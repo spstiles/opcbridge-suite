@@ -156,6 +156,11 @@ const state = {
   liveTagsLast: null,
   liveTagFilter: { type: 'all', label: 'All' },
 
+  // alarms/events (from opcbridge-alarms)
+  alarmsAllLast: null,
+  alarmsAll: [],
+  alarmHistoryLast: null,
+
   // connections
   connFiles: [],
   connObjCache: new Map(),
@@ -175,7 +180,7 @@ const state = {
   scadaDirty: false,
 
   // tree
-  expanded: new Set(['project:opcbridge', 'folder:connectivity']),
+  expanded: new Set(['project:opcbridge', 'folder:connectivity', 'folder:alarms_events']),
   selectedNodeId: '',
   scadaChannels: [],
   workspaceTreeRoot: null,
@@ -719,7 +724,8 @@ function setWorkspaceSaveStatus(msg) {
 function renderWorkspaceSaveBar() {
   const dirty = workspaceIsDirty();
   if (els.workspaceSaveBtn) els.workspaceSaveBtn.disabled = !dirty;
-  if (els.workspaceSaveReloadBtn) els.workspaceSaveReloadBtn.disabled = !dirty;
+  // Allow manual reload even when there are no staged changes.
+  if (els.workspaceSaveReloadBtn) els.workspaceSaveReloadBtn.disabled = false;
   if (els.workspaceDiscardBtn) els.workspaceDiscardBtn.disabled = !dirty;
 }
 
@@ -1356,6 +1362,33 @@ function openWorkspaceItemModal(node) {
       addRow('Enabled', row?.enabled !== false ? 'yes' : 'no');
       addRow('Writable', row?.writable === true ? 'yes' : 'no');
     }
+  } else if (type === 'alarm') {
+    addRow('Alarm ID', String(node.meta?.alarm_id || ''));
+    addRow('Name', String(node.label || ''));
+    addRow('Group', String(node.meta?.group || ''), !String(node.meta?.group || '').trim());
+    addRow('Site', String(node.meta?.site || ''), !String(node.meta?.site || '').trim());
+    addRow('Severity', node.meta?.severity == null ? '' : String(node.meta.severity), node.meta?.severity == null);
+    addRow('Enabled', node.meta?.enabled === false ? 'no' : 'yes');
+    addRow('Active', node.meta?.active ? 'yes' : 'no');
+    addRow('Acked', node.meta?.acked ? 'yes' : 'no');
+    const src = node.meta?.source || {};
+    addRow('Source', `${String(src?.connection_id || '')}:${String(src?.tag || '')}`.replace(/^:$/, ''), !(src?.connection_id || src?.tag));
+    addRow('Message', String(node.meta?.message || ''), !String(node.meta?.message || '').trim());
+  } else if (type === 'event') {
+    const ev = node.meta || {};
+    const src = ev?.source || {};
+    addRow('Event ID', String(ev?.event_id || ''), !String(ev?.event_id || '').trim());
+    addRow('Time', fmtTime(ev?.ts_ms), !ev?.ts_ms);
+    addRow('Type', String(ev?.type || ''), !String(ev?.type || '').trim());
+    addRow('Alarm ID', String(ev?.alarm_id || ''), !String(ev?.alarm_id || '').trim());
+    addRow('Group', String(ev?.group || ''), !String(ev?.group || '').trim());
+    addRow('Site', String(ev?.site || ''), !String(ev?.site || '').trim());
+    addRow('Severity', ev?.severity == null ? '' : String(ev.severity), ev?.severity == null);
+    addRow('Source', `${String(src?.connection_id || '')}:${String(src?.tag || '')}`.replace(/^:$/, ''), !(src?.connection_id || src?.tag));
+    addRow('Value', ev?.value == null ? '' : (typeof ev.value === 'string' ? ev.value : JSON.stringify(ev.value)), ev?.value == null);
+    addRow('Message', ev?.message == null ? '' : String(ev.message), ev?.message == null);
+    addRow('Actor', ev?.actor == null ? '' : String(ev.actor), ev?.actor == null);
+    addRow('Note', ev?.note == null ? '' : String(ev.note), ev?.note == null);
   } else {
     addRow('Name', String(node.label || node.id || ''));
   }
@@ -1782,6 +1815,10 @@ function buildTree() {
   const alarmsEvents = { id: 'folder:alarms_events', type: 'folder', label: 'Alarms & Events', children: [] };
   root.children.push(alarmsEvents);
 
+  const alarmsRoot = { id: 'folder:alarms', type: 'alarms_root', label: 'Alarms', children: [] };
+
+  alarmsEvents.children.push(alarmsRoot);
+
   const channelItems = Array.isArray(state.scadaChannels) ? state.scadaChannels.slice() : [];
   const channels = [];
 
@@ -1862,11 +1899,97 @@ function buildTree() {
   channelNodes.forEach((ch) => connectivity.children.push(ch));
   if (unassigned.children.length) connectivity.children.push(unassigned);
 
+  // Build alarms tree: Group -> Site -> Alarm
+  const allAlarms = Array.isArray(state.alarmsAll) ? state.alarmsAll : [];
+  const safeKey = (s) => {
+    const k = String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    return k || 'none';
+  };
+
+  if (!allAlarms.length) {
+    alarmsRoot.children.push({ id: 'hint:no_alarms', type: 'hint', label: '(no alarms loaded yet)', children: [] });
+  } else {
+    const groups = new Map();
+    allAlarms.forEach((a) => {
+      const alarm_id = String(a?.alarm_id || a?.id || '').trim();
+      if (!alarm_id) return;
+
+      const groupRaw = String(a?.group || a?.group_name || '').trim();
+      const siteRaw = String(a?.site || a?.site_name || '').trim();
+
+      const groupLabel = groupRaw || '(No group)';
+      const siteLabel = siteRaw || '(No site)';
+
+      const groupId = `alarm_group:${safeKey(groupLabel)}`;
+      let groupNode = groups.get(groupId);
+      if (!groupNode) {
+        groupNode = {
+          id: groupId,
+          type: 'alarm_group',
+          label: groupLabel,
+          meta: { group: groupRaw },
+          children: []
+        };
+        groups.set(groupId, groupNode);
+      }
+
+      const siteId = `${groupId}:site:${safeKey(siteLabel)}`;
+      let siteNode = (groupNode.children || []).find((n) => String(n?.id || '') === siteId) || null;
+      if (!siteNode) {
+        siteNode = {
+          id: siteId,
+          type: 'alarm_site',
+          label: siteLabel,
+          meta: { group: groupRaw, site: siteRaw },
+          children: []
+        };
+        groupNode.children.push(siteNode);
+      }
+
+      const name = String(a?.name || a?.description || alarm_id).trim() || alarm_id;
+      const sev = (a?.severity == null) ? '' : Number(a.severity);
+      const enabled = (a?.enabled !== false);
+      const active = Boolean(a?.active);
+      const acked = Boolean(a?.acked);
+      const src = a?.source || {};
+      const srcConn = String(src?.connection_id || a?.connection_id || '').trim();
+      const srcTag = String(src?.tag || a?.tag || a?.tag_name || '').trim();
+      const message = String(a?.message || '').trim();
+
+      siteNode.children.push({
+        id: `alarm:${alarm_id}`,
+        type: 'alarm',
+        label: name,
+        meta: {
+          alarm_id,
+          group: groupRaw,
+          site: siteRaw,
+          severity: sev,
+          enabled,
+          active,
+          acked,
+          source: { connection_id: srcConn, tag: srcTag },
+          message
+        },
+        children: []
+      });
+    });
+
+    const groupNodes = Array.from(groups.values()).sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
+    groupNodes.forEach((g) => {
+      g.children = (g.children || []).slice().sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
+      g.children.forEach((s) => {
+        s.children = (s.children || []).slice().sort((a, b) => Number(b?.meta?.severity || 0) - Number(a?.meta?.severity || 0));
+      });
+      alarmsRoot.children.push(g);
+    });
+  }
+
   return root;
 }
 
 function renderTreeNode(node, container) {
-  const canExpand = node.type === 'project' || node.type === 'folder' || node.type === 'channel' || node.type === 'device';
+  const canExpand = ['project', 'folder', 'channel', 'device', 'alarms_root', 'alarm_group', 'alarm_site'].includes(String(node.type || ''));
   const expanded = state.expanded.has(node.id);
 
   const btn = document.createElement('button');
@@ -2000,7 +2123,7 @@ function renderTreeNode(node, container) {
       items.push({ label: 'Add Device…', onClick: () => createNewConnectionInteractive({ channel_id: String(node.meta?.channel_id || '') }) });
     }
 
-    items.push({ label: 'Refresh', onClick: async () => { await loadConnectionsList(); await loadTagsConfig(); } });
+    items.push({ label: 'Refresh', onClick: async () => { await loadConnectionsList(); await loadTagsConfig(); await refreshAll(); } });
 
     if (!items.length) return;
     showContextMenu(e.clientX, e.clientY, items);
@@ -2016,6 +2139,7 @@ function renderTreeNode(node, container) {
   }
 }
 
+
 function renderWorkspaceDetails(node) {
   if (!node) return;
 
@@ -2027,6 +2151,97 @@ function renderWorkspaceDetails(node) {
   const isChannel = String(node.type || '') === 'channel';
   const isDevice = String(node.type || '') === 'device';
   const isTag = String(node.type || '') === 'tag';
+
+  const isAlarmsEvents = node.id === 'folder:alarms_events';
+  const isAlarmsRoot = String(node.type || '') === 'alarms_root';
+  const isAlarmGroup = String(node.type || '') === 'alarm_group';
+  const isAlarmSite = String(node.type || '') === 'alarm_site';
+  const isAlarm = String(node.type || '') === 'alarm';
+
+  // ---------- Alarms & Events (alarms only for now) ----------
+  if (isAlarmsEvents || isAlarmsRoot || isAlarmGroup || isAlarmSite || isAlarm) {
+    const columns = (isAlarmSite || isAlarm)
+      ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Group', 'Site']
+      : ['Name'];
+
+    const colCount = columns.length;
+
+    // Header
+    if (els.workspaceChildrenTable) {
+      const headRow = els.workspaceChildrenTable.querySelector('thead tr');
+      if (headRow) {
+        headRow.textContent = '';
+        columns.forEach((c) => {
+          const th = document.createElement('th');
+          th.textContent = c;
+          headRow.appendChild(th);
+        });
+      }
+    }
+
+    if (!els.workspaceChildrenTbody) return;
+    els.workspaceChildrenTbody.textContent = '';
+
+    const addCell = (tr, text, dim = false) => {
+      const td = document.createElement('td');
+      td.textContent = String(text ?? '');
+      if (dim) td.className = 'audit-cell-dim';
+      tr.appendChild(td);
+      return td;
+    };
+
+    const rows = isAlarm ? [node] : (Array.isArray(node.children) ? node.children : []);
+
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = colCount;
+      td.className = 'audit-cell-dim';
+      td.textContent = 'No items.';
+      tr.appendChild(td);
+      els.workspaceChildrenTbody.appendChild(tr);
+      return;
+    }
+
+    rows.forEach((c) => {
+      const tr = document.createElement('tr');
+      const type = String(c?.type || '');
+
+      if ((isAlarmSite || isAlarm) && type === 'alarm') {
+        const meta = c?.meta || {};
+        const src = meta?.source || {};
+        const stateStr = (meta?.enabled === false) ? 'DISABLED' : (meta?.active ? 'ACTIVE' : 'OK');
+        addCell(tr, String(c?.label || meta?.alarm_id || ''), false);
+        addCell(tr, meta?.severity == null ? '' : String(meta.severity), meta?.severity == null);
+        addCell(tr, `${String(src?.connection_id || '')}:${String(src?.tag || '')}`.replace(/^:$/, ''), !(src?.connection_id || src?.tag));
+        addCell(tr, stateStr, false);
+        addCell(tr, meta?.acked ? 'yes' : 'no', false);
+        addCell(tr, meta?.enabled === false ? 'no' : 'yes', false);
+        addCell(tr, String(meta?.group || ''), !String(meta?.group || '').trim());
+        addCell(tr, String(meta?.site || ''), !String(meta?.site || '').trim());
+      } else {
+        addCell(tr, String(c?.label || c?.id || ''), false);
+      }
+
+      tr.style.cursor = 'default';
+
+      tr.addEventListener('click', () => {
+        const trs = Array.from(els.workspaceChildrenTbody.querySelectorAll('tr'));
+        trs.forEach((r) => r.classList.remove('is-selected'));
+        tr.classList.add('is-selected');
+      });
+
+      tr.addEventListener('dblclick', () => {
+        openWorkspaceItemModal(c);
+      });
+
+      els.workspaceChildrenTbody.appendChild(tr);
+    });
+
+    return;
+  }
+
+  // ---------- Connectivity / tags ----------
 
   // When a channel is selected, list its devices with device fields.
   const showDeviceCols = isChannel;
@@ -2043,7 +2258,6 @@ function renderWorkspaceDetails(node) {
 
   state.workspaceRenderSeq = (Number(state.workspaceRenderSeq || 0) + 1) || 1;
   const seq = state.workspaceRenderSeq;
-
 
   const connectionId = String(node.meta?.connection_id || '').trim();
   const selectedTagName = isTag ? String(node.meta?.name || node.label || '').trim() : '';
@@ -2208,7 +2422,6 @@ function renderWorkspaceDetails(node) {
     els.workspaceChildrenTbody.appendChild(tr);
   });
 }
-
 function renderWorkspaceTree() {
   if (!els.treeView) return;
   els.treeView.textContent = '';
@@ -2253,7 +2466,20 @@ function selectWorkspaceNodeById(id) {
 }
 
 async function saveWorkspaceAll({ reload }) {
-  if (!workspaceIsDirty()) return;
+  if (!workspaceIsDirty()) {
+    if (!reload) return;
+    setWorkspaceSaveStatus('Reloading…');
+    renderWorkspaceSaveBar();
+    try {
+      await opcbridgeReload();
+      setWorkspaceSaveStatus('Reloaded.');
+    } catch (err) {
+      setWorkspaceSaveStatus(`Reload failed: ${err.message}`);
+    } finally {
+      renderWorkspaceSaveBar();
+    }
+    return;
+  }
   setWorkspaceSaveStatus('Saving…');
   renderWorkspaceSaveBar();
   try {
@@ -2468,6 +2694,7 @@ function renderLiveTags(tagsResp) {
 
 
 function renderActiveAlarms(activeResp) {
+  state.activeAlarmsLast = activeResp;
   if (!els.activeAlarmsTableBody) return;
   els.activeAlarmsTableBody.textContent = '';
   const alarms = Array.isArray(activeResp?.alarms) ? activeResp.alarms : [];
@@ -2487,6 +2714,7 @@ function renderActiveAlarms(activeResp) {
 }
 
 function renderAlarmEvents(histResp) {
+  state.alarmHistoryLast = histResp;
   if (!els.alarmEventsTableBody) return;
   els.alarmEventsTableBody.textContent = '';
   const events = Array.isArray(histResp?.events) ? histResp.events : [];
@@ -2521,12 +2749,22 @@ async function refreshAll() {
     const tags = await apiGet('/api/opcbridge/tags');
     renderLiveTags(tags);
 
-    const [active, history] = await Promise.all([
-      apiGet('/api/alarms/alarm/api/alarms/active'),
-      apiGet('/api/alarms/alarm/api/alarms/history?limit=200')
-    ]);
-    renderActiveAlarms(active);
-    renderAlarmEvents(history);
+const [active, history, all] = await Promise.all([
+  apiGet('/api/alarms/alarm/api/alarms/active').catch(() => ({ ok: false, alarms: [] })),
+  apiGet('/api/alarms/alarm/api/alarms/history?limit=200').catch(() => ({ ok: false, events: [] })),
+  apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] }))
+]);
+renderActiveAlarms(active);
+renderAlarmEvents(history);
+
+state.alarmsAllLast = all;
+state.alarmsAll = Array.isArray(all?.alarms) ? all.alarms : [];
+
+// If the user is browsing alarms/events in Workspace, refresh that view.
+const sid = String(state.selectedNodeId || '');
+if (sid.includes('alarms') || sid.includes('alarm')) {
+  renderWorkspaceTree();
+}
 
     const overall = String(health?.status || 'unknown');
     const elapsed = Date.now() - started;
