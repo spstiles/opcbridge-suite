@@ -21,6 +21,18 @@ body {
   background: radial-gradient(1200px 600px at 20% -10%, rgba(80,100,132,.35), transparent 55%), var(--bg);
 }
 
+body.is-embed {
+  background: transparent;
+}
+
+body.is-embed .topbar {
+  display: none;
+}
+
+body.is-embed .main {
+  padding: 0;
+}
+
 code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
 
 .topbar {
