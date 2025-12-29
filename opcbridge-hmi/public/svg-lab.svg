@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">
+  <defs>
+    <radialGradient id="dialGlow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#2b3646"/>
+      <stop offset="70%" stop-color="#1a212c"/>
+      <stop offset="100%" stop-color="#0f141d"/>
+    </radialGradient>
+  </defs>
+  <rect width="600" height="600" fill="#0f141d"/>
+  <circle cx="300" cy="300" r="220" fill="url(#dialGlow)" stroke="#3a4455" stroke-width="6"/>
+  <circle cx="300" cy="300" r="160" fill="#1e2633" stroke="#2f3b4c" stroke-width="3"/>
+  <line x1="300" y1="300" x2="300" y2="165" stroke="#2ecc71" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="300" cy="300" r="22" fill="#cfd6e4" stroke="#202833" stroke-width="2"/>
+  <text x="300" y="520" fill="#c7d1e0" font-family="Arial, sans-serif" font-size="18" text-anchor="middle">SVG Lab</text>
+</svg>

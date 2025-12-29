@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>opcbridge SCADA</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">opcbridge SCADA</div>
+    <div class="status" id="statusLine">Loading…</div>
+    <div class="status" id="buildLine"></div>
+
+    <nav class="tabs" id="tabs">
+      <button data-tab="overview" class="tab is-active">Overview</button>
+      <button data-tab="configure" class="tab">Configure Server</button>
+      <button data-tab="workspace" class="tab">Workspace</button>
+      <button data-tab="alarms" class="tab">Alarms</button>
+    </nav>
+  </header>
+
+  <main class="main">
+    <section id="tab-overview" class="panel is-active">
+      <h2>Overview</h2>
+      <div class="grid">
+        <div class="card">
+          <div class="card-title">opcbridge /health</div>
+                    <div id="overviewHealthOverall" class="status">Loading…</div>
+          <div class="small" id="overviewHealthMeta"></div>
+          <div class="small" id="overviewHealthConnections"></div>
+          <details class="details" style="margin-top: 10px;">
+            <summary class="small">Raw JSON</summary>
+            <pre class="mono" id="healthJson">Loading…</pre>
+          </details>
+        </div>
+        <div class="card">
+          <div class="card-title">opcbridge-alarms /alarm/api/status</div>
+          <pre class="mono" id="alarmsStatusJson">Loading…</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-configure" class="panel">
+      <h2>Configure Server</h2>
+      <div class="hint">SCADA server settings (where to find opcbridge/alarms/HMI, refresh rate). Tokens stay on the SCADA server.</div>
+
+      <div class="card">
+        <div class="card-title">Server Settings</div>
+        <div class="card-body">
+          <div class="form" style="max-width: 720px;">
+            <div class="form-row">
+              <label>SCADA Listen Host</label>
+              <input id="scadaListenHost" type="text" placeholder="0.0.0.0" />
+            </div>
+            <div class="form-row">
+              <label>SCADA Listen Port</label>
+              <input id="scadaListenPort" type="number" min="1" max="65535" step="1" />
+            </div>
+            <div class="form-row">
+              <label>Refresh Interval (ms)</label>
+              <input id="scadaRefreshMs" type="number" min="250" max="30000" step="250" />
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-row">
+              <label>opcbridge Scheme</label>
+              <select id="scadaOpcbridgeScheme">
+                <option value="http">http</option>
+                <option value="https">https</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>opcbridge Host</label>
+              <input id="scadaOpcbridgeHost" type="text" placeholder="127.0.0.1" />
+            </div>
+            <div class="form-row">
+              <label>opcbridge Port</label>
+              <input id="scadaOpcbridgePort" type="number" min="1" max="65535" step="1" />
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-row">
+              <label>alarms Scheme</label>
+              <select id="scadaAlarmsScheme">
+                <option value="http">http</option>
+                <option value="https">https</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>alarms Host</label>
+              <input id="scadaAlarmsHost" type="text" placeholder="127.0.0.1" />
+            </div>
+            <div class="form-row">
+              <label>alarms Port</label>
+              <input id="scadaAlarmsPort" type="number" min="1" max="65535" step="1" />
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-row">
+              <label>HMI Scheme</label>
+              <select id="scadaHmiScheme">
+                <option value="http">http</option>
+                <option value="https">https</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>HMI Host</label>
+              <input id="scadaHmiHost" type="text" placeholder="127.0.0.1" />
+            </div>
+            <div class="form-row">
+              <label>HMI Port</label>
+              <input id="scadaHmiPort" type="number" min="1" max="65535" step="1" />
+            </div>
+            <div class="form-row">
+              <label></label>
+              <div class="row-actions">
+                <button class="btn" id="scadaOpenHmiBtn" type="button">Open HMI</button>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label></label>
+              <div class="row-actions">
+                <button class="btn" id="scadaSettingsReloadBtn" type="button">Reload</button>
+                <button class="btn primary" id="scadaSettingsSaveBtn" type="button">Save</button>
+              </div>
+            </div>
+
+            <div class="hint mono" id="scadaSettingsStatus"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+      </div>
+    </section>
+    <section id="tab-alarms" class="panel">
+      <h2>Alarms</h2>
+      <div class="split">
+        <div class="card">
+          <div class="card-title">Active Alarms</div>
+          <div class="card-body">
+            <div class="table-wrap"><table class="table" id="activeAlarmsTable">
+              <thead><tr><th>Alarm</th><th>Sev</th><th>Source</th><th>Message</th><th>Acked</th><th>Active Since</th></tr></thead>
+              <tbody></tbody>
+            </table></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Alarm Events (History)</div>
+          <div class="card-body">
+            <div class="table-wrap"><table class="table" id="alarmEventsTable">
+              <thead><tr><th>Time</th><th>Type</th><th>Alarm</th><th>Sev</th><th>Source</th><th>Value</th><th>Message</th></tr></thead>
+              <tbody></tbody>
+            </table></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-workspace" class="panel">
+      <h2>Workspace</h2>
+      <div class="hint">Tree view (Connectivity → Channels → Devices → Tags).</div>
+
+      <div class="row-actions" style="margin: 10px 0;">
+        <button class="btn primary" id="workspaceSaveBtn" type="button" disabled>Save</button>
+        <button class="btn" id="workspaceSaveReloadBtn" type="button" disabled>Save + Reload</button>
+        <button class="btn" id="workspaceDiscardBtn" type="button" disabled>Discard</button>
+        <div class="hint mono" id="workspaceSaveStatus" style="margin-left: auto;"></div>
+      </div>
+
+      <div class="workspace" style="min-height: 560px;">
+        <aside class="sidebar tree">
+          <div class="sidebar-title">Project</div>
+          <div class="tree-body" id="treeView"></div>
+          <div class="sidebar-note" id="treeNote"></div>
+        </aside>
+
+        <section class="editor workspace-right">
+          <div class="editor-body">
+            <section id="workspaceDetailsPanel">
+              <div class="table-wrap">
+                <table class="table" id="workspaceChildrenTable">
+                  <thead><tr><th>Name</th></tr></thead>
+                  <tbody id="workspaceChildrenTbody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="editor workspace-bottom">
+          <div class="editor-toolbar">
+            <div class="editor-title">Live Tags</div>
+            <div class="hint mono" id="workspaceLiveTagsFilter"></div>
+            <div class="hint">Read-only from opcbridge <code>/tags</code>.</div>
+          </div>
+          <div class="editor-body">
+            <div class="table-wrap">
+              <table class="table" id="workspaceLiveTagsTable">
+                <thead><tr><th>Connection</th><th>Tag</th><th>Datatype</th><th>Status</th><th>Value</th><th>Writable</th><th>Timestamp</th></tr></thead>
+                <tbody id="workspaceLiveTagsTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-overlay" id="channelPropsModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="channelPropsModalTitle">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="channelPropsModalTitle">Channel Properties</div>
+        <button class="btn" id="channelPropsCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint" id="channelPropsHint"></div>
+        <div class="form" style="max-width: 720px;">
+          <div class="form-row"><label>Name</label><input id="channelPropName" type="text" placeholder="Main" /></div>
+          <div class="form-row"><label>Description</label><textarea id="channelPropDesc" rows="3" placeholder="Optional description..."></textarea></div>
+          <div class="form-row"><label></label>
+            <div class="row-actions">
+              <button class="btn" id="channelPropCancelBtn" type="button">Cancel</button>
+              <button class="btn primary" id="channelPropSaveBtn" type="button">Save</button>
+            </div>
+          </div>
+          <div class="hint mono" id="channelPropStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  
+  <div class="modal-overlay" id="workspaceItemModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="workspaceItemModalTitle">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="workspaceItemModalTitle">Properties</div>
+        <button class="btn" id="workspaceItemCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint" id="workspaceItemHint"></div>
+
+        <section id="workspaceItemDeviceEdit" style="display:none;">
+          <div class="form" style="max-width: 720px;">
+            <div class="form-row"><label>Device ID</label><input id="editDevId" type="text" disabled /></div>
+            <div class="form-row"><label>Driver</label><select id="editDevDriver">
+              <option value="ab_eip">Allen-Bradley Ethernet/IP</option>
+            </select></div>
+            <div class="form-row"><label>Gateway</label><input id="editDevGateway" type="text" placeholder="192.0.2.10" /></div>
+            <div class="form-row"><label>Path</label><input id="editDevPath" type="text" placeholder="1,0" /></div>
+            <div class="form-row"><label>Slot</label><input id="editDevSlot" type="number" step="1" min="0" placeholder="0" /></div>
+            <div class="form-row"><label>PLC Type</label><select id="editDevPlcType">
+              <option value="lgx">Allen-Bradley Logix (ControlLogix / CompactLogix)</option>
+              <option value="mlgx">Allen-Bradley MicroLogix</option>
+              <option value="micro800">Allen-Bradley Micro800 (Micro8xx)</option>
+              <option value="slc">Allen-Bradley SLC 500</option>
+              <option value="plc5">Allen-Bradley PLC-5</option>
+              <option value="lgx-pccc">Logix (PCCC gateway mode)</option>
+              <option value="omron-njnx">OMRON NJ/NX</option>
+            </select></div>
+            <div class="form-row"><label></label>
+              <div class="row-actions">
+                <button class="btn" id="editDevCancelBtn" type="button">Cancel</button>
+                <button class="btn primary" id="editDevSaveBtn" type="button">Save</button>
+              </div>
+            </div>
+            <div class="hint mono" id="editDevStatus"></div>
+          </div>
+        </section>
+
+        <section id="workspaceItemTagEdit" style="display:none;">
+          <div class="form" style="max-width: 720px;">
+            <div class="form-row"><label>Connection</label><input id="editTagConn" type="text" disabled /></div>
+            <div class="form-row"><label>Tag Name</label><input id="editTagName" type="text" disabled /></div>
+            <div class="form-row"><label>PLC Tag</label><input id="editTagPlc" type="text" placeholder="Pump1.Running" /></div>
+            <div class="form-row"><label>Datatype</label><select id="editTagDatatype"></select></div>
+            <div class="form-row"><label>Scan (ms)</label><input id="editTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
+            <div class="form-row"><label>Enabled</label><input id="editTagEnabled" type="checkbox" class="inline-check" /></div>
+            <div class="form-row"><label>Writable</label><input id="editTagWritable" type="checkbox" class="inline-check" /></div>
+            <div class="form-row"><label></label>
+              <div class="row-actions">
+                <button class="btn" id="editTagCancelBtn" type="button">Cancel</button>
+                <button class="btn primary" id="editTagSaveBtn" type="button">Save</button>
+              </div>
+            </div>
+            <div class="hint mono" id="editTagStatus"></div>
+          </div>
+        </section>
+
+</section>
+
+        <section id="workspaceItemGeneric" style="display:none;">
+          <div class="table-wrap" style="margin-top: 10px;">
+            <table class="table" id="workspaceItemTable">
+              <thead><tr><th>Field</th><th>Value</th></tr></thead>
+              <tbody id="workspaceItemTbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="hint mono" id="workspaceItemStatus"></div>
+      </div>
+    </div>
+  </div>
+
+<div class="modal-overlay" id="workspaceNewDevicePanel" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newDeviceModalTitle">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="newDeviceModalTitle">New Device</div>
+        <button class="btn" id="newDevModalCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint" id="newDeviceHint"></div>
+        <div class="form" style="max-width: 720px;">
+          <div class="form-row"><label>Device ID</label><input id="newDevId" type="text" placeholder="test01" /></div>
+          <div class="form-row"><label>Driver</label><select id="newDevDriver">
+            <option value="ab_eip">Allen-Bradley Ethernet/IP</option>
+          </select></div>
+          <div class="form-row"><label>Gateway</label><input id="newDevGateway" type="text" placeholder="192.0.2.10" /></div>
+          <div class="form-row"><label>Path</label><input id="newDevPath" type="text" placeholder="1,0" /></div>
+          <div class="form-row"><label>Slot</label><input id="newDevSlot" type="number" step="1" min="0" placeholder="0" /></div>
+          <div class="form-row"><label>PLC Type</label><select id="newDevPlcType">
+            <option value="lgx">Allen-Bradley Logix (ControlLogix / CompactLogix)</option>
+            <option value="mlgx">Allen-Bradley MicroLogix</option>
+            <option value="micro800">Allen-Bradley Micro800 (Micro8xx)</option>
+            <option value="slc">Allen-Bradley SLC 500</option>
+            <option value="plc5">Allen-Bradley PLC-5</option>
+            <option value="lgx-pccc">Logix (PCCC gateway mode)</option>
+            <option value="omron-njnx">OMRON NJ/NX</option>
+          </select></div>
+          <div class="form-row"><label></label>
+            <div class="row-actions">
+              <button class="btn" id="newDevCancelBtn" type="button">Cancel</button>
+              <button class="btn primary" id="newDevCreateBtn" type="button">Create</button>
+            </div>
+          </div>
+          <div class="hint mono" id="newDevStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="modal-overlay" id="newTagModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newTagModalTitle">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="newTagModalTitle">New Tag</div>
+        <button class="btn" id="newTagCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint" id="newTagHint"></div>
+        <div class="form" style="max-width: 720px;">
+          <div class="form-row"><label>Tag Name</label><input id="newTagName" type="text" placeholder="Pump1.Running" /></div>
+          <div class="form-row"><label>PLC Tag</label><input id="newTagPlc" type="text" placeholder="Pump1.Running" /></div>
+          <div class="form-row"><label>Datatype</label><select id="newTagDatatype"></select></div>
+          <div class="form-row"><label>Scan (ms)</label><input id="newTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
+          <div class="form-row"><label>Enabled</label><input id="newTagEnabled" type="checkbox" class="inline-check" checked /></div>
+          <div class="form-row"><label>Writable</label><input id="newTagWritable" type="checkbox" class="inline-check" /></div>
+          <div class="form-row"><label></label>
+            <div class="row-actions">
+              <button class="btn" id="newTagCancelBtn" type="button">Cancel</button>
+              <button class="btn primary" id="newTagCreateBtn" type="button">Create</button>
+            </div>
+          </div>
+          <div class="hint mono" id="newTagStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

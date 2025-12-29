@@ -1,0 +1,657 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "background": "#ff8d8d",
+  "objects": [
+    {
+      "type": "viewport",
+      "id": "vp_1",
+      "x": 0,
+      "y": 0,
+      "w": 1588,
+      "h": 943,
+      "target": "overview",
+      "scaleMode": "actual-size",
+      "border": {
+        "enabled": true,
+        "color": "#ffffff",
+        "width": 1
+      }
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 84,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Collection\nSystem\nOverview",
+      "fill": "#0611b7",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 84,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Safety\nSystem\nOverview",
+      "fill": "#0611b7",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 150,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Suburban Flow",
+      "fill": "#0611b7",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 151,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Lift Station\nFlow",
+      "fill": "#0611b7",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 216,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Safety Site\nFlow",
+      "fill": "#0611b7",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 216,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "EVACUATION\nALARM",
+      "fill": "#ff1f00",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 282,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Plant Overview",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 282,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 139\nFinal Clarifiers\n1 Thru 6",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 348,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 145\nFinal Clarifiers\n7, 8, & 9",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 348,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Buiding 30\nEQ Basins",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 414,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 130\nPreliminary\nTreatment",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 414,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 139\nAeration Tanks",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 480,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 135\nWest Primary\nClarifiers",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 480,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 160\nUV Disinfection\n",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "text",
+      "x": 1870,
+      "y": 538,
+      "text": "North",
+      "fontSize": 15,
+      "fill": "#ffffff",
+      "w": 40,
+      "h": 11,
+      "bold": true
+    },
+    {
+      "type": "text",
+      "x": 1761,
+      "y": 535,
+      "text": "South",
+      "fontSize": 15,
+      "fill": "#ffffff",
+      "w": 43,
+      "h": 11,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 546,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "West Primary\nSludge Pumping",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 546,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 172\nDigester B",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 678,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "East Primary\nSludge Pumping",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 678,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 180\nDigesters C & E",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 612,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 173\nDigester A & D",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 612,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 136\nEast Primary\nClarifiers",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 744,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 185\nAeration Blowers",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 744,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 138\nWest Drain\nPump Station",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 810,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Building 165\nSolids Process",
+      "fill": "#800080",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 810,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Remote Storage\nFlow Trend",
+      "fill": "#00a9a9",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#000000",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 876,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Plant Flow\nTrend",
+      "fill": "#00a9a9",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#000000",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 876,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Collection\nFlow Trend",
+      "fill": "#00a9a9",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#000000",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 942,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Plant Data\nEntry",
+      "fill": "#00a9a9",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#000000",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 942,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Suburban\nCall Center",
+      "fill": "#00a9a9",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#000000",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1425,
+      "y": 942,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "PDF Test\nDisplay",
+      "fill": "#00a9a9",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#000000",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1425,
+      "y": 1008,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Communication\nTimers",
+      "fill": "#008000",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1590,
+      "y": 1008,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Plant Alarms",
+      "fill": "#ff7f00",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#000000",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    },
+    {
+      "type": "button",
+      "x": 1755,
+      "y": 1008,
+      "w": 165,
+      "h": 66,
+      "rx": 0,
+      "label": "Field Alarms",
+      "fill": "#ff7f00",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#000000",
+      "action": {
+        "type": "navigate",
+        "screenId": "console_background"
+      },
+      "fontSize": 15,
+      "bold": true
+    }
+  ],
+  "border": {
+    "enabled": true,
+    "color": "#008c3c",
+    "width": 1
+  }
+}

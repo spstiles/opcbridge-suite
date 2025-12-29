@@ -1,0 +1,2371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>opcbridge-HMI</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <header id="toolbar" class="toolbar is-hidden">
+    <div class="toolbar-left">
+      <span class="project-title">opcbridge-HMI</span>
+      <span class="screen-title-wrap">
+        <span id="screen-title" class="screen-title">Screen</span>
+        <span id="groupBreadcrumb" class="group-breadcrumb is-hidden" title="Editing a group (Esc to exit)">Group edit</span>
+        <button id="screenSaveBtn" class="screen-save-btn toolbar-btn" type="button">Save</button>
+      </span>
+	      <span id="toolHint" class="tool-hint is-hidden" aria-live="polite"></span>
+	      <span id="wsStatus" class="ws-status" aria-live="polite">ws://</span>
+	      <button id="alarmsBadge" class="alarms-badge" type="button" aria-live="polite" title="View alarms">Alarms: 0</button>
+	    </div>
+    <div class="toolbar-right">
+      <button id="snapToggleBtn" class="toolbar-btn" type="button" title="Toggle snap to grid">Snap</button>
+      <button id="groupToggleBtn" class="toolbar-btn" type="button" title="Group selected items">Group</button>
+      <a id="svgLabBtn" class="toolbar-btn" href="svg-lab.html">SVG Lab</a>
+      <button id="runtimeBtn" class="toolbar-btn" type="button">Switch to Runtime</button>
+      <div class="menu-wrap">
+        <button id="menuToggleBtn" class="toolbar-btn menu-toggle" type="button" aria-haspopup="true" aria-expanded="false">☰</button>
+        <div id="menuDropdown" class="menu-dropdown" role="menu">
+          <div class="menu-heading">Edit</div>
+          <button id="groupMenuBtn" class="menu-item" type="button">Group</button>
+          <button id="ungroupMenuBtn" class="menu-item" type="button">Ungroup</button>
+          <div class="menu-separator"></div>
+          <button id="alignMenuLeft" class="menu-item" type="button">Align Left</button>
+          <button id="alignMenuCenter" class="menu-item" type="button">Align Center</button>
+          <button id="alignMenuRight" class="menu-item" type="button">Align Right</button>
+          <div class="menu-separator"></div>
+          <button id="alignMenuTop" class="menu-item" type="button">Align Top</button>
+          <button id="alignMenuMiddle" class="menu-item" type="button">Align Middle</button>
+          <button id="alignMenuBottom" class="menu-item" type="button">Align Bottom</button>
+          <div class="menu-separator"></div>
+          <button id="matchMenuWidth" class="menu-item" type="button">Match Width</button>
+          <button id="matchMenuHeight" class="menu-item" type="button">Match Height</button>
+          <button id="matchMenuSize" class="menu-item" type="button">Match Size</button>
+          <div class="menu-separator"></div>
+          <button id="spaceMenuHorizontal" class="menu-item" type="button">Space Evenly (Horizontal)</button>
+          <button id="spaceMenuVertical" class="menu-item" type="button">Space Evenly (Vertical)</button>
+          <div class="menu-separator"></div>
+          <button id="flipMenuHorizontal" class="menu-item" type="button">Flip Horizontal</button>
+          <button id="flipMenuVertical" class="menu-item" type="button">Flip Vertical</button>
+          <div class="menu-separator"></div>
+          <button id="moveToFrontMenuBtn" class="menu-item" type="button">Move To Front</button>
+          <button id="moveToBackMenuBtn" class="menu-item" type="button">Move To Back</button>
+          <div class="menu-separator"></div>
+          <button id="exportSelectionSvgBtn" class="menu-item" type="button">Export Selection…</button>
+          <button id="explodeSelectedSvgBtn" class="menu-item" type="button">Explode Selected SVG…</button>
+          <div class="menu-separator"></div>
+	          <button id="aboutMenuBtn" class="menu-item" type="button">About…</button>
+	          <button id="settingsMenuBtn" class="menu-item" type="button">Settings…</button>
+	          <button id="alarmsMenuBtn" class="menu-item" type="button">Alarms…</button>
+	          <button id="usersMenuBtn" class="menu-item" type="button">Users…</button>
+	          <button id="auditMenuBtn" class="menu-item" type="button">Audit Log…</button>
+	          <button id="loginMenuBtn" class="menu-item" type="button">Login…</button>
+	          <button id="logoutMenuBtn" class="menu-item" type="button">Logout</button>
+	        </div>
+      </div>
+    </div>
+	  </header>
+
+	  <div id="wsBadge" class="ws-badge" aria-live="polite">ws://</div>
+
+	  <main id="app">
+	    <div id="workspace">
+	      <div id="screen-wrapper">
+	        <div id="screen">
+          <svg id="hmi-svg"
+               xmlns="http://www.w3.org/2000/svg"
+               width="100%"
+               height="100%"
+               preserveAspectRatio="xMidYMid meet">
+          </svg>
+        </div>
+      </div>
+      <div id="editor-resizer" class="editor-resizer" aria-hidden="true"></div>
+      <aside id="editor-pane" class="editor-pane is-hidden">
+        <div class="editor-tabs" role="tablist" aria-label="Editor Tabs">
+          <button class="editor-tab is-active" data-tab="files" role="tab" aria-selected="true">Files</button>
+          <button class="editor-tab" data-tab="library" role="tab" aria-selected="false">Library</button>
+          <button class="editor-tab" data-tab="properties" role="tab" aria-selected="false">Properties</button>
+          <button class="editor-tab" data-tab="tags" role="tab" aria-selected="false">Tags</button>
+          <button class="editor-tab" data-tab="jsonc" role="tab" aria-selected="false">JSONC</button>
+        </div>
+
+        <div class="editor-panel is-active" data-panel="files" role="tabpanel">
+          <div class="editor-section-title">Screens</div>
+          <div class="screen-manager">
+            <select id="screenList" class="screen-select"></select>
+            <div class="screen-actions">
+              <button id="screenOpenBtn" class="panel-btn" type="button">Open</button>
+              <button id="screenNewBtn" class="panel-btn" type="button">New</button>
+              <button id="screenDuplicateBtn" class="panel-btn" type="button">Duplicate</button>
+              <button id="screenDeleteBtn" class="panel-btn danger" type="button">Delete</button>
+            </div>
+            <div class="screen-hint">Manage JSONC screens stored in `screens/`.</div>
+          </div>
+        </div>
+
+        <div class="editor-panel" data-panel="library" role="tabpanel">
+          <div class="editor-section-title">Tools</div>
+	          <div class="library-toolbar">
+	            <button id="textToolBtn" class="tool-btn" type="button" title="Text tool">
+	              <span class="tool-icon">T</span>
+	            </button>
+              <button id="buttonToolBtn" class="tool-btn" type="button" title="Button tool">
+                <span class="tool-icon">B</span>
+              </button>
+            <button id="rectToolBtn" class="tool-btn" type="button" title="Rectangle tool">
+              <span class="tool-icon">▭</span>
+            </button>
+            <button id="alarmsPanelToolBtn" class="tool-btn" type="button" title="Alarms panel tool">
+              <span class="tool-icon">AL</span>
+            </button>
+	            <button id="polylineToolBtn" class="tool-btn" type="button" title="Polyline tool">
+	              <span class="tool-icon">〰</span>
+	            </button>
+            <button id="polygonToolBtn" class="tool-btn" type="button" title="Polygon tool">
+              <span class="tool-icon">⬠</span>
+            </button>
+            <button id="regularPolygonToolBtn" class="tool-btn" type="button" title="Regular polygon tool (draw a box)">
+              <span class="tool-icon">⬣</span>
+            </button>
+            <button id="stretchedPolygonToolBtn" class="tool-btn" type="button" title="Stretched polygon tool (fill the box)">
+              <span class="tool-icon">⬢</span>
+            </button>
+            <button id="barToolBtn" class="tool-btn" type="button" title="Bar graph tool">
+              <span class="tool-icon">▮</span>
+            </button>
+	            <button id="circleToolBtn" class="tool-btn" type="button" title="Circle (diameter)">
+	              <span class="tool-icon">◯</span>
+            </button>
+            <button id="circleCenterToolBtn" class="tool-btn" type="button" title="Circle (center/radius)">
+              <span class="tool-icon">◎</span>
+            </button>
+            <button id="lineToolBtn" class="tool-btn" type="button" title="Line tool">
+              <span class="tool-icon">／</span>
+            </button>
+            <button id="curveToolBtn" class="tool-btn" type="button" title="Curve tool (2 endpoints + control point)">
+              <span class="tool-icon">⌒</span>
+            </button>
+            <button id="viewportToolBtn" class="tool-btn" type="button" title="Viewport tool">
+              <span class="tool-icon">VP</span>
+            </button>
+          </div>
+	          <div class="editor-section-title">Items</div>
+	          <div class="library-items">
+	            <button id="navToolBtn" class="panel-btn" type="button" draggable="true">Button</button>
+	            <button id="numberInputToolBtn" class="panel-btn" type="button" draggable="true">Numeric Entry</button>
+	            <button id="indicatorToolBtn" class="panel-btn" type="button" draggable="true">Indicator</button>
+	          </div>
+	          <div class="editor-section-title">Images</div>
+	          <div id="libraryImagesGrid" class="library-images-grid" aria-label="Image library"></div>
+	        </div>
+
+        <div class="editor-panel" data-panel="properties" role="tabpanel">
+          <div id="screenProps" class="properties-form">
+            <div class="prop-group-title">Screen</div>
+            <div class="prop-row">
+              <label for="screenWidth">Width</label>
+              <input id="screenWidth" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="screenHeight">Height</label>
+              <input id="screenHeight" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="screenBg">Background</label>
+              <div class="prop-inline">
+                <input id="screenBg" type="color" />
+                <input id="screenBgText" type="text" placeholder="#202533" />
+                <button id="screenBgSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="screenBgSwatches" class="swatch-popover" aria-label="Background swatches"></div>
+              </div>
+            </div>
+            <div class="prop-group-title">Border</div>
+            <div class="prop-row">
+              <label for="screenBorderEnabled">Enabled</label>
+              <input id="screenBorderEnabled" type="checkbox" />
+            </div>
+            <div class="prop-row" id="screenBorderColorRow">
+              <label for="screenBorderColor">Color</label>
+              <div class="prop-inline">
+                <input id="screenBorderColor" type="color" />
+                <input id="screenBorderColorText" type="text" placeholder="#ffffff" />
+                <button id="screenBorderSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="screenBorderSwatches" class="swatch-popover" aria-label="Border swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row" id="screenBorderWidthRow">
+              <label for="screenBorderWidth">Width</label>
+              <input id="screenBorderWidth" type="number" min="0" step="1" />
+            </div>
+          </div>
+
+          <div id="textProps" class="properties-form is-hidden">
+            <div class="prop-group-title">Text</div>
+            <div class="prop-row">
+              <label for="textValue">Text</label>
+              <textarea id="textValue" rows="3" placeholder="Text"></textarea>
+            </div>
+            <div class="prop-row">
+              <label for="textFontSize">Font Size</label>
+              <input id="textFontSize" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row prop-row-compact">
+              <label>Style</label>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="textBold" type="checkbox" />
+                  <span>Bold</span>
+                </label>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="textFill">Fill</label>
+              <div class="prop-inline">
+                <input id="textFill" type="color" />
+                <input id="textFillText" type="text" placeholder="#ffffff" />
+                <button id="textFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="textFillSwatches" class="swatch-popover" aria-label="Text fill swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="textBg">Background</label>
+              <div class="prop-inline">
+                <input id="textBg" type="color" />
+                <input id="textBgText" type="text" placeholder="transparent" />
+                <button id="textBgSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="textBgSwatches" class="swatch-popover" aria-label="Text background swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="textBorderColor">Border</label>
+              <div class="prop-inline">
+                <input id="textBorderColor" type="color" />
+                <input id="textBorderColorText" type="text" placeholder="transparent" />
+                <button id="textBorderSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="textBorderSwatches" class="swatch-popover" aria-label="Text border swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="textRadius">Radius</label>
+              <input id="textRadius" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="textAlign">Align</label>
+              <select id="textAlign">
+                <option value="left">Left</option>
+                <option value="center">Center</option>
+                <option value="right">Right</option>
+              </select>
+            </div>
+            <div class="prop-row">
+              <label for="textValign">V Align</label>
+              <select id="textValign">
+                <option value="top">Top</option>
+                <option value="middle">Middle</option>
+                <option value="bottom">Bottom</option>
+              </select>
+            </div>
+            <div class="prop-group-title">Binding</div>
+            <div class="prop-row">
+              <label for="textBindConnection">Connection</label>
+              <input id="textBindConnection" type="text" placeholder="test01" />
+            </div>
+            <div class="prop-row">
+              <label for="textBindTag">Tag</label>
+              <select id="textBindTag">
+                <option value="">Select tag…</option>
+              </select>
+            </div>
+            <div class="prop-row">
+              <label for="textBindDigits">Digits</label>
+              <input id="textBindDigits" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="textBindDecimals">Decimals</label>
+              <input id="textBindDecimals" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="textBindMultiplier">Multiplier</label>
+              <input id="textBindMultiplier" type="number" step="0.01" />
+            </div>
+            <div class="prop-group-header">
+              <div class="prop-group-title">Text Color Automation</div>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="textAutoEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="textAutoInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+	            <div id="textAutoFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="textAutoConnection">Connection</label>
+	                <input id="textAutoConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="textAutoTag">Tag</label>
+	                <select id="textAutoTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row">
+	                <label for="textAutoMode">Mode</label>
+	                <select id="textAutoMode">
+	                  <option value="threshold">Threshold</option>
+	                  <option value="equals">Equals</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="textAutoThresholdRow">
+	                <label for="textAutoThreshold">Threshold</label>
+	                <input id="textAutoThreshold" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="textAutoMatchRow">
+	                <label for="textAutoMatch">Match</label>
+	                <input id="textAutoMatch" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="textAutoOn">On Color</label>
+	                <div class="prop-inline">
+	                  <input id="textAutoOn" type="color" />
+	                  <input id="textAutoOnText" type="text" placeholder="#ffffff" />
+                  <button id="textAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="textAutoOnSwatches" class="swatch-popover" aria-label="Text automation on swatches"></div>
+                </div>
+              </div>
+              <div class="prop-row">
+                <label for="textAutoOff">Off Color</label>
+                <div class="prop-inline">
+                  <input id="textAutoOff" type="color" />
+                  <input id="textAutoOffText" type="text" placeholder="#ffffff" />
+                  <button id="textAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="textAutoOffSwatches" class="swatch-popover" aria-label="Text automation off swatches"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="buttonProps" class="properties-form is-hidden">
+            <div class="prop-group-title">Button</div>
+            <div class="prop-row">
+              <label for="buttonLabel">Label</label>
+              <textarea id="buttonLabel" rows="3" placeholder="Button"></textarea>
+            </div>
+	            <div class="prop-row">
+	              <label for="buttonActionType">Action</label>
+		              <select id="buttonActionType">
+		                <option value="navigate">Navigate</option>
+		                <option value="history-back">History Back</option>
+		                <option value="history-forward">History Forward</option>
+		                <option value="load-viewport">Load Viewport</option>
+		                <option value="popup">Popup</option>
+		                <option value="momentary-write">Momentary Write</option>
+		                <option value="toggle-write">Maintained (Toggle)</option>
+		                <option value="set-write">Maintained (Set Value)</option>
+		                <option value="prompt-write">Setpoint (Prompt)</option>
+		              </select>
+		            </div>
+            <div class="prop-row" id="buttonTargetRow">
+              <label for="buttonTarget">Target Screen</label>
+              <select id="buttonTarget"></select>
+            </div>
+            <div class="prop-row is-hidden" id="buttonViewportRow">
+              <label for="buttonViewportTarget">Viewport</label>
+              <select id="buttonViewportTarget"></select>
+            </div>
+	            <div class="prop-subgroup is-hidden" id="buttonWriteFields" hidden>
+	              <div class="prop-row">
+	                <label for="buttonWriteConnection">Connection</label>
+	                <input id="buttonWriteConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="buttonWriteTag">Tag</label>
+	                <select id="buttonWriteTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="buttonWriteOnRow">
+	                <label id="buttonWriteOnLabel" for="buttonWriteOnValue">On Value</label>
+	                <input id="buttonWriteOnValue" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row" id="buttonWriteOffRow">
+	                <label for="buttonWriteOffValue">Off Value</label>
+	                <input id="buttonWriteOffValue" type="text" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonPromptDefaultRow">
+	                <label for="buttonPromptDefault">Default</label>
+	                <input id="buttonPromptDefault" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonPromptMinRow">
+	                <label for="buttonPromptMin">Min</label>
+	                <input id="buttonPromptMin" type="number" step="any" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonPromptMaxRow">
+	                <label for="buttonPromptMax">Max</label>
+	                <input id="buttonPromptMax" type="number" step="any" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonPromptStepRow">
+	                <label for="buttonPromptStep">Step</label>
+	                <input id="buttonPromptStep" type="number" step="any" placeholder="1" />
+	              </div>
+	            </div>
+	            <div class="prop-row">
+	              <label for="buttonX">X</label>
+	              <input id="buttonX" type="number" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="buttonY">Y</label>
+	              <input id="buttonY" type="number" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="buttonWidth">Width</label>
+	              <input id="buttonWidth" type="number" min="1" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="buttonHeight">Height</label>
+	              <input id="buttonHeight" type="number" min="1" step="1" />
+	            </div>
+            <div class="prop-row">
+              <label for="buttonRadius">Radius</label>
+              <input id="buttonRadius" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label>Effects</label>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="buttonShadow" type="checkbox" />
+                  <span>Shadow</span>
+                </label>
+                <label class="inline-check">
+                  <input id="buttonBevel" type="checkbox" />
+                  <span>Raised</span>
+                </label>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="buttonFill">Fill</label>
+              <div class="prop-inline">
+                <input id="buttonFill" type="color" />
+                <input id="buttonFillText" type="text" placeholder="#2b2f3a" />
+                <button id="buttonFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="buttonFillSwatches" class="swatch-popover" aria-label="Button fill swatches"></div>
+              </div>
+            </div>
+	            <div class="prop-row">
+	              <label for="buttonTextColor">Text Color</label>
+	              <div class="prop-inline">
+	                <input id="buttonTextColor" type="color" />
+	                <input id="buttonTextColorText" type="text" placeholder="#ffffff" />
+	                <button id="buttonTextColorSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+	                <div id="buttonTextColorSwatches" class="swatch-popover" aria-label="Button text swatches"></div>
+	              </div>
+	            </div>
+	            <div class="prop-row">
+	              <label for="buttonFontSize">Text Size</label>
+	              <input id="buttonFontSize" type="number" min="1" step="1" />
+	            </div>
+	            <div class="prop-row prop-row-compact">
+	              <label>Text</label>
+	              <div class="prop-inline">
+	                <label class="inline-check">
+                  <input id="buttonBold" type="checkbox" />
+                  <span>Bold</span>
+                </label>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="buttonAlign">Align</label>
+              <select id="buttonAlign">
+                <option value="left">Left</option>
+                <option value="center">Center</option>
+                <option value="right">Right</option>
+              </select>
+            </div>
+            <div class="prop-row">
+              <label for="buttonValign">V Align</label>
+              <select id="buttonValign">
+                <option value="top">Top</option>
+                <option value="middle">Middle</option>
+                <option value="bottom">Bottom</option>
+              </select>
+            </div>
+            <div class="prop-row">
+              <label for="buttonBorderEnabled">Border</label>
+              <input id="buttonBorderEnabled" type="checkbox" />
+            </div>
+            <div class="prop-row" id="buttonStrokeRow">
+              <label for="buttonStroke">Stroke</label>
+              <div class="prop-inline">
+                <input id="buttonStroke" type="color" />
+                <input id="buttonStrokeText" type="text" placeholder="#ffffff" />
+                <button id="buttonStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="buttonStrokeSwatches" class="swatch-popover" aria-label="Button stroke swatches"></div>
+              </div>
+            </div>
+            <div class="prop-group-title">Label Bind</div>
+            <div class="prop-row">
+              <label for="buttonLabelBindConnection">Connection</label>
+              <input id="buttonLabelBindConnection" type="text" placeholder="test01" />
+            </div>
+            <div class="prop-row">
+              <label for="buttonLabelBindTag">Tag</label>
+              <select id="buttonLabelBindTag">
+                <option value="">Select tag…</option>
+              </select>
+            </div>
+            <div class="prop-row">
+              <label for="buttonLabelBindMultiplier">Multiplier</label>
+              <input id="buttonLabelBindMultiplier" type="number" step="any" />
+            </div>
+            <div class="prop-row">
+              <label for="buttonLabelBindDigits">Digits</label>
+              <input id="buttonLabelBindDigits" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="buttonLabelBindDecimals">Decimals</label>
+              <input id="buttonLabelBindDecimals" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-group-header">
+              <div class="prop-group-title">Fill Automation</div>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="buttonFillAutoEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="buttonFillAutoInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+	            <div id="buttonFillAutoFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="buttonFillAutoConnection">Connection</label>
+	                <input id="buttonFillAutoConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="buttonFillAutoTag">Tag</label>
+	                <select id="buttonFillAutoTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row">
+	                <label for="buttonFillAutoMode">Mode</label>
+	                <select id="buttonFillAutoMode">
+	                  <option value="threshold">Threshold</option>
+	                  <option value="equals">Equals</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="buttonFillAutoThresholdRow">
+	                <label for="buttonFillAutoThreshold">Threshold</label>
+	                <input id="buttonFillAutoThreshold" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonFillAutoMatchRow">
+	                <label for="buttonFillAutoMatch">Match</label>
+	                <input id="buttonFillAutoMatch" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="buttonFillAutoOn">On Color</label>
+	                <div class="prop-inline">
+	                  <input id="buttonFillAutoOn" type="color" />
+	                  <input id="buttonFillAutoOnText" type="text" placeholder="#2b2f3a" />
+                  <button id="buttonFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="buttonFillAutoOnSwatches" class="swatch-popover" aria-label="Button fill automation on swatches"></div>
+                </div>
+              </div>
+              <div class="prop-row">
+                <label for="buttonFillAutoOff">Off Color</label>
+                <div class="prop-inline">
+                  <input id="buttonFillAutoOff" type="color" />
+                  <input id="buttonFillAutoOffText" type="text" placeholder="#2b2f3a" />
+                  <button id="buttonFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="buttonFillAutoOffSwatches" class="swatch-popover" aria-label="Button fill automation off swatches"></div>
+                </div>
+              </div>
+            </div>
+            <div class="prop-group-header">
+              <div class="prop-group-title">Text Color Automation</div>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="buttonTextAutoEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="buttonTextAutoInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+	            <div id="buttonTextAutoFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="buttonTextAutoConnection">Connection</label>
+	                <input id="buttonTextAutoConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="buttonTextAutoTag">Tag</label>
+	                <select id="buttonTextAutoTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row">
+	                <label for="buttonTextAutoMode">Mode</label>
+	                <select id="buttonTextAutoMode">
+	                  <option value="threshold">Threshold</option>
+	                  <option value="equals">Equals</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="buttonTextAutoThresholdRow">
+	                <label for="buttonTextAutoThreshold">Threshold</label>
+	                <input id="buttonTextAutoThreshold" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonTextAutoMatchRow">
+	                <label for="buttonTextAutoMatch">Match</label>
+	                <input id="buttonTextAutoMatch" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="buttonTextAutoOn">On Color</label>
+	                <div class="prop-inline">
+	                  <input id="buttonTextAutoOn" type="color" />
+	                  <input id="buttonTextAutoOnText" type="text" placeholder="#ffffff" />
+                  <button id="buttonTextAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="buttonTextAutoOnSwatches" class="swatch-popover" aria-label="Button text automation on swatches"></div>
+                </div>
+              </div>
+              <div class="prop-row">
+                <label for="buttonTextAutoOff">Off Color</label>
+                <div class="prop-inline">
+                  <input id="buttonTextAutoOff" type="color" />
+                  <input id="buttonTextAutoOffText" type="text" placeholder="#ffffff" />
+                  <button id="buttonTextAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="buttonTextAutoOffSwatches" class="swatch-popover" aria-label="Button text automation off swatches"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+	          <div id="numberInputProps" class="properties-form is-hidden">
+	            <div class="prop-group-title">Numeric Entry</div>
+            <div class="prop-row">
+              <label for="numberInputX">X</label>
+              <input id="numberInputX" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputY">Y</label>
+              <input id="numberInputY" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputConnection">Connection</label>
+              <input id="numberInputConnection" type="text" placeholder="test01" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputTag">Tag</label>
+              <select id="numberInputTag">
+                <option value="">Select tag…</option>
+              </select>
+            </div>
+            <div class="prop-row">
+              <label for="numberInputDigits">Digits</label>
+              <input id="numberInputDigits" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputDecimals">Decimals</label>
+              <input id="numberInputDecimals" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputMultiplier">Multiplier</label>
+              <input id="numberInputMultiplier" type="number" step="any" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputWidth">Width</label>
+              <input id="numberInputWidth" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputHeight">Height</label>
+              <input id="numberInputHeight" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputRadius">Radius</label>
+              <input id="numberInputRadius" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="numberInputFill">Fill</label>
+              <div class="prop-inline">
+                <input id="numberInputFill" type="color" />
+                <input id="numberInputFillText" type="text" placeholder="#2b2f3a" />
+                <button id="numberInputFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="numberInputFillSwatches" class="swatch-popover" aria-label="Numeric entry fill swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="numberInputTextColor">Text Color</label>
+              <div class="prop-inline">
+                <input id="numberInputTextColor" type="color" />
+                <input id="numberInputTextColorText" type="text" placeholder="#ffffff" />
+                <button id="numberInputTextColorSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="numberInputTextColorSwatches" class="swatch-popover" aria-label="Numeric entry text swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="numberInputFontSize">Font Size</label>
+              <input id="numberInputFontSize" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row prop-row-compact">
+              <label>Text</label>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="numberInputBold" type="checkbox" />
+                  <span>Bold</span>
+                </label>
+              </div>
+            </div>
+	            <div class="prop-row prop-row-compact">
+	              <label>Border</label>
+	              <div class="prop-inline">
+	                <label class="inline-check">
+	                  <input id="numberInputBorderEnabled" type="checkbox" />
+	                  <span>Enabled</span>
+	                </label>
+	              </div>
+	            </div>
+	            <div class="prop-row is-hidden" id="numberInputBevelRow" hidden>
+	              <label for="numberInputBevel">Bezel</label>
+	              <input id="numberInputBevel" type="checkbox" />
+	            </div>
+	            <div class="prop-row" id="numberInputStrokeRow">
+	              <label for="numberInputStroke">Border Color</label>
+	              <div class="prop-inline">
+	                <input id="numberInputStroke" type="color" />
+                <input id="numberInputStrokeText" type="text" placeholder="#ffffff" />
+                <button id="numberInputStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="numberInputStrokeSwatches" class="swatch-popover" aria-label="Numeric entry border swatches"></div>
+              </div>
+            </div>
+	            <div class="prop-row" id="numberInputStrokeWidthRow">
+	              <label for="numberInputStrokeWidth">Border Width</label>
+	              <input id="numberInputStrokeWidth" type="number" min="0" step="1" />
+	            </div>
+	          </div>
+
+		          <div id="indicatorProps" class="properties-form is-hidden">
+		            <div class="prop-group-title">Indicator</div>
+	            <div class="prop-row">
+	              <label for="indicatorX">X</label>
+	              <input id="indicatorX" type="number" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorY">Y</label>
+	              <input id="indicatorY" type="number" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorW">Width</label>
+	              <input id="indicatorW" type="number" min="1" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorH">Height</label>
+	              <input id="indicatorH" type="number" min="1" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorRadius">Radius</label>
+	              <input id="indicatorRadius" type="number" min="0" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorBackgroundEnabled">Background</label>
+	              <input id="indicatorBackgroundEnabled" type="checkbox" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorShadow">Shadow</label>
+	              <input id="indicatorShadow" type="checkbox" />
+	            </div>
+	            <div class="prop-row" id="indicatorFillRow">
+	              <label for="indicatorFill">Fill</label>
+	              <div class="prop-inline">
+	                <input id="indicatorFill" type="color" />
+	                <input id="indicatorFillText" type="text" placeholder="#3a3f4b" />
+	                <button id="indicatorFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+	                <div id="indicatorFillSwatches" class="swatch-popover" aria-label="Indicator fill swatches"></div>
+	              </div>
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorTextColor">Text Color</label>
+	              <div class="prop-inline">
+	                <input id="indicatorTextColor" type="color" />
+	                <input id="indicatorTextColorText" type="text" placeholder="#ffffff" />
+	                <button id="indicatorTextColorSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+	                <div id="indicatorTextColorSwatches" class="swatch-popover" aria-label="Indicator text swatches"></div>
+	              </div>
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorFontSize">Font Size</label>
+	              <input id="indicatorFontSize" type="number" min="1" step="1" />
+	            </div>
+              <div class="prop-row prop-row-compact">
+                <label>Text</label>
+                <div class="prop-inline">
+                  <label class="inline-check">
+                    <input id="indicatorBold" type="checkbox" />
+                    <span>Bold</span>
+                  </label>
+                </div>
+              </div>
+		            <div class="prop-row prop-row-compact">
+		              <label>Border</label>
+		              <div class="prop-inline">
+		                <label class="inline-check">
+		                  <input id="indicatorBorderEnabled" type="checkbox" />
+		                  <span>Enabled</span>
+		                </label>
+		              </div>
+		            </div>
+		            <div class="prop-row is-hidden" id="indicatorBevelRow" hidden>
+		              <label for="indicatorBevel">Bezel</label>
+		              <input id="indicatorBevel" type="checkbox" />
+		            </div>
+		            <div class="prop-row" id="indicatorStrokeRow">
+		              <label for="indicatorStroke">Border Color</label>
+		              <div class="prop-inline">
+		                <input id="indicatorStroke" type="color" />
+	                <input id="indicatorStrokeText" type="text" placeholder="#ffffff" />
+	                <button id="indicatorStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+	                <div id="indicatorStrokeSwatches" class="swatch-popover" aria-label="Indicator border swatches"></div>
+	              </div>
+	            </div>
+	            <div class="prop-row" id="indicatorStrokeWidthRow">
+	              <label for="indicatorStrokeWidth">Border Width</label>
+	              <input id="indicatorStrokeWidth" type="number" min="0" step="1" />
+	            </div>
+
+	            <div class="prop-group-title">Binding</div>
+	            <div class="prop-row">
+	              <label for="indicatorConnection">Connection</label>
+	              <input id="indicatorConnection" type="text" placeholder="test01" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorTag">Tag</label>
+	              <select id="indicatorTag">
+	                <option value="">Select tag…</option>
+	              </select>
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorStateMode">Match</label>
+	              <select id="indicatorStateMode">
+	                <option value="equals">Equals</option>
+	                <option value="threshold">Threshold</option>
+	              </select>
+	            </div>
+	            <div class="screen-hint">Uses each State’s Value field (Equals = exact match, Threshold = highest ≤ tag value).</div>
+
+	            <div class="prop-group-title">Label</div>
+	            <div class="prop-row prop-row-compact">
+	              <label>Overlay</label>
+	              <div class="prop-inline">
+	                <label class="inline-check">
+	                  <input id="indicatorLabelOverlay" type="checkbox" />
+	                  <span>Enabled</span>
+	                </label>
+	              </div>
+	            </div>
+	            <div class="prop-row">
+	              <label for="indicatorLabelValign">V Align</label>
+	              <select id="indicatorLabelValign">
+	                <option value="top">Top</option>
+	                <option value="middle">Middle</option>
+	                <option value="bottom">Bottom</option>
+	              </select>
+	            </div>
+
+	            <div class="prop-group-title">States</div>
+	            <div class="prop-row">
+	              <div class="prop-inline">
+	                <button id="indicatorAddStateBtn" class="panel-btn" type="button">Add</button>
+	                <button id="indicatorRemoveStateBtn" class="panel-btn danger" type="button">Remove</button>
+	              </div>
+	            </div>
+	            <div id="indicatorStatesList" class="prop-group"></div>
+	          </div>
+
+		          <div id="viewportProps" class="properties-form is-hidden">
+		            <div class="prop-group-title">Viewport</div>
+            <div class="prop-row">
+              <label for="viewportId">Id</label>
+              <input id="viewportId" type="text" placeholder="vp_main" />
+            </div>
+            <div class="prop-row">
+              <label for="viewportX">X</label>
+              <input id="viewportX" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="viewportY">Y</label>
+              <input id="viewportY" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="viewportW">Width</label>
+              <input id="viewportW" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="viewportH">Height</label>
+              <input id="viewportH" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="viewportRadius">Radius</label>
+              <input id="viewportRadius" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="viewportTarget">Target Screen</label>
+              <select id="viewportTarget"></select>
+            </div>
+            <div class="prop-row">
+              <label for="viewportScaleMode">Scale Mode</label>
+              <select id="viewportScaleMode">
+                <option value="actual-size">Actual Size</option>
+                <option value="contain">Contain</option>
+                <option value="fit-width">Fit Width</option>
+                <option value="fit-height">Fit Height</option>
+              </select>
+            </div>
+	            <div class="prop-group-title">Border</div>
+	            <div class="prop-row">
+	              <label for="viewportBorderEnabled">Enabled</label>
+	              <input id="viewportBorderEnabled" type="checkbox" />
+	            </div>
+	            <div class="prop-row is-hidden" id="viewportBevelRow" hidden>
+	              <label for="viewportBevel">Bezel</label>
+	              <input id="viewportBevel" type="checkbox" />
+	            </div>
+	            <div class="prop-row" id="viewportBorderColorRow">
+	              <label for="viewportBorderColor">Color</label>
+	              <div class="prop-inline">
+	                <input id="viewportBorderColor" type="color" />
+                <input id="viewportBorderColorText" type="text" placeholder="#ffffff" />
+                <button id="viewportBorderSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="viewportBorderSwatches" class="swatch-popover" aria-label="Viewport border swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row" id="viewportBorderWidthRow">
+              <label for="viewportBorderWidth">Width</label>
+              <input id="viewportBorderWidth" type="number" min="0" step="1" />
+            </div>
+          </div>
+
+		          <div id="rectProps" class="properties-form is-hidden">
+		            <div id="rectPropsTitle" class="prop-group-title">Rectangle</div>
+	            <div class="prop-row">
+	              <label for="rectX">X</label>
+	              <input id="rectX" type="number" step="1" />
+	            </div>
+            <div class="prop-row">
+              <label for="rectY">Y</label>
+              <input id="rectY" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="rectW">Width</label>
+              <input id="rectW" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="rectH">Height</label>
+              <input id="rectH" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="rectRadius">Radius</label>
+              <input id="rectRadius" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="rectShadow">Shadow</label>
+              <input id="rectShadow" type="checkbox" />
+            </div>
+	            <div class="prop-row">
+	              <label for="rectBorderEnabled">Border</label>
+	              <input id="rectBorderEnabled" type="checkbox" />
+	            </div>
+	            <div class="prop-row is-hidden" id="rectBevelRow" hidden>
+	              <label for="rectBevel">Bezel</label>
+	              <input id="rectBevel" type="checkbox" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="rectFill">Fill</label>
+	              <div class="prop-inline">
+	                <input id="rectFill" type="color" />
+                <input id="rectFillText" type="text" placeholder="#3a3f4b" />
+                <button id="rectFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="rectFillSwatches" class="swatch-popover" aria-label="Rectangle fill swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row" id="rectStrokeRow">
+              <label for="rectStroke">Stroke</label>
+              <div class="prop-inline">
+                <input id="rectStroke" type="color" />
+                <input id="rectStrokeText" type="text" placeholder="#ffffff" />
+                <button id="rectStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="rectStrokeSwatches" class="swatch-popover" aria-label="Rectangle stroke swatches"></div>
+              </div>
+            </div>
+	            <div class="prop-row" id="rectStrokeWidthRow">
+	              <label for="rectStrokeWidth">Stroke Width</label>
+	              <input id="rectStrokeWidth" type="number" min="0" step="1" />
+	            </div>
+
+              <div id="alarmsPanelPropsFields" class="prop-subgroup is-hidden" hidden>
+                <div class="prop-group-title">Alarms Panel</div>
+                <div class="prop-row">
+                  <label for="alarmsPanelMaxRows">Max Rows</label>
+                  <input id="alarmsPanelMaxRows" type="number" min="1" step="1" />
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelOnlyUnacked">Only Unacked</label>
+                  <input id="alarmsPanelOnlyUnacked" type="checkbox" />
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelShowSource">Show Source</label>
+                  <input id="alarmsPanelShowSource" type="checkbox" />
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelFontSize">Font Size</label>
+                  <input id="alarmsPanelFontSize" type="number" min="6" step="1" />
+                </div>
+
+                <div class="prop-group-title">Colors</div>
+                <div class="prop-row">
+                  <label for="alarmsPanelHeaderBg">Header BG</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelHeaderBg" type="color" />
+                    <input id="alarmsPanelHeaderBgText" type="text" placeholder="#000000" />
+                    <button id="alarmsPanelHeaderBgSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelHeaderBgSwatches" class="swatch-popover" aria-label="Alarms panel header background swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelHeaderText">Header Text</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelHeaderText" type="color" />
+                    <input id="alarmsPanelHeaderTextText" type="text" placeholder="#ffffff" />
+                    <button id="alarmsPanelHeaderTextSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelHeaderTextSwatches" class="swatch-popover" aria-label="Alarms panel header text swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowBgNormal">Row BG</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowBgNormal" type="color" />
+                    <input id="alarmsPanelRowBgNormalText" type="text" placeholder="#ffffff" />
+                    <button id="alarmsPanelRowBgNormalSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowBgNormalSwatches" class="swatch-popover" aria-label="Alarms panel row background swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowBgActiveUnacked">Row BG (Active)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowBgActiveUnacked" type="color" />
+                    <input id="alarmsPanelRowBgActiveUnackedText" type="text" placeholder="#ffcccc" />
+                    <button id="alarmsPanelRowBgActiveUnackedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowBgActiveUnackedSwatches" class="swatch-popover" aria-label="Alarms panel active-unacked row background swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowBgActiveAcked">Row BG (Acked)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowBgActiveAcked" type="color" />
+                    <input id="alarmsPanelRowBgActiveAckedText" type="text" placeholder="#ffe3a3" />
+                    <button id="alarmsPanelRowBgActiveAckedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowBgActiveAckedSwatches" class="swatch-popover" aria-label="Alarms panel active-acked row background swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowBgReturned">Row BG (Returned)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowBgReturned" type="color" />
+                    <input id="alarmsPanelRowBgReturnedText" type="text" placeholder="#e9ecef" />
+                    <button id="alarmsPanelRowBgReturnedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowBgReturnedSwatches" class="swatch-popover" aria-label="Alarms panel returned row background swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowBgBadQuality">Row BG (Bad Quality)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowBgBadQuality" type="color" />
+                    <input id="alarmsPanelRowBgBadQualityText" type="text" placeholder="#ffd1ea" />
+                    <button id="alarmsPanelRowBgBadQualitySwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowBgBadQualitySwatches" class="swatch-popover" aria-label="Alarms panel bad quality row background swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowTextNormal">Row Text</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowTextNormal" type="color" />
+                    <input id="alarmsPanelRowTextNormalText" type="text" placeholder="#000000" />
+                    <button id="alarmsPanelRowTextNormalSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowTextNormalSwatches" class="swatch-popover" aria-label="Alarms panel row text swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowTextActiveUnacked">Row Text (Active)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowTextActiveUnacked" type="color" />
+                    <input id="alarmsPanelRowTextActiveUnackedText" type="text" placeholder="#000000" />
+                    <button id="alarmsPanelRowTextActiveUnackedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowTextActiveUnackedSwatches" class="swatch-popover" aria-label="Alarms panel active-unacked row text swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowTextActiveAcked">Row Text (Acked)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowTextActiveAcked" type="color" />
+                    <input id="alarmsPanelRowTextActiveAckedText" type="text" placeholder="#000000" />
+                    <button id="alarmsPanelRowTextActiveAckedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowTextActiveAckedSwatches" class="swatch-popover" aria-label="Alarms panel active-acked row text swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowTextReturned">Row Text (Returned)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowTextReturned" type="color" />
+                    <input id="alarmsPanelRowTextReturnedText" type="text" placeholder="#000000" />
+                    <button id="alarmsPanelRowTextReturnedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowTextReturnedSwatches" class="swatch-popover" aria-label="Alarms panel returned row text swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelRowTextBadQuality">Row Text (Bad Quality)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelRowTextBadQuality" type="color" />
+                    <input id="alarmsPanelRowTextBadQualityText" type="text" placeholder="#000000" />
+                    <button id="alarmsPanelRowTextBadQualitySwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelRowTextBadQualitySwatches" class="swatch-popover" aria-label="Alarms panel bad quality row text swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelStripeActiveUnacked">Stripe (Active)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelStripeActiveUnacked" type="color" />
+                    <input id="alarmsPanelStripeActiveUnackedText" type="text" placeholder="#dc2626" />
+                    <button id="alarmsPanelStripeActiveUnackedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelStripeActiveUnackedSwatches" class="swatch-popover" aria-label="Alarms panel active stripe swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelStripeActiveAcked">Stripe (Acked)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelStripeActiveAcked" type="color" />
+                    <input id="alarmsPanelStripeActiveAckedText" type="text" placeholder="#d97706" />
+                    <button id="alarmsPanelStripeActiveAckedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelStripeActiveAckedSwatches" class="swatch-popover" aria-label="Alarms panel acked stripe swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelStripeReturned">Stripe (Returned)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelStripeReturned" type="color" />
+                    <input id="alarmsPanelStripeReturnedText" type="text" placeholder="#6b7280" />
+                    <button id="alarmsPanelStripeReturnedSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelStripeReturnedSwatches" class="swatch-popover" aria-label="Alarms panel returned stripe swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label for="alarmsPanelStripeBadQuality">Stripe (Bad Quality)</label>
+                  <div class="prop-inline">
+                    <input id="alarmsPanelStripeBadQuality" type="color" />
+                    <input id="alarmsPanelStripeBadQualityText" type="text" placeholder="#be185d" />
+                    <button id="alarmsPanelStripeBadQualitySwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="alarmsPanelStripeBadQualitySwatches" class="swatch-popover" aria-label="Alarms panel bad quality stripe swatches"></div>
+                  </div>
+                </div>
+              </div>
+	            <div class="prop-group-header" id="rectStrokeAutoHeader">
+	              <div class="prop-group-title">Border Color Automation</div>
+	              <div class="prop-inline">
+	                <label class="inline-check">
+                  <input id="rectStrokeAutoEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="rectStrokeAutoInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+	            <div id="rectStrokeAutoFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="rectStrokeAutoConnection">Connection</label>
+	                <input id="rectStrokeAutoConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="rectStrokeAutoTag">Tag</label>
+	                <select id="rectStrokeAutoTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row">
+	                <label for="rectStrokeAutoMode">Mode</label>
+	                <select id="rectStrokeAutoMode">
+	                  <option value="threshold">Threshold</option>
+	                  <option value="equals">Equals</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="rectStrokeAutoThresholdRow">
+	                <label for="rectStrokeAutoThreshold">Threshold</label>
+	                <input id="rectStrokeAutoThreshold" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="rectStrokeAutoMatchRow">
+	                <label for="rectStrokeAutoMatch">Match</label>
+	                <input id="rectStrokeAutoMatch" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="rectStrokeAutoOn">On Color</label>
+	                <div class="prop-inline">
+	                  <input id="rectStrokeAutoOn" type="color" />
+	                  <input id="rectStrokeAutoOnText" type="text" placeholder="#ffffff" />
+                  <button id="rectStrokeAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="rectStrokeAutoOnSwatches" class="swatch-popover" aria-label="Rectangle border automation on swatches"></div>
+                </div>
+              </div>
+              <div class="prop-row">
+                <label for="rectStrokeAutoOff">Off Color</label>
+                <div class="prop-inline">
+                  <input id="rectStrokeAutoOff" type="color" />
+                  <input id="rectStrokeAutoOffText" type="text" placeholder="#ffffff" />
+                  <button id="rectStrokeAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="rectStrokeAutoOffSwatches" class="swatch-popover" aria-label="Rectangle border automation off swatches"></div>
+                </div>
+              </div>
+            </div>
+            <div class="prop-group-header">
+              <div class="prop-group-title">Fill Automation</div>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="rectFillAutoEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="rectFillAutoInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+	            <div id="rectFillAutoFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="rectFillAutoConnection">Connection</label>
+	                <input id="rectFillAutoConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="rectFillAutoTag">Tag</label>
+	                <select id="rectFillAutoTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row">
+	                <label for="rectFillAutoMode">Mode</label>
+	                <select id="rectFillAutoMode">
+	                  <option value="threshold">Threshold</option>
+	                  <option value="equals">Equals</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="rectFillAutoThresholdRow">
+	                <label for="rectFillAutoThreshold">Threshold</label>
+	                <input id="rectFillAutoThreshold" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="rectFillAutoMatchRow">
+	                <label for="rectFillAutoMatch">Match</label>
+	                <input id="rectFillAutoMatch" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="rectFillAutoOn">On Color</label>
+	                <div class="prop-inline">
+	                  <input id="rectFillAutoOn" type="color" />
+	                  <input id="rectFillAutoOnText" type="text" placeholder="#3a3f4b" />
+                  <button id="rectFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="rectFillAutoOnSwatches" class="swatch-popover" aria-label="Rectangle fill automation on swatches"></div>
+                </div>
+              </div>
+              <div class="prop-row">
+                <label for="rectFillAutoOff">Off Color</label>
+                <div class="prop-inline">
+                  <input id="rectFillAutoOff" type="color" />
+                  <input id="rectFillAutoOffText" type="text" placeholder="#3a3f4b" />
+                  <button id="rectFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="rectFillAutoOffSwatches" class="swatch-popover" aria-label="Rectangle fill automation off swatches"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="circleProps" class="properties-form is-hidden">
+            <div class="prop-group-title">Circle</div>
+            <div class="prop-row">
+              <label for="circleCx">Center X</label>
+              <input id="circleCx" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="circleCy">Center Y</label>
+              <input id="circleCy" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="circleR">Radius</label>
+              <input id="circleR" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="circleShadow">Shadow</label>
+              <input id="circleShadow" type="checkbox" />
+            </div>
+            <div class="prop-row">
+              <label for="circleBorderEnabled">Border</label>
+              <input id="circleBorderEnabled" type="checkbox" />
+            </div>
+            <div class="prop-row">
+              <label for="circleFill">Fill</label>
+              <div class="prop-inline">
+                <input id="circleFill" type="color" />
+                <input id="circleFillText" type="text" placeholder="#3a3f4b" />
+                <button id="circleFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="circleFillSwatches" class="swatch-popover" aria-label="Circle fill swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row" id="circleStrokeRow">
+              <label for="circleStroke">Stroke</label>
+              <div class="prop-inline">
+                <input id="circleStroke" type="color" />
+                <input id="circleStrokeText" type="text" placeholder="#ffffff" />
+                <button id="circleStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="circleStrokeSwatches" class="swatch-popover" aria-label="Circle stroke swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row" id="circleStrokeWidthRow">
+              <label for="circleStrokeWidth">Stroke Width</label>
+              <input id="circleStrokeWidth" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-group-header" id="circleStrokeAutoHeader">
+              <div class="prop-group-title">Border Color Automation</div>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="circleStrokeAutoEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="circleStrokeAutoInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+	            <div id="circleStrokeAutoFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="circleStrokeAutoConnection">Connection</label>
+	                <input id="circleStrokeAutoConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="circleStrokeAutoTag">Tag</label>
+	                <select id="circleStrokeAutoTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row">
+	                <label for="circleStrokeAutoMode">Mode</label>
+	                <select id="circleStrokeAutoMode">
+	                  <option value="threshold">Threshold</option>
+	                  <option value="equals">Equals</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="circleStrokeAutoThresholdRow">
+	                <label for="circleStrokeAutoThreshold">Threshold</label>
+	                <input id="circleStrokeAutoThreshold" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="circleStrokeAutoMatchRow">
+	                <label for="circleStrokeAutoMatch">Match</label>
+	                <input id="circleStrokeAutoMatch" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="circleStrokeAutoOn">On Color</label>
+	                <div class="prop-inline">
+	                  <input id="circleStrokeAutoOn" type="color" />
+	                  <input id="circleStrokeAutoOnText" type="text" placeholder="#ffffff" />
+                  <button id="circleStrokeAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="circleStrokeAutoOnSwatches" class="swatch-popover" aria-label="Circle border automation on swatches"></div>
+                </div>
+              </div>
+              <div class="prop-row">
+                <label for="circleStrokeAutoOff">Off Color</label>
+                <div class="prop-inline">
+                  <input id="circleStrokeAutoOff" type="color" />
+                  <input id="circleStrokeAutoOffText" type="text" placeholder="#ffffff" />
+                  <button id="circleStrokeAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="circleStrokeAutoOffSwatches" class="swatch-popover" aria-label="Circle border automation off swatches"></div>
+                </div>
+              </div>
+            </div>
+            <div class="prop-group-header">
+              <div class="prop-group-title">Fill Automation</div>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="circleFillAutoEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="circleFillAutoInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+	            <div id="circleFillAutoFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="circleFillAutoConnection">Connection</label>
+	                <input id="circleFillAutoConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="circleFillAutoTag">Tag</label>
+	                <select id="circleFillAutoTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row">
+	                <label for="circleFillAutoMode">Mode</label>
+	                <select id="circleFillAutoMode">
+	                  <option value="threshold">Threshold</option>
+	                  <option value="equals">Equals</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="circleFillAutoThresholdRow">
+	                <label for="circleFillAutoThreshold">Threshold</label>
+	                <input id="circleFillAutoThreshold" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="circleFillAutoMatchRow">
+	                <label for="circleFillAutoMatch">Match</label>
+	                <input id="circleFillAutoMatch" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="circleFillAutoOn">On Color</label>
+	                <div class="prop-inline">
+	                  <input id="circleFillAutoOn" type="color" />
+	                  <input id="circleFillAutoOnText" type="text" placeholder="#3a3f4b" />
+                  <button id="circleFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="circleFillAutoOnSwatches" class="swatch-popover" aria-label="Circle fill automation on swatches"></div>
+                </div>
+              </div>
+              <div class="prop-row">
+                <label for="circleFillAutoOff">Off Color</label>
+                <div class="prop-inline">
+                  <input id="circleFillAutoOff" type="color" />
+                  <input id="circleFillAutoOffText" type="text" placeholder="#3a3f4b" />
+                  <button id="circleFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="circleFillAutoOffSwatches" class="swatch-popover" aria-label="Circle fill automation off swatches"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="lineProps" class="properties-form is-hidden">
+            <div class="prop-group-title">Line</div>
+            <div class="prop-row">
+              <label for="lineX1">X1</label>
+              <input id="lineX1" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="lineY1">Y1</label>
+              <input id="lineY1" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="lineX2">X2</label>
+              <input id="lineX2" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="lineY2">Y2</label>
+              <input id="lineY2" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="lineStroke">Stroke</label>
+              <div class="prop-inline">
+                <input id="lineStroke" type="color" />
+                <input id="lineStrokeText" type="text" placeholder="#ffffff" />
+                <button id="lineStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="lineStrokeSwatches" class="swatch-popover" aria-label="Line stroke swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="lineStrokeWidth">Stroke Width</label>
+              <input id="lineStrokeWidth" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-group-header">
+              <div class="prop-group-title">Stroke Automation</div>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="lineStrokeAutoEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="lineStrokeAutoInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+	            <div id="lineStrokeAutoFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="lineStrokeAutoConnection">Connection</label>
+	                <input id="lineStrokeAutoConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="lineStrokeAutoTag">Tag</label>
+	                <select id="lineStrokeAutoTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	              <div class="prop-row">
+	                <label for="lineStrokeAutoMode">Mode</label>
+	                <select id="lineStrokeAutoMode">
+	                  <option value="threshold">Threshold</option>
+	                  <option value="equals">Equals</option>
+	                </select>
+	              </div>
+	              <div class="prop-row" id="lineStrokeAutoThresholdRow">
+	                <label for="lineStrokeAutoThreshold">Threshold</label>
+	                <input id="lineStrokeAutoThreshold" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="lineStrokeAutoMatchRow">
+	                <label for="lineStrokeAutoMatch">Match</label>
+	                <input id="lineStrokeAutoMatch" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="lineStrokeAutoOn">On Color</label>
+	                <div class="prop-inline">
+	                  <input id="lineStrokeAutoOn" type="color" />
+	                  <input id="lineStrokeAutoOnText" type="text" placeholder="#ffffff" />
+                  <button id="lineStrokeAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="lineStrokeAutoOnSwatches" class="swatch-popover" aria-label="Line stroke automation on swatches"></div>
+                </div>
+              </div>
+              <div class="prop-row">
+                <label for="lineStrokeAutoOff">Off Color</label>
+                <div class="prop-inline">
+                  <input id="lineStrokeAutoOff" type="color" />
+                  <input id="lineStrokeAutoOffText" type="text" placeholder="#ffffff" />
+                  <button id="lineStrokeAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                  <div id="lineStrokeAutoOffSwatches" class="swatch-popover" aria-label="Line stroke automation off swatches"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="curveProps" class="properties-form is-hidden">
+            <div class="prop-group-title">Curve</div>
+            <div class="prop-row">
+              <label for="curveX1">X1</label>
+              <input id="curveX1" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="curveY1">Y1</label>
+              <input id="curveY1" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="curveCX">CX</label>
+              <input id="curveCX" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="curveCY">CY</label>
+              <input id="curveCY" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="curveX2">X2</label>
+              <input id="curveX2" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="curveY2">Y2</label>
+              <input id="curveY2" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="curveStroke">Stroke</label>
+              <div class="prop-inline">
+                <input id="curveStroke" type="color" />
+                <input id="curveStrokeText" type="text" placeholder="#ffffff" />
+                <button id="curveStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="curveStrokeSwatches" class="swatch-popover" aria-label="Curve stroke swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="curveStrokeWidth">Stroke Width</label>
+              <input id="curveStrokeWidth" type="number" min="0" step="1" />
+            </div>
+          </div>
+
+          <div id="polylineProps" class="properties-form is-hidden">
+            <div class="prop-group-title">Polyline</div>
+            <div class="prop-row">
+              <label for="polylineStroke">Stroke</label>
+	              <div class="prop-inline">
+	                <input id="polylineStroke" type="color" />
+	                <input id="polylineStrokeText" type="text" placeholder="#ffffff" />
+	                <button id="polylineStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+	                <div id="polylineStrokeSwatches" class="swatch-popover" aria-label="Polyline stroke swatches"></div>
+	              </div>
+	            </div>
+	            <div class="prop-row">
+	              <label for="polylineStrokeWidth">Stroke Width</label>
+	              <input id="polylineStrokeWidth" type="number" min="0" step="1" />
+	            </div>
+	          </div>
+
+		          <div id="polygonProps" class="properties-form is-hidden">
+		            <div class="prop-group-title">Polygon</div>
+		            <div class="prop-row">
+		              <label for="polygonFill">Fill</label>
+		              <div class="prop-inline">
+		                <input id="polygonFill" type="color" />
+		                <input id="polygonFillText" type="text" placeholder="#3a3f4b" />
+		                <button id="polygonFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                <div id="polygonFillSwatches" class="swatch-popover" aria-label="Polygon fill swatches"></div>
+		              </div>
+		            </div>
+		            <div class="prop-row">
+		              <label for="polygonStroke">Stroke</label>
+		              <div class="prop-inline">
+		                <input id="polygonStroke" type="color" />
+		                <input id="polygonStrokeText" type="text" placeholder="#ffffff" />
+		                <button id="polygonStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                <div id="polygonStrokeSwatches" class="swatch-popover" aria-label="Polygon stroke swatches"></div>
+		              </div>
+		            </div>
+		            <div class="prop-row">
+		              <label for="polygonStrokeWidth">Stroke Width</label>
+		              <input id="polygonStrokeWidth" type="number" min="0" step="1" />
+		            </div>
+		            <div class="prop-group-header">
+		              <div class="prop-group-title">Fill Automation</div>
+		              <div class="prop-inline">
+		                <label class="inline-check">
+		                  <input id="polygonFillAutoEnabled" type="checkbox" />
+		                  <span>Enabled</span>
+		                </label>
+		                <label class="inline-check">
+		                  <input id="polygonFillAutoInvert" type="checkbox" />
+		                  <span>Invert</span>
+		                </label>
+		              </div>
+		            </div>
+		            <div id="polygonFillAutoFields" class="prop-subgroup is-hidden" hidden>
+		              <div class="prop-row">
+		                <label for="polygonFillAutoConnection">Connection</label>
+		                <input id="polygonFillAutoConnection" type="text" placeholder="test01" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="polygonFillAutoTag">Tag</label>
+		                <select id="polygonFillAutoTag">
+		                  <option value="">Select tag…</option>
+		                </select>
+		              </div>
+		              <div class="prop-row">
+		                <label for="polygonFillAutoMode">Mode</label>
+		                <select id="polygonFillAutoMode">
+		                  <option value="threshold">Threshold</option>
+		                  <option value="equals">Equals</option>
+		                </select>
+		              </div>
+		              <div class="prop-row" id="polygonFillAutoThresholdRow">
+		                <label for="polygonFillAutoThreshold">Threshold</label>
+		                <input id="polygonFillAutoThreshold" type="number" step="any" placeholder="0" />
+		              </div>
+		              <div class="prop-row is-hidden" id="polygonFillAutoMatchRow">
+		                <label for="polygonFillAutoMatch">Match</label>
+		                <input id="polygonFillAutoMatch" type="text" placeholder="1" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="polygonFillAutoOn">On Color</label>
+		                <div class="prop-inline">
+		                  <input id="polygonFillAutoOn" type="color" />
+		                  <input id="polygonFillAutoOnText" type="text" placeholder="#3a3f4b" />
+		                  <button id="polygonFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                  <div id="polygonFillAutoOnSwatches" class="swatch-popover" aria-label="Polygon fill automation on swatches"></div>
+		                </div>
+		              </div>
+		              <div class="prop-row">
+		                <label for="polygonFillAutoOff">Off Color</label>
+		                <div class="prop-inline">
+		                  <input id="polygonFillAutoOff" type="color" />
+		                  <input id="polygonFillAutoOffText" type="text" placeholder="#3a3f4b" />
+		                  <button id="polygonFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                  <div id="polygonFillAutoOffSwatches" class="swatch-popover" aria-label="Polygon fill automation off swatches"></div>
+		                </div>
+		              </div>
+		            </div>
+		            <div class="prop-group-header">
+		              <div class="prop-group-title">Border Color Automation</div>
+		              <div class="prop-inline">
+		                <label class="inline-check">
+		                  <input id="polygonStrokeAutoEnabled" type="checkbox" />
+		                  <span>Enabled</span>
+		                </label>
+		                <label class="inline-check">
+		                  <input id="polygonStrokeAutoInvert" type="checkbox" />
+		                  <span>Invert</span>
+		                </label>
+		              </div>
+		            </div>
+		            <div id="polygonStrokeAutoFields" class="prop-subgroup is-hidden" hidden>
+		              <div class="prop-row">
+		                <label for="polygonStrokeAutoConnection">Connection</label>
+		                <input id="polygonStrokeAutoConnection" type="text" placeholder="test01" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="polygonStrokeAutoTag">Tag</label>
+		                <select id="polygonStrokeAutoTag">
+		                  <option value="">Select tag…</option>
+		                </select>
+		              </div>
+		              <div class="prop-row">
+		                <label for="polygonStrokeAutoMode">Mode</label>
+		                <select id="polygonStrokeAutoMode">
+		                  <option value="threshold">Threshold</option>
+		                  <option value="equals">Equals</option>
+		                </select>
+		              </div>
+		              <div class="prop-row" id="polygonStrokeAutoThresholdRow">
+		                <label for="polygonStrokeAutoThreshold">Threshold</label>
+		                <input id="polygonStrokeAutoThreshold" type="number" step="any" placeholder="0" />
+		              </div>
+		              <div class="prop-row is-hidden" id="polygonStrokeAutoMatchRow">
+		                <label for="polygonStrokeAutoMatch">Match</label>
+		                <input id="polygonStrokeAutoMatch" type="text" placeholder="1" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="polygonStrokeAutoOn">On Color</label>
+		                <div class="prop-inline">
+		                  <input id="polygonStrokeAutoOn" type="color" />
+		                  <input id="polygonStrokeAutoOnText" type="text" placeholder="#ffffff" />
+		                  <button id="polygonStrokeAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                  <div id="polygonStrokeAutoOnSwatches" class="swatch-popover" aria-label="Polygon border automation on swatches"></div>
+		                </div>
+		              </div>
+		              <div class="prop-row">
+		                <label for="polygonStrokeAutoOff">Off Color</label>
+		                <div class="prop-inline">
+		                  <input id="polygonStrokeAutoOff" type="color" />
+		                  <input id="polygonStrokeAutoOffText" type="text" placeholder="#ffffff" />
+		                  <button id="polygonStrokeAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                  <div id="polygonStrokeAutoOffSwatches" class="swatch-popover" aria-label="Polygon border automation off swatches"></div>
+		                </div>
+		              </div>
+		            </div>
+		          </div>
+
+	          <div id="barProps" class="properties-form is-hidden">
+	            <div class="prop-group-title">Bar Graph</div>
+	            <div class="prop-row">
+	              <label for="barX">X</label>
+              <input id="barX" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="barY">Y</label>
+              <input id="barY" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="barW">Width</label>
+              <input id="barW" type="number" min="1" step="1" />
+            </div>
+		            <div class="prop-row">
+		              <label for="barH">Height</label>
+		              <input id="barH" type="number" min="1" step="1" />
+		            </div>
+		            <div class="prop-row">
+		              <label for="barOrientation">Orientation</label>
+		              <select id="barOrientation">
+		                <option value="vertical">Vertical</option>
+	                <option value="horizontal">Horizontal</option>
+              </select>
+            </div>
+	            <div class="prop-row">
+	              <label for="barMin">Min</label>
+	              <input id="barMin" type="number" step="any" placeholder="0" />
+	            </div>
+	            <div class="prop-row prop-row-compact">
+	              <label>Min Tag</label>
+	              <div class="prop-inline">
+	                <label class="inline-check">
+	                  <input id="barMinTagEnabled" type="checkbox" />
+	                  <span>Enabled</span>
+	                </label>
+	              </div>
+	            </div>
+	            <div id="barMinTagFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="barMinConnection">Connection</label>
+	                <input id="barMinConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="barMinTag">Tag</label>
+	                <select id="barMinTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	            </div>
+	            <div class="prop-row">
+	              <label for="barMax">Max</label>
+	              <input id="barMax" type="number" step="any" placeholder="100" />
+	            </div>
+	            <div class="prop-row prop-row-compact">
+	              <label>Max Tag</label>
+	              <div class="prop-inline">
+	                <label class="inline-check">
+	                  <input id="barMaxTagEnabled" type="checkbox" />
+	                  <span>Enabled</span>
+	                </label>
+	              </div>
+	            </div>
+	            <div id="barMaxTagFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="barMaxConnection">Connection</label>
+	                <input id="barMaxConnection" type="text" placeholder="test01" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="barMaxTag">Tag</label>
+	                <select id="barMaxTag">
+	                  <option value="">Select tag…</option>
+	                </select>
+	              </div>
+	            </div>
+            <div class="prop-row">
+              <label for="barBindConnection">Connection</label>
+              <input id="barBindConnection" type="text" placeholder="test01" />
+            </div>
+            <div class="prop-row">
+              <label for="barBindTag">Tag</label>
+              <select id="barBindTag">
+                <option value="">Select tag…</option>
+              </select>
+            </div>
+            <div class="prop-row">
+              <label for="barDigits">Digits</label>
+              <input id="barDigits" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="barDecimals">Decimals</label>
+              <input id="barDecimals" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="barMultiplier">Multiplier</label>
+              <input id="barMultiplier" type="number" step="0.01" />
+            </div>
+            <div class="prop-row">
+              <label for="barFill">Fill</label>
+              <div class="prop-inline">
+                <input id="barFill" type="color" />
+                <input id="barFillText" type="text" placeholder="#46ff64" />
+                <button id="barFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="barFillSwatches" class="swatch-popover" aria-label="Bar fill swatches"></div>
+              </div>
+            </div>
+	            <div class="prop-row">
+	              <label for="barBackground">Background</label>
+	              <div class="prop-inline">
+	                <input id="barBackground" type="color" />
+                <input id="barBackgroundText" type="text" placeholder="transparent" />
+                <button id="barBackgroundSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="barBackgroundSwatches" class="swatch-popover" aria-label="Bar background swatches"></div>
+	              </div>
+	            </div>
+            <div class="prop-row prop-row-compact">
+              <label>Ticks</label>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="barTicksEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+              </div>
+            </div>
+	            <div id="barTicksFields" class="prop-subgroup is-hidden" hidden>
+	              <div class="prop-row">
+	                <label for="barTicksMajor">Major</label>
+	                <input id="barTicksMajor" type="number" min="2" step="1" placeholder="5" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="barTicksMinor">Minor</label>
+	                <input id="barTicksMinor" type="number" min="0" step="1" placeholder="4" />
+	              </div>
+	            </div>
+		            <div class="prop-row prop-row-compact">
+		              <label>Border</label>
+		              <div class="prop-inline">
+		                <label class="inline-check">
+	                  <input id="barBorderEnabled" type="checkbox" />
+	                  <span>Enabled</span>
+	                </label>
+	              </div>
+	            </div>
+	            <div class="prop-row is-hidden" id="barBevelRow" hidden>
+	              <label for="barBevel">Bezel</label>
+	              <input id="barBevel" type="checkbox" />
+	            </div>
+	            <div class="prop-row" id="barBorderColorRow">
+	              <label for="barBorderColor">Border Color</label>
+	              <div class="prop-inline">
+	                <input id="barBorderColor" type="color" />
+                <input id="barBorderColorText" type="text" placeholder="#ffffff" />
+                <button id="barBorderSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="barBorderSwatches" class="swatch-popover" aria-label="Bar border swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row" id="barBorderWidthRow">
+              <label for="barBorderWidth">Border Width</label>
+              <input id="barBorderWidth" type="number" min="0" step="1" />
+            </div>
+	          </div>
+
+	          <div id="groupProps" class="properties-form is-hidden">
+	            <div class="prop-group-title">Group</div>
+	            <div class="prop-row">
+	              <label for="groupX">X</label>
+	              <input id="groupX" type="number" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="groupY">Y</label>
+	              <input id="groupY" type="number" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="groupW">Width</label>
+	              <input id="groupW" type="number" min="1" step="1" />
+	            </div>
+	            <div class="prop-row">
+	              <label for="groupH">Height</label>
+	              <input id="groupH" type="number" min="1" step="1" />
+	            </div>
+
+	            <div class="prop-group-title">Click Action</div>
+	            <div class="prop-row">
+	              <label for="groupActionType">Action</label>
+	              <select id="groupActionType">
+	                <option value="">None</option>
+	                <option value="navigate">Navigate</option>
+	                <option value="load-viewport">Load Viewport</option>
+	                <option value="popup">Popup</option>
+	              </select>
+	            </div>
+	            <div class="prop-row is-hidden" id="groupActionViewportRow">
+	              <label for="groupActionViewportId">Viewport</label>
+	              <select id="groupActionViewportId">
+	                <option value="">Select viewport…</option>
+	              </select>
+	            </div>
+	            <div class="prop-row is-hidden" id="groupActionScreenRow">
+	              <label for="groupActionScreenId">Screen</label>
+	              <select id="groupActionScreenId">
+	                <option value="">Select screen…</option>
+	              </select>
+	            </div>
+	          </div>
+
+	          <div id="visibilityProps" class="properties-form is-hidden">
+	            <div class="prop-group-header">
+	              <div class="prop-group-title">Visibility</div>
+	              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="visibilityEnabled" type="checkbox" />
+                  <span>Enabled</span>
+                </label>
+                <label class="inline-check">
+                  <input id="visibilityInvert" type="checkbox" />
+                  <span>Invert</span>
+                </label>
+              </div>
+            </div>
+            <div id="visibilityFields" class="prop-subgroup is-hidden" hidden>
+              <div class="prop-row">
+                <label for="visibilityConnection">Connection</label>
+                <input id="visibilityConnection" type="text" placeholder="test01" />
+              </div>
+              <div class="prop-row">
+                <label for="visibilityTag">Tag</label>
+                <select id="visibilityTag">
+                  <option value="">Select tag…</option>
+                </select>
+              </div>
+              <div class="prop-row">
+                <label for="visibilityThreshold">Threshold</label>
+                <input id="visibilityThreshold" type="number" step="any" placeholder="0" />
+              </div>
+            </div>
+          </div>
+
+          <div id="alignTools" class="properties-form is-hidden">
+            <div class="prop-group-title">Align Selected</div>
+            <div class="align-grid">
+              <button id="alignLeftBtn" class="panel-btn" type="button">Left</button>
+              <button id="alignCenterBtn" class="panel-btn" type="button">Center</button>
+              <button id="alignRightBtn" class="panel-btn" type="button">Right</button>
+              <button id="alignTopBtn" class="panel-btn" type="button">Top</button>
+              <button id="alignMiddleBtn" class="panel-btn" type="button">Middle</button>
+              <button id="alignBottomBtn" class="panel-btn" type="button">Bottom</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-panel" data-panel="tags" role="tabpanel">
+          <div class="editor-section-title">Opcbridge Tags</div>
+          <div class="tags-header">
+            <button id="tagsRefreshBtn" class="panel-btn" type="button">Refresh</button>
+            <div id="tagsStatus" class="tags-status">Loading…</div>
+          </div>
+          <div id="tagsList" class="tags-list"></div>
+        </div>
+
+        <div class="editor-panel" data-panel="jsonc" role="tabpanel">
+          <div class="editor-header">
+            <div class="editor-title">Screen JSONC</div>
+            <div class="editor-actions">
+              <span id="editor-filename" class="editor-filename">overview.jsonc</span>
+              <button id="jsoncApplyBtn" class="panel-btn" type="button">Apply</button>
+              <button id="jsoncSaveBtn" class="panel-btn" type="button">Save</button>
+              <button id="jsoncReloadBtn" class="panel-btn" type="button">Reload</button>
+            </div>
+          </div>
+          <textarea id="jsoncEditor" spellcheck="false"></textarea>
+          <div id="editorStatus">Ready.</div>
+        </div>
+      </aside>
+    </div>
+  </main>
+	  <div id="popupOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="popup-modal">
+	      <div class="popup-header">
+	        <div id="popupTitle" class="popup-title">Popup</div>
+	        <button id="popupCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="popup-body">
+	        <svg id="popupSvg" class="popup-svg" role="img" aria-label="Popup screen"></svg>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="setpointOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="setpoint-modal">
+	      <div class="popup-header">
+	        <div id="setpointTitle" class="popup-title">Setpoint</div>
+	        <button id="setpointCancelBtn" class="panel-btn" type="button">Cancel</button>
+	      </div>
+	      <div class="setpoint-body">
+	        <div class="setpoint-row">
+	          <label for="setpointValue" class="setpoint-label">Value</label>
+	          <input id="setpointValue" class="setpoint-input" type="number" step="any" />
+	        </div>
+	        <div class="setpoint-actions">
+	          <button id="setpointOkBtn" class="panel-btn" type="button">Write</button>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="settingsOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Settings</div>
+	        <button id="settingsCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div class="prop-group-title">Server</div>
+	          <div class="prop-row">
+	            <label for="settingsHost">Host/IP</label>
+	            <input id="settingsHost" type="text" placeholder="192.0.2.10" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="settingsHttpPort">HTTP Port</label>
+	            <input id="settingsHttpPort" type="number" min="1" step="1" placeholder="8080" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="settingsWsPort">WS Port</label>
+	            <input id="settingsWsPort" type="number" min="1" step="1" placeholder="8090" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="settingsWriteToken">Write Token</label>
+	            <input id="settingsWriteToken" type="text" placeholder="mysecret123" />
+	          </div>
+	        </div>
+
+	        <div class="settings-section">
+	          <div class="prop-group-title">Alarms</div>
+	          <div class="prop-row">
+	            <label for="settingsAlarmsHost">Host/IP</label>
+	            <input id="settingsAlarmsHost" type="text" placeholder="192.0.2.10" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="settingsAlarmsHttpPort">HTTP Port</label>
+	            <input id="settingsAlarmsHttpPort" type="number" min="1" step="1" placeholder="8085" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="settingsAlarmsWsPort">WS Port</label>
+	            <input id="settingsAlarmsWsPort" type="number" min="1" step="1" placeholder="8086" />
+	          </div>
+	          <div class="settings-hint">opcbridge-alarms WebSocket drives the Alarms badge/table in real-time.</div>
+	        </div>
+	
+	        <div class="settings-section">
+	          <div class="prop-group-title">Runtime</div>
+	          <div class="prop-row">
+	            <label for="settingsDefaultScreen">Default screen</label>
+	            <select id="settingsDefaultScreen"></select>
+	          </div>
+	          <div class="prop-row prop-row-inline">
+	            <label for="settingsTouchscreenMode">Touchscreen mode</label>
+	            <input id="settingsTouchscreenMode" type="checkbox" />
+	          </div>
+	          <div class="prop-row prop-row-inline">
+	            <label for="settingsViewOnlyMode">View-only mode</label>
+	            <input id="settingsViewOnlyMode" type="checkbox" />
+	          </div>
+	          <div class="settings-hint">Touchscreen mode uses the on-screen keypad. View-only mode disables all writes in runtime.</div>
+	        </div>
+	
+	        <div class="settings-actions">
+	          <button id="settingsTestBtn" class="panel-btn" type="button">Test</button>
+	          <button id="settingsApplyBtn" class="panel-btn" type="button">Apply</button>
+	          <button id="settingsSaveBtn" class="panel-btn" type="button">Save</button>
+	          <div id="settingsStatus" class="settings-status">Ready.</div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="aboutOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">About</div>
+	        <button id="aboutCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div class="prop-group-title">Build</div>
+	          <pre id="aboutText" class="about-text"></pre>
+	        </div>
+	        <div class="settings-actions">
+	          <button id="aboutRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	          <button id="aboutCopyBtn" class="panel-btn" type="button">Copy</button>
+	          <div id="aboutStatus" class="settings-status">Ready.</div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="auditOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal audit-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Audit Log</div>
+	        <button id="auditCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div class="prop-group-title">Recent Events</div>
+	          <div class="audit-table-wrap" role="region" aria-label="Audit log table">
+	            <table class="audit-table" aria-label="Audit log">
+	              <thead>
+	                <tr>
+	                  <th scope="col">Time</th>
+	                  <th scope="col">IP</th>
+	                  <th scope="col">User</th>
+	                  <th scope="col">Event</th>
+	                  <th scope="col">Connection</th>
+	                  <th scope="col">Tag</th>
+	                  <th scope="col">Value</th>
+	                </tr>
+	              </thead>
+	              <tbody id="auditTableBody"></tbody>
+	            </table>
+	          </div>
+	        </div>
+	        <div class="settings-actions">
+	          <button id="auditRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	          <button id="auditCopyBtn" class="panel-btn" type="button">Copy</button>
+	          <button id="auditDownloadBtn" class="panel-btn" type="button">Download CSV</button>
+	          <div id="auditStatus" class="settings-status">Ready.</div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="alarmsOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal alarms-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Alarms</div>
+	        <button id="alarmsCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div class="prop-group-title">Active Alarms</div>
+	          <div class="audit-table-wrap" role="region" aria-label="Active alarms table">
+	            <table class="audit-table" aria-label="Active alarms">
+	              <thead>
+	                <tr>
+	                  <th scope="col">Alarm</th>
+	                  <th scope="col">Severity</th>
+	                  <th scope="col">Source</th>
+	                  <th scope="col">Value</th>
+	                  <th scope="col">Message</th>
+	                  <th scope="col">Acked</th>
+	                  <th scope="col">Shelved</th>
+	                  <th scope="col">Since</th>
+	                </tr>
+	              </thead>
+	              <tbody id="alarmsActiveTableBody"></tbody>
+	            </table>
+	          </div>
+	        </div>
+
+	        <div class="settings-section">
+	          <div class="prop-group-title">Recent Events</div>
+	          <div class="audit-table-wrap" role="region" aria-label="Alarm events table">
+	            <table class="audit-table" aria-label="Alarm events">
+	              <thead>
+	                <tr>
+	                  <th scope="col">Time</th>
+	                  <th scope="col">Type</th>
+	                  <th scope="col">Alarm</th>
+	                  <th scope="col">Source</th>
+	                  <th scope="col">Value</th>
+	                  <th scope="col">Message</th>
+	                </tr>
+	              </thead>
+	              <tbody id="alarmsEventsTableBody"></tbody>
+	            </table>
+	          </div>
+	        </div>
+
+	        <div class="settings-actions">
+	          <button id="alarmsRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	          <div id="alarmsStatus" class="settings-status">Ready.</div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="authOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal auth-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Login</div>
+	        <button id="authCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div class="prop-group-title">Session</div>
+	          <div id="authSessionSummary" class="auth-session-summary">Not logged in.</div>
+	          <div class="settings-actions">
+	            <button id="authLogoutBtn" class="panel-btn" type="button">Logout</button>
+	          </div>
+	        </div>
+
+	        <div id="authSetupSection" class="settings-section">
+	          <div class="prop-group-title">Initial Setup</div>
+	          <div class="prop-row">
+	            <label for="authSetupUsername">Admin username</label>
+	            <input id="authSetupUsername" type="text" autocomplete="username" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="authSetupPassword">Admin password</label>
+	            <input id="authSetupPassword" type="password" autocomplete="new-password" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="authSetupPasswordConfirm">Confirm password</label>
+	            <input id="authSetupPasswordConfirm" type="password" autocomplete="new-password" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="authSetupTimeout">Timeout (minutes)</label>
+	            <input id="authSetupTimeout" type="number" min="0" step="1" placeholder="0 = no timeout" />
+	          </div>
+	          <div class="settings-actions">
+	            <button id="authSetupBtn" class="panel-btn" type="button">Create Admin</button>
+	          </div>
+	        </div>
+
+	        <div id="authLoginSection" class="settings-section">
+	          <div class="prop-group-title">Login</div>
+	          <div class="prop-row">
+	            <label for="authUsername">Username</label>
+	            <input id="authUsername" type="text" autocomplete="username" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="authPassword">Password</label>
+	            <input id="authPassword" type="password" autocomplete="current-password" />
+	          </div>
+	          <div class="settings-actions">
+	            <button id="authLoginBtn" class="panel-btn" type="button">Login</button>
+	          </div>
+	        </div>
+
+	        <div class="settings-actions">
+	          <button id="authRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	          <div id="authStatus" class="settings-status">Ready.</div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="usersOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal auth-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Users</div>
+	        <button id="usersCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div class="prop-group-title">Users</div>
+	          <div id="usersList" class="auth-users-list"></div>
+	          <div class="prop-row">
+	            <label for="usersAddUsername">Username</label>
+	            <input id="usersAddUsername" type="text" autocomplete="off" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="usersAddPassword">Password</label>
+	            <input id="usersAddPassword" type="password" autocomplete="new-password" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="usersAddPasswordConfirm">Confirm password</label>
+	            <input id="usersAddPasswordConfirm" type="password" autocomplete="new-password" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="usersAddRole">Role</label>
+	            <select id="usersAddRole">
+	              <option value="operator">Operator</option>
+	              <option value="editor">Editor</option>
+	              <option value="admin">Admin</option>
+	            </select>
+	          </div>
+	          <div class="settings-actions">
+	            <button id="usersAddUserBtn" class="panel-btn" type="button">Add User</button>
+	          </div>
+	        </div>
+
+	        <div class="settings-section">
+	          <div class="prop-group-title">Policy</div>
+	          <div class="prop-row">
+	            <label for="usersTimeoutMinutes">Timeout (minutes)</label>
+	            <input id="usersTimeoutMinutes" type="number" min="0" step="1" placeholder="0 = no timeout" />
+	          </div>
+	          <div class="settings-actions">
+	            <button id="usersSaveTimeoutBtn" class="panel-btn" type="button">Save Timeout</button>
+	          </div>
+	        </div>
+
+	        <div class="settings-actions">
+	          <button id="usersRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	          <div id="usersStatus" class="settings-status">Ready.</div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="keypadOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="keypad-modal">
+	      <div class="popup-header">
+	        <div id="keypadTitle" class="popup-title">Enter value</div>
+	        <button id="keypadCancelBtn" class="panel-btn" type="button">Cancel</button>
+	      </div>
+	      <div class="keypad-body">
+	        <input id="keypadDisplay" class="keypad-display" type="text" inputmode="none" autocomplete="off" spellcheck="false" />
+	        <div class="keypad-grid">
+	          <button class="keypad-btn" type="button" data-keypad="7">7</button>
+	          <button class="keypad-btn" type="button" data-keypad="8">8</button>
+	          <button class="keypad-btn" type="button" data-keypad="9">9</button>
+	          <button class="keypad-btn keypad-fn" type="button" data-keypad="bksp">⌫</button>
+	          <button class="keypad-btn" type="button" data-keypad="4">4</button>
+	          <button class="keypad-btn" type="button" data-keypad="5">5</button>
+	          <button class="keypad-btn" type="button" data-keypad="6">6</button>
+	          <button class="keypad-btn keypad-fn" type="button" data-keypad="clear">C</button>
+	          <button class="keypad-btn" type="button" data-keypad="1">1</button>
+	          <button class="keypad-btn" type="button" data-keypad="2">2</button>
+	          <button class="keypad-btn" type="button" data-keypad="3">3</button>
+	          <button class="keypad-btn keypad-fn" type="button" data-keypad="sign">±</button>
+	          <button class="keypad-btn" type="button" data-keypad="0">0</button>
+	          <button class="keypad-btn" type="button" data-keypad=".">.</button>
+	          <button class="keypad-btn keypad-wide keypad-ok" type="button" data-keypad="ok">OK</button>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <script src="js/hmi.js?v=2025-12-28-alarms-panel-v18"></script>
+	</body>
+	</html>

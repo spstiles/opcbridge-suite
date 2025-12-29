@@ -1,0 +1,247 @@
+{
+  "connection_id": "conn002",
+  "tags": [
+    {
+      "name": "Tag0025",
+      "plc_tag_name": "PLC_Tag0027",
+      "datatype": "int32",
+      "scan_ms": 1000,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_periodic": true,
+      "log_periodic_mode": "interval",
+      "log_periodic_interval": 300
+    },
+    {
+      "name": "Tag0024",
+      "plc_tag_name": "PLC_Tag0028",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": true
+    },
+    {
+      "name": "Tag0008",
+      "plc_tag_name": "PLC_Tag0029",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0005",
+      "plc_tag_name": "PLC_Tag0030",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0007",
+      "plc_tag_name": "PLC_Tag0031",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0010",
+      "plc_tag_name": "PLC_Tag0032",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0012",
+      "plc_tag_name": "PLC_Tag0033",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0003",
+      "plc_tag_name": "PLC_Tag0034",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0009",
+      "plc_tag_name": "PLC_Tag0035",
+      "datatype": "float32",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0004",
+      "plc_tag_name": "PLC_Tag0036",
+      "datatype": "int32",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0006",
+      "plc_tag_name": "PLC_Tag0037",
+      "datatype": "int32",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0011",
+      "plc_tag_name": "PLC_Tag0038",
+      "datatype": "int32",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0018",
+      "plc_tag_name": "PLC_Tag0039",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0015",
+      "plc_tag_name": "PLC_Tag0040",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0017",
+      "plc_tag_name": "PLC_Tag0041",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0020",
+      "plc_tag_name": "PLC_Tag0042",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0022",
+      "plc_tag_name": "PLC_Tag0043",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0013",
+      "plc_tag_name": "PLC_Tag0044",
+      "datatype": "bool",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0019",
+      "plc_tag_name": "PLC_Tag0045",
+      "datatype": "float32",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0014",
+      "plc_tag_name": "PLC_Tag0046",
+      "datatype": "int32",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0016",
+      "plc_tag_name": "PLC_Tag0047",
+      "datatype": "int32",
+      "scan_ms": 500,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0021",
+      "plc_tag_name": "PLC_Tag0048",
+      "datatype": "int32",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0026",
+      "plc_tag_name": "PLC_Tag0049",
+      "datatype": "float32",
+      "scan_ms": 500,
+      "writable": false,
+      "mqtt_command_allowed": false,
+      "log_event_on_change": false
+    },
+    {
+      "name": "Tag0002",
+      "plc_tag_name": "PLC_Tag0050",
+      "datatype": "float32",
+      "scan_ms": 1000,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_periodic": false,
+      "log_periodic_mode": "interval",
+      "log_periodic_interval": 300
+    },
+    {
+      "name": "Tag0001",
+      "plc_tag_name": "PLC_Tag0051",
+      "datatype": "float32",
+      "scan_ms": 1000,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_periodic": false,
+      "log_periodic_mode": "interval",
+      "log_periodic_interval": 300
+    },
+    {
+      "name": "Tag0023",
+      "plc_tag_name": "PLC_Tag0052",
+      "datatype": "float32",
+      "scan_ms": 1000,
+      "writable": true,
+      "mqtt_command_allowed": true,
+      "log_periodic": false,
+      "log_periodic_mode": "interval",
+      "log_periodic_interval": 300
+    }
+  ]
+}

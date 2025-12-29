@@ -1,0 +1,33 @@
+{
+  "width": 800,
+  "height": 600,
+  "background": "#ffeb3b",
+  "objects": [
+    {
+      "type": "text",
+      "x": 302,
+      "y": 276,
+      "text": "Test Popup",
+      "fontSize": 18,
+      "fill": "#000000"
+    },
+    {
+      "type": "button",
+      "x": 271,
+      "y": 397,
+      "w": 160,
+      "h": 48,
+      "rx": 8,
+      "label": "Button",
+      "fill": "#2b2f3a",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "overview"
+      },
+      "rotation": 56.88661154252155
+    }
+  ]
+}

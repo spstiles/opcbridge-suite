@@ -1,0 +1,38 @@
+# Ignore build artifacts
+build/
+CMakeFiles/
+CMakeCache.txt
+*.o
+*.so
+*.a
+*.log
+*.bak
+
+# Ignore the compiled binary
+opcbridge
+
+# Ignore sqlite databases
+config/data/*.db
+config/data/
+
+# Ignore sensitive local config
+config/mqtt.json
+config/admin_auth.json
+config/alarms.json
+config/mqtt_inputs.json
+config/connections/*.json
+config/tags/*.json
+
+# Ignore editor/IDE files
+*.swp
+*.swo
+*.tmp
+*.geany
+*.crt
+
+# Ignore backup files
+*~
+
+# Dev helper artifacts
+_run/
+_logs/

@@ -1,0 +1,32 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "background": "#4aa3ff",
+  "objects": [
+    {
+      "type": "text",
+      "x": 54,
+      "y": 39,
+      "text": "Test Page 2",
+      "fontSize": 18,
+      "fill": "#ffffff"
+    },
+    {
+      "type": "button",
+      "x": 892,
+      "y": 124,
+      "w": 160,
+      "h": 48,
+      "rx": 8,
+      "label": "Overview",
+      "fill": "#0611b7",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "overview"
+      }
+    }
+  ]
+}

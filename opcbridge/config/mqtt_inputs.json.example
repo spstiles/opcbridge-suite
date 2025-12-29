@@ -1,0 +1,14 @@
+{
+  "inputs": [
+    {
+      "id": "Input001",
+      "topic": "example/conn003/Tag0003",
+      "connection_id": "conn003",
+      "tag_name": "Tag0003",
+      "datatype": "int16",
+      "write_to_plc": true,
+      "payload_format": "json_field",
+      "json_field": "value"
+    }
+  ]
+}

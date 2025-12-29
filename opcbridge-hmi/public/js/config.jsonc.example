@@ -1,0 +1,18 @@
+{
+  "opcbridge": {
+    "host": "OPCBRIDGE_HOST",
+    "httpPort": 8080,
+    "wsPort": 8090,
+    "writeToken": "OPCBRIDGE_WRITE_TOKEN"
+  },
+  "alarms": {
+    "host": "OPCBRIDGE_HOST",
+    "httpPort": 8085,
+    "wsPort": 8086
+  },
+  "hmi": {
+    "defaultScreen": "console_background",
+    "touchscreenMode": false,
+    "viewOnlyMode": false
+  }
+}

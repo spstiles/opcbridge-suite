@@ -1,0 +1,7 @@
+opcbridge-alarms
+build/
+*.o
+*.a
+*.so
+config/alarms.json
+config/data/

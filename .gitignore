@@ -1,0 +1,25 @@
+# --- Monorepo ignores (no identifiable local config/secrets) ---
+
+# Secrets / runtime config
+**/config.secrets.json
+**/config.json
+**/*.env
+**/.env*
+
+# Logs / runtime artifacts
+**/_run/
+**/_logs/
+**/*.log
+**/*.db
+**/config/**/data/
+
+# Build artifacts
+**/build/
+**/dist/
+**/node_modules/
+**/*.o
+**/*.a
+**/*.so
+
+# Workspace files
+*.code-workspace

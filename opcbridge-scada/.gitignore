@@ -1,0 +1,4 @@
+# Local runtime config
+config.json
+# Secrets (do not commit)
+config.secrets.json

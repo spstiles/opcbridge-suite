@@ -1,0 +1,2319 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SVG Lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "JetBrains Mono", "Fira Mono", "DejaVu Sans Mono", monospace;
+        background: #10131a;
+        color: #e6e9ef;
+      }
+      body {
+        margin: 0;
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        min-height: 100vh;
+      }
+      header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #273040;
+        background: linear-gradient(90deg, #161b25, #0f141d);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      header h1 {
+        margin: 0 0 6px 0;
+        font-size: 18px;
+      }
+      header p {
+        margin: 0;
+        font-size: 13px;
+        color: #9aa3b2;
+      }
+      .header-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .header-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .header-actions button,
+      .header-actions select {
+        background: #1c2430;
+        color: #e6e9ef;
+        border: 1px solid #2b3646;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .header-actions button:hover,
+      .header-actions select:hover {
+        border-color: #3b4a61;
+      }
+      .file-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .file-actions select {
+        min-width: 200px;
+      }
+      .file-status {
+        font-size: 12px;
+        color: #9aa3b2;
+        padding: 6px 20px 0 20px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.2fr) minmax(200px, 0.6fr);
+        gap: 14px;
+        padding: 16px;
+        align-items: stretch;
+        min-height: calc(100vh - 120px);
+      }
+      .pane {
+        background: #171d27;
+        border: 1px solid #2b3646;
+        border-radius: 16px;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+        display: grid;
+        grid-template-rows: auto 1fr;
+        overflow: hidden;
+        min-height: 60vh;
+      }
+      .pane-header {
+        padding: 12px 16px;
+        font-size: 13px;
+        color: #9aa3b2;
+        border-bottom: 1px solid #243043;
+        background: #141924;
+      }
+      .editor {
+        width: 100%;
+        height: 100%;
+        border: none;
+        background: #0f141d;
+        color: #e6e9ef;
+        padding: 16px;
+        font-size: 13px;
+        line-height: 1.45;
+        resize: none;
+        outline: none;
+      }
+      .frame {
+        width: 100%;
+        height: 100%;
+        background: #0f141d;
+        display: grid;
+        place-items: center;
+      }
+      #svgLabCanvas {
+        width: 100%;
+        height: 100%;
+        background: #0f141d;
+      }
+      .toolbox {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
+        height: 100%;
+        overflow-y: auto;
+      }
+      .properties-pane {
+        border-top: 1px solid #243043;
+        padding: 10px 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .properties-title {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #9aa3b2;
+      }
+      .align-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .align-btn {
+        flex: 1 1 80px;
+        background: #19212b;
+        border: 1px solid #2d3a4d;
+        color: #e6e9ef;
+        padding: 8px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .align-btn:hover {
+        border-color: #4aa3ff;
+        color: #ffffff;
+      }
+      .align-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .prop-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .prop-row label {
+        width: 72px;
+        font-size: 12px;
+        color: #c7d1e0;
+      }
+      .prop-row input,
+      .prop-row select {
+        flex: 1;
+        background: #0f141d;
+        color: #e6e9ef;
+        border: 1px solid #2b3646;
+        border-radius: 6px;
+        padding: 4px 6px;
+        font-size: 12px;
+      }
+      .toolbox-section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .toolbox-title {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #9aa3b2;
+      }
+      .toolbox-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #1c2430;
+        color: #e6e9ef;
+        border: 1px solid #2b3646;
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 12px;
+        cursor: grab;
+        user-select: none;
+      }
+      .toolbox-item:active {
+        cursor: grabbing;
+      }
+      .toolbox-item svg {
+        width: 16px;
+        height: 16px;
+      }
+      .toolbox-item.is-active {
+        border-color: #4aa3ff;
+        box-shadow: 0 0 0 1px rgba(74, 163, 255, 0.35);
+      }
+      code {
+        background: #0f141d;
+        padding: 2px 6px;
+        border-radius: 6px;
+        color: #c7d1e0;
+      }
+      @media (max-width: 1100px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+        .pane {
+          min-height: 50vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-copy">
+        <h1>SVG Lab</h1>
+        <p>Editor left, preview center, toolbox right. File actions target <code>public/img</code> SVGs.</p>
+      </div>
+      <div class="header-actions">
+        <div class="file-actions">
+          <select id="svgFileSelect"></select>
+          <button id="svgFileOpenBtn" type="button">Open</button>
+          <button id="svgFileSaveBtn" type="button">Save</button>
+          <button id="svgFileNewBtn" type="button">New</button>
+          <button id="svgFileCopyBtn" type="button">Copy</button>
+          <button id="svgFileDeleteBtn" type="button">Delete</button>
+        </div>
+        <button id="backToHmiBtn" type="button">Back to HMI</button>
+      </div>
+    </header>
+    <div id="svgFileStatus" class="file-status"></div>
+    <main>
+      <section class="pane">
+        <div class="pane-header">SVG Source</div>
+        <textarea id="svgEditor" class="editor" spellcheck="false"></textarea>
+      </section>
+      <section class="pane">
+        <div class="pane-header">Preview</div>
+        <div class="frame">
+          <svg id="svgLabCanvas" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+      </section>
+      <section class="pane">
+        <div class="pane-header">Toolbox</div>
+        <div class="toolbox">
+          <div class="toolbox-section">
+            <div class="toolbox-title">Shapes</div>
+            <div class="toolbox-item" draggable="true" data-tool="rect">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="14" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"></rect>
+              </svg>
+              Rectangle
+            </div>
+            <div class="toolbox-item" draggable="true" data-tool="circle">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle>
+              </svg>
+              Circle
+            </div>
+            <div class="toolbox-item" draggable="true" data-tool="line">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <line x1="5" y1="19" x2="19" y2="5" stroke="currentColor" stroke-width="2"></line>
+              </svg>
+              Line
+            </div>
+            <div class="toolbox-item" draggable="true" data-tool="arc">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 16 A7 7 0 0 1 19 16" stroke="currentColor" stroke-width="2" fill="none"></path>
+              </svg>
+              Arc
+            </div>
+            <div class="toolbox-item" draggable="true" data-tool="polygon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 6 L19 8 L16 19 L6 16 Z" stroke="currentColor" stroke-width="2" fill="none"></path>
+              </svg>
+              Polygon
+            </div>
+            <div class="toolbox-item" draggable="true" data-tool="curved-rect">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 6 Q4 6 4 8 Q4 18 6 18 L18 18 Q20 18 20 16 Q20 6 18 6 Z" stroke="currentColor" stroke-width="2" fill="none"></path>
+              </svg>
+              Curved Rect
+            </div>
+          </div>
+          <div class="toolbox-section">
+            <div class="toolbox-title">Text</div>
+            <div class="toolbox-item" draggable="true" data-tool="text">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 6h14M12 6v12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"></path>
+              </svg>
+              Text
+            </div>
+          </div>
+          <div class="properties-pane">
+            <div class="properties-title">Properties</div>
+            <div id="svgProps" class="prop-body">Select an item.</div>
+            <div class="properties-title">Align</div>
+            <div class="align-row">
+              <button type="button" class="align-btn" data-align="left">Left</button>
+              <button type="button" class="align-btn" data-align="center">Center</button>
+              <button type="button" class="align-btn" data-align="right">Right</button>
+              <button type="button" class="align-btn" data-align="top">Top</button>
+              <button type="button" class="align-btn" data-align="middle">Middle</button>
+              <button type="button" class="align-btn" data-align="bottom">Bottom</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script>
+      const editor = document.getElementById("svgEditor");
+      const canvas = document.getElementById("svgLabCanvas");
+      const backBtn = document.getElementById("backToHmiBtn");
+      const fileSelect = document.getElementById("svgFileSelect");
+      const openBtn = document.getElementById("svgFileOpenBtn");
+      const saveBtn = document.getElementById("svgFileSaveBtn");
+      const newBtn = document.getElementById("svgFileNewBtn");
+      const copyBtn = document.getElementById("svgFileCopyBtn");
+      const deleteBtn = document.getElementById("svgFileDeleteBtn");
+      const statusEl = document.getElementById("svgFileStatus");
+      const toolboxItems = Array.from(document.querySelectorAll("[data-tool]"));
+      const propsEl = document.getElementById("svgProps");
+      const alignButtons = Array.from(document.querySelectorAll(".align-btn"));
+
+      let currentFilename = "";
+      let isSyncing = false;
+      let svgState = { width: 600, height: 600, objects: [] };
+      let rawSvgText = "";
+      let rawMode = false;
+      let selection = [];
+      let dragState = null;
+      let selectState = null;
+      let suppressPropsRender = false;
+      let clipboardObjects = null;
+
+      const getSelectionBounds = (indices, sourceObjects = svgState.objects) => {
+        const safe = Array.isArray(indices) ? indices : [];
+        let b = null;
+        for (const idx of safe) {
+          const obj = sourceObjects[idx];
+          if (!obj) continue;
+          const ob = getBounds(obj);
+          if (!ob) continue;
+          if (!b) {
+            b = { ...ob };
+            continue;
+          }
+          const x1 = Math.min(b.x, ob.x);
+          const y1 = Math.min(b.y, ob.y);
+          const x2 = Math.max(b.x + b.w, ob.x + ob.w);
+          const y2 = Math.max(b.y + b.h, ob.y + ob.h);
+          b = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+        }
+        return b;
+      };
+
+      const scalePoint = (pt, fromB, scale, toB) => ({
+        x: toB.x + (pt.x - fromB.x) * scale,
+        y: toB.y + (pt.y - fromB.y) * scale
+      });
+
+      const scaleObject = (startObj, scale, fromB, toB) => {
+        const obj = cloneObject(startObj);
+        const scaleStrokeWidth = () => {
+          if (obj.strokeWidth == null) return;
+          const v = Number(startObj.strokeWidth);
+          if (!Number.isFinite(v)) return;
+          obj.strokeWidth = Math.max(1, Math.round(v * scale));
+        };
+        const scaleFontSize = () => {
+          if (obj.fontSize == null) return;
+          const v = Number(startObj.fontSize);
+          if (!Number.isFinite(v)) return;
+          obj.fontSize = Math.max(1, Math.round(v * scale));
+        };
+        if (obj.type === "rect") {
+          const p1 = scalePoint({ x: startObj.x, y: startObj.y }, fromB, scale, toB);
+          const p2 = scalePoint({ x: startObj.x + startObj.w, y: startObj.y + startObj.h }, fromB, scale, toB);
+          obj.x = Math.round(Math.min(p1.x, p2.x));
+          obj.y = Math.round(Math.min(p1.y, p2.y));
+          obj.w = Math.max(1, Math.round(Math.abs(p2.x - p1.x)));
+          obj.h = Math.max(1, Math.round(Math.abs(p2.y - p1.y)));
+          if (startObj.rx != null) obj.rx = Math.max(0, Math.round(Number(startObj.rx) * scale));
+          scaleStrokeWidth();
+          return obj;
+        }
+        if (obj.type === "curved-rect") {
+          const p1 = scalePoint({ x: startObj.x, y: startObj.y }, fromB, scale, toB);
+          const p2 = scalePoint({ x: startObj.x + startObj.w, y: startObj.y + startObj.h }, fromB, scale, toB);
+          obj.x = Math.round(Math.min(p1.x, p2.x));
+          obj.y = Math.round(Math.min(p1.y, p2.y));
+          obj.w = Math.max(1, Math.round(Math.abs(p2.x - p1.x)));
+          obj.h = Math.max(1, Math.round(Math.abs(p2.y - p1.y)));
+          if (startObj.curve != null) obj.curve = Math.max(0, Math.round(Number(startObj.curve) * scale));
+          scaleStrokeWidth();
+          return obj;
+        }
+        if (obj.type === "circle" || obj.type === "arc") {
+          const c = scalePoint({ x: startObj.cx, y: startObj.cy }, fromB, scale, toB);
+          obj.cx = Math.round(c.x);
+          obj.cy = Math.round(c.y);
+          obj.r = Math.max(1, Math.round(Number(startObj.r) * scale));
+          scaleStrokeWidth();
+          return obj;
+        }
+        if (obj.type === "line") {
+          const a = scalePoint({ x: startObj.x1, y: startObj.y1 }, fromB, scale, toB);
+          const b = scalePoint({ x: startObj.x2, y: startObj.y2 }, fromB, scale, toB);
+          obj.x1 = Math.round(a.x);
+          obj.y1 = Math.round(a.y);
+          obj.x2 = Math.round(b.x);
+          obj.y2 = Math.round(b.y);
+          scaleStrokeWidth();
+          return obj;
+        }
+        if (obj.type === "polygon") {
+          obj.points = (startObj.points || []).map((pt) => {
+            const p = scalePoint({ x: pt.x, y: pt.y }, fromB, scale, toB);
+            return { x: Math.round(p.x), y: Math.round(p.y) };
+          });
+          scaleStrokeWidth();
+          return obj;
+        }
+        if (obj.type === "text") {
+          const p = scalePoint({ x: startObj.x, y: startObj.y }, fromB, scale, toB);
+          obj.x = Math.round(p.x);
+          obj.y = Math.round(p.y);
+          scaleFontSize();
+          return obj;
+        }
+        return obj;
+      };
+
+      const setStatus = (msg) => {
+        if (statusEl) statusEl.textContent = msg || "";
+      };
+
+      const escapeXml = (text) =>
+        String(text ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+
+      const polarToCartesian = (cx, cy, r, angleDeg) => {
+        const rad = ((angleDeg - 90) * Math.PI) / 180;
+        return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+      };
+
+      const describeArc = (cx, cy, r, startAngle, endAngle) => {
+        const start = polarToCartesian(cx, cy, r, endAngle);
+        const end = polarToCartesian(cx, cy, r, startAngle);
+        const delta = endAngle - startAngle;
+        const largeArcFlag = Math.abs(delta) > 180 ? 1 : 0;
+        const sweepFlag = delta >= 0 ? 1 : 0;
+        return `M ${start.x} ${start.y} A ${r} ${r} 0 ${largeArcFlag} ${sweepFlag} ${end.x} ${end.y}`;
+      };
+
+      const describeCurvedRect = (x, y, w, h, curve) => {
+        const c = Math.max(0, Math.min(curve, Math.min(w, h)));
+        const cx = x + w / 2;
+        const cy = y + h / 2;
+        return [
+          `M ${x} ${y}`,
+          `L ${x + w} ${y}`,
+          `Q ${x + w + c} ${cy} ${x + w} ${y + h}`,
+          `L ${x} ${y + h}`,
+          `Q ${x - c} ${cy} ${x} ${y}`,
+          "Z"
+        ].join(" ");
+      };
+
+      const parsePoints = (value) => {
+        if (!value) return [];
+        return String(value)
+          .trim()
+          .split(/\s+/)
+          .map((pair) => {
+            const [x, y] = pair.split(",").map((v) => Number(v));
+            return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
+          })
+          .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+      };
+
+      const pointsToString = (points) =>
+        (points || []).map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(" ");
+
+      const getPolygonBounds = (points) => {
+        if (!points || points.length === 0) return null;
+        let minX = points[0].x;
+        let maxX = points[0].x;
+        let minY = points[0].y;
+        let maxY = points[0].y;
+        for (const p of points) {
+          minX = Math.min(minX, p.x);
+          maxX = Math.max(maxX, p.x);
+          minY = Math.min(minY, p.y);
+          maxY = Math.max(maxY, p.y);
+        }
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      };
+
+      const getRotatedRectBounds = (x, y, w, h, rotation) => {
+        const angle = (rotation * Math.PI) / 180;
+        if (!angle) return { x, y, w, h };
+        const cx = x + w / 2;
+        const cy = y + h / 2;
+        const corners = [
+          { x, y },
+          { x: x + w, y },
+          { x: x + w, y: y + h },
+          { x, y: y + h }
+        ].map((pt) => {
+          const dx = pt.x - cx;
+          const dy = pt.y - cy;
+          return {
+            x: cx + dx * Math.cos(angle) - dy * Math.sin(angle),
+            y: cy + dx * Math.sin(angle) + dy * Math.cos(angle)
+          };
+        });
+        let minX = corners[0].x;
+        let maxX = corners[0].x;
+        let minY = corners[0].y;
+        let maxY = corners[0].y;
+        for (const p of corners) {
+          minX = Math.min(minX, p.x);
+          maxX = Math.max(maxX, p.x);
+          minY = Math.min(minY, p.y);
+          maxY = Math.max(maxY, p.y);
+        }
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      };
+
+      const rotatePoints = (points, degrees, center) => {
+        const rad = (degrees * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        return (points || []).map((pt) => {
+          const dx = pt.x - center.x;
+          const dy = pt.y - center.y;
+          return {
+            x: center.x + (dx * cos - dy * sin),
+            y: center.y + (dx * sin + dy * cos)
+          };
+        });
+      };
+
+      const rotatePoint = (pt, degrees, center) => {
+        const rad = (degrees * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const dx = pt.x - center.x;
+        const dy = pt.y - center.y;
+        return {
+          x: center.x + (dx * cos - dy * sin),
+          y: center.y + (dx * sin + dy * cos)
+        };
+      };
+
+      const normalizeDegrees = (deg) => {
+        const value = Number(deg);
+        if (!Number.isFinite(value)) return 0;
+        const mod = value % 360;
+        return mod < 0 ? mod + 360 : mod;
+      };
+
+      const applyDragRotateToObject = (obj, startObj, degrees, center) => {
+        if (!obj || !startObj) return;
+        if (startObj.type === "polygon") {
+          obj.points = rotatePoints(startObj.points, degrees, center).map((pt) => ({
+            x: Math.round(pt.x),
+            y: Math.round(pt.y)
+          }));
+          return;
+        }
+        if (startObj.type === "line") {
+          const p1 = rotatePoint({ x: startObj.x1, y: startObj.y1 }, degrees, center);
+          const p2 = rotatePoint({ x: startObj.x2, y: startObj.y2 }, degrees, center);
+          obj.x1 = Math.round(p1.x);
+          obj.y1 = Math.round(p1.y);
+          obj.x2 = Math.round(p2.x);
+          obj.y2 = Math.round(p2.y);
+          return;
+        }
+        if (startObj.type === "circle") {
+          const p = rotatePoint({ x: startObj.cx, y: startObj.cy }, degrees, center);
+          obj.cx = Math.round(p.x);
+          obj.cy = Math.round(p.y);
+          return;
+        }
+        if (startObj.type === "arc") {
+          const p = rotatePoint({ x: startObj.cx, y: startObj.cy }, degrees, center);
+          obj.cx = Math.round(p.x);
+          obj.cy = Math.round(p.y);
+          return;
+        }
+        if (startObj.type === "text") {
+          const p = rotatePoint({ x: startObj.x, y: startObj.y }, degrees, center);
+          obj.x = Math.round(p.x);
+          obj.y = Math.round(p.y);
+          return;
+        }
+        if (startObj.type === "rect" || startObj.type === "curved-rect") {
+          const w = Number(startObj.w ?? 0);
+          const h = Number(startObj.h ?? 0);
+          const startCenter = { x: Number(startObj.x ?? 0) + w / 2, y: Number(startObj.y ?? 0) + h / 2 };
+          const nextCenter = rotatePoint(startCenter, degrees, center);
+          obj.x = Math.round(nextCenter.x - w / 2);
+          obj.y = Math.round(nextCenter.y - h / 2);
+          obj.rotation = normalizeDegrees(Number(startObj.rotation || 0) + degrees);
+        }
+      };
+
+      const serializeSvg = () => {
+        const { width, height, objects } = svgState;
+        const lines = [
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+        ];
+        for (const obj of objects) {
+          if (obj.type === "rect") {
+            const rotation = Number(obj.rotation || 0);
+            const cx = obj.x + obj.w / 2;
+            const cy = obj.y + obj.h / 2;
+            const transform = rotation ? ` transform="rotate(${rotation} ${cx} ${cy})"` : "";
+            lines.push(
+              `  <rect x="${obj.x}" y="${obj.y}" width="${obj.w}" height="${obj.h}" rx="${obj.rx}" fill="${obj.fill}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}" data-rotate="${rotation}"${transform}/>`
+            );
+          } else if (obj.type === "circle") {
+            lines.push(`  <circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="${obj.fill}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"/>`);
+          } else if (obj.type === "line") {
+            lines.push(`  <line x1="${obj.x1}" y1="${obj.y1}" x2="${obj.x2}" y2="${obj.y2}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}" stroke-linecap="round"/>`);
+          } else if (obj.type === "arc") {
+            const d = describeArc(obj.cx, obj.cy, obj.r, obj.startAngle, obj.endAngle);
+            lines.push(
+              `  <path d="${d}" data-arc="1" data-cx="${obj.cx}" data-cy="${obj.cy}" data-r="${obj.r}" data-start="${obj.startAngle}" data-end="${obj.endAngle}" fill="none" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}" stroke-linecap="round"/>`
+            );
+          } else if (obj.type === "polygon") {
+            const points = pointsToString(obj.points);
+            lines.push(`  <polygon points="${points}" fill="${obj.fill}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"/>`);
+          } else if (obj.type === "curved-rect") {
+            const d = describeCurvedRect(obj.x, obj.y, obj.w, obj.h, obj.curve);
+            const rotation = Number(obj.rotation || 0);
+            const cx = obj.x + obj.w / 2;
+            const cy = obj.y + obj.h / 2;
+            const transform = rotation ? ` transform="rotate(${rotation} ${cx} ${cy})"` : "";
+            lines.push(
+              `  <path d="${d}" data-curverect="1" data-x="${obj.x}" data-y="${obj.y}" data-w="${obj.w}" data-h="${obj.h}" data-curve="${obj.curve}" data-rotate="${rotation}" fill="${obj.fill}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"${transform}/>`
+            );
+          } else if (obj.type === "text") {
+            lines.push(`  <text x="${obj.x}" y="${obj.y}" fill="${obj.fill}" font-size="${obj.fontSize}" font-family="${obj.fontFamily}">${escapeXml(obj.text)}</text>`);
+          }
+        }
+        lines.push("</svg>");
+        return lines.join("\n");
+      };
+
+      const parseSvg = (text) => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, "image/svg+xml");
+        const svg = doc.querySelector("svg");
+        if (!svg) return null;
+        const viewBox = svg.getAttribute("viewBox");
+        let width = Number(svg.getAttribute("width")) || 0;
+        let height = Number(svg.getAttribute("height")) || 0;
+        if ((!width || !height) && viewBox) {
+          const parts = viewBox.split(/\s+/).map((v) => Number(v));
+          if (parts.length === 4) {
+            width = width || parts[2];
+            height = height || parts[3];
+          }
+        }
+        width = Number.isFinite(width) && width > 0 ? width : 600;
+        height = Number.isFinite(height) && height > 0 ? height : 600;
+        const objects = [];
+        const children = Array.from(svg.children || []);
+        for (const el of children) {
+          const tag = el.tagName.toLowerCase();
+          if (tag === "rect") {
+            objects.push({
+              type: "rect",
+              x: Number(el.getAttribute("x") || 0),
+              y: Number(el.getAttribute("y") || 0),
+              w: Number(el.getAttribute("width") || 0),
+              h: Number(el.getAttribute("height") || 0),
+              rx: Number(el.getAttribute("rx") || 0),
+              rotation: Number(el.getAttribute("data-rotate") || 0),
+              fill: el.getAttribute("fill") || "#2b3646",
+              stroke: el.getAttribute("stroke") || "#8fa3bf",
+              strokeWidth: Number(el.getAttribute("stroke-width") || 2)
+            });
+          } else if (tag === "circle") {
+            objects.push({
+              type: "circle",
+              cx: Number(el.getAttribute("cx") || 0),
+              cy: Number(el.getAttribute("cy") || 0),
+              r: Number(el.getAttribute("r") || 0),
+              fill: el.getAttribute("fill") || "#1f2a36",
+              stroke: el.getAttribute("stroke") || "#8fa3bf",
+              strokeWidth: Number(el.getAttribute("stroke-width") || 2)
+            });
+          } else if (tag === "line") {
+            objects.push({
+              type: "line",
+              x1: Number(el.getAttribute("x1") || 0),
+              y1: Number(el.getAttribute("y1") || 0),
+              x2: Number(el.getAttribute("x2") || 0),
+              y2: Number(el.getAttribute("y2") || 0),
+              stroke: el.getAttribute("stroke") || "#8fa3bf",
+              strokeWidth: Number(el.getAttribute("stroke-width") || 2)
+            });
+          } else if (tag === "path" && el.getAttribute("data-arc") === "1") {
+            objects.push({
+              type: "arc",
+              cx: Number(el.getAttribute("data-cx") || 0),
+              cy: Number(el.getAttribute("data-cy") || 0),
+              r: Number(el.getAttribute("data-r") || 0),
+              startAngle: Number(el.getAttribute("data-start") || 0),
+              endAngle: Number(el.getAttribute("data-end") || 180),
+              stroke: el.getAttribute("stroke") || "#8fa3bf",
+              strokeWidth: Number(el.getAttribute("stroke-width") || 2)
+            });
+          } else if (tag === "polygon") {
+            objects.push({
+              type: "polygon",
+              points: parsePoints(el.getAttribute("points") || ""),
+              fill: el.getAttribute("fill") || "#2b3646",
+              stroke: el.getAttribute("stroke") || "#8fa3bf",
+              strokeWidth: Number(el.getAttribute("stroke-width") || 2)
+            });
+          } else if (tag === "path" && el.getAttribute("data-curverect") === "1") {
+            objects.push({
+              type: "curved-rect",
+              x: Number(el.getAttribute("data-x") || 0),
+              y: Number(el.getAttribute("data-y") || 0),
+              w: Number(el.getAttribute("data-w") || 0),
+              h: Number(el.getAttribute("data-h") || 0),
+              curve: Number(el.getAttribute("data-curve") || 0),
+              rotation: Number(el.getAttribute("data-rotate") || 0),
+              fill: el.getAttribute("fill") || "#2b3646",
+              stroke: el.getAttribute("stroke") || "#8fa3bf",
+              strokeWidth: Number(el.getAttribute("stroke-width") || 2)
+            });
+          } else if (tag === "text") {
+            objects.push({
+              type: "text",
+              x: Number(el.getAttribute("x") || 0),
+              y: Number(el.getAttribute("y") || 0),
+              text: el.textContent || "Text",
+              fill: el.getAttribute("fill") || "#e6e9ef",
+              fontSize: Number(el.getAttribute("font-size") || 18),
+              fontFamily: el.getAttribute("font-family") || "Arial, sans-serif"
+            });
+          }
+        }
+        return { width, height, objects };
+      };
+
+      const hasUnsupportedSvg = (text) => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, "image/svg+xml");
+        const svg = doc.querySelector("svg");
+        if (!svg) return true;
+        const unsupported = new Set(["g", "image", "polyline", "ellipse", "use", "defs", "mask", "clippath"]);
+        for (const el of Array.from(svg.querySelectorAll("*"))) {
+          const tag = el.tagName.toLowerCase();
+          if (tag === "path" && (el.getAttribute("data-arc") === "1" || el.getAttribute("data-curverect") === "1")) continue;
+          if (unsupported.has(tag) || tag === "path") return true;
+        }
+        return false;
+      };
+
+      const renderRawSvg = (text) => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, "image/svg+xml");
+        const svg = doc.querySelector("svg");
+        if (!svg) return;
+        const viewBox = svg.getAttribute("viewBox");
+        let width = Number(svg.getAttribute("width")) || 0;
+        let height = Number(svg.getAttribute("height")) || 0;
+        if ((!width || !height) && viewBox) {
+          const parts = viewBox.split(/\s+/).map((v) => Number(v));
+          if (parts.length === 4) {
+            width = width || parts[2];
+            height = height || parts[3];
+          }
+        }
+        width = Number.isFinite(width) && width > 0 ? width : 600;
+        height = Number.isFinite(height) && height > 0 ? height : 600;
+        canvas.setAttribute("width", width);
+        canvas.setAttribute("height", height);
+        canvas.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
+        Array.from(svg.childNodes).forEach((node) => {
+          const imported = document.importNode(node, true);
+          canvas.appendChild(imported);
+        });
+      };
+
+      const syncEditorFromModel = () => {
+        isSyncing = true;
+        editor.value = serializeSvg();
+        isSyncing = false;
+      };
+
+      const updateStateFromEditor = () => {
+        if (isSyncing) return;
+        rawSvgText = editor.value;
+        const parsed = parseSvg(editor.value);
+        if (parsed) {
+          rawMode = parsed.objects.length === 0 && hasUnsupportedSvg(editor.value);
+          svgState = parsed;
+          selection = [];
+          if (rawMode) renderRawSvg(rawSvgText);
+          else renderCanvas();
+        } else {
+          rawMode = true;
+          selection = [];
+          renderRawSvg(rawSvgText);
+        }
+      };
+
+      const translateObject = (obj, dx, dy) => {
+        if (!obj || (!dx && !dy)) return;
+        if (obj.type === "rect") {
+          obj.x = Math.round(obj.x + dx);
+          obj.y = Math.round(obj.y + dy);
+        } else if (obj.type === "curved-rect") {
+          obj.x = Math.round(obj.x + dx);
+          obj.y = Math.round(obj.y + dy);
+        } else if (obj.type === "circle") {
+          obj.cx = Math.round(obj.cx + dx);
+          obj.cy = Math.round(obj.cy + dy);
+        } else if (obj.type === "arc") {
+          obj.cx = Math.round(obj.cx + dx);
+          obj.cy = Math.round(obj.cy + dy);
+        } else if (obj.type === "line") {
+          obj.x1 = Math.round(obj.x1 + dx);
+          obj.y1 = Math.round(obj.y1 + dy);
+          obj.x2 = Math.round(obj.x2 + dx);
+          obj.y2 = Math.round(obj.y2 + dy);
+        } else if (obj.type === "polygon") {
+          obj.points = (obj.points || []).map((pt) => ({
+            x: Math.round(pt.x + dx),
+            y: Math.round(pt.y + dy)
+          }));
+        } else if (obj.type === "text") {
+          obj.x = Math.round(obj.x + dx);
+          obj.y = Math.round(obj.y + dy);
+        }
+      };
+
+      const alignSelectedObjects = (mode) => {
+        if (rawMode) return;
+        if (!selection || selection.length < 2) return;
+        const bounds = selection
+          .map((idx) => getBounds(svgState.objects[idx]))
+          .filter(Boolean);
+        if (bounds.length < 2) return;
+        const left = Math.min(...bounds.map((b) => b.x));
+        const right = Math.max(...bounds.map((b) => b.x + b.w));
+        const top = Math.min(...bounds.map((b) => b.y));
+        const bottom = Math.max(...bounds.map((b) => b.y + b.h));
+        const centerX = (left + right) / 2;
+        const centerY = (top + bottom) / 2;
+        selection.forEach((idx) => {
+          const obj = svgState.objects[idx];
+          const b = getBounds(obj);
+          if (!b) return;
+          let dx = 0;
+          let dy = 0;
+          if (mode === "left") dx = left - b.x;
+          if (mode === "right") dx = right - (b.x + b.w);
+          if (mode === "center") dx = centerX - (b.x + b.w / 2);
+          if (mode === "top") dy = top - b.y;
+          if (mode === "bottom") dy = bottom - (b.y + b.h);
+          if (mode === "middle") dy = centerY - (b.y + b.h / 2);
+          translateObject(obj, dx, dy);
+        });
+        syncEditorFromModel();
+        renderCanvas();
+      };
+
+      const rotateSelectedObjects = (degrees) => {
+        if (rawMode) return;
+        if (!selection || selection.length === 0) return;
+        selection.forEach((idx) => {
+          const obj = svgState.objects[idx];
+          if (!obj) return;
+          if (obj.type === "polygon") {
+            const b = getPolygonBounds(obj.points);
+            if (!b) return;
+            const center = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+            obj.points = rotatePoints(obj.points, degrees, center);
+          } else if (obj.type === "rect") {
+            obj.rotation = Number(obj.rotation || 0) + degrees;
+          } else if (obj.type === "curved-rect") {
+            obj.rotation = Number(obj.rotation || 0) + degrees;
+          } else if (obj.type === "line") {
+            const center = { x: (obj.x1 + obj.x2) / 2, y: (obj.y1 + obj.y2) / 2 };
+            const p1 = rotatePoint({ x: obj.x1, y: obj.y1 }, degrees, center);
+            const p2 = rotatePoint({ x: obj.x2, y: obj.y2 }, degrees, center);
+            obj.x1 = Math.round(p1.x);
+            obj.y1 = Math.round(p1.y);
+            obj.x2 = Math.round(p2.x);
+            obj.y2 = Math.round(p2.y);
+          } else if (obj.type === "arc") {
+            obj.startAngle = Number(obj.startAngle || 0) + degrees;
+            obj.endAngle = Number(obj.endAngle || 0) + degrees;
+          }
+        });
+        syncEditorFromModel();
+        renderCanvas();
+      };
+
+      const cloneObject = (obj) => JSON.parse(JSON.stringify(obj));
+
+      const getBounds = (obj) => {
+        if (obj.type === "rect") return getRotatedRectBounds(obj.x, obj.y, obj.w, obj.h, Number(obj.rotation || 0));
+        if (obj.type === "circle") return { x: obj.cx - obj.r, y: obj.cy - obj.r, w: obj.r * 2, h: obj.r * 2 };
+        if (obj.type === "arc") return { x: obj.cx - obj.r, y: obj.cy - obj.r, w: obj.r * 2, h: obj.r * 2 };
+        if (obj.type === "polygon") return getPolygonBounds(obj.points);
+        if (obj.type === "curved-rect") return getRotatedRectBounds(obj.x, obj.y, obj.w, obj.h, Number(obj.rotation || 0));
+        if (obj.type === "line") {
+          const x = Math.min(obj.x1, obj.x2);
+          const y = Math.min(obj.y1, obj.y2);
+          return { x, y, w: Math.abs(obj.x2 - obj.x1), h: Math.abs(obj.y2 - obj.y1) };
+        }
+        if (obj.type === "text") {
+          const w = obj.text.length * obj.fontSize * 0.6;
+          const h = obj.fontSize * 1.2;
+          return { x: obj.x, y: obj.y - obj.fontSize, w, h };
+        }
+        return null;
+      };
+
+      const hitTest = (p) => {
+        if (rawMode) return -1;
+        for (let i = svgState.objects.length - 1; i >= 0; i--) {
+          const b = getBounds(svgState.objects[i]);
+          if (!b) continue;
+          if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return i;
+        }
+        return -1;
+      };
+
+      const selectObjectsInRect = (start, end) => {
+        if (rawMode) return [];
+        const leftToRight = end.x >= start.x;
+        const x1 = Math.min(start.x, end.x);
+        const y1 = Math.min(start.y, end.y);
+        const x2 = Math.max(start.x, end.x);
+        const y2 = Math.max(start.y, end.y);
+        const selected = [];
+        for (let i = 0; i < svgState.objects.length; i++) {
+          const b = getBounds(svgState.objects[i]);
+          if (!b) continue;
+          const bx1 = b.x;
+          const by1 = b.y;
+          const bx2 = b.x + b.w;
+          const by2 = b.y + b.h;
+          const contained = bx1 >= x1 && by1 >= y1 && bx2 <= x2 && by2 <= y2;
+          const intersects = !(bx2 < x1 || bx1 > x2 || by2 < y1 || by1 > y2);
+          if (leftToRight ? contained : intersects) selected.push(i);
+        }
+        return selected;
+      };
+
+      const getHandlePoints = (b) => ([
+        { id: "nw", x: b.x, y: b.y },
+        { id: "n", x: b.x + b.w / 2, y: b.y },
+        { id: "ne", x: b.x + b.w, y: b.y },
+        { id: "e", x: b.x + b.w, y: b.y + b.h / 2 },
+        { id: "se", x: b.x + b.w, y: b.y + b.h },
+        { id: "s", x: b.x + b.w / 2, y: b.y + b.h },
+        { id: "sw", x: b.x, y: b.y + b.h },
+        { id: "w", x: b.x, y: b.y + b.h / 2 }
+      ]);
+
+      const svgPoint = (evt) => {
+        const pt = canvas.createSVGPoint();
+        pt.x = evt.clientX;
+        pt.y = evt.clientY;
+        const ctm = canvas.getScreenCTM();
+        if (!ctm) return { x: 0, y: 0 };
+        const p = pt.matrixTransform(ctm.inverse());
+        return { x: p.x, y: p.y };
+      };
+
+      const renderCanvas = () => {
+        if (rawMode) {
+          renderRawSvg(rawSvgText);
+          return;
+        }
+        if (!svgState.objects || svgState.objects.length === 0) {
+          if (rawSvgText) {
+            renderRawSvg(rawSvgText);
+            return;
+          }
+        }
+        const ns = "http://www.w3.org/2000/svg";
+        canvas.setAttribute("width", svgState.width);
+        canvas.setAttribute("height", svgState.height);
+        canvas.setAttribute("viewBox", `0 0 ${svgState.width} ${svgState.height}`);
+        while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
+
+        svgState.objects.forEach((obj, idx) => {
+          let el = null;
+          if (obj.type === "rect") {
+            el = document.createElementNS(ns, "rect");
+            el.setAttribute("x", obj.x);
+            el.setAttribute("y", obj.y);
+            el.setAttribute("width", obj.w);
+            el.setAttribute("height", obj.h);
+            el.setAttribute("rx", obj.rx);
+            el.setAttribute("fill", obj.fill);
+            el.setAttribute("stroke", obj.stroke);
+            el.setAttribute("stroke-width", obj.strokeWidth);
+            const rotation = Number(obj.rotation || 0);
+            if (rotation) {
+              const cx = obj.x + obj.w / 2;
+              const cy = obj.y + obj.h / 2;
+              el.setAttribute("transform", `rotate(${rotation} ${cx} ${cy})`);
+            }
+          } else if (obj.type === "circle") {
+            el = document.createElementNS(ns, "circle");
+            el.setAttribute("cx", obj.cx);
+            el.setAttribute("cy", obj.cy);
+            el.setAttribute("r", obj.r);
+            el.setAttribute("fill", obj.fill);
+            el.setAttribute("stroke", obj.stroke);
+            el.setAttribute("stroke-width", obj.strokeWidth);
+          } else if (obj.type === "line") {
+            el = document.createElementNS(ns, "line");
+            el.setAttribute("x1", obj.x1);
+            el.setAttribute("y1", obj.y1);
+            el.setAttribute("x2", obj.x2);
+            el.setAttribute("y2", obj.y2);
+            el.setAttribute("stroke", obj.stroke);
+            el.setAttribute("stroke-width", obj.strokeWidth);
+            el.setAttribute("stroke-linecap", "round");
+          } else if (obj.type === "arc") {
+            el = document.createElementNS(ns, "path");
+            el.setAttribute("d", describeArc(obj.cx, obj.cy, obj.r, obj.startAngle, obj.endAngle));
+            el.setAttribute("fill", "none");
+            el.setAttribute("stroke", obj.stroke);
+            el.setAttribute("stroke-width", obj.strokeWidth);
+            el.setAttribute("stroke-linecap", "round");
+          } else if (obj.type === "polygon") {
+            el = document.createElementNS(ns, "polygon");
+            el.setAttribute("points", pointsToString(obj.points));
+            el.setAttribute("fill", obj.fill);
+            el.setAttribute("stroke", obj.stroke);
+            el.setAttribute("stroke-width", obj.strokeWidth);
+          } else if (obj.type === "curved-rect") {
+            el = document.createElementNS(ns, "path");
+            el.setAttribute("d", describeCurvedRect(obj.x, obj.y, obj.w, obj.h, obj.curve));
+            el.setAttribute("fill", obj.fill);
+            el.setAttribute("stroke", obj.stroke);
+            el.setAttribute("stroke-width", obj.strokeWidth);
+            const rotation = Number(obj.rotation || 0);
+            if (rotation) {
+              const cx = obj.x + obj.w / 2;
+              const cy = obj.y + obj.h / 2;
+              el.setAttribute("transform", `rotate(${rotation} ${cx} ${cy})`);
+            }
+          } else if (obj.type === "text") {
+            el = document.createElementNS(ns, "text");
+            el.setAttribute("x", obj.x);
+            el.setAttribute("y", obj.y);
+            el.setAttribute("fill", obj.fill);
+            el.setAttribute("font-size", obj.fontSize);
+            el.setAttribute("font-family", obj.fontFamily);
+            el.textContent = obj.text;
+          }
+          if (!el) return;
+          canvas.appendChild(el);
+
+          if (selection.includes(idx)) {
+            const b = getBounds(obj);
+            if (b) {
+              const rotation = Number(obj.rotation || 0);
+              const canRotateSelection = rotation && (obj.type === "rect" || obj.type === "curved-rect");
+              if (canRotateSelection) {
+                const pad = 4;
+                const cx = obj.x + obj.w / 2;
+                const cy = obj.y + obj.h / 2;
+                const g = document.createElementNS(ns, "g");
+                g.setAttribute("transform", `rotate(${rotation} ${cx} ${cy})`);
+                const sel = document.createElementNS(ns, "rect");
+                sel.setAttribute("x", obj.x - pad);
+                sel.setAttribute("y", obj.y - pad);
+                sel.setAttribute("width", obj.w + pad * 2);
+                sel.setAttribute("height", obj.h + pad * 2);
+                sel.setAttribute("rx", Math.max(0, Number(obj.rx || 0)));
+                sel.setAttribute("fill", "none");
+                sel.setAttribute("stroke", "#4aa3ff");
+                sel.setAttribute("stroke-width", "2");
+                sel.setAttribute("stroke-dasharray", "4 3");
+                g.appendChild(sel);
+                canvas.appendChild(g);
+              } else {
+                const sel = document.createElementNS(ns, "rect");
+                sel.setAttribute("x", b.x);
+                sel.setAttribute("y", b.y);
+                sel.setAttribute("width", b.w);
+                sel.setAttribute("height", b.h);
+                sel.setAttribute("fill", "none");
+                sel.setAttribute("stroke", "#4aa3ff");
+                sel.setAttribute("stroke-width", "2");
+                sel.setAttribute("stroke-dasharray", "4 3");
+                canvas.appendChild(sel);
+              }
+
+              if (selection.length > 1) {
+                return;
+              }
+
+              if (obj.type === "line") {
+                const handleA = document.createElementNS(ns, "circle");
+                handleA.setAttribute("cx", obj.x1);
+                handleA.setAttribute("cy", obj.y1);
+                handleA.setAttribute("r", "5");
+                handleA.setAttribute("fill", "#4aa3ff");
+                handleA.dataset.handle = "line-start";
+                handleA.dataset.idx = String(idx);
+                canvas.appendChild(handleA);
+
+                const handleB = document.createElementNS(ns, "circle");
+                handleB.setAttribute("cx", obj.x2);
+                handleB.setAttribute("cy", obj.y2);
+                handleB.setAttribute("r", "5");
+                handleB.setAttribute("fill", "#4aa3ff");
+                handleB.dataset.handle = "line-end";
+                handleB.dataset.idx = String(idx);
+                canvas.appendChild(handleB);
+              } else {
+                const rotation = Number(obj.rotation || 0);
+                const isRotatedRect = rotation && (obj.type === "rect" || obj.type === "curved-rect");
+                if (isRotatedRect) {
+                  const pad = 4;
+                  const cx = obj.x + obj.w / 2;
+                  const cy = obj.y + obj.h / 2;
+                  const points = [
+                    { id: "nw", x: obj.x - pad, y: obj.y - pad, cursor: "nwse-resize" },
+                    { id: "n", x: obj.x + obj.w / 2, y: obj.y - pad, cursor: "ns-resize" },
+                    { id: "ne", x: obj.x + obj.w + pad, y: obj.y - pad, cursor: "nesw-resize" },
+                    { id: "e", x: obj.x + obj.w + pad, y: obj.y + obj.h / 2, cursor: "ew-resize" },
+                    { id: "se", x: obj.x + obj.w + pad, y: obj.y + obj.h + pad, cursor: "nwse-resize" },
+                    { id: "s", x: obj.x + obj.w / 2, y: obj.y + obj.h + pad, cursor: "ns-resize" },
+                    { id: "sw", x: obj.x - pad, y: obj.y + obj.h + pad, cursor: "nesw-resize" },
+                    { id: "w", x: obj.x - pad, y: obj.y + obj.h / 2, cursor: "ew-resize" }
+                  ];
+                  points.forEach((h) => {
+                    const rotated = rotatePoint({ x: h.x, y: h.y }, rotation, { x: cx, y: cy });
+                    const handle = document.createElementNS(ns, "rect");
+                    handle.setAttribute("x", rotated.x - 4);
+                    handle.setAttribute("y", rotated.y - 4);
+                    handle.setAttribute("width", "8");
+                    handle.setAttribute("height", "8");
+                    handle.setAttribute("fill", "#4aa3ff");
+                    handle.dataset.handle = h.id;
+                    handle.dataset.idx = String(idx);
+                    handle.style.cursor = h.cursor;
+                    canvas.appendChild(handle);
+                  });
+                } else {
+                  const handles = getHandlePoints(b);
+                  handles.forEach((h) => {
+                    const handle = document.createElementNS(ns, "rect");
+                    handle.setAttribute("x", h.x - 4);
+                    handle.setAttribute("y", h.y - 4);
+                    handle.setAttribute("width", "8");
+                    handle.setAttribute("height", "8");
+                    handle.setAttribute("fill", "#4aa3ff");
+                    handle.dataset.handle = h.id;
+                    handle.dataset.idx = String(idx);
+                    canvas.appendChild(handle);
+                  });
+                }
+              }
+
+              const rotationValue = Number(obj.rotation || 0);
+              const isRotatedRect =
+                rotationValue &&
+                (obj.type === "rect" || obj.type === "curved-rect") &&
+                Number.isFinite(obj.x) &&
+                Number.isFinite(obj.y) &&
+                Number.isFinite(obj.w) &&
+                Number.isFinite(obj.h);
+
+              let rotateHandlePos = null;
+              let rotateStemStart = null;
+              let rotateStemEnd = null;
+
+              if (isRotatedRect) {
+                const pad = 4;
+                const cx = obj.x + obj.w / 2;
+                const cy = obj.y + obj.h / 2;
+                const nw = rotatePoint({ x: obj.x - pad, y: obj.y - pad }, rotationValue, { x: cx, y: cy });
+                const ne = rotatePoint({ x: obj.x + obj.w + pad, y: obj.y - pad }, rotationValue, { x: cx, y: cy });
+                const topMid = { x: (nw.x + ne.x) / 2, y: (nw.y + ne.y) / 2 };
+                const edge = { x: ne.x - nw.x, y: ne.y - nw.y };
+                let normal = { x: -edge.y, y: edge.x };
+                const normalLen = Math.hypot(normal.x, normal.y) || 1;
+                normal = { x: normal.x / normalLen, y: normal.y / normalLen };
+                const toTop = { x: topMid.x - cx, y: topMid.y - cy };
+                if (normal.x * toTop.x + normal.y * toTop.y < 0) normal = { x: -normal.x, y: -normal.y };
+
+                rotateStemStart = topMid;
+                rotateStemEnd = { x: topMid.x + normal.x * 12, y: topMid.y + normal.y * 12 };
+                rotateHandlePos = { x: topMid.x + normal.x * 18, y: topMid.y + normal.y * 18 };
+              } else {
+                const rotateX = b.x + b.w / 2;
+                const rotateY = b.y - 18;
+                rotateStemStart = { x: rotateX, y: b.y };
+                rotateStemEnd = { x: rotateX, y: rotateY + 6 };
+                rotateHandlePos = { x: rotateX, y: rotateY };
+              }
+
+              const rotateStem = document.createElementNS(ns, "line");
+              rotateStem.setAttribute("x1", rotateStemStart.x);
+              rotateStem.setAttribute("y1", rotateStemStart.y);
+              rotateStem.setAttribute("x2", rotateStemEnd.x);
+              rotateStem.setAttribute("y2", rotateStemEnd.y);
+              rotateStem.setAttribute("stroke", "#4aa3ff");
+              rotateStem.setAttribute("stroke-width", "2");
+              canvas.appendChild(rotateStem);
+              const rotateHandle = document.createElementNS(ns, "circle");
+              rotateHandle.setAttribute("cx", rotateHandlePos.x);
+              rotateHandle.setAttribute("cy", rotateHandlePos.y);
+              rotateHandle.setAttribute("r", "7");
+              rotateHandle.setAttribute("fill", "#4aa3ff");
+              rotateHandle.dataset.handle = "rotate";
+              rotateHandle.style.cursor = "grab";
+              canvas.appendChild(rotateHandle);
+            }
+          }
+        });
+
+        if (selection.length > 1) {
+          const groupB = getSelectionBounds(selection);
+          if (groupB) {
+            const groupRect = document.createElementNS(ns, "rect");
+            groupRect.setAttribute("x", groupB.x);
+            groupRect.setAttribute("y", groupB.y);
+            groupRect.setAttribute("width", groupB.w);
+            groupRect.setAttribute("height", groupB.h);
+            groupRect.setAttribute("fill", "none");
+            groupRect.setAttribute("stroke", "#ffb300");
+            groupRect.setAttribute("stroke-width", "2");
+            groupRect.setAttribute("stroke-dasharray", "6 4");
+            canvas.appendChild(groupRect);
+
+            const cornerHandles = [
+              { id: "nw", x: groupB.x, y: groupB.y },
+              { id: "ne", x: groupB.x + groupB.w, y: groupB.y },
+              { id: "se", x: groupB.x + groupB.w, y: groupB.y + groupB.h },
+              { id: "sw", x: groupB.x, y: groupB.y + groupB.h }
+            ];
+            cornerHandles.forEach((h) => {
+              const handle = document.createElementNS(ns, "rect");
+              handle.setAttribute("x", h.x - 5);
+              handle.setAttribute("y", h.y - 5);
+              handle.setAttribute("width", "10");
+              handle.setAttribute("height", "10");
+              handle.setAttribute("fill", "#ffb300");
+              handle.dataset.handle = `group-${h.id}`;
+              handle.dataset.group = "1";
+              canvas.appendChild(handle);
+            });
+
+            const rotateX = groupB.x + groupB.w / 2;
+            const rotateY = groupB.y - 22;
+            const rotateStem = document.createElementNS(ns, "line");
+            rotateStem.setAttribute("x1", rotateX);
+            rotateStem.setAttribute("y1", groupB.y);
+            rotateStem.setAttribute("x2", rotateX);
+            rotateStem.setAttribute("y2", rotateY + 7);
+            rotateStem.setAttribute("stroke", "#ffb300");
+            rotateStem.setAttribute("stroke-width", "2");
+            canvas.appendChild(rotateStem);
+            const rotateHandle = document.createElementNS(ns, "circle");
+            rotateHandle.setAttribute("cx", rotateX);
+            rotateHandle.setAttribute("cy", rotateY);
+            rotateHandle.setAttribute("r", "8");
+            rotateHandle.setAttribute("fill", "#ffb300");
+            rotateHandle.dataset.handle = "rotate";
+            rotateHandle.dataset.group = "1";
+            rotateHandle.style.cursor = "grab";
+            canvas.appendChild(rotateHandle);
+          }
+        }
+
+        if (selectState && selectState.active) {
+          const rect = document.createElementNS(ns, "rect");
+          rect.setAttribute("x", selectState.rect.x);
+          rect.setAttribute("y", selectState.rect.y);
+          rect.setAttribute("width", selectState.rect.w);
+          rect.setAttribute("height", selectState.rect.h);
+          rect.setAttribute("fill", "rgba(74,163,255,0.12)");
+          rect.setAttribute("stroke", "#4aa3ff");
+          rect.setAttribute("stroke-width", "1");
+          rect.setAttribute("stroke-dasharray", "4 3");
+          canvas.appendChild(rect);
+        }
+        if (!suppressPropsRender) renderProperties();
+      };
+
+      const renderProperties = () => {
+        if (!propsEl) return;
+        const addRow = (label, input) => {
+          const row = document.createElement("div");
+          row.className = "prop-row";
+          const lab = document.createElement("label");
+          lab.textContent = label;
+          row.appendChild(lab);
+          row.appendChild(input);
+          propsEl.appendChild(row);
+        };
+        const addInput = (label, value, type, onChange) => {
+          const input = document.createElement("input");
+          input.type = type;
+          input.value = value ?? "";
+          input.addEventListener("input", () => onChange(input.value));
+          addRow(label, input);
+          return input;
+        };
+        const addColor = (label, value, onChange) => {
+          const input = document.createElement("input");
+          input.type = "color";
+          input.value = String(value || "#ffffff");
+          input.addEventListener("input", () => onChange(input.value));
+          addRow(label, input);
+        };
+        const commit = () => {
+          syncEditorFromModel();
+          renderCanvas();
+        };
+        if (rawMode) {
+          propsEl.textContent = "Raw SVG mode.";
+          if (alignButtons.length) alignButtons.forEach((btn) => (btn.disabled = true));
+          return;
+        }
+        if (!selection || selection.length === 0) {
+          propsEl.textContent = "Select an item.";
+          if (alignButtons.length) alignButtons.forEach((btn) => (btn.disabled = true));
+          return;
+        }
+        if (selection.length > 1) {
+          propsEl.innerHTML = "";
+          const note = document.createElement("div");
+          note.textContent = "Multiple selected.";
+          propsEl.appendChild(note);
+          const rotateInput = document.createElement("input");
+          rotateInput.type = "number";
+          rotateInput.value = 0;
+          const applyRotate = () => {
+            const deg = Number(rotateInput.value || 0);
+            if (!Number.isFinite(deg) || deg === 0) return;
+            rotateSelectedObjects(deg);
+            rotateInput.value = 0;
+          };
+          rotateInput.addEventListener("keydown", (evt) => {
+            if (evt.key === "Enter") {
+              evt.preventDefault();
+              applyRotate();
+            }
+          });
+          rotateInput.addEventListener("blur", applyRotate);
+          addRow("Rotate (deg)", rotateInput);
+          if (alignButtons.length) alignButtons.forEach((btn) => (btn.disabled = false));
+          return;
+        }
+        const obj = svgState.objects[selection[0]];
+        if (!obj) {
+          propsEl.textContent = "Select an item.";
+          if (alignButtons.length) alignButtons.forEach((btn) => (btn.disabled = true));
+          return;
+        }
+        propsEl.innerHTML = "";
+        if (alignButtons.length) alignButtons.forEach((btn) => (btn.disabled = true));
+
+        if (obj.type === "rect") {
+          addInput("X", obj.x, "number", (v) => { obj.x = Number(v || 0); commit(); });
+          addInput("Y", obj.y, "number", (v) => { obj.y = Number(v || 0); commit(); });
+          addInput("W", obj.w, "number", (v) => { obj.w = Number(v || 0); commit(); });
+          addInput("H", obj.h, "number", (v) => { obj.h = Number(v || 0); commit(); });
+          addInput("Radius", obj.rx, "number", (v) => { obj.rx = Number(v || 0); commit(); });
+          const rotateInput = document.createElement("input");
+          rotateInput.type = "number";
+          rotateInput.value = obj.rotation || 0;
+          const applyRotate = () => {
+            obj.rotation = Number(rotateInput.value || 0);
+            commit();
+          };
+          rotateInput.addEventListener("keydown", (evt) => {
+            if (evt.key === "Enter") {
+              evt.preventDefault();
+              applyRotate();
+            }
+          });
+          rotateInput.addEventListener("blur", applyRotate);
+          addRow("Rotate", rotateInput);
+          addColor("Fill", obj.fill, (v) => { obj.fill = v; commit(); });
+          addColor("Stroke", obj.stroke, (v) => { obj.stroke = v; commit(); });
+          addInput("Stroke W", obj.strokeWidth, "number", (v) => { obj.strokeWidth = Number(v || 0); commit(); });
+        } else if (obj.type === "circle") {
+          addInput("CX", obj.cx, "number", (v) => { obj.cx = Number(v || 0); commit(); });
+          addInput("CY", obj.cy, "number", (v) => { obj.cy = Number(v || 0); commit(); });
+          addInput("R", obj.r, "number", (v) => { obj.r = Number(v || 0); commit(); });
+          addColor("Fill", obj.fill, (v) => { obj.fill = v; commit(); });
+          addColor("Stroke", obj.stroke, (v) => { obj.stroke = v; commit(); });
+          addInput("Stroke W", obj.strokeWidth, "number", (v) => { obj.strokeWidth = Number(v || 0); commit(); });
+        } else if (obj.type === "line") {
+          addInput("X1", obj.x1, "number", (v) => { obj.x1 = Number(v || 0); commit(); });
+          addInput("Y1", obj.y1, "number", (v) => { obj.y1 = Number(v || 0); commit(); });
+          addInput("X2", obj.x2, "number", (v) => { obj.x2 = Number(v || 0); commit(); });
+          addInput("Y2", obj.y2, "number", (v) => { obj.y2 = Number(v || 0); commit(); });
+          addColor("Stroke", obj.stroke, (v) => { obj.stroke = v; commit(); });
+          addInput("Stroke W", obj.strokeWidth, "number", (v) => { obj.strokeWidth = Number(v || 0); commit(); });
+        } else if (obj.type === "arc") {
+          addInput("CX", obj.cx, "number", (v) => { obj.cx = Number(v || 0); commit(); });
+          addInput("CY", obj.cy, "number", (v) => { obj.cy = Number(v || 0); commit(); });
+          addInput("R", obj.r, "number", (v) => { obj.r = Math.max(1, Number(v || 0)); commit(); });
+          addInput("Start", obj.startAngle, "number", (v) => { obj.startAngle = Number(v || 0); commit(); });
+          addInput("End", obj.endAngle, "number", (v) => { obj.endAngle = Number(v || 0); commit(); });
+          addColor("Stroke", obj.stroke, (v) => { obj.stroke = v; commit(); });
+          addInput("Stroke W", obj.strokeWidth, "number", (v) => { obj.strokeWidth = Number(v || 0); commit(); });
+        } else if (obj.type === "polygon") {
+          const textarea = document.createElement("textarea");
+          textarea.rows = 3;
+          textarea.value = pointsToString(obj.points);
+          textarea.addEventListener("focus", () => {
+            suppressPropsRender = true;
+          });
+          textarea.addEventListener("blur", () => {
+            suppressPropsRender = false;
+            obj.points = parsePoints(textarea.value);
+            commit();
+            renderCanvas();
+          });
+          textarea.addEventListener("input", () => {
+            obj.points = parsePoints(textarea.value);
+            commit();
+          });
+          addRow("Points", textarea);
+          const rotateInput = document.createElement("input");
+          rotateInput.type = "number";
+          rotateInput.value = 0;
+          const applyRotate = () => {
+            const deg = Number(rotateInput.value || 0);
+            if (!Number.isFinite(deg) || deg === 0) return;
+            const b = getPolygonBounds(obj.points);
+            if (!b) return;
+            const center = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+            obj.points = rotatePoints(obj.points, deg, center);
+            textarea.value = pointsToString(obj.points);
+            rotateInput.value = 0;
+            commit();
+          };
+          rotateInput.addEventListener("keydown", (evt) => {
+            if (evt.key === "Enter") {
+              evt.preventDefault();
+              applyRotate();
+            }
+          });
+          rotateInput.addEventListener("blur", applyRotate);
+          addRow("Rotate (deg)", rotateInput);
+          addColor("Fill", obj.fill, (v) => { obj.fill = v; commit(); });
+          addColor("Stroke", obj.stroke, (v) => { obj.stroke = v; commit(); });
+          addInput("Stroke W", obj.strokeWidth, "number", (v) => { obj.strokeWidth = Number(v || 0); commit(); });
+        } else if (obj.type === "curved-rect") {
+          addInput("X", obj.x, "number", (v) => { obj.x = Number(v || 0); commit(); });
+          addInput("Y", obj.y, "number", (v) => { obj.y = Number(v || 0); commit(); });
+          addInput("W", obj.w, "number", (v) => { obj.w = Math.max(1, Number(v || 0)); commit(); });
+          addInput("H", obj.h, "number", (v) => { obj.h = Math.max(1, Number(v || 0)); commit(); });
+          addInput("Curve", obj.curve, "number", (v) => { obj.curve = Math.max(0, Number(v || 0)); commit(); });
+          const rotateInput = document.createElement("input");
+          rotateInput.type = "number";
+          rotateInput.value = obj.rotation || 0;
+          const applyRotate = () => {
+            obj.rotation = Number(rotateInput.value || 0);
+            commit();
+          };
+          rotateInput.addEventListener("keydown", (evt) => {
+            if (evt.key === "Enter") {
+              evt.preventDefault();
+              applyRotate();
+            }
+          });
+          rotateInput.addEventListener("blur", applyRotate);
+          addRow("Rotate", rotateInput);
+          addColor("Fill", obj.fill, (v) => { obj.fill = v; commit(); });
+          addColor("Stroke", obj.stroke, (v) => { obj.stroke = v; commit(); });
+          addInput("Stroke W", obj.strokeWidth, "number", (v) => { obj.strokeWidth = Number(v || 0); commit(); });
+        } else if (obj.type === "text") {
+          addInput("Text", obj.text, "text", (v) => { obj.text = v; commit(); });
+          addInput("X", obj.x, "number", (v) => { obj.x = Number(v || 0); commit(); });
+          addInput("Y", obj.y, "number", (v) => { obj.y = Number(v || 0); commit(); });
+          addColor("Fill", obj.fill, (v) => { obj.fill = v; commit(); });
+          addInput("Font", obj.fontSize, "number", (v) => { obj.fontSize = Number(v || 0); commit(); });
+        }
+      };
+
+      const addObject = (obj) => {
+        if (rawMode) {
+          const snippet = (() => {
+            if (obj.type === "rect") {
+              const rotation = Number(obj.rotation || 0);
+              const cx = obj.x + obj.w / 2;
+              const cy = obj.y + obj.h / 2;
+              const transform = rotation ? ` transform="rotate(${rotation} ${cx} ${cy})"` : "";
+              return `  <rect x="${obj.x}" y="${obj.y}" width="${obj.w}" height="${obj.h}" rx="${obj.rx}" fill="${obj.fill}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}" data-rotate="${rotation}"${transform}/>`;
+            }
+            if (obj.type === "circle") {
+              return `  <circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="${obj.fill}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"/>`;
+            }
+            if (obj.type === "line") {
+              return `  <line x1="${obj.x1}" y1="${obj.y1}" x2="${obj.x2}" y2="${obj.y2}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}" stroke-linecap="round"/>`;
+            }
+            if (obj.type === "text") {
+              return `  <text x="${obj.x}" y="${obj.y}" fill="${obj.fill}" font-size="${obj.fontSize}" font-family="${obj.fontFamily}">${escapeXml(obj.text)}</text>`;
+            }
+            if (obj.type === "arc") {
+              const d = describeArc(obj.cx, obj.cy, obj.r, obj.startAngle, obj.endAngle);
+              return `  <path d="${d}" data-arc="1" data-cx="${obj.cx}" data-cy="${obj.cy}" data-r="${obj.r}" data-start="${obj.startAngle}" data-end="${obj.endAngle}" fill="none" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}" stroke-linecap="round"/>`;
+            }
+            if (obj.type === "polygon") {
+              const points = pointsToString(obj.points);
+              return `  <polygon points="${points}" fill="${obj.fill}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"/>`;
+            }
+            if (obj.type === "curved-rect") {
+              const d = describeCurvedRect(obj.x, obj.y, obj.w, obj.h, obj.curve);
+              const rotation = Number(obj.rotation || 0);
+              const cx = obj.x + obj.w / 2;
+              const cy = obj.y + obj.h / 2;
+              const transform = rotation ? ` transform="rotate(${rotation} ${cx} ${cy})"` : "";
+              return `  <path d="${d}" data-curverect="1" data-x="${obj.x}" data-y="${obj.y}" data-w="${obj.w}" data-h="${obj.h}" data-curve="${obj.curve}" data-rotate="${rotation}" fill="${obj.fill}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"${transform}/>`;
+            }
+            return "";
+          })();
+          const closeIdx = rawSvgText.lastIndexOf("</svg>");
+          if (closeIdx >= 0) {
+            rawSvgText = `${rawSvgText.slice(0, closeIdx)}\n${snippet}\n${rawSvgText.slice(closeIdx)}`;
+          } else {
+            rawSvgText = `${rawSvgText}\n${snippet}`;
+          }
+          isSyncing = true;
+          editor.value = rawSvgText;
+          isSyncing = false;
+          renderRawSvg(rawSvgText);
+          return;
+        }
+        svgState.objects.push(obj);
+        syncEditorFromModel();
+        updateStateFromEditor();
+      };
+
+      toolboxItems.forEach((item) => {
+        item.addEventListener("dragstart", (evt) => {
+          const type = item.dataset.tool;
+          if (!type) return;
+          evt.dataTransfer?.setData("application/x-svg-tool", type);
+          evt.dataTransfer?.setData("text/plain", type);
+          if (evt.dataTransfer) evt.dataTransfer.effectAllowed = "copy";
+        });
+      });
+
+      alignButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const mode = btn.dataset.align || "";
+          if (!mode) return;
+          alignSelectedObjects(mode);
+        });
+      });
+
+      canvas.addEventListener("dragover", (evt) => {
+        evt.preventDefault();
+        if (evt.dataTransfer) evt.dataTransfer.dropEffect = "copy";
+      });
+
+      canvas.addEventListener("drop", (evt) => {
+        evt.preventDefault();
+        const type = evt.dataTransfer?.getData("application/x-svg-tool") || "";
+        if (!type) return;
+        const p = svgPoint(evt);
+        if (type === "rect") {
+          addObject({ type: "rect", x: Math.round(p.x - 60), y: Math.round(p.y - 40), w: 120, h: 80, rx: 10, fill: "#2b3646", stroke: "#8fa3bf", strokeWidth: 2 });
+        } else if (type === "circle") {
+          addObject({ type: "circle", cx: Math.round(p.x), cy: Math.round(p.y), r: 50, fill: "#1f2a36", stroke: "#8fa3bf", strokeWidth: 2 });
+        } else if (type === "line") {
+          addObject({ type: "line", x1: Math.round(p.x - 60), y1: Math.round(p.y - 40), x2: Math.round(p.x + 60), y2: Math.round(p.y + 40), stroke: "#8fa3bf", strokeWidth: 3 });
+        } else if (type === "arc") {
+          addObject({ type: "arc", cx: Math.round(p.x), cy: Math.round(p.y), r: 60, startAngle: 200, endAngle: 340, stroke: "#8fa3bf", strokeWidth: 3 });
+        } else if (type === "polygon") {
+          const cx = Math.round(p.x);
+          const cy = Math.round(p.y);
+          addObject({
+            type: "polygon",
+            points: [
+              { x: cx - 60, y: cy - 40 },
+              { x: cx + 60, y: cy - 20 },
+              { x: cx + 40, y: cy + 60 },
+              { x: cx - 40, y: cy + 50 }
+            ],
+            fill: "#2b3646",
+            stroke: "#8fa3bf",
+            strokeWidth: 2
+          });
+        } else if (type === "curved-rect") {
+          addObject({
+            type: "curved-rect",
+            x: Math.round(p.x - 70),
+            y: Math.round(p.y - 40),
+            w: 140,
+            h: 80,
+            curve: 24,
+            rotation: 0,
+            fill: "#2b3646",
+            stroke: "#8fa3bf",
+            strokeWidth: 2
+          });
+        } else if (type === "text") {
+          addObject({ type: "text", x: Math.round(p.x), y: Math.round(p.y), text: "Text", fill: "#e6e9ef", fontSize: 18, fontFamily: "Arial, sans-serif" });
+        }
+      });
+
+      canvas.addEventListener("mousedown", (evt) => {
+        const p = svgPoint(evt);
+        const handleEl = evt.target instanceof Element ? evt.target.closest("[data-handle]") : null;
+        if (handleEl) {
+          const handle = handleEl.dataset.handle || "";
+          const isGroup = handleEl.dataset.group === "1";
+          if (handle === "rotate") {
+            if (!selection || selection.length === 0) return;
+            const base = selection.map((i) => ({ idx: i, obj: cloneObject(svgState.objects[i]) }));
+            const baseObjects = [];
+            for (const entry of base) baseObjects[entry.idx] = entry.obj;
+            const bounds = selection.length > 1 ? getSelectionBounds(selection, baseObjects) : getBounds(base[0].obj);
+            if (!bounds) return;
+            const center = { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 };
+            const angle0 = Math.atan2(p.y - center.y, p.x - center.x);
+            dragState = {
+              start: p,
+              base,
+              handle,
+              pending: false,
+              rotate: true,
+              rotateCenter: center,
+              rotateAngle0: angle0
+            };
+            renderCanvas();
+            return;
+          }
+          if (isGroup && handle.startsWith("group-")) {
+            const base = selection.map((i) => ({ idx: i, obj: cloneObject(svgState.objects[i]) }));
+            const baseObjects = [];
+            for (const entry of base) baseObjects[entry.idx] = entry.obj;
+            const groupBounds = getSelectionBounds(selection, baseObjects);
+            if (!groupBounds) return;
+            dragState = {
+              start: p,
+              base,
+              handle,
+              pending: true,
+              group: true,
+              groupBounds
+            };
+            renderCanvas();
+            return;
+          }
+          const idx = Number(handleEl.dataset.idx || -1);
+          if (Number.isFinite(idx) && idx >= 0) {
+            dragState = {
+              start: p,
+              base: [{ idx, obj: { ...svgState.objects[idx] } }],
+              handle,
+              pending: true
+            };
+            selection = [idx];
+            renderCanvas();
+            return;
+          }
+        }
+        const idx = hitTest(p);
+        if (idx < 0) {
+          selection = [];
+          if (!rawMode) {
+            selectState = {
+              active: true,
+              start: p,
+              last: p,
+              rect: { x: p.x, y: p.y, w: 0, h: 0 }
+            };
+          } else {
+            selectState = null;
+          }
+          renderCanvas();
+          return;
+        }
+        if (evt.shiftKey) {
+          if (selection.includes(idx)) {
+            selection = selection.filter((i) => i !== idx);
+          } else {
+            selection = [...selection, idx];
+          }
+        } else if (!selection.includes(idx)) {
+          selection = [idx];
+        }
+        const base = selection.map((i) => ({ idx: i, obj: { ...svgState.objects[i] } }));
+        dragState = { start: p, base, handle: "", pending: true };
+        renderCanvas();
+      });
+
+      window.addEventListener("mousemove", (evt) => {
+        if (selectState && selectState.active) {
+          const p = svgPoint(evt);
+          selectState.last = p;
+          const x = Math.min(selectState.start.x, p.x);
+          const y = Math.min(selectState.start.y, p.y);
+          const w = Math.abs(p.x - selectState.start.x);
+          const h = Math.abs(p.y - selectState.start.y);
+          selectState.rect = { x, y, w, h };
+          renderCanvas();
+          return;
+        }
+        if (!dragState) return;
+        const p = svgPoint(evt);
+        if (dragState.rotate && dragState.rotateCenter) {
+          const center = dragState.rotateCenter;
+          const angle = Math.atan2(p.y - center.y, p.x - center.x);
+          let deg = ((angle - dragState.rotateAngle0) * 180) / Math.PI;
+          if (evt.shiftKey) deg = Math.round(deg / 15) * 15;
+          dragState.base.forEach((entry) => {
+            const obj = svgState.objects[entry.idx];
+            if (!obj) return;
+            applyDragRotateToObject(obj, entry.obj, deg, center);
+          });
+          syncEditorFromModel();
+          renderCanvas();
+          return;
+        }
+        const dx = p.x - dragState.start.x;
+        const dy = p.y - dragState.start.y;
+        if (dragState.pending) {
+          const dist2 = dx * dx + dy * dy;
+          if (dist2 < 9) return;
+          dragState.pending = false;
+        }
+        if (dragState.group && dragState.handle && dragState.handle.startsWith("group-")) {
+          const fromB = dragState.groupBounds;
+          if (!fromB || fromB.w <= 0 || fromB.h <= 0) return;
+          const handleId = dragState.handle.slice("group-".length);
+          const x1 = fromB.x;
+          const y1 = fromB.y;
+          const x2 = fromB.x + fromB.w;
+          const y2 = fromB.y + fromB.h;
+
+          let ax = x1;
+          let ay = y1;
+          let cx = x2;
+          let cy = y2;
+          if (handleId === "nw") {
+            ax = x2;
+            ay = y2;
+            cx = x1 + dx;
+            cy = y1 + dy;
+          } else if (handleId === "ne") {
+            ax = x1;
+            ay = y2;
+            cx = x2 + dx;
+            cy = y1 + dy;
+          } else if (handleId === "se") {
+            ax = x1;
+            ay = y1;
+            cx = x2 + dx;
+            cy = y2 + dy;
+          } else if (handleId === "sw") {
+            ax = x2;
+            ay = y1;
+            cx = x1 + dx;
+            cy = y2 + dy;
+          } else {
+            return;
+          }
+
+          const relX = (cx - ax) / fromB.w;
+          const relY = (cy - ay) / fromB.h;
+          const scale = Math.max(0.05, Math.abs(relX) > Math.abs(relY) ? Math.abs(relX) : Math.abs(relY));
+          const newW = Math.max(10, fromB.w * scale);
+          const newH = Math.max(10, fromB.h * scale);
+          const sx = Math.sign(cx - ax) || 1;
+          const sy = Math.sign(cy - ay) || 1;
+          const fx = ax + sx * newW;
+          const fy = ay + sy * newH;
+
+          const nx = Math.min(ax, fx);
+          const ny = Math.min(ay, fy);
+          const toB = { x: nx, y: ny, w: Math.abs(fx - ax), h: Math.abs(fy - ay) };
+          const s = toB.w / fromB.w;
+
+          dragState.base.forEach((entry) => {
+            const obj = svgState.objects[entry.idx];
+            if (!obj) return;
+            const startObj = entry.obj;
+            const next = scaleObject(startObj, s, fromB, toB);
+            Object.assign(obj, next);
+          });
+          syncEditorFromModel();
+          renderCanvas();
+          return;
+        }
+          dragState.base.forEach((entry) => {
+            const obj = svgState.objects[entry.idx];
+            const startObj = entry.obj;
+            if (!obj) return;
+            if (dragState.handle) {
+              if (obj.type === "line") {
+                if (dragState.handle === "line-start") {
+                  obj.x1 = Math.round(startObj.x1 + dx);
+                  obj.y1 = Math.round(startObj.y1 + dy);
+                } else if (dragState.handle === "line-end") {
+                  obj.x2 = Math.round(startObj.x2 + dx);
+                  obj.y2 = Math.round(startObj.y2 + dy);
+                }
+              } else {
+                const rotation = Number(startObj.rotation || 0);
+                const isRotatedRect = rotation && (startObj.type === "rect" || startObj.type === "curved-rect");
+                if (isRotatedRect && typeof dragState.handle === "string") {
+                  const center = { x: startObj.x + startObj.w / 2, y: startObj.y + startObj.h / 2 };
+                  const startLocal = rotatePoint(dragState.start, -rotation, center);
+                  const nowLocal = rotatePoint(p, -rotation, center);
+                  const dxL = nowLocal.x - startLocal.x;
+                  const dyL = nowLocal.y - startLocal.y;
+                  const bLocal = { x: startObj.x, y: startObj.y, w: startObj.w, h: startObj.h };
+                  if (["nw", "ne", "se", "sw"].includes(dragState.handle)) {
+                    const x1 = bLocal.x;
+                    const y1 = bLocal.y;
+                    const x2 = bLocal.x + bLocal.w;
+                    const y2 = bLocal.y + bLocal.h;
+                    let ax = x1;
+                    let ay = y1;
+                    let cx = x2;
+                    let cy = y2;
+                    if (dragState.handle === "nw") {
+                      ax = x2;
+                      ay = y2;
+                      cx = x1 + dxL;
+                      cy = y1 + dyL;
+                    } else if (dragState.handle === "ne") {
+                      ax = x1;
+                      ay = y2;
+                      cx = x2 + dxL;
+                      cy = y1 + dyL;
+                    } else if (dragState.handle === "se") {
+                      ax = x1;
+                      ay = y1;
+                      cx = x2 + dxL;
+                      cy = y2 + dyL;
+                    } else if (dragState.handle === "sw") {
+                      ax = x2;
+                      ay = y1;
+                      cx = x1 + dxL;
+                      cy = y2 + dyL;
+                    }
+                    const relX = (cx - ax) / (bLocal.w || 1);
+                    const relY = (cy - ay) / (bLocal.h || 1);
+                    const scale = Math.max(0.05, Math.abs(relX) > Math.abs(relY) ? Math.abs(relX) : Math.abs(relY));
+                    const newW = Math.max(10, bLocal.w * scale);
+                    const newH = Math.max(10, bLocal.h * scale);
+                    const sx = Math.sign(cx - ax) || 1;
+                    const sy = Math.sign(cy - ay) || 1;
+                    const fx = ax + sx * newW;
+                    const fy = ay + sy * newH;
+                    const nx = Math.min(ax, fx);
+                    const ny = Math.min(ay, fy);
+                    const toB = { x: nx, y: ny, w: Math.abs(fx - ax), h: Math.abs(fy - ay) };
+                    const next = scaleObject(startObj, toB.w / (bLocal.w || 1), bLocal, toB);
+                    Object.assign(obj, next);
+                    return;
+                  }
+                  let x1 = bLocal.x;
+                  let y1 = bLocal.y;
+                  let x2 = bLocal.x + bLocal.w;
+                  let y2 = bLocal.y + bLocal.h;
+                  if (dragState.handle.includes("n")) y1 = bLocal.y + dyL;
+                  if (dragState.handle.includes("s")) y2 = bLocal.y + bLocal.h + dyL;
+                  if (dragState.handle.includes("w")) x1 = bLocal.x + dxL;
+                  if (dragState.handle.includes("e")) x2 = bLocal.x + bLocal.w + dxL;
+                  const nx = Math.min(x1, x2);
+                  const ny = Math.min(y1, y2);
+                  const nw = Math.max(10, Math.abs(x2 - x1));
+                  const nh = Math.max(10, Math.abs(y2 - y1));
+                  obj.x = Math.round(nx);
+                  obj.y = Math.round(ny);
+                  obj.w = Math.round(nw);
+                  obj.h = Math.round(nh);
+                  return;
+                }
+                const b = getBounds(startObj);
+                if (!b) return;
+                if (["nw", "ne", "se", "sw"].includes(dragState.handle)) {
+                  const x1 = b.x;
+                  const y1 = b.y;
+                  const x2 = b.x + b.w;
+                  const y2 = b.y + b.h;
+                  let ax = x1;
+                  let ay = y1;
+                  let cx = x2;
+                  let cy = y2;
+                  if (dragState.handle === "nw") {
+                    ax = x2;
+                    ay = y2;
+                    cx = x1 + dx;
+                    cy = y1 + dy;
+                  } else if (dragState.handle === "ne") {
+                    ax = x1;
+                    ay = y2;
+                    cx = x2 + dx;
+                    cy = y1 + dy;
+                  } else if (dragState.handle === "se") {
+                    ax = x1;
+                    ay = y1;
+                    cx = x2 + dx;
+                    cy = y2 + dy;
+                  } else if (dragState.handle === "sw") {
+                    ax = x2;
+                    ay = y1;
+                    cx = x1 + dx;
+                    cy = y2 + dy;
+                  }
+                  const relX = (cx - ax) / (b.w || 1);
+                  const relY = (cy - ay) / (b.h || 1);
+                  const scale = Math.max(0.05, Math.abs(relX) > Math.abs(relY) ? Math.abs(relX) : Math.abs(relY));
+                  const newW = Math.max(10, b.w * scale);
+                  const newH = Math.max(10, b.h * scale);
+                  const sx = Math.sign(cx - ax) || 1;
+                  const sy = Math.sign(cy - ay) || 1;
+                  const fx = ax + sx * newW;
+                  const fy = ay + sy * newH;
+                  const nx = Math.min(ax, fx);
+                  const ny = Math.min(ay, fy);
+                  const toB = { x: nx, y: ny, w: Math.abs(fx - ax), h: Math.abs(fy - ay) };
+                  const next = scaleObject(startObj, toB.w / (b.w || 1), b, toB);
+                  Object.assign(obj, next);
+                  return;
+                }
+                let x1 = b.x;
+                let y1 = b.y;
+                let x2 = b.x + b.w;
+                let y2 = b.y + b.h;
+              if (dragState.handle.includes("n")) y1 = b.y + dy;
+              if (dragState.handle.includes("s")) y2 = b.y + b.h + dy;
+              if (dragState.handle.includes("w")) x1 = b.x + dx;
+              if (dragState.handle.includes("e")) x2 = b.x + b.w + dx;
+              const nx = Math.min(x1, x2);
+              const ny = Math.min(y1, y2);
+              const nw = Math.max(10, Math.abs(x2 - x1));
+              const nh = Math.max(10, Math.abs(y2 - y1));
+              if (obj.type === "rect") {
+                obj.x = Math.round(nx);
+                obj.y = Math.round(ny);
+                obj.w = Math.round(nw);
+                obj.h = Math.round(nh);
+              } else if (obj.type === "curved-rect") {
+                obj.x = Math.round(nx);
+                obj.y = Math.round(ny);
+                obj.w = Math.round(nw);
+                obj.h = Math.round(nh);
+              } else if (obj.type === "circle") {
+                obj.cx = Math.round(nx + nw / 2);
+                obj.cy = Math.round(ny + nh / 2);
+                obj.r = Math.round(Math.min(nw, nh) / 2);
+              } else if (obj.type === "arc") {
+                obj.cx = Math.round(nx + nw / 2);
+                obj.cy = Math.round(ny + nh / 2);
+                obj.r = Math.round(Math.min(nw, nh) / 2);
+              } else if (obj.type === "polygon") {
+                const sx = b.w ? (nw / b.w) : 1;
+                const sy = b.h ? (nh / b.h) : 1;
+                obj.points = (startObj.points || []).map((pt) => ({
+                  x: Math.round(nx + (pt.x - b.x) * sx),
+                  y: Math.round(ny + (pt.y - b.y) * sy)
+                }));
+              } else if (obj.type === "text") {
+                obj.x = Math.round(nx);
+                obj.y = Math.round(ny + startObj.fontSize);
+              }
+            }
+          } else {
+            if (obj.type === "rect") {
+              obj.x = Math.round(startObj.x + dx);
+              obj.y = Math.round(startObj.y + dy);
+            } else if (obj.type === "curved-rect") {
+              obj.x = Math.round(startObj.x + dx);
+              obj.y = Math.round(startObj.y + dy);
+            } else if (obj.type === "circle") {
+              obj.cx = Math.round(startObj.cx + dx);
+              obj.cy = Math.round(startObj.cy + dy);
+            } else if (obj.type === "arc") {
+              obj.cx = Math.round(startObj.cx + dx);
+              obj.cy = Math.round(startObj.cy + dy);
+            } else if (obj.type === "polygon") {
+              obj.points = (startObj.points || []).map((pt) => ({
+                x: Math.round(pt.x + dx),
+                y: Math.round(pt.y + dy)
+              }));
+            } else if (obj.type === "line") {
+              obj.x1 = Math.round(startObj.x1 + dx);
+              obj.y1 = Math.round(startObj.y1 + dy);
+              obj.x2 = Math.round(startObj.x2 + dx);
+              obj.y2 = Math.round(startObj.y2 + dy);
+            } else if (obj.type === "text") {
+              obj.x = Math.round(startObj.x + dx);
+              obj.y = Math.round(startObj.y + dy);
+            }
+          }
+        });
+        syncEditorFromModel();
+        renderCanvas();
+      });
+
+      window.addEventListener("mouseup", () => {
+        if (selectState && selectState.active) {
+          const start = selectState.start;
+          const end = selectState.last || selectState.start;
+          const moved = selectState.rect.w > 2 || selectState.rect.h > 2;
+          selection = moved ? selectObjectsInRect(start, end) : [];
+          selectState = null;
+          renderCanvas();
+        }
+        dragState = null;
+      });
+
+      window.addEventListener("keydown", (evt) => {
+        const isCopy = (evt.ctrlKey || evt.metaKey) && (evt.key === "c" || evt.key === "C");
+        const isPaste = (evt.ctrlKey || evt.metaKey) && (evt.key === "v" || evt.key === "V");
+        const isSelectAll = (evt.ctrlKey || evt.metaKey) && (evt.key === "a" || evt.key === "A");
+        if (isCopy || isPaste) {
+          if (rawMode) return;
+          const el = document.activeElement;
+          const tag = el?.tagName?.toLowerCase?.() || "";
+          const typing = (tag === "input" || tag === "textarea" || el?.isContentEditable);
+          if (typing) return;
+        }
+        if (isSelectAll) {
+          if (rawMode) return;
+          const el = document.activeElement;
+          const tag = el?.tagName?.toLowerCase?.() || "";
+          const typing = (tag === "input" || tag === "textarea" || el?.isContentEditable);
+          if (typing) return;
+          evt.preventDefault();
+          selection = svgState.objects.map((_, i) => i);
+          renderCanvas();
+          return;
+        }
+        if (isCopy) {
+          if (selection.length === 0) return;
+          clipboardObjects = selection.map((idx) => cloneObject(svgState.objects[idx]));
+          evt.preventDefault();
+          return;
+        }
+        if (isPaste) {
+          if (!clipboardObjects || clipboardObjects.length === 0) return;
+          evt.preventDefault();
+          const startIndex = svgState.objects.length;
+          const offset = 10;
+          clipboardObjects.forEach((obj) => {
+            const copy = cloneObject(obj);
+            translateObject(copy, offset, offset);
+            svgState.objects.push(copy);
+          });
+          selection = clipboardObjects.map((_, i) => startIndex + i);
+          syncEditorFromModel();
+          renderCanvas();
+          return;
+        }
+        const isArrowKey = (evt.key === "ArrowUp" || evt.key === "ArrowDown" || evt.key === "ArrowLeft" || evt.key === "ArrowRight");
+        if (isArrowKey) {
+          if (rawMode) return;
+          const el = document.activeElement;
+          const tag = el?.tagName?.toLowerCase?.() || "";
+          const typing = (tag === "input" || tag === "textarea" || el?.isContentEditable);
+          if (typing || selection.length === 0) return;
+          evt.preventDefault();
+          const dx = (evt.key === "ArrowLeft" ? -1 : (evt.key === "ArrowRight" ? 1 : 0));
+          const dy = (evt.key === "ArrowUp" ? -1 : (evt.key === "ArrowDown" ? 1 : 0));
+          selection.forEach((idx) => {
+            const obj = svgState.objects[idx];
+            translateObject(obj, dx, dy);
+          });
+          syncEditorFromModel();
+          renderCanvas();
+          return;
+        }
+        if (evt.key !== "Delete" && evt.key !== "Backspace") return;
+        if (rawMode) return;
+        const el = document.activeElement;
+        const tag = el?.tagName?.toLowerCase?.() || "";
+        const typing = (tag === "input" || tag === "textarea" || el?.isContentEditable);
+        if (typing || selection.length === 0) return;
+        evt.preventDefault();
+        const indices = selection.slice().sort((a, b) => b - a);
+        for (const idx of indices) {
+          svgState.objects.splice(idx, 1);
+        }
+        selection = [];
+        syncEditorFromModel();
+        updateStateFromEditor();
+      });
+
+      const refreshFileList = async () => {
+        try {
+          const res = await fetch("/api/svg-files", { cache: "no-cache" });
+          const data = await res.json();
+          const files = Array.isArray(data?.files) ? data.files : [];
+          fileSelect.innerHTML = "";
+          for (const name of files) {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            fileSelect.appendChild(opt);
+          }
+          if (files.length > 0) {
+            const existing = files.includes(currentFilename) ? currentFilename : files[0];
+            fileSelect.value = existing;
+            currentFilename = existing;
+            setStatus(`Loaded ${files.length} SVG file(s).`);
+          } else {
+            setStatus("No SVG files found in public/img.");
+          }
+        } catch {
+          fileSelect.innerHTML = "";
+          setStatus("Failed to load SVG file list.");
+        }
+      };
+
+      const loadFile = async (filename) => {
+        if (!filename) return;
+        try {
+          const res = await fetch(`/api/svg-files/${encodeURIComponent(filename)}`, { cache: "no-cache" });
+          if (!res.ok) throw new Error(`Load failed (${res.status})`);
+          const data = await res.json();
+          editor.value = data.raw || "<svg></svg>";
+          currentFilename = data.filename || filename;
+          updateStateFromEditor();
+          setStatus(`Opened ${currentFilename}.`);
+        } catch {
+          editor.value = "<svg></svg>";
+          updateStateFromEditor();
+          setStatus("Failed to open SVG file.");
+        }
+      };
+
+      const saveFile = async () => {
+        if (!currentFilename) {
+          alert("No file selected. Use New to create one.");
+          return;
+        }
+        const res = await fetch(`/api/svg-files/${encodeURIComponent(currentFilename)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ raw: editor.value })
+        });
+        if (res.ok) {
+          await refreshFileList();
+          setStatus(`Saved ${currentFilename}.`);
+        } else {
+          setStatus("Save failed.");
+        }
+      };
+
+      const createNewFile = async () => {
+        const name = prompt("New SVG name (without .svg):", "new_icon");
+        if (!name) return;
+        const filename = name.trim().toLowerCase().endsWith(".svg") ? name.trim() : `${name.trim()}.svg`;
+        const template = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">\n</svg>\n`;
+        const res = await fetch(`/api/svg-files/${encodeURIComponent(filename)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ raw: template })
+        });
+        if (res.ok) {
+          currentFilename = filename;
+          editor.value = template;
+          updateStateFromEditor();
+          await refreshFileList();
+          fileSelect.value = currentFilename;
+          setStatus(`Created ${currentFilename}.`);
+        } else {
+          setStatus("Create failed.");
+        }
+      };
+
+      const copyFile = async () => {
+        if (!currentFilename) return;
+        const name = prompt("Copy to (new SVG name without .svg):", currentFilename.replace(/\.svg$/i, "_copy"));
+        if (!name) return;
+        const filename = name.trim().toLowerCase().endsWith(".svg") ? name.trim() : `${name.trim()}.svg`;
+        const res = await fetch(`/api/svg-files/${encodeURIComponent(currentFilename)}/copy`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: filename })
+        });
+        if (res.ok) {
+          currentFilename = filename;
+          await refreshFileList();
+          await loadFile(currentFilename);
+          fileSelect.value = currentFilename;
+          setStatus(`Copied to ${currentFilename}.`);
+        } else {
+          setStatus("Copy failed.");
+        }
+      };
+
+      const deleteFile = async () => {
+        if (!currentFilename) return;
+        if (!confirm(`Delete ${currentFilename}?`)) return;
+        const res = await fetch(`/api/svg-files/${encodeURIComponent(currentFilename)}`, {
+          method: "DELETE"
+        });
+        if (res.ok) {
+          currentFilename = "";
+          editor.value = "<svg></svg>";
+          updateStateFromEditor();
+          await refreshFileList();
+          if (fileSelect.value) {
+            currentFilename = fileSelect.value;
+            await loadFile(currentFilename);
+          }
+          setStatus("Deleted SVG file.");
+        } else {
+          setStatus("Delete failed.");
+        }
+      };
+
+      const loadInitial = async () => {
+        try {
+          await refreshFileList();
+          if (fileSelect.value) {
+            await loadFile(fileSelect.value);
+          } else {
+            const res = await fetch("/svg-lab.svg", { cache: "no-cache" });
+            const text = await res.text();
+            editor.value = text;
+            updateStateFromEditor();
+          }
+        } catch {
+          editor.value = "<svg></svg>";
+          updateStateFromEditor();
+        }
+      };
+
+      let debounce = 0;
+      editor.addEventListener("input", () => {
+        clearTimeout(debounce);
+        debounce = setTimeout(updateStateFromEditor, 200);
+      });
+
+      fileSelect?.addEventListener("change", () => {
+        currentFilename = fileSelect.value || "";
+        setStatus(currentFilename ? `Selected ${currentFilename}.` : "");
+      });
+
+      openBtn?.addEventListener("click", () => {
+        const target = fileSelect.value;
+        if (!target) {
+          setStatus("No SVG selected.");
+          return;
+        }
+        loadFile(target);
+      });
+      saveBtn?.addEventListener("click", () => {
+        saveFile();
+      });
+      newBtn?.addEventListener("click", () => {
+        createNewFile();
+      });
+      copyBtn?.addEventListener("click", () => {
+        copyFile();
+      });
+      deleteBtn?.addEventListener("click", () => {
+        deleteFile();
+      });
+
+      loadInitial();
+
+	      backBtn?.addEventListener("click", () => {
+	        window.location.href = "/?mode=edit";
+	      });
+	    </script>
+	  </body>
+	</html>

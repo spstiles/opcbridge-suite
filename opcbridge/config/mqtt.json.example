@@ -1,0 +1,38 @@
+{
+  "enabled": true,
+  "host": "mqtt.example.com",
+  "port": 8883,
+
+  "client_id": "opcbridge-core",
+  "base_topic": "opcbridge",
+  "command_topic": "opcbridge/cmd",
+  "ack_topic_prefix": "opcbridge/ack",
+  "subscribe_enabled": true,
+
+  "patterns": {
+    "per_field": true,
+    "tag_json": true,
+    "connection_json": false
+  },
+
+  // For MQTT commands (writes), strongly recommended to require a write token.
+  // If require_write_token is true and write_token is empty, commands are refused.
+  "require_write_token": true,
+  "write_token": "",
+
+  // If your broker requires auth, set username/password here.
+  // Do not commit real credentials to git; keep them only in config/mqtt.json locally.
+  "username": "",
+  "password": "",
+
+  "use_tls": true,
+
+  // CA certificate file under config/ (optional).
+  "cafile": "ca.crt",
+
+  "certfile": "",
+  "keyfile": "",
+
+  "tls_version": "tlsv1.2",
+  "tls_insecure": false
+}

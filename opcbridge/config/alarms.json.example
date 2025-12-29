@@ -1,0 +1,42 @@
+{
+  "alarms": [
+    {
+      "id": "Alarm001",
+      "name": "Tank Level High (Operator Message)",
+      "group": "Plant",
+      "site": "Building 30",
+      "connection_id": "conn002",
+      "tag_name": "Tag0025",
+      "type": "high",
+      "threshold": 1000.0,
+      "hysteresis": 50.0,
+      "severity": 700,
+      "message_on_active": "Tank level is HIGH - check inlet valve.",
+      "message_on_return": "Tank level returned to normal.",
+      "enabled": true
+    },
+    {
+      "id": "Alarm002",
+      "name": "Tag0025 Changed",
+      "group": "Plant",
+      "site": "Building 30",
+      "connection_id": "conn002",
+      "tag_name": "Tag0025",
+      "type": "change",
+      "enabled": false
+    },
+    {
+      "id": "Alarm003",
+      "name": "Pump Fail (Equals)",
+      "group": "Lift Stations",
+      "site": "Lift Station 1",
+      "connection_id": "conn002",
+      "tag_name": "Pump1.Fail",
+      "type": "equals",
+      "value": true,
+      "message_on_active": "Pump faulted.",
+      "message_on_return": "Pump fault cleared.",
+      "enabled": true
+    }
+  ]
+}

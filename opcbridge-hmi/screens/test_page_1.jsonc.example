@@ -1,0 +1,135 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "background": "#ff64c8",
+  "objects": [
+    {
+      "type": "text",
+      "x": 54,
+      "y": 39,
+      "text": "Test Page 1",
+      "fontSize": 18,
+      "fill": "#ffffff"
+    },
+    {
+      "type": "button",
+      "x": 892,
+      "y": 124,
+      "w": 160,
+      "h": 48,
+      "rx": 8,
+      "label": "Overview",
+      "fill": "#002878",
+      "stroke": "#ffffff",
+      "strokeWidth": 1,
+      "textColor": "#ffffff",
+      "action": {
+        "type": "navigate",
+        "screenId": "test_page_2"
+      },
+      "rotation": 325.34780372056724
+    },
+    {
+      "type": "group",
+      "x": 887,
+      "y": 222,
+      "w": 180,
+      "h": 36,
+      "rotation": 0,
+      "visibility": null,
+      "children": [
+        {
+          "type": "button",
+          "x": 131,
+          "y": 0,
+          "w": 49,
+          "h": 36,
+          "rx": 8,
+          "label": "Auto",
+          "fill": "#002878",
+          "stroke": "#ffffff",
+          "strokeWidth": 1,
+          "textColor": "#ffffff",
+          "action": {
+            "type": "set-write",
+            "connection_id": "conn001",
+            "tag": "tag001",
+            "onValue": "2"
+          },
+          "fillAutomation": {
+            "enabled": true,
+            "connection_id": "conn001",
+            "tag": "tag001",
+            "mode": "equals",
+            "match": "2",
+            "onColor": "#506484"
+          }
+        },
+        {
+          "type": "button",
+          "x": 73,
+          "y": 0,
+          "w": 40,
+          "h": 36,
+          "rx": 8,
+          "label": "Off",
+          "fill": "#002878",
+          "stroke": "#ffffff",
+          "strokeWidth": 1,
+          "textColor": "#ffffff",
+          "action": {
+            "type": "set-write",
+            "connection_id": "conn001",
+            "tag": "tag001",
+            "onValue": "0"
+          },
+          "fillAutomation": {
+            "enabled": true,
+            "connection_id": "conn001",
+            "tag": "tag001",
+            "mode": "equals",
+            "match": "0",
+            "onColor": "#506484"
+          }
+        },
+        {
+          "type": "button",
+          "x": 0,
+          "y": 0,
+          "w": 55,
+          "h": 36,
+          "rx": 8,
+          "label": "Hand",
+          "fill": "#002878",
+          "stroke": "#ffffff",
+          "strokeWidth": 1,
+          "textColor": "#ffffff",
+          "action": {
+            "type": "set-write",
+            "connection_id": "conn001",
+            "tag": "tag001",
+            "onValue": "1"
+          },
+          "fillAutomation": {
+            "enabled": true,
+            "connection_id": "conn001",
+            "tag": "tag001",
+            "mode": "equals",
+            "match": "1",
+            "onColor": "#506484"
+          }
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "x": 949,
+      "y": 202,
+      "text": "Pump 1",
+      "fontSize": 18,
+      "fill": "#ffffff",
+      "w": 63,
+      "h": 23
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+name: Build Manual
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-manual:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pandoc and LaTeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc texlive-latex-base
+
+      - name: Build manual
+        working-directory: ./docs
+        run: |
+          make
+
+      - name: Upload manual artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opcbridge-manual
+          path: docs/manual.pdf

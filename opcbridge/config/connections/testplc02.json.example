@@ -1,0 +1,13 @@
+{
+  "id": "conn003",
+  "driver": "ab_eip",
+  "description": "Example connection for conn003",
+  "gateway": "192.0.2.3",
+  "path": "1,7",
+  "slot": 7,
+  "plc_type": "lgx",
+  "default_timeout_ms": 1000,
+  "default_read_ms": 1000,
+  "default_write_ms": 1000,
+  "debug": 0
+}

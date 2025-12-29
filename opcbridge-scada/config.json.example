@@ -1,0 +1,29 @@
+{
+  "listen": {
+    "host": "0.0.0.0",
+    "port": 3010
+  },
+  "refresh_ms": 2000,
+  "opcbridge": {
+    "scheme": "http",
+    "host": "127.0.0.1",
+    "port": 8080
+  },
+  "alarms": {
+    "scheme": "http",
+    "host": "127.0.0.1",
+    "port": 8085
+  },
+  "hmi": {
+    "scheme": "http",
+    "host": "127.0.0.1",
+    "port": 3000
+  },
+  "channels": [
+    {
+      "id": "main",
+      "name": "Main",
+      "description": ""
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "rules": [
+    {
+      "id": "example_pump_fail",
+      "name": "Pump Fail (Example)",
+      "group": "Plant",
+      "site": "Building 30",
+      "enabled": true,
+      "severity": 800,
+      "source": { "connection_id": "b030", "tag": "Pump1.Fail" },
+      "condition": { "type": "equals", "value": true },
+      "message_on_active": "Pump 1 Fail is ON",
+      "message_on_return": "Pump 1 Fail returned to normal"
+    }
+  ]
+}
