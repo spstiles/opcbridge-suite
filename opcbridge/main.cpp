@@ -4919,13 +4919,13 @@ int main(int argc, char **argv) {
 		  flex: 1;
 		  min-width: 260px;
 		}
-		.tag-editor-list {
-		  border: 1px solid #333;
-		  border-radius: 6px;
-		  overflow: auto;
-		  max-height: 45vh;
-		  background: #101010;
-		}
+			.tag-editor-list {
+			  border: 1px solid #333;
+			  border-radius: 6px;
+			  overflow: auto;
+			  max-height: 45vh;
+			  background: #101010;
+			}
 		.tag-editor-list table {
 		  margin-top: 0;
 		}
@@ -4952,11 +4952,169 @@ int main(int argc, char **argv) {
 		  padding: 4px 6px;
 		  font-size: 12px;
 		}
-		.tag-editor-form textarea {
-		  width: 100%;
-		  min-height: 220px;
-		  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-		}
+			.tag-editor-form textarea {
+			  width: 100%;
+			  min-height: 220px;
+			  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+			}
+
+			/* Workspace (SCADA-style) */
+			.workspace-card {
+			  width: 100%;
+			  flex: 1 1 100%;
+			  min-width: 520px;
+			}
+			.workspace-savebar {
+			  display: flex;
+			  align-items: center;
+			  gap: 6px;
+			  flex-wrap: wrap;
+			  margin-bottom: 10px;
+			}
+			.workspace-grid {
+			  display: grid;
+			  grid-template-columns: 320px 1fr;
+			  gap: 12px;
+			  min-height: 420px;
+			}
+			.workspace-pane {
+			  min-height: 0;
+			  border: 1px solid #333;
+			  border-radius: 6px;
+			  background: #0f0f0f;
+			  padding: 8px;
+			}
+			.ws-tree {
+			  margin-top: 6px;
+			  overflow: auto;
+			  max-height: 56vh;
+			  user-select: none;
+			}
+			.ws-tree-row {
+			  display: flex;
+			  align-items: center;
+			  gap: 6px;
+			  padding: 2px 4px;
+			  cursor: pointer;
+			  border-radius: 4px;
+			}
+			.ws-tree-row:hover {
+			  background: rgba(255,255,255,0.06);
+			}
+			.ws-tree-row.is-selected {
+			  background: rgba(59,130,246,0.20);
+			  outline: 1px solid rgba(59,130,246,0.55);
+			}
+			.ws-expander {
+			  width: 14px;
+			  height: 14px;
+			  display: inline-flex;
+			  align-items: center;
+			  justify-content: center;
+			  border: 1px solid #444;
+			  background: #111;
+			  font-size: 11px;
+			  line-height: 1;
+			}
+			.ws-expander.is-empty {
+			  border-color: transparent;
+			  background: transparent;
+			}
+			.ws-label {
+			  font-size: 13px;
+			  color: #eee;
+			}
+			.ws-indent {
+			  width: 14px;
+			  flex: 0 0 14px;
+			}
+			.ws-table-wrap {
+			  border: 1px solid #333;
+			  border-radius: 6px;
+			  overflow: auto;
+			  max-height: 56vh;
+			}
+			#ws-children-table tbody tr {
+			  cursor: default;
+			}
+			#ws-children-table tbody tr:hover td {
+			  background: rgba(255,255,255,0.05);
+			}
+			#ws-children-table tbody tr.is-selected td {
+			  background: rgba(59,130,246,0.18);
+			}
+			.ws-context-menu {
+			  position: fixed;
+			  z-index: 3000;
+			  min-width: 180px;
+			  background: #151515;
+			  border: 1px solid #333;
+			  border-radius: 6px;
+			  box-shadow: 0 10px 22px rgba(0,0,0,0.55);
+			  padding: 4px;
+			}
+			.ws-menu-item {
+			  padding: 6px 8px;
+			  border-radius: 4px;
+			  cursor: pointer;
+			  font-size: 12px;
+			  color: #eee;
+			}
+			.ws-menu-item:hover {
+			  background: rgba(255,255,255,0.07);
+			}
+			.ws-modal {
+			  position: fixed;
+			  inset: 0;
+			  background: rgba(0,0,0,0.55);
+			  z-index: 2500;
+			  display: flex;
+			  align-items: center;
+			  justify-content: center;
+			}
+			.ws-modal-card {
+			  width: 100%;
+			  max-width: 720px;
+			  background: #1b1b1b;
+			  border: 1px solid #333;
+			  border-radius: 10px;
+			  box-shadow: 0 10px 24px rgba(0,0,0,0.65);
+			  padding: 12px;
+			}
+			.ws-modal-title {
+			  font-size: 14px;
+			  font-weight: bold;
+			  margin-bottom: 10px;
+			  border-bottom: 1px solid #333;
+			  padding-bottom: 6px;
+			}
+			.ws-form {
+			  display: grid;
+			  grid-template-columns: 1fr 1fr;
+			  gap: 10px 12px;
+			}
+			.ws-form label {
+			  display: flex;
+			  flex-direction: column;
+			  gap: 4px;
+			  font-size: 11px;
+			  color: #aaa;
+			}
+			.ws-form input,
+			.ws-form select {
+			  background: #0b0b0b;
+			  color: #eee;
+			  border: 1px solid #333;
+			  border-radius: 4px;
+			  padding: 6px 8px;
+			  font-size: 12px;
+			}
+			.ws-modal-actions {
+			  display: flex;
+			  justify-content: flex-end;
+			  gap: 6px;
+			  margin-top: 10px;
+			}
 	</style>
 </head>
 <body>
@@ -5121,128 +5279,85 @@ int main(int argc, char **argv) {
 						background:#000; border:1px solid #333; padding:8px;"></pre>
 			</div>
 	    </div>
-			<div id="editors-section" class="flex" style="display:none;">
-				<div class="card">
-					<h2>Connection Editor</h2>
-				<div id="conn-editor-status" class="small">
-					Admin login required to edit connection config files.
-				</div>
-				<div class="tag-editor-toolbar">
-					<button class="btn-reload" id="conn-editor-toggle-btn" onclick="toggleConnEditor()">
-						Open editor
-					</button>
-					<label>
-						File:
-						<select id="conn-editor-file"></select>
-					</label>
-					<button class="btn-write" id="conn-editor-new-btn" onclick="connEditorNew()">New</button>
-					<button class="btn-write" id="conn-editor-del-btn" onclick="connEditorDelete()">Delete</button>
-					<button class="btn-reload" id="conn-editor-save-btn" onclick="connEditorSave(false)">Save file</button>
-					<button class="btn-reload" id="conn-editor-save-reload-btn" onclick="connEditorSave(true)">Save + Reload</button>
-				</div>
-
-				<div id="conn-editor-wrap" style="display:none;">
-					<div class="small" style="margin-bottom:6px;">
-						Edits rewrite the selected file as JSON (comments are not preserved).
-					</div>
-					<textarea id="conn-edit-json" spellcheck="false"
-							  style="width:100%; min-height:260px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", monospace;
-									 background:#0b0b0b; color:#eee; border:1px solid #333; border-radius:4px; padding:6px;"></textarea>
-				</div>
-				</div>
-				<div class="card">
-					<h2>Tag Editor</h2>
-				<div id="tag-editor-status" class="small">
-					Admin login required to edit tag config files.
-				</div>
-				<div class="tag-editor-toolbar">
-					<button class="btn-reload" id="tag-editor-toggle-btn" onclick="toggleTagEditor()">
-						Open editor
-					</button>
-					<label>
-						File:
-						<select id="tag-editor-file"></select>
-					</label>
-					<label>
-						Filter:
-						<input id="tag-editor-filter" type="text" placeholder="name / plc_tag_name" style="width:220px;">
-					</label>
-					<button class="btn-write" id="tag-editor-add-btn" onclick="tagEditorAddTag()">Add tag</button>
-					<button class="btn-write" id="tag-editor-del-btn" onclick="tagEditorDeleteTag()">Delete tag</button>
-					<button class="btn-reload" id="tag-editor-save-btn" onclick="tagEditorSave(false)">Save file</button>
-					<button class="btn-reload" id="tag-editor-save-reload-btn" onclick="tagEditorSave(true)">Save + Reload</button>
-				</div>
-
-				<div id="tag-editor-wrap" class="tag-editor-wrap" style="display:none;">
-					<div class="tag-editor-col">
-						<div class="small" id="tag-editor-meta"></div>
-						<div class="tag-editor-list">
-							<table>
-								<thead>
-									<tr>
-										<th>Name</th>
-										<th>PLC Tag</th>
-										<th>Type</th>
-										<th>Scan</th>
-									</tr>
-								</thead>
-								<tbody id="tag-editor-tbody"></tbody>
-							</table>
+				<div id="editors-section" class="flex" style="display:none;">
+					<div class="card workspace-card">
+						<h2>Workspace</h2>
+						<div class="workspace-savebar">
+							<button class="btn-reload" id="ws-save-btn">Save</button>
+							<button class="btn-reload" id="ws-save-reload-btn">Save + Reload</button>
+							<button class="btn-write" id="ws-discard-btn">Discard</button>
+							<div class="small" id="ws-save-status" style="margin-left:10px;"></div>
 						</div>
-					</div>
-					<div class="tag-editor-col">
-						<div class="small" style="margin-bottom:6px;">
-							Edits are applied to the selected tag object. Saving rewrites the file (comments are not preserved).
-						</div>
-						<div class="tag-editor-form">
-							<div style="margin-bottom:6px;">
-								<label>Name <input id="tag-edit-name" type="text" style="width:220px;"></label>
-								<label>PLC Tag <input id="tag-edit-plc" type="text" style="width:220px;"></label>
-								<label>Datatype
-									<select id="tag-edit-dt">
-										<option value="bool">bool</option>
-										<option value="int16">int16</option>
-										<option value="uint16">uint16</option>
-										<option value="int32">int32</option>
-										<option value="uint32">uint32</option>
-										<option value="float32">float32</option>
-										<option value="float64">float64</option>
-									</select>
-								</label>
-								<label>Scan ms <input id="tag-edit-scan" type="number" min="0" step="1" style="width:90px;"></label>
-								<label>Writable <input id="tag-edit-writable" type="checkbox"></label>
+
+						<div class="workspace-grid">
+							<div class="workspace-pane">
+								<div class="small" id="ws-tree-status">Loading…</div>
+								<div class="ws-tree" id="ws-tree"></div>
 							</div>
-							<div style="margin-bottom:6px;">
-								<button class="btn-write" onclick="tagEditorApplyFieldsToJson()">Apply fields → JSON</button>
-								<button class="btn-write" onclick="tagEditorApplyJsonToFields()">Apply JSON → fields</button>
+							<div class="workspace-pane">
+								<div class="ws-table-wrap">
+									<table id="ws-children-table">
+										<thead id="ws-children-thead"></thead>
+										<tbody id="ws-children-tbody"></tbody>
+									</table>
+								</div>
 							</div>
-							<textarea id="tag-edit-json" spellcheck="false"></textarea>
+						</div>
+
+						<div class="small" style="margin-top:8px;">
+							Bottom live tags list filters when a device is selected.
 						</div>
 					</div>
-					</div>
-				</div>
-				<div class="card">
-					<h2>Alarms Editor</h2>
-					<div id="alarms-editor-status" class="small">
-						Admin login required to edit alarms.json.
-					</div>
-					<div class="tag-editor-toolbar">
-						<button class="btn-reload" id="alarms-editor-toggle-btn" onclick="toggleAlarmsEditor()">
-							Open editor
-						</button>
-						<button class="btn-reload" id="alarms-editor-refresh-btn" onclick="alarmsEditorLoad()">Refresh</button>
-						<button class="btn-reload" id="alarms-editor-save-btn" onclick="alarmsEditorSave(false)">Save file</button>
-						<button class="btn-reload" id="alarms-editor-save-reload-btn" onclick="alarmsEditorSave(true)">Save + Reload</button>
+
+					<!-- Context menu -->
+					<div id="ws-context-menu" class="ws-context-menu" style="display:none;"></div>
+
+					<!-- Device properties modal -->
+					<div id="ws-device-modal" class="ws-modal" style="display:none;">
+						<div class="ws-modal-card">
+							<div class="ws-modal-title" id="ws-device-title">Device</div>
+							<div class="ws-form">
+								<label>Device ID <input id="ws-device-id" type="text" /></label>
+								<label>Description <input id="ws-device-desc" type="text" /></label>
+								<label>Driver <select id="ws-device-driver"></select></label>
+								<label>PLC Type <select id="ws-device-plc-type"></select></label>
+								<label>Gateway <input id="ws-device-gateway" type="text" /></label>
+								<label>Path <input id="ws-device-path" type="text" placeholder="1,0" /></label>
+								<label>Slot <input id="ws-device-slot" type="number" min="0" step="1" /></label>
+								<label>Default timeout (ms) <input id="ws-device-timeout" type="number" min="0" step="1" /></label>
+								<label>Default read (ms) <input id="ws-device-read" type="number" min="0" step="1" /></label>
+								<label>Default write (ms) <input id="ws-device-write" type="number" min="0" step="1" /></label>
+								<label>Debug <input id="ws-device-debug" type="number" min="0" step="1" /></label>
+							</div>
+							<div class="small" id="ws-device-status"></div>
+							<div class="ws-modal-actions">
+								<button class="btn-write" id="ws-device-cancel-btn">Cancel</button>
+								<button class="btn-reload" id="ws-device-save-btn">Save</button>
+							</div>
+						</div>
 					</div>
 
-					<div id="alarms-editor-wrap" style="display:none;">
-						<div class="small" id="alarms-editor-meta" style="margin-bottom:6px;"></div>
-						<textarea id="alarms-edit-json" spellcheck="false"
-								  style="width:100%; min-height:260px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", monospace;
-										 background:#0b0b0b; color:#eee; border:1px solid #333; border-radius:4px; padding:6px;"></textarea>
+					<!-- Tag properties modal -->
+					<div id="ws-tag-modal" class="ws-modal" style="display:none;">
+						<div class="ws-modal-card">
+							<div class="ws-modal-title" id="ws-tag-title">Tag</div>
+							<div class="ws-form">
+								<label>Device <input id="ws-tag-conn" type="text" readonly /></label>
+								<label>Name <input id="ws-tag-name" type="text" /></label>
+								<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
+								<label>Datatype <select id="ws-tag-dt"></select></label>
+								<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
+								<label><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
+								<label><input id="ws-tag-writable" type="checkbox" /> Writable</label>
+							</div>
+							<div class="small" id="ws-tag-status"></div>
+							<div class="ws-modal-actions">
+								<button class="btn-write" id="ws-tag-cancel-btn">Cancel</button>
+								<button class="btn-reload" id="ws-tag-save-btn">Save</button>
+							</div>
+						</div>
 					</div>
 				</div>
-			</div>
 		    <div class="card">
 		        <h2>Tags</h2>
 		        <div class="small" id="tags-meta">Loading...</div>
@@ -5510,13 +5625,16 @@ async function submitAdminModal() {
 
             modalEl.style.display = "none";
 
-            // Refresh status from server & update UI
-            await refreshAdminStatus();
-            updateAdminUi();
-        }
-    } catch (e) {
-        console.error("Admin modal submit error:", e);
-        errEl.textContent = "Error: " + e.toString();
+	            // Refresh status from server & update UI
+	            await refreshAdminStatus();
+	            updateAdminUi();
+	            if (isEditorPage()) {
+	                wsInit();
+	            }
+	        }
+	    } catch (e) {
+	        console.error("Admin modal submit error:", e);
+	        errEl.textContent = "Error: " + e.toString();
     }
 }
 function toggleAdminPasswordVisibility() {
@@ -5572,6 +5690,871 @@ function withAdminHeaders(baseHeaders = {}) {
     }
     return h;
 }
+
+// ---------------------------
+// Workspace (SCADA-style, using opcbridge endpoints)
+// ---------------------------
+const WS_DRIVER_LABELS = {
+    ab_eip: "Allen-Bradley Ethernet/IP"
+};
+
+const WS_PLC_TYPE_LABELS = {
+    lgx: "Allen-Bradley Logix (ControlLogix / CompactLogix)",
+    mlgx: "Allen-Bradley MicroLogix",
+    micro800: "Allen-Bradley Micro800 (Micro8xx)",
+    slc: "Allen-Bradley SLC 500",
+    plc5: "Allen-Bradley PLC-5",
+    "lgx-pccc": "Logix (PCCC gateway mode)",
+    "omron-njnx": "OMRON NJ/NX"
+};
+
+const WS_TAG_DATATYPES = ["bool", "int16", "uint16", "int32", "uint32", "float32", "float64"];
+
+const wsLabelForDriver = (code) => {
+    const k = String(code || "").trim();
+    return WS_DRIVER_LABELS[k] || k;
+};
+
+const wsLabelForPlcType = (code) => {
+    const k = String(code || "").trim();
+    return WS_PLC_TYPE_LABELS[k] || k;
+};
+
+const wsStripJsonComments = (raw) => {
+    // Minimal JSONC support for configs; good enough for typical // and /* */ usage.
+    const s = String(raw || "");
+    const noBlock = s.replace(/\/\*[\s\S]*?\*\//g, "");
+    const noLine = noBlock.replace(/(^|[^:])\/\/.*$/gm, "$1");
+    return noLine;
+};
+
+const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
+
+let wsLoadedOnce = false;
+let wsBase = { connections: [], tags: [] };
+let wsDraft = { connections: [], tags: [] };
+let wsDirty = false;
+let wsSelectedId = "ws:root";
+let wsExpanded = new Set(["ws:root", "ws:connectivity"]);
+let wsPendingDeletes = []; // { path: "connections/x.json" }
+let wsNodeById = new Map();
+
+const wsEls = () => ({
+    treeStatus: document.getElementById("ws-tree-status"),
+    tree: document.getElementById("ws-tree"),
+    thead: document.getElementById("ws-children-thead"),
+    tbody: document.getElementById("ws-children-tbody"),
+    saveBtn: document.getElementById("ws-save-btn"),
+    saveReloadBtn: document.getElementById("ws-save-reload-btn"),
+    discardBtn: document.getElementById("ws-discard-btn"),
+    saveStatus: document.getElementById("ws-save-status"),
+    contextMenu: document.getElementById("ws-context-menu"),
+
+    deviceModal: document.getElementById("ws-device-modal"),
+    deviceTitle: document.getElementById("ws-device-title"),
+    deviceId: document.getElementById("ws-device-id"),
+    deviceDesc: document.getElementById("ws-device-desc"),
+    deviceDriver: document.getElementById("ws-device-driver"),
+    devicePlcType: document.getElementById("ws-device-plc-type"),
+    deviceGateway: document.getElementById("ws-device-gateway"),
+    devicePath: document.getElementById("ws-device-path"),
+    deviceSlot: document.getElementById("ws-device-slot"),
+    deviceTimeout: document.getElementById("ws-device-timeout"),
+    deviceRead: document.getElementById("ws-device-read"),
+    deviceWrite: document.getElementById("ws-device-write"),
+    deviceDebug: document.getElementById("ws-device-debug"),
+    deviceStatus: document.getElementById("ws-device-status"),
+    deviceCancelBtn: document.getElementById("ws-device-cancel-btn"),
+    deviceSaveBtn: document.getElementById("ws-device-save-btn"),
+
+    tagModal: document.getElementById("ws-tag-modal"),
+    tagTitle: document.getElementById("ws-tag-title"),
+    tagConn: document.getElementById("ws-tag-conn"),
+    tagName: document.getElementById("ws-tag-name"),
+    tagPlc: document.getElementById("ws-tag-plc"),
+    tagDt: document.getElementById("ws-tag-dt"),
+    tagScan: document.getElementById("ws-tag-scan"),
+    tagEnabled: document.getElementById("ws-tag-enabled"),
+    tagWritable: document.getElementById("ws-tag-writable"),
+    tagStatus: document.getElementById("ws-tag-status"),
+    tagCancelBtn: document.getElementById("ws-tag-cancel-btn"),
+    tagSaveBtn: document.getElementById("ws-tag-save-btn")
+});
+
+const wsSetDirty = (dirty) => {
+    wsDirty = Boolean(dirty);
+    const el = wsEls();
+    if (el.saveBtn) el.saveBtn.disabled = !wsDirty;
+    if (el.saveReloadBtn) el.saveReloadBtn.disabled = false; // allow reload path
+    if (el.discardBtn) el.discardBtn.disabled = !wsDirty;
+};
+
+const wsSetStatus = (msg, cls) => {
+    const el = wsEls();
+    if (!el.saveStatus) return;
+    el.saveStatus.textContent = String(msg || "");
+    el.saveStatus.className = "small " + (cls || "");
+};
+
+const wsApiJson = async (url, opts = {}) => {
+    const resp = await fetch(url, Object.assign({}, opts, { headers: withAdminHeaders(opts.headers || {}) }));
+    const text = await resp.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { data = { ok: false, error: text }; }
+    if (!resp.ok) throw new Error((data && data.error) ? data.error : ("HTTP " + resp.status));
+    return data;
+};
+
+const wsApiText = async (url, opts = {}) => {
+    const resp = await fetch(url, Object.assign({}, opts, { headers: withAdminHeaders(opts.headers || {}) }));
+    const text = await resp.text();
+    if (!resp.ok) throw new Error(text || ("HTTP " + resp.status));
+    return text;
+};
+
+const wsLoadWorkspaceFromServer = async () => {
+    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN || !ADMIN_TOKEN) {
+        throw new Error("Admin login required.");
+    }
+
+    const files = await wsApiJson("/config/files");
+    const connPaths = (Array.isArray(files?.files) ? files.files : [])
+        .filter((f) => f && f.kind === "connection" && typeof f.path === "string")
+        .map((f) => f.path)
+        .sort();
+
+    const connections = [];
+    for (const relPath of connPaths) {
+        try {
+            const raw = await wsApiText("/config/file?path=" + encodeURIComponent(relPath));
+            const parsed = JSON.parse(wsStripJsonComments(raw));
+            if (!parsed || typeof parsed !== "object") continue;
+            const id = String(parsed.id || "").trim();
+            if (!id) continue;
+            parsed.__path = relPath;
+            connections.push(parsed);
+        } catch (e) {
+            console.warn("Failed to load connection:", relPath, e);
+        }
+    }
+
+    const tagsResp = await wsApiJson("/config/tags");
+    const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
+
+    return { connections, tags };
+};
+
+const wsBuildNodeIndex = (root) => {
+    wsNodeById = new Map();
+    const walk = (node, parentId) => {
+        wsNodeById.set(node.id, Object.assign({ parentId }, node));
+        (node.children || []).forEach((c) => walk(c, node.id));
+    };
+    walk(root, null);
+};
+
+const wsBuildTree = () => {
+    const root = { id: "ws:root", type: "root", label: "opcbridge", children: [] };
+    const connectivity = { id: "ws:connectivity", type: "connectivity", label: "Connectivity", children: [] };
+    root.children.push(connectivity);
+
+    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
+    conns.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+
+    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
+    const tagsByConn = new Map();
+    tags.forEach((t) => {
+        const cid = String(t?.connection_id || "").trim();
+        const name = String(t?.name || "").trim();
+        if (!cid || !name) return;
+        if (!tagsByConn.has(cid)) tagsByConn.set(cid, []);
+        tagsByConn.get(cid).push(t);
+    });
+    tagsByConn.forEach((arr) => {
+        arr.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" }));
+    });
+
+    conns.forEach((c) => {
+        const cid = String(c?.id || "").trim();
+        if (!cid) return;
+        const node = { id: `ws:device:${encodeURIComponent(cid)}`, type: "device", label: cid, connection_id: cid, children: [] };
+        const tagList = tagsByConn.get(cid) || [];
+        tagList.forEach((t) => {
+            const name = String(t?.name || "").trim();
+            if (!name) return;
+            node.children.push({
+                id: `ws:tag:${encodeURIComponent(cid)}:${encodeURIComponent(name)}`,
+                type: "tag",
+                label: name,
+                connection_id: cid,
+                name,
+                children: []
+            });
+        });
+        connectivity.children.push(node);
+    });
+
+    wsBuildNodeIndex(root);
+    return root;
+};
+
+const wsHideContextMenu = () => {
+    const el = wsEls();
+    if (!el.contextMenu) return;
+    el.contextMenu.style.display = "none";
+    el.contextMenu.textContent = "";
+};
+
+const wsCloseModal = (modal) => {
+    if (!modal) return;
+    modal.style.display = "none";
+};
+
+const wsFillSelect = (sel, opts, selectedValue) => {
+    if (!sel) return;
+    sel.textContent = "";
+    opts.forEach((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        sel.appendChild(opt);
+    });
+    if (selectedValue != null) sel.value = String(selectedValue);
+};
+
+const wsFillDatatypeSelect = (sel, selected) => {
+    if (!sel) return;
+    sel.textContent = "";
+    WS_TAG_DATATYPES.forEach((dt) => {
+        const opt = document.createElement("option");
+        opt.value = dt;
+        opt.textContent = dt;
+        sel.appendChild(opt);
+    });
+    sel.value = selected && WS_TAG_DATATYPES.includes(selected) ? selected : "bool";
+};
+
+let wsDeviceModalMode = "new";
+let wsDeviceEditingId = "";
+let wsTagModalMode = "new";
+let wsTagEditingConn = "";
+let wsTagEditingName = "";
+
+const wsOpenDeviceModal = ({ mode, connection_id }) => {
+    const el = wsEls();
+    if (!el.deviceModal) return;
+
+    wsDeviceModalMode = mode === "edit" ? "edit" : "new";
+    wsDeviceEditingId = "";
+
+    wsFillSelect(el.deviceDriver, Object.entries(WS_DRIVER_LABELS).map(([v, label]) => ({ value: v, label })), "ab_eip");
+    wsFillSelect(el.devicePlcType, Object.entries(WS_PLC_TYPE_LABELS).map(([v, label]) => ({ value: v, label })), "lgx");
+
+    let obj = {};
+    if (wsDeviceModalMode === "edit") {
+        const cid = String(connection_id || "").trim();
+        obj = (Array.isArray(wsDraft.connections) ? wsDraft.connections : []).find((c) => String(c?.id || "") === cid) || {};
+        wsDeviceEditingId = cid;
+    }
+
+    if (el.deviceTitle) el.deviceTitle.textContent = wsDeviceModalMode === "edit" ? `Device Properties: ${wsDeviceEditingId}` : "New Device";
+    if (el.deviceStatus) el.deviceStatus.textContent = "";
+
+    if (el.deviceId) {
+        el.deviceId.value = wsDeviceModalMode === "edit" ? wsDeviceEditingId : "";
+        el.deviceId.disabled = wsDeviceModalMode === "edit";
+    }
+    if (el.deviceDesc) el.deviceDesc.value = String(obj?.description || "");
+    if (el.deviceDriver) el.deviceDriver.value = String(obj?.driver || "ab_eip");
+    if (el.devicePlcType) el.devicePlcType.value = String(obj?.plc_type || "lgx");
+    if (el.deviceGateway) el.deviceGateway.value = String(obj?.gateway || "");
+    if (el.devicePath) el.devicePath.value = String(obj?.path || "");
+    if (el.deviceSlot) el.deviceSlot.value = obj?.slot == null ? "" : String(obj.slot);
+    if (el.deviceTimeout) el.deviceTimeout.value = obj?.default_timeout_ms == null ? "" : String(obj.default_timeout_ms);
+    if (el.deviceRead) el.deviceRead.value = obj?.default_read_ms == null ? "" : String(obj.default_read_ms);
+    if (el.deviceWrite) el.deviceWrite.value = obj?.default_write_ms == null ? "" : String(obj.default_write_ms);
+    if (el.deviceDebug) el.deviceDebug.value = obj?.debug == null ? "" : String(obj.debug);
+
+    el.deviceModal.style.display = "flex";
+    el.deviceId?.focus?.();
+};
+
+const wsOpenTagModal = ({ mode, connection_id, name }) => {
+    const el = wsEls();
+    if (!el.tagModal) return;
+    wsTagModalMode = mode === "edit" ? "edit" : "new";
+    wsTagEditingConn = String(connection_id || "").trim();
+    wsTagEditingName = String(name || "").trim();
+
+    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
+    const existing = wsTagModalMode === "edit"
+        ? tags.find((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName)
+        : null;
+
+    if (el.tagTitle) {
+        el.tagTitle.textContent = wsTagModalMode === "edit"
+            ? `Tag Properties: ${wsTagEditingConn}:${wsTagEditingName}`
+            : `New Tag: ${wsTagEditingConn}`;
+    }
+    if (el.tagStatus) el.tagStatus.textContent = "";
+
+    if (el.tagConn) el.tagConn.value = wsTagEditingConn;
+    if (el.tagName) {
+        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
+        el.tagName.disabled = wsTagModalMode === "edit";
+    }
+    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
+    wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
+    if (el.tagScan) el.tagScan.value = existing && existing?.scan_ms != null ? String(existing.scan_ms) : "";
+    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
+    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
+
+    el.tagModal.style.display = "flex";
+    el.tagName?.focus?.();
+};
+
+const wsOpenPropertiesForNode = (nodeId) => {
+    const node = wsNodeById.get(nodeId);
+    if (!node) return;
+    if (node.type === "device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
+    if (node.type === "tag") return wsOpenTagModal({ mode: "edit", connection_id: node.connection_id, name: node.name });
+};
+
+const wsShowContextMenu = (nodeId, x, y) => {
+    const el = wsEls();
+    if (!el.contextMenu) return;
+    const node = wsNodeById.get(nodeId);
+    if (!node) return;
+
+    const items = [];
+    const addItem = (label, action) => items.push({ label, action });
+
+    if (node.type === "connectivity") {
+        addItem("Add Device…", "add-device");
+    } else if (node.type === "device") {
+        addItem("Add Tag…", "add-tag");
+        addItem("Properties…", "edit-device");
+        addItem("Delete Device", "delete-device");
+    } else if (node.type === "tag") {
+        addItem("Delete Tag", "delete-tag");
+    } else {
+        return;
+    }
+
+    el.contextMenu.textContent = "";
+    items.forEach((it) => {
+        const div = document.createElement("div");
+        div.className = "ws-menu-item";
+        div.textContent = it.label;
+        div.addEventListener("click", () => {
+            wsHideContextMenu();
+            wsHandleContextAction(it.action, nodeId);
+        });
+        el.contextMenu.appendChild(div);
+    });
+
+    el.contextMenu.style.left = `${Math.max(4, x)}px`;
+    el.contextMenu.style.top = `${Math.max(4, y)}px`;
+    el.contextMenu.style.display = "block";
+};
+
+const wsHandleContextAction = (action, nodeId) => {
+    const node = wsNodeById.get(nodeId);
+    if (!node) return;
+    if (action === "add-device") return wsOpenDeviceModal({ mode: "new" });
+    if (action === "edit-device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
+    if (action === "delete-device") return wsDeleteDevice(node.connection_id);
+    if (action === "add-tag") return wsOpenTagModal({ mode: "new", connection_id: node.connection_id });
+    if (action === "delete-tag") return wsDeleteTag(node.connection_id, node.name);
+};
+
+const wsSelectNode = (nodeId) => {
+    wsSelectedId = nodeId;
+    wsRenderTree();
+    wsRenderChildrenTable();
+    wsApplyLiveTagsFilterFromSelection();
+};
+
+const wsToggleNode = (nodeId) => {
+    if (wsExpanded.has(nodeId)) wsExpanded.delete(nodeId);
+    else wsExpanded.add(nodeId);
+    wsRenderTree();
+};
+
+const wsRenderTree = () => {
+    const el = wsEls();
+    if (!el.tree) return;
+
+    const root = wsBuildTree();
+
+    const rows = [];
+    const renderNode = (node, depth) => {
+        const row = document.createElement("div");
+        row.className = "ws-tree-row" + (node.id === wsSelectedId ? " is-selected" : "");
+        row.dataset.id = node.id;
+
+        for (let i = 0; i < depth; i++) {
+            const ind = document.createElement("span");
+            ind.className = "ws-indent";
+            row.appendChild(ind);
+        }
+
+        const hasKids = Array.isArray(node.children) && node.children.length > 0;
+        const exp = document.createElement("span");
+        exp.className = "ws-expander" + (hasKids ? "" : " is-empty");
+        exp.textContent = hasKids ? (wsExpanded.has(node.id) ? "−" : "+") : "";
+        if (hasKids) {
+            exp.addEventListener("click", (e) => {
+                e.stopPropagation();
+                wsToggleNode(node.id);
+            });
+        }
+        row.appendChild(exp);
+
+        const label = document.createElement("span");
+        label.className = "ws-label";
+        label.textContent = node.label;
+        row.appendChild(label);
+
+        row.addEventListener("click", () => wsSelectNode(node.id));
+        row.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            wsSelectNode(node.id);
+            wsShowContextMenu(node.id, e.clientX, e.clientY);
+        });
+
+        rows.push(row);
+
+        if (hasKids && wsExpanded.has(node.id)) {
+            node.children.forEach((c) => renderNode(c, depth + 1));
+        }
+    };
+
+    renderNode(root, 0);
+    el.tree.textContent = "";
+    rows.forEach((r) => el.tree.appendChild(r));
+};
+
+const wsRenderChildrenTable = () => {
+    const el = wsEls();
+    if (!el.thead || !el.tbody) return;
+    const node = wsNodeById.get(wsSelectedId);
+    if (!node) return;
+
+    const setHeader = (cols) => {
+        const tr = document.createElement("tr");
+        cols.forEach((c) => {
+            const th = document.createElement("th");
+            th.textContent = c;
+            tr.appendChild(th);
+        });
+        el.thead.textContent = "";
+        el.thead.appendChild(tr);
+    };
+
+    const addRow = (cells, nodeId) => {
+        const tr = document.createElement("tr");
+        cells.forEach((txt) => {
+            const td = document.createElement("td");
+            td.textContent = txt;
+            tr.appendChild(td);
+        });
+        if (nodeId) {
+            tr.dataset.nodeId = nodeId;
+            tr.addEventListener("click", () => wsSelectNode(nodeId));
+            tr.addEventListener("dblclick", () => wsOpenPropertiesForNode(nodeId));
+        }
+        el.tbody.appendChild(tr);
+    };
+
+    el.tbody.textContent = "";
+
+    if (node.type === "root") {
+        setHeader(["Name"]);
+        addRow(["Connectivity"], "ws:connectivity");
+        return;
+    }
+
+    if (node.type === "connectivity") {
+        setHeader(["Name", "Description", "Driver", "PLC Type", "Gateway", "Path", "Slot"]);
+        const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
+        conns.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+        conns.forEach((c) => {
+            const cid = String(c?.id || "").trim();
+            if (!cid) return;
+            addRow([
+                cid,
+                String(c?.description || ""),
+                wsLabelForDriver(c?.driver),
+                wsLabelForPlcType(c?.plc_type),
+                String(c?.gateway || ""),
+                String(c?.path || ""),
+                String(c?.slot ?? "")
+            ], `ws:device:${encodeURIComponent(cid)}`);
+        });
+        return;
+    }
+
+    if (node.type === "device") {
+        setHeader(["Name", "PLC Tag", "Datatype", "Scan (ms)", "Enabled", "Writable"]);
+        const cid = String(node.connection_id || "").trim();
+        const tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => String(t?.connection_id || "") === cid);
+        tags.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" }));
+        if (!tags.length) {
+            addRow(["(no tags)", "", "", "", "", ""], null);
+            return;
+        }
+        tags.forEach((t) => {
+            const name = String(t?.name || "").trim();
+            addRow([
+                name,
+                String(t?.plc_tag_name || ""),
+                String(t?.datatype || ""),
+                t?.scan_ms == null ? "" : String(t.scan_ms),
+                t?.enabled === false ? "no" : "yes",
+                t?.writable === true ? "yes" : "no"
+            ], `ws:tag:${encodeURIComponent(cid)}:${encodeURIComponent(name)}`);
+        });
+        return;
+    }
+
+    if (node.type === "tag") {
+        setHeader(["Name", "PLC Tag", "Datatype", "Scan (ms)", "Enabled", "Writable"]);
+        const cid = String(node.connection_id || "").trim();
+        const name = String(node.name || "").trim();
+        const t = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).find((x) => String(x?.connection_id || "") === cid && String(x?.name || "") === name);
+        if (!t) {
+            addRow(["(missing)", "", "", "", "", ""], null);
+            return;
+        }
+        addRow([
+            String(t?.name || ""),
+            String(t?.plc_tag_name || ""),
+            String(t?.datatype || ""),
+            t?.scan_ms == null ? "" : String(t.scan_ms),
+            t?.enabled === false ? "no" : "yes",
+            t?.writable === true ? "yes" : "no"
+        ], null);
+    }
+};
+
+const wsSaveDeviceFromModal = () => {
+    const el = wsEls();
+    const id = String(el.deviceId?.value || "").trim();
+    if (!id) {
+        if (el.deviceStatus) el.deviceStatus.textContent = "Device ID is required.";
+        return;
+    }
+
+    const base = wsDeviceModalMode === "edit"
+        ? ((Array.isArray(wsDraft.connections) ? wsDraft.connections : []).find((c) => String(c?.id || "") === wsDeviceEditingId) || {})
+        : {};
+
+    const next = Object.assign({}, base);
+    next.id = id;
+    next.description = String(el.deviceDesc?.value || "");
+    next.driver = String(el.deviceDriver?.value || "ab_eip");
+    next.plc_type = String(el.devicePlcType?.value || "lgx");
+    next.gateway = String(el.deviceGateway?.value || "");
+    next.path = String(el.devicePath?.value || "");
+    next.slot = Math.max(0, Math.floor(Number(el.deviceSlot?.value) || 0));
+    if (String(el.deviceTimeout?.value || "").trim() !== "") next.default_timeout_ms = Math.max(0, Math.floor(Number(el.deviceTimeout.value) || 0));
+    if (String(el.deviceRead?.value || "").trim() !== "") next.default_read_ms = Math.max(0, Math.floor(Number(el.deviceRead.value) || 0));
+    if (String(el.deviceWrite?.value || "").trim() !== "") next.default_write_ms = Math.max(0, Math.floor(Number(el.deviceWrite.value) || 0));
+    if (String(el.deviceDebug?.value || "").trim() !== "") next.debug = Math.max(0, Math.floor(Number(el.deviceDebug.value) || 0));
+
+    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
+
+    if (wsDeviceModalMode === "new") {
+        if (conns.some((c) => String(c?.id || "") === id)) {
+            if (el.deviceStatus) el.deviceStatus.textContent = "Device ID already exists.";
+            return;
+        }
+        conns.push(next);
+    } else {
+        const idx = conns.findIndex((c) => String(c?.id || "") === wsDeviceEditingId);
+        if (idx >= 0) conns[idx] = next;
+    }
+
+    wsDraft.connections = conns;
+    wsSetDirty(true);
+    wsCloseModal(el.deviceModal);
+
+    wsSelectNode("ws:connectivity");
+};
+
+const wsSaveTagFromModal = () => {
+    const el = wsEls();
+    const cid = String(el.tagConn?.value || "").trim();
+    const name = String(el.tagName?.value || "").trim();
+    const plc_tag_name = String(el.tagPlc?.value || "").trim();
+    const datatype = String(el.tagDt?.value || "").trim();
+    const scanRaw = String(el.tagScan?.value || "").trim();
+    const enabled = Boolean(el.tagEnabled?.checked);
+    const writable = Boolean(el.tagWritable?.checked);
+
+    if (!cid) {
+        if (el.tagStatus) el.tagStatus.textContent = "Device is required.";
+        return;
+    }
+    if (!name) {
+        if (el.tagStatus) el.tagStatus.textContent = "Tag name is required.";
+        return;
+    }
+    if (!plc_tag_name) {
+        if (el.tagStatus) el.tagStatus.textContent = "PLC Tag is required.";
+        return;
+    }
+    if (!datatype) {
+        if (el.tagStatus) el.tagStatus.textContent = "Datatype is required.";
+        return;
+    }
+
+    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
+
+    if (wsTagModalMode === "new") {
+        if (tags.some((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name)) {
+            if (el.tagStatus) el.tagStatus.textContent = "Tag name already exists for this device.";
+            return;
+        }
+        const next = { connection_id: cid, name };
+        next.plc_tag_name = plc_tag_name;
+        next.datatype = datatype;
+        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
+        next.enabled = enabled;
+        next.writable = writable;
+        tags.push(next);
+    } else {
+        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
+        if (idx < 0) {
+            if (el.tagStatus) el.tagStatus.textContent = "Tag not found.";
+            return;
+        }
+        const next = Object.assign({}, tags[idx]);
+        next.plc_tag_name = plc_tag_name;
+        next.datatype = datatype;
+        if (scanRaw === "") delete next.scan_ms;
+        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
+        next.enabled = enabled;
+        next.writable = writable;
+        tags[idx] = next;
+    }
+
+    wsDraft.tags = tags;
+    wsSetDirty(true);
+    wsCloseModal(el.tagModal);
+    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
+};
+
+const wsDeleteDevice = (connection_id) => {
+    const cid = String(connection_id || "").trim();
+    if (!cid) return;
+    if (!confirm(`Delete device '${cid}'? (Will delete config files on Save.)`)) return;
+
+    wsDraft.connections = (Array.isArray(wsDraft.connections) ? wsDraft.connections : []).filter((c) => String(c?.id || "") !== cid);
+    wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => String(t?.connection_id || "") !== cid);
+
+    wsPendingDeletes.push({ path: `connections/${cid}.json` });
+    wsPendingDeletes.push({ path: `tags/${cid}.json` });
+    wsSetDirty(true);
+    wsSelectNode("ws:connectivity");
+};
+
+const wsDeleteTag = (connection_id, name) => {
+    const cid = String(connection_id || "").trim();
+    const tn = String(name || "").trim();
+    if (!cid || !tn) return;
+    if (!confirm(`Delete tag '${cid}:${tn}'? (Applied on Save.)`)) return;
+    wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => !(String(t?.connection_id || "") === cid && String(t?.name || "") === tn));
+    wsSetDirty(true);
+    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
+};
+
+const wsSaveAll = async ({ reloadAfter }) => {
+    if (!wsDirty && !wsPendingDeletes.length) {
+        wsSetStatus("No changes to save.", "");
+        if (reloadAfter) await reloadConfig();
+        return;
+    }
+
+    const el = wsEls();
+    wsSetStatus("Saving…", "");
+    if (el.saveBtn) el.saveBtn.disabled = true;
+    if (el.saveReloadBtn) el.saveReloadBtn.disabled = true;
+    if (el.discardBtn) el.discardBtn.disabled = true;
+
+    try {
+        // 1) Connections: write each connection to connections/<id>.json (and optionally delete old path)
+        const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections : [];
+        for (const c of conns) {
+            const cid = String(c?.id || "").trim();
+            if (!cid) continue;
+            const targetPath = `connections/${cid}.json`;
+            const prevPath = String(c?.__path || "").trim();
+            if (prevPath && prevPath !== targetPath) {
+                wsPendingDeletes.push({ path: prevPath });
+            }
+            const out = Object.assign({}, c);
+            delete out.__path;
+            const content = JSON.stringify(out, null, 2) + "\n";
+            await wsApiJson("/config/file", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: WRITE_TOKEN, path: targetPath, content })
+            });
+        }
+
+        // 2) Tags: send flat list (strip source_file so it doesn't get written back into config).
+        // Also delete any tags/<connection_id>.json files that no longer have tags.
+        const rawDraftTags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
+        const draftTagConns = new Set(
+            rawDraftTags
+                .map((t) => String(t?.connection_id || "").trim())
+                .filter(Boolean)
+        );
+        const baseTagConns = new Set(
+            (Array.isArray(wsBase.tags) ? wsBase.tags : [])
+                .map((t) => String(t?.connection_id || "").trim())
+                .filter(Boolean)
+        );
+        baseTagConns.forEach((cid) => {
+            if (!draftTagConns.has(cid)) {
+                wsPendingDeletes.push({ path: `tags/${cid}.json` });
+            }
+        });
+
+        const tags = rawDraftTags.map((t) => {
+            const next = Object.assign({}, t);
+            delete next.source_file;
+            return next;
+        });
+        if (tags.length > 0) {
+            await wsApiJson("/config/tags", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: WRITE_TOKEN, tags })
+            });
+        }
+
+        // 3) Deletes
+        const uniqueDeletes = [];
+        const seen = new Set();
+        wsPendingDeletes.forEach((d) => {
+            const p = String(d?.path || "").trim();
+            if (!p) return;
+            if (seen.has(p)) return;
+            seen.add(p);
+            uniqueDeletes.push(p);
+        });
+        for (const p of uniqueDeletes) {
+            await wsApiJson("/config/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: WRITE_TOKEN, path: p })
+            });
+        }
+
+        wsPendingDeletes = [];
+        wsBase = wsDeepClone(wsDraft);
+        wsSetDirty(false);
+        wsSetStatus("Saved. Reload to apply changes.", "status-ok");
+
+        if (reloadAfter) {
+            await reloadConfig();
+        }
+    } catch (e) {
+        wsSetStatus("Save failed: " + e.toString(), "status-error");
+    } finally {
+        if (el.saveBtn) el.saveBtn.disabled = !wsDirty;
+        if (el.saveReloadBtn) el.saveReloadBtn.disabled = false;
+        if (el.discardBtn) el.discardBtn.disabled = !wsDirty;
+    }
+};
+
+const wsDiscardChanges = async () => {
+    if (!wsDirty) return;
+    if (!confirm("Discard all unsaved changes?")) return;
+    wsDraft = wsDeepClone(wsBase);
+    wsPendingDeletes = [];
+    wsSetDirty(false);
+    wsSetStatus("Discarded changes.", "");
+    wsSelectNode("ws:root");
+};
+
+// Live tags filtering (bottom table) — implemented by toggling <tr> visibility.
+function filterLiveTagsByConnection(connectionId) {
+    const tbody = document.getElementById("tags-tbody");
+    const metaEl = document.getElementById("tags-meta");
+    if (!tbody) return;
+    const cid = String(connectionId || "").trim();
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    let shown = 0;
+    rows.forEach((tr) => {
+        const rowCid = tr.getAttribute("data-conn") || "";
+        const show = !cid || rowCid === cid;
+        tr.style.display = show ? "" : "none";
+        if (show) shown += 1;
+    });
+    if (metaEl && cid) {
+        metaEl.textContent = (metaEl.textContent || "").replace(/\s+\|\s+Filter:.*$/, "") + ` | Filter: ${cid} (${shown} shown)`;
+    } else if (metaEl) {
+        metaEl.textContent = (metaEl.textContent || "").replace(/\s+\|\s+Filter:.*$/, "");
+    }
+}
+
+const wsApplyLiveTagsFilterFromSelection = () => {
+    const node = wsNodeById.get(wsSelectedId);
+    let filterConn = "";
+    if (node && node.type === "device") filterConn = String(node.connection_id || "");
+    filterLiveTagsByConnection(filterConn);
+};
+
+const wsWireUi = () => {
+    const el = wsEls();
+    if (el.saveBtn) el.saveBtn.addEventListener("click", () => wsSaveAll({ reloadAfter: false }));
+    if (el.saveReloadBtn) el.saveReloadBtn.addEventListener("click", () => wsSaveAll({ reloadAfter: true }));
+    if (el.discardBtn) el.discardBtn.addEventListener("click", wsDiscardChanges);
+
+    if (el.contextMenu) {
+        document.addEventListener("click", () => wsHideContextMenu());
+        window.addEventListener("blur", () => wsHideContextMenu());
+        window.addEventListener("scroll", () => wsHideContextMenu(), true);
+    }
+
+    if (el.deviceCancelBtn) el.deviceCancelBtn.addEventListener("click", () => wsCloseModal(el.deviceModal));
+    if (el.deviceSaveBtn) el.deviceSaveBtn.addEventListener("click", wsSaveDeviceFromModal);
+    if (el.deviceModal) el.deviceModal.addEventListener("click", (e) => { if (e.target === el.deviceModal) wsCloseModal(el.deviceModal); });
+
+    if (el.tagCancelBtn) el.tagCancelBtn.addEventListener("click", () => wsCloseModal(el.tagModal));
+    if (el.tagSaveBtn) el.tagSaveBtn.addEventListener("click", wsSaveTagFromModal);
+    if (el.tagModal) el.tagModal.addEventListener("click", (e) => { if (e.target === el.tagModal) wsCloseModal(el.tagModal); });
+};
+
+const wsInit = async () => {
+    const el = wsEls();
+    if (!el.tree || !el.tbody) return;
+
+    if (!wsLoadedOnce) {
+        wsWireUi();
+        wsLoadedOnce = true;
+    }
+
+    if (el.treeStatus) el.treeStatus.textContent = "Loading…";
+    wsSetStatus("", "");
+
+    try {
+        const data = await wsLoadWorkspaceFromServer();
+        wsBase = wsDeepClone(data);
+        wsDraft = wsDeepClone(data);
+        wsPendingDeletes = [];
+        wsSetDirty(false);
+        if (el.treeStatus) el.treeStatus.textContent = "";
+        wsSelectNode(wsSelectedId || "ws:root");
+    } catch (e) {
+        if (el.treeStatus) el.treeStatus.textContent = "Workspace unavailable: " + e.toString();
+        wsSetStatus("Workspace requires admin login.", "status-degraded");
+    }
+};
 
 function classForStatus(status) {
     if (!status) return "";
@@ -6476,26 +7459,30 @@ async function doWrite(connectionId, tagName) {
                    (t.name || "") + "')\">Write</button>")
                 : "";
 
-	            rows.push(
-	                "<tr>" +
-	                "<td>" + (t.connection_id || "") + "</td>" +
-	                "<td>" + (t.name || "") + "</td>" +
-	                "<td>" + (t.datatype || "") + "</td>" +
-	                "<td class='" + qCls + "'>" + qual.toUpperCase() + "</td>" +
-	                "<td>" + val + "</td>" +
-	                "<td>" + (writable ? "yes" : "no") + "</td>" +
-	                "<td>" + writeBtn + "</td>" +
-	                "<td>" + ts + "</td>" +
-	                "</tr>"
-	            );
+		            const connId = (t.connection_id || "");
+		            rows.push(
+		                "<tr data-conn=\"" + connId + "\">" +
+		                "<td>" + (t.connection_id || "") + "</td>" +
+		                "<td>" + (t.name || "") + "</td>" +
+		                "<td>" + (t.datatype || "") + "</td>" +
+		                "<td class='" + qCls + "'>" + qual.toUpperCase() + "</td>" +
+		                "<td>" + val + "</td>" +
+		                "<td>" + (writable ? "yes" : "no") + "</td>" +
+		                "<td>" + writeBtn + "</td>" +
+		                "<td>" + ts + "</td>" +
+		                "</tr>"
+		            );
 	        }
-	        tbody.innerHTML = rows.join("");
-	        indexTagRows();
-	        wsSubscribeCurrentTags();
-	    } catch (e) {
-	        metaEl.textContent = "Error fetching tags: " + e.toString();
-	        tbody.innerHTML = "";
-	        g_tagCellsByKey = new Map();
+		        tbody.innerHTML = rows.join("");
+		        indexTagRows();
+		        wsSubscribeCurrentTags();
+		        if (isEditorPage()) {
+		            wsApplyLiveTagsFilterFromSelection();
+		        }
+		    } catch (e) {
+		        metaEl.textContent = "Error fetching tags: " + e.toString();
+		        tbody.innerHTML = "";
+		        g_tagCellsByKey = new Map();
 	    } finally {
         g_tagsFetchInFlight = false;
     }
@@ -7826,12 +8813,15 @@ async function tagEditorSave(reloadAfter) {
     }
 }
 
-	function startAutoRefresh() {
-		restoreAdminTokenFromStorage();
-		applyPageMode();
+		function startAutoRefresh() {
+			restoreAdminTokenFromStorage();
+			applyPageMode();
+			if (isEditorPage()) {
+			    wsInit();
+			}
 
-    // NEW: wire up modal key handling
-    setupAdminModalKeys();
+	    // NEW: wire up modal key handling
+	    setupAdminModalKeys();
 
     // Existing: upload/edit existing config files
     const cfgInput = document.getElementById("config-upload-input");
