@@ -10,6 +10,9 @@ Monorepo for the opcbridge ecosystem:
 
 ## Install (Debian 13 derivatives)
 
+- Install OS deps first (recommended):
+  - `sudo ./install.sh --deps`
+
 The installer lets you install only `opcbridge` (as a comms layer), or install the full suite.
 
 From the repo root:

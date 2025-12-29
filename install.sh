@@ -14,6 +14,7 @@ SERVICE_GROUP="opcbridge"
 
 BUILD=1
 WITH_NODE_DEPS=0
+INSTALL_DEPS=0
 ASSUME_YES=0
 START_SERVICES=1
 ENABLE_SERVICES=1
@@ -40,6 +41,7 @@ Options:
   --user USER             Service user (default: ${SERVICE_USER})
   --group GROUP           Service group (default: ${SERVICE_GROUP})
   --no-build              Do not build; use existing binaries
+  --deps                  Install OS dependencies via apt
   --with-node-deps        Run npm install for Node services (requires network)
   --no-start              Do not start services
   --no-enable             Do not enable services at boot
@@ -49,6 +51,7 @@ Options:
 Notes:
 - This script targets Debian 13 derivatives (systemd).
 - It never writes secrets into the repo; tokens live in ${ENV_FILE}.
+- --deps uses apt and needs package repo access.
 USAGE
 }
 
@@ -60,6 +63,114 @@ need_root() {
 }
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+
+is_debian_like() {
+  # shellcheck disable=SC1091
+  if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    local id="${ID:-}"
+    local like="${ID_LIKE:-}"
+    if [[ "$id" == "debian" ]]; then
+      return 0
+    fi
+    if echo "$like" | grep -Eq '(^|[[:space:]])debian([[:space:]]|$)'; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+APT_UPDATED=0
+apt_update_once() {
+  [[ "$APT_UPDATED" == "1" ]] && return 0
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  APT_UPDATED=1
+}
+
+apt_install() {
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  apt_update_once
+  apt-get install -y --no-install-recommends "$@"
+}
+
+install_deps() {
+  if ! have_cmd apt-get; then
+    echo "apt-get not found; cannot install dependencies automatically." >&2
+    exit 1
+  fi
+  if ! is_debian_like; then
+    echo "This installer currently supports --deps only on Debian-like systems." >&2
+    exit 1
+  fi
+
+  local -a pkgs
+  # Base runtime tools used by this installer.
+  pkgs=(ca-certificates curl rsync)
+
+  # For generating tokens if openssl is available.
+  pkgs+=(openssl)
+
+  # If we are building, install build tooling and common libs.
+  if [[ "$BUILD" -eq 1 ]]; then
+    pkgs+=(build-essential pkg-config)
+    pkgs+=(libssl-dev zlib1g-dev libsqlite3-dev)
+    # MQTT client dev (opcbridge links mosquitto)
+    pkgs+=(libmosquitto-dev)
+  fi
+
+  # Node runtime for scada/hmi services.
+  for c in "${COMPONENTS[@]}"; do
+    if [[ "$c" == "scada" || "$c" == "hmi" ]]; then
+      pkgs+=(nodejs)
+      # npm is needed for installing deps; include it when asked.
+      if [[ "$WITH_NODE_DEPS" -eq 1 ]]; then
+        pkgs+=(npm)
+      fi
+      break
+    fi
+  done
+
+  # Reporter deps
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
+    if [[ "$BUILD" -eq 1 ]]; then
+      pkgs+=(libcurl4-openssl-dev default-libmysqlclient-dev)
+    fi
+  fi
+
+  # De-dupe
+  local -a uniq
+  uniq=()
+  for p in "${pkgs[@]}"; do
+    if [[ -z "$p" ]]; then
+      continue
+    fi
+    if [[ " ${uniq[*]} " != *" $p "* ]]; then
+      uniq+=("$p")
+    fi
+  done
+
+  echo "Installing OS dependencies via apt:" 
+  printf '  %s\n' "${uniq[@]}"
+
+  apt_install "${uniq[@]}"
+
+  # Libraries we cannot reliably install from apt (often built from source into /usr/local).
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
+    echo ""
+    echo "Note: opcbridge build expects these libs (often installed to /usr/local):"
+    echo "  - libplctag (libplctag.so)"
+    echo "  - libixwebsocket (libixwebsocket.so)"
+  fi
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
+    echo ""
+    echo "Note: opcbridge-alarms build expects libixwebsocket (often installed to /usr/local)."
+  fi
+}
 
 prompt() {
   local msg="$1"
@@ -281,13 +392,32 @@ install_alarms() {
     "$CONFIG_ROOT/alarms/alarms.json.example" 2>/dev/null || true
 }
 
+
+copy_tree() {
+  local src="$1"
+  local dst="$2"
+
+  if have_cmd rsync; then
+    rsync -a --delete "$src" "$dst"
+    return 0
+  fi
+
+  mkdir -p "$dst"
+  (cd "$src" && tar -cf - .) | (cd "$dst" && tar -xf -)
+}
+
 install_scada() {
   echo "Installing opcbridge-scada..."
   mkdir -p "$PREFIX/scada"
-  rsync -a --delete \
-    --exclude 'config.json' \
-    --exclude 'config.secrets.json' \
-    "$ROOT_DIR/opcbridge-scada/" "$PREFIX/scada/"
+  if have_cmd rsync; then
+    rsync -a --delete \
+      --exclude 'config.json' \
+      --exclude 'config.secrets.json' \
+      "$ROOT_DIR/opcbridge-scada/" "$PREFIX/scada/"
+  else
+    copy_tree "$ROOT_DIR/opcbridge-scada/" "$PREFIX/scada/"
+    rm -f "$PREFIX/scada/config.json" "$PREFIX/scada/config.secrets.json" || true
+  fi
 
   mkdir -p "$CONFIG_ROOT/scada"
   install -m 0644 "$ROOT_DIR/opcbridge-scada/config.json.example" "$CONFIG_ROOT/scada/config.json.example" 2>/dev/null || true
@@ -297,11 +427,17 @@ install_scada() {
 install_hmi() {
   echo "Installing opcbridge-hmi..."
   mkdir -p "$PREFIX/hmi"
-  rsync -a --delete \
-    --exclude 'node_modules' \
-    --exclude 'passwords.jsonc' \
-    --exclude 'audit.jsonl' \
-    "$ROOT_DIR/opcbridge-hmi/" "$PREFIX/hmi/"
+  if have_cmd rsync; then
+    rsync -a --delete \
+      --exclude 'node_modules' \
+      --exclude 'passwords.jsonc' \
+      --exclude 'audit.jsonl' \
+      "$ROOT_DIR/opcbridge-hmi/" "$PREFIX/hmi/"
+  else
+    copy_tree "$ROOT_DIR/opcbridge-hmi/" "$PREFIX/hmi/"
+    rm -rf "$PREFIX/hmi/node_modules" || true
+    rm -f "$PREFIX/hmi/passwords.jsonc" "$PREFIX/hmi/audit.jsonl" || true
+  fi
 
   if [[ "$WITH_NODE_DEPS" -eq 1 ]]; then
     if ! have_cmd npm; then
@@ -455,8 +591,8 @@ main() {
       --logs) LOG_ROOT="${2:-}"; shift 2;;
       --user) SERVICE_USER="${2:-}"; shift 2;;
       --group) SERVICE_GROUP="${2:-}"; shift 2;;
-      --no-build) BUILD=0; shift;;
-      --with-node-deps) WITH_NODE_DEPS=1; shift;;
+      --no-build) BUILD=0; shift;;      --with-node-deps) WITH_NODE_DEPS=1; shift;;
+      --deps) INSTALL_DEPS=1; shift;;
       --no-start) START_SERVICES=0; shift;;
       --no-enable) ENABLE_SERVICES=0; shift;;
       -y|--yes) ASSUME_YES=1; shift;;
@@ -482,6 +618,10 @@ main() {
   fi
 
   validate_components
+
+  if [[ "$INSTALL_DEPS" -eq 1 ]]; then
+    install_deps
+  fi
 
   echo "Installing components: ${COMPONENTS[*]}"
   echo "Prefix:  $PREFIX"
