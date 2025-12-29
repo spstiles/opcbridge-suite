@@ -8080,6 +8080,14 @@ const setDirty = (next) => {
   }
 };
 
+const confirmLoseUnsavedChanges = (actionLabel) => {
+  if (!isEditMode) return true;
+  if (!isDirty) return true;
+  const action = String(actionLabel || 'This action');
+  return window.confirm(`${action} will discard unsaved changes. Continue?`);
+};
+
+
 const applyJsoncEditor = () => {
   if (!jsoncEditor) return;
   try {
@@ -8735,7 +8743,9 @@ loadImageFiles();
 
 if (runtimeBtn) {
   runtimeBtn.addEventListener("click", () => {
-    if (isEditMode) setMode(false);
+    if (!isEditMode) return;
+    if (!confirmLoseUnsavedChanges('Switching to runtime')) return;
+    setMode(false);
   });
 }
 
@@ -9428,7 +9438,10 @@ if (snapToggleBtn) {
 
 if (jsoncApplyBtn) jsoncApplyBtn.addEventListener("click", applyJsoncEditor);
 if (jsoncSaveBtn) jsoncSaveBtn.addEventListener("click", saveJsoncEditor);
-if (jsoncReloadBtn) jsoncReloadBtn.addEventListener("click", reloadJsoncEditor);
+if (jsoncReloadBtn) jsoncReloadBtn.addEventListener("click", () => {
+  if (!confirmLoseUnsavedChanges('Reloading')) return;
+  reloadJsoncEditor();
+});
 if (screenSaveBtn) screenSaveBtn.addEventListener("click", saveJsoncEditor);
 if (jsoncEditor) {
   jsoncEditor.addEventListener("input", () => {
