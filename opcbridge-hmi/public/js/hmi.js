@@ -1101,9 +1101,20 @@ const openAlarms = () => {
 
 const apiGetAlarmsHistory = async (limit) => {
   const query = limit != null ? `?limit=${encodeURIComponent(String(limit))}` : "";
-  const response = await fetch(`/api/alarms/history${query}`, { cache: "no-store", headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+  const tryFetchJson = async (path) => {
+    const response = await fetch(path, { cache: "no-store", headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  };
+
+  try {
+    // Prefer the alarm server history (includes ack/shelve workflow events).
+    return await tryFetchJson(`/api/alarms/history${query}`);
+  } catch (error) {
+    // Fallback: opcbridge’s built-in alarm history DB.
+    // This keeps the alarm panel populated even without opcbridge-alarms.
+    return tryFetchJson(`/api/opcbridge/alarm-history${query}`);
+  }
 };
 
 const normalizeAlarmTimelineId = (value) => {

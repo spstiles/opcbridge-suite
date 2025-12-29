@@ -544,6 +544,32 @@ const createApp = () => {
     }
   });
 
+  // Convenience proxy for opcbridge's built-in alarm history database.
+  // This is useful when running without opcbridge-alarms.
+  app.get("/api/opcbridge/alarm-history", async (req, res) => {
+    try {
+      const { config: parsed } = await readConfig();
+      const opcbridge = parsed?.opcbridge || {};
+      const host = String(opcbridge.host || "127.0.0.1");
+      const port = Number(opcbridge.httpPort) || 8080;
+      const limitRaw = req.query?.limit;
+      const limit = Math.max(1, Math.min(5000, Number(limitRaw) || 500));
+      const url = `http://${host}:${port}/alarm-history?limit=${limit}`;
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      const text = await response.text();
+      if (!response.ok) {
+        return res.status(502).json({ error: `opcbridge HTTP ${response.status}`, details: text });
+      }
+      try {
+        res.json(JSON.parse(text));
+      } catch {
+        res.status(502).json({ error: "Invalid JSON from opcbridge.", details: text });
+      }
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   app.get("/api/svg-files", async (req, res) => {
     try {
       await fsp.mkdir(IMAGES_DIR, { recursive: true });
