@@ -4965,10 +4965,10 @@ int main(int argc, char **argv) {
 		<div id="admin-chip" class="admin-chip" style="display:none;">
 			👑 ADMIN
 		</div>
-		<div style="display:flex; gap:6px; margin-left:10px;">
-			<a class="btn-reload" href="/dashboard">Dashboard</a>
-			<a class="btn-reload" href="/editor">Editors</a>
-		</div>
+			<div style="display:flex; gap:6px; margin-left:10px;">
+				<a class="btn-reload" href="/dashboard">Dashboard</a>
+				<a class="btn-reload" href="/editor">Workspace</a>
+			</div>
 	    <div id="admin-panel">
 	        <span id="admin-status-text">Checking admin status...</span>
 	        <button id="admin-login-button" class="btn-reload" onclick="showAdminLogin()">Admin login</button>
