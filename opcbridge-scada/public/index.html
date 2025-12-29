@@ -164,7 +164,7 @@
 
     <section id="tab-workspace" class="panel">
       <h2>Workspace</h2>
-      <div class="hint">Tree view (Connectivity → Channels → Devices → Tags).</div>
+      <div class="hint">Tree view (Connectivity → Devices → Tags).</div>
 
       <div class="row-actions" style="margin: 10px 0;">
         <button class="btn primary" id="workspaceSaveBtn" type="button" disabled>Save</button>
@@ -211,29 +211,6 @@
       </div>
     </section>
   </main>
-
-  <div class="modal-overlay" id="channelPropsModal" style="display:none;">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="channelPropsModalTitle">
-      <div class="modal-titlebar">
-        <div class="modal-title" id="channelPropsModalTitle">Channel Properties</div>
-        <button class="btn" id="channelPropsCloseBtn" type="button">Close</button>
-      </div>
-      <div class="modal-body">
-        <div class="hint" id="channelPropsHint"></div>
-        <div class="form" style="max-width: 720px;">
-          <div class="form-row"><label>Name</label><input id="channelPropName" type="text" placeholder="Main" /></div>
-          <div class="form-row"><label>Description</label><textarea id="channelPropDesc" rows="3" placeholder="Optional description..."></textarea></div>
-          <div class="form-row"><label></label>
-            <div class="row-actions">
-              <button class="btn" id="channelPropCancelBtn" type="button">Cancel</button>
-              <button class="btn primary" id="channelPropSaveBtn" type="button">Save</button>
-            </div>
-          </div>
-          <div class="hint mono" id="channelPropStatus"></div>
-        </div>
-      </div>
-    </div>
-  </div>
 
 
   

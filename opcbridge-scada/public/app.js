@@ -81,14 +81,6 @@ const els = {
   // Workspace: new device form
   workspaceDetailsPanel: document.getElementById('workspaceDetailsPanel'),
   workspaceNewDevicePanel: document.getElementById('workspaceNewDevicePanel'),
-  channelPropsModal: document.getElementById('channelPropsModal'),
-  channelPropsCloseBtn: document.getElementById('channelPropsCloseBtn'),
-  channelPropsHint: document.getElementById('channelPropsHint'),
-  channelPropName: document.getElementById('channelPropName'),
-  channelPropDesc: document.getElementById('channelPropDesc'),
-  channelPropCancelBtn: document.getElementById('channelPropCancelBtn'),
-  channelPropSaveBtn: document.getElementById('channelPropSaveBtn'),
-  channelPropStatus: document.getElementById('channelPropStatus'),
 
   workspaceItemModal: document.getElementById('workspaceItemModal'),
   workspaceItemCloseBtn: document.getElementById('workspaceItemCloseBtn'),
@@ -177,17 +169,13 @@ const state = {
   tagConfigDirty: false,
 
   workspaceConnDirty: new Map(), // pathRel -> connection object
-  scadaDirty: false,
 
   // tree
   expanded: new Set(['project:opcbridge', 'folder:connectivity', 'folder:alarms_events']),
   selectedNodeId: '',
-  scadaChannels: [],
   workspaceTreeRoot: null,
-  scadaDeviceAssignments: {},
   pendingNewDevice: null,
   pendingNewTag: null,
-  pendingChannelEdit: null,
   pendingWorkspaceItem: null,
   draggedDeviceConnectionId: ''
 };
@@ -450,8 +438,6 @@ async function loadScadaSettings() {
     const data = await apiGet('/api/scada/config');
     fillScadaSettings(data?.config);
     state.scadaConfigFull = data?.config || null;
-    state.scadaChannels = Array.isArray(data?.config?.channels) ? data.config.channels : [];
-    state.scadaDeviceAssignments = (data?.config?.device_assignments && typeof data.config.device_assignments === 'object') ? data.config.device_assignments : {};
     renderWorkspaceTree();
     setScadaSettingsStatus(data?.local_only ? 'Ready. (Config updates restricted to localhost)' : 'Ready.');
   } catch (err) {
@@ -714,7 +700,7 @@ function getEffectiveTagsAll() {
 }
 
 function workspaceIsDirty() {
-  return (state.workspaceConnDirty && state.workspaceConnDirty.size > 0) || Boolean(state.tagConfigDirty) || Boolean(state.scadaDirty);
+  return (state.workspaceConnDirty && state.workspaceConnDirty.size > 0) || Boolean(state.tagConfigDirty);
 }
 
 function setWorkspaceSaveStatus(msg) {
@@ -748,10 +734,7 @@ function saveWorkspaceDraft() {
       conn_dirty: conn,
       tag_all: Array.isArray(state.tagConfigAll) ? state.tagConfigAll : [],
       tag_edits: tagEdits,
-      tag_dirty: Boolean(state.tagConfigDirty),
-      scada_channels: Array.isArray(state.scadaChannels) ? state.scadaChannels : [],
-      scada_assignments: (state.scadaDeviceAssignments && typeof state.scadaDeviceAssignments === 'object') ? state.scadaDeviceAssignments : {},
-      scada_dirty: Boolean(state.scadaDirty)
+      tag_dirty: Boolean(state.tagConfigDirty)
     };
 
     window.localStorage.setItem(OPCBRIDGE_SCADA_DRAFT_KEY, JSON.stringify(payload));
@@ -801,11 +784,6 @@ function restoreWorkspaceDraft() {
       });
     }
 
-    // Restore scada drafts
-    if (Array.isArray(parsed.scada_channels)) state.scadaChannels = parsed.scada_channels;
-    if (parsed.scada_assignments && typeof parsed.scada_assignments === 'object') state.scadaDeviceAssignments = parsed.scada_assignments;
-
-    state.scadaDirty = Boolean(parsed.scada_dirty);
     markTagsDirty(Boolean(parsed.tag_dirty));
 
     renderWorkspaceTree();
@@ -1049,12 +1027,11 @@ function showWorkspacePanel(which) {
 }
 
 function showWorkspaceNewDeviceForm(channelId) {
-  const cid = String(channelId || '').trim();
-  state.pendingNewDevice = { channel_id: cid };
+  state.pendingNewDevice = {};
   showWorkspacePanel('new_device');
 
   if (els.newDeviceHint) {
-    els.newDeviceHint.textContent = cid ? `Creating a new Device under channel '${cid}'.` : 'Creating a new Device.';
+    els.newDeviceHint.textContent = 'Creating a new Device.';
   }
 
   if (els.newDevId) els.newDevId.value = '';
@@ -1182,35 +1159,6 @@ function wireNewTagModalUi() {
       }
     }));
 }
-
-
-function setChannelPropStatus(msg) {
-  if (els.channelPropStatus) els.channelPropStatus.textContent = String(msg || '');
-}
-
-function openChannelPropsModal(channelId) {
-  const cid = String(channelId || '').trim();
-  if (!cid || cid === 'unassigned') return;
-
-  const ch = (Array.isArray(state.scadaChannels) ? state.scadaChannels : []).find((c) => String(c?.id || '').trim() === cid);
-  state.pendingChannelEdit = { channel_id: cid };
-
-  if (els.channelPropsHint) els.channelPropsHint.textContent = `Editing channel '${cid}'.`;
-  if (els.channelPropName) els.channelPropName.value = String(ch?.name || cid);
-  if (els.channelPropDesc) els.channelPropDesc.value = String(ch?.description || '');
-
-  setChannelPropStatus('');
-
-  if (els.channelPropsModal) els.channelPropsModal.style.display = 'flex';
-  els.channelPropName?.focus?.();
-}
-
-function closeChannelPropsModal() {
-  state.pendingChannelEdit = null;
-  setChannelPropStatus('');
-  if (els.channelPropsModal) els.channelPropsModal.style.display = 'none';
-}
-
 
 function setWorkspaceItemStatus(msg) {
   if (els.workspaceItemStatus) els.workspaceItemStatus.textContent = String(msg || '');
@@ -1343,11 +1291,7 @@ function openWorkspaceItemModal(node) {
   // Generic (read-only) properties
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'block';
 
-  if (type === 'channel') {
-    addRow('Name', String(node.label || ''));
-    addRow('Channel ID', String(node.meta?.channel_id || ''));
-    addRow('Description', String(node.meta?.description || ''), !String(node.meta?.description || '').trim());
-  } else if (type === 'tags_folder') {
+  if (type === 'tags_folder') {
     addRow('Connection', String(node.meta?.connection_id || ''));
   } else if (type === 'tag') {
     const conn = String(node.meta?.connection_id || '');
@@ -1512,36 +1456,7 @@ function wireWorkspaceItemModalUi() {
 
 }
 
-async function saveChannelPropsModal() {
-  const cid = String(state.pendingChannelEdit?.channel_id || '').trim();
-  if (!cid) return;
-
-  const name = String(els.channelPropName?.value || '').trim();
-  if (!name) { setChannelPropStatus('Name is required.'); return; }
-  const description = String(els.channelPropDesc?.value || '').trim();
-
-  const channels = Array.isArray(state.scadaChannels) ? state.scadaChannels.slice() : [];
-  const next = channels.map((c) => {
-    const id = String(c?.id || '').trim();
-    if (id !== cid) return c;
-    return { ...c, name, description };
-  });
-
-  state.scadaChannels = next;
-  state.scadaDirty = true;
-  renderWorkspaceSaveBar();
-  saveWorkspaceDraft();
-
-  renderWorkspaceTree();
-  const selected = findWorkspaceNodeById(state.workspaceTreeRoot, state.selectedNodeId);
-  if (selected) renderWorkspaceDetails(selected);
-
-  closeChannelPropsModal();
-}
-
 async function createNewDeviceFromWorkspace() {
-  const cid = String(state.pendingNewDevice?.channel_id || '').trim();
-
   const connection_id = String(els.newDevId?.value || '').trim();
   if (!connection_id) { setNewDevStatus('Device ID is required.'); return; }
 
@@ -1561,14 +1476,6 @@ async function createNewDeviceFromWorkspace() {
   state.workspaceConnDirty.set(relPath, obj);
   if (state.connObjCache) state.connObjCache.set(String(relPath), obj);
   state.connFiles = state.connFiles.concat([{ kind: 'connection', path: relPath }]);
-
-  // Stage channel assignment
-  if (cid) {
-    const da = (state.scadaDeviceAssignments && typeof state.scadaDeviceAssignments === 'object') ? { ...state.scadaDeviceAssignments } : {};
-    da[String(connection_id)] = cid;
-    state.scadaDeviceAssignments = da;
-    state.scadaDirty = true;
-  }
 
   setNewDevStatus('Staged.');
   renderWorkspaceSaveBar();
@@ -1616,74 +1523,9 @@ function wireWorkspaceSaveBarUi() {
   renderWorkspaceSaveBar();
 }
 
-function wireChannelPropsUi() {
-  const close = () => closeChannelPropsModal();
-
-  els.channelPropCancelBtn?.addEventListener('click', close);
-  els.channelPropsCloseBtn?.addEventListener('click', close);
-  els.channelPropSaveBtn?.addEventListener('click', saveChannelPropsModal);
-
-  els.channelPropsModal?.addEventListener('click', (e) => {
-    if (e.target === els.channelPropsModal) close();
-  });
-
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && els.channelPropsModal?.style.display === 'flex') close();
-  });
-}
-
-
-
-async function deleteChannelById(channelId) {
-  const cid = String(channelId || '').trim();
-  if (!cid || cid === 'unassigned') return;
-
-  if (!window.confirm(`Delete channel '${cid}'? Devices assigned to it will become Unassigned.`)) return;
-
-  const channels = Array.isArray(state.scadaChannels) ? state.scadaChannels.slice() : [];
-  const nextChannels = channels.filter((c) => String(c?.id || '').trim() !== cid);
-
-  const da = (state.scadaDeviceAssignments && typeof state.scadaDeviceAssignments === 'object') ? { ...state.scadaDeviceAssignments } : {};
-  for (const [devId, chId] of Object.entries(da)) {
-    if (String(chId || '').trim() === cid) delete da[devId];
-  }
-
-  state.scadaChannels = nextChannels;
-  state.scadaDeviceAssignments = da;
-  state.scadaDirty = true;
-  renderWorkspaceSaveBar();
-  saveWorkspaceDraft();
-
-  if (state.selectedNodeId === `channel:${cid}`) state.selectedNodeId = 'folder:connectivity';
-  renderWorkspaceTree();
-}
-
-async function createNewChannelInteractive() {
-  const name = String(window.prompt('New channel name:', '') || '').trim();
-  if (!name) return;
-
-  const idDefault = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  const id = String(window.prompt('Channel id:', idDefault) || '').trim() || idDefault;
-  if (!id) return;
-
-  const channels = Array.isArray(state.scadaChannels) ? state.scadaChannels.slice() : [];
-  if (channels.some((c) => String(c?.id || '') === id)) {
-    window.alert(`A channel with id '${id}' already exists.`);
-    return;
-  }
-
-  channels.push({ id, name });
-  state.scadaChannels = channels;
-  state.scadaDirty = true;
-  renderWorkspaceSaveBar();
-  saveWorkspaceDraft();
-  renderWorkspaceTree();
-}
-
 async function createNewConnectionInteractive(opts = {}) {
   setTab('workspace');
-  const cid = String(opts?.channel_id || '').trim();
-  showWorkspaceNewDeviceForm(cid);
+  showWorkspaceNewDeviceForm();
 }
 
 
@@ -1696,18 +1538,6 @@ async function deleteDeviceById(connectionId, pathRel) {
 
   try {
     await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
-
-    // Remove any channel assignment
-    try {
-      const cur = await apiGet('/api/scada/config');
-      const cfg = cur?.config || {};
-      const da = (cfg.device_assignments && typeof cfg.device_assignments === 'object') ? { ...cfg.device_assignments } : {};
-      delete da[cid];
-      const resp = await apiPostJson('/api/scada/config', { config: { ...cfg, device_assignments: da } });
-      state.scadaDeviceAssignments = (resp?.config?.device_assignments && typeof resp.config.device_assignments === 'object') ? resp.config.device_assignments : da;
-    } catch {
-      // ignore
-    }
 
     // Remove tags for this connection_id
     try {
@@ -1758,50 +1588,6 @@ function connectionIdForConnFilePath(pathRel) {
 }
 
 
-function parseDraggedDevice(e) {
-  const fromState = String(state.draggedDeviceConnectionId || '').trim();
-  if (fromState) return { connection_id: fromState };
-
-  try {
-    const raw = e?.dataTransfer?.getData('text/plain') || e?.dataTransfer?.getData('text') || '';
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    if (String(parsed.type || '') !== 'device') return null;
-    const connection_id = String(parsed.connection_id || '').trim();
-    if (!connection_id) return null;
-    return { connection_id };
-  } catch {
-    return null;
-  }
-}
-
-async function assignDeviceToChannel(connectionId, channelId) {
-  const connection_id = String(connectionId || '').trim();
-  const target = String(channelId || '').trim();
-  if (!connection_id) return;
-
-  const targetCid = (target && target !== 'unassigned') ? target : '';
-  const currentCid = String(state.scadaDeviceAssignments?.[connection_id] || '').trim();
-  if (currentCid === targetCid) return;
-
-  const next = (state.scadaDeviceAssignments && typeof state.scadaDeviceAssignments === 'object')
-    ? { ...state.scadaDeviceAssignments }
-    : {};
-
-  if (targetCid) next[connection_id] = targetCid;
-  else delete next[connection_id];
-
-  state.scadaDeviceAssignments = next;
-  state.scadaDirty = true;
-  renderWorkspaceSaveBar();
-  saveWorkspaceDraft();
-
-  renderWorkspaceTree();
-  const sel = findWorkspaceNodeById(state.workspaceTreeRoot, state.selectedNodeId);
-  if (sel) renderWorkspaceDetails(sel);
-}
-
 function buildTree() {
   const root = {
     id: 'project:opcbridge',
@@ -1818,39 +1604,6 @@ function buildTree() {
   const alarmsRoot = { id: 'folder:alarms', type: 'alarms_root', label: 'Alarms', children: [] };
 
   alarmsEvents.children.push(alarmsRoot);
-
-  const channelItems = Array.isArray(state.scadaChannels) ? state.scadaChannels.slice() : [];
-  const channels = [];
-
-  channelItems.forEach((ch) => {
-    const cid = String(ch?.id || '').trim();
-    const cname = String(ch?.name || ch?.id || '').trim();
-    const cdesc = String(ch?.description || '').trim();
-    if (!cid || !cname) return;
-    channels.push({ id: cid, name: cname, description: cdesc });
-  });
-
-  if (channels.length === 0) {
-    connectivity.children.push({ id: 'hint:no_channels', type: 'hint', label: '(right-click Connectivity to add a channel)', children: [] });
-  }
-
-  const assignments = (state.scadaDeviceAssignments && typeof state.scadaDeviceAssignments === 'object') ? state.scadaDeviceAssignments : {};
-
-  const channelNodes = channels.map((c) => ({
-    id: `channel:${c.id}`,
-    type: 'channel',
-    label: c.name,
-    meta: { channel_id: c.id, description: String(c.description || '') },
-    children: []
-  }));
-
-  const unassigned = {
-    id: 'channel:unassigned',
-    type: 'channel',
-    label: 'Unassigned',
-    meta: { channel_id: 'unassigned' },
-    children: []
-  };
 
   const connItems = state.connFiles.slice().sort((a, b) => String(a?.path || '').localeCompare(String(b?.path || '')));
   connItems.forEach((f) => {
@@ -1885,19 +1638,8 @@ function buildTree() {
       meta: { path: pathRel, connection_id: connectionId },
       children: tagChildren
     };
-
-    const assigned = String(assignments[String(connectionId)] || '').trim();
-    if (assigned) {
-      const target = channelNodes.find((c) => String(c.meta?.channel_id) === assigned);
-      if (target) target.children.push(deviceNode);
-      else unassigned.children.push(deviceNode);
-    } else {
-      unassigned.children.push(deviceNode);
-    }
+    connectivity.children.push(deviceNode);
   });
-
-  channelNodes.forEach((ch) => connectivity.children.push(ch));
-  if (unassigned.children.length) connectivity.children.push(unassigned);
 
   // Build alarms tree: Group -> Site -> Alarm
   const allAlarms = Array.isArray(state.alarmsAll) ? state.alarmsAll : [];
@@ -1989,7 +1731,7 @@ function buildTree() {
 }
 
 function renderTreeNode(node, container) {
-  const canExpand = ['project', 'folder', 'channel', 'device', 'alarms_root', 'alarm_group', 'alarm_site'].includes(String(node.type || ''));
+  const canExpand = ['project', 'folder', 'device', 'alarms_root', 'alarm_group', 'alarm_site'].includes(String(node.type || ''));
   const expanded = state.expanded.has(node.id);
 
   const btn = document.createElement('button');
@@ -2033,51 +1775,6 @@ function renderTreeNode(node, container) {
     renderWorkspaceDetails(node);
   });
 
-  if (node.type === 'device') {
-    btn.draggable = true;
-    btn.addEventListener('dragstart', (e) => {
-      try {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'device', connection_id: String(node.meta?.connection_id || '') }));
-        state.draggedDeviceConnectionId = String(node.meta?.connection_id || '');
-        btn.classList.add('is-dragging');
-      } catch {
-        // ignore
-      }
-    });
-    btn.addEventListener('dragend', () => {
-      btn.classList.remove('is-dragging');
-      state.draggedDeviceConnectionId = '';
-      document.querySelectorAll('.tree-item.is-drop-target').forEach((el) => el.classList.remove('is-drop-target'));
-    });
-  }
-
-  if (node.type === 'channel') {
-    btn.addEventListener('dragenter', (e) => {
-      const dev = parseDraggedDevice(e);
-      if (!dev) return;
-      e.preventDefault();
-      btn.classList.add('is-drop-target');
-    });
-    btn.addEventListener('dragover', (e) => {
-      const dev = parseDraggedDevice(e);
-      if (!dev) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-    });
-    btn.addEventListener('dragleave', () => {
-      btn.classList.remove('is-drop-target');
-    });
-    btn.addEventListener('drop', async (e) => {
-      const dev = parseDraggedDevice(e);
-      if (!dev) return;
-      e.preventDefault();
-      btn.classList.remove('is-drop-target');
-      const cid = String(node.meta?.channel_id || '').trim();
-      await assignDeviceToChannel(dev.connection_id, cid);
-    });
-  }
-
   btn.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2091,14 +1788,7 @@ function renderTreeNode(node, container) {
     const items = [];
 
     if (node.type === 'folder' && node.id === 'folder:connectivity') {
-      items.push({ label: 'Add Channel…', onClick: () => createNewChannelInteractive() });
-      items.push('sep');
-    }
-
-    if (node.type === 'channel' && String(node.meta?.channel_id || '') !== 'unassigned') {
-      const cid = String(node.meta?.channel_id || '');
-      items.push({ label: 'Edit Channel…', onClick: () => openChannelPropsModal(cid) });
-      items.push({ label: 'Delete Channel…', onClick: () => deleteChannelById(cid) });
+      items.push({ label: 'Add Device…', onClick: () => createNewConnectionInteractive() });
       items.push('sep');
     }
 
@@ -2116,11 +1806,6 @@ function renderTreeNode(node, container) {
       const name = String(node.meta?.name || node.label || '').trim();
       items.push({ label: 'Delete Tag…', onClick: () => deleteTagById(cid, name) });
       items.push('sep');
-    }
-
-    const canAddDevice = node.type === 'channel';
-    if (canAddDevice) {
-      items.push({ label: 'Add Device…', onClick: () => createNewConnectionInteractive({ channel_id: String(node.meta?.channel_id || '') }) });
     }
 
     items.push({ label: 'Refresh', onClick: async () => { await loadConnectionsList(); await loadTagsConfig(); await refreshAll(); } });
@@ -2148,7 +1833,6 @@ function renderWorkspaceDetails(node) {
 
   const children = Array.isArray(node.children) ? node.children : [];
   const isConnectivity = node.id === 'folder:connectivity';
-  const isChannel = String(node.type || '') === 'channel';
   const isDevice = String(node.type || '') === 'device';
   const isTag = String(node.type || '') === 'tag';
 
@@ -2243,15 +1927,14 @@ function renderWorkspaceDetails(node) {
 
   // ---------- Connectivity / tags ----------
 
-  // When a channel is selected, list its devices with device fields.
-  const showDeviceCols = isChannel;
+  // When connectivity is selected, list its devices with device fields.
+  const showDeviceCols = isConnectivity;
 
   // When a device is selected, list all tags. When a tag is selected, show a single-row tag table.
   const showTagCols = isDevice || isTag;
 
   const columns = ['Name'];
-  if (isConnectivity) columns.push('Description');
-  if (showDeviceCols) columns.push('Driver', 'Gateway', 'Path', 'Slot', 'PLC Type');
+  if (showDeviceCols) columns.push('Description', 'Driver', 'Gateway', 'Path', 'Slot', 'PLC Type');
   if (showTagCols) columns.push('PLC Tag', 'Datatype', 'Scan (ms)', 'Enabled', 'Writable');
 
   const colCount = columns.length;
@@ -2336,10 +2019,7 @@ function renderWorkspaceDetails(node) {
       addCell(tr, writable, false);
     }
 
-    if (isConnectivity) {
-      const desc = (type === 'channel') ? String(c?.meta?.description || '') : '';
-      addCell(tr, desc, !desc);
-    }
+    let tDesc = null;
 
     let tDriver = null;
     let tGateway = null;
@@ -2349,6 +2029,7 @@ function renderWorkspaceDetails(node) {
 
     if (showDeviceCols) {
       // Only device rows get values; other child rows get blanks.
+      tDesc = addCell(tr, '', true);
       tDriver = addCell(tr, '', true);
       tGateway = addCell(tr, '', true);
       tPath = addCell(tr, '', true);
@@ -2361,27 +2042,29 @@ function renderWorkspaceDetails(node) {
           // async fill from cache / file
           getConnObjForPath(relPath).then((obj) => {
             if (seq !== state.workspaceRenderSeq) return;
-            if (!tDriver?.isConnected) return;
+            if (!tDriver?.isConnected || !tDesc?.isConnected) return;
 
+            const desc = String(obj?.description || '').trim();
             const driver = String(obj?.driver || '').trim();
             const gateway = String(obj?.gateway || '').trim();
             const pathVal = String(obj?.path || '').trim();
             const slotVal = (obj?.slot == null) ? '' : String(obj.slot);
             const plcType = String(obj?.plc_type || obj?.plcType || '').trim();
 
+            tDesc.textContent = desc;
             tDriver.textContent = labelForDriver(driver);
             tGateway.textContent = gateway;
             tPath.textContent = pathVal;
             tSlot.textContent = slotVal;
             tPlc.textContent = labelForPlcType(plcType);
 
-            [tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+            [tDesc, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
               if (!td) return;
               td.classList.toggle('audit-cell-dim', !String(td.textContent || '').trim());
             });
           }).catch(() => {
             if (seq !== state.workspaceRenderSeq) return;
-            [tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+            [tDesc, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
               if (!td?.isConnected) return;
               td.textContent = '';
               td.classList.add('audit-cell-dim');
@@ -2409,11 +2092,6 @@ function renderWorkspaceDetails(node) {
           meta: { connection_id: String(c?.connection_id || connectionId), name: String(c?.name || '') }
         };
         openWorkspaceItemModal(pseudo);
-        return;
-      }
-      if (type === 'channel') {
-        const cid = String(c?.meta?.channel_id || '').trim();
-        if (cid && cid !== 'unassigned') openChannelPropsModal(cid);
         return;
       }
       openWorkspaceItemModal(c);
@@ -2498,27 +2176,17 @@ async function saveWorkspaceAll({ reload }) {
       await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
     }
 
-    // 3) Save SCADA config (channels + assignments)
-    if (state.scadaDirty) {
-      const cur = await apiGet('/api/scada/config');
-      const cfg = cur?.config || state.scadaConfigFull || {};
-      const next = { ...cfg, channels: Array.isArray(state.scadaChannels) ? state.scadaChannels : [], device_assignments: (state.scadaDeviceAssignments && typeof state.scadaDeviceAssignments === 'object') ? state.scadaDeviceAssignments : {} };
-      const resp = await apiPostJson('/api/scada/config', { config: next });
-      state.scadaConfigFull = resp?.config || next;
-    }
-
     if (reload) {
       await opcbridgeReload();
     }
 
     // Clear dirty state and refresh
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
-    state.scadaDirty = false;
     state.tagConfigEdited = new Map();
     markTagsDirty(false);
     clearWorkspaceDraft();
 
-    await Promise.all([loadConnectionsList(), loadTagsConfig(), loadScadaSettings()]);
+    await Promise.all([loadConnectionsList(), loadTagsConfig()]);
     renderWorkspaceTree();
     setWorkspaceSaveStatus(reload ? 'Saved + Reloaded.' : 'Saved.');
   } catch (err) {
@@ -2534,11 +2202,10 @@ async function discardWorkspaceChanges() {
   setWorkspaceSaveStatus('Discarding…');
   try {
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
-    state.scadaDirty = false;
     state.tagConfigEdited = new Map();
     markTagsDirty(false);
     clearWorkspaceDraft();
-    await Promise.all([loadConnectionsList(), loadTagsConfig(), loadScadaSettings()]);
+    await Promise.all([loadConnectionsList(), loadTagsConfig()]);
     renderWorkspaceTree();
     setWorkspaceSaveStatus('');
   } catch (err) {
@@ -2559,11 +2226,7 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
   if (!node) return;
   const type = String(node.type || '');
 
-  if (type === 'channel') {
-    const channel_id = String(node.meta?.channel_id || '').trim();
-    const label = channel_id && channel_id !== 'unassigned' ? node.label : 'Unassigned';
-    state.liveTagFilter = { type: 'channel', channel_id, label };
-  } else if (type === 'device' || type === 'tag') {
+  if (type === 'device' || type === 'tag') {
     const connection_id = String(node.meta?.connection_id || '').trim();
     if (connection_id) {
       state.liveTagFilter = { type: 'device', connection_id, label: connection_id };
@@ -2590,36 +2253,6 @@ function filterLiveTagsForWorkspace(tags) {
     const cid = String(f.connection_id || '').trim();
     if (!cid) return tags;
     return tags.filter((t) => String(t?.connection_id || '') === cid);
-  }
-
-  if (f.type === 'channel') {
-    const ch = String(f.channel_id || '').trim();
-
-    // Build set of connection_ids assigned to this channel.
-    const da = (state.scadaDeviceAssignments && typeof state.scadaDeviceAssignments === 'object')
-      ? state.scadaDeviceAssignments
-      : {};
-
-    const include = new Set();
-
-    if (ch && ch !== 'unassigned') {
-      Object.entries(da).forEach(([devId, channelId]) => {
-        if (String(channelId || '').trim() === ch) include.add(String(devId || '').trim());
-      });
-    } else {
-      // Unassigned: devices with no assignment.
-      const assigned = new Set(Object.keys(da).map((k) => String(k || '').trim()).filter(Boolean));
-
-      // Prefer the known configured connections list.
-      const connIds = (Array.isArray(state.connFiles) ? state.connFiles : [])
-        .map((f) => connectionIdForConnFilePath(String(f?.path || '')))
-        .filter(Boolean);
-
-      connIds.forEach((cid) => { if (!assigned.has(cid)) include.add(cid); });
-    }
-
-    if (include.size === 0) return [];
-    return tags.filter((t) => include.has(String(t?.connection_id || '').trim()));
   }
 
   return tags;
@@ -2809,7 +2442,6 @@ async function main() {
   wireConnectionsUi();
   wireTagsConfigUi();
   wireNewDeviceFormUi();
-  wireChannelPropsUi();
   wireWorkspaceItemModalUi();
   wireNewTagModalUi();
 
