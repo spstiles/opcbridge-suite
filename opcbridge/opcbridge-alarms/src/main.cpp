@@ -263,44 +263,68 @@ struct AlarmDb
         const bool has_tag   = req.has_param("tag");
         const bool has_types = req.has_param("types");
 
-        std::string sql =
-            "SELECT event_id, ts_ms, alarm_id, type, severity, group_name, site, connection_id, tag, value_json, message, actor, note "
-            "FROM alarm_events WHERE 1=1 ";
 
-        if (has_since) sql += "AND ts_ms >= ? ";
-        if (has_until) sql += "AND ts_ms <= ? ";
-        if (has_alarm) sql += "AND alarm_id = ? ";
-        if (has_conn)  sql += "AND connection_id = ? ";
-        if (has_tag)   sql += "AND tag = ? ";
+std::vector<std::string> typeList;
+if (has_types)
+{
+    std::string s = req.get_param_value("types");
+    size_t start = 0;
+    while (start < s.size())
+    {
+        size_t comma = s.find(',', start);
+        if (comma == std::string::npos) comma = s.size();
+        std::string part = s.substr(start, comma - start);
+        if (!part.empty()) typeList.push_back(part);
+        start = comma + 1;
+    }
+}
 
-        std::vector<std::string> typeList;
-        if (has_types)
+
+auto make_sql = [&](bool withGroupSite) -> std::string {
+    std::string sql = withGroupSite
+        ? "SELECT event_id, ts_ms, alarm_id, type, severity, group_name, site, connection_id, tag, value_json, message, actor, note "
+        : "SELECT event_id, ts_ms, alarm_id, type, severity, connection_id, tag, value_json, message, actor, note ";
+    sql += "FROM alarm_events WHERE 1=1 ";
+
+    if (has_since) sql += "AND ts_ms >= ? ";
+    if (has_until) sql += "AND ts_ms <= ? ";
+    if (has_alarm) sql += "AND alarm_id = ? ";
+    if (has_conn)  sql += "AND connection_id = ? ";
+    if (has_tag)   sql += "AND tag = ? ";
+
+    if (!typeList.empty())
+    {
+        sql += "AND type IN (";
+        for (size_t i = 0; i < typeList.size(); i++)
         {
-            std::string s = req.get_param_value("types");
-            size_t start = 0;
-            while (start < s.size())
-            {
-                size_t comma = s.find(',', start);
-                if (comma == std::string::npos) comma = s.size();
-                std::string part = s.substr(start, comma - start);
-                if (!part.empty()) typeList.push_back(part);
-                start = comma + 1;
-            }
-            if (!typeList.empty())
-            {
-                sql += "AND type IN (";
-                for (size_t i = 0; i < typeList.size(); i++)
-                {
-                    sql += (i == 0 ? "?" : ",?");
-                }
-                sql += ") ";
-            }
+            sql += (i == 0 ? "?" : ",?");
         }
+        sql += ") ";
+    }
 
-        sql += "ORDER BY ts_ms DESC LIMIT ?;";
+    sql += "ORDER BY ts_ms DESC LIMIT ?;";
+    return sql;
+};
+
+
+        bool withGroupSite = true;
+        std::string sql = make_sql(withGroupSite);
 
         sqlite3_stmt* stmt = nullptr;
         int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+
+        if (rc != SQLITE_OK)
+        {
+            // Backward compatibility: older DBs may not have group_name/site columns.
+            const std::string e = sqlite3_errmsg(db);
+            if (e.find("no such column") != std::string::npos || e.find("has no column") != std::string::npos)
+            {
+                withGroupSite = false;
+                sql = make_sql(withGroupSite);
+                rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+            }
+        }
+
         if (rc != SQLITE_OK)
         {
             err = sqlite3_errmsg(db);
@@ -335,26 +359,50 @@ struct AlarmDb
             ev["alarm_id"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
             ev["type"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
             ev["severity"] = sqlite3_column_int(stmt, 4);
-            if (sqlite3_column_type(stmt, 5) == SQLITE_NULL) ev["group"] = "";
-            else ev["group"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-            if (sqlite3_column_type(stmt, 6) == SQLITE_NULL) ev["site"] = "";
-            else ev["site"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
-            ev["source"] = {
-                {"connection_id", reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7))},
-                {"tag", reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8))}
-            };
-            if (sqlite3_column_type(stmt, 9) == SQLITE_NULL) ev["value"] = nullptr;
+
+            const int col_group = withGroupSite ? 5 : -1;
+            const int col_site = withGroupSite ? 6 : -1;
+            const int col_conn = withGroupSite ? 7 : 5;
+            const int col_tag  = withGroupSite ? 8 : 6;
+            const int col_val  = withGroupSite ? 9 : 7;
+            const int col_msg  = withGroupSite ? 10 : 8;
+            const int col_actor= withGroupSite ? 11 : 9;
+            const int col_note = withGroupSite ? 12 : 10;
+
+            if (withGroupSite)
+            {
+                if (sqlite3_column_type(stmt, col_group) == SQLITE_NULL) ev["group"] = "";
+                else ev["group"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_group));
+
+                if (sqlite3_column_type(stmt, col_site) == SQLITE_NULL) ev["site"] = "";
+                else ev["site"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_site));
+            }
             else
             {
-                const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+                ev["group"] = "";
+                ev["site"] = "";
+            }
+
+            ev["source"] = {
+                {"connection_id", reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_conn))},
+                {"tag", reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_tag))}
+            };
+
+            if (sqlite3_column_type(stmt, col_val) == SQLITE_NULL) ev["value"] = nullptr;
+            else
+            {
+                const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_val));
                 try { ev["value"] = json::parse(v); } catch (...) { ev["value"] = v; }
             }
-            if (sqlite3_column_type(stmt, 10) == SQLITE_NULL) ev["message"] = nullptr;
-            else ev["message"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
-            if (sqlite3_column_type(stmt, 11) == SQLITE_NULL) ev["actor"] = nullptr;
-            else ev["actor"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 11));
-            if (sqlite3_column_type(stmt, 12) == SQLITE_NULL) ev["note"] = nullptr;
-            else ev["note"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 12));
+
+            if (sqlite3_column_type(stmt, col_msg) == SQLITE_NULL) ev["message"] = nullptr;
+            else ev["message"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_msg));
+
+            if (sqlite3_column_type(stmt, col_actor) == SQLITE_NULL) ev["actor"] = nullptr;
+            else ev["actor"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_actor));
+
+            if (sqlite3_column_type(stmt, col_note) == SQLITE_NULL) ev["note"] = nullptr;
+            else ev["note"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_note));
 
             out.push_back(ev);
         }
