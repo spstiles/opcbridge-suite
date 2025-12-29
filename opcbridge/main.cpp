@@ -5809,44 +5809,92 @@ const wsApiJson = async (url, opts = {}) => {
     return data;
 };
 
-const wsApiText = async (url, opts = {}) => {
-    const resp = await fetch(url, Object.assign({}, opts, { headers: withAdminHeaders(opts.headers || {}) }));
-    const text = await resp.text();
-    if (!resp.ok) throw new Error(text || ("HTTP " + resp.status));
-    return text;
-};
+	const wsApiText = async (url, opts = {}) => {
+	    const resp = await fetch(url, Object.assign({}, opts, { headers: withAdminHeaders(opts.headers || {}) }));
+	    const text = await resp.text();
+	    if (!resp.ok) throw new Error(text || ("HTTP " + resp.status));
+	    return text;
+	};
 
-const wsLoadWorkspaceFromServer = async () => {
-    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN || !ADMIN_TOKEN) {
-        throw new Error("Admin login required.");
-    }
+	const wsIsEditable = () => {
+	    return !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN && ADMIN_TOKEN);
+	};
 
-    const files = await wsApiJson("/config/files");
-    const connPaths = (Array.isArray(files?.files) ? files.files : [])
-        .filter((f) => f && f.kind === "connection" && typeof f.path === "string")
-        .map((f) => f.path)
-        .sort();
+	const wsApplyEditability = () => {
+	    const el = wsEls();
+	    const canEdit = wsIsEditable();
+	    if (el.saveBtn) el.saveBtn.disabled = !canEdit || !wsDirty;
+	    if (el.saveReloadBtn) el.saveReloadBtn.disabled = !canEdit;
+	    if (el.discardBtn) el.discardBtn.disabled = !canEdit || !wsDirty;
+	};
 
-    const connections = [];
-    for (const relPath of connPaths) {
-        try {
-            const raw = await wsApiText("/config/file?path=" + encodeURIComponent(relPath));
-            const parsed = JSON.parse(wsStripJsonComments(raw));
-            if (!parsed || typeof parsed !== "object") continue;
-            const id = String(parsed.id || "").trim();
-            if (!id) continue;
-            parsed.__path = relPath;
-            connections.push(parsed);
-        } catch (e) {
-            console.warn("Failed to load connection:", relPath, e);
-        }
-    }
+	const wsLoadWorkspaceFromServer = async () => {
+	    // Prefer config endpoints if admin is logged in; otherwise fall back to public read-only endpoints.
+	    if (wsIsEditable()) {
+	        try {
+	            const files = await wsApiJson("/config/files");
+	            const connPaths = (Array.isArray(files?.files) ? files.files : [])
+	                .filter((f) => f && f.kind === "connection" && typeof f.path === "string")
+	                .map((f) => f.path)
+	                .sort();
 
-    const tagsResp = await wsApiJson("/config/tags");
-    const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
+	            const connections = [];
+	            for (const relPath of connPaths) {
+	                try {
+	                    const raw = await wsApiText("/config/file?path=" + encodeURIComponent(relPath));
+	                    const parsed = JSON.parse(wsStripJsonComments(raw));
+	                    if (!parsed || typeof parsed !== "object") continue;
+	                    const id = String(parsed.id || "").trim();
+	                    if (!id) continue;
+	                    parsed.__path = relPath;
+	                    connections.push(parsed);
+	                } catch (e) {
+	                    console.warn("Failed to load connection:", relPath, e);
+	                }
+	            }
 
-    return { connections, tags };
-};
+	            const tagsResp = await wsApiJson("/config/tags");
+	            const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
+
+	            return { connections, tags };
+	        } catch (e) {
+	            console.warn("Workspace: config endpoints unavailable, falling back to read-only:", e);
+	        }
+	    }
+
+	    const [healthResp, tagsResp] = await Promise.all([
+	        fetch("/health"),
+	        fetch("/tags")
+	    ]);
+
+	    const healthText = await healthResp.text();
+	    const tagsText = await tagsResp.text();
+
+	    let health = {};
+	    let tagsData = {};
+	    try { health = JSON.parse(healthText); } catch { health = {}; }
+	    try { tagsData = JSON.parse(tagsText); } catch { tagsData = {}; }
+
+	    const tags = Array.isArray(tagsData?.tags) ? tagsData.tags : [];
+
+	    const connIds = new Set();
+	    const healthConns = health && typeof health === "object" ? (health.connections || health?.connections_summary || {}) : {};
+	    if (healthConns && typeof healthConns === "object" && !Array.isArray(healthConns)) {
+	        Object.keys(healthConns).forEach((k) => {
+	            const id = String(k || "").trim();
+	            if (id) connIds.add(id);
+	        });
+	    }
+	    tags.forEach((t) => {
+	        const cid = String(t?.connection_id || "").trim();
+	        if (cid) connIds.add(cid);
+	    });
+
+	    const connections = Array.from(connIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
+	        .map((id) => ({ id }));
+
+	    return { connections, tags };
+	};
 
 const wsBuildNodeIndex = (root) => {
     wsNodeById = new Map();
@@ -6024,11 +6072,12 @@ const wsOpenPropertiesForNode = (nodeId) => {
     if (node.type === "tag") return wsOpenTagModal({ mode: "edit", connection_id: node.connection_id, name: node.name });
 };
 
-const wsShowContextMenu = (nodeId, x, y) => {
-    const el = wsEls();
-    if (!el.contextMenu) return;
-    const node = wsNodeById.get(nodeId);
-    if (!node) return;
+	const wsShowContextMenu = (nodeId, x, y) => {
+	    const el = wsEls();
+	    if (!el.contextMenu) return;
+	    if (!wsIsEditable()) return;
+	    const node = wsNodeById.get(nodeId);
+	    if (!node) return;
 
     const items = [];
     const addItem = (label, action) => items.push({ label, action });
@@ -6139,11 +6188,11 @@ const wsRenderTree = () => {
     rows.forEach((r) => el.tree.appendChild(r));
 };
 
-const wsRenderChildrenTable = () => {
-    const el = wsEls();
-    if (!el.thead || !el.tbody) return;
-    const node = wsNodeById.get(wsSelectedId);
-    if (!node) return;
+	const wsRenderChildrenTable = () => {
+	    const el = wsEls();
+	    if (!el.thead || !el.tbody) return;
+	    const node = wsNodeById.get(wsSelectedId);
+	    if (!node) return;
 
     const setHeader = (cols) => {
         const tr = document.createElement("tr");
@@ -6156,20 +6205,22 @@ const wsRenderChildrenTable = () => {
         el.thead.appendChild(tr);
     };
 
-    const addRow = (cells, nodeId) => {
-        const tr = document.createElement("tr");
-        cells.forEach((txt) => {
-            const td = document.createElement("td");
-            td.textContent = txt;
-            tr.appendChild(td);
-        });
-        if (nodeId) {
-            tr.dataset.nodeId = nodeId;
-            tr.addEventListener("click", () => wsSelectNode(nodeId));
-            tr.addEventListener("dblclick", () => wsOpenPropertiesForNode(nodeId));
-        }
-        el.tbody.appendChild(tr);
-    };
+	    const addRow = (cells, nodeId) => {
+	        const tr = document.createElement("tr");
+	        cells.forEach((txt) => {
+	            const td = document.createElement("td");
+	            td.textContent = txt;
+	            tr.appendChild(td);
+	        });
+	        if (nodeId) {
+	            tr.dataset.nodeId = nodeId;
+	            tr.addEventListener("click", () => wsSelectNode(nodeId));
+	            if (wsIsEditable()) {
+	                tr.addEventListener("dblclick", () => wsOpenPropertiesForNode(nodeId));
+	            }
+	        }
+	        el.tbody.appendChild(tr);
+	    };
 
     el.tbody.textContent = "";
 
@@ -6513,11 +6564,20 @@ const wsApplyLiveTagsFilterFromSelection = () => {
     filterLiveTagsByConnection(filterConn);
 };
 
-const wsWireUi = () => {
-    const el = wsEls();
-    if (el.saveBtn) el.saveBtn.addEventListener("click", () => wsSaveAll({ reloadAfter: false }));
-    if (el.saveReloadBtn) el.saveReloadBtn.addEventListener("click", () => wsSaveAll({ reloadAfter: true }));
-    if (el.discardBtn) el.discardBtn.addEventListener("click", wsDiscardChanges);
+	const wsWireUi = () => {
+	    const el = wsEls();
+	    if (el.saveBtn) el.saveBtn.addEventListener("click", () => {
+	        if (!wsIsEditable()) return;
+	        wsSaveAll({ reloadAfter: false });
+	    });
+	    if (el.saveReloadBtn) el.saveReloadBtn.addEventListener("click", () => {
+	        if (!wsIsEditable()) return;
+	        wsSaveAll({ reloadAfter: true });
+	    });
+	    if (el.discardBtn) el.discardBtn.addEventListener("click", () => {
+	        if (!wsIsEditable()) return;
+	        wsDiscardChanges();
+	    });
 
     if (el.contextMenu) {
         document.addEventListener("click", () => wsHideContextMenu());
@@ -6534,31 +6594,36 @@ const wsWireUi = () => {
     if (el.tagModal) el.tagModal.addEventListener("click", (e) => { if (e.target === el.tagModal) wsCloseModal(el.tagModal); });
 };
 
-const wsInit = async () => {
-    const el = wsEls();
-    if (!el.tree || !el.tbody) return;
+	const wsInit = async () => {
+	    const el = wsEls();
+	    if (!el.tree || !el.tbody) return;
 
     if (!wsLoadedOnce) {
         wsWireUi();
         wsLoadedOnce = true;
     }
 
-    if (el.treeStatus) el.treeStatus.textContent = "Loading…";
-    wsSetStatus("", "");
+	    if (el.treeStatus) el.treeStatus.textContent = "Loading…";
+	    wsSetStatus("", "");
 
-    try {
-        const data = await wsLoadWorkspaceFromServer();
-        wsBase = wsDeepClone(data);
-        wsDraft = wsDeepClone(data);
-        wsPendingDeletes = [];
-        wsSetDirty(false);
-        if (el.treeStatus) el.treeStatus.textContent = "";
-        wsSelectNode(wsSelectedId || "ws:root");
-    } catch (e) {
-        if (el.treeStatus) el.treeStatus.textContent = "Workspace unavailable: " + e.toString();
-        wsSetStatus("Workspace requires admin login.", "status-degraded");
-    }
-};
+	    try {
+	        const data = await wsLoadWorkspaceFromServer();
+	        wsBase = wsDeepClone(data);
+	        wsDraft = wsDeepClone(data);
+	        wsPendingDeletes = [];
+	        wsSetDirty(false);
+	        if (el.treeStatus) el.treeStatus.textContent = "";
+	        wsSelectNode(wsSelectedId || "ws:root");
+	        wsApplyEditability();
+	        if (!wsIsEditable()) {
+	            wsSetStatus("Read-only (admin login required to edit).", "status-degraded");
+	        }
+	    } catch (e) {
+	        if (el.treeStatus) el.treeStatus.textContent = "Workspace unavailable: " + e.toString();
+	        wsApplyEditability();
+	        wsSetStatus("Workspace unavailable.", "status-error");
+	    }
+	};
 
 function classForStatus(status) {
     if (!status) return "";
