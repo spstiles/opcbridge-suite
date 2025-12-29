@@ -2178,7 +2178,10 @@ const connectAlarmsWebSocket = () => {
           const id = String(alarm?.alarm_id || "");
           if (!id) return;
           alarmsStateById.set(id, alarm);
-          upsertTimelineFromAlarmState(alarm, { createIfMissing: false });
+          // A snapshot may include many configured alarms, most of which will be inactive.
+          // Only "seed" the timeline for active alarms so the on-screen panel shows
+          // current actives immediately without flooding the list with every alarm.
+          upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) });
         });
         scheduleAlarmsRender();
         return;
@@ -2187,7 +2190,7 @@ const connectAlarmsWebSocket = () => {
         const alarm = payload.alarm;
         const id = String(alarm?.alarm_id || "");
         if (id) alarmsStateById.set(id, alarm);
-        upsertTimelineFromAlarmState(alarm, { createIfMissing: false });
+        upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) });
         scheduleAlarmsRender();
         return;
       }
