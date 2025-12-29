@@ -12,6 +12,14 @@
 
 using json = nlohmann::json;
 
+// Version info (wired in via Makefile)
+#ifndef OPCBRIDGE_REPORTER_VERSION
+#define OPCBRIDGE_REPORTER_VERSION "dev"
+#endif
+#ifndef OPCBRIDGE_SUITE_VERSION
+#define OPCBRIDGE_SUITE_VERSION "dev"
+#endif
+
 struct Config {
     std::string opcbridge_base_url;
     std::string mysql_host;
@@ -478,12 +486,18 @@ int main(int argc, char* argv[]) {
     // Simple arg parsing
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        if (arg == "--version" || arg == "-V") {
+            std::cout << "opcbridge-reporter version " << OPCBRIDGE_REPORTER_VERSION
+                      << " (suite " << OPCBRIDGE_SUITE_VERSION << ")"
+                      << " (" << __DATE__ << " " << __TIME__ << ")\n";
+            return 0;
+        }
         if (arg == "--job" && i + 1 < argc) {
             job_name = argv[++i];
         } else if (arg == "--config" && i + 1 < argc) {
             config_path = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: " << argv[0] << " --job <name> [--config path]\n";
+            std::cout << "Usage: " << argv[0] << " --job <name> [--config path] [--version]\n";
             return 0;
         }
     }

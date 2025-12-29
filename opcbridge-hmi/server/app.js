@@ -13,9 +13,24 @@ const IMAGES_DIR = path.join(ROOT, "public", "img");
 const PASSWORDS_PATH = path.join(ROOT, "passwords.jsonc");
 const AUDIT_PATH = path.join(ROOT, "audit.jsonl");
 const HMI_BUILD = "2025-12-28-alarms-panel-v18";
+const SUITE_VERSION_PATH = path.join(ROOT, "..", "VERSION");
+const COMPONENT_VERSION_PATH = path.join(ROOT, "VERSION");
 const AUDIT_RETENTION_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 const AUDIT_PRUNE_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let lastAuditPruneMs = 0;
+
+const readVersionFile = (filePath) => {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const cleaned = String(raw || "").trim();
+    return cleaned || "dev";
+  } catch {
+    return "dev";
+  }
+};
+
+const SUITE_VERSION = readVersionFile(SUITE_VERSION_PATH);
+const COMPONENT_VERSION = readVersionFile(COMPONENT_VERSION_PATH);
 
 const readConfig = async () => {
   let raw = "";
@@ -195,8 +210,21 @@ const createApp = () => {
   app.use(express.json({ limit: "5mb" }));
   app.use((req, res, next) => {
     res.setHeader("X-OPCBRIDGE-HMI-Build", HMI_BUILD);
+    res.setHeader("X-OPCBRIDGE-Suite-Version", SUITE_VERSION);
+    res.setHeader("X-OPCBRIDGE-HMI-Version", COMPONENT_VERSION);
     next();
   });
+
+  app.get("/api/version", (_req, res) => {
+    res.json({
+      ok: true,
+      service: "opcbridge-hmi",
+      suite_version: SUITE_VERSION,
+      component_version: COMPONENT_VERSION,
+      build: HMI_BUILD
+    });
+  });
+
   app.use(express.static(path.join(ROOT, "public"), {
     etag: true,
     maxAge: 0,

@@ -33,6 +33,14 @@
 #include <cstdlib>
 #include <atomic>
 
+// Version info (wired in via build.sh)
+#ifndef OPCBRIDGE_VERSION
+#define OPCBRIDGE_VERSION "dev"
+#endif
+#ifndef OPCBRIDGE_SUITE_VERSION
+#define OPCBRIDGE_SUITE_VERSION "dev"
+#endif
+
 #include <unistd.h>
 #include <limits.h>
 #include <libgen.h>
@@ -4428,6 +4436,7 @@ int main(int argc, char **argv) {
 
         if (versionMode) {
             std::cout << "opcbridge version " << OPCBRIDGE_VERSION
+                      << " (suite " << OPCBRIDGE_SUITE_VERSION << ")"
                       << " (" << __DATE__ << " " << __TIME__ << ")\n";
             return 0;
         }
@@ -5202,16 +5211,11 @@ int main(int argc, char **argv) {
 			</div>
 		</div>
     </div>
-	<div class="card">
-		<h2>Alarms / Events</h2>
-		<div id="alarms-meta" class="small">Loading...</div>
-		<div id="alarms-body" class="small"></div>
-		    </div>
-		    <div class="card">
-		        <h2>Config Files</h2>
-        <div id="config-meta" class="small">Loading...</div>
-        <div class="tag-table-container">
-            <table id="config-table">
+			    <div class="card">
+			        <h2>Config Files</h2>
+	        <div id="config-meta" class="small">Loading...</div>
+	        <div class="tag-table-container">
+	            <table id="config-table">
                 <thead>
                     <tr>
                         <th>Path</th>
@@ -7121,6 +7125,7 @@ async function refreshInfo() {
 
         const name    = data.name    || "opcbridge";
         const version = data.version || "unknown";
+        const suiteVersion = data.suite_version || "";
         const bdate   = data.build_date || "";
         const btime   = data.build_time || "";
         const wa      = data.write_auth || {};
@@ -7130,7 +7135,7 @@ async function refreshInfo() {
 	        const connSummary = data.connections_summary || [];
 	        const ws = data.ws || {};
 
-	        nameVerEl.textContent = name + " v" + version;
+		        nameVerEl.textContent = name + " v" + version + ((suiteVersion && suiteVersion !== version) ? (" (suite " + suiteVersion + ")") : "");
         buildEl.textContent   = "Built: " + bdate + " " + btime;
         uptimeEl.textContent  = "Uptime: " + (typeof up === "number" ? formatUptime(up) : "n/a");
 
@@ -8889,10 +8894,12 @@ window.addEventListener("load", startAutoRefresh);
 					std::lock_guard<std::mutex> lock(driverMutex);
 					json root;
 
-				root["name"]       = "opcbridge";
-				root["version"]    = OPCBRIDGE_VERSION;
-				root["build_date"] = __DATE__;
-				root["build_time"] = __TIME__;
+					root["name"]              = "opcbridge";
+					root["version"]           = OPCBRIDGE_VERSION; // backward compat
+					root["component_version"] = OPCBRIDGE_VERSION;
+					root["suite_version"]     = OPCBRIDGE_SUITE_VERSION;
+					root["build_date"]        = __DATE__;
+					root["build_time"]        = __TIME__;
 
 				auto now = std::chrono::system_clock::now();
 				auto uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(

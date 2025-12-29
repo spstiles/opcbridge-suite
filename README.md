@@ -32,6 +32,20 @@ Notes:
 - Shared tokens and ports live in `/etc/opcbridge/opcbridge.env`.
 - Data defaults to `/var/lib/opcbridge` (SQLite/state).
 
+## Versioning
+
+This repo uses a `suite_version` + `component_version` scheme:
+
+- Suite version: `VERSION` (repo root)
+- Component versions:
+  - `opcbridge/VERSION`
+  - `opcbridge-alarms/VERSION`
+  - `opcbridge-scada/VERSION`
+  - `opcbridge-hmi/VERSION`
+  - `opcbridge-reporter/VERSION`
+
+`opcbridge`, `opcbridge-alarms`, and `opcbridge-reporter` embed both versions into their `--version` output, and services expose them via their status/info endpoints.
+
 ## Uninstall
 
 - Keep config/data/logs:

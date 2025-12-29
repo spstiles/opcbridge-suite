@@ -2413,16 +2413,23 @@ async function loadBootstrapConfig() {
   const cfg = await apiGet('/api/config');
   state.cfg = cfg?.config;
   state.auth = cfg?.auth;
+  state.versions = {
+    suite_version: String(cfg?.suite_version || ''),
+    component_version: String(cfg?.component_version || '')
+  };
 
   if (els.buildLine) {
     const o = state.cfg?.opcbridge || {};
     const a = state.cfg?.alarms || {};
     const h = state.cfg?.hmi || {};
     const r = state.cfg?.refresh_ms;
+    const suiteV = String(state.versions?.suite_version || '').trim();
+    const compV = String(state.versions?.component_version || '').trim();
+    const verStr = (suiteV || compV) ? `suite=${suiteV || '?'} · scada=${compV || '?'}` : '';
     const authStr = state.auth
       ? ` · admin_token=${state.auth.admin_token_configured ? 'yes' : 'no'} write_token=${state.auth.write_token_configured ? 'yes' : 'no'}`
       : '';
-    els.buildLine.textContent = `refresh=${r}ms · opcbridge @ ${o.scheme}://${o.host}:${o.port} · alarms @ ${a.scheme}://${a.host}:${a.port} · hmi @ ${h.scheme}://${h.host}:${h.port}${authStr}`;
+    els.buildLine.textContent = `refresh=${r}ms · ${verStr}${verStr ? ' · ' : ''}opcbridge @ ${o.scheme}://${o.host}:${o.port} · alarms @ ${a.scheme}://${a.host}:${a.port} · hmi @ ${h.scheme}://${h.host}:${h.port}${authStr}`;
   }
 }
 

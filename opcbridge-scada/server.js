@@ -21,6 +21,19 @@ const CONFIG_PATH = process.env.OPCBRIDGE_SCADA_CONFIG || path.join(ROOT, 'confi
 
 const SECRETS_PATH = process.env.OPCBRIDGE_SCADA_SECRETS || path.join(ROOT, 'config.secrets.json');
 
+function readVersionFile(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const cleaned = String(raw || '').trim();
+    return cleaned || 'dev';
+  } catch {
+    return 'dev';
+  }
+}
+
+const SUITE_VERSION = readVersionFile(path.join(ROOT, '..', 'VERSION'));
+const COMPONENT_VERSION = readVersionFile(path.join(ROOT, 'VERSION'));
+
 function readSecretsFile() {
   try {
     const raw = fs.readFileSync(SECRETS_PATH, 'utf8');
@@ -432,6 +445,9 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/config') {
     sendJson(res, 200, {
       ok: true,
+      service: 'opcbridge-scada',
+      suite_version: SUITE_VERSION,
+      component_version: COMPONENT_VERSION,
       config: {
         listen: { host: cfg.listen.host, port: cfg.listen.port },
         refresh_ms: cfg.refresh_ms,

@@ -24,6 +24,14 @@
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
+// Version info (wired in via build.sh)
+#ifndef OPCBRIDGE_ALARMS_VERSION
+#define OPCBRIDGE_ALARMS_VERSION "dev"
+#endif
+#ifndef OPCBRIDGE_SUITE_VERSION
+#define OPCBRIDGE_SUITE_VERSION "dev"
+#endif
+
 extern "C" {
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -1932,6 +1940,7 @@ int main(int argc, char **argv)
         else if (arg == "--version" || arg == "-V")
         {
             std::cout << "opcbridge-alarms version " << OPCBRIDGE_ALARMS_VERSION
+                      << " (suite " << OPCBRIDGE_SUITE_VERSION << ")"
                       << " (" << __DATE__ << " " << __TIME__ << ")\n";
             return 0;
         }
@@ -2081,11 +2090,13 @@ int main(int argc, char **argv)
         engine.counts(active, unacked, shelved, disabled);
         const auto keys = engine.subscription_keys();
 
-        json j;
-        j["ok"] = true;
-        j["service"] = "opcbridge-alarms";
-        j["version"] = OPCBRIDGE_ALARMS_VERSION;
-        j["uptime_ms"] = now_ms() - startMs;
+	        json j;
+	        j["ok"] = true;
+	        j["service"] = "opcbridge-alarms";
+	        j["version"] = OPCBRIDGE_ALARMS_VERSION; // backward compat
+	        j["component_version"] = OPCBRIDGE_ALARMS_VERSION;
+	        j["suite_version"] = OPCBRIDGE_SUITE_VERSION;
+	        j["uptime_ms"] = now_ms() - startMs;
         j["opcbridge"] = {
             {"connected", true},
             {"base_url", "http://" + opcbridgeHost + ":" + std::to_string(opcbridgeHttpPort)},
