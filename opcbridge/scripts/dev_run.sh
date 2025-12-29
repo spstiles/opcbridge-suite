@@ -17,7 +17,8 @@ WRITE_TOKEN_FILE="$ROOT/_run/write_token.txt"
 ENV_FILE="$ROOT/_run/dev_env.sh"
 
 OPCBRIDGE_BIN="$ROOT/opcbridge"
-ALARMS_BIN="$ROOT/opcbridge-alarms/opcbridge-alarms"
+ALARMS_ROOT="$ROOT/../opcbridge-alarms"
+ALARMS_BIN="$ALARMS_ROOT/opcbridge-alarms"
 
 if [[ ! -x "$OPCBRIDGE_BIN" ]]; then
   echo "Missing binary: $OPCBRIDGE_BIN"
@@ -27,7 +28,7 @@ fi
 
 if [[ ! -x "$ALARMS_BIN" ]]; then
   echo "Missing binary: $ALARMS_BIN"
-  echo "Build with: (cd opcbridge-alarms && ./build.sh)"
+  echo "Build with: (cd \"$ALARMS_ROOT\" && ./build.sh)"
   exit 1
 fi
 
@@ -122,7 +123,7 @@ else
   echo "Starting opcbridge-alarms..."
   : >"$ROOT/_logs/opcbridge-alarms.log"
   "$ALARMS_BIN" \
-    --config "$ROOT/opcbridge-alarms/config" \
+    --config "$ALARMS_ROOT/config" \
     --opcbridge-host 127.0.0.1 \
     --opcbridge-http-port "$OPCBRIDGE_HTTP_PORT" \
     --opcbridge-ws-port "$OPCBRIDGE_WS_PORT" \
