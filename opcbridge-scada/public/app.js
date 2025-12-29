@@ -236,20 +236,6 @@ function setTab(id) {
   document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('is-active', p.id === `tab-${id}`));
 }
 
-function getInitialTabFromUrl() {
-  const params = new URLSearchParams(window.location.search || '');
-  const tab = String(params.get('tab') || '').trim().toLowerCase();
-  const allowed = new Set(['overview', 'configure', 'workspace', 'alarms']);
-  return allowed.has(tab) ? tab : '';
-}
-
-function applyEmbedModeFromUrl() {
-  const params = new URLSearchParams(window.location.search || '');
-  const raw = String(params.get('embed') || '').trim().toLowerCase();
-  const enabled = raw === '1' || raw === 'true' || raw === 'yes';
-  document.body.classList.toggle('is-embed', enabled);
-}
-
 els.tabs?.addEventListener('click', (e) => {
   const btn = e.target.closest('.tab');
   if (!btn) return;
@@ -2817,8 +2803,7 @@ function restartRefreshLoop() {
 }
 
 async function main() {
-  applyEmbedModeFromUrl();
-  setTab(getInitialTabFromUrl() || 'overview');
+  setTab('overview');
 
   wireScadaSettingsUi();
   wireConnectionsUi();

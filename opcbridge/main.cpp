@@ -4965,10 +4965,10 @@ int main(int argc, char **argv) {
 		<div id="admin-chip" class="admin-chip" style="display:none;">
 			👑 ADMIN
 		</div>
-			<div style="display:flex; gap:6px; margin-left:10px;">
-				<a class="btn-reload" href="/dashboard">Dashboard</a>
-				<a class="btn-reload" href="/workspace">Workspace</a>
-			</div>
+		<div style="display:flex; gap:6px; margin-left:10px;">
+			<a class="btn-reload" href="/dashboard">Dashboard</a>
+			<a class="btn-reload" href="/editor">Editors</a>
+		</div>
 	    <div id="admin-panel">
 	        <span id="admin-status-text">Checking admin status...</span>
 	        <button id="admin-login-button" class="btn-reload" onclick="showAdminLogin()">Admin login</button>
@@ -5116,40 +5116,17 @@ int main(int argc, char **argv) {
 				<button class="btn-write" style="float:right;"
 						onclick="closeConfigViewer()">Close</button>
 			</div>
-				<pre id="config-viewer-body"
-					 style="white-space:pre; overflow:auto; max-height:90%;
-							background:#000; border:1px solid #333; padding:8px;"></pre>
+			<pre id="config-viewer-body"
+				 style="white-space:pre; overflow:auto; max-height:90%;
+						background:#000; border:1px solid #333; padding:8px;"></pre>
+			</div>
+	    </div>
+			<div id="editors-section" class="flex" style="display:none;">
+				<div class="card">
+					<h2>Connection Editor</h2>
+				<div id="conn-editor-status" class="small">
+					Admin login required to edit connection config files.
 				</div>
-		    </div>
-				<div id="workspace-section" class="flex" style="display:none;">
-					<div class="card" style="width:100%;">
-						<h2>Workspace</h2>
-						<div class="small">
-							This view is provided by <code>opcbridge-scada</code>. If it isn't running, start it and refresh.
-						</div>
-						<div style="display:flex; gap:6px; margin-top:8px; margin-bottom:8px;">
-							<a class="btn-reload" id="workspace-open-scada" href="#" target="_blank" rel="noreferrer">Open in new tab</a>
-							<a class="btn-reload" href="/legacy-editor">Legacy editors</a>
-						</div>
-						<div style="border:1px solid #333; border-radius:8px; overflow:hidden; background:#0b0b0b;">
-							<iframe id="workspace-embed"
-									title="opcbridge-scada workspace"
-									style="width:100%; height:78vh; border:0; background:#0f1115;"
-									loading="lazy"
-									referrerpolicy="no-referrer"></iframe>
-						</div>
-						<div class="small" style="margin-top:8px;">
-							Expected: <code id="workspace-scada-url"></code>
-						</div>
-					</div>
-				</div>
-
-				<div id="legacy-editors-section" class="flex" style="display:none;">
-					<div class="card">
-						<h2>Connection Editor</h2>
-					<div id="conn-editor-status" class="small">
-						Admin login required to edit connection config files.
-					</div>
 				<div class="tag-editor-toolbar">
 					<button class="btn-reload" id="conn-editor-toggle-btn" onclick="toggleConnEditor()">
 						Open editor
@@ -6125,50 +6102,22 @@ document.addEventListener("visibilitychange", () => {
     }
 });
 
-	function isWorkspacePage() {
-	    return window.location.pathname === "/workspace" || window.location.pathname === "/editor";
-	}
+function isEditorPage() {
+    return window.location.pathname === "/editor";
+}
 
-	function isLegacyEditorPage() {
-	    return window.location.pathname === "/legacy-editor";
-	}
-
-	function setupWorkspaceEmbed() {
-	    const iframe = document.getElementById("workspace-embed");
-	    const urlEl = document.getElementById("workspace-scada-url");
-	    const openEl = document.getElementById("workspace-open-scada");
-	    if (!iframe) return;
-
-	    const host = window.location.hostname || "127.0.0.1";
-	    const scheme = window.location.protocol === "https:" ? "https" : "http";
-	    const embedUrl = `${scheme}://${host}:3010/?tab=workspace&embed=1`;
-	    const openUrl = `${scheme}://${host}:3010/?tab=workspace`;
-	    iframe.src = embedUrl;
-	    if (openEl) openEl.href = openUrl;
-	    if (urlEl) urlEl.textContent = embedUrl;
-	}
-
-	function applyPageMode() {
-	    const dash = document.getElementById("dashboard-section");
-	    const workspace = document.getElementById("workspace-section");
-	    const legacy = document.getElementById("legacy-editors-section");
-	    if (!dash || !workspace || !legacy) return;
-
-	    if (isWorkspacePage()) {
-	        dash.style.display = "none";
-	        workspace.style.display = "";
-	        legacy.style.display = "none";
-	        setupWorkspaceEmbed();
-	    } else if (isLegacyEditorPage()) {
-	        dash.style.display = "none";
-	        workspace.style.display = "none";
-	        legacy.style.display = "";
-	    } else {
-	        dash.style.display = "";
-	        workspace.style.display = "none";
-	        legacy.style.display = "none";
-	    }
-	}
+function applyPageMode() {
+    const dash = document.getElementById("dashboard-section");
+    const editors = document.getElementById("editors-section");
+    if (!dash || !editors) return;
+    if (isEditorPage()) {
+        dash.style.display = "none";
+        editors.style.display = "";
+    } else {
+        dash.style.display = "";
+        editors.style.display = "none";
+    }
+}
 
 async function refreshInfo() {
     const nameVerEl      = document.getElementById("info-name-version");
@@ -7877,12 +7826,12 @@ async function tagEditorSave(reloadAfter) {
     }
 }
 
-		function startAutoRefresh() {
-			restoreAdminTokenFromStorage();
-			applyPageMode();
+	function startAutoRefresh() {
+		restoreAdminTokenFromStorage();
+		applyPageMode();
 
-	    // NEW: wire up modal key handling
-	    setupAdminModalKeys();
+    // NEW: wire up modal key handling
+    setupAdminModalKeys();
 
     // Existing: upload/edit existing config files
     const cfgInput = document.getElementById("config-upload-input");
@@ -7937,21 +7886,13 @@ window.addEventListener("load", startAutoRefresh);
                 res.set_content(dashboard_html, "text/html");
             });
 
-		            svr.Get("/dashboard", [dashboard_html](const httplib::Request &, httplib::Response &res) {
-		                res.set_content(dashboard_html, "text/html");
-		            });
+	            svr.Get("/dashboard", [dashboard_html](const httplib::Request &, httplib::Response &res) {
+	                res.set_content(dashboard_html, "text/html");
+	            });
 
-		            svr.Get("/workspace", [dashboard_html](const httplib::Request &, httplib::Response &res) {
-		                res.set_content(dashboard_html, "text/html");
-		            });
-
-		            svr.Get("/editor", [dashboard_html](const httplib::Request &, httplib::Response &res) {
-		                res.set_content(dashboard_html, "text/html");
-		            });
-
-		            svr.Get("/legacy-editor", [dashboard_html](const httplib::Request &, httplib::Response &res) {
-		                res.set_content(dashboard_html, "text/html");
-		            });
+	            svr.Get("/editor", [dashboard_html](const httplib::Request &, httplib::Response &res) {
+	                res.set_content(dashboard_html, "text/html");
+	            });
 
 				// /info
 				svr.Get("/info", [&](const httplib::Request &, httplib::Response &res) {
