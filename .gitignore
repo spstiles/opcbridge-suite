@@ -27,8 +27,9 @@
 # Built binaries (do not commit)
 opcbridge/opcbridge
 opcbridge/opcbridge-alarms/opcbridge-alarms
-opcbridge_reporter/opcbridge_reporter
+opcbridge-reporter/opcbridge-reporter
 
 # HMI local-only artifacts
 opcbridge-hmi/passwords.jsonc
 opcbridge-hmi/audit.jsonl
+opcbridge-reporter/opcbridge_reporter

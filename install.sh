@@ -232,8 +232,8 @@ build_if_needed() {
   (cd "$ROOT_DIR/opcbridge" && ./build.sh)
   (cd "$ROOT_DIR/opcbridge/opcbridge-alarms" && ./build.sh)
 
-  if [[ -f "$ROOT_DIR/opcbridge_reporter/Makefile" ]]; then
-    (cd "$ROOT_DIR/opcbridge_reporter" && make)
+  if [[ -f "$ROOT_DIR/opcbridge-reporter/Makefile" ]]; then
+    (cd "$ROOT_DIR/opcbridge-reporter" && make)
   fi
 }
 
@@ -316,13 +316,13 @@ install_hmi() {
 }
 
 install_reporter() {
-  echo "Installing opcbridge_reporter..."
-  local src="$ROOT_DIR/opcbridge_reporter/opcbridge_reporter"
+  echo "Installing opcbridge-reporter..."
+  local src="$ROOT_DIR/opcbridge-reporter/opcbridge-reporter"
   [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
-  install -m 0755 "$src" "$PREFIX/bin/opcbridge_reporter"
+  install -m 0755 "$src" "$PREFIX/bin/opcbridge-reporter"
 
   mkdir -p "$CONFIG_ROOT/reporter"
-  install -m 0644 "$ROOT_DIR/opcbridge_reporter/config.json.example" "$CONFIG_ROOT/reporter/config.json.example" 2>/dev/null || true
+  install -m 0644 "$ROOT_DIR/opcbridge-reporter/config.json.example" "$CONFIG_ROOT/reporter/config.json.example" 2>/dev/null || true
 }
 
 write_unit() {

@@ -2,7 +2,7 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 LDFLAGS = -lcurl -lmysqlclient
 
-TARGET = opcbridge_reporter
+TARGET = opcbridge-reporter
 SRCS = opcbridge_reporter.cpp
 
 all: $(TARGET)

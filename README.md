@@ -6,7 +6,7 @@ Monorepo for the opcbridge ecosystem:
 - `opcbridge-alarms/` (alarm server)
 - `opcbridge-scada/` (SCADA configuration/console UI)
 - `opcbridge-hmi/` (HMI)
-- `opcbridge_reporter/` (optional reporter)
+- `opcbridge-reporter/` (optional reporter)
 
 ## Install (Debian 13 derivatives)
 
