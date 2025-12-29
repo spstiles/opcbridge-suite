@@ -28,3 +28,7 @@
 opcbridge/opcbridge
 opcbridge/opcbridge-alarms/opcbridge-alarms
 opcbridge_reporter/opcbridge_reporter
+
+# HMI local-only artifacts
+opcbridge-hmi/passwords.jsonc
+opcbridge-hmi/audit.jsonl
