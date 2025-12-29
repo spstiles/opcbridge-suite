@@ -23,3 +23,8 @@
 
 # Workspace files
 *.code-workspace
+
+# Built binaries (do not commit)
+opcbridge/opcbridge
+opcbridge/opcbridge-alarms/opcbridge-alarms
+opcbridge_reporter/opcbridge_reporter
