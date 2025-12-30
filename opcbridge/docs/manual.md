@@ -1,5 +1,5 @@
 opcbridge — Installation, Configuration, and API Manual
-Version: 0.2.1
+Version: 0.2.2
 Project: opcbridge (SCADA Communication Core)
 1. Introduction
 
@@ -67,7 +67,7 @@ Build script: build.sh
 #!/bin/bash
 set -e
 
-VERSION="0.2.1"
+VERSION="0.2.2"
 
 CXX_FLAGS="-std=c++17 -Wall -Wextra -O2"
 C_FLAGS="-std=c99 -O2"
@@ -352,7 +352,7 @@ Environment="OPCBRIDGE_ADMIN_SERVICE_TOKEN=change-me-to-a-long-random-token"
 5.1 GET /info
 {
   "name": "opcbridge",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "uptime_seconds": 12,
   "num_connections": 2,
   "total_tags": 32

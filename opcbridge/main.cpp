@@ -4652,6 +4652,12 @@ int main(int argc, char **argv) {
 		flex: 0 0 auto;        /* Card size stays based on content */
 		margin-right: 20px;    /* Space between cards */
 	}
+	.card-full {
+		flex: 1 0 100%;
+		min-width: 100%;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
     .status-ok {
         color: #4caf50;
         font-weight: bold;
@@ -4967,16 +4973,26 @@ int main(int argc, char **argv) {
 			  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 			}
 
-			/* Workspace (SCADA-style) */
-			.workspace-card {
-			  width: 100%;
-			  flex: 1 1 100%;
-			  min-width: 520px;
-			}
-				.workspace-savebar {
-				  display: flex;
-				  align-items: center;
-				  gap: 6px;
+					/* Workspace (SCADA-style, match opcbridge-scada layout) */
+					.workspace-page {
+					  width: 100%;
+					  min-width: 520px;
+					  margin-bottom: 0;
+					  padding: 0;
+					  background: transparent;
+					  border: 0;
+					  box-shadow: none;
+					}
+					.workspace-page h2 {
+					  margin: 6px 0 10px 0;
+					  font-size: 18px;
+					  border-bottom: 0;
+					  padding-bottom: 0;
+					}
+					.workspace-savebar {
+					  display: flex;
+					  align-items: center;
+					  gap: 6px;
 				  flex-wrap: wrap;
 				  margin-bottom: 10px;
 				}
@@ -4984,29 +5000,133 @@ int main(int argc, char **argv) {
 				.workspace-savebar .btn-write {
 				  margin-top: 0;
 				}
-				.workspace-grid {
+				.ws-workspace {
 				  display: grid;
 				  grid-template-columns: 320px 1fr;
+				  grid-template-rows: 1fr 1fr;
 				  gap: 12px;
-				  min-height: 420px;
-			}
-			.workspace-pane {
-			  min-height: 0;
-			  border: 1px solid #333;
-			  border-radius: 6px;
-			  background: #0f0f0f;
-			  padding: 8px;
-			}
-			.ws-tree {
-			  margin-top: 6px;
-			  overflow: auto;
-			  max-height: 56vh;
-			  user-select: none;
-			}
-			.ws-tree-row {
-			  display: flex;
-			  align-items: center;
-			  gap: 6px;
+				  height: min(72vh, 900px);
+				  min-height: 560px;
+				}
+				.ws-sidebar {
+				  grid-column: 1;
+				  grid-row: 1;
+				  min-height: 0;
+				  border: 1px solid #333;
+				  border-radius: 6px;
+				  background: #0f0f0f;
+				  overflow: hidden;
+				  display: flex;
+				  flex-direction: column;
+				}
+				.ws-sidebar-title {
+				  padding: 8px 10px;
+				  border-bottom: 1px solid #333;
+				  background: #111;
+				  color: #aaa;
+				  font-size: 12px;
+				}
+				.ws-sidebar-note {
+				  padding: 8px 10px;
+				  border-top: 1px solid #333;
+				  color: #aaa;
+				  font-size: 11px;
+				}
+				.ws-tree {
+				  user-select: none;
+				  overflow: auto;
+				  flex: 1 1 auto;
+				  min-height: 0;
+				  padding: 6px;
+				  margin-top: 0;
+				}
+				.ws-editor {
+				  min-height: 0;
+				  border: 1px solid #333;
+				  border-radius: 6px;
+				  background: #0f0f0f;
+				  overflow: hidden;
+				  display: flex;
+				  flex-direction: column;
+				}
+				.ws-editor-toolbar {
+				  display: flex;
+				  align-items: center;
+				  justify-content: space-between;
+				  gap: 10px;
+				  padding: 8px 10px;
+				  border-bottom: 1px solid #333;
+				  background: #111;
+				}
+				.ws-editor-title {
+				  font-size: 12px;
+				  color: #aaa;
+				  font-weight: bold;
+				}
+				.ws-editor-body {
+				  flex: 1 1 auto;
+				  min-height: 0;
+				  padding: 8px;
+				}
+				.ws-workspace-right {
+				  grid-column: 2;
+				  grid-row: 1;
+				}
+				.ws-workspace-bottom {
+				  grid-column: 1 / -1;
+				  grid-row: 2;
+				}
+					.ws-workspace-bottom .ws-editor-body {
+					  display: flex;
+					  flex-direction: column;
+					  gap: 6px;
+					  overflow: hidden;
+					}
+					.ws-workspace-bottom #workspace-live-tags-host {
+					  flex: 1 1 auto;
+					  min-height: 0;
+					  display: flex;
+					  flex-direction: column;
+					  overflow: hidden;
+					}
+					#live-tags-panel {
+					  display: flex;
+					  flex-direction: column;
+					  min-height: 0;
+					}
+				#live-tags-panel .tag-table-container {
+				  flex: 1 1 auto;
+				  min-height: 0;
+				}
+					.ws-workspace-bottom .tag-table-container {
+					  flex: 1 1 auto;
+					  min-height: 0;
+					  max-height: none;
+					  overflow: auto;
+					}
+				.ws-table-wrap {
+				  border: 1px solid #333;
+				  border-radius: 6px;
+				  overflow: auto;
+				  height: 100%;
+				}
+				@media (max-width: 1100px) {
+				  .ws-workspace {
+				    grid-template-columns: 1fr;
+				    grid-template-rows: auto auto auto;
+				    height: auto;
+				  }
+				  .ws-sidebar,
+				  .ws-workspace-right,
+				  .ws-workspace-bottom {
+				    grid-column: auto;
+				    grid-row: auto;
+				  }
+				}
+				.ws-tree-row {
+				  display: flex;
+				  align-items: center;
+				  gap: 6px;
 			  padding: 2px 4px;
 			  cursor: pointer;
 			  border-radius: 4px;
@@ -5041,15 +5161,9 @@ int main(int argc, char **argv) {
 			  width: 14px;
 			  flex: 0 0 14px;
 			}
-			.ws-table-wrap {
-			  border: 1px solid #333;
-			  border-radius: 6px;
-			  overflow: auto;
-			  max-height: 56vh;
-			}
-			#ws-children-table tbody tr {
-			  cursor: default;
-			}
+				#ws-children-table tbody tr {
+				  cursor: default;
+				}
 			#ws-children-table tbody tr:hover td {
 			  background: rgba(255,255,255,0.05);
 			}
@@ -5101,11 +5215,11 @@ int main(int argc, char **argv) {
 			  border-bottom: 1px solid #333;
 			  padding-bottom: 6px;
 			}
-			.ws-form {
-			  display: grid;
-			  grid-template-columns: 1fr 1fr;
-			  gap: 10px 12px;
-			}
+				.ws-form {
+				  display: grid;
+				  grid-template-columns: 1fr;
+				  gap: 10px;
+				}
 			.ws-form label {
 			  display: flex;
 			  flex-direction: column;
@@ -5122,12 +5236,19 @@ int main(int argc, char **argv) {
 			  padding: 6px 8px;
 			  font-size: 12px;
 			}
-			.ws-modal-actions {
-			  display: flex;
-			  justify-content: flex-end;
-			  gap: 6px;
-			  margin-top: 10px;
-			}
+				.ws-modal-actions {
+				  display: flex;
+				  justify-content: flex-end;
+				  gap: 6px;
+				  margin-top: 10px;
+				}
+				.ws-modal-actions button {
+				  min-width: 120px;
+				  margin-top: 0;
+				  padding: 6px 12px;
+				  line-height: 1;
+				  height: 30px;
+				}
 	</style>
 </head>
 <body>
@@ -5138,7 +5259,7 @@ int main(int argc, char **argv) {
 		</div>
 			<div style="display:flex; gap:6px; margin-left:10px;">
 				<a class="btn-reload" href="/dashboard">Dashboard</a>
-				<a class="btn-reload" href="/editor">Workspace</a>
+					<a class="btn-reload" href="/workspace">Workspace</a>
 			</div>
 	    <div id="admin-panel">
 	        <span id="admin-status-text">Checking admin status...</span>
@@ -5213,109 +5334,153 @@ int main(int argc, char **argv) {
 				</button>
 				<div class="small" id="bundle-file-name"></div>
 			</div>
-		</div>
-    </div>
-			    <div class="card">
-			        <h2>Config Files</h2>
-	        <div id="config-meta" class="small">Loading...</div>
-	        <div class="tag-table-container">
-	            <table id="config-table">
-                <thead>
-                    <tr>
-                        <th>Path</th>
-                        <th>Kind</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="config-tbody">
-                </tbody>
-            </table>
-        </div>
-		<div class="small" style="margin-top:8px;">
-			<div>Upload new config file:</div>
-			<label>
-				Kind:
-				<select id="config-new-kind">
-					<option value="connection">connection (connections/*.json)</option>
-					<option value="tags">tags (tags/*.json)</option>
-					<option value="mqtt">mqtt (mqtt.json)</option>
-					<option value="mqtt_inputs">mqtt inputs (mqtt_inputs.json)</option>
-					<option value="alarms">alarms (alarms.json)</option>
-				</select>
-			</label>
-			<label style="margin-left:8px;">
-				Filename:
-				<input type="text"
-					   id="config-new-name"
-					   placeholder="(no file selected)"
-					   style="width:180px;"
-					   readonly />
-			</label>
-			<button class="btn-write" style="margin-left:8px;"
-					onclick="chooseNewConfigFile()">
-				Find File
-			</button>
-			<button class="btn-write" style="margin-left:4px;"
-					onclick="uploadNewConfigFile()">
-				Upload
-			</button>
-		</div>
-
-		<!-- Hidden file input just for "new" configs -->
-		<input type="file" id="config-new-file-input" style="display:none" />
-
-		<!-- Existing hidden input for editing existing files -->
-		<input type="file" id="config-upload-input" style="display:none" />
-
-		<div id="config-status" class="small"></div>
-
-		<input type="file" id="config-upload-input" style="display:none" />
-		<div id="config-status" class="small"></div>
-
-		<!-- Simple modal for viewing raw config text -->
-		<div id="config-viewer"
-			 style="display:none; position:fixed; left:10%; top:10%; width:80%; height:80%;
-					background:#111; border:1px solid #444; z-index:1000;
-					box-shadow:0 4px 10px rgba(0,0,0,0.8); padding:8px;">
-			<div class="small" style="margin-bottom:6px; overflow:auto;">
-				<span id="config-viewer-title"></span>
-				<button class="btn-write" style="float:right;"
-						onclick="closeConfigViewer()">Close</button>
 			</div>
-			<pre id="config-viewer-body"
-				 style="white-space:pre; overflow:auto; max-height:90%;
-						background:#000; border:1px solid #333; padding:8px;"></pre>
-			</div>
-	    </div>
-				<div id="editors-section" class="flex" style="display:none;">
-					<div class="card workspace-card">
-						<h2>Workspace</h2>
-						<div class="workspace-savebar">
-							<button class="btn-reload" id="ws-save-btn">Save</button>
-							<button class="btn-reload" id="ws-save-reload-btn">Save + Reload</button>
-							<button class="btn-write" id="ws-discard-btn">Discard</button>
-							<div class="small" id="ws-save-status" style="margin-left:10px;"></div>
-						</div>
 
-						<div class="workspace-grid">
-							<div class="workspace-pane">
-								<div class="small" id="ws-tree-status">Loading…</div>
-								<div class="ws-tree" id="ws-tree"></div>
-							</div>
-							<div class="workspace-pane">
-								<div class="ws-table-wrap">
-									<table id="ws-children-table">
-										<thead id="ws-children-thead"></thead>
-										<tbody id="ws-children-tbody"></tbody>
-									</table>
-								</div>
-							</div>
-						</div>
+				<div class="card card-full">
+					<h2>Config Files</h2>
+					<div id="config-meta" class="small">Loading...</div>
+					<div class="tag-table-container">
+						<table id="config-table">
+						<thead>
+							<tr>
+								<th>Path</th>
+								<th>Kind</th>
+								<th>Actions</th>
+							</tr>
+						</thead>
+						<tbody id="config-tbody">
+						</tbody>
+					</table>
+				</div>
+				<div class="small" style="margin-top:8px;">
+					<div>Upload new config file:</div>
+					<label>
+						Kind:
+						<select id="config-new-kind">
+							<option value="connection">connection (connections/*.json)</option>
+							<option value="tags">tags (tags/*.json)</option>
+							<option value="mqtt">mqtt (mqtt.json)</option>
+							<option value="mqtt_inputs">mqtt inputs (mqtt_inputs.json)</option>
+							<option value="alarms">alarms (alarms.json)</option>
+						</select>
+					</label>
+					<label style="margin-left:8px;">
+						Filename:
+						<input type="text"
+							   id="config-new-name"
+							   placeholder="(no file selected)"
+							   style="width:180px;"
+							   readonly />
+					</label>
+					<button class="btn-write" style="margin-left:8px;"
+							onclick="chooseNewConfigFile()">
+						Find File
+					</button>
+					<button class="btn-write" style="margin-left:4px;"
+							onclick="uploadNewConfigFile()">
+						Upload
+					</button>
+				</div>
 
-						<div class="small" style="margin-top:8px;">
-							Bottom live tags list filters when a device is selected.
+				<!-- Hidden file input just for "new" configs -->
+				<input type="file" id="config-new-file-input" style="display:none" />
+
+				<!-- Existing hidden input for editing existing files -->
+				<input type="file" id="config-upload-input" style="display:none" />
+
+				<div id="config-status" class="small"></div>
+
+				<!-- Simple modal for viewing raw config text -->
+				<div id="config-viewer"
+					 style="display:none; position:fixed; left:10%; top:10%; width:80%; height:80%;
+							background:#111; border:1px solid #444; z-index:1000;
+							box-shadow:0 4px 10px rgba(0,0,0,0.8); padding:8px;">
+					<div class="small" style="margin-bottom:6px; overflow:auto;">
+						<span id="config-viewer-title"></span>
+						<button class="btn-write" style="float:right;"
+								onclick="closeConfigViewer()">Close</button>
+					</div>
+					<pre id="config-viewer-body"
+						 style="white-space:pre; overflow:auto; max-height:90%;
+								background:#000; border:1px solid #333; padding:8px;"></pre>
+					</div>
+				</div>
+
+				<div class="card card-full">
+					<h2>Tags</h2>
+					<div id="dashboard-live-tags-host">
+						<div id="live-tags-panel">
+							<div class="small" id="tags-meta">Loading...</div>
+						<div class="tag-table-container">
+							<table id="tags-table">
+								<thead>
+									<tr>
+										<th>Connection</th>
+										<th>Name</th>
+										<th>Datatype</th>
+										<th>Quality</th>
+										<th>Value</th>
+										<th>Writable</th>
+										<th>Action</th>
+										<th>Timestamp</th>
+									</tr>
+								</thead>
+								<tbody id="tags-tbody">
+								</tbody>
+							</table>
+						</div>
+						<div id="write-status" class="small"></div>
 						</div>
 					</div>
+				</div>
+
+				<div class="card card-full">
+					<h2>Alarms / Events</h2>
+					<div id="alarms-meta" class="small">Loading...</div>
+					<div id="alarms-body" class="small"></div>
+				</div>
+		    </div>
+						<div id="editors-section" style="display:none;">
+							<div class="workspace-page">
+								<h2>Workspace</h2>
+								<div class="workspace-savebar">
+									<button class="btn-reload" id="ws-save-btn">Save</button>
+									<button class="btn-reload" id="ws-save-reload-btn">Save + Reload</button>
+									<button class="btn-write" id="ws-discard-btn">Discard</button>
+								<div class="small" id="ws-save-status" style="margin-left:10px;"></div>
+							</div>
+
+							<div class="ws-workspace">
+								<aside class="ws-sidebar">
+									<div class="ws-sidebar-title">Project</div>
+									<div class="ws-tree" id="ws-tree"></div>
+									<div class="ws-sidebar-note" id="ws-tree-status">Loading…</div>
+								</aside>
+
+								<section class="ws-editor ws-workspace-right">
+									<div class="ws-editor-toolbar">
+										<div class="ws-editor-title">Properties</div>
+									</div>
+									<div class="ws-editor-body">
+										<div class="ws-table-wrap">
+											<table id="ws-children-table">
+												<thead id="ws-children-thead"></thead>
+												<tbody id="ws-children-tbody"></tbody>
+											</table>
+										</div>
+									</div>
+								</section>
+
+										<section class="ws-editor ws-workspace-bottom">
+											<div class="ws-editor-toolbar">
+												<div class="ws-editor-title">Tags</div>
+											</div>
+											<div class="ws-editor-body">
+												<div id="workspace-live-tags-host"></div>
+											</div>
+										</section>
+							</div>
+						</div>
 
 					<!-- Context menu -->
 					<div id="ws-context-menu" class="ws-context-menu" style="display:none;"></div>
@@ -5366,32 +5531,9 @@ int main(int argc, char **argv) {
 						</div>
 					</div>
 				</div>
-		    <div class="card">
-		        <h2>Tags</h2>
-		        <div class="small" id="tags-meta">Loading...</div>
-	        <div class="tag-table-container">
-            <table id="tags-table">
-                <thead>
-                    <tr>
-                        <th>Connection</th>
-                        <th>Name</th>
-                        <th>Datatype</th>
-                        <th>Quality</th>
-                        <th>Value</th>
-                        <th>Writable</th>
-                        <th>Action</th>
-                        <th>Timestamp</th>
-                    </tr>
-                </thead>
-                <tbody id="tags-tbody">
-                </tbody>
-            </table>
-	    </div>
-        <div id="write-status" class="small"></div>
-    </div>
-	<!-- Admin login / setup modal -->
-	<div id="admin-modal" class="admin-modal-backdrop" style="display:none;">
-	  <div class="admin-modal-card">
+		<!-- Admin login / setup modal -->
+		<div id="admin-modal" class="admin-modal-backdrop" style="display:none;">
+		  <div class="admin-modal-card">
 		<div class="admin-modal-header">
 		  <div class="admin-modal-icon">🔐</div>
 		  <div>
@@ -5728,13 +5870,50 @@ const wsLabelForPlcType = (code) => {
     return WS_PLC_TYPE_LABELS[k] || k;
 };
 
-const wsStripJsonComments = (raw) => {
-    // Minimal JSONC support for configs; good enough for typical // and /* */ usage.
-    const s = String(raw || "");
-    const noBlock = s.replace(/\/\*[\s\S]*?\*\//g, "");
-    const noLine = noBlock.replace(/(^|[^:])\/\/.*$/gm, "$1");
-    return noLine;
-};
+	const wsStripJsonComments = (raw) => {
+	    // Minimal JSONC support for configs; handles // and /* */ comments and trailing commas.
+	    const s = String(raw || "");
+	    const noBlock = s.replace(/\/\*[\s\S]*?\*\//g, "");
+	    const noLine = noBlock.replace(/(^|[^:])\/\/.*$/gm, "$1");
+	
+	    // Strip trailing commas outside of strings.
+	    let out = "";
+	    let inString = false;
+	    let escaped = false;
+	    for (let i = 0; i < noLine.length; i++) {
+	        const c = noLine[i];
+	        if (inString) {
+	            out += c;
+	            if (escaped) {
+	                escaped = false;
+	            } else if (c === "\\") {
+	                escaped = true;
+	            } else if (c === "\"") {
+	                inString = false;
+	            }
+	            continue;
+	        }
+	
+	        if (c === "\"") {
+	            inString = true;
+	            out += c;
+	            continue;
+	        }
+	
+	        if (c === ",") {
+	            let j = i + 1;
+	            while (j < noLine.length && /\s/.test(noLine[j])) j++;
+	            const next = noLine[j];
+	            if (next === "}" || next === "]") {
+	                continue; // drop trailing comma
+	            }
+	        }
+	
+	        out += c;
+	    }
+	
+	    return out;
+	};
 
 const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 
@@ -5832,73 +6011,37 @@ const wsApiJson = async (url, opts = {}) => {
 	    if (el.discardBtn) el.discardBtn.disabled = !canEdit || !wsDirty;
 	};
 
-	const wsLoadWorkspaceFromServer = async () => {
-	    // Prefer config endpoints if admin is logged in; otherwise fall back to public read-only endpoints.
-	    if (wsIsEditable()) {
-	        try {
-	            const files = await wsApiJson("/config/files");
-	            const connPaths = (Array.isArray(files?.files) ? files.files : [])
-	                .filter((f) => f && f.kind === "connection" && typeof f.path === "string")
-	                .map((f) => f.path)
-	                .sort();
+			const wsLoadWorkspaceFromServer = async () => {
+			    if (!wsIsEditable()) {
+			        throw new Error("Admin login required to view workspace config.");
+			    }
 
-	            const connections = [];
-	            for (const relPath of connPaths) {
-	                try {
-	                    const raw = await wsApiText("/config/file?path=" + encodeURIComponent(relPath));
-	                    const parsed = JSON.parse(wsStripJsonComments(raw));
-	                    if (!parsed || typeof parsed !== "object") continue;
-	                    const id = String(parsed.id || "").trim();
-	                    if (!id) continue;
-	                    parsed.__path = relPath;
-	                    connections.push(parsed);
-	                } catch (e) {
-	                    console.warn("Failed to load connection:", relPath, e);
-	                }
-	            }
-
-	            const tagsResp = await wsApiJson("/config/tags");
-	            const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
-
-	            return { connections, tags };
-	        } catch (e) {
-	            console.warn("Workspace: config endpoints unavailable, falling back to read-only:", e);
-	        }
-	    }
-
-	    const [healthResp, tagsResp] = await Promise.all([
-	        fetch("/health"),
-	        fetch("/tags")
-	    ]);
-
-	    const healthText = await healthResp.text();
-	    const tagsText = await tagsResp.text();
-
-	    let health = {};
-	    let tagsData = {};
-	    try { health = JSON.parse(healthText); } catch { health = {}; }
-	    try { tagsData = JSON.parse(tagsText); } catch { tagsData = {}; }
-
-	    const tags = Array.isArray(tagsData?.tags) ? tagsData.tags : [];
-
-	    const connIds = new Set();
-	    const healthConns = health && typeof health === "object" ? (health.connections || health?.connections_summary || {}) : {};
-	    if (healthConns && typeof healthConns === "object" && !Array.isArray(healthConns)) {
-	        Object.keys(healthConns).forEach((k) => {
-	            const id = String(k || "").trim();
-	            if (id) connIds.add(id);
-	        });
-	    }
-	    tags.forEach((t) => {
-	        const cid = String(t?.connection_id || "").trim();
-	        if (cid) connIds.add(cid);
-	    });
-
-	    const connections = Array.from(connIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
-	        .map((id) => ({ id }));
-
-	    return { connections, tags };
-	};
+			    const files = await wsApiJson("/config/files");
+			    const connPaths = (Array.isArray(files?.files) ? files.files : [])
+			        .filter((f) => f && f.kind === "connection" && typeof f.path === "string")
+			        .map((f) => f.path)
+			        .sort();
+			
+			    const connections = [];
+			    for (const relPath of connPaths) {
+			        try {
+			            const raw = await wsApiText("/config/file?path=" + encodeURIComponent(relPath));
+			            const parsed = JSON.parse(wsStripJsonComments(raw));
+			            if (!parsed || typeof parsed !== "object") continue;
+			            const id = String(parsed.id || "").trim();
+			            if (!id) continue;
+			            parsed.__path = relPath;
+			            connections.push(parsed);
+			        } catch (e) {
+			            console.warn("Failed to load connection:", relPath, e);
+			        }
+			    }
+			
+			    const tagsResp = await wsApiJson("/config/tags");
+			    const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
+			
+			    return { connections, tags };
+			};
 
 const wsBuildNodeIndex = (root) => {
     wsNodeById = new Map();
@@ -6598,20 +6741,37 @@ const wsApplyLiveTagsFilterFromSelection = () => {
     if (el.tagModal) el.tagModal.addEventListener("click", (e) => { if (e.target === el.tagModal) wsCloseModal(el.tagModal); });
 };
 
-	const wsInit = async () => {
-	    const el = wsEls();
-	    if (!el.tree || !el.tbody) return;
+		const wsInit = async () => {
+		    const el = wsEls();
+		    if (!el.tree || !el.tbody) return;
 
-    if (!wsLoadedOnce) {
-        wsWireUi();
-        wsLoadedOnce = true;
-    }
+	    if (!wsLoadedOnce) {
+	        wsWireUi();
+	        wsLoadedOnce = true;
+	    }
 
-	    if (el.treeStatus) el.treeStatus.textContent = "Loading…";
-	    wsSetStatus("", "");
+		    // If not logged in, keep the live tags panel but hide workspace config tree/details.
+		    if (!wsIsEditable()) {
+		        wsBase = { connections: [], tags: [] };
+		        wsDraft = { connections: [], tags: [] };
+		        wsPendingDeletes = [];
+		        wsNodeById = new Map();
+		        wsSetDirty(false);
 
-	    try {
-	        const data = await wsLoadWorkspaceFromServer();
+		        if (el.treeStatus) el.treeStatus.textContent = "Admin login required to view workspace.";
+		        if (el.tree) el.tree.textContent = "";
+		        if (el.thead) el.thead.textContent = "";
+		        if (el.tbody) el.tbody.textContent = "";
+		        wsApplyEditability();
+		        wsSetStatus("Read-only (admin login required to view/edit workspace).", "status-degraded");
+		        return;
+		    }
+
+		    if (el.treeStatus) el.treeStatus.textContent = "Loading…";
+		    wsSetStatus("", "");
+
+		    try {
+		        const data = await wsLoadWorkspaceFromServer();
 	        wsBase = wsDeepClone(data);
 	        wsDraft = wsDeepClone(data);
 	        wsPendingDeletes = [];
@@ -6663,6 +6823,7 @@ function formatUptime(sec) {
 
 async function refreshAdminStatus() {
     try {
+        const wasEditable = !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN && ADMIN_TOKEN);
         const resp = await fetch("/auth/status", {
             method: "GET",
             headers: withAdminHeaders()
@@ -6682,6 +6843,17 @@ async function refreshAdminStatus() {
         }
 
         updateAdminUi();
+
+        const isEditableNow = !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN && ADMIN_TOKEN);
+        // If we're on /workspace and admin status just became editable, load the workspace tree now.
+        if (isEditorPage() && !wasEditable && isEditableNow) {
+            if (!wsDirty) {
+                wsInit();
+            } else {
+                wsSetStatus("Admin login restored. Save/Discard to reload workspace.", "status-degraded");
+                wsApplyEditability();
+            }
+        }
     } catch (e) {
         const s = document.getElementById("admin-status-text");
         if (s) s.textContent = "Admin status: error";
@@ -7158,22 +7330,37 @@ document.addEventListener("visibilitychange", () => {
     }
 });
 
-function isEditorPage() {
-    return window.location.pathname === "/editor";
-}
+		function isEditorPage() {
+		    return window.location.pathname === "/workspace";
+		}
 
-function applyPageMode() {
-    const dash = document.getElementById("dashboard-section");
-    const editors = document.getElementById("editors-section");
-    if (!dash || !editors) return;
-    if (isEditorPage()) {
-        dash.style.display = "none";
-        editors.style.display = "";
-    } else {
-        dash.style.display = "";
-        editors.style.display = "none";
-    }
-}
+	function applyPageMode() {
+	    const dash = document.getElementById("dashboard-section");
+	    const editors = document.getElementById("editors-section");
+	    if (!dash || !editors) return;
+
+	    const moveLiveTagsPanel = () => {
+	        const panel = document.getElementById("live-tags-panel");
+	        if (!panel) return;
+	        const host = isEditorPage()
+	            ? document.getElementById("workspace-live-tags-host")
+	            : document.getElementById("dashboard-live-tags-host");
+	        if (!host) return;
+	        if (panel.parentElement !== host) host.appendChild(panel);
+	    };
+
+	    if (isEditorPage()) {
+	        document.body.classList.add("is-editor-page");
+	        dash.style.display = "none";
+	        editors.style.display = "";
+	        moveLiveTagsPanel();
+	    } else {
+	        document.body.classList.remove("is-editor-page");
+	        dash.style.display = "";
+	        editors.style.display = "none";
+	        moveLiveTagsPanel();
+	    }
+	}
 
 async function refreshInfo() {
     const nameVerEl      = document.getElementById("info-name-version");
@@ -8887,45 +9074,47 @@ async function tagEditorSave(reloadAfter) {
     }
 }
 
-		function startAutoRefresh() {
-			restoreAdminTokenFromStorage();
-			applyPageMode();
-			if (isEditorPage()) {
-			    wsInit();
-			}
+				function startAutoRefresh() {
+					restoreAdminTokenFromStorage();
+					applyPageMode();
+					if (isEditorPage()) {
+					    wsInit();
+					}
 
-	    // NEW: wire up modal key handling
-	    setupAdminModalKeys();
+		    // NEW: wire up modal key handling
+		    setupAdminModalKeys();
 
-    // Existing: upload/edit existing config files
-    const cfgInput = document.getElementById("config-upload-input");
-    if (cfgInput) {
-        cfgInput.addEventListener("change", onConfigFileSelected);
-    }
+		    // Existing: upload/edit existing config files
+		    const cfgInput = document.getElementById("config-upload-input");
+		    if (cfgInput && !cfgInput.dataset.bound) {
+		        cfgInput.addEventListener("change", onConfigFileSelected);
+		        cfgInput.dataset.bound = "1";
+		    }
 
-    // NEW: upload new config files
-    const newCfgInput = document.getElementById("config-new-file-input");
-    if (newCfgInput) {
-        newCfgInput.addEventListener("change", onNewConfigFileSelected);
-    }
+		    // Upload new config files
+		    const newCfgInput = document.getElementById("config-new-file-input");
+		    if (newCfgInput && !newCfgInput.dataset.bound) {
+		        newCfgInput.addEventListener("change", onNewConfigFileSelected);
+		        newCfgInput.dataset.bound = "1";
+		    }
 
-	    refreshAdminStatus();
-	    refreshInfo();
-	    refreshConfigFiles();
-	    if (!isEditorPage()) {
-	        refreshHealth();
-	    }
-	    refreshTags();
-	    refreshAlarms();
+			    refreshAdminStatus();
+			    refreshInfo();
+			    refreshConfigFiles();
+			    if (!isEditorPage()) {
+			        refreshHealth();
+			    }
+			    refreshTags();
+			    refreshAlarms();
 
-	    setInterval(refreshAdminStatus, 60000); // once a minute is fine
-	    setInterval(refreshInfo,   15000);
-	    setInterval(refreshConfigFiles, 60000); // e.g. once a minute
-	    if (!isEditorPage()) {
-	        setInterval(refreshHealth,  5000);
-	    }
-	    setInterval(refreshTags,    5000);
-	    setInterval(refreshAlarms,  5000);
+			    setInterval(refreshAdminStatus, 60000); // once a minute is fine
+			    setInterval(refreshInfo,   15000);
+			    setInterval(refreshConfigFiles, 60000); // e.g. once a minute
+			    if (!isEditorPage()) {
+			        setInterval(refreshHealth,  5000);
+			    }
+			    setInterval(refreshTags,    5000);
+		    setInterval(refreshAlarms,  5000);
 
 	}
 
@@ -8954,7 +9143,7 @@ window.addEventListener("load", startAutoRefresh);
 	                res.set_content(dashboard_html, "text/html");
 	            });
 
-	            svr.Get("/editor", [dashboard_html](const httplib::Request &, httplib::Response &res) {
+	            svr.Get("/workspace", [dashboard_html](const httplib::Request &, httplib::Response &res) {
 	                res.set_content(dashboard_html, "text/html");
 	            });
 
@@ -9733,8 +9922,8 @@ window.addEventListener("load", startAutoRefresh);
 				res.set_content(root.dump(2), "application/json");
 			});
 
-			// GET /alarms/events
-			svr.Get(R"(/alarms/events)", [&](const httplib::Request &req, httplib::Response &res) {
+				// GET /alarms/events
+				svr.Get(R"(/alarms/events)", [&](const httplib::Request &req, httplib::Response &res) {
 				int limit = 50;
 				if (req.has_param("limit")) {
 					try {
@@ -9758,13 +9947,123 @@ window.addEventListener("load", startAutoRefresh);
 					res.status = 200;
 				}
 
-				res.set_content(root.dump(2), "application/json");
-			});
+					res.set_content(root.dump(2), "application/json");
+				});
 
-				// GET /config/tags  -> flattened view of all tag configs on disk
-				svr.Get("/config/tags", [&](const httplib::Request &req, httplib::Response &res) {
-					if (!is_admin_request(req)) {
-						json err;
+					// GET /workspace/config -> read-only workspace config (connections + tags), no admin required
+					svr.Get("/workspace/config", [&](const httplib::Request &, httplib::Response &res) {
+						json root;
+						root["ok"] = false;
+						root["connections"] = json::array();
+						root["tags"] = json::array();
+
+						try {
+							auto pick = [](const json &src, const std::vector<std::string> &keys) -> json {
+								json out = json::object();
+								if (!src.is_object()) return out;
+								for (const auto &k : keys) {
+									if (src.contains(k)) out[k] = src.at(k);
+								}
+								return out;
+							};
+							const std::vector<std::string> connKeys = {
+								"id",
+								"description",
+								"driver",
+								"plc_type",
+								"gateway",
+								"path",
+								"slot",
+								"default_timeout_ms",
+								"default_read_ms",
+								"default_write_ms",
+								"debug"};
+							const std::vector<std::string> tagKeys = {
+								"connection_id",
+								"name",
+								"plc_tag_name",
+								"datatype",
+								"scan_ms",
+								"enabled",
+								"writable",
+								"source_file"};
+
+							// connections/*.json
+							const std::string connDir = joinPath(configDir, "connections");
+							if (fs::exists(connDir) && fs::is_directory(connDir)) {
+								std::vector<std::string> paths;
+								for (const auto &entry : fs::directory_iterator(connDir)) {
+									if (!entry.is_regular_file()) continue;
+									if (entry.path().extension() != ".json" && entry.path().extension() != ".jsonc") continue;
+									paths.push_back(entry.path().string());
+								}
+								std::sort(paths.begin(), paths.end());
+								for (const auto &path : paths) {
+									try {
+										json c = load_json_with_comments(path);
+										if (!c.is_object()) continue;
+										std::string id = c.value("id", std::string{});
+										if (id.empty()) continue;
+										fs::path p(path);
+										json safe = pick(c, connKeys);
+										safe["__path"] = std::string("connections/") + p.filename().string();
+										root["connections"].push_back(safe);
+									} catch (const std::exception &ex) {
+										std::cerr << "[workspace] Error reading connection file " << path
+												  << ": " << ex.what() << "\n";
+									}
+								}
+							}
+
+						// tags/*.json (flattened view, same shape as /config/tags)
+							const std::string tagDir = joinPath(configDir, "tags");
+							if (fs::exists(tagDir) && fs::is_directory(tagDir)) {
+								std::vector<std::string> paths;
+								for (const auto &entry : fs::directory_iterator(tagDir)) {
+									if (!entry.is_regular_file()) continue;
+									if (entry.path().extension() != ".json" && entry.path().extension() != ".jsonc") continue;
+									paths.push_back(entry.path().string());
+								}
+								std::sort(paths.begin(), paths.end());
+								for (const auto &path : paths) {
+									try {
+										json jf = load_json_with_comments(path);
+									if (!jf.is_object()) continue;
+									std::string connId = jf.value("connection_id", std::string{});
+									if (connId.empty()) continue;
+									if (!jf.contains("tags") || !jf["tags"].is_array()) continue;
+
+										fs::path p(path);
+										const std::string filename = p.filename().string();
+										for (const auto &t : jf["tags"]) {
+											if (!t.is_object()) continue;
+											json flat = t;
+											flat["connection_id"] = connId;
+											flat["source_file"] = filename;
+											root["tags"].push_back(pick(flat, tagKeys));
+										}
+									} catch (const std::exception &ex) {
+										std::cerr << "[workspace] Error reading tag file " << path
+												  << ": " << ex.what() << "\n";
+									}
+							}
+						}
+
+						root["ok"] = true;
+						res.status = 200;
+					} catch (const std::exception &ex) {
+						root["ok"] = false;
+						root["error"] = std::string("Exception in /workspace/config: ") + ex.what();
+						res.status = 500;
+					}
+
+					res.set_content(root.dump(2), "application/json");
+				});
+
+					// GET /config/tags  -> flattened view of all tag configs on disk
+					svr.Get("/config/tags", [&](const httplib::Request &req, httplib::Response &res) {
+						if (!is_admin_request(req)) {
+							json err;
 						err["ok"] = false;
 						err["error"] = "Admin login required.";
 						res.status = 403;

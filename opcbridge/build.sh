@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
 
 SUITE_VERSION="$(cat "$ROOT/../VERSION" 2>/dev/null | tr -d '\r\n' || true)"
 COMPONENT_VERSION="$(cat "$ROOT/VERSION" 2>/dev/null | tr -d '\r\n' || true)"
