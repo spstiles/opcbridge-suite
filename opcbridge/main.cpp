@@ -4973,18 +4973,22 @@ int main(int argc, char **argv) {
 			  flex: 1 1 100%;
 			  min-width: 520px;
 			}
-			.workspace-savebar {
-			  display: flex;
-			  align-items: center;
-			  gap: 6px;
-			  flex-wrap: wrap;
-			  margin-bottom: 10px;
-			}
-			.workspace-grid {
-			  display: grid;
-			  grid-template-columns: 320px 1fr;
-			  gap: 12px;
-			  min-height: 420px;
+				.workspace-savebar {
+				  display: flex;
+				  align-items: center;
+				  gap: 6px;
+				  flex-wrap: wrap;
+				  margin-bottom: 10px;
+				}
+				.workspace-savebar .btn-reload,
+				.workspace-savebar .btn-write {
+				  margin-top: 0;
+				}
+				.workspace-grid {
+				  display: grid;
+				  grid-template-columns: 320px 1fr;
+				  gap: 12px;
+				  min-height: 420px;
 			}
 			.workspace-pane {
 			  min-height: 0;
