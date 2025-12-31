@@ -9758,27 +9758,37 @@ window.addEventListener("load", startAutoRefresh);
 								jt["reason"] = "no_snapshot_yet";
 							}
 
-							if (r.has_snapshot) {
-								const TagSnapshot &snap = r.snap;
-								jt["quality"] = snap.quality;
+								if (r.has_snapshot) {
+									const TagSnapshot &snap = r.snap;
+									jt["quality"] = snap.quality;
 
 								auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 									snap.timestamp.time_since_epoch()
 								).count();
 								jt["timestamp_ms"] = ms;
 
-								if (snap.quality == 1) {
-									std::visit([&jt](auto &&arg) {
-										jt["value"] = arg;
-									}, snap.value);
+									if (snap.quality == 1) {
+										std::visit([&jt](auto &&arg) {
+											using V = std::decay_t<decltype(arg)>;
+											if constexpr (std::is_same_v<V, float> || std::is_same_v<V, double>) {
+												// JSON cannot represent NaN/Inf; avoid throwing and breaking /tags.
+												if (std::isfinite(arg)) {
+													jt["value"] = arg;
+												} else {
+													jt["value"] = nullptr;
+												}
+											} else {
+												jt["value"] = arg;
+											}
+										}, snap.value);
+									} else {
+										jt["value"] = nullptr;
+									}
 								} else {
+									jt["quality"] = nullptr;
+									jt["timestamp_ms"] = nullptr;
 									jt["value"] = nullptr;
 								}
-							} else {
-								jt["quality"] = nullptr;
-								jt["timestamp_ms"] = nullptr;
-								jt["value"] = nullptr;
-							}
 
 							root["tags"].push_back(std::move(jt));
 						}
