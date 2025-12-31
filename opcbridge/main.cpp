@@ -6971,26 +6971,57 @@ const wsDeleteDevice = (connection_id) => {
 
         // 2) Tags: send flat list (strip source_file so it doesn't get written back into config).
         // Also delete any tags/<connection_id>.json files that no longer have tags.
-        const rawDraftTags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
-        const draftTagConns = new Set(
-            rawDraftTags
-                .map((t) => String(t?.connection_id || "").trim())
-                .filter(Boolean)
-        );
-        const baseTagConns = new Set(
-            (Array.isArray(wsBase.tags) ? wsBase.tags : [])
-                .map((t) => String(t?.connection_id || "").trim())
-                .filter(Boolean)
-        );
-        baseTagConns.forEach((cid) => {
-            if (!draftTagConns.has(cid)) {
-                wsPendingDeletes.push({ path: `tags/${cid}.json` });
-            }
-        });
+	        const rawDraftTags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
+	        const draftTagConns = new Set(
+	            rawDraftTags
+	                .map((t) => String(t?.connection_id || "").trim())
+	                .filter(Boolean)
+	        );
+	        const baseTagFilesByConn = new Map(); // cid -> Set(source_file)
+	        const baseTagConns = new Set(
+	            (Array.isArray(wsBase.tags) ? wsBase.tags : [])
+	                .map((t) => String(t?.connection_id || "").trim())
+	                .filter(Boolean)
+	        );
+	        (Array.isArray(wsBase.tags) ? wsBase.tags : []).forEach((t) => {
+	            const cid = String(t?.connection_id || "").trim();
+	            if (!cid) return;
+	            const sf = String(t?.source_file || "").trim();
+	            if (!sf) return;
+	            if (!baseTagFilesByConn.has(cid)) baseTagFilesByConn.set(cid, new Set());
+	            baseTagFilesByConn.get(cid).add(sf);
+	        });
+	        baseTagConns.forEach((cid) => {
+	            if (!draftTagConns.has(cid)) {
+	                // If tags for this connection are now empty, delete the per-connection tag file(s).
+	                // This also migrates legacy setups where tags were stored in tags/<cid>.jsonc.
+	                wsPendingDeletes.push({ path: `tags/${cid}.json` });
+	                const files = baseTagFilesByConn.get(cid);
+	                if (files) {
+	                    files.forEach((fname) => {
+	                        if (fname.endsWith(".jsonc")) {
+	                            wsPendingDeletes.push({ path: `tags/${fname}` });
+	                        }
+	                    });
+	                }
+	            }
+	        });
+	
+	        // If we're writing tags for a connection that previously used tags/<cid>.jsonc, delete the legacy file
+	        // so /config/tags doesn't re-import old entries after reload.
+	        draftTagConns.forEach((cid) => {
+	            const files = baseTagFilesByConn.get(cid);
+	            if (!files) return;
+	            files.forEach((fname) => {
+	                if (fname.endsWith(".jsonc")) {
+	                    wsPendingDeletes.push({ path: `tags/${fname}` });
+	                }
+	            });
+	        });
 
-        const tags = rawDraftTags.map((t) => {
-            const next = Object.assign({}, t);
-            delete next.source_file;
+	        const tags = rawDraftTags.map((t) => {
+	            const next = Object.assign({}, t);
+	            delete next.source_file;
             return next;
         });
 	        if (tags.length > 0) {
