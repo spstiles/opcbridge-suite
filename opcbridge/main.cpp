@@ -2500,8 +2500,9 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
     }
 
     if (connection_map.empty()) {
-        std::cerr << "[load] No connection configs loaded.\n";
-        return false;
+        std::cerr << "[load] No connection configs loaded; starting with empty configuration.\n";
+        outDrivers.clear();
+        return true;
     }
 
     // Load tag files
@@ -2585,8 +2586,9 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
     }
 
     if (driversLocal.empty()) {
-        std::cerr << "[load] No drivers with tags configured.\n";
-        return false;
+        std::cerr << "[load] No drivers with tags configured; starting with empty tag set.\n";
+        outDrivers.clear();
+        return true;
     }
 
     std::cout << "[load] Driver summary:\n";
