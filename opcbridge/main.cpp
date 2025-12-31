@@ -5272,16 +5272,25 @@ int main(int argc, char **argv) {
 					  user-select: text;
 					  -webkit-user-select: text;
 					}
-				.ws-form label.ws-inline {
-				  flex-direction: row;
-				  align-items: center;
-				  gap: 8px;
-				}
-				.ws-form-two {
-				  display: grid;
-				  grid-template-columns: 1fr 1fr;
-				  gap: 10px;
-				}
+					.ws-form label.ws-inline {
+					  flex-direction: row;
+					  align-items: center;
+					  gap: 8px;
+					}
+					.ws-inline-row {
+					  display: flex;
+					  align-items: center;
+					  gap: 14px;
+					  flex-wrap: wrap;
+					}
+					.ws-inline-row .ws-inline {
+					  margin: 0;
+					}
+					.ws-form-two {
+					  display: grid;
+					  grid-template-columns: 1fr 1fr;
+					  gap: 10px;
+					}
 				@media (max-width: 720px) {
 				  .ws-form-two {
 				    grid-template-columns: 1fr;
@@ -5572,7 +5581,7 @@ int main(int argc, char **argv) {
 						</div>
 					</div>
 
-						<!-- Tag properties modal -->
+							<!-- Tag properties modal -->
 							<div id="ws-tag-modal" class="ws-modal" style="display:none;">
 								<div class="ws-modal-card">
 									<div class="ws-modal-title" id="ws-tag-title">Tag</div>
@@ -5582,12 +5591,15 @@ int main(int argc, char **argv) {
 										<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
 										<label>Datatype <select id="ws-tag-dt"></select></label>
 										<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
-										<label class="ws-inline"><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
-									<label class="ws-inline"><input id="ws-tag-writable" type="checkbox" /> Writable</label>
-								</div>
-								<div class="small" id="ws-tag-status"></div>
-								<div class="ws-modal-actions">
-									<button class="btn-write" id="ws-tag-cancel-btn">Cancel</button>
+										<div class="ws-inline-row">
+											<label class="ws-inline"><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
+											<label class="ws-inline"><input id="ws-tag-writable" type="checkbox" /> Writable</label>
+											<label class="ws-inline"><input id="ws-tag-mqtt-allowed" type="checkbox" /> MQTT Command Allowed</label>
+										</div>
+									</div>
+									<div class="small" id="ws-tag-status"></div>
+									<div class="ws-modal-actions">
+										<button class="btn-write" id="ws-tag-cancel-btn">Cancel</button>
 									<button class="btn-reload" id="ws-tag-save-btn">Save</button>
 								</div>
 							</div>
@@ -6048,16 +6060,17 @@ let wsNodeById = new Map();
 
     tagModal: document.getElementById("ws-tag-modal"),
     tagTitle: document.getElementById("ws-tag-title"),
-    tagConn: document.getElementById("ws-tag-conn"),
-    tagName: document.getElementById("ws-tag-name"),
-    tagPlc: document.getElementById("ws-tag-plc"),
-    tagDt: document.getElementById("ws-tag-dt"),
-    tagScan: document.getElementById("ws-tag-scan"),
-    tagEnabled: document.getElementById("ws-tag-enabled"),
-    tagWritable: document.getElementById("ws-tag-writable"),
-	    tagStatus: document.getElementById("ws-tag-status"),
-	    tagCancelBtn: document.getElementById("ws-tag-cancel-btn"),
-	    tagSaveBtn: document.getElementById("ws-tag-save-btn"),
+	    tagConn: document.getElementById("ws-tag-conn"),
+	    tagName: document.getElementById("ws-tag-name"),
+	    tagPlc: document.getElementById("ws-tag-plc"),
+	    tagDt: document.getElementById("ws-tag-dt"),
+	    tagScan: document.getElementById("ws-tag-scan"),
+	    tagEnabled: document.getElementById("ws-tag-enabled"),
+	    tagWritable: document.getElementById("ws-tag-writable"),
+	    tagMqttAllowed: document.getElementById("ws-tag-mqtt-allowed"),
+		    tagStatus: document.getElementById("ws-tag-status"),
+		    tagCancelBtn: document.getElementById("ws-tag-cancel-btn"),
+		    tagSaveBtn: document.getElementById("ws-tag-save-btn"),
 
 	    alarmModal: document.getElementById("ws-alarm-modal"),
 	    alarmTitle: document.getElementById("ws-alarm-title"),
@@ -6362,10 +6375,11 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	        el.tagName.disabled = wsTagModalMode === "edit";
 	    }
 	    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
-    wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
-    if (el.tagScan) el.tagScan.value = existing && existing?.scan_ms != null ? String(existing.scan_ms) : "";
-    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
-    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
+	    wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
+	    if (el.tagScan) el.tagScan.value = existing && existing?.scan_ms != null ? String(existing.scan_ms) : "";
+	    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
+	    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
+	    if (el.tagMqttAllowed) el.tagMqttAllowed.checked = existing ? (existing?.mqtt_command_allowed === true) : false;
 
     el.tagModal.style.display = "flex";
     el.tagName?.focus?.();
@@ -6772,9 +6786,10 @@ const wsSaveTagFromModal = () => {
     const name = String(el.tagName?.value || "").trim();
     const plc_tag_name = String(el.tagPlc?.value || "").trim();
     const datatype = String(el.tagDt?.value || "").trim();
-    const scanRaw = String(el.tagScan?.value || "").trim();
-    const enabled = Boolean(el.tagEnabled?.checked);
-    const writable = Boolean(el.tagWritable?.checked);
+	    const scanRaw = String(el.tagScan?.value || "").trim();
+	    const enabled = Boolean(el.tagEnabled?.checked);
+	    const writable = Boolean(el.tagWritable?.checked);
+	    const mqtt_command_allowed = Boolean(el.tagMqttAllowed?.checked);
 
     if (!cid) {
         if (el.tagStatus) el.tagStatus.textContent = "Device is required.";
@@ -6800,13 +6815,14 @@ const wsSaveTagFromModal = () => {
 	            if (el.tagStatus) el.tagStatus.textContent = "Tag name already exists for this device.";
 	            return;
 	        }
-        const next = { connection_id: cid, name };
-        next.plc_tag_name = plc_tag_name;
-        next.datatype = datatype;
-        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
-        next.enabled = enabled;
-        next.writable = writable;
-        tags.push(next);
+	        const next = { connection_id: cid, name };
+	        next.plc_tag_name = plc_tag_name;
+	        next.datatype = datatype;
+	        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
+	        next.enabled = enabled;
+	        next.writable = writable;
+	        next.mqtt_command_allowed = mqtt_command_allowed;
+	        tags.push(next);
 	    } else {
 	        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
 	        if (idx < 0) {
@@ -6827,6 +6843,7 @@ const wsSaveTagFromModal = () => {
 	        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 	        next.enabled = enabled;
 	        next.writable = writable;
+	        next.mqtt_command_allowed = mqtt_command_allowed;
 	        tags[idx] = next;
 
 	        // If the user changed the Device, fully move the tag: remove any remaining copies
@@ -6991,33 +7008,35 @@ const wsDeleteDevice = (connection_id) => {
 	            if (!baseTagFilesByConn.has(cid)) baseTagFilesByConn.set(cid, new Set());
 	            baseTagFilesByConn.get(cid).add(sf);
 	        });
-	        baseTagConns.forEach((cid) => {
-	            if (!draftTagConns.has(cid)) {
-	                // If tags for this connection are now empty, delete the per-connection tag file(s).
-	                // This also migrates legacy setups where tags were stored in tags/<cid>.jsonc.
-	                wsPendingDeletes.push({ path: `tags/${cid}.json` });
-	                const files = baseTagFilesByConn.get(cid);
-	                if (files) {
-	                    files.forEach((fname) => {
-	                        if (fname.endsWith(".jsonc")) {
-	                            wsPendingDeletes.push({ path: `tags/${fname}` });
-	                        }
-	                    });
-	                }
-	            }
-	        });
-	
-	        // If we're writing tags for a connection that previously used tags/<cid>.jsonc, delete the legacy file
-	        // so /config/tags doesn't re-import old entries after reload.
-	        draftTagConns.forEach((cid) => {
-	            const files = baseTagFilesByConn.get(cid);
-	            if (!files) return;
-	            files.forEach((fname) => {
-	                if (fname.endsWith(".jsonc")) {
-	                    wsPendingDeletes.push({ path: `tags/${fname}` });
-	                }
-	            });
-	        });
+		        baseTagConns.forEach((cid) => {
+		            if (!draftTagConns.has(cid)) {
+		                // If tags for this connection are now empty, delete the per-connection tag file(s).
+		                // This also migrates legacy setups where tags were stored in non-canonical files
+		                // (e.g. tags/<cid>.jsonc or tags/<something-else>.json for the same connection_id).
+		                wsPendingDeletes.push({ path: `tags/${cid}.json` });
+		                const files = baseTagFilesByConn.get(cid);
+		                if (files) {
+		                    files.forEach((fname) => {
+		                        // Keep only the canonical file name convention (tags/<cid>.json).
+		                        if (fname && fname !== `${cid}.json`) {
+		                            wsPendingDeletes.push({ path: `tags/${fname}` });
+		                        }
+		                    });
+		                }
+		            }
+		        });
+		
+		        // If we're writing tags for a connection that previously used a non-canonical tag file name,
+		        // delete those old files so /config/tags doesn't re-import entries after reload.
+		        draftTagConns.forEach((cid) => {
+		            const files = baseTagFilesByConn.get(cid);
+		            if (!files) return;
+		            files.forEach((fname) => {
+		                if (fname && fname !== `${cid}.json`) {
+		                    wsPendingDeletes.push({ path: `tags/${fname}` });
+		                }
+		            });
+		        });
 
 	        const tags = rawDraftTags.map((t) => {
 	            const next = Object.assign({}, t);
