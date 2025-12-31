@@ -102,43 +102,50 @@ struct AlarmDb
             return false;
         }
 
-        const char* schema = R"SQL(
-            CREATE TABLE IF NOT EXISTS alarm_events (
-                event_id      TEXT PRIMARY KEY,
-                ts_ms         INTEGER NOT NULL,
-                alarm_id      TEXT NOT NULL,
-                type          TEXT NOT NULL,
-                severity      INTEGER NOT NULL,
-                group_name    TEXT,
-                site          TEXT,
-                connection_id TEXT NOT NULL,
-                tag           TEXT NOT NULL,
-                value_json    TEXT,
-                message       TEXT,
-                actor         TEXT,
-                note          TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_alarm_events_ts ON alarm_events(ts_ms);
-            CREATE INDEX IF NOT EXISTS idx_alarm_events_alarm ON alarm_events(alarm_id, ts_ms);
-            CREATE INDEX IF NOT EXISTS idx_alarm_events_tag ON alarm_events(connection_id, tag, ts_ms);
-            CREATE INDEX IF NOT EXISTS idx_alarm_events_group_site ON alarm_events(group_name, site, ts_ms);
-        )SQL";
+        auto exec_ignore = [&](const char* sql) {
+            sqlite3_exec(db, sql, nullptr, nullptr, nullptr);
+        };
 
-        char* errmsg = nullptr;
-        rc = sqlite3_exec(db, schema, nullptr, nullptr, &errmsg);
-        if (rc != SQLITE_OK)
+        // Create base table if needed.
         {
-            err = errmsg ? errmsg : "schema error";
-            sqlite3_free(errmsg);
-            sqlite3_close(db);
-            db = nullptr;
-            return false;
+            const char* sql = R"SQL(
+                CREATE TABLE IF NOT EXISTS alarm_events (
+                    event_id      TEXT PRIMARY KEY,
+                    ts_ms         INTEGER NOT NULL,
+                    alarm_id      TEXT NOT NULL,
+                    type          TEXT NOT NULL,
+                    severity      INTEGER NOT NULL,
+                    connection_id TEXT NOT NULL,
+                    tag           TEXT NOT NULL,
+                    value_json    TEXT,
+                    message       TEXT,
+                    actor         TEXT,
+                    note          TEXT
+                );
+            )SQL";
+
+            char* errmsg = nullptr;
+            rc = sqlite3_exec(db, sql, nullptr, nullptr, &errmsg);
+            if (rc != SQLITE_OK)
+            {
+                err = errmsg ? errmsg : "schema error";
+                sqlite3_free(errmsg);
+                sqlite3_close(db);
+                db = nullptr;
+                return false;
+            }
         }
 
         // Backward-compatible migrations (if DB existed before group/site columns).
         // Ignore errors (e.g., "duplicate column name") so we can start cleanly.
-        sqlite3_exec(db, "ALTER TABLE alarm_events ADD COLUMN group_name TEXT;", nullptr, nullptr, nullptr);
-        sqlite3_exec(db, "ALTER TABLE alarm_events ADD COLUMN site TEXT;", nullptr, nullptr, nullptr);
+        exec_ignore("ALTER TABLE alarm_events ADD COLUMN group_name TEXT;");
+        exec_ignore("ALTER TABLE alarm_events ADD COLUMN site TEXT;");
+
+        // Indexes (best-effort; do not fail DB open if an index can't be created).
+        exec_ignore("CREATE INDEX IF NOT EXISTS idx_alarm_events_ts ON alarm_events(ts_ms);");
+        exec_ignore("CREATE INDEX IF NOT EXISTS idx_alarm_events_alarm ON alarm_events(alarm_id, ts_ms);");
+        exec_ignore("CREATE INDEX IF NOT EXISTS idx_alarm_events_tag ON alarm_events(connection_id, tag, ts_ms);");
+        exec_ignore("CREATE INDEX IF NOT EXISTS idx_alarm_events_group_site ON alarm_events(group_name, site, ts_ms);");
 
         return true;
     }
@@ -169,15 +176,32 @@ struct AlarmDb
             return "";
         };
 
-        static const char* sql = R"SQL(
+        const char* sql_with_group_site = R"SQL(
             INSERT INTO alarm_events (
                 event_id, ts_ms, alarm_id, type, severity, group_name, site, connection_id, tag,
                 value_json, message, actor, note
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         )SQL";
 
+        const char* sql_legacy = R"SQL(
+            INSERT INTO alarm_events (
+                event_id, ts_ms, alarm_id, type, severity, connection_id, tag,
+                value_json, message, actor, note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        )SQL";
+
         sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        bool useLegacy = false;
+        int rc = sqlite3_prepare_v2(db, sql_with_group_site, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK)
+        {
+            const std::string e = sqlite3_errmsg(db);
+            if (e.find("group_name") != std::string::npos || e.find("site") != std::string::npos)
+            {
+                useLegacy = true;
+                rc = sqlite3_prepare_v2(db, sql_legacy, -1, &stmt, nullptr);
+            }
+        }
         if (rc != SQLITE_OK)
         {
             err = sqlite3_errmsg(db);
@@ -204,10 +228,13 @@ struct AlarmDb
         sqlite3_bind_text(stmt, idx++, alarm_id.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, idx++, type.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(stmt, idx++, severity);
-        if (!group_name.empty()) sqlite3_bind_text(stmt, idx++, group_name.c_str(), -1, SQLITE_TRANSIENT);
-        else sqlite3_bind_null(stmt, idx++);
-        if (!site.empty()) sqlite3_bind_text(stmt, idx++, site.c_str(), -1, SQLITE_TRANSIENT);
-        else sqlite3_bind_null(stmt, idx++);
+        if (!useLegacy)
+        {
+            if (!group_name.empty()) sqlite3_bind_text(stmt, idx++, group_name.c_str(), -1, SQLITE_TRANSIENT);
+            else sqlite3_bind_null(stmt, idx++);
+            if (!site.empty()) sqlite3_bind_text(stmt, idx++, site.c_str(), -1, SQLITE_TRANSIENT);
+            else sqlite3_bind_null(stmt, idx++);
+        }
         sqlite3_bind_text(stmt, idx++, connection_id.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, idx++, tag.c_str(), -1, SQLITE_TRANSIENT);
 
@@ -389,6 +416,119 @@ auto make_sql = [&](bool withGroupSite) -> std::string {
             {
                 ev["group"] = "";
                 ev["site"] = "";
+            }
+
+            ev["source"] = {
+                {"connection_id", reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_conn))},
+                {"tag", reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_tag))}
+            };
+
+            if (sqlite3_column_type(stmt, col_val) == SQLITE_NULL) ev["value"] = nullptr;
+            else
+            {
+                const char* v = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_val));
+                try { ev["value"] = json::parse(v); } catch (...) { ev["value"] = v; }
+            }
+
+            if (sqlite3_column_type(stmt, col_msg) == SQLITE_NULL) ev["message"] = nullptr;
+            else ev["message"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_msg));
+
+            if (sqlite3_column_type(stmt, col_actor) == SQLITE_NULL) ev["actor"] = nullptr;
+            else ev["actor"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_actor));
+
+            if (sqlite3_column_type(stmt, col_note) == SQLITE_NULL) ev["note"] = nullptr;
+            else ev["note"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_note));
+
+            out.push_back(ev);
+        }
+
+        if (rc != SQLITE_DONE)
+        {
+            err = sqlite3_errmsg(db);
+            sqlite3_finalize(stmt);
+            return false;
+        }
+
+        sqlite3_finalize(stmt);
+        return true;
+    }
+
+    bool fetch_events_since(int64_t since_ms, int limit, json& out, std::string& err)
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        out = json::array();
+        if (!db)
+        {
+            err = "DB not open";
+            return false;
+        }
+
+        if (limit < 1) limit = 1;
+        if (limit > 50000) limit = 50000;
+
+        auto make_sql = [&](bool withGroupSite) -> std::string {
+            std::string sql = withGroupSite
+                ? "SELECT event_id, ts_ms, alarm_id, type, severity, group_name, site, connection_id, tag, value_json, message, actor, note "
+                : "SELECT event_id, ts_ms, alarm_id, type, severity, connection_id, tag, value_json, message, actor, note ";
+            sql += "FROM alarm_events WHERE ts_ms >= ? ORDER BY ts_ms ASC LIMIT ?;";
+            return sql;
+        };
+
+        bool withGroupSite = true;
+        std::string sql = make_sql(withGroupSite);
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+        if (rc != SQLITE_OK)
+        {
+            // Backward compatibility: older DBs may not have group_name/site columns.
+            const std::string e = sqlite3_errmsg(db);
+            if (e.find("no such column") != std::string::npos || e.find("has no column") != std::string::npos)
+            {
+                withGroupSite = false;
+                sql = make_sql(withGroupSite);
+                rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+            }
+        }
+        if (rc != SQLITE_OK)
+        {
+            err = sqlite3_errmsg(db);
+            return false;
+        }
+
+        int idx = 1;
+        sqlite3_bind_int64(stmt, idx++, since_ms);
+        sqlite3_bind_int(stmt, idx++, limit);
+
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+        {
+            int col = 0;
+            const int col_event_id = col++;
+            const int col_ts       = col++;
+            const int col_alarm_id  = col++;
+            const int col_type      = col++;
+            const int col_sev       = col++;
+            const int col_group     = withGroupSite ? col++ : -1;
+            const int col_site      = withGroupSite ? col++ : -1;
+            const int col_conn      = col++;
+            const int col_tag       = col++;
+            const int col_val       = col++;
+            const int col_msg       = col++;
+            const int col_actor     = col++;
+            const int col_note      = col++;
+
+            json ev;
+            ev["event_id"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_event_id));
+            ev["ts_ms"] = sqlite3_column_int64(stmt, col_ts);
+            ev["alarm_id"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_alarm_id));
+            ev["type"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_type));
+            ev["severity"] = sqlite3_column_int(stmt, col_sev);
+
+            if (withGroupSite)
+            {
+                if (sqlite3_column_type(stmt, col_group) == SQLITE_NULL) ev["group"] = "";
+                else ev["group"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_group));
+                if (sqlite3_column_type(stmt, col_site) == SQLITE_NULL) ev["site"] = "";
+                else ev["site"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col_site));
             }
 
             ev["source"] = {
@@ -750,6 +890,86 @@ struct AlarmEngine
     void set_ws(AlarmWs* ptr) { ws = ptr; }
     void set_ua(AlarmUa* ptr) { ua = ptr; }
 
+    void restore_state_from_db(int64_t since_ms)
+    {
+        if (!db) return;
+        json events = json::array();
+        std::string err;
+        if (!db->fetch_events_since(since_ms, 50000, events, err))
+        {
+            std::cerr << "[alarms] DB restore skipped: " << err << "\n";
+            return;
+        }
+        if (!events.is_array() || events.empty()) return;
+
+        int64_t lastChange = last_alarm_change_ms.load();
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            for (const auto& ev : events)
+            {
+                if (!ev.is_object()) continue;
+                const std::string alarmId = ev.value("alarm_id", "");
+                const std::string type = ev.value("type", "");
+                const int64_t ts = ev.value("ts_ms", 0LL);
+                if (alarmId.empty() || type.empty() || ts <= 0) continue;
+
+                auto it = states.find(alarmId);
+                if (it == states.end()) continue;
+                AlarmState& s = it->second;
+
+                s.last_change_ms = ts;
+                if (ts > lastChange) lastChange = ts;
+                if (ev.contains("value")) s.last_value = ev["value"];
+                if (ev.contains("message") && ev["message"].is_string()) s.message = ev["message"].get<std::string>();
+
+                if (type == "active")
+                {
+                    s.active = true;
+                    s.acked = false;
+                    s.active_since_ms = ts;
+                }
+                else if (type == "return" || type == "reset" || type == "clear")
+                {
+                    s.active = false;
+                }
+                else if (type == "ack")
+                {
+                    s.acked = true;
+                }
+                else if (type == "unack")
+                {
+                    s.acked = false;
+                }
+                else if (type == "shelve")
+                {
+                    int64_t until = 0;
+                    if (ev.contains("value") && ev["value"].is_object())
+                    {
+                        until = ev["value"].value("until_ms", 0LL);
+                    }
+                    if (until > 0) s.shelved_until_ms = until;
+                }
+                else if (type == "unshelve")
+                {
+                    s.shelved_until_ms.reset();
+                }
+            }
+        }
+
+        last_alarm_change_ms.store(lastChange);
+
+        if (ua)
+        {
+            std::vector<AlarmState> snap;
+            {
+                std::lock_guard<std::mutex> lock(mu);
+                snap.reserve(states.size());
+                for (const auto& kv : states) snap.push_back(kv.second);
+            }
+            ua->sync_alarms(snap);
+        }
+    }
+
 	    void log_event(const AlarmState& s,
 	                   const std::string& type,
 	                   const json& value,
@@ -831,6 +1051,8 @@ struct AlarmEngine
                 {
                     if (a.contains("value")) r["condition"]["value"] = a["value"];
                     else if (a.contains("equals_value")) r["condition"]["value"] = a["equals_value"];
+                    // Backward-compat / UI convenience: allow type=equals to use "threshold" as the target value.
+                    else if (a.contains("threshold")) r["condition"]["value"] = a["threshold"];
                 }
                 else if (type == "high" || type == "low")
                 {
@@ -933,6 +1155,11 @@ struct AlarmEngine
 
     void apply_tag_update(const std::string &connection_id, const std::string &tag, const json &value)
     {
+        apply_tag_update(connection_id, tag, value, true);
+    }
+
+    void apply_tag_update(const std::string &connection_id, const std::string &tag, const json &value, bool recordEvent)
+    {
         last_tag_update_ms.store(now_ms());
         const std::string key = connection_id + ":" + tag;
 
@@ -992,11 +1219,14 @@ struct AlarmEngine
                     s.last_change_ms = t;
                     s.message = r.message_on_active.empty() ? s.name : r.message_on_active;
                     last_alarm_change_ms.store(t);
-                    std::cout << "[alarms] ACTIVE " << s.alarm_id
-                              << " (" << s.connection_id << ":" << s.tag << ")"
-                              << " value=" << s.last_value.dump()
-                              << " severity=" << s.severity << "\n";
-                    log_event(s, "active", s.last_value);
+                    if (recordEvent)
+                    {
+                        std::cout << "[alarms] ACTIVE " << s.alarm_id
+                                  << " (" << s.connection_id << ":" << s.tag << ")"
+                                  << " value=" << s.last_value.dump()
+                                  << " severity=" << s.severity << "\n";
+                        log_event(s, "active", s.last_value);
+                    }
                     if (ws && ws->enabled.load()) {
                         json msg;
                         msg["type"] = "alarm_state";
@@ -1012,10 +1242,13 @@ struct AlarmEngine
                     s.last_change_ms = t;
                     s.message = r.message_on_return.empty() ? "" : r.message_on_return;
                     last_alarm_change_ms.store(t);
-                    std::cout << "[alarms] RETURN " << s.alarm_id
-                              << " (" << s.connection_id << ":" << s.tag << ")"
-                              << " value=" << s.last_value.dump() << "\n";
-                    log_event(s, "return", s.last_value);
+                    if (recordEvent)
+                    {
+                        std::cout << "[alarms] RETURN " << s.alarm_id
+                                  << " (" << s.connection_id << ":" << s.tag << ")"
+                                  << " value=" << s.last_value.dump() << "\n";
+                        log_event(s, "return", s.last_value);
+                    }
                     if (ws && ws->enabled.load()) {
                         json msg;
                         msg["type"] = "alarm_state";
@@ -1632,6 +1865,8 @@ void AlarmUa::write_alarm_locked(const AlarmState& s)
 static void ws_client_loop(std::atomic<bool> &stop,
                            AlarmEngine &engine,
                            const std::string &wsUrl,
+                           const std::string &opcbridgeHost,
+                           uint16_t opcbridgeHttpPort,
                            std::atomic<uint64_t> &subscriptionGeneration)
 {
     ix::WebSocket ws;
@@ -1649,6 +1884,45 @@ static void ws_client_loop(std::atomic<bool> &stop,
         std::cout << "[alarms] Sent opcbridge subscribe (" << sub["tags"].size() << " tag(s))\n";
     };
 
+    auto seed_subscriptions_from_http = [&]() {
+        const auto keys = engine.subscription_keys();
+        if (keys.empty()) return;
+
+        std::unordered_set<std::string> want;
+        want.reserve(keys.size());
+        for (const auto& k : keys) want.insert(k);
+
+        httplib::Client cli(opcbridgeHost, opcbridgeHttpPort);
+        cli.set_read_timeout(5, 0);
+        cli.set_connection_timeout(5, 0);
+
+        auto res = cli.Get("/tags");
+        if (!res || res->status != 200) return;
+
+        json body;
+        try
+        {
+            body = json::parse(res->body);
+        }
+        catch (...)
+        {
+            return;
+        }
+
+        if (!body.is_object() || !body.contains("tags") || !body["tags"].is_array()) return;
+        for (const auto& t : body["tags"])
+        {
+            if (!t.is_object()) continue;
+            const std::string conn = t.value("connection_id", "");
+            const std::string name = t.value("name", "");
+            if (conn.empty() || name.empty()) continue;
+            const std::string k = conn + ":" + name;
+            if (want.find(k) == want.end()) continue;
+            if (!t.contains("value")) continue;
+            engine.apply_tag_update(conn, name, t["value"], false);
+        }
+    };
+
     ws.setOnMessageCallback([&](const ix::WebSocketMessagePtr &msg) {
         if (!msg) return;
 
@@ -1658,6 +1932,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
             std::cout << "[alarms] opcbridge WS connected\n";
             lastSentGeneration = subscriptionGeneration.load();
             send_subscribe();
+            seed_subscriptions_from_http();
             return;
         }
         if (msg->type == ix::WebSocketMessageType::Close)
@@ -1702,6 +1977,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
         {
             lastSentGeneration = gen;
             send_subscribe();
+            seed_subscriptions_from_http();
         }
     }
 
@@ -1814,6 +2090,8 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 {
                     if (a.contains("value")) r["condition"]["value"] = a["value"];
                     else if (a.contains("equals_value")) r["condition"]["value"] = a["equals_value"];
+                    // Backward-compat / UI convenience: allow type=equals to use "threshold" as the target value.
+                    else if (a.contains("threshold")) r["condition"]["value"] = a["threshold"];
                 }
                 else if (type == "high" || type == "low")
                 {
@@ -1998,6 +2276,12 @@ int main(int argc, char **argv)
         }
         engine.set_db(&db);
     }
+
+    // Restore last-known alarm state from history (so /alarm/api/alarms/all is populated after restart).
+    {
+        const int64_t since = now_ms() - (14LL * 24LL * 60LL * 60LL * 1000LL);
+        engine.restore_state_from_db(since);
+    }
     engine.set_ws(&wsServer);
     engine.set_ua(&uaServer);
 
@@ -2059,7 +2343,7 @@ int main(int argc, char **argv)
     const int64_t startMs = now_ms();
     std::atomic<bool> stop{false};
     std::atomic<uint64_t> subscriptionGeneration{1};
-    std::thread wsThread([&]() { ws_client_loop(stop, engine, wsUrl, subscriptionGeneration); });
+    std::thread wsThread([&]() { ws_client_loop(stop, engine, wsUrl, opcbridgeHost, opcbridgeHttpPort, subscriptionGeneration); });
 
     std::thread configThread([&]() {
         if (adminToken.empty()) return;
@@ -2079,6 +2363,8 @@ int main(int argc, char **argv)
             if (next != prev) {
                 subscriptionGeneration.fetch_add(1);
                 std::cout << "[alarms] Reloaded alarms.json from opcbridge (mtime change)\n";
+                const int64_t since = now_ms() - (14LL * 24LL * 60LL * 60LL * 1000LL);
+                engine.restore_state_from_db(since);
             }
         }
     });

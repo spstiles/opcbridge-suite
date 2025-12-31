@@ -16,8 +16,9 @@ TOKEN_FILE="$ROOT/_run/admin_service_token.txt"
 WRITE_TOKEN_FILE="$ROOT/_run/write_token.txt"
 ENV_FILE="$ROOT/_run/dev_env.sh"
 
-OPCBRIDGE_BIN="$ROOT/opcbridge"
-ALARMS_ROOT="$ROOT/../opcbridge-alarms"
+# Use relative paths from $ROOT so moving the repo doesn't bake in absolute paths.
+OPCBRIDGE_BIN="./opcbridge"
+ALARMS_ROOT="../opcbridge-alarms"
 ALARMS_BIN="$ALARMS_ROOT/opcbridge-alarms"
 
 if [[ ! -x "$OPCBRIDGE_BIN" ]]; then
@@ -79,7 +80,7 @@ if [[ -f "$ROOT/_run/opcbridge.pid" ]] && kill -0 "$(cat "$ROOT/_run/opcbridge.p
 else
   echo "Starting opcbridge..."
   : >"$ROOT/_logs/opcbridge.log"
-  "$OPCBRIDGE_BIN" --config "$ROOT/config" --http --ws --ws-port "$OPCBRIDGE_WS_PORT" --opcua --opcua-port "$OPCBRIDGE_OPCUA_PORT" \
+  "$OPCBRIDGE_BIN" --config "./config" --http --ws --ws-port "$OPCBRIDGE_WS_PORT" --opcua --opcua-port "$OPCBRIDGE_OPCUA_PORT" \
     >"$ROOT/_logs/opcbridge.log" 2>&1 &
   echo $! >"$ROOT/_run/opcbridge.pid"
 fi

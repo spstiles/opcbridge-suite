@@ -1096,6 +1096,8 @@ const openAlarms = () => {
   if (!alarmsOverlay) return;
   setMenuOpen(false);
   setOverlayOpen(alarmsOverlay, true);
+  loadAlarmTimelineFromHistory();
+  loadAlarmsStateFromHttp();
   scheduleAlarmsRender();
 };
 
@@ -1114,6 +1116,32 @@ const apiGetAlarmsHistory = async (limit) => {
     // Fallback: opcbridge’s built-in alarm history DB.
     // This keeps the alarm panel populated even without opcbridge-alarms.
     return tryFetchJson(`/api/opcbridge/alarm-history${query}`);
+  }
+};
+
+const apiGetAlarmsAll = async () => {
+  const response = await fetch(`/api/alarms/all`, { cache: "no-store", headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+};
+
+const loadAlarmsStateFromHttp = async () => {
+  try {
+    const data = await apiGetAlarmsAll();
+    const alarms = Array.isArray(data?.alarms) ? data.alarms : [];
+    alarmsStateById = new Map();
+    const cutoffMs = Date.now() - ALARM_HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    alarms.forEach((alarm) => {
+      const id = String(alarm?.alarm_id || "").trim();
+      if (!id) return;
+      alarmsStateById.set(id, alarm);
+      const lastChange = Number(alarm?.last_change_ms) || 0;
+      const isRecent = lastChange >= cutoffMs;
+      upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) || isRecent });
+    });
+    scheduleAlarmsRender();
+  } catch (error) {
+    console.warn("[alarms] Failed to load current alarms snapshot:", error);
   }
 };
 
@@ -1141,11 +1169,16 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   next.active = alarm?.active ?? prev.active ?? false;
   next.acked = alarm?.acked ?? prev.acked ?? false;
   next.active_since_ms = alarm?.active_since_ms ?? prev.active_since_ms ?? 0;
+  const lastChange = alarm?.last_change_ms ?? prev.last_change_ms ?? 0;
+  next.last_change_ms = lastChange;
+  if (!next.active && Number.isFinite(Number(lastChange)) && Number(lastChange) > 0) {
+    next.cleared_ts_ms = Number(lastChange);
+  }
   if (!next.last_event_type) {
-    next.last_event_type = next.active ? "active" : "snapshot";
+    next.last_event_type = next.active ? "active" : (Number(next.cleared_ts_ms) > 0 ? "return" : "snapshot");
   }
   if (!next.last_event_ts_ms) {
-    next.last_event_ts_ms = next.active_since_ms || Date.now();
+    next.last_event_ts_ms = next.active ? (next.active_since_ms || Date.now()) : (Number(next.cleared_ts_ms) || Date.now());
   }
   alarmTimelineById.set(id, next);
 };
@@ -1182,16 +1215,28 @@ const upsertTimelineFromAlarmEvent = (event) => {
   alarmTimelineById.set(id, next);
 };
 
-const loadAlarmTimelineFromHistory = async () => {
-  if (alarmHistoryLoaded || alarmHistoryLoading) return;
+const ALARM_HISTORY_WINDOW_DAYS = 14;
+const ALARM_HISTORY_MAX_EVENTS = 5000;
+
+const loadAlarmTimelineFromHistory = async (opts = {}) => {
+  const force = Boolean(opts.force);
+  if (!force && (alarmHistoryLoaded || alarmHistoryLoading)) return;
   alarmHistoryLoading = true;
   try {
-    const data = await apiGetAlarmsHistory(500);
+    const cutoffMs = Date.now() - ALARM_HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const data = await apiGetAlarmsHistory(ALARM_HISTORY_MAX_EVENTS);
     const events = Array.isArray(data?.events) ? data.events : [];
-    events
+    const filtered = events.filter((ev) => {
+      const ts = Number(ev?.ts_ms) || 0;
+      return ts >= cutoffMs;
+    });
+
+    alarmTimelineById = new Map();
+    filtered
       .slice()
       .sort((a, b) => (Number(a?.ts_ms) || 0) - (Number(b?.ts_ms) || 0))
       .forEach((ev) => upsertTimelineFromAlarmEvent(ev));
+
     alarmHistoryLoaded = true;
     scheduleAlarmsRender();
   } catch (error) {
@@ -1199,6 +1244,14 @@ const loadAlarmTimelineFromHistory = async () => {
   } finally {
     alarmHistoryLoading = false;
   }
+};
+
+const refreshAlarmsForScreenLoad = async () => {
+  if (!screenHasAlarmsPanel()) return;
+  alarmHistoryLoaded = false;
+  await loadAlarmTimelineFromHistory({ force: true });
+  await loadAlarmsStateFromHttp();
+  scheduleAlarmsRender();
 };
 
 const getAlarmTimelineRows = () => {
@@ -2153,6 +2206,11 @@ const connectAlarmsWebSocket = () => {
   alarmsWsConnected = false;
   scheduleAlarmsRender();
 
+  // Always try to load history at least once, even if the WS can't connect (firewall, etc.).
+  // This keeps the alarm overlay/panel useful without requiring a WS connection.
+  loadAlarmTimelineFromHistory();
+  loadAlarmsStateFromHttp();
+
   if (!nextUrl) return;
 
   try {
@@ -2165,6 +2223,7 @@ const connectAlarmsWebSocket = () => {
   alarmsWsClient.onopen = () => {
     alarmsWsConnected = true;
     loadAlarmTimelineFromHistory();
+    loadAlarmsStateFromHttp();
     scheduleAlarmsRender();
   };
 
@@ -8671,6 +8730,7 @@ const loadJsonc = async () => {
       undoStack.length = 0;
       recordHistory();
       renderScreen();
+      refreshAlarmsForScreenLoad();
       scheduleWsSubscribeRefresh();
       updateGroupBreadcrumb();
       refreshViewportIdOptions();
@@ -9014,7 +9074,10 @@ if (alarmsCloseBtn) alarmsCloseBtn.addEventListener("click", closeAlarms);
 if (alarmsRefreshBtn) {
   alarmsRefreshBtn.addEventListener("click", () => {
     if (alarmsStatus) alarmsStatus.textContent = "Refreshing…";
+    alarmHistoryLoaded = false;
     connectAlarmsWebSocket();
+    loadAlarmTimelineFromHistory();
+    loadAlarmsStateFromHttp();
   });
 }
 if (alarmsOverlay) {

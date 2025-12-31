@@ -2619,8 +2619,8 @@ bool load_alarms(const std::string &configDir,
 
         std::vector<AlarmRuntime> tmp;
 
-        for (const auto &ja : j["alarms"]) {
-            AlarmConfig cfg;
+	        for (const auto &ja : j["alarms"]) {
+	            AlarmConfig cfg;
 
             cfg.id             = ja.value("id", std::string{});
             cfg.name           = ja.value("name", ja.value("description", cfg.id));
@@ -2633,11 +2633,13 @@ bool load_alarms(const std::string &configDir,
             cfg.severity       = ja.value("severity", cfg.severity);
             cfg.message_on_active = ja.value("message_on_active", ja.value("message", std::string{}));
             cfg.message_on_return = ja.value("message_on_return", std::string{});
-            cfg.group          = ja.value("group", std::string{});
-            cfg.site           = ja.value("site", std::string{});
-            if (ja.contains("value")) cfg.equals_value = ja["value"];
-            else if (ja.contains("equals_value")) cfg.equals_value = ja["equals_value"];
-            cfg.equals_tolerance = ja.value("tolerance", ja.value("equals_tolerance", cfg.equals_tolerance));
+	            cfg.group          = ja.value("group", std::string{});
+	            cfg.site           = ja.value("site", std::string{});
+	            if (ja.contains("value")) cfg.equals_value = ja["value"];
+	            else if (ja.contains("equals_value")) cfg.equals_value = ja["equals_value"];
+	            // Backward-compat / UI convenience: allow type=equals to use "threshold" as the target value.
+	            else if (ja.contains("threshold")) cfg.equals_value = ja["threshold"];
+	            cfg.equals_tolerance = ja.value("tolerance", ja.value("equals_tolerance", cfg.equals_tolerance));
 
             if (cfg.id.empty() || cfg.connection_id.empty() ||
                 cfg.tag_name.empty() || cfg.type.empty())
@@ -2662,11 +2664,10 @@ bool load_alarms(const std::string &configDir,
                 continue;
             }
 
-            if (cfg.type == "equals" && cfg.equals_value.is_null())
-            {
-                std::cerr << "[alarms] Alarm '" << cfg.id << "' type=equals requires field 'value'. Skipping.\n";
-                continue;
-            }
+	            if (cfg.type == "equals" && cfg.equals_value.is_null()) {
+	                std::cerr << "[alarms] Alarm '" << cfg.id << "' type=equals requires field 'value' (or 'threshold'). Skipping.\n";
+	                continue;
+	            }
 
             AlarmRuntime rt;
             rt.cfg = cfg;
@@ -4623,6 +4624,7 @@ int main(int argc, char **argv) {
     }
     main {
         padding: 15px 20px 40px 20px;
+        font-size: 12px;        /* smaller overall UI (header/title row stays unchanged) */
 		flex-wrap: wrap;      /* Allows cards to flow onto next row */
 		gap: 20px;            /* Space between items */
     }
@@ -4643,7 +4645,7 @@ int main(int argc, char **argv) {
 	}
     .card h2 {
         margin: 0 0 8px 0;
-        font-size: 16px;
+        font-size: 14px;
         border-bottom: 1px solid #333;
         padding-bottom: 4px;
     }
@@ -4674,7 +4676,7 @@ int main(int argc, char **argv) {
         width: 100%;
         border-collapse: collapse;
         margin-top: 8px;
-        font-size: 13px;
+        font-size: 12px;
     }
     th, td {
         border-bottom: 1px solid #333;
@@ -4695,7 +4697,7 @@ int main(int argc, char **argv) {
         background: #101010;
     }
     .small {
-        font-size: 11px;
+        font-size: 10px;
         color: #aaa;
     }
     .tag-table-container {
@@ -4983,12 +4985,12 @@ int main(int argc, char **argv) {
 					  border: 0;
 					  box-shadow: none;
 					}
-					.workspace-page h2 {
-					  margin: 6px 0 10px 0;
-					  font-size: 18px;
-					  border-bottom: 0;
-					  padding-bottom: 0;
-					}
+						.workspace-page h2 {
+						  margin: 6px 0 10px 0;
+						  font-size: 16px;
+						  border-bottom: 0;
+						  padding-bottom: 0;
+						}
 					.workspace-savebar {
 					  display: flex;
 					  align-items: center;
@@ -5058,11 +5060,11 @@ int main(int argc, char **argv) {
 				  border-bottom: 1px solid #333;
 				  background: #111;
 				}
-				.ws-editor-title {
-				  font-size: 12px;
-				  color: #aaa;
-				  font-weight: bold;
-				}
+					.ws-editor-title {
+					  font-size: 11px;
+					  color: #aaa;
+					  font-weight: bold;
+					}
 				.ws-editor-body {
 				  flex: 1 1 auto;
 				  min-height: 0;
@@ -5220,13 +5222,28 @@ int main(int argc, char **argv) {
 				  grid-template-columns: 1fr;
 				  gap: 10px;
 				}
-			.ws-form label {
-			  display: flex;
-			  flex-direction: column;
-			  gap: 4px;
-			  font-size: 11px;
-			  color: #aaa;
-			}
+				.ws-form label {
+				  display: flex;
+				  flex-direction: column;
+				  gap: 4px;
+				  font-size: 11px;
+				  color: #aaa;
+				}
+				.ws-form label.ws-inline {
+				  flex-direction: row;
+				  align-items: center;
+				  gap: 8px;
+				}
+				.ws-form-two {
+				  display: grid;
+				  grid-template-columns: 1fr 1fr;
+				  gap: 10px;
+				}
+				@media (max-width: 720px) {
+				  .ws-form-two {
+				    grid-template-columns: 1fr;
+				  }
+				}
 			.ws-form input,
 			.ws-form select {
 			  background: #0b0b0b;
@@ -5510,28 +5527,57 @@ int main(int argc, char **argv) {
 						</div>
 					</div>
 
-					<!-- Tag properties modal -->
-					<div id="ws-tag-modal" class="ws-modal" style="display:none;">
-						<div class="ws-modal-card">
-							<div class="ws-modal-title" id="ws-tag-title">Tag</div>
-							<div class="ws-form">
-								<label>Device <input id="ws-tag-conn" type="text" readonly /></label>
-								<label>Name <input id="ws-tag-name" type="text" /></label>
-								<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
-								<label>Datatype <select id="ws-tag-dt"></select></label>
-								<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
-								<label><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
-								<label><input id="ws-tag-writable" type="checkbox" /> Writable</label>
+						<!-- Tag properties modal -->
+						<div id="ws-tag-modal" class="ws-modal" style="display:none;">
+							<div class="ws-modal-card">
+								<div class="ws-modal-title" id="ws-tag-title">Tag</div>
+								<div class="ws-form">
+									<label>Device <input id="ws-tag-conn" type="text" readonly /></label>
+									<label>Name <input id="ws-tag-name" type="text" /></label>
+									<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
+									<label>Datatype <select id="ws-tag-dt"></select></label>
+									<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
+									<label class="ws-inline"><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
+									<label class="ws-inline"><input id="ws-tag-writable" type="checkbox" /> Writable</label>
+								</div>
+								<div class="small" id="ws-tag-status"></div>
+								<div class="ws-modal-actions">
+									<button class="btn-write" id="ws-tag-cancel-btn">Cancel</button>
+									<button class="btn-reload" id="ws-tag-save-btn">Save</button>
+								</div>
 							</div>
-							<div class="small" id="ws-tag-status"></div>
-							<div class="ws-modal-actions">
-								<button class="btn-write" id="ws-tag-cancel-btn">Cancel</button>
-								<button class="btn-reload" id="ws-tag-save-btn">Save</button>
+						</div>
+
+						<!-- Alarm properties modal -->
+						<div id="ws-alarm-modal" class="ws-modal" style="display:none;">
+							<div class="ws-modal-card">
+								<div class="ws-modal-title" id="ws-alarm-title">Alarm</div>
+								<div class="ws-form">
+									<label>Alarm ID <input id="ws-alarm-id" type="text" /></label>
+									<label>Name <input id="ws-alarm-name" type="text" /></label>
+									<label>Group <input id="ws-alarm-group" type="text" /></label>
+									<label>Site <input id="ws-alarm-site" type="text" /></label>
+									<label>Connection <select id="ws-alarm-conn"></select></label>
+									<label>Tag <select id="ws-alarm-tag"></select></label>
+									<label>Type <select id="ws-alarm-type"></select></label>
+									<label class="ws-inline"><input id="ws-alarm-enabled" type="checkbox" /> Enabled</label>
+									<div class="ws-form-two">
+										<label>Severity (0-1000) <input id="ws-alarm-severity" type="number" min="0" max="1000" step="1" value="500" /></label>
+										<label>Threshold <input id="ws-alarm-threshold" type="number" step="any" /></label>
+										<label>Hysteresis <input id="ws-alarm-hysteresis" type="number" step="any" /></label>
+										<label>Message on active <input id="ws-alarm-msg-on" type="text" /></label>
+										<label>Message on return <input id="ws-alarm-msg-off" type="text" /></label>
+									</div>
+								</div>
+								<div class="small" id="ws-alarm-status"></div>
+								<div class="ws-modal-actions">
+									<button class="btn-write" id="ws-alarm-cancel-btn">Cancel</button>
+									<button class="btn-reload" id="ws-alarm-save-btn">Save</button>
+								</div>
 							</div>
 						</div>
 					</div>
-				</div>
-		<!-- Admin login / setup modal -->
+			<!-- Admin login / setup modal -->
 		<div id="admin-modal" class="admin-modal-backdrop" style="display:none;">
 		  <div class="admin-modal-card">
 		<div class="admin-modal-header">
@@ -5609,6 +5655,7 @@ let g_wsReconnectTimer = null;
 // Tag table indexing for incremental updates
 let g_tagCellsByKey = new Map(); // key: "conn:name" -> { qualEl, valueEl, tsEl }
 let g_tagsFetchInFlight = false;
+let g_tagsMissingRefreshTimer = null;
 
 // Tag editor state (config/tags/*.json)
 let TAG_EDITOR_OPEN = false;
@@ -5918,15 +5965,15 @@ const wsLabelForPlcType = (code) => {
 const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 
 let wsLoadedOnce = false;
-let wsBase = { connections: [], tags: [] };
-let wsDraft = { connections: [], tags: [] };
+	let wsBase = { connections: [], tags: [], alarms: [] };
+	let wsDraft = { connections: [], tags: [], alarms: [] };
 let wsDirty = false;
 let wsSelectedId = "ws:root";
 let wsExpanded = new Set(["ws:root", "ws:connectivity"]);
 let wsPendingDeletes = []; // { path: "connections/x.json" }
 let wsNodeById = new Map();
 
-const wsEls = () => ({
+	const wsEls = () => ({
     treeStatus: document.getElementById("ws-tree-status"),
     tree: document.getElementById("ws-tree"),
     thead: document.getElementById("ws-children-thead"),
@@ -5963,10 +6010,29 @@ const wsEls = () => ({
     tagScan: document.getElementById("ws-tag-scan"),
     tagEnabled: document.getElementById("ws-tag-enabled"),
     tagWritable: document.getElementById("ws-tag-writable"),
-    tagStatus: document.getElementById("ws-tag-status"),
-    tagCancelBtn: document.getElementById("ws-tag-cancel-btn"),
-    tagSaveBtn: document.getElementById("ws-tag-save-btn")
-});
+	    tagStatus: document.getElementById("ws-tag-status"),
+	    tagCancelBtn: document.getElementById("ws-tag-cancel-btn"),
+	    tagSaveBtn: document.getElementById("ws-tag-save-btn"),
+
+	    alarmModal: document.getElementById("ws-alarm-modal"),
+	    alarmTitle: document.getElementById("ws-alarm-title"),
+	    alarmId: document.getElementById("ws-alarm-id"),
+	    alarmName: document.getElementById("ws-alarm-name"),
+	    alarmGroup: document.getElementById("ws-alarm-group"),
+	    alarmSite: document.getElementById("ws-alarm-site"),
+	    alarmType: document.getElementById("ws-alarm-type"),
+	    alarmConn: document.getElementById("ws-alarm-conn"),
+	    alarmTag: document.getElementById("ws-alarm-tag"),
+	    alarmEnabled: document.getElementById("ws-alarm-enabled"),
+	    alarmSeverity: document.getElementById("ws-alarm-severity"),
+	    alarmThreshold: document.getElementById("ws-alarm-threshold"),
+	    alarmHysteresis: document.getElementById("ws-alarm-hysteresis"),
+	    alarmMsgOn: document.getElementById("ws-alarm-msg-on"),
+	    alarmMsgOff: document.getElementById("ws-alarm-msg-off"),
+	    alarmStatus: document.getElementById("ws-alarm-status"),
+	    alarmCancelBtn: document.getElementById("ws-alarm-cancel-btn"),
+	    alarmSaveBtn: document.getElementById("ws-alarm-save-btn")
+	});
 
 const wsSetDirty = (dirty) => {
     wsDirty = Boolean(dirty);
@@ -6039,8 +6105,18 @@ const wsApiJson = async (url, opts = {}) => {
 			
 			    const tagsResp = await wsApiJson("/config/tags");
 			    const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
+
+			    let alarms = [];
+			    try {
+			        const ar = await wsApiJson("/config/alarms");
+			        const cfg = ar && typeof ar === "object" ? (ar.json || {}) : {};
+			        if (Array.isArray(cfg?.alarms)) alarms = cfg.alarms;
+			        else if (Array.isArray(cfg?.rules)) alarms = cfg.rules; // legacy naming
+			    } catch (_) {
+			        alarms = [];
+			    }
 			
-			    return { connections, tags };
+			    return { connections, tags, alarms };
 			};
 
 const wsBuildNodeIndex = (root) => {
@@ -6052,10 +6128,12 @@ const wsBuildNodeIndex = (root) => {
     walk(root, null);
 };
 
-const wsBuildTree = () => {
-    const root = { id: "ws:root", type: "root", label: "opcbridge", children: [] };
-    const connectivity = { id: "ws:connectivity", type: "connectivity", label: "Connectivity", children: [] };
-    root.children.push(connectivity);
+	const wsBuildTree = () => {
+	    const root = { id: "ws:root", type: "root", label: "opcbridge", children: [] };
+	    const connectivity = { id: "ws:connectivity", type: "connectivity", label: "Connectivity", children: [] };
+	    const alarmsRoot = { id: "ws:alarms", type: "alarms", label: "Alarms & Events", children: [] };
+	    root.children.push(connectivity);
+	    root.children.push(alarmsRoot);
 
     const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
     conns.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
@@ -6073,10 +6151,10 @@ const wsBuildTree = () => {
         arr.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" }));
     });
 
-    conns.forEach((c) => {
-        const cid = String(c?.id || "").trim();
-        if (!cid) return;
-        const node = { id: `ws:device:${encodeURIComponent(cid)}`, type: "device", label: cid, connection_id: cid, children: [] };
+	    conns.forEach((c) => {
+	        const cid = String(c?.id || "").trim();
+	        if (!cid) return;
+	        const node = { id: `ws:device:${encodeURIComponent(cid)}`, type: "device", label: cid, connection_id: cid, children: [] };
         const tagList = tagsByConn.get(cid) || [];
         tagList.forEach((t) => {
             const name = String(t?.name || "").trim();
@@ -6090,12 +6168,28 @@ const wsBuildTree = () => {
                 children: []
             });
         });
-        connectivity.children.push(node);
-    });
+	        connectivity.children.push(node);
+	    });
 
-    wsBuildNodeIndex(root);
-    return root;
-};
+	    const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
+	    alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+	    alarms.forEach((a) => {
+	        const id = String(a?.id || "").trim();
+	        if (!id) return;
+	        alarmsRoot.children.push({
+	            id: `ws:alarm:${encodeURIComponent(id)}`,
+	            type: "alarm",
+	            label: id,
+	            alarm_id: id,
+	            connection_id: String(a?.connection_id || ""),
+	            tag_name: String(a?.tag_name || ""),
+	            children: []
+	        });
+	    });
+
+	    wsBuildNodeIndex(root);
+	    return root;
+	};
 
 const wsHideContextMenu = () => {
     const el = wsEls();
@@ -6133,11 +6227,15 @@ const wsFillDatatypeSelect = (sel, selected) => {
     sel.value = selected && WS_TAG_DATATYPES.includes(selected) ? selected : "bool";
 };
 
-let wsDeviceModalMode = "new";
-let wsDeviceEditingId = "";
-let wsTagModalMode = "new";
-let wsTagEditingConn = "";
-let wsTagEditingName = "";
+	let wsDeviceModalMode = "new";
+	let wsDeviceEditingId = "";
+	let wsTagModalMode = "new";
+	let wsTagEditingConn = "";
+	let wsTagEditingName = "";
+	let wsAlarmModalMode = "new";
+	let wsAlarmEditingId = "";
+
+	const WS_ALARM_TYPES = ["high", "low", "change", "equals"];
 
 const wsOpenDeviceModal = ({ mode, connection_id }) => {
     const el = wsEls();
@@ -6178,7 +6276,7 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
     el.deviceId?.focus?.();
 };
 
-const wsOpenTagModal = ({ mode, connection_id, name }) => {
+	const wsOpenTagModal = ({ mode, connection_id, name }) => {
     const el = wsEls();
     if (!el.tagModal) return;
     wsTagModalMode = mode === "edit" ? "edit" : "new";
@@ -6212,12 +6310,64 @@ const wsOpenTagModal = ({ mode, connection_id, name }) => {
     el.tagName?.focus?.();
 };
 
-const wsOpenPropertiesForNode = (nodeId) => {
-    const node = wsNodeById.get(nodeId);
-    if (!node) return;
-    if (node.type === "device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
-    if (node.type === "tag") return wsOpenTagModal({ mode: "edit", connection_id: node.connection_id, name: node.name });
-};
+	const wsOpenPropertiesForNode = (nodeId) => {
+	    const node = wsNodeById.get(nodeId);
+	    if (!node) return;
+	    if (node.type === "device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
+	    if (node.type === "tag") return wsOpenTagModal({ mode: "edit", connection_id: node.connection_id, name: node.name });
+	    if (node.type === "alarm") return wsOpenAlarmModal({ mode: "edit", alarm_id: node.alarm_id });
+	};
+
+	const wsOpenAlarmModal = ({ mode, alarm_id }) => {
+	    const el = wsEls();
+	    if (!el.alarmModal) return;
+	    wsAlarmModalMode = mode === "edit" ? "edit" : "new";
+	    wsAlarmEditingId = String(alarm_id || "").trim();
+
+	    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections : [];
+	    const connIds = conns.map((c) => String(c?.id || "")).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+	    wsFillSelect(el.alarmConn, connIds.map((id) => ({ value: id, label: id })), connIds[0] || "");
+
+	    wsFillSelect(el.alarmType, WS_ALARM_TYPES.map((t) => ({ value: t, label: t })), "high");
+
+	    const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms : [];
+	    const existing = wsAlarmModalMode === "edit"
+	        ? alarms.find((a) => String(a?.id || "") === wsAlarmEditingId)
+	        : null;
+
+	    if (el.alarmTitle) el.alarmTitle.textContent = wsAlarmModalMode === "edit" ? `Alarm Properties: ${wsAlarmEditingId}` : "New Alarm";
+	    if (el.alarmStatus) el.alarmStatus.textContent = "";
+
+	    if (el.alarmId) {
+	        el.alarmId.value = wsAlarmModalMode === "edit" ? wsAlarmEditingId : "";
+	        el.alarmId.disabled = wsAlarmModalMode === "edit";
+	    }
+	    if (el.alarmName) el.alarmName.value = existing ? String(existing?.name || "") : "";
+	    if (el.alarmGroup) el.alarmGroup.value = existing ? String(existing?.group || "") : "";
+	    if (el.alarmSite) el.alarmSite.value = existing ? String(existing?.site || "") : "";
+	    if (el.alarmType) el.alarmType.value = existing ? String(existing?.type || "high") : "high";
+	    if (el.alarmConn) el.alarmConn.value = existing ? String(existing?.connection_id || "") : (connIds[0] || "");
+	    if (el.alarmTag) el.alarmTag.value = existing ? String(existing?.tag_name || "") : "";
+	    if (el.alarmEnabled) el.alarmEnabled.checked = existing ? (existing?.enabled !== false) : true;
+	    if (el.alarmSeverity) el.alarmSeverity.value = existing && existing?.severity != null ? String(existing.severity) : "500";
+	    if (el.alarmThreshold) el.alarmThreshold.value = existing && existing?.threshold != null ? String(existing.threshold) : "";
+	    if (el.alarmHysteresis) el.alarmHysteresis.value = existing && existing?.hysteresis != null ? String(existing.hysteresis) : "";
+	    if (el.alarmMsgOn) el.alarmMsgOn.value = existing ? String(existing?.message_on_active || "") : "";
+	    if (el.alarmMsgOff) el.alarmMsgOff.value = existing ? String(existing?.message_on_return || "") : "";
+
+	    const refreshTagOptions = () => {
+	        const cid = String(el.alarmConn?.value || "").trim();
+	        const tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => String(t?.connection_id || "") === cid);
+	        tags.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" }));
+	        wsFillSelect(el.alarmTag, tags.map((t) => ({ value: String(t?.name || ""), label: String(t?.name || "") })), String(existing?.tag_name || ""));
+	        if (!existing && el.alarmTag && tags.length && !el.alarmTag.value) el.alarmTag.value = String(tags[0]?.name || "");
+	    };
+	    if (el.alarmConn) el.alarmConn.onchange = refreshTagOptions;
+	    refreshTagOptions();
+
+	    el.alarmModal.style.display = "flex";
+	    el.alarmId?.focus?.();
+	};
 
 	const wsShowContextMenu = (nodeId, x, y) => {
 	    const el = wsEls();
@@ -6229,17 +6379,22 @@ const wsOpenPropertiesForNode = (nodeId) => {
     const items = [];
     const addItem = (label, action) => items.push({ label, action });
 
-    if (node.type === "connectivity") {
-        addItem("Add Device…", "add-device");
-    } else if (node.type === "device") {
-        addItem("Add Tag…", "add-tag");
-        addItem("Properties…", "edit-device");
-        addItem("Delete Device", "delete-device");
-    } else if (node.type === "tag") {
-        addItem("Delete Tag", "delete-tag");
-    } else {
-        return;
-    }
+	    if (node.type === "connectivity") {
+	        addItem("Add Device…", "add-device");
+	    } else if (node.type === "alarms") {
+	        addItem("Add Alarm…", "add-alarm");
+	    } else if (node.type === "device") {
+	        addItem("Add Tag…", "add-tag");
+	        addItem("Properties…", "edit-device");
+	        addItem("Delete Device", "delete-device");
+	    } else if (node.type === "alarm") {
+	        addItem("Properties…", "edit-alarm");
+	        addItem("Delete Alarm", "delete-alarm");
+	    } else if (node.type === "tag") {
+	        addItem("Delete Tag", "delete-tag");
+	    } else {
+	        return;
+	    }
 
     el.contextMenu.textContent = "";
     items.forEach((it) => {
@@ -6258,15 +6413,18 @@ const wsOpenPropertiesForNode = (nodeId) => {
     el.contextMenu.style.display = "block";
 };
 
-const wsHandleContextAction = (action, nodeId) => {
-    const node = wsNodeById.get(nodeId);
-    if (!node) return;
-    if (action === "add-device") return wsOpenDeviceModal({ mode: "new" });
-    if (action === "edit-device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
-    if (action === "delete-device") return wsDeleteDevice(node.connection_id);
-    if (action === "add-tag") return wsOpenTagModal({ mode: "new", connection_id: node.connection_id });
-    if (action === "delete-tag") return wsDeleteTag(node.connection_id, node.name);
-};
+	const wsHandleContextAction = (action, nodeId) => {
+	    const node = wsNodeById.get(nodeId);
+	    if (!node) return;
+	    if (action === "add-device") return wsOpenDeviceModal({ mode: "new" });
+	    if (action === "add-alarm") return wsOpenAlarmModal({ mode: "new" });
+	    if (action === "edit-device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
+	    if (action === "edit-alarm") return wsOpenAlarmModal({ mode: "edit", alarm_id: node.alarm_id });
+	    if (action === "delete-device") return wsDeleteDevice(node.connection_id);
+	    if (action === "delete-alarm") return wsDeleteAlarm(node.alarm_id);
+	    if (action === "add-tag") return wsOpenTagModal({ mode: "new", connection_id: node.connection_id });
+	    if (action === "delete-tag") return wsDeleteTag(node.connection_id, node.name);
+	};
 
 const wsSelectNode = (nodeId) => {
     wsSelectedId = nodeId;
@@ -6352,30 +6510,36 @@ const wsRenderTree = () => {
         el.thead.appendChild(tr);
     };
 
-	    const addRow = (cells, nodeId) => {
-	        const tr = document.createElement("tr");
-	        cells.forEach((txt) => {
-	            const td = document.createElement("td");
-	            td.textContent = txt;
-	            tr.appendChild(td);
-	        });
-	        if (nodeId) {
-	            tr.dataset.nodeId = nodeId;
-	            tr.addEventListener("click", () => wsSelectNode(nodeId));
-	            if (wsIsEditable()) {
-	                tr.addEventListener("dblclick", () => wsOpenPropertiesForNode(nodeId));
-	            }
-	        }
-	        el.tbody.appendChild(tr);
-	    };
+		    const addRow = (cells, nodeId) => {
+		        const tr = document.createElement("tr");
+		        cells.forEach((txt) => {
+		            const td = document.createElement("td");
+		            td.textContent = txt;
+		            tr.appendChild(td);
+		        });
+		        if (nodeId) {
+		            tr.dataset.nodeId = nodeId;
+		            tr.addEventListener("click", () => wsSelectNode(nodeId));
+		            tr.addEventListener("contextmenu", (e) => {
+		                e.preventDefault();
+		                wsSelectNode(nodeId);
+		                wsShowContextMenu(nodeId, e.clientX, e.clientY);
+		            });
+		            if (wsIsEditable()) {
+		                tr.addEventListener("dblclick", () => wsOpenPropertiesForNode(nodeId));
+		            }
+		        }
+		        el.tbody.appendChild(tr);
+		    };
 
     el.tbody.textContent = "";
 
-    if (node.type === "root") {
-        setHeader(["Name"]);
-        addRow(["Connectivity"], "ws:connectivity");
-        return;
-    }
+	    if (node.type === "root") {
+	        setHeader(["Name"]);
+	        addRow(["Connectivity"], "ws:connectivity");
+	        addRow(["Alarms & Events"], "ws:alarms");
+	        return;
+	    }
 
     if (node.type === "connectivity") {
         setHeader(["Name", "Description", "Driver", "PLC Type", "Gateway", "Path", "Slot"]);
@@ -6420,25 +6584,79 @@ const wsRenderTree = () => {
         return;
     }
 
-    if (node.type === "tag") {
-        setHeader(["Name", "PLC Tag", "Datatype", "Scan (ms)", "Enabled", "Writable"]);
-        const cid = String(node.connection_id || "").trim();
-        const name = String(node.name || "").trim();
+	    if (node.type === "tag") {
+	        setHeader(["Name", "PLC Tag", "Datatype", "Scan (ms)", "Enabled", "Writable"]);
+	        const cid = String(node.connection_id || "").trim();
+	        const name = String(node.name || "").trim();
         const t = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).find((x) => String(x?.connection_id || "") === cid && String(x?.name || "") === name);
         if (!t) {
             addRow(["(missing)", "", "", "", "", ""], null);
             return;
         }
-        addRow([
-            String(t?.name || ""),
-            String(t?.plc_tag_name || ""),
-            String(t?.datatype || ""),
-            t?.scan_ms == null ? "" : String(t.scan_ms),
-            t?.enabled === false ? "no" : "yes",
-            t?.writable === true ? "yes" : "no"
-        ], null);
-    }
-};
+	        addRow([
+	            String(t?.name || ""),
+	            String(t?.plc_tag_name || ""),
+	            String(t?.datatype || ""),
+	            t?.scan_ms == null ? "" : String(t.scan_ms),
+	            t?.enabled === false ? "no" : "yes",
+	            t?.writable === true ? "yes" : "no"
+	        ], null);
+	        return;
+	    }
+
+	    if (node.type === "alarms") {
+	        setHeader(["ID", "Name", "Group", "Site", "Type", "Connection", "Tag", "Enabled", "Severity"]);
+	        const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
+	        alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+	        if (!alarms.length) {
+	            addRow(["(no alarms)", "", "", "", "", "", "", "", ""], null);
+	            return;
+	        }
+	        alarms.forEach((a) => {
+	            const id = String(a?.id || "").trim();
+	            if (!id) return;
+	            addRow([
+	                id,
+	                String(a?.name || ""),
+	                String(a?.group || ""),
+	                String(a?.site || ""),
+	                String(a?.type || ""),
+	                String(a?.connection_id || ""),
+	                String(a?.tag_name || ""),
+	                a?.enabled === false ? "no" : "yes",
+	                String(a?.severity ?? "")
+	            ], `ws:alarm:${encodeURIComponent(id)}`);
+	        });
+	        return;
+	    }
+
+	    if (node.type === "alarm") {
+	        setHeader(["Field", "Value"]);
+	        const id = String(node.alarm_id || "").trim();
+	        const a = (Array.isArray(wsDraft.alarms) ? wsDraft.alarms : []).find((x) => String(x?.id || "") === id);
+	        if (!a) {
+	            addRow(["(missing)", ""], null);
+	            return;
+	        }
+	        const kv = [
+	            ["id", String(a?.id || "")],
+	            ["name", String(a?.name || "")],
+	            ["group", String(a?.group || "")],
+	            ["site", String(a?.site || "")],
+	            ["type", String(a?.type || "")],
+	            ["connection_id", String(a?.connection_id || "")],
+	            ["tag_name", String(a?.tag_name || "")],
+	            ["enabled", a?.enabled === false ? "no" : "yes"],
+	            ["severity", String(a?.severity ?? "")],
+	            ["threshold", String(a?.threshold ?? "")],
+	            ["hysteresis", String(a?.hysteresis ?? "")],
+	            ["message_on_active", String(a?.message_on_active || "")],
+	            ["message_on_return", String(a?.message_on_return || "")],
+	        ];
+	        kv.forEach(([k, v]) => addRow([k, v], null));
+	        return;
+	    }
+	};
 
 const wsSaveDeviceFromModal = () => {
     const el = wsEls();
@@ -6562,21 +6780,88 @@ const wsDeleteDevice = (connection_id) => {
     wsSelectNode("ws:connectivity");
 };
 
-const wsDeleteTag = (connection_id, name) => {
-    const cid = String(connection_id || "").trim();
-    const tn = String(name || "").trim();
-    if (!cid || !tn) return;
-    if (!confirm(`Delete tag '${cid}:${tn}'? (Applied on Save.)`)) return;
-    wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => !(String(t?.connection_id || "") === cid && String(t?.name || "") === tn));
-    wsSetDirty(true);
-    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
-};
+	const wsDeleteTag = (connection_id, name) => {
+	    const cid = String(connection_id || "").trim();
+	    const tn = String(name || "").trim();
+	    if (!cid || !tn) return;
+	    if (!confirm(`Delete tag '${cid}:${tn}'? (Applied on Save.)`)) return;
+	    wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => !(String(t?.connection_id || "") === cid && String(t?.name || "") === tn));
+	    wsSetDirty(true);
+	    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
+	};
 
-const wsSaveAll = async ({ reloadAfter }) => {
-    if (!wsDirty && !wsPendingDeletes.length) {
-        wsSetStatus("No changes to save.", "");
-        if (reloadAfter) await reloadConfig();
-        return;
+	const wsSaveAlarmFromModal = () => {
+	    const el = wsEls();
+	    const id = String(el.alarmId?.value || "").trim();
+	    if (!id) {
+	        if (el.alarmStatus) el.alarmStatus.textContent = "Alarm ID is required.";
+	        return;
+	    }
+
+	    const base = wsAlarmModalMode === "edit"
+	        ? ((Array.isArray(wsDraft.alarms) ? wsDraft.alarms : []).find((a) => String(a?.id || "") === wsAlarmEditingId) || {})
+	        : {};
+
+	    const next = Object.assign({}, base);
+	    next.id = id;
+	    next.name = String(el.alarmName?.value || "");
+	    next.group = String(el.alarmGroup?.value || "");
+	    next.site = String(el.alarmSite?.value || "");
+	    next.type = String(el.alarmType?.value || "high");
+	    next.connection_id = String(el.alarmConn?.value || "");
+	    next.tag_name = String(el.alarmTag?.value || "");
+	    next.enabled = !!el.alarmEnabled?.checked;
+	    next.severity = Math.max(0, Math.min(1000, Math.floor(Number(el.alarmSeverity?.value) || 0)));
+	    const thRaw = String(el.alarmThreshold?.value || "").trim();
+	    const hyRaw = String(el.alarmHysteresis?.value || "").trim();
+	    if (next.type === "equals" && thRaw === "") {
+	        if (el.alarmStatus) el.alarmStatus.textContent = "Threshold is required for type=equals (use 0/1 for boolean tags).";
+	        return;
+	    }
+	    if (thRaw !== "") next.threshold = Number(thRaw) || 0;
+	    else delete next.threshold;
+	    if (hyRaw !== "") next.hysteresis = Number(hyRaw) || 0;
+	    else delete next.hysteresis;
+	    next.message_on_active = String(el.alarmMsgOn?.value || "");
+	    next.message_on_return = String(el.alarmMsgOff?.value || "");
+
+	    if (!next.connection_id || !next.tag_name || !next.type) {
+	        if (el.alarmStatus) el.alarmStatus.textContent = "connection_id, tag_name, and type are required.";
+	        return;
+	    }
+
+	    const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
+	    if (wsAlarmModalMode === "new") {
+	        if (alarms.some((a) => String(a?.id || "") === id)) {
+	            if (el.alarmStatus) el.alarmStatus.textContent = "Alarm ID already exists.";
+	            return;
+	        }
+	        alarms.push(next);
+	    } else {
+	        const idx = alarms.findIndex((a) => String(a?.id || "") === wsAlarmEditingId);
+	        if (idx >= 0) alarms[idx] = next;
+	    }
+
+	    wsDraft.alarms = alarms;
+	    wsSetDirty(true);
+	    wsCloseModal(el.alarmModal);
+	    wsSelectNode("ws:alarms");
+	};
+
+	const wsDeleteAlarm = (alarm_id) => {
+	    const id = String(alarm_id || "").trim();
+	    if (!id) return;
+	    if (!confirm(`Delete alarm '${id}'? (Applied on Save.)`)) return;
+	    wsDraft.alarms = (Array.isArray(wsDraft.alarms) ? wsDraft.alarms : []).filter((a) => String(a?.id || "") !== id);
+	    wsSetDirty(true);
+	    wsSelectNode("ws:alarms");
+	};
+
+	const wsSaveAll = async ({ reloadAfter }) => {
+	    if (!wsDirty && !wsPendingDeletes.length) {
+	        wsSetStatus("No changes to save.", "");
+	        if (reloadAfter) await reloadConfig();
+	        return;
     }
 
     const el = wsEls();
@@ -6630,19 +6915,32 @@ const wsSaveAll = async ({ reloadAfter }) => {
             delete next.source_file;
             return next;
         });
-        if (tags.length > 0) {
-            await wsApiJson("/config/tags", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ token: WRITE_TOKEN, tags })
-            });
-        }
+	        if (tags.length > 0) {
+	            await wsApiJson("/config/tags", {
+	                method: "POST",
+	                headers: { "Content-Type": "application/json" },
+	                body: JSON.stringify({ token: WRITE_TOKEN, tags })
+	            });
+	        }
 
-        // 3) Deletes
-        const uniqueDeletes = [];
-        const seen = new Set();
-        wsPendingDeletes.forEach((d) => {
-            const p = String(d?.path || "").trim();
+	        // 3) Alarms: write alarms.json (root-level)
+	        {
+	            const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
+	            alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+	            const out = { alarms };
+	            const content = JSON.stringify(out, null, 2) + "\n";
+	            await wsApiJson("/config/file", {
+	                method: "POST",
+	                headers: { "Content-Type": "application/json" },
+	                body: JSON.stringify({ token: WRITE_TOKEN, path: "alarms.json", content })
+	            });
+	        }
+
+	        // 4) Deletes
+	        const uniqueDeletes = [];
+	        const seen = new Set();
+	        wsPendingDeletes.forEach((d) => {
+	            const p = String(d?.path || "").trim();
             if (!p) return;
             if (seen.has(p)) return;
             seen.add(p);
@@ -6656,18 +6954,24 @@ const wsSaveAll = async ({ reloadAfter }) => {
             });
         }
 
-        wsPendingDeletes = [];
-        wsBase = wsDeepClone(wsDraft);
-        wsSetDirty(false);
-        wsSetStatus("Saved. Reload to apply changes.", "status-ok");
+	        wsPendingDeletes = [];
+	        wsBase = wsDeepClone(wsDraft);
+	        wsSetDirty(false);
 
-        if (reloadAfter) {
-            await reloadConfig();
-        }
-    } catch (e) {
-        wsSetStatus("Save failed: " + e.toString(), "status-error");
-    } finally {
-        if (el.saveBtn) el.saveBtn.disabled = !wsDirty;
+	        if (reloadAfter) {
+	            const ok = await reloadConfig();
+	            if (ok) {
+	                wsSetStatus("Saved + reloaded.", "status-ok");
+	            } else {
+	                wsSetStatus("Saved, but reload failed (see status).", "status-error");
+	            }
+	        } else {
+	            wsSetStatus("Saved. Reload to apply changes.", "status-ok");
+	        }
+	    } catch (e) {
+	        wsSetStatus("Save failed: " + e.toString(), "status-error");
+	    } finally {
+	        if (el.saveBtn) el.saveBtn.disabled = !wsDirty;
         if (el.saveReloadBtn) el.saveReloadBtn.disabled = false;
         if (el.discardBtn) el.discardBtn.disabled = !wsDirty;
     }
@@ -6704,12 +7008,13 @@ function filterLiveTagsByConnection(connectionId) {
     }
 }
 
-const wsApplyLiveTagsFilterFromSelection = () => {
-    const node = wsNodeById.get(wsSelectedId);
-    let filterConn = "";
-    if (node && node.type === "device") filterConn = String(node.connection_id || "");
-    filterLiveTagsByConnection(filterConn);
-};
+	const wsApplyLiveTagsFilterFromSelection = () => {
+	    const node = wsNodeById.get(wsSelectedId);
+	    let filterConn = "";
+	    if (node && node.type === "device") filterConn = String(node.connection_id || "");
+	    if (node && node.type === "alarm") filterConn = String(node.connection_id || "");
+	    filterLiveTagsByConnection(filterConn);
+	};
 
 	const wsWireUi = () => {
 	    const el = wsEls();
@@ -6736,10 +7041,14 @@ const wsApplyLiveTagsFilterFromSelection = () => {
     if (el.deviceSaveBtn) el.deviceSaveBtn.addEventListener("click", wsSaveDeviceFromModal);
     if (el.deviceModal) el.deviceModal.addEventListener("click", (e) => { if (e.target === el.deviceModal) wsCloseModal(el.deviceModal); });
 
-    if (el.tagCancelBtn) el.tagCancelBtn.addEventListener("click", () => wsCloseModal(el.tagModal));
-    if (el.tagSaveBtn) el.tagSaveBtn.addEventListener("click", wsSaveTagFromModal);
-    if (el.tagModal) el.tagModal.addEventListener("click", (e) => { if (e.target === el.tagModal) wsCloseModal(el.tagModal); });
-};
+	    if (el.tagCancelBtn) el.tagCancelBtn.addEventListener("click", () => wsCloseModal(el.tagModal));
+	    if (el.tagSaveBtn) el.tagSaveBtn.addEventListener("click", wsSaveTagFromModal);
+	    if (el.tagModal) el.tagModal.addEventListener("click", (e) => { if (e.target === el.tagModal) wsCloseModal(el.tagModal); });
+
+	    if (el.alarmCancelBtn) el.alarmCancelBtn.addEventListener("click", () => wsCloseModal(el.alarmModal));
+	    if (el.alarmSaveBtn) el.alarmSaveBtn.addEventListener("click", wsSaveAlarmFromModal);
+	    if (el.alarmModal) el.alarmModal.addEventListener("click", (e) => { if (e.target === el.alarmModal) wsCloseModal(el.alarmModal); });
+	};
 
 		const wsInit = async () => {
 		    const el = wsEls();
@@ -6752,8 +7061,8 @@ const wsApplyLiveTagsFilterFromSelection = () => {
 
 		    // If not logged in, keep the live tags panel but hide workspace config tree/details.
 		    if (!wsIsEditable()) {
-		        wsBase = { connections: [], tags: [] };
-		        wsDraft = { connections: [], tags: [] };
+		        wsBase = { connections: [], tags: [], alarms: [] };
+		        wsDraft = { connections: [], tags: [], alarms: [] };
 		        wsPendingDeletes = [];
 		        wsNodeById = new Map();
 		        wsSetDirty(false);
@@ -7670,28 +7979,28 @@ async function doWrite(connectionId, tagName) {
     refreshTags();
 }
 
-	async function refreshTags() {
-	    const metaEl = document.getElementById("tags-meta");
-	    const tbody  = document.getElementById("tags-tbody");
-	    if (document.hidden) return;
-	    if (WS_CONNECTED && g_tagCellsByKey && g_tagCellsByKey.size > 0) {
-	        return; // WS will deliver incremental updates
-	    }
-	    if (g_tagsFetchInFlight) return;
-	    try {
+		async function refreshTags(force = false) {
+		    const metaEl = document.getElementById("tags-meta");
+		    const tbody  = document.getElementById("tags-tbody");
+		    if (document.hidden) return;
+		    if (!force && WS_CONNECTED && g_tagCellsByKey && g_tagCellsByKey.size > 0) {
+		        return; // WS will deliver incremental updates
+		    }
+		    if (g_tagsFetchInFlight) return;
+		    try {
 	        g_tagsFetchInFlight = true;
 	        const t0 = performance.now();
 	        const resp = await fetch("/tags");
 	        const data = await resp.json();
 	        const t1 = performance.now();
 
-	        const tags = data.tags || [];
-	        const missing = tags.filter(t => t && t.has_snapshot === false).length;
-	        const badHandles = tags.filter(t => t && t.handle_ok === false).length;
-	        metaEl.textContent = "Count: " + tags.length +
-	            " | Missing: " + missing +
-	            " | Bad handles: " + badHandles +
-	            " | Last fetch: " + (t1 - t0).toFixed(1) + " ms";
+		        const tags = data.tags || [];
+		        const missing = tags.filter(t => t && t.has_snapshot === false).length;
+		        const badHandles = tags.filter(t => t && t.handle_ok === false).length;
+		        metaEl.textContent = "Count: " + tags.length +
+		            " | Missing: " + missing +
+		            " | Bad handles: " + badHandles +
+		            " | Last fetch: " + (t1 - t0).toFixed(1) + " ms";
 
 	        const rows = [];
 	        for (const t of tags) {
@@ -7734,30 +8043,60 @@ async function doWrite(connectionId, tagName) {
 		                "</tr>"
 		            );
 	        }
-		        tbody.innerHTML = rows.join("");
-		        indexTagRows();
-		        wsSubscribeCurrentTags();
-		        if (isEditorPage()) {
-		            wsApplyLiveTagsFilterFromSelection();
-		        }
-		    } catch (e) {
-		        metaEl.textContent = "Error fetching tags: " + e.toString();
-		        tbody.innerHTML = "";
-		        g_tagCellsByKey = new Map();
-	    } finally {
-        g_tagsFetchInFlight = false;
-    }
-}
+			        tbody.innerHTML = rows.join("");
+			        indexTagRows();
+			        wsSubscribeCurrentTags();
+			        if (isEditorPage()) {
+			            wsApplyLiveTagsFilterFromSelection();
+			        }
+			        return { count: tags.length, missing, badHandles };
+			    } catch (e) {
+			        metaEl.textContent = "Error fetching tags: " + e.toString();
+			        tbody.innerHTML = "";
+			        g_tagCellsByKey = new Map();
+			        return null;
+		    } finally {
+	        g_tagsFetchInFlight = false;
+	    }
+	}
 
-async function reloadConfig() {
+	function scheduleTagsRefreshUntilNoMissing({ maxTries = 6, delayMs = 750 } = {}) {
+	    if (g_tagsMissingRefreshTimer) return;
+	    let tries = 0;
+
+	    const tick = async () => {
+	        g_tagsMissingRefreshTimer = null;
+	        if (document.hidden) return;
+	        tries += 1;
+	        const r = await refreshTags(true);
+	        if (!r) return;
+	        if (r.missing <= 0) return;
+	        if (tries >= maxTries) return;
+	        g_tagsMissingRefreshTimer = setTimeout(tick, delayMs);
+	    };
+
+	    g_tagsMissingRefreshTimer = setTimeout(tick, delayMs);
+	}
+
+	async function reloadConfig() {
     const btn      = document.getElementById("reload-button");
     const statusEl = document.getElementById("reload-status");
     const lastEl   = document.getElementById("reload-last");
 
-    statusEl.textContent = "Reloading config...";
-    statusEl.className   = "small";
-    btn.disabled         = true;
-    btn.dataset.reloading = "1";
+    const setStatus = (msg, cls) => {
+        if (statusEl) {
+            statusEl.textContent = msg;
+            statusEl.className = "small" + (cls ? (" " + cls) : "");
+        } else if (isEditorPage()) {
+            wsSetStatus(msg, cls || "");
+        }
+    };
+
+    setStatus("Reloading config...", "");
+    if (btn) {
+        btn.disabled = true;
+        btn.dataset.reloading = "1";
+    }
 
     try {
         const resp = await fetch("/reload", {
@@ -7767,25 +8106,36 @@ async function reloadConfig() {
         });
         const data = await resp.json();
         if (data.ok) {
-            statusEl.textContent = "Reload OK: " + (data.message || "");
-            statusEl.className   = "small status-ok";
+            setStatus("Reload OK: " + (data.message || ""), "status-ok");
             const now = new Date();
-            lastEl.textContent = "Last successful reload: " + now.toLocaleString();
-            lastEl.className   = "small";
+            if (lastEl) {
+                lastEl.textContent = "Last successful reload: " + now.toLocaleString();
+                lastEl.className   = "small";
+            }
             await refreshInfo();
             await refreshHealth();
-            await refreshTags();
+            const tagCounts = await refreshTags(true);
+            if (tagCounts && tagCounts.missing > 0) {
+                scheduleTagsRefreshUntilNoMissing();
+            }
             await refreshAlarms();
+            if (isEditorPage()) {
+                // Refresh workspace config view after reload so the tree/properties reflect what's on disk.
+                wsInit();
+            }
+            return true;
         } else {
-            statusEl.textContent = "Reload FAILED: " + (data.error || "unknown error");
-            statusEl.className   = "small status-error";
+            setStatus("Reload FAILED: " + (data.error || "unknown error"), "status-error");
+            return false;
         }
     } catch (e) {
-        statusEl.textContent = "Reload exception: " + e.toString();
-        statusEl.className   = "small status-error";
+        setStatus("Reload exception: " + e.toString(), "status-error");
+        return false;
     } finally {
-        btn.disabled = false;
-        delete btn.dataset.reloading;
+        if (btn) {
+            btn.disabled = false;
+            delete btn.dataset.reloading;
+        }
     }
 }
 

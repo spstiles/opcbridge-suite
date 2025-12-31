@@ -572,6 +572,30 @@ const createApp = () => {
     }
   });
 
+  // Current alarm state snapshot from opcbridge-alarms (not just event history).
+  app.get("/api/alarms/all", async (req, res) => {
+    try {
+      const { config: parsed } = await readConfig();
+      const alarms = parsed?.alarms || {};
+      const opcbridge = parsed?.opcbridge || {};
+      const host = String(alarms.host || opcbridge.host || "127.0.0.1");
+      const port = Number(alarms.httpPort) || 8085;
+      const url = `http://${host}:${port}/alarm/api/alarms/all`;
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      const text = await response.text();
+      if (!response.ok) {
+        return res.status(502).json({ error: `opcbridge-alarms HTTP ${response.status}`, details: text });
+      }
+      try {
+        res.json(JSON.parse(text));
+      } catch {
+        res.status(502).json({ error: "Invalid JSON from opcbridge-alarms.", details: text });
+      }
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   // Convenience proxy for opcbridge's built-in alarm history database.
   // This is useful when running without opcbridge-alarms.
   app.get("/api/opcbridge/alarm-history", async (req, res) => {
