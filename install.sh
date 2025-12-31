@@ -504,19 +504,62 @@ write_unit() {
 install_systemd_units() {
   have_cmd systemctl || { echo "systemctl not found; skipping service install."; return 0; }
 
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
-    write_unit "opcbridge.service" "[Unit]
-Description=opcbridge industrial data bridge
-After=network.target
+	if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
+	    write_unit "opcbridge.service" "[Unit]
+	Description=opcbridge industrial data bridge
+	After=network.target
 
-[Service]
-Type=simple
-EnvironmentFile=${ENV_FILE}
-WorkingDirectory=${PREFIX}
-ExecStart=${PREFIX}/bin/opcbridge --config ${CONFIG_ROOT} --http --ws --ws-port \${OPCBRIDGE_WS_PORT} --opcua --opcua-port \${OPCBRIDGE_OPCUA_PORT}
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
-Restart=always
+	[Service]
+	Type=simple
+	EnvironmentFile=${ENV_FILE}
+	WorkingDirectory=${PREFIX}
+	ExecStart=${PREFIX}/bin/opcbridge --config ${CONFIG_ROOT} --http --ws --ws-port \$OPCBRIDGE_WS_PORT --opcua --opcua-port \$OPCBRIDGE_OPCUA_PORT
+	User=${SERVICE_USER}
+	Group=${SERVICE_GROUP}
+	Restart=always
+	RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+"
+  fi
+
+	if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
+	    write_unit "opcbridge-alarms.service" "[Unit]
+	Description=opcbridge alarms server
+	After=network.target opcbridge.service
+
+	[Service]
+	Type=simple
+	EnvironmentFile=${ENV_FILE}
+	WorkingDirectory=${PREFIX}
+	ExecStart=${PREFIX}/bin/opcbridge-alarms --config ${CONFIG_ROOT}/alarms --opcbridge-host 127.0.0.1 --opcbridge-http-port \$OPCBRIDGE_HTTP_PORT --opcbridge-ws-port \$OPCBRIDGE_WS_PORT --http-port \$ALARMS_HTTP_PORT --ws-port \$ALARMS_WS_PORT --opcua --admin-token \$OPCBRIDGE_ADMIN_SERVICE_TOKEN
+	User=${SERVICE_USER}
+	Group=${SERVICE_GROUP}
+	Restart=always
+	RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+"
+  fi
+
+	if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
+	    write_unit "opcbridge-scada.service" "[Unit]
+	Description=opcbridge SCADA console
+	After=network.target
+
+	[Service]
+	Type=simple
+	EnvironmentFile=${ENV_FILE}
+	Environment=OPCBRIDGE_SCADA_CONFIG=${CONFIG_ROOT}/scada/config.json
+	Environment=OPCBRIDGE_SCADA_SECRETS=${CONFIG_ROOT}/scada/config.secrets.json
+	Environment=PORT=\$SCADA_PORT
+	WorkingDirectory=${PREFIX}/scada
+	ExecStart=/usr/bin/node ${PREFIX}/scada/server.js
+	User=${SERVICE_USER}
+	Group=${SERVICE_GROUP}
+	Restart=always
 RestartSec=2
 
 [Install]
@@ -524,63 +567,20 @@ WantedBy=multi-user.target
 "
   fi
 
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
-    write_unit "opcbridge-alarms.service" "[Unit]
-Description=opcbridge alarms server
-After=network.target opcbridge.service
+	if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'hmi'; then
+	    write_unit "opcbridge-hmi.service" "[Unit]
+	Description=opcbridge HMI
+	After=network.target
 
-[Service]
-Type=simple
-EnvironmentFile=${ENV_FILE}
-WorkingDirectory=${PREFIX}
-ExecStart=${PREFIX}/bin/opcbridge-alarms --config ${CONFIG_ROOT}/alarms --opcbridge-host 127.0.0.1 --opcbridge-http-port \${OPCBRIDGE_HTTP_PORT} --opcbridge-ws-port \${OPCBRIDGE_WS_PORT} --http-port \${ALARMS_HTTP_PORT} --ws-port \${ALARMS_WS_PORT} --opcua --admin-token \${OPCBRIDGE_ADMIN_SERVICE_TOKEN}
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-"
-  fi
-
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
-    write_unit "opcbridge-scada.service" "[Unit]
-Description=opcbridge SCADA console
-After=network.target
-
-[Service]
-Type=simple
-EnvironmentFile=${ENV_FILE}
-Environment=OPCBRIDGE_SCADA_CONFIG=${CONFIG_ROOT}/scada/config.json
-Environment=OPCBRIDGE_SCADA_SECRETS=${CONFIG_ROOT}/scada/config.secrets.json
-Environment=PORT=\${SCADA_PORT}
-WorkingDirectory=${PREFIX}/scada
-ExecStart=/usr/bin/node ${PREFIX}/scada/server.js
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-"
-  fi
-
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'hmi'; then
-    write_unit "opcbridge-hmi.service" "[Unit]
-Description=opcbridge HMI
-After=network.target
-
-[Service]
-Type=simple
-EnvironmentFile=${ENV_FILE}
-Environment=PORT=\${HMI_PORT}
-WorkingDirectory=${PREFIX}/hmi
-ExecStart=/usr/bin/node ${PREFIX}/hmi/server.js
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
-Restart=always
+	[Service]
+	Type=simple
+	EnvironmentFile=${ENV_FILE}
+	Environment=PORT=\$HMI_PORT
+	WorkingDirectory=${PREFIX}/hmi
+	ExecStart=/usr/bin/node ${PREFIX}/hmi/server.js
+	User=${SERVICE_USER}
+	Group=${SERVICE_GROUP}
+	Restart=always
 RestartSec=2
 
 [Install]
