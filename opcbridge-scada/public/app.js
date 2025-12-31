@@ -1804,6 +1804,7 @@ function renderTreeNode(node, container) {
     if (node.type === 'tag') {
       const cid = String(node.meta?.connection_id || '').trim();
       const name = String(node.meta?.name || node.label || '').trim();
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Delete Tag…', onClick: () => deleteTagById(cid, name) });
       items.push('sep');
     }
