@@ -341,7 +341,7 @@ build_if_needed() {
 
   echo "Building C++ components..."
   (cd "$ROOT_DIR/opcbridge" && ./build.sh)
-  (cd "$ROOT_DIR/opcbridge/opcbridge-alarms" && ./build.sh)
+  (cd "$ROOT_DIR/opcbridge-alarms" && ./build.sh)
 
   if [[ -f "$ROOT_DIR/opcbridge-reporter/Makefile" ]]; then
     (cd "$ROOT_DIR/opcbridge-reporter" && make)
@@ -376,7 +376,7 @@ install_opcbridge() {
 
 install_alarms() {
   echo "Installing opcbridge-alarms..."
-  local src="$ROOT_DIR/opcbridge/opcbridge-alarms/opcbridge-alarms"
+  local src="$ROOT_DIR/opcbridge-alarms/opcbridge-alarms"
   [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
 
   install -m 0755 "$src" "$PREFIX/bin/opcbridge-alarms"
@@ -388,7 +388,7 @@ install_alarms() {
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/opcbridge-alarms" || true
   fi
 
-  install -m 0644 "$ROOT_DIR/opcbridge/opcbridge-alarms/config/alarms.json.example" \
+  install -m 0644 "$ROOT_DIR/opcbridge-alarms/config/alarms.json.example" \
     "$CONFIG_ROOT/alarms/alarms.json.example" 2>/dev/null || true
 }
 
