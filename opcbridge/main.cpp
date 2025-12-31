@@ -126,6 +126,7 @@ struct TagConfig {
     std::string plc_tag_name;
     std::string datatype;
     int scan_ms = 1000;
+    bool enabled = true; // legacy configs default to enabled
     bool writable = false;
 
     // MQTT command and event logging
@@ -1549,6 +1550,8 @@ TagFile load_tag_file(const std::string &path) {
         t.plc_tag_name         = jt.at("plc_tag_name").get<std::string>();
         t.datatype             = jt.at("datatype").get<std::string>();
         t.scan_ms              = jt.value("scan_ms", 1000);
+        // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
+        t.enabled              = jt.value("enabled", true);
         t.writable             = jt.value("writable", false);
         t.mqtt_command_allowed = jt.value("mqtt_command_allowed", false);
         t.log_event_on_change  = jt.value("log_event_on_change", false);
@@ -1881,17 +1884,18 @@ void ws_notify_tag_update(const TagSnapshot &snap,
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         snap.timestamp.time_since_epoch()
     ).count();
-    j["timestamp_ms"] = ms;
+	    j["timestamp_ms"] = ms;
 
-    std::visit([&j](auto &&arg) {
-        j["value"] = arg;
-    }, snap.value);
+	    std::visit([&j](auto &&arg) {
+	        j["value"] = arg;
+	    }, snap.value);
 
-    j["writable"]              = cfg.writable;
-    j["mqtt_command_allowed"]  = cfg.mqtt_command_allowed;
-    j["log_event_on_change"]   = cfg.log_event_on_change;
-    j["log_periodic_mode"]     = cfg.log_periodic_mode;
-    j["log_periodic_interval_sec"] = cfg.log_periodic_interval_sec;
+	    j["enabled"]               = cfg.enabled;
+	    j["writable"]              = cfg.writable;
+	    j["mqtt_command_allowed"]  = cfg.mqtt_command_allowed;
+	    j["log_event_on_change"]   = cfg.log_event_on_change;
+	    j["log_periodic_mode"]     = cfg.log_periodic_mode;
+	    j["log_periodic_interval_sec"] = cfg.log_periodic_interval_sec;
 
     ws_send_json(j);
 }
@@ -2560,21 +2564,28 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
 	        // Duplicates waste poll time and can make the UI appear "slower" because the same tag is read multiple times.
 	        std::unordered_set<std::string> seen_logical_names;
 
-	        for (const auto &tc : tags_it->second) {
-	            const std::string logical = tc.logical_name;
-	            if (!logical.empty()) {
-	                if (!seen_logical_names.insert(logical).second) {
-	                    std::cerr << "[load] Warning: duplicate tag logical_name '" << logical
-	                              << "' for connection '" << conn_id << "'. Skipping duplicate.\n";
-	                    continue;
-	                }
-	            }
+		                for (const auto &tc : tags_it->second) {
+		                    const std::string logical = tc.logical_name;
+		                    if (!logical.empty()) {
+		                        if (!seen_logical_names.insert(logical).second) {
+		                            std::cerr << "[load] Warning: duplicate tag logical_name '" << logical
+		                                      << "' for connection '" << conn_id << "'. Skipping duplicate.\n";
+		                            continue;
+		                        }
+		                    }
 
-	            TagRuntime rt;
-	            rt.cfg = tc;
+		                    TagRuntime rt;
+		                    rt.cfg = tc;
 
-            std::string tag_str = build_tag_conn_str(conn_cfg, tc);
-            std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
+		                    // Disabled tags stay visible in /tags, but we don't create handles or poll them.
+		                    if (!tc.enabled) {
+			                    rt.handle = PLCTAG_ERR_NOT_FOUND;
+			                    ctx.tags.push_back(std::move(rt));
+			                    continue;
+		                    }
+
+	            std::string tag_str = build_tag_conn_str(conn_cfg, tc);
+	            std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
 
             int32_t handle = plc_tag_create(tag_str.c_str(),
                                             conn_cfg.default_timeout_ms);
@@ -9723,38 +9734,40 @@ window.addEventListener("load", startAutoRefresh);
 
 		            // /tags
 		            svr.Get("/tags", [&](const httplib::Request &, httplib::Response &res) {
-						struct TagRow {
-							std::string connection_id;
-							std::string name;
-							std::string datatype;
-							TagSnapshot snap;
-							bool writable;
-							bool handle_ok;
-							bool has_snapshot;
-						};
+							struct TagRow {
+								std::string connection_id;
+								std::string name;
+								std::string datatype;
+								TagSnapshot snap;
+								bool enabled;
+								bool writable;
+								bool handle_ok;
+								bool has_snapshot;
+							};
 
 						std::vector<TagRow> rows;
 
 		                {
 							std::lock_guard<std::mutex> lock(driverMutex);
 							for (auto &driver : drivers) {
-								for (auto &t : driver.tags) {
-									std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
-									auto it = tagTable.find(key);
-									TagRow row;
-									row.connection_id = driver.conn.id;
-									row.name          = t.cfg.logical_name;
-									row.datatype      = t.cfg.datatype;
-									row.writable      = t.cfg.writable;
-									row.handle_ok     = (t.handle >= 0);
-									row.has_snapshot  = (it != tagTable.end());
-									if (row.has_snapshot) {
-										row.snap = it->second;
+			                    for (auto &t : driver.tags) {
+										std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
+										auto it = tagTable.find(key);
+										TagRow row;
+										row.connection_id = driver.conn.id;
+										row.name          = t.cfg.logical_name;
+										row.datatype      = t.cfg.datatype;
+										row.enabled       = t.cfg.enabled;
+										row.writable      = t.cfg.writable;
+										row.handle_ok     = (t.handle >= 0);
+										row.has_snapshot  = (it != tagTable.end());
+										if (row.has_snapshot) {
+											row.snap = it->second;
+										}
+										rows.push_back(std::move(row));
 									}
-									rows.push_back(std::move(row));
 								}
 							}
-						}
 
 		                json root;
 		                root["tags"] = json::array();
@@ -9764,15 +9777,18 @@ window.addEventListener("load", startAutoRefresh);
 							jt["connection_id"] = r.connection_id;
 							jt["name"]          = r.name;
 							jt["datatype"]      = r.datatype;
-							jt["writable"]      = r.writable;
-							jt["handle_ok"]     = r.handle_ok;
-							jt["has_snapshot"]  = r.has_snapshot;
+								jt["enabled"]       = r.enabled;
+								jt["writable"]      = r.writable;
+								jt["handle_ok"]     = r.handle_ok;
+								jt["has_snapshot"]  = r.has_snapshot;
 
-							if (!r.handle_ok) {
-								jt["reason"] = "bad_handle";
-							} else if (!r.has_snapshot) {
-								jt["reason"] = "no_snapshot_yet";
-							}
+								if (!r.enabled) {
+									jt["reason"] = "disabled";
+								} else if (!r.handle_ok) {
+									jt["reason"] = "bad_handle";
+								} else if (!r.has_snapshot) {
+									jt["reason"] = "no_snapshot_yet";
+								}
 
 								if (r.has_snapshot) {
 									const TagSnapshot &snap = r.snap;
@@ -9847,21 +9863,31 @@ window.addEventListener("load", startAutoRefresh);
                     }
                 }
 
-                if (!found) {
-                    res.status = 404;
-                    json err;
-                    err["error"] = "Connection or tag not found";
-                    err["connection_id"] = conn_id;
-                    err["name"] = tag_name;
-                    res.set_content(err.dump(2), "application/json");
-                    return;
-                }
+	                if (!found) {
+	                    res.status = 404;
+	                    json err;
+	                    err["error"] = "Connection or tag not found";
+	                    err["connection_id"] = conn_id;
+	                    err["name"] = tag_name;
+	                    res.set_content(err.dump(2), "application/json");
+	                    return;
+	                }
 
-                if (handle < 0) {
-                    res.status = 503;
-                    json err;
-                    err["error"] = "Tag has invalid handle";
-                    err["connection_id"] = conn_id;
+	                if (!cfg.enabled) {
+	                    res.status = 409;
+	                    json err;
+	                    err["error"] = "Tag is disabled";
+	                    err["connection_id"] = conn_id;
+	                    err["name"] = tag_name;
+	                    res.set_content(err.dump(2), "application/json");
+	                    return;
+	                }
+
+	                if (handle < 0) {
+	                    res.status = 503;
+	                    json err;
+	                    err["error"] = "Tag has invalid handle";
+	                    err["connection_id"] = conn_id;
                     err["name"] = tag_name;
                     res.set_content(err.dump(2), "application/json");
                     return;
@@ -9891,12 +9917,13 @@ window.addEventListener("load", startAutoRefresh);
                     ts.time_since_epoch()
                 ).count();
 
-                json jt;
-                jt["connection_id"] = conn_id;
-                jt["name"]          = tag_name;
-                jt["datatype"]      = cfg.datatype;
-                jt["writable"]      = cfg.writable;
-                jt["timestamp_ms"]  = ms;
+	                json jt;
+	                jt["connection_id"] = conn_id;
+	                jt["name"]          = tag_name;
+	                jt["datatype"]      = cfg.datatype;
+	                jt["enabled"]       = cfg.enabled;
+	                jt["writable"]      = cfg.writable;
+	                jt["timestamp_ms"]  = ms;
 
                 if (status != PLCTAG_STATUS_OK) {
                     jt["quality"] = 0;
@@ -10088,6 +10115,7 @@ window.addEventListener("load", startAutoRefresh);
 								int64_t newest_age_ms = -1;
 
 							for (auto &t : driver.tags) {
+								if (!t.cfg.enabled) continue;
 								if (t.handle < 0) continue;
 								has_valid_tag = true;
 
@@ -10371,15 +10399,23 @@ window.addEventListener("load", startAutoRefresh);
 								"default_read_ms",
 								"default_write_ms",
 								"debug"};
-							const std::vector<std::string> tagKeys = {
-								"connection_id",
-								"name",
-								"plc_tag_name",
-								"datatype",
-								"scan_ms",
-								"enabled",
-								"writable",
-								"source_file"};
+								const std::vector<std::string> tagKeys = {
+									"connection_id",
+									"name",
+									"plc_tag_name",
+									"datatype",
+									"scan_ms",
+									"enabled",
+									"writable",
+									"mqtt_command_allowed",
+									"log_event_on_change",
+									"log_periodic",
+									"log_periodic_mode",
+									"log_periodic_interval_sec",
+									"log_hourly_minute",
+									"log_daily_hour",
+									"log_daily_minute",
+									"source_file"};
 
 							// connections/*.json
 							const std::string connDir = joinPath(configDir, "connections");
