@@ -5238,34 +5238,40 @@ int main(int argc, char **argv) {
 			  align-items: center;
 			  justify-content: center;
 			}
-			.ws-modal-card {
-			  width: 100%;
-			  max-width: 720px;
-			  background: #1b1b1b;
-			  border: 1px solid #333;
-			  border-radius: 10px;
-			  box-shadow: 0 10px 24px rgba(0,0,0,0.65);
-			  padding: 12px;
-			}
-			.ws-modal-title {
-			  font-size: 14px;
-			  font-weight: bold;
-			  margin-bottom: 10px;
-			  border-bottom: 1px solid #333;
-			  padding-bottom: 6px;
-			}
-				.ws-form {
-				  display: grid;
-				  grid-template-columns: 1fr;
-				  gap: 10px;
+				.ws-modal-card {
+				  width: 100%;
+				  max-width: 720px;
+				  background: #1b1b1b;
+				  border: 1px solid #333;
+				  border-radius: 10px;
+				  box-shadow: 0 10px 24px rgba(0,0,0,0.65);
+				  padding: 12px;
+				  user-select: text;
+				  -webkit-user-select: text;
 				}
-				.ws-form label {
-				  display: flex;
-				  flex-direction: column;
-				  gap: 4px;
-				  font-size: 11px;
-				  color: #aaa;
+				.ws-modal-title {
+				  font-size: 14px;
+				  font-weight: bold;
+				  margin-bottom: 10px;
+				  border-bottom: 1px solid #333;
+				  padding-bottom: 6px;
+				  user-select: text;
+				  -webkit-user-select: text;
 				}
+					.ws-form {
+					  display: grid;
+					  grid-template-columns: 1fr;
+					  gap: 10px;
+					}
+					.ws-form label {
+					  display: flex;
+					  flex-direction: column;
+					  gap: 4px;
+					  font-size: 11px;
+					  color: #aaa;
+					  user-select: text;
+					  -webkit-user-select: text;
+					}
 				.ws-form label.ws-inline {
 				  flex-direction: row;
 				  align-items: center;
@@ -5281,15 +5287,17 @@ int main(int argc, char **argv) {
 				    grid-template-columns: 1fr;
 				  }
 				}
-			.ws-form input,
-			.ws-form select {
-			  background: #0b0b0b;
-			  color: #eee;
-			  border: 1px solid #333;
-			  border-radius: 4px;
-			  padding: 6px 8px;
-			  font-size: 12px;
-			}
+				.ws-form input,
+				.ws-form select {
+				  background: #0b0b0b;
+				  color: #eee;
+				  border: 1px solid #333;
+				  border-radius: 4px;
+				  padding: 6px 8px;
+				  font-size: 12px;
+				  user-select: text;
+				  -webkit-user-select: text;
+				}
 				.ws-modal-actions {
 				  display: flex;
 				  justify-content: flex-end;
@@ -5565,16 +5573,16 @@ int main(int argc, char **argv) {
 					</div>
 
 						<!-- Tag properties modal -->
-						<div id="ws-tag-modal" class="ws-modal" style="display:none;">
-							<div class="ws-modal-card">
-								<div class="ws-modal-title" id="ws-tag-title">Tag</div>
-								<div class="ws-form">
-									<label>Device <input id="ws-tag-conn" type="text" readonly /></label>
-									<label>Name <input id="ws-tag-name" type="text" /></label>
-									<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
-									<label>Datatype <select id="ws-tag-dt"></select></label>
-									<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
-									<label class="ws-inline"><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
+							<div id="ws-tag-modal" class="ws-modal" style="display:none;">
+								<div class="ws-modal-card">
+									<div class="ws-modal-title" id="ws-tag-title">Tag</div>
+									<div class="ws-form">
+										<label>Device <select id="ws-tag-conn"></select></label>
+										<label>Name <input id="ws-tag-name" type="text" /></label>
+										<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
+										<label>Datatype <select id="ws-tag-dt"></select></label>
+										<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
+										<label class="ws-inline"><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
 									<label class="ws-inline"><input id="ws-tag-writable" type="checkbox" /> Writable</label>
 								</div>
 								<div class="small" id="ws-tag-status"></div>
@@ -6313,31 +6321,47 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
     el.deviceId?.focus?.();
 };
 
-	const wsOpenTagModal = ({ mode, connection_id, name }) => {
-    const el = wsEls();
-    if (!el.tagModal) return;
-    wsTagModalMode = mode === "edit" ? "edit" : "new";
-    wsTagEditingConn = String(connection_id || "").trim();
-    wsTagEditingName = String(name || "").trim();
+		const wsOpenTagModal = ({ mode, connection_id, name }) => {
+	    const el = wsEls();
+	    if (!el.tagModal) return;
+	    wsTagModalMode = mode === "edit" ? "edit" : "new";
+	    wsTagEditingConn = String(connection_id || "").trim();
+	    wsTagEditingName = String(name || "").trim();
 
-    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
-    const existing = wsTagModalMode === "edit"
-        ? tags.find((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName)
-        : null;
+	    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections : [];
+	    const connIds = conns
+	        .map((c) => String(c?.id || ""))
+	        .filter(Boolean)
+	        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+	    wsFillSelect(el.tagConn, connIds.map((id) => ({ value: id, label: id })), wsTagEditingConn || (connIds[0] || ""));
 
-    if (el.tagTitle) {
-        el.tagTitle.textContent = wsTagModalMode === "edit"
-            ? `Tag Properties: ${wsTagEditingConn}:${wsTagEditingName}`
-            : `New Tag: ${wsTagEditingConn}`;
-    }
-    if (el.tagStatus) el.tagStatus.textContent = "";
+	    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
+	    const existing = wsTagModalMode === "edit"
+	        ? tags.find((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName)
+	        : null;
 
-    if (el.tagConn) el.tagConn.value = wsTagEditingConn;
-    if (el.tagName) {
-        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
-        el.tagName.disabled = wsTagModalMode === "edit";
-    }
-    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
+	    if (el.tagTitle) {
+	        const curConn = String(el.tagConn?.value || wsTagEditingConn || "").trim();
+	        el.tagTitle.textContent = wsTagModalMode === "edit"
+	            ? `Tag Properties: ${wsTagEditingConn}:${wsTagEditingName}`
+	            : `New Tag: ${curConn}`;
+	    }
+	    if (el.tagStatus) el.tagStatus.textContent = "";
+
+	    if (el.tagConn) {
+	        el.tagConn.value = wsTagEditingConn || String(el.tagConn.value || "");
+	        el.tagConn.onchange = () => {
+	            if (!el.tagTitle) return;
+	            if (wsTagModalMode !== "new") return;
+	            const curConn = String(el.tagConn?.value || "").trim();
+	            el.tagTitle.textContent = `New Tag: ${curConn}`;
+	        };
+	    }
+	    if (el.tagName) {
+	        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
+	        el.tagName.disabled = wsTagModalMode === "edit";
+	    }
+	    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
     wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
     if (el.tagScan) el.tagScan.value = existing && existing?.scan_ms != null ? String(existing.scan_ms) : "";
     if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
@@ -6771,11 +6795,11 @@ const wsSaveTagFromModal = () => {
 
     const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
 
-    if (wsTagModalMode === "new") {
-        if (tags.some((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name)) {
-            if (el.tagStatus) el.tagStatus.textContent = "Tag name already exists for this device.";
-            return;
-        }
+	    if (wsTagModalMode === "new") {
+	        if (tags.some((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name)) {
+	            if (el.tagStatus) el.tagStatus.textContent = "Tag name already exists for this device.";
+	            return;
+	        }
         const next = { connection_id: cid, name };
         next.plc_tag_name = plc_tag_name;
         next.datatype = datatype;
@@ -6783,18 +6807,25 @@ const wsSaveTagFromModal = () => {
         next.enabled = enabled;
         next.writable = writable;
         tags.push(next);
-    } else {
-        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
-        if (idx < 0) {
-            if (el.tagStatus) el.tagStatus.textContent = "Tag not found.";
-            return;
-        }
-        const next = Object.assign({}, tags[idx]);
-        next.plc_tag_name = plc_tag_name;
-        next.datatype = datatype;
-        if (scanRaw === "") delete next.scan_ms;
-        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
-        next.enabled = enabled;
+	    } else {
+	        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
+	        if (idx < 0) {
+	            if (el.tagStatus) el.tagStatus.textContent = "Tag not found.";
+	            return;
+	        }
+	        if (cid !== wsTagEditingConn) {
+	            if (tags.some((t, i) => i !== idx && String(t?.connection_id || "") === cid && String(t?.name || "") === wsTagEditingName)) {
+	                if (el.tagStatus) el.tagStatus.textContent = "A tag with this name already exists for the selected device.";
+	                return;
+	            }
+	        }
+	        const next = Object.assign({}, tags[idx]);
+	        next.connection_id = cid;
+	        next.plc_tag_name = plc_tag_name;
+	        next.datatype = datatype;
+	        if (scanRaw === "") delete next.scan_ms;
+	        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
+	        next.enabled = enabled;
         next.writable = writable;
         tags[idx] = next;
     }
