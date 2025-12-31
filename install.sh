@@ -501,10 +501,17 @@ install_hmi() {
       exit 1
     fi
     echo "Installing HMI Node dependencies (npm ci)..."
-    (cd "$PREFIX/hmi" && npm ci --omit=dev)
+    # Ensure service user can create node_modules and has a writable HOME for npm cache/logs.
+    chown -R "$SERVICE_USER:$SERVICE_GROUP" "$PREFIX/hmi" || true
+    mkdir -p "$DATA_ROOT/.npm"
+    chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/.npm" || true
+    (cd "$PREFIX/hmi" && runuser -u "$SERVICE_USER" -- env HOME="$DATA_ROOT" NPM_CONFIG_CACHE="$DATA_ROOT/.npm" npm ci --omit=dev)
   else
     echo "Note: HMI requires Node deps. Run: (cd $PREFIX/hmi && npm ci --omit=dev)"
   fi
+
+  # Ensure runtime can write node_modules (if installed later) and any local cache.
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$PREFIX/hmi" || true
 }
 
 install_reporter() {
@@ -592,14 +599,16 @@ WantedBy=multi-user.target
 "
   fi
 
-	if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'hmi'; then
-	    write_unit "opcbridge-hmi.service" "[Unit]
+		if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'hmi'; then
+		    write_unit "opcbridge-hmi.service" "[Unit]
 	Description=opcbridge HMI
 	After=network.target
 
 	[Service]
 	Type=simple
 	EnvironmentFile=${ENV_FILE}
+	Environment=HOME=${DATA_ROOT}
+	Environment=NPM_CONFIG_CACHE=${DATA_ROOT}/.npm
 	WorkingDirectory=${PREFIX}/hmi
 	ExecStart=/bin/sh -c 'PORT=\"\${HMI_PORT:-3000}\" exec /usr/bin/node ${PREFIX}/hmi/server.js'
 	User=${SERVICE_USER}
@@ -607,9 +616,9 @@ WantedBy=multi-user.target
 	Restart=always
 RestartSec=2
 
-[Install]
-WantedBy=multi-user.target
-"
+	[Install]
+	WantedBy=multi-user.target
+	"
   fi
 
   systemctl daemon-reload
