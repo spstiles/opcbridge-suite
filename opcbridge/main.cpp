@@ -32,6 +32,7 @@
 #include <iomanip>
 #include <cstdlib>
 #include <atomic>
+#include <queue>
 
 // Version info (wired in via build.sh)
 #ifndef OPCBRIDGE_VERSION
@@ -11806,33 +11807,61 @@ window.addEventListener("load", startAutoRefresh);
 
 	            const bool doConsolePrint = (!httpMode && !opcuaMode && !mqttMode);
 
-	            for (auto &spec : specs) {
-	                if (spec.tags.empty()) {
-	                    continue;
-	                }
-	                pollThreads.emplace_back([&, spec = std::move(spec), doConsolePrint]() mutable {
-	                    while (g_configGeneration.load(std::memory_order_relaxed) == spec.gen) {
-	                        bool didWork = false;
-	                        auto nowSteady = std::chrono::steady_clock::now();
+		            for (auto &spec : specs) {
+		                if (spec.tags.empty()) {
+		                    continue;
+		                }
+		                pollThreads.emplace_back([&, spec = std::move(spec), doConsolePrint]() mutable {
+							struct HeapItem {
+								std::chrono::steady_clock::time_point next_poll;
+								size_t idx;
+							};
+							struct HeapCmp {
+								bool operator()(const HeapItem &a, const HeapItem &b) const {
+									// min-heap by next_poll
+									return a.next_poll > b.next_poll;
+								}
+							};
 
-	                        for (auto &t : spec.tags) {
-	                            if (g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
-	                                return;
-	                            }
+							std::priority_queue<HeapItem, std::vector<HeapItem>, HeapCmp> heap;
+							for (size_t i = 0; i < spec.tags.size(); ++i) {
+								heap.push(HeapItem{spec.tags[i].next_poll, i});
+							}
 
-	                            if (nowSteady < t.next_poll) continue;
-	                            didWork = true;
+		                    while (g_configGeneration.load(std::memory_order_relaxed) == spec.gen) {
+								if (g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
+									return;
+								}
+								if (heap.empty()) {
+									std::this_thread::sleep_for(std::chrono::milliseconds(25));
+									continue;
+								}
 
-	                            int scan_ms = t.cfg.scan_ms;
-	                            if (scan_ms <= 0) scan_ms = 1000;
-	                            t.next_poll = nowSteady + std::chrono::milliseconds(scan_ms);
+								auto nowSteady = std::chrono::steady_clock::now();
+								const HeapItem top = heap.top();
+								if (nowSteady < top.next_poll) {
+									auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(top.next_poll - nowSteady);
+									if (delta.count() > 5) delta = std::chrono::milliseconds(5);
+									if (delta.count() > 0) {
+										std::this_thread::sleep_for(delta);
+									}
+									continue;
+								}
 
-	                            const std::string key = make_tag_key(spec.conn.id, t.cfg.logical_name);
+								heap.pop();
+								auto &t = spec.tags[top.idx];
 
-	                            int32_t status = PLCTAG_STATUS_OK;
-	                            TagSnapshot snap;
+								int scan_ms = t.cfg.scan_ms;
+								if (scan_ms <= 0) scan_ms = 1000;
+								t.next_poll = nowSteady + std::chrono::milliseconds(scan_ms);
+								heap.push(HeapItem{t.next_poll, top.idx});
 
-	                            {
+								const std::string key = make_tag_key(spec.conn.id, t.cfg.logical_name);
+
+		                            int32_t status = PLCTAG_STATUS_OK;
+		                            TagSnapshot snap;
+
+		                            {
 	                                std::shared_lock<std::shared_mutex> plcLock;
 	                                if (g_plcMutex) {
 	                                    plcLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
@@ -11994,23 +12023,18 @@ window.addEventListener("load", startAutoRefresh);
 	                                uaQueue.push_back(UaUpdate{spec.conn.id, t.cfg.logical_name, snap.value});
 	                            }
 
-	                            if (doMqttPublish) {
-	                                std::lock_guard<std::mutex> ql(mqttQueueMutex);
-	                                MqttPublishJob j;
-	                                j.snap = snap;
-	                                j.hadPrev = hadPrev;
-	                                if (hadPrev) j.prev = prevSnap;
-	                                mqttQueue.push_back(std::move(j));
-	                            }
-	                        }
-
-	                        if (!didWork) {
-	                            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-	                        }
-	                    }
-	                });
-	            }
-	        };
+		                            if (doMqttPublish) {
+		                                std::lock_guard<std::mutex> ql(mqttQueueMutex);
+		                                MqttPublishJob j;
+		                                j.snap = snap;
+		                                j.hadPrev = hadPrev;
+		                                if (hadPrev) j.prev = prevSnap;
+		                                mqttQueue.push_back(std::move(j));
+		                            }
+		                    }
+		                });
+		            }
+		        };
 
 	        auto stopPollers = [&]() {
 	            for (auto &t : pollThreads) {
