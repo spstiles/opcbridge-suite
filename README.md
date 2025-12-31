@@ -31,6 +31,9 @@ Notes:
 - Config root defaults to `/etc/opcbridge`.
 - Shared tokens and ports live in `/etc/opcbridge/opcbridge.env`.
 - Data defaults to `/var/lib/opcbridge` (SQLite/state).
+- Node-based components (`opcbridge-hmi`, `opcbridge-scada`) need `npm` packages:
+  - Automatic (requires network): `sudo ./install.sh --with-node-deps`
+  - Manual: `cd /opt/opcbridge-suite/hmi && sudo -u opcbridge env HOME=/var/lib/opcbridge NPM_CONFIG_CACHE=/var/lib/opcbridge/.npm npm ci --omit=dev`
 
 ## Versioning
 
