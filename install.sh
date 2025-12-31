@@ -334,6 +334,20 @@ ensure_dirs() {
   chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT" "$LOG_ROOT" || true
 }
 
+fix_config_permissions() {
+  # The services run as $SERVICE_USER. They must be able to write config files
+  # (connections, tags, alarms, admin_auth.json, etc). Keep secrets file locked down.
+  chgrp -R "$SERVICE_GROUP" "$CONFIG_ROOT" 2>/dev/null || true
+  find "$CONFIG_ROOT" -type d -exec chmod 770 {} + 2>/dev/null || true
+  find "$CONFIG_ROOT" -type f -exec chmod 660 {} + 2>/dev/null || true
+
+  # Keep the env file root-owned and not group/world readable.
+  if [[ -f "$ENV_FILE" ]]; then
+    chown root:root "$ENV_FILE" 2>/dev/null || true
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
+  fi
+}
+
 write_env_file() {
   if [[ -f "$ENV_FILE" ]]; then
     echo "Keeping existing env file: $ENV_FILE"
@@ -687,6 +701,7 @@ main() {
   ensure_user
   ensure_dirs
   write_env_file
+  fix_config_permissions
   build_if_needed
 
   for c in "${COMPONENTS[@]}"; do
@@ -698,6 +713,7 @@ main() {
       reporter) install_reporter;;
     esac
   done
+  fix_config_permissions
 
   install_systemd_units
 
