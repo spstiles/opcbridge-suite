@@ -512,6 +512,45 @@ install_hmi() {
 
   # Ensure runtime can write node_modules (if installed later) and any local cache.
   chown -R "$SERVICE_USER:$SERVICE_GROUP" "$PREFIX/hmi" || true
+
+  # If config.jsonc is not present (we only commit the example), create a usable default.
+  local hmi_config_path="$PREFIX/hmi/public/js/config.jsonc"
+  if [[ ! -f "$hmi_config_path" ]]; then
+    local write_token=""
+    if [[ -f "$ENV_FILE" ]]; then
+      # shellcheck disable=SC1090
+      set +u
+      source "$ENV_FILE" || true
+      set -u
+      write_token="${OPCBRIDGE_WRITE_TOKEN:-}"
+    fi
+
+    cat >"$hmi_config_path" <<EOF
+{
+  // opcbridge connection settings used by the HMI server (proxy) + client (websocket)
+  "opcbridge": {
+    "host": "127.0.0.1",
+    "httpPort": 8080,
+    "wsPort": 8090,
+    "writeToken": "${write_token}"
+  },
+  // opcbridge-alarms connection settings (optional)
+  "alarms": {
+    "host": "127.0.0.1",
+    "httpPort": 8085,
+    "wsPort": 8086
+  },
+  // HMI runtime settings
+  "hmi": {
+    "defaultScreen": "console_background",
+    "touchscreenMode": false,
+    "viewOnlyMode": false
+  }
+}
+EOF
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$hmi_config_path" 2>/dev/null || true
+    chmod 660 "$hmi_config_path" 2>/dev/null || true
+  fi
 }
 
 install_reporter() {
