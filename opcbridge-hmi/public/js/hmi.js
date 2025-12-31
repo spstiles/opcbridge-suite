@@ -1704,6 +1704,7 @@ let alarmHistoryLoaded = false;
 let alarmHistoryLoading = false;
 let alarmsRenderRaf = null;
 let pendingScaleRaf = null;
+let wsRuntimeRenderRaf = null;
 const tagValueCache = new Map();
 const tagQualityCache = new Map();
 let tagsCache = [];
@@ -2729,7 +2730,7 @@ const resolveBarLimit = (obj, which) => {
   const connectionId = String(binding.connection_id || "");
   const tagName = String(binding.tag || "");
   if (!connectionId || !tagName) return fixed;
-  const raw = tagValueCache.get(`${connectionId}.${tagName}`);
+  const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tagName));
   const numeric = coerceTagNumber(raw);
   return numeric === null ? fixed : numeric;
 };
@@ -2795,8 +2796,8 @@ const shouldRenderObject = (obj) => {
   const connectionId = String(vis.connection_id || "");
   const tag = String(vis.tag || "");
   if (!connectionId || !tag) return true;
-  const key = `${connectionId}.${tag}`;
-  const value = tagValueCache.get(key);
+  const key = normalizeTagCacheKey(connectionId, tag);
+  const value = key ? tagValueCache.get(key) : undefined;
   if (value === undefined || value === null) return true;
   const hasThreshold = vis.threshold !== undefined && vis.threshold !== null && vis.threshold !== "";
   if (hasThreshold) {
@@ -2857,7 +2858,7 @@ const getAutomationColor = (config, baseColor) => {
   const connectionId = String(config.connection_id || "");
   const tag = String(config.tag || "");
   if (!connectionId || !tag) return baseColor;
-  const rawValue = tagValueCache.get(`${connectionId}.${tag}`);
+  const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
   const state = getAutomationState(rawValue, config);
   if (state === null) return config.offColor || baseColor;
   if (state) return config.onColor || baseColor;
@@ -3510,6 +3511,24 @@ const scheduleWsReconnect = () => {
   }, 3000);
 };
 
+const normalizeTagCacheKey = (connectionId, tagName) => {
+  const conn = String(connectionId || "").trim();
+  const tag = String(tagName || "").trim();
+  if (!conn || !tag) return "";
+  return `${conn}.${tag}`;
+};
+
+const scheduleRuntimeRender = () => {
+  if (wsRuntimeRenderRaf != null) return;
+  wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
+    wsRuntimeRenderRaf = null;
+    if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
+      renderScreen();
+      if (currentPopupScreenId) openPopup(currentPopupScreenId);
+    }
+  });
+};
+
 const normalizeWsTagKey = (connectionId, tagName) => {
   const conn = String(connectionId || "").trim();
   const tag = String(tagName || "").trim();
@@ -3652,14 +3671,12 @@ const connectWebSocket = () => {
     try {
       const payload = JSON.parse(event.data);
       if (payload?.type === "tag_update") {
-        const key = `${payload.connection_id || ""}.${payload.name || ""}`;
+        const key = normalizeTagCacheKey(payload.connection_id, payload.name);
         tagValueCache.set(key, payload.value);
         if (Object.prototype.hasOwnProperty.call(payload, "quality")) {
           tagQualityCache.set(key, payload.quality);
         }
-        if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
-          renderScreen();
-        }
+        scheduleRuntimeRender();
       }
     } catch {
       // ignore malformed payloads
@@ -3993,7 +4010,8 @@ const loadTags = async () => {
         const connectionId = String(tag?.connection_id || "");
         const name = String(tag?.name || "");
         if (!connectionId || !name) return;
-        const key = `${connectionId}.${name}`;
+        const key = normalizeTagCacheKey(connectionId, name);
+        if (!key) return;
         if (Object.prototype.hasOwnProperty.call(tag, "value")) {
           tagValueCache.set(key, tag.value);
         }
@@ -4349,7 +4367,7 @@ const resolveIndicatorState = (obj) => {
   const bind = obj?.bindValue || {};
   const connectionId = String(bind.connection_id || "");
   const tagName = String(bind.tag || "");
-  const key = connectionId && tagName ? `${connectionId}.${tagName}` : "";
+  const key = normalizeTagCacheKey(connectionId, tagName);
   if (isEditMode || !key) {
     return states[0] || null;
   }
@@ -4729,7 +4747,7 @@ const renderObjectInto = (parent, obj) => {
     input.placeholder = getBindPlaceholder(bind);
     const connectionId = String(bind.connection_id || "");
     const tagName = String(bind.tag || "");
-    const key = connectionId && tagName ? `${connectionId}.${tagName}` : "";
+    const key = normalizeTagCacheKey(connectionId, tagName);
 	    if (key) {
 	      const raw = tagValueCache.get(key);
 	      const formatted = formatBoundNumber(raw, bind);
@@ -4888,7 +4906,7 @@ const renderObjectInto = (parent, obj) => {
 			        const activeText = activeTs ? formatAlarmTimeMs(activeTs) : "";
 			        const clearedText = clearedTs ? formatAlarmTimeMs(clearedTs) : "";
 		        const statusText = String(alarm?.last_event_type || (alarm?.active ? "active" : "return") || "").toUpperCase();
-		        const rawQuality = tagQualityCache.get(`${connectionId}.${tagName}`);
+		        const rawQuality = tagQualityCache.get(normalizeTagCacheKey(connectionId, tagName));
 		        const qualityText = rawQuality === 1 ? "GOOD" : rawQuality === 0 ? "BAD" : rawQuality == null ? "-" : String(rawQuality);
 
 		        const row = document.createElementNS(xhtml, "div");
@@ -5116,7 +5134,7 @@ const renderObjectInto = (parent, obj) => {
     const connectionId = String(bind.connection_id || "");
     const tagName = String(bind.tag || "");
     if (!isEditMode && connectionId && tagName) {
-      const raw = tagValueCache.get(`${connectionId}.${tagName}`);
+      const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tagName));
       const numeric = coerceTagNumber(raw);
       if (numeric !== null) {
         const multiplier = Number.isFinite(Number(bind.multiplier)) ? Number(bind.multiplier) : 1;
@@ -5183,8 +5201,8 @@ const renderObjectInto = (parent, obj) => {
     if (obj.bindText && rawText.includes("{value}")) {
       const connectionId = String(obj.bindText.connection_id || "");
       const tag = String(obj.bindText.tag || "");
-      const key = `${connectionId}.${tag}`;
-      const boundValue = tagValueCache.get(key);
+      const key = normalizeTagCacheKey(connectionId, tag);
+      const boundValue = key ? tagValueCache.get(key) : undefined;
       const formatted = (!isEditMode) ? formatBoundNumber(boundValue, obj.bindText) : null;
       const replacement = formatted !== null ? formatted : getBindPlaceholder(obj.bindText);
       displayText = rawText.replace(/\{value\}/g, replacement);
@@ -5343,8 +5361,8 @@ const renderObjectInto = (parent, obj) => {
     if (obj.bindLabel && labelText.includes("{value}")) {
       const connectionId = String(obj.bindLabel.connection_id || "");
       const tag = String(obj.bindLabel.tag || "");
-      const key = `${connectionId}.${tag}`;
-      const boundValue = tagValueCache.get(key);
+      const key = normalizeTagCacheKey(connectionId, tag);
+      const boundValue = key ? tagValueCache.get(key) : undefined;
       const formatted = (!isEditMode) ? formatBoundNumber(boundValue, obj.bindLabel) : null;
       const replacement = formatted !== null ? formatted : getBindPlaceholder(obj.bindLabel);
       labelText = labelText.replace(/\{value\}/g, replacement);
@@ -5450,12 +5468,13 @@ const openSetpointPrompt = (action, buttonLabel) => {
   if (stepValue != null) setpointValueInput.step = String(stepValue);
   else setpointValueInput.step = "any";
 
-  let initialValue = null;
-  if (connectionId && tagName) {
-    const raw = tagValueCache.get(`${connectionId}.${tagName}`);
-    const numeric = coerceTagNumber(raw);
-    if (numeric != null) initialValue = numeric;
-  }
+	  let initialValue = null;
+	  if (connectionId && tagName) {
+	    const key = normalizeTagCacheKey(connectionId, tagName);
+	    const raw = key ? tagValueCache.get(key) : undefined;
+	    const numeric = coerceTagNumber(raw);
+	    if (numeric != null) initialValue = numeric;
+	  }
   if (initialValue == null) {
     const fallback = parseOptionalNumber(action?.defaultValue);
     initialValue = fallback != null ? fallback : 0;
@@ -5724,14 +5743,14 @@ const renderScreen = () => {
           input.value = activeNumberInput.value;
           numberInputRestore = { input, selectionStart: activeNumberInput.selectionStart, selectionEnd: activeNumberInput.selectionEnd };
         }
-        const connectionId = String(bind.connection_id || "");
-        const tagName = String(bind.tag || "");
-        const key = connectionId && tagName ? `${connectionId}.${tagName}` : "";
-        if (key && !shouldRestore) {
-          const raw = tagValueCache.get(key);
-          const formatted = formatBoundNumber(raw, bind);
-          if (formatted !== null) input.value = formatted.trimEnd();
-        }
+	        const connectionId = String(bind.connection_id || "");
+	        const tagName = String(bind.tag || "");
+	        const key = normalizeTagCacheKey(connectionId, tagName);
+	        if (key && !shouldRestore) {
+	          const raw = tagValueCache.get(key);
+	          const formatted = formatBoundNumber(raw, bind);
+	          if (formatted !== null) input.value = formatted.trimEnd();
+	        }
 	        container.appendChild(input);
 	        fo.appendChild(container);
 	        group.appendChild(fo);
@@ -5887,7 +5906,7 @@ const renderScreen = () => {
             const activeText = activeTs ? formatAlarmTimeMs(activeTs) : "";
             const clearedText = clearedTs ? formatAlarmTimeMs(clearedTs) : "";
             const statusText = String(alarm?.last_event_type || (alarm?.active ? "active" : "return") || "").toUpperCase();
-            const rawQuality = tagQualityCache.get(`${connectionId}.${tagName}`);
+            const rawQuality = tagQualityCache.get(normalizeTagCacheKey(connectionId, tagName));
             const qualityText = rawQuality === 1 ? "GOOD" : rawQuality === 0 ? "BAD" : rawQuality == null ? "-" : String(rawQuality);
 
             const row = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
@@ -5983,17 +6002,18 @@ const renderScreen = () => {
 	    const max = resolveBarLimit(obj, "max");
 	    const range = max - min;
 	    let value = min;
-	    const bind = obj.bindValue || {};
-	    const connectionId = String(bind.connection_id || "");
-	    const tagName = String(bind.tag || "");
-	    if (!isEditMode && connectionId && tagName) {
-	      const raw = tagValueCache.get(`${connectionId}.${tagName}`);
-	      const numeric = coerceTagNumber(raw);
-	      if (numeric !== null) {
-	        const multiplier = Number.isFinite(Number(bind.multiplier)) ? Number(bind.multiplier) : 1;
-	        value = numeric * multiplier;
-	      }
-	    }
+		    const bind = obj.bindValue || {};
+		    const connectionId = String(bind.connection_id || "");
+		    const tagName = String(bind.tag || "");
+		    if (!isEditMode && connectionId && tagName) {
+		      const key = normalizeTagCacheKey(connectionId, tagName);
+		      const raw = key ? tagValueCache.get(key) : undefined;
+		      const numeric = coerceTagNumber(raw);
+		      if (numeric !== null) {
+		        const multiplier = Number.isFinite(Number(bind.multiplier)) ? Number(bind.multiplier) : 1;
+		        value = numeric * multiplier;
+		      }
+		    }
 	    if (Number.isFinite(range) && range !== 0) {
 	      value = Math.min(max, Math.max(min, value));
 	    }
@@ -6207,15 +6227,15 @@ const renderScreen = () => {
       if (align === "center") label.setAttribute("text-anchor", "middle");
       if (align === "right") label.setAttribute("text-anchor", "end");
 	      let labelText = decodeNbspEntities(obj.label || "Button");
-	      if (obj.bindLabel && labelText.includes("{value}")) {
-	        const connectionId = String(obj.bindLabel.connection_id || "");
-	        const tag = String(obj.bindLabel.tag || "");
-	        const key = `${connectionId}.${tag}`;
-	        const boundValue = tagValueCache.get(key);
-	        const formatted = (!isEditMode) ? formatBoundNumber(boundValue, obj.bindLabel) : null;
-	        const replacement = formatted !== null ? formatted : getBindPlaceholder(obj.bindLabel);
-	        labelText = labelText.replace(/\{value\}/g, replacement);
-	      }
+		      if (obj.bindLabel && labelText.includes("{value}")) {
+		        const connectionId = String(obj.bindLabel.connection_id || "");
+		        const tag = String(obj.bindLabel.tag || "");
+		        const key = normalizeTagCacheKey(connectionId, tag);
+		        const boundValue = key ? tagValueCache.get(key) : undefined;
+		        const formatted = (!isEditMode) ? formatBoundNumber(boundValue, obj.bindLabel) : null;
+		        const replacement = formatted !== null ? formatted : getBindPlaceholder(obj.bindLabel);
+		        labelText = labelText.replace(/\{value\}/g, replacement);
+		      }
 	      labelText = decodeNbspEntities(labelText);
 	      const labelLines = splitMultiline(labelText);
 	      if (labelLines.length > 1) {
@@ -6383,15 +6403,15 @@ const renderScreen = () => {
     const valign = obj.valign || "top";
     const rawText = obj.text || "";
     let displayText = rawText;
-    if (obj.bindText && rawText.includes("{value}")) {
-      const connectionId = String(obj.bindText.connection_id || "");
-      const tag = String(obj.bindText.tag || "");
-      const key = `${connectionId}.${tag}`;
-      const boundValue = tagValueCache.get(key);
-      const formatted = (!isEditMode) ? formatBoundNumber(boundValue, obj.bindText) : null;
-      const replacement = formatted !== null ? formatted : getBindPlaceholder(obj.bindText);
-      displayText = rawText.replace(/\{value\}/g, replacement);
-    }
+	    if (obj.bindText && rawText.includes("{value}")) {
+	      const connectionId = String(obj.bindText.connection_id || "");
+	      const tag = String(obj.bindText.tag || "");
+	      const key = normalizeTagCacheKey(connectionId, tag);
+	      const boundValue = key ? tagValueCache.get(key) : undefined;
+	      const formatted = (!isEditMode) ? formatBoundNumber(boundValue, obj.bindText) : null;
+	      const replacement = formatted !== null ? formatted : getBindPlaceholder(obj.bindText);
+	      displayText = rawText.replace(/\{value\}/g, replacement);
+	    }
 	    const decodedText = decodeNbspEntities(displayText);
 	    const lines = splitMultiline(decodedText);
 	    if (lines.length > 1) {
@@ -9318,14 +9338,15 @@ const apiWriteTag = async ({ connection_id, tag, value }) => {
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`HTTP ${response.status} ${text}`.trim());
-  }
-  const payload = await response.json().catch(() => ({}));
-  const cacheKey = `${connectionId}.${tagName}`;
-  if (payload && Object.prototype.hasOwnProperty.call(payload, "value")) {
-    tagValueCache.set(cacheKey, payload.value);
-  } else {
-    tagValueCache.set(cacheKey, value);
-  }
+	  }
+	  const payload = await response.json().catch(() => ({}));
+	  const cacheKey = normalizeTagCacheKey(connectionId, tagName);
+	  if (!cacheKey) return payload;
+	  if (payload && Object.prototype.hasOwnProperty.call(payload, "value")) {
+	    tagValueCache.set(cacheKey, payload.value);
+	  } else {
+	    tagValueCache.set(cacheKey, value);
+	  }
   if (!isEditMode) {
     renderScreen();
     if (currentPopupScreenId) openPopup(currentPopupScreenId);
@@ -9472,8 +9493,8 @@ const runToggleWriteAction = async (action) => {
   const connectionId = String(action.connection_id || "").trim();
   const tagName = String(action.tag || "").trim();
   if (!connectionId || !tagName) return;
-  const key = `${connectionId}.${tagName}`;
-  const rawValue = tagValueCache.get(key);
+  const key = normalizeTagCacheKey(connectionId, tagName);
+  const rawValue = key ? tagValueCache.get(key) : undefined;
   const isOn = matchesToggleOnValue(rawValue, action.onValue);
   const valueToWrite = isOn ? action.offValue : action.onValue;
   await apiWriteTag({ connection_id: connectionId, tag: tagName, value: valueToWrite });
@@ -9485,8 +9506,8 @@ const runSetWriteAction = async (action) => {
   const connectionId = String(action.connection_id || "").trim();
   const tagName = String(action.tag || "").trim();
   if (!connectionId || !tagName) return;
-  const key = `${connectionId}.${tagName}`;
-  const rawValue = tagValueCache.get(key);
+  const key = normalizeTagCacheKey(connectionId, tagName);
+  const rawValue = key ? tagValueCache.get(key) : undefined;
   const isOn = matchesToggleOnValue(rawValue, action.onValue);
   if (isOn) return;
   await apiWriteTag({ connection_id: connectionId, tag: tagName, value: action.onValue });
@@ -9497,7 +9518,8 @@ const getWriteActionActiveState = (action) => {
   const connectionId = String(action.connection_id || "").trim();
   const tagName = String(action.tag || "").trim();
   if (!connectionId || !tagName) return false;
-  const rawValue = tagValueCache.get(`${connectionId}.${tagName}`);
+  const key = normalizeTagCacheKey(connectionId, tagName);
+  const rawValue = key ? tagValueCache.get(key) : undefined;
   return matchesToggleOnValue(rawValue, action.onValue);
 };
 

@@ -52,6 +52,7 @@
 #include <nlohmann/json.hpp>
 #include "httplib.h"
 #include <unordered_map>
+#include <unordered_set>
 #include <sqlite3.h>
 #include "ws.h"
 #include <openssl/evp.h>
@@ -10407,14 +10408,15 @@ window.addEventListener("load", startAutoRefresh);
 								}
 							}
 
-						// tags/*.json (flattened view, same shape as /config/tags)
-							const std::string tagDir = joinPath(configDir, "tags");
-							if (fs::exists(tagDir) && fs::is_directory(tagDir)) {
-								std::vector<std::string> paths;
-								for (const auto &entry : fs::directory_iterator(tagDir)) {
-									if (!entry.is_regular_file()) continue;
-									if (entry.path().extension() != ".json" && entry.path().extension() != ".jsonc") continue;
-									paths.push_back(entry.path().string());
+							// tags/*.json (flattened view, same shape as /config/tags)
+								const std::string tagDir = joinPath(configDir, "tags");
+								if (fs::exists(tagDir) && fs::is_directory(tagDir)) {
+									std::unordered_set<std::string> seenTags;
+									std::vector<std::string> paths;
+									for (const auto &entry : fs::directory_iterator(tagDir)) {
+										if (!entry.is_regular_file()) continue;
+										if (entry.path().extension() != ".json" && entry.path().extension() != ".jsonc") continue;
+										paths.push_back(entry.path().string());
 								}
 								std::sort(paths.begin(), paths.end());
 								for (const auto &path : paths) {
@@ -10425,15 +10427,20 @@ window.addEventListener("load", startAutoRefresh);
 									if (connId.empty()) continue;
 									if (!jf.contains("tags") || !jf["tags"].is_array()) continue;
 
-										fs::path p(path);
-										const std::string filename = p.filename().string();
-										for (const auto &t : jf["tags"]) {
-											if (!t.is_object()) continue;
-											json flat = t;
-											flat["connection_id"] = connId;
-											flat["source_file"] = filename;
-											root["tags"].push_back(pick(flat, tagKeys));
-										}
+											fs::path p(path);
+											const std::string filename = p.filename().string();
+											for (const auto &t : jf["tags"]) {
+												if (!t.is_object()) continue;
+												const std::string name = t.value("name", std::string{});
+												if (!name.empty()) {
+													const std::string key = connId + ":" + name;
+													if (!seenTags.insert(key).second) continue;
+												}
+												json flat = t;
+												flat["connection_id"] = connId;
+												flat["source_file"] = filename;
+												root["tags"].push_back(pick(flat, tagKeys));
+											}
 									} catch (const std::exception &ex) {
 										std::cerr << "[workspace] Error reading tag file " << path
 												  << ": " << ex.what() << "\n";
@@ -10466,21 +10473,22 @@ window.addEventListener("load", startAutoRefresh);
 					root["ok"]   = false;
 					root["tags"] = json::array();
 
-				try {
-					std::string tagDir = joinPath(configDir, "tags");
-					root["source_dir"] = tagDir;
+					try {
+						std::string tagDir = joinPath(configDir, "tags");
+						root["source_dir"] = tagDir;
 
-					if (!fs::exists(tagDir)) {
+						if (!fs::exists(tagDir)) {
 						root["ok"]      = true;
 						root["message"] = "Tags directory does not exist.";
 						res.status      = 200;
-						res.set_content(root.dump(2), "application/json");
-						return;
-					}
+							res.set_content(root.dump(2), "application/json");
+							return;
+						}
 
-					for (const auto &entry : fs::directory_iterator(tagDir)) {
-						if (!entry.is_regular_file()) continue;
-						if (entry.path().extension() != ".json") continue;
+						std::unordered_set<std::string> seenTags;
+						for (const auto &entry : fs::directory_iterator(tagDir)) {
+							if (!entry.is_regular_file()) continue;
+							if (entry.path().extension() != ".json" && entry.path().extension() != ".jsonc") continue;
 
 						std::string path     = entry.path().string();
 						std::string filename = entry.path().filename().string();
@@ -10503,13 +10511,18 @@ window.addEventListener("load", startAutoRefresh);
 								continue;
 							}
 
-							for (const auto &t : jf["tags"]) {
-								if (!t.is_object()) continue;
-								json flat = t;
-								flat["connection_id"] = connId;
-								flat["source_file"]   = filename; // <- NEW
-								root["tags"].push_back(flat);
-							}
+								for (const auto &t : jf["tags"]) {
+									if (!t.is_object()) continue;
+									const std::string name = t.value("name", std::string{});
+									if (!name.empty()) {
+										const std::string key = connId + ":" + name;
+										if (!seenTags.insert(key).second) continue;
+									}
+									json flat = t;
+									flat["connection_id"] = connId;
+									flat["source_file"]   = filename; // <- NEW
+									root["tags"].push_back(flat);
+								}
 						} catch (const std::exception &ex) {
 							std::cerr << "[config] Error reading tag file " << path
 									  << ": " << ex.what() << "\n";
