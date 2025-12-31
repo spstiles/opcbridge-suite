@@ -513,16 +513,16 @@ install_systemd_units() {
 	Type=simple
 	EnvironmentFile=${ENV_FILE}
 	WorkingDirectory=${PREFIX}
-	ExecStart=${PREFIX}/bin/opcbridge --config ${CONFIG_ROOT} --http --ws --ws-port \$OPCBRIDGE_WS_PORT --opcua --opcua-port \$OPCBRIDGE_OPCUA_PORT
+	ExecStart=/bin/sh -c 'exec ${PREFIX}/bin/opcbridge --config ${CONFIG_ROOT} --http --ws --ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --opcua --opcua-port \"\${OPCBRIDGE_OPCUA_PORT:-4840}\"'
 	User=${SERVICE_USER}
 	Group=${SERVICE_GROUP}
 	Restart=always
 	RestartSec=2
 
-[Install]
-WantedBy=multi-user.target
-"
-  fi
+	[Install]
+	WantedBy=multi-user.target
+	"
+	  fi
 
 	if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
 	    write_unit "opcbridge-alarms.service" "[Unit]
@@ -533,16 +533,16 @@ WantedBy=multi-user.target
 	Type=simple
 	EnvironmentFile=${ENV_FILE}
 	WorkingDirectory=${PREFIX}
-	ExecStart=${PREFIX}/bin/opcbridge-alarms --config ${CONFIG_ROOT}/alarms --opcbridge-host 127.0.0.1 --opcbridge-http-port \$OPCBRIDGE_HTTP_PORT --opcbridge-ws-port \$OPCBRIDGE_WS_PORT --http-port \$ALARMS_HTTP_PORT --ws-port \$ALARMS_WS_PORT --opcua --admin-token \$OPCBRIDGE_ADMIN_SERVICE_TOKEN
+	ExecStart=/bin/sh -c 'exec ${PREFIX}/bin/opcbridge-alarms --config ${CONFIG_ROOT}/alarms --opcbridge-host 127.0.0.1 --opcbridge-http-port \"\${OPCBRIDGE_HTTP_PORT:-8080}\" --opcbridge-ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --http-port \"\${ALARMS_HTTP_PORT:-8085}\" --ws-port \"\${ALARMS_WS_PORT:-8086}\" --opcua --admin-token \"\${OPCBRIDGE_ADMIN_SERVICE_TOKEN}\"'
 	User=${SERVICE_USER}
 	Group=${SERVICE_GROUP}
 	Restart=always
 	RestartSec=2
 
-[Install]
-WantedBy=multi-user.target
-"
-  fi
+	[Install]
+	WantedBy=multi-user.target
+	"
+	  fi
 
 	if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
 	    write_unit "opcbridge-scada.service" "[Unit]
@@ -554,9 +554,8 @@ WantedBy=multi-user.target
 	EnvironmentFile=${ENV_FILE}
 	Environment=OPCBRIDGE_SCADA_CONFIG=${CONFIG_ROOT}/scada/config.json
 	Environment=OPCBRIDGE_SCADA_SECRETS=${CONFIG_ROOT}/scada/config.secrets.json
-	Environment=PORT=\$SCADA_PORT
 	WorkingDirectory=${PREFIX}/scada
-	ExecStart=/usr/bin/node ${PREFIX}/scada/server.js
+	ExecStart=/bin/sh -c 'PORT=\"\${SCADA_PORT:-3010}\" exec /usr/bin/node ${PREFIX}/scada/server.js'
 	User=${SERVICE_USER}
 	Group=${SERVICE_GROUP}
 	Restart=always
@@ -575,9 +574,8 @@ WantedBy=multi-user.target
 	[Service]
 	Type=simple
 	EnvironmentFile=${ENV_FILE}
-	Environment=PORT=\$HMI_PORT
 	WorkingDirectory=${PREFIX}/hmi
-	ExecStart=/usr/bin/node ${PREFIX}/hmi/server.js
+	ExecStart=/bin/sh -c 'PORT=\"\${HMI_PORT:-3000}\" exec /usr/bin/node ${PREFIX}/hmi/server.js'
 	User=${SERVICE_USER}
 	Group=${SERVICE_GROUP}
 	Restart=always
