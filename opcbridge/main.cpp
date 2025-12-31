@@ -6793,7 +6793,7 @@ const wsSaveTagFromModal = () => {
         return;
     }
 
-    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
+	    let tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
 
 	    if (wsTagModalMode === "new") {
 	        if (tags.some((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name)) {
@@ -6826,9 +6826,17 @@ const wsSaveTagFromModal = () => {
 	        if (scanRaw === "") delete next.scan_ms;
 	        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 	        next.enabled = enabled;
-        next.writable = writable;
-        tags[idx] = next;
-    }
+	        next.writable = writable;
+	        tags[idx] = next;
+
+	        // If the user changed the Device, fully move the tag: remove any remaining copies
+	        // of the old (connection_id,name) from the draft list (helps with legacy duplicates).
+	        if (cid !== wsTagEditingConn) {
+	            const oldConn = wsTagEditingConn;
+	            const oldName = wsTagEditingName;
+	            tags = tags.filter((t) => !(String(t?.connection_id || "") === oldConn && String(t?.name || "") === oldName));
+	        }
+	    }
 
     wsDraft.tags = tags;
     wsSetDirty(true);
