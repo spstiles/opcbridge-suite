@@ -2512,26 +2512,79 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
     }
 
     // Load tag files
+    // Prefer one canonical tag file per connection_id (tags/<id>.json). If present, ignore other files
+    // that claim the same connection_id (e.g. legacy .jsonc or alternate filenames).
     std::map<std::string, std::vector<TagConfig>> tags_by_conn;
 
     if (!fs::exists(tagDir)) {
         std::cerr << "[load] Warning: tags directory does not exist: "
                   << tagDir << "\n";
     } else {
+        struct TagFileChoice {
+            std::string cid;
+            std::string path;
+            std::string filename;
+        };
+
+        std::vector<TagFileChoice> candidates;
         for (const auto &entry : fs::directory_iterator(tagDir)) {
             if (!entry.is_regular_file()) continue;
-            if (entry.path().extension() != ".json") continue;
+            const std::string ext = entry.path().extension().string();
+            if (ext != ".json" && ext != ".jsonc") continue;
 
-            std::string path = entry.path().string();
+            const std::string path = entry.path().string();
             try {
                 TagFile tf = load_tag_file(path);
-                std::cout << "[load] Loaded tag file for connection_id '"
-                          << tf.connection_id << "' from " << path << "\n";
+                if (tf.connection_id.empty()) continue;
+                candidates.push_back({tf.connection_id, path, entry.path().filename().string()});
+            } catch (const std::exception &ex) {
+                std::cerr << "[load] Error in tag file " << path
+                          << ": " << ex.what() << "\n";
+            }
+        }
 
+        std::map<std::string, TagFileChoice> chosen;
+        std::unordered_map<std::string, std::vector<TagFileChoice>> byCid;
+        for (const auto &c : candidates) byCid[c.cid].push_back(c);
+
+        for (auto &kv : byCid) {
+            const std::string &cid = kv.first;
+            auto &arr = kv.second;
+
+            auto is_canonical_json = [&](const TagFileChoice &x) {
+                return x.filename == (cid + ".json");
+            };
+            auto is_canonical_jsonc = [&](const TagFileChoice &x) {
+                return x.filename == (cid + ".jsonc");
+            };
+
+            auto it = std::find_if(arr.begin(), arr.end(), is_canonical_json);
+            if (it == arr.end()) it = std::find_if(arr.begin(), arr.end(), is_canonical_jsonc);
+            if (it == arr.end()) {
+                std::sort(arr.begin(), arr.end(), [](const TagFileChoice &a, const TagFileChoice &b) {
+                    return a.filename < b.filename;
+                });
+                it = arr.begin();
+            }
+
+            chosen[cid] = *it;
+
+            if (arr.size() > 1) {
+                std::cerr << "[load] Info: multiple tag files for connection_id '" << cid
+                          << "'. Using " << it->filename << " and ignoring others.\n";
+            }
+        }
+
+        for (const auto &kv : chosen) {
+            const auto &pick = kv.second;
+            try {
+                TagFile tf = load_tag_file(pick.path);
+                std::cout << "[load] Loaded tag file for connection_id '"
+                          << tf.connection_id << "' from " << pick.path << "\n";
                 auto &vec = tags_by_conn[tf.connection_id];
                 vec.insert(vec.end(), tf.tags.begin(), tf.tags.end());
             } catch (const std::exception &ex) {
-                std::cerr << "[load] Error in tag file " << path
+                std::cerr << "[load] Error in tag file " << pick.path
                           << ": " << ex.what() << "\n";
             }
         }
@@ -6855,11 +6908,11 @@ const wsSaveTagFromModal = () => {
 	        }
 	    }
 
-    wsDraft.tags = tags;
-    wsSetDirty(true);
-    wsCloseModal(el.tagModal);
-    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
-};
+	    wsDraft.tags = tags;
+	    wsSetDirty(true);
+	    wsCloseModal(el.tagModal);
+	    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
+	};
 
 const wsDeleteDevice = (connection_id) => {
     const cid = String(connection_id || "").trim();
@@ -6875,15 +6928,15 @@ const wsDeleteDevice = (connection_id) => {
     wsSelectNode("ws:connectivity");
 };
 
-	const wsDeleteTag = (connection_id, name) => {
-	    const cid = String(connection_id || "").trim();
-	    const tn = String(name || "").trim();
-	    if (!cid || !tn) return;
-	    if (!confirm(`Delete tag '${cid}:${tn}'? (Applied on Save.)`)) return;
-	    wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => !(String(t?.connection_id || "") === cid && String(t?.name || "") === tn));
-	    wsSetDirty(true);
-	    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
-	};
+		const wsDeleteTag = (connection_id, name) => {
+		    const cid = String(connection_id || "").trim();
+		    const tn = String(name || "").trim();
+		    if (!cid || !tn) return;
+		    if (!confirm(`Delete tag '${cid}:${tn}'? (Applied on Save.)`)) return;
+		    wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => !(String(t?.connection_id || "") === cid && String(t?.name || "") === tn));
+		    wsSetDirty(true);
+		    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
+		};
 
 	const wsSaveAlarmFromModal = () => {
 	    const el = wsEls();
@@ -6986,68 +7039,43 @@ const wsDeleteDevice = (connection_id) => {
             });
         }
 
-        // 2) Tags: send flat list (strip source_file so it doesn't get written back into config).
-        // Also delete any tags/<connection_id>.json files that no longer have tags.
+	        // 2) Tags: send flat list (strip source_file so it doesn't get written back into config).
+	        // If a connection ends up with zero tags, write an empty canonical tags/<connection_id>.json
+	        // so legacy/non-canonical tag files won't reintroduce old tags after reload.
 	        const rawDraftTags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
 	        const draftTagConns = new Set(
 	            rawDraftTags
 	                .map((t) => String(t?.connection_id || "").trim())
 	                .filter(Boolean)
 	        );
-	        const baseTagFilesByConn = new Map(); // cid -> Set(source_file)
 	        const baseTagConns = new Set(
 	            (Array.isArray(wsBase.tags) ? wsBase.tags : [])
 	                .map((t) => String(t?.connection_id || "").trim())
 	                .filter(Boolean)
 	        );
-	        (Array.isArray(wsBase.tags) ? wsBase.tags : []).forEach((t) => {
-	            const cid = String(t?.connection_id || "").trim();
-	            if (!cid) return;
-	            const sf = String(t?.source_file || "").trim();
-	            if (!sf) return;
-	            if (!baseTagFilesByConn.has(cid)) baseTagFilesByConn.set(cid, new Set());
-	            baseTagFilesByConn.get(cid).add(sf);
+	        const emptied = [];
+	        baseTagConns.forEach((cid) => {
+	            if (cid && !draftTagConns.has(cid)) emptied.push(cid);
 	        });
-		        baseTagConns.forEach((cid) => {
-		            if (!draftTagConns.has(cid)) {
-		                // If tags for this connection are now empty, delete the per-connection tag file(s).
-		                // This also migrates legacy setups where tags were stored in non-canonical files
-		                // (e.g. tags/<cid>.jsonc or tags/<something-else>.json for the same connection_id).
-		                wsPendingDeletes.push({ path: `tags/${cid}.json` });
-		                const files = baseTagFilesByConn.get(cid);
-		                if (files) {
-		                    files.forEach((fname) => {
-		                        // Keep only the canonical file name convention (tags/<cid>.json).
-		                        if (fname && fname !== `${cid}.json`) {
-		                            wsPendingDeletes.push({ path: `tags/${fname}` });
-		                        }
-		                    });
-		                }
-		            }
-		        });
-		
-		        // If we're writing tags for a connection that previously used a non-canonical tag file name,
-		        // delete those old files so /config/tags doesn't re-import entries after reload.
-		        draftTagConns.forEach((cid) => {
-		            const files = baseTagFilesByConn.get(cid);
-		            if (!files) return;
-		            files.forEach((fname) => {
-		                if (fname && fname !== `${cid}.json`) {
-		                    wsPendingDeletes.push({ path: `tags/${fname}` });
-		                }
-		            });
-		        });
 
 	        const tags = rawDraftTags.map((t) => {
 	            const next = Object.assign({}, t);
 	            delete next.source_file;
-            return next;
-        });
+	            return next;
+	        });
 	        if (tags.length > 0) {
 	            await wsApiJson("/config/tags", {
 	                method: "POST",
 	                headers: { "Content-Type": "application/json" },
 	                body: JSON.stringify({ token: WRITE_TOKEN, tags })
+	            });
+	        }
+	        for (const cid of emptied) {
+	            const content = JSON.stringify({ connection_id: cid, tags: [] }, null, 2) + "\n";
+	            await wsApiJson("/config/file", {
+	                method: "POST",
+	                headers: { "Content-Type": "application/json" },
+	                body: JSON.stringify({ token: WRITE_TOKEN, path: `tags/${cid}.json`, content })
 	            });
 	        }
 
@@ -10534,27 +10562,69 @@ window.addEventListener("load", startAutoRefresh);
 								}
 							}
 
-							// tags/*.json (flattened view, same shape as /config/tags)
+								// tags/*.json (flattened view, same shape as /config/tags)
+								// Prefer one canonical tag file per connection_id (tags/<id>.json). If present, ignore other files
+								// that claim the same connection_id (e.g. legacy .jsonc or alternate filenames).
 								const std::string tagDir = joinPath(configDir, "tags");
 								if (fs::exists(tagDir) && fs::is_directory(tagDir)) {
 									std::unordered_set<std::string> seenTags;
-									std::vector<std::string> paths;
+
+									struct Choice {
+										std::string cid;
+										std::string path;
+										std::string filename;
+									};
+
+									std::vector<Choice> candidates;
 									for (const auto &entry : fs::directory_iterator(tagDir)) {
 										if (!entry.is_regular_file()) continue;
-										if (entry.path().extension() != ".json" && entry.path().extension() != ".jsonc") continue;
-										paths.push_back(entry.path().string());
-								}
-								std::sort(paths.begin(), paths.end());
-								for (const auto &path : paths) {
-									try {
-										json jf = load_json_with_comments(path);
-									if (!jf.is_object()) continue;
-									std::string connId = jf.value("connection_id", std::string{});
-									if (connId.empty()) continue;
-									if (!jf.contains("tags") || !jf["tags"].is_array()) continue;
+										const std::string ext = entry.path().extension().string();
+										if (ext != ".json" && ext != ".jsonc") continue;
 
-											fs::path p(path);
-											const std::string filename = p.filename().string();
+										const std::string path = entry.path().string();
+										try {
+											json jf = load_json_with_comments(path);
+											if (!jf.is_object()) continue;
+											const std::string cid = jf.value("connection_id", std::string{});
+											if (cid.empty()) continue;
+											if (!jf.contains("tags") || !jf["tags"].is_array()) continue;
+											candidates.push_back({cid, path, entry.path().filename().string()});
+										} catch (const std::exception &ex) {
+											std::cerr << "[workspace] Error reading tag file " << path
+													  << ": " << ex.what() << "\n";
+										}
+									}
+
+									std::unordered_map<std::string, std::vector<Choice>> byCid;
+									for (const auto &c : candidates) byCid[c.cid].push_back(c);
+
+									std::map<std::string, Choice> chosen;
+									for (auto &kv : byCid) {
+										const std::string &cid = kv.first;
+										auto &arr              = kv.second;
+										auto isCanonicalJson   = [&](const Choice &x) { return x.filename == (cid + ".json"); };
+										auto isCanonicalJsonc  = [&](const Choice &x) { return x.filename == (cid + ".jsonc"); };
+
+										auto it = std::find_if(arr.begin(), arr.end(), isCanonicalJson);
+										if (it == arr.end()) it = std::find_if(arr.begin(), arr.end(), isCanonicalJsonc);
+										if (it == arr.end()) {
+											std::sort(arr.begin(), arr.end(), [](const Choice &a, const Choice &b) {
+												return a.filename < b.filename;
+											});
+											it = arr.begin();
+										}
+										chosen[cid] = *it;
+									}
+
+									for (const auto &kv : chosen) {
+										const auto &pickFile = kv.second;
+										try {
+											json jf = load_json_with_comments(pickFile.path);
+											if (!jf.is_object()) continue;
+											std::string connId = jf.value("connection_id", std::string{});
+											if (connId.empty()) continue;
+											if (!jf.contains("tags") || !jf["tags"].is_array()) continue;
+
 											for (const auto &t : jf["tags"]) {
 												if (!t.is_object()) continue;
 												const std::string name = t.value("name", std::string{});
@@ -10564,15 +10634,15 @@ window.addEventListener("load", startAutoRefresh);
 												}
 												json flat = t;
 												flat["connection_id"] = connId;
-												flat["source_file"] = filename;
+												flat["source_file"]   = pickFile.filename;
 												root["tags"].push_back(pick(flat, tagKeys));
 											}
-									} catch (const std::exception &ex) {
-										std::cerr << "[workspace] Error reading tag file " << path
-												  << ": " << ex.what() << "\n";
+										} catch (const std::exception &ex) {
+											std::cerr << "[workspace] Error reading tag file " << pickFile.path
+													  << ": " << ex.what() << "\n";
+										}
 									}
-							}
-						}
+								}
 
 						root["ok"] = true;
 						res.status = 200;
@@ -10612,30 +10682,67 @@ window.addEventListener("load", startAutoRefresh);
 						}
 
 						std::unordered_set<std::string> seenTags;
+
+						struct Choice {
+							std::string cid;
+							std::string path;
+							std::string filename;
+						};
+						std::vector<Choice> candidates;
+
 						for (const auto &entry : fs::directory_iterator(tagDir)) {
 							if (!entry.is_regular_file()) continue;
-							if (entry.path().extension() != ".json" && entry.path().extension() != ".jsonc") continue;
+							const std::string ext = entry.path().extension().string();
+							if (ext != ".json" && ext != ".jsonc") continue;
 
-						std::string path     = entry.path().string();
-						std::string filename = entry.path().filename().string();
+							const std::string path     = entry.path().string();
+							const std::string filename = entry.path().filename().string();
 
-						try {
-							json jf = load_json_with_comments(path);
+							try {
+								json jf = load_json_with_comments(path);
+								if (!jf.is_object()) continue;
 
-							// Expect each file to look like:
-							// { "connection_id": "test01", "tags": [ ... ] }
-							std::string connId = jf.value("connection_id", std::string{});
-							if (connId.empty()) {
-								std::cerr << "[config] Skipping tag file (no connection_id): "
-										  << path << "\n";
-								continue;
+								// Expect each file to look like:
+								// { "connection_id": "test01", "tags": [ ... ] }
+								const std::string connId = jf.value("connection_id", std::string{});
+								if (connId.empty()) continue;
+								if (!jf.contains("tags") || !jf["tags"].is_array()) continue;
+
+								candidates.push_back({connId, path, filename});
+							} catch (const std::exception &ex) {
+								std::cerr << "[config] Error reading tag file " << path
+										  << ": " << ex.what() << "\n";
 							}
+						}
 
-							if (!jf.contains("tags") || !jf["tags"].is_array()) {
-								std::cerr << "[config] Skipping tag file (no 'tags' array): "
-										  << path << "\n";
-								continue;
+						std::unordered_map<std::string, std::vector<Choice>> byCid;
+						for (const auto &c : candidates) byCid[c.cid].push_back(c);
+
+						std::map<std::string, Choice> chosen;
+						for (auto &kv : byCid) {
+							const std::string &cid = kv.first;
+							auto &arr              = kv.second;
+							auto isCanonicalJson   = [&](const Choice &x) { return x.filename == (cid + ".json"); };
+							auto isCanonicalJsonc  = [&](const Choice &x) { return x.filename == (cid + ".jsonc"); };
+
+							auto it = std::find_if(arr.begin(), arr.end(), isCanonicalJson);
+							if (it == arr.end()) it = std::find_if(arr.begin(), arr.end(), isCanonicalJsonc);
+							if (it == arr.end()) {
+								std::sort(arr.begin(), arr.end(), [](const Choice &a, const Choice &b) {
+									return a.filename < b.filename;
+								});
+								it = arr.begin();
 							}
+							chosen[cid] = *it;
+						}
+
+						for (const auto &kv : chosen) {
+							const auto &pickFile = kv.second;
+							try {
+								json jf = load_json_with_comments(pickFile.path);
+								const std::string connId = jf.value("connection_id", std::string{});
+								if (connId.empty()) continue;
+								if (!jf.contains("tags") || !jf["tags"].is_array()) continue;
 
 								for (const auto &t : jf["tags"]) {
 									if (!t.is_object()) continue;
@@ -10646,15 +10753,14 @@ window.addEventListener("load", startAutoRefresh);
 									}
 									json flat = t;
 									flat["connection_id"] = connId;
-									flat["source_file"]   = filename; // <- NEW
+									flat["source_file"]   = pickFile.filename;
 									root["tags"].push_back(flat);
 								}
-						} catch (const std::exception &ex) {
-							std::cerr << "[config] Error reading tag file " << path
-									  << ": " << ex.what() << "\n";
-							// Skip this file but keep going
+							} catch (const std::exception &ex) {
+								std::cerr << "[config] Error reading tag file " << pickFile.path
+										  << ": " << ex.what() << "\n";
+							}
 						}
-					}
 
 					root["ok"] = true;
 					res.status = 200;
