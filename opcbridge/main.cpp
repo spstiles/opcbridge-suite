@@ -4377,6 +4377,8 @@ int main(int argc, char **argv) {
 
         uint16_t opcuaPort = 4840;
 
+        std::string configDirOverride;
+
         std::string writeConnId;
         std::string writeTagName;
         std::string writeValue;
@@ -4400,6 +4402,13 @@ int main(int argc, char **argv) {
                 dumpJsonMode = true;
             } else if (arg == "--dump") {
                 dumpMode = true;
+            } else if (arg == "--config" || arg == "--config-dir") {
+                if (i + 1 >= argc) {
+                    std::cerr << "Error: --config requires a directory path.\n";
+                    return 1;
+                }
+                configDirOverride = argv[i + 1];
+                i += 1;
             } else if (arg == "--mqtt") {
                 mqttMode = true;
             } else if (arg == "--http") {
@@ -4468,7 +4477,7 @@ int main(int argc, char **argv) {
         }
 
         // ----------------- Config & drivers -----------------
-        std::string configDir = findConfigDir();
+        std::string configDir = configDirOverride.empty() ? findConfigDir() : configDirOverride;
         std::string connDir = joinPath(configDir, "connections");
         std::string tagDir  = joinPath(configDir, "tags");
 
