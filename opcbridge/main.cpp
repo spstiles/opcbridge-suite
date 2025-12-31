@@ -10032,13 +10032,17 @@ window.addEventListener("load", startAutoRefresh);
 					{
 						std::lock_guard<std::mutex> lock(driverMutex);
 
-						if (drivers.empty()) {
-							resp["status"] = "error";
-							resp["reason"] = "no drivers configured";
-							res.status = 503;
-							res.set_content(resp.dump(), "application/json");
-							return;
-						}
+							if (drivers.empty()) {
+								// Treat "no drivers" as a valid bootstrap state so tools like opcbridge-scada
+								// can start and create the first connections/tags.
+								resp["status"] = "ok";
+								resp["reason"] = "no drivers configured";
+								resp["connections"] = json::object();
+								resp["counts"] = {{"ok", 0}, {"degraded", 0}, {"error", 0}};
+								res.status = 200;
+								res.set_content(resp.dump(), "application/json");
+								return;
+							}
 
 							for (auto &driver : drivers) {
 								json dstatus;
@@ -10165,9 +10169,11 @@ window.addEventListener("load", startAutoRefresh);
 						{"error", error_count}
 					};
 
-					res.status = (overall == "ok") ? 200 : 503;
-	                res.set_content(resp.dump(), "application/json");
-	            });
+						// HTTP status reflects server availability, not tag quality. Clients should
+						// use resp["status"] to display ok/degraded/error.
+						res.status = 200;
+		                res.set_content(resp.dump(), "application/json");
+		            });
             
             // /alarm-history?limit=N  (default 50, max 1000)
             svr.Get("/alarm-history", [&](const httplib::Request &req, httplib::Response &res) {	    int limit = 50;
