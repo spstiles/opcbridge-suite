@@ -2552,12 +2552,25 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
             continue;
         }
 
-        DriverContext ctx;
-        ctx.conn = conn_cfg;
+	        DriverContext ctx;
+	        ctx.conn = conn_cfg;
 
-        for (const auto &tc : tags_it->second) {
-            TagRuntime rt;
-            rt.cfg = tc;
+	        // Guard against duplicated tag definitions (e.g., multiple tag files or accidental repeats).
+	        // Duplicates waste poll time and can make the UI appear "slower" because the same tag is read multiple times.
+	        std::unordered_set<std::string> seen_logical_names;
+
+	        for (const auto &tc : tags_it->second) {
+	            const std::string logical = tc.logical_name;
+	            if (!logical.empty()) {
+	                if (!seen_logical_names.insert(logical).second) {
+	                    std::cerr << "[load] Warning: duplicate tag logical_name '" << logical
+	                              << "' for connection '" << conn_id << "'. Skipping duplicate.\n";
+	                    continue;
+	                }
+	            }
+
+	            TagRuntime rt;
+	            rt.cfg = tc;
 
             std::string tag_str = build_tag_conn_str(conn_cfg, tc);
             std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
@@ -6398,14 +6411,15 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	        addItem("Add Tag…", "add-tag");
 	        addItem("Properties…", "edit-device");
 	        addItem("Delete Device", "delete-device");
-	    } else if (node.type === "alarm") {
-	        addItem("Properties…", "edit-alarm");
-	        addItem("Delete Alarm", "delete-alarm");
-	    } else if (node.type === "tag") {
-	        addItem("Delete Tag", "delete-tag");
-	    } else {
-	        return;
-	    }
+		    } else if (node.type === "alarm") {
+		        addItem("Properties…", "edit-alarm");
+		        addItem("Delete Alarm", "delete-alarm");
+		    } else if (node.type === "tag") {
+		        addItem("Properties…", "edit-tag");
+		        addItem("Delete Tag", "delete-tag");
+		    } else {
+		        return;
+		    }
 
     el.contextMenu.textContent = "";
     items.forEach((it) => {
@@ -6429,13 +6443,14 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	    if (!node) return;
 	    if (action === "add-device") return wsOpenDeviceModal({ mode: "new" });
 	    if (action === "add-alarm") return wsOpenAlarmModal({ mode: "new" });
-	    if (action === "edit-device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
-	    if (action === "edit-alarm") return wsOpenAlarmModal({ mode: "edit", alarm_id: node.alarm_id });
-	    if (action === "delete-device") return wsDeleteDevice(node.connection_id);
-	    if (action === "delete-alarm") return wsDeleteAlarm(node.alarm_id);
-	    if (action === "add-tag") return wsOpenTagModal({ mode: "new", connection_id: node.connection_id });
-	    if (action === "delete-tag") return wsDeleteTag(node.connection_id, node.name);
-	};
+		    if (action === "edit-device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
+		    if (action === "edit-alarm") return wsOpenAlarmModal({ mode: "edit", alarm_id: node.alarm_id });
+		    if (action === "delete-device") return wsDeleteDevice(node.connection_id);
+		    if (action === "delete-alarm") return wsDeleteAlarm(node.alarm_id);
+		    if (action === "add-tag") return wsOpenTagModal({ mode: "new", connection_id: node.connection_id });
+		    if (action === "edit-tag") return wsOpenTagModal({ mode: "edit", connection_id: node.connection_id, name: node.name });
+		    if (action === "delete-tag") return wsDeleteTag(node.connection_id, node.name);
+		};
 
 const wsSelectNode = (nodeId) => {
     wsSelectedId = nodeId;
