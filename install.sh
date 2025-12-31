@@ -98,6 +98,24 @@ apt_install() {
   apt-get install -y --no-install-recommends "$@"
 }
 
+apt_has_pkg() {
+  local pkg="$1"
+  apt_update_once
+  apt-cache show "$pkg" >/dev/null 2>&1
+}
+
+apt_install_first_available() {
+  # Usage: apt_install_first_available pkg1 pkg2 ...
+  local pkg
+  for pkg in "$@"; do
+    if apt_has_pkg "$pkg"; then
+      apt_install "$pkg"
+      return 0
+    fi
+  done
+  return 1
+}
+
 install_deps() {
   if ! have_cmd apt-get; then
     echo "apt-get not found; cannot install dependencies automatically." >&2
@@ -115,13 +133,17 @@ install_deps() {
   # For generating tokens if openssl is available.
   pkgs+=(openssl)
 
-  # If we are building, install build tooling and common libs.
-  if [[ "$BUILD" -eq 1 ]]; then
-    pkgs+=(build-essential pkg-config)
-    pkgs+=(libssl-dev zlib1g-dev libsqlite3-dev)
-    # MQTT client dev (opcbridge links mosquitto)
-    pkgs+=(libmosquitto-dev)
-  fi
+  # Common build/runtime dependencies.
+  #
+  # Note: even when using --no-build, we still install the dev packages because:
+  # - They pull in the correct runtime libs on Debian derivatives (including t64 transitions).
+  # - It avoids "missing *.so" surprises for users.
+  pkgs+=(build-essential pkg-config)
+  pkgs+=(libssl-dev zlib1g-dev libsqlite3-dev)
+  # MQTT client dev (opcbridge links mosquitto)
+  pkgs+=(libmosquitto-dev)
+  # Handy for quick inspection/debugging on servers.
+  pkgs+=(sqlite3)
 
   # Node runtime for scada/hmi services.
   for c in "${COMPONENTS[@]}"; do
@@ -137,9 +159,7 @@ install_deps() {
 
   # Reporter deps
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
-    if [[ "$BUILD" -eq 1 ]]; then
-      pkgs+=(libcurl4-openssl-dev default-libmysqlclient-dev)
-    fi
+    pkgs+=(libcurl4-openssl-dev)
   fi
 
   # De-dupe
@@ -158,6 +178,16 @@ install_deps() {
   printf '  %s\n' "${uniq[@]}"
 
   apt_install "${uniq[@]}"
+
+  # Optional DB client headers for opcbridge-reporter.
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
+    if ! apt_install_first_available default-libmysqlclient-dev libmariadb-dev libmariadb-dev-compat; then
+      echo "Warning: could not find a MySQL/MariaDB client dev package; opcbridge-reporter build may fail." >&2
+    fi
+    if [[ ! -f /usr/include/mysql/mysql.h && ! -f /usr/include/mariadb/mysql.h ]]; then
+      echo "Warning: mysql headers not found after deps install; opcbridge-reporter build may fail." >&2
+    fi
+  fi
 
   # Libraries we cannot reliably install from apt (often built from source into /usr/local).
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
@@ -578,6 +608,13 @@ WantedBy=multi-user.target
 }
 
 main() {
+  # Allow help without sudo/root.
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) usage; exit 0;;
+    esac
+  done
+
   need_root
 
   while [[ $# -gt 0 ]]; do
