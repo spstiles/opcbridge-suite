@@ -658,6 +658,9 @@ main() {
 
   if [[ "$INSTALL_DEPS" -eq 1 ]]; then
     install_deps
+    echo ""
+    echo "Dependencies installed."
+    echo ""
   fi
 
   echo "Installing components: ${COMPONENTS[*]}"
