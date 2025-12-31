@@ -369,12 +369,24 @@ ENV
 build_if_needed() {
   [[ "$BUILD" -eq 1 ]] || return 0
 
-  echo "Building C++ components..."
-  (cd "$ROOT_DIR/opcbridge" && ./build.sh)
-  (cd "$ROOT_DIR/opcbridge-alarms" && ./build.sh)
+  if ! printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(opcbridge|alarms|reporter)'; then
+    return 0
+  fi
 
-  if [[ -f "$ROOT_DIR/opcbridge-reporter/Makefile" ]]; then
-    (cd "$ROOT_DIR/opcbridge-reporter" && make)
+  echo "Building C++ components..."
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
+    (cd "$ROOT_DIR/opcbridge" && ./build.sh)
+  fi
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
+    (cd "$ROOT_DIR/opcbridge-alarms" && ./build.sh)
+  fi
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
+    if [[ -f "$ROOT_DIR/opcbridge-reporter/Makefile" ]]; then
+      (cd "$ROOT_DIR/opcbridge-reporter" && make)
+    fi
   fi
 }
 
