@@ -18,6 +18,8 @@ INSTALL_DEPS=0
 ASSUME_YES=0
 START_SERVICES=1
 ENABLE_SERVICES=1
+SCADA_SYSTEMD_SUDO=0
+INSTALL_HAD_ERRORS=0
 
 PROFILE=""
 COMPONENTS=()
@@ -45,6 +47,7 @@ Options:
   --with-node-deps        Run npm install for Node services (requires network)
   --no-start              Do not start services
   --no-enable             Do not enable services at boot
+  --scada-systemd-sudo    Configure sudoers so opcbridge-scada can manage opcbridge.service
   -y, --yes               Non-interactive defaults
   -h, --help              Show help
 
@@ -480,19 +483,55 @@ install_scada() {
   install -m 0644 "$ROOT_DIR/opcbridge-scada/config.secrets.json.example" "$CONFIG_ROOT/scada/config.secrets.json.example" 2>/dev/null || true
 }
 
+install_scada_systemd_sudoers() {
+  have_cmd sudo || { echo "sudo not found; cannot configure SCADA systemd sudoers." >&2; return 1; }
+
+  local sudoers_path="/etc/sudoers.d/opcbridge-scada-systemd"
+  echo "Configuring sudoers for opcbridge-scada systemd management: ${sudoers_path}"
+
+  umask 027
+  cat >"$sudoers_path" <<EOF
+# Managed by opcbridge-suite install.sh
+# Allow opcbridge-scada (running as ${SERVICE_USER}) to update opcbridge.service drop-in + restart only.
+
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl daemon-reload
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl restart opcbridge.service
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/install -D -m 0644 /tmp/opcbridge-scada-dropin-*.conf /etc/systemd/system/opcbridge.service.d/20-opcbridge-scada.conf
+EOF
+
+  chmod 440 "$sudoers_path"
+
+  mkdir -p "/etc/systemd/system/opcbridge.service.d"
+  chmod 755 "/etc/systemd/system/opcbridge.service.d" 2>/dev/null || true
+}
+
 install_hmi() {
   echo "Installing opcbridge-hmi..."
   mkdir -p "$PREFIX/hmi"
   if have_cmd rsync; then
     rsync -a --delete \
       --exclude 'node_modules' \
+      --exclude 'screens/*.jsonc' \
+      --exclude 'screens/*.jsonc.example' \
       --exclude 'passwords.jsonc' \
       --exclude 'audit.jsonl' \
       "$ROOT_DIR/opcbridge-hmi/" "$PREFIX/hmi/"
+  elif have_cmd tar; then
+    # Copy without shipping demo screens. (Also do not delete any existing screens in $PREFIX/hmi.)
+    (
+      cd "$ROOT_DIR/opcbridge-hmi" || exit 1
+      tar -cf - \
+        --exclude='node_modules' \
+        --exclude='screens/*.jsonc' \
+        --exclude='screens/*.jsonc.example' \
+        --exclude='passwords.jsonc' \
+        --exclude='audit.jsonl' \
+        .
+    ) | (cd "$PREFIX/hmi" && tar -xf -)
   else
-    copy_tree "$ROOT_DIR/opcbridge-hmi/" "$PREFIX/hmi/"
-    rm -rf "$PREFIX/hmi/node_modules" || true
-    rm -f "$PREFIX/hmi/passwords.jsonc" "$PREFIX/hmi/audit.jsonl" || true
+    echo "ERROR: install_hmi requires either rsync or tar." >&2
+    echo "Install rsync (recommended) or tar, then rerun the installer." >&2
+    exit 1
   fi
 
   if [[ "$WITH_NODE_DEPS" -eq 1 ]]; then
@@ -507,7 +546,9 @@ install_hmi() {
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/.npm" || true
     (cd "$PREFIX/hmi" && runuser -u "$SERVICE_USER" -- env HOME="$DATA_ROOT" NPM_CONFIG_CACHE="$DATA_ROOT/.npm" npm ci --omit=dev)
   else
-    echo "Note: HMI requires Node deps. Run: (cd $PREFIX/hmi && npm ci --omit=dev)"
+    echo "Note: HMI requires Node deps. Either rerun the installer with --with-node-deps,"
+    echo "or run:"
+    echo "  sudo -u ${SERVICE_USER} env HOME=\"${DATA_ROOT}\" NPM_CONFIG_CACHE=\"${DATA_ROOT}/.npm\" bash -lc 'cd \"${PREFIX}/hmi\" && npm ci --omit=dev'"
   fi
 
   # Ensure runtime can write node_modules (if installed later) and any local cache.
@@ -561,6 +602,33 @@ install_reporter() {
 
   mkdir -p "$CONFIG_ROOT/reporter"
   install -m 0644 "$ROOT_DIR/opcbridge-reporter/config.json.example" "$CONFIG_ROOT/reporter/config.json.example" 2>/dev/null || true
+}
+
+node_deps_installed() {
+  local dir="$1"
+  [[ -d "$dir/node_modules" ]] || return 1
+  # express is a required runtime dep for both HMI and SCADA servers
+  [[ -d "$dir/node_modules/express" ]] || return 1
+  return 0
+}
+
+print_node_deps_install_instructions() {
+  local service_name="$1" # human label
+  local dir="$2"          # install dir
+  echo "To install ${service_name} Node dependencies:"
+  echo "  sudo -u ${SERVICE_USER} env HOME=\"${DATA_ROOT}\" NPM_CONFIG_CACHE=\"${DATA_ROOT}/.npm\" bash -lc 'cd \"${dir}\" && npm ci --omit=dev'"
+  echo "Then enable/start:"
+  if [[ "$service_name" == "opcbridge-hmi" ]]; then
+    echo "  sudo systemctl enable --now opcbridge-hmi"
+  elif [[ "$service_name" == "opcbridge-scada" ]]; then
+    echo "  sudo systemctl enable --now opcbridge-scada"
+  else
+    echo "  sudo systemctl enable --now ${service_name}"
+  fi
+}
+
+mark_install_error() {
+  INSTALL_HAD_ERRORS=1
 }
 
 write_unit() {
@@ -665,6 +733,14 @@ RestartSec=2
   if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
     for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi; do
       if systemctl cat "$svc" >/dev/null 2>&1; then
+        if [[ "$svc" == "opcbridge-hmi" ]]; then
+          if ! node_deps_installed "$PREFIX/hmi"; then
+            echo "ERROR: opcbridge-hmi selected but Node dependencies are not installed."
+            print_node_deps_install_instructions "opcbridge-hmi" "$PREFIX/hmi"
+            mark_install_error
+            continue
+          fi
+        fi
         systemctl enable "$svc" >/dev/null 2>&1 || true
       fi
     done
@@ -673,6 +749,14 @@ RestartSec=2
   if [[ "$START_SERVICES" -eq 1 ]]; then
     for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi; do
       if systemctl cat "$svc" >/dev/null 2>&1; then
+        if [[ "$svc" == "opcbridge-hmi" ]]; then
+          if ! node_deps_installed "$PREFIX/hmi"; then
+            echo "ERROR: opcbridge-hmi selected but Node dependencies are not installed."
+            print_node_deps_install_instructions "opcbridge-hmi" "$PREFIX/hmi"
+            mark_install_error
+            continue
+          fi
+        fi
         systemctl restart "$svc" >/dev/null 2>&1 || true
       fi
     done
@@ -702,6 +786,7 @@ main() {
       --group) SERVICE_GROUP="${2:-}"; shift 2;;
       --no-build) BUILD=0; shift;;      --with-node-deps) WITH_NODE_DEPS=1; shift;;
       --deps) INSTALL_DEPS=1; shift;;
+      --scada-systemd-sudo) SCADA_SYSTEMD_SUDO=1; shift;;
       --no-start) START_SERVICES=0; shift;;
       --no-enable) ENABLE_SERVICES=0; shift;;
       -y|--yes) ASSUME_YES=1; shift;;
@@ -763,7 +848,24 @@ main() {
   done
   fix_config_permissions
 
+  # Option A: keep opcbridge-scada unprivileged but allow limited systemd control via sudoers.
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
+    if [[ "$SCADA_SYSTEMD_SUDO" -eq 1 ]]; then
+      install_scada_systemd_sudoers || true
+    else
+      if prompt_yn "Allow opcbridge-scada to manage opcbridge.service via sudoers (recommended)?" y; then
+        install_scada_systemd_sudoers || true
+      fi
+    fi
+  fi
+
   install_systemd_units
+
+  if [[ "$INSTALL_HAD_ERRORS" -eq 1 ]]; then
+    echo ""
+    echo "Install finished with errors. Fix the issues above and re-run enable/start."
+    exit 1
+  fi
 
   echo ""
   echo "Installed."
