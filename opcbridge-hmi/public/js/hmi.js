@@ -1422,6 +1422,7 @@ const AUTH_SESSION_KEY = "opcbridge-hmi.session";
 let authInfo = { initialized: false, timeoutMinutes: 0, users: [] };
 let authSession = null;
 let authActivityTimer = null;
+let authSyncTimer = null;
 
 const getAuthRole = () => String(authSession?.role || "viewer");
 const canWrite = () => ["operator", "editor", "admin"].includes(getAuthRole());
@@ -1517,6 +1518,15 @@ const apiAuthLogin = async ({ username, password }) => {
   return response.json();
 };
 
+const apiAuthLogout = async () => {
+  const response = await fetch("/api/auth/logout", { method: "POST" });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status} ${text}`.trim());
+  }
+  return response.json().catch(() => ({ ok: true }));
+};
+
 const apiAuthAddUser = async ({ username, password, role }) => {
   const response = await fetch("/api/auth/users", {
     method: "POST",
@@ -1609,8 +1619,9 @@ const updateAuthUiVisibility = () => {
     }
   }
   if (authSetupTimeout) authSetupTimeout.value = !initialized ? "0" : authSetupTimeout.value;
-  if (usersMenuBtn) usersMenuBtn.classList.toggle("is-hidden", !canAdmin());
-  if (auditMenuBtn) auditMenuBtn.classList.toggle("is-hidden", !canAdmin());
+  // User management is centralized in opcbridge-scada (single admin console).
+  if (usersMenuBtn) usersMenuBtn.classList.add("is-hidden");
+  if (auditMenuBtn) auditMenuBtn.classList.add("is-hidden");
   if (logoutMenuBtn) logoutMenuBtn.classList.toggle("is-hidden", !authSession);
   if (settingsMenuBtn) {
     const enabled = canAdmin();
@@ -1625,12 +1636,71 @@ const refreshAuthUi = async () => {
   try {
     const status = await apiAuthStatus();
     authInfo = status || { initialized: false };
+    const serverLoggedIn = Boolean(authInfo?.user_logged_in);
+    const serverUser = authInfo?.user;
+    const serverUsername = String(serverUser?.username || "").trim();
+    const serverRole = String(serverUser?.role || "viewer").trim().toLowerCase();
+
+    if (!serverLoggedIn && authSession) {
+      clearAuthSession();
+    }
+    if (serverLoggedIn && serverUsername && ["viewer", "operator", "editor", "admin"].includes(serverRole)) {
+      const needsSync = !authSession ||
+        String(authSession?.username || "").trim() !== serverUsername ||
+        String(authSession?.role || "").trim().toLowerCase() !== serverRole;
+      if (needsSync) {
+        saveAuthSession({
+          username: serverUsername,
+          role: serverRole,
+          timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
+          lastActivityMs: Date.now()
+        });
+      }
+    }
     updateAuthUiVisibility();
     if (authStatusEl) authStatusEl.textContent = "Ready.";
   } catch (error) {
     authInfo = { initialized: false, timeoutMinutes: 0, users: [] };
+    // Don't clear authSession here: offline/unavailable should not forcibly log the user out.
     updateAuthUiVisibility();
     if (authStatusEl) authStatusEl.textContent = `Load failed: ${error.message}`;
+  }
+};
+
+const syncAuthFromServer = async () => {
+  if (document?.hidden) return;
+  try {
+    const status = await apiAuthStatus();
+    authInfo = status || authInfo;
+    const serverLoggedIn = Boolean(status?.user_logged_in);
+    const serverUser = status?.user;
+    const serverUsername = String(serverUser?.username || "").trim();
+    const serverRole = String(serverUser?.role || "viewer").trim().toLowerCase();
+
+    if (!serverLoggedIn && authSession) {
+      clearAuthSession();
+      if (isEditMode) setMode(false);
+      closeSettings();
+      closeUsers();
+      updateAuthUiVisibility();
+    }
+
+    if (serverLoggedIn && serverUsername && ["viewer", "operator", "editor", "admin"].includes(serverRole)) {
+      const needsSync = !authSession ||
+        String(authSession?.username || "").trim() !== serverUsername ||
+        String(authSession?.role || "").trim().toLowerCase() !== serverRole;
+      if (needsSync) {
+        saveAuthSession({
+          username: serverUsername,
+          role: serverRole,
+          timeoutMinutes: Number(status?.timeoutMinutes) || 0,
+          lastActivityMs: Date.now()
+        });
+        updateAuthUiVisibility();
+      }
+    }
+  } catch {
+    // ignore (offline/unavailable)
   }
 };
 
@@ -1639,6 +1709,27 @@ const refreshUsersUi = async () => {
   try {
     const status = await apiAuthStatus();
     authInfo = status || { initialized: false };
+    const serverLoggedIn = Boolean(authInfo?.user_logged_in);
+    const serverUser = authInfo?.user;
+    const serverUsername = String(serverUser?.username || "").trim();
+    const serverRole = String(serverUser?.role || "viewer").trim().toLowerCase();
+
+    if (!serverLoggedIn && authSession) {
+      clearAuthSession();
+    }
+    if (serverLoggedIn && serverUsername && ["viewer", "operator", "editor", "admin"].includes(serverRole)) {
+      const needsSync = !authSession ||
+        String(authSession?.username || "").trim() !== serverUsername ||
+        String(authSession?.role || "").trim().toLowerCase() !== serverRole;
+      if (needsSync) {
+        saveAuthSession({
+          username: serverUsername,
+          role: serverRole,
+          timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
+          lastActivityMs: Date.now()
+        });
+      }
+    }
     updateAuthUiVisibility();
     if (usersTimeoutMinutes) usersTimeoutMinutes.value = String(Number(authInfo?.timeoutMinutes) || 0);
     renderUsersList();
@@ -1686,6 +1777,8 @@ authSession = loadAuthSession();
 if (authSession && isAuthSessionExpired()) clearAuthSession();
 updateAuthUiVisibility();
 installAuditActorHeaders();
+setTimeout(() => refreshAuthUi().catch(() => {}), 0);
+if (!authSyncTimer) authSyncTimer = window.setInterval(() => syncAuthFromServer(), 2000);
 
 let wsClient = null;
 let wsConnected = false;
@@ -2799,9 +2892,12 @@ const shouldRenderObject = (obj) => {
   const key = normalizeTagCacheKey(connectionId, tag);
   const value = key ? tagValueCache.get(key) : undefined;
   if (value === undefined || value === null) return true;
-  const hasThreshold = vis.threshold !== undefined && vis.threshold !== null && vis.threshold !== "";
+  const thresholdRaw = (vis.threshold !== undefined && vis.threshold !== null && vis.threshold !== "")
+    ? vis.threshold
+    : vis.value; // legacy alias
+  const hasThreshold = thresholdRaw !== undefined && thresholdRaw !== null && thresholdRaw !== "";
   if (hasThreshold) {
-    const thresholdValue = Number(vis.threshold);
+    const thresholdValue = Number(thresholdRaw);
     if (!Number.isFinite(thresholdValue)) return true;
     const numeric = coerceTagNumber(value);
     if (numeric === null) return true;
@@ -7485,27 +7581,27 @@ const syncPropertiesFromSelection = () => {
     if (barTicksMajorInput) setInputValueSafe(barTicksMajorInput, ticks.major ?? 5);
     if (barTicksMinorInput) setInputValueSafe(barTicksMinorInput, ticks.minor ?? 4);
   }
-  if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityThresholdInput || visibilityInvertInput) {
-    const vis = obj.visibility || {};
-    const isEnabled = Boolean(vis.enabled);
-    if (visibilityEnabledInput) visibilityEnabledInput.checked = isEnabled;
-    if (visibilityFields) {
-      visibilityFields.classList.toggle("is-hidden", !isEnabled);
-      visibilityFields.hidden = !isEnabled;
-    }
+	  if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityThresholdInput || visibilityInvertInput) {
+	    const vis = obj.visibility || {};
+	    const isEnabled = vis.enabled !== false;
+	    if (visibilityEnabledInput) visibilityEnabledInput.checked = isEnabled;
+	    if (visibilityFields) {
+	      visibilityFields.classList.toggle("is-hidden", !isEnabled);
+	      visibilityFields.hidden = !isEnabled;
+	    }
     setInputValueSafe(visibilityConnectionInput, vis.connection_id || "");
     if (visibilityTagSelect) {
       const connectionId = String(vis.connection_id || "");
       const tagName = String(vis.tag || "");
       const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
       setSelectValueSafe(visibilityTagSelect, combined);
-    }
-    if (visibilityThresholdInput) {
-      const thresholdValue = vis.threshold;
-      setInputValueSafe(visibilityThresholdInput, thresholdValue ?? "");
-    }
-    if (visibilityInvertInput) visibilityInvertInput.checked = Boolean(vis.invert);
-  }
+	    }
+	    if (visibilityThresholdInput) {
+	      const thresholdValue = (vis.threshold ?? vis.value);
+	      setInputValueSafe(visibilityThresholdInput, thresholdValue ?? "");
+	    }
+	    if (visibilityInvertInput) visibilityInvertInput.checked = Boolean(vis.invert);
+	  }
 };
 
 const updatePropertiesPanel = () => {
@@ -7942,24 +8038,29 @@ const updateBarRangeBinding = (which, patch) => {
   setDirty(true);
 };
 
-const updateVisibilityProperty = (patch) => {
-  const activeObjects = getActiveObjects();
-  if (!activeObjects || !Array.isArray(activeObjects)) return;
-  if (selectedIndices.length !== 1) return;
-  const index = selectedIndices[0];
-  const obj = activeObjects[index];
-  if (!obj) return;
-  recordHistory();
-  const current = obj.visibility || { enabled: true };
-  const next = { ...current, ...patch };
-  if ("threshold" in patch) {
-    if (patch.threshold === "" || patch.threshold === null || patch.threshold === undefined) {
-      delete next.threshold;
-    }
-    if (obj.type === "polyline") {
-      const strokeValue = (!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke;
-      if (polylineStrokeInput) polylineStrokeInput.value = strokeValue;
-      if (polylineStrokeTextInput) polylineStrokeTextInput.value = strokeValue;
+	const updateVisibilityProperty = (patch) => {
+	  const activeObjects = getActiveObjects();
+	  if (!activeObjects || !Array.isArray(activeObjects)) return;
+	  if (selectedIndices.length !== 1) return;
+	  const index = selectedIndices[0];
+	  const obj = activeObjects[index];
+	  if (!obj) return;
+	  recordHistory();
+	  const current = obj.visibility || { enabled: true };
+	  const next = { ...current, ...patch };
+	  if ("connection_id" in patch && !patch.connection_id) delete next.connection_id;
+	  if ("tag" in patch && !patch.tag) delete next.tag;
+	  if ("threshold" in patch) {
+	    if (patch.threshold === "" || patch.threshold === null || patch.threshold === undefined) {
+	      delete next.threshold;
+	      delete next.value;
+	    } else {
+	      delete next.value;
+	    }
+	    if (obj.type === "polyline") {
+	      const strokeValue = (!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke;
+	      if (polylineStrokeInput) polylineStrokeInput.value = strokeValue;
+	      if (polylineStrokeTextInput) polylineStrokeTextInput.value = strokeValue;
       if (polylineStrokeWidthInput) polylineStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
     }
     if (obj.type === "polygon") {
@@ -9229,6 +9330,12 @@ if (authPassword) {
 
 if (authLogoutBtn) {
   authLogoutBtn.addEventListener("click", async () => {
+    if (authStatusEl) authStatusEl.textContent = "Logging out…";
+    try {
+      await apiAuthLogout();
+    } catch {
+      // ignore (still clear local session)
+    }
     clearAuthSession();
     if (isEditMode) setMode(false);
     closeSettings();
@@ -9244,6 +9351,7 @@ if (!authActivityTimer) {
   authActivityTimer = window.setInterval(() => {
     if (!authSession) return;
     if (!isAuthSessionExpired()) return;
+    apiAuthLogout().catch(() => {});
     clearAuthSession();
     if (isEditMode) setMode(false);
     closeSettings();
