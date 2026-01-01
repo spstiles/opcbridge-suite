@@ -96,7 +96,7 @@ struct AdminAuthInfo {
 };
 
 static AdminAuthInfo g_adminAuth;
-static bool g_adminConfigured = false;
+static bool g_legacyAdminConfigured = false;
 static bool g_adminAuthFilePresent = false;
 static std::string g_adminAuthLoadError;
 
@@ -1252,7 +1252,7 @@ static bool load_admin_auth(const std::string &path) {
         g_adminAuthLoadError.clear();
 
         if (!g_adminAuthFilePresent) {
-            g_adminConfigured = false;
+            g_legacyAdminConfigured = false;
             g_adminAuth = AdminAuthInfo{};
             return true;
         }
@@ -1265,43 +1265,39 @@ static bool load_admin_auth(const std::string &path) {
 
         if (g_adminAuth.salt_hex.empty() || g_adminAuth.hash_hex.empty()) {
             std::cerr << "[auth] admin_auth.json missing salt/hash; treating as not configured.\n";
-            g_adminConfigured = false;
+            g_legacyAdminConfigured = false;
             g_adminAuth = AdminAuthInfo{};
         } else {
-            g_adminConfigured = true;
+            g_legacyAdminConfigured = true;
         }
         return true;
     } catch (const std::exception &ex) {
         g_adminAuthFilePresent = fs::exists(path);
         g_adminAuthLoadError = ex.what();
         std::cerr << "[auth] Failed to load admin_auth.json: " << ex.what() << "\n";
-        g_adminConfigured = false;
+        g_legacyAdminConfigured = false;
         g_adminAuth = AdminAuthInfo{};
         return false;
     }
 }
 
-static bool save_admin_auth(const std::string &path,
-                            const std::string &salt_hex,
-                            const std::string &hash_hex)
-{
-    json j;
-    j["salt_hex"] = salt_hex;
-    j["hash_hex"] = hash_hex;
-    j["created_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()
-    ).count();
+static bool verify_legacy_admin_password(const std::string &password) {
+    if (!g_adminAuthFilePresent) return false;
+    if (!g_legacyAdminConfigured) return false;
+    if (password.empty()) return false;
+    if (g_adminAuth.salt_hex.size() % 2 != 0) return false;
 
-    try {
-        write_string_to_file(path, j.dump(2));
-        fs::permissions(path,
-                        fs::perms::owner_read | fs::perms::owner_write,
-                        fs::perm_options::replace);
-        return true;
-    } catch (const std::exception &ex) {
-        std::cerr << "[auth] Failed to save admin_auth.json: " << ex.what() << "\n";
-        return false;
+    std::string salt_bytes;
+    salt_bytes.resize(g_adminAuth.salt_hex.size() / 2);
+    for (size_t i = 0; i < salt_bytes.size(); ++i) {
+        std::string byteStr = g_adminAuth.salt_hex.substr(i * 2, 2);
+        salt_bytes[i] = static_cast<char>(std::stoi(byteStr, nullptr, 16));
     }
+
+    std::string hash_hex;
+    if (!pbkdf2_sha256_hex(password, salt_bytes, 100000, hash_hex)) return false;
+    if (hash_hex.size() != g_adminAuth.hash_hex.size()) return false;
+    return (CRYPTO_memcmp(hash_hex.data(), g_adminAuth.hash_hex.data(), hash_hex.size()) == 0);
 }
 
 static std::string normalize_auth_username(const std::string &value) {
@@ -6006,26 +6002,39 @@ int main(int argc, char **argv) {
 				   autocomplete="username"
 				   class="admin-input" />
 		  </div>
-		  <div class="admin-field-row">
-			<label for="admin-password" class="admin-field-label">Password</label>
-			<div class="admin-field-input-wrap">
-			  <input id="admin-password"
-					 type="password"
-					 autocomplete="current-password"
-					 class="admin-input" />
-			  <button type="button"
-					  id="admin-toggle-password"
-					  class="admin-icon-button"
-					  title="Show / hide password">
-				👁
-			  </button>
-			</div>
-		  </div>
+			  <div class="admin-field-row">
+				<label for="admin-password" class="admin-field-label">Password</label>
+				<div class="admin-field-input-wrap">
+				  <input id="admin-password"
+						 type="password"
+						 autocomplete="current-password"
+						 class="admin-input" />
+				  <button type="button"
+						  id="admin-toggle-password"
+						  class="admin-icon-button"
+						  title="Show / hide password">
+					👁
+				  </button>
+				</div>
+			  </div>
+	
+			  <div id="admin-legacy-container" class="admin-field-row" style="display:none;">
+				<label for="admin-legacy-password" class="admin-field-label">
+				  Current password (legacy)
+				</label>
+				<input id="admin-legacy-password"
+					   type="password"
+					   autocomplete="current-password"
+					   class="admin-input" />
+				<div class="small" style="margin-top:4px; color:#aaa;">
+				  Legacy `admin_auth.json` detected. Enter the current password to migrate to the unified user store.
+				</div>
+			  </div>
 
-		  <div id="admin-confirm-container" class="admin-field-row" style="display:none;">
-			<label for="admin-password-confirm" class="admin-field-label">
-			  Confirm password
-			</label>
+			  <div id="admin-confirm-container" class="admin-field-row" style="display:none;">
+				<label for="admin-password-confirm" class="admin-field-label">
+				  Confirm password
+				</label>
 			<input id="admin-password-confirm"
 				   type="password"
 				   autocomplete="new-password"
@@ -6054,12 +6063,14 @@ int main(int argc, char **argv) {
 // Use a placeholder here – we’ll replace it from C++
 const WRITE_TOKEN = "WRITE_TOKEN_PLACEHOLDER";
 
-let ADMIN_TOKEN = null;
-let ADMIN_CONFIGURED = false;
-let ADMIN_LOGGED_IN = false;
-let USER_LOGGED_IN = false;
-let USERNAME = "";
-let USER_ROLE = "viewer";
+	let ADMIN_TOKEN = null;
+	let ADMIN_CONFIGURED = false;
+	let ADMIN_LOGGED_IN = false;
+	let USER_LOGGED_IN = false;
+	let USERNAME = "";
+	let USER_ROLE = "viewer";
+	let LEGACY_AUTH_PRESENT = false;
+	let LEGACY_AUTH_CONFIGURED = false;
 
 function normalizeUserRole(role) {
     const r = String(role || "").trim().toLowerCase();
@@ -6125,68 +6136,78 @@ function persistAdminToken() {
     }
 }
 
-let adminModalMode = "login";  
-// "login" or "setup"
+	let adminModalMode = "login";
+	// "login" or "init"
 
-function openAdminModal(mode) {
-    adminModalMode = mode;  // <– keep this, submit logic needs it
+	function openAdminModal(mode) {
+	    adminModalMode = mode;  // <– keep this, submit logic needs it
 
-    const modal = document.getElementById("admin-modal");
-    const title = document.getElementById("admin-modal-title");
-    const err   = document.getElementById("admin-modal-error");
-    const user  = document.getElementById("admin-username");
-    const pw    = document.getElementById("admin-password");
-    const conf  = document.getElementById("admin-confirm-container");
-    const pw2   = document.getElementById("admin-password-confirm");
-    const toggleBtn = document.getElementById("admin-toggle-password");
+	    const modal = document.getElementById("admin-modal");
+	    const title = document.getElementById("admin-modal-title");
+	    const err   = document.getElementById("admin-modal-error");
+	    const user  = document.getElementById("admin-username");
+	    const pw    = document.getElementById("admin-password");
+	    const legacyContainer = document.getElementById("admin-legacy-container");
+	    const legacyPw = document.getElementById("admin-legacy-password");
+	    const conf  = document.getElementById("admin-confirm-container");
+	    const pw2   = document.getElementById("admin-password-confirm");
+	    const toggleBtn = document.getElementById("admin-toggle-password");
 
     if (!modal || !title || !err || !user || !pw || !conf || !pw2) {
         console.error("Admin modal elements missing");
         return;
     }
 
-    // Clear previous state
-    err.textContent = "";
-    user.value = user.value || "admin";
-    pw.value = "";
-    pw2.value = "";
+	    // Clear previous state
+	    err.textContent = "";
+	    user.value = user.value || "admin";
+	    pw.value = "";
+	    if (legacyPw) legacyPw.value = "";
+	    pw2.value = "";
 
-    if (mode === "setup") {
-        title.textContent = "Create Admin User";
-        conf.style.display = "";
-    } else {
-        title.textContent = "Admin Login";
-        conf.style.display = "none";
-    }
+	    if (mode === "init") {
+	        title.textContent = "Initialize Users";
+	        conf.style.display = "";
+	        if (legacyContainer) {
+	            legacyContainer.style.display = LEGACY_AUTH_PRESENT ? "" : "none";
+	        }
+	    } else {
+	        title.textContent = "Admin Login";
+	        conf.style.display = "none";
+	        if (legacyContainer) legacyContainer.style.display = "none";
+	    }
 
-    // Reset show-password state
-    pw.type  = "password";
-    pw2.type = "password";
-    if (toggleBtn) toggleBtn.textContent = "👁";
+	    // Reset show-password state
+	    pw.type  = "password";
+	    if (legacyPw) legacyPw.type = "password";
+	    pw2.type = "password";
+	    if (toggleBtn) toggleBtn.textContent = "👁";
 
     modal.style.display = "flex";
     (user.value ? pw : user).focus();
 }
 
-function closeAdminModal() {
-    document.getElementById("admin-modal").style.display = "none";
-}
+	function closeAdminModal() {
+	    document.getElementById("admin-modal").style.display = "none";
+	}
 
-async function submitAdminModal() {
-    const userEl  = document.getElementById("admin-username");
-    const pwEl    = document.getElementById("admin-password");
-    const pw2El   = document.getElementById("admin-password-confirm");
-    const errEl   = document.getElementById("admin-modal-error");
-    const modalEl = document.getElementById("admin-modal");
+	async function submitAdminModal() {
+	    const userEl  = document.getElementById("admin-username");
+	    const pwEl    = document.getElementById("admin-password");
+	    const legacyPwEl = document.getElementById("admin-legacy-password");
+	    const pw2El   = document.getElementById("admin-password-confirm");
+	    const errEl   = document.getElementById("admin-modal-error");
+	    const modalEl = document.getElementById("admin-modal");
 
     if (!userEl || !pwEl || !errEl || !modalEl) {
         console.error("Admin modal elements missing");
         return;
     }
 
-    const username = String(userEl.value || "").trim();
-    const pw  = pwEl.value;
-    const pw2 = pw2El ? pw2El.value : "";
+	    const username = String(userEl.value || "").trim();
+	    const pw  = pwEl.value;
+	    const pw2 = pw2El ? pw2El.value : "";
+	    const legacyPw = legacyPwEl ? legacyPwEl.value : "";
 
     errEl.textContent = "";
 
@@ -6195,28 +6216,38 @@ async function submitAdminModal() {
         return;
     }
 
-    try {
-        if (adminModalMode === "setup") {
-            // First-time init (creates the centralized user store: config/passwords.jsonc)
-            if (!username) {
-                errEl.textContent = "Username cannot be empty.";
-                return;
-            }
-            if (!pw2) {
-                errEl.textContent = "Please confirm the password.";
-                return;
-            }
-            if (pw !== pw2) {
-                errEl.textContent = "Passwords do not match.";
-                return;
-            }
+	    try {
+	        if (adminModalMode === "init") {
+	            // First-time init (creates the centralized user store: config/passwords.jsonc)
+	            if (!username) {
+	                errEl.textContent = "Username cannot be empty.";
+	                return;
+	            }
+	            if (!pw2) {
+	                errEl.textContent = "Please confirm the password.";
+	                return;
+	            }
+	            if (pw !== pw2) {
+	                errEl.textContent = "Passwords do not match.";
+	                return;
+	            }
+	            if (LEGACY_AUTH_PRESENT && !legacyPw) {
+	                errEl.textContent = "Legacy password is required to migrate.";
+	                return;
+	            }
 
-            const resp = await fetch("/auth/init", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, password: pw, timeoutMinutes: 0 })
-            });
-            const data = await resp.json();
+	            const resp = await fetch("/auth/init", {
+	                method: "POST",
+	                headers: { "Content-Type": "application/json" },
+	                body: JSON.stringify({
+	                    username,
+	                    password: pw,
+	                    confirm: pw2,
+	                    legacy_password: LEGACY_AUTH_PRESENT ? legacyPw : "",
+	                    timeoutMinutes: 0
+	                })
+	            });
+	            const data = await resp.json();
 
             if (!data.ok) {
                 errEl.textContent = data.error || "Admin setup failed.";
@@ -6275,17 +6306,19 @@ async function submitAdminModal() {
 	        errEl.textContent = "Error: " + e.toString();
     }
 }
-let g_adminPwVisible = false;
-function toggleAdminPasswordVisibility() {
-    g_adminPwVisible = !g_adminPwVisible;
-    const pw  = document.getElementById("admin-password");
-    const pw2 = document.getElementById("admin-password-confirm");
-    const btn = document.getElementById("admin-toggle-password");
-    const t = g_adminPwVisible ? "text" : "password";
-    if (pw) pw.type = t;
-    if (pw2) pw2.type = t;
-    if (btn) btn.textContent = g_adminPwVisible ? "🙈" : "👁";
-}
+	let g_adminPwVisible = false;
+	function toggleAdminPasswordVisibility() {
+	    g_adminPwVisible = !g_adminPwVisible;
+	    const pw  = document.getElementById("admin-password");
+	    const legacy = document.getElementById("admin-legacy-password");
+	    const pw2 = document.getElementById("admin-password-confirm");
+	    const btn = document.getElementById("admin-toggle-password");
+	    const t = g_adminPwVisible ? "text" : "password";
+	    if (pw) pw.type = t;
+	    if (legacy) legacy.type = t;
+	    if (pw2) pw2.type = t;
+	    if (btn) btn.textContent = g_adminPwVisible ? "🙈" : "👁";
+	}
 
 function setupAdminModalKeys() {
     const modal = document.getElementById("admin-modal");
@@ -7770,12 +7803,14 @@ async function refreshAdminStatus() {
             method: "GET",
             headers: withAdminHeaders()
         });
-        const data = await resp.json();
-        ADMIN_CONFIGURED = !!data.configured;
-        USER_LOGGED_IN = !!(data.user_logged_in ?? data.logged_in);
-        USERNAME = USER_LOGGED_IN ? String(data?.user?.username || "admin").trim() : "";
-        USER_ROLE = USER_LOGGED_IN ? normalizeUserRole(data?.user?.role || (data.logged_in ? "admin" : "viewer")) : "viewer";
-        ADMIN_LOGGED_IN = !!(ADMIN_CONFIGURED && canEditWorkspace());
+	        const data = await resp.json();
+	        ADMIN_CONFIGURED = !!(data.initialized ?? data.configured);
+	        LEGACY_AUTH_PRESENT = !!data.legacy_admin_auth_present;
+	        LEGACY_AUTH_CONFIGURED = !!data.legacy_admin_auth_configured;
+	        USER_LOGGED_IN = !!(data.user_logged_in ?? data.logged_in);
+	        USERNAME = USER_LOGGED_IN ? String(data?.user?.username || "admin").trim() : "";
+	        USER_ROLE = USER_LOGGED_IN ? normalizeUserRole(data?.user?.role || (data.logged_in ? "admin" : "viewer")) : "viewer";
+	        ADMIN_LOGGED_IN = !!(ADMIN_CONFIGURED && canEditWorkspace());
 
         // If server says "not logged in", drop any stale token we might have
         if (!USER_LOGGED_IN && !data.logged_in) {
@@ -7813,19 +7848,21 @@ async function refreshAdminStatus() {
 
     if (!statusEl || !loginBtn || !logoutBtn) return;
 
-	    if (!ADMIN_CONFIGURED) {
-        statusEl.textContent = "No admin password set (first-time setup required).";
-        loginBtn.textContent = "Set admin password";
-        loginBtn.style.display = "";
-        logoutBtn.style.display = "none";
-        chip.style.display = "none";   // NEW
-        disableAdminFeatures();
+		    if (!ADMIN_CONFIGURED) {
+	        statusEl.textContent = LEGACY_AUTH_PRESENT
+	          ? "Users not initialized (legacy admin password detected – migration required)."
+	          : "Users not initialized (first-time setup required).";
+	        loginBtn.textContent = LEGACY_AUTH_PRESENT ? "Migrate & initialize" : "Initialize users";
+	        loginBtn.style.display = "";
+	        logoutBtn.style.display = "none";
+	        chip.style.display = "none";   // NEW
+	        disableAdminFeatures();
 
         // Hide config files when not configured
         const metaEl  = document.getElementById("config-meta");
         const tbodyEl = document.getElementById("config-tbody");
-	        if (metaEl)  metaEl.textContent = "Admin setup required.";
-	        if (tbodyEl) tbodyEl.innerHTML  = "";
+		        if (metaEl)  metaEl.textContent = "User initialization required.";
+		        if (tbodyEl) tbodyEl.innerHTML  = "";
 
 	        // Tag editor
 	        {
@@ -7833,10 +7870,10 @@ async function refreshAdminStatus() {
 	            TAG_EDITOR_OPEN = false;
 	            if (te.wrapEl) te.wrapEl.style.display = "none";
 	            if (te.toggleBtn) te.toggleBtn.textContent = "Open editor";
-	            if (te.statusEl) {
-	                te.statusEl.textContent = "Admin setup required to edit tag config files.";
-	                te.statusEl.className = "small";
-	            }
+		            if (te.statusEl) {
+		                te.statusEl.textContent = "User initialization required to edit tag config files.";
+		                te.statusEl.className = "small";
+		            }
 	            tagEditorSetEnabled(false);
 	        }
 
@@ -7846,10 +7883,10 @@ async function refreshAdminStatus() {
 	            CONN_EDITOR_OPEN = false;
 	            if (ce.wrapEl) ce.wrapEl.style.display = "none";
 	            if (ce.toggleBtn) ce.toggleBtn.textContent = "Open editor";
-	            if (ce.statusEl) {
-	                ce.statusEl.textContent = "Admin setup required to edit connection config files.";
-	                ce.statusEl.className = "small";
-	            }
+		            if (ce.statusEl) {
+		                ce.statusEl.textContent = "User initialization required to edit connection config files.";
+		                ce.statusEl.className = "small";
+		            }
 	            connEditorSetEnabled(false);
 	        }
 	    } else if (USER_LOGGED_IN) {
@@ -7951,13 +7988,13 @@ function enableAdminFeatures() {
     if (reloadBtn && !reloadBtn.dataset.reloading) reloadBtn.disabled = false;
 }
 
-function showAdminLogin() {
-    if (!ADMIN_CONFIGURED) {
-        openAdminModal("setup");
-    } else {
-        openAdminModal("login");
-    }
-}
+	function showAdminLogin() {
+	    if (!ADMIN_CONFIGURED) {
+	        openAdminModal("init");
+	    } else {
+	        openAdminModal("login");
+	    }
+	}
 
 async function adminLogout() {
     try {
@@ -12161,10 +12198,10 @@ window.addEventListener("load", startAutoRefresh);
 			                cleanup_expired_admin_sessions();
 			                json resp;
 			                // Backwards-compatible admin status (editor+).
-			                resp["configured"] = (g_userStoreConfigured || g_adminConfigured);
+			                resp["configured"] = g_userStoreConfigured;
 			                resp["logged_in"]  = is_admin_request(req);
 			                resp["legacy_admin_auth_present"] = g_adminAuthFilePresent;
-			                resp["legacy_admin_auth_configured"] = g_adminConfigured;
+			                resp["legacy_admin_auth_configured"] = g_legacyAdminConfigured;
 			                resp["legacy_admin_auth_error"] = g_adminAuthLoadError.empty() ? json(nullptr) : json(g_adminAuthLoadError);
 			                // New unified auth status (any role).
 			                AdminSessionInfo sess;
@@ -12217,100 +12254,10 @@ window.addEventListener("load", startAutoRefresh);
 		                res.set_content(resp.dump(2), "application/json");
 		            });
 
-            // POST /auth/setup  (first-time password set)
-            // Body: { "password": "...", "confirm": "..." }
-	            svr.Post("/auth/setup", [&, adminAuthPath](const httplib::Request &req,
-	                                                       httplib::Response &res)
-	            {
-	                json resp;
-
-	                if (g_userStoreConfigured) {
-	                    resp["ok"] = false;
-	                    resp["error"] = "User store is already initialized. Use /auth/login.";
-	                    res.status = 400;
-	                    res.set_content(resp.dump(2), "application/json");
-	                    return;
-	                }
-
-	                if (g_adminConfigured) {
-	                    resp["ok"] = false;
-	                    resp["error"] = "Admin password is already configured.";
-	                    res.status = 400;
-                    res.set_content(resp.dump(2), "application/json");
-                    return;
-                }
-
-                try {
-                    json body = json::parse(req.body);
-                    std::string pw  = body.value("password", std::string{});
-                    std::string pw2 = body.value("confirm", std::string{});
-
-                    if (pw.empty()) {
-                        resp["ok"] = false;
-                        resp["error"] = "Password must not be empty.";
-                        res.status = 400;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
-                    if (pw != pw2) {
-                        resp["ok"] = false;
-                        resp["error"] = "Passwords do not match.";
-                        res.status = 400;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
-
-                    std::string salt;
-                    salt.resize(16);
-                    if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]),
-                                   static_cast<int>(salt.size())) != 1) {
-                        resp["ok"] = false;
-                        resp["error"] = "Failed to generate random salt.";
-                        res.status = 500;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
-
-                    std::string hash_hex;
-                    if (!pbkdf2_sha256_hex(pw, salt, 100000, hash_hex)) {
-                        resp["ok"] = false;
-                        resp["error"] = "PBKDF2 hashing failed.";
-                        res.status = 500;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
-
-                    std::string salt_hex = to_hex(
-                        reinterpret_cast<const uint8_t*>(salt.data()),
-                        salt.size()
-                    );
-
-                    if (!save_admin_auth(adminAuthPath, salt_hex, hash_hex)) {
-                        resp["ok"] = false;
-                        resp["error"] = "Failed to save admin_auth.json.";
-                        res.status = 500;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
-
-                    g_adminAuth.salt_hex = salt_hex;
-                    g_adminAuth.hash_hex = hash_hex;
-                    g_adminConfigured = true;
-
-                    resp["ok"] = true;
-                    res.set_content(resp.dump(2), "application/json");
-                } catch (const std::exception &ex) {
-                    resp["ok"] = false;
-                    resp["error"] = std::string("Invalid JSON: ") + ex.what();
-                    res.status = 400;
-                    res.set_content(resp.dump(2), "application/json");
-                }
-            });
-
-	            // POST /auth/login
-	            // Body (preferred): { "username": "...", "password": "..." }
-	            // Legacy: { "password": "..." } (only when there is exactly one user, or when using admin_auth.json)
-	            svr.Post("/auth/login", [&](const httplib::Request &req, httplib::Response &res) {
+		            // POST /auth/login
+		            // Body (preferred): { "username": "...", "password": "..." }
+		            // Legacy: username may be omitted only when there is exactly one user.
+		            svr.Post("/auth/login", [&](const httplib::Request &req, httplib::Response &res) {
 	                json resp;
 	                try {
 	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
@@ -12386,50 +12333,13 @@ window.addEventListener("load", startAutoRefresh);
 	                        }
 
 	                        role = normalize_auth_role(record->role);
-	                    } else {
-	                        // Legacy single-admin password flow (admin_auth.json)
-	                        if (!g_adminConfigured) {
-	                            resp["ok"] = false;
-	                            resp["error"] = "Admin password is not configured. Use /auth/init or /auth/setup.";
-	                            res.status = 400;
-	                            res.set_content(resp.dump(2), "application/json");
-	                            return;
-	                        }
-
-	                        // decode salt_hex back to bytes
-	                        std::string salt_bytes;
-	                        if (g_adminAuth.salt_hex.size() % 2 != 0) {
-	                            resp["ok"] = false;
-	                            resp["error"] = "Invalid salt_hex in admin_auth.json";
-	                            res.status = 500;
-	                            res.set_content(resp.dump(2), "application/json");
-	                            return;
-	                        }
-	                        salt_bytes.resize(g_adminAuth.salt_hex.size() / 2);
-	                        for (size_t i = 0; i < salt_bytes.size(); ++i) {
-	                            std::string byteStr = g_adminAuth.salt_hex.substr(i * 2, 2);
-	                            salt_bytes[i] = static_cast<char>(std::stoi(byteStr, nullptr, 16));
-	                        }
-
-	                        std::string hash_hex;
-	                        if (!pbkdf2_sha256_hex(pw, salt_bytes, 100000, hash_hex)) {
-	                            resp["ok"] = false;
-	                            resp["error"] = "PBKDF2 hashing failed.";
-	                            res.status = 500;
-	                            res.set_content(resp.dump(2), "application/json");
-	                            return;
-	                        }
-	                        if (hash_hex.size() != g_adminAuth.hash_hex.size() ||
-	                            CRYPTO_memcmp(hash_hex.data(), g_adminAuth.hash_hex.data(), hash_hex.size()) != 0) {
-	                            resp["ok"] = false;
-	                            resp["error"] = "Invalid password.";
-	                            res.status = 403;
-	                            res.set_content(resp.dump(2), "application/json");
-	                            return;
-	                        }
-	                        if (username.empty()) username = "admin";
-	                        role = "admin";
-	                    }
+		                    } else {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Not initialized. Use /auth/init to create the first admin user.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
 
 	                    std::string token = random_token_hex(32);
 	                    auto now = std::chrono::system_clock::now();
@@ -12466,63 +12376,81 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            });
 
-		            // POST /auth/init  (first-time user store setup)
-		            // Body: { "username": "...", "password": "...", "timeoutMinutes": 0 }
-		            svr.Post("/auth/init", [&](const httplib::Request &req, httplib::Response &res) {
-		                json resp;
-		                try {
-		                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-		                    load_passwords_store(passwordsPath);
-		                    if (g_userStoreConfigured) {
+			            // POST /auth/init  (first-time user store setup)
+			            // Body: { "username": "...", "password": "...", "confirm": "...", "timeoutMinutes": 0, "legacy_password": "..." }
+			            svr.Post("/auth/init", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                try {
+			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    load_passwords_store(passwordsPath);
+			                    if (g_userStoreConfigured) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Already initialized.";
+			                        res.status = 409;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+
+			                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+			                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
+			                    const std::string password = body.value("password", std::string{});
+			                    const std::string confirm = body.value("confirm", std::string{});
+			                    const std::string legacyPassword = body.value("legacy_password", std::string{});
+			                    const int timeoutMinutes = std::max(0, body.value("timeoutMinutes", 0));
+
+		                    if (username.empty()) {
 		                        resp["ok"] = false;
-		                        resp["error"] = "Already initialized.";
-		                        res.status = 409;
+		                        resp["error"] = "Invalid username.";
+		                        res.status = 400;
 		                        res.set_content(resp.dump(2), "application/json");
 		                        return;
 		                    }
-		
-		                    // Safety: don't allow initializing a new user store if legacy auth exists,
-		                    // unless the caller is already authenticated as admin (legacy admin or service token).
-		                    // Otherwise a visitor can create a new admin user and effectively lock out the existing admin.
+		                    if (password.size() < 4) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Password too short.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+		                    if (!confirm.empty() && password != confirm) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Passwords do not match.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+
+		                    // If legacy auth exists, require the legacy password to migrate into the new unified store.
 		                    if (g_adminAuthFilePresent) {
-		                        AdminSessionInfo sess;
-		                        const bool authed = get_session_from_request(req, sess);
-		                        const bool isAdmin = authed && (normalize_auth_role(sess.role) == "admin");
-		                        if (!isAdmin) {
+		                        const std::string adminAuthPath = joinPath(configDir, "admin_auth.json");
+		                        load_admin_auth(adminAuthPath);
+		                        if (!g_legacyAdminConfigured) {
 		                            resp["ok"] = false;
-		                            resp["error"] =
-		                              "Legacy admin_auth.json exists. Admin login required to initialize the new user store "
-		                              "(or delete/rename admin_auth.json first).";
+		                            resp["error"] = "Legacy admin_auth.json exists but is invalid. Fix or remove it before initializing.";
+		                            res.status = 400;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                        if (legacyPassword.empty()) {
+		                            resp["ok"] = false;
+		                            resp["error"] = "Legacy password required to migrate existing admin_auth.json.";
+		                            res.status = 400;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                        if (!verify_legacy_admin_password(legacyPassword)) {
+		                            resp["ok"] = false;
+		                            resp["error"] = "Invalid legacy password.";
 		                            res.status = 403;
 		                            res.set_content(resp.dump(2), "application/json");
 		                            return;
 		                        }
 		                    }
 
-		                    json body = json::parse(req.body.empty() ? "{}" : req.body);
-		                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
-		                    const std::string password = body.value("password", std::string{});
-		                    const int timeoutMinutes = std::max(0, body.value("timeoutMinutes", 0));
-
-	                    if (username.empty()) {
-	                        resp["ok"] = false;
-	                        resp["error"] = "Invalid username.";
-	                        res.status = 400;
-	                        res.set_content(resp.dump(2), "application/json");
-	                        return;
-	                    }
-	                    if (password.size() < 4) {
-	                        resp["ok"] = false;
-	                        resp["error"] = "Password too short.";
-	                        res.status = 400;
-	                        res.set_content(resp.dump(2), "application/json");
-	                        return;
-	                    }
-
-	                    // Create first admin user.
-	                    std::string salt(16, '\0');
-	                    if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
-	                        resp["ok"] = false;
+		                    // Create first admin user.
+		                    std::string salt(16, '\0');
+		                    if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
+		                        resp["ok"] = false;
 	                        resp["error"] = "Failed to generate random salt.";
 	                        res.status = 500;
 	                        res.set_content(resp.dump(2), "application/json");
