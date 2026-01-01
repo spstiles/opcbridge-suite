@@ -97,6 +97,8 @@ struct AdminAuthInfo {
 
 static AdminAuthInfo g_adminAuth;
 static bool g_adminConfigured = false;
+static bool g_adminAuthFilePresent = false;
+static std::string g_adminAuthLoadError;
 
 static bool g_userStoreConfigured = false;
 static int g_authTimeoutMinutes = 0; // idle timeout; 0 disables
@@ -1246,7 +1248,10 @@ static std::string random_token_hex(size_t bytes = 32) {
 
 static bool load_admin_auth(const std::string &path) {
     try {
-        if (!fs::exists(path)) {
+        g_adminAuthFilePresent = fs::exists(path);
+        g_adminAuthLoadError.clear();
+
+        if (!g_adminAuthFilePresent) {
             g_adminConfigured = false;
             g_adminAuth = AdminAuthInfo{};
             return true;
@@ -1267,6 +1272,8 @@ static bool load_admin_auth(const std::string &path) {
         }
         return true;
     } catch (const std::exception &ex) {
+        g_adminAuthFilePresent = fs::exists(path);
+        g_adminAuthLoadError = ex.what();
         std::cerr << "[auth] Failed to load admin_auth.json: " << ex.what() << "\n";
         g_adminConfigured = false;
         g_adminAuth = AdminAuthInfo{};
@@ -1533,6 +1540,14 @@ static bool is_user_logged_in(const httplib::Request &req, AdminSessionInfo &out
     if (!get_session_from_request(req, s)) return false;
     // Do not treat the service token as an interactive user session.
     if (s.username == "service") return false;
+    out = s;
+    return true;
+}
+
+static bool is_admin_user_request(const httplib::Request &req, AdminSessionInfo &out) {
+    AdminSessionInfo s;
+    if (!get_session_from_request(req, s)) return false;
+    if (normalize_auth_role(s.role) != "admin") return false;
     out = s;
     return true;
 }
@@ -12141,18 +12156,21 @@ window.addEventListener("load", startAutoRefresh);
 
 	            // ---------- ADMIN AUTH ENDPOINTS ----------
 
-		            // GET /auth/status
-		            svr.Get("/auth/status", [&](const httplib::Request &req, httplib::Response &res) {
-		                cleanup_expired_admin_sessions();
-		                json resp;
-		                // Backwards-compatible admin status (editor+).
-		                resp["configured"] = (g_userStoreConfigured || g_adminConfigured);
-		                resp["logged_in"]  = is_admin_request(req);
-		                // New unified auth status (any role).
-		                AdminSessionInfo sess;
-		                const bool userLoggedIn = is_user_logged_in(req, sess);
-		                resp["user_logged_in"] = userLoggedIn;
-		                resp["user"] = userLoggedIn
+			            // GET /auth/status
+			            svr.Get("/auth/status", [&](const httplib::Request &req, httplib::Response &res) {
+			                cleanup_expired_admin_sessions();
+			                json resp;
+			                // Backwards-compatible admin status (editor+).
+			                resp["configured"] = (g_userStoreConfigured || g_adminConfigured);
+			                resp["logged_in"]  = is_admin_request(req);
+			                resp["legacy_admin_auth_present"] = g_adminAuthFilePresent;
+			                resp["legacy_admin_auth_configured"] = g_adminConfigured;
+			                resp["legacy_admin_auth_error"] = g_adminAuthLoadError.empty() ? json(nullptr) : json(g_adminAuthLoadError);
+			                // New unified auth status (any role).
+			                AdminSessionInfo sess;
+			                const bool userLoggedIn = is_user_logged_in(req, sess);
+			                resp["user_logged_in"] = userLoggedIn;
+			                resp["user"] = userLoggedIn
 		                  ? json::object({{"username", sess.username}, {"role", normalize_auth_role(sess.role)}})
 		                  : json(nullptr);
 		                resp["initialized"] = g_userStoreConfigured;
@@ -12448,25 +12466,43 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            });
 
-	            // POST /auth/init  (first-time user store setup)
-	            // Body: { "username": "...", "password": "...", "timeoutMinutes": 0 }
-	            svr.Post("/auth/init", [&](const httplib::Request &req, httplib::Response &res) {
-	                json resp;
-	                try {
-	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-	                    load_passwords_store(passwordsPath);
-	                    if (g_userStoreConfigured) {
-	                        resp["ok"] = false;
-	                        resp["error"] = "Already initialized.";
-	                        res.status = 409;
-	                        res.set_content(resp.dump(2), "application/json");
-	                        return;
-	                    }
+		            // POST /auth/init  (first-time user store setup)
+		            // Body: { "username": "...", "password": "...", "timeoutMinutes": 0 }
+		            svr.Post("/auth/init", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                try {
+		                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		                    load_passwords_store(passwordsPath);
+		                    if (g_userStoreConfigured) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Already initialized.";
+		                        res.status = 409;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+		
+		                    // Safety: don't allow initializing a new user store if legacy auth exists,
+		                    // unless the caller is already authenticated as admin (legacy admin or service token).
+		                    // Otherwise a visitor can create a new admin user and effectively lock out the existing admin.
+		                    if (g_adminAuthFilePresent) {
+		                        AdminSessionInfo sess;
+		                        const bool authed = get_session_from_request(req, sess);
+		                        const bool isAdmin = authed && (normalize_auth_role(sess.role) == "admin");
+		                        if (!isAdmin) {
+		                            resp["ok"] = false;
+		                            resp["error"] =
+		                              "Legacy admin_auth.json exists. Admin login required to initialize the new user store "
+		                              "(or delete/rename admin_auth.json first).";
+		                            res.status = 403;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                    }
 
-	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
-	                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
-	                    const std::string password = body.value("password", std::string{});
-	                    const int timeoutMinutes = std::max(0, body.value("timeoutMinutes", 0));
+		                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+		                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
+		                    const std::string password = body.value("password", std::string{});
+		                    const int timeoutMinutes = std::max(0, body.value("timeoutMinutes", 0));
 
 	                    if (username.empty()) {
 	                        resp["ok"] = false;
@@ -12536,16 +12572,16 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            });
 
-	            // PUT /auth/timeout  (admin-only)
-	            svr.Put("/auth/timeout", [&](const httplib::Request &req, httplib::Response &res) {
-	                json resp;
-	                AdminSessionInfo sess;
-	                if (!is_user_logged_in(req, sess) || normalize_auth_role(sess.role) != "admin") {
-	                    resp["ok"] = false;
-	                    resp["error"] = "Admin login required.";
-	                    res.status = 403;
-	                    res.set_content(resp.dump(2), "application/json");
-	                    return;
+		            // PUT /auth/timeout  (admin-only)
+		            svr.Put("/auth/timeout", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                AdminSessionInfo sess;
+		                if (!is_admin_user_request(req, sess)) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Admin login required.";
+		                    res.status = 403;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
 	                }
 	                try {
 	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
@@ -12576,16 +12612,16 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            });
 
-	            // POST /auth/users  (admin-only)
-	            svr.Post("/auth/users", [&](const httplib::Request &req, httplib::Response &res) {
-	                json resp;
-	                AdminSessionInfo sess;
-	                if (!is_user_logged_in(req, sess) || normalize_auth_role(sess.role) != "admin") {
-	                    resp["ok"] = false;
-	                    resp["error"] = "Admin login required.";
-	                    res.status = 403;
-	                    res.set_content(resp.dump(2), "application/json");
-	                    return;
+		            // POST /auth/users  (admin-only)
+		            svr.Post("/auth/users", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                AdminSessionInfo sess;
+		                if (!is_admin_user_request(req, sess)) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Admin login required.";
+		                    res.status = 403;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
 	                }
 	                try {
 	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
@@ -12664,16 +12700,16 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            });
 
-	            // DELETE /auth/users/<username>  (admin-only)
-	            svr.Delete(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
-	                json resp;
-	                AdminSessionInfo sess;
-	                if (!is_user_logged_in(req, sess) || normalize_auth_role(sess.role) != "admin") {
-	                    resp["ok"] = false;
-	                    resp["error"] = "Admin login required.";
-	                    res.status = 403;
-	                    res.set_content(resp.dump(2), "application/json");
-	                    return;
+		            // DELETE /auth/users/<username>  (admin-only)
+		            svr.Delete(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                AdminSessionInfo sess;
+		                if (!is_admin_user_request(req, sess)) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Admin login required.";
+		                    res.status = 403;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
 	                }
 	                try {
 	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
