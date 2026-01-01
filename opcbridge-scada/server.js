@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const child_process = require('child_process');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -67,6 +68,18 @@ const UI_USER = String(process.env.OPCBRIDGE_SCADA_UI_USER || SECRETS.ui_user ||
 const UI_PASSWORD = String(process.env.OPCBRIDGE_SCADA_UI_PASSWORD || SECRETS.ui_password || '').trim();
 // Security disabled: SCADA UI does not require authentication.
 const UI_AUTH_ENABLED = false;
+
+const SYSTEMD_ENABLED = String(process.env.OPCBRIDGE_SCADA_SYSTEMD || 'true').trim().toLowerCase() === 'true';
+const SYSTEMD_UNIT = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNIT || 'opcbridge.service').trim();
+const SYSTEMD_DROPIN_DIR = String(
+  process.env.OPCBRIDGE_SCADA_SYSTEMD_DROPIN_DIR ||
+  path.join('/etc/systemd/system', `${SYSTEMD_UNIT}.d`)
+).trim();
+const SYSTEMD_DROPIN_NAME = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_DROPIN_NAME || '20-opcbridge-scada.conf').trim();
+const SYSTEMD_DROPIN_PATH = path.join(SYSTEMD_DROPIN_DIR, SYSTEMD_DROPIN_NAME);
+
+const DEFAULT_OPCBRIDGE_BIN = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_BIN || '/opt/opcbridge-suite/bin/opcbridge').trim();
+const DEFAULT_OPCBRIDGE_CONFIG_DIR = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_CONFIG_DIR || '/etc/opcbridge').trim();
 
 const defaultConfig = {
   listen: { host: '0.0.0.0', port: 3010 },
@@ -213,6 +226,215 @@ function sendJson(res, status, obj) {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store'
   }, JSON.stringify(obj, null, 2));
+}
+
+function parseCmdTokens(cmdline) {
+  const s = String(cmdline || '');
+  const out = [];
+  let cur = '';
+  let inSingle = false;
+  let inDouble = false;
+  let esc = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) {
+      cur += ch;
+      esc = false;
+      continue;
+    }
+    if (ch === '\\') {
+      esc = true;
+      continue;
+    }
+    if (inSingle) {
+      if (ch === "'") inSingle = false;
+      else cur += ch;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"') inDouble = false;
+      else cur += ch;
+      continue;
+    }
+    if (ch === "'") { inSingle = true; continue; }
+    if (ch === '"') { inDouble = true; continue; }
+    if (/\s/.test(ch)) {
+      if (cur) out.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+function buildOpcbridgeExecStart(settings) {
+  const bin = String(settings?.bin || DEFAULT_OPCBRIDGE_BIN).trim() || DEFAULT_OPCBRIDGE_BIN;
+  const configDir = String(settings?.config_dir || DEFAULT_OPCBRIDGE_CONFIG_DIR).trim() || DEFAULT_OPCBRIDGE_CONFIG_DIR;
+
+  const enableHttp = Boolean(settings?.http_enabled);
+  const enableWs = Boolean(settings?.ws_enabled);
+  const enableOpcua = Boolean(settings?.opcua_enabled);
+  const enableMqtt = Boolean(settings?.mqtt_enabled);
+
+  const httpPort = Number(settings?.http_port);
+  const wsPort = Number(settings?.ws_port);
+  const opcuaPort = Number(settings?.opcua_port);
+
+  const args = [];
+  args.push(bin);
+  args.push('--config', configDir);
+  if (enableHttp) {
+    args.push('--http');
+    if (Number.isFinite(httpPort) && httpPort > 0) args.push('--http-port', String(Math.trunc(httpPort)));
+  }
+  if (enableWs) {
+    args.push('--ws');
+    if (Number.isFinite(wsPort) && wsPort > 0) args.push('--ws-port', String(Math.trunc(wsPort)));
+  }
+  if (enableOpcua) {
+    args.push('--opcua');
+    if (Number.isFinite(opcuaPort) && opcuaPort > 0) args.push('--opcua-port', String(Math.trunc(opcuaPort)));
+  }
+  if (enableMqtt) {
+    args.push('--mqtt');
+  }
+
+  // systemd ExecStart uses a single line; avoid quoting unless necessary.
+  return args.join(' ');
+}
+
+function loadOpcbridgeSystemdSettings() {
+  const defaults = {
+    unit: SYSTEMD_UNIT,
+    dropin_path: SYSTEMD_DROPIN_PATH,
+    bin: DEFAULT_OPCBRIDGE_BIN,
+    config_dir: DEFAULT_OPCBRIDGE_CONFIG_DIR,
+    http_enabled: true,
+    http_port: 8080,
+    ws_enabled: true,
+    ws_port: 8090,
+    opcua_enabled: true,
+    opcua_port: 4840,
+    mqtt_enabled: false
+  };
+
+  if (!SYSTEMD_ENABLED) return { ok: true, enabled: false, settings: defaults };
+
+  try {
+    if (!fs.existsSync(SYSTEMD_DROPIN_PATH)) {
+      return { ok: true, enabled: true, settings: defaults, exists: false };
+    }
+
+    const raw = fs.readFileSync(SYSTEMD_DROPIN_PATH, 'utf8');
+    const lines = String(raw || '').split(/\r?\n/);
+    const execLines = lines
+      .map((l) => String(l || '').trim())
+      .filter((l) => l.toLowerCase().startsWith('execstart=') && l !== 'ExecStart=' && l !== 'execstart=');
+
+    const last = execLines.length ? execLines[execLines.length - 1] : '';
+    const cmd = last.replace(/^execstart=/i, '').trim();
+    if (!cmd) return { ok: true, enabled: true, settings: defaults, exists: true };
+
+    const tokens = parseCmdTokens(cmd);
+    const s = { ...defaults };
+    s.bin = tokens[0] || s.bin;
+
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (t === '--config') { s.config_dir = tokens[i + 1] || s.config_dir; i += 1; continue; }
+      if (t === '--http') { s.http_enabled = true; continue; }
+      if (t === '--http-port') { s.http_port = Number(tokens[i + 1] || s.http_port); i += 1; continue; }
+      if (t === '--ws') { s.ws_enabled = true; continue; }
+      if (t === '--ws-port') { s.ws_port = Number(tokens[i + 1] || s.ws_port); i += 1; continue; }
+      if (t === '--opcua') { s.opcua_enabled = true; continue; }
+      if (t === '--opcua-port') { s.opcua_port = Number(tokens[i + 1] || s.opcua_port); i += 1; continue; }
+      if (t === '--mqtt') { s.mqtt_enabled = true; continue; }
+    }
+
+    // If a flag isn't present in the drop-in, treat it as disabled.
+    s.http_enabled = tokens.includes('--http');
+    s.ws_enabled = tokens.includes('--ws');
+    s.opcua_enabled = tokens.includes('--opcua');
+    s.mqtt_enabled = tokens.includes('--mqtt');
+
+    return { ok: true, enabled: true, settings: s, exists: true };
+  } catch (err) {
+    return { ok: false, enabled: true, error: String(err.message || err), settings: defaults };
+  }
+}
+
+function writeOpcbridgeSystemdDropIn(settings) {
+  if (!SYSTEMD_ENABLED) {
+    return { ok: false, error: 'Systemd management disabled in opcbridge-scada.' };
+  }
+
+  const execStart = buildOpcbridgeExecStart(settings);
+  const content =
+`# Managed by opcbridge-scada
+[Service]
+ExecStart=
+ExecStart=${execStart}
+`;
+
+  const inst = installSystemdDropIn(content);
+  if (!inst.ok) return { ok: false, error: inst.error || 'Failed to install drop-in.', ...inst };
+  return { ok: true, dropin_path: SYSTEMD_DROPIN_PATH, content, exec_start: execStart, ...inst };
+}
+
+function runSystemctl(args) {
+  const a = Array.isArray(args) ? args.map((x) => String(x)) : [];
+  const isRoot = (typeof process.getuid === 'function') ? (process.getuid() === 0) : false;
+  const cmd = isRoot ? 'systemctl' : 'sudo';
+  const cmdArgs = isRoot ? a : ['-n', 'systemctl', ...a];
+  const r = child_process.spawnSync(cmd, cmdArgs, { encoding: 'utf8' });
+  return {
+    ok: r.status === 0,
+    status: r.status,
+    stdout: String(r.stdout || ''),
+    stderr: String(r.stderr || '')
+  };
+}
+
+function installSystemdDropIn(content) {
+  if (!SYSTEMD_ENABLED) {
+    return { ok: false, error: 'Systemd management disabled in opcbridge-scada.' };
+  }
+
+  const isRoot = (typeof process.getuid === 'function') ? (process.getuid() === 0) : false;
+  const tmpDir = '/tmp';
+  const tmpPath = path.join(tmpDir, `opcbridge-scada-dropin-${process.pid}-${Date.now()}.conf`);
+
+  try {
+    fs.writeFileSync(tmpPath, content, { encoding: 'utf8', mode: 0o644 });
+  } catch (err) {
+    return { ok: false, error: `Failed to write temp drop-in: ${String(err.message || err)}`, tmp_path: tmpPath };
+  }
+
+  try {
+    if (isRoot) {
+      fs.mkdirSync(SYSTEMD_DROPIN_DIR, { recursive: true });
+      fs.writeFileSync(SYSTEMD_DROPIN_PATH, content, { encoding: 'utf8', mode: 0o644 });
+      return { ok: true, dropin_path: SYSTEMD_DROPIN_PATH, installed_via: 'root_write' };
+    }
+
+    // Use `install -D` under sudo to create the directory and place the file.
+    const r = child_process.spawnSync('sudo', ['-n', '/usr/bin/install', '-D', '-m', '0644', tmpPath, SYSTEMD_DROPIN_PATH], { encoding: 'utf8' });
+    const ok = r.status === 0;
+    return {
+      ok,
+      dropin_path: SYSTEMD_DROPIN_PATH,
+      installed_via: 'sudo_install',
+      status: r.status,
+      stdout: String(r.stdout || ''),
+      stderr: String(r.stderr || ''),
+      tmp_path: tmpPath
+    };
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+  }
 }
 
 function contentTypeFor(filePath) {
@@ -377,7 +599,14 @@ async function proxy(req, res, target, prefixName) {
     'Accept': req.headers['accept'] || '*/*'
   };
 
-  if (prefixName === 'opcbridge' && ADMIN_TOKEN) {
+  // Forward browser cookies to opcbridge so cookie-based auth can work cross-app.
+  if (req.headers['cookie']) {
+    headers['Cookie'] = String(req.headers['cookie']);
+  }
+
+  // For most opcbridge requests we inject the admin token (server-side secret) so the browser never sees it.
+  // But for /auth/* we must NOT inject it, otherwise every user looks "logged in" (service token would satisfy auth).
+  if (prefixName === 'opcbridge' && ADMIN_TOKEN && !upstreamPathname.startsWith('/auth/')) {
     headers['X-Admin-Token'] = ADMIN_TOKEN;
   }
 
@@ -416,11 +645,14 @@ async function proxy(req, res, target, prefixName) {
   };
 
   const upstream = client.request(opts, (up) => {
-    res.writeHead(up.statusCode || 502, {
+    const outHeaders = {
       'Content-Type': up.headers['content-type'] || 'application/octet-stream',
       'Cache-Control': 'no-store',
       'Permissions-Policy': 'geolocation=(), microphone=(), camera=()'
-    });
+    };
+    // Allow opcbridge to set cookies (SSO).
+    if (up.headers['set-cookie']) outHeaders['Set-Cookie'] = up.headers['set-cookie'];
+    res.writeHead(up.statusCode || 502, outHeaders);
     up.pipe(res);
   });
 
@@ -441,6 +673,57 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://local');
 
   if (!requireUiAuth(req, res)) return;
+
+  // Check if an MQTT CA certificate exists on opcbridge (admin-gated).
+  if (url.pathname === '/api/opcbridge/cert/status') {
+    if (!ADMIN_TOKEN) {
+      sendJson(res, 400, { ok: false, error: 'opcbridge admin token not configured on scada server.' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const { scheme, host, port } = cfg.opcbridge;
+    const client = scheme === 'https' ? https : http;
+
+    const opts = {
+      host,
+      port,
+      method: 'GET',
+      path: '/config/cert/download',
+      headers: {
+        'X-Admin-Token': ADMIN_TOKEN,
+        'Accept': 'application/x-pem-file'
+      },
+      timeout: 5000
+    };
+
+    const upstream = client.request(opts, (up) => {
+      const status = up.statusCode || 502;
+      let size = 0;
+      up.on('data', (chunk) => { size += chunk.length; });
+      up.on('end', () => {
+        if (status === 200) {
+          sendJson(res, 200, { ok: true, exists: true, size_bytes: size });
+          return;
+        }
+        if (status === 404) {
+          sendJson(res, 200, { ok: true, exists: false });
+          return;
+        }
+
+        // Pass through the error body (likely JSON)
+        sendJson(res, 200, { ok: false, exists: false, status });
+      });
+    });
+
+    upstream.on('timeout', () => upstream.destroy(new Error('upstream timeout')));
+    upstream.on('error', (err) => sendJson(res, 502, { ok: false, error: String(err.message || err) }));
+    upstream.end();
+    return;
+  }
 
   if (url.pathname === '/api/config') {
     sendJson(res, 200, {
@@ -483,6 +766,116 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  // Upload MQTT CA certificate to opcbridge (raw body -> opcbridge /config/cert/upload?token=WRITE_TOKEN)
+  // Tokens are never exposed to the browser.
+  if (url.pathname === '/api/opcbridge/cert/upload') {
+    if (!ADMIN_TOKEN) {
+      sendJson(res, 400, { ok: false, error: 'opcbridge admin token not configured on scada server.' });
+      return;
+    }
+    if (!WRITE_TOKEN) {
+      sendJson(res, 400, { ok: false, error: 'opcbridge write token not configured on scada server.' });
+      return;
+    }
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      const bodyBuf = await readBody(req, 2 * 1024 * 1024);
+      if (!bodyBuf || bodyBuf.length < 1) {
+        sendJson(res, 400, { ok: false, error: 'Empty upload.' });
+        return;
+      }
+
+      const { scheme, host, port } = cfg.opcbridge;
+      const client = scheme === 'https' ? https : http;
+
+      const upstreamPath = `/config/cert/upload?token=${encodeURIComponent(WRITE_TOKEN)}`;
+      const headers = {
+        'Content-Type': req.headers['content-type'] || 'application/x-pem-file',
+        'Content-Length': String(bodyBuf.length),
+        'X-Admin-Token': ADMIN_TOKEN,
+        'Accept': 'application/json'
+      };
+
+      const opts = {
+        host,
+        port,
+        method: 'POST',
+        path: upstreamPath,
+        headers,
+        timeout: 8000
+      };
+
+      const upstream = client.request(opts, (up) => {
+        const chunks = [];
+        up.on('data', (c) => chunks.push(c));
+        up.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data = null;
+          try { data = JSON.parse(raw); } catch { data = { ok: false, error: raw }; }
+          sendJson(res, up.statusCode || 502, data);
+        });
+      });
+
+      upstream.on('timeout', () => upstream.destroy(new Error('upstream timeout')));
+      upstream.on('error', (err) => sendJson(res, 502, { ok: false, error: String(err.message || err) }));
+      upstream.end(bodyBuf);
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/opcbridge/systemd') {
+    if (!SYSTEMD_ENABLED) {
+      sendJson(res, 200, { ok: true, enabled: false, message: 'Systemd management disabled in opcbridge-scada.' });
+      return;
+    }
+
+    if (req.method === 'GET') {
+      const data = loadOpcbridgeSystemdSettings();
+      sendJson(res, data.ok ? 200 : 500, data);
+      return;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const bodyBuf = await readBody(req);
+        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+        const settings = parsed && typeof parsed === 'object' ? (parsed.settings || parsed) : {};
+
+        const wr = writeOpcbridgeSystemdDropIn(settings);
+        if (!wr.ok) {
+          sendJson(res, 400, wr);
+          return;
+        }
+
+        const daemonReload = runSystemctl(['daemon-reload']);
+        if (!daemonReload.ok) {
+          sendJson(res, 500, { ok: false, error: 'systemctl daemon-reload failed', ...wr, daemonReload });
+          return;
+        }
+
+        const restart = runSystemctl(['restart', SYSTEMD_UNIT]);
+        if (!restart.ok) {
+          sendJson(res, 500, { ok: false, error: `systemctl restart ${SYSTEMD_UNIT} failed`, ...wr, restart });
+          return;
+        }
+
+        sendJson(res, 200, { ok: true, ...wr, daemonReload, restart });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+
     sendJson(res, 405, { ok: false, error: 'Method not allowed' });
     return;
   }

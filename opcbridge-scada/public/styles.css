@@ -80,6 +80,8 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table th, .table td { padding: 8px 10px; border-bottom: 1px solid rgba(232,238,252,.08); white-space: nowrap; }
 .table th { text-align: left; color: var(--muted); background: rgba(255,255,255,.03); position: sticky; top: 0; }
+.table th.sortable { cursor: pointer; user-select: none; }
+.table th.sortable:hover { text-decoration: underline; }
 
 #workspaceChildrenTable tbody tr:hover > td { background: rgba(255,255,255,.04); }
 #workspaceChildrenTable tbody tr.is-selected > td { background: rgba(90,130,255,.18); }
@@ -282,6 +284,21 @@ details.advanced summary {
 .inline-check {
   transform: scale(1.2);
   transform-origin: left;
+}
+
+.check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.check-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  white-space: nowrap;
 }
 
 

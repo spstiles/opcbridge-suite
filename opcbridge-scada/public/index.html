@@ -12,6 +12,7 @@
     <div class="brand">opcbridge SCADA</div>
     <div class="status" id="statusLine">Loading…</div>
     <div class="status" id="buildLine"></div>
+    <div class="status" id="authLine"></div>
 
     <nav class="tabs" id="tabs">
       <button data-tab="overview" class="tab is-active">Overview</button>
@@ -135,7 +136,149 @@
           </div>
         </div>
       </div>
-    </section>
+
+      <div class="card" style="margin-top: 14px;">
+        <div class="card-title">opcbridge Service (systemd drop-in)</div>
+        <div class="hint">Writes a drop-in override for <code>opcbridge.service</code> to enable/disable endpoints and ports, then restarts the service.</div>
+        <div class="card-body">
+          <div class="form" style="max-width: 720px;">
+            <div class="form-row">
+              <label>Binary</label>
+              <input id="svcOpcbridgeBin" type="text" placeholder="/opt/opcbridge-suite/bin/opcbridge" />
+            </div>
+            <div class="form-row">
+              <label>Config Dir</label>
+              <input id="svcOpcbridgeConfigDir" type="text" placeholder="/etc/opcbridge" />
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-row">
+              <label>Enable</label>
+              <div class="row-actions" style="gap: 14px; justify-content: flex-start;">
+                <label style="display:flex; align-items:center; gap:6px;"><input id="svcHttpEnabled" type="checkbox" /> HTTP</label>
+                <label style="display:flex; align-items:center; gap:6px;"><input id="svcWsEnabled" type="checkbox" /> WebSocket</label>
+                <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaEnabled" type="checkbox" /> OPC UA</label>
+                <label style="display:flex; align-items:center; gap:6px;"><input id="svcMqttEnabled" type="checkbox" /> MQTT</label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label>HTTP Port</label>
+              <input id="svcHttpPort" type="number" min="1" max="65535" step="1" />
+            </div>
+            <div class="form-row">
+              <label>WS Port</label>
+              <input id="svcWsPort" type="number" min="1" max="65535" step="1" />
+            </div>
+            <div class="form-row">
+              <label>OPC UA Port</label>
+              <input id="svcOpcuaPort" type="number" min="1" max="65535" step="1" />
+            </div>
+
+            <div class="form-row">
+              <label></label>
+              <div class="row-actions">
+                <button class="btn" id="svcReloadBtn" type="button">Reload</button>
+                <button class="btn primary" id="svcApplyBtn" type="button">Apply (write drop-in + restart)</button>
+              </div>
+            </div>
+            <div class="hint mono" id="svcStatus"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 14px;">
+        <div class="card-title">MQTT TLS CA Certificate</div>
+        <div class="hint">Uploads a <code>ca.crt</code> file to opcbridge (used for MQTT TLS).</div>
+        <div class="card-body">
+          <div class="form" style="max-width: 720px;">
+            <div class="hint mono" id="mqttCaCurrentStatus"></div>
+            <div class="form-row">
+              <label>CA File</label>
+              <input id="mqttCaFile" type="file" accept=".crt,.pem,.cer,application/x-pem-file" />
+            </div>
+            <div class="form-row">
+              <label></label>
+              <div class="row-actions">
+                <button class="btn" id="mqttCaDownloadBtn" type="button">Download current</button>
+                <button class="btn primary" id="mqttCaUploadBtn" type="button">Upload</button>
+              </div>
+            </div>
+            <div class="hint mono" id="mqttCaStatus"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 14px;">
+        <div class="card-title">Users & Roles (opcbridge)</div>
+        <div class="hint">User store lives in <code>/etc/opcbridge/passwords.jsonc</code> (managed via opcbridge <code>/auth/*</code> APIs). Requires admin role for changes.</div>
+        <div class="card-body">
+          <div class="hint mono" id="usersStatusLine">Loading…</div>
+
+          <div id="usersInitWrap" style="display:none; margin-top: 10px;">
+            <div class="divider"></div>
+            <div class="hint">First-time setup (creates the initial admin user).</div>
+            <div class="form" style="max-width: 520px;">
+              <div class="form-row"><label>Admin Username</label><input id="usersInitUsername" type="text" autocomplete="username" placeholder="admin" /></div>
+              <div class="form-row"><label>Admin Password</label><input id="usersInitPassword" type="password" autocomplete="new-password" /></div>
+              <div class="form-row"><label>Session Timeout (min)</label><input id="usersInitTimeout" type="number" min="0" step="1" placeholder="0" /></div>
+              <div class="form-row"><label></label>
+                <div class="row-actions">
+                  <button class="btn primary" id="usersInitBtn" type="button">Initialize</button>
+                </div>
+              </div>
+              <div class="hint mono" id="usersInitStatus"></div>
+            </div>
+          </div>
+
+          <div id="usersManageWrap" style="display:none; margin-top: 10px;">
+            <div class="divider"></div>
+            <div class="form" style="max-width: 520px;">
+              <div class="form-row"><label>Session Timeout (min)</label><input id="usersTimeoutMinutes" type="number" min="0" step="1" placeholder="0" /></div>
+              <div class="form-row"><label></label>
+                <div class="row-actions">
+                  <button class="btn" id="usersRefreshBtn" type="button">Refresh</button>
+                  <button class="btn primary" id="usersTimeoutSaveBtn" type="button">Save Timeout</button>
+                </div>
+              </div>
+              <div class="hint mono" id="usersTimeoutStatus"></div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="row-actions" style="margin-bottom: 8px;">
+              <div class="hint">Users</div>
+              <div class="spacer"></div>
+            </div>
+            <div class="table-wrap">
+              <table class="table" id="usersTable">
+                <thead><tr><th>Username</th><th>Role</th><th>Actions</th></tr></thead>
+                <tbody id="usersTbody"></tbody>
+              </table>
+            </div>
+
+            <div class="divider"></div>
+            <div class="hint">Add user</div>
+            <div class="form" style="max-width: 520px;">
+              <div class="form-row"><label>Username</label><input id="usersAddUsername" type="text" autocomplete="username" /></div>
+              <div class="form-row"><label>Password</label><input id="usersAddPassword" type="password" autocomplete="new-password" /></div>
+              <div class="form-row"><label>Role</label>
+                <select id="usersAddRole">
+                  <option value="viewer">viewer</option>
+                  <option value="operator">operator</option>
+                  <option value="editor">editor</option>
+                  <option value="admin">admin</option>
+                </select>
+              </div>
+              <div class="form-row"><label></label>
+                <div class="row-actions">
+                  <button class="btn primary" id="usersAddBtn" type="button">Add User</button>
+                </div>
+              </div>
+              <div class="hint mono" id="usersAddStatus"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
     <section id="tab-alarms" class="panel">
@@ -258,8 +401,14 @@
             <div class="form-row"><label>PLC Tag</label><input id="editTagPlc" type="text" placeholder="Pump1.Running" /></div>
             <div class="form-row"><label>Datatype</label><select id="editTagDatatype"></select></div>
             <div class="form-row"><label>Scan (ms)</label><input id="editTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
-            <div class="form-row"><label>Enabled</label><input id="editTagEnabled" type="checkbox" class="inline-check" /></div>
-            <div class="form-row"><label>Writable</label><input id="editTagWritable" type="checkbox" class="inline-check" /></div>
+            <div class="form-row">
+              <label>Options</label>
+              <div class="check-row">
+                <label class="check-pill"><input id="editTagEnabled" type="checkbox" class="inline-check" /> Enabled</label>
+                <label class="check-pill"><input id="editTagWritable" type="checkbox" class="inline-check" /> Writable</label>
+                <label class="check-pill"><input id="editTagMqttAllowed" type="checkbox" class="inline-check" /> MQTT command allowed</label>
+              </div>
+            </div>
             <div class="form-row"><label></label>
               <div class="row-actions">
                 <button class="btn" id="editTagCancelBtn" type="button">Cancel</button>
@@ -337,8 +486,14 @@
           <div class="form-row"><label>PLC Tag</label><input id="newTagPlc" type="text" placeholder="Pump1.Running" /></div>
           <div class="form-row"><label>Datatype</label><select id="newTagDatatype"></select></div>
           <div class="form-row"><label>Scan (ms)</label><input id="newTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
-          <div class="form-row"><label>Enabled</label><input id="newTagEnabled" type="checkbox" class="inline-check" checked /></div>
-          <div class="form-row"><label>Writable</label><input id="newTagWritable" type="checkbox" class="inline-check" /></div>
+          <div class="form-row">
+            <label>Options</label>
+            <div class="check-row">
+              <label class="check-pill"><input id="newTagEnabled" type="checkbox" class="inline-check" checked /> Enabled</label>
+              <label class="check-pill"><input id="newTagWritable" type="checkbox" class="inline-check" /> Writable</label>
+              <label class="check-pill"><input id="newTagMqttAllowed" type="checkbox" class="inline-check" /> MQTT command allowed</label>
+            </div>
+          </div>
           <div class="form-row"><label></label>
             <div class="row-actions">
               <button class="btn" id="newTagCancelBtn" type="button">Cancel</button>
@@ -346,6 +501,29 @@
             </div>
           </div>
           <div class="hint mono" id="newTagStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="loginModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="loginModalTitle">opcbridge Login</div>
+        <button class="btn" id="loginCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint">Cookie-based SSO across SCADA/HMI works when all apps are opened via the same hostname.</div>
+        <div class="form" style="max-width: 520px;">
+          <div class="form-row"><label>Username</label><input id="loginUsername" type="text" autocomplete="username" placeholder="admin" /></div>
+          <div class="form-row"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password" /></div>
+          <div class="form-row"><label></label>
+            <div class="row-actions">
+              <button class="btn" id="loginCancelBtn" type="button">Cancel</button>
+              <button class="btn primary" id="loginOkBtn" type="button">Login</button>
+            </div>
+          </div>
+          <div class="hint mono" id="loginStatus"></div>
         </div>
       </div>
     </div>

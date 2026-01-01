@@ -3,6 +3,7 @@
 const els = {
   statusLine: document.getElementById('statusLine'),
   buildLine: document.getElementById('buildLine'),
+  authLine: document.getElementById('authLine'),
   tabs: document.getElementById('tabs'),
 
   // Overview
@@ -29,6 +30,27 @@ const els = {
   scadaSettingsReloadBtn: document.getElementById('scadaSettingsReloadBtn'),
   scadaSettingsSaveBtn: document.getElementById('scadaSettingsSaveBtn'),
   scadaSettingsStatus: document.getElementById('scadaSettingsStatus'),
+
+  // opcbridge systemd service settings
+  svcOpcbridgeBin: document.getElementById('svcOpcbridgeBin'),
+  svcOpcbridgeConfigDir: document.getElementById('svcOpcbridgeConfigDir'),
+  svcHttpEnabled: document.getElementById('svcHttpEnabled'),
+  svcWsEnabled: document.getElementById('svcWsEnabled'),
+  svcOpcuaEnabled: document.getElementById('svcOpcuaEnabled'),
+  svcMqttEnabled: document.getElementById('svcMqttEnabled'),
+  svcHttpPort: document.getElementById('svcHttpPort'),
+  svcWsPort: document.getElementById('svcWsPort'),
+  svcOpcuaPort: document.getElementById('svcOpcuaPort'),
+  svcReloadBtn: document.getElementById('svcReloadBtn'),
+  svcApplyBtn: document.getElementById('svcApplyBtn'),
+  svcStatus: document.getElementById('svcStatus'),
+
+  // MQTT CA certificate (opcbridge)
+  mqttCaFile: document.getElementById('mqttCaFile'),
+  mqttCaDownloadBtn: document.getElementById('mqttCaDownloadBtn'),
+  mqttCaUploadBtn: document.getElementById('mqttCaUploadBtn'),
+  mqttCaCurrentStatus: document.getElementById('mqttCaCurrentStatus'),
+  mqttCaStatus: document.getElementById('mqttCaStatus'),
 
   // Connections
   connRefreshBtn: document.getElementById('connRefreshBtn'),
@@ -99,6 +121,7 @@ const els = {
   newTagScan: document.getElementById('newTagScan'),
   newTagEnabled: document.getElementById('newTagEnabled'),
   newTagWritable: document.getElementById('newTagWritable'),
+  newTagMqttAllowed: document.getElementById('newTagMqttAllowed'),
   newTagCancelBtn: document.getElementById('newTagCancelBtn'),
   newTagCreateBtn: document.getElementById('newTagCreateBtn'),
   newTagStatus: document.getElementById('newTagStatus'),
@@ -122,6 +145,7 @@ const els = {
   editTagScan: document.getElementById('editTagScan'),
   editTagEnabled: document.getElementById('editTagEnabled'),
   editTagWritable: document.getElementById('editTagWritable'),
+  editTagMqttAllowed: document.getElementById('editTagMqttAllowed'),
   editTagCancelBtn: document.getElementById('editTagCancelBtn'),
   editTagSaveBtn: document.getElementById('editTagSaveBtn'),
   editTagStatus: document.getElementById('editTagStatus'),
@@ -137,11 +161,43 @@ const els = {
   newDevCreateBtn: document.getElementById('newDevCreateBtn'),
   newDevModalCloseBtn: document.getElementById('newDevModalCloseBtn'),
   newDevStatus: document.getElementById('newDevStatus')
+  ,
+  // Auth (opcbridge cookie-based login)
+  loginModal: document.getElementById('loginModal'),
+  loginCloseBtn: document.getElementById('loginCloseBtn'),
+  loginUsername: document.getElementById('loginUsername'),
+  loginPassword: document.getElementById('loginPassword'),
+  loginCancelBtn: document.getElementById('loginCancelBtn'),
+  loginOkBtn: document.getElementById('loginOkBtn'),
+  loginStatus: document.getElementById('loginStatus'),
+
+  // Users (opcbridge auth)
+  usersStatusLine: document.getElementById('usersStatusLine'),
+  usersInitWrap: document.getElementById('usersInitWrap'),
+  usersInitUsername: document.getElementById('usersInitUsername'),
+  usersInitPassword: document.getElementById('usersInitPassword'),
+  usersInitTimeout: document.getElementById('usersInitTimeout'),
+  usersInitBtn: document.getElementById('usersInitBtn'),
+  usersInitStatus: document.getElementById('usersInitStatus'),
+
+  usersManageWrap: document.getElementById('usersManageWrap'),
+  usersRefreshBtn: document.getElementById('usersRefreshBtn'),
+  usersTimeoutMinutes: document.getElementById('usersTimeoutMinutes'),
+  usersTimeoutSaveBtn: document.getElementById('usersTimeoutSaveBtn'),
+  usersTimeoutStatus: document.getElementById('usersTimeoutStatus'),
+  usersTable: document.getElementById('usersTable'),
+  usersTbody: document.getElementById('usersTbody'),
+  usersAddUsername: document.getElementById('usersAddUsername'),
+  usersAddPassword: document.getElementById('usersAddPassword'),
+  usersAddRole: document.getElementById('usersAddRole'),
+  usersAddBtn: document.getElementById('usersAddBtn'),
+  usersAddStatus: document.getElementById('usersAddStatus')
 };
 
 const state = {
   cfg: null,
   auth: null,
+  userAuthTimer: null,
 
   refreshTimer: null,
 
@@ -169,6 +225,7 @@ const state = {
   tagConfigDirty: false,
 
   workspaceConnDirty: new Map(), // pathRel -> connection object
+  workspaceDeletePaths: new Set(), // connection config paths to delete on Save/Save+Reload
 
   // tree
   expanded: new Set(['project:opcbridge', 'folder:connectivity', 'folder:alarms_events']),
@@ -177,7 +234,16 @@ const state = {
   pendingNewDevice: null,
   pendingNewTag: null,
   pendingWorkspaceItem: null,
-  draggedDeviceConnectionId: ''
+  draggedDeviceConnectionId: '',
+
+  // workspace right-pane table (selection + sorting)
+  workspaceChildrenSelRoot: '',
+  workspaceChildrenSel: new Set(), // keys like "connection_id::tag_name"
+  workspaceChildrenLastIndex: -1,
+  workspaceChildrenSort: { key: 'name', dir: 'asc' },
+
+  // auth status cache (opcbridge cookie-based)
+  opcbridgeAuthStatus: null
 };
 
 const DRIVER_LABELS = {
@@ -202,6 +268,15 @@ function labelForDriver(code) {
 function labelForPlcType(code) {
   const k = String(code || '').trim();
   return PLC_TYPE_LABELS[k] || k;
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 
@@ -314,6 +389,24 @@ async function apiPostJson(url, bodyObj) {
   return parsed;
 }
 
+async function apiJson(url, { method, bodyObj } = {}) {
+  const m = String(method || 'GET').toUpperCase();
+  const init = { method: m, headers: { Accept: 'application/json' } };
+  if (m !== 'GET' && m !== 'HEAD') {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(bodyObj || {});
+  }
+  const res = await fetch(url, init);
+  const text = await res.text();
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { parsed = { ok: false, error: text || `HTTP ${res.status}` }; }
+  if (!res.ok) {
+    const msg = parsed?.error || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return parsed;
+}
+
 async function opcbridgeReload() {
   await apiPostJson('/api/opcbridge/reload', {});
 }
@@ -330,6 +423,399 @@ function parseJsonc(text) {
 
 function prettyJson(obj) {
   return JSON.stringify(obj, null, 2) + '\n';
+}
+
+function csvEscape(value) {
+  const s = value == null ? '' : String(value);
+  // RFC4180-ish: quote if contains comma, quote, or newline. Double quotes inside quoted fields.
+  if (!/[,"\r\n]/.test(s)) return s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function toCsv(rows, headers) {
+  const hdr = Array.isArray(headers) ? headers : [];
+  const lines = [];
+  if (hdr.length) lines.push(hdr.map(csvEscape).join(','));
+  (rows || []).forEach((row) => {
+    lines.push(hdr.map((h) => csvEscape(row?.[h])).join(','));
+  });
+  return `${lines.join('\n')}\n`;
+}
+
+function downloadTextFile({ filename, mime, text }) {
+  const blob = new Blob([text], { type: mime || 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'download.txt';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 250);
+}
+
+function isDeleteAction(value) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  return raw === 'delete';
+}
+
+async function downloadConnectivityCsv() {
+  const connItems = state.connFiles.slice().sort((a, b) => String(a?.path || '').localeCompare(String(b?.path || '')));
+  const objs = await Promise.all(connItems.map(async (f) => {
+    const rel = String(f?.path || '').trim();
+    if (!rel) return null;
+    try {
+      const obj = await getConnObjForPath(rel);
+      return { rel, obj };
+    } catch {
+      return { rel, obj: null };
+    }
+  }));
+
+  const headers = [
+    'connection_id',
+    'description',
+    'driver',
+    'driver_label',
+    'gateway',
+    'path',
+    'slot',
+    'plc_type',
+    'plc_type_label',
+    'source_file',
+    'action'
+  ];
+
+  const rows = objs.filter(Boolean).map(({ rel, obj }) => {
+    const cid = String(obj?.connection_id || obj?.id || '') || inferConnectionIdFromPath(rel);
+    const driver = String(obj?.driver || '').trim();
+    const plcType = String(obj?.plc_type || obj?.plcType || '').trim();
+    return {
+      connection_id: cid,
+      description: String(obj?.description || '').trim(),
+      driver,
+      driver_label: labelForDriver(driver),
+      gateway: String(obj?.gateway || '').trim(),
+      path: String(obj?.path || '').trim(),
+      slot: (obj?.slot == null) ? '' : String(obj.slot),
+      plc_type: plcType,
+      plc_type_label: labelForPlcType(plcType),
+      source_file: rel,
+      action: ''
+    };
+  });
+
+  downloadTextFile({
+    filename: 'opcbridge-devices.csv',
+    mime: 'text/csv',
+    text: toCsv(rows, headers)
+  });
+}
+
+function downloadDeviceTagsCsv(connectionId) {
+  const cid = String(connectionId || '').trim();
+  if (!cid) return;
+
+  const tags = getEffectiveTagsAll()
+    .filter((t) => String(t?.connection_id || '') === cid)
+    .slice()
+    .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
+
+  const headers = [
+    'connection_id',
+    'name',
+    'plc_tag_name',
+    'datatype',
+    'scan_ms',
+    'enabled',
+    'writable',
+    'mqtt_command_allowed',
+    'log_event_on_change',
+    'log_periodic_mode',
+    'log_periodic_interval_sec',
+    'action'
+  ];
+
+  const rows = tags.map((t) => ({
+    connection_id: cid,
+    name: String(t?.name || '').trim(),
+    plc_tag_name: String(t?.plc_tag_name || '').trim(),
+    datatype: String(t?.datatype || '').trim(),
+    scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
+    enabled: (t?.enabled !== false) ? 'true' : 'false',
+    writable: (t?.writable === true) ? 'true' : 'false',
+    mqtt_command_allowed: (t?.mqtt_command_allowed === true) ? 'true' : 'false',
+    log_event_on_change: (t?.log_event_on_change === true) ? 'true' : 'false',
+    log_periodic_mode: String(t?.log_periodic_mode || '').trim(),
+    log_periodic_interval_sec: (t?.log_periodic_interval_sec == null) ? '' : String(t.log_periodic_interval_sec),
+    action: ''
+  }));
+
+  const safe = cid.replace(/[^a-z0-9._-]+/gi, '_');
+  downloadTextFile({
+    filename: `opcbridge-tags-${safe}.csv`,
+    mime: 'text/csv',
+    text: toCsv(rows, headers)
+  });
+}
+
+function parseCsv(text) {
+  const input = String(text || '');
+  const rows = [];
+  let row = [];
+  let field = '';
+  let i = 0;
+  let inQuotes = false;
+
+  const pushField = () => {
+    row.push(field);
+    field = '';
+  };
+  const pushRow = () => {
+    // Ignore trailing empty line
+    if (row.length === 1 && String(row[0] || '').trim() === '' && rows.length === 0) return;
+    rows.push(row);
+    row = [];
+  };
+
+  while (i < input.length) {
+    const ch = input[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        const next = input[i + 1];
+        if (next === '"') {
+          field += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i += 1;
+        continue;
+      }
+      field += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+      i += 1;
+      continue;
+    }
+    if (ch === ',') {
+      pushField();
+      i += 1;
+      continue;
+    }
+    if (ch === '\r') {
+      // ignore, handle at \n
+      i += 1;
+      continue;
+    }
+    if (ch === '\n') {
+      pushField();
+      pushRow();
+      i += 1;
+      continue;
+    }
+    field += ch;
+    i += 1;
+  }
+  // Flush last field/row
+  pushField();
+  if (row.some((c) => String(c || '').length > 0)) pushRow();
+
+  if (!rows.length) return { headers: [], records: [] };
+  const headers = rows[0].map((h) => String(h || '').trim());
+  const records = [];
+  rows.slice(1).forEach((cells) => {
+    const obj = {};
+    headers.forEach((h, idx) => {
+      obj[h] = (idx < cells.length) ? cells[idx] : '';
+    });
+    // drop totally empty rows
+    const hasAny = Object.values(obj).some((v) => String(v || '').trim() !== '');
+    if (hasAny) records.push(obj);
+  });
+  return { headers, records };
+}
+
+function parseBoolLoose(value, defaultValue) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return defaultValue;
+  if (raw === 'true' || raw === '1' || raw === 'yes' || raw === 'y' || raw === 'on') return true;
+  if (raw === 'false' || raw === '0' || raw === 'no' || raw === 'n' || raw === 'off') return false;
+  return defaultValue;
+}
+
+function parseIntLoose(value, defaultValue) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return defaultValue;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return defaultValue;
+  return Math.trunc(n);
+}
+
+function normalizeConnRelPath(connectionId, sourceFile) {
+  const cid = String(connectionId || '').trim();
+  if (!cid) return '';
+  const sf = String(sourceFile || '').trim();
+  if (sf && sf.startsWith('connections/') && sf.toLowerCase().endsWith('.json')) return sf;
+  return `connections/${cid}.json`;
+}
+
+async function pickCsvText() {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv,text/csv';
+    input.style.position = 'fixed';
+    input.style.left = '-9999px';
+    input.style.top = '-9999px';
+    document.body.appendChild(input);
+
+    const cleanup = () => {
+      try { input.remove(); } catch { /* ignore */ }
+    };
+
+    input.addEventListener('change', () => {
+      try {
+        const file = input.files && input.files[0];
+        if (!file) { cleanup(); return resolve(''); }
+        const reader = new FileReader();
+        reader.onerror = () => { cleanup(); reject(new Error('Failed to read file.')); };
+        reader.onload = () => { cleanup(); resolve(String(reader.result || '')); };
+        reader.readAsText(file);
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    }, { once: true });
+
+    input.click();
+  });
+}
+
+async function importDevicesCsvIntoWorkspace() {
+  const csvText = await pickCsvText();
+  if (!csvText) return;
+
+  const { records } = parseCsv(csvText);
+  if (!records.length) { setWorkspaceSaveStatus('CSV had no rows.'); return; }
+
+  let staged = 0;
+  let deleted = 0;
+  let skipped = 0;
+  records.forEach((r) => {
+    const connection_id = String(r.connection_id || '').trim();
+    if (!connection_id) { skipped += 1; return; }
+    const relPath = normalizeConnRelPath(connection_id, r.source_file);
+
+    if (isDeleteAction(r.action)) {
+      state.workspaceDeletePaths?.add?.(relPath);
+      state.workspaceConnDirty?.delete?.(relPath);
+      state.connObjCache?.delete?.(relPath);
+      state.connFiles = (state.connFiles || []).filter((f) => String(f?.path || '') !== relPath);
+
+      // Also remove tags belonging to this device.
+      state.tagConfigAll = (state.tagConfigAll || []).filter((t) => String(t?.connection_id || '') !== connection_id);
+      state.tagConfigEdited = new Map();
+      markTagsDirty(true);
+
+      deleted += 1;
+      return;
+    }
+
+    const driver = String(r.driver || '').trim() || 'ab_eip';
+    const plc_type = String(r.plc_type || '').trim() || 'lgx';
+    const gateway = String(r.gateway || '').trim();
+    const pathVal = String(r.path || '').trim() || '1,0';
+    const slot = parseIntLoose(r.slot, 0) || 0;
+    const description = String(r.description || '').trim();
+
+    const obj = { id: connection_id, description, driver, gateway, path: pathVal, slot, plc_type };
+
+    if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
+    state.workspaceConnDirty.set(relPath, obj);
+    state.connObjCache?.set?.(relPath, obj);
+
+    if (!Array.isArray(state.connFiles)) state.connFiles = [];
+    if (!state.connFiles.some((f) => String(f?.path || '') === relPath)) {
+      state.connFiles.push({ kind: 'connection', path: relPath });
+    }
+
+    staged += 1;
+  });
+
+  renderWorkspaceSaveBar();
+  saveWorkspaceDraft();
+  renderWorkspaceTree();
+  setWorkspaceSaveStatus(`Imported devices CSV: staged ${staged} device(s)${deleted ? `, deleted ${deleted}` : ''}${skipped ? `, skipped ${skipped}` : ''}.`);
+}
+
+async function importTagsCsvIntoWorkspace(connectionId) {
+  const cid = String(connectionId || '').trim();
+  if (!cid) return;
+
+  const csvText = await pickCsvText();
+  if (!csvText) return;
+
+  const { records } = parseCsv(csvText);
+  if (!records.length) { setWorkspaceSaveStatus('CSV had no rows.'); return; }
+
+  let upserts = 0;
+  let deleted = 0;
+  let skipped = 0;
+  const all = Array.isArray(state.tagConfigAll) ? state.tagConfigAll.slice() : [];
+
+  records.forEach((r) => {
+    const rowCid = String(r.connection_id || '').trim();
+    const name = String(r.name || '').trim();
+    if (!rowCid || !name) { skipped += 1; return; }
+    if (rowCid !== cid) { skipped += 1; return; }
+
+    const idx = all.findIndex((t) => String(t?.connection_id || '') === rowCid && String(t?.name || '') === name);
+    if (isDeleteAction(r.action)) {
+      if (idx >= 0) {
+        all.splice(idx, 1);
+        deleted += 1;
+      }
+      state.tagConfigEdited?.delete?.(`${rowCid}::${name}`);
+      return;
+    }
+    const base = (idx >= 0) ? { ...(all[idx] || {}) } : { connection_id: rowCid, name };
+
+    const plc_tag_name = String(r.plc_tag_name || '').trim();
+    if (plc_tag_name) base.plc_tag_name = plc_tag_name;
+    const datatype = String(r.datatype || '').trim();
+    if (datatype) base.datatype = datatype;
+    const scan = parseIntLoose(r.scan_ms, null);
+    if (scan == null) delete base.scan_ms;
+    else base.scan_ms = Math.max(0, scan);
+    base.enabled = parseBoolLoose(r.enabled, true);
+    base.writable = parseBoolLoose(r.writable, false);
+    base.mqtt_command_allowed = parseBoolLoose(r.mqtt_command_allowed, false);
+    base.log_event_on_change = parseBoolLoose(r.log_event_on_change, false);
+
+    const mode = String(r.log_periodic_mode || '').trim();
+    if (mode) base.log_periodic_mode = mode;
+    else delete base.log_periodic_mode;
+    const intervalSec = parseIntLoose(r.log_periodic_interval_sec, null);
+    if (intervalSec == null) delete base.log_periodic_interval_sec;
+    else base.log_periodic_interval_sec = Math.max(0, intervalSec);
+
+    if (idx >= 0) all[idx] = base;
+    else all.push(base);
+    upserts += 1;
+  });
+
+  state.tagConfigAll = all;
+  state.tagConfigEdited = new Map();
+  markTagsDirty(true);
+  saveWorkspaceDraft();
+  renderWorkspaceTree();
+  setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${upserts} tag(s)${deleted ? `, deleted ${deleted}` : ''}${skipped ? `, skipped ${skipped}` : ''}.`);
 }
 
 const TAG_DATATYPE_OPTIONS = [
@@ -379,6 +865,34 @@ function renderJson(el, obj) {
 
 function setScadaSettingsStatus(msg) {
   if (els.scadaSettingsStatus) els.scadaSettingsStatus.textContent = String(msg || '');
+}
+
+function setSvcStatus(msg) {
+  if (els.svcStatus) els.svcStatus.textContent = String(msg || '');
+}
+
+function setMqttCaStatus(msg) {
+  if (els.mqttCaStatus) els.mqttCaStatus.textContent = String(msg || '');
+}
+
+function setMqttCaCurrentStatus(msg) {
+  if (els.mqttCaCurrentStatus) els.mqttCaCurrentStatus.textContent = String(msg || '');
+}
+
+async function refreshMqttCaStatus() {
+  setMqttCaCurrentStatus('Checking current CA cert…');
+  try {
+    const data = await apiGet('/api/opcbridge/cert/status');
+    if (data?.exists) {
+      const size = Number(data?.size_bytes ?? 0) || 0;
+      const suffix = size > 0 ? ` (${size} bytes)` : '';
+      setMqttCaCurrentStatus(`Current: present${suffix}`);
+    } else {
+      setMqttCaCurrentStatus('Current: missing');
+    }
+  } catch (err) {
+    setMqttCaCurrentStatus(`Current: unknown (${err.message})`);
+  }
 }
 
 function hmiUrlFromForm() {
@@ -471,6 +985,100 @@ function wireScadaSettingsUi() {
   els.scadaOpenHmiBtn?.addEventListener('click', () => {
     window.open(hmiUrlFromForm(), '_blank', 'noopener,noreferrer');
   });
+}
+
+// ---------------- opcbridge service (systemd) ----------------
+
+function fillSvcForm(s) {
+  if (!s) return;
+  if (els.svcOpcbridgeBin) els.svcOpcbridgeBin.value = String(s.bin || '');
+  if (els.svcOpcbridgeConfigDir) els.svcOpcbridgeConfigDir.value = String(s.config_dir || '');
+  if (els.svcHttpEnabled) els.svcHttpEnabled.checked = Boolean(s.http_enabled);
+  if (els.svcWsEnabled) els.svcWsEnabled.checked = Boolean(s.ws_enabled);
+  if (els.svcOpcuaEnabled) els.svcOpcuaEnabled.checked = Boolean(s.opcua_enabled);
+  if (els.svcMqttEnabled) els.svcMqttEnabled.checked = Boolean(s.mqtt_enabled);
+  if (els.svcHttpPort) els.svcHttpPort.value = String(s.http_port ?? '');
+  if (els.svcWsPort) els.svcWsPort.value = String(s.ws_port ?? '');
+  if (els.svcOpcuaPort) els.svcOpcuaPort.value = String(s.opcua_port ?? '');
+}
+
+function readSvcForm() {
+  return {
+    bin: els.svcOpcbridgeBin?.value?.trim() || '',
+    config_dir: els.svcOpcbridgeConfigDir?.value?.trim() || '',
+    http_enabled: Boolean(els.svcHttpEnabled?.checked),
+    ws_enabled: Boolean(els.svcWsEnabled?.checked),
+    opcua_enabled: Boolean(els.svcOpcuaEnabled?.checked),
+    mqtt_enabled: Boolean(els.svcMqttEnabled?.checked),
+    http_port: Number(els.svcHttpPort?.value ?? 0) || 0,
+    ws_port: Number(els.svcWsPort?.value ?? 0) || 0,
+    opcua_port: Number(els.svcOpcuaPort?.value ?? 0) || 0
+  };
+}
+
+async function loadSvcSettings() {
+  setSvcStatus('Loading…');
+  try {
+    const data = await apiGet('/api/opcbridge/systemd');
+    if (data?.enabled === false) {
+      setSvcStatus('Systemd management disabled in opcbridge-scada.');
+      return;
+    }
+    fillSvcForm(data?.settings);
+    const p = data?.dropin_path ? ` (${data.dropin_path})` : '';
+    setSvcStatus(data?.exists ? `Loaded from drop-in${p}.` : `No drop-in found${p}; showing defaults.`);
+  } catch (err) {
+    setSvcStatus(`Failed: ${err.message}`);
+  }
+}
+
+async function applySvcSettings() {
+  setSvcStatus('Applying…');
+  try {
+    const settings = readSvcForm();
+    const resp = await apiPostJson('/api/opcbridge/systemd', { settings });
+    if (!resp?.ok) throw new Error(resp?.error || 'Apply failed');
+    setSvcStatus(`Applied. Restarted ${resp?.unit || 'opcbridge.service'}.`);
+    restartRefreshLoop();
+  } catch (err) {
+    setSvcStatus(`Apply failed: ${err.message}`);
+  }
+}
+
+function wireSvcUi() {
+  els.svcReloadBtn?.addEventListener('click', loadSvcSettings);
+  els.svcApplyBtn?.addEventListener('click', applySvcSettings);
+}
+
+async function uploadMqttCaCert() {
+  setMqttCaStatus('Uploading…');
+  try {
+    const file = els.mqttCaFile?.files?.[0] || null;
+    if (!file) throw new Error('Pick a ca.crt file first.');
+
+    const buf = await file.arrayBuffer();
+    const resp = await fetch('/api/opcbridge/cert/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/x-pem-file' },
+      body: buf
+    });
+    const data = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+    if (!resp.ok || !data?.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+    setMqttCaStatus(data?.message || 'Uploaded.');
+    await refreshMqttCaStatus();
+  } catch (err) {
+    setMqttCaStatus(`Upload failed: ${err.message}`);
+  }
+}
+
+function downloadMqttCaCert() {
+  // This is proxied by scada and uses the scada server's admin token.
+  window.open('/api/opcbridge/config/cert/download', '_blank', 'noopener,noreferrer');
+}
+
+function wireMqttCaUi() {
+  els.mqttCaUploadBtn?.addEventListener('click', uploadMqttCaCert);
+  els.mqttCaDownloadBtn?.addEventListener('click', downloadMqttCaCert);
 }
 
 // ---------------- Connections ----------------
@@ -700,7 +1308,11 @@ function getEffectiveTagsAll() {
 }
 
 function workspaceIsDirty() {
-  return (state.workspaceConnDirty && state.workspaceConnDirty.size > 0) || Boolean(state.tagConfigDirty);
+  return (
+    (state.workspaceConnDirty && state.workspaceConnDirty.size > 0) ||
+    (state.workspaceDeletePaths && state.workspaceDeletePaths.size > 0) ||
+    Boolean(state.tagConfigDirty)
+  );
 }
 
 function setWorkspaceSaveStatus(msg) {
@@ -723,6 +1335,10 @@ function saveWorkspaceDraft() {
     if (state.workspaceConnDirty && state.workspaceConnDirty.size) {
       for (const [k, v] of state.workspaceConnDirty.entries()) conn[k] = v;
     }
+    const deletes = [];
+    if (state.workspaceDeletePaths && state.workspaceDeletePaths.size) {
+      for (const p of state.workspaceDeletePaths.values()) deletes.push(String(p));
+    }
 
     const tagEdits = {};
     if (state.tagConfigEdited && state.tagConfigEdited.size) {
@@ -732,6 +1348,7 @@ function saveWorkspaceDraft() {
     const payload = {
       ts_ms: Date.now(),
       conn_dirty: conn,
+      conn_delete: deletes,
       tag_all: Array.isArray(state.tagConfigAll) ? state.tagConfigAll : [],
       tag_edits: tagEdits,
       tag_dirty: Boolean(state.tagConfigDirty)
@@ -781,6 +1398,14 @@ function restoreWorkspaceDraft() {
         if (rel && Array.isArray(state.connFiles) && !state.connFiles.some((f) => String(f?.path || '') === rel)) {
           state.connFiles.push({ kind: 'connection', path: rel });
         }
+      });
+    }
+
+    state.workspaceDeletePaths = new Set();
+    if (Array.isArray(parsed.conn_delete)) {
+      parsed.conn_delete.forEach((p) => {
+        const rel = String(p || '').trim();
+        if (rel) state.workspaceDeletePaths.add(rel);
       });
     }
 
@@ -1069,6 +1694,7 @@ function showNewTagModal(connectionId) {
   if (els.newTagScan) els.newTagScan.value = '';
   if (els.newTagEnabled) els.newTagEnabled.checked = true;
   if (els.newTagWritable) els.newTagWritable.checked = false;
+  if (els.newTagMqttAllowed) els.newTagMqttAllowed.checked = false;
 
   setNewTagStatus('');
   if (els.newTagModal) els.newTagModal.style.display = 'flex';
@@ -1116,8 +1742,9 @@ async function createNewTagFromModal() {
   const scan_ms = scanRaw === '' ? null : Math.max(0, Math.trunc(Number(scanRaw) || 0));
   const enabled = Boolean(els.newTagEnabled?.checked);
   const writable = Boolean(els.newTagWritable?.checked);
+  const mqtt_command_allowed = Boolean(els.newTagMqttAllowed?.checked);
 
-  const tag = { connection_id: cid, name, plc_tag_name, datatype, enabled, writable };
+  const tag = { connection_id: cid, name, plc_tag_name, datatype, enabled, writable, mqtt_command_allowed };
   if (scan_ms != null) tag.scan_ms = scan_ms;
 
   const key = makeTagKey(tag);
@@ -1271,6 +1898,7 @@ function openWorkspaceItemModal(node) {
       if (els.editTagScan) els.editTagScan.value = '';
       if (els.editTagEnabled) els.editTagEnabled.checked = true;
       if (els.editTagWritable) els.editTagWritable.checked = false;
+      if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = false;
       if (els.editTagSaveBtn) els.editTagSaveBtn.disabled = true;
       setEditTagStatus('Tag not found in config. Refresh tag config.');
     } else {
@@ -1279,6 +1907,7 @@ function openWorkspaceItemModal(node) {
       if (els.editTagScan) els.editTagScan.value = (row?.scan_ms == null) ? '' : String(row.scan_ms);
       if (els.editTagEnabled) els.editTagEnabled.checked = (row?.enabled !== false);
       if (els.editTagWritable) els.editTagWritable.checked = (row?.writable === true);
+      if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = (row?.mqtt_command_allowed === true);
       if (els.editTagSaveBtn) els.editTagSaveBtn.disabled = false;
       setEditTagStatus('');
     }
@@ -1353,6 +1982,7 @@ async function saveEditedTagFromModal() {
   const scanRaw = String(els.editTagScan?.value || '').trim();
   const enabled = Boolean(els.editTagEnabled?.checked);
   const writable = Boolean(els.editTagWritable?.checked);
+  const mqtt_command_allowed = Boolean(els.editTagMqttAllowed?.checked);
 
   if (!plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
@@ -1362,6 +1992,7 @@ async function saveEditedTagFromModal() {
   next.datatype = datatype;
   next.enabled = enabled;
   next.writable = writable;
+  next.mqtt_command_allowed = mqtt_command_allowed;
   if (scanRaw === '') delete next.scan_ms;
   else next.scan_ms = Math.max(0, Math.trunc(Number(scanRaw) || 0));
 
@@ -1390,14 +2021,16 @@ async function saveEditedDeviceFromModal() {
   const relPath = String(node.meta?.path || '').trim();
   if (!relPath) { setEditDevStatus('Missing device config path.'); return; }
 
-  const connection_id = String(node.meta?.connection_id || '').trim();
+  const id = String(node.meta?.connection_id || node.meta?.id || '').trim();
   const driver = String(els.editDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.editDevGateway?.value || '').trim();
   const pathVal = String(els.editDevPath?.value || '').trim() || '1,0';
   const slot = Number(String(els.editDevSlot?.value || '0').trim() || '0') || 0;
   const plc_type = String(els.editDevPlcType?.value || '').trim() || 'lgx';
 
-  const obj = { connection_id, driver, gateway, path: pathVal, slot, plc_type };
+  const existing = state.connObjCache?.get?.(relPath) || {};
+  const description = String(existing?.description || '').trim();
+  const obj = { id, description, driver, gateway, path: pathVal, slot, plc_type };
 
   if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
   state.workspaceConnDirty.set(relPath, obj);
@@ -1466,7 +2099,8 @@ async function createNewDeviceFromWorkspace() {
   const slot = Number(String(els.newDevSlot?.value || '0').trim() || '0') || 0;
   const plc_type = String(els.newDevPlcType?.value || '').trim() || 'lgx';
 
-  const obj = { connection_id, driver, gateway, path: pathVal, slot, plc_type };
+  // opcbridge connection config requires `id` (not `connection_id`).
+  const obj = { id: connection_id, description: '', driver, gateway, path: pathVal, slot, plc_type };
   const relPath = `connections/${connection_id}.json`;
 
   const exists = state.connFiles.some((f) => String(f?.path || '') === relPath);
@@ -1789,6 +2423,8 @@ function renderTreeNode(node, container) {
 
     if (node.type === 'folder' && node.id === 'folder:connectivity') {
       items.push({ label: 'Add Device…', onClick: () => createNewConnectionInteractive() });
+      items.push({ label: 'Download CSV', onClick: () => downloadConnectivityCsv() });
+      items.push({ label: 'Upload CSV…', onClick: () => importDevicesCsvIntoWorkspace().catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
       items.push('sep');
     }
 
@@ -1796,6 +2432,8 @@ function renderTreeNode(node, container) {
       const cid = String(node.meta?.connection_id || '').trim();
       const relPath = String(node.meta?.path || '').trim();
       items.push({ label: 'Add Tag…', onClick: () => showNewTagModal(cid) });
+      items.push({ label: 'Download CSV', onClick: () => downloadDeviceTagsCsv(cid) });
+      items.push({ label: 'Upload CSV…', onClick: () => importTagsCsvIntoWorkspace(cid).catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Delete Device…', onClick: () => deleteDeviceById(cid, relPath) });
       items.push('sep');
@@ -1931,12 +2569,27 @@ function renderWorkspaceDetails(node) {
   // When connectivity is selected, list its devices with device fields.
   const showDeviceCols = isConnectivity;
 
-  // When a device is selected, list all tags. When a tag is selected, show a single-row tag table.
+  // When a device is selected, list its tags. Clicking a tag in the tree should not change the right pane.
   const showTagCols = isDevice || isTag;
 
-  const columns = ['Name'];
-  if (showDeviceCols) columns.push('Description', 'Driver', 'Gateway', 'Path', 'Slot', 'PLC Type');
-  if (showTagCols) columns.push('PLC Tag', 'Datatype', 'Scan (ms)', 'Enabled', 'Writable');
+  const columns = [];
+  const addCol = (key, label, sortable = false) => columns.push({ key, label, sortable });
+  addCol('name', 'Name', true);
+  if (showDeviceCols) {
+    addCol('description', 'Description', true);
+    addCol('driver', 'Driver', true);
+    addCol('gateway', 'Gateway', true);
+    addCol('path', 'Path', true);
+    addCol('slot', 'Slot', true);
+    addCol('plc_type', 'PLC Type', true);
+  }
+  if (showTagCols) {
+    addCol('plc_tag_name', 'PLC Tag', true);
+    addCol('datatype', 'Datatype', true);
+    addCol('scan_ms', 'Scan (ms)', true);
+    addCol('enabled', 'Enabled', true);
+    addCol('writable', 'Writable', true);
+  }
 
   const colCount = columns.length;
 
@@ -1944,25 +2597,65 @@ function renderWorkspaceDetails(node) {
   const seq = state.workspaceRenderSeq;
 
   const connectionId = String(node.meta?.connection_id || '').trim();
-  const selectedTagName = isTag ? String(node.meta?.name || node.label || '').trim() : '';
 
   let tagRows = [];
   if (showTagCols && connectionId) {
-    if (isDevice) {
-      tagRows = getEffectiveTagsAll()
-        .filter((tt) => String(tt?.connection_id || '') === connectionId)
-        .slice()
-        .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
-    } else if (isTag && selectedTagName) {
-      const key = `${connectionId}::${selectedTagName}`;
-      const original = state.tagConfigAll.find((tt) => String(tt?.connection_id || '') === connectionId && String(tt?.name || '') === selectedTagName) || null;
-      const edited = state.tagConfigEdited?.get?.(key) || null;
-      const row = edited || original || { connection_id: connectionId, name: selectedTagName };
-      tagRows = [row];
-    }
+    tagRows = getEffectiveTagsAll()
+      .filter((tt) => String(tt?.connection_id || '') === connectionId)
+      .slice();
   }
 
   const rowsToRender = showTagCols ? tagRows : children;
+
+  const rootKey = showTagCols ? `tags:${connectionId || ''}` : `children:${String(node.id || '')}`;
+  if (state.workspaceChildrenSelRoot !== rootKey) {
+    state.workspaceChildrenSelRoot = rootKey;
+    state.workspaceChildrenSel = new Set();
+    state.workspaceChildrenLastIndex = -1;
+    state.workspaceChildrenSort = showTagCols ? { key: 'name', dir: 'asc' } : { key: 'name', dir: 'asc' };
+  }
+
+  const getComparable = (row, key) => {
+    if (!row) return '';
+    const k = String(key || '');
+    if (showTagCols) {
+      if (k === 'name') return String(row?.name || '');
+      if (k === 'plc_tag_name') return String(row?.plc_tag_name || '');
+      if (k === 'datatype') return String(row?.datatype || '');
+      if (k === 'scan_ms') return (row?.scan_ms == null) ? -1 : Number(row.scan_ms);
+      if (k === 'enabled') return (row?.enabled === false) ? 0 : 1;
+      if (k === 'writable') return (row?.writable === true) ? 1 : 0;
+      return '';
+    }
+
+    // device rows are tree nodes; use cached connection object where possible
+    const label = String(row?.label || row?.id || '');
+    if (k === 'name') return label;
+    const pathRel = String(row?.meta?.path || '').trim();
+    const obj = pathRel ? state.connObjCache?.get?.(pathRel) : null;
+    if (!obj) return '';
+    if (k === 'description') return String(obj?.description || '');
+    if (k === 'driver') return labelForDriver(obj?.driver);
+    if (k === 'gateway') return String(obj?.gateway || '');
+    if (k === 'path') return String(obj?.path || '');
+    if (k === 'slot') return (obj?.slot == null) ? '' : String(obj.slot);
+    if (k === 'plc_type') return labelForPlcType(obj?.plc_type || obj?.plcType || '');
+    return '';
+  };
+
+  const sortRows = (arr) => {
+    const s = state.workspaceChildrenSort || { key: 'name', dir: 'asc' };
+    const dir = (s.dir === 'desc') ? -1 : 1;
+    const key = String(s.key || 'name');
+    return arr.slice().sort((a, b) => {
+      const va = getComparable(a, key);
+      const vb = getComparable(b, key);
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+      return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+    });
+  };
+
+  const rowsSorted = columns.some((c) => c.sortable) ? sortRows(rowsToRender) : rowsToRender;
 
   // Header
   if (els.workspaceChildrenTable) {
@@ -1971,7 +2664,18 @@ function renderWorkspaceDetails(node) {
       headRow.textContent = '';
       columns.forEach((c) => {
         const th = document.createElement('th');
-        th.textContent = c;
+        th.textContent = c.label;
+        if (c.sortable) {
+          th.classList.add('sortable');
+          th.title = 'Sort';
+          th.addEventListener('click', () => {
+            const cur = state.workspaceChildrenSort || { key: 'name', dir: 'asc' };
+            const nextKey = String(c.key || 'name');
+            const nextDir = (cur.key === nextKey && cur.dir === 'asc') ? 'desc' : 'asc';
+            state.workspaceChildrenSort = { key: nextKey, dir: nextDir };
+            renderWorkspaceDetails(node);
+          });
+        }
         headRow.appendChild(th);
       });
     }
@@ -1999,7 +2703,77 @@ function renderWorkspaceDetails(node) {
     return td;
   };
 
-  rowsToRender.forEach((c) => {
+  const selectKeyForRow = (row) => {
+    if (showTagCols) return makeTagKey(row);
+    return String(row?.id || '');
+  };
+
+  const clearSelection = () => {
+    state.workspaceChildrenSel = new Set();
+    state.workspaceChildrenLastIndex = -1;
+  };
+
+  const applySelectionClass = () => {
+    const keys = state.workspaceChildrenSel || new Set();
+    const trs = Array.from(els.workspaceChildrenTbody.querySelectorAll('tr[data-row-key]'));
+    trs.forEach((r) => r.classList.toggle('is-selected', keys.has(String(r.dataset.rowKey || ''))));
+  };
+
+  const handleRowClick = (e, idx, key) => {
+    if (!showTagCols) {
+      clearSelection();
+      state.workspaceChildrenSel.add(key);
+      state.workspaceChildrenLastIndex = idx;
+      applySelectionClass();
+      return;
+    }
+
+    const multi = e.ctrlKey || e.metaKey;
+    const range = e.shiftKey && state.workspaceChildrenLastIndex >= 0;
+    const keys = state.workspaceChildrenSel || new Set();
+
+    if (range) {
+      const start = Math.min(state.workspaceChildrenLastIndex, idx);
+      const end = Math.max(state.workspaceChildrenLastIndex, idx);
+      const toSelect = [];
+      const trs = Array.from(els.workspaceChildrenTbody.querySelectorAll('tr[data-row-key]'));
+      for (let i = start; i <= end; i++) {
+        const k = String(trs[i]?.dataset?.rowKey || '');
+        if (k) toSelect.push(k);
+      }
+      if (!multi) keys.clear();
+      toSelect.forEach((k) => keys.add(k));
+    } else if (multi) {
+      if (keys.has(key)) keys.delete(key);
+      else keys.add(key);
+      state.workspaceChildrenLastIndex = idx;
+    } else {
+      keys.clear();
+      keys.add(key);
+      state.workspaceChildrenLastIndex = idx;
+    }
+
+    state.workspaceChildrenSel = keys;
+    applySelectionClass();
+  };
+
+  const stageDeleteSelectedTags = () => {
+    const keys = Array.from(state.workspaceChildrenSel || []);
+    const tagKeys = keys.filter((k) => k.includes('::'));
+    if (!tagKeys.length) return;
+    if (!window.confirm(`Delete ${tagKeys.length} tag(s)? (Applied on Save / Save+Reload.)`)) return;
+
+    const delSet = new Set(tagKeys);
+    state.tagConfigAll = (state.tagConfigAll || []).filter((t) => !delSet.has(makeTagKey(t)));
+    if (state.tagConfigEdited && state.tagConfigEdited.size) {
+      for (const k of delSet.values()) state.tagConfigEdited.delete(k);
+    }
+    markTagsDirty(true);
+    clearSelection();
+    renderWorkspaceTree();
+  };
+
+  rowsSorted.forEach((c, idx) => {
     const tr = document.createElement('tr');
 
     const type = String(c?.type || '');
@@ -2077,10 +2851,25 @@ function renderWorkspaceDetails(node) {
 
     tr.style.cursor = 'default';
 
-    tr.addEventListener('click', () => {
-      const rows = Array.from(els.workspaceChildrenTbody.querySelectorAll('tr'));
-      rows.forEach((r) => r.classList.remove('is-selected'));
-      tr.classList.add('is-selected');
+    const rowKey = selectKeyForRow(c);
+    if (rowKey) tr.dataset.rowKey = rowKey;
+    tr.addEventListener('click', (e) => handleRowClick(e, idx, rowKey));
+    tr.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      // ensure row is selected
+      const keys = state.workspaceChildrenSel || new Set();
+      if (rowKey && !keys.has(rowKey)) {
+        keys.clear();
+        keys.add(rowKey);
+        state.workspaceChildrenSel = keys;
+        state.workspaceChildrenLastIndex = idx;
+        applySelectionClass();
+      }
+      if (showTagCols && (state.workspaceChildrenSel?.size || 0) > 0) {
+        showContextMenu(e.clientX, e.clientY, [
+          { label: `Delete selected tag(s) (${state.workspaceChildrenSel.size})`, onClick: stageDeleteSelectedTags }
+        ]);
+      }
     });
 
     tr.addEventListener('dblclick', () => {
@@ -2100,6 +2889,8 @@ function renderWorkspaceDetails(node) {
 
     els.workspaceChildrenTbody.appendChild(tr);
   });
+
+  applySelectionClass();
 }
 function renderWorkspaceTree() {
   if (!els.treeView) return;
@@ -2151,6 +2942,9 @@ async function saveWorkspaceAll({ reload }) {
     renderWorkspaceSaveBar();
     try {
       await opcbridgeReload();
+      setWorkspaceSaveStatus('Reloaded. Refreshing…');
+      await Promise.all([loadConnectionsList(), loadTagsConfig()]);
+      renderWorkspaceTree();
       setWorkspaceSaveStatus('Reloaded.');
     } catch (err) {
       setWorkspaceSaveStatus(`Reload failed: ${err.message}`);
@@ -2162,9 +2956,22 @@ async function saveWorkspaceAll({ reload }) {
   setWorkspaceSaveStatus('Saving…');
   renderWorkspaceSaveBar();
   try {
+    // 0) Apply staged deletes
+    if (state.workspaceDeletePaths && state.workspaceDeletePaths.size) {
+      for (const relPath of Array.from(state.workspaceDeletePaths.values())) {
+        await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
+        state.connObjCache?.delete?.(relPath);
+        state.workspaceConnDirty?.delete?.(relPath);
+        state.connFiles = (state.connFiles || []).filter((f) => String(f?.path || '') !== relPath);
+      }
+      state.workspaceDeletePaths.clear();
+    }
+
     // 1) Save connection file writes
     if (state.workspaceConnDirty && state.workspaceConnDirty.size) {
       for (const [pathRel, obj] of state.workspaceConnDirty.entries()) {
+        if (!obj || typeof obj !== 'object') throw new Error(`Invalid connection object for ${pathRel}`);
+        if (!String(obj.id || '').trim()) throw new Error(`Connection config must contain string field 'id' (${pathRel})`);
         await apiPostJson('/api/opcbridge/config/file', { path: pathRel, content: prettyJson(obj) });
         if (state.connObjCache) state.connObjCache.set(String(pathRel), obj);
       }
@@ -2203,6 +3010,7 @@ async function discardWorkspaceChanges() {
   setWorkspaceSaveStatus('Discarding…');
   try {
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
+    if (state.workspaceDeletePaths) state.workspaceDeletePaths.clear();
     state.tagConfigEdited = new Map();
     markTagsDirty(false);
     clearWorkspaceDraft();
@@ -2434,6 +3242,268 @@ async function loadBootstrapConfig() {
   }
 }
 
+async function refreshUserAuthLine() {
+  if (!els.authLine) return;
+  try {
+    const s = await apiGet('/api/opcbridge/auth/status');
+    state.opcbridgeAuthStatus = s || null;
+    const configured = Boolean(s?.configured);
+    const loggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
+    const username = String(s?.user?.username || '').trim();
+    const role = String(s?.user?.role || '').trim();
+    if (!configured) {
+      els.authLine.innerHTML = `<span class="badge warn">auth</span> not configured`;
+      return;
+    }
+    if (loggedIn) {
+      const who = username ? ` as ${escapeHtml(username)}${role ? ` (${escapeHtml(role)})` : ''}` : '';
+      els.authLine.innerHTML = `<span class="badge ok">auth</span> logged in${who} <button class="btn" id="authLogoutBtn" type="button">Logout</button>`;
+      document.getElementById('authLogoutBtn')?.addEventListener('click', logoutUser);
+      return;
+    }
+    els.authLine.innerHTML = `<span class="badge warn">auth</span> not logged in <button class="btn primary" id="authLoginBtn" type="button">Login</button>`;
+    document.getElementById('authLoginBtn')?.addEventListener('click', loginUser);
+  } catch {
+    els.authLine.innerHTML = `<span class="badge warn">auth</span> unavailable`;
+  }
+}
+
+function isOpcbridgeAdmin() {
+  const role = String(state.opcbridgeAuthStatus?.user?.role || '').trim().toLowerCase();
+  return role === 'admin';
+}
+
+function setUsersStatus(msg) {
+  if (els.usersStatusLine) els.usersStatusLine.textContent = String(msg || '');
+}
+
+function setUsersInitStatus(msg) {
+  if (els.usersInitStatus) els.usersInitStatus.textContent = String(msg || '');
+}
+
+function setUsersTimeoutStatus(msg) {
+  if (els.usersTimeoutStatus) els.usersTimeoutStatus.textContent = String(msg || '');
+}
+
+function setUsersAddStatus(msg) {
+  if (els.usersAddStatus) els.usersAddStatus.textContent = String(msg || '');
+}
+
+async function refreshUsersPanel() {
+  if (!els.usersStatusLine) return;
+  try {
+    const s = await apiGet('/api/opcbridge/auth/status');
+    state.opcbridgeAuthStatus = s || null;
+
+    const configured = Boolean(s?.configured);
+    const initialized = Boolean(s?.initialized);
+    const loggedIn = Boolean(s?.user_logged_in);
+    const username = String(s?.user?.username || '').trim();
+    const role = String(s?.user?.role || 'viewer').trim().toLowerCase();
+    const timeoutMinutes = Number(s?.timeoutMinutes) || 0;
+    const users = Array.isArray(s?.users) ? s.users : [];
+
+    const who = loggedIn ? `${username || '?'} (${role || 'viewer'})` : 'not logged in';
+    setUsersStatus(`opcbridge auth: configured=${configured ? 'yes' : 'no'} initialized=${initialized ? 'yes' : 'no'} · ${who}`);
+
+    if (els.usersInitWrap) els.usersInitWrap.style.display = (!initialized) ? 'block' : 'none';
+    if (els.usersManageWrap) els.usersManageWrap.style.display = (initialized) ? 'block' : 'none';
+
+    if (!initialized) {
+      if (els.usersInitUsername && !String(els.usersInitUsername.value || '').trim()) els.usersInitUsername.value = 'admin';
+      if (els.usersInitTimeout) els.usersInitTimeout.value = String(timeoutMinutes || 0);
+      setUsersInitStatus('');
+      return;
+    }
+
+    if (els.usersTimeoutMinutes) els.usersTimeoutMinutes.value = String(timeoutMinutes || 0);
+    setUsersTimeoutStatus('');
+    setUsersAddStatus('');
+
+    if (!els.usersTbody) return;
+    els.usersTbody.textContent = '';
+
+    const canAdmin = loggedIn && role === 'admin';
+    users.forEach((u) => {
+      const tr = document.createElement('tr');
+      const uname = String(u?.username || '').trim();
+      const urole = String(u?.role || 'viewer').trim();
+      tr.innerHTML = `
+        <td><code>${escapeHtml(uname)}</code></td>
+        <td><code>${escapeHtml(urole)}</code></td>
+        <td></td>
+      `;
+      const td = tr.querySelector('td:last-child');
+      if (td) {
+        const btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.textContent = 'Delete';
+        btn.disabled = !canAdmin;
+        btn.addEventListener('click', async () => {
+          if (!uname) return;
+          if (!window.confirm(`Delete user '${uname}'?`)) return;
+          try {
+            setUsersTimeoutStatus('');
+            setUsersAddStatus('');
+            setUsersInitStatus('');
+            setUsersStatus('Deleting user…');
+            await apiJson(`/api/opcbridge/auth/users/${encodeURIComponent(uname)}`, { method: 'DELETE' });
+            await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+          } catch (err) {
+            setUsersStatus(`Delete failed: ${err.message}`);
+          }
+        });
+        td.appendChild(btn);
+      }
+      els.usersTbody.appendChild(tr);
+    });
+
+    if (els.usersTimeoutSaveBtn) els.usersTimeoutSaveBtn.disabled = !canAdmin;
+    if (els.usersAddBtn) els.usersAddBtn.disabled = !canAdmin;
+  } catch (err) {
+    setUsersStatus(`Users panel failed: ${err.message}`);
+    if (els.usersInitWrap) els.usersInitWrap.style.display = 'none';
+    if (els.usersManageWrap) els.usersManageWrap.style.display = 'none';
+  }
+}
+
+function wireUsersUi() {
+  if (els.usersRefreshBtn) els.usersRefreshBtn.addEventListener('click', refreshUsersPanel);
+
+  if (els.usersInitBtn) {
+    els.usersInitBtn.addEventListener('click', async () => {
+      const username = String(els.usersInitUsername?.value || '').trim();
+      const password = String(els.usersInitPassword?.value || '');
+      const timeoutMinutes = Math.max(0, Math.floor(Number(els.usersInitTimeout?.value) || 0));
+      if (!password) { setUsersInitStatus('Password required.'); return; }
+      setUsersInitStatus('Initializing…');
+      try {
+        await apiPostJson('/api/opcbridge/auth/init', { username, password, timeoutMinutes });
+        if (els.usersInitPassword) els.usersInitPassword.value = '';
+        await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+        setUsersInitStatus('Initialized.');
+      } catch (err) {
+        setUsersInitStatus(`Init failed: ${err.message}`);
+      }
+    });
+  }
+
+  if (els.usersTimeoutSaveBtn) {
+    els.usersTimeoutSaveBtn.addEventListener('click', async () => {
+      const timeoutMinutes = Math.max(0, Math.floor(Number(els.usersTimeoutMinutes?.value) || 0));
+      setUsersTimeoutStatus('Saving…');
+      try {
+        await apiJson('/api/opcbridge/auth/timeout', { method: 'PUT', bodyObj: { timeoutMinutes } });
+        await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+        setUsersTimeoutStatus('Saved.');
+      } catch (err) {
+        setUsersTimeoutStatus(`Save failed: ${err.message}`);
+      }
+    });
+  }
+
+  if (els.usersAddBtn) {
+    els.usersAddBtn.addEventListener('click', async () => {
+      const username = String(els.usersAddUsername?.value || '').trim();
+      const password = String(els.usersAddPassword?.value || '');
+      const role = String(els.usersAddRole?.value || 'viewer').trim();
+      if (!username) { setUsersAddStatus('Username required.'); return; }
+      if (!password) { setUsersAddStatus('Password required.'); return; }
+      setUsersAddStatus('Adding…');
+      try {
+        await apiPostJson('/api/opcbridge/auth/users', { username, password, role });
+        if (els.usersAddPassword) els.usersAddPassword.value = '';
+        await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+        setUsersAddStatus('Added.');
+      } catch (err) {
+        setUsersAddStatus(`Add failed: ${err.message}`);
+      }
+    });
+  }
+}
+
+function startUserAuthPolling() {
+  if (state.userAuthTimer) return;
+  state.userAuthTimer = window.setInterval(() => {
+    refreshUserAuthLine().catch(() => {});
+  }, 2000);
+}
+
+function openLoginModal() {
+  if (!els.loginModal) return;
+  if (els.loginStatus) els.loginStatus.textContent = '';
+  if (els.loginUsername && !String(els.loginUsername.value || '').trim()) {
+    els.loginUsername.value = 'admin';
+  }
+  if (els.loginPassword) els.loginPassword.value = '';
+  els.loginModal.style.display = 'flex';
+  try {
+    (els.loginPassword || els.loginUsername)?.focus?.();
+  } catch {
+    // ignore
+  }
+}
+
+function closeLoginModal() {
+  if (!els.loginModal) return;
+  els.loginModal.style.display = 'none';
+  if (els.loginStatus) els.loginStatus.textContent = '';
+}
+
+function wireLoginModalUi() {
+  if (!els.loginModal) return;
+  if (els.loginModal.dataset.wired === '1') return;
+  els.loginModal.dataset.wired = '1';
+
+  els.loginCloseBtn?.addEventListener('click', closeLoginModal);
+  els.loginCancelBtn?.addEventListener('click', closeLoginModal);
+  els.loginModal.addEventListener('click', (e) => {
+    if (e.target === els.loginModal) closeLoginModal();
+  });
+  els.loginModal.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeLoginModal();
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      els.loginOkBtn?.click?.();
+    }
+  });
+
+  els.loginOkBtn?.addEventListener('click', async () => {
+    const username = String(els.loginUsername?.value || '').trim();
+    const password = String(els.loginPassword?.value || '');
+    if (!password) {
+      if (els.loginStatus) els.loginStatus.textContent = 'Password required.';
+      return;
+    }
+    if (els.loginStatus) els.loginStatus.textContent = 'Logging in…';
+    try {
+      const payload = { password };
+      if (username) payload.username = username;
+      await apiPostJson('/api/opcbridge/auth/login', payload);
+      await refreshUserAuthLine();
+      closeLoginModal();
+    } catch (err) {
+      if (els.loginStatus) els.loginStatus.textContent = `Login failed: ${err.message}`;
+    }
+  });
+}
+
+async function loginUser() {
+  openLoginModal();
+}
+
+async function logoutUser() {
+  try {
+    await apiPostJson('/api/opcbridge/auth/logout', {});
+    await refreshUserAuthLine();
+  } catch (err) {
+    window.alert(`Logout failed: ${err.message}`);
+  }
+}
+
 function restartRefreshLoop() {
   if (state.refreshTimer) {
     window.clearInterval(state.refreshTimer);
@@ -2446,10 +3516,17 @@ function restartRefreshLoop() {
 async function main() {
   setTab('overview');
 
+  startUserAuthPolling();
+
   wireScadaSettingsUi();
+  wireSvcUi();
+  wireMqttCaUi();
   wireConnectionsUi();
   wireTagsConfigUi();
+  wireLoginModalUi();
+  wireUsersUi();
   wireNewDeviceFormUi();
+  wireWorkspaceSaveBarUi();
   wireWorkspaceItemModalUi();
   wireNewTagModalUi();
 
@@ -2460,7 +3537,26 @@ async function main() {
   }
 
   try {
+    await refreshUserAuthLine();
+  } catch {
+    // ignore
+  }
+
+  try {
+    await refreshUsersPanel();
+  } catch {
+    // ignore
+  }
+
+  try {
     await loadScadaSettings();
+    await loadSvcSettings();
+  } catch {
+    // ignore
+  }
+
+  try {
+    await refreshMqttCaStatus();
   } catch {
     // ignore
   }
