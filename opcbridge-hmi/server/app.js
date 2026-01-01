@@ -266,148 +266,37 @@ const createApp = () => {
     }
   });
 
-  app.get("/api/auth/status", async (req, res) => {
+  // Auth is centralized in opcbridge (single source of truth for users/roles).
+  // Proxy /api/auth/* -> opcbridge /auth/* and forward Cookie/Set-Cookie so login is shared across apps.
+  app.use("/api/auth", async (req, res) => {
     try {
-      const info = await readPasswords();
-      if (!info) return res.json({ initialized: false });
-      const data = info.data || {};
-      const users = Array.isArray(data.users) ? data.users : [];
-      res.json({
-        initialized: true,
-        timeoutMinutes: Number(data.timeoutMinutes) || 0,
-        users: users.map((user) => ({
-          username: String(user.username || ""),
-          role: normalizeRole(user.role)
-        }))
+      const { config: parsed } = await readConfig();
+      const opcbridge = parsed?.opcbridge || {};
+      const host = String(opcbridge.host || "127.0.0.1");
+      const port = Number(opcbridge.httpPort) || 8080;
+
+      const upstreamPath = String(req.originalUrl || "").replace(/^\/api/, "") || "/auth/status";
+      const url = `http://${host}:${port}${upstreamPath}`;
+
+      const headers = { Accept: req.headers["accept"] || "*/*" };
+      if (req.method !== "GET" && req.method !== "HEAD") headers["Content-Type"] = "application/json";
+      if (req.headers["cookie"]) headers["Cookie"] = String(req.headers["cookie"]);
+
+      const response = await fetch(url, {
+        method: req.method,
+        headers,
+        body: (req.method === "GET" || req.method === "HEAD") ? undefined : JSON.stringify(req.body || {})
       });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
 
-  app.post("/api/auth/init", async (req, res) => {
-    try {
-      const existing = await readPasswords();
-      if (existing) return res.status(409).json({ error: "Already initialized." });
-      const username = normalizeUsername(req.body?.username);
-      if (!username) return res.status(400).json({ error: "Invalid username." });
-      const password = String(req.body?.password || "");
-      if (password.length < 4) return res.status(400).json({ error: "Password too short." });
-      const timeoutMinutes = Number(req.body?.timeoutMinutes) || 0;
-      const iterations = 150000;
-      const saltB64 = crypto.randomBytes(16).toString("base64");
-      const hashB64 = hashPassword({ password, saltB64, iterations });
-      const data = {
-        timeoutMinutes: Math.max(0, Math.floor(timeoutMinutes)),
-        users: [
-          {
-            username,
-            role: "admin",
-            kdf: { algo: "pbkdf2-sha256", iterations, saltB64, hashB64 }
-          }
-        ]
-      };
-      await writePasswords(data);
-      await appendAudit(req, { event: "auth.init", username });
-      res.json({ ok: true });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
+      const setCookie = response.headers.get("set-cookie");
+      if (setCookie) res.setHeader("Set-Cookie", setCookie);
 
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const info = await readPasswords();
-      if (!info) return res.status(400).json({ error: "Not initialized." });
-      const data = info.data || {};
-      const username = normalizeUsername(req.body?.username);
-      if (!username) return res.status(400).json({ error: "Invalid username." });
-      const password = String(req.body?.password || "");
-      const users = Array.isArray(data.users) ? data.users : [];
-      const record = users.find((user) => String(user.username || "") === username);
-      if (!record) return res.status(401).json({ error: "Invalid username or password." });
-      const kdf = record.kdf || {};
-      const expectedHash = Buffer.from(String(kdf.hashB64 || ""), "base64");
-      if (!expectedHash.length) return res.status(401).json({ error: "Invalid username or password." });
-      const actualHashB64 = hashPassword({ password, saltB64: kdf.saltB64, iterations: kdf.iterations });
-      const actualHash = Buffer.from(actualHashB64, "base64");
-      if (expectedHash.length !== actualHash.length || !crypto.timingSafeEqual(expectedHash, actualHash)) {
-        return res.status(401).json({ error: "Invalid username or password." });
-      }
-      await appendAudit(req, { event: "auth.login", username, role: normalizeRole(record.role) });
-      res.json({
-        ok: true,
-        username,
-        role: normalizeRole(record.role),
-        timeoutMinutes: Number(data.timeoutMinutes) || 0
-      });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.put("/api/auth/timeout", async (req, res) => {
-    try {
-      const info = await readPasswords();
-      if (!info) return res.status(400).json({ error: "Not initialized." });
-      const timeoutMinutes = Math.max(0, Math.floor(Number(req.body?.timeoutMinutes) || 0));
-      const data = info.data || {};
-      const next = { ...data, timeoutMinutes };
-      await writePasswords(next);
-      await appendAudit(req, { event: "auth.timeout.update", timeoutMinutes });
-      res.json({ ok: true });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.post("/api/auth/users", async (req, res) => {
-    try {
-      const info = await readPasswords();
-      if (!info) return res.status(400).json({ error: "Not initialized." });
-      const data = info.data || {};
-      const users = Array.isArray(data.users) ? data.users : [];
-      const username = normalizeUsername(req.body?.username);
-      if (!username) return res.status(400).json({ error: "Invalid username." });
-      const password = String(req.body?.password || "");
-      if (password.length < 4) return res.status(400).json({ error: "Password too short." });
-      if (users.some((u) => String(u.username || "") === username)) {
-        return res.status(409).json({ error: "User already exists." });
-      }
-      const role = normalizeRole(req.body?.role);
-      const iterations = 150000;
-      const saltB64 = crypto.randomBytes(16).toString("base64");
-      const hashB64 = hashPassword({ password, saltB64, iterations });
-      const nextUsers = [
-        ...users,
-        { username, role, kdf: { algo: "pbkdf2-sha256", iterations, saltB64, hashB64 } }
-      ];
-      const next = { ...data, users: nextUsers };
-      await writePasswords(next);
-      await appendAudit(req, { event: "auth.user.create", username, role });
-      res.json({ ok: true });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.delete("/api/auth/users/:username", async (req, res) => {
-    try {
-      const info = await readPasswords();
-      if (!info) return res.status(400).json({ error: "Not initialized." });
-      const data = info.data || {};
-      const users = Array.isArray(data.users) ? data.users : [];
-      const username = normalizeUsername(req.params.username);
-      if (!username) return res.status(400).json({ error: "Invalid username." });
-      const remaining = users.filter((user) => String(user.username || "") !== username);
-      if (remaining.length === users.length) return res.status(404).json({ error: "User not found." });
-      if (!remaining.some((user) => normalizeRole(user.role) === "admin")) {
-        return res.status(400).json({ error: "Cannot remove the last admin user." });
-      }
-      const next = { ...data, users: remaining };
-      await writePasswords(next);
-      await appendAudit(req, { event: "auth.user.delete", username });
-      res.json({ ok: true });
+      const text = await response.text();
+      res.status(response.status);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+      res.setHeader("Content-Type", response.headers.get("content-type") || "application/octet-stream");
+      res.send(text);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
@@ -489,6 +378,42 @@ const createApp = () => {
   });
 
   app.use("/api/screens", createScreensRouter({ rootDir: ROOT, audit: appendAudit }));
+
+  // Proxy opcbridge admin auth so a login from HMI can set the shared cookie.
+  // This enables single-login across opcbridge / scada / hmi (same hostname).
+  app.use("/api/opcbridge/auth", express.raw({ type: "*/*", limit: "1mb" }), async (req, res) => {
+    try {
+      const { config: parsed } = await readConfig();
+      const opcbridge = parsed?.opcbridge || {};
+      const host = String(opcbridge.host || "127.0.0.1");
+      const port = Number(opcbridge.httpPort) || 8080;
+
+      const upstreamPath = String(req.originalUrl || "").replace(/^\/api\/opcbridge/, "") || "/auth/status";
+      const url = `http://${host}:${port}${upstreamPath}`;
+
+      const headers = { Accept: req.headers["accept"] || "*/*" };
+      if (req.headers["content-type"]) headers["Content-Type"] = String(req.headers["content-type"]);
+      if (req.headers["cookie"]) headers["Cookie"] = String(req.headers["cookie"]);
+
+      const response = await fetch(url, {
+        method: req.method,
+        headers,
+        body: (req.method === "GET" || req.method === "HEAD") ? undefined : req.body
+      });
+
+      const setCookie = response.headers.get("set-cookie");
+      if (setCookie) res.setHeader("Set-Cookie", setCookie);
+
+      const text = await response.text();
+      res.status(response.status);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+      res.setHeader("Content-Type", response.headers.get("content-type") || "application/octet-stream");
+      res.send(text);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
 
   app.get("/api/opc/tags", async (req, res) => {
     try {
