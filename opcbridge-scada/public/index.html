@@ -17,6 +17,7 @@
     <nav class="tabs" id="tabs">
       <button data-tab="overview" class="tab is-active">Overview</button>
       <button data-tab="configure" class="tab">Configure Server</button>
+      <button data-tab="users" class="tab">Users</button>
       <button data-tab="workspace" class="tab">Workspace</button>
       <button data-tab="alarms" class="tab">Alarms</button>
     </nav>
@@ -209,10 +210,14 @@
           </div>
         </div>
       </div>
+    </section>
 
-      <div class="card" style="margin-top: 14px;">
+    <section id="tab-users" class="panel">
+      <h2>Users</h2>
+      <div class="hint">Manage users and roles in opcbridge (stored in <code>passwords.jsonc</code>). Requires admin role for changes.</div>
+
+      <div class="card">
         <div class="card-title">Users & Roles (opcbridge)</div>
-        <div class="hint">User store lives in <code>/etc/opcbridge/passwords.jsonc</code> (managed via opcbridge <code>/auth/*</code> APIs). Requires admin role for changes.</div>
         <div class="card-body">
           <div class="hint mono" id="usersStatusLine">Loading…</div>
 

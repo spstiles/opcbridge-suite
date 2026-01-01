@@ -297,6 +297,11 @@ window.addEventListener('unhandledrejection', (e) => {
 function setTab(id) {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('is-active', b.dataset.tab === id));
   document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('is-active', p.id === `tab-${id}`));
+
+  if (id === 'users') {
+    refreshUsersPanel().catch(() => {});
+    refreshUserAuthLine().catch(() => {});
+  }
 }
 
 els.tabs?.addEventListener('click', (e) => {
