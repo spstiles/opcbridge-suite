@@ -186,13 +186,32 @@ const els = {
   usersTimeoutMinutes: document.getElementById('usersTimeoutMinutes'),
   usersTimeoutSaveBtn: document.getElementById('usersTimeoutSaveBtn'),
   usersTimeoutStatus: document.getElementById('usersTimeoutStatus'),
-  usersTable: document.getElementById('usersTable'),
-  usersTbody: document.getElementById('usersTbody'),
-  usersAddUsername: document.getElementById('usersAddUsername'),
-  usersAddPassword: document.getElementById('usersAddPassword'),
-  usersAddRole: document.getElementById('usersAddRole'),
-  usersAddBtn: document.getElementById('usersAddBtn'),
-  usersAddStatus: document.getElementById('usersAddStatus')
+
+  usersTreeView: document.getElementById('usersTreeView'),
+  usersTreeNote: document.getElementById('usersTreeNote'),
+
+  usersDetailsStatus: document.getElementById('usersDetailsStatus'),
+  usersDetailsTablePanel: document.getElementById('usersDetailsTablePanel'),
+  usersDetailsTable: document.getElementById('usersDetailsTable'),
+  usersDetailsThead: document.getElementById('usersDetailsThead'),
+  usersDetailsTbody: document.getElementById('usersDetailsTbody'),
+
+  usersDetailsFormPanel: document.getElementById('usersDetailsFormPanel'),
+  usersFormIdLabel: document.getElementById('usersFormIdLabel'),
+  usersFormId: document.getElementById('usersFormId'),
+  usersFormLabel: document.getElementById('usersFormLabel'),
+  usersFormDescription: document.getElementById('usersFormDescription'),
+  usersFormRankRow: document.getElementById('usersFormRankRow'),
+  usersFormRank: document.getElementById('usersFormRank'),
+  usersFormRoleRow: document.getElementById('usersFormRoleRow'),
+  usersFormRole: document.getElementById('usersFormRole'),
+  usersFormPasswordRow: document.getElementById('usersFormPasswordRow'),
+  usersFormPassword: document.getElementById('usersFormPassword'),
+  usersFormConfirmRow: document.getElementById('usersFormConfirmRow'),
+  usersFormConfirm: document.getElementById('usersFormConfirm'),
+  usersFormCancelBtn: document.getElementById('usersFormCancelBtn'),
+  usersFormSaveBtn: document.getElementById('usersFormSaveBtn'),
+  usersFormStatus: document.getElementById('usersFormStatus')
 };
 
 const state = {
@@ -209,6 +228,14 @@ const state = {
   alarmsAllLast: null,
   alarmsAll: [],
   alarmHistoryLast: null,
+
+  // users/roles ui (opcbridge auth store)
+  usersRoles: [],
+  usersUsers: [],
+  usersTreeExpanded: new Set(),
+  usersSelectedNodeId: '',
+  usersFormMode: '', // role_new|role_edit|user_new|user_edit
+  usersFormTargetId: '', // role id or username
 
   // connections
   connFiles: [],
@@ -3291,8 +3318,309 @@ function setUsersTimeoutStatus(msg) {
   if (els.usersTimeoutStatus) els.usersTimeoutStatus.textContent = String(msg || '');
 }
 
-function setUsersAddStatus(msg) {
-  if (els.usersAddStatus) els.usersAddStatus.textContent = String(msg || '');
+function setUsersDetailsStatus(msg) {
+  if (els.usersDetailsStatus) els.usersDetailsStatus.textContent = String(msg || '');
+}
+
+function setUsersFormStatus(msg) {
+  if (els.usersFormStatus) els.usersFormStatus.textContent = String(msg || '');
+}
+
+function usersShowTablePanel() {
+  if (els.usersDetailsTablePanel) els.usersDetailsTablePanel.style.display = 'block';
+  if (els.usersDetailsFormPanel) els.usersDetailsFormPanel.style.display = 'none';
+}
+
+function usersShowFormPanel() {
+  if (els.usersDetailsTablePanel) els.usersDetailsTablePanel.style.display = 'none';
+  if (els.usersDetailsFormPanel) els.usersDetailsFormPanel.style.display = 'block';
+}
+
+function usersSetDetailsTable(headers, rows) {
+  if (!els.usersDetailsThead || !els.usersDetailsTbody) return;
+  els.usersDetailsThead.textContent = '';
+  els.usersDetailsTbody.textContent = '';
+
+  const trh = document.createElement('tr');
+  (headers || []).forEach((h) => {
+    const th = document.createElement('th');
+    th.textContent = String(h || '');
+    trh.appendChild(th);
+  });
+  els.usersDetailsThead.appendChild(trh);
+
+  (rows || []).forEach((r) => {
+    const tr = document.createElement('tr');
+    (r?.cells || []).forEach((c) => {
+      const td = document.createElement('td');
+      td.textContent = String(c ?? '');
+      tr.appendChild(td);
+    });
+    if (typeof r?.onDblClick === 'function') {
+      tr.addEventListener('dblclick', () => r.onDblClick());
+    }
+    els.usersDetailsTbody.appendChild(tr);
+  });
+}
+
+function buildUsersTree() {
+  const roles = (state.usersRoles || []).slice().sort((a, b) => String(a?.id || '').localeCompare(String(b?.id || '')));
+  const users = (state.usersUsers || []).slice().sort((a, b) => String(a?.username || '').localeCompare(String(b?.username || '')));
+  return [
+    {
+      id: 'users_root_roles',
+      type: 'roles_root',
+      label: 'Roles',
+      children: roles.map((r) => ({
+        id: `role:${String(r?.id || '')}`,
+        type: 'role',
+        label: String(r?.label || r?.id || ''),
+        meta: r,
+        children: []
+      }))
+    },
+    {
+      id: 'users_root_users',
+      type: 'users_root',
+      label: 'Users',
+      children: users.map((u) => ({
+        id: `user:${String(u?.username || '')}`,
+        type: 'user',
+        label: String(u?.username || ''),
+        meta: u,
+        children: []
+      }))
+    }
+  ];
+}
+
+function renderUsersTreeNode(node, container) {
+  const canExpand = (node?.type === 'roles_root' || node?.type === 'users_root');
+  const expanded = state.usersTreeExpanded.has(node.id);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tree-item';
+  btn.classList.toggle('is-active', state.usersSelectedNodeId === node.id);
+
+  const twisty = document.createElement('span');
+  twisty.className = 'twisty';
+  twisty.classList.toggle('is-empty', !canExpand);
+  twisty.textContent = canExpand ? (expanded ? '−' : '+') : '';
+  if (canExpand) {
+    twisty.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (expanded) state.usersTreeExpanded.delete(node.id);
+      else state.usersTreeExpanded.add(node.id);
+      renderUsersTree();
+    });
+  }
+
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.textContent = String(node?.label || '');
+
+  btn.appendChild(twisty);
+  btn.appendChild(label);
+
+  btn.addEventListener('click', () => {
+    state.usersSelectedNodeId = node.id;
+    renderUsersTree();
+    renderUsersDetails(node);
+  });
+
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    state.usersSelectedNodeId = node.id;
+    renderUsersTree();
+    renderUsersDetails(node);
+
+    if (!isOpcbridgeAdmin()) return;
+
+    const items = [];
+    if (node.type === 'roles_root') {
+      items.push({ label: 'Add Role…', onClick: () => openRoleForm({ mode: 'new' }) });
+    } else if (node.type === 'role') {
+      const roleId = String(node?.meta?.id || '').trim();
+      items.push({ label: 'Edit Role…', onClick: () => openRoleForm({ mode: 'edit', roleId }) });
+      items.push({ label: 'Delete Role…', onClick: () => deleteRole(roleId) });
+    } else if (node.type === 'users_root') {
+      items.push({ label: 'Add User…', onClick: () => openUserForm({ mode: 'new' }) });
+    } else if (node.type === 'user') {
+      const username = String(node?.meta?.username || '').trim();
+      items.push({ label: 'Edit User…', onClick: () => openUserForm({ mode: 'edit', username }) });
+      items.push({ label: 'Delete User…', onClick: () => deleteUser(username) });
+    }
+    if (items.length) showContextMenu(e.clientX, e.clientY, items);
+  });
+
+  container.appendChild(btn);
+
+  if (canExpand && expanded && Array.isArray(node.children) && node.children.length) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tree-children';
+    node.children.forEach((child) => renderUsersTreeNode(child, wrap));
+    container.appendChild(wrap);
+  }
+}
+
+function renderUsersTree() {
+  if (!els.usersTreeView) return;
+  els.usersTreeView.textContent = '';
+  const roots = buildUsersTree();
+  roots.forEach((r) => {
+    if (!state.usersTreeExpanded.has(r.id)) state.usersTreeExpanded.add(r.id);
+    renderUsersTreeNode(r, els.usersTreeView);
+  });
+  if (els.usersTreeNote) {
+    els.usersTreeNote.textContent = `Roles: ${(state.usersRoles || []).length} · Users: ${(state.usersUsers || []).length}`;
+  }
+  if (!state.usersSelectedNodeId && roots.length) state.usersSelectedNodeId = roots[0].id;
+}
+
+function renderUsersDetails(node) {
+  if (!node) return;
+  usersShowTablePanel();
+  setUsersDetailsStatus('');
+
+  if (node.type === 'roles_root') {
+    const rows = (state.usersRoles || []).slice().sort((a, b) => String(a?.id || '').localeCompare(String(b?.id || ''))).map((r) => ({
+      cells: [String(r?.id || ''), String(r?.rank ?? ''), String(r?.description || '')],
+      onDblClick: () => openRoleForm({ mode: 'edit', roleId: String(r?.id || '') })
+    }));
+    usersSetDetailsTable(['Role', 'Rank', 'Description'], rows);
+    return;
+  }
+
+  if (node.type === 'users_root') {
+    const rows = (state.usersUsers || []).slice().sort((a, b) => String(a?.username || '').localeCompare(String(b?.username || ''))).map((u) => ({
+      cells: [String(u?.username || ''), String(u?.role || '')],
+      onDblClick: () => openUserForm({ mode: 'edit', username: String(u?.username || '') })
+    }));
+    usersSetDetailsTable(['Username', 'Role'], rows);
+    return;
+  }
+
+  if (node.type === 'role') {
+    openRoleForm({ mode: 'edit', roleId: String(node?.meta?.id || '') });
+    return;
+  }
+
+  if (node.type === 'user') {
+    openUserForm({ mode: 'edit', username: String(node?.meta?.username || '') });
+  }
+}
+
+function fillRoleSelectOptions(selectedValue) {
+  if (!els.usersFormRole) return;
+  els.usersFormRole.textContent = '';
+  (state.usersRoles || []).slice().sort((a, b) => Number(a?.rank || 0) - Number(b?.rank || 0)).forEach((r) => {
+    const opt = document.createElement('option');
+    opt.value = String(r?.id || '');
+    opt.textContent = String(r?.label || r?.id || '');
+    els.usersFormRole.appendChild(opt);
+  });
+  if (selectedValue) els.usersFormRole.value = String(selectedValue);
+}
+
+function openRoleForm({ mode, roleId }) {
+  usersShowFormPanel();
+  setUsersFormStatus('');
+  setUsersDetailsStatus('');
+
+  state.usersFormMode = (mode === 'new') ? 'role_new' : 'role_edit';
+  state.usersFormTargetId = roleId ? String(roleId) : '';
+
+  if (els.usersFormIdLabel) els.usersFormIdLabel.textContent = 'Role ID';
+  if (els.usersFormRoleRow) els.usersFormRoleRow.style.display = 'none';
+  if (els.usersFormPasswordRow) els.usersFormPasswordRow.style.display = 'none';
+  if (els.usersFormConfirmRow) els.usersFormConfirmRow.style.display = 'none';
+  if (els.usersFormRankRow) els.usersFormRankRow.style.display = '';
+
+  const role = (mode === 'edit')
+    ? (state.usersRoles || []).find((r) => String(r?.id || '') === String(roleId || '')) || null
+    : null;
+
+  if (els.usersFormId) {
+    els.usersFormId.value = role ? String(role.id || '') : '';
+    els.usersFormId.disabled = (mode === 'edit');
+  }
+  if (els.usersFormLabel) {
+    els.usersFormLabel.value = role ? String(role.label || '') : '';
+    els.usersFormLabel.disabled = false;
+  }
+  if (els.usersFormDescription) {
+    els.usersFormDescription.value = role ? String(role.description || '') : '';
+    els.usersFormDescription.disabled = false;
+  }
+  if (els.usersFormRank) {
+    els.usersFormRank.value = role ? String(role.rank ?? 0) : '0';
+  }
+}
+
+function openUserForm({ mode, username }) {
+  usersShowFormPanel();
+  setUsersFormStatus('');
+  setUsersDetailsStatus('');
+
+  state.usersFormMode = (mode === 'new') ? 'user_new' : 'user_edit';
+  state.usersFormTargetId = username ? String(username) : '';
+
+  if (els.usersFormIdLabel) els.usersFormIdLabel.textContent = 'Username';
+  if (els.usersFormRankRow) els.usersFormRankRow.style.display = 'none';
+  if (els.usersFormRoleRow) els.usersFormRoleRow.style.display = '';
+  if (els.usersFormPasswordRow) els.usersFormPasswordRow.style.display = '';
+  if (els.usersFormConfirmRow) els.usersFormConfirmRow.style.display = '';
+
+  const user = (mode === 'edit')
+    ? (state.usersUsers || []).find((u) => String(u?.username || '') === String(username || '')) || null
+    : null;
+
+  if (els.usersFormId) {
+    els.usersFormId.value = user ? String(user.username || '') : '';
+    els.usersFormId.disabled = (mode === 'edit');
+  }
+  if (els.usersFormLabel) {
+    els.usersFormLabel.value = user ? String(user.username || '') : '';
+    els.usersFormLabel.disabled = true;
+  }
+  if (els.usersFormDescription) {
+    els.usersFormDescription.value = '';
+    els.usersFormDescription.disabled = true;
+  }
+  fillRoleSelectOptions(user ? String(user.role || '') : 'viewer');
+  if (els.usersFormPassword) els.usersFormPassword.value = '';
+  if (els.usersFormConfirm) els.usersFormConfirm.value = '';
+}
+
+async function deleteRole(roleId) {
+  const id = String(roleId || '').trim();
+  if (!id) return;
+  if (!window.confirm(`Delete role '${id}'?`)) return;
+  setUsersDetailsStatus('Deleting role…');
+  try {
+    await apiJson(`/api/opcbridge/auth/roles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await refreshUsersPanel();
+    setUsersDetailsStatus('Role deleted.');
+  } catch (err) {
+    setUsersDetailsStatus(`Delete failed: ${err.message}`);
+  }
+}
+
+async function deleteUser(username) {
+  const uname = String(username || '').trim();
+  if (!uname) return;
+  if (!window.confirm(`Delete user '${uname}'?`)) return;
+  setUsersDetailsStatus('Deleting user…');
+  try {
+    await apiJson(`/api/opcbridge/auth/users/${encodeURIComponent(uname)}`, { method: 'DELETE' });
+    await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+    setUsersDetailsStatus('User deleted.');
+  } catch (err) {
+    setUsersDetailsStatus(`Delete failed: ${err.message}`);
+  }
 }
 
 async function refreshUsersPanel() {
@@ -3308,6 +3636,9 @@ async function refreshUsersPanel() {
     const role = String(s?.user?.role || 'viewer').trim().toLowerCase();
     const timeoutMinutes = Number(s?.timeoutMinutes) || 0;
     const users = Array.isArray(s?.users) ? s.users : [];
+    const roles = Array.isArray(s?.roles) ? s.roles : [];
+    state.usersUsers = users;
+    state.usersRoles = roles;
 
     const who = loggedIn ? `${username || '?'} (${role || 'viewer'})` : 'not logged in';
     setUsersStatus(`opcbridge auth: configured=${configured ? 'yes' : 'no'} initialized=${initialized ? 'yes' : 'no'} · ${who}`);
@@ -3324,48 +3655,14 @@ async function refreshUsersPanel() {
 
     if (els.usersTimeoutMinutes) els.usersTimeoutMinutes.value = String(timeoutMinutes || 0);
     setUsersTimeoutStatus('');
-    setUsersAddStatus('');
-
-    if (!els.usersTbody) return;
-    els.usersTbody.textContent = '';
-
     const canAdmin = loggedIn && role === 'admin';
-    users.forEach((u) => {
-      const tr = document.createElement('tr');
-      const uname = String(u?.username || '').trim();
-      const urole = String(u?.role || 'viewer').trim();
-      tr.innerHTML = `
-        <td><code>${escapeHtml(uname)}</code></td>
-        <td><code>${escapeHtml(urole)}</code></td>
-        <td></td>
-      `;
-      const td = tr.querySelector('td:last-child');
-      if (td) {
-        const btn = document.createElement('button');
-        btn.className = 'btn';
-        btn.textContent = 'Delete';
-        btn.disabled = !canAdmin;
-        btn.addEventListener('click', async () => {
-          if (!uname) return;
-          if (!window.confirm(`Delete user '${uname}'?`)) return;
-          try {
-            setUsersTimeoutStatus('');
-            setUsersAddStatus('');
-            setUsersInitStatus('');
-            setUsersStatus('Deleting user…');
-            await apiJson(`/api/opcbridge/auth/users/${encodeURIComponent(uname)}`, { method: 'DELETE' });
-            await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
-          } catch (err) {
-            setUsersStatus(`Delete failed: ${err.message}`);
-          }
-        });
-        td.appendChild(btn);
-      }
-      els.usersTbody.appendChild(tr);
-    });
-
     if (els.usersTimeoutSaveBtn) els.usersTimeoutSaveBtn.disabled = !canAdmin;
-    if (els.usersAddBtn) els.usersAddBtn.disabled = !canAdmin;
+
+    renderUsersTree();
+    const roots = buildUsersTree();
+    const allNodes = roots.flatMap((r) => [r, ...(r.children || [])]);
+    const selected = allNodes.find((n) => n.id === state.usersSelectedNodeId) || roots[0];
+    if (selected) renderUsersDetails(selected);
   } catch (err) {
     setUsersStatus(`Users panel failed: ${err.message}`);
     if (els.usersInitWrap) els.usersInitWrap.style.display = 'none';
@@ -3413,24 +3710,72 @@ function wireUsersUi() {
     });
   }
 
-  if (els.usersAddBtn) {
-    els.usersAddBtn.addEventListener('click', async () => {
-      const username = String(els.usersAddUsername?.value || '').trim();
-      const password = String(els.usersAddPassword?.value || '');
-      const role = String(els.usersAddRole?.value || 'viewer').trim();
-      if (!username) { setUsersAddStatus('Username required.'); return; }
-      if (!password) { setUsersAddStatus('Password required.'); return; }
-      setUsersAddStatus('Adding…');
-      try {
+  els.usersFormCancelBtn?.addEventListener('click', async () => {
+    usersShowTablePanel();
+    setUsersFormStatus('');
+    const roots = buildUsersTree();
+    const allNodes = roots.flatMap((r) => [r, ...(r.children || [])]);
+    const selected = allNodes.find((n) => n.id === state.usersSelectedNodeId) || roots[0];
+    if (selected) renderUsersDetails(selected);
+  });
+
+  els.usersFormSaveBtn?.addEventListener('click', async () => {
+    if (!isOpcbridgeAdmin()) { setUsersFormStatus('Admin login required.'); return; }
+    setUsersFormStatus('Saving…');
+    try {
+      const mode = state.usersFormMode;
+      if (mode === 'role_new') {
+        const id = String(els.usersFormId?.value || '').trim().toLowerCase();
+        const label = String(els.usersFormLabel?.value || '').trim();
+        const description = String(els.usersFormDescription?.value || '').trim();
+        const rank = Math.max(0, Math.min(3, Math.floor(Number(els.usersFormRank?.value) || 0)));
+        await apiPostJson('/api/opcbridge/auth/roles', { id, label, description, rank });
+        state.usersSelectedNodeId = `role:${id}`;
+      } else if (mode === 'role_edit') {
+        const id = String(state.usersFormTargetId || '').trim();
+        const label = String(els.usersFormLabel?.value || '').trim();
+        const description = String(els.usersFormDescription?.value || '').trim();
+        const rank = Math.max(0, Math.min(3, Math.floor(Number(els.usersFormRank?.value) || 0)));
+        await apiJson(`/api/opcbridge/auth/roles/${encodeURIComponent(id)}`, { method: 'PUT', bodyObj: { label, description, rank } });
+        state.usersSelectedNodeId = `role:${id}`;
+      } else if (mode === 'user_new') {
+        const username = String(els.usersFormId?.value || '').trim();
+        const role = String(els.usersFormRole?.value || 'viewer').trim();
+        const password = String(els.usersFormPassword?.value || '');
+        const confirm = String(els.usersFormConfirm?.value || '');
+        if (!username) throw new Error('Username required.');
+        if (!password) throw new Error('Password required.');
+        if (!confirm) throw new Error('Confirm required.');
+        if (password !== confirm) throw new Error('Passwords do not match.');
         await apiPostJson('/api/opcbridge/auth/users', { username, password, role });
-        if (els.usersAddPassword) els.usersAddPassword.value = '';
-        await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
-        setUsersAddStatus('Added.');
-      } catch (err) {
-        setUsersAddStatus(`Add failed: ${err.message}`);
+        state.usersSelectedNodeId = `user:${username}`;
+      } else if (mode === 'user_edit') {
+        const username = String(state.usersFormTargetId || '').trim();
+        const role = String(els.usersFormRole?.value || 'viewer').trim();
+        const password = String(els.usersFormPassword?.value || '');
+        const confirm = String(els.usersFormConfirm?.value || '');
+        const bodyObj = { role };
+        if (password) {
+          if (!confirm) throw new Error('Confirm required.');
+          if (password !== confirm) throw new Error('Passwords do not match.');
+          bodyObj.password = password;
+          bodyObj.confirm = confirm;
+        }
+        await apiJson(`/api/opcbridge/auth/users/${encodeURIComponent(username)}`, { method: 'PUT', bodyObj });
+        state.usersSelectedNodeId = `user:${username}`;
+      } else {
+        throw new Error('Nothing to save.');
       }
-    });
-  }
+
+      if (els.usersFormPassword) els.usersFormPassword.value = '';
+      if (els.usersFormConfirm) els.usersFormConfirm.value = '';
+      usersShowTablePanel();
+      await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+      setUsersFormStatus('Saved.');
+    } catch (err) {
+      setUsersFormStatus(`Save failed: ${err.message}`);
+    }
+  });
 }
 
 function startUserAuthPolling() {

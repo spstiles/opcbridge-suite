@@ -102,9 +102,16 @@ static std::string g_adminAuthLoadError;
 
 static bool g_userStoreConfigured = false;
 static int g_authTimeoutMinutes = 0; // idle timeout; 0 disables
+struct AuthRoleRecord {
+    std::string id;          // machine id, used by users.role
+    std::string label;       // human label
+    std::string description; // optional
+    int rank = 0;            // 0..3 (viewer..admin)
+};
+static std::vector<AuthRoleRecord> g_authRoles;
 struct AuthUserRecord {
     std::string username;
-    std::string role; // viewer|operator|editor|admin
+    std::string role; // role id (default: viewer|operator|editor|admin)
     int iterations = 150000;
     std::string salt_b64;
     std::string hash_b64;
@@ -1330,25 +1337,74 @@ static std::string normalize_auth_username(const std::string &value) {
     return cleaned;
 }
 
-static std::string normalize_auth_role(const std::string &value) {
-    std::string s = value;
+static std::string normalize_auth_role_id(const std::string &raw) {
+    std::string s = raw;
     for (auto &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (s == "admin" || s == "editor" || s == "operator" || s == "viewer") return s;
+    if (s.empty()) return "";
+    // allow a-z 0-9 _ -
+    for (char c : s) {
+        if (c >= 'a' && c <= 'z') continue;
+        if (c >= '0' && c <= '9') continue;
+        if (c == '_' || c == '-') continue;
+        return "";
+    }
+    return s;
+}
+
+static std::string normalize_auth_role(const std::string &value) {
+    const std::string id = normalize_auth_role_id(value);
+    if (id.empty()) return "viewer";
+    // If roles are loaded, only allow defined ids.
+    if (!g_authRoles.empty()) {
+        for (const auto &r : g_authRoles) {
+            if (r.id == id) return id;
+        }
+        return "viewer";
+    }
+    // Backward-compat default set.
+    if (id == "admin" || id == "editor" || id == "operator" || id == "viewer") return id;
     return "viewer";
 }
 
 static int role_rank(const std::string &role) {
-    const std::string r = normalize_auth_role(role);
-    if (r == "admin") return 3;
-    if (r == "editor") return 2;
-    if (r == "operator") return 1;
+    const std::string id = normalize_auth_role(role);
+    for (const auto &r : g_authRoles) {
+        if (r.id == id) return r.rank;
+    }
+    if (id == "admin") return 3;
+    if (id == "editor") return 2;
+    if (id == "operator") return 1;
     return 0;
+}
+
+static bool role_exists(const std::string &role) {
+    const std::string id = normalize_auth_role_id(role);
+    if (id.empty()) return false;
+    for (const auto &r : g_authRoles) {
+        if (r.id == id) return true;
+    }
+    // If no roles loaded yet, allow default set.
+    if (g_authRoles.empty()) {
+        return (id == "admin" || id == "editor" || id == "operator" || id == "viewer");
+    }
+    return false;
+}
+
+static void ensure_default_roles() {
+    if (!g_authRoles.empty()) return;
+    g_authRoles = {
+        {"viewer", "Viewer", "Read-only access.", 0},
+        {"operator", "Operator", "Runtime operation (no edits).", 1},
+        {"editor", "Editor", "Can edit configuration and screens.", 2},
+        {"admin", "Admin", "Full access.", 3}
+    };
 }
 
 static bool load_passwords_store(const std::string &path) {
     try {
         g_userStoreConfigured = false;
         g_authTimeoutMinutes = 0;
+        g_authRoles.clear();
         g_authUsers.clear();
 
         if (!fs::exists(path)) return true;
@@ -1359,6 +1415,29 @@ static bool load_passwords_store(const std::string &path) {
         if (!j.is_object()) return false;
 
         g_authTimeoutMinutes = std::max(0, j.value("timeoutMinutes", 0));
+
+        // roles (optional)
+        auto roles = j.value("roles", json::array());
+        if (roles.is_array()) {
+            for (const auto &rj : roles) {
+                if (!rj.is_object()) continue;
+                AuthRoleRecord r;
+                r.id = normalize_auth_role_id(rj.value("id", std::string{}));
+                r.label = rj.value("label", std::string{});
+                r.description = rj.value("description", std::string{});
+                r.rank = std::max(0, std::min(3, rj.value("rank", 0)));
+                if (r.id.empty()) continue;
+                if (r.label.empty()) r.label = r.id;
+                // prevent duplicates
+                bool dup = false;
+                for (const auto &existing : g_authRoles) {
+                    if (existing.id == r.id) { dup = true; break; }
+                }
+                if (dup) continue;
+                g_authRoles.push_back(r);
+            }
+        }
+        ensure_default_roles();
 
         auto users = j.value("users", json::array());
         if (!users.is_array()) users = json::array();
@@ -1396,6 +1475,16 @@ static bool save_passwords_store(const std::string &path) {
     try {
         json out;
         out["timeoutMinutes"] = g_authTimeoutMinutes;
+        ensure_default_roles();
+        out["roles"] = json::array();
+        for (const auto &r : g_authRoles) {
+            json rec;
+            rec["id"] = r.id;
+            rec["label"] = r.label;
+            rec["description"] = r.description.empty() ? json(nullptr) : json(r.description);
+            rec["rank"] = r.rank;
+            out["roles"].push_back(rec);
+        }
         out["users"] = json::array();
         for (const auto &u : g_authUsers) {
             json rec;
@@ -12215,13 +12304,22 @@ window.addEventListener("load", startAutoRefresh);
 			                resp["user"] = userLoggedIn
 		                  ? json::object({{"username", sess.username}, {"role", normalize_auth_role(sess.role)}})
 		                  : json(nullptr);
-		                resp["initialized"] = g_userStoreConfigured;
-		                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
-		                resp["users"] = json::array();
-		                if (g_userStoreConfigured) {
-		                    for (const auto &u : g_authUsers) {
-		                        resp["users"].push_back({
-		                            {"username", u.username},
+			                resp["initialized"] = g_userStoreConfigured;
+			                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
+			                resp["roles"] = json::array();
+			                for (const auto &r : g_authRoles) {
+			                    resp["roles"].push_back({
+			                        {"id", r.id},
+			                        {"label", r.label},
+			                        {"description", r.description.empty() ? json(nullptr) : json(r.description)},
+			                        {"rank", r.rank}
+			                    });
+			                }
+			                resp["users"] = json::array();
+			                if (g_userStoreConfigured) {
+			                    for (const auto &u : g_authUsers) {
+			                        resp["users"].push_back({
+			                            {"username", u.username},
 		                            {"role", normalize_auth_role(u.role)}
 		                        });
 		                    }
@@ -12452,19 +12550,20 @@ window.addEventListener("load", startAutoRefresh);
 		                        }
 		                    }
 
-		                    // Create first admin user.
-		                    std::string salt(16, '\0');
-		                    if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
-		                        resp["ok"] = false;
-	                        resp["error"] = "Failed to generate random salt.";
-	                        res.status = 500;
+				                    // Create first admin user.
+				                    ensure_default_roles();
+				                    std::string salt(16, '\0');
+				                    if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Failed to generate random salt.";
+				                        res.status = 500;
 	                        res.set_content(resp.dump(2), "application/json");
 	                        return;
 	                    }
 
-	                    AuthUserRecord u;
-	                    u.username = username;
-	                    u.role = "admin";
+				                    AuthUserRecord u;
+				                    u.username = username;
+				                    u.role = "admin";
 	                    u.iterations = 150000;
 	                    u.salt_b64 = b64_encode(salt);
 	                    if (u.salt_b64.empty()) {
@@ -12505,8 +12604,8 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            });
 
-		            // PUT /auth/timeout  (admin-only)
-		            svr.Put("/auth/timeout", [&](const httplib::Request &req, httplib::Response &res) {
+			            // PUT /auth/timeout  (admin-only)
+			            svr.Put("/auth/timeout", [&](const httplib::Request &req, httplib::Response &res) {
 		                json resp;
 		                AdminSessionInfo sess;
 		                if (!is_admin_user_request(req, sess)) {
@@ -12543,7 +12642,278 @@ window.addEventListener("load", startAutoRefresh);
 	                    res.status = 400;
 	                    res.set_content(resp.dump(2), "application/json");
 	                }
-	            });
+			            });
+
+			            // ---------- ROLES (admin-only) ----------
+			            // GET /auth/roles
+				            svr.Get("/auth/roles", [&](const httplib::Request & /*req*/, httplib::Response &res) {
+				                json resp;
+				                try {
+				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                    load_passwords_store(passwordsPath);
+				                    ensure_default_roles();
+			                    resp["ok"] = true;
+			                    resp["roles"] = json::array();
+			                    for (const auto &r : g_authRoles) {
+			                        resp["roles"].push_back({
+			                            {"id", r.id},
+			                            {"label", r.label},
+			                            {"description", r.description.empty() ? json(nullptr) : json(r.description)},
+			                            {"rank", r.rank}
+			                        });
+			                    }
+			                    res.set_content(resp.dump(2), "application/json");
+			                } catch (const std::exception &ex) {
+			                    resp["ok"] = false;
+			                    resp["error"] = std::string("Failed: ") + ex.what();
+			                    res.status = 500;
+			                    res.set_content(resp.dump(2), "application/json");
+			                }
+			            });
+
+			            auto is_reserved_role = [](const std::string &id) {
+			                return (id == "admin" || id == "editor" || id == "operator" || id == "viewer");
+			            };
+
+			            // POST /auth/roles  (admin-only)
+			            // Body: { id, label, description, rank }
+			            svr.Post("/auth/roles", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                AdminSessionInfo sess;
+			                if (!is_admin_user_request(req, sess)) {
+			                    resp["ok"] = false;
+			                    resp["error"] = "Admin login required.";
+			                    res.status = 403;
+			                    res.set_content(resp.dump(2), "application/json");
+			                    return;
+			                }
+			                try {
+			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    load_passwords_store(passwordsPath);
+			                    if (!g_userStoreConfigured) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Not initialized.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    ensure_default_roles();
+			                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+			                    const std::string id = normalize_auth_role_id(body.value("id", std::string{}));
+			                    const std::string label = body.value("label", std::string{});
+			                    const std::string description = body.value("description", std::string{});
+			                    const int rank = std::max(0, std::min(3, body.value("rank", 0)));
+			                    if (id.empty()) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Invalid role id.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    if (is_reserved_role(id)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Cannot create reserved role id.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    for (const auto &r : g_authRoles) {
+			                        if (r.id == id) {
+			                            resp["ok"] = false;
+			                            resp["error"] = "Role already exists.";
+			                            res.status = 409;
+			                            res.set_content(resp.dump(2), "application/json");
+			                            return;
+			                        }
+			                    }
+			                    AuthRoleRecord r;
+			                    r.id = id;
+			                    r.label = label.empty() ? id : label;
+			                    r.description = description;
+			                    r.rank = rank;
+			                    g_authRoles.push_back(r);
+			                    if (!save_passwords_store(passwordsPath)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Failed to save passwords.jsonc.";
+			                        res.status = 500;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    resp["ok"] = true;
+			                    res.set_content(resp.dump(2), "application/json");
+			                } catch (const std::exception &ex) {
+			                    resp["ok"] = false;
+			                    resp["error"] = std::string("Invalid JSON: ") + ex.what();
+			                    res.status = 400;
+			                    res.set_content(resp.dump(2), "application/json");
+			                }
+			            });
+
+			            // PUT /auth/roles/<id>  (admin-only)
+			            // Body: { label?, description?, rank? }
+			            svr.Put(R"(/auth/roles/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                AdminSessionInfo sess;
+			                if (!is_admin_user_request(req, sess)) {
+			                    resp["ok"] = false;
+			                    resp["error"] = "Admin login required.";
+			                    res.status = 403;
+			                    res.set_content(resp.dump(2), "application/json");
+			                    return;
+			                }
+			                try {
+			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    load_passwords_store(passwordsPath);
+			                    if (!g_userStoreConfigured) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Not initialized.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    ensure_default_roles();
+			                    const std::string id = normalize_auth_role_id(req.matches[1]);
+			                    if (id.empty()) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Invalid role id.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+			                    const bool hasLabel = body.contains("label");
+			                    const bool hasDesc = body.contains("description");
+			                    const bool hasRank = body.contains("rank");
+			                    bool found = false;
+			                    for (auto &r : g_authRoles) {
+			                        if (r.id != id) continue;
+			                        found = true;
+			                        if (hasLabel) {
+			                            const std::string label = body.value("label", std::string{});
+			                            r.label = label.empty() ? r.id : label;
+			                        }
+			                        if (hasDesc) {
+			                            r.description = body.value("description", std::string{});
+			                        }
+			                        if (hasRank) {
+			                            r.rank = std::max(0, std::min(3, body.value("rank", r.rank)));
+			                        }
+			                        break;
+			                    }
+			                    if (!found) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Role not found.";
+			                        res.status = 404;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    // Ensure at least one admin-ranked user remains.
+			                    int adminCount = 0;
+			                    for (const auto &u : g_authUsers) {
+			                        if (role_rank(u.role) >= 3) adminCount++;
+			                    }
+			                    if (adminCount < 1) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Cannot remove admin access from all users.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    if (!save_passwords_store(passwordsPath)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Failed to save passwords.jsonc.";
+			                        res.status = 500;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    resp["ok"] = true;
+			                    res.set_content(resp.dump(2), "application/json");
+			                } catch (const std::exception &ex) {
+			                    resp["ok"] = false;
+			                    resp["error"] = std::string("Invalid JSON: ") + ex.what();
+			                    res.status = 400;
+			                    res.set_content(resp.dump(2), "application/json");
+			                }
+			            });
+
+			            // DELETE /auth/roles/<id>  (admin-only)
+			            svr.Delete(R"(/auth/roles/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                AdminSessionInfo sess;
+			                if (!is_admin_user_request(req, sess)) {
+			                    resp["ok"] = false;
+			                    resp["error"] = "Admin login required.";
+			                    res.status = 403;
+			                    res.set_content(resp.dump(2), "application/json");
+			                    return;
+			                }
+			                try {
+			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    load_passwords_store(passwordsPath);
+			                    if (!g_userStoreConfigured) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Not initialized.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    ensure_default_roles();
+			                    const std::string id = normalize_auth_role_id(req.matches[1]);
+			                    if (id.empty()) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Invalid role id.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    if (is_reserved_role(id)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Cannot delete reserved roles.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    for (const auto &u : g_authUsers) {
+			                        if (normalize_auth_role(u.role) == id) {
+			                            resp["ok"] = false;
+			                            resp["error"] = "Cannot delete a role that is assigned to a user.";
+			                            res.status = 400;
+			                            res.set_content(resp.dump(2), "application/json");
+			                            return;
+			                        }
+			                    }
+			                    std::vector<AuthRoleRecord> next;
+			                    next.reserve(g_authRoles.size());
+			                    bool removed = false;
+			                    for (const auto &r : g_authRoles) {
+			                        if (r.id == id) { removed = true; continue; }
+			                        next.push_back(r);
+			                    }
+			                    if (!removed) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Role not found.";
+			                        res.status = 404;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    g_authRoles = next;
+			                    ensure_default_roles();
+			                    if (!save_passwords_store(passwordsPath)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Failed to save passwords.jsonc.";
+			                        res.status = 500;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    resp["ok"] = true;
+			                    res.set_content(resp.dump(2), "application/json");
+			                } catch (const std::exception &ex) {
+			                    resp["ok"] = false;
+			                    resp["error"] = std::string("Invalid request: ") + ex.what();
+			                    res.status = 400;
+			                    res.set_content(resp.dump(2), "application/json");
+			                }
+			            });
 
 		            // POST /auth/users  (admin-only)
 		            svr.Post("/auth/users", [&](const httplib::Request &req, httplib::Response &res) {
@@ -12569,7 +12939,14 @@ window.addEventListener("load", startAutoRefresh);
 	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
 	                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
 	                    const std::string password = body.value("password", std::string{});
-	                    const std::string role = normalize_auth_role(body.value("role", std::string{"viewer"}));
+		                    const std::string role = normalize_auth_role(body.value("role", std::string{"viewer"}));
+		                    if (!role_exists(role)) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Invalid role.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
 	                    if (username.empty()) {
 	                        resp["ok"] = false;
 	                        resp["error"] = "Invalid username.";
@@ -12615,7 +12992,7 @@ window.addEventListener("load", startAutoRefresh);
 	                        res.set_content(resp.dump(2), "application/json");
 	                        return;
 	                    }
-	                    g_authUsers.push_back(u);
+		                    g_authUsers.push_back(u);
 	                    if (!save_passwords_store(passwordsPath)) {
 	                        resp["ok"] = false;
 	                        resp["error"] = "Failed to save passwords.jsonc.";
@@ -12631,7 +13008,139 @@ window.addEventListener("load", startAutoRefresh);
 	                    res.status = 400;
 	                    res.set_content(resp.dump(2), "application/json");
 	                }
-	            });
+		            });
+
+		            // PUT /auth/users/<username>  (admin-only)
+		            // Body: { "role": "...", "password": "...", "confirm": "..." }
+		            svr.Put(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                AdminSessionInfo sess;
+		                if (!is_admin_user_request(req, sess)) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Admin login required.";
+		                    res.status = 403;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
+		                }
+		                try {
+		                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		                    load_passwords_store(passwordsPath);
+		                    if (!g_userStoreConfigured) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Not initialized.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+
+		                    const std::string username = normalize_auth_username(req.matches[1]);
+		                    if (username.empty()) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Invalid username.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+
+		                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+		                    const bool hasRole = body.contains("role");
+		                    const bool hasPassword = body.contains("password");
+
+		                    std::string nextRole;
+		                    if (hasRole) {
+		                        nextRole = normalize_auth_role(body.value("role", std::string{"viewer"}));
+		                        if (!role_exists(nextRole)) {
+		                            resp["ok"] = false;
+		                            resp["error"] = "Invalid role.";
+		                            res.status = 400;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                    }
+
+		                    std::string password;
+		                    if (hasPassword) {
+		                        password = body.value("password", std::string{});
+		                        const std::string confirm = body.value("confirm", std::string{});
+		                        if (password.size() < 4) {
+		                            resp["ok"] = false;
+		                            resp["error"] = "Password too short.";
+		                            res.status = 400;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                        if (!confirm.empty() && password != confirm) {
+		                            resp["ok"] = false;
+		                            resp["error"] = "Passwords do not match.";
+		                            res.status = 400;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                    }
+
+		                    bool found = false;
+		                    for (auto &u : g_authUsers) {
+		                        if (u.username != username) continue;
+		                        found = true;
+		                        if (hasRole) u.role = nextRole;
+		                        if (hasPassword) {
+		                            std::string salt(16, '\0');
+		                            if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
+		                                resp["ok"] = false;
+		                                resp["error"] = "Failed to generate random salt.";
+		                                res.status = 500;
+		                                res.set_content(resp.dump(2), "application/json");
+		                                return;
+		                            }
+		                            u.iterations = 150000;
+		                            u.salt_b64 = b64_encode(salt);
+		                            if (!pbkdf2_sha256_b64(password, salt, u.iterations, u.hash_b64)) {
+		                                resp["ok"] = false;
+		                                resp["error"] = "PBKDF2 hashing failed.";
+		                                res.status = 500;
+		                                res.set_content(resp.dump(2), "application/json");
+		                                return;
+		                            }
+		                        }
+		                        break;
+		                    }
+
+		                    if (!found) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "User not found.";
+		                        res.status = 404;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+
+		                    bool hasAdmin = false;
+		                    for (const auto &u : g_authUsers) {
+		                        if (role_rank(u.role) >= 3) { hasAdmin = true; break; }
+		                    }
+		                    if (!hasAdmin) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Cannot remove admin access from all users.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+
+		                    if (!save_passwords_store(passwordsPath)) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Failed to save passwords.jsonc.";
+		                        res.status = 500;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+		                    resp["ok"] = true;
+		                    res.set_content(resp.dump(2), "application/json");
+		                } catch (const std::exception &ex) {
+		                    resp["ok"] = false;
+		                    resp["error"] = std::string("Invalid request: ") + ex.what();
+		                    res.status = 400;
+		                    res.set_content(resp.dump(2), "application/json");
+		                }
+		            });
 
 		            // DELETE /auth/users/<username>  (admin-only)
 		            svr.Delete(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
@@ -12679,17 +13188,17 @@ window.addEventListener("load", startAutoRefresh);
 	                        return;
 	                    }
 
-	                    bool hasAdmin = false;
-	                    for (const auto &u : remaining) {
-	                        if (normalize_auth_role(u.role) == "admin") { hasAdmin = true; break; }
-	                    }
-	                    if (!hasAdmin) {
-	                        resp["ok"] = false;
-	                        resp["error"] = "Cannot remove the last admin user.";
-	                        res.status = 400;
-	                        res.set_content(resp.dump(2), "application/json");
-	                        return;
-	                    }
+		                    bool hasAdmin = false;
+		                    for (const auto &u : remaining) {
+		                        if (role_rank(u.role) >= 3) { hasAdmin = true; break; }
+		                    }
+		                    if (!hasAdmin) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Cannot remove the last admin user.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
 
 	                    g_authUsers = remaining;
 	                    if (!save_passwords_store(passwordsPath)) {

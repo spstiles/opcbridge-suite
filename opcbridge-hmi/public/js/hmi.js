@@ -709,7 +709,11 @@ const visibilityFields = document.getElementById("visibilityFields");
 const visibilityEnabledInput = document.getElementById("visibilityEnabled");
 const visibilityConnectionInput = document.getElementById("visibilityConnection");
 const visibilityTagSelect = document.getElementById("visibilityTag");
+const visibilityModeSelect = document.getElementById("visibilityMode");
+const visibilityThresholdRow = document.getElementById("visibilityThresholdRow");
 const visibilityThresholdInput = document.getElementById("visibilityThreshold");
+const visibilityMatchRow = document.getElementById("visibilityMatchRow");
+const visibilityMatchInput = document.getElementById("visibilityMatch");
 const visibilityInvertInput = document.getElementById("visibilityInvert");
 const alignTools = document.getElementById("alignTools");
 const alignLeftBtn = document.getElementById("alignLeftBtn");
@@ -1325,6 +1329,7 @@ let isDirty = false;
 let renderedElements = [];
 let renderedElementMeta = [];
 let selectedIndices = [];
+let lastSelectionSignature = "";
 let selectionLayer = null;
 let resizeLayer = null;
 let selectionBox = null;
@@ -1362,6 +1367,9 @@ let nextIndicatorId = 1;
 let imageFilesCache = [];
 let imageFilesLoading = false;
 let imageFilesError = "";
+let imageLibraryContextMenu = null;
+let imageLibraryContextMenuOpen = false;
+let imageLibraryContextMenuFile = "";
 let isDrawingViewport = false;
 let viewportDraft = null;
 let viewportDraftStart = null;
@@ -1905,6 +1913,7 @@ const applyMultilineSvgText = (textEl, lines, x, yStart, lineHeight) => {
 };
 const groupEditStack = [];
 let selectedPolygonVertex = null;
+let lastEditUiState = null;
 
 const updateGroupBreadcrumb = () => {
   if (!groupBreadcrumb) return;
@@ -2896,13 +2905,18 @@ const shouldRenderObject = (obj) => {
     ? vis.threshold
     : vis.value; // legacy alias
   const hasThreshold = thresholdRaw !== undefined && thresholdRaw !== null && thresholdRaw !== "";
-  if (hasThreshold) {
-    const thresholdValue = Number(thresholdRaw);
-    if (!Number.isFinite(thresholdValue)) return true;
-    const numeric = coerceTagNumber(value);
-    if (numeric === null) return true;
-    const isOn = numeric >= thresholdValue;
-    return vis.invert ? !isOn : isOn;
+  const hasMatch = String(vis.match ?? "").trim() !== "";
+  const mode = (vis.mode === "equals" || vis.mode === "threshold") ? vis.mode : "";
+  const hasExplicit = hasThreshold || hasMatch || mode;
+  if (hasExplicit) {
+    const config = {
+      ...vis,
+      enabled: true,
+      threshold: hasThreshold ? thresholdRaw : vis.threshold
+    };
+    const state = getAutomationState(value, config);
+    if (state === null) return true;
+    return state;
   }
   const isOn = coerceTagBoolean(value);
   return vis.invert ? !isOn : isOn;
@@ -3799,6 +3813,15 @@ const setSelectValueSafe = (select, value) => {
   select.value = value;
 };
 
+const blurActiveFormControl = () => {
+  const el = document.activeElement;
+  if (!el) return;
+  const tag = el.tagName?.toLowerCase?.() || "";
+  const isForm = tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
+  if (!isForm) return;
+  try { el.blur(); } catch { /* ignore */ }
+};
+
 const parseOptionalNumber = (value) => {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
@@ -4154,6 +4177,93 @@ const loadImageFiles = async () => {
   updatePropertiesPanel();
 };
 
+const ensureImageLibraryContextMenu = () => {
+  if (imageLibraryContextMenu) return imageLibraryContextMenu;
+  const menu = document.createElement("div");
+  menu.className = "hmi-context-menu is-hidden";
+  menu.setAttribute("role", "menu");
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  document.body.appendChild(menu);
+  imageLibraryContextMenu = menu;
+
+  const closeIfOpen = () => {
+    if (!imageLibraryContextMenuOpen) return;
+    imageLibraryContextMenuOpen = false;
+    imageLibraryContextMenuFile = "";
+    menu.classList.add("is-hidden");
+    menu.innerHTML = "";
+  };
+
+  document.addEventListener("click", closeIfOpen);
+  window.addEventListener("blur", closeIfOpen);
+  window.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape") closeIfOpen();
+  });
+
+  return menu;
+};
+
+const showImageLibraryContextMenu = (clientX, clientY, file) => {
+  if (!isEditMode) return;
+  if (!canEdit()) return;
+  const menu = ensureImageLibraryContextMenu();
+  imageLibraryContextMenuOpen = true;
+  imageLibraryContextMenuFile = String(file || "");
+  menu.innerHTML = "";
+
+  const title = document.createElement("div");
+  title.className = "hmi-context-menu-title";
+  title.textContent = imageLibraryContextMenuFile;
+  menu.appendChild(title);
+
+  const addItem = (label, onClick, disabled = false) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "hmi-context-menu-item";
+    btn.textContent = label;
+    btn.disabled = disabled;
+    btn.addEventListener("click", async () => {
+      try {
+        await onClick?.();
+      } finally {
+        imageLibraryContextMenuOpen = false;
+        imageLibraryContextMenuFile = "";
+        menu.classList.add("is-hidden");
+        menu.innerHTML = "";
+      }
+    });
+    menu.appendChild(btn);
+  };
+
+  const isSvg = /\.svg$/i.test(imageLibraryContextMenuFile);
+  addItem(
+    "Delete SVG…",
+    async () => {
+      if (!isSvg) return;
+      const ok = window.confirm(`Delete ${imageLibraryContextMenuFile}? This cannot be undone.`);
+      if (!ok) return;
+      const response = await fetch(`/api/svg-files/${encodeURIComponent(imageLibraryContextMenuFile)}`, { method: "DELETE" });
+      const text = await response.text();
+      if (!response.ok) {
+        let message = text;
+        try { message = JSON.parse(text)?.error || text; } catch { /* ignore */ }
+        throw new Error(message || `HTTP ${response.status}`);
+      }
+      imageFilesCache = imageFilesCache.filter((name) => name !== imageLibraryContextMenuFile);
+      renderLibraryImages();
+    },
+    !isSvg
+  );
+
+  addItem("Cancel", async () => {});
+
+  menu.style.left = `${Math.max(8, clientX)}px`;
+  menu.style.top = `${Math.max(8, clientY)}px`;
+  menu.classList.remove("is-hidden");
+};
+
 const renderLibraryImages = () => {
   if (!libraryImagesGrid) return;
   libraryImagesGrid.textContent = "";
@@ -4183,6 +4293,10 @@ const renderLibraryImages = () => {
     item.className = "library-image-item";
     item.draggable = true;
     item.title = file;
+    item.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      showImageLibraryContextMenu(event.clientX, event.clientY, file);
+    });
 
     const thumb = document.createElement("img");
     thumb.className = "library-image-thumb";
@@ -6824,14 +6938,13 @@ const syncPropertiesFromSelection = () => {
     if (groupActionViewportIdSelect) {
       setSelectValueSafe(groupActionViewportIdSelect, String(obj.action?.viewportId || ""));
     }
-    if (groupActionScreenIdSelect) {
-      setSelectValueSafe(groupActionScreenIdSelect, String(obj.action?.screenId || ""));
-    }
-    return;
-  }
-  if (obj.type === "text") {
-    const bind = obj.bindText || {};
-    if (textValueInput) textValueInput.value = obj.text || "";
+	    if (groupActionScreenIdSelect) {
+	      setSelectValueSafe(groupActionScreenIdSelect, String(obj.action?.screenId || ""));
+	    }
+	  }
+	  if (obj.type === "text") {
+	    const bind = obj.bindText || {};
+	    if (textValueInput) textValueInput.value = obj.text || "";
     if (textFontSizeInput) textFontSizeInput.value = Number(obj.fontSize) || 18;
     if (textBoldInput) textBoldInput.checked = Boolean(obj.bold);
     if (textFillInput) textFillInput.value = obj.fill || "#ffffff";
@@ -7581,7 +7694,7 @@ const syncPropertiesFromSelection = () => {
     if (barTicksMajorInput) setInputValueSafe(barTicksMajorInput, ticks.major ?? 5);
     if (barTicksMinorInput) setInputValueSafe(barTicksMinorInput, ticks.minor ?? 4);
   }
-	  if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityThresholdInput || visibilityInvertInput) {
+	  if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityModeSelect || visibilityThresholdInput || visibilityMatchInput || visibilityInvertInput) {
 	    const vis = obj.visibility || {};
 	    const isEnabled = vis.enabled !== false;
 	    if (visibilityEnabledInput) visibilityEnabledInput.checked = isEnabled;
@@ -7596,10 +7709,22 @@ const syncPropertiesFromSelection = () => {
       const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
       setSelectValueSafe(visibilityTagSelect, combined);
 	    }
-	    if (visibilityThresholdInput) {
-	      const thresholdValue = (vis.threshold ?? vis.value);
-	      setInputValueSafe(visibilityThresholdInput, thresholdValue ?? "");
-	    }
+      const thresholdValue = (vis.threshold ?? vis.value);
+      const hasMatch = String(vis.match ?? "").trim() !== "";
+      const mode = (vis.mode === "equals" || vis.mode === "threshold")
+        ? vis.mode
+        : (hasMatch ? "equals" : "threshold");
+      if (visibilityModeSelect) setSelectValueSafe(visibilityModeSelect, mode);
+      if (visibilityThresholdRow) {
+        visibilityThresholdRow.classList.toggle("is-hidden", mode === "equals");
+        visibilityThresholdRow.hidden = mode === "equals";
+      }
+      if (visibilityMatchRow) {
+        visibilityMatchRow.classList.toggle("is-hidden", mode !== "equals");
+        visibilityMatchRow.hidden = mode !== "equals";
+      }
+	    if (visibilityThresholdInput) setInputValueSafe(visibilityThresholdInput, thresholdValue ?? "");
+      if (visibilityMatchInput) setInputValueSafe(visibilityMatchInput, vis.match ?? "");
 	    if (visibilityInvertInput) visibilityInvertInput.checked = Boolean(vis.invert);
 	  }
 };
@@ -7607,6 +7732,11 @@ const syncPropertiesFromSelection = () => {
 const updatePropertiesPanel = () => {
   const isSingle = selectedIndices.length === 1;
   const isMulti = selectedIndices.length > 1;
+  const selectionSignature = `${groupEditStack.length}:${[...selectedIndices].sort((a, b) => a - b).join(",")}`;
+  if (selectionSignature !== lastSelectionSignature) {
+    blurActiveFormControl();
+    lastSelectionSignature = selectionSignature;
+  }
   const activeObjects = getActiveObjects();
   const obj = isSingle ? activeObjects?.[selectedIndices[0]] : null;
   const showText = Boolean(obj && obj.type === "text");
@@ -7640,16 +7770,13 @@ const updatePropertiesPanel = () => {
   if (visibilityProps) visibilityProps.classList.toggle("is-hidden", !showVisibility);
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
   updateMenuState();
-  if (isMulti) {
-    return;
-  }
-  if (showText || showButton || showGroup || showViewport || showRect || showCircle || showLine || showCurve || showPolyline || showPolygon || showBar || showNumberInput || showIndicator) {
-    syncPropertiesFromSelection();
-  } else {
-    syncPropertiesFromScreen();
-  }
-  refreshViewportIdOptions();
-};
+	  if (isMulti) {
+	    return;
+	  }
+	  if (obj) syncPropertiesFromSelection();
+	  else syncPropertiesFromScreen();
+	  refreshViewportIdOptions();
+	};
 
 const updateScreenProperty = (patch) => {
   if (!currentScreenObj) return;
@@ -8048,6 +8175,14 @@ const updateBarRangeBinding = (which, patch) => {
 	  recordHistory();
 	  const current = obj.visibility || { enabled: true };
 	  const next = { ...current, ...patch };
+    if ("mode" in patch) {
+      if (patch.mode !== "equals" && patch.mode !== "threshold") delete next.mode;
+    }
+    if ("match" in patch) {
+      const raw = String(patch.match ?? "").trim();
+      if (!raw) delete next.match;
+      else next.match = raw;
+    }
 	  if ("connection_id" in patch && !patch.connection_id) delete next.connection_id;
 	  if ("tag" in patch && !patch.tag) delete next.tag;
 	  if ("threshold" in patch) {
@@ -8481,6 +8616,13 @@ function bindScreenManager() {
 
 const setMode = (next) => {
   const wasEditMode = isEditMode;
+  if (wasEditMode && !next) {
+    lastEditUiState = {
+      selectedIndices: Array.isArray(selectedIndices) ? [...selectedIndices] : [],
+      groupEditStack: [...groupEditStack],
+      selectedPolygonVertex: selectedPolygonVertex ? { ...selectedPolygonVertex } : null
+    };
+  }
   isEditMode = next;
   document.body.classList.toggle("edit-mode", isEditMode);
   document.body.classList.toggle("runtime-mode", !isEditMode);
@@ -8492,6 +8634,16 @@ const setMode = (next) => {
     selectedIndices = [];
     groupEditStack.length = 0;
     clearSelectedPolygonVertex();
+  } else if (!wasEditMode && lastEditUiState) {
+    groupEditStack.length = 0;
+    lastEditUiState.groupEditStack.forEach((groupObj) => {
+      if (groupObj && Array.isArray(groupObj.children)) groupEditStack.push(groupObj);
+    });
+    const activeObjects = getActiveObjects() || [];
+    selectedIndices = (lastEditUiState.selectedIndices || []).filter(
+      (idx) => Number.isInteger(idx) && idx >= 0 && idx < activeObjects.length
+    );
+    selectedPolygonVertex = lastEditUiState.selectedPolygonVertex || null;
   }
   if (!isEditMode && wasEditMode) {
     const baseId = currentScreenId || currentScreenFilename.replace(/\.jsonc$/i, "");
@@ -11714,6 +11866,37 @@ if (visibilityThresholdInput) {
   });
 }
 
+const applyVisibilityModeUi = (mode) => {
+  const normalized = (mode === "equals" || mode === "threshold") ? mode : "threshold";
+  if (visibilityThresholdRow) {
+    visibilityThresholdRow.classList.toggle("is-hidden", normalized === "equals");
+    visibilityThresholdRow.hidden = normalized === "equals";
+  }
+  if (visibilityMatchRow) {
+    visibilityMatchRow.classList.toggle("is-hidden", normalized !== "equals");
+    visibilityMatchRow.hidden = normalized !== "equals";
+  }
+};
+
+if (visibilityModeSelect) {
+  visibilityModeSelect.addEventListener("change", () => {
+    const mode = visibilityModeSelect.value;
+    applyVisibilityModeUi(mode);
+    updateVisibilityProperty({ mode, enabled: true });
+  });
+}
+
+if (visibilityMatchInput) {
+  visibilityMatchInput.addEventListener("change", () => {
+    const raw = visibilityMatchInput.value.trim();
+    if (!raw) {
+      updateVisibilityProperty({ match: "", enabled: true });
+      return;
+    }
+    updateVisibilityProperty({ match: raw, enabled: true });
+  });
+}
+
 if (visibilityInvertInput) {
   visibilityInvertInput.addEventListener("change", () => {
     updateVisibilityProperty({ invert: visibilityInvertInput.checked, enabled: true });
@@ -13364,6 +13547,33 @@ function updateSelectionOverlays() {
   if (!selectionLayer || !renderedElementMeta.length) return;
   selectionLayer.textContent = "";
   if (resizeLayer) resizeLayer.textContent = "";
+  if (!isEditMode) return;
+  const getRotationAnchor = (obj, bounds, offset) => {
+    const o = offset || { x: 0, y: 0 };
+    if (!obj) {
+      return {
+        cx: (Number(bounds?.x ?? 0) + Number(bounds?.width ?? 0) / 2) + Number(o.x ?? 0),
+        cy: (Number(bounds?.y ?? 0) + Number(bounds?.height ?? 0) / 2) + Number(o.y ?? 0)
+      };
+    }
+    if (obj.type === "text") {
+      return {
+        cx: Number(obj.x ?? 0) + Number(o.x ?? 0),
+        cy: Number(obj.y ?? 0) + Number(o.y ?? 0)
+      };
+    }
+    if (obj.type === "group") {
+      return {
+        cx: Number(obj.x ?? 0) + Number(obj.w ?? 0) / 2 + Number(o.x ?? 0),
+        cy: Number(obj.y ?? 0) + Number(obj.h ?? 0) / 2 + Number(o.y ?? 0)
+      };
+    }
+    return {
+      cx: (Number(bounds?.x ?? 0) + Number(bounds?.width ?? 0) / 2) + Number(o.x ?? 0),
+      cy: (Number(bounds?.y ?? 0) + Number(bounds?.height ?? 0) / 2) + Number(o.y ?? 0)
+    };
+  };
+
   const currentGroupDepth = groupEditStack.length;
   const activeSelectedVertex = selectedPolygonVertex && selectedPolygonVertex.groupDepth === currentGroupDepth ? selectedPolygonVertex : null;
   const groupEditActive = groupEditStack.length > 0;
@@ -13489,14 +13699,15 @@ function updateSelectionOverlays() {
 	      selectedIndices.length === 1 &&
 	      rotation &&
 	      obj &&
-	      ["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image"].includes(obj.type);
+	      ["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image", "text", "group"].includes(obj.type);
     if (canRotateSelection) {
-      const b = getObjectBounds(obj);
+      const b = obj.type === "group"
+        ? { x: Number(obj.x ?? 0), y: Number(obj.y ?? 0), width: Number(obj.w ?? 0), height: Number(obj.h ?? 0) }
+        : getObjectBounds(obj);
       if (b) {
         const offset = getActiveOffset();
         const pad = 4;
-        const cx = b.x + b.width / 2 + offset.x;
-        const cy = b.y + b.height / 2 + offset.y;
+        const { cx, cy } = getRotationAnchor(obj, b, offset);
         const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
         g.setAttribute("transform", `rotate(${rotation} ${cx} ${cy})`);
         const rectEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -13527,8 +13738,7 @@ function updateSelectionOverlays() {
     }
 
 	    if (!isEditMode || selectedIndices.length !== 1) return;
-	    if (!obj || !["button", "viewport", "rect", "alarms-panel", "bar", "circle", "line", "polyline", "polygon", "number-input", "indicator", "image"].includes(obj.type)) return;
-    if (obj.type === "group") return;
+	    if (!obj || !["button", "viewport", "rect", "alarms-panel", "bar", "circle", "line", "polyline", "polygon", "number-input", "indicator", "image", "group"].includes(obj.type)) return;
     if (!resizeLayer) return;
 		    if (obj.type === "polyline" || obj.type === "polygon") {
 		      const points = Array.isArray(obj.points) ? obj.points : [];
@@ -13634,17 +13844,25 @@ function updateSelectionOverlays() {
 	    const rotationValue = Number(obj.rotation ?? 0);
 		    const canRotateHandles =
 		      rotationValue &&
-		      ["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image"].includes(obj.type);
-	    if (canRotateHandles) {
-	      const offset = getActiveOffset();
-	      const baseX = Number(obj.x ?? 0);
-	      const baseY = Number(obj.y ?? 0);
-	      const baseW = Number(obj.w ?? (obj.type === "indicator" ? 160 : 0));
-	      const baseH = Number(obj.h ?? (obj.type === "indicator" ? 64 : 0));
-	      const pad2 = 4;
-	      const cx = baseX + baseW / 2 + offset.x;
-	      const cy = baseY + baseH / 2 + offset.y;
-	      const angleRad = (rotationValue * Math.PI) / 180;
+		      ["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image", "group"].includes(obj.type);
+		    if (canRotateHandles) {
+		      const offset = getActiveOffset();
+          const bounds = obj.type === "indicator"
+            ? {
+                x: Number(obj.x ?? 0),
+                y: Number(obj.y ?? 0),
+                width: Number(obj.w ?? 160),
+                height: Number(obj.h ?? 64)
+              }
+            : (getObjectBounds(obj) || { x: Number(obj.x ?? 0), y: Number(obj.y ?? 0), width: Number(obj.w ?? 0), height: Number(obj.h ?? 0) });
+		      const baseX = Number(bounds.x ?? 0);
+		      const baseY = Number(bounds.y ?? 0);
+		      const baseW = Number(bounds.width ?? 0);
+		      const baseH = Number(bounds.height ?? 0);
+		      const pad2 = 4;
+		      const cx = baseX + baseW / 2 + offset.x;
+		      const cy = baseY + baseH / 2 + offset.y;
+		      const angleRad = (rotationValue * Math.PI) / 180;
 	      const local = {
 	        x: baseX - pad2,
 	        y: baseY - pad2,
@@ -13705,6 +13923,27 @@ function updateSelectionOverlays() {
       const boundsActive = getSelectionBoundsForScaling(activeObjectsForOverlay, selectedIndices);
       const offset = getActiveOffset();
       if (boundsActive && boundsActive.width > 0 && boundsActive.height > 0) {
+        const selectionRotation = (() => {
+          if (selectedIndices.length === 1) {
+            const only = activeObjectsForOverlay[selectedIndices[0]];
+            const r = Number(only?.rotation ?? 0);
+            if (only?.type === "group" && r && Number.isFinite(r)) return r;
+            return 0;
+          }
+          if (selectedIndices.length < 2) return 0;
+          const rotatable = new Set(["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image", "group"]);
+          const first = activeObjectsForOverlay[selectedIndices[0]];
+          const r0 = Number(first?.rotation ?? 0);
+          if (!r0 || !Number.isFinite(r0)) return 0;
+          if (!rotatable.has(first?.type)) return 0;
+          for (const idx of selectedIndices) {
+            const obj = activeObjectsForOverlay[idx];
+            if (!obj || !rotatable.has(obj.type)) return 0;
+            const r = Number(obj.rotation ?? 0);
+            if (!Number.isFinite(r) || Math.abs(r - r0) > 1e-6) return 0;
+          }
+          return r0;
+        })();
         const box = {
           x: boundsActive.x + offset.x,
           y: boundsActive.y + offset.y,
@@ -13725,6 +13964,27 @@ function updateSelectionOverlays() {
           { id: "sel-se", x: handleBox.x + handleBox.width, y: handleBox.y + handleBox.height, cursor: "nwse-resize" },
           { id: "sel-sw", x: handleBox.x, y: handleBox.y + handleBox.height, cursor: "nesw-resize" }
         ];
+        if (selectionRotation) {
+          const angleRad = (selectionRotation * Math.PI) / 180;
+          const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+          positions.forEach((pos) => {
+            const rotated = rotatePointAround({ x: pos.x, y: pos.y }, center, angleRad);
+            const handle = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            handle.setAttribute("x", rotated.x - half);
+            handle.setAttribute("y", rotated.y - half);
+            handle.setAttribute("width", RESIZE_HANDLE_SIZE);
+            handle.setAttribute("height", RESIZE_HANDLE_SIZE);
+            handle.setAttribute("fill", "#ffb300");
+            handle.setAttribute("stroke", "#1f2937");
+            handle.setAttribute("stroke-width", "1");
+            handle.setAttribute("vector-effect", "non-scaling-stroke");
+            handle.setAttribute("data-resize-handle", pos.id);
+            handle.setAttribute("data-resize-selection", "1");
+            handle.style.cursor = pos.cursor;
+            resizeLayer.appendChild(handle);
+          });
+          // still allow the single-object rotate handle logic below
+        } else {
         positions.forEach((pos) => {
           const handle = document.createElementNS("http://www.w3.org/2000/svg", "rect");
           handle.setAttribute("x", pos.x - half);
@@ -13740,6 +14000,7 @@ function updateSelectionOverlays() {
           handle.style.cursor = pos.cursor;
           resizeLayer.appendChild(handle);
         });
+        }
       }
     }
 
@@ -13747,20 +14008,20 @@ function updateSelectionOverlays() {
     const offset = getActiveOffset();
     if (activeBox && activeBox.width > 0 && activeBox.height > 0) {
       const activeObjects = getActiveObjects() || [];
-      const singleObj = selectedIndices.length === 1 ? activeObjects[selectedIndices[0]] : null;
-      const singleRotation = Number(singleObj?.rotation ?? 0);
-      const canRotateHandleTrack =
-        selectedIndices.length === 1 &&
-        singleRotation &&
-        singleObj &&
-        ["button", "viewport", "rect", "bar", "number-input", "indicator", "image"].includes(singleObj.type);
+	      const singleObj = selectedIndices.length === 1 ? activeObjects[selectedIndices[0]] : null;
+	      const singleRotation = Number(singleObj?.rotation ?? 0);
+	      const canRotateHandleTrack =
+	        selectedIndices.length === 1 &&
+	        singleRotation &&
+	        singleObj &&
+	        ["button", "viewport", "rect", "bar", "number-input", "indicator", "image", "group"].includes(singleObj.type);
 
-      if (canRotateHandleTrack) {
-        const b = getObjectBounds(singleObj);
-        if (b && b.width > 0 && b.height > 0) {
-          const pad = 4;
-          const center = { x: b.x + b.width / 2 + offset.x, y: b.y + b.height / 2 + offset.y };
-          const angleRad = (singleRotation * Math.PI) / 180;
+	      if (canRotateHandleTrack) {
+	        const b = getObjectBounds(singleObj);
+	        if (b && b.width > 0 && b.height > 0) {
+	          const pad = 4;
+	          const center = { x: b.x + b.width / 2 + offset.x, y: b.y + b.height / 2 + offset.y };
+	          const angleRad = (singleRotation * Math.PI) / 180;
           const nw = rotatePointAround({ x: b.x - pad + offset.x, y: b.y - pad + offset.y }, center, angleRad);
           const ne = rotatePointAround({ x: b.x + b.width + pad + offset.x, y: b.y - pad + offset.y }, center, angleRad);
           const topMid = { x: (nw.x + ne.x) / 2, y: (nw.y + ne.y) / 2 };
@@ -14115,6 +14376,9 @@ const applyRotationToObject = (obj, startObj, deltaRad, center, deltaDeg) => {
   if (startObj.type === "button" || startObj.type === "viewport" || startObj.type === "rect" || startObj.type === "bar" || startObj.type === "number-input" || startObj.type === "indicator" || startObj.type === "image") {
     obj.rotation = normalizeDegrees(Number(startObj.rotation ?? 0) + deltaDeg);
   }
+  if (startObj.type === "group") {
+    obj.rotation = normalizeDegrees(Number(startObj.rotation ?? 0) + deltaDeg);
+  }
 };
 
 const snapValue = (value) => {
@@ -14305,6 +14569,7 @@ const getObjectFromMeta = (meta) => {
 };
 
 const getMetaAtPoint = (point) => {
+  const offset = getActiveOffset();
   for (let i = renderedElementMeta.length - 1; i >= 0; i -= 1) {
     const item = renderedElementMeta[i];
     const obj = getActiveObjects()?.[item.index];
@@ -14378,7 +14643,35 @@ const getMetaAtPoint = (point) => {
 	        bbox = null;
       }
     }
-    if (bbox && pointInBox(point, bbox)) {
+    const rotation = Number(obj?.rotation ?? 0);
+    const canRotateHit =
+      isEditMode &&
+      rotation &&
+      obj &&
+      ["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image", "group", "text"].includes(obj.type);
+    const isGroupEdit = groupEditStack.length > 0;
+    const hitBox = (canRotateHit && obj?.type === "group")
+      ? {
+        x: Number((obj.x ?? 0)) + (isGroupEdit ? Number(offset.x ?? 0) : 0),
+        y: Number((obj.y ?? 0)) + (isGroupEdit ? Number(offset.y ?? 0) : 0),
+        width: Number(obj.w ?? 0),
+        height: Number(obj.h ?? 0)
+      }
+      : bbox;
+    const isHit = hitBox
+      ? (canRotateHit
+        ? (obj.type === "text"
+          ? pointInRotatedBoxAround(
+            point,
+            hitBox,
+            rotation,
+            Number(obj.x ?? NaN) + (isGroupEdit ? Number(offset.x ?? 0) : 0),
+            Number(obj.y ?? NaN) + (isGroupEdit ? Number(offset.y ?? 0) : 0)
+          )
+          : pointInRotatedBox(point, hitBox, rotation))
+        : pointInBox(point, hitBox))
+      : false;
+    if (isHit) {
       if (!isEditMode && obj?.type === "group") {
         const groupBox = bbox;
         const child = findRuntimeChildMetaInGroup(
@@ -14413,6 +14706,15 @@ const pointInRotatedBox = (point, box, rotationDeg) => {
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
   const local = rotatePointAroundDeg(point, cx, cy, -rotation);
+  return pointInBox(local, box);
+};
+
+const pointInRotatedBoxAround = (point, box, rotationDeg, cx, cy) => {
+  const rotation = Number(rotationDeg) || 0;
+  if (!rotation) return pointInBox(point, box);
+  const centerX = Number.isFinite(Number(cx)) ? Number(cx) : (box.x + box.width / 2);
+  const centerY = Number.isFinite(Number(cy)) ? Number(cy) : (box.y + box.height / 2);
+  const local = rotatePointAroundDeg(point, centerX, centerY, -rotation);
   return pointInBox(local, box);
 };
 
@@ -15013,6 +15315,9 @@ const setTool = (nextTool) => {
 		  hmiSvg.addEventListener("mousedown", (event) => {
 		    if (!isEditMode) return;
 		    if (event.button === 2) return;
+        // If the user clicked the canvas, we should treat it as a selection gesture and
+        // allow the properties panel to refresh for whatever they click next.
+        blurActiveFormControl();
 		    const target = event.target;
 		    if (target instanceof Element) {
 		      const rotateEl = target.closest("[data-rotate-handle]");
@@ -15047,8 +15352,34 @@ const setTool = (nextTool) => {
 			            .map((idx) => ({ idx, obj: JSON.parse(JSON.stringify(activeObjects[idx] || null)) }))
 			            .filter((entry) => entry.obj);
 			          if (!base.length) return;
+			          const selectionRotation = (() => {
+			            if (selectedIndices.length === 1) {
+			              const only = activeObjects[selectedIndices[0]];
+			              const r = Number(only?.rotation ?? 0);
+			              if (only?.type === "group" && r && Number.isFinite(r)) return r;
+			              return 0;
+			            }
+			            if (selectedIndices.length < 2) return 0;
+			            const rotatable = new Set(["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image", "group"]);
+			            const first = activeObjects[selectedIndices[0]];
+			            const r0 = Number(first?.rotation ?? 0);
+			            if (!r0 || !Number.isFinite(r0)) return 0;
+			            if (!rotatable.has(first?.type)) return 0;
+			            for (const idx of selectedIndices) {
+			              const obj = activeObjects[idx];
+			              if (!obj || !rotatable.has(obj.type)) return 0;
+			              const r = Number(obj.rotation ?? 0);
+			              if (!Number.isFinite(r) || Math.abs(r - r0) > 1e-6) return 0;
+			            }
+			            return r0;
+			          })();
 			          const bounds = getSelectionBoundsForScaling(activeObjects, selectedIndices);
 			          if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+			          if (selectionRotation) {
+			            bounds.rotation = selectionRotation;
+			            bounds.cx = bounds.x + bounds.width / 2;
+			            bounds.cy = bounds.y + bounds.height / 2;
+			          }
 			          recordHistory();
 			          isResizing = true;
 			          resizeStart = point;
@@ -15074,7 +15405,7 @@ const setTool = (nextTool) => {
 	        } else if (handleType !== "vertex") {
 	          clearSelectedPolygonVertex();
 	        }
-	        if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "polygon" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image")) {
+	        if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "polygon" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
 	          const point = getScreenPoint(event);
 	          if (!point) return;
 	          recordHistory();
@@ -15256,6 +15587,7 @@ const setTool = (nextTool) => {
 		    if (currentTool !== "select") return;
 	    const hitMeta = getMetaAtPoint(point);
 		    if (hitMeta) {
+          blurActiveFormControl();
 	      if (event.ctrlKey || event.metaKey) {
 	        if (selectedIndices.includes(hitMeta.index)) {
 	          selectedIndices = selectedIndices.filter((idx) => idx !== hitMeta.index);
@@ -15438,10 +15770,22 @@ const setTool = (nextTool) => {
 		        if (!resizeSelectionBounds || !resizeSelectionBase.length) return;
 		        const startActive = toActivePoint(resizeStart);
 		        const nowActive = toActivePoint(point);
-		        const dx = nowActive.x - startActive.x;
-		        const dy = nowActive.y - startActive.y;
+		        let dx = nowActive.x - startActive.x;
+		        let dy = nowActive.y - startActive.y;
 		        const handle = resizeSelectionHandle || "se";
 		        const fromB = resizeSelectionBounds;
+		        const rotation = Number(fromB.rotation ?? 0);
+		        if (rotation) {
+		          const angleRad = (rotation * Math.PI) / 180;
+		          const center = {
+		            x: Number(fromB.cx ?? (fromB.x + fromB.width / 2)),
+		            y: Number(fromB.cy ?? (fromB.y + fromB.height / 2))
+		          };
+		          const startLocal = rotatePointAround(startActive, center, -angleRad);
+		          const nowLocal = rotatePointAround(nowActive, center, -angleRad);
+		          dx = nowLocal.x - startLocal.x;
+		          dy = nowLocal.y - startLocal.y;
+		        }
 		        const x1 = fromB.x;
 		        const y1 = fromB.y;
 		        const x2 = fromB.x + fromB.width;
@@ -15659,7 +16003,7 @@ const setTool = (nextTool) => {
 	        const rotation = Number(resizeStartBounds.rotation ?? 0);
 		        const canRotateResize =
 		          rotation &&
-		          ["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image"].includes(resizeStartBounds.type) &&
+		          ["button", "viewport", "rect", "alarms-panel", "bar", "number-input", "indicator", "image", "group"].includes(resizeStartBounds.type) &&
 		          ["nw", "n", "ne", "e", "se", "s", "sw", "w"].includes(handle);
 	        if (canRotateResize) {
 	          const angleRad = (rotation * Math.PI) / 180;

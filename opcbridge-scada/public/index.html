@@ -252,36 +252,50 @@
             </div>
 
             <div class="divider"></div>
-            <div class="row-actions" style="margin-bottom: 8px;">
-              <div class="hint">Users</div>
-              <div class="spacer"></div>
-            </div>
-            <div class="table-wrap">
-              <table class="table" id="usersTable">
-                <thead><tr><th>Username</th><th>Role</th><th>Actions</th></tr></thead>
-                <tbody id="usersTbody"></tbody>
-              </table>
-            </div>
 
-            <div class="divider"></div>
-            <div class="hint">Add user</div>
-            <div class="form" style="max-width: 520px;">
-              <div class="form-row"><label>Username</label><input id="usersAddUsername" type="text" autocomplete="username" /></div>
-              <div class="form-row"><label>Password</label><input id="usersAddPassword" type="password" autocomplete="new-password" /></div>
-              <div class="form-row"><label>Role</label>
-                <select id="usersAddRole">
-                  <option value="viewer">viewer</option>
-                  <option value="operator">operator</option>
-                  <option value="editor">editor</option>
-                  <option value="admin">admin</option>
-                </select>
+            <div class="users-workspace" style="min-height: 560px;">
+              <div class="sidebar">
+                <div class="sidebar-title">Directory</div>
+                <div class="tree-body" id="usersTreeView"></div>
+                <div class="tree-note mono" id="usersTreeNote"></div>
               </div>
-              <div class="form-row"><label></label>
-                <div class="row-actions">
-                  <button class="btn primary" id="usersAddBtn" type="button">Add User</button>
+
+              <section class="editor users-right">
+                <div class="card">
+                  <div class="card-title">Details</div>
+                  <div class="card-body">
+                    <div class="hint mono" id="usersDetailsStatus"></div>
+
+                    <section id="usersDetailsTablePanel">
+                      <div class="table-wrap">
+                        <table class="table" id="usersDetailsTable">
+                          <thead id="usersDetailsThead"></thead>
+                          <tbody id="usersDetailsTbody"></tbody>
+                        </table>
+                      </div>
+                    </section>
+
+                    <section id="usersDetailsFormPanel" style="display:none;">
+                      <div class="form" style="max-width: 720px;">
+                        <div class="form-row"><label id="usersFormIdLabel">ID</label><input id="usersFormId" type="text" /></div>
+                        <div class="form-row"><label>Name</label><input id="usersFormLabel" type="text" /></div>
+                        <div class="form-row"><label>Description</label><input id="usersFormDescription" type="text" /></div>
+                        <div class="form-row" id="usersFormRankRow"><label>Rank</label><input id="usersFormRank" type="number" min="0" max="3" step="1" /></div>
+                        <div class="form-row" id="usersFormRoleRow" style="display:none;"><label>Role</label><select id="usersFormRole"></select></div>
+                        <div class="form-row" id="usersFormPasswordRow" style="display:none;"><label>New Password</label><input id="usersFormPassword" type="password" autocomplete="new-password" /></div>
+                        <div class="form-row" id="usersFormConfirmRow" style="display:none;"><label>Confirm</label><input id="usersFormConfirm" type="password" autocomplete="new-password" /></div>
+                        <div class="form-row"><label></label>
+                          <div class="row-actions">
+                            <button class="btn" id="usersFormCancelBtn" type="button">Cancel</button>
+                            <button class="btn primary" id="usersFormSaveBtn" type="button">Save</button>
+                          </div>
+                        </div>
+                        <div class="hint mono" id="usersFormStatus"></div>
+                      </div>
+                    </section>
+                  </div>
                 </div>
-              </div>
-              <div class="hint mono" id="usersAddStatus"></div>
+              </section>
             </div>
           </div>
         </div>

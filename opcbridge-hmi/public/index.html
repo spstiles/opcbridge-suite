@@ -1975,8 +1975,19 @@
                 </select>
               </div>
               <div class="prop-row">
+                <label for="visibilityMode">Mode</label>
+                <select id="visibilityMode">
+                  <option value="threshold">Threshold</option>
+                  <option value="equals">Equals</option>
+                </select>
+              </div>
+              <div class="prop-row" id="visibilityThresholdRow">
                 <label for="visibilityThreshold">Threshold</label>
                 <input id="visibilityThreshold" type="number" step="any" placeholder="0" />
+              </div>
+              <div class="prop-row is-hidden" id="visibilityMatchRow">
+                <label for="visibilityMatch">Match</label>
+                <input id="visibilityMatch" type="text" placeholder="1" />
               </div>
             </div>
           </div>
