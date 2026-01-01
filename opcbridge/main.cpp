@@ -98,8 +98,22 @@ struct AdminAuthInfo {
 static AdminAuthInfo g_adminAuth;
 static bool g_adminConfigured = false;
 
+static bool g_userStoreConfigured = false;
+static int g_authTimeoutMinutes = 0; // idle timeout; 0 disables
+struct AuthUserRecord {
+    std::string username;
+    std::string role; // viewer|operator|editor|admin
+    int iterations = 150000;
+    std::string salt_b64;
+    std::string hash_b64;
+};
+static std::vector<AuthUserRecord> g_authUsers;
+
 struct AdminSessionInfo {
     std::chrono::system_clock::time_point expires_at;
+    std::chrono::system_clock::time_point last_activity_at;
+    std::string username;
+    std::string role; // viewer|operator|editor|admin
 };
 
 static std::unordered_map<std::string, AdminSessionInfo> g_adminSessions;
@@ -208,7 +222,7 @@ struct AlarmConfig {
     std::string site;
     std::string connection_id;
     std::string tag_name;   // logical_name
-    std::string type;       // "high", "low", "change", "equals"
+    std::string type;       // "high", "low", "change", "equals", "not_equals"
     double threshold = 0.0;
     double hysteresis = 0.0;
     bool enabled = true;
@@ -1156,6 +1170,68 @@ static bool pbkdf2_sha256_hex(const std::string &password,
     return true;
 }
 
+static std::string b64_encode(const std::string &bytes) {
+    if (bytes.empty()) return "";
+    const int out_len = 4 * static_cast<int>((bytes.size() + 2) / 3);
+    std::string out;
+    out.resize(out_len);
+    const int actual = EVP_EncodeBlock(reinterpret_cast<unsigned char*>(&out[0]),
+                                       reinterpret_cast<const unsigned char*>(bytes.data()),
+                                       static_cast<int>(bytes.size()));
+    if (actual <= 0) return "";
+    out.resize(actual);
+    return out;
+}
+
+static bool b64_decode(const std::string &b64, std::string &out_bytes) {
+    out_bytes.clear();
+    if (b64.empty()) return true;
+
+    std::string in = b64;
+    // strip whitespace
+    in.erase(std::remove_if(in.begin(), in.end(), [](unsigned char c){ return std::isspace(c); }), in.end());
+    if (in.empty()) return true;
+
+    // EVP_DecodeBlock output is at most 3/4 of input.
+    std::string buf;
+    buf.resize((in.size() * 3) / 4 + 4);
+    const int n = EVP_DecodeBlock(reinterpret_cast<unsigned char*>(&buf[0]),
+                                  reinterpret_cast<const unsigned char*>(in.data()),
+                                  static_cast<int>(in.size()));
+    if (n < 0) return false;
+
+    int actual = n;
+    // Adjust for '=' padding.
+    if (!in.empty() && in.back() == '=') actual--;
+    if (in.size() >= 2 && in[in.size() - 2] == '=') actual--;
+    if (actual < 0) actual = 0;
+    buf.resize(static_cast<size_t>(actual));
+    out_bytes = buf;
+    return true;
+}
+
+static bool pbkdf2_sha256_b64(const std::string &password,
+                              const std::string &salt_bytes,
+                              int iterations,
+                              std::string &out_b64)
+{
+    const int key_len = 32;
+    uint8_t key[key_len];
+    const int rc = PKCS5_PBKDF2_HMAC(
+        password.c_str(),
+        static_cast<int>(password.size()),
+        reinterpret_cast<const unsigned char*>(salt_bytes.data()),
+        static_cast<int>(salt_bytes.size()),
+        iterations,
+        EVP_sha256(),
+        key_len,
+        key
+    );
+    if (rc != 1) return false;
+    out_b64 = b64_encode(std::string(reinterpret_cast<const char*>(key), key_len));
+    return !out_b64.empty();
+}
+
 static std::string random_token_hex(size_t bytes = 32) {
     std::vector<uint8_t> buf(bytes);
     if (RAND_bytes(buf.data(), static_cast<int>(bytes)) != 1) {
@@ -1221,11 +1297,135 @@ static bool save_admin_auth(const std::string &path,
     }
 }
 
+static std::string normalize_auth_username(const std::string &value) {
+    std::string raw = value;
+    // trim
+    while (!raw.empty() && std::isspace(static_cast<unsigned char>(raw.front()))) raw.erase(raw.begin());
+    while (!raw.empty() && std::isspace(static_cast<unsigned char>(raw.back()))) raw.pop_back();
+    if (raw.empty()) return "";
+    if (raw.size() > 64) return "";
+    // allow A-Z a-z 0-9 space _ . -
+    for (char c : raw) {
+        if (std::isalnum(static_cast<unsigned char>(c))) continue;
+        if (c == ' ' || c == '_' || c == '.' || c == '-') continue;
+        return "";
+    }
+    // collapse runs of spaces
+    std::string cleaned;
+    cleaned.reserve(raw.size());
+    bool prevSpace = false;
+    for (char c : raw) {
+        if (c == ' ') {
+            if (prevSpace) continue;
+            prevSpace = true;
+            cleaned.push_back(' ');
+            continue;
+        }
+        prevSpace = false;
+        cleaned.push_back(c);
+    }
+    return cleaned;
+}
+
+static std::string normalize_auth_role(const std::string &value) {
+    std::string s = value;
+    for (auto &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (s == "admin" || s == "editor" || s == "operator" || s == "viewer") return s;
+    return "viewer";
+}
+
+static int role_rank(const std::string &role) {
+    const std::string r = normalize_auth_role(role);
+    if (r == "admin") return 3;
+    if (r == "editor") return 2;
+    if (r == "operator") return 1;
+    return 0;
+}
+
+static bool load_passwords_store(const std::string &path) {
+    try {
+        g_userStoreConfigured = false;
+        g_authTimeoutMinutes = 0;
+        g_authUsers.clear();
+
+        if (!fs::exists(path)) return true;
+
+        std::string txt = read_file_to_string(path);
+        std::string stripped = strip_json_comments(txt);
+        auto j = json::parse(stripped);
+        if (!j.is_object()) return false;
+
+        g_authTimeoutMinutes = std::max(0, j.value("timeoutMinutes", 0));
+
+        auto users = j.value("users", json::array());
+        if (!users.is_array()) users = json::array();
+
+        for (const auto &u : users) {
+            if (!u.is_object()) continue;
+            AuthUserRecord r;
+            r.username = normalize_auth_username(u.value("username", std::string{}));
+            r.role = normalize_auth_role(u.value("role", std::string{"viewer"}));
+
+            auto kdf = u.value("kdf", json::object());
+            r.iterations = std::max(10'000, std::min(5'000'000, kdf.value("iterations", 150000)));
+            r.salt_b64 = kdf.value("saltB64", std::string{});
+            r.hash_b64 = kdf.value("hashB64", std::string{});
+
+            if (r.username.empty()) continue;
+            if (r.salt_b64.empty() || r.hash_b64.empty()) continue;
+            g_authUsers.push_back(r);
+        }
+
+        if (!g_authUsers.empty()) {
+            g_userStoreConfigured = true;
+        }
+
+        return true;
+    } catch (const std::exception &ex) {
+        std::cerr << "[auth] Failed to load passwords.jsonc: " << ex.what() << "\n";
+        g_userStoreConfigured = false;
+        g_authUsers.clear();
+        return false;
+    }
+}
+
+static bool save_passwords_store(const std::string &path) {
+    try {
+        json out;
+        out["timeoutMinutes"] = g_authTimeoutMinutes;
+        out["users"] = json::array();
+        for (const auto &u : g_authUsers) {
+            json rec;
+            rec["username"] = u.username;
+            rec["role"] = normalize_auth_role(u.role);
+            rec["kdf"] = {
+                {"algo", "pbkdf2-sha256"},
+                {"iterations", u.iterations},
+                {"saltB64", u.salt_b64},
+                {"hashB64", u.hash_b64}
+            };
+            out["users"].push_back(rec);
+        }
+        write_string_to_file(path, out.dump(2));
+        fs::permissions(path,
+                        fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace);
+        return true;
+    } catch (const std::exception &ex) {
+        std::cerr << "[auth] Failed to save passwords.jsonc: " << ex.what() << "\n";
+        return false;
+    }
+}
+
 static void cleanup_expired_admin_sessions() {
     std::lock_guard<std::mutex> lock(g_adminMutex);
     auto now = std::chrono::system_clock::now();
     for (auto it = g_adminSessions.begin(); it != g_adminSessions.end(); ) {
-        if (it->second.expires_at <= now) {
+        const bool expired = (it->second.expires_at <= now);
+        const bool idleExpired = (g_authTimeoutMinutes > 0 &&
+                                 it->second.last_activity_at.time_since_epoch().count() > 0 &&
+                                 (now - it->second.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes));
+        if (expired || idleExpired) {
             it = g_adminSessions.erase(it);
         } else {
             ++it;
@@ -1245,28 +1445,95 @@ static void init_admin_service_token_from_env()
     }
 }
 
-static bool is_admin_request(const httplib::Request &req) {
-    auto token = req.get_header_value("X-Admin-Token");
-    if (token.empty()) {
-        return false;
+static std::string get_cookie_value(const httplib::Request &req, const std::string &name) {
+    const auto cookie = req.get_header_value("Cookie");
+    if (cookie.empty() || name.empty()) return "";
+
+    // Minimal cookie parser ("a=b; c=d"). Does not decode; cookie values we use are hex.
+    size_t i = 0;
+    while (i < cookie.size()) {
+        while (i < cookie.size() && (cookie[i] == ' ' || cookie[i] == ';')) i++;
+        if (i >= cookie.size()) break;
+
+        const size_t key_start = i;
+        while (i < cookie.size() && cookie[i] != '=' && cookie[i] != ';') i++;
+        const size_t key_end = i;
+        if (i >= cookie.size() || cookie[i] != '=') {
+            while (i < cookie.size() && cookie[i] != ';') i++;
+            continue;
+        }
+        i++; // '='
+        const size_t val_start = i;
+        while (i < cookie.size() && cookie[i] != ';') i++;
+        const size_t val_end = i;
+
+        std::string key = cookie.substr(key_start, key_end - key_start);
+        while (!key.empty() && key.front() == ' ') key.erase(key.begin());
+        while (!key.empty() && key.back() == ' ') key.pop_back();
+
+        if (key == name) {
+            std::string val = cookie.substr(val_start, val_end - val_start);
+            while (!val.empty() && val.front() == ' ') val.erase(val.begin());
+            while (!val.empty() && val.back() == ' ') val.pop_back();
+            return val;
+        }
     }
 
-    // Allow an optional long-lived service token (for module-to-module auth),
-    // e.g. opcbridge-alarms fetching /config/alarms without interactive login.
+    return "";
+}
+
+static bool get_session_from_request(const httplib::Request &req, AdminSessionInfo &out) {
+    std::string token = req.get_header_value("X-Admin-Token");
+    if (token.empty()) token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
+    if (token.empty()) return false;
+
+    // Service token always maps to admin.
     if (!g_adminServiceToken.empty() && token == g_adminServiceToken) {
+        out = AdminSessionInfo{};
+        out.role = "admin";
+        out.username = "service";
+        out.expires_at = std::chrono::system_clock::now() + std::chrono::hours(24 * 365 * 10);
+        out.last_activity_at = std::chrono::system_clock::now();
         return true;
     }
 
+    cleanup_expired_admin_sessions();
     std::lock_guard<std::mutex> lock(g_adminMutex);
     auto it = g_adminSessions.find(token);
-    if (it == g_adminSessions.end()) {
-        return false;
-    }
+    if (it == g_adminSessions.end()) return false;
+
     auto now = std::chrono::system_clock::now();
     if (it->second.expires_at <= now) {
         g_adminSessions.erase(it);
         return false;
     }
+
+    if (g_authTimeoutMinutes > 0 &&
+        it->second.last_activity_at.time_since_epoch().count() > 0 &&
+        (now - it->second.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes)) {
+        g_adminSessions.erase(it);
+        return false;
+    }
+
+    // Rolling activity
+    it->second.last_activity_at = now;
+    out = it->second;
+    return true;
+}
+
+static bool is_admin_request(const httplib::Request &req) {
+    AdminSessionInfo s;
+    if (!get_session_from_request(req, s)) return false;
+    // "admin request" (for existing admin-gated endpoints) means editor+.
+    return role_rank(s.role) >= role_rank("editor");
+}
+
+static bool is_user_logged_in(const httplib::Request &req, AdminSessionInfo &out) {
+    AdminSessionInfo s;
+    if (!get_session_from_request(req, s)) return false;
+    // Do not treat the service token as an interactive user session.
+    if (s.username == "service") return false;
+    out = s;
     return true;
 }
 
@@ -1943,7 +2210,7 @@ void ws_notify_alarm_event(const AlarmRuntime &alarm,
         j["threshold"]  = alarm.cfg.threshold;
         j["hysteresis"] = alarm.cfg.hysteresis;
     }
-    if (alarm.cfg.type == "equals") {
+    if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals") {
         j["equals_value"] = alarm.cfg.equals_value;
         j["tolerance"] = alarm.cfg.equals_tolerance;
     }
@@ -2734,21 +3001,22 @@ bool load_alarms(const std::string &configDir,
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             }
 
-            if (cfg.type != "high" &&
-                cfg.type != "low" &&
-                cfg.type != "change" &&
-                cfg.type != "equals")
-            {
-                std::cerr << "[alarms] Alarm '" << cfg.id
-                          << "' has unsupported type '" << cfg.type
-                          << "'. Skipping.\n";
-                continue;
-            }
-
-	            if (cfg.type == "equals" && cfg.equals_value.is_null()) {
-	                std::cerr << "[alarms] Alarm '" << cfg.id << "' type=equals requires field 'value' (or 'threshold'). Skipping.\n";
+	            if (cfg.type != "high" &&
+	                cfg.type != "low" &&
+	                cfg.type != "change" &&
+	                cfg.type != "equals" &&
+	                cfg.type != "not_equals")
+	            {
+	                std::cerr << "[alarms] Alarm '" << cfg.id
+	                          << "' has unsupported type '" << cfg.type
+	                          << "'. Skipping.\n";
 	                continue;
 	            }
+
+		            if ((cfg.type == "equals" || cfg.type == "not_equals") && cfg.equals_value.is_null()) {
+		                std::cerr << "[alarms] Alarm '" << cfg.id << "' type=" << cfg.type << " requires field 'value' (or 'threshold'). Skipping.\n";
+		                continue;
+		            }
 
             AlarmRuntime rt;
             rt.cfg = cfg;
@@ -3382,7 +3650,7 @@ void publish_alarm_event(const AlarmRuntime &alarm,
             }, snap.value);
         }
 
-        if (alarm.cfg.type == "equals") {
+        if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals") {
             j["equals_value"] = alarm.cfg.equals_value;
             j["tolerance"] = alarm.cfg.equals_tolerance;
         }
@@ -3438,7 +3706,7 @@ void publish_alarm_event(const AlarmRuntime &alarm,
         j["message"]       = message.empty() ? nullptr : json(message);
         j["timestamp_ms"]  = now_ms;
 
-        if (alarm.cfg.type == "equals") {
+        if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals") {
             j["equals_value"] = alarm.cfg.equals_value;
             j["tolerance"] = alarm.cfg.equals_tolerance;
         }
@@ -3498,7 +3766,8 @@ void evaluate_tag_alarms(const std::string &conn_id,
             a.lastValue = snap.value;
             a.hasLastValue = true;
         }
-        else if (type == "equals") {
+        else if (type == "equals" || type == "not_equals") {
+            bool matchKnown = false;
             bool match = false;
 
             // Bool targets
@@ -3510,7 +3779,7 @@ void evaluate_tag_alarms(const std::string &conn_id,
                     using T = std::decay_t<decltype(arg)>;
                     if constexpr (std::is_same_v<T, bool>) { cur = arg; curOk = true; }
                 }, snap.value);
-                if (curOk) match = (cur == target);
+                if (curOk) { matchKnown = true; match = (cur == target); }
             }
             // Numeric targets (support analog + integer tags)
             else if (a.cfg.equals_value.is_number() || a.cfg.equals_value.is_string()) {
@@ -3525,15 +3794,18 @@ void evaluate_tag_alarms(const std::string &conn_id,
                 } catch (...) { targetOk = false; }
 
                 if (targetOk && okNum) {
+                    matchKnown = true;
                     const double tol = std::max(0.0, a.cfg.equals_tolerance);
                     match = std::fabs(val - target) <= tol;
                 }
             }
 
-            if (match && !a.active) {
+            const bool shouldBeActive = matchKnown && (type == "equals" ? match : !match);
+
+            if (shouldBeActive && !a.active) {
                 a.active = true;
                 publish_alarm_event(a, snap, "active");
-            } else if (!match && a.active) {
+            } else if (!shouldBeActive && a.active) {
                 a.active = false;
                 publish_alarm_event(a, snap, "cleared");
             }
@@ -4562,9 +4834,11 @@ int main(int argc, char **argv) {
         std::string connDir = joinPath(configDir, "connections");
         std::string tagDir  = joinPath(configDir, "tags");
 
-        std::string adminAuthPath = joinPath(configDir, "admin_auth.json");
-        load_admin_auth(adminAuthPath);
-        init_admin_service_token_from_env();
+	        std::string adminAuthPath = joinPath(configDir, "admin_auth.json");
+	        load_admin_auth(adminAuthPath);
+	        init_admin_service_token_from_env();
+	        std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+	        load_passwords_store(passwordsPath);
 
         std::cout << "Executable directory: " << getExecutableDir() << "\n";
         std::cout << "Using configDir:      " << configDir << "\n";
@@ -5259,13 +5533,20 @@ int main(int argc, char **argv) {
 			#ws-children-table tbody tr:hover td {
 			  background: rgba(255,255,255,0.05);
 			}
-			#ws-children-table tbody tr.is-selected td {
-			  background: rgba(59,130,246,0.18);
-			}
-			.ws-context-menu {
-			  position: fixed;
-			  z-index: 3000;
-			  min-width: 180px;
+				#ws-children-table tbody tr.is-selected td {
+				  background: rgba(59,130,246,0.18);
+				}
+				#ws-children-table thead th.is-sortable {
+				  cursor: pointer;
+				  user-select: none;
+				}
+				#ws-children-table thead th.is-sortable:hover {
+				  text-decoration: underline;
+				}
+				.ws-context-menu {
+				  position: fixed;
+				  z-index: 3000;
+				  min-width: 180px;
 			  background: #151515;
 			  border: 1px solid #333;
 			  border-radius: 6px;
@@ -5704,6 +5985,13 @@ int main(int argc, char **argv) {
 
 		<div class="admin-modal-body">
 		  <div class="admin-field-row">
+			<label for="admin-username" class="admin-field-label">Username</label>
+			<input id="admin-username"
+				   type="text"
+				   autocomplete="username"
+				   class="admin-input" />
+		  </div>
+		  <div class="admin-field-row">
 			<label for="admin-password" class="admin-field-label">Password</label>
 			<div class="admin-field-input-wrap">
 			  <input id="admin-password"
@@ -5754,6 +6042,23 @@ const WRITE_TOKEN = "WRITE_TOKEN_PLACEHOLDER";
 let ADMIN_TOKEN = null;
 let ADMIN_CONFIGURED = false;
 let ADMIN_LOGGED_IN = false;
+let USER_LOGGED_IN = false;
+let USERNAME = "";
+let USER_ROLE = "viewer";
+
+function normalizeUserRole(role) {
+    const r = String(role || "").trim().toLowerCase();
+    if (r === "admin" || r === "editor" || r === "operator" || r === "viewer") return r;
+    return "viewer";
+}
+
+function canEditWorkspace() {
+    return !!(USER_LOGGED_IN && (USER_ROLE === "admin" || USER_ROLE === "editor"));
+}
+
+function canWriteTags() {
+    return !!(USER_LOGGED_IN && (USER_ROLE === "admin" || USER_ROLE === "editor" || USER_ROLE === "operator"));
+}
 
 // --- WebSocket (optional, for high-scale tag updates) ---
 let WS_ENABLED = false;
@@ -5787,7 +6092,6 @@ function restoreAdminTokenFromStorage() {
         const stored = window.localStorage.getItem(ADMIN_TOKEN_KEY);
         if (stored && typeof stored === "string") {
             ADMIN_TOKEN = stored;
-            ADMIN_LOGGED_IN = true;
         }
     } catch (e) {
         console.warn("Failed to restore admin token from storage:", e);
@@ -5815,38 +6119,38 @@ function openAdminModal(mode) {
     const modal = document.getElementById("admin-modal");
     const title = document.getElementById("admin-modal-title");
     const err   = document.getElementById("admin-modal-error");
+    const user  = document.getElementById("admin-username");
     const pw    = document.getElementById("admin-password");
     const conf  = document.getElementById("admin-confirm-container");
     const pw2   = document.getElementById("admin-password-confirm");
-    const showCb = document.getElementById("admin-show-password");
+    const toggleBtn = document.getElementById("admin-toggle-password");
 
-    if (!modal || !title || !err || !pw || !conf || !pw2) {
+    if (!modal || !title || !err || !user || !pw || !conf || !pw2) {
         console.error("Admin modal elements missing");
         return;
     }
 
     // Clear previous state
     err.textContent = "";
+    user.value = user.value || "admin";
     pw.value = "";
     pw2.value = "";
 
     if (mode === "setup") {
-        title.textContent = "Set Admin Password";
+        title.textContent = "Create Admin User";
         conf.style.display = "";
     } else {
         title.textContent = "Admin Login";
         conf.style.display = "none";
     }
 
-    // Reset show-password checkbox + field types
-    if (showCb) {
-        showCb.checked = false;
-    }
+    // Reset show-password state
     pw.type  = "password";
     pw2.type = "password";
+    if (toggleBtn) toggleBtn.textContent = "👁";
 
     modal.style.display = "flex";
-    pw.focus();
+    (user.value ? pw : user).focus();
 }
 
 function closeAdminModal() {
@@ -5854,16 +6158,18 @@ function closeAdminModal() {
 }
 
 async function submitAdminModal() {
+    const userEl  = document.getElementById("admin-username");
     const pwEl    = document.getElementById("admin-password");
     const pw2El   = document.getElementById("admin-password-confirm");
     const errEl   = document.getElementById("admin-modal-error");
     const modalEl = document.getElementById("admin-modal");
 
-    if (!pwEl || !errEl || !modalEl) {
+    if (!userEl || !pwEl || !errEl || !modalEl) {
         console.error("Admin modal elements missing");
         return;
     }
 
+    const username = String(userEl.value || "").trim();
     const pw  = pwEl.value;
     const pw2 = pw2El ? pw2El.value : "";
 
@@ -5876,7 +6182,11 @@ async function submitAdminModal() {
 
     try {
         if (adminModalMode === "setup") {
-            // First-time setup
+            // First-time init (creates the centralized user store: config/passwords.jsonc)
+            if (!username) {
+                errEl.textContent = "Username cannot be empty.";
+                return;
+            }
             if (!pw2) {
                 errEl.textContent = "Please confirm the password.";
                 return;
@@ -5886,10 +6196,10 @@ async function submitAdminModal() {
                 return;
             }
 
-            const resp = await fetch("/auth/setup", {
+            const resp = await fetch("/auth/init", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ password: pw, confirm: pw2 })
+                body: JSON.stringify({ username, password: pw, timeoutMinutes: 0 })
             });
             const data = await resp.json();
 
@@ -5898,37 +6208,43 @@ async function submitAdminModal() {
                 return;
             }
 
-            // After setup, no token yet; user must log in
-            ADMIN_CONFIGURED = true;
-            ADMIN_LOGGED_IN  = false;
-            ADMIN_TOKEN      = null;
-            persistAdminToken();   // clear any old token just in case
+            // Auto-login after init so the user can continue without re-entering creds.
+            try {
+                const loginResp = await fetch("/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password: pw })
+                });
+                const loginData = await loginResp.json();
+                if (loginData && loginData.ok && loginData.admin_token) {
+                    ADMIN_TOKEN = loginData.admin_token;
+                    persistAdminToken();
+                }
+            } catch (_) {
+                // ignore
+            }
 
-            // Close modal and prompt login
             modalEl.style.display = "none";
-            alert("Admin password set. Please log in.");
-            showAdminLogin(); // opens in login mode
-
+            await refreshAdminStatus();
+            updateAdminUi();
         } else {
             // Normal login
             const resp = await fetch("/auth/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ password: pw })
+                body: JSON.stringify(username ? { username, password: pw } : { password: pw })
             });
             const data = await resp.json();
 
-            if (!data.ok || !data.admin_token) {
+            if (!data.ok) {
                 errEl.textContent = data.error || "Admin login failed.";
                 return;
             }
 
-            ADMIN_TOKEN      = data.admin_token;
-            ADMIN_CONFIGURED = true;
-            ADMIN_LOGGED_IN  = true;
-
-            // *** THIS IS THE IMPORTANT PART ***
-            persistAdminToken();
+            if (data.admin_token) {
+                ADMIN_TOKEN = data.admin_token;
+                persistAdminToken();
+            }
 
             modalEl.style.display = "none";
 
@@ -5944,15 +6260,16 @@ async function submitAdminModal() {
 	        errEl.textContent = "Error: " + e.toString();
     }
 }
+let g_adminPwVisible = false;
 function toggleAdminPasswordVisibility() {
-    const cb  = document.getElementById("admin-show-password");
+    g_adminPwVisible = !g_adminPwVisible;
     const pw  = document.getElementById("admin-password");
     const pw2 = document.getElementById("admin-password-confirm");
-
-    const show = cb && cb.checked;
-
-    if (pw)  pw.type  = show ? "text" : "password";
-    if (pw2) pw2.type = show ? "text" : "password";
+    const btn = document.getElementById("admin-toggle-password");
+    const t = g_adminPwVisible ? "text" : "password";
+    if (pw) pw.type = t;
+    if (pw2) pw2.type = t;
+    if (btn) btn.textContent = g_adminPwVisible ? "🙈" : "👁";
 }
 
 function setupAdminModalKeys() {
@@ -5963,6 +6280,9 @@ function setupAdminModalKeys() {
     if (modal.dataset.keysAttached === "1") return;
     modal.dataset.keysAttached = "1";
 
+    const btn = document.getElementById("admin-toggle-password");
+    if (btn) btn.addEventListener("click", toggleAdminPasswordVisibility);
+
     modal.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
             e.preventDefault();
@@ -5972,17 +6292,6 @@ function setupAdminModalKeys() {
             closeAdminModal();
         }
     });
-}
-
-function toggleAdminPasswordVisibility() {
-    const cb  = document.getElementById("admin-show-password");
-    const pw  = document.getElementById("admin-password");
-    const pw2 = document.getElementById("admin-password-confirm");
-
-    const show = cb && cb.checked;
-
-    if (pw)  pw.type  = show ? "text" : "password";
-    if (pw2) pw2.type = show ? "text" : "password";
 }
 
 // --- Config file editor state ---
@@ -6074,14 +6383,18 @@ const wsLabelForPlcType = (code) => {
 
 const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 
-let wsLoadedOnce = false;
-	let wsBase = { connections: [], tags: [], alarms: [] };
-	let wsDraft = { connections: [], tags: [], alarms: [] };
-let wsDirty = false;
-let wsSelectedId = "ws:root";
-let wsExpanded = new Set(["ws:root", "ws:connectivity"]);
-let wsPendingDeletes = []; // { path: "connections/x.json" }
-let wsNodeById = new Map();
+	let wsLoadedOnce = false;
+		let wsBase = { connections: [], tags: [], alarms: [] };
+		let wsDraft = { connections: [], tags: [], alarms: [] };
+	let wsDirty = false;
+	let wsSelectedId = "ws:root";
+	let wsChildrenSelRoot = "";
+	let wsChildrenSel = new Set(); // keys like "connection_id::tag_name"
+	let wsChildrenLastIndex = -1;
+	let wsChildrenSort = { key: "name", dir: "asc" };
+	let wsExpanded = new Set(["ws:root", "ws:connectivity"]);
+	let wsPendingDeletes = []; // { path: "connections/x.json" }
+	let wsNodeById = new Map();
 
 	const wsEls = () => ({
     treeStatus: document.getElementById("ws-tree-status"),
@@ -6177,7 +6490,7 @@ const wsApiJson = async (url, opts = {}) => {
 	};
 
 	const wsIsEditable = () => {
-	    return !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN && ADMIN_TOKEN);
+	    return !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN);
 	};
 
 	const wsApplyEditability = () => {
@@ -6346,7 +6659,7 @@ const wsFillDatatypeSelect = (sel, selected) => {
 	let wsAlarmModalMode = "new";
 	let wsAlarmEditingId = "";
 
-	const WS_ALARM_TYPES = ["high", "low", "change", "equals"];
+		const WS_ALARM_TYPES = ["high", "low", "change", "equals", "not_equals"];
 
 const wsOpenDeviceModal = ({ mode, connection_id }) => {
     const el = wsEls();
@@ -6537,10 +6850,34 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
         el.contextMenu.appendChild(div);
     });
 
-    el.contextMenu.style.left = `${Math.max(4, x)}px`;
-    el.contextMenu.style.top = `${Math.max(4, y)}px`;
-    el.contextMenu.style.display = "block";
-};
+	    el.contextMenu.style.left = `${Math.max(4, x)}px`;
+	    el.contextMenu.style.top = `${Math.max(4, y)}px`;
+	    el.contextMenu.style.display = "block";
+	};
+
+	// Show a custom context menu (used by the right-pane multi-select table).
+	const wsShowCustomContextMenu = (items, x, y, onAction) => {
+	    const el = wsEls();
+	    if (!el.contextMenu) return;
+	    if (!wsIsEditable()) return;
+	    if (!Array.isArray(items) || !items.length) return;
+
+	    el.contextMenu.textContent = "";
+	    items.forEach((it) => {
+	        const div = document.createElement("div");
+	        div.className = "ws-menu-item";
+	        div.textContent = String(it?.label || "");
+	        div.addEventListener("click", () => {
+	            wsHideContextMenu();
+	            try { onAction && onAction(String(it?.action || "")); } catch { /* ignore */ }
+	        });
+	        el.contextMenu.appendChild(div);
+	    });
+
+	    el.contextMenu.style.left = `${Math.max(4, x)}px`;
+	    el.contextMenu.style.top = `${Math.max(4, y)}px`;
+	    el.contextMenu.style.display = "block";
+	};
 
 	const wsHandleContextAction = (action, nodeId) => {
 	    const node = wsNodeById.get(nodeId);
@@ -6623,153 +6960,277 @@ const wsRenderTree = () => {
     rows.forEach((r) => el.tree.appendChild(r));
 };
 
-	const wsRenderChildrenTable = () => {
-	    const el = wsEls();
-	    if (!el.thead || !el.tbody) return;
-	    const node = wsNodeById.get(wsSelectedId);
-	    if (!node) return;
+		const wsRenderChildrenTable = () => {
+		    const el = wsEls();
+		    if (!el.thead || !el.tbody) return;
+		    const node = wsNodeById.get(wsSelectedId);
+		    if (!node) return;
 
-    const setHeader = (cols) => {
-        const tr = document.createElement("tr");
-        cols.forEach((c) => {
-            const th = document.createElement("th");
-            th.textContent = c;
-            tr.appendChild(th);
-        });
-        el.thead.textContent = "";
-        el.thead.appendChild(tr);
-    };
+	    const setHeaderSimple = (cols) => {
+	        const tr = document.createElement("tr");
+	        cols.forEach((c) => {
+	            const th = document.createElement("th");
+	            th.textContent = c;
+	            tr.appendChild(th);
+	        });
+	        el.thead.textContent = "";
+	        el.thead.appendChild(tr);
+	    };
 
-		    const addRow = (cells, nodeId) => {
-		        const tr = document.createElement("tr");
-		        cells.forEach((txt) => {
-		            const td = document.createElement("td");
-		            td.textContent = txt;
-		            tr.appendChild(td);
-		        });
-		        if (nodeId) {
-		            tr.dataset.nodeId = nodeId;
-		            tr.addEventListener("click", () => wsSelectNode(nodeId));
-		            tr.addEventListener("contextmenu", (e) => {
-		                e.preventDefault();
-		                wsSelectNode(nodeId);
-		                wsShowContextMenu(nodeId, e.clientX, e.clientY);
-		            });
-		            if (wsIsEditable()) {
-		                tr.addEventListener("dblclick", () => wsOpenPropertiesForNode(nodeId));
-		            }
-		        }
-		        el.tbody.appendChild(tr);
-		    };
+	    const setHeaderSortable = (cols) => {
+	        const tr = document.createElement("tr");
+	        cols.forEach((c) => {
+	            const th = document.createElement("th");
+	            th.textContent = c.label;
+	            if (c.sortable) {
+	                th.classList.add("is-sortable");
+	                th.title = "Sort";
+	                th.addEventListener("click", () => {
+	                    const key = String(c.key || "name");
+	                    const cur = wsChildrenSort || { key: "name", dir: "asc" };
+	                    const dir = (cur.key === key && cur.dir === "asc") ? "desc" : "asc";
+	                    wsChildrenSort = { key, dir };
+	                    wsRenderChildrenTable();
+	                });
+	            }
+	            tr.appendChild(th);
+	        });
+	        el.thead.textContent = "";
+	        el.thead.appendChild(tr);
+	    };
 
-    el.tbody.textContent = "";
+			    const addRowSimple = (cells, nodeId) => {
+			        const tr = document.createElement("tr");
+			        cells.forEach((txt) => {
+			            const td = document.createElement("td");
+			            td.textContent = txt;
+			            tr.appendChild(td);
+			        });
+			        if (nodeId) {
+			            tr.dataset.nodeId = nodeId;
+			            tr.addEventListener("click", () => wsSelectNode(nodeId));
+			            tr.addEventListener("contextmenu", (e) => {
+			                e.preventDefault();
+			                wsSelectNode(nodeId);
+			                wsShowContextMenu(nodeId, e.clientX, e.clientY);
+			            });
+			            if (wsIsEditable()) {
+			                tr.addEventListener("dblclick", () => wsOpenPropertiesForNode(nodeId));
+			            }
+			        }
+			        el.tbody.appendChild(tr);
+			    };
 
-	    if (node.type === "root") {
-	        setHeader(["Name"]);
-	        addRow(["Connectivity"], "ws:connectivity");
-	        addRow(["Alarms & Events"], "ws:alarms");
-	        return;
-	    }
+	    el.tbody.textContent = "";
 
-    if (node.type === "connectivity") {
-        setHeader(["Name", "Description", "Driver", "PLC Type", "Gateway", "Path", "Slot"]);
-        const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
-        conns.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
-        conns.forEach((c) => {
-            const cid = String(c?.id || "").trim();
-            if (!cid) return;
-            addRow([
-                cid,
-                String(c?.description || ""),
-                wsLabelForDriver(c?.driver),
-                wsLabelForPlcType(c?.plc_type),
-                String(c?.gateway || ""),
-                String(c?.path || ""),
-                String(c?.slot ?? "")
-            ], `ws:device:${encodeURIComponent(cid)}`);
-        });
-        return;
-    }
+		    if (node.type === "root") {
+		        setHeaderSimple(["Name"]);
+		        addRowSimple(["Connectivity"], "ws:connectivity");
+		        addRowSimple(["Alarms & Events"], "ws:alarms");
+		        return;
+		    }
 
-    if (node.type === "device") {
-        setHeader(["Name", "PLC Tag", "Datatype", "Scan (ms)", "Enabled", "Writable"]);
-        const cid = String(node.connection_id || "").trim();
-        const tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => String(t?.connection_id || "") === cid);
-        tags.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" }));
-        if (!tags.length) {
-            addRow(["(no tags)", "", "", "", "", ""], null);
-            return;
-        }
-        tags.forEach((t) => {
-            const name = String(t?.name || "").trim();
-            addRow([
-                name,
-                String(t?.plc_tag_name || ""),
-                String(t?.datatype || ""),
-                t?.scan_ms == null ? "" : String(t.scan_ms),
-                t?.enabled === false ? "no" : "yes",
-                t?.writable === true ? "yes" : "no"
-            ], `ws:tag:${encodeURIComponent(cid)}:${encodeURIComponent(name)}`);
-        });
-        return;
-    }
-
-	    if (node.type === "tag") {
-	        setHeader(["Name", "PLC Tag", "Datatype", "Scan (ms)", "Enabled", "Writable"]);
-	        const cid = String(node.connection_id || "").trim();
-	        const name = String(node.name || "").trim();
-        const t = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).find((x) => String(x?.connection_id || "") === cid && String(x?.name || "") === name);
-        if (!t) {
-            addRow(["(missing)", "", "", "", "", ""], null);
-            return;
-        }
-	        addRow([
-	            String(t?.name || ""),
-	            String(t?.plc_tag_name || ""),
-	            String(t?.datatype || ""),
-	            t?.scan_ms == null ? "" : String(t.scan_ms),
-	            t?.enabled === false ? "no" : "yes",
-	            t?.writable === true ? "yes" : "no"
-	        ], null);
-	        return;
-	    }
-
-	    if (node.type === "alarms") {
-	        setHeader(["ID", "Name", "Group", "Site", "Type", "Connection", "Tag", "Enabled", "Severity"]);
-	        const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
-	        alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
-	        if (!alarms.length) {
-	            addRow(["(no alarms)", "", "", "", "", "", "", "", ""], null);
-	            return;
-	        }
-	        alarms.forEach((a) => {
-	            const id = String(a?.id || "").trim();
-	            if (!id) return;
-	            addRow([
-	                id,
-	                String(a?.name || ""),
-	                String(a?.group || ""),
-	                String(a?.site || ""),
-	                String(a?.type || ""),
-	                String(a?.connection_id || ""),
-	                String(a?.tag_name || ""),
-	                a?.enabled === false ? "no" : "yes",
-	                String(a?.severity ?? "")
-	            ], `ws:alarm:${encodeURIComponent(id)}`);
+	    if (node.type === "connectivity") {
+	        setHeaderSimple(["Name", "Description", "Driver", "PLC Type", "Gateway", "Path", "Slot"]);
+	        const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
+	        conns.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+	        conns.forEach((c) => {
+	            const cid = String(c?.id || "").trim();
+	            if (!cid) return;
+	            addRowSimple([
+	                cid,
+	                String(c?.description || ""),
+	                wsLabelForDriver(c?.driver),
+	                wsLabelForPlcType(c?.plc_type),
+	                String(c?.gateway || ""),
+	                String(c?.path || ""),
+	                String(c?.slot ?? "")
+	            ], `ws:device:${encodeURIComponent(cid)}`);
 	        });
 	        return;
 	    }
 
-	    if (node.type === "alarm") {
-	        setHeader(["Field", "Value"]);
-	        const id = String(node.alarm_id || "").trim();
-	        const a = (Array.isArray(wsDraft.alarms) ? wsDraft.alarms : []).find((x) => String(x?.id || "") === id);
-	        if (!a) {
-	            addRow(["(missing)", ""], null);
+	    if (node.type === "device" || node.type === "tag") {
+	        const cid = String(node.connection_id || "").trim();
+	        const rootKey = `tags:${cid}`;
+	        if (wsChildrenSelRoot !== rootKey) {
+	            wsChildrenSelRoot = rootKey;
+	            wsChildrenSel = new Set();
+	            wsChildrenLastIndex = -1;
+	            wsChildrenSort = { key: "name", dir: "asc" };
+	        }
+
+	        const cols = [
+	            { key: "name", label: "Name", sortable: true },
+	            { key: "plc_tag_name", label: "PLC Tag", sortable: true },
+	            { key: "datatype", label: "Datatype", sortable: true },
+	            { key: "scan_ms", label: "Scan (ms)", sortable: true },
+	            { key: "enabled", label: "Enabled", sortable: true },
+	            { key: "writable", label: "Writable", sortable: true }
+	        ];
+	        setHeaderSortable(cols);
+
+	        const allTags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => String(t?.connection_id || "") === cid);
+	        const getVal = (t, key) => {
+	            if (key === "name") return String(t?.name || "");
+	            if (key === "plc_tag_name") return String(t?.plc_tag_name || "");
+	            if (key === "datatype") return String(t?.datatype || "");
+	            if (key === "scan_ms") return t?.scan_ms == null ? -1 : Number(t.scan_ms);
+	            if (key === "enabled") return t?.enabled === false ? 0 : 1;
+	            if (key === "writable") return t?.writable === true ? 1 : 0;
+	            return "";
+	        };
+
+	        const sortKey = String(wsChildrenSort?.key || "name");
+	        const dir = (wsChildrenSort?.dir === "desc") ? -1 : 1;
+	        allTags.sort((a, b) => {
+	            const va = getVal(a, sortKey);
+	            const vb = getVal(b, sortKey);
+	            if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+	            return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" }) * dir;
+	        });
+
+	        const applySelectionClass = () => {
+	            const trs = Array.from(el.tbody.querySelectorAll("tr[data-row-key]"));
+	            trs.forEach((r) => r.classList.toggle("is-selected", wsChildrenSel.has(String(r.dataset.rowKey || ""))));
+	        };
+
+	        const handleRowClick = (e, idx, key) => {
+	            if (!wsIsEditable()) {
+	                wsChildrenSel = new Set([key]);
+	                wsChildrenLastIndex = idx;
+	                applySelectionClass();
+	                return;
+	            }
+
+	            const multi = e.ctrlKey || e.metaKey;
+	            const range = e.shiftKey && wsChildrenLastIndex >= 0;
+
+	            if (range) {
+	                const start = Math.min(wsChildrenLastIndex, idx);
+	                const end = Math.max(wsChildrenLastIndex, idx);
+	                const trs = Array.from(el.tbody.querySelectorAll("tr[data-row-key]"));
+	                const keys = [];
+	                for (let i = start; i <= end; i++) {
+	                    const k = String(trs[i]?.dataset?.rowKey || "");
+	                    if (k) keys.push(k);
+	                }
+	                if (!multi) wsChildrenSel = new Set();
+	                keys.forEach((k) => wsChildrenSel.add(k));
+	            } else if (multi) {
+	                if (wsChildrenSel.has(key)) wsChildrenSel.delete(key);
+	                else wsChildrenSel.add(key);
+	                wsChildrenLastIndex = idx;
+	            } else {
+	                wsChildrenSel = new Set([key]);
+	                wsChildrenLastIndex = idx;
+	            }
+	            applySelectionClass();
+	        };
+
+	        const deleteSelected = () => {
+	            const keys = Array.from(wsChildrenSel.values());
+	            if (!keys.length) return;
+	            if (!confirm(`Delete ${keys.length} tag(s)? (Applied on Save.)`)) return;
+	            const del = new Set(keys);
+	            wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => !del.has(`${String(t?.connection_id || "")}::${String(t?.name || "")}`));
+	            wsChildrenSel = new Set();
+	            wsChildrenLastIndex = -1;
+	            wsSetDirty(true);
+	            wsRenderTree();
+	            wsRenderChildrenTable();
+	        };
+
+	        el.tbody.textContent = "";
+	        if (!allTags.length) {
+	            const tr = document.createElement("tr");
+	            tr.innerHTML = `<td>(no tags)</td><td></td><td></td><td></td><td></td><td></td>`;
+	            el.tbody.appendChild(tr);
 	            return;
 	        }
-	        const kv = [
-	            ["id", String(a?.id || "")],
+
+	        allTags.forEach((t, idx) => {
+	            const name = String(t?.name || "").trim();
+	            const rowKey = `${cid}::${name}`;
+	            const tr = document.createElement("tr");
+	            tr.dataset.rowKey = rowKey;
+	            const cells = [
+	                name,
+	                String(t?.plc_tag_name || ""),
+	                String(t?.datatype || ""),
+	                t?.scan_ms == null ? "" : String(t.scan_ms),
+	                t?.enabled === false ? "no" : "yes",
+	                t?.writable === true ? "yes" : "no"
+	            ];
+	            cells.forEach((txt) => {
+	                const td = document.createElement("td");
+	                td.textContent = txt;
+	                tr.appendChild(td);
+	            });
+
+	            tr.addEventListener("click", (e) => handleRowClick(e, idx, rowKey));
+	            tr.addEventListener("dblclick", () => {
+	                if (!wsIsEditable()) return;
+	                wsOpenPropertiesForNode(`ws:tag:${encodeURIComponent(cid)}:${encodeURIComponent(name)}`);
+	            });
+	            tr.addEventListener("contextmenu", (e) => {
+	                e.preventDefault();
+	                if (!wsIsEditable()) return;
+	                if (!wsChildrenSel.has(rowKey)) {
+	                    wsChildrenSel = new Set([rowKey]);
+	                    wsChildrenLastIndex = idx;
+	                    applySelectionClass();
+	                }
+	                wsShowCustomContextMenu([
+	                    { label: `Delete selected tag(s) (${wsChildrenSel.size})`, action: "bulk-delete-tags" }
+	                ], e.clientX, e.clientY, (action) => {
+	                    if (action === "bulk-delete-tags") deleteSelected();
+	                });
+	            });
+
+	            el.tbody.appendChild(tr);
+	        });
+
+	        applySelectionClass();
+	        return;
+	    }
+
+		    if (node.type === "alarms") {
+		        setHeaderSimple(["ID", "Name", "Group", "Site", "Type", "Connection", "Tag", "Enabled", "Severity"]);
+		        const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
+		        alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+		        if (!alarms.length) {
+		            addRowSimple(["(no alarms)", "", "", "", "", "", "", "", ""], null);
+		            return;
+		        }
+		        alarms.forEach((a) => {
+		            const id = String(a?.id || "").trim();
+		            if (!id) return;
+		            addRowSimple([
+		                id,
+		                String(a?.name || ""),
+		                String(a?.group || ""),
+		                String(a?.site || ""),
+		                String(a?.type || ""),
+		                String(a?.connection_id || ""),
+		                String(a?.tag_name || ""),
+		                a?.enabled === false ? "no" : "yes",
+		                String(a?.severity ?? "")
+		            ], `ws:alarm:${encodeURIComponent(id)}`);
+		        });
+		        return;
+		    }
+
+		    if (node.type === "alarm") {
+		        setHeaderSimple(["Field", "Value"]);
+		        const id = String(node.alarm_id || "").trim();
+		        const a = (Array.isArray(wsDraft.alarms) ? wsDraft.alarms : []).find((x) => String(x?.id || "") === id);
+		        if (!a) {
+		            addRowSimple(["(missing)", ""], null);
+		            return;
+		        }
+		        const kv = [
+		            ["id", String(a?.id || "")],
 	            ["name", String(a?.name || "")],
 	            ["group", String(a?.group || "")],
 	            ["site", String(a?.site || "")],
@@ -6780,13 +7241,13 @@ const wsRenderTree = () => {
 	            ["severity", String(a?.severity ?? "")],
 	            ["threshold", String(a?.threshold ?? "")],
 	            ["hysteresis", String(a?.hysteresis ?? "")],
-	            ["message_on_active", String(a?.message_on_active || "")],
-	            ["message_on_return", String(a?.message_on_return || "")],
-	        ];
-	        kv.forEach(([k, v]) => addRow([k, v], null));
-	        return;
-	    }
-	};
+		            ["message_on_active", String(a?.message_on_active || "")],
+		            ["message_on_return", String(a?.message_on_return || "")],
+		        ];
+		        kv.forEach(([k, v]) => addRowSimple([k, v], null));
+		        return;
+		    }
+		};
 
 const wsSaveDeviceFromModal = () => {
     const el = wsEls();
@@ -6962,10 +7423,10 @@ const wsDeleteDevice = (connection_id) => {
 	    next.severity = Math.max(0, Math.min(1000, Math.floor(Number(el.alarmSeverity?.value) || 0)));
 	    const thRaw = String(el.alarmThreshold?.value || "").trim();
 	    const hyRaw = String(el.alarmHysteresis?.value || "").trim();
-	    if (next.type === "equals" && thRaw === "") {
-	        if (el.alarmStatus) el.alarmStatus.textContent = "Threshold is required for type=equals (use 0/1 for boolean tags).";
-	        return;
-	    }
+		    if ((next.type === "equals" || next.type === "not_equals") && thRaw === "") {
+		        if (el.alarmStatus) el.alarmStatus.textContent = "Threshold is required for type=equals/not_equals (use 0/1 for boolean tags).";
+		        return;
+		    }
 	    if (thRaw !== "") next.threshold = Number(thRaw) || 0;
 	    else delete next.threshold;
 	    if (hyRaw !== "") next.hysteresis = Number(hyRaw) || 0;
@@ -7164,13 +7625,14 @@ function filterLiveTagsByConnection(connectionId) {
     }
 }
 
-	const wsApplyLiveTagsFilterFromSelection = () => {
-	    const node = wsNodeById.get(wsSelectedId);
-	    let filterConn = "";
-	    if (node && node.type === "device") filterConn = String(node.connection_id || "");
-	    if (node && node.type === "alarm") filterConn = String(node.connection_id || "");
-	    filterLiveTagsByConnection(filterConn);
-	};
+		const wsApplyLiveTagsFilterFromSelection = () => {
+		    const node = wsNodeById.get(wsSelectedId);
+		    let filterConn = "";
+		    if (node && node.type === "device") filterConn = String(node.connection_id || "");
+		    if (node && node.type === "tag") filterConn = String(node.connection_id || "");
+		    if (node && node.type === "alarm") filterConn = String(node.connection_id || "");
+		    filterLiveTagsByConnection(filterConn);
+		};
 
 	const wsWireUi = () => {
 	    const el = wsEls();
@@ -7288,20 +7750,23 @@ function formatUptime(sec) {
 
 async function refreshAdminStatus() {
     try {
-        const wasEditable = !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN && ADMIN_TOKEN);
+        const wasEditable = !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN);
         const resp = await fetch("/auth/status", {
             method: "GET",
             headers: withAdminHeaders()
         });
         const data = await resp.json();
         ADMIN_CONFIGURED = !!data.configured;
-        ADMIN_LOGGED_IN  = !!data.logged_in;
+        USER_LOGGED_IN = !!(data.user_logged_in ?? data.logged_in);
+        USERNAME = USER_LOGGED_IN ? String(data?.user?.username || "admin").trim() : "";
+        USER_ROLE = USER_LOGGED_IN ? normalizeUserRole(data?.user?.role || (data.logged_in ? "admin" : "viewer")) : "viewer";
+        ADMIN_LOGGED_IN = !!(ADMIN_CONFIGURED && canEditWorkspace());
 
         // If server says "not logged in", drop any stale token we might have
-        if (!ADMIN_LOGGED_IN) {
+        if (!USER_LOGGED_IN && !data.logged_in) {
             ADMIN_TOKEN = null;
             try {
-                sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+                window.localStorage.removeItem(ADMIN_TOKEN_KEY);
             } catch (e) {
                 console.warn("Unable to clear stale admin token from storage:", e);
             }
@@ -7309,7 +7774,7 @@ async function refreshAdminStatus() {
 
         updateAdminUi();
 
-        const isEditableNow = !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN && ADMIN_TOKEN);
+        const isEditableNow = !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN);
         // If we're on /workspace and admin status just became editable, load the workspace tree now.
         if (isEditorPage() && !wasEditable && isEditableNow) {
             if (!wsDirty) {
@@ -7372,37 +7837,55 @@ async function refreshAdminStatus() {
 	            }
 	            connEditorSetEnabled(false);
 	        }
-	    } else if (ADMIN_LOGGED_IN && ADMIN_TOKEN) {
-        statusEl.textContent = "Admin: logged in";
+	    } else if (USER_LOGGED_IN) {
+        statusEl.textContent = `Logged in as ${USERNAME || "?"} (${USER_ROLE}).`;
         loginBtn.style.display = "none";
         logoutBtn.style.display = "";
-        chip.style.display = "inline-block";   // NEW
-        enableAdminFeatures();
+        chip.style.display = "inline-block";
+        chip.textContent = `${USERNAME || "?"} (${USER_ROLE})`;
 
-	        // Now that we're logged in, load the file list
-	        refreshConfigFiles();
+        if (canEditWorkspace()) {
+            enableAdminFeatures();
+            refreshConfigFiles();
+        } else {
+            disableAdminFeatures();
+            const metaEl  = document.getElementById("config-meta");
+            const tbodyEl = document.getElementById("config-tbody");
+            if (metaEl) metaEl.textContent = "Editor+ login required to view/edit config files.";
+            if (tbodyEl) tbodyEl.innerHTML = "";
+        }
 
-	        // Tag editor
-	        {
-	            const te = tagEditorEls();
-	            if (te.statusEl) {
-	                te.statusEl.textContent = "Ready. Click 'Open editor' to load tag files.";
-	                te.statusEl.className = "small";
-	            }
-	            tagEditorSetEnabled(true);
-	        }
+        // Tag editor
+        {
+            const te = tagEditorEls();
+            TAG_EDITOR_OPEN = false;
+            if (te.wrapEl) te.wrapEl.style.display = "none";
+            if (te.toggleBtn) te.toggleBtn.textContent = "Open editor";
+            if (te.statusEl) {
+                te.statusEl.textContent = canEditWorkspace()
+                  ? "Ready. Click 'Open editor' to load tag files."
+                  : "Editor+ login required to edit tag config files.";
+                te.statusEl.className = "small";
+            }
+            tagEditorSetEnabled(canEditWorkspace());
+        }
 
-	        // Connection editor
-	        {
-	            const ce = connEditorEls();
-	            if (ce.statusEl) {
-	                ce.statusEl.textContent = "Ready. Click 'Open editor' to load connection files.";
-	                ce.statusEl.className = "small";
-	            }
-	            connEditorSetEnabled(true);
-	        }
+        // Connection editor
+        {
+            const ce = connEditorEls();
+            CONN_EDITOR_OPEN = false;
+            if (ce.wrapEl) ce.wrapEl.style.display = "none";
+            if (ce.toggleBtn) ce.toggleBtn.textContent = "Open editor";
+            if (ce.statusEl) {
+                ce.statusEl.textContent = canEditWorkspace()
+                  ? "Ready. Click 'Open editor' to load connection files."
+                  : "Editor+ login required to edit connection config files.";
+                ce.statusEl.className = "small";
+            }
+            connEditorSetEnabled(canEditWorkspace());
+        }
 	    } else {
-        statusEl.textContent = "Admin: not logged in";
+        statusEl.textContent = "Not logged in. (Tip: use the same hostname in all apps for cookie SSO.)";
         loginBtn.textContent = "Admin login";
         loginBtn.style.display = "";
         logoutBtn.style.display = "none";
@@ -7473,7 +7956,11 @@ async function adminLogout() {
     }
     ADMIN_TOKEN = null;
     ADMIN_LOGGED_IN = false;
+    USER_LOGGED_IN = false;
+    USERNAME = "";
+    USER_ROLE = "viewer";
     persistAdminToken();   // <-- clear localStorage
+    await refreshAdminStatus();
     updateAdminUi();
 }
 
@@ -8099,8 +8586,8 @@ async function uploadCaCert() {
 async function doWrite(connectionId, tagName) {
     const writeStatus = document.getElementById("write-status");
 
-    if (!ADMIN_TOKEN) {
-        writeStatus.textContent = "Write blocked: admin login required.";
+    if (!canWriteTags()) {
+        writeStatus.textContent = "Write blocked: login required (operator+).";
         writeStatus.className   = "small status-error";
         return;
     }
@@ -8351,7 +8838,7 @@ function toggleAlarmsEditor() {
     const statusEl = document.getElementById("alarms-editor-status");
     if (!wrap || !btn) return;
 
-    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN || !ADMIN_TOKEN) {
+    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
         if (statusEl) {
             statusEl.textContent = "Admin login required to edit alarms.json.";
             statusEl.className   = "small status-error";
@@ -8374,7 +8861,7 @@ async function alarmsEditorLoad() {
     const ta       = document.getElementById("alarms-edit-json");
     if (!statusEl || !metaEl || !ta) return;
 
-    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN || !ADMIN_TOKEN) {
+    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
         statusEl.textContent = "Admin login required to load alarms.json.";
         statusEl.className   = "small status-error";
         return;
@@ -8412,7 +8899,7 @@ async function alarmsEditorSave(reloadAfter) {
     const ta       = document.getElementById("alarms-edit-json");
     if (!statusEl || !ta) return;
 
-    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN || !ADMIN_TOKEN) {
+    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
         statusEl.textContent = "Admin login required to save alarms.json.";
         statusEl.className   = "small status-error";
         return;
@@ -8642,8 +9129,8 @@ async function refreshConfigFiles() {
         return; // card not present
     }
 
-    // Only show file list to logged-in admin
-    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN || !ADMIN_TOKEN) {
+    // Only show file list to editor/admin users.
+    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
         metaEl.textContent = "Admin login required to view config files.";
         tbodyEl.innerHTML  = "";
         return;
@@ -8931,7 +9418,7 @@ function toggleConnEditor() {
     const el = connEditorEls();
     if (!el.wrapEl || !el.toggleBtn) return;
 
-    if (!ADMIN_TOKEN) {
+    if (!ADMIN_LOGGED_IN) {
         if (el.statusEl) {
             el.statusEl.textContent = "Admin login required to edit connection config files.";
             el.statusEl.className = "small status-error";
@@ -8950,7 +9437,7 @@ function toggleConnEditor() {
 
 async function loadConnectionEditorFiles() {
     const el = connEditorEls();
-    if (!ADMIN_TOKEN) return;
+    if (!ADMIN_LOGGED_IN) return;
 
     if (el.statusEl) {
         el.statusEl.textContent = "Loading connection files...";
@@ -9047,7 +9534,7 @@ async function connEditorLoad() {
 
 function connEditorNew() {
     const el = connEditorEls();
-    if (!ADMIN_TOKEN) return;
+    if (!ADMIN_LOGGED_IN) return;
 
     const id = window.prompt("New connection id (required):", "");
     if (!id) return;
@@ -9100,7 +9587,7 @@ function connEditorNew() {
 
 async function connEditorDelete() {
     const el = connEditorEls();
-    if (!ADMIN_TOKEN) return;
+    if (!ADMIN_LOGGED_IN) return;
     const path = connEditorSelectedPath();
     if (!path) return;
 
@@ -9157,7 +9644,7 @@ async function connEditorDelete() {
 
 async function connEditorSave(reloadAfter) {
     const el = connEditorEls();
-    if (!ADMIN_TOKEN) return;
+    if (!ADMIN_LOGGED_IN) return;
     const path = connEditorSelectedPath();
     if (!path) return;
     if (!el.jsonEl) return;
@@ -9252,7 +9739,7 @@ function toggleTagEditor() {
     const el = tagEditorEls();
     if (!el.wrapEl || !el.toggleBtn) return;
 
-    if (!ADMIN_TOKEN) {
+    if (!ADMIN_LOGGED_IN) {
         if (el.statusEl) {
             el.statusEl.textContent = "Admin login required to edit tag config files.";
             el.statusEl.className = "small status-error";
@@ -9271,7 +9758,7 @@ function toggleTagEditor() {
 
 async function loadTagEditorFiles() {
     const el = tagEditorEls();
-    if (!ADMIN_TOKEN) return;
+    if (!ADMIN_LOGGED_IN) return;
 
     if (el.statusEl) {
         el.statusEl.textContent = "Loading tag files...";
@@ -9509,7 +9996,7 @@ function tagEditorDeleteTag() {
 async function tagEditorSave(reloadAfter) {
     const el = tagEditorEls();
     const f = tagEditorCurrentFile();
-    if (!ADMIN_TOKEN) return;
+    if (!ADMIN_LOGGED_IN) return;
     if (!f || !f.content) return;
 
     // If user edited JSON textarea, ensure it's applied to the tag object.
@@ -9613,7 +10100,12 @@ async function tagEditorSave(reloadAfter) {
 			    refreshTags();
 			    refreshAlarms();
 
-			    setInterval(refreshAdminStatus, 60000); // once a minute is fine
+			    // Keep auth status fresh so SSO logins (from scada/hmi) show up quickly.
+			    setInterval(refreshAdminStatus, 2000);
+			    window.addEventListener("focus", () => refreshAdminStatus());
+			    document.addEventListener("visibilitychange", () => {
+			        if (!document.hidden) refreshAdminStatus();
+			    });
 			    setInterval(refreshInfo,   15000);
 			    setInterval(refreshConfigFiles, 60000); // e.g. once a minute
 			    if (!isEditorPage()) {
@@ -10412,10 +10904,10 @@ window.addEventListener("load", startAutoRefresh);
                         ja["threshold"]  = a.cfg.threshold;
                         ja["hysteresis"] = a.cfg.hysteresis;
                     }
-                    if (a.cfg.type == "equals") {
-                        ja["equals_value"] = a.cfg.equals_value;
-                        ja["tolerance"] = a.cfg.equals_tolerance;
-                    }
+	                    if (a.cfg.type == "equals" || a.cfg.type == "not_equals") {
+	                        ja["equals_value"] = a.cfg.equals_value;
+	                        ja["tolerance"] = a.cfg.equals_tolerance;
+	                    }
 
                     // last_value if we have one
                     if (a.hasLastValue) {
@@ -11649,53 +12141,83 @@ window.addEventListener("load", startAutoRefresh);
 
 	            // ---------- ADMIN AUTH ENDPOINTS ----------
 
-	            // GET /auth/status
-	            svr.Get("/auth/status", [&](const httplib::Request &req, httplib::Response &res) {
-	                cleanup_expired_admin_sessions();
-	                json resp;
-	                resp["configured"] = g_adminConfigured;
-	                resp["logged_in"]  = is_admin_request(req);
-	                resp["service_token_enabled"] = !g_adminServiceToken.empty();
-	                resp["service_token_len"] = static_cast<int>(g_adminServiceToken.size());
-	                res.set_content(resp.dump(2), "application/json");
-	            });
+		            // GET /auth/status
+		            svr.Get("/auth/status", [&](const httplib::Request &req, httplib::Response &res) {
+		                cleanup_expired_admin_sessions();
+		                json resp;
+		                // Backwards-compatible admin status (editor+).
+		                resp["configured"] = (g_userStoreConfigured || g_adminConfigured);
+		                resp["logged_in"]  = is_admin_request(req);
+		                // New unified auth status (any role).
+		                AdminSessionInfo sess;
+		                const bool userLoggedIn = is_user_logged_in(req, sess);
+		                resp["user_logged_in"] = userLoggedIn;
+		                resp["user"] = userLoggedIn
+		                  ? json::object({{"username", sess.username}, {"role", normalize_auth_role(sess.role)}})
+		                  : json(nullptr);
+		                resp["initialized"] = g_userStoreConfigured;
+		                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
+		                resp["users"] = json::array();
+		                if (g_userStoreConfigured) {
+		                    for (const auto &u : g_authUsers) {
+		                        resp["users"].push_back({
+		                            {"username", u.username},
+		                            {"role", normalize_auth_role(u.role)}
+		                        });
+		                    }
+		                }
+		                resp["service_token_enabled"] = !g_adminServiceToken.empty();
+		                resp["service_token_len"] = static_cast<int>(g_adminServiceToken.size());
+		                res.set_content(resp.dump(2), "application/json");
+		            });
 
 	            // GET /auth/debug
 	            // Debug helper to verify whether the caller's X-Admin-Token header
 	            // matches the service token (does not reveal token value).
-	            svr.Get("/auth/debug", [&](const httplib::Request &req, httplib::Response &res) {
-	                cleanup_expired_admin_sessions();
-	                const std::string token = req.get_header_value("X-Admin-Token");
-	                json resp;
-	                resp["ok"] = true;
-	                resp["header_present"] = !token.empty();
-	                resp["header_len"] = static_cast<int>(token.size());
+		            svr.Get("/auth/debug", [&](const httplib::Request &req, httplib::Response &res) {
+		                cleanup_expired_admin_sessions();
+		                std::string token = req.get_header_value("X-Admin-Token");
+		                if (token.empty()) token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
+		                json resp;
+		                resp["ok"] = true;
+		                resp["header_present"] = !token.empty();
+		                resp["header_len"] = static_cast<int>(token.size());
 	                resp["service_token_enabled"] = !g_adminServiceToken.empty();
 	                resp["service_token_len"] = static_cast<int>(g_adminServiceToken.size());
 	                resp["matches_service_token"] = (!g_adminServiceToken.empty() && token == g_adminServiceToken);
-	                resp["admin_session_valid"] = false;
-	                if (!token.empty()) {
-	                    std::lock_guard<std::mutex> lock(g_adminMutex);
-	                    auto it = g_adminSessions.find(token);
-	                    if (it != g_adminSessions.end() && it->second.expires_at > std::chrono::system_clock::now()) {
-	                        resp["admin_session_valid"] = true;
-	                    }
-	                }
-	                resp["is_admin_request"] = is_admin_request(req);
-	                res.set_content(resp.dump(2), "application/json");
-	            });
+		                resp["admin_session_valid"] = false;
+		                if (!token.empty()) {
+		                    std::lock_guard<std::mutex> lock(g_adminMutex);
+		                    auto it = g_adminSessions.find(token);
+		                    if (it != g_adminSessions.end() && it->second.expires_at > std::chrono::system_clock::now()) {
+		                        resp["admin_session_valid"] = true;
+		                        resp["session_username"] = it->second.username;
+		                        resp["session_role"] = normalize_auth_role(it->second.role);
+		                    }
+		                }
+		                resp["is_admin_request"] = is_admin_request(req);
+		                res.set_content(resp.dump(2), "application/json");
+		            });
 
             // POST /auth/setup  (first-time password set)
             // Body: { "password": "...", "confirm": "..." }
-            svr.Post("/auth/setup", [&, adminAuthPath](const httplib::Request &req,
-                                                       httplib::Response &res)
-            {
-                json resp;
+	            svr.Post("/auth/setup", [&, adminAuthPath](const httplib::Request &req,
+	                                                       httplib::Response &res)
+	            {
+	                json resp;
 
-                if (g_adminConfigured) {
-                    resp["ok"] = false;
-                    resp["error"] = "Admin password is already configured.";
-                    res.status = 400;
+	                if (g_userStoreConfigured) {
+	                    resp["ok"] = false;
+	                    resp["error"] = "User store is already initialized. Use /auth/login.";
+	                    res.status = 400;
+	                    res.set_content(resp.dump(2), "application/json");
+	                    return;
+	                }
+
+	                if (g_adminConfigured) {
+	                    resp["ok"] = false;
+	                    resp["error"] = "Admin password is already configured.";
+	                    res.status = 400;
                     res.set_content(resp.dump(2), "application/json");
                     return;
                 }
@@ -11767,107 +12289,484 @@ window.addEventListener("load", startAutoRefresh);
                 }
             });
 
-            // POST /auth/login  { "password": "..." }
-            svr.Post("/auth/login", [&](const httplib::Request &req, httplib::Response &res) {
-                json resp;
-                if (!g_adminConfigured) {
-                    resp["ok"] = false;
-                    resp["error"] = "Admin password is not configured. Use /auth/setup.";
-                    res.status = 400;
-                    res.set_content(resp.dump(2), "application/json");
-                    return;
-                }
+	            // POST /auth/login
+	            // Body (preferred): { "username": "...", "password": "..." }
+	            // Legacy: { "password": "..." } (only when there is exactly one user, or when using admin_auth.json)
+	            svr.Post("/auth/login", [&](const httplib::Request &req, httplib::Response &res) {
+	                json resp;
+	                try {
+	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+	                    load_passwords_store(passwordsPath);
 
-                try {
-                    json body = json::parse(req.body);
-                    std::string pw = body.value("password", std::string{});
-                    if (pw.empty()) {
-                        resp["ok"] = false;
-                        resp["error"] = "Password must not be empty.";
-                        res.status = 400;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
+	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+	                    std::string username = normalize_auth_username(body.value("username", std::string{}));
+	                    std::string pw = body.value("password", std::string{});
+	                    if (pw.empty()) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Password must not be empty.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
 
-                    // decode salt_hex back to bytes
-                    std::string salt_bytes;
-                    if (g_adminAuth.salt_hex.size() % 2 != 0) {
-                        resp["ok"] = false;
-                        resp["error"] = "Invalid salt_hex in admin_auth.json";
-                        res.status = 500;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
-                    salt_bytes.resize(g_adminAuth.salt_hex.size() / 2);
-                    for (size_t i = 0; i < salt_bytes.size(); ++i) {
-                        std::string byteStr = g_adminAuth.salt_hex.substr(i * 2, 2);
-                        salt_bytes[i] = static_cast<char>(std::stoi(byteStr, nullptr, 16));
-                    }
+	                    std::string role = "admin";
 
-                    std::string hash_hex;
-                    if (!pbkdf2_sha256_hex(pw, salt_bytes, 100000, hash_hex)) {
-                        resp["ok"] = false;
-                        resp["error"] = "PBKDF2 hashing failed.";
-                        res.status = 500;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
+	                    if (g_userStoreConfigured) {
+	                        if (username.empty()) {
+	                            if (g_authUsers.size() == 1) username = g_authUsers[0].username;
+	                            else {
+	                                resp["ok"] = false;
+	                                resp["error"] = "Username is required.";
+	                                res.status = 400;
+	                                res.set_content(resp.dump(2), "application/json");
+	                                return;
+	                            }
+	                        }
 
-                    if (hash_hex.size() != g_adminAuth.hash_hex.size() ||
-                        CRYPTO_memcmp(hash_hex.data(),
-                                      g_adminAuth.hash_hex.data(),
-                                      hash_hex.size()) != 0) {
-                        resp["ok"] = false;
-                        resp["error"] = "Invalid password.";
-                        res.status = 403;
-                        res.set_content(resp.dump(2), "application/json");
-                        return;
-                    }
+	                        const AuthUserRecord *record = nullptr;
+	                        for (const auto &u : g_authUsers) {
+	                            if (u.username == username) { record = &u; break; }
+	                        }
+	                        if (!record) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "Invalid username or password.";
+	                            res.status = 403;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
 
-                    std::string token = random_token_hex(32);
-                    auto now = std::chrono::system_clock::now();
-                    auto expiry = now + std::chrono::hours(8); // 8h session
+	                        std::string salt_bytes;
+	                        if (!b64_decode(record->salt_b64, salt_bytes) || salt_bytes.empty()) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "Invalid password salt.";
+	                            res.status = 500;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
 
-                    {
-                        std::lock_guard<std::mutex> lock(g_adminMutex);
-                        g_adminSessions[token] = AdminSessionInfo{ expiry };
-                    }
+	                        std::string actual_hash_b64;
+	                        if (!pbkdf2_sha256_b64(pw, salt_bytes, record->iterations, actual_hash_b64)) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "PBKDF2 hashing failed.";
+	                            res.status = 500;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
 
-                    resp["ok"] = true;
-                    resp["admin_token"] = token;
-                    resp["expires_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        expiry.time_since_epoch()
-                    ).count();
-                    res.set_content(resp.dump(2), "application/json");
-                } catch (const std::exception &ex) {
-                    resp["ok"] = false;
-                    resp["error"] = std::string("Invalid JSON: ") + ex.what();
-                    res.status = 400;
-                    res.set_content(resp.dump(2), "application/json");
-                }
-            });
+	                        std::string expected_bytes;
+	                        std::string actual_bytes;
+	                        if (!b64_decode(record->hash_b64, expected_bytes) ||
+	                            !b64_decode(actual_hash_b64, actual_bytes) ||
+	                            expected_bytes.empty() ||
+	                            expected_bytes.size() != actual_bytes.size() ||
+	                            CRYPTO_memcmp(expected_bytes.data(), actual_bytes.data(), expected_bytes.size()) != 0) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "Invalid username or password.";
+	                            res.status = 403;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
 
-            // POST /auth/logout
-            svr.Post("/auth/logout", [&](const httplib::Request &req, httplib::Response &res) {
-                json resp;
+	                        role = normalize_auth_role(record->role);
+	                    } else {
+	                        // Legacy single-admin password flow (admin_auth.json)
+	                        if (!g_adminConfigured) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "Admin password is not configured. Use /auth/init or /auth/setup.";
+	                            res.status = 400;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
 
-                auto token = req.get_header_value("X-Admin-Token");
-                if (token.empty()) {
-                    // Also allow in JSON body
-                    try {
-                        json body = json::parse(req.body);
-                        token = body.value("admin_token", std::string{});
-                    } catch (...) {}
-                }
+	                        // decode salt_hex back to bytes
+	                        std::string salt_bytes;
+	                        if (g_adminAuth.salt_hex.size() % 2 != 0) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "Invalid salt_hex in admin_auth.json";
+	                            res.status = 500;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
+	                        salt_bytes.resize(g_adminAuth.salt_hex.size() / 2);
+	                        for (size_t i = 0; i < salt_bytes.size(); ++i) {
+	                            std::string byteStr = g_adminAuth.salt_hex.substr(i * 2, 2);
+	                            salt_bytes[i] = static_cast<char>(std::stoi(byteStr, nullptr, 16));
+	                        }
+
+	                        std::string hash_hex;
+	                        if (!pbkdf2_sha256_hex(pw, salt_bytes, 100000, hash_hex)) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "PBKDF2 hashing failed.";
+	                            res.status = 500;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
+	                        if (hash_hex.size() != g_adminAuth.hash_hex.size() ||
+	                            CRYPTO_memcmp(hash_hex.data(), g_adminAuth.hash_hex.data(), hash_hex.size()) != 0) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "Invalid password.";
+	                            res.status = 403;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
+	                        if (username.empty()) username = "admin";
+	                        role = "admin";
+	                    }
+
+	                    std::string token = random_token_hex(32);
+	                    auto now = std::chrono::system_clock::now();
+	                    auto expiry = now + std::chrono::hours(8); // 8h session
+
+	                    {
+	                        std::lock_guard<std::mutex> lock(g_adminMutex);
+	                        AdminSessionInfo info;
+	                        info.expires_at = expiry;
+	                        info.last_activity_at = now;
+	                        info.username = username;
+	                        info.role = role;
+	                        g_adminSessions[token] = info;
+	                    }
+
+	                    resp["ok"] = true;
+	                    resp["admin_token"] = token;
+	                    resp["username"] = username;
+	                    resp["role"] = role;
+	                    resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
+	                    resp["expires_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                        expiry.time_since_epoch()
+	                    ).count();
+
+	                    res.set_header("Set-Cookie",
+	                                   std::string("OPCBRIDGE_ADMIN_TOKEN=") + token +
+	                                   "; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax");
+	                    res.set_content(resp.dump(2), "application/json");
+	                } catch (const std::exception &ex) {
+	                    resp["ok"] = false;
+	                    resp["error"] = std::string("Invalid JSON: ") + ex.what();
+	                    res.status = 400;
+	                    res.set_content(resp.dump(2), "application/json");
+	                }
+	            });
+
+	            // POST /auth/init  (first-time user store setup)
+	            // Body: { "username": "...", "password": "...", "timeoutMinutes": 0 }
+	            svr.Post("/auth/init", [&](const httplib::Request &req, httplib::Response &res) {
+	                json resp;
+	                try {
+	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+	                    load_passwords_store(passwordsPath);
+	                    if (g_userStoreConfigured) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Already initialized.";
+	                        res.status = 409;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+	                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
+	                    const std::string password = body.value("password", std::string{});
+	                    const int timeoutMinutes = std::max(0, body.value("timeoutMinutes", 0));
+
+	                    if (username.empty()) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Invalid username.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    if (password.size() < 4) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Password too short.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    // Create first admin user.
+	                    std::string salt(16, '\0');
+	                    if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Failed to generate random salt.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    AuthUserRecord u;
+	                    u.username = username;
+	                    u.role = "admin";
+	                    u.iterations = 150000;
+	                    u.salt_b64 = b64_encode(salt);
+	                    if (u.salt_b64.empty()) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Failed to encode password salt.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    if (!pbkdf2_sha256_b64(password, salt, u.iterations, u.hash_b64)) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "PBKDF2 hashing failed.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    g_authTimeoutMinutes = timeoutMinutes;
+	                    g_authUsers.clear();
+	                    g_authUsers.push_back(u);
+	                    g_userStoreConfigured = true;
+
+	                    if (!save_passwords_store(passwordsPath)) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Failed to save passwords.jsonc.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    resp["ok"] = true;
+	                    res.set_content(resp.dump(2), "application/json");
+	                } catch (const std::exception &ex) {
+	                    resp["ok"] = false;
+	                    resp["error"] = std::string("Invalid JSON: ") + ex.what();
+	                    res.status = 400;
+	                    res.set_content(resp.dump(2), "application/json");
+	                }
+	            });
+
+	            // PUT /auth/timeout  (admin-only)
+	            svr.Put("/auth/timeout", [&](const httplib::Request &req, httplib::Response &res) {
+	                json resp;
+	                AdminSessionInfo sess;
+	                if (!is_user_logged_in(req, sess) || normalize_auth_role(sess.role) != "admin") {
+	                    resp["ok"] = false;
+	                    resp["error"] = "Admin login required.";
+	                    res.status = 403;
+	                    res.set_content(resp.dump(2), "application/json");
+	                    return;
+	                }
+	                try {
+	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+	                    load_passwords_store(passwordsPath);
+	                    if (!g_userStoreConfigured) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Not initialized.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+	                    g_authTimeoutMinutes = std::max(0, body.value("timeoutMinutes", 0));
+	                    if (!save_passwords_store(passwordsPath)) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Failed to save passwords.jsonc.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    resp["ok"] = true;
+	                    res.set_content(resp.dump(2), "application/json");
+	                } catch (const std::exception &ex) {
+	                    resp["ok"] = false;
+	                    resp["error"] = std::string("Invalid JSON: ") + ex.what();
+	                    res.status = 400;
+	                    res.set_content(resp.dump(2), "application/json");
+	                }
+	            });
+
+	            // POST /auth/users  (admin-only)
+	            svr.Post("/auth/users", [&](const httplib::Request &req, httplib::Response &res) {
+	                json resp;
+	                AdminSessionInfo sess;
+	                if (!is_user_logged_in(req, sess) || normalize_auth_role(sess.role) != "admin") {
+	                    resp["ok"] = false;
+	                    resp["error"] = "Admin login required.";
+	                    res.status = 403;
+	                    res.set_content(resp.dump(2), "application/json");
+	                    return;
+	                }
+	                try {
+	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+	                    load_passwords_store(passwordsPath);
+	                    if (!g_userStoreConfigured) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Not initialized.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+	                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
+	                    const std::string password = body.value("password", std::string{});
+	                    const std::string role = normalize_auth_role(body.value("role", std::string{"viewer"}));
+	                    if (username.empty()) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Invalid username.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    if (password.size() < 4) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Password too short.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    for (const auto &u : g_authUsers) {
+	                        if (u.username == username) {
+	                            resp["ok"] = false;
+	                            resp["error"] = "User already exists.";
+	                            res.status = 409;
+	                            res.set_content(resp.dump(2), "application/json");
+	                            return;
+	                        }
+	                    }
+
+	                    std::string salt(16, '\0');
+	                    if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Failed to generate random salt.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    AuthUserRecord u;
+	                    u.username = username;
+	                    u.role = role;
+	                    u.iterations = 150000;
+	                    u.salt_b64 = b64_encode(salt);
+	                    if (!pbkdf2_sha256_b64(password, salt, u.iterations, u.hash_b64)) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "PBKDF2 hashing failed.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    g_authUsers.push_back(u);
+	                    if (!save_passwords_store(passwordsPath)) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Failed to save passwords.jsonc.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    resp["ok"] = true;
+	                    res.set_content(resp.dump(2), "application/json");
+	                } catch (const std::exception &ex) {
+	                    resp["ok"] = false;
+	                    resp["error"] = std::string("Invalid JSON: ") + ex.what();
+	                    res.status = 400;
+	                    res.set_content(resp.dump(2), "application/json");
+	                }
+	            });
+
+	            // DELETE /auth/users/<username>  (admin-only)
+	            svr.Delete(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+	                json resp;
+	                AdminSessionInfo sess;
+	                if (!is_user_logged_in(req, sess) || normalize_auth_role(sess.role) != "admin") {
+	                    resp["ok"] = false;
+	                    resp["error"] = "Admin login required.";
+	                    res.status = 403;
+	                    res.set_content(resp.dump(2), "application/json");
+	                    return;
+	                }
+	                try {
+	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+	                    load_passwords_store(passwordsPath);
+	                    if (!g_userStoreConfigured) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Not initialized.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    const std::string username = normalize_auth_username(req.matches[1]);
+	                    if (username.empty()) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Invalid username.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    std::vector<AuthUserRecord> remaining;
+	                    remaining.reserve(g_authUsers.size());
+	                    bool removed = false;
+	                    for (const auto &u : g_authUsers) {
+	                        if (u.username == username) { removed = true; continue; }
+	                        remaining.push_back(u);
+	                    }
+	                    if (!removed) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "User not found.";
+	                        res.status = 404;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    bool hasAdmin = false;
+	                    for (const auto &u : remaining) {
+	                        if (normalize_auth_role(u.role) == "admin") { hasAdmin = true; break; }
+	                    }
+	                    if (!hasAdmin) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Cannot remove the last admin user.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+
+	                    g_authUsers = remaining;
+	                    if (!save_passwords_store(passwordsPath)) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Failed to save passwords.jsonc.";
+	                        res.status = 500;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    resp["ok"] = true;
+	                    res.set_content(resp.dump(2), "application/json");
+	                } catch (const std::exception &ex) {
+	                    resp["ok"] = false;
+	                    resp["error"] = std::string("Invalid request: ") + ex.what();
+	                    res.status = 400;
+	                    res.set_content(resp.dump(2), "application/json");
+	                }
+	            });
+
+	            // POST /auth/logout
+	            svr.Post("/auth/logout", [&](const httplib::Request &req, httplib::Response &res) {
+	                json resp;
+
+	                auto token = req.get_header_value("X-Admin-Token");
+	                if (token.empty()) {
+	                    token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
+	                }
+	                if (token.empty()) {
+	                    // Also allow in JSON body
+	                    try {
+	                        json body = json::parse(req.body);
+	                        token = body.value("admin_token", std::string{});
+	                    } catch (...) {}
+	                }
 
                 if (!token.empty()) {
                     std::lock_guard<std::mutex> lock(g_adminMutex);
                     g_adminSessions.erase(token);
-                }
+	                }
 
-                resp["ok"] = true;
-                res.set_content(resp.dump(2), "application/json");
-            });
+	                resp["ok"] = true;
+	                // Clear cookie in browser as well.
+	                res.set_header("Set-Cookie",
+	                               "OPCBRIDGE_ADMIN_TOKEN=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+	                res.set_content(resp.dump(2), "application/json");
+	            });
 
             std::cout << "HTTP server listening on 0.0.0.0:8080\n";
             std::cout << "Endpoints:\n";
