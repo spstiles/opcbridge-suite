@@ -714,8 +714,8 @@ struct AlarmRule
     int severity = 500;
     std::string connection_id;
     std::string tag;
-    std::string condition_type; // "equals" | "high" | "low"
-    json condition_value;       // used for equals
+    std::string condition_type; // "equals" | "not_equals" | "high" | "low"
+    json condition_value;       // used for equals/not_equals
     double threshold = 0.0;     // used for high/low
     double hysteresis = 0.0;    // used for high/low
     std::string message_on_active;
@@ -1047,7 +1047,7 @@ struct AlarmEngine
                     {"tag", a.value("tag_name", "")}
                 };
                 r["condition"] = {{"type", type}};
-                if (type == "equals")
+                if (type == "equals" || type == "not_equals")
                 {
                     if (a.contains("value")) r["condition"]["value"] = a["value"];
                     else if (a.contains("equals_value")) r["condition"]["value"] = a["equals_value"];
@@ -1085,7 +1085,7 @@ struct AlarmEngine
             if (it.contains("condition") && it["condition"].is_object())
             {
                 r.condition_type = it["condition"].value("type", "equals");
-                if (r.condition_type == "equals")
+                if (r.condition_type == "equals" || r.condition_type == "not_equals")
                 {
                     r.condition_value = it["condition"].contains("value") ? it["condition"]["value"] : json();
                 }
@@ -1186,9 +1186,13 @@ struct AlarmEngine
                 bool should_be_active = false;
                 if (can_eval)
                 {
-                    if (r.condition_type == "equals")
+                    if (r.condition_type == "equals" || r.condition_type == "not_equals")
                     {
-                        should_be_active = json_equalish(value, r.condition_value);
+                        if (!r.condition_value.is_null())
+                        {
+                            const bool match = json_equalish(value, r.condition_value);
+                            should_be_active = (r.condition_type == "equals") ? match : !match;
+                        }
                     }
                     else if (r.condition_type == "high" || r.condition_type == "low")
                     {
@@ -2086,7 +2090,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                     {"tag", a.value("tag_name", "")}
                 };
                 r["condition"] = {{"type", type}};
-                if (type == "equals")
+                if (type == "equals" || type == "not_equals")
                 {
                     if (a.contains("value")) r["condition"]["value"] = a["value"];
                     else if (a.contains("equals_value")) r["condition"]["value"] = a["equals_value"];
@@ -2121,7 +2125,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             if (it.contains("condition") && it["condition"].is_object())
             {
                 r.condition_type = it["condition"].value("type", "equals");
-                if (r.condition_type == "equals")
+                if (r.condition_type == "equals" || r.condition_type == "not_equals")
                 {
                     r.condition_value = it["condition"].contains("value") ? it["condition"]["value"] : json();
                 }
