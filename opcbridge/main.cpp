@@ -5986,22 +5986,23 @@ int main(int argc, char **argv) {
 		  <div class="admin-modal-icon">🔐</div>
 		  <div>
 			<h2 id="admin-modal-title" class="admin-modal-title">Admin Login</h2>
-			<div id="admin-modal-subtitle" class="admin-modal-subtitle">
-			  Elevated access for config changes and writes.
-			</div>
+				<div id="admin-modal-subtitle" class="admin-modal-subtitle">
+				  Initialize creates the first user (admin role). Login grants elevated access for config changes and writes.
+				</div>
 		  </div>
 		</div>
 
 		<div id="admin-modal-error" class="admin-modal-error"></div>
 
 		<div class="admin-modal-body">
-		  <div class="admin-field-row">
-			<label for="admin-username" class="admin-field-label">Username</label>
-			<input id="admin-username"
-				   type="text"
-				   autocomplete="username"
-				   class="admin-input" />
-		  </div>
+			  <div class="admin-field-row">
+				<label for="admin-username" class="admin-field-label">Username</label>
+				<input id="admin-username"
+					   type="text"
+					   autocomplete="username"
+					   placeholder="e.g. steve"
+					   class="admin-input" />
+			  </div>
 			  <div class="admin-field-row">
 				<label for="admin-password" class="admin-field-label">Password</label>
 				<div class="admin-field-input-wrap">
@@ -6160,7 +6161,7 @@ function persistAdminToken() {
 
 	    // Clear previous state
 	    err.textContent = "";
-	    user.value = user.value || "admin";
+	    user.value = user.value || "";
 	    pw.value = "";
 	    if (legacyPw) legacyPw.value = "";
 	    pw2.value = "";
@@ -7850,9 +7851,9 @@ async function refreshAdminStatus() {
 
 		    if (!ADMIN_CONFIGURED) {
 	        statusEl.textContent = LEGACY_AUTH_PRESENT
-	          ? "Users not initialized (legacy admin password detected – migration required)."
+	          ? "Users not initialized (legacy password detected – migration required)."
 	          : "Users not initialized (first-time setup required).";
-	        loginBtn.textContent = LEGACY_AUTH_PRESENT ? "Migrate & initialize" : "Initialize users";
+	        loginBtn.textContent = LEGACY_AUTH_PRESENT ? "Migrate & initialize users" : "Initialize users";
 	        loginBtn.style.display = "";
 	        logoutBtn.style.display = "none";
 	        chip.style.display = "none";   // NEW
