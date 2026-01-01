@@ -176,6 +176,7 @@ const els = {
   usersInitWrap: document.getElementById('usersInitWrap'),
   usersInitUsername: document.getElementById('usersInitUsername'),
   usersInitPassword: document.getElementById('usersInitPassword'),
+  usersInitConfirm: document.getElementById('usersInitConfirm'),
   usersInitTimeout: document.getElementById('usersInitTimeout'),
   usersInitBtn: document.getElementById('usersInitBtn'),
   usersInitStatus: document.getElementById('usersInitStatus'),
@@ -3379,12 +3380,17 @@ function wireUsersUi() {
     els.usersInitBtn.addEventListener('click', async () => {
       const username = String(els.usersInitUsername?.value || '').trim();
       const password = String(els.usersInitPassword?.value || '');
+      const confirm = String(els.usersInitConfirm?.value || '');
       const timeoutMinutes = Math.max(0, Math.floor(Number(els.usersInitTimeout?.value) || 0));
+      if (!username) { setUsersInitStatus('Username required.'); return; }
       if (!password) { setUsersInitStatus('Password required.'); return; }
+      if (!confirm) { setUsersInitStatus('Confirm password required.'); return; }
+      if (password !== confirm) { setUsersInitStatus('Passwords do not match.'); return; }
       setUsersInitStatus('Initializing…');
       try {
-        await apiPostJson('/api/opcbridge/auth/init', { username, password, timeoutMinutes });
+        await apiPostJson('/api/opcbridge/auth/init', { username, password, confirm, timeoutMinutes });
         if (els.usersInitPassword) els.usersInitPassword.value = '';
+        if (els.usersInitConfirm) els.usersInitConfirm.value = '';
         await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
         setUsersInitStatus('Initialized.');
       } catch (err) {
