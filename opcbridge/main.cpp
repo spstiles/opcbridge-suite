@@ -6023,10 +6023,12 @@ int main(int argc, char **argv) {
 				<label for="admin-legacy-password" class="admin-field-label">
 				  Current password (legacy)
 				</label>
-				<input id="admin-legacy-password"
-					   type="password"
-					   autocomplete="current-password"
-					   class="admin-input" />
+				<div class="admin-field-input-wrap">
+				  <input id="admin-legacy-password"
+						 type="password"
+						 autocomplete="current-password"
+						 class="admin-input" />
+				</div>
 				<div class="small" style="margin-top:4px; color:#aaa;">
 				  Legacy `admin_auth.json` detected. Enter the current password to migrate to the unified user store.
 				</div>
@@ -6036,11 +6038,13 @@ int main(int argc, char **argv) {
 				<label for="admin-password-confirm" class="admin-field-label">
 				  Confirm password
 				</label>
-			<input id="admin-password-confirm"
-				   type="password"
-				   autocomplete="new-password"
-				   class="admin-input" />
-		  </div>
+				<div class="admin-field-input-wrap">
+				  <input id="admin-password-confirm"
+						 type="password"
+						 autocomplete="new-password"
+						 class="admin-input" />
+				</div>
+			  </div>
 		</div>
 
 		<div class="admin-modal-footer">
