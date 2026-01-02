@@ -8,6 +8,7 @@ CONFIG_ROOT="/etc/opcbridge"
 DATA_ROOT="/var/lib/opcbridge"
 LOG_ROOT="/var/log/opcbridge"
 ENV_FILE="${CONFIG_ROOT}/opcbridge.env"
+LICENSES_ROOT_REL="share/licenses"
 
 SERVICE_USER="opcbridge"
 SERVICE_GROUP="opcbridge"
@@ -66,6 +67,26 @@ need_root() {
 }
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+install_licenses() {
+  # Keep the installed suite self-contained for license compliance.
+  local dst="${PREFIX}/${LICENSES_ROOT_REL}"
+  mkdir -p "$dst"
+
+  if [[ -f "$ROOT_DIR/THIRD_PARTY_NOTICES.md" ]]; then
+    install -m 0644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$dst/THIRD_PARTY_NOTICES.md" 2>/dev/null || true
+  fi
+
+  if [[ -d "$ROOT_DIR/third_party/licenses" ]]; then
+    mkdir -p "$dst/third_party"
+    if have_cmd rsync; then
+      rsync -a "$ROOT_DIR/third_party/licenses/" "$dst/third_party/licenses/"
+    else
+      mkdir -p "$dst/third_party/licenses"
+      (cd "$ROOT_DIR/third_party/licenses" && tar -cf - .) | (cd "$dst/third_party/licenses" && tar -xf -)
+    fi
+  fi
+}
 
 
 is_debian_like() {
@@ -852,6 +873,7 @@ main() {
     ensure_logs_group_access
   fi
   ensure_dirs
+  install_licenses
   write_env_file
   fix_config_permissions
   build_if_needed
