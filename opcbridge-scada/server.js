@@ -221,6 +221,87 @@ function send(res, status, headers, body) {
   res.end(body);
 }
 
+async function fetchOpcbridgeAuthStatus(req, cfg) {
+  const { scheme, host, port } = cfg.opcbridge || {};
+  const client = String(scheme || 'http') === 'https' ? https : http;
+
+  const headers = { Accept: 'application/json' };
+  if (req.headers['cookie']) headers['Cookie'] = String(req.headers['cookie']);
+
+  const opts = {
+    host,
+    port,
+    method: 'GET',
+    path: '/auth/status',
+    headers,
+    timeout: 5000
+  };
+
+  return await new Promise((resolve, reject) => {
+    const up = client.request(opts, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        try {
+          resolve(JSON.parse(raw));
+        } catch (err) {
+          reject(new Error(`opcbridge /auth/status parse failed: ${err.message}`));
+        }
+      });
+    });
+    up.on('timeout', () => up.destroy(new Error('opcbridge /auth/status timeout')));
+    up.on('error', reject);
+    up.end();
+  });
+}
+
+function authStatusHasPerm(status, permId) {
+  const want = String(permId || '').trim();
+  if (!want) return false;
+  const perms = status?.user?.permissions;
+  if (!Array.isArray(perms)) return false;
+  return perms.map((p) => String(p || '').trim()).includes(want);
+}
+
+async function fetchUpstreamJson(req, target, path, { timeoutMs = 8000 } = {}) {
+  const { scheme, host, port } = target || {};
+  const client = String(scheme || 'http') === 'https' ? https : http;
+
+  const headers = { Accept: 'application/json' };
+  if (req.headers['cookie']) headers['Cookie'] = String(req.headers['cookie']);
+
+  const opts = {
+    host,
+    port,
+    method: 'GET',
+    path,
+    headers,
+    timeout: timeoutMs
+  };
+
+  return await new Promise((resolve, reject) => {
+    const up = client.request(opts, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let parsed = null;
+        try {
+          parsed = JSON.parse(raw || '{}');
+        } catch (err) {
+          reject(new Error(`Upstream JSON parse failed: ${err.message}`));
+          return;
+        }
+        resolve({ status: res.statusCode || 0, headers: res.headers || {}, json: parsed });
+      });
+    });
+    up.on('timeout', () => up.destroy(new Error('upstream timeout')));
+    up.on('error', reject);
+    up.end();
+  });
+}
+
 function sendJson(res, status, obj) {
   send(res, status, {
     'Content-Type': 'application/json',
@@ -673,6 +754,136 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://local');
 
   if (!requireUiAuth(req, res)) return;
+
+  async function requireViewLogsPerm() {
+    let status = null;
+    try {
+      status = await fetchOpcbridgeAuthStatus(req, cfg);
+    } catch (err) {
+      sendJson(res, 502, { ok: false, error: String(err.message || err) });
+      return null;
+    }
+    if (!authStatusHasPerm(status, 'suite.view_logs')) {
+      sendJson(res, 403, { ok: false, error: 'Insufficient permissions (suite.view_logs required).' });
+      return null;
+    }
+    return status;
+  }
+
+  // Read system logs via journalctl (permission: suite.view_logs).
+  if (url.pathname === '/api/logs') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    if (!SYSTEMD_ENABLED) {
+      sendJson(res, 200, { ok: false, error: 'Systemd management disabled in opcbridge-scada.' });
+      return;
+    }
+
+    if (!await requireViewLogsPerm()) return;
+
+    const allowedUnits = new Set([
+      'opcbridge.service',
+      'opcbridge-alarms.service',
+      'opcbridge-hmi.service',
+      'opcbridge-scada.service'
+    ]);
+
+    const unit = String(url.searchParams.get('unit') || 'opcbridge.service').trim();
+    if (!allowedUnits.has(unit)) {
+      sendJson(res, 400, { ok: false, error: 'Unsupported unit.', allowed: Array.from(allowedUnits) });
+      return;
+    }
+
+    const lines = Math.max(10, Math.min(5000, Math.trunc(Number(url.searchParams.get('lines') || '400') || 400)));
+
+    const r = child_process.spawnSync('journalctl', ['-u', unit, '-n', String(lines), '--no-pager', '-o', 'short-iso'], {
+      encoding: 'utf8'
+    });
+
+    if (r.error) {
+      // Common causes:
+      // - journalctl missing (ENOENT)
+      // - insufficient permissions to read system journal
+      const msg = String(r.error.message || r.error);
+      const hint =
+        msg.includes('ENOENT') || msg.toLowerCase().includes('not found')
+          ? 'journalctl not found. Install systemd/journalctl on this host, or disable Logs tab.'
+          : 'Permission denied reading system journal. Run opcbridge-scada as root or add its user to group systemd-journal (then restart the service).';
+      sendJson(res, 200, { ok: false, error: msg, hint, unit, lines });
+      return;
+    }
+    if (r.status !== 0) {
+      const stderr = String(r.stderr || '').trim();
+      const hint = stderr.toLowerCase().includes('permission denied')
+        ? 'Permission denied reading system journal. Run opcbridge-scada as root or add its user to group systemd-journal (then restart the service).'
+        : 'journalctl returned a non-zero status. Check that the unit exists and journald is available.';
+      sendJson(res, 200, { ok: false, error: 'journalctl failed', hint, unit, lines, status: r.status, stderr });
+      return;
+    }
+
+    sendJson(res, 200, { ok: true, unit, lines, text: String(r.stdout || '') });
+    return;
+  }
+
+  // Application logs (non-systemd):
+  // - opcbridge alarms/events sqlite log (via /alarms/events)
+  // - alarm server alarm history (via /alarm/api/alarms/history)
+  // - HMI audit log (via /api/audit/tail)
+  if (url.pathname === '/api/logs/source') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    if (!await requireViewLogsPerm()) return;
+
+    const source = String(url.searchParams.get('source') || '').trim();
+    const nRaw = url.searchParams.get('limit') || url.searchParams.get('lines') || '400';
+    const n = Math.max(10, Math.min(5000, Math.trunc(Number(nRaw) || 400)));
+
+    try {
+      if (source === 'opcbridge_events') {
+        const path = `/alarms/events?limit=${encodeURIComponent(String(n))}`;
+        const up = await fetchUpstreamJson(req, cfg.opcbridge, path, { timeoutMs: 8000 });
+        if (up.status < 200 || up.status >= 300) {
+          sendJson(res, 200, { ok: false, error: `opcbridge HTTP ${up.status}`, source, details: up.json });
+          return;
+        }
+        sendJson(res, 200, { ok: true, source, lines: n, format: 'json', text: JSON.stringify(up.json || {}, null, 2) });
+        return;
+      }
+
+      if (source === 'alarm_server_history') {
+        const path = `/alarm/api/alarms/history?limit=${encodeURIComponent(String(n))}`;
+        const up = await fetchUpstreamJson(req, cfg.alarms, path, { timeoutMs: 8000 });
+        if (up.status < 200 || up.status >= 300) {
+          sendJson(res, 200, { ok: false, error: `alarm server HTTP ${up.status}`, source, details: up.json });
+          return;
+        }
+        sendJson(res, 200, { ok: true, source, lines: n, format: 'json', text: JSON.stringify(up.json || {}, null, 2) });
+        return;
+      }
+
+      if (source === 'hmi_audit') {
+        const path = `/api/audit/tail?lines=${encodeURIComponent(String(n))}`;
+        const up = await fetchUpstreamJson(req, cfg.hmi, path, { timeoutMs: 8000 });
+        if (up.status < 200 || up.status >= 300) {
+          sendJson(res, 200, { ok: false, error: `hmi HTTP ${up.status}`, source, details: up.json });
+          return;
+        }
+        sendJson(res, 200, { ok: true, source, lines: n, format: 'json', text: JSON.stringify(up.json || {}, null, 2) });
+        return;
+      }
+
+      sendJson(res, 400, { ok: false, error: 'Unsupported source.', source, allowed: ['opcbridge_events', 'alarm_server_history', 'hmi_audit'] });
+    } catch (err) {
+      sendJson(res, 200, { ok: false, error: String(err.message || err), source });
+    }
+    return;
+  }
 
   // Check if an MQTT CA certificate exists on opcbridge (admin-gated).
   if (url.pathname === '/api/opcbridge/cert/status') {

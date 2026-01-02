@@ -35,7 +35,7 @@ code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
 .brand { font-weight: 700; letter-spacing: .04em; }
 .status { margin-top: 6px; font-size: 12px; color: var(--muted); }
 
-.tabs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.tabs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 .tab {
   border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
@@ -45,6 +45,8 @@ code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
   cursor: pointer;
 }
 .tab.is-active { background: rgba(80,100,132,.35); border-color: rgba(80,100,132,.7); }
+.tab-link { text-decoration: none; display: inline-flex; align-items: center; }
+.tabs-right { margin-left: auto; display: flex; gap: 8px; }
 
 .main { padding: 10px 14px 14px 14px; }
 .panel { display: none; }
@@ -147,6 +149,25 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 
 .users-right {
   min-height: 0;
+}
+
+.perm-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+
+.perm-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(232,238,252,.95);
+}
+
+.perm-item input {
+  width: 16px;
+  height: 16px;
 }
 
 @media (max-width: 1100px) {

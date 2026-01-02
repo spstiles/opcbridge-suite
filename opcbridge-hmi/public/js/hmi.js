@@ -151,10 +151,26 @@ const setEditorStatusSafe = (message) => {
   if (!editorStatus) return;
   editorStatus.textContent = String(message ?? "").slice(0, 400);
 };
-const loginMenuBtn = document.getElementById("loginMenuBtn");
 const usersMenuBtn = document.getElementById("usersMenuBtn");
 const auditMenuBtn = document.getElementById("auditMenuBtn");
-const logoutMenuBtn = document.getElementById("logoutMenuBtn");
+
+let hmiToastTimer = null;
+const showHmiToast = (message, durationMs = 15000) => {
+  const msg = String(message ?? "");
+  if (!msg) return;
+  let el = document.getElementById("hmiToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "hmiToast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("is-show");
+  if (hmiToastTimer) window.clearTimeout(hmiToastTimer);
+  hmiToastTimer = window.setTimeout(() => {
+    el.classList.remove("is-show");
+  }, Math.max(250, Number(durationMs) || 15000));
+};
 const aboutOverlay = document.getElementById("aboutOverlay");
 const aboutCloseBtn = document.getElementById("aboutCloseBtn");
 const aboutRefreshBtn = document.getElementById("aboutRefreshBtn");
@@ -1431,11 +1447,37 @@ let authInfo = { initialized: false, timeoutMinutes: 0, users: [] };
 let authSession = null;
 let authActivityTimer = null;
 let authSyncTimer = null;
+let pendingEditModeAfterLogin = false;
 
-const getAuthRole = () => String(authSession?.role || "viewer");
-const canWrite = () => ["operator", "editor", "admin"].includes(getAuthRole());
-const canEdit = () => ["editor", "admin"].includes(getAuthRole());
-const canAdmin = () => getAuthRole() === "admin";
+const getAuthRole = () => String(authSession?.role || "").trim();
+
+const getAuthPermissions = () => {
+  const perms = authSession?.permissions;
+  if (Array.isArray(perms)) return perms.map((p) => String(p || "").trim()).filter(Boolean);
+  const serverPerms = authInfo?.user?.permissions;
+  if (Array.isArray(serverPerms)) return serverPerms.map((p) => String(p || "").trim()).filter(Boolean);
+  return [];
+};
+
+const hasPerm = (permId) => {
+  const want = String(permId || "").trim();
+  if (!want) return false;
+  const perms = getAuthPermissions();
+  if (perms.includes(want)) return true;
+
+  // Back-compat fallback for legacy role-name deployments.
+  const role = String(getAuthRole() || "").toLowerCase();
+  if (role === "admin") return true;
+  if (want === "hmi.edit_screens") return role === "editor";
+  if (want === "opcbridge.edit_config") return role === "editor";
+  if (want === "opcbridge.write_tags") return role === "operator";
+  if (want === "auth.manage_users") return false;
+  return false;
+};
+
+const canWrite = () => hasPerm("opcbridge.write_tags");
+const canEdit = () => hasPerm("hmi.edit_screens");
+const canAdmin = () => hasPerm("auth.manage_users");
 
 const loadAuthSession = () => {
   try {
@@ -1443,12 +1485,12 @@ const loadAuthSession = () => {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     const username = String(parsed?.username || "").trim();
-    const role = String(parsed?.role || "").trim().toLowerCase();
+    const role = String(parsed?.role || "").trim();
+    const permissions = Array.isArray(parsed?.permissions) ? parsed.permissions : [];
     const timeoutMinutes = Number(parsed?.timeoutMinutes) || 0;
     const lastActivityMs = Number(parsed?.lastActivityMs) || 0;
     if (!username) return null;
-    if (!["viewer", "operator", "editor", "admin"].includes(role)) return null;
-    return { username, role, timeoutMinutes, lastActivityMs };
+    return { username, role, permissions, timeoutMinutes, lastActivityMs };
   } catch {
     return null;
   }
@@ -1630,7 +1672,6 @@ const updateAuthUiVisibility = () => {
   // User management is centralized in opcbridge-scada (single admin console).
   if (usersMenuBtn) usersMenuBtn.classList.add("is-hidden");
   if (auditMenuBtn) auditMenuBtn.classList.add("is-hidden");
-  if (logoutMenuBtn) logoutMenuBtn.classList.toggle("is-hidden", !authSession);
   if (settingsMenuBtn) {
     const enabled = canAdmin();
     settingsMenuBtn.disabled = !enabled;
@@ -1647,19 +1688,23 @@ const refreshAuthUi = async () => {
     const serverLoggedIn = Boolean(authInfo?.user_logged_in);
     const serverUser = authInfo?.user;
     const serverUsername = String(serverUser?.username || "").trim();
-    const serverRole = String(serverUser?.role || "viewer").trim().toLowerCase();
+    const serverRole = String(serverUser?.role || "").trim();
+    const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
     if (!serverLoggedIn && authSession) {
       clearAuthSession();
     }
-    if (serverLoggedIn && serverUsername && ["viewer", "operator", "editor", "admin"].includes(serverRole)) {
+    if (serverLoggedIn && serverUsername) {
+      const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
       const needsSync = !authSession ||
         String(authSession?.username || "").trim() !== serverUsername ||
-        String(authSession?.role || "").trim().toLowerCase() !== serverRole;
+        String(authSession?.role || "").trim() !== serverRole ||
+        JSON.stringify((Array.isArray(authSession?.permissions) ? authSession.permissions : []).slice().map(String).sort()) !== permsKey;
       if (needsSync) {
         saveAuthSession({
           username: serverUsername,
           role: serverRole,
+          permissions: serverPerms,
           timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
           lastActivityMs: Date.now()
         });
@@ -1683,7 +1728,8 @@ const syncAuthFromServer = async () => {
     const serverLoggedIn = Boolean(status?.user_logged_in);
     const serverUser = status?.user;
     const serverUsername = String(serverUser?.username || "").trim();
-    const serverRole = String(serverUser?.role || "viewer").trim().toLowerCase();
+    const serverRole = String(serverUser?.role || "").trim();
+    const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
     if (!serverLoggedIn && authSession) {
       clearAuthSession();
@@ -1693,14 +1739,17 @@ const syncAuthFromServer = async () => {
       updateAuthUiVisibility();
     }
 
-    if (serverLoggedIn && serverUsername && ["viewer", "operator", "editor", "admin"].includes(serverRole)) {
+    if (serverLoggedIn && serverUsername) {
+      const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
       const needsSync = !authSession ||
         String(authSession?.username || "").trim() !== serverUsername ||
-        String(authSession?.role || "").trim().toLowerCase() !== serverRole;
+        String(authSession?.role || "").trim() !== serverRole ||
+        JSON.stringify((Array.isArray(authSession?.permissions) ? authSession.permissions : []).slice().map(String).sort()) !== permsKey;
       if (needsSync) {
         saveAuthSession({
           username: serverUsername,
           role: serverRole,
+          permissions: serverPerms,
           timeoutMinutes: Number(status?.timeoutMinutes) || 0,
           lastActivityMs: Date.now()
         });
@@ -1720,19 +1769,23 @@ const refreshUsersUi = async () => {
     const serverLoggedIn = Boolean(authInfo?.user_logged_in);
     const serverUser = authInfo?.user;
     const serverUsername = String(serverUser?.username || "").trim();
-    const serverRole = String(serverUser?.role || "viewer").trim().toLowerCase();
+    const serverRole = String(serverUser?.role || "").trim();
+    const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
     if (!serverLoggedIn && authSession) {
       clearAuthSession();
     }
-    if (serverLoggedIn && serverUsername && ["viewer", "operator", "editor", "admin"].includes(serverRole)) {
+    if (serverLoggedIn && serverUsername) {
+      const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
       const needsSync = !authSession ||
         String(authSession?.username || "").trim() !== serverUsername ||
-        String(authSession?.role || "").trim().toLowerCase() !== serverRole;
+        String(authSession?.role || "").trim() !== serverRole ||
+        JSON.stringify((Array.isArray(authSession?.permissions) ? authSession.permissions : []).slice().map(String).sort()) !== permsKey;
       if (needsSync) {
         saveAuthSession({
           username: serverUsername,
           role: serverRole,
+          permissions: serverPerms,
           timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
           lastActivityMs: Date.now()
         });
@@ -7694,14 +7747,15 @@ const syncPropertiesFromSelection = () => {
     if (barTicksMajorInput) setInputValueSafe(barTicksMajorInput, ticks.major ?? 5);
     if (barTicksMinorInput) setInputValueSafe(barTicksMinorInput, ticks.minor ?? 4);
   }
-	  if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityModeSelect || visibilityThresholdInput || visibilityMatchInput || visibilityInvertInput) {
-	    const vis = obj.visibility || {};
-	    const isEnabled = vis.enabled !== false;
-	    if (visibilityEnabledInput) visibilityEnabledInput.checked = isEnabled;
-	    if (visibilityFields) {
-	      visibilityFields.classList.toggle("is-hidden", !isEnabled);
-	      visibilityFields.hidden = !isEnabled;
-	    }
+		  if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityModeSelect || visibilityThresholdInput || visibilityMatchInput || visibilityInvertInput) {
+		    const vis = obj.visibility || {};
+		    const hasFields = Object.keys(vis).some((k) => k !== "enabled");
+		    const isEnabled = (vis.enabled === undefined) ? hasFields : Boolean(vis.enabled);
+		    if (visibilityEnabledInput) visibilityEnabledInput.checked = isEnabled;
+		    if (visibilityFields) {
+		      visibilityFields.classList.toggle("is-hidden", !isEnabled);
+		      visibilityFields.hidden = !isEnabled;
+		    }
     setInputValueSafe(visibilityConnectionInput, vis.connection_id || "");
     if (visibilityTagSelect) {
       const connectionId = String(vis.connection_id || "");
@@ -8671,6 +8725,7 @@ window.addEventListener("keydown", (evt) => {
   if (typing) return;
   evt.preventDefault();
   if (!isEditMode && !canEdit()) {
+    pendingEditModeAfterLogin = true;
     openAuth();
     if (authStatusEl) authStatusEl.textContent = "Login required for edit mode.";
     return;
@@ -8679,14 +8734,65 @@ window.addEventListener("keydown", (evt) => {
 });
 
 window.addEventListener("keydown", (evt) => {
-  const isLogin = (evt.ctrlKey || evt.metaKey) && (evt.key === "l" || evt.key === "L");
-  if (!isLogin) return;
+  const isLogout = (evt.ctrlKey || evt.metaKey) && !evt.shiftKey && (evt.key === "l" || evt.key === "L");
+  if (!isLogout) return;
   const el = document.activeElement;
   const tag = el?.tagName?.toLowerCase?.() || "";
   const typing = (tag === "input" || tag === "textarea" || el?.isContentEditable);
   if (typing) return;
   evt.preventDefault();
-  openAuth();
+  setMenuOpen(false);
+  apiAuthLogout()
+    .catch(() => {})
+    .finally(async () => {
+      pendingEditModeAfterLogin = false;
+      clearAuthSession();
+      await refreshAuthUi().catch(() => {});
+      showHmiToast("User logged out", 15000);
+    });
+});
+
+window.addEventListener("keydown", (evt) => {
+  const isToggleAuth = (evt.ctrlKey || evt.metaKey) && evt.shiftKey && (evt.key === "l" || evt.key === "L");
+  if (!isToggleAuth) return;
+  const el = document.activeElement;
+  const tag = el?.tagName?.toLowerCase?.() || "";
+  const typing = (tag === "input" || tag === "textarea" || el?.isContentEditable);
+  if (typing) return;
+  evt.preventDefault();
+  (async () => {
+    if (authOverlay && authOverlay.classList.contains("is-open")) {
+      closeAuth();
+      return;
+    }
+
+    // Don't trust a cached local session for deciding whether we're logged in.
+    // Confirm with the server to avoid getting "stuck" only being able to logout.
+    let serverLoggedIn = false;
+    try {
+      const status = await apiAuthStatus();
+      authInfo = status || authInfo;
+      serverLoggedIn = Boolean(status?.user_logged_in);
+    } catch {
+      serverLoggedIn = Boolean(authSession);
+    }
+
+    if (!serverLoggedIn) {
+      clearAuthSession();
+      await openAuth();
+      return;
+    }
+
+    setMenuOpen(false);
+    apiAuthLogout()
+      .catch(() => {})
+      .finally(async () => {
+        pendingEditModeAfterLogin = false;
+        clearAuthSession();
+        await refreshAuthUi().catch(() => {});
+        showHmiToast("User logged out", 15000);
+      });
+  })();
 });
 
 window.addEventListener("keydown", (evt) => {
@@ -9176,17 +9282,11 @@ if (settingsMenuBtn) {
   });
 }
 
-if (aboutMenuBtn) {
-  aboutMenuBtn.addEventListener("click", () => {
-    openAbout();
-  });
-}
-
-if (loginMenuBtn) {
-  loginMenuBtn.addEventListener("click", () => {
-    openAuth();
-  });
-}
+	if (aboutMenuBtn) {
+	  aboutMenuBtn.addEventListener("click", () => {
+	    openAbout();
+	  });
+	}
 
 if (usersMenuBtn) {
   usersMenuBtn.addEventListener("click", () => {
@@ -9206,25 +9306,11 @@ if (alarmsMenuBtn) {
   });
 }
 
-if (alarmsBadge) {
-  alarmsBadge.addEventListener("click", () => {
-    openAlarms();
-  });
-}
-
-if (logoutMenuBtn) {
-  logoutMenuBtn.addEventListener("click", async () => {
-    clearAuthSession();
-    if (isEditMode) setMode(false);
-    closeSettings();
-    closeUsers();
-    closeAudit();
-    closeAlarms();
-    closeAuth();
-    updateAuthUiVisibility();
-    setMenuOpen(false);
-  });
-}
+	if (alarmsBadge) {
+	  alarmsBadge.addEventListener("click", () => {
+	    openAlarms();
+	  });
+	}
 
 if (settingsCloseBtn) {
   settingsCloseBtn.addEventListener("click", closeSettings);
@@ -9460,10 +9546,11 @@ if (authLoginBtn) {
       if (authPassword) authPassword.value = "";
       await refreshAuthUi();
       if (authStatusEl) authStatusEl.textContent = "Logged in.";
-      if (session.role === "admin" || session.role === "editor") {
-        setMode(true);
-        closeAuth();
-      }
+      const shouldEnterEdit = Boolean(pendingEditModeAfterLogin) && canEdit();
+      pendingEditModeAfterLogin = false;
+      if (shouldEnterEdit) setMode(true);
+      closeAuth();
+      showHmiToast(`User logged in: ${session.username}`, 8000);
     } catch (error) {
       clearAuthSession();
       await refreshAuthUi();
@@ -9488,6 +9575,7 @@ if (authLogoutBtn) {
     } catch {
       // ignore (still clear local session)
     }
+    pendingEditModeAfterLogin = false;
     clearAuthSession();
     if (isEditMode) setMode(false);
     closeSettings();
@@ -16606,15 +16694,21 @@ const setTool = (nextTool) => {
       event.stopPropagation();
       return;
     }
-    if (currentTool !== "select") return;
-    const point = getScreenPoint(event);
-    if (!point) return;
-    const hitMeta = getMetaAtPoint(point);
-    const activeObjects = getActiveObjects();
-    const hitObj = hitMeta ? activeObjects?.[hitMeta.index] : null;
-    const selectedObj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-    const groupObj = (hitObj?.type === "group") ? hitObj : (selectedObj?.type === "group" ? selectedObj : null);
-    if (!groupObj) return;
+	    if (currentTool !== "select") return;
+	    const point = getScreenPoint(event);
+	    if (!point) return;
+	    const hitMeta = getMetaAtPoint(point);
+	    if (groupEditStack.length && !hitMeta) {
+	      exitGroupEdit();
+	      event.preventDefault();
+	      event.stopPropagation();
+	      return;
+	    }
+	    const activeObjects = getActiveObjects();
+	    const hitObj = hitMeta ? activeObjects?.[hitMeta.index] : null;
+	    const selectedObj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+	    const groupObj = (hitObj?.type === "group") ? hitObj : (selectedObj?.type === "group" ? selectedObj : null);
+	    if (!groupObj) return;
 	    enterGroupEdit(groupObj);
 	    event.preventDefault();
 	  });

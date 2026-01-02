@@ -17,6 +17,7 @@
 **/build/
 **/dist/
 **/node_modules/
+/package-lock.json
 **/*.o
 **/*.a
 **/*.so
@@ -27,6 +28,7 @@
 # Built binaries (do not commit)
 opcbridge/opcbridge
 opcbridge/opcbridge-alarms/opcbridge-alarms
+opcbridge-alarms/opcbridge-alarms
 opcbridge-reporter/opcbridge-reporter
 
 # HMI local-only artifacts

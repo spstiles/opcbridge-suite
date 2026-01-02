@@ -323,6 +323,21 @@ ensure_user() {
     --gid "$SERVICE_GROUP" "$SERVICE_USER"
 }
 
+ensure_logs_group_access() {
+  # For the SCADA "Logs" tab we read systemd journal via journalctl.
+  # On Debian/systemd, non-root access typically requires membership in systemd-journal (or adm).
+  # This is set-and-forget: installer adds the service user to the group automatically.
+  if ! have_cmd usermod; then
+    return 0
+  fi
+  if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    return 0
+  fi
+  if getent group systemd-journal >/dev/null 2>&1; then
+    usermod -aG systemd-journal "$SERVICE_USER" >/dev/null 2>&1 || true
+  fi
+}
+
 ensure_dirs() {
   mkdir -p "$PREFIX/bin" "$CONFIG_ROOT" "$DATA_ROOT" "$LOG_ROOT"
 
@@ -832,6 +847,10 @@ main() {
   fi
 
   ensure_user
+  # If SCADA is installed, grant the service user journal access so the Logs tab works by default.
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
+    ensure_logs_group_access
+  fi
   ensure_dirs
   write_env_file
   fix_config_permissions
@@ -875,6 +894,9 @@ main() {
   echo "scada:     http://<host>:3010"
   echo "hmi:       http://<host>:3000"
   echo ""
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
+    echo "Note: SCADA Logs tab uses journalctl; installer grants access via systemd-journal group when available."
+  fi
   echo "Logs:"
   echo "  journalctl -u opcbridge -f"
   echo "  journalctl -u opcbridge-alarms -f"

@@ -87,16 +87,50 @@ struct AlarmDb
     std::mutex mu;
     sqlite3* db = nullptr;
     std::string path;
+    std::string last_error;
+
+    bool is_open()
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        return db != nullptr;
+    }
+
+    json status_json()
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        json j;
+        j["open"] = (db != nullptr);
+        j["path"] = path;
+        j["error"] = last_error.empty() ? nullptr : json(last_error);
+        if (!db) return j;
+
+        // Best-effort stats (do not fail status on SQL errors).
+        auto scalar_i64 = [&](const char* sql) -> std::optional<int64_t> {
+            sqlite3_stmt* stmt = nullptr;
+            if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) return std::nullopt;
+            std::optional<int64_t> out;
+            int rc = sqlite3_step(stmt);
+            if (rc == SQLITE_ROW) out = sqlite3_column_int64(stmt, 0);
+            sqlite3_finalize(stmt);
+            return out;
+        };
+
+        if (auto c = scalar_i64("SELECT COUNT(*) FROM alarm_events;"); c.has_value()) j["row_count"] = c.value();
+        if (auto t = scalar_i64("SELECT COALESCE(MAX(ts_ms),0) FROM alarm_events;"); t.has_value()) j["last_ts_ms"] = t.value();
+        return j;
+    }
 
     bool open_or_create(const std::string& dbPath, std::string& err)
     {
         std::lock_guard<std::mutex> lock(mu);
         path = dbPath;
+        last_error.clear();
 
         int rc = sqlite3_open(dbPath.c_str(), &db);
         if (rc != SQLITE_OK)
         {
             err = sqlite3_errmsg(db);
+            last_error = err;
             sqlite3_close(db);
             db = nullptr;
             return false;
@@ -129,6 +163,7 @@ struct AlarmDb
             if (rc != SQLITE_OK)
             {
                 err = errmsg ? errmsg : "schema error";
+                last_error = err;
                 sqlite3_free(errmsg);
                 sqlite3_close(db);
                 db = nullptr;
@@ -166,6 +201,7 @@ struct AlarmDb
         if (!db)
         {
             err = "DB not open";
+            last_error = err;
             return false;
         }
 
@@ -205,6 +241,7 @@ struct AlarmDb
         if (rc != SQLITE_OK)
         {
             err = sqlite3_errmsg(db);
+            last_error = err;
             return false;
         }
 
@@ -254,11 +291,13 @@ struct AlarmDb
         if (rc != SQLITE_DONE)
         {
             err = sqlite3_errmsg(db);
+            last_error = err;
             sqlite3_finalize(stmt);
             return false;
         }
 
         sqlite3_finalize(stmt);
+        last_error.clear();
         return true;
     }
 
@@ -269,6 +308,7 @@ struct AlarmDb
         if (!db)
         {
             err = "DB not open";
+            last_error = err;
             return false;
         }
 
@@ -363,6 +403,7 @@ auto make_sql = [&](bool withGroupSite) -> std::string {
         if (rc != SQLITE_OK)
         {
             err = sqlite3_errmsg(db);
+            last_error = err;
             return false;
         }
 
@@ -445,11 +486,13 @@ auto make_sql = [&](bool withGroupSite) -> std::string {
         if (rc != SQLITE_DONE)
         {
             err = sqlite3_errmsg(db);
+            last_error = err;
             sqlite3_finalize(stmt);
             return false;
         }
 
         sqlite3_finalize(stmt);
+        last_error.clear();
         return true;
     }
 
@@ -1020,11 +1063,13 @@ struct AlarmEngine
         std::unordered_map<std::string, std::vector<std::string>> nextByKey;
 
         json rulesArr = json::array();
-        if (root.contains("rules") && root["rules"].is_array())
+        const bool hasRulesArr = root.contains("rules") && root["rules"].is_array();
+        const bool hasAlarmsArr = root.contains("alarms") && root["alarms"].is_array();
+        if (hasRulesArr && !root["rules"].empty())
         {
             rulesArr = root["rules"];
         }
-        else if (root.contains("alarms") && root["alarms"].is_array())
+        else if (hasAlarmsArr)
         {
             // Backward-compatible: accept opcbridge's alarms.json schema:
             // { "alarms": [ { id, connection_id, tag_name, type, threshold, hysteresis, enabled }, ... ] }
@@ -1044,7 +1089,7 @@ struct AlarmEngine
                 r["site"] = a.value("site", "");
                 r["source"] = {
                     {"connection_id", a.value("connection_id", "")},
-                    {"tag", a.value("tag_name", "")}
+                    {"tag", a.value("tag_name", a.value("tag", ""))}
                 };
                 r["condition"] = {{"type", type}};
                 if (type == "equals" || type == "not_equals")
@@ -1061,6 +1106,11 @@ struct AlarmEngine
                 }
                 rulesArr.push_back(r);
             }
+        }
+        else if (hasRulesArr)
+        {
+            // Accept an empty {"rules": []} config (no alarms configured).
+            rulesArr = root["rules"];
         }
         else
         {
@@ -1923,7 +1973,11 @@ static void ws_client_loop(std::atomic<bool> &stop,
             const std::string k = conn + ":" + name;
             if (want.find(k) == want.end()) continue;
             if (!t.contains("value")) continue;
-            engine.apply_tag_update(conn, name, t["value"], false);
+            // Seed current values from HTTP so alarms that are already active at boot can
+            // immediately generate an ACTIVE event and be visible in history/panels.
+            // This will not duplicate events after restarts because restore_state_from_db()
+            // is run before WS connect, so already-active alarms will be active here too.
+            engine.apply_tag_update(conn, name, t["value"], true);
         }
     };
 
@@ -2047,6 +2101,14 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
         return false;
     }
 
+    // Defensive: some tooling may accidentally save the /config/alarms HTTP response body
+    // (which includes {"json":{...}}) directly into alarms.json. If so, unwrap it.
+    if (rulesRoot.contains("json") && rulesRoot["json"].is_object() &&
+        (!rulesRoot.contains("rules") && !rulesRoot.contains("alarms")))
+    {
+        rulesRoot = rulesRoot["json"];
+    }
+
     // Accept either schema:
     // - {"rules":[...]} (alarm-server style)
     // - {"alarms":[...]} (opcbridge style)
@@ -2064,11 +2126,13 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
 
         // Normalize into an array of rule objects.
         json rulesArr = json::array();
-        if (rulesRoot.contains("rules") && rulesRoot["rules"].is_array())
+        const bool hasRulesArr = rulesRoot.contains("rules") && rulesRoot["rules"].is_array();
+        const bool hasAlarmsArr = rulesRoot.contains("alarms") && rulesRoot["alarms"].is_array();
+        if (hasRulesArr && !rulesRoot["rules"].empty())
         {
             rulesArr = rulesRoot["rules"];
         }
-        else if (rulesRoot.contains("alarms") && rulesRoot["alarms"].is_array())
+        else if (hasAlarmsArr)
         {
             rulesArr = json::array();
             for (const auto &a : rulesRoot["alarms"])
@@ -2087,7 +2151,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 r["site"] = a.value("site", "");
                 r["source"] = {
                     {"connection_id", a.value("connection_id", "")},
-                    {"tag", a.value("tag_name", "")}
+                    {"tag", a.value("tag_name", a.value("tag", ""))}
                 };
                 r["condition"] = {{"type", type}};
                 if (type == "equals" || type == "not_equals")
@@ -2104,6 +2168,10 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 }
                 rulesArr.push_back(r);
             }
+        }
+        else if (hasRulesArr)
+        {
+            rulesArr = rulesRoot["rules"];
         }
 
         if (!rulesArr.is_array()) throw std::runtime_error("rules must be an array");
@@ -2387,6 +2455,7 @@ int main(int argc, char **argv)
 	        j["component_version"] = OPCBRIDGE_ALARMS_VERSION;
 	        j["suite_version"] = OPCBRIDGE_SUITE_VERSION;
 	        j["uptime_ms"] = now_ms() - startMs;
+        j["db"] = db.status_json();
         j["opcbridge"] = {
             {"connected", true},
             {"base_url", "http://" + opcbridgeHost + ":" + std::to_string(opcbridgeHttpPort)},
@@ -2454,6 +2523,51 @@ int main(int argc, char **argv)
         j["ok"] = ok;
         if (!ok) j["error"] = err;
         j["events"] = events;
+        // Always include current active alarms as synthetic snapshot entries so an alarm
+        // that is already active at boot appears in UIs even if there has been no DB event yet.
+        {
+            json active = engine.get_active(false);
+            if (active.is_array() && !active.empty()) {
+                if (!j["events"].is_array()) j["events"] = json::array();
+
+                std::unordered_set<std::string> existing;
+                for (const auto &ev : j["events"]) {
+                    if (ev.is_object() && ev.contains("alarm_id") && ev["alarm_id"].is_string()) {
+                        existing.insert(ev["alarm_id"].get<std::string>());
+                    }
+                }
+
+                for (const auto &a : active) {
+                    const std::string alarm_id = a.value("alarm_id", a.value("id", ""));
+                    if (alarm_id.empty()) continue;
+                    if (existing.count(alarm_id)) continue;
+
+                    json ev;
+                    ev["synthetic"] = true;
+                    // Treat as an "active" event so UIs can show an alarm that is
+                    // already active at boot even if the DB has no transition yet.
+                    ev["type"] = "active";
+                    ev["event_id"] = std::string("snap_") + random_hex(16);
+                    ev["alarm_id"] = alarm_id;
+                    ev["severity"] = a.value("severity", 0);
+                    ev["group"] = a.value("group", "");
+                    ev["site"] = a.value("site", "");
+                    ev["actor"] = nullptr;
+                    ev["note"] = nullptr;
+                    ev["message"] = a.value("message", "");
+                    const int64_t ts =
+                        a.contains("active_since_ms") && a["active_since_ms"].is_number_integer()
+                            ? a["active_since_ms"].get<int64_t>()
+                            : (a.contains("last_change_ms") && a["last_change_ms"].is_number_integer()
+                                   ? a["last_change_ms"].get<int64_t>()
+                                   : now_ms());
+                    ev["ts_ms"] = ts;
+                    ev["source"] = (a.contains("source") && a["source"].is_object()) ? a["source"] : json::object();
+                    ev["value"] = a.contains("last_value") ? a["last_value"] : nullptr;
+                    j["events"].push_back(ev);
+                }
+            }
+        }
         if (ok && events.is_array() && !events.empty()) {
             // For paging backwards (older events), request again with until_ms=next_until_ms.
             try {

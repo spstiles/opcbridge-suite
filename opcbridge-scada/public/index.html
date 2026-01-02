@@ -14,13 +14,17 @@
     <div class="status" id="buildLine"></div>
     <div class="status" id="authLine"></div>
 
-    <nav class="tabs" id="tabs">
-      <button data-tab="overview" class="tab is-active">Overview</button>
-      <button data-tab="configure" class="tab">Configure Server</button>
-      <button data-tab="users" class="tab">Users</button>
-      <button data-tab="workspace" class="tab">Workspace</button>
-      <button data-tab="alarms" class="tab">Alarms</button>
-    </nav>
+	    <nav class="tabs" id="tabs">
+	      <button data-tab="overview" class="tab is-active">Overview</button>
+	      <button data-tab="configure" class="tab">Configure Server</button>
+	      <button data-tab="workspace" class="tab">Workspace</button>
+	      <button data-tab="logs" class="tab">Logs</button>
+	      <button data-tab="users" class="tab">Users</button>
+	      <div class="tabs-right">
+	        <a class="tab tab-link" id="topLinkOpcbridge" href="#" target="_blank" rel="noopener noreferrer">opcbridge</a>
+	        <a class="tab tab-link" id="topLinkHmi" href="#" target="_blank" rel="noopener noreferrer">HMI</a>
+	      </div>
+	    </nav>
   </header>
 
   <main class="main">
@@ -225,7 +229,7 @@
             <div class="divider"></div>
             <div class="hint">First-time setup (creates the initial admin user).</div>
             <div class="form" style="max-width: 520px;">
-              <div class="form-row"><label>Admin Username</label><input id="usersInitUsername" type="text" autocomplete="username" placeholder="admin" /></div>
+              <div class="form-row"><label>Username</label><input id="usersInitUsername" type="text" autocomplete="username" /></div>
               <div class="form-row"><label>Admin Password</label><input id="usersInitPassword" type="password" autocomplete="new-password" /></div>
               <div class="form-row"><label>Confirm Password</label><input id="usersInitConfirm" type="password" autocomplete="new-password" /></div>
               <div class="form-row"><label>Session Timeout (min)</label><input id="usersInitTimeout" type="number" min="0" step="1" placeholder="0" /></div>
@@ -279,11 +283,11 @@
                       <div class="form" style="max-width: 720px;">
                         <div class="form-row"><label id="usersFormIdLabel">ID</label><input id="usersFormId" type="text" /></div>
                         <div class="form-row"><label>Name</label><input id="usersFormLabel" type="text" /></div>
-                        <div class="form-row"><label>Description</label><input id="usersFormDescription" type="text" /></div>
-                        <div class="form-row" id="usersFormRankRow"><label>Rank</label><input id="usersFormRank" type="number" min="0" max="3" step="1" /></div>
-                        <div class="form-row" id="usersFormRoleRow" style="display:none;"><label>Role</label><select id="usersFormRole"></select></div>
-                        <div class="form-row" id="usersFormPasswordRow" style="display:none;"><label>New Password</label><input id="usersFormPassword" type="password" autocomplete="new-password" /></div>
-                        <div class="form-row" id="usersFormConfirmRow" style="display:none;"><label>Confirm</label><input id="usersFormConfirm" type="password" autocomplete="new-password" /></div>
+	                        <div class="form-row"><label>Description</label><input id="usersFormDescription" type="text" /></div>
+	                        <div class="form-row" id="usersFormPermsRow"><label>Permissions</label><div id="usersFormPerms" class="perm-grid"></div></div>
+	                        <div class="form-row" id="usersFormRoleRow" style="display:none;"><label>Role</label><select id="usersFormRole"></select></div>
+	                        <div class="form-row" id="usersFormPasswordRow" style="display:none;"><label>New Password</label><input id="usersFormPassword" type="password" autocomplete="new-password" /></div>
+	                        <div class="form-row" id="usersFormConfirmRow" style="display:none;"><label>Confirm</label><input id="usersFormConfirm" type="password" autocomplete="new-password" /></div>
                         <div class="form-row"><label></label>
                           <div class="row-actions">
                             <button class="btn" id="usersFormCancelBtn" type="button">Cancel</button>
@@ -301,33 +305,9 @@
         </div>
       </div>
     </section>
-    <section id="tab-alarms" class="panel">
-      <h2>Alarms</h2>
-      <div class="split">
-        <div class="card">
-          <div class="card-title">Active Alarms</div>
-          <div class="card-body">
-            <div class="table-wrap"><table class="table" id="activeAlarmsTable">
-              <thead><tr><th>Alarm</th><th>Sev</th><th>Source</th><th>Message</th><th>Acked</th><th>Active Since</th></tr></thead>
-              <tbody></tbody>
-            </table></div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-title">Alarm Events (History)</div>
-          <div class="card-body">
-            <div class="table-wrap"><table class="table" id="alarmEventsTable">
-              <thead><tr><th>Time</th><th>Type</th><th>Alarm</th><th>Sev</th><th>Source</th><th>Value</th><th>Message</th></tr></thead>
-              <tbody></tbody>
-            </table></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="tab-workspace" class="panel">
-      <h2>Workspace</h2>
-      <div class="hint">Tree view (Connectivity → Devices → Tags).</div>
+	    <section id="tab-workspace" class="panel">
+	      <h2>Workspace</h2>
+	      <div class="hint">Tree view (Connectivity → Devices → Tags).</div>
 
       <div class="row-actions" style="margin: 10px 0;">
         <button class="btn primary" id="workspaceSaveBtn" type="button" disabled>Save</button>
@@ -371,9 +351,44 @@
             </div>
           </div>
         </section>
-      </div>
-    </section>
-  </main>
+	      </div>
+	    </section>
+
+	    <section id="tab-logs" class="panel">
+	      <h2>Logs</h2>
+	      <div class="hint">Requires <code>suite.view_logs</code>.</div>
+
+	      <div class="card">
+	        <div class="card-title">Logs</div>
+	        <div class="card-body">
+	          <div class="form" style="max-width: 720px;">
+	            <div class="form-row">
+	              <label>Source</label>
+	              <select id="logsSource"></select>
+	            </div>
+	            <div class="form-row">
+	              <label>Service</label>
+	              <select id="logsUnit"></select>
+	            </div>
+	            <div class="form-row">
+	              <label>Lines / Limit</label>
+	              <input id="logsLines" type="number" min="10" max="5000" step="10" value="400" />
+	            </div>
+	            <div class="form-row">
+	              <label></label>
+	              <div class="row-actions">
+	                <button class="btn primary" id="logsRefreshBtn" type="button">Refresh</button>
+	              </div>
+	            </div>
+	            <div class="hint mono" id="logsStatus"></div>
+	          </div>
+
+	          <div class="divider"></div>
+	          <pre class="mono" id="logsOutput" style="max-height: 520px; overflow:auto; white-space: pre; margin:0;">Select a service and click Refresh.</pre>
+	        </div>
+	      </div>
+	    </section>
+	  </main>
 
 
   
@@ -439,7 +454,41 @@
           </div>
         </section>
 
-</section>
+        <section id="workspaceItemAlarmEdit" style="display:none;">
+          <div class="form" style="max-width: 860px;">
+            <div class="form-row"><label>Alarm ID</label><input id="editAlarmId" type="text" placeholder="High_WetwellLevel" /></div>
+            <div class="form-row"><label>Name</label><input id="editAlarmName" type="text" placeholder="Wetwell High Level" /></div>
+            <div class="form-row"><label>Group</label><input id="editAlarmGroup" type="text" placeholder="Plant" /></div>
+            <div class="form-row"><label>Site</label><input id="editAlarmSite" type="text" placeholder="Building 30" /></div>
+            <div class="form-row"><label>Connection</label><select id="editAlarmConn"></select></div>
+            <div class="form-row"><label>Tag</label><select id="editAlarmTag"></select></div>
+            <div class="form-row"><label>Type</label><select id="editAlarmType">
+              <option value="high">High</option>
+              <option value="low">Low</option>
+              <option value="change">Change</option>
+              <option value="equals">Equals</option>
+              <option value="not_equals">Not-equals</option>
+            </select></div>
+            <div class="form-row">
+              <label>Options</label>
+              <div class="check-row">
+                <label class="check-pill"><input id="editAlarmEnabled" type="checkbox" class="inline-check" /> Enabled</label>
+              </div>
+            </div>
+            <div class="form-row"><label>Severity (0-1000)</label><input id="editAlarmSeverity" type="number" min="0" max="1000" step="1" placeholder="500" /></div>
+            <div class="form-row"><label>Threshold</label><input id="editAlarmThreshold" type="number" step="any" placeholder="1000" /></div>
+            <div class="form-row"><label>Hysteresis</label><input id="editAlarmHysteresis" type="number" step="any" placeholder="0" /></div>
+            <div class="form-row"><label>Message on active</label><input id="editAlarmMsgOn" type="text" /></div>
+            <div class="form-row"><label>Message on return</label><input id="editAlarmMsgOff" type="text" /></div>
+            <div class="form-row"><label></label>
+              <div class="row-actions">
+                <button class="btn" id="editAlarmCancelBtn" type="button">Cancel</button>
+                <button class="btn primary" id="editAlarmSaveBtn" type="button">Save</button>
+              </div>
+            </div>
+            <div class="hint mono" id="editAlarmStatus"></div>
+          </div>
+        </section>
 
         <section id="workspaceItemGeneric" style="display:none;">
           <div class="table-wrap" style="margin-top: 10px;">
@@ -535,7 +584,7 @@
       <div class="modal-body">
         <div class="hint">Cookie-based SSO across SCADA/HMI works when all apps are opened via the same hostname.</div>
         <div class="form" style="max-width: 520px;">
-          <div class="form-row"><label>Username</label><input id="loginUsername" type="text" autocomplete="username" placeholder="admin" /></div>
+          <div class="form-row"><label>Username</label><input id="loginUsername" type="text" autocomplete="username" /></div>
           <div class="form-row"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password" /></div>
           <div class="form-row"><label></label>
             <div class="row-actions">

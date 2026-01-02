@@ -331,6 +331,11 @@ X-Admin-Token: <token>
 
 The dashboard obtains and stores this token after login.
 
+Role-based permissions:
+
+- User and role management endpoints require the `auth.manage_users` permission.
+- If your user does not have that permission, `POST/PUT/DELETE /auth/roles/*` and `POST/PUT/DELETE /auth/users/*` will return `403`.
+
 Service-to-service auth (optional):
 
 If you run headless modules (e.g. opcbridge-alarms) that need to fetch config without an interactive login, set an environment variable on the opcbridge service:

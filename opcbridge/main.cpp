@@ -106,27 +106,37 @@ struct AuthRoleRecord {
     std::string id;          // machine id, used by users.role
     std::string label;       // human label
     std::string description; // optional
-    int rank = 0;            // 0..3 (viewer..admin)
+    std::vector<std::string> permissions; // permission ids (strings)
 };
 static std::vector<AuthRoleRecord> g_authRoles;
 struct AuthUserRecord {
     std::string username;
-    std::string role; // role id (default: viewer|operator|editor|admin)
+    std::string name; // display name (human-readable); username remains immutable
+    std::string description; // optional free-form note
+    std::string role; // role id
     int iterations = 150000;
     std::string salt_b64;
     std::string hash_b64;
 };
 static std::vector<AuthUserRecord> g_authUsers;
 
+// Diagnostics for passwords.jsonc loading (helps debug "first-time setup" after restart/install).
+static bool g_passwordsStoreLastExists = false;
+static bool g_passwordsStoreLastLoadOk = true;
+static std::string g_passwordsStoreLastLoadError;
+static int64_t g_passwordsStoreLastMtimeMs = -1;
+
 struct AdminSessionInfo {
     std::chrono::system_clock::time_point expires_at;
     std::chrono::system_clock::time_point last_activity_at;
     std::string username;
-    std::string role; // viewer|operator|editor|admin
+    std::string role; // role id
 };
 
 static std::unordered_map<std::string, AdminSessionInfo> g_adminSessions;
 static std::mutex g_adminMutex;
+
+static std::mutex g_userStoreMutex;
 
 // Incremented when configuration (drivers/tags) is replaced so the poll loop can
 // safely skip stale work-in-flight.
@@ -462,7 +472,7 @@ static std::string snapshot_value_to_string(const TagSnapshot &snap);
 // Forward declarations for file helpers used by admin auth.
 // These must match the actual definitions later in the file.
 static std::string read_file_to_string(const std::string &path);
-static void write_string_to_file(const std::string &path, const std::string &contents);
+static void write_string_to_file_atomic(const std::string &path, const std::string &contents);
 
 
 // ================================================================
@@ -1351,30 +1361,76 @@ static std::string normalize_auth_role_id(const std::string &raw) {
     return s;
 }
 
-static std::string normalize_auth_role(const std::string &value) {
-    const std::string id = normalize_auth_role_id(value);
-    if (id.empty()) return "viewer";
-    // If roles are loaded, only allow defined ids.
-    if (!g_authRoles.empty()) {
-        for (const auto &r : g_authRoles) {
-            if (r.id == id) return id;
-        }
-        return "viewer";
-    }
-    // Backward-compat default set.
-    if (id == "admin" || id == "editor" || id == "operator" || id == "viewer") return id;
-    return "viewer";
+// Permission ids (initial set).
+static const std::vector<std::string> &all_permission_ids() {
+    static const std::vector<std::string> perms = {
+        "hmi.edit_screens",
+        "opcbridge.write_tags",
+        "opcbridge.edit_config",
+        "suite.manage_server",
+        "auth.manage_users",
+        "suite.view_logs"
+    };
+    return perms;
 }
 
-static int role_rank(const std::string &role) {
-    const std::string id = normalize_auth_role(role);
-    for (const auto &r : g_authRoles) {
-        if (r.id == id) return r.rank;
+static bool is_valid_permission_id(const std::string &id) {
+    if (id.empty()) return false;
+    for (const auto &p : all_permission_ids()) {
+        if (p == id) return true;
     }
-    if (id == "admin") return 3;
-    if (id == "editor") return 2;
-    if (id == "operator") return 1;
-    return 0;
+    return false;
+}
+
+static std::vector<std::string> parse_permission_list(const json &j) {
+    std::vector<std::string> out;
+    if (!j.is_array()) return out;
+    for (const auto &v : j) {
+        if (!v.is_string()) continue;
+        const std::string id = v.get<std::string>();
+        // keep exact ids; only allow known ids for now.
+        if (!is_valid_permission_id(id)) continue;
+        bool dup = false;
+        for (const auto &existing : out) {
+            if (existing == id) { dup = true; break; }
+        }
+        if (!dup) out.push_back(id);
+    }
+    return out;
+}
+
+static const AuthRoleRecord *find_role_record(const std::string &roleId) {
+    const std::string id = normalize_auth_role_id(roleId);
+    if (id.empty()) return nullptr;
+    for (const auto &r : g_authRoles) {
+        if (r.id == id) return &r;
+    }
+    return nullptr;
+}
+
+static std::vector<std::string> role_permissions(const std::string &roleId) {
+    const std::string id = normalize_auth_role_id(roleId);
+    if (id == "admin") return all_permission_ids();
+    const AuthRoleRecord *r = find_role_record(id);
+    if (!r) return {};
+    return r->permissions;
+}
+
+static bool role_has_permission(const std::string &roleId, const std::string &permId) {
+    const std::string perm = permId;
+    if (!is_valid_permission_id(perm)) return false;
+    const std::string id = normalize_auth_role_id(roleId);
+    if (id == "admin") return true;
+    const AuthRoleRecord *r = find_role_record(id);
+    if (!r) return false;
+    for (const auto &p : r->permissions) {
+        if (p == perm) return true;
+    }
+    return false;
+}
+
+static bool session_has_permission(const AdminSessionInfo &sess, const std::string &permId) {
+    return role_has_permission(sess.role, permId);
 }
 
 static bool role_exists(const std::string &role) {
@@ -1383,29 +1439,42 @@ static bool role_exists(const std::string &role) {
     for (const auto &r : g_authRoles) {
         if (r.id == id) return true;
     }
-    // If no roles loaded yet, allow default set.
-    if (g_authRoles.empty()) {
-        return (id == "admin" || id == "editor" || id == "operator" || id == "viewer");
-    }
     return false;
 }
 
 static void ensure_default_roles() {
-    if (!g_authRoles.empty()) return;
-    g_authRoles = {
-        {"viewer", "Viewer", "Read-only access.", 0},
-        {"operator", "Operator", "Runtime operation (no edits).", 1},
-        {"editor", "Editor", "Can edit configuration and screens.", 2},
-        {"admin", "Admin", "Full access.", 3}
-    };
+    // We only guarantee the built-in Admin role exists by default.
+    // All other roles are user-defined.
+    for (const auto &r : g_authRoles) {
+        if (r.id == "admin") return;
+    }
+    AuthRoleRecord admin;
+    admin.id = "admin";
+    admin.label = "Admin";
+    admin.description = "Full access.";
+    admin.permissions = all_permission_ids();
+    g_authRoles.push_back(admin);
 }
 
 static bool load_passwords_store(const std::string &path) {
     try {
-        g_userStoreConfigured = false;
-        g_authTimeoutMinutes = 0;
-        g_authRoles.clear();
-        g_authUsers.clear();
+        {
+            std::lock_guard<std::mutex> lock(g_userStoreMutex);
+            g_passwordsStoreLastExists = fs::exists(path);
+            g_passwordsStoreLastLoadOk = true;
+            g_passwordsStoreLastLoadError.clear();
+            g_passwordsStoreLastMtimeMs = -1;
+            if (g_passwordsStoreLastExists) {
+                std::error_code ec;
+                auto ftime = fs::last_write_time(path, ec);
+                if (!ec) {
+                    auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                        ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now()
+                    );
+                    g_passwordsStoreLastMtimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(sctp.time_since_epoch()).count();
+                }
+            }
+        }
 
         if (!fs::exists(path)) return true;
 
@@ -1414,59 +1483,106 @@ static bool load_passwords_store(const std::string &path) {
         auto j = json::parse(stripped);
         if (!j.is_object()) return false;
 
-        g_authTimeoutMinutes = std::max(0, j.value("timeoutMinutes", 0));
+        auto get_string_or_empty = [](const json &obj, const char *key) -> std::string {
+            if (!obj.is_object() || !key || !*key) return "";
+            if (!obj.contains(key)) return "";
+            const auto &v = obj.at(key);
+            if (v.is_null()) return "";
+            if (!v.is_string()) return "";
+            return v.get<std::string>();
+        };
+
+        auto get_string_or_default = [&](const json &obj, const char *key, const std::string &fallback) -> std::string {
+            const std::string s = get_string_or_empty(obj, key);
+            return s.empty() ? fallback : s;
+        };
+
+        int nextTimeout = std::max(0, j.value("timeoutMinutes", 0));
 
         // roles (optional)
+        std::vector<AuthRoleRecord> nextRoles;
         auto roles = j.value("roles", json::array());
         if (roles.is_array()) {
             for (const auto &rj : roles) {
                 if (!rj.is_object()) continue;
                 AuthRoleRecord r;
-                r.id = normalize_auth_role_id(rj.value("id", std::string{}));
-                r.label = rj.value("label", std::string{});
-                r.description = rj.value("description", std::string{});
-                r.rank = std::max(0, std::min(3, rj.value("rank", 0)));
+                r.id = normalize_auth_role_id(get_string_or_empty(rj, "id"));
+                r.label = get_string_or_default(rj, "label", r.id);
+                r.description = get_string_or_empty(rj, "description");
+                r.permissions = parse_permission_list(rj.value("permissions", json::array()));
                 if (r.id.empty()) continue;
-                if (r.label.empty()) r.label = r.id;
+                if (r.id == "admin") {
+                    if (r.permissions.empty()) r.permissions = all_permission_ids();
+                }
                 // prevent duplicates
                 bool dup = false;
-                for (const auto &existing : g_authRoles) {
+                for (const auto &existing : nextRoles) {
                     if (existing.id == r.id) { dup = true; break; }
                 }
                 if (dup) continue;
-                g_authRoles.push_back(r);
+                nextRoles.push_back(r);
             }
         }
-        ensure_default_roles();
+        // Ensure default roles on the *parsed* list, not the global list.
+        {
+            bool hasAdmin = false;
+            for (const auto &r : nextRoles) {
+                if (r.id == "admin") { hasAdmin = true; break; }
+            }
+            if (!hasAdmin) {
+                AuthRoleRecord admin;
+                admin.id = "admin";
+                admin.label = "Admin";
+                admin.description = "Full access.";
+                admin.permissions = all_permission_ids();
+                nextRoles.push_back(admin);
+            }
+        }
 
         auto users = j.value("users", json::array());
         if (!users.is_array()) users = json::array();
 
+        std::vector<AuthUserRecord> nextUsers;
         for (const auto &u : users) {
             if (!u.is_object()) continue;
             AuthUserRecord r;
-            r.username = normalize_auth_username(u.value("username", std::string{}));
-            r.role = normalize_auth_role(u.value("role", std::string{"viewer"}));
+            r.username = normalize_auth_username(get_string_or_empty(u, "username"));
+            r.name = get_string_or_default(u, "name", r.username);
+            if (r.name.empty()) r.name = r.username;
+            r.description = get_string_or_empty(u, "description");
+            r.role = normalize_auth_role_id(get_string_or_empty(u, "role"));
+            if (r.role.empty()) r.role = "admin";
 
             auto kdf = u.value("kdf", json::object());
             r.iterations = std::max(10'000, std::min(5'000'000, kdf.value("iterations", 150000)));
-            r.salt_b64 = kdf.value("saltB64", std::string{});
-            r.hash_b64 = kdf.value("hashB64", std::string{});
+            r.salt_b64 = get_string_or_empty(kdf, "saltB64");
+            r.hash_b64 = get_string_or_empty(kdf, "hashB64");
 
             if (r.username.empty()) continue;
             if (r.salt_b64.empty() || r.hash_b64.empty()) continue;
-            g_authUsers.push_back(r);
+            nextUsers.push_back(r);
         }
 
-        if (!g_authUsers.empty()) {
-            g_userStoreConfigured = true;
+        const bool nextConfigured = !nextUsers.empty();
+
+        // Only commit global state after a fully successful parse so transient file errors don't "erase" auth.
+        {
+            std::lock_guard<std::mutex> lock(g_userStoreMutex);
+            g_authTimeoutMinutes = nextTimeout;
+            g_authRoles = std::move(nextRoles);
+            g_authUsers = std::move(nextUsers);
+            g_userStoreConfigured = nextConfigured;
         }
 
         return true;
     } catch (const std::exception &ex) {
         std::cerr << "[auth] Failed to load passwords.jsonc: " << ex.what() << "\n";
-        g_userStoreConfigured = false;
-        g_authUsers.clear();
+        {
+            std::lock_guard<std::mutex> lock(g_userStoreMutex);
+            g_passwordsStoreLastLoadOk = false;
+            g_passwordsStoreLastLoadError = ex.what();
+        }
+        // Keep previous in-memory state if load fails (avoid breaking active sessions on transient file issues).
         return false;
     }
 }
@@ -1474,22 +1590,49 @@ static bool load_passwords_store(const std::string &path) {
 static bool save_passwords_store(const std::string &path) {
     try {
         json out;
-        out["timeoutMinutes"] = g_authTimeoutMinutes;
-        ensure_default_roles();
+        int timeoutMinutes = 0;
+        std::vector<AuthRoleRecord> roles;
+        std::vector<AuthUserRecord> users;
+        {
+            std::lock_guard<std::mutex> lock(g_userStoreMutex);
+            timeoutMinutes = g_authTimeoutMinutes;
+            roles = g_authRoles;
+            users = g_authUsers;
+        }
+
+        out["timeoutMinutes"] = timeoutMinutes;
+        // Ensure default roles on this snapshot.
+        bool hasAdmin = false;
+        for (const auto &r : roles) { if (r.id == "admin") { hasAdmin = true; break; } }
+        if (!hasAdmin) {
+            AuthRoleRecord admin;
+            admin.id = "admin";
+            admin.label = "Admin";
+            admin.description = "Full access.";
+            admin.permissions = all_permission_ids();
+            roles.push_back(admin);
+        }
+
         out["roles"] = json::array();
-        for (const auto &r : g_authRoles) {
+        for (const auto &r : roles) {
             json rec;
             rec["id"] = r.id;
             rec["label"] = r.label;
             rec["description"] = r.description.empty() ? json(nullptr) : json(r.description);
-            rec["rank"] = r.rank;
+            if (r.id == "admin") {
+                rec["permissions"] = all_permission_ids();
+            } else {
+                rec["permissions"] = r.permissions;
+            }
             out["roles"].push_back(rec);
         }
         out["users"] = json::array();
-        for (const auto &u : g_authUsers) {
+        for (const auto &u : users) {
             json rec;
             rec["username"] = u.username;
-            rec["role"] = normalize_auth_role(u.role);
+            rec["name"] = u.name.empty() ? u.username : u.name;
+            rec["description"] = u.description.empty() ? json(nullptr) : json(u.description);
+            rec["role"] = normalize_auth_role_id(u.role);
             rec["kdf"] = {
                 {"algo", "pbkdf2-sha256"},
                 {"iterations", u.iterations},
@@ -1498,7 +1641,7 @@ static bool save_passwords_store(const std::string &path) {
             };
             out["users"].push_back(rec);
         }
-        write_string_to_file(path, out.dump(2));
+        write_string_to_file_atomic(path, out.dump(2));
         fs::permissions(path,
                         fs::perms::owner_read | fs::perms::owner_write,
                         fs::perm_options::replace);
@@ -1616,8 +1759,10 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
 static bool is_admin_request(const httplib::Request &req) {
     AdminSessionInfo s;
     if (!get_session_from_request(req, s)) return false;
-    // "admin request" (for existing admin-gated endpoints) means editor+.
-    return role_rank(s.role) >= role_rank("editor");
+    // "admin request" (for existing admin-gated endpoints) means config/server management.
+    if (session_has_permission(s, "opcbridge.edit_config")) return true;
+    if (session_has_permission(s, "suite.manage_server")) return true;
+    return false;
 }
 
 static bool is_user_logged_in(const httplib::Request &req, AdminSessionInfo &out) {
@@ -1632,7 +1777,7 @@ static bool is_user_logged_in(const httplib::Request &req, AdminSessionInfo &out
 static bool is_admin_user_request(const httplib::Request &req, AdminSessionInfo &out) {
     AdminSessionInfo s;
     if (!get_session_from_request(req, s)) return false;
-    if (normalize_auth_role(s.role) != "admin") return false;
+    if (!session_has_permission(s, "auth.manage_users")) return false;
     out = s;
     return true;
 }
@@ -1761,9 +1906,8 @@ static std::string read_file_to_string(const std::string &path) {
     return oss.str();
 }
 
-static void write_string_to_file(const std::string &path,
-                                 const std::string &contents) {
-    // Make sure parent directory exists (for things like /etc/opcbridge/...)
+static void write_string_to_file_atomic(const std::string &path,
+                                        const std::string &contents) {
     fs::path p(path);
     if (!p.parent_path().empty()) {
         std::error_code ec;
@@ -1775,15 +1919,28 @@ static void write_string_to_file(const std::string &path,
         }
     }
 
-    std::ofstream ofs(path, std::ios::out | std::ios::binary | std::ios::trunc);
-    if (!ofs) {
-        throw std::runtime_error("Failed to open file for writing: " + path);
-    }
+    // Write to a temp file in the same directory, then rename (atomic on POSIX when same filesystem).
+    const std::string dir = p.parent_path().string();
+    const std::string base = p.filename().string();
+    const std::string tmp = joinPath(dir, "." + base + ".tmp." + std::to_string(::getpid()) + "." + std::to_string(std::rand()));
 
-    ofs.write(contents.data(),
-              static_cast<std::streamsize>(contents.size()));
+    std::ofstream ofs(tmp, std::ios::out | std::ios::binary | std::ios::trunc);
     if (!ofs) {
-        throw std::runtime_error("Error writing file: " + path);
+        throw std::runtime_error("Failed to open temp file for writing: " + tmp);
+    }
+    ofs.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+    if (!ofs) {
+        throw std::runtime_error("Error writing temp file: " + tmp);
+    }
+    ofs.close();
+
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {
+        // Best-effort cleanup.
+        std::error_code ec2;
+        fs::remove(tmp, ec2);
+        throw std::runtime_error("Failed to rename temp file into place: " + ec.message());
     }
 }
 
@@ -6086,11 +6243,12 @@ int main(int argc, char **argv) {
 		<div class="admin-modal-body">
 			  <div class="admin-field-row">
 				<label for="admin-username" class="admin-field-label">Username</label>
-				<input id="admin-username"
-					   type="text"
-					   autocomplete="username"
-					   placeholder="e.g. steve"
-					   class="admin-input" />
+				<div class="admin-field-input-wrap">
+				  <input id="admin-username"
+						 type="text"
+						 autocomplete="username"
+						 class="admin-input" />
+				</div>
 			  </div>
 			  <div class="admin-field-row">
 				<label for="admin-password" class="admin-field-label">Password</label>
@@ -6160,25 +6318,30 @@ const WRITE_TOKEN = "WRITE_TOKEN_PLACEHOLDER";
 	let ADMIN_TOKEN = null;
 	let ADMIN_CONFIGURED = false;
 	let ADMIN_LOGGED_IN = false;
-	let USER_LOGGED_IN = false;
-	let USERNAME = "";
-	let USER_ROLE = "viewer";
-	let LEGACY_AUTH_PRESENT = false;
-	let LEGACY_AUTH_CONFIGURED = false;
+		let USER_LOGGED_IN = false;
+		let USERNAME = "";
+		let USER_ROLE = "";
+		let USER_PERMS = [];
+		let LEGACY_AUTH_PRESENT = false;
+		let LEGACY_AUTH_CONFIGURED = false;
 
-function normalizeUserRole(role) {
-    const r = String(role || "").trim().toLowerCase();
-    if (r === "admin" || r === "editor" || r === "operator" || r === "viewer") return r;
-    return "viewer";
-}
+	function userHasPerm(permId) {
+	    const want = String(permId || "").trim();
+	    if (!want) return false;
+	    if (String(USER_ROLE || "").trim().toLowerCase() === "admin") return true;
+	    if (Array.isArray(USER_PERMS) && USER_PERMS.includes(want)) return true;
+	    return false;
+	}
 
-function canEditWorkspace() {
-    return !!(USER_LOGGED_IN && (USER_ROLE === "admin" || USER_ROLE === "editor"));
-}
+	function canEditWorkspace() {
+	    if (!USER_LOGGED_IN) return false;
+	    return (userHasPerm("opcbridge.edit_config") || userHasPerm("suite.manage_server"));
+	}
 
-function canWriteTags() {
-    return !!(USER_LOGGED_IN && (USER_ROLE === "admin" || USER_ROLE === "editor" || USER_ROLE === "operator"));
-}
+	function canWriteTags() {
+	    if (!USER_LOGGED_IN) return false;
+	    return userHasPerm("opcbridge.write_tags");
+	}
 
 // --- WebSocket (optional, for high-scale tag updates) ---
 let WS_ENABLED = false;
@@ -6526,15 +6689,15 @@ const wsLabelForPlcType = (code) => {
 const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 
 	let wsLoadedOnce = false;
-		let wsBase = { connections: [], tags: [], alarms: [] };
-		let wsDraft = { connections: [], tags: [], alarms: [] };
+		let wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [] };
+		let wsDraft = { connections: [], tags: [], alarms: [], alarm_groups: [] };
 	let wsDirty = false;
 	let wsSelectedId = "ws:root";
 	let wsChildrenSelRoot = "";
 	let wsChildrenSel = new Set(); // keys like "connection_id::tag_name"
 	let wsChildrenLastIndex = -1;
 	let wsChildrenSort = { key: "name", dir: "asc" };
-	let wsExpanded = new Set(["ws:root", "ws:connectivity"]);
+	let wsExpanded = new Set(["ws:root", "ws:connectivity", "ws:alarms"]);
 	let wsPendingDeletes = []; // { path: "connections/x.json" }
 	let wsNodeById = new Map();
 
@@ -6673,16 +6836,18 @@ const wsApiJson = async (url, opts = {}) => {
 			    const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
 
 			    let alarms = [];
+			    let alarm_groups = [];
 			    try {
 			        const ar = await wsApiJson("/config/alarms");
 			        const cfg = ar && typeof ar === "object" ? (ar.json || {}) : {};
 			        if (Array.isArray(cfg?.alarms)) alarms = cfg.alarms;
 			        else if (Array.isArray(cfg?.rules)) alarms = cfg.rules; // legacy naming
+			        if (Array.isArray(cfg?.groups)) alarm_groups = cfg.groups;
 			    } catch (_) {
 			        alarms = [];
 			    }
 			
-			    return { connections, tags, alarms };
+			    return { connections, tags, alarms, alarm_groups };
 			};
 
 const wsBuildNodeIndex = (root) => {
@@ -6739,18 +6904,78 @@ const wsBuildNodeIndex = (root) => {
 
 	    const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
 	    alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+
+	    const safeKey = (s) => {
+	        const k = String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+	        return k || "none";
+	    };
+
+	    const groupMap = new Map(); // id -> node
+
+	    // Configured group/site folders (optional, from alarms.json groups[])
+	    const cfgGroups = Array.isArray(wsDraft.alarm_groups) ? wsDraft.alarm_groups : [];
+	    cfgGroups.forEach((g) => {
+	        const gname = String(g?.name || g?.label || g?.id || "").trim();
+	        if (!gname) return;
+	        const gid = `ws:alarm_group:${safeKey(gname)}`;
+	        let gnode = groupMap.get(gid);
+	        if (!gnode) {
+	            gnode = { id: gid, type: "alarm_group", label: gname, group: gname, children: [] };
+	            groupMap.set(gid, gnode);
+	        }
+	        const sites = Array.isArray(g?.sites) ? g.sites : [];
+	        sites.forEach((s) => {
+	            const sname = String(s?.name || s?.label || s?.id || "").trim();
+	            if (!sname) return;
+	            const sid = `${gid}:site:${safeKey(sname)}`;
+	            if ((gnode.children || []).some((n) => String(n?.id || "") === sid)) return;
+	            gnode.children.push({ id: sid, type: "alarm_site", label: sname, group: gname, site: sname, children: [] });
+	        });
+	    });
+
+	    // Alarms placed into folders
 	    alarms.forEach((a) => {
 	        const id = String(a?.id || "").trim();
 	        if (!id) return;
-	        alarmsRoot.children.push({
+	        const groupRaw = String(a?.group || "").trim();
+	        const siteRaw = String(a?.site || "").trim();
+	        const groupLabel = groupRaw || "(No group)";
+	        const siteLabel = siteRaw || "(No site)";
+
+	        const gid = `ws:alarm_group:${safeKey(groupLabel)}`;
+	        let gnode = groupMap.get(gid);
+	        if (!gnode) {
+	            gnode = { id: gid, type: "alarm_group", label: groupLabel, group: groupRaw, children: [] };
+	            groupMap.set(gid, gnode);
+	        }
+
+	        const sid = `${gid}:site:${safeKey(siteLabel)}`;
+	        let snode = (gnode.children || []).find((n) => String(n?.id || "") === sid) || null;
+	        if (!snode) {
+	            snode = { id: sid, type: "alarm_site", label: siteLabel, group: groupRaw, site: siteRaw, children: [] };
+	            gnode.children.push(snode);
+	        }
+
+	        snode.children.push({
 	            id: `ws:alarm:${encodeURIComponent(id)}`,
 	            type: "alarm",
-	            label: id,
+	            label: String(a?.name || id) || id,
 	            alarm_id: id,
 	            connection_id: String(a?.connection_id || ""),
 	            tag_name: String(a?.tag_name || ""),
+	            group: groupRaw,
+	            site: siteRaw,
 	            children: []
 	        });
+	    });
+
+	    const groupNodes = Array.from(groupMap.values()).sort((a, b) => String(a?.label || "").localeCompare(String(b?.label || ""), undefined, { numeric: true, sensitivity: "base" }));
+	    groupNodes.forEach((g) => {
+	        g.children = (g.children || []).slice().sort((a, b) => String(a?.label || "").localeCompare(String(b?.label || ""), undefined, { numeric: true, sensitivity: "base" }));
+	        g.children.forEach((s) => {
+	            s.children = (s.children || []).slice().sort((a, b) => String(a?.label || "").localeCompare(String(b?.label || ""), undefined, { numeric: true, sensitivity: "base" }));
+	        });
+	        alarmsRoot.children.push(g);
 	    });
 
 	    wsBuildNodeIndex(root);
@@ -6793,19 +7018,20 @@ const wsFillDatatypeSelect = (sel, selected) => {
     sel.value = selected && WS_TAG_DATATYPES.includes(selected) ? selected : "bool";
 };
 
-	let wsDeviceModalMode = "new";
-	let wsDeviceEditingId = "";
-	let wsTagModalMode = "new";
-	let wsTagEditingConn = "";
-	let wsTagEditingName = "";
-	let wsAlarmModalMode = "new";
-	let wsAlarmEditingId = "";
+		let wsDeviceModalMode = "new";
+		let wsDeviceEditingId = "";
+		let wsTagModalMode = "new";
+			let wsTagEditingConn = "";
+			let wsTagEditingName = "";
+			let wsAlarmModalMode = "new";
+			let wsAlarmEditingId = "";
+			let wsReturnSelectId = "";
+	
+			const WS_ALARM_TYPES = ["high", "low", "change", "equals", "not_equals"];
 
-		const WS_ALARM_TYPES = ["high", "low", "change", "equals", "not_equals"];
-
-const wsOpenDeviceModal = ({ mode, connection_id }) => {
-    const el = wsEls();
-    if (!el.deviceModal) return;
+	const wsOpenDeviceModal = ({ mode, connection_id }) => {
+	    const el = wsEls();
+	    if (!el.deviceModal) return;
 
     wsDeviceModalMode = mode === "edit" ? "edit" : "new";
     wsDeviceEditingId = "";
@@ -6813,12 +7039,13 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
     wsFillSelect(el.deviceDriver, Object.entries(WS_DRIVER_LABELS).map(([v, label]) => ({ value: v, label })), "ab_eip");
     wsFillSelect(el.devicePlcType, Object.entries(WS_PLC_TYPE_LABELS).map(([v, label]) => ({ value: v, label })), "lgx");
 
-    let obj = {};
-    if (wsDeviceModalMode === "edit") {
-        const cid = String(connection_id || "").trim();
-        obj = (Array.isArray(wsDraft.connections) ? wsDraft.connections : []).find((c) => String(c?.id || "") === cid) || {};
-        wsDeviceEditingId = cid;
-    }
+	    let obj = {};
+	    if (wsDeviceModalMode === "edit") {
+	        const cid = String(connection_id || "").trim();
+	        obj = (Array.isArray(wsDraft.connections) ? wsDraft.connections : []).find((c) => String(c?.id || "") === cid) || {};
+	        wsDeviceEditingId = cid;
+	    }
+	    wsReturnSelectId = wsDeviceEditingId ? ("ws:device:" + encodeURIComponent(wsDeviceEditingId)) : "ws:connectivity";
 
     if (el.deviceTitle) el.deviceTitle.textContent = wsDeviceModalMode === "edit" ? `Device Properties: ${wsDeviceEditingId}` : "New Device";
     if (el.deviceStatus) el.deviceStatus.textContent = "";
@@ -6842,12 +7069,15 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
     el.deviceId?.focus?.();
 };
 
-		const wsOpenTagModal = ({ mode, connection_id, name }) => {
-	    const el = wsEls();
-	    if (!el.tagModal) return;
-	    wsTagModalMode = mode === "edit" ? "edit" : "new";
-	    wsTagEditingConn = String(connection_id || "").trim();
-	    wsTagEditingName = String(name || "").trim();
+			const wsOpenTagModal = ({ mode, connection_id, name }) => {
+		    const el = wsEls();
+		    if (!el.tagModal) return;
+		    wsTagModalMode = mode === "edit" ? "edit" : "new";
+		    wsTagEditingConn = String(connection_id || "").trim();
+		    wsTagEditingName = String(name || "").trim();
+		    wsReturnSelectId = wsTagEditingConn.empty() || wsTagEditingName.empty()
+		        ? "ws:connectivity"
+		        : ("ws:tag:" + encodeURIComponent(wsTagEditingConn) + ":" + encodeURIComponent(wsTagEditingName));
 
 	    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections : [];
 	    const connIds = conns
@@ -6878,10 +7108,10 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	            el.tagTitle.textContent = `New Tag: ${curConn}`;
 	        };
 	    }
-	    if (el.tagName) {
-	        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
-	        el.tagName.disabled = wsTagModalMode === "edit";
-	    }
+		    if (el.tagName) {
+		        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
+		        el.tagName.disabled = !wsIsEditable();
+		    }
 	    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
 	    wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
 	    if (el.tagScan) el.tagScan.value = existing && existing?.scan_ms != null ? String(existing.scan_ms) : "";
@@ -6901,11 +7131,14 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	    if (node.type === "alarm") return wsOpenAlarmModal({ mode: "edit", alarm_id: node.alarm_id });
 	};
 
-	const wsOpenAlarmModal = ({ mode, alarm_id }) => {
-	    const el = wsEls();
-	    if (!el.alarmModal) return;
-	    wsAlarmModalMode = mode === "edit" ? "edit" : "new";
-	    wsAlarmEditingId = String(alarm_id || "").trim();
+		const wsOpenAlarmModal = ({ mode, alarm_id, group, site }) => {
+		    const el = wsEls();
+		    if (!el.alarmModal) return;
+		    wsAlarmModalMode = mode === "edit" ? "edit" : "new";
+		    wsAlarmEditingId = String(alarm_id || "").trim();
+		    wsReturnSelectId = wsAlarmEditingId.empty()
+		        ? "ws:alarms"
+		        : ("ws:alarm:" + encodeURIComponent(wsAlarmEditingId));
 
 	    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections : [];
 	    const connIds = conns.map((c) => String(c?.id || "")).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
@@ -6926,8 +7159,8 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	        el.alarmId.disabled = wsAlarmModalMode === "edit";
 	    }
 	    if (el.alarmName) el.alarmName.value = existing ? String(existing?.name || "") : "";
-	    if (el.alarmGroup) el.alarmGroup.value = existing ? String(existing?.group || "") : "";
-	    if (el.alarmSite) el.alarmSite.value = existing ? String(existing?.site || "") : "";
+	    if (el.alarmGroup) el.alarmGroup.value = existing ? String(existing?.group || "") : String(group || "");
+	    if (el.alarmSite) el.alarmSite.value = existing ? String(existing?.site || "") : String(site || "");
 	    if (el.alarmType) el.alarmType.value = existing ? String(existing?.type || "high") : "high";
 	    if (el.alarmConn) el.alarmConn.value = existing ? String(existing?.connection_id || "") : (connIds[0] || "");
 	    if (el.alarmTag) el.alarmTag.value = existing ? String(existing?.tag_name || "") : "";
@@ -6950,6 +7183,59 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 
 	    el.alarmModal.style.display = "flex";
 	    el.alarmId?.focus?.();
+};
+
+	const wsEnsureAlarmGroupsDraft = () => {
+	    if (!Array.isArray(wsDraft.alarm_groups)) wsDraft.alarm_groups = [];
+	    wsDraft.alarm_groups = wsDraft.alarm_groups.filter((g) => g && typeof g === "object" && !Array.isArray(g));
+	};
+
+	const wsAddAlarmGroup = (nodeId) => {
+	    wsEnsureAlarmGroupsDraft();
+	    const name = String(prompt("New alarm group name:", "") || "").trim();
+	    if (!name) return;
+	    const want = name.toLowerCase();
+	    if (!wsDraft.alarm_groups.some((g) => String(g?.name || g?.label || g?.id || "").trim().toLowerCase() === want)) {
+	        wsDraft.alarm_groups.push({ name, sites: [] });
+	        wsSetDirty(true);
+	        wsRenderTree();
+	    }
+	    wsSelectNode(nodeId || "ws:alarms");
+	};
+
+	const wsAddAlarmSite = (nodeId) => {
+	    wsEnsureAlarmGroupsDraft();
+	    const node = wsNodeById.get(nodeId);
+	    if (!node) return;
+	    const groupName = String(node.group || node.label || "").trim();
+	    if (!groupName) return;
+	    const siteName = String(prompt(`New site name for group '${groupName}':`, "") || "").trim();
+	    if (!siteName) return;
+	    const g = wsDraft.alarm_groups.find((gg) => String(gg?.name || gg?.label || gg?.id || "").trim().toLowerCase() === groupName.toLowerCase()) || null;
+	    if (!g) {
+	        wsDraft.alarm_groups.push({ name: groupName, sites: [{ name: siteName }] });
+	    } else {
+	        if (!Array.isArray(g.sites)) g.sites = [];
+	        const want = siteName.toLowerCase();
+	        if (!g.sites.some((s) => String(s?.name || s?.label || s?.id || "").trim().toLowerCase() === want)) {
+	            g.sites.push({ name: siteName });
+	        }
+	    }
+	    wsSetDirty(true);
+	    wsRenderTree();
+	    wsSelectNode(nodeId);
+	};
+
+	const wsAddAlarmFromNode = (nodeId) => {
+	    const node = wsNodeById.get(nodeId);
+	    if (!node) return wsOpenAlarmModal({ mode: "new" });
+	    if (node.type === "alarm_site") {
+	        return wsOpenAlarmModal({ mode: "new", group: String(node.group || ""), site: String(node.site || "") });
+	    }
+	    if (node.type === "alarm_group") {
+	        return wsOpenAlarmModal({ mode: "new", group: String(node.group || node.label || "") });
+	    }
+	    return wsOpenAlarmModal({ mode: "new" });
 	};
 
 	const wsShowContextMenu = (nodeId, x, y) => {
@@ -6965,6 +7251,12 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	    if (node.type === "connectivity") {
 	        addItem("Add Device…", "add-device");
 	    } else if (node.type === "alarms") {
+	        addItem("Add Group…", "add-alarm-group");
+	        addItem("Add Alarm…", "add-alarm");
+	    } else if (node.type === "alarm_group") {
+	        addItem("Add Site…", "add-alarm-site");
+	        addItem("Add Alarm…", "add-alarm");
+	    } else if (node.type === "alarm_site") {
 	        addItem("Add Alarm…", "add-alarm");
 	    } else if (node.type === "device") {
 	        addItem("Add Tag…", "add-tag");
@@ -7025,7 +7317,9 @@ const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	    const node = wsNodeById.get(nodeId);
 	    if (!node) return;
 	    if (action === "add-device") return wsOpenDeviceModal({ mode: "new" });
-	    if (action === "add-alarm") return wsOpenAlarmModal({ mode: "new" });
+	    if (action === "add-alarm-group") return wsAddAlarmGroup(nodeId);
+	    if (action === "add-alarm-site") return wsAddAlarmSite(nodeId);
+	    if (action === "add-alarm") return wsAddAlarmFromNode(nodeId);
 		    if (action === "edit-device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
 		    if (action === "edit-alarm") return wsOpenAlarmModal({ mode: "edit", alarm_id: node.alarm_id });
 		    if (action === "delete-device") return wsDeleteDevice(node.connection_id);
@@ -7337,29 +7631,14 @@ const wsRenderTree = () => {
 	        return;
 	    }
 
-		    if (node.type === "alarms") {
-		        setHeaderSimple(["ID", "Name", "Group", "Site", "Type", "Connection", "Tag", "Enabled", "Severity"]);
-		        const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
-		        alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
-		        if (!alarms.length) {
-		            addRowSimple(["(no alarms)", "", "", "", "", "", "", "", ""], null);
+		    if (node.type === "alarms" || node.type === "alarm_group" || node.type === "alarm_site") {
+		        setHeaderSimple(["Name"]);
+		        const kids = Array.isArray(node.children) ? node.children : [];
+		        if (!kids.length) {
+		            addRowSimple(["(no items)"], null);
 		            return;
 		        }
-		        alarms.forEach((a) => {
-		            const id = String(a?.id || "").trim();
-		            if (!id) return;
-		            addRowSimple([
-		                id,
-		                String(a?.name || ""),
-		                String(a?.group || ""),
-		                String(a?.site || ""),
-		                String(a?.type || ""),
-		                String(a?.connection_id || ""),
-		                String(a?.tag_name || ""),
-		                a?.enabled === false ? "no" : "yes",
-		                String(a?.severity ?? "")
-		            ], `ws:alarm:${encodeURIComponent(id)}`);
-		        });
+		        kids.forEach((c) => addRowSimple([String(c?.label || "")], String(c?.id || "")));
 		        return;
 		    }
 
@@ -7391,9 +7670,9 @@ const wsRenderTree = () => {
 		    }
 		};
 
-const wsSaveDeviceFromModal = () => {
-    const el = wsEls();
-    const id = String(el.deviceId?.value || "").trim();
+	const wsSaveDeviceFromModal = () => {
+	    const el = wsEls();
+	    const id = String(el.deviceId?.value || "").trim();
     if (!id) {
         if (el.deviceStatus) el.deviceStatus.textContent = "Device ID is required.";
         return;
@@ -7429,17 +7708,17 @@ const wsSaveDeviceFromModal = () => {
         if (idx >= 0) conns[idx] = next;
     }
 
-    wsDraft.connections = conns;
-    wsSetDirty(true);
-    wsCloseModal(el.deviceModal);
+	    wsDraft.connections = conns;
+	    wsSetDirty(true);
+	    wsCloseModal(el.deviceModal);
 
-    wsSelectNode("ws:connectivity");
-};
+	    wsSelectNode("ws:device:" + encodeURIComponent(id));
+	};
 
-const wsSaveTagFromModal = () => {
-    const el = wsEls();
-    const cid = String(el.tagConn?.value || "").trim();
-    const name = String(el.tagName?.value || "").trim();
+	const wsSaveTagFromModal = () => {
+	    const el = wsEls();
+	    const cid = String(el.tagConn?.value || "").trim();
+	    const name = String(el.tagName?.value || "").trim();
     const plc_tag_name = String(el.tagPlc?.value || "").trim();
     const datatype = String(el.tagDt?.value || "").trim();
 	    const scanRaw = String(el.tagScan?.value || "").trim();
@@ -7479,43 +7758,42 @@ const wsSaveTagFromModal = () => {
 	        next.writable = writable;
 	        next.mqtt_command_allowed = mqtt_command_allowed;
 	        tags.push(next);
-	    } else {
-	        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
-	        if (idx < 0) {
-	            if (el.tagStatus) el.tagStatus.textContent = "Tag not found.";
-	            return;
-	        }
-	        if (cid !== wsTagEditingConn) {
-	            if (tags.some((t, i) => i !== idx && String(t?.connection_id || "") === cid && String(t?.name || "") === wsTagEditingName)) {
-	                if (el.tagStatus) el.tagStatus.textContent = "A tag with this name already exists for the selected device.";
-	                return;
-	            }
-	        }
-	        const next = Object.assign({}, tags[idx]);
-	        next.connection_id = cid;
-	        next.plc_tag_name = plc_tag_name;
-	        next.datatype = datatype;
-	        if (scanRaw === "") delete next.scan_ms;
-	        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
-	        next.enabled = enabled;
-	        next.writable = writable;
-	        next.mqtt_command_allowed = mqtt_command_allowed;
-	        tags[idx] = next;
+		    } else {
+		        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
+		        if (idx < 0) {
+		            if (el.tagStatus) el.tagStatus.textContent = "Tag not found.";
+		            return;
+		        }
+		        if (tags.some((t, i) => i != idx && String(t?.connection_id || "") == cid && String(t?.name || "") == name)) {
+		            if (el.tagStatus) el.tagStatus.textContent = "A tag with this name already exists for the selected device.";
+		            return;
+		        }
+		        const next = Object.assign({}, tags[idx]);
+		        next.connection_id = cid;
+		        next.name = name;
+		        next.plc_tag_name = plc_tag_name;
+		        next.datatype = datatype;
+		        if (scanRaw === "") delete next.scan_ms;
+		        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
+		        next.enabled = enabled;
+		        next.writable = writable;
+		        next.mqtt_command_allowed = mqtt_command_allowed;
+		        tags[idx] = next;
 
-	        // If the user changed the Device, fully move the tag: remove any remaining copies
-	        // of the old (connection_id,name) from the draft list (helps with legacy duplicates).
-	        if (cid !== wsTagEditingConn) {
-	            const oldConn = wsTagEditingConn;
-	            const oldName = wsTagEditingName;
-	            tags = tags.filter((t) => !(String(t?.connection_id || "") === oldConn && String(t?.name || "") === oldName));
-	        }
-	    }
+		        // If the user changed the Device, fully move the tag: remove any remaining copies
+		        // of the old (connection_id,name) from the draft list (helps with legacy duplicates).
+		        if (cid !== wsTagEditingConn || name !== wsTagEditingName) {
+		            const oldConn = wsTagEditingConn;
+		            const oldName = wsTagEditingName;
+		            tags = tags.filter((t) => !(String(t?.connection_id || "") === oldConn && String(t?.name || "") === oldName));
+		        }
+		    }
 
-	    wsDraft.tags = tags;
-	    wsSetDirty(true);
-	    wsCloseModal(el.tagModal);
-	    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
-	};
+		    wsDraft.tags = tags;
+		    wsSetDirty(true);
+		    wsCloseModal(el.tagModal);
+		    wsSelectNode("ws:tag:" + encodeURIComponent(cid) + ":" + encodeURIComponent(name));
+		};
 
 const wsDeleteDevice = (connection_id) => {
     const cid = String(connection_id || "").trim();
@@ -7596,7 +7874,7 @@ const wsDeleteDevice = (connection_id) => {
 	    wsDraft.alarms = alarms;
 	    wsSetDirty(true);
 	    wsCloseModal(el.alarmModal);
-	    wsSelectNode("ws:alarms");
+	    wsSelectNode("ws:alarm:" + encodeURIComponent(id));
 	};
 
 	const wsDeleteAlarm = (alarm_id) => {
@@ -7686,7 +7964,8 @@ const wsDeleteDevice = (connection_id) => {
 	        {
 	            const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
 	            alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
-	            const out = { alarms };
+	            const groups = Array.isArray(wsDraft.alarm_groups) ? wsDraft.alarm_groups : [];
+	            const out = { groups, alarms };
 	            const content = JSON.stringify(out, null, 2) + "\n";
 	            await wsApiJson("/config/file", {
 	                method: "POST",
@@ -7821,7 +8100,7 @@ function filterLiveTagsByConnection(connectionId) {
 
 		    // If not logged in, keep the live tags panel but hide workspace config tree/details.
 		    if (!wsIsEditable()) {
-		        wsBase = { connections: [], tags: [], alarms: [] };
+		        wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [] };
 		        wsDraft = { connections: [], tags: [], alarms: [] };
 		        wsPendingDeletes = [];
 		        wsNodeById = new Map();
@@ -7893,18 +8172,19 @@ function formatUptime(sec) {
 async function refreshAdminStatus() {
     try {
         const wasEditable = !!(ADMIN_CONFIGURED && ADMIN_LOGGED_IN);
-        const resp = await fetch("/auth/status", {
-            method: "GET",
-            headers: withAdminHeaders()
-        });
-	        const data = await resp.json();
-	        ADMIN_CONFIGURED = !!(data.initialized ?? data.configured);
-	        LEGACY_AUTH_PRESENT = !!data.legacy_admin_auth_present;
-	        LEGACY_AUTH_CONFIGURED = !!data.legacy_admin_auth_configured;
-	        USER_LOGGED_IN = !!(data.user_logged_in ?? data.logged_in);
-	        USERNAME = USER_LOGGED_IN ? String(data?.user?.username || "admin").trim() : "";
-	        USER_ROLE = USER_LOGGED_IN ? normalizeUserRole(data?.user?.role || (data.logged_in ? "admin" : "viewer")) : "viewer";
-	        ADMIN_LOGGED_IN = !!(ADMIN_CONFIGURED && canEditWorkspace());
+	        const resp = await fetch("/auth/status", {
+	            method: "GET",
+	            headers: withAdminHeaders()
+	        });
+		        const data = await resp.json();
+		        ADMIN_CONFIGURED = !!(data.initialized ?? data.configured);
+		        LEGACY_AUTH_PRESENT = !!data.legacy_admin_auth_present;
+		        LEGACY_AUTH_CONFIGURED = !!data.legacy_admin_auth_configured;
+		        USER_LOGGED_IN = !!(data.user_logged_in ?? data.logged_in);
+		        USERNAME = USER_LOGGED_IN ? String(data?.user?.username || "").trim() : "";
+		        USER_ROLE = USER_LOGGED_IN ? String(data?.user?.role || "").trim() : "";
+		        USER_PERMS = USER_LOGGED_IN && Array.isArray(data?.user?.permissions) ? data.user.permissions : [];
+		        ADMIN_LOGGED_IN = !!(ADMIN_CONFIGURED && canEditWorkspace());
 
         // If server says "not logged in", drop any stale token we might have
         if (!USER_LOGGED_IN && !data.logged_in) {
@@ -7931,25 +8211,28 @@ async function refreshAdminStatus() {
     } catch (e) {
         const s = document.getElementById("admin-status-text");
         if (s) s.textContent = "Admin status: error";
+        console.warn("refreshAdminStatus failed:", e);
     }
 }
 
 	function updateAdminUi() {
-    const statusEl = document.getElementById("admin-status-text");
-    const loginBtn = document.getElementById("admin-login-button");
-    const logoutBtn= document.getElementById("admin-logout-button");
-    const chip     = document.getElementById("admin-chip");   // NEW
+    const statusEl  = document.getElementById("admin-status-text");
+    const loginBtn  = document.getElementById("admin-login-button");
+    const logoutBtn = document.getElementById("admin-logout-button");
+    const chip      = document.getElementById("admin-chip");
 
-    if (!statusEl || !loginBtn || !logoutBtn) return;
+    if (!statusEl) return;
 
 		    if (!ADMIN_CONFIGURED) {
 	        statusEl.textContent = LEGACY_AUTH_PRESENT
 	          ? "Users not initialized (legacy password detected – migration required)."
 	          : "Users not initialized (first-time setup required).";
-	        loginBtn.textContent = LEGACY_AUTH_PRESENT ? "Migrate & initialize users" : "Initialize users";
-	        loginBtn.style.display = "";
-	        logoutBtn.style.display = "none";
-	        chip.style.display = "none";   // NEW
+	        if (loginBtn) {
+	            loginBtn.textContent = LEGACY_AUTH_PRESENT ? "Migrate & initialize users" : "Initialize users";
+	            loginBtn.style.display = "";
+	        }
+	        if (logoutBtn) logoutBtn.style.display = "none";
+	        if (chip) chip.style.display = "none";
 	        disableAdminFeatures();
 
         // Hide config files when not configured
@@ -7985,10 +8268,12 @@ async function refreshAdminStatus() {
 	        }
 	    } else if (USER_LOGGED_IN) {
         statusEl.textContent = `Logged in as ${USERNAME || "?"} (${USER_ROLE}).`;
-        loginBtn.style.display = "none";
-        logoutBtn.style.display = "";
-        chip.style.display = "inline-block";
-        chip.textContent = `${USERNAME || "?"} (${USER_ROLE})`;
+        if (loginBtn) loginBtn.style.display = "none";
+        if (logoutBtn) logoutBtn.style.display = "";
+        if (chip) {
+            chip.style.display = "inline-block";
+            chip.textContent = `${USERNAME || "?"} (${USER_ROLE})`;
+        }
 
         if (canEditWorkspace()) {
             enableAdminFeatures();
@@ -8029,13 +8314,15 @@ async function refreshAdminStatus() {
                 ce.statusEl.className = "small";
             }
             connEditorSetEnabled(canEditWorkspace());
-        }
+	        }
 	    } else {
         statusEl.textContent = "Not logged in. (Tip: use the same hostname in all apps for cookie SSO.)";
-        loginBtn.textContent = "Admin login";
-        loginBtn.style.display = "";
-        logoutBtn.style.display = "none";
-        chip.style.display = "none";   // NEW
+        if (loginBtn) {
+            loginBtn.textContent = "Admin login";
+            loginBtn.style.display = "";
+        }
+        if (logoutBtn) logoutBtn.style.display = "none";
+        if (chip) chip.style.display = "none";
         disableAdminFeatures();
 
         const metaEl  = document.getElementById("config-meta");
@@ -8100,15 +8387,16 @@ async function adminLogout() {
     } catch (e) {
         // ignore
     }
-    ADMIN_TOKEN = null;
-    ADMIN_LOGGED_IN = false;
-    USER_LOGGED_IN = false;
-    USERNAME = "";
-    USER_ROLE = "viewer";
-    persistAdminToken();   // <-- clear localStorage
-    await refreshAdminStatus();
-    updateAdminUi();
-}
+	    ADMIN_TOKEN = null;
+	    ADMIN_LOGGED_IN = false;
+	    USER_LOGGED_IN = false;
+	    USERNAME = "";
+	    USER_ROLE = "";
+	    USER_PERMS = [];
+	    persistAdminToken();   // <-- clear localStorage
+	    await refreshAdminStatus();
+	    updateAdminUi();
+	}
 
 async function viewConfigFile(path) {
     const viewer    = document.getElementById("config-viewer");
@@ -10214,11 +10502,12 @@ async function tagEditorSave(reloadAfter) {
 }
 
 				function startAutoRefresh() {
-					restoreAdminTokenFromStorage();
-					applyPageMode();
-					if (isEditorPage()) {
-					    wsInit();
-					}
+					try {
+					    restoreAdminTokenFromStorage();
+					    applyPageMode();
+					    if (isEditorPage()) {
+					        wsInit();
+					    }
 
 		    // NEW: wire up modal key handling
 		    setupAdminModalKeys();
@@ -10236,15 +10525,17 @@ async function tagEditorSave(reloadAfter) {
 		        newCfgInput.addEventListener("change", onNewConfigFileSelected);
 		        newCfgInput.dataset.bound = "1";
 		    }
+					} catch (e) {
+					    console.error("startAutoRefresh init failed:", e);
+					}
 
-			    refreshAdminStatus();
-			    refreshInfo();
-			    refreshConfigFiles();
-			    if (!isEditorPage()) {
-			        refreshHealth();
-			    }
-			    refreshTags();
-			    refreshAlarms();
+			    // Always attempt refresh calls (even if init threw).
+			    try { refreshAdminStatus(); } catch (e) { console.warn("refreshAdminStatus failed:", e); }
+			    try { refreshInfo(); } catch (e) { console.warn("refreshInfo failed:", e); }
+			    try { refreshConfigFiles(); } catch (e) { console.warn("refreshConfigFiles failed:", e); }
+			    try { if (!isEditorPage()) refreshHealth(); } catch (e) { console.warn("refreshHealth failed:", e); }
+			    try { refreshTags(); } catch (e) { console.warn("refreshTags failed:", e); }
+			    try { refreshAlarms(); } catch (e) { console.warn("refreshAlarms failed:", e); }
 
 			    // Keep auth status fresh so SSO logins (from scada/hmi) show up quickly.
 			    setInterval(refreshAdminStatus, 2000);
@@ -12287,55 +12578,95 @@ window.addEventListener("load", startAutoRefresh);
 
 	            // ---------- ADMIN AUTH ENDPOINTS ----------
 
-			            // GET /auth/status
-			            svr.Get("/auth/status", [&](const httplib::Request &req, httplib::Response &res) {
-			                cleanup_expired_admin_sessions();
-			                json resp;
-			                // Backwards-compatible admin status (editor+).
-			                resp["configured"] = g_userStoreConfigured;
-			                resp["logged_in"]  = is_admin_request(req);
-			                resp["legacy_admin_auth_present"] = g_adminAuthFilePresent;
-			                resp["legacy_admin_auth_configured"] = g_legacyAdminConfigured;
-			                resp["legacy_admin_auth_error"] = g_adminAuthLoadError.empty() ? json(nullptr) : json(g_adminAuthLoadError);
+				            // GET /auth/status
+				            svr.Get("/auth/status", [&](const httplib::Request &req, httplib::Response &res) {
+				                // Ensure auth store is loaded so UIs don't show "first-time setup" after a restart
+				                // just because no other /auth/* endpoint has been hit yet.
+				                const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                load_passwords_store(passwordsPath);
+				                ensure_default_roles();
+
+				                cleanup_expired_admin_sessions();
+				                json resp;
+				                // Backwards-compatible admin status (editor+).
+				                resp["configured"] = g_userStoreConfigured;
+				                resp["logged_in"]  = is_admin_request(req);
+				                {
+				                    std::lock_guard<std::mutex> lock(g_userStoreMutex);
+				                    resp["passwords_store"] = json::object({
+				                        {"path", "passwords.jsonc"},
+				                        {"exists", g_passwordsStoreLastExists},
+				                        {"load_ok", g_passwordsStoreLastLoadOk},
+				                        {"mtime_ms", (g_passwordsStoreLastMtimeMs < 0 ? json(nullptr) : json(g_passwordsStoreLastMtimeMs))},
+				                        {"error", (g_passwordsStoreLastLoadError.empty() ? json(nullptr) : json(g_passwordsStoreLastLoadError))}
+				                    });
+				                }
+				                resp["legacy_admin_auth_present"] = g_adminAuthFilePresent;
+				                resp["legacy_admin_auth_configured"] = g_legacyAdminConfigured;
+				                resp["legacy_admin_auth_error"] = g_adminAuthLoadError.empty() ? json(nullptr) : json(g_adminAuthLoadError);
 			                // New unified auth status (any role).
 			                AdminSessionInfo sess;
 			                const bool userLoggedIn = is_user_logged_in(req, sess);
-			                resp["user_logged_in"] = userLoggedIn;
-			                resp["user"] = userLoggedIn
-		                  ? json::object({{"username", sess.username}, {"role", normalize_auth_role(sess.role)}})
-		                  : json(nullptr);
+				                resp["user_logged_in"] = userLoggedIn;
+				                    if (userLoggedIn) {
+				                    std::string displayName = sess.username;
+				                    std::string description;
+				                    for (const auto &u : g_authUsers) {
+				                        if (u.username == sess.username) {
+				                            displayName = u.name.empty() ? u.username : u.name;
+				                            description = u.description;
+				                            break;
+				                        }
+				                    }
+				                    resp["user"] = json::object({
+				                        {"username", sess.username},
+				                        {"name", displayName},
+				                        {"description", description.empty() ? json(nullptr) : json(description)},
+				                        {"role", normalize_auth_role_id(sess.role)},
+				                        {"permissions", role_permissions(sess.role)}
+				                    });
+				                } else {
+				                    resp["user"] = json(nullptr);
+				                }
 			                resp["initialized"] = g_userStoreConfigured;
 			                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
 			                resp["roles"] = json::array();
-			                for (const auto &r : g_authRoles) {
-			                    resp["roles"].push_back({
-			                        {"id", r.id},
-			                        {"label", r.label},
-			                        {"description", r.description.empty() ? json(nullptr) : json(r.description)},
-			                        {"rank", r.rank}
-			                    });
-			                }
+				                for (const auto &r : g_authRoles) {
+				                    resp["roles"].push_back({
+				                        {"id", r.id},
+				                        {"label", r.label},
+				                        {"description", r.description.empty() ? json(nullptr) : json(r.description)},
+				                        {"permissions", (r.id == "admin" ? all_permission_ids() : r.permissions)}
+				                    });
+				                }
 			                resp["users"] = json::array();
 			                if (g_userStoreConfigured) {
-			                    for (const auto &u : g_authUsers) {
-			                        resp["users"].push_back({
-			                            {"username", u.username},
-		                            {"role", normalize_auth_role(u.role)}
-		                        });
-		                    }
-		                }
+				                    for (const auto &u : g_authUsers) {
+				                        resp["users"].push_back({
+				                            {"username", u.username},
+				                            {"name", u.name.empty() ? u.username : u.name},
+				                            {"description", u.description.empty() ? json(nullptr) : json(u.description)},
+				                            {"role", normalize_auth_role_id(u.role)},
+				                            {"permissions", role_permissions(u.role)}
+				                        });
+			                    }
+			                }
 		                resp["service_token_enabled"] = !g_adminServiceToken.empty();
 		                resp["service_token_len"] = static_cast<int>(g_adminServiceToken.size());
 		                res.set_content(resp.dump(2), "application/json");
 		            });
 
-	            // GET /auth/debug
-	            // Debug helper to verify whether the caller's X-Admin-Token header
-	            // matches the service token (does not reveal token value).
-		            svr.Get("/auth/debug", [&](const httplib::Request &req, httplib::Response &res) {
-		                cleanup_expired_admin_sessions();
-		                std::string token = req.get_header_value("X-Admin-Token");
-		                if (token.empty()) token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
+			            // GET /auth/debug
+			            // Debug helper to verify whether the caller's X-Admin-Token header
+			            // matches the service token (does not reveal token value).
+			            svr.Get("/auth/debug", [&](const httplib::Request &req, httplib::Response &res) {
+			                const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                load_passwords_store(passwordsPath);
+			                ensure_default_roles();
+
+			                cleanup_expired_admin_sessions();
+			                std::string token = req.get_header_value("X-Admin-Token");
+			                if (token.empty()) token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
 		                json resp;
 		                resp["ok"] = true;
 		                resp["header_present"] = !token.empty();
@@ -12350,8 +12681,8 @@ window.addEventListener("load", startAutoRefresh);
 		                    if (it != g_adminSessions.end() && it->second.expires_at > std::chrono::system_clock::now()) {
 		                        resp["admin_session_valid"] = true;
 		                        resp["session_username"] = it->second.username;
-		                        resp["session_role"] = normalize_auth_role(it->second.role);
-		                    }
+			                        resp["session_role"] = normalize_auth_role_id(it->second.role);
+				                    }
 		                }
 		                resp["is_admin_request"] = is_admin_request(req);
 		                res.set_content(resp.dump(2), "application/json");
@@ -12435,7 +12766,7 @@ window.addEventListener("load", startAutoRefresh);
 	                            return;
 	                        }
 
-	                        role = normalize_auth_role(record->role);
+	                        role = normalize_auth_role_id(record->role);
 		                    } else {
 		                        resp["ok"] = false;
 		                        resp["error"] = "Not initialized. Use /auth/init to create the first admin user.";
@@ -12563,6 +12894,8 @@ window.addEventListener("load", startAutoRefresh);
 
 				                    AuthUserRecord u;
 				                    u.username = username;
+				                    u.name = username;
+				                    u.description = "";
 				                    u.role = "admin";
 	                    u.iterations = 150000;
 	                    u.salt_b64 = b64_encode(salt);
@@ -12604,23 +12937,29 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            });
 
-			            // PUT /auth/timeout  (admin-only)
-			            svr.Put("/auth/timeout", [&](const httplib::Request &req, httplib::Response &res) {
-		                json resp;
-		                AdminSessionInfo sess;
-		                if (!is_admin_user_request(req, sess)) {
-		                    resp["ok"] = false;
-		                    resp["error"] = "Admin login required.";
-		                    res.status = 403;
-		                    res.set_content(resp.dump(2), "application/json");
-		                    return;
-	                }
-	                try {
-	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-	                    load_passwords_store(passwordsPath);
-	                    if (!g_userStoreConfigured) {
-	                        resp["ok"] = false;
-	                        resp["error"] = "Not initialized.";
+				            // PUT /auth/timeout  (admin-only)
+				            svr.Put("/auth/timeout", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                try {
+			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    if (!load_passwords_store(passwordsPath)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Failed to load passwords.jsonc.";
+			                        res.status = 500;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    AdminSessionInfo sess;
+			                    if (!is_admin_user_request(req, sess)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Admin login required.";
+			                        res.status = 403;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    if (!g_userStoreConfigured) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Not initialized.";
 	                        res.status = 400;
 	                        res.set_content(resp.dump(2), "application/json");
 	                        return;
@@ -12653,15 +12992,15 @@ window.addEventListener("load", startAutoRefresh);
 				                    load_passwords_store(passwordsPath);
 				                    ensure_default_roles();
 			                    resp["ok"] = true;
-			                    resp["roles"] = json::array();
-			                    for (const auto &r : g_authRoles) {
-			                        resp["roles"].push_back({
-			                            {"id", r.id},
-			                            {"label", r.label},
-			                            {"description", r.description.empty() ? json(nullptr) : json(r.description)},
-			                            {"rank", r.rank}
-			                        });
-			                    }
+				                    resp["roles"] = json::array();
+				                    for (const auto &r : g_authRoles) {
+				                        resp["roles"].push_back({
+				                            {"id", r.id},
+				                            {"label", r.label},
+				                            {"description", r.description.empty() ? json(nullptr) : json(r.description)},
+				                            {"permissions", (r.id == "admin" ? all_permission_ids() : r.permissions)}
+				                        });
+				                    }
 			                    res.set_content(resp.dump(2), "application/json");
 			                } catch (const std::exception &ex) {
 			                    resp["ok"] = false;
@@ -12671,38 +13010,45 @@ window.addEventListener("load", startAutoRefresh);
 			                }
 			            });
 
-			            auto is_reserved_role = [](const std::string &id) {
-			                return (id == "admin" || id == "editor" || id == "operator" || id == "viewer");
-			            };
+				            auto is_reserved_role = [](const std::string &id) {
+				                // Built-in role id reserved for the system.
+				                return (id == "admin");
+				            };
 
-			            // POST /auth/roles  (admin-only)
-			            // Body: { id, label, description, rank }
-			            svr.Post("/auth/roles", [&](const httplib::Request &req, httplib::Response &res) {
-			                json resp;
-			                AdminSessionInfo sess;
-			                if (!is_admin_user_request(req, sess)) {
-			                    resp["ok"] = false;
-			                    resp["error"] = "Admin login required.";
-			                    res.status = 403;
-			                    res.set_content(resp.dump(2), "application/json");
-			                    return;
-			                }
-			                try {
-			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-			                    load_passwords_store(passwordsPath);
-			                    if (!g_userStoreConfigured) {
-			                        resp["ok"] = false;
-			                        resp["error"] = "Not initialized.";
+				            // POST /auth/roles  (admin-only)
+				            // Body: { id, label, description, permissions }
+				            svr.Post("/auth/roles", [&](const httplib::Request &req, httplib::Response &res) {
+				                json resp;
+				                try {
+				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                    if (!load_passwords_store(passwordsPath)) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Failed to load passwords.jsonc.";
+				                        res.status = 500;
+				                        res.set_content(resp.dump(2), "application/json");
+				                        return;
+				                    }
+				                    AdminSessionInfo sess;
+				                    if (!is_admin_user_request(req, sess)) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Admin login required.";
+				                        res.status = 403;
+				                        res.set_content(resp.dump(2), "application/json");
+				                        return;
+				                    }
+				                    if (!g_userStoreConfigured) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Not initialized.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
 			                    }
 			                    ensure_default_roles();
 			                    json body = json::parse(req.body.empty() ? "{}" : req.body);
-			                    const std::string id = normalize_auth_role_id(body.value("id", std::string{}));
-			                    const std::string label = body.value("label", std::string{});
-			                    const std::string description = body.value("description", std::string{});
-			                    const int rank = std::max(0, std::min(3, body.value("rank", 0)));
+				                    const std::string id = normalize_auth_role_id(body.value("id", std::string{}));
+				                    const std::string label = body.value("label", std::string{});
+				                    const std::string description = body.value("description", std::string{});
+				                    const auto permissions = parse_permission_list(body.value("permissions", json::array()));
 			                    if (id.empty()) {
 			                        resp["ok"] = false;
 			                        resp["error"] = "Invalid role id.";
@@ -12726,12 +13072,12 @@ window.addEventListener("load", startAutoRefresh);
 			                            return;
 			                        }
 			                    }
-			                    AuthRoleRecord r;
-			                    r.id = id;
-			                    r.label = label.empty() ? id : label;
-			                    r.description = description;
-			                    r.rank = rank;
-			                    g_authRoles.push_back(r);
+				                    AuthRoleRecord r;
+				                    r.id = id;
+				                    r.label = label.empty() ? id : label;
+				                    r.description = description;
+					                    r.permissions = permissions;
+					                    g_authRoles.push_back(r);
 			                    if (!save_passwords_store(passwordsPath)) {
 			                        resp["ok"] = false;
 			                        resp["error"] = "Failed to save passwords.jsonc.";
@@ -12749,24 +13095,30 @@ window.addEventListener("load", startAutoRefresh);
 			                }
 			            });
 
-			            // PUT /auth/roles/<id>  (admin-only)
-			            // Body: { label?, description?, rank? }
-			            svr.Put(R"(/auth/roles/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
-			                json resp;
-			                AdminSessionInfo sess;
-			                if (!is_admin_user_request(req, sess)) {
-			                    resp["ok"] = false;
-			                    resp["error"] = "Admin login required.";
-			                    res.status = 403;
-			                    res.set_content(resp.dump(2), "application/json");
-			                    return;
-			                }
-			                try {
-			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-			                    load_passwords_store(passwordsPath);
-			                    if (!g_userStoreConfigured) {
-			                        resp["ok"] = false;
-			                        resp["error"] = "Not initialized.";
+				            // PUT /auth/roles/<id>  (admin-only)
+				            // Body: { label?, description?, permissions? }
+				            svr.Put(R"(/auth/roles/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+				                json resp;
+				                try {
+				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                    if (!load_passwords_store(passwordsPath)) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Failed to load passwords.jsonc.";
+				                        res.status = 500;
+				                        res.set_content(resp.dump(2), "application/json");
+				                        return;
+				                    }
+				                    AdminSessionInfo sess;
+				                    if (!is_admin_user_request(req, sess)) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Admin login required.";
+				                        res.status = 403;
+				                        res.set_content(resp.dump(2), "application/json");
+				                        return;
+				                    }
+				                    if (!g_userStoreConfigured) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Not initialized.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
@@ -12781,25 +13133,30 @@ window.addEventListener("load", startAutoRefresh);
 			                        return;
 			                    }
 			                    json body = json::parse(req.body.empty() ? "{}" : req.body);
-			                    const bool hasLabel = body.contains("label");
-			                    const bool hasDesc = body.contains("description");
-			                    const bool hasRank = body.contains("rank");
-			                    bool found = false;
-			                    for (auto &r : g_authRoles) {
-			                        if (r.id != id) continue;
-			                        found = true;
-			                        if (hasLabel) {
-			                            const std::string label = body.value("label", std::string{});
-			                            r.label = label.empty() ? r.id : label;
-			                        }
-			                        if (hasDesc) {
-			                            r.description = body.value("description", std::string{});
-			                        }
-			                        if (hasRank) {
-			                            r.rank = std::max(0, std::min(3, body.value("rank", r.rank)));
-			                        }
-			                        break;
-			                    }
+				                    const bool hasLabel = body.contains("label");
+				                    const bool hasDesc = body.contains("description");
+				                    const bool hasPerms = body.contains("permissions");
+				                    bool found = false;
+				                    for (auto &r : g_authRoles) {
+				                        if (r.id != id) continue;
+				                        found = true;
+				                        const bool isAdminRole = (r.id == "admin");
+				                        if (hasLabel) {
+				                            const std::string label = body.value("label", std::string{});
+				                            r.label = label.empty() ? r.id : label;
+				                        }
+				                        if (hasDesc) {
+				                            r.description = body.value("description", std::string{});
+				                        }
+				                        if (hasPerms) {
+				                            if (!isAdminRole) {
+				                                r.permissions = parse_permission_list(body.value("permissions", json::array()));
+				                            } else {
+				                                r.permissions = all_permission_ids();
+				                            }
+				                        }
+				                        break;
+				                    }
 			                    if (!found) {
 			                        resp["ok"] = false;
 			                        resp["error"] = "Role not found.";
@@ -12807,18 +13164,18 @@ window.addEventListener("load", startAutoRefresh);
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
 			                    }
-			                    // Ensure at least one admin-ranked user remains.
-			                    int adminCount = 0;
-			                    for (const auto &u : g_authUsers) {
-			                        if (role_rank(u.role) >= 3) adminCount++;
-			                    }
-			                    if (adminCount < 1) {
-			                        resp["ok"] = false;
-			                        resp["error"] = "Cannot remove admin access from all users.";
-			                        res.status = 400;
-			                        res.set_content(resp.dump(2), "application/json");
-			                        return;
-			                    }
+				                    // Ensure at least one user can manage users remains.
+				                    int managerCount = 0;
+				                    for (const auto &u : g_authUsers) {
+				                        if (role_has_permission(u.role, "auth.manage_users")) managerCount++;
+				                    }
+				                    if (managerCount < 1) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Cannot remove user-management access from all users.";
+				                        res.status = 400;
+				                        res.set_content(resp.dump(2), "application/json");
+				                        return;
+				                    }
 			                    if (!save_passwords_store(passwordsPath)) {
 			                        resp["ok"] = false;
 			                        resp["error"] = "Failed to save passwords.jsonc.";
@@ -12837,22 +13194,28 @@ window.addEventListener("load", startAutoRefresh);
 			            });
 
 			            // DELETE /auth/roles/<id>  (admin-only)
-			            svr.Delete(R"(/auth/roles/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
-			                json resp;
-			                AdminSessionInfo sess;
-			                if (!is_admin_user_request(req, sess)) {
-			                    resp["ok"] = false;
-			                    resp["error"] = "Admin login required.";
-			                    res.status = 403;
-			                    res.set_content(resp.dump(2), "application/json");
-			                    return;
-			                }
-			                try {
-			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-			                    load_passwords_store(passwordsPath);
-			                    if (!g_userStoreConfigured) {
-			                        resp["ok"] = false;
-			                        resp["error"] = "Not initialized.";
+				            svr.Delete(R"(/auth/roles/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+				                json resp;
+				                try {
+				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                    if (!load_passwords_store(passwordsPath)) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Failed to load passwords.jsonc.";
+				                        res.status = 500;
+				                        res.set_content(resp.dump(2), "application/json");
+				                        return;
+				                    }
+				                    AdminSessionInfo sess;
+				                    if (!is_admin_user_request(req, sess)) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Admin login required.";
+				                        res.status = 403;
+				                        res.set_content(resp.dump(2), "application/json");
+				                        return;
+				                    }
+				                    if (!g_userStoreConfigured) {
+				                        resp["ok"] = false;
+				                        resp["error"] = "Not initialized.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
@@ -12874,7 +13237,7 @@ window.addEventListener("load", startAutoRefresh);
 			                        return;
 			                    }
 			                    for (const auto &u : g_authUsers) {
-			                        if (normalize_auth_role(u.role) == id) {
+			                        if (normalize_auth_role_id(u.role) == id) {
 			                            resp["ok"] = false;
 			                            resp["error"] = "Cannot delete a role that is assigned to a user.";
 			                            res.status = 400;
@@ -12916,22 +13279,28 @@ window.addEventListener("load", startAutoRefresh);
 			            });
 
 		            // POST /auth/users  (admin-only)
-		            svr.Post("/auth/users", [&](const httplib::Request &req, httplib::Response &res) {
-		                json resp;
-		                AdminSessionInfo sess;
-		                if (!is_admin_user_request(req, sess)) {
-		                    resp["ok"] = false;
-		                    resp["error"] = "Admin login required.";
-		                    res.status = 403;
-		                    res.set_content(resp.dump(2), "application/json");
-		                    return;
-	                }
-	                try {
-	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-	                    load_passwords_store(passwordsPath);
-	                    if (!g_userStoreConfigured) {
-	                        resp["ok"] = false;
-	                        resp["error"] = "Not initialized.";
+			            svr.Post("/auth/users", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                try {
+			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    if (!load_passwords_store(passwordsPath)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Failed to load passwords.jsonc.";
+			                        res.status = 500;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    AdminSessionInfo sess;
+			                    if (!is_admin_user_request(req, sess)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Admin login required.";
+			                        res.status = 403;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    if (!g_userStoreConfigured) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Not initialized.";
 	                        res.status = 400;
 	                        res.set_content(resp.dump(2), "application/json");
 	                        return;
@@ -12939,7 +13308,7 @@ window.addEventListener("load", startAutoRefresh);
 	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
 	                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
 	                    const std::string password = body.value("password", std::string{});
-		                    const std::string role = normalize_auth_role(body.value("role", std::string{"viewer"}));
+		                    const std::string role = normalize_auth_role_id(body.value("role", std::string{"admin"}));
 		                    if (!role_exists(role)) {
 		                        resp["ok"] = false;
 		                        resp["error"] = "Invalid role.";
@@ -12982,6 +13351,9 @@ window.addEventListener("load", startAutoRefresh);
 
 	                    AuthUserRecord u;
 	                    u.username = username;
+	                    u.name = body.value("name", std::string{});
+	                    if (u.name.empty()) u.name = username;
+	                    u.description = body.value("description", std::string{});
 	                    u.role = role;
 	                    u.iterations = 150000;
 	                    u.salt_b64 = b64_encode(salt);
@@ -13010,14 +13382,16 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 		            });
 
-		            // PUT /auth/users/<username>  (admin-only)
-		            // Body: { "role": "...", "password": "...", "confirm": "..." }
+		            // PUT /auth/users/<username>
+		            // Admin may update: role, password, name
+		            // User may update self: password, name
+		            // Username is immutable (URL path).
 		            svr.Put(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
 		                json resp;
 		                AdminSessionInfo sess;
-		                if (!is_admin_user_request(req, sess)) {
+		                if (!is_user_logged_in(req, sess)) {
 		                    resp["ok"] = false;
-		                    resp["error"] = "Admin login required.";
+		                    resp["error"] = "Login required.";
 		                    res.status = 403;
 		                    res.set_content(resp.dump(2), "application/json");
 		                    return;
@@ -13045,10 +13419,30 @@ window.addEventListener("load", startAutoRefresh);
 		                    json body = json::parse(req.body.empty() ? "{}" : req.body);
 		                    const bool hasRole = body.contains("role");
 		                    const bool hasPassword = body.contains("password");
+		                    const bool hasName = body.contains("name");
+		                    const bool hasDescription = body.contains("description");
+
+		                    const bool isSelf = (sess.username == username);
+		                    const bool canManageUsers = session_has_permission(sess, "auth.manage_users");
+
+		                    if (!isSelf && !canManageUsers) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Admin login required.";
+		                        res.status = 403;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
 
 		                    std::string nextRole;
 		                    if (hasRole) {
-		                        nextRole = normalize_auth_role(body.value("role", std::string{"viewer"}));
+		                        if (!canManageUsers) {
+		                            resp["ok"] = false;
+		                            resp["error"] = "Insufficient permissions to change role.";
+		                            res.status = 403;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                        nextRole = normalize_auth_role_id(body.value("role", std::string{"admin"}));
 		                        if (!role_exists(nextRole)) {
 		                            resp["ok"] = false;
 		                            resp["error"] = "Invalid role.";
@@ -13078,11 +13472,37 @@ window.addEventListener("load", startAutoRefresh);
 		                        }
 		                    }
 
+		                    std::string nextName;
+		                    if (hasName) {
+		                        nextName = body.value("name", std::string{});
+		                    }
+		                    std::string nextDescription;
+		                    if (hasDescription) {
+		                        nextDescription = body.value("description", std::string{});
+		                    }
+
 		                    bool found = false;
 		                    for (auto &u : g_authUsers) {
 		                        if (u.username != username) continue;
 		                        found = true;
-		                        if (hasRole) u.role = nextRole;
+		                        if (hasRole) {
+		                            const std::string currentRole = normalize_auth_role_id(u.role);
+		                            if (isSelf && currentRole != nextRole) {
+		                                resp["ok"] = false;
+		                                resp["error"] = "You cannot change your own role.";
+		                                res.status = 400;
+		                                res.set_content(resp.dump(2), "application/json");
+		                                return;
+		                            }
+		                            u.role = nextRole;
+		                        }
+		                        if (hasName) {
+		                            u.name = nextName;
+		                            if (u.name.empty()) u.name = u.username;
+		                        }
+		                        if (hasDescription) {
+		                            u.description = nextDescription;
+		                        }
 		                        if (hasPassword) {
 		                            std::string salt(16, '\0');
 		                            if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
@@ -13113,16 +13533,18 @@ window.addEventListener("load", startAutoRefresh);
 		                        return;
 		                    }
 
-		                    bool hasAdmin = false;
-		                    for (const auto &u : g_authUsers) {
-		                        if (role_rank(u.role) >= 3) { hasAdmin = true; break; }
-		                    }
-		                    if (!hasAdmin) {
-		                        resp["ok"] = false;
-		                        resp["error"] = "Cannot remove admin access from all users.";
-		                        res.status = 400;
-		                        res.set_content(resp.dump(2), "application/json");
-		                        return;
+		                    if (canManageUsers) {
+			                    bool hasManager = false;
+			                    for (const auto &u : g_authUsers) {
+			                        if (role_has_permission(u.role, "auth.manage_users")) { hasManager = true; break; }
+			                    }
+			                    if (!hasManager) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Cannot remove user-management access from all users.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
 		                    }
 
 		                    if (!save_passwords_store(passwordsPath)) {
@@ -13142,24 +13564,30 @@ window.addEventListener("load", startAutoRefresh);
 		                }
 		            });
 
-		            // DELETE /auth/users/<username>  (admin-only)
-		            svr.Delete(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
-		                json resp;
-		                AdminSessionInfo sess;
-		                if (!is_admin_user_request(req, sess)) {
-		                    resp["ok"] = false;
-		                    resp["error"] = "Admin login required.";
-		                    res.status = 403;
-		                    res.set_content(resp.dump(2), "application/json");
-		                    return;
-	                }
-	                try {
-	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-	                    load_passwords_store(passwordsPath);
-	                    if (!g_userStoreConfigured) {
-	                        resp["ok"] = false;
-	                        resp["error"] = "Not initialized.";
-	                        res.status = 400;
+		            // DELETE /auth/users/<username>  (admin-only; cannot delete self)
+			            svr.Delete(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+		                try {
+		                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		                    if (!load_passwords_store(passwordsPath)) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Failed to load passwords.jsonc.";
+		                        res.status = 500;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+		                    AdminSessionInfo sess;
+		                    if (!is_admin_user_request(req, sess)) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Admin login required.";
+		                        res.status = 403;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+		                    if (!g_userStoreConfigured) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Not initialized.";
+		                        res.status = 400;
 	                        res.set_content(resp.dump(2), "application/json");
 	                        return;
 	                    }
@@ -13168,6 +13596,13 @@ window.addEventListener("load", startAutoRefresh);
 	                    if (username.empty()) {
 	                        resp["ok"] = false;
 	                        resp["error"] = "Invalid username.";
+	                        res.status = 400;
+	                        res.set_content(resp.dump(2), "application/json");
+	                        return;
+	                    }
+	                    if (normalize_auth_username(sess.username) == username) {
+	                        resp["ok"] = false;
+	                        resp["error"] = "Cannot delete the currently logged-in user.";
 	                        res.status = 400;
 	                        res.set_content(resp.dump(2), "application/json");
 	                        return;
@@ -13188,17 +13623,17 @@ window.addEventListener("load", startAutoRefresh);
 	                        return;
 	                    }
 
-		                    bool hasAdmin = false;
-		                    for (const auto &u : remaining) {
-		                        if (role_rank(u.role) >= 3) { hasAdmin = true; break; }
-		                    }
-		                    if (!hasAdmin) {
-		                        resp["ok"] = false;
-		                        resp["error"] = "Cannot remove the last admin user.";
-		                        res.status = 400;
-		                        res.set_content(resp.dump(2), "application/json");
-		                        return;
-		                    }
+			                    bool hasManager = false;
+			                    for (const auto &u : remaining) {
+			                        if (role_has_permission(u.role, "auth.manage_users")) { hasManager = true; break; }
+			                    }
+			                    if (!hasManager) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Cannot remove the last user with manage-users permission.";
+			                        res.status = 400;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
 
 	                    g_authUsers = remaining;
 	                    if (!save_passwords_store(passwordsPath)) {

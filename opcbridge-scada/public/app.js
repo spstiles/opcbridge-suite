@@ -27,6 +27,8 @@ const els = {
   scadaHmiHost: document.getElementById('scadaHmiHost'),
   scadaHmiPort: document.getElementById('scadaHmiPort'),
   scadaOpenHmiBtn: document.getElementById('scadaOpenHmiBtn'),
+  topLinkOpcbridge: document.getElementById('topLinkOpcbridge'),
+  topLinkHmi: document.getElementById('topLinkHmi'),
   scadaSettingsReloadBtn: document.getElementById('scadaSettingsReloadBtn'),
   scadaSettingsSaveBtn: document.getElementById('scadaSettingsSaveBtn'),
   scadaSettingsStatus: document.getElementById('scadaSettingsStatus'),
@@ -89,6 +91,14 @@ const els = {
   activeAlarmsTableBody: document.querySelector('#activeAlarmsTable tbody'),
   alarmEventsTableBody: document.querySelector('#alarmEventsTable tbody'),
 
+  // Logs
+  logsSource: document.getElementById('logsSource'),
+  logsUnit: document.getElementById('logsUnit'),
+  logsLines: document.getElementById('logsLines'),
+  logsRefreshBtn: document.getElementById('logsRefreshBtn'),
+  logsStatus: document.getElementById('logsStatus'),
+  logsOutput: document.getElementById('logsOutput'),
+
   // Workspace (tree)
   treeView: document.getElementById('treeView'),
   treeNote: document.getElementById('treeNote'),
@@ -127,6 +137,7 @@ const els = {
   newTagStatus: document.getElementById('newTagStatus'),
   workspaceItemDeviceEdit: document.getElementById('workspaceItemDeviceEdit'),
   workspaceItemTagEdit: document.getElementById('workspaceItemTagEdit'),
+  workspaceItemAlarmEdit: document.getElementById('workspaceItemAlarmEdit'),
   workspaceItemGeneric: document.getElementById('workspaceItemGeneric'),
   editDevId: document.getElementById('editDevId'),
   editDevDriver: document.getElementById('editDevDriver'),
@@ -149,6 +160,23 @@ const els = {
   editTagCancelBtn: document.getElementById('editTagCancelBtn'),
   editTagSaveBtn: document.getElementById('editTagSaveBtn'),
   editTagStatus: document.getElementById('editTagStatus'),
+
+  editAlarmId: document.getElementById('editAlarmId'),
+  editAlarmName: document.getElementById('editAlarmName'),
+  editAlarmGroup: document.getElementById('editAlarmGroup'),
+  editAlarmSite: document.getElementById('editAlarmSite'),
+  editAlarmConn: document.getElementById('editAlarmConn'),
+  editAlarmTag: document.getElementById('editAlarmTag'),
+  editAlarmType: document.getElementById('editAlarmType'),
+  editAlarmEnabled: document.getElementById('editAlarmEnabled'),
+  editAlarmSeverity: document.getElementById('editAlarmSeverity'),
+  editAlarmThreshold: document.getElementById('editAlarmThreshold'),
+  editAlarmHysteresis: document.getElementById('editAlarmHysteresis'),
+  editAlarmMsgOn: document.getElementById('editAlarmMsgOn'),
+  editAlarmMsgOff: document.getElementById('editAlarmMsgOff'),
+  editAlarmCancelBtn: document.getElementById('editAlarmCancelBtn'),
+  editAlarmSaveBtn: document.getElementById('editAlarmSaveBtn'),
+  editAlarmStatus: document.getElementById('editAlarmStatus'),
 
   newDeviceHint: document.getElementById('newDeviceHint'),
   newDevId: document.getElementById('newDevId'),
@@ -201,8 +229,8 @@ const els = {
   usersFormId: document.getElementById('usersFormId'),
   usersFormLabel: document.getElementById('usersFormLabel'),
   usersFormDescription: document.getElementById('usersFormDescription'),
-  usersFormRankRow: document.getElementById('usersFormRankRow'),
-  usersFormRank: document.getElementById('usersFormRank'),
+  usersFormPermsRow: document.getElementById('usersFormPermsRow'),
+  usersFormPerms: document.getElementById('usersFormPerms'),
   usersFormRoleRow: document.getElementById('usersFormRoleRow'),
   usersFormRole: document.getElementById('usersFormRole'),
   usersFormPasswordRow: document.getElementById('usersFormPasswordRow'),
@@ -228,6 +256,10 @@ const state = {
   alarmsAllLast: null,
   alarmsAll: [],
   alarmHistoryLast: null,
+  // alarms config (from opcbridge alarms.json via /config/alarms)
+  alarmsConfigLast: null,
+  alarmsConfig: null,
+  alarmsConfigMtimeMs: 0,
 
   // users/roles ui (opcbridge auth store)
   usersRoles: [],
@@ -278,6 +310,26 @@ const DRIVER_LABELS = {
   ab_eip: 'Allen-Bradley Ethernet/IP'
 };
 
+const ROLE_PERMISSION_DEFS = [
+  { id: 'hmi.edit_screens', label: 'Edit screens (HMI editor)' },
+  { id: 'opcbridge.write_tags', label: 'Write tags (runtime)' },
+  { id: 'opcbridge.edit_config', label: 'Edit connections/tags (config)' },
+  { id: 'suite.manage_server', label: 'Manage server (ports, endpoints, tokens)' },
+  { id: 'auth.manage_users', label: 'Manage users/roles' },
+  { id: 'suite.view_logs', label: 'View logs' }
+];
+
+function getUserPermissions() {
+  const perms = state.opcbridgeAuthStatus?.user?.permissions;
+  return Array.isArray(perms) ? perms.map((p) => String(p || '').trim()).filter(Boolean) : [];
+}
+
+function hasPerm(permId) {
+  const want = String(permId || '').trim();
+  if (!want) return false;
+  return getUserPermissions().includes(want);
+}
+
 const PLC_TYPE_LABELS = {
   lgx: 'Allen-Bradley Logix (ControlLogix / CompactLogix)',
   mlgx: 'Allen-Bradley MicroLogix',
@@ -314,6 +366,164 @@ function setFatalStatus(err) {
   if (els.statusLine) els.statusLine.textContent = `UI error: ${msg}`;
 }
 
+function canAccessUsersTab() {
+  return hasPerm('auth.manage_users');
+}
+
+function canAccessConfigureTab() {
+  return hasPerm('suite.manage_server');
+}
+
+function canAccessLogsTab() {
+  return hasPerm('suite.view_logs');
+}
+
+function canAccessWorkspaceTab() {
+  return hasPerm('opcbridge.edit_config');
+}
+
+function canEditConfig() {
+  return hasPerm('opcbridge.edit_config');
+}
+
+function updateUsersTabVisibility() {
+  const usersBtn = document.querySelector('.tabs .tab[data-tab="users"]');
+  if (!usersBtn) return;
+  const canSee = canAccessUsersTab();
+  usersBtn.style.display = canSee ? '' : 'none';
+
+  if (!canSee) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel && activePanel.id === 'tab-users') {
+      setTab('overview');
+    }
+  }
+}
+
+function updateConfigureTabVisibility() {
+  const cfgBtn = document.querySelector('.tabs .tab[data-tab="configure"]');
+  if (!cfgBtn) return;
+  const canSee = canAccessConfigureTab();
+  cfgBtn.style.display = canSee ? '' : 'none';
+
+  if (!canSee) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel && activePanel.id === 'tab-configure') {
+      setTab('overview');
+    }
+  }
+}
+
+function updateWorkspaceTabVisibility() {
+  const wsBtn = document.querySelector('.tabs .tab[data-tab="workspace"]');
+  if (!wsBtn) return;
+  const canSee = canAccessWorkspaceTab();
+  wsBtn.style.display = canSee ? '' : 'none';
+
+  if (!canSee) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel && activePanel.id === 'tab-workspace') {
+      setTab('overview');
+    }
+  }
+}
+
+function updateLogsTabVisibility() {
+  const logsBtn = document.querySelector('.tabs .tab[data-tab="logs"]');
+  if (!logsBtn) return;
+  const canSee = canAccessLogsTab();
+  logsBtn.style.display = canSee ? '' : 'none';
+
+  if (!canSee) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel && activePanel.id === 'tab-logs') {
+      setTab('overview');
+    }
+  }
+}
+
+function logsSetStatus(msg) {
+  if (els.logsStatus) els.logsStatus.textContent = String(msg || '');
+}
+
+function logsSetOutput(text) {
+  if (!els.logsOutput) return;
+  els.logsOutput.textContent = String(text || '');
+}
+
+async function refreshLogs() {
+  if (!els.logsOutput) return;
+  const source = String(els.logsSource?.value || 'systemd').trim() || 'systemd';
+  const unit = String(els.logsUnit?.value || '').trim();
+  const lines = Math.max(10, Math.min(5000, Math.trunc(Number(els.logsLines?.value ?? 400) || 400)));
+  logsSetStatus('Loading…');
+  try {
+    const u = source === 'systemd'
+      ? `/api/logs?unit=${encodeURIComponent(unit)}&lines=${encodeURIComponent(String(lines))}`
+      : `/api/logs/source?source=${encodeURIComponent(source)}&limit=${encodeURIComponent(String(lines))}`;
+    const resp = await apiGetText(u);
+    let data = null;
+    try { data = JSON.parse(resp); } catch { data = { ok: false, error: resp }; }
+    if (!data?.ok) {
+      const err = String(data?.error || 'unknown error');
+      const hint = data?.hint ? String(data.hint) : '';
+      const stderr = data?.stderr ? String(data.stderr) : '';
+      logsSetStatus(`Failed: ${err}`);
+      const extra = [
+        hint ? `Hint: ${hint}` : '',
+        stderr ? `stderr:\n${stderr}` : '',
+        (data?.details && typeof data.details === 'object') ? `details:\n${JSON.stringify(data.details, null, 2)}` : ''
+      ].filter(Boolean).join('\n\n');
+      logsSetOutput(extra);
+      return;
+    }
+    logsSetStatus(`OK · ${String(data.unit || data.source || unit || source)} · ${Number(data.lines || lines)} lines`);
+    logsSetOutput(String(data.text || ''));
+  } catch (err) {
+    logsSetStatus(`Failed: ${err.message}`);
+    logsSetOutput('');
+  }
+}
+
+function wireLogsUi() {
+  if (!els.logsRefreshBtn) return;
+  if (els.logsRefreshBtn.dataset.wired === '1') return;
+  els.logsRefreshBtn.dataset.wired = '1';
+
+  if (els.logsSource) {
+    els.logsSource.innerHTML = [
+      { value: 'systemd', label: 'System journal (journalctl)' },
+      { value: 'opcbridge_events', label: 'opcbridge alarms/events log' },
+      { value: 'alarm_server_history', label: 'alarm server history' },
+      { value: 'hmi_audit', label: 'HMI audit log' }
+    ].map((s) => `<option value="${escapeHtml(s.value)}">${escapeHtml(s.label)}</option>`).join('');
+  }
+
+  const units = [
+    { value: 'opcbridge.service', label: 'opcbridge.service' },
+    { value: 'opcbridge-alarms.service', label: 'opcbridge-alarms.service' },
+    { value: 'opcbridge-hmi.service', label: 'opcbridge-hmi.service' },
+    { value: 'opcbridge-scada.service', label: 'opcbridge-scada.service' }
+  ];
+  if (els.logsUnit) {
+    els.logsUnit.innerHTML = units.map((u) => `<option value="${escapeHtml(u.value)}">${escapeHtml(u.label)}</option>`).join('');
+  }
+
+  els.logsRefreshBtn.addEventListener('click', refreshLogs);
+
+  const updateLogsControls = () => {
+    const source = String(els.logsSource?.value || 'systemd').trim() || 'systemd';
+    const serviceRow = els.logsUnit?.closest('.form-row');
+    if (serviceRow) serviceRow.style.display = (source === 'systemd') ? '' : 'none';
+  };
+  if (els.logsSource) {
+    els.logsSource.addEventListener('change', () => {
+      updateLogsControls();
+    });
+  }
+  updateLogsControls();
+}
+
 window.addEventListener('error', (e) => {
   setFatalStatus(e?.error || e?.message || 'Unknown error');
 });
@@ -323,6 +533,25 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 function setTab(id) {
+  const next = String(id || '').trim();
+  if (!next) return;
+  if (next === 'alarms') {
+    // Alarms page removed (data is still visible elsewhere).
+    id = 'overview';
+  }
+  if (next === 'configure' && !canAccessConfigureTab()) {
+    id = 'overview';
+  }
+  if (next === 'workspace' && !canAccessWorkspaceTab()) {
+    id = 'overview';
+  }
+  if (next === 'logs' && !canAccessLogsTab()) {
+    id = 'overview';
+  }
+  if (next === 'users' && !canAccessUsersTab()) {
+    id = 'overview';
+  }
+
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('is-active', b.dataset.tab === id));
   document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('is-active', p.id === `tab-${id}`));
 
@@ -330,11 +559,15 @@ function setTab(id) {
     refreshUsersPanel().catch(() => {});
     refreshUserAuthLine().catch(() => {});
   }
+  if (id === 'logs') {
+    refreshLogs().catch(() => {});
+  }
 }
 
 els.tabs?.addEventListener('click', (e) => {
   const btn = e.target.closest('.tab');
   if (!btn) return;
+  if (!btn.dataset.tab) return; // ignore non-tab links in the header
   setTab(btn.dataset.tab);
 });
 
@@ -894,6 +1127,87 @@ function renderJson(el, obj) {
   el.textContent = JSON.stringify(obj, null, 2);
 }
 
+// ---------------- Alarms config (opcbridge alarms.json) ----------------
+
+function normalizeAlarmGroupName(name) {
+  return String(name || '').trim();
+}
+
+function normalizeAlarmSiteName(name) {
+  return String(name || '').trim();
+}
+
+function ensureAlarmGroupsTree(cfgObj) {
+  const obj = (cfgObj && typeof cfgObj === 'object' && !Array.isArray(cfgObj)) ? cfgObj : {};
+  if (!Array.isArray(obj.groups)) obj.groups = [];
+  obj.groups = obj.groups.filter((g) => g && typeof g === 'object' && !Array.isArray(g));
+  obj.groups.forEach((g) => {
+    g.name = normalizeAlarmGroupName(g.name || g.label || g.id || '');
+    if (!Array.isArray(g.sites)) g.sites = [];
+    g.sites = g.sites.filter((s) => s && typeof s === 'object' && !Array.isArray(s));
+    g.sites.forEach((s) => { s.name = normalizeAlarmSiteName(s.name || s.label || s.id || ''); });
+    g.sites = g.sites.filter((s) => s.name);
+  });
+  obj.groups = obj.groups.filter((g) => g.name);
+  return obj;
+}
+
+function parseOpcbridgeAlarmsConfig(resp) {
+  // Expected: { ok, json: { alarms: [...] , groups?: [...] }, mtime_ms }
+  const cfg = resp?.json;
+  if (!cfg || typeof cfg !== 'object') return { alarms: [], groups: [] };
+  const out = { ...(cfg || {}) };
+  if (!Array.isArray(out.alarms)) out.alarms = [];
+  ensureAlarmGroupsTree(out);
+  return out;
+}
+
+async function loadOpcbridgeAlarmsConfig() {
+  const resp = await apiGet('/api/opcbridge/config/alarms');
+  state.alarmsConfigLast = resp || null;
+  state.alarmsConfigMtimeMs = Number(resp?.mtime_ms || 0) || 0;
+  state.alarmsConfig = parseOpcbridgeAlarmsConfig(resp);
+  return state.alarmsConfig;
+}
+
+async function saveOpcbridgeAlarmsConfig(nextCfg) {
+  const obj = (nextCfg && typeof nextCfg === 'object' && !Array.isArray(nextCfg)) ? nextCfg : {};
+  if (!Array.isArray(obj.alarms)) obj.alarms = [];
+  ensureAlarmGroupsTree(obj);
+  const content = JSON.stringify(obj, null, 2) + '\n';
+  await apiPostJson('/api/opcbridge/config/file', { path: 'alarms.json', content });
+}
+
+function upsertAlarmGroup(cfg, groupName) {
+  const name = normalizeAlarmGroupName(groupName);
+  if (!name) throw new Error('Group name is required.');
+  ensureAlarmGroupsTree(cfg);
+  const want = name.toLowerCase();
+  if (cfg.groups.some((g) => String(g?.name || '').toLowerCase() === want)) return;
+  cfg.groups.push({ name, sites: [] });
+}
+
+function upsertAlarmSite(cfg, groupName, siteName) {
+  const gname = normalizeAlarmGroupName(groupName);
+  const sname = normalizeAlarmSiteName(siteName);
+  if (!gname) throw new Error('Group name is required.');
+  if (!sname) throw new Error('Site name is required.');
+  ensureAlarmGroupsTree(cfg);
+  const group = cfg.groups.find((g) => String(g?.name || '').toLowerCase() === gname.toLowerCase()) || null;
+  if (!group) throw new Error(`Group not found: ${gname}`);
+  const want = sname.toLowerCase();
+  if (Array.isArray(group.sites) && group.sites.some((s) => String(s?.name || '').toLowerCase() === want)) return;
+  group.sites = Array.isArray(group.sites) ? group.sites : [];
+  group.sites.push({ name: sname });
+}
+
+function ensureGroupSiteInConfig(cfg, groupName, siteName) {
+  const g = normalizeAlarmGroupName(groupName);
+  const s = normalizeAlarmSiteName(siteName);
+  if (g) upsertAlarmGroup(cfg, g);
+  if (g && s) upsertAlarmSite(cfg, g, s);
+}
+
 // ---------------- Configure ----------------
 
 function setScadaSettingsStatus(msg) {
@@ -929,10 +1243,37 @@ async function refreshMqttCaStatus() {
 }
 
 function hmiUrlFromForm() {
-  const scheme = els.scadaHmiScheme?.value || 'http';
-  const host = els.scadaHmiHost?.value?.trim() || '127.0.0.1';
+  const currentHost = (window.location && window.location.hostname) ? String(window.location.hostname) : '';
+  const currentScheme = (window.location && window.location.protocol) ? String(window.location.protocol).replace(':', '') : '';
+  // For UI convenience, the header links should use the same host you used to reach SCADA
+  // (headless servers won't have a browser on localhost).
+  const scheme = currentScheme || (els.scadaHmiScheme?.value || 'http');
+  const host = currentHost || (els.scadaHmiHost?.value?.trim() || '127.0.0.1');
   const port = Number(els.scadaHmiPort?.value ?? 3000) || 3000;
   return `${scheme}://${host}:${port}`;
+}
+
+function opcbridgeUrlFromForm() {
+  const currentHost = (window.location && window.location.hostname) ? String(window.location.hostname) : '';
+  const currentScheme = (window.location && window.location.protocol) ? String(window.location.protocol).replace(':', '') : '';
+  // For UI convenience, the header links should use the same host you used to reach SCADA.
+  const scheme = currentScheme || (els.scadaOpcbridgeScheme?.value || 'http');
+  const host = currentHost || (els.scadaOpcbridgeHost?.value?.trim() || '127.0.0.1');
+  const port = Number(els.scadaOpcbridgePort?.value ?? 8080) || 8080;
+  return `${scheme}://${host}:${port}`;
+}
+
+function refreshTopLinks() {
+  const opcUrl = opcbridgeUrlFromForm();
+  const hmiUrl = hmiUrlFromForm();
+  if (els.topLinkOpcbridge) {
+    els.topLinkOpcbridge.href = `${opcUrl}/`;
+    els.topLinkOpcbridge.title = `${opcUrl}/`;
+  }
+  if (els.topLinkHmi) {
+    els.topLinkHmi.href = `${hmiUrl}/`;
+    els.topLinkHmi.title = `${hmiUrl}/`;
+  }
 }
 
 function fillScadaSettings(cfg) {
@@ -952,6 +1293,8 @@ function fillScadaSettings(cfg) {
   if (els.scadaHmiScheme) els.scadaHmiScheme.value = String(cfg.hmi?.scheme || 'http');
   if (els.scadaHmiHost) els.scadaHmiHost.value = String(cfg.hmi?.host || '');
   if (els.scadaHmiPort) els.scadaHmiPort.value = String(cfg.hmi?.port ?? '');
+
+  refreshTopLinks();
 }
 
 function readScadaSettingsFromForm() {
@@ -986,6 +1329,7 @@ async function loadScadaSettings() {
     fillScadaSettings(data?.config);
     state.scadaConfigFull = data?.config || null;
     renderWorkspaceTree();
+    refreshTopLinks();
     setScadaSettingsStatus(data?.local_only ? 'Ready. (Config updates restricted to localhost)' : 'Ready.');
   } catch (err) {
     setScadaSettingsStatus(`Failed: ${err.message}`);
@@ -998,6 +1342,7 @@ async function saveScadaSettings() {
     const next = readScadaSettingsFromForm();
     const resp = await apiPostJson('/api/scada/config', { config: next });
     fillScadaSettings(resp?.config);
+    refreshTopLinks();
 
     if (resp?.restart_required) {
       setScadaSettingsStatus('Saved. Restart opcbridge-scada for listen host/port changes to take effect.');
@@ -1018,6 +1363,15 @@ function wireScadaSettingsUi() {
   els.scadaOpenHmiBtn?.addEventListener('click', () => {
     window.open(hmiUrlFromForm(), '_blank', 'noopener,noreferrer');
   });
+
+  // Keep header links up-to-date while editing.
+  [
+    els.scadaOpcbridgeScheme, els.scadaOpcbridgeHost, els.scadaOpcbridgePort,
+    els.scadaHmiScheme, els.scadaHmiHost, els.scadaHmiPort
+  ].forEach((el) => el?.addEventListener?.('input', refreshTopLinks));
+  [
+    els.scadaOpcbridgeScheme, els.scadaHmiScheme
+  ].forEach((el) => el?.addEventListener?.('change', refreshTopLinks));
 }
 
 // ---------------- opcbridge service (systemd) ----------------
@@ -1829,9 +2183,10 @@ function closeWorkspaceItemModal() {
   setWorkspaceItemStatus('');
   setEditDevStatus('');
   setEditTagStatus('');
-  setEditTagStatus('');
+  setEditAlarmStatus('');
   if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
   if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
+  if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
   if (els.workspaceItemModal) els.workspaceItemModal.style.display = 'none';
 }
@@ -1844,9 +2199,16 @@ function setEditTagStatus(msg) {
   if (els.editTagStatus) els.editTagStatus.textContent = String(msg || '');
 }
 
+function setEditAlarmStatus(msg) {
+  if (els.editAlarmStatus) els.editAlarmStatus.textContent = String(msg || '');
+}
+
 function openWorkspaceItemModal(node) {
   if (!els.workspaceItemModal) return;
   if (!node) return;
+
+  // Show immediately so any async loads (or errors) still present feedback.
+  els.workspaceItemModal.style.display = 'flex';
 
   state.pendingWorkspaceItem = { id: String(node.id || '') };
 
@@ -1857,6 +2219,7 @@ function openWorkspaceItemModal(node) {
 
   if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
   if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
+  if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
 
   const type = String(node.type || '');
@@ -1908,7 +2271,6 @@ function openWorkspaceItemModal(node) {
       els.workspaceItemHint.textContent = relPath ? `Editing ${relPath}` : 'Editing device.';
     }
 
-    els.workspaceItemModal.style.display = 'flex';
     return;
   }
 
@@ -1922,7 +2284,10 @@ function openWorkspaceItemModal(node) {
     if (els.workspaceItemHint) els.workspaceItemHint.textContent = `${conn}:${name}`;
 
     if (els.editTagConn) els.editTagConn.value = conn;
-    if (els.editTagName) els.editTagName.value = name;
+    if (els.editTagName) {
+      els.editTagName.value = name;
+      els.editTagName.disabled = !canEditConfig();
+    }
 
     const row = getEffectiveTagsAll().find((tt) => String(tt?.connection_id || '') === conn && String(tt?.name || '') === name) || null;
     if (!row) {
@@ -1945,8 +2310,73 @@ function openWorkspaceItemModal(node) {
       setEditTagStatus('');
     }
 
-    els.workspaceItemModal.style.display = 'flex';
     els.editTagPlc?.focus?.();
+    return;
+  }
+
+  if (type === 'alarm') {
+    if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'block';
+
+    const alarmId = String(node.meta?.alarm_id || '').trim();
+    state.pendingWorkspaceItem = { id: String(node.id || ''), type: 'alarm', mode: 'edit', alarm_id: alarmId };
+    if (els.workspaceItemHint) els.workspaceItemHint.textContent = alarmId ? `Alarm: ${alarmId}` : 'Alarm';
+
+    const cfg = state.alarmsConfig || { alarms: [], groups: [] };
+    const existing = (Array.isArray(cfg.alarms) ? cfg.alarms : []).find((a) => String(a?.id || '').trim() === alarmId) || null;
+
+    setEditAlarmStatus('');
+
+    if (els.editAlarmId) {
+      els.editAlarmId.value = existing ? String(existing.id || '') : alarmId;
+      els.editAlarmId.disabled = true; // immutable
+    }
+    if (els.editAlarmName) els.editAlarmName.value = existing ? String(existing.name || '') : String(node.label || '');
+    if (els.editAlarmGroup) els.editAlarmGroup.value = existing ? String(existing.group || '') : String(node.meta?.group || '');
+    if (els.editAlarmSite) els.editAlarmSite.value = existing ? String(existing.site || '') : String(node.meta?.site || '');
+
+    // Fill connection options from loaded connections
+    if (els.editAlarmConn) {
+      const conns = state.connFiles.slice().map((f) => connectionIdForConnFilePath(String(f?.path || ''))).filter(Boolean);
+      conns.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+      els.editAlarmConn.textContent = '';
+      conns.forEach((cid) => {
+        const opt = document.createElement('option');
+        opt.value = cid;
+        opt.textContent = cid;
+        els.editAlarmConn.appendChild(opt);
+      });
+      const want = existing ? String(existing.connection_id || '') : String(node.meta?.source?.connection_id || '');
+      if (want) els.editAlarmConn.value = want;
+    }
+
+    const refreshTagSelect = () => {
+      const cid = String(els.editAlarmConn?.value || '').trim();
+      if (!els.editAlarmTag) return;
+      els.editAlarmTag.textContent = '';
+      const tags = getEffectiveTagsAll().filter((t) => String(t?.connection_id || '') === cid);
+      tags.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
+      tags.forEach((t) => {
+        const opt = document.createElement('option');
+        opt.value = String(t?.name || '');
+        opt.textContent = String(t?.name || '');
+        els.editAlarmTag.appendChild(opt);
+      });
+      const wantTag = existing ? String(existing.tag_name || '') : String(node.meta?.source?.tag || '');
+      if (wantTag) els.editAlarmTag.value = wantTag;
+    };
+
+    if (els.editAlarmConn) els.editAlarmConn.onchange = refreshTagSelect;
+    refreshTagSelect();
+
+    if (els.editAlarmType) els.editAlarmType.value = existing ? String(existing.type || 'high') : 'high';
+    if (els.editAlarmEnabled) els.editAlarmEnabled.checked = existing ? (existing.enabled !== false) : true;
+    if (els.editAlarmSeverity) els.editAlarmSeverity.value = existing && existing.severity != null ? String(existing.severity) : '500';
+    if (els.editAlarmThreshold) els.editAlarmThreshold.value = existing && existing.threshold != null ? String(existing.threshold) : '';
+    if (els.editAlarmHysteresis) els.editAlarmHysteresis.value = existing && existing.hysteresis != null ? String(existing.hysteresis) : '';
+    if (els.editAlarmMsgOn) els.editAlarmMsgOn.value = existing ? String(existing.message_on_active || '') : '';
+    if (els.editAlarmMsgOff) els.editAlarmMsgOff.value = existing ? String(existing.message_on_return || '') : '';
+
+    (els.editAlarmName || els.editAlarmGroup || els.editAlarmSite || els.editAlarmConn)?.focus?.();
     return;
   }
 
@@ -1968,18 +2398,6 @@ function openWorkspaceItemModal(node) {
       addRow('Enabled', row?.enabled !== false ? 'yes' : 'no');
       addRow('Writable', row?.writable === true ? 'yes' : 'no');
     }
-  } else if (type === 'alarm') {
-    addRow('Alarm ID', String(node.meta?.alarm_id || ''));
-    addRow('Name', String(node.label || ''));
-    addRow('Group', String(node.meta?.group || ''), !String(node.meta?.group || '').trim());
-    addRow('Site', String(node.meta?.site || ''), !String(node.meta?.site || '').trim());
-    addRow('Severity', node.meta?.severity == null ? '' : String(node.meta.severity), node.meta?.severity == null);
-    addRow('Enabled', node.meta?.enabled === false ? 'no' : 'yes');
-    addRow('Active', node.meta?.active ? 'yes' : 'no');
-    addRow('Acked', node.meta?.acked ? 'yes' : 'no');
-    const src = node.meta?.source || {};
-    addRow('Source', `${String(src?.connection_id || '')}:${String(src?.tag || '')}`.replace(/^:$/, ''), !(src?.connection_id || src?.tag));
-    addRow('Message', String(node.meta?.message || ''), !String(node.meta?.message || '').trim());
   } else if (type === 'event') {
     const ev = node.meta || {};
     const src = ev?.source || {};
@@ -2002,6 +2420,71 @@ function openWorkspaceItemModal(node) {
   els.workspaceItemModal.style.display = 'flex';
 }
 
+function openNewAlarmModal({ group, site } = {}) {
+  if (!els.workspaceItemModal) return;
+
+  state.pendingWorkspaceItem = { id: 'alarm:new', type: 'alarm', mode: 'new', alarm_id: '' };
+  if (els.workspaceItemHint) els.workspaceItemHint.textContent = 'New Alarm';
+  if (els.workspaceItemTbody) els.workspaceItemTbody.textContent = '';
+  setWorkspaceItemStatus('');
+  setEditAlarmStatus('');
+
+  if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
+  if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
+  if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
+  if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'block';
+
+  const titleEl = document.getElementById('workspaceItemModalTitle');
+  if (titleEl) titleEl.textContent = 'New Alarm';
+
+  if (els.editAlarmId) { els.editAlarmId.value = ''; els.editAlarmId.disabled = false; }
+  if (els.editAlarmName) els.editAlarmName.value = '';
+  if (els.editAlarmGroup) els.editAlarmGroup.value = String(group || '');
+  if (els.editAlarmSite) els.editAlarmSite.value = String(site || '');
+
+  // Connections
+  if (els.editAlarmConn) {
+    const conns = state.connFiles.slice().map((f) => connectionIdForConnFilePath(String(f?.path || ''))).filter(Boolean);
+    conns.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+    els.editAlarmConn.textContent = '';
+    conns.forEach((cid) => {
+      const opt = document.createElement('option');
+      opt.value = cid;
+      opt.textContent = cid;
+      els.editAlarmConn.appendChild(opt);
+    });
+    if (els.editAlarmConn.options.length) els.editAlarmConn.value = String(els.editAlarmConn.options[0].value || '');
+  }
+
+  const refreshTags = () => {
+    const cid = String(els.editAlarmConn?.value || '').trim();
+    if (!els.editAlarmTag) return;
+    els.editAlarmTag.textContent = '';
+    const tags = getEffectiveTagsAll().filter((t) => String(t?.connection_id || '') === cid);
+    tags.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
+    tags.forEach((t) => {
+      const opt = document.createElement('option');
+      opt.value = String(t?.name || '');
+      opt.textContent = String(t?.name || '');
+      els.editAlarmTag.appendChild(opt);
+    });
+    if (els.editAlarmTag.options.length) els.editAlarmTag.value = String(els.editAlarmTag.options[0].value || '');
+  };
+  if (els.editAlarmConn) els.editAlarmConn.onchange = refreshTags;
+  refreshTags();
+
+  if (els.editAlarmType) els.editAlarmType.value = 'high';
+  if (els.editAlarmEnabled) els.editAlarmEnabled.checked = true;
+  if (els.editAlarmSeverity) els.editAlarmSeverity.value = '500';
+  if (els.editAlarmThreshold) els.editAlarmThreshold.value = '';
+  if (els.editAlarmHysteresis) els.editAlarmHysteresis.value = '';
+  if (els.editAlarmMsgOn) els.editAlarmMsgOn.value = '';
+  if (els.editAlarmMsgOff) els.editAlarmMsgOff.value = '';
+
+  els.workspaceItemModal.style.display = 'flex';
+  els.editAlarmId?.focus?.();
+}
+
 async function saveEditedTagFromModal() {
   const conn = String(state.pendingWorkspaceItem?.connection_id || '').trim();
   const name = String(state.pendingWorkspaceItem?.name || '').trim();
@@ -2009,6 +2492,10 @@ async function saveEditedTagFromModal() {
 
   const idx = state.tagConfigAll.findIndex((t) => String(t?.connection_id || '') === conn && String(t?.name || '') === name);
   if (idx < 0) { setEditTagStatus('Tag not found in config (try Refresh).'); return; }
+
+  const newName = String(els.editTagName?.value || '').trim();
+  if (!newName) { setEditTagStatus('Tag name is required.'); return; }
+  if (!canEditConfig() && newName !== name) { setEditTagStatus('Login required to rename tags.'); return; }
 
   const plc_tag_name = String(els.editTagPlc?.value || '').trim();
   const datatype = String(els.editTagDatatype?.value || '').trim();
@@ -2019,6 +2506,26 @@ async function saveEditedTagFromModal() {
 
   if (!plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
+
+  // If renaming, update the base row so the new key is part of the canonical tag list.
+  const oldKey = `${conn}::${name}`;
+  if (newName !== name) {
+    const oldNodeId = `tag:${conn}::${name}`;
+    const newNodeId = `tag:${conn}::${newName}`;
+    const exists = getEffectiveTagsAll().some((t) => {
+      const key = makeTagKey(t);
+      return key && key !== oldKey && key === `${conn}::${newName}`;
+    });
+    if (exists) { setEditTagStatus(`Tag '${conn}:${newName}' already exists.`); return; }
+    state.tagConfigAll[idx] = { ...(state.tagConfigAll[idx] || {}), name: newName };
+    state.tagConfigEdited?.delete?.(oldKey);
+    if (state.pendingWorkspaceItem) state.pendingWorkspaceItem.name = newName;
+    if (String(state.selectedNodeId || '') === oldNodeId) state.selectedNodeId = newNodeId;
+    if (state.workspaceChildrenSel && state.workspaceChildrenSel.size && state.workspaceChildrenSel.has(oldKey)) {
+      state.workspaceChildrenSel.delete(oldKey);
+      state.workspaceChildrenSel.add(`${conn}::${newName}`);
+    }
+  }
 
   const next = { ...(state.tagConfigAll[idx] || {}) };
   next.plc_tag_name = plc_tag_name;
@@ -2044,6 +2551,81 @@ async function saveEditedTagFromModalReload() {
   } catch {
     // ignore
   }
+}
+
+async function saveEditedAlarmFromModal() {
+  const mode = String(state.pendingWorkspaceItem?.mode || 'edit');
+  const alarm_id = String(state.pendingWorkspaceItem?.alarm_id || '').trim();
+
+  const id = String(els.editAlarmId?.value || alarm_id || '').trim();
+  const name = String(els.editAlarmName?.value || '').trim();
+  const group = String(els.editAlarmGroup?.value || '').trim();
+  const site = String(els.editAlarmSite?.value || '').trim();
+  const connection_id = String(els.editAlarmConn?.value || '').trim();
+  const tag_name = String(els.editAlarmTag?.value || '').trim();
+  const type = String(els.editAlarmType?.value || '').trim();
+  const enabled = Boolean(els.editAlarmEnabled?.checked);
+  const severity = Math.max(0, Math.min(1000, Math.trunc(Number(els.editAlarmSeverity?.value ?? 500) || 500)));
+  const thresholdRaw = String(els.editAlarmThreshold?.value ?? '').trim();
+  const hysteresisRaw = String(els.editAlarmHysteresis?.value ?? '').trim();
+  const message_on_active = String(els.editAlarmMsgOn?.value || '').trim();
+  const message_on_return = String(els.editAlarmMsgOff?.value || '').trim();
+
+  if (!id) { setEditAlarmStatus('Alarm ID is required.'); return; }
+  if (!connection_id) { setEditAlarmStatus('Connection is required.'); return; }
+  if (!tag_name) { setEditAlarmStatus('Tag is required.'); return; }
+  if (!type) { setEditAlarmStatus('Type is required.'); return; }
+
+  const cfg = state.alarmsConfig || { alarms: [], groups: [] };
+  if (!Array.isArray(cfg.alarms)) cfg.alarms = [];
+
+  const idx = cfg.alarms.findIndex((a) => String(a?.id || '').trim() === id);
+  if (mode === 'new' && idx >= 0) { setEditAlarmStatus('Alarm ID already exists.'); return; }
+  if (mode === 'edit' && !alarm_id) { setEditAlarmStatus('Missing alarm id.'); return; }
+
+  const next = {
+    id,
+    name: name || id,
+    group,
+    site,
+    connection_id,
+    tag_name,
+    type,
+    enabled,
+    severity,
+    message_on_active,
+    message_on_return
+  };
+  if (thresholdRaw !== '') next.threshold = Number(thresholdRaw);
+  if (hysteresisRaw !== '') next.hysteresis = Number(hysteresisRaw);
+
+  // Ensure folder nodes exist if user filled group/site.
+  if (group || site) {
+    try { ensureGroupSiteInConfig(cfg, group, site); } catch { /* ignore */ }
+  }
+
+  if (mode === 'new') {
+    cfg.alarms.push(next);
+  } else {
+    // Update by alarm_id (original id), allowing id rename? (Not currently; keep id immutable.)
+    const origId = alarm_id;
+    const origIdx = cfg.alarms.findIndex((a) => String(a?.id || '').trim() === origId);
+    if (origIdx < 0) { setEditAlarmStatus('Alarm not found in config (try Refresh).'); return; }
+    next.id = origId;
+    cfg.alarms[origIdx] = { ...(cfg.alarms[origIdx] || {}), ...next };
+  }
+
+  setEditAlarmStatus('Saving…');
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  closeWorkspaceItemModal();
+  renderWorkspaceTree();
+}
+
+async function saveEditedAlarmFromModalReload() {
+  await saveEditedAlarmFromModal();
+  try { await opcbridgeReload(); } catch { /* ignore */ }
+  try { await refreshAll(); } catch { /* ignore */ }
 }
 
 async function saveEditedDeviceFromModal() {
@@ -2095,6 +2677,9 @@ function wireWorkspaceItemModalUi() {
 
   els.editTagCancelBtn?.addEventListener('click', close);
   els.editTagSaveBtn?.addEventListener('click', saveEditedTagFromModal);
+
+  els.editAlarmCancelBtn?.addEventListener('click', close);
+  els.editAlarmSaveBtn?.addEventListener('click', saveEditedAlarmFromModalReload);
   els.workspaceItemModal?.addEventListener('click', (e) => {
     if (e.target === els.workspaceItemModal) close();
   });
@@ -2229,6 +2814,56 @@ async function deleteDeviceById(connectionId, pathRel) {
   }
 }
 
+async function addAlarmGroupInteractive() {
+  const name = normalizeAlarmGroupName(window.prompt('New alarm group name:', '') || '');
+  if (!name) return;
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    upsertAlarmGroup(cfg, name);
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    renderWorkspaceTree();
+  } catch (err) {
+    window.alert(`Failed to create alarm group: ${err.message}`);
+  }
+}
+
+async function addAlarmSiteInteractive(groupName) {
+  const g = normalizeAlarmGroupName(groupName);
+  if (!g) return;
+  const site = normalizeAlarmSiteName(window.prompt(`New site name for group '${g}':`, '') || '');
+  if (!site) return;
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    ensureGroupSiteInConfig(cfg, g, site);
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    renderWorkspaceTree();
+  } catch (err) {
+    window.alert(`Failed to create site: ${err.message}`);
+  }
+}
+
+async function deleteAlarmById(alarmId) {
+  const id = String(alarmId || '').trim();
+  if (!id) return;
+  if (!window.confirm(`Delete alarm '${id}'?`)) return;
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const before = Array.isArray(cfg?.alarms) ? cfg.alarms.length : 0;
+    cfg.alarms = (Array.isArray(cfg?.alarms) ? cfg.alarms : []).filter((a) => String(a?.id || '').trim() !== id);
+    const after = cfg.alarms.length;
+    if (after === before) return;
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    await opcbridgeReload().catch(() => {});
+    await refreshAll().catch(() => {});
+    renderWorkspaceTree();
+  } catch (err) {
+    window.alert(`Failed to delete alarm: ${err.message}`);
+  }
+}
+
 // ---------------- Workspace tree ----------------
 
 
@@ -2308,91 +2943,108 @@ function buildTree() {
     connectivity.children.push(deviceNode);
   });
 
-  // Build alarms tree: Group -> Site -> Alarm
-  const allAlarms = Array.isArray(state.alarmsAll) ? state.alarmsAll : [];
+  // Build alarms tree: Group -> Site -> Alarm (config-driven)
+  const cfg = state.alarmsConfig || null;
+  const cfgAlarms = Array.isArray(cfg?.alarms) ? cfg.alarms : [];
+  const cfgGroups = Array.isArray(cfg?.groups) ? cfg.groups : [];
+  const runtime = Array.isArray(state.alarmsAll) ? state.alarmsAll : [];
+  const runtimeById = new Map();
+  runtime.forEach((a) => {
+    const id = String(a?.alarm_id || a?.id || '').trim();
+    if (id) runtimeById.set(id, a);
+  });
   const safeKey = (s) => {
     const k = String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
     return k || 'none';
   };
 
-  if (!allAlarms.length) {
-    alarmsRoot.children.push({ id: 'hint:no_alarms', type: 'hint', label: '(no alarms loaded yet)', children: [] });
-  } else {
-    const groups = new Map();
-    allAlarms.forEach((a) => {
-      const alarm_id = String(a?.alarm_id || a?.id || '').trim();
-      if (!alarm_id) return;
+  const groups = new Map();
 
-      const groupRaw = String(a?.group || a?.group_name || '').trim();
-      const siteRaw = String(a?.site || a?.site_name || '').trim();
-
-      const groupLabel = groupRaw || '(No group)';
-      const siteLabel = siteRaw || '(No site)';
-
-      const groupId = `alarm_group:${safeKey(groupLabel)}`;
-      let groupNode = groups.get(groupId);
-      if (!groupNode) {
-        groupNode = {
-          id: groupId,
-          type: 'alarm_group',
-          label: groupLabel,
-          meta: { group: groupRaw },
-          children: []
-        };
-        groups.set(groupId, groupNode);
-      }
-
-      const siteId = `${groupId}:site:${safeKey(siteLabel)}`;
-      let siteNode = (groupNode.children || []).find((n) => String(n?.id || '') === siteId) || null;
-      if (!siteNode) {
-        siteNode = {
-          id: siteId,
-          type: 'alarm_site',
-          label: siteLabel,
-          meta: { group: groupRaw, site: siteRaw },
-          children: []
-        };
-        groupNode.children.push(siteNode);
-      }
-
-      const name = String(a?.name || a?.description || alarm_id).trim() || alarm_id;
-      const sev = (a?.severity == null) ? '' : Number(a.severity);
-      const enabled = (a?.enabled !== false);
-      const active = Boolean(a?.active);
-      const acked = Boolean(a?.acked);
-      const src = a?.source || {};
-      const srcConn = String(src?.connection_id || a?.connection_id || '').trim();
-      const srcTag = String(src?.tag || a?.tag || a?.tag_name || '').trim();
-      const message = String(a?.message || '').trim();
-
-      siteNode.children.push({
-        id: `alarm:${alarm_id}`,
-        type: 'alarm',
-        label: name,
-        meta: {
-          alarm_id,
-          group: groupRaw,
-          site: siteRaw,
-          severity: sev,
-          enabled,
-          active,
-          acked,
-          source: { connection_id: srcConn, tag: srcTag },
-          message
-        },
-        children: []
-      });
+  // Add configured group/site folders (even if empty).
+  cfgGroups.forEach((g) => {
+    const groupName = String(g?.name || '').trim();
+    if (!groupName) return;
+    const groupId = `alarm_group:${safeKey(groupName)}`;
+    let groupNode = groups.get(groupId);
+    if (!groupNode) {
+      groupNode = { id: groupId, type: 'alarm_group', label: groupName, meta: { group: groupName }, children: [] };
+      groups.set(groupId, groupNode);
+    }
+    const sites = Array.isArray(g?.sites) ? g.sites : [];
+    sites.forEach((s) => {
+      const siteName = String(s?.name || '').trim();
+      if (!siteName) return;
+      const siteId = `${groupId}:site:${safeKey(siteName)}`;
+      if ((groupNode.children || []).some((n) => String(n?.id || '') === siteId)) return;
+      groupNode.children.push({ id: siteId, type: 'alarm_site', label: siteName, meta: { group: groupName, site: siteName }, children: [] });
     });
+  });
 
-    const groupNodes = Array.from(groups.values()).sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
-    groupNodes.forEach((g) => {
-      g.children = (g.children || []).slice().sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
-      g.children.forEach((s) => {
-        s.children = (s.children || []).slice().sort((a, b) => Number(b?.meta?.severity || 0) - Number(a?.meta?.severity || 0));
-      });
-      alarmsRoot.children.push(g);
+  // Place alarms into folders.
+  cfgAlarms.forEach((a) => {
+    const alarm_id = String(a?.id || '').trim();
+    if (!alarm_id) return;
+
+    const groupRaw = String(a?.group || '').trim();
+    const siteRaw = String(a?.site || '').trim();
+    const groupLabel = groupRaw || '(No group)';
+    const siteLabel = siteRaw || '(No site)';
+
+    const groupId = `alarm_group:${safeKey(groupLabel)}`;
+    let groupNode = groups.get(groupId);
+    if (!groupNode) {
+      groupNode = { id: groupId, type: 'alarm_group', label: groupLabel, meta: { group: groupRaw }, children: [] };
+      groups.set(groupId, groupNode);
+    }
+
+    const siteId = `${groupId}:site:${safeKey(siteLabel)}`;
+    let siteNode = (groupNode.children || []).find((n) => String(n?.id || '') === siteId) || null;
+    if (!siteNode) {
+      siteNode = { id: siteId, type: 'alarm_site', label: siteLabel, meta: { group: groupRaw, site: siteRaw }, children: [] };
+      groupNode.children.push(siteNode);
+    }
+
+    const runtimeRow = runtimeById.get(alarm_id) || null;
+    const name = String(a?.name || alarm_id).trim() || alarm_id;
+    const sev = (a?.severity == null) ? '' : Number(a.severity);
+    const enabled = (a?.enabled !== false);
+    const active = Boolean(runtimeRow?.active);
+    const acked = Boolean(runtimeRow?.acked);
+    const srcConn = String(a?.connection_id || '').trim();
+    const srcTag = String(a?.tag_name || '').trim();
+    const message = String(runtimeRow?.message || '').trim();
+
+    siteNode.children.push({
+      id: `alarm:${alarm_id}`,
+      type: 'alarm',
+      label: name,
+      meta: {
+        alarm_id,
+        group: groupRaw,
+        site: siteRaw,
+        severity: sev,
+        enabled,
+        active,
+        acked,
+        source: { connection_id: srcConn, tag: srcTag },
+        message
+      },
+      children: []
     });
+  });
+
+  if (!cfgAlarms.length && !cfgGroups.length) {
+    alarmsRoot.children.push({ id: 'hint:no_alarms', type: 'hint', label: '(no alarms configured)', children: [] });
   }
+
+  const groupNodes = Array.from(groups.values()).sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
+  groupNodes.forEach((g) => {
+    g.children = (g.children || []).slice().sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
+    g.children.forEach((s) => {
+      s.children = (s.children || []).slice().sort((a, b) => Number(b?.meta?.severity || 0) - Number(a?.meta?.severity || 0));
+    });
+    alarmsRoot.children.push(g);
+  });
 
   return root;
 }
@@ -2458,6 +3110,30 @@ function renderTreeNode(node, container) {
       items.push({ label: 'Add Device…', onClick: () => createNewConnectionInteractive() });
       items.push({ label: 'Download CSV', onClick: () => downloadConnectivityCsv() });
       items.push({ label: 'Upload CSV…', onClick: () => importDevicesCsvIntoWorkspace().catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
+      items.push('sep');
+    }
+
+    if (node.type === 'alarms_root') {
+      items.push({ label: 'Add Group…', onClick: () => addAlarmGroupInteractive() });
+      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal() });
+      items.push('sep');
+    }
+
+    if (node.type === 'alarm_group') {
+      items.push({ label: 'Add Site…', onClick: () => addAlarmSiteInteractive(String(node.meta?.group || node.label || '')) });
+      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || node.label || '') }) });
+      items.push('sep');
+    }
+
+    if (node.type === 'alarm_site') {
+      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || ''), site: String(node.meta?.site || '') }) });
+      items.push('sep');
+    }
+
+    if (node.type === 'alarm') {
+      const aid = String(node.meta?.alarm_id || '').trim();
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
+      items.push({ label: 'Delete Alarm…', onClick: () => deleteAlarmById(aid) });
       items.push('sep');
     }
 
@@ -3235,6 +3911,13 @@ renderAlarmEvents(history);
 state.alarmsAllLast = all;
 state.alarmsAll = Array.isArray(all?.alarms) ? all.alarms : [];
 
+// Keep alarms config fresh for Workspace editing.
+try {
+  await loadOpcbridgeAlarmsConfig();
+} catch {
+  // ignore
+}
+
 // If the user is browsing alarms/events in Workspace, refresh that view.
 const sid = String(state.selectedNodeId || '');
 if (sid.includes('alarms') || sid.includes('alarm')) {
@@ -3280,6 +3963,10 @@ async function refreshUserAuthLine() {
   try {
     const s = await apiGet('/api/opcbridge/auth/status');
     state.opcbridgeAuthStatus = s || null;
+    updateConfigureTabVisibility();
+    updateWorkspaceTabVisibility();
+    updateLogsTabVisibility();
+    updateUsersTabVisibility();
     const configured = Boolean(s?.configured);
     const loggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
     const username = String(s?.user?.username || '').trim();
@@ -3302,8 +3989,7 @@ async function refreshUserAuthLine() {
 }
 
 function isOpcbridgeAdmin() {
-  const role = String(state.opcbridgeAuthStatus?.user?.role || '').trim().toLowerCase();
-  return role === 'admin';
+  return hasPerm('auth.manage_users');
 }
 
 function setUsersStatus(msg) {
@@ -3487,19 +4173,24 @@ function renderUsersDetails(node) {
 
   if (node.type === 'roles_root') {
     const rows = (state.usersRoles || []).slice().sort((a, b) => String(a?.id || '').localeCompare(String(b?.id || ''))).map((r) => ({
-      cells: [String(r?.id || ''), String(r?.rank ?? ''), String(r?.description || '')],
+      cells: [
+        String(r?.id || ''),
+        String(r?.label || ''),
+        String(r?.description || ''),
+        Array.isArray(r?.permissions) ? r.permissions.join(', ') : ''
+      ],
       onDblClick: () => openRoleForm({ mode: 'edit', roleId: String(r?.id || '') })
     }));
-    usersSetDetailsTable(['Role', 'Rank', 'Description'], rows);
+    usersSetDetailsTable(['Role', 'Label', 'Description', 'Permissions'], rows);
     return;
   }
 
   if (node.type === 'users_root') {
     const rows = (state.usersUsers || []).slice().sort((a, b) => String(a?.username || '').localeCompare(String(b?.username || ''))).map((u) => ({
-      cells: [String(u?.username || ''), String(u?.role || '')],
+      cells: [String(u?.username || ''), String(u?.name || u?.username || ''), String(u?.description || ''), String(u?.role || '')],
       onDblClick: () => openUserForm({ mode: 'edit', username: String(u?.username || '') })
     }));
-    usersSetDetailsTable(['Username', 'Role'], rows);
+    usersSetDetailsTable(['Username', 'Name', 'Description', 'Role'], rows);
     return;
   }
 
@@ -3516,13 +4207,16 @@ function renderUsersDetails(node) {
 function fillRoleSelectOptions(selectedValue) {
   if (!els.usersFormRole) return;
   els.usersFormRole.textContent = '';
-  (state.usersRoles || []).slice().sort((a, b) => Number(a?.rank || 0) - Number(b?.rank || 0)).forEach((r) => {
+  (state.usersRoles || []).slice().sort((a, b) => String(a?.id || '').localeCompare(String(b?.id || ''))).forEach((r) => {
     const opt = document.createElement('option');
     opt.value = String(r?.id || '');
     opt.textContent = String(r?.label || r?.id || '');
     els.usersFormRole.appendChild(opt);
   });
   if (selectedValue) els.usersFormRole.value = String(selectedValue);
+  if (!String(els.usersFormRole.value || '').trim() && els.usersFormRole.options.length) {
+    els.usersFormRole.value = String(els.usersFormRole.options[0].value || '');
+  }
 }
 
 function openRoleForm({ mode, roleId }) {
@@ -3537,7 +4231,7 @@ function openRoleForm({ mode, roleId }) {
   if (els.usersFormRoleRow) els.usersFormRoleRow.style.display = 'none';
   if (els.usersFormPasswordRow) els.usersFormPasswordRow.style.display = 'none';
   if (els.usersFormConfirmRow) els.usersFormConfirmRow.style.display = 'none';
-  if (els.usersFormRankRow) els.usersFormRankRow.style.display = '';
+  if (els.usersFormPermsRow) els.usersFormPermsRow.style.display = '';
 
   const role = (mode === 'edit')
     ? (state.usersRoles || []).find((r) => String(r?.id || '') === String(roleId || '')) || null
@@ -3555,8 +4249,23 @@ function openRoleForm({ mode, roleId }) {
     els.usersFormDescription.value = role ? String(role.description || '') : '';
     els.usersFormDescription.disabled = false;
   }
-  if (els.usersFormRank) {
-    els.usersFormRank.value = role ? String(role.rank ?? 0) : '0';
+  if (els.usersFormPerms) {
+    const current = new Set((role && Array.isArray(role.permissions)) ? role.permissions.map((p) => String(p || '').trim()).filter(Boolean) : []);
+    els.usersFormPerms.textContent = '';
+    ROLE_PERMISSION_DEFS.forEach((p) => {
+      const wrap = document.createElement('label');
+      wrap.className = 'perm-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.permId = p.id;
+      cb.checked = current.has(p.id);
+      if (role && String(role.id || '') === 'admin') cb.disabled = true;
+      const txt = document.createElement('span');
+      txt.textContent = p.label;
+      wrap.appendChild(cb);
+      wrap.appendChild(txt);
+      els.usersFormPerms.appendChild(wrap);
+    });
   }
 }
 
@@ -3568,8 +4277,12 @@ function openUserForm({ mode, username }) {
   state.usersFormMode = (mode === 'new') ? 'user_new' : 'user_edit';
   state.usersFormTargetId = username ? String(username) : '';
 
+  const self = String(state.opcbridgeAuthStatus?.user?.username || '').trim();
+  const isSelfEdit = (mode === 'edit' && self && String(username || '').trim() === self);
+  const canAdmin = isOpcbridgeAdmin();
+
   if (els.usersFormIdLabel) els.usersFormIdLabel.textContent = 'Username';
-  if (els.usersFormRankRow) els.usersFormRankRow.style.display = 'none';
+  if (els.usersFormPermsRow) els.usersFormPermsRow.style.display = 'none';
   if (els.usersFormRoleRow) els.usersFormRoleRow.style.display = '';
   if (els.usersFormPasswordRow) els.usersFormPasswordRow.style.display = '';
   if (els.usersFormConfirmRow) els.usersFormConfirmRow.style.display = '';
@@ -3583,14 +4296,15 @@ function openUserForm({ mode, username }) {
     els.usersFormId.disabled = (mode === 'edit');
   }
   if (els.usersFormLabel) {
-    els.usersFormLabel.value = user ? String(user.username || '') : '';
-    els.usersFormLabel.disabled = true;
+    els.usersFormLabel.value = user ? String(user.name || user.username || '') : '';
+    els.usersFormLabel.disabled = false;
   }
   if (els.usersFormDescription) {
-    els.usersFormDescription.value = '';
-    els.usersFormDescription.disabled = true;
+    els.usersFormDescription.value = user ? String(user.description || '') : '';
+    els.usersFormDescription.disabled = false;
   }
-  fillRoleSelectOptions(user ? String(user.role || '') : 'viewer');
+  fillRoleSelectOptions(user ? String(user.role || '') : '');
+  if (els.usersFormRole) els.usersFormRole.disabled = isSelfEdit ? true : (!canAdmin);
   if (els.usersFormPassword) els.usersFormPassword.value = '';
   if (els.usersFormConfirm) els.usersFormConfirm.value = '';
 }
@@ -3612,6 +4326,11 @@ async function deleteRole(roleId) {
 async function deleteUser(username) {
   const uname = String(username || '').trim();
   if (!uname) return;
+  const self = String(state.opcbridgeAuthStatus?.user?.username || '').trim();
+  if (self && uname === self) {
+    window.alert('You cannot delete the currently logged-in user.');
+    return;
+  }
   if (!window.confirm(`Delete user '${uname}'?`)) return;
   setUsersDetailsStatus('Deleting user…');
   try {
@@ -3646,12 +4365,12 @@ async function refreshUsersPanel() {
     if (els.usersInitWrap) els.usersInitWrap.style.display = (!initialized) ? 'block' : 'none';
     if (els.usersManageWrap) els.usersManageWrap.style.display = (initialized) ? 'block' : 'none';
 
-    if (!initialized) {
-      if (els.usersInitUsername && !String(els.usersInitUsername.value || '').trim()) els.usersInitUsername.value = 'admin';
-      if (els.usersInitTimeout) els.usersInitTimeout.value = String(timeoutMinutes || 0);
-      setUsersInitStatus('');
-      return;
-    }
+	    if (!initialized) {
+	      // Leave blank by default; user may not use "admin" as the initial username.
+	      if (els.usersInitTimeout) els.usersInitTimeout.value = String(timeoutMinutes || 0);
+	      setUsersInitStatus('');
+	      return;
+	    }
 
     if (els.usersTimeoutMinutes) els.usersTimeoutMinutes.value = String(timeoutMinutes || 0);
     setUsersTimeoutStatus('');
@@ -3720,41 +4439,59 @@ function wireUsersUi() {
   });
 
   els.usersFormSaveBtn?.addEventListener('click', async () => {
-    if (!isOpcbridgeAdmin()) { setUsersFormStatus('Admin login required.'); return; }
+    const mode = state.usersFormMode;
+    const self = String(state.opcbridgeAuthStatus?.user?.username || '').trim();
+    const isSelfEdit = (mode === 'user_edit' && self && String(state.usersFormTargetId || '').trim() === self);
+    const isAdminAction = (mode === 'role_new' || mode === 'role_edit' || mode === 'user_new' || mode === 'user_edit');
+    if (isAdminAction && !isOpcbridgeAdmin() && !isSelfEdit) {
+      setUsersFormStatus('Admin login required.');
+      return;
+    }
     setUsersFormStatus('Saving…');
     try {
-      const mode = state.usersFormMode;
       if (mode === 'role_new') {
         const id = String(els.usersFormId?.value || '').trim().toLowerCase();
         const label = String(els.usersFormLabel?.value || '').trim();
         const description = String(els.usersFormDescription?.value || '').trim();
-        const rank = Math.max(0, Math.min(3, Math.floor(Number(els.usersFormRank?.value) || 0)));
-        await apiPostJson('/api/opcbridge/auth/roles', { id, label, description, rank });
+        const permissions = [];
+        els.usersFormPerms?.querySelectorAll('input[type="checkbox"][data-perm-id]')?.forEach((cb) => {
+          if (cb.checked) permissions.push(String(cb.dataset.permId || '').trim());
+        });
+        await apiPostJson('/api/opcbridge/auth/roles', { id, label, description, permissions });
         state.usersSelectedNodeId = `role:${id}`;
       } else if (mode === 'role_edit') {
         const id = String(state.usersFormTargetId || '').trim();
         const label = String(els.usersFormLabel?.value || '').trim();
         const description = String(els.usersFormDescription?.value || '').trim();
-        const rank = Math.max(0, Math.min(3, Math.floor(Number(els.usersFormRank?.value) || 0)));
-        await apiJson(`/api/opcbridge/auth/roles/${encodeURIComponent(id)}`, { method: 'PUT', bodyObj: { label, description, rank } });
+        const permissions = [];
+        els.usersFormPerms?.querySelectorAll('input[type="checkbox"][data-perm-id]')?.forEach((cb) => {
+          if (cb.checked) permissions.push(String(cb.dataset.permId || '').trim());
+        });
+        await apiJson(`/api/opcbridge/auth/roles/${encodeURIComponent(id)}`, { method: 'PUT', bodyObj: { label, description, permissions } });
         state.usersSelectedNodeId = `role:${id}`;
       } else if (mode === 'user_new') {
         const username = String(els.usersFormId?.value || '').trim();
         const role = String(els.usersFormRole?.value || 'viewer').trim();
+        const name = String(els.usersFormLabel?.value || '').trim();
+        const description = String(els.usersFormDescription?.value || '').trim();
         const password = String(els.usersFormPassword?.value || '');
         const confirm = String(els.usersFormConfirm?.value || '');
         if (!username) throw new Error('Username required.');
         if (!password) throw new Error('Password required.');
         if (!confirm) throw new Error('Confirm required.');
         if (password !== confirm) throw new Error('Passwords do not match.');
-        await apiPostJson('/api/opcbridge/auth/users', { username, password, role });
+        await apiPostJson('/api/opcbridge/auth/users', { username, name, description, password, role });
         state.usersSelectedNodeId = `user:${username}`;
       } else if (mode === 'user_edit') {
         const username = String(state.usersFormTargetId || '').trim();
-        const role = String(els.usersFormRole?.value || 'viewer').trim();
+        const name = String(els.usersFormLabel?.value || '').trim();
+        const description = String(els.usersFormDescription?.value || '').trim();
         const password = String(els.usersFormPassword?.value || '');
         const confirm = String(els.usersFormConfirm?.value || '');
-        const bodyObj = { role };
+        const bodyObj = { name, description };
+        if (isOpcbridgeAdmin() && !isSelfEdit) {
+          bodyObj.role = String(els.usersFormRole?.value || 'viewer').trim();
+        }
         if (password) {
           if (!confirm) throw new Error('Confirm required.');
           if (password !== confirm) throw new Error('Passwords do not match.');
@@ -3785,20 +4522,17 @@ function startUserAuthPolling() {
   }, 2000);
 }
 
-function openLoginModal() {
-  if (!els.loginModal) return;
-  if (els.loginStatus) els.loginStatus.textContent = '';
-  if (els.loginUsername && !String(els.loginUsername.value || '').trim()) {
-    els.loginUsername.value = 'admin';
-  }
-  if (els.loginPassword) els.loginPassword.value = '';
-  els.loginModal.style.display = 'flex';
-  try {
-    (els.loginPassword || els.loginUsername)?.focus?.();
-  } catch {
-    // ignore
-  }
-}
+	function openLoginModal() {
+	  if (!els.loginModal) return;
+	  if (els.loginStatus) els.loginStatus.textContent = '';
+	  if (els.loginPassword) els.loginPassword.value = '';
+	  els.loginModal.style.display = 'flex';
+	  try {
+	    (els.loginUsername || els.loginPassword)?.focus?.();
+	  } catch {
+	    // ignore
+	  }
+	}
 
 function closeLoginModal() {
   if (!els.loginModal) return;
@@ -3871,6 +4605,10 @@ function restartRefreshLoop() {
 
 async function main() {
   setTab('overview');
+  updateConfigureTabVisibility();
+  updateWorkspaceTabVisibility();
+  updateLogsTabVisibility();
+  updateUsersTabVisibility();
 
   startUserAuthPolling();
 
@@ -3881,6 +4619,7 @@ async function main() {
   wireTagsConfigUi();
   wireLoginModalUi();
   wireUsersUi();
+  wireLogsUi();
   wireNewDeviceFormUi();
   wireWorkspaceSaveBarUi();
   wireWorkspaceItemModalUi();

@@ -2014,6 +2014,27 @@ body.runtime-mode #editor-pane {
   display: none;
 }
 
+#hmiToast {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.25;
+  max-width: min(520px, calc(100vw - 28px));
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.35);
+  display: none;
+  white-space: pre-wrap;
+}
+
+#hmiToast.is-show {
+  display: block;
+}
+
 .prop-row.is-hidden {
   display: none;
 }
