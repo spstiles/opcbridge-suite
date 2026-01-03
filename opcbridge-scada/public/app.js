@@ -4914,7 +4914,23 @@ async function saveWorkspaceAll({ reload }) {
     renderWorkspaceTree();
     setWorkspaceSaveStatus(reload ? 'Saved + Reloaded.' : 'Saved.');
   } catch (err) {
-    setWorkspaceSaveStatus(`Save failed: ${err.message}`);
+    const msg = String(err?.message || err || '');
+    if (msg.toLowerCase().includes('upstream timeout')) {
+      setWorkspaceSaveStatus('Save is taking longer than expected (timeout). The server may still be working; waiting a moment then refreshing…');
+      renderWorkspaceSaveBar();
+      setTimeout(async () => {
+        try {
+          await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
+          renderWorkspaceTree();
+          setWorkspaceSaveStatus(reload ? 'Saved + Reloaded.' : 'Saved.');
+          renderWorkspaceSaveBar();
+        } catch {
+          // keep the prior status
+        }
+      }, 5000);
+    } else {
+      setWorkspaceSaveStatus(`Save failed: ${msg}`);
+    }
   } finally {
     renderWorkspaceSaveBar();
   }

@@ -849,6 +849,25 @@ function needsWriteToken(upstreamPathname) {
   );
 }
 
+function upstreamTimeoutMs(prefixName, upstreamPathname, method) {
+  const m = String(method || 'GET').toUpperCase();
+  const p = String(upstreamPathname || '/');
+
+  // Reads should be fast; keep defaults to detect real connectivity issues.
+  if (m === 'GET' || m === 'HEAD') return 8000;
+
+  // Some writes can legitimately take a long time (large tag lists, reload).
+  if (prefixName === 'opcbridge') {
+    if (p === '/reload') return 120000;
+    if (p === '/config/tags') return 120000;
+    if (p === '/config/bundle') return 120000;
+    if (p.startsWith('/config/')) return 60000;
+    if (p === '/write') return 30000;
+  }
+
+  return 8000;
+}
+
 async function proxy(req, res, target, prefixName) {
   const { scheme, host, port } = target;
   const client = scheme === 'https' ? https : http;
@@ -909,7 +928,7 @@ async function proxy(req, res, target, prefixName) {
     method: req.method,
     path: upstreamPath,
     headers,
-    timeout: 8000
+    timeout: upstreamTimeoutMs(prefixName, upstreamPathname, req.method)
   };
 
   const upstream = client.request(opts, (up) => {
