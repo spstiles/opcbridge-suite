@@ -2112,6 +2112,8 @@ static std::string json_get_string_loose(const json &obj, const char *key, const
 // Config loading
 // -----------------------------
 
+static bool is_supported_datatype(const std::string &dt);
+
 ConnectionConfig load_connection_config(const std::string &path) {
     json j = load_json_with_comments(path);
 
@@ -2158,6 +2160,11 @@ TagFile load_tag_file(const std::string &path) {
             t.plc_tag_name = json_get_string_loose(jt, "plc_tag_name", std::string{});
             t.datatype     = json_get_string_loose(jt, "datatype", std::string{});
             if (t.logical_name.empty() || t.plc_tag_name.empty() || t.datatype.empty()) continue;
+            if (!is_supported_datatype(t.datatype)) {
+                std::cerr << "[load] Warning: skipping tag '" << t.logical_name
+                          << "' in " << path << " due to unsupported datatype '" << t.datatype << "'.\n";
+                continue;
+            }
 
             t.scan_ms              = json_get_int_loose(jt, "scan_ms", 1000);
             // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
@@ -2199,6 +2206,16 @@ size_t datatype_size_bytes(const std::string &dt) {
     if (dt == "float32")                   return 4;
     if (dt == "float64")                   return 8;
     throw std::runtime_error("Unsupported datatype: " + dt);
+}
+
+static bool is_supported_datatype(const std::string &dt) {
+    return (
+        dt == "bool" ||
+        dt == "int16" || dt == "uint16" ||
+        dt == "int32" || dt == "uint32" ||
+        dt == "float32" ||
+        dt == "float64"
+    );
 }
 
 std::string build_base_conn_str(const ConnectionConfig &c) {
@@ -3250,8 +3267,27 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
 			                    continue;
 		                    }
 
-	            std::string tag_str = build_tag_conn_str(conn_cfg, tc);
-	            std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
+                            if (!is_supported_datatype(tc.datatype)) {
+                                std::cerr << "[load] Warning: skipping tag '" << tc.logical_name
+                                          << "' on connection '" << conn_id
+                                          << "' due to unsupported datatype '" << tc.datatype << "'.\n";
+                                rt.handle = PLCTAG_ERR_NOT_FOUND;
+                                ctx.tags.push_back(std::move(rt));
+                                continue;
+                            }
+
+                            std::string tag_str;
+                            try {
+                                tag_str = build_tag_conn_str(conn_cfg, tc);
+                            } catch (const std::exception &ex) {
+                                std::cerr << "[load] Warning: skipping tag '" << tc.logical_name
+                                          << "' on connection '" << conn_id
+                                          << "' due to error building connection string: " << ex.what() << "\n";
+                                rt.handle = PLCTAG_ERR_NOT_FOUND;
+                                ctx.tags.push_back(std::move(rt));
+                                continue;
+                            }
+                            std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
 
             int32_t handle = plc_tag_create(tag_str.c_str(),
                                             conn_cfg.default_timeout_ms);
@@ -4286,7 +4322,31 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
 
     // Build bindings and namespace
     std::vector<UaTagBinding> bindings;
-    bindings.reserve(drivers.size() * 16); // heuristic
+    // IMPORTANT: We store UaTagBinding* as nodeContext for writable nodes.
+    // Those pointers must remain valid for the lifetime of the UA server.
+    // If this vector reallocates while we are still pushing, earlier pointers become dangling
+    // and can crash the server later (often appearing as "it crashes after N tags").
+    size_t expectedBindings = 0;
+    for (auto &driver : drivers) {
+        ConnectionConfig &conn = driver.conn;
+        for (auto &tag : driver.tags) {
+            const TagConfig &cfg = tag.cfg;
+            if (tag.handle < 0) continue;
+            const std::string &dt = cfg.datatype;
+            if (dt == "bool" || dt == "BOOL" || dt == "Bool") expectedBindings++;
+            else if (dt == "int16" || dt == "INT" || dt == "Int16") expectedBindings++;
+            else if (dt == "uint16" || dt == "WORD" || dt == "Word") expectedBindings++;
+            else if (dt == "int32" || dt == "DINT" || dt == "Int32") expectedBindings++;
+            else if (dt == "uint32" || dt == "DWORD" || dt == "DWord") expectedBindings++;
+            else if (dt == "float32" || dt == "REAL" || dt == "Real") expectedBindings++;
+            else if (dt == "float64" || dt == "LREAL" || dt == "LReal") expectedBindings++;
+            else {
+                // unsupported: skipped later
+                (void)conn;
+            }
+        }
+    }
+    bindings.reserve(expectedBindings);
 
     for (auto &driver : drivers) {
         ConnectionConfig &conn = driver.conn;
@@ -14190,32 +14250,36 @@ window.addEventListener("load", startAutoRefresh);
 	                bool ok = false;
 	                std::string err;
 
-	                {
-	                    std::unique_lock<std::shared_mutex> plcLock(plcMutex);
-	                    std::vector<DriverContext> newDrivers;
+		                try {
+		                    std::unique_lock<std::shared_mutex> plcLock(plcMutex);
+		                    std::vector<DriverContext> newDrivers;
 
-	                    if (!load_all_drivers(newDrivers, configDir)) {
-	                        err = "Reload failed (see server log for details).";
-	                    } else {
-	                        {
-	                            std::lock_guard<std::mutex> lock(driverMutex);
-	                            destroy_all_handles(drivers, true /*plcAlreadyLocked*/);
-	                            drivers = std::move(newDrivers);
-	                            tagTable.clear();
-	                        }
+		                    if (!load_all_drivers(newDrivers, configDir)) {
+		                        err = "Reload failed (see server log for details).";
+		                    } else {
+		                        {
+		                            std::lock_guard<std::mutex> lock(driverMutex);
+		                            destroy_all_handles(drivers, true /*plcAlreadyLocked*/);
+		                            drivers = std::move(newDrivers);
+		                            tagTable.clear();
+		                        }
 
-	                        // Rebuild OPC UA server to refresh node contexts / handles.
-	                        if (g_uaServer) {
-	                            std::cout << "[reload] Rebuilding OPC UA server...\n";
-	                            shutdown_opcua_server();
-	                            if (!init_opcua_server(opcuaPort, drivers)) {
-	                                err = "OPC UA reinit failed after reload (see server log).";
-	                            }
-	                        }
+		                        // Rebuild OPC UA server to refresh node contexts / handles.
+		                        if (g_uaServer) {
+		                            std::cout << "[reload] Rebuilding OPC UA server...\n";
+		                            shutdown_opcua_server();
+		                            if (!init_opcua_server(opcuaPort, drivers)) {
+		                                err = "OPC UA reinit failed after reload (see server log).";
+		                            }
+		                        }
 
-	                        ok = err.empty();
-	                    }
-	                }
+		                        ok = err.empty();
+		                    }
+		                } catch (const std::exception &ex) {
+		                    ok = false;
+		                    err = std::string("Reload exception: ") + ex.what();
+		                    std::cerr << "[reload] " << err << "\n";
+		                }
 
 	                {
 	                    std::lock_guard<std::mutex> mlock(g_metricsMutex);
