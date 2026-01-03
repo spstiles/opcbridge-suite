@@ -336,6 +336,7 @@ const state = {
   alarmsConfigLast: null,
   alarmsConfig: null,
   alarmsConfigMtimeMs: 0,
+  alarmsConfigDirty: false,
 
   // users/roles ui (opcbridge auth store)
   usersRoles: [],
@@ -1876,6 +1877,26 @@ function downloadDeviceTagsCsv(connectionId) {
 
 function parseCsv(text) {
   const input = String(text || '');
+  const firstNonEmptyLine = (() => {
+    const lines = input.split(/\r?\n/g);
+    for (const line of lines) {
+      if (String(line || '').trim() !== '') return String(line);
+    }
+    return '';
+  })();
+
+  // Auto-detect delimiter (supports CSV and TSV; common spreadsheet exports).
+  const delimiter = (() => {
+    const line = firstNonEmptyLine;
+    const count = (ch) => (line.split(ch).length - 1);
+    const commas = count(',');
+    const tabs = count('\t');
+    const semis = count(';');
+    if (tabs > commas && tabs >= semis) return '\t';
+    if (semis > commas && semis > tabs) return ';';
+    return ',';
+  })();
+
   const rows = [];
   let row = [];
   let field = '';
@@ -1917,7 +1938,7 @@ function parseCsv(text) {
       i += 1;
       continue;
     }
-    if (ch === ',') {
+    if (ch === delimiter) {
       pushField();
       i += 1;
       continue;
@@ -1971,6 +1992,26 @@ function parseIntLoose(value, defaultValue) {
   return Math.trunc(n);
 }
 
+function csvNormalizeHeaderKey(key) {
+  return String(key || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '');
+}
+
+function csvGet(rowObj, key) {
+  if (!rowObj || typeof rowObj !== 'object') return '';
+  const direct = rowObj[key];
+  if (direct != null) return direct;
+  const want = csvNormalizeHeaderKey(key);
+  if (!want) return '';
+  for (const k of Object.keys(rowObj)) {
+    if (csvNormalizeHeaderKey(k) === want) return rowObj[k];
+  }
+  return '';
+}
+
 function normalizeConnRelPath(connectionId, sourceFile) {
   const cid = String(connectionId || '').trim();
   if (!cid) return '';
@@ -2016,17 +2057,17 @@ async function importDevicesCsvIntoWorkspace() {
   if (!csvText) return;
 
   const { records } = parseCsv(csvText);
-  if (!records.length) { setWorkspaceSaveStatus('CSV had no rows.'); return; }
+  if (!records.length) { setWorkspaceSaveStatus('CSV had no data rows (make sure the first row is a header).'); return; }
 
   let staged = 0;
   let deleted = 0;
   let skipped = 0;
   records.forEach((r) => {
-    const connection_id = String(r.connection_id || '').trim();
+    const connection_id = String(csvGet(r, 'connection_id') || '').trim();
     if (!connection_id) { skipped += 1; return; }
-    const relPath = normalizeConnRelPath(connection_id, r.source_file);
+    const relPath = normalizeConnRelPath(connection_id, csvGet(r, 'source_file'));
 
-    if (isDeleteAction(r.action)) {
+    if (isDeleteAction(csvGet(r, 'action'))) {
       state.workspaceDeletePaths?.add?.(relPath);
       state.workspaceConnDirty?.delete?.(relPath);
       state.connObjCache?.delete?.(relPath);
@@ -2041,12 +2082,12 @@ async function importDevicesCsvIntoWorkspace() {
       return;
     }
 
-    const driver = String(r.driver || '').trim() || 'ab_eip';
-    const plc_type = String(r.plc_type || '').trim() || 'lgx';
-    const gateway = String(r.gateway || '').trim();
-    const pathVal = String(r.path || '').trim() || '1,0';
-    const slot = parseIntLoose(r.slot, 0) || 0;
-    const description = String(r.description || '').trim();
+    const driver = String(csvGet(r, 'driver') || '').trim() || 'ab_eip';
+    const plc_type = String(csvGet(r, 'plc_type') || '').trim() || 'lgx';
+    const gateway = String(csvGet(r, 'gateway') || '').trim();
+    const pathVal = String(csvGet(r, 'path') || '').trim() || '1,0';
+    const slot = parseIntLoose(csvGet(r, 'slot'), 0) || 0;
+    const description = String(csvGet(r, 'description') || '').trim();
 
     const obj = { id: connection_id, description, driver, gateway, path: pathVal, slot, plc_type };
 
@@ -2076,21 +2117,35 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   if (!csvText) return;
 
   const { records } = parseCsv(csvText);
-  if (!records.length) { setWorkspaceSaveStatus('CSV had no rows.'); return; }
+  if (!records.length) { setWorkspaceSaveStatus('CSV had no data rows (make sure the first row is a header).'); return; }
 
   let upserts = 0;
   let deleted = 0;
   let skipped = 0;
+  let skippedWrongConn = 0;
+  let skippedMissing = 0;
+  let sampleWrongConn = null;
+  let sampleMissing = null;
   const all = Array.isArray(state.tagConfigAll) ? state.tagConfigAll.slice() : [];
 
   records.forEach((r) => {
-    const rowCid = String(r.connection_id || '').trim();
-    const name = String(r.name || '').trim();
-    if (!rowCid || !name) { skipped += 1; return; }
-    if (rowCid !== cid) { skipped += 1; return; }
+    const rowCid = String(csvGet(r, 'connection_id') || '').trim() || cid;
+    const name = String(csvGet(r, 'name') || '').trim();
+    if (!rowCid || !name) {
+      skipped += 1;
+      skippedMissing += 1;
+      if (!sampleMissing) sampleMissing = { connection_id: rowCid, name };
+      return;
+    }
+    if (rowCid !== cid) {
+      skipped += 1;
+      skippedWrongConn += 1;
+      if (!sampleWrongConn) sampleWrongConn = { connection_id: rowCid, name };
+      return;
+    }
 
     const idx = all.findIndex((t) => String(t?.connection_id || '') === rowCid && String(t?.name || '') === name);
-    if (isDeleteAction(r.action)) {
+    if (isDeleteAction(csvGet(r, 'action'))) {
       if (idx >= 0) {
         all.splice(idx, 1);
         deleted += 1;
@@ -2100,22 +2155,27 @@ async function importTagsCsvIntoWorkspace(connectionId) {
     }
     const base = (idx >= 0) ? { ...(all[idx] || {}) } : { connection_id: rowCid, name };
 
-    const plc_tag_name = String(r.plc_tag_name || '').trim();
+    const plc_tag_name = String(
+      csvGet(r, 'plc_tag_name') ||
+      csvGet(r, 'plc_tag') ||
+      csvGet(r, 'plc_tagname') ||
+      ''
+    ).trim();
     if (plc_tag_name) base.plc_tag_name = plc_tag_name;
-    const datatype = String(r.datatype || '').trim();
+    const datatype = String(csvGet(r, 'datatype') || '').trim();
     if (datatype) base.datatype = datatype;
-    const scan = parseIntLoose(r.scan_ms, null);
+    const scan = parseIntLoose(csvGet(r, 'scan_ms') || csvGet(r, 'scan') || csvGet(r, 'scanms'), null);
     if (scan == null) delete base.scan_ms;
     else base.scan_ms = Math.max(0, scan);
-    base.enabled = parseBoolLoose(r.enabled, true);
-    base.writable = parseBoolLoose(r.writable, false);
-    base.mqtt_command_allowed = parseBoolLoose(r.mqtt_command_allowed, false);
-    base.log_event_on_change = parseBoolLoose(r.log_event_on_change, false);
+    base.enabled = parseBoolLoose(csvGet(r, 'enabled'), true);
+    base.writable = parseBoolLoose(csvGet(r, 'writable'), false);
+    base.mqtt_command_allowed = parseBoolLoose(csvGet(r, 'mqtt_command_allowed') || csvGet(r, 'mqtt_allowed') || csvGet(r, 'mqtt_command'), false);
+    base.log_event_on_change = parseBoolLoose(csvGet(r, 'log_event_on_change') || csvGet(r, 'log_on_change'), false);
 
-    const mode = String(r.log_periodic_mode || '').trim();
+    const mode = String(csvGet(r, 'log_periodic_mode') || '').trim();
     if (mode) base.log_periodic_mode = mode;
     else delete base.log_periodic_mode;
-    const intervalSec = parseIntLoose(r.log_periodic_interval_sec, null);
+    const intervalSec = parseIntLoose(csvGet(r, 'log_periodic_interval_sec') || csvGet(r, 'log_interval_sec'), null);
     if (intervalSec == null) delete base.log_periodic_interval_sec;
     else base.log_periodic_interval_sec = Math.max(0, intervalSec);
 
@@ -2129,7 +2189,18 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   markTagsDirty(true);
   saveWorkspaceDraft();
   renderWorkspaceTree();
-  setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${upserts} tag(s)${deleted ? `, deleted ${deleted}` : ''}${skipped ? `, skipped ${skipped}` : ''}.`);
+  const parts = [];
+  if (skippedWrongConn) {
+    parts.push(`${skippedWrongConn} wrong connection_id`);
+  }
+  if (skippedMissing) {
+    parts.push(`${skippedMissing} missing required fields`);
+  }
+  const hint = parts.length ? ` (${parts.join(', ')})` : '';
+  const ex = sampleWrongConn
+    ? ` Example wrong connection_id: connection_id='${String(sampleWrongConn.connection_id)}' name='${String(sampleWrongConn.name)}' (upload target is '${cid}').`
+    : (sampleMissing ? ` Example missing fields: connection_id='${String(sampleMissing.connection_id)}' name='${String(sampleMissing.name)}'.` : '');
+  setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${upserts} tag(s)${deleted ? `, deleted ${deleted}` : ''}${skipped ? `, skipped ${skipped}${hint}` : ''}.${ex}`);
 }
 
 const TAG_DATATYPE_OPTIONS = [
@@ -2746,7 +2817,8 @@ function workspaceIsDirty() {
   return (
     (state.workspaceConnDirty && state.workspaceConnDirty.size > 0) ||
     (state.workspaceDeletePaths && state.workspaceDeletePaths.size > 0) ||
-    Boolean(state.tagConfigDirty)
+    Boolean(state.tagConfigDirty) ||
+    Boolean(state.alarmsConfigDirty)
   );
 }
 
@@ -2786,7 +2858,9 @@ function saveWorkspaceDraft() {
       conn_delete: deletes,
       tag_all: Array.isArray(state.tagConfigAll) ? state.tagConfigAll : [],
       tag_edits: tagEdits,
-      tag_dirty: Boolean(state.tagConfigDirty)
+      tag_dirty: Boolean(state.tagConfigDirty),
+      alarms_config: state.alarmsConfig || null,
+      alarms_dirty: Boolean(state.alarmsConfigDirty)
     };
 
     window.localStorage.setItem(OPCBRIDGE_SCADA_DRAFT_KEY, JSON.stringify(payload));
@@ -2845,6 +2919,11 @@ function restoreWorkspaceDraft() {
     }
 
     markTagsDirty(Boolean(parsed.tag_dirty));
+
+    if (parsed.alarms_config && typeof parsed.alarms_config === 'object') {
+      state.alarmsConfig = parsed.alarms_config;
+    }
+    state.alarmsConfigDirty = Boolean(parsed.alarms_dirty);
 
     renderWorkspaceTree();
     renderWorkspaceSaveBar();
@@ -3298,6 +3377,9 @@ function openWorkspaceItemModal(node) {
     const relPath = String(node.meta?.path || '').trim();
 
     if (els.editDevId) els.editDevId.value = connectionId;
+    if (els.editDevId) els.editDevId.disabled = !canEditConfig();
+
+    state.pendingWorkspaceItem = { id: String(node.id || ''), type: 'device', connection_id: connectionId, path: relPath };
 
     if (!relPath) {
       setEditDevStatus('Missing device config path.');
@@ -3681,10 +3763,16 @@ async function saveEditedDeviceFromModal() {
   const node = findWorkspaceNodeById(state.workspaceTreeRoot, nodeId);
   if (!node || String(node.type || '') !== 'device') return;
 
-  const relPath = String(node.meta?.path || '').trim();
+  const relPath = String(state.pendingWorkspaceItem?.path || node.meta?.path || '').trim();
   if (!relPath) { setEditDevStatus('Missing device config path.'); return; }
 
-  const id = String(node.meta?.connection_id || node.meta?.id || '').trim();
+  const oldId = String(state.pendingWorkspaceItem?.connection_id || node.meta?.connection_id || node.meta?.id || '').trim();
+  const newId = String(els.editDevId?.value || '').trim();
+  if (!newId) { setEditDevStatus('Device ID is required.'); return; }
+  if (!/^[A-Za-z0-9._-]+$/.test(newId)) {
+    setEditDevStatus('Device ID may only contain letters, digits, ".", "_", and "-".');
+    return;
+  }
   const driver = String(els.editDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.editDevGateway?.value || '').trim();
   const pathVal = String(els.editDevPath?.value || '').trim() || '1,0';
@@ -3693,11 +3781,70 @@ async function saveEditedDeviceFromModal() {
 
   const existing = state.connObjCache?.get?.(relPath) || {};
   const description = String(existing?.description || '').trim();
-  const obj = { id, description, driver, gateway, path: pathVal, slot, plc_type };
+  const obj = { id: newId, description, driver, gateway, path: pathVal, slot, plc_type };
+
+  let targetRelPath = relPath;
+  if (oldId && newId !== oldId) {
+    const newRelPath = `connections/${newId}.json`;
+
+    const collides = (state.connFiles || []).some((f) => {
+      const p = String(f?.path || '');
+      if (!p) return false;
+      if (p === relPath) return false;
+      const cid = connectionIdForConnFilePath(p);
+      return String(cid || '') === newId || p === newRelPath;
+    });
+    if (collides) { setEditDevStatus(`Device '${newId}' already exists.`); return; }
+
+    if (!state.workspaceDeletePaths) state.workspaceDeletePaths = new Set();
+    state.workspaceDeletePaths.add(relPath);
+    state.workspaceDeletePaths.add(`tags/${oldId}.json`);
+
+    state.connFiles = (state.connFiles || []).filter((f) => String(f?.path || '') !== relPath);
+    if (!state.connFiles.some((f) => String(f?.path || '') === newRelPath)) {
+      state.connFiles = state.connFiles.concat([{ kind: 'connection', path: newRelPath }]);
+    }
+    state.connObjCache?.delete?.(relPath);
+
+    // Update tags to the new connection_id.
+    state.tagConfigAll = (Array.isArray(state.tagConfigAll) ? state.tagConfigAll : []).map((t) => {
+      if (String(t?.connection_id || '') !== oldId) return t;
+      return { ...(t || {}), connection_id: newId };
+    });
+    if (state.tagConfigEdited && state.tagConfigEdited.size) {
+      const nextEdits = new Map();
+      for (const [k, v] of state.tagConfigEdited.entries()) {
+        const key = String(k || '');
+        const sep = key.indexOf('::');
+        if (sep < 0) { nextEdits.set(key, v); continue; }
+        const cid = key.slice(0, sep);
+        const name = key.slice(sep + 2);
+        if (cid !== oldId) { nextEdits.set(key, v); continue; }
+        nextEdits.set(`${newId}::${name}`, { ...(v || {}), connection_id: newId });
+      }
+      state.tagConfigEdited = nextEdits;
+    }
+    markTagsDirty(true);
+
+    // Update alarms config to the new connection_id (staged with Save/Save+Reload).
+    if (state.alarmsConfig && Array.isArray(state.alarmsConfig.alarms)) {
+      state.alarmsConfig = {
+        ...(state.alarmsConfig || {}),
+        alarms: state.alarmsConfig.alarms.map((a) => {
+          if (String(a?.connection_id || '') !== oldId) return a;
+          return { ...(a || {}), connection_id: newId };
+        })
+      };
+      state.alarmsConfigDirty = true;
+    }
+
+    targetRelPath = newRelPath;
+    state.selectedNodeId = `device:${newRelPath}`;
+  }
 
   if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
-  state.workspaceConnDirty.set(relPath, obj);
-  if (state.connObjCache) state.connObjCache.set(relPath, obj);
+  state.workspaceConnDirty.set(targetRelPath, obj);
+  if (state.connObjCache) state.connObjCache.set(targetRelPath, obj);
 
   setEditDevStatus('Staged.');
   renderWorkspaceSaveBar();
@@ -4700,7 +4847,7 @@ async function saveWorkspaceAll({ reload }) {
     try {
       await opcbridgeReload();
       setWorkspaceSaveStatus('Reloaded. Refreshing…');
-      await Promise.all([loadConnectionsList(), loadTagsConfig()]);
+      await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
       renderWorkspaceTree();
       setWorkspaceSaveStatus('Reloaded.');
     } catch (err) {
@@ -4716,7 +4863,12 @@ async function saveWorkspaceAll({ reload }) {
     // 0) Apply staged deletes
     if (state.workspaceDeletePaths && state.workspaceDeletePaths.size) {
       for (const relPath of Array.from(state.workspaceDeletePaths.values())) {
-        await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
+        try {
+          await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
+        } catch (err) {
+          const msg = String(err?.message || '');
+          if (!msg.toLowerCase().includes('file does not exist')) throw err;
+        }
         state.connObjCache?.delete?.(relPath);
         state.workspaceConnDirty?.delete?.(relPath);
         state.connFiles = (state.connFiles || []).filter((f) => String(f?.path || '') !== relPath);
@@ -4741,6 +4893,13 @@ async function saveWorkspaceAll({ reload }) {
       await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
     }
 
+    // 3) Save alarms config (only if we staged updates, e.g., renaming a device)
+    if (state.alarmsConfigDirty) {
+      const cfg = state.alarmsConfig || { alarms: [], groups: [] };
+      await saveOpcbridgeAlarmsConfig(cfg);
+      state.alarmsConfigDirty = false;
+    }
+
     if (reload) {
       await opcbridgeReload();
     }
@@ -4751,7 +4910,7 @@ async function saveWorkspaceAll({ reload }) {
     markTagsDirty(false);
     clearWorkspaceDraft();
 
-    await Promise.all([loadConnectionsList(), loadTagsConfig()]);
+    await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
     renderWorkspaceTree();
     setWorkspaceSaveStatus(reload ? 'Saved + Reloaded.' : 'Saved.');
   } catch (err) {
@@ -4768,10 +4927,11 @@ async function discardWorkspaceChanges() {
   try {
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
     if (state.workspaceDeletePaths) state.workspaceDeletePaths.clear();
+    state.alarmsConfigDirty = false;
     state.tagConfigEdited = new Map();
     markTagsDirty(false);
     clearWorkspaceDraft();
-    await Promise.all([loadConnectionsList(), loadTagsConfig()]);
+    await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
     renderWorkspaceTree();
     setWorkspaceSaveStatus('');
   } catch (err) {

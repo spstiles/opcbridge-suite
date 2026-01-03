@@ -7052,7 +7052,7 @@ const wsFillDatatypeSelect = (sel, selected) => {
 
     if (el.deviceId) {
         el.deviceId.value = wsDeviceModalMode === "edit" ? wsDeviceEditingId : "";
-        el.deviceId.disabled = wsDeviceModalMode === "edit";
+        el.deviceId.disabled = !wsIsEditable();
     }
     if (el.deviceDesc) el.deviceDesc.value = String(obj?.description || "");
     if (el.deviceDriver) el.deviceDriver.value = String(obj?.driver || "ab_eip");
@@ -7670,17 +7670,21 @@ const wsRenderTree = () => {
 		    }
 		};
 
-	const wsSaveDeviceFromModal = () => {
-	    const el = wsEls();
-	    const id = String(el.deviceId?.value || "").trim();
-    if (!id) {
-        if (el.deviceStatus) el.deviceStatus.textContent = "Device ID is required.";
-        return;
-    }
+		const wsSaveDeviceFromModal = () => {
+		    const el = wsEls();
+		    const id = String(el.deviceId?.value || "").trim();
+	    if (!id) {
+	        if (el.deviceStatus) el.deviceStatus.textContent = "Device ID is required.";
+	        return;
+	    }
+	    if (!/^[A-Za-z0-9._-]+$/.test(id)) {
+	        if (el.deviceStatus) el.deviceStatus.textContent = "Device ID may only contain letters, digits, '.', '_', and '-'.";
+	        return;
+	    }
 
-    const base = wsDeviceModalMode === "edit"
-        ? ((Array.isArray(wsDraft.connections) ? wsDraft.connections : []).find((c) => String(c?.id || "") === wsDeviceEditingId) || {})
-        : {};
+	    const base = wsDeviceModalMode === "edit"
+	        ? ((Array.isArray(wsDraft.connections) ? wsDraft.connections : []).find((c) => String(c?.id || "") === wsDeviceEditingId) || {})
+	        : {};
 
     const next = Object.assign({}, base);
     next.id = id;
@@ -7695,22 +7699,40 @@ const wsRenderTree = () => {
     if (String(el.deviceWrite?.value || "").trim() !== "") next.default_write_ms = Math.max(0, Math.floor(Number(el.deviceWrite.value) || 0));
     if (String(el.deviceDebug?.value || "").trim() !== "") next.debug = Math.max(0, Math.floor(Number(el.deviceDebug.value) || 0));
 
-    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
+	    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
 
-    if (wsDeviceModalMode === "new") {
-        if (conns.some((c) => String(c?.id || "") === id)) {
-            if (el.deviceStatus) el.deviceStatus.textContent = "Device ID already exists.";
-            return;
-        }
-        conns.push(next);
-    } else {
-        const idx = conns.findIndex((c) => String(c?.id || "") === wsDeviceEditingId);
-        if (idx >= 0) conns[idx] = next;
-    }
+	    if (wsDeviceModalMode === "new") {
+	        if (conns.some((c) => String(c?.id || "") === id)) {
+	            if (el.deviceStatus) el.deviceStatus.textContent = "Device ID already exists.";
+	            return;
+	        }
+	        conns.push(next);
+	    } else {
+	        if (id !== wsDeviceEditingId && conns.some((c) => String(c?.id || "") === id)) {
+	            if (el.deviceStatus) el.deviceStatus.textContent = "Device ID already exists.";
+	            return;
+	        }
 
-	    wsDraft.connections = conns;
-	    wsSetDirty(true);
-	    wsCloseModal(el.deviceModal);
+	        const idx = conns.findIndex((c) => String(c?.id || "") === wsDeviceEditingId);
+	        if (idx >= 0) conns[idx] = next;
+
+	        // Rename propagation: update tags/alarms that reference this device.
+	        if (id !== wsDeviceEditingId) {
+	            const oldId = wsDeviceEditingId;
+	            wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).map((t) => {
+	                if (String(t?.connection_id || "") !== oldId) return t;
+	                return Object.assign({}, t, { connection_id: id });
+	            });
+	            wsDraft.alarms = (Array.isArray(wsDraft.alarms) ? wsDraft.alarms : []).map((a) => {
+	                if (String(a?.connection_id || "") !== oldId) return a;
+	                return Object.assign({}, a, { connection_id: id });
+	            });
+	        }
+	    }
+
+		    wsDraft.connections = conns;
+		    wsSetDirty(true);
+		    wsCloseModal(el.deviceModal);
 
 	    wsSelectNode("ws:device:" + encodeURIComponent(id));
 	};
