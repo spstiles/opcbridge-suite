@@ -2029,6 +2029,85 @@ json load_json_with_comments(const std::string &path) {
     return json::parse(stripped);
 }
 
+static std::string trim_copy(const std::string &s) {
+    const auto is_ws = [](unsigned char c) { return std::isspace(c) != 0; };
+    size_t b = 0;
+    while (b < s.size() && is_ws((unsigned char)s[b])) b++;
+    size_t e = s.size();
+    while (e > b && is_ws((unsigned char)s[e - 1])) e--;
+    return s.substr(b, e - b);
+}
+
+static std::string to_lower_copy(std::string s) {
+    for (auto &c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+static bool json_bool_loose(const json &v, bool def) {
+    try {
+        if (v.is_boolean()) return v.get<bool>();
+        if (v.is_number_integer() || v.is_number_unsigned()) return v.get<long long>() != 0;
+        if (v.is_number_float()) return v.get<double>() != 0.0;
+        if (v.is_string()) {
+            const std::string s = to_lower_copy(trim_copy(v.get<std::string>()));
+            if (s == "1" || s == "true" || s == "yes" || s == "y" || s == "on") return true;
+            if (s == "0" || s == "false" || s == "no" || s == "n" || s == "off") return false;
+            return def;
+        }
+    } catch (...) {
+        return def;
+    }
+    return def;
+}
+
+static int json_int_loose(const json &v, int def) {
+    try {
+        if (v.is_number_integer()) return v.get<int>();
+        if (v.is_number_unsigned()) return (int)v.get<unsigned long long>();
+        if (v.is_number_float()) return (int)std::llround(v.get<double>());
+        if (v.is_boolean()) return v.get<bool>() ? 1 : 0;
+        if (v.is_string()) {
+            const std::string s = trim_copy(v.get<std::string>());
+            if (s.empty()) return def;
+            size_t idx = 0;
+            long long out = std::stoll(s, &idx, 10);
+            (void)idx;
+            return (int)out;
+        }
+    } catch (...) {
+        return def;
+    }
+    return def;
+}
+
+static std::string json_string_loose(const json &v, const std::string &def) {
+    try {
+        if (v.is_string()) return v.get<std::string>();
+        if (v.is_number_integer()) return std::to_string(v.get<long long>());
+        if (v.is_number_unsigned()) return std::to_string(v.get<unsigned long long>());
+        if (v.is_number_float()) return std::to_string(v.get<double>());
+        if (v.is_boolean()) return v.get<bool>() ? "true" : "false";
+    } catch (...) {
+        return def;
+    }
+    return def;
+}
+
+static bool json_get_bool_loose(const json &obj, const char *key, bool def) {
+    if (!obj.is_object() || !obj.contains(key) || obj.at(key).is_null()) return def;
+    return json_bool_loose(obj.at(key), def);
+}
+
+static int json_get_int_loose(const json &obj, const char *key, int def) {
+    if (!obj.is_object() || !obj.contains(key) || obj.at(key).is_null()) return def;
+    return json_int_loose(obj.at(key), def);
+}
+
+static std::string json_get_string_loose(const json &obj, const char *key, const std::string &def) {
+    if (!obj.is_object() || !obj.contains(key) || obj.at(key).is_null()) return def;
+    return json_string_loose(obj.at(key), def);
+}
+
 // -----------------------------
 // Config loading
 // -----------------------------
@@ -2070,31 +2149,40 @@ TagFile load_tag_file(const std::string &path) {
     tf.connection_id = j.at("connection_id").get<std::string>();
 
 	for (const auto &jt : j.at("tags")) {
-        TagConfig t;
-        t.logical_name         = jt.at("name").get<std::string>();
-        t.plc_tag_name         = jt.at("plc_tag_name").get<std::string>();
-        t.datatype             = jt.at("datatype").get<std::string>();
-        t.scan_ms              = jt.value("scan_ms", 1000);
-        // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
-        t.enabled              = jt.value("enabled", true);
-        t.writable             = jt.value("writable", false);
-        t.mqtt_command_allowed = jt.value("mqtt_command_allowed", false);
-        t.log_event_on_change  = jt.value("log_event_on_change", false);
+        try {
+            TagConfig t;
+            if (!jt.is_object()) continue;
+            if (!jt.contains("name") || !jt.contains("plc_tag_name") || !jt.contains("datatype")) continue;
 
-        // Periodic logging config (all optional)
-        t.log_periodic        = jt.value("log_periodic", false);
-        t.log_periodic_mode   = jt.value("log_periodic_mode", std::string{});
+            t.logical_name = json_get_string_loose(jt, "name", std::string{});
+            t.plc_tag_name = json_get_string_loose(jt, "plc_tag_name", std::string{});
+            t.datatype     = json_get_string_loose(jt, "datatype", std::string{});
+            if (t.logical_name.empty() || t.plc_tag_name.empty() || t.datatype.empty()) continue;
 
-        // Accept either "log_periodic_interval_sec" or legacy "log_periodic_interval"
-        int interval1 = jt.value("log_periodic_interval_sec", 0);
-        int interval2 = jt.value("log_periodic_interval", 0); // so your existing JSON still works
-        t.log_periodic_interval_sec = (interval1 > 0) ? interval1 : interval2;
+            t.scan_ms              = json_get_int_loose(jt, "scan_ms", 1000);
+            // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
+            t.enabled              = json_get_bool_loose(jt, "enabled", true);
+            t.writable             = json_get_bool_loose(jt, "writable", false);
+            t.mqtt_command_allowed = json_get_bool_loose(jt, "mqtt_command_allowed", false);
+            t.log_event_on_change  = json_get_bool_loose(jt, "log_event_on_change", false);
 
-        t.log_hourly_minute   = jt.value("log_hourly_minute", 0);
-        t.log_daily_hour      = jt.value("log_daily_hour", 0);
-        t.log_daily_minute    = jt.value("log_daily_minute", 0);
+            // Periodic logging config (all optional)
+            t.log_periodic      = json_get_bool_loose(jt, "log_periodic", false);
+            t.log_periodic_mode = json_get_string_loose(jt, "log_periodic_mode", std::string{});
 
-		tf.tags.push_back(t);
+            // Accept either "log_periodic_interval_sec" or legacy "log_periodic_interval"
+            int interval1 = json_get_int_loose(jt, "log_periodic_interval_sec", 0);
+            int interval2 = json_get_int_loose(jt, "log_periodic_interval", 0);
+            t.log_periodic_interval_sec = (interval1 > 0) ? interval1 : interval2;
+
+            t.log_hourly_minute = json_get_int_loose(jt, "log_hourly_minute", 0);
+            t.log_daily_hour    = json_get_int_loose(jt, "log_daily_hour", 0);
+            t.log_daily_minute  = json_get_int_loose(jt, "log_daily_minute", 0);
+
+            tf.tags.push_back(t);
+        } catch (const std::exception &ex) {
+            std::cerr << "[load] Warning: skipping malformed tag in " << path << ": " << ex.what() << "\n";
+        }
 	}
     
     return tf;
