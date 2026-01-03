@@ -38,6 +38,20 @@ if have_cmd systemctl; then
       rm -f "/etc/systemd/system/${svc}.service"
     fi
   done
+
+  # Reporter per-report timers/services are managed by opcbridge-scada. Keep them unless --purge.
+  if [[ "$PURGE" -eq 1 ]]; then
+    for tmr in /etc/systemd/system/opcbridge-reporter-*.timer; do
+      [[ -e "$tmr" ]] || continue
+      unit="$(basename "$tmr")"
+      systemctl disable --now "$unit" >/dev/null 2>&1 || true
+      rm -f "$tmr" || true
+      rm -f "/etc/systemd/system/${unit%.timer}.service" || true
+    done
+
+    # Remove scada sudoers drop-in (created by installer option A).
+    rm -f "/etc/sudoers.d/opcbridge-scada-systemd" || true
+  fi
   systemctl daemon-reload || true
 fi
 

@@ -15,14 +15,15 @@
     <div class="status" id="authLine"></div>
 
 	    <nav class="tabs" id="tabs">
-	      <button data-tab="overview" class="tab is-active">Overview</button>
-	      <button data-tab="configure" class="tab">Configure Server</button>
-	      <button data-tab="workspace" class="tab">Workspace</button>
-	      <button data-tab="logs" class="tab">Logs</button>
-	      <button data-tab="users" class="tab">Users</button>
-	      <div class="tabs-right">
-	        <a class="tab tab-link" id="topLinkOpcbridge" href="#" target="_blank" rel="noopener noreferrer">opcbridge</a>
-	        <a class="tab tab-link" id="topLinkHmi" href="#" target="_blank" rel="noopener noreferrer">HMI</a>
+		      <button data-tab="overview" class="tab is-active">Overview</button>
+		      <button data-tab="configure" class="tab">Configure Server</button>
+		      <button data-tab="workspace" class="tab">Workspace</button>
+		      <button data-tab="logger" class="tab">Data Logger</button>
+		      <button data-tab="logs" class="tab">Logs</button>
+		      <button data-tab="users" class="tab">Users</button>
+		      <div class="tabs-right">
+		        <a class="tab tab-link" id="topLinkOpcbridge" href="#" target="_blank" rel="noopener noreferrer">opcbridge</a>
+		        <a class="tab tab-link" id="topLinkHmi" href="#" target="_blank" rel="noopener noreferrer">HMI</a>
 	      </div>
 	    </nav>
   </header>
@@ -352,11 +353,70 @@
           </div>
         </section>
 	      </div>
-	    </section>
+		    </section>
 
-	    <section id="tab-logs" class="panel">
-	      <h2>Logs</h2>
-	      <div class="hint">Requires <code>suite.view_logs</code>.</div>
+		    <section id="tab-logger" class="panel">
+		      <h2>Data Logger</h2>
+		      <div class="hint">Configure opcbridge-reporter connections. Settings are stored on the SCADA server.</div>
+
+		      <div class="workspace" style="min-height: 560px;">
+		        <aside class="sidebar tree">
+		          <div class="sidebar-title">Data Logger</div>
+		          <div class="tree-body" id="loggerTreeView"></div>
+		          <div class="sidebar-note" id="loggerTreeNote"></div>
+		        </aside>
+
+		        <section class="editor workspace-right">
+		          <div class="editor-body">
+		            <div class="row-actions" style="margin: 0 0 10px 0;">
+		              <button class="btn" id="loggerRefreshBtn" type="button">Refresh</button>
+		              <div class="hint mono" id="loggerStatus" style="margin-left: auto;"></div>
+		            </div>
+
+		            <div class="table-wrap">
+		              <table class="table" id="loggerDbTable">
+		                <thead>
+		                  <tr>
+		                    <th>ID</th>
+		                    <th>Name</th>
+		                    <th>Type</th>
+		                    <th>MySQL Host</th>
+		                    <th>Port</th>
+		                    <th>User</th>
+		                    <th>Database</th>
+		                    <th>opcbridge</th>
+		                    <th>Password</th>
+		                  </tr>
+		                </thead>
+		                <tbody id="loggerDbTbody"></tbody>
+		              </table>
+		              <table class="table" id="loggerReportsTable" style="display:none;">
+		                <thead>
+		                  <tr>
+		                    <th>ID</th>
+		                    <th>Name</th>
+		                    <th>Database</th>
+		                    <th>Mode</th>
+		                    <th>Schedule</th>
+		                    <th>Enabled</th>
+		                  </tr>
+		                </thead>
+		                <tbody id="loggerReportsTbody"></tbody>
+		              </table>
+		            </div>
+
+		            <details class="details" style="margin-top: 10px;">
+		              <summary class="small">Raw JSON</summary>
+		              <pre class="mono" id="loggerJson">Loading…</pre>
+		            </details>
+		          </div>
+		        </section>
+		      </div>
+		    </section>
+
+		    <section id="tab-logs" class="panel">
+		      <h2>Logs</h2>
+		      <div class="hint">Requires <code>suite.view_logs</code>.</div>
 
 	      <div class="card">
 	        <div class="card-title">Logs</div>
@@ -593,6 +653,237 @@
             </div>
           </div>
           <div class="hint mono" id="loginStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="loggerDbModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loggerDbModalTitle">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="loggerDbModalTitle">Database</div>
+        <button class="btn" id="loggerDbCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint" id="loggerDbHint">Configure a database connection for the data logger.</div>
+        <div class="form" style="max-width: 720px;">
+          <div class="form-row"><label>ID</label><input id="loggerDbModalId" type="text" placeholder="e.g. plant_mysql" /></div>
+          <div class="form-row"><label>Name</label><input id="loggerDbModalName" type="text" placeholder="e.g. Plant Historian" /></div>
+          <div class="form-row"><label>Type</label>
+            <select id="loggerDbModalType">
+              <option value="mysql">MySQL / MariaDB</option>
+              <option value="odbc">SQL Server (ODBC)</option>
+            </select>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="form-row"><label>opcbridge Base URL</label><input id="loggerDbModalOpcbridgeBaseUrl" type="text" placeholder="http://127.0.0.1:8080" /></div>
+
+          <div class="divider"></div>
+
+          <div id="loggerDbMysqlFields">
+            <div class="form-row"><label>MySQL Host</label><input id="loggerDbModalMysqlHost" type="text" placeholder="127.0.0.1" /></div>
+            <div class="form-row"><label>MySQL Port</label><input id="loggerDbModalMysqlPort" type="number" min="1" max="65535" step="1" /></div>
+            <div class="form-row"><label>MySQL User</label><input id="loggerDbModalMysqlUser" type="text" placeholder="opcbridge" /></div>
+            <div class="form-row">
+              <label>MySQL Password</label>
+              <input id="loggerDbModalMysqlPassword" type="password" placeholder="(unchanged)" />
+              <div class="small" id="loggerDbModalMysqlPasswordHint"></div>
+            </div>
+            <div class="form-row"><label>MySQL Database</label><input id="loggerDbModalMysqlDatabase" type="text" placeholder="opcbridge" /></div>
+          </div>
+
+          <div id="loggerDbOdbcFields" style="display:none;">
+            <div class="form-row"><label>ODBC Driver</label><input id="loggerDbModalOdbcDriver" type="text" placeholder="e.g. FreeTDS or ODBC Driver 18 for SQL Server" /></div>
+            <div class="form-row"><label>SQL Server Host</label><input id="loggerDbModalOdbcHost" type="text" placeholder="127.0.0.1" /></div>
+            <div class="form-row"><label>SQL Server Port</label><input id="loggerDbModalOdbcPort" type="number" min="1" max="65535" step="1" placeholder="1433" /></div>
+            <div class="form-row"><label>Database</label><input id="loggerDbModalOdbcDatabase" type="text" placeholder="opcbridge" /></div>
+            <div class="form-row"><label>User</label><input id="loggerDbModalOdbcUser" type="text" placeholder="opcbridge" /></div>
+            <div class="form-row">
+              <label>Password</label>
+              <input id="loggerDbModalOdbcPassword" type="password" placeholder="(unchanged)" />
+              <div class="small" id="loggerDbModalOdbcPasswordHint"></div>
+            </div>
+            <div class="form-row">
+              <label>Options</label>
+              <div class="check-row">
+                <label class="check-pill"><input id="loggerDbModalOdbcEncrypt" type="checkbox" class="inline-check" checked /> Encrypt</label>
+                <label class="check-pill"><input id="loggerDbModalOdbcTrustCert" type="checkbox" class="inline-check" /> Trust server certificate</label>
+              </div>
+            </div>
+            <div class="small">Note: SQL Server support requires ODBC deps installed on the server.</div>
+          </div>
+
+          <div class="form-row"><label></label>
+            <div class="row-actions">
+              <button class="btn" id="loggerDbCancelBtn" type="button">Cancel</button>
+              <button class="btn primary" id="loggerDbSaveBtn" type="button">Save</button>
+            </div>
+          </div>
+          <div class="hint mono" id="loggerDbModalStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="loggerReportModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loggerReportModalTitle">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="loggerReportModalTitle">Report</div>
+        <button class="btn" id="loggerReportCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint" id="loggerReportHint">Configure a report schedule and tag selection.</div>
+        <div class="form" style="max-width: 720px;">
+          <div class="form-row"><label>ID</label><input id="loggerReportId" type="text" placeholder="e.g. hist_5m" /></div>
+          <div class="form-row"><label>Name</label><input id="loggerReportName" type="text" placeholder="e.g. 5-minute Historian" /></div>
+          <div class="form-row"><label>Database</label><select id="loggerReportDatabase"></select></div>
+          <div class="form-row"><label>Table</label><input id="loggerReportTable" type="text" placeholder="tag_log" /></div>
+          <div class="form-row"><label>Mode</label><select id="loggerReportMode">
+            <option value="scheduled">Scheduled</option>
+            <option value="event">Event (not yet supported)</option>
+          </select></div>
+
+          <div class="form-row">
+            <label>Enabled</label>
+            <div class="check-row">
+              <label class="check-pill"><input id="loggerReportEnabled" type="checkbox" class="inline-check" /> Enabled</label>
+              <label class="check-pill"><input id="loggerReportPersistent" type="checkbox" class="inline-check" checked /> Persistent (run after downtime)</label>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="form-row">
+            <label>Schedule</label>
+            <select id="loggerReportScheduleKind">
+              <option value="every_n_minutes">Every N minutes (aligned)</option>
+              <option value="hourly">Hourly</option>
+              <option value="daily">Daily</option>
+              <option value="custom">Custom (advanced)</option>
+            </select>
+          </div>
+
+          <div id="loggerScheduleEveryMinutesWrap">
+            <div class="form-row">
+              <label>Interval (min)</label>
+              <input id="loggerReportEveryMinutes" type="number" min="1" max="1440" step="1" value="5" />
+              <div class="small">Runs at minute <code>0, N, 2N, …</code> each hour.</div>
+            </div>
+          </div>
+
+          <div id="loggerScheduleHourlyWrap" style="display:none;">
+            <div class="form-row">
+              <label>At</label>
+              <div style="display:flex; gap: 10px; align-items:center;">
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <span class="small mono">min</span>
+                  <input id="loggerReportHourlyMinute" type="number" min="0" max="59" step="1" value="0" style="width: 90px;" />
+                </div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <span class="small mono">sec</span>
+                  <input id="loggerReportHourlySecond" type="number" min="0" max="59" step="1" value="0" style="width: 90px;" />
+                </div>
+              </div>
+              <div class="small">Runs once per hour at the specified minute/second.</div>
+            </div>
+          </div>
+
+          <div id="loggerScheduleDailyWrap" style="display:none;">
+            <div class="form-row">
+              <label>At</label>
+              <div style="display:flex; gap: 10px; align-items:center;">
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <span class="small mono">hour</span>
+                  <input id="loggerReportDailyHour" type="number" min="0" max="23" step="1" value="23" style="width: 90px;" />
+                </div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <span class="small mono">min</span>
+                  <input id="loggerReportDailyMinute" type="number" min="0" max="59" step="1" value="55" style="width: 90px;" />
+                </div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <span class="small mono">sec</span>
+                  <input id="loggerReportDailySecond" type="number" min="0" max="59" step="1" value="0" style="width: 90px;" />
+                </div>
+              </div>
+              <div class="small">Runs once per day (server local time).</div>
+            </div>
+          </div>
+
+          <details class="details" id="loggerScheduleAdvancedWrap" style="margin-top: 6px; display:none;">
+            <summary class="small">Advanced schedule (systemd OnCalendar)</summary>
+            <div class="form-row" style="margin-top: 10px;">
+              <label>OnCalendar</label>
+              <input id="loggerReportOnCalendar" type="text" placeholder="*-*-* *:0/5:00" />
+              <div class="small">Examples: every 5 minutes: <code>*-*-* *:0/5:00</code>, daily 23:55: <code>*-*-* 23:55:00</code></div>
+            </div>
+          </details>
+
+          <div class="small mono" id="loggerReportSchedulePreview" style="margin-top: 6px;"></div>
+
+          <div class="divider"></div>
+
+          <div class="form-row">
+            <label>Tags</label>
+            <textarea id="loggerReportTags" rows="8" class="mono" placeholder='One per line:\nfield_ops:PLC_Second\nfield_ops:Pump*.Running'></textarea>
+            <div class="row-actions" style="margin-top: 8px;">
+              <button class="btn" id="loggerReportSelectTagsBtn" type="button">Select Tags…</button>
+            </div>
+            <div class="small">Case-sensitive. Wildcards supported in tag name (<code>*</code>, <code>?</code>). Format: <code>connection_id:tag_name</code>.</div>
+          </div>
+
+          <div class="form-row"><label></label>
+            <div class="row-actions">
+              <button class="btn" id="loggerReportCancelBtn" type="button">Cancel</button>
+              <button class="btn primary" id="loggerReportSaveBtn" type="button">Save + Apply</button>
+            </div>
+          </div>
+          <div class="hint mono" id="loggerReportStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="loggerTagPickerModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loggerTagPickerTitle" style="max-width: 980px;">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="loggerTagPickerTitle">Select Tags</div>
+        <button class="btn" id="loggerTagPickerCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint">Choose tags to add to the report. Uses live tag list from opcbridge.</div>
+        <div class="form" style="max-width: 960px;">
+          <div class="form-row">
+            <label>Search</label>
+            <input id="loggerTagPickerSearch" type="text" placeholder="filter by connection or tag name" />
+          </div>
+          <div class="form-row">
+            <label></label>
+            <div class="row-actions">
+              <button class="btn" id="loggerTagPickerSelectAllBtn" type="button">Select All (filtered)</button>
+              <button class="btn" id="loggerTagPickerClearBtn" type="button">Clear</button>
+              <button class="btn primary" id="loggerTagPickerApplyBtn" type="button">Apply Selection</button>
+            </div>
+          </div>
+          <div class="hint mono" id="loggerTagPickerStatus"></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="table-wrap">
+          <table class="table" id="loggerTagPickerTable">
+            <thead>
+              <tr>
+                <th style="width: 40px;"></th>
+                <th>Connection</th>
+                <th>Tag</th>
+                <th>Datatype</th>
+                <th>Writable</th>
+              </tr>
+            </thead>
+            <tbody id="loggerTagPickerTbody"></tbody>
+          </table>
         </div>
       </div>
     </div>

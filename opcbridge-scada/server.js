@@ -78,6 +78,69 @@ const SYSTEMD_DROPIN_DIR = String(
 const SYSTEMD_DROPIN_NAME = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_DROPIN_NAME || '20-opcbridge-scada.conf').trim();
 const SYSTEMD_DROPIN_PATH = path.join(SYSTEMD_DROPIN_DIR, SYSTEMD_DROPIN_NAME);
 
+const REPORTER_CONFIG_PATH = String(
+  process.env.OPCBRIDGE_REPORTER_CONFIG ||
+  '/etc/opcbridge/reporter/config.json'
+).trim();
+const REPORTER_CONFIG_EXAMPLE_PATH = `${REPORTER_CONFIG_PATH}.example`;
+
+const REPORTER_DATABASES_PATH = String(
+  process.env.OPCBRIDGE_REPORTER_DATABASES ||
+  '/etc/opcbridge/reporter/databases.json'
+).trim();
+
+function detectReporterCapabilities() {
+  const caps = {
+    odbc: { available: false, drivers: [] }
+  };
+
+  // Basic ODBC detection: unixODBC tools and library presence.
+  try {
+    const hasOdbcinst = fs.existsSync('/usr/bin/odbcinst') || fs.existsSync('/bin/odbcinst');
+    const hasIsql = fs.existsSync('/usr/bin/isql') || fs.existsSync('/bin/isql');
+    caps.odbc.available = Boolean(hasOdbcinst || hasIsql);
+
+    if (caps.odbc.available && hasOdbcinst) {
+      const r = child_process.spawnSync('odbcinst', ['-q', '-d'], { encoding: 'utf8' });
+      if (r.status === 0) {
+        const lines = String(r.stdout || '')
+          .split(/\r?\n/g)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((s) => s.replace(/^\[|\]$/g, ''));
+        caps.odbc.drivers = Array.from(new Set(lines));
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return caps;
+}
+
+const REPORTER_CAPABILITIES = detectReporterCapabilities();
+
+const REPORTER_REPORTS_PATH = String(
+  process.env.OPCBRIDGE_REPORTER_REPORTS ||
+  '/etc/opcbridge/reporter/reports.json'
+).trim();
+
+const REPORTER_REPORTS_DIR = String(
+  process.env.OPCBRIDGE_REPORTER_REPORTS_DIR ||
+  '/etc/opcbridge/reporter/reports'
+).trim();
+
+const REPORTER_BIN = String(
+  process.env.OPCBRIDGE_REPORTER_BIN ||
+  '/opt/opcbridge-suite/bin/opcbridge-reporter'
+).trim();
+
+const SYSTEMD_UNITS_DIR = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNITS_DIR || '/etc/systemd/system').trim();
+
+const SUITE_PREFIX = String(process.env.OPCBRIDGE_SUITE_PREFIX || '/opt/opcbridge-suite').trim();
+const SUITE_SERVICE_USER = String(process.env.OPCBRIDGE_SERVICE_USER || 'opcbridge').trim();
+const SUITE_SERVICE_GROUP = String(process.env.OPCBRIDGE_SERVICE_GROUP || SUITE_SERVICE_USER).trim();
+
 const DEFAULT_OPCBRIDGE_BIN = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_BIN || '/opt/opcbridge-suite/bin/opcbridge').trim();
 const DEFAULT_OPCBRIDGE_CONFIG_DIR = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_CONFIG_DIR || '/etc/opcbridge').trim();
 
@@ -309,6 +372,92 @@ function sendJson(res, status, obj) {
   }, JSON.stringify(obj, null, 2));
 }
 
+function readJsonFileOrNull(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(String(raw || ''));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function ensureDirForFile(filePath) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function writeJsonFile(filePath, obj) {
+  ensureDirForFile(filePath);
+  fs.writeFileSync(filePath, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+}
+
+function sanitizeId(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, '_');
+}
+
+function normalizeOnCalendar(value) {
+  const s = String(value || '').trim();
+  return s;
+}
+
+function buildReporterServiceUnit(reportId, cfgPath) {
+  // Skip overlapping runs via flock. systemd creates RuntimeDirectory owned by User.
+  const safeId = sanitizeId(reportId);
+  const lockPath = `/run/opcbridge-reporter/${safeId}.lock`;
+  const jobName = safeId;
+
+  return (
+`# Managed by opcbridge-scada
+[Unit]
+Description=opcbridge-reporter job ${safeId}
+After=network.target
+
+[Service]
+Type=oneshot
+User=${SUITE_SERVICE_USER}
+Group=${SUITE_SERVICE_GROUP}
+WorkingDirectory=${SUITE_PREFIX}
+RuntimeDirectory=opcbridge-reporter
+ExecStart=/usr/bin/flock -n ${lockPath} ${REPORTER_BIN} --job ${jobName} --config ${cfgPath}
+`
+  );
+}
+
+function buildReporterTimerUnit(reportId, onCalendar, persistent = true) {
+  const safeId = sanitizeId(reportId);
+  const cal = normalizeOnCalendar(onCalendar);
+  return (
+`# Managed by opcbridge-scada
+[Unit]
+Description=opcbridge-reporter schedule ${safeId}
+
+[Timer]
+OnCalendar=${cal}
+Persistent=${persistent ? 'true' : 'false'}
+Unit=opcbridge-reporter-${safeId}.service
+
+[Install]
+WantedBy=timers.target
+`
+  );
+}
+
+function readReporterDatabasesRaw() {
+  const root = readJsonFileOrNull(REPORTER_DATABASES_PATH) || { databases: [] };
+  const raw = Array.isArray(root?.databases) ? root.databases : [];
+  return raw.filter((d) => d && typeof d === 'object' && !Array.isArray(d));
+}
+
+function readReporterReportsRaw() {
+  const root = readJsonFileOrNull(REPORTER_REPORTS_PATH) || { reports: [] };
+  const raw = Array.isArray(root?.reports) ? root.reports : [];
+  return raw.filter((r) => r && typeof r === 'object' && !Array.isArray(r));
+}
+
 function parseCmdTokens(cmdline) {
   const s = String(cmdline || '');
   const out = [];
@@ -507,6 +656,44 @@ function installSystemdDropIn(content) {
     return {
       ok,
       dropin_path: SYSTEMD_DROPIN_PATH,
+      installed_via: 'sudo_install',
+      status: r.status,
+      stdout: String(r.stdout || ''),
+      stderr: String(r.stderr || ''),
+      tmp_path: tmpPath
+    };
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+  }
+}
+
+function installSystemdUnitFile(content, dstPath) {
+  if (!SYSTEMD_ENABLED) {
+    return { ok: false, error: 'Systemd management disabled in opcbridge-scada.' };
+  }
+
+  const isRoot = (typeof process.getuid === 'function') ? (process.getuid() === 0) : false;
+  const tmpDir = '/tmp';
+  const base = path.basename(dstPath);
+  const tmpPath = path.join(tmpDir, `opcbridge-scada-unit-${process.pid}-${Date.now()}-${base}`);
+
+  try {
+    fs.writeFileSync(tmpPath, content, { encoding: 'utf8', mode: 0o644 });
+  } catch (err) {
+    return { ok: false, error: `Failed to write temp unit: ${String(err.message || err)}`, tmp_path: tmpPath };
+  }
+
+  try {
+    if (isRoot) {
+      fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+      fs.writeFileSync(dstPath, content, { encoding: 'utf8', mode: 0o644 });
+      return { ok: true, unit_path: dstPath, installed_via: 'root_write' };
+    }
+
+    const r = child_process.spawnSync('sudo', ['-n', '/usr/bin/install', '-D', '-m', '0644', tmpPath, dstPath], { encoding: 'utf8' });
+    return {
+      ok: r.status === 0,
+      unit_path: dstPath,
       installed_via: 'sudo_install',
       status: r.status,
       stdout: String(r.stdout || ''),
@@ -770,6 +957,21 @@ const server = http.createServer(async (req, res) => {
     return status;
   }
 
+  async function requireManageServerPerm() {
+    let status = null;
+    try {
+      status = await fetchOpcbridgeAuthStatus(req, cfg);
+    } catch (err) {
+      sendJson(res, 502, { ok: false, error: String(err.message || err) });
+      return null;
+    }
+    if (!authStatusHasPerm(status, 'suite.manage_server')) {
+      sendJson(res, 403, { ok: false, error: 'Insufficient permissions (suite.manage_server required).' });
+      return null;
+    }
+    return status;
+  }
+
   // Read system logs via journalctl (permission: suite.view_logs).
   if (url.pathname === '/api/logs') {
     if (req.method !== 'GET') {
@@ -978,6 +1180,422 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  // Read/write opcbridge-reporter config on the SCADA server.
+  // NOTE: do not return mysql_password to the browser; indicate if it is set.
+  if (url.pathname === '/api/reporter/config') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method === 'GET') {
+      const onDisk = readJsonFileOrNull(REPORTER_CONFIG_PATH) || readJsonFileOrNull(REPORTER_CONFIG_EXAMPLE_PATH) || {};
+      const mysqlPassword = (typeof onDisk.mysql_password === 'string') ? onDisk.mysql_password : '';
+      const safe = { ...onDisk };
+      delete safe.mysql_password;
+      sendJson(res, 200, { ok: true, config_path: REPORTER_CONFIG_PATH, config: safe, mysql_password_set: Boolean(mysqlPassword) });
+      return;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const bodyBuf = await readBody(req);
+        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+        const incoming = parsed?.config || parsed;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {config:{...}}.' });
+          return;
+        }
+
+        const prev = readJsonFileOrNull(REPORTER_CONFIG_PATH) || {};
+        const next = { ...prev, ...incoming };
+
+        // Only update password if explicitly provided and non-empty.
+        if (typeof incoming.mysql_password === 'string' && String(incoming.mysql_password).trim()) {
+          next.mysql_password = String(incoming.mysql_password);
+        } else if (typeof prev.mysql_password === 'string' && prev.mysql_password) {
+          next.mysql_password = prev.mysql_password;
+        } else {
+          delete next.mysql_password;
+        }
+
+        writeJsonFile(REPORTER_CONFIG_PATH, next);
+
+        const safe = { ...next };
+        delete safe.mysql_password;
+        sendJson(res, 200, { ok: true, config_path: REPORTER_CONFIG_PATH, config: safe, mysql_password_set: Boolean(next.mysql_password) });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  // Capabilities for opcbridge-reporter integrations (used by SCADA UI).
+  // Permissions: suite.manage_server
+  if (url.pathname === '/api/reporter/capabilities') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, capabilities: REPORTER_CAPABILITIES });
+    return;
+  }
+
+  // Read/write database connection profiles for opcbridge-reporter.
+  // Permissions: suite.manage_server
+  if (url.pathname === '/api/reporter/databases') {
+    if (!await requireManageServerPerm()) return;
+
+    if (req.method === 'GET') {
+      const root = readJsonFileOrNull(REPORTER_DATABASES_PATH) || { databases: [] };
+      const raw = Array.isArray(root?.databases) ? root.databases : [];
+      const databases = raw
+        .filter((d) => d && typeof d === 'object' && !Array.isArray(d))
+        .map((d) => {
+          const safe = { ...d };
+          const type = String(safe.type || 'mysql').trim() || 'mysql';
+          let pw = '';
+          if (type === 'odbc') {
+            pw = (typeof safe.odbc_password === 'string') ? safe.odbc_password : '';
+            delete safe.odbc_password;
+          } else {
+            pw = (typeof safe.mysql_password === 'string') ? safe.mysql_password : '';
+            delete safe.mysql_password;
+          }
+          safe.password_set = Boolean(pw);
+          safe.mysql_password_set = safe.password_set; // backwards-compatible UI field
+          return safe;
+        });
+      sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, databases });
+      return;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const bodyBuf = await readBody(req);
+        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+        const incoming = parsed?.database || parsed?.db || parsed?.config || parsed;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {database:{...}}.' });
+          return;
+        }
+
+        const id = String(incoming.id || '').trim();
+        if (!id) {
+          sendJson(res, 400, { ok: false, error: 'Database "id" is required.' });
+          return;
+        }
+
+        const root = readJsonFileOrNull(REPORTER_DATABASES_PATH) || { databases: [] };
+        const raw = Array.isArray(root?.databases) ? root.databases : [];
+        const nextList = raw
+          .filter((d) => d && typeof d === 'object' && !Array.isArray(d))
+          .map((d) => ({ ...d }));
+
+        const idx = nextList.findIndex((d) => String(d.id || '').trim() === id);
+        const prev = idx >= 0 ? nextList[idx] : {};
+        const next = { ...prev, ...incoming, id };
+
+        // Password behavior:
+        // - If password is provided and non-empty -> set it (type-specific field).
+        // - If clear_password=true -> remove it (type-specific field).
+        // - Else -> keep existing.
+        const clearPw = Boolean(incoming.clear_password);
+        const type = String(next.type || 'mysql').trim() || 'mysql';
+        const pwField = (type === 'odbc') ? 'odbc_password' : 'mysql_password';
+        const incomingPw = (typeof incoming[pwField] === 'string') ? String(incoming[pwField]).trim() : '';
+        if (clearPw) {
+          delete next[pwField];
+        } else if (incomingPw) {
+          next[pwField] = String(incoming[pwField]);
+        } else if (typeof prev[pwField] === 'string' && prev[pwField]) {
+          next[pwField] = prev[pwField];
+        } else {
+          delete next[pwField];
+        }
+
+        // Basic normalization defaults (MySQL only for now).
+        next.type = type;
+        if (next.mysql_port != null) next.mysql_port = Math.trunc(Number(next.mysql_port) || 0) || 0;
+        if (next.odbc_port != null) next.odbc_port = Math.trunc(Number(next.odbc_port) || 0) || 0;
+
+        if (idx >= 0) nextList[idx] = next;
+        else nextList.push(next);
+
+        writeJsonFile(REPORTER_DATABASES_PATH, { databases: nextList });
+
+        const safe = { ...next };
+        const safeType = String(safe.type || 'mysql').trim() || 'mysql';
+        let pw = '';
+        if (safeType === 'odbc') {
+          pw = (typeof safe.odbc_password === 'string') ? safe.odbc_password : '';
+          delete safe.odbc_password;
+        } else {
+          pw = (typeof safe.mysql_password === 'string') ? safe.mysql_password : '';
+          delete safe.mysql_password;
+        }
+        safe.password_set = Boolean(pw);
+        safe.mysql_password_set = safe.password_set; // backwards-compatible UI field
+        sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, database: safe });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/databases/delete') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = String(parsed?.id || '').trim();
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+
+      const root = readJsonFileOrNull(REPORTER_DATABASES_PATH) || { databases: [] };
+      const raw = Array.isArray(root?.databases) ? root.databases : [];
+      const before = raw.length;
+      const afterList = raw.filter((d) => String(d?.id || '').trim() !== id);
+      if (afterList.length === before) {
+        sendJson(res, 200, { ok: true, deleted: false, id });
+        return;
+      }
+      writeJsonFile(REPORTER_DATABASES_PATH, { databases: afterList });
+      sendJson(res, 200, { ok: true, deleted: true, id });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  // Read/write report definitions (metadata) for opcbridge-reporter.
+  // Permissions: suite.manage_server
+  if (url.pathname === '/api/reporter/reports') {
+    if (!await requireManageServerPerm()) return;
+
+    if (req.method === 'GET') {
+      const raw = readReporterReportsRaw();
+      const reports = raw.map((r) => ({ ...r }));
+      sendJson(res, 200, { ok: true, path: REPORTER_REPORTS_PATH, reports });
+      return;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const bodyBuf = await readBody(req);
+        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+        const incoming = parsed?.report || parsed;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {report:{...}}.' });
+          return;
+        }
+
+        const id = sanitizeId(incoming.id);
+        if (!id) {
+          sendJson(res, 400, { ok: false, error: 'Report "id" is required.' });
+          return;
+        }
+
+        const root = readJsonFileOrNull(REPORTER_REPORTS_PATH) || { reports: [] };
+        const rawList = Array.isArray(root?.reports) ? root.reports : [];
+        const nextList = rawList
+          .filter((r) => r && typeof r === 'object' && !Array.isArray(r))
+          .map((r) => ({ ...r }));
+
+        const idx = nextList.findIndex((r) => sanitizeId(r.id) === id);
+        const prev = idx >= 0 ? nextList[idx] : {};
+
+        const next = { ...prev, ...incoming, id };
+        next.name = String(next.name || next.id || '').trim();
+        next.mode = String(next.mode || 'scheduled').trim() || 'scheduled';
+        next.database_id = sanitizeId(next.database_id);
+        next.table = String(next.table || 'tag_log').trim() || 'tag_log';
+        next.tags = Array.isArray(next.tags) ? next.tags : [];
+        next.enabled = Boolean(next.enabled);
+        next.schedule = (next.schedule && typeof next.schedule === 'object' && !Array.isArray(next.schedule)) ? next.schedule : {};
+        if (next.schedule) {
+          next.schedule.on_calendar = normalizeOnCalendar(next.schedule.on_calendar || '');
+          next.schedule.persistent = (next.schedule.persistent !== false);
+        }
+
+        if (idx >= 0) nextList[idx] = next;
+        else nextList.push(next);
+
+        writeJsonFile(REPORTER_REPORTS_PATH, { reports: nextList });
+        sendJson(res, 200, { ok: true, path: REPORTER_REPORTS_PATH, report: next });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/reports/delete') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+
+      const root = readJsonFileOrNull(REPORTER_REPORTS_PATH) || { reports: [] };
+      const raw = Array.isArray(root?.reports) ? root.reports : [];
+      const before = raw.length;
+      const afterList = raw.filter((r) => sanitizeId(r?.id) !== id);
+      if (afterList.length === before) {
+        sendJson(res, 200, { ok: true, deleted: false, id });
+        return;
+      }
+      writeJsonFile(REPORTER_REPORTS_PATH, { reports: afterList });
+      let systemctl = null;
+      if (SYSTEMD_ENABLED) {
+        const timerName = `opcbridge-reporter-${id}.timer`;
+        systemctl = runSystemctl(['disable', '--now', timerName]);
+      }
+      sendJson(res, 200, { ok: true, deleted: true, id, systemctl });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  // Apply a report schedule: write per-report reporter config + install/enable systemd timer.
+  if (url.pathname === '/api/reporter/reports/apply') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!SYSTEMD_ENABLED) {
+      sendJson(res, 200, { ok: false, error: 'Systemd management disabled in opcbridge-scada.' });
+      return;
+    }
+
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+
+      const reports = readReporterReportsRaw();
+      const report = reports.find((r) => sanitizeId(r?.id) === id);
+      if (!report) {
+        sendJson(res, 404, { ok: false, error: `Report not found: ${id}` });
+        return;
+      }
+
+      const databaseId = sanitizeId(report.database_id);
+      if (!databaseId) {
+        sendJson(res, 400, { ok: false, error: `Report '${id}' is missing database_id.` });
+        return;
+      }
+
+      const dbs = readReporterDatabasesRaw();
+      const db = dbs.find((d) => sanitizeId(d?.id) === databaseId);
+      if (!db) {
+        sendJson(res, 400, { ok: false, error: `Database not found: ${databaseId}` });
+        return;
+      }
+
+      const mode = String(report.mode || 'scheduled').trim() || 'scheduled';
+      if (mode !== 'scheduled') {
+        sendJson(res, 400, { ok: false, error: 'Only scheduled reports are supported right now.' });
+        return;
+      }
+
+      const onCalendar = normalizeOnCalendar(report?.schedule?.on_calendar || '');
+      if (!onCalendar) {
+        sendJson(res, 400, { ok: false, error: 'schedule.on_calendar is required.' });
+        return;
+      }
+
+      // 1) Write per-report reporter config (includes mysql_password).
+      fs.mkdirSync(REPORTER_REPORTS_DIR, { recursive: true });
+      const cfgPath = path.join(REPORTER_REPORTS_DIR, `${id}.json`);
+      const jobName = id;
+      const cfg = {
+        opcbridge_base_url: String(db.opcbridge_base_url || report.opcbridge_base_url || 'http://127.0.0.1:8080'),
+        mysql_host: String(db.mysql_host || ''),
+        mysql_port: Math.trunc(Number(db.mysql_port || 0) || 0),
+        mysql_user: String(db.mysql_user || ''),
+        mysql_password: (typeof db.mysql_password === 'string') ? db.mysql_password : '',
+        mysql_database: String(db.mysql_database || ''),
+        jobs: {
+          [jobName]: {
+            table: String(report.table || 'tag_log'),
+            tags: Array.isArray(report.tags) ? report.tags : []
+          }
+        }
+      };
+      fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+
+      // 2) Install systemd unit + timer.
+      const serviceName = `opcbridge-reporter-${id}.service`;
+      const timerName = `opcbridge-reporter-${id}.timer`;
+      const servicePath = path.join(SYSTEMD_UNITS_DIR, serviceName);
+      const timerPath = path.join(SYSTEMD_UNITS_DIR, timerName);
+
+      const serviceUnit = buildReporterServiceUnit(id, cfgPath);
+      const timerUnit = buildReporterTimerUnit(id, onCalendar, report?.schedule?.persistent !== false);
+
+      const svcWrite = installSystemdUnitFile(serviceUnit, servicePath);
+      if (!svcWrite.ok) throw new Error(`Failed to install ${serviceName}: ${svcWrite.stderr || svcWrite.error || 'unknown error'}`);
+      const tmrWrite = installSystemdUnitFile(timerUnit, timerPath);
+      if (!tmrWrite.ok) throw new Error(`Failed to install ${timerName}: ${tmrWrite.stderr || tmrWrite.error || 'unknown error'}`);
+
+      const daemonReload = runSystemctl(['daemon-reload']);
+      if (!daemonReload.ok) {
+        sendJson(res, 500, { ok: false, error: 'systemctl daemon-reload failed', daemonReload, svcWrite, tmrWrite });
+        return;
+      }
+
+      const enabled = Boolean(report.enabled);
+      const ctl = enabled
+        ? runSystemctl(['enable', '--now', timerName])
+        : runSystemctl(['disable', '--now', timerName]);
+
+      sendJson(res, 200, {
+        ok: ctl.ok,
+        id,
+        enabled,
+        config_path: cfgPath,
+        service: { name: serviceName, path: servicePath },
+        timer: { name: timerName, path: timerPath, on_calendar: onCalendar },
+        svcWrite,
+        tmrWrite,
+        daemonReload,
+        systemctl: ctl
+      });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
     return;
   }
 

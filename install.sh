@@ -21,6 +21,8 @@ START_SERVICES=1
 ENABLE_SERVICES=1
 SCADA_SYSTEMD_SUDO=0
 INSTALL_HAD_ERRORS=0
+WITH_ODBC=0
+ODBC_DRIVER=""
 
 PROFILE=""
 COMPONENTS=()
@@ -45,6 +47,8 @@ Options:
   --group GROUP           Service group (default: ${SERVICE_GROUP})
   --no-build              Do not build; use existing binaries
   --deps                  Install OS dependencies via apt
+  --with-odbc             Install ODBC deps (SQL Server support for reporter)
+  --odbc-driver NAME      ODBC driver: freetds | ms (default: freetds)
   --with-node-deps        Run npm install for Node services (requires network)
   --no-start              Do not start services
   --no-enable             Do not enable services at boot
@@ -184,6 +188,12 @@ install_deps() {
   # Reporter deps
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
     pkgs+=(libcurl4-openssl-dev)
+    if [[ "$WITH_ODBC" -eq 1 ]]; then
+      pkgs+=(unixodbc unixodbc-dev odbcinst)
+      if [[ -z "$ODBC_DRIVER" || "$ODBC_DRIVER" == "freetds" ]]; then
+        pkgs+=(tdsodbc freetds-bin)
+      fi
+    fi
   fi
 
   # De-dupe
@@ -210,6 +220,20 @@ install_deps() {
     fi
     if [[ ! -f /usr/include/mysql/mysql.h && ! -f /usr/include/mariadb/mysql.h ]]; then
       echo "Warning: mysql headers not found after deps install; opcbridge-reporter build may fail." >&2
+    fi
+
+    if [[ "$WITH_ODBC" -eq 1 && "$ODBC_DRIVER" == "ms" ]]; then
+      echo ""
+      echo "SQL Server (Microsoft ODBC driver) requested."
+      echo "Note: msodbcsql18 is typically not in Debian default repos and may require adding Microsoft's apt repo."
+      if apt-cache show msodbcsql18 >/dev/null 2>&1; then
+        echo "Installing msodbcsql18 from configured repos..."
+        apt_install msodbcsql18 || true
+      else
+        echo "msodbcsql18 not found in current apt sources."
+        echo "Recommendation: choose FreeTDS (ODBC) instead, or follow Microsoft's install docs:"
+        echo "  https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server"
+      fi
     fi
   fi
 
@@ -253,6 +277,42 @@ prompt_yn() {
       y|yes) return 0;;
       n|no) return 1;;
     esac
+  done
+}
+
+prompt_choice() {
+  local title="$1"
+  shift
+  local -a opts=("$@")
+
+  if [[ "${#opts[@]}" -eq 0 ]]; then
+    echo "prompt_choice called with no options" >&2
+    return 1
+  fi
+
+  if [[ "${ASSUME_YES}" -eq 1 ]]; then
+    echo "${opts[0]}"
+    return 0
+  fi
+
+  # IMPORTANT: this function is often called via command-substitution like:
+  #   choice="$(prompt_choice ...)"
+  # In that case, anything printed to stdout is captured and won't be shown.
+  # Print the menu to stderr and only print the selected value to stdout.
+  echo "$title" >&2
+  local i=1
+  for o in "${opts[@]}"; do
+    echo "  $i) $o" >&2
+    i=$((i + 1))
+  done
+  while true; do
+    read -r -p "Choice [1-${#opts[@]}]: " REPLY >&2
+    local n
+    n="$(echo "$REPLY" | tr -cd '0-9')"
+    if [[ -n "$n" && "$n" -ge 1 && "$n" -le "${#opts[@]}" ]]; then
+      echo "${opts[$((n-1))]}"
+      return 0
+    fi
   done
 }
 
@@ -528,11 +588,17 @@ install_scada_systemd_sudoers() {
   umask 027
   cat >"$sudoers_path" <<EOF
 # Managed by opcbridge-suite install.sh
-# Allow opcbridge-scada (running as ${SERVICE_USER}) to update opcbridge.service drop-in + restart only.
+# Allow opcbridge-scada (running as ${SERVICE_USER}) to update a limited set of systemd units via sudo.
 
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl daemon-reload
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl restart opcbridge.service
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/install -D -m 0644 /tmp/opcbridge-scada-dropin-*.conf /etc/systemd/system/opcbridge.service.d/20-opcbridge-scada.conf
+
+# opcbridge-reporter scheduled jobs (created by opcbridge-scada Data Logger).
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/install -D -m 0644 /tmp/opcbridge-scada-unit-*.service /etc/systemd/system/opcbridge-reporter-*.service
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/install -D -m 0644 /tmp/opcbridge-scada-unit-*.timer /etc/systemd/system/opcbridge-reporter-*.timer
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl enable --now opcbridge-reporter-*.timer
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl disable --now opcbridge-reporter-*.timer
 EOF
 
   chmod 440 "$sudoers_path"
@@ -822,6 +888,8 @@ main() {
       --group) SERVICE_GROUP="${2:-}"; shift 2;;
       --no-build) BUILD=0; shift;;      --with-node-deps) WITH_NODE_DEPS=1; shift;;
       --deps) INSTALL_DEPS=1; shift;;
+      --with-odbc) WITH_ODBC=1; shift;;
+      --odbc-driver) ODBC_DRIVER="${2:-}"; shift 2;;
       --scada-systemd-sudo) SCADA_SYSTEMD_SUDO=1; shift;;
       --no-start) START_SERVICES=0; shift;;
       --no-enable) ENABLE_SERVICES=0; shift;;
@@ -848,6 +916,35 @@ main() {
   fi
 
   validate_components
+
+  # Optional: SQL Server support for opcbridge-reporter via ODBC (wizard-style).
+  if [[ "$INSTALL_DEPS" -eq 1 ]] && printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
+    if [[ "$WITH_ODBC" -eq 0 ]]; then
+      if prompt_yn "Enable SQL Server logging support (ODBC) for opcbridge-reporter?" n; then
+        WITH_ODBC=1
+      fi
+    fi
+
+    if [[ "$WITH_ODBC" -eq 1 ]]; then
+      local driver
+      driver="$(echo "${ODBC_DRIVER:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+      if [[ -z "$driver" ]]; then
+        local choice
+        choice="$(prompt_choice "Select ODBC driver:" "FreeTDS (recommended on Debian)" "Microsoft ODBC driver (msodbcsql18)")"
+        case "$choice" in
+          FreeTDS*) driver="freetds";;
+          Microsoft*) driver="ms";;
+          *) driver="freetds";;
+        esac
+      fi
+      if [[ "$driver" != "freetds" && "$driver" != "ms" ]]; then
+        echo "Unknown --odbc-driver '$driver'; defaulting to freetds."
+        driver="freetds"
+      fi
+      ODBC_DRIVER="$driver"
+      echo "ODBC enabled for reporter (driver=${ODBC_DRIVER})."
+    fi
+  fi
 
   if [[ "$INSTALL_DEPS" -eq 1 ]]; then
     install_deps

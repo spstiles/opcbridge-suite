@@ -54,6 +54,82 @@ const els = {
   mqttCaCurrentStatus: document.getElementById('mqttCaCurrentStatus'),
   mqttCaStatus: document.getElementById('mqttCaStatus'),
 
+  // Data Logger (opcbridge-reporter)
+  loggerTreeView: document.getElementById('loggerTreeView'),
+  loggerTreeNote: document.getElementById('loggerTreeNote'),
+  loggerDbTbody: document.getElementById('loggerDbTbody'),
+  loggerDbTable: document.getElementById('loggerDbTable'),
+  loggerReportsTable: document.getElementById('loggerReportsTable'),
+  loggerReportsTbody: document.getElementById('loggerReportsTbody'),
+  loggerRefreshBtn: document.getElementById('loggerRefreshBtn'),
+  loggerStatus: document.getElementById('loggerStatus'),
+  loggerJson: document.getElementById('loggerJson'),
+
+  loggerDbModal: document.getElementById('loggerDbModal'),
+  loggerDbCloseBtn: document.getElementById('loggerDbCloseBtn'),
+  loggerDbHint: document.getElementById('loggerDbHint'),
+  loggerDbModalId: document.getElementById('loggerDbModalId'),
+  loggerDbModalName: document.getElementById('loggerDbModalName'),
+  loggerDbModalType: document.getElementById('loggerDbModalType'),
+  loggerDbModalOpcbridgeBaseUrl: document.getElementById('loggerDbModalOpcbridgeBaseUrl'),
+  loggerDbModalMysqlHost: document.getElementById('loggerDbModalMysqlHost'),
+  loggerDbModalMysqlPort: document.getElementById('loggerDbModalMysqlPort'),
+  loggerDbModalMysqlUser: document.getElementById('loggerDbModalMysqlUser'),
+  loggerDbModalMysqlPassword: document.getElementById('loggerDbModalMysqlPassword'),
+  loggerDbModalMysqlPasswordHint: document.getElementById('loggerDbModalMysqlPasswordHint'),
+  loggerDbModalMysqlDatabase: document.getElementById('loggerDbModalMysqlDatabase'),
+  loggerDbMysqlFields: document.getElementById('loggerDbMysqlFields'),
+  loggerDbOdbcFields: document.getElementById('loggerDbOdbcFields'),
+  loggerDbModalOdbcDriver: document.getElementById('loggerDbModalOdbcDriver'),
+  loggerDbModalOdbcHost: document.getElementById('loggerDbModalOdbcHost'),
+  loggerDbModalOdbcPort: document.getElementById('loggerDbModalOdbcPort'),
+  loggerDbModalOdbcDatabase: document.getElementById('loggerDbModalOdbcDatabase'),
+  loggerDbModalOdbcUser: document.getElementById('loggerDbModalOdbcUser'),
+  loggerDbModalOdbcPassword: document.getElementById('loggerDbModalOdbcPassword'),
+  loggerDbModalOdbcPasswordHint: document.getElementById('loggerDbModalOdbcPasswordHint'),
+  loggerDbModalOdbcEncrypt: document.getElementById('loggerDbModalOdbcEncrypt'),
+  loggerDbModalOdbcTrustCert: document.getElementById('loggerDbModalOdbcTrustCert'),
+  loggerDbCancelBtn: document.getElementById('loggerDbCancelBtn'),
+  loggerDbSaveBtn: document.getElementById('loggerDbSaveBtn'),
+  loggerDbModalStatus: document.getElementById('loggerDbModalStatus'),
+
+  loggerReportModal: document.getElementById('loggerReportModal'),
+  loggerReportCloseBtn: document.getElementById('loggerReportCloseBtn'),
+  loggerReportCancelBtn: document.getElementById('loggerReportCancelBtn'),
+  loggerReportSaveBtn: document.getElementById('loggerReportSaveBtn'),
+  loggerReportId: document.getElementById('loggerReportId'),
+  loggerReportName: document.getElementById('loggerReportName'),
+  loggerReportDatabase: document.getElementById('loggerReportDatabase'),
+  loggerReportTable: document.getElementById('loggerReportTable'),
+  loggerReportMode: document.getElementById('loggerReportMode'),
+  loggerReportEnabled: document.getElementById('loggerReportEnabled'),
+  loggerReportPersistent: document.getElementById('loggerReportPersistent'),
+  loggerReportScheduleKind: document.getElementById('loggerReportScheduleKind'),
+  loggerReportEveryMinutes: document.getElementById('loggerReportEveryMinutes'),
+  loggerReportHourlyMinute: document.getElementById('loggerReportHourlyMinute'),
+  loggerReportHourlySecond: document.getElementById('loggerReportHourlySecond'),
+  loggerReportDailyHour: document.getElementById('loggerReportDailyHour'),
+  loggerReportDailyMinute: document.getElementById('loggerReportDailyMinute'),
+  loggerReportDailySecond: document.getElementById('loggerReportDailySecond'),
+  loggerReportOnCalendar: document.getElementById('loggerReportOnCalendar'),
+  loggerScheduleEveryMinutesWrap: document.getElementById('loggerScheduleEveryMinutesWrap'),
+  loggerScheduleHourlyWrap: document.getElementById('loggerScheduleHourlyWrap'),
+  loggerScheduleDailyWrap: document.getElementById('loggerScheduleDailyWrap'),
+  loggerScheduleAdvancedWrap: document.getElementById('loggerScheduleAdvancedWrap'),
+  loggerReportSchedulePreview: document.getElementById('loggerReportSchedulePreview'),
+  loggerReportTags: document.getElementById('loggerReportTags'),
+  loggerReportSelectTagsBtn: document.getElementById('loggerReportSelectTagsBtn'),
+  loggerReportStatus: document.getElementById('loggerReportStatus'),
+
+  loggerTagPickerModal: document.getElementById('loggerTagPickerModal'),
+  loggerTagPickerCloseBtn: document.getElementById('loggerTagPickerCloseBtn'),
+  loggerTagPickerSearch: document.getElementById('loggerTagPickerSearch'),
+  loggerTagPickerSelectAllBtn: document.getElementById('loggerTagPickerSelectAllBtn'),
+  loggerTagPickerClearBtn: document.getElementById('loggerTagPickerClearBtn'),
+  loggerTagPickerApplyBtn: document.getElementById('loggerTagPickerApplyBtn'),
+  loggerTagPickerStatus: document.getElementById('loggerTagPickerStatus'),
+  loggerTagPickerTbody: document.getElementById('loggerTagPickerTbody'),
+
   // Connections
   connRefreshBtn: document.getElementById('connRefreshBtn'),
   connNewBtn: document.getElementById('connNewBtn'),
@@ -303,7 +379,21 @@ const state = {
   workspaceChildrenSort: { key: 'name', dir: 'asc' },
 
   // auth status cache (opcbridge cookie-based)
-  opcbridgeAuthStatus: null
+  opcbridgeAuthStatus: null,
+
+  // reporter (data logger)
+  reporterDatabases: [],
+  reporterReports: [],
+  reporterCapabilities: null,
+  loggerSelectedNodeId: 'logger:databases',
+  loggerEditingId: '',
+  loggerEditingMode: '', // '' | 'new' | 'edit'
+  loggerReportEditingId: '',
+  loggerReportEditingMode: '', // '' | 'new' | 'edit'
+
+  loggerTagPickerAll: [],
+  loggerTagPickerSelected: new Set(),
+  loggerTagPickerFilter: '',
 };
 
 const DRIVER_LABELS = {
@@ -382,6 +472,10 @@ function canAccessWorkspaceTab() {
   return hasPerm('opcbridge.edit_config');
 }
 
+function canAccessLoggerTab() {
+  return hasPerm('suite.manage_server');
+}
+
 function canEditConfig() {
   return hasPerm('opcbridge.edit_config');
 }
@@ -440,6 +534,954 @@ function updateLogsTabVisibility() {
       setTab('overview');
     }
   }
+}
+
+function updateLoggerTabVisibility() {
+  const loggerBtn = document.querySelector('.tabs .tab[data-tab="logger"]');
+  if (!loggerBtn) return;
+  const canSee = canAccessLoggerTab();
+  loggerBtn.style.display = canSee ? '' : 'none';
+
+  if (!canSee) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel && activePanel.id === 'tab-logger') {
+      setTab('overview');
+    }
+  }
+}
+
+function loggerSetStatus(msg) {
+  if (els.loggerStatus) els.loggerStatus.textContent = String(msg || '');
+}
+
+function loggerModalSetStatus(msg) {
+  if (els.loggerDbModalStatus) els.loggerDbModalStatus.textContent = String(msg || '');
+}
+
+function buildLoggerTreeRoots() {
+  const dbs = Array.isArray(state.reporterDatabases) ? state.reporterDatabases : [];
+  const reports = Array.isArray(state.reporterReports) ? state.reporterReports : [];
+
+  const dbRoot = {
+    id: 'logger:databases',
+    type: 'logger_root_db',
+    label: 'Databases',
+    children: dbs
+      .slice()
+      .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { sensitivity: 'base' }))
+      .map((d) => ({
+        id: `logger:db:${String(d?.id || '').trim()}`,
+        type: 'logger_db',
+        label: String(d?.name || d?.id || '').trim() || '(unnamed)',
+        meta: { id: String(d?.id || '').trim() }
+      }))
+  };
+
+  const reportsRoot = {
+    id: 'logger:reports',
+    type: 'logger_root_reports',
+    label: 'Reports',
+    children: reports
+      .slice()
+      .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { sensitivity: 'base' }))
+      .map((r) => ({
+        id: `logger:report:${String(r?.id || '').trim()}`,
+        type: 'logger_report',
+        label: String(r?.name || r?.id || '').trim() || '(unnamed)',
+        meta: { id: String(r?.id || '').trim() }
+      }))
+  };
+
+  return [dbRoot, reportsRoot];
+}
+
+function renderLoggerTreeNode(node, container) {
+  const canExpand = node.type === 'logger_root_db' || node.type === 'logger_root_reports';
+  const expanded = Boolean(state._loggerExpanded) ? state._loggerExpanded.has(node.id) : true;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tree-item';
+  btn.classList.toggle('is-active', state.loggerSelectedNodeId === node.id);
+
+  const twisty = document.createElement('span');
+  twisty.className = 'twisty';
+  twisty.classList.toggle('is-empty', !canExpand);
+  twisty.textContent = canExpand ? (expanded ? '−' : '+') : '';
+  if (canExpand) {
+    twisty.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!state._loggerExpanded) state._loggerExpanded = new Set();
+      if (state._loggerExpanded.has(node.id)) state._loggerExpanded.delete(node.id);
+      else state._loggerExpanded.add(node.id);
+      renderLoggerTree();
+    });
+  }
+
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.textContent = node.label;
+
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  if (node.type === 'logger_root_db') meta.textContent = `${(node.children || []).length} db(s)`;
+  if (node.type === 'logger_root_reports') meta.textContent = `${(node.children || []).length} report(s)`;
+
+  btn.appendChild(twisty);
+  btn.appendChild(label);
+  btn.appendChild(meta);
+
+  btn.addEventListener('click', () => {
+    state.loggerSelectedNodeId = node.id;
+    renderLoggerTree();
+    renderLoggerDetails();
+  });
+
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    state.loggerSelectedNodeId = node.id;
+    renderLoggerTree();
+    renderLoggerDetails();
+
+    const items = [];
+    if (node.type === 'logger_root_db') {
+      items.push({ label: 'Add Database…', onClick: () => startNewDatabase() });
+      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
+    }
+    if (node.type === 'logger_root_reports') {
+      items.push({ label: 'Add Report…', onClick: () => startNewReport() });
+      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
+    }
+	    if (node.type === 'logger_db') {
+	      const id = String(node.meta?.id || '').trim();
+	      items.push({ label: 'Properties…', onClick: () => openLoggerDbModal({ mode: 'edit', id }) });
+	      items.push({ label: 'Delete Database…', onClick: () => deleteReporterDatabase(id) });
+	      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
+	    }
+    if (node.type === 'logger_report') {
+      const id = String(node.meta?.id || '').trim();
+      items.push({ label: 'Properties…', onClick: () => openLoggerReportModal({ mode: 'edit', id }) });
+      items.push({ label: 'Delete Report…', onClick: () => deleteReporterReport(id) });
+      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
+    }
+    if (items.length) showContextMenu(e.clientX, e.clientY, items);
+  });
+
+  container.appendChild(btn);
+
+  if (canExpand && expanded) {
+    const children = Array.isArray(node.children) ? node.children : [];
+    if (children.length) {
+      const div = document.createElement('div');
+      div.className = 'tree-children';
+      children.forEach((c) => renderLoggerTreeNode(c, div));
+      container.appendChild(div);
+    }
+  }
+}
+
+function renderLoggerTree() {
+  if (!els.loggerTreeView) return;
+  els.loggerTreeView.textContent = '';
+  const roots = buildLoggerTreeRoots();
+  if (!state._loggerExpanded) state._loggerExpanded = new Set(['logger:databases', 'logger:reports']);
+  roots.forEach((r) => renderLoggerTreeNode(r, els.loggerTreeView));
+  if (els.loggerTreeNote) {
+    const dbCount = Array.isArray(roots[0]?.children) ? roots[0].children.length : 0;
+    const reportCount = Array.isArray(roots[1]?.children) ? roots[1].children.length : 0;
+    els.loggerTreeNote.textContent = `Databases: ${dbCount} · Reports: ${reportCount}`;
+  }
+  if (!state.loggerSelectedNodeId) state.loggerSelectedNodeId = 'logger:databases';
+}
+
+function getSelectedDatabaseId() {
+  const sid = String(state.loggerSelectedNodeId || '').trim();
+  if (sid.startsWith('logger:db:')) return sid.slice('logger:db:'.length);
+  return '';
+}
+
+function getSelectedReportId() {
+  const sid = String(state.loggerSelectedNodeId || '').trim();
+  if (sid.startsWith('logger:report:')) return sid.slice('logger:report:'.length);
+  return '';
+}
+
+function findDatabaseById(id) {
+  const dbs = Array.isArray(state.reporterDatabases) ? state.reporterDatabases : [];
+  return dbs.find((d) => String(d?.id || '').trim() === String(id || '').trim()) || null;
+}
+
+function findReportById(id) {
+  const reports = Array.isArray(state.reporterReports) ? state.reporterReports : [];
+  return reports.find((r) => String(r?.id || '').trim() === String(id || '').trim()) || null;
+}
+
+function setLoggerModalPasswordHint(passwordSet) {
+  if (!els.loggerDbModalMysqlPasswordHint) return;
+  els.loggerDbModalMysqlPasswordHint.textContent = passwordSet
+    ? 'Password is set on the server (leave blank to keep unchanged).'
+    : 'No password is set yet.';
+}
+
+function setLoggerModalOdbcPasswordHint(passwordSet) {
+  if (!els.loggerDbModalOdbcPasswordHint) return;
+  els.loggerDbModalOdbcPasswordHint.textContent = passwordSet
+    ? 'Password is set on the server (leave blank to keep unchanged).'
+    : 'No password is set yet.';
+}
+
+function canUseOdbcInUi() {
+  const avail = state.reporterCapabilities?.odbc?.available;
+  return Boolean(avail);
+}
+
+function renderLoggerDbModalTypeUi() {
+  if (!els.loggerDbModalType) return;
+  const canOdbc = canUseOdbcInUi();
+  const opt = Array.from(els.loggerDbModalType.options || []).find((o) => String(o.value) === 'odbc');
+  if (opt) opt.disabled = !canOdbc;
+  if (!canOdbc && String(els.loggerDbModalType.value) === 'odbc') {
+    els.loggerDbModalType.value = 'mysql';
+  }
+}
+
+function renderLoggerDbModalFieldsForType(type) {
+  const t = String(type || 'mysql').trim() || 'mysql';
+  if (els.loggerDbMysqlFields) els.loggerDbMysqlFields.style.display = (t === 'mysql') ? '' : 'none';
+  if (els.loggerDbOdbcFields) els.loggerDbOdbcFields.style.display = (t === 'odbc') ? '' : 'none';
+}
+
+function renderLoggerTable() {
+  if (!els.loggerDbTbody) return;
+  const dbs = Array.isArray(state.reporterDatabases) ? state.reporterDatabases : [];
+  const selectedId = getSelectedDatabaseId();
+  els.loggerDbTbody.textContent = '';
+
+  if (!dbs.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 9;
+    td.className = 'small';
+    td.textContent = 'No databases configured. Right-click “Databases” to add one.';
+    tr.appendChild(td);
+    els.loggerDbTbody.appendChild(tr);
+    return;
+  }
+
+  const mk = (text, mono) => {
+    const td = document.createElement('td');
+    if (mono) td.className = 'mono';
+    td.textContent = String(text ?? '');
+    return td;
+  };
+
+  dbs.forEach((d) => {
+    const id = String(d?.id || '').trim();
+    const tr = document.createElement('tr');
+    tr.classList.toggle('is-selected', id && id === selectedId);
+    tr.appendChild(mk(id, true));
+    tr.appendChild(mk(String(d?.name || ''), false));
+    tr.appendChild(mk(String(d?.type || 'mysql'), true));
+    tr.appendChild(mk(String(d?.mysql_host || ''), true));
+    tr.appendChild(mk(String(d?.mysql_port ?? ''), true));
+    tr.appendChild(mk(String(d?.mysql_user || ''), true));
+    tr.appendChild(mk(String(d?.mysql_database || ''), true));
+    tr.appendChild(mk(String(d?.opcbridge_base_url || ''), true));
+    tr.appendChild(mk((d?.password_set || d?.mysql_password_set) ? 'set' : '', false));
+
+    tr.addEventListener('click', () => {
+      if (!id) return;
+      state.loggerSelectedNodeId = `logger:db:${id}`;
+      renderLoggerTree();
+      renderLoggerTable();
+    });
+    tr.addEventListener('dblclick', () => {
+      if (!id) return;
+      openLoggerDbModal({ mode: 'edit', id });
+    });
+
+    els.loggerDbTbody.appendChild(tr);
+  });
+}
+
+function reporterDatabaseLabel(databaseId) {
+  const id = String(databaseId || '').trim();
+  if (!id) return '';
+  const db = findDatabaseById(id);
+  if (!db) return id;
+  const name = String(db?.name || '').trim();
+  return name ? `${name} (${id})` : id;
+}
+
+function renderLoggerReportsTable() {
+  if (!els.loggerReportsTbody) return;
+  const reports = Array.isArray(state.reporterReports) ? state.reporterReports : [];
+  const selectedId = getSelectedReportId();
+  els.loggerReportsTbody.textContent = '';
+
+  if (!reports.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6;
+    td.className = 'small';
+    td.textContent = 'No reports configured. Right-click “Reports” to add one.';
+    tr.appendChild(td);
+    els.loggerReportsTbody.appendChild(tr);
+    return;
+  }
+
+  const mk = (text, mono = false) => {
+    const td = document.createElement('td');
+    if (mono) td.classList.add('mono');
+    td.textContent = String(text ?? '');
+    return td;
+  };
+
+  reports.forEach((r) => {
+    const id = String(r?.id || '').trim();
+    const tr = document.createElement('tr');
+    tr.classList.toggle('is-selected', id && id === selectedId);
+
+    const mode = String(r?.mode || 'scheduled').trim() || 'scheduled';
+    const enabled = Boolean(r?.enabled);
+    const cal = String(r?.schedule?.on_calendar || '').trim();
+
+    tr.appendChild(mk(id, true));
+    tr.appendChild(mk(String(r?.name || ''), false));
+    tr.appendChild(mk(reporterDatabaseLabel(r?.database_id), false));
+    tr.appendChild(mk(mode, true));
+    tr.appendChild(mk(cal, true));
+    tr.appendChild(mk(enabled ? 'yes' : 'no', false));
+
+    tr.addEventListener('click', () => {
+      if (!id) return;
+      state.loggerSelectedNodeId = `logger:report:${id}`;
+      renderLoggerTree();
+      renderLoggerReportsTable();
+    });
+    tr.addEventListener('dblclick', () => {
+      if (!id) return;
+      openLoggerReportModal({ mode: 'edit', id });
+    });
+
+    els.loggerReportsTbody.appendChild(tr);
+  });
+}
+
+function renderLoggerDetails() {
+  const sid = String(state.loggerSelectedNodeId || '').trim();
+  const showReports = sid === 'logger:reports' || sid.startsWith('logger:report:');
+
+  if (els.loggerDbTable) els.loggerDbTable.style.display = showReports ? 'none' : '';
+  if (els.loggerReportsTable) els.loggerReportsTable.style.display = showReports ? '' : 'none';
+
+  if (showReports) renderLoggerReportsTable();
+  else renderLoggerTable();
+}
+
+function openLoggerDbModal(opts = {}) {
+  const mode = String(opts.mode || 'edit');
+  const id = String(opts.id || '').trim();
+  const isNew = mode === 'new';
+  const db = (!isNew && id) ? findDatabaseById(id) : null;
+
+  state.loggerEditingMode = isNew ? 'new' : 'edit';
+  state.loggerEditingId = isNew ? '' : id;
+
+  if (els.loggerDbModal) els.loggerDbModal.style.display = 'block';
+  loggerModalSetStatus('');
+
+  renderLoggerDbModalTypeUi();
+
+  if (els.loggerDbModalId) {
+    els.loggerDbModalId.disabled = !isNew;
+    els.loggerDbModalId.value = isNew ? '' : String(db?.id || id);
+  }
+  if (els.loggerDbModalName) els.loggerDbModalName.value = String(db?.name || '');
+  if (els.loggerDbModalType) els.loggerDbModalType.value = String(db?.type || 'mysql');
+  if (els.loggerDbModalOpcbridgeBaseUrl) els.loggerDbModalOpcbridgeBaseUrl.value = String(db?.opcbridge_base_url || '');
+  const t = String(db?.type || 'mysql').trim() || 'mysql';
+  renderLoggerDbModalFieldsForType(t);
+
+  if (els.loggerDbModalMysqlHost) els.loggerDbModalMysqlHost.value = String(db?.mysql_host || '');
+  if (els.loggerDbModalMysqlPort) els.loggerDbModalMysqlPort.value = String(db?.mysql_port ?? '');
+  if (els.loggerDbModalMysqlUser) els.loggerDbModalMysqlUser.value = String(db?.mysql_user || '');
+  if (els.loggerDbModalMysqlDatabase) els.loggerDbModalMysqlDatabase.value = String(db?.mysql_database || '');
+  if (els.loggerDbModalMysqlPassword) els.loggerDbModalMysqlPassword.value = '';
+  setLoggerModalPasswordHint(Boolean(db?.password_set || db?.mysql_password_set));
+
+  if (els.loggerDbModalOdbcDriver) els.loggerDbModalOdbcDriver.value = String(db?.odbc_driver || '');
+  if (els.loggerDbModalOdbcHost) els.loggerDbModalOdbcHost.value = String(db?.odbc_host || '');
+  if (els.loggerDbModalOdbcPort) els.loggerDbModalOdbcPort.value = String(db?.odbc_port ?? '');
+  if (els.loggerDbModalOdbcDatabase) els.loggerDbModalOdbcDatabase.value = String(db?.odbc_database || '');
+  if (els.loggerDbModalOdbcUser) els.loggerDbModalOdbcUser.value = String(db?.odbc_user || '');
+  if (els.loggerDbModalOdbcPassword) els.loggerDbModalOdbcPassword.value = '';
+  setLoggerModalOdbcPasswordHint(Boolean(db?.password_set));
+  if (els.loggerDbModalOdbcEncrypt) els.loggerDbModalOdbcEncrypt.checked = (db?.odbc_encrypt !== false);
+  if (els.loggerDbModalOdbcTrustCert) els.loggerDbModalOdbcTrustCert.checked = Boolean(db?.odbc_trust_cert);
+
+  if (els.loggerDbHint) {
+    els.loggerDbHint.textContent = isNew ? 'New database connection.' : `Edit database '${id}'.`;
+  }
+}
+
+function closeLoggerDbModal() {
+  if (els.loggerDbModal) els.loggerDbModal.style.display = 'none';
+  state.loggerEditingMode = '';
+  state.loggerEditingId = '';
+  loggerModalSetStatus('');
+}
+
+function startNewDatabase() {
+  openLoggerDbModal({ mode: 'new' });
+}
+
+async function deleteReporterDatabase(id) {
+  const dbId = String(id || '').trim();
+  if (!dbId) return;
+  if (!window.confirm(`Delete database '${dbId}'?`)) return;
+  loggerSetStatus('Deleting…');
+  try {
+    const resp = await apiPostJson('/api/reporter/databases/delete', { id: dbId });
+    if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+    await refreshReporterAll();
+    state.loggerSelectedNodeId = 'logger:databases';
+    state.loggerEditingMode = '';
+    state.loggerEditingId = '';
+    renderLoggerTree();
+    renderLoggerDetails();
+    loggerSetStatus('Deleted.');
+  } catch (err) {
+    loggerSetStatus(`Failed: ${err.message || err}`);
+  }
+}
+
+function getDatabaseFromModalUi() {
+  const id = String(els.loggerDbModalId?.value || '').trim();
+  const type = String(els.loggerDbModalType?.value || 'mysql').trim() || 'mysql';
+  const base = {
+    id,
+    name: String(els.loggerDbModalName?.value || '').trim(),
+    type,
+    opcbridge_base_url: String(els.loggerDbModalOpcbridgeBaseUrl?.value || '').trim(),
+  };
+
+  if (type === 'odbc') {
+    const db = {
+      ...base,
+      odbc_driver: String(els.loggerDbModalOdbcDriver?.value || '').trim(),
+      odbc_host: String(els.loggerDbModalOdbcHost?.value || '').trim(),
+      odbc_port: Math.trunc(Number(els.loggerDbModalOdbcPort?.value ?? 0) || 0),
+      odbc_database: String(els.loggerDbModalOdbcDatabase?.value || '').trim(),
+      odbc_user: String(els.loggerDbModalOdbcUser?.value || '').trim(),
+      odbc_encrypt: Boolean(els.loggerDbModalOdbcEncrypt?.checked),
+      odbc_trust_cert: Boolean(els.loggerDbModalOdbcTrustCert?.checked),
+    };
+    const password = String(els.loggerDbModalOdbcPassword?.value || '').trim();
+    if (password) db.odbc_password = password;
+    return db;
+  }
+
+  const db = {
+    ...base,
+    mysql_host: String(els.loggerDbModalMysqlHost?.value || '').trim(),
+    mysql_port: Math.trunc(Number(els.loggerDbModalMysqlPort?.value ?? 0) || 0),
+    mysql_user: String(els.loggerDbModalMysqlUser?.value || '').trim(),
+    mysql_database: String(els.loggerDbModalMysqlDatabase?.value || '').trim()
+  };
+  const password = String(els.loggerDbModalMysqlPassword?.value || '').trim();
+  if (password) db.mysql_password = password;
+  return db;
+}
+
+async function saveReporterDatabase() {
+  loggerModalSetStatus('Saving…');
+  try {
+    const db = getDatabaseFromModalUi();
+    if (!db.id) throw new Error('ID is required.');
+    if (!db.opcbridge_base_url) throw new Error('opcbridge Base URL is required.');
+    if (db.type === 'odbc') {
+      if (!canUseOdbcInUi()) throw new Error('ODBC support is not installed on this server.');
+      if (!db.odbc_driver) throw new Error('ODBC Driver is required.');
+      if (!db.odbc_host) throw new Error('SQL Server Host is required.');
+      if (!db.odbc_port || db.odbc_port < 1 || db.odbc_port > 65535) throw new Error('SQL Server Port is required.');
+      if (!db.odbc_database) throw new Error('Database is required.');
+      if (!db.odbc_user) throw new Error('User is required.');
+    } else {
+      if (!db.mysql_host) throw new Error('MySQL Host is required.');
+      if (!db.mysql_port || db.mysql_port < 1 || db.mysql_port > 65535) throw new Error('MySQL Port is required.');
+      if (!db.mysql_user) throw new Error('MySQL User is required.');
+      if (!db.mysql_database) throw new Error('MySQL Database is required.');
+    }
+
+    const resp = await apiPostJson('/api/reporter/databases', { database: db });
+    if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+
+    state.loggerEditingMode = '';
+    state.loggerEditingId = '';
+    await refreshReporterAll();
+    state.loggerSelectedNodeId = `logger:db:${db.id}`;
+    renderLoggerTree();
+    renderLoggerDetails();
+    closeLoggerDbModal();
+    loggerSetStatus('Saved.');
+  } catch (err) {
+    loggerModalSetStatus(`Failed: ${err.message || err}`);
+  }
+}
+
+function loggerReportModalSetStatus(msg) {
+  if (els.loggerReportStatus) els.loggerReportStatus.textContent = String(msg || '');
+}
+
+function clampInt(n, min, max, fallback) {
+  const v = Math.trunc(Number(n));
+  if (!Number.isFinite(v)) return fallback;
+  if (v < min) return min;
+  if (v > max) return max;
+  return v;
+}
+
+function buildOnCalendarForScheduleKind(kind) {
+  const k = String(kind || '').trim();
+  if (k === 'hourly') {
+    const mm = clampInt(els.loggerReportHourlyMinute?.value ?? 0, 0, 59, 0);
+    const ss = clampInt(els.loggerReportHourlySecond?.value ?? 0, 0, 59, 0);
+    return `*-*-* *:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  }
+  if (k === 'daily') {
+    const hh = clampInt(els.loggerReportDailyHour?.value ?? 23, 0, 23, 23);
+    const mm = clampInt(els.loggerReportDailyMinute?.value ?? 55, 0, 59, 55);
+    const ss = clampInt(els.loggerReportDailySecond?.value ?? 0, 0, 59, 0);
+    return `*-*-* ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  }
+  if (k === 'custom') {
+    return String(els.loggerReportOnCalendar?.value || '').trim();
+  }
+  // every_n_minutes (default)
+  const n = clampInt(els.loggerReportEveryMinutes?.value ?? 5, 1, 1440, 5);
+  return `*-*-* *:0/${n}:00`;
+}
+
+function guessScheduleKindFromOnCalendar(value) {
+  const s = String(value || '').trim();
+  let m = null;
+  m = s.match(/^\*-\*-\* \*:0\/(\d+):00$/);
+  if (m) return { kind: 'every_n_minutes', everyMinutes: clampInt(m[1], 1, 1440, 5) };
+  m = s.match(/^\*-\*-\* \*:(\d{1,2}):(\d{1,2})$/);
+  if (m) return { kind: 'hourly', hourlyMinute: clampInt(m[1], 0, 59, 0), hourlySecond: clampInt(m[2], 0, 59, 0) };
+  m = s.match(/^\*-\*-\* (\d{1,2}):(\d{1,2}):(\d{1,2})$/);
+  if (m) return { kind: 'daily', dailyHour: clampInt(m[1], 0, 23, 23), dailyMinute: clampInt(m[2], 0, 59, 55), dailySecond: clampInt(m[3], 0, 59, 0) };
+  return { kind: 'custom' };
+}
+
+function renderLoggerReportScheduleUi() {
+  const kind = String(els.loggerReportScheduleKind?.value || 'every_n_minutes').trim() || 'every_n_minutes';
+
+  if (els.loggerScheduleEveryMinutesWrap) els.loggerScheduleEveryMinutesWrap.style.display = (kind === 'every_n_minutes') ? '' : 'none';
+  if (els.loggerScheduleHourlyWrap) els.loggerScheduleHourlyWrap.style.display = (kind === 'hourly') ? '' : 'none';
+  if (els.loggerScheduleDailyWrap) els.loggerScheduleDailyWrap.style.display = (kind === 'daily') ? '' : 'none';
+  if (els.loggerScheduleAdvancedWrap) els.loggerScheduleAdvancedWrap.style.display = (kind === 'custom') ? '' : 'none';
+
+  const cal = buildOnCalendarForScheduleKind(kind);
+  if (els.loggerReportOnCalendar) {
+    if (kind !== 'custom') els.loggerReportOnCalendar.value = cal;
+  }
+  if (els.loggerReportSchedulePreview) {
+    els.loggerReportSchedulePreview.textContent = cal ? `Schedule: ${cal}` : '';
+  }
+}
+
+function closeLoggerReportModal() {
+  if (els.loggerReportModal) els.loggerReportModal.style.display = 'none';
+  state.loggerReportEditingMode = '';
+  state.loggerReportEditingId = '';
+  loggerReportModalSetStatus('');
+}
+
+function closeLoggerTagPickerModal() {
+  if (els.loggerTagPickerModal) els.loggerTagPickerModal.style.display = 'none';
+  if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = '';
+}
+
+function tagKeyFromLiveTag(t) {
+  const cid = String(t?.connection_id || '').trim();
+  const name = String(t?.name || '').trim();
+  if (!cid || !name) return '';
+  return `${cid}:${name}`;
+}
+
+function parseReportTagsTextToSet() {
+  const text = String(els.loggerReportTags?.value || '');
+  const set = new Set();
+  text.split(/\r?\n/g).forEach((line) => {
+    const s = String(line || '').trim();
+    if (!s) return;
+    if (s.startsWith('#')) return;
+    // Only preselect concrete tags (no wildcards).
+    if (s.includes('*') || s.includes('?')) return;
+    if (!s.includes(':')) return;
+    set.add(s);
+  });
+  return set;
+}
+
+function renderLoggerTagPickerTable() {
+  if (!els.loggerTagPickerTbody) return;
+  const all = Array.isArray(state.loggerTagPickerAll) ? state.loggerTagPickerAll : [];
+  const q = String(state.loggerTagPickerFilter || '').toLowerCase();
+  els.loggerTagPickerTbody.textContent = '';
+
+  const filtered = all.filter((t) => {
+    if (!q) return true;
+    const cid = String(t?.connection_id || '').toLowerCase();
+    const name = String(t?.name || '').toLowerCase();
+    return cid.includes(q) || name.includes(q);
+  });
+
+  const mk = (text, mono = false) => {
+    const td = document.createElement('td');
+    if (mono) td.classList.add('mono');
+    td.textContent = String(text ?? '');
+    return td;
+  };
+
+  filtered.forEach((t) => {
+    const key = tagKeyFromLiveTag(t);
+    if (!key) return;
+    const tr = document.createElement('tr');
+
+    const td0 = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = state.loggerTagPickerSelected.has(key);
+    cb.addEventListener('change', () => {
+      if (cb.checked) state.loggerTagPickerSelected.add(key);
+      else state.loggerTagPickerSelected.delete(key);
+      if (els.loggerTagPickerStatus) {
+        els.loggerTagPickerStatus.textContent = `${state.loggerTagPickerSelected.size} selected`;
+      }
+    });
+    td0.appendChild(cb);
+
+    tr.appendChild(td0);
+    tr.appendChild(mk(String(t?.connection_id || ''), true));
+    tr.appendChild(mk(String(t?.name || ''), true));
+    tr.appendChild(mk(String(t?.datatype || ''), true));
+    tr.appendChild(mk(t?.writable ? 'yes' : 'no', false));
+
+    tr.addEventListener('dblclick', () => {
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event('change'));
+    });
+
+    els.loggerTagPickerTbody.appendChild(tr);
+  });
+
+  if (els.loggerTagPickerStatus) {
+    els.loggerTagPickerStatus.textContent = `${state.loggerTagPickerSelected.size} selected · ${filtered.length} shown`;
+  }
+}
+
+async function openLoggerTagPickerModal() {
+  if (!els.loggerTagPickerModal) return;
+  if (!els.loggerReportTags) return;
+
+  state.loggerTagPickerSelected = parseReportTagsTextToSet();
+  state.loggerTagPickerFilter = '';
+  if (els.loggerTagPickerSearch) els.loggerTagPickerSearch.value = '';
+  if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = 'Loading tags…';
+  els.loggerTagPickerModal.style.display = 'block';
+
+  try {
+    const resp = await apiGet('/api/opcbridge/tags');
+    const raw = Array.isArray(resp?.tags) ? resp.tags : [];
+    // Deduplicate by connection_id:name
+    const seen = new Set();
+    const out = [];
+    raw.forEach((t) => {
+      const key = tagKeyFromLiveTag(t);
+      if (!key) return;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(t);
+    });
+    out.sort((a, b) => tagKeyFromLiveTag(a).localeCompare(tagKeyFromLiveTag(b), undefined, { sensitivity: 'base' }));
+    state.loggerTagPickerAll = out;
+    renderLoggerTagPickerTable();
+  } catch (err) {
+    state.loggerTagPickerAll = [];
+    if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = `Failed: ${err.message || err}`;
+    renderLoggerTagPickerTable();
+  }
+}
+
+function applyLoggerTagPickerSelectionToTextarea() {
+  const existing = String(els.loggerReportTags?.value || '').split(/\r?\n/g).map((s) => String(s || '').trim());
+  const preserved = [];
+  for (const line of existing) {
+    if (!line) continue;
+    if (line.startsWith('#')) { preserved.push(line); continue; }
+    if (line.includes('*') || line.includes('?')) { preserved.push(line); continue; }
+    if (!line.includes(':')) { preserved.push(line); continue; }
+    // concrete tags will be rebuilt from selection
+  }
+
+  const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean);
+  selected.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+  const next = preserved.concat(selected);
+  if (els.loggerReportTags) els.loggerReportTags.value = next.join('\n');
+  closeLoggerTagPickerModal();
+}
+
+function normalizeReportTagsArray(tags) {
+  const out = [];
+  const arr = Array.isArray(tags) ? tags : [];
+  for (const t of arr) {
+    if (typeof t === 'string') {
+      const s = String(t || '').trim();
+      if (s) out.push(s);
+      continue;
+    }
+    if (t && typeof t === 'object' && !Array.isArray(t)) {
+      const cid = String(t.connection_id || '').trim();
+      const name = String(t.name || '').trim();
+      if (cid && name) out.push(`${cid}:${name}`);
+      continue;
+    }
+  }
+  return out;
+}
+
+function openLoggerReportModal(opts = {}) {
+  const mode = String(opts.mode || 'edit').trim() || 'edit';
+  const id = String(opts.id || '').trim();
+  const isNew = mode === 'new';
+  const report = (!isNew && id) ? findReportById(id) : null;
+
+  state.loggerReportEditingMode = isNew ? 'new' : 'edit';
+  state.loggerReportEditingId = isNew ? '' : id;
+
+  if (els.loggerReportModal) els.loggerReportModal.style.display = 'block';
+  loggerReportModalSetStatus('');
+
+  if (els.loggerReportId) {
+    els.loggerReportId.disabled = !isNew;
+    els.loggerReportId.value = isNew ? '' : String(report?.id || id);
+  }
+  if (els.loggerReportName) els.loggerReportName.value = String(report?.name || '');
+
+  // Database dropdown
+  if (els.loggerReportDatabase) {
+    const dbs = Array.isArray(state.reporterDatabases) ? state.reporterDatabases : [];
+    els.loggerReportDatabase.innerHTML = ['<option value=""></option>'].concat(
+      dbs
+        .slice()
+        .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { sensitivity: 'base' }))
+        .map((d) => {
+          const did = String(d?.id || '').trim();
+          const label = String(d?.name || d?.id || '').trim() || did;
+          return `<option value="${escapeHtml(did)}">${escapeHtml(label)}</option>`;
+        })
+    ).join('');
+    els.loggerReportDatabase.value = String(report?.database_id || '');
+  }
+
+  if (els.loggerReportTable) els.loggerReportTable.value = String(report?.table || 'tag_log');
+  if (els.loggerReportMode) els.loggerReportMode.value = String(report?.mode || 'scheduled');
+  if (els.loggerReportEnabled) els.loggerReportEnabled.checked = Boolean(report?.enabled);
+  if (els.loggerReportPersistent) els.loggerReportPersistent.checked = (report?.schedule?.persistent !== false);
+
+  const cal = String(report?.schedule?.on_calendar || '');
+  if (els.loggerReportOnCalendar) els.loggerReportOnCalendar.value = cal;
+  const guess = guessScheduleKindFromOnCalendar(cal);
+  if (els.loggerReportScheduleKind) els.loggerReportScheduleKind.value = String(guess.kind || 'every_n_minutes');
+  if (els.loggerReportEveryMinutes && typeof guess.everyMinutes === 'number') els.loggerReportEveryMinutes.value = String(guess.everyMinutes);
+  if (els.loggerReportHourlyMinute && typeof guess.hourlyMinute === 'number') els.loggerReportHourlyMinute.value = String(guess.hourlyMinute);
+  if (els.loggerReportHourlySecond && typeof guess.hourlySecond === 'number') els.loggerReportHourlySecond.value = String(guess.hourlySecond);
+  if (els.loggerReportDailyHour && typeof guess.dailyHour === 'number') els.loggerReportDailyHour.value = String(guess.dailyHour);
+  if (els.loggerReportDailyMinute && typeof guess.dailyMinute === 'number') els.loggerReportDailyMinute.value = String(guess.dailyMinute);
+  if (els.loggerReportDailySecond && typeof guess.dailySecond === 'number') els.loggerReportDailySecond.value = String(guess.dailySecond);
+  renderLoggerReportScheduleUi();
+
+  if (els.loggerReportTags) {
+    const tags = normalizeReportTagsArray(report?.tags);
+    els.loggerReportTags.value = tags.join('\n');
+  }
+}
+
+function startNewReport() {
+  openLoggerReportModal({ mode: 'new' });
+}
+
+function getReportFromModalUi() {
+  const id = String(els.loggerReportId?.value || '').trim();
+  const mode = String(els.loggerReportMode?.value || 'scheduled').trim() || 'scheduled';
+  const enabled = Boolean(els.loggerReportEnabled?.checked);
+  const persistent = Boolean(els.loggerReportPersistent?.checked);
+  const kind = String(els.loggerReportScheduleKind?.value || 'every_n_minutes').trim() || 'every_n_minutes';
+  const onCalendar = buildOnCalendarForScheduleKind(kind);
+
+  const tagsText = String(els.loggerReportTags?.value || '');
+  const tags = tagsText
+    .split(/\r?\n/g)
+    .map((s) => String(s || '').trim())
+    .filter((s) => s && !s.startsWith('#'));
+
+  return {
+    id,
+    name: String(els.loggerReportName?.value || '').trim(),
+    database_id: String(els.loggerReportDatabase?.value || '').trim(),
+    table: String(els.loggerReportTable?.value || 'tag_log').trim() || 'tag_log',
+    mode,
+    enabled,
+    schedule: { on_calendar: onCalendar, persistent },
+    tags
+  };
+}
+
+async function saveAndApplyReporterReport() {
+  loggerReportModalSetStatus('Saving…');
+  try {
+    const report = getReportFromModalUi();
+    if (!report.id) throw new Error('ID is required.');
+    if (!report.database_id) throw new Error('Database is required.');
+    if (report.mode === 'scheduled' && !report.schedule.on_calendar) throw new Error('OnCalendar is required for scheduled reports.');
+
+    const save = await apiPostJson('/api/reporter/reports', { report });
+    if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
+
+    loggerReportModalSetStatus('Applying schedule…');
+    const apply = await apiPostJson('/api/reporter/reports/apply', { id: report.id });
+    if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
+
+    await refreshReporterAll();
+    state.loggerSelectedNodeId = `logger:report:${report.id}`;
+    renderLoggerTree();
+    renderLoggerDetails();
+    closeLoggerReportModal();
+    loggerSetStatus('Applied.');
+  } catch (err) {
+    loggerReportModalSetStatus(`Failed: ${err.message || err}`);
+  }
+}
+
+async function deleteReporterReport(id) {
+  const rid = String(id || '').trim();
+  if (!rid) return;
+  if (!window.confirm(`Delete report '${rid}'?`)) return;
+  loggerSetStatus('Deleting…');
+  try {
+    const resp = await apiPostJson('/api/reporter/reports/delete', { id: rid });
+    if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+    await refreshReporterAll();
+    state.loggerSelectedNodeId = 'logger:reports';
+    renderLoggerTree();
+    renderLoggerDetails();
+    loggerSetStatus('Deleted.');
+  } catch (err) {
+    loggerSetStatus(`Failed: ${err.message || err}`);
+  }
+}
+
+async function refreshReporterAll() {
+  loggerSetStatus('Loading…');
+  const out = { ok: true };
+
+  try {
+    const caps = await apiGet('/api/reporter/capabilities');
+    if (caps?.ok) state.reporterCapabilities = caps.capabilities || null;
+    out.capabilities = caps;
+  } catch (err) {
+    out.ok = false;
+    out.capabilities = { ok: false, error: String(err.message || err) };
+    state.reporterCapabilities = null;
+  }
+
+  try {
+    const db = await apiGet('/api/reporter/databases');
+    if (!db?.ok) throw new Error(String(db?.error || 'Failed'));
+    state.reporterDatabases = Array.isArray(db?.databases) ? db.databases : [];
+    out.databases = db;
+  } catch (err) {
+    out.ok = false;
+    out.databases = { ok: false, error: String(err.message || err) };
+    state.reporterDatabases = [];
+  }
+
+  try {
+    const rep = await apiGet('/api/reporter/reports');
+    if (!rep?.ok) throw new Error(String(rep?.error || 'Failed'));
+    state.reporterReports = Array.isArray(rep?.reports) ? rep.reports : [];
+    out.reports = rep;
+  } catch (err) {
+    out.ok = false;
+    out.reports = { ok: false, error: String(err.message || err) };
+    state.reporterReports = [];
+  }
+
+  if (els.loggerJson) els.loggerJson.textContent = JSON.stringify(out, null, 2);
+  if (!state.loggerSelectedNodeId) state.loggerSelectedNodeId = 'logger:databases';
+  renderLoggerTree();
+  renderLoggerDetails();
+  loggerSetStatus(out.ok ? 'Ready.' : 'Partial failure (see Raw JSON).');
+}
+
+function wireLoggerUi() {
+  if (els.loggerRefreshBtn) els.loggerRefreshBtn.addEventListener('click', () => refreshReporterAll());
+  if (els.loggerDbModalType) els.loggerDbModalType.addEventListener('change', () => {
+    renderLoggerDbModalTypeUi();
+    renderLoggerDbModalFieldsForType(String(els.loggerDbModalType?.value || 'mysql'));
+  });
+  if (els.loggerDbCloseBtn) els.loggerDbCloseBtn.addEventListener('click', closeLoggerDbModal);
+  if (els.loggerDbCancelBtn) els.loggerDbCancelBtn.addEventListener('click', closeLoggerDbModal);
+  if (els.loggerDbSaveBtn) els.loggerDbSaveBtn.addEventListener('click', () => saveReporterDatabase());
+  if (els.loggerReportCloseBtn) els.loggerReportCloseBtn.addEventListener('click', closeLoggerReportModal);
+  if (els.loggerReportCancelBtn) els.loggerReportCancelBtn.addEventListener('click', closeLoggerReportModal);
+  if (els.loggerReportSaveBtn) els.loggerReportSaveBtn.addEventListener('click', saveAndApplyReporterReport);
+  if (els.loggerReportScheduleKind) els.loggerReportScheduleKind.addEventListener('change', renderLoggerReportScheduleUi);
+  if (els.loggerReportEveryMinutes) els.loggerReportEveryMinutes.addEventListener('input', renderLoggerReportScheduleUi);
+  if (els.loggerReportHourlyMinute) els.loggerReportHourlyMinute.addEventListener('input', renderLoggerReportScheduleUi);
+  if (els.loggerReportHourlySecond) els.loggerReportHourlySecond.addEventListener('input', renderLoggerReportScheduleUi);
+  if (els.loggerReportDailyHour) els.loggerReportDailyHour.addEventListener('input', renderLoggerReportScheduleUi);
+  if (els.loggerReportDailyMinute) els.loggerReportDailyMinute.addEventListener('input', renderLoggerReportScheduleUi);
+  if (els.loggerReportDailySecond) els.loggerReportDailySecond.addEventListener('input', renderLoggerReportScheduleUi);
+  if (els.loggerReportOnCalendar) els.loggerReportOnCalendar.addEventListener('input', () => {
+    if (String(els.loggerReportScheduleKind?.value || '') === 'custom') renderLoggerReportScheduleUi();
+  });
+
+  if (els.loggerReportSelectTagsBtn) els.loggerReportSelectTagsBtn.addEventListener('click', openLoggerTagPickerModal);
+  if (els.loggerTagPickerCloseBtn) els.loggerTagPickerCloseBtn.addEventListener('click', closeLoggerTagPickerModal);
+  if (els.loggerTagPickerApplyBtn) els.loggerTagPickerApplyBtn.addEventListener('click', applyLoggerTagPickerSelectionToTextarea);
+  if (els.loggerTagPickerClearBtn) els.loggerTagPickerClearBtn.addEventListener('click', () => {
+    state.loggerTagPickerSelected = new Set();
+    renderLoggerTagPickerTable();
+  });
+  if (els.loggerTagPickerSelectAllBtn) els.loggerTagPickerSelectAllBtn.addEventListener('click', () => {
+    const all = Array.isArray(state.loggerTagPickerAll) ? state.loggerTagPickerAll : [];
+    const q = String(state.loggerTagPickerFilter || '').toLowerCase();
+    const sel = new Set(state.loggerTagPickerSelected || []);
+    all.forEach((t) => {
+      const key = tagKeyFromLiveTag(t);
+      if (!key) return;
+      if (q) {
+        const cid = String(t?.connection_id || '').toLowerCase();
+        const name = String(t?.name || '').toLowerCase();
+        if (!cid.includes(q) && !name.includes(q)) return;
+      }
+      sel.add(key);
+    });
+    state.loggerTagPickerSelected = sel;
+    renderLoggerTagPickerTable();
+  });
+  if (els.loggerTagPickerSearch) els.loggerTagPickerSearch.addEventListener('input', () => {
+    state.loggerTagPickerFilter = String(els.loggerTagPickerSearch?.value || '');
+    renderLoggerTagPickerTable();
+  });
 }
 
 function logsSetStatus(msg) {
@@ -545,6 +1587,9 @@ function setTab(id) {
   if (next === 'workspace' && !canAccessWorkspaceTab()) {
     id = 'overview';
   }
+  if (next === 'logger' && !canAccessLoggerTab()) {
+    id = 'overview';
+  }
   if (next === 'logs' && !canAccessLogsTab()) {
     id = 'overview';
   }
@@ -561,6 +1606,9 @@ function setTab(id) {
   }
   if (id === 'logs') {
     refreshLogs().catch(() => {});
+  }
+  if (id === 'logger') {
+    refreshReporterAll().catch(() => {});
   }
 }
 
@@ -3967,6 +5015,7 @@ async function refreshUserAuthLine() {
     updateWorkspaceTabVisibility();
     updateLogsTabVisibility();
     updateUsersTabVisibility();
+    updateLoggerTabVisibility();
     const configured = Boolean(s?.configured);
     const loggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
     const username = String(s?.user?.username || '').trim();
@@ -4607,6 +5656,7 @@ async function main() {
   setTab('overview');
   updateConfigureTabVisibility();
   updateWorkspaceTabVisibility();
+  updateLoggerTabVisibility();
   updateLogsTabVisibility();
   updateUsersTabVisibility();
 
@@ -4615,6 +5665,7 @@ async function main() {
   wireScadaSettingsUi();
   wireSvcUi();
   wireMqttCaUi();
+  wireLoggerUi();
   wireConnectionsUi();
   wireTagsConfigUi();
   wireLoginModalUi();

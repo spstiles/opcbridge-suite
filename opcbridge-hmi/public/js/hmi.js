@@ -1185,6 +1185,8 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   next.message = alarm?.message ?? prev.message ?? null;
   next.severity = alarm?.severity ?? prev.severity ?? null;
   next.area = alarm?.area ?? prev.area ?? null;
+  next.group = alarm?.group ?? prev.group ?? null;
+  next.site = alarm?.site ?? prev.site ?? null;
   next.enabled = alarm?.enabled ?? prev.enabled ?? true;
   next.active = alarm?.active ?? prev.active ?? false;
   next.acked = alarm?.acked ?? prev.acked ?? false;
@@ -1210,6 +1212,8 @@ const upsertTimelineFromAlarmEvent = (event) => {
   const next = { ...prev };
   next.alarm_id = id;
   next.source = event?.source || prev.source || {};
+  if (event?.group != null) next.group = event.group;
+  if (event?.site != null) next.site = event.site;
   if (event?.severity != null) next.severity = event.severity;
   next.last_event_type = String(event?.type || "").trim() || "event";
   next.last_event_ts_ms = Number(event?.ts_ms) || Date.now();
@@ -5119,7 +5123,7 @@ const renderObjectInto = (parent, obj) => {
 
 		    const cols = document.createElementNS(xhtml, "div");
 		    cols.className = "hmi-alarms-panel-cols";
-		    ["Active", "Cleared", "Tag", "Area", "Description", "Status", "Quality"].forEach((label) => {
+			    ["Active", "Cleared", "Tag", "Location", "Description", "Status", "Quality"].forEach((label) => {
 		      const cell = document.createElementNS(xhtml, "div");
 		      cell.className = "hmi-alarms-panel-cell hmi-alarms-panel-col";
 		      cell.textContent = label;
@@ -5162,7 +5166,13 @@ const renderObjectInto = (parent, obj) => {
 		        const connectionId = String(src?.connection_id || "");
 		        const tagName = String(src?.tag || "");
 			        const sourceText = showSource ? `${connectionId}:${tagName}`.trim() : tagName.trim();
-			        const areaText = String(alarm?.area || src?.area || "").trim();
+				        let areaText = String(alarm?.area || src?.area || "").trim();
+				        if (!areaText) {
+				          const groupText = String(alarm?.group || src?.group || "").trim();
+				          const siteText = String(alarm?.site || src?.site || "").trim();
+				          if (groupText && siteText) areaText = `${groupText}-${siteText}`;
+				          else areaText = groupText || siteText;
+				        }
 			        const baseDescText = getAlarmDisplayDescription(alarm);
 			        const activeTs = Number(alarm?.active_since_ms) || 0;
 			        const clearedTs = Number(alarm?.cleared_ts_ms) || 0;
@@ -6119,7 +6129,7 @@ const renderScreen = () => {
 
         const cols = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
         cols.className = "hmi-alarms-panel-cols";
-        ["Active", "Cleared", "Tag", "Area", "Description", "Status", "Quality"].forEach((label) => {
+	        ["Active", "Cleared", "Tag", "Location", "Description", "Status", "Quality"].forEach((label) => {
           const cell = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
           cell.className = "hmi-alarms-panel-cell hmi-alarms-panel-col";
           cell.textContent = label;
@@ -6162,7 +6172,13 @@ const renderScreen = () => {
             const connectionId = String(src?.connection_id || "");
             const tagName = String(src?.tag || "");
             const sourceText = showSource ? `${connectionId}:${tagName}`.trim() : tagName.trim();
-            const areaText = String(alarm?.area || src?.area || "").trim();
+	            let areaText = String(alarm?.area || src?.area || "").trim();
+	            if (!areaText) {
+	              const groupText = String(alarm?.group || src?.group || "").trim();
+	              const siteText = String(alarm?.site || src?.site || "").trim();
+	              if (groupText && siteText) areaText = `${groupText}-${siteText}`;
+	              else areaText = groupText || siteText;
+	            }
             const baseDescText = getAlarmDisplayDescription(alarm);
             const activeTs = Number(alarm?.active_since_ms) || 0;
             const clearedTs = Number(alarm?.cleared_ts_ms) || 0;

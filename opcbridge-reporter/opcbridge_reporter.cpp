@@ -3,6 +3,7 @@
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
+#include <vector>
 #include <ctime>
 
 #include <curl/curl.h>
@@ -34,6 +35,7 @@ struct Job {
     std::string table;
     bool log_all = false;
     std::unordered_set<std::string> tag_keys; // "conn_id\x1Fname"
+    std::unordered_map<std::string, std::vector<std::string>> tag_name_globs_by_conn;
 };
 
 using TableSqlMap = std::unordered_map<std::string, std::string>;
@@ -42,6 +44,58 @@ static const char TAG_KEY_SEP = '\x1F';
 
 static std::string make_tag_key(const std::string& conn, const std::string& name) {
     return conn + TAG_KEY_SEP + name;
+}
+
+static bool has_glob_chars(const std::string& s) {
+    return (s.find('*') != std::string::npos) || (s.find('?') != std::string::npos);
+}
+
+// Simple glob match supporting:
+// - '*' any sequence (including empty)
+// - '?' any single character
+// Case-sensitive. No escaping.
+static bool glob_match(const std::string& pattern, const std::string& text) {
+    size_t p = 0;
+    size_t t = 0;
+    size_t star = std::string::npos;
+    size_t match = 0;
+
+    while (t < text.size()) {
+        if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == text[t])) {
+            ++p;
+            ++t;
+            continue;
+        }
+        if (p < pattern.size() && pattern[p] == '*') {
+            star = p++;
+            match = t;
+            continue;
+        }
+        if (star != std::string::npos) {
+            p = star + 1;
+            ++match;
+            t = match;
+            continue;
+        }
+        return false;
+    }
+
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+
+static bool job_includes_tag(const Job& job, const std::string& connection_id, const std::string& tag_name) {
+    if (job.log_all) return true;
+    const std::string key = make_tag_key(connection_id, tag_name);
+    if (job.tag_keys.find(key) != job.tag_keys.end()) return true;
+
+    auto it = job.tag_name_globs_by_conn.find(connection_id);
+    if (it == job.tag_name_globs_by_conn.end()) return false;
+    const auto& globs = it->second;
+    for (const auto& pat : globs) {
+        if (glob_match(pat, tag_name)) return true;
+    }
+    return false;
 }
 
 // ---------------- Epoch ms -> DATETIME string (local time) ----------------
@@ -203,6 +257,7 @@ bool load_job_config(const json& root, const std::string& job_name, Job& job) {
     job.table = jjob.value("table", "tag_log");
     job.log_all = false;
     job.tag_keys.clear();
+    job.tag_name_globs_by_conn.clear();
 
     if (jjob.contains("tags")) {
         const auto& tags = jjob["tags"];
@@ -216,13 +271,41 @@ bool load_job_config(const json& root, const std::string& job_name, Job& job) {
             }
         } else if (tags.is_array()) {
             for (const auto& t : tags) {
-                if (!t.contains("connection_id") || !t.contains("name")) {
-                    std::cerr << "Job '" << job_name << "': tag missing connection_id or name.\n";
+                // Supported forms:
+                // - object: { "connection_id": "...", "name": "ExactOrGlob*" }
+                // - string: "connection_id:ExactOrGlob*"
+                std::string conn;
+                std::string name;
+
+                if (t.is_string()) {
+                    const std::string s = t.get<std::string>();
+                    const size_t pos = s.find(':');
+                    if (pos == std::string::npos) {
+                        std::cerr << "Job '" << job_name << "': tag string must be 'connection_id:name' (got '" << s << "').\n";
+                        continue;
+                    }
+                    conn = s.substr(0, pos);
+                    name = s.substr(pos + 1);
+                } else if (t.is_object()) {
+                    if (!t.contains("connection_id") || !t.contains("name") ||
+                        !t["connection_id"].is_string() || !t["name"].is_string()) {
+                        std::cerr << "Job '" << job_name << "': tag missing string connection_id or name.\n";
+                        continue;
+                    }
+                    conn = t["connection_id"].get<std::string>();
+                    name = t["name"].get<std::string>();
+                } else {
+                    std::cerr << "Job '" << job_name << "': tag entries must be objects or strings.\n";
                     continue;
                 }
-                std::string conn = t["connection_id"].get<std::string>();
-                std::string name = t["name"].get<std::string>();
-                job.tag_keys.insert(make_tag_key(conn, name));
+
+                if (conn.empty() || name.empty()) continue;
+
+                if (has_glob_chars(name)) {
+                    job.tag_name_globs_by_conn[conn].push_back(name);
+                } else {
+                    job.tag_keys.insert(make_tag_key(conn, name));
+                }
             }
         } else {
             std::cerr << "Job '" << job_name << "': 'tags' must be 'ALL' or array.\n";
@@ -371,12 +454,7 @@ void insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job) {
             std::string tag_name      = t["name"].get<std::string>();
 
             // Filter by job tags if not logging ALL
-            if (!job.log_all) {
-                std::string key = make_tag_key(connection_id, tag_name);
-                if (job.tag_keys.find(key) == job.tag_keys.end()) {
-                    continue;
-                }
-            }
+            if (!job_includes_tag(job, connection_id, tag_name)) continue;
 
             long long timestamp_ms    = t["timestamp_ms"].get<long long>();
             std::string timestamp_dt  = epoch_ms_to_datetime(timestamp_ms);
