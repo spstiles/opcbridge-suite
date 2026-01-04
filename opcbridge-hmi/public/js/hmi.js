@@ -5907,6 +5907,17 @@ const openPopup = (screenId) => {
   bgRect.setAttribute("height", childH);
   bgRect.setAttribute("fill", child.background || "transparent");
   popupSvg.appendChild(bgRect);
+  const popupBgImage = String(child.backgroundImage || "").trim();
+  if (popupBgImage) {
+    const bgImg = document.createElementNS(ns, "image");
+    bgImg.setAttribute("x", 0);
+    bgImg.setAttribute("y", 0);
+    bgImg.setAttribute("width", childW);
+    bgImg.setAttribute("height", childH);
+    bgImg.setAttribute("preserveAspectRatio", "xMidYMid slice");
+    setImageHref(bgImg, imgUrl(popupBgImage));
+    popupSvg.appendChild(bgImg);
+  }
   child.objects?.forEach((childObj) => renderObjectInto(popupSvg, childObj));
 
   if (popupTitle) popupTitle.textContent = screenId;
@@ -6733,6 +6744,17 @@ const renderScreen = () => {
           bgRect.setAttribute("height", childH);
           bgRect.setAttribute("fill", child.background || "transparent");
           scaledGroup.appendChild(bgRect);
+          const bgImage = String(child.backgroundImage || "").trim();
+          if (bgImage) {
+            const bgImg = document.createElementNS(ns, "image");
+            bgImg.setAttribute("x", 0);
+            bgImg.setAttribute("y", 0);
+            bgImg.setAttribute("width", childW);
+            bgImg.setAttribute("height", childH);
+            bgImg.setAttribute("preserveAspectRatio", "xMidYMid slice");
+            setImageHref(bgImg, imgUrl(bgImage));
+            scaledGroup.appendChild(bgImg);
+          }
           child.objects?.forEach((childObj) => {
             renderObjectInto(scaledGroup, childObj);
           });
