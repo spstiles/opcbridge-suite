@@ -208,6 +208,15 @@ const els = {
   newTagEnabled: document.getElementById('newTagEnabled'),
   newTagWritable: document.getElementById('newTagWritable'),
   newTagMqttAllowed: document.getElementById('newTagMqttAllowed'),
+  newTagScaling: document.getElementById('newTagScaling'),
+  newTagScalingLinearRow: document.getElementById('newTagScalingLinearRow'),
+  newTagRawLow: document.getElementById('newTagRawLow'),
+  newTagRawHigh: document.getElementById('newTagRawHigh'),
+  newTagScaledLow: document.getElementById('newTagScaledLow'),
+  newTagScaledHigh: document.getElementById('newTagScaledHigh'),
+  newTagScaledDatatype: document.getElementById('newTagScaledDatatype'),
+  newTagClampLow: document.getElementById('newTagClampLow'),
+  newTagClampHigh: document.getElementById('newTagClampHigh'),
   newTagCancelBtn: document.getElementById('newTagCancelBtn'),
   newTagCreateBtn: document.getElementById('newTagCreateBtn'),
   newTagStatus: document.getElementById('newTagStatus'),
@@ -233,6 +242,15 @@ const els = {
   editTagEnabled: document.getElementById('editTagEnabled'),
   editTagWritable: document.getElementById('editTagWritable'),
   editTagMqttAllowed: document.getElementById('editTagMqttAllowed'),
+  editTagScaling: document.getElementById('editTagScaling'),
+  editTagScalingLinearRow: document.getElementById('editTagScalingLinearRow'),
+  editTagRawLow: document.getElementById('editTagRawLow'),
+  editTagRawHigh: document.getElementById('editTagRawHigh'),
+  editTagScaledLow: document.getElementById('editTagScaledLow'),
+  editTagScaledHigh: document.getElementById('editTagScaledHigh'),
+  editTagScaledDatatype: document.getElementById('editTagScaledDatatype'),
+  editTagClampLow: document.getElementById('editTagClampLow'),
+  editTagClampHigh: document.getElementById('editTagClampHigh'),
   editTagCancelBtn: document.getElementById('editTagCancelBtn'),
   editTagSaveBtn: document.getElementById('editTagSaveBtn'),
   editTagStatus: document.getElementById('editTagStatus'),
@@ -2240,6 +2258,16 @@ const TAG_DATATYPE_OPTIONS = [
   { value: 'string', label: 'String' },
 ];
 
+const TAG_SCALED_DATATYPE_OPTIONS = [
+  { value: '', label: '(default float64)' },
+  { value: 'float64', label: 'Float64' },
+  { value: 'float32', label: 'Float32' },
+  { value: 'int32', label: 'Int32' },
+  { value: 'uint32', label: 'UInt32' },
+  { value: 'int16', label: 'Int16' },
+  { value: 'uint16', label: 'UInt16' },
+];
+
 function fillTagDatatypeSelect(selectEl, selected) {
   if (!selectEl) return;
   const cur = String(selected || '').trim().toLowerCase();
@@ -2259,6 +2287,66 @@ function fillTagDatatypeSelect(selectEl, selected) {
 
   // default
   selectEl.value = 'bool';
+}
+
+function fillScaledDatatypeSelect(selectEl, selected) {
+  if (!selectEl) return;
+  const cur = String(selected ?? '').trim().toLowerCase();
+  selectEl.textContent = '';
+  TAG_SCALED_DATATYPE_OPTIONS.forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    selectEl.appendChild(o);
+  });
+
+  const known = TAG_SCALED_DATATYPE_OPTIONS.some((x) => x.value === cur);
+  selectEl.value = known ? cur : '';
+}
+
+function applyScalingModeUi(modeEl, linearRowEl) {
+  if (!modeEl || !linearRowEl) return;
+  const mode = String(modeEl.value || 'none').trim().toLowerCase();
+  linearRowEl.style.display = (mode === 'linear') ? '' : 'none';
+}
+
+function readLinearScalingFromUi({ scalingEl, rawLowEl, rawHighEl, scaledLowEl, scaledHighEl, scaledDatatypeEl, clampLowEl, clampHighEl }, datatype) {
+  const mode = String(scalingEl?.value || 'none').trim().toLowerCase();
+  if (mode !== 'linear') return { ok: true, scaling: 'none', fields: {} };
+
+  const dt = String(datatype || '').trim().toLowerCase();
+  if (dt === 'bool' || dt === 'string') return { ok: false, error: 'Scaling is only supported for numeric datatypes.' };
+
+  const rawLowStr = String(rawLowEl?.value ?? '').trim();
+  const rawHighStr = String(rawHighEl?.value ?? '').trim();
+  const scaledLowStr = String(scaledLowEl?.value ?? '').trim();
+  const scaledHighStr = String(scaledHighEl?.value ?? '').trim();
+  if (!rawLowStr || !rawHighStr || !scaledLowStr || !scaledHighStr) {
+    return { ok: false, error: 'Raw Low/High and Scaled Low/High are required for Linear scaling.' };
+  }
+
+  const raw_low = Number(rawLowStr);
+  const raw_high = Number(rawHighStr);
+  const scaled_low = Number(scaledLowStr);
+  const scaled_high = Number(scaledHighStr);
+  if (![raw_low, raw_high, scaled_low, scaled_high].every((n) => Number.isFinite(n))) {
+    return { ok: false, error: 'Scaling bounds must be valid numbers.' };
+  }
+  if (raw_high === raw_low) return { ok: false, error: 'Raw High must be different from Raw Low.' };
+  if (scaled_high === scaled_low) return { ok: false, error: 'Scaled High must be different from Scaled Low.' };
+
+  const fields = {
+    scaling: 'linear',
+    raw_low,
+    raw_high,
+    scaled_low,
+    scaled_high,
+    clamp_low: Boolean(clampLowEl?.checked),
+    clamp_high: Boolean(clampHighEl?.checked),
+  };
+  const sdt = String(scaledDatatypeEl?.value || '').trim().toLowerCase();
+  if (sdt) fields.scaled_datatype = sdt;
+  return { ok: true, scaling: 'linear', fields };
 }
 
 function fmtTime(tsMs) {
@@ -3235,6 +3323,22 @@ function showNewTagModal(connectionId) {
   if (els.newTagEnabled) els.newTagEnabled.checked = true;
   if (els.newTagWritable) els.newTagWritable.checked = false;
   if (els.newTagMqttAllowed) els.newTagMqttAllowed.checked = false;
+  if (els.newTagScaling) {
+    els.newTagScaling.value = 'none';
+    els.newTagScaling.onchange = () => applyScalingModeUi(els.newTagScaling, els.newTagScalingLinearRow);
+    applyScalingModeUi(els.newTagScaling, els.newTagScalingLinearRow);
+  }
+  fillScaledDatatypeSelect(els.newTagScaledDatatype, '');
+  if (els.newTagRawLow) els.newTagRawLow.value = '0';
+  if (els.newTagRawHigh) els.newTagRawHigh.value = '100';
+  if (els.newTagScaledLow) els.newTagScaledLow.value = '0';
+  if (els.newTagScaledHigh) els.newTagScaledHigh.value = '100';
+  if (els.newTagClampLow) els.newTagClampLow.checked = false;
+  if (els.newTagClampHigh) els.newTagClampHigh.checked = false;
+
+  [els.newTagScaling, els.newTagRawLow, els.newTagRawHigh, els.newTagScaledLow, els.newTagScaledHigh, els.newTagScaledDatatype, els.newTagClampLow, els.newTagClampHigh]
+    .filter(Boolean)
+    .forEach((e) => { e.disabled = !canEditConfig(); });
 
   setNewTagStatus('');
   if (els.newTagModal) els.newTagModal.style.display = 'flex';
@@ -3283,9 +3387,21 @@ async function createNewTagFromModal() {
   const enabled = Boolean(els.newTagEnabled?.checked);
   const writable = Boolean(els.newTagWritable?.checked);
   const mqtt_command_allowed = Boolean(els.newTagMqttAllowed?.checked);
+  const scalingRes = readLinearScalingFromUi({
+    scalingEl: els.newTagScaling,
+    rawLowEl: els.newTagRawLow,
+    rawHighEl: els.newTagRawHigh,
+    scaledLowEl: els.newTagScaledLow,
+    scaledHighEl: els.newTagScaledHigh,
+    scaledDatatypeEl: els.newTagScaledDatatype,
+    clampLowEl: els.newTagClampLow,
+    clampHighEl: els.newTagClampHigh,
+  }, datatype);
+  if (!scalingRes.ok) { setNewTagStatus(String(scalingRes.error || 'Invalid scaling settings.')); return; }
 
   const tag = { connection_id: cid, name, plc_tag_name, datatype, enabled, writable, mqtt_command_allowed };
   if (scan_ms != null) tag.scan_ms = scan_ms;
+  if (scalingRes.scaling === 'linear') Object.assign(tag, scalingRes.fields || {});
 
   const key = makeTagKey(tag);
   const exists = state.tagConfigAll.some((t) => makeTagKey(t) === key);
@@ -3453,6 +3569,14 @@ function openWorkspaceItemModal(node) {
       if (els.editTagEnabled) els.editTagEnabled.checked = true;
       if (els.editTagWritable) els.editTagWritable.checked = false;
       if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = false;
+      if (els.editTagScaling) els.editTagScaling.value = 'none';
+      fillScaledDatatypeSelect(els.editTagScaledDatatype, '');
+      if (els.editTagRawLow) els.editTagRawLow.value = '0';
+      if (els.editTagRawHigh) els.editTagRawHigh.value = '100';
+      if (els.editTagScaledLow) els.editTagScaledLow.value = '0';
+      if (els.editTagScaledHigh) els.editTagScaledHigh.value = '100';
+      if (els.editTagClampLow) els.editTagClampLow.checked = false;
+      if (els.editTagClampHigh) els.editTagClampHigh.checked = false;
       if (els.editTagSaveBtn) els.editTagSaveBtn.disabled = true;
       setEditTagStatus('Tag not found in config. Refresh tag config.');
     } else {
@@ -3462,9 +3586,26 @@ function openWorkspaceItemModal(node) {
       if (els.editTagEnabled) els.editTagEnabled.checked = (row?.enabled !== false);
       if (els.editTagWritable) els.editTagWritable.checked = (row?.writable === true);
       if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = (row?.mqtt_command_allowed === true);
+      if (els.editTagScaling) els.editTagScaling.value = String(row?.scaling || 'none').trim().toLowerCase() || 'none';
+      fillScaledDatatypeSelect(els.editTagScaledDatatype, row?.scaled_datatype ?? '');
+      if (els.editTagRawLow) els.editTagRawLow.value = (row?.raw_low == null) ? '0' : String(row.raw_low);
+      if (els.editTagRawHigh) els.editTagRawHigh.value = (row?.raw_high == null) ? '100' : String(row.raw_high);
+      if (els.editTagScaledLow) els.editTagScaledLow.value = (row?.scaled_low == null) ? '0' : String(row.scaled_low);
+      if (els.editTagScaledHigh) els.editTagScaledHigh.value = (row?.scaled_high == null) ? '100' : String(row.scaled_high);
+      if (els.editTagClampLow) els.editTagClampLow.checked = (row?.clamp_low === true);
+      if (els.editTagClampHigh) els.editTagClampHigh.checked = (row?.clamp_high === true);
       if (els.editTagSaveBtn) els.editTagSaveBtn.disabled = false;
       setEditTagStatus('');
     }
+
+    if (els.editTagScaling) {
+      els.editTagScaling.onchange = () => applyScalingModeUi(els.editTagScaling, els.editTagScalingLinearRow);
+      applyScalingModeUi(els.editTagScaling, els.editTagScalingLinearRow);
+      els.editTagScaling.disabled = !canEditConfig();
+    }
+    [els.editTagRawLow, els.editTagRawHigh, els.editTagScaledLow, els.editTagScaledHigh, els.editTagScaledDatatype, els.editTagClampLow, els.editTagClampHigh]
+      .filter(Boolean)
+      .forEach((e) => { e.disabled = !canEditConfig(); });
 
     els.editTagPlc?.focus?.();
     return;
@@ -3659,9 +3800,20 @@ async function saveEditedTagFromModal() {
   const enabled = Boolean(els.editTagEnabled?.checked);
   const writable = Boolean(els.editTagWritable?.checked);
   const mqtt_command_allowed = Boolean(els.editTagMqttAllowed?.checked);
+  const scalingRes = readLinearScalingFromUi({
+    scalingEl: els.editTagScaling,
+    rawLowEl: els.editTagRawLow,
+    rawHighEl: els.editTagRawHigh,
+    scaledLowEl: els.editTagScaledLow,
+    scaledHighEl: els.editTagScaledHigh,
+    scaledDatatypeEl: els.editTagScaledDatatype,
+    clampLowEl: els.editTagClampLow,
+    clampHighEl: els.editTagClampHigh,
+  }, datatype);
 
   if (!plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
+  if (!scalingRes.ok) { setEditTagStatus(String(scalingRes.error || 'Invalid scaling settings.')); return; }
 
   // If renaming, update the base row so the new key is part of the canonical tag list.
   const oldKey = `${conn}::${name}`;
@@ -3691,6 +3843,16 @@ async function saveEditedTagFromModal() {
   next.mqtt_command_allowed = mqtt_command_allowed;
   if (scanRaw === '') delete next.scan_ms;
   else next.scan_ms = Math.max(0, Math.trunc(Number(scanRaw) || 0));
+
+  delete next.scaling;
+  delete next.raw_low;
+  delete next.raw_high;
+  delete next.scaled_low;
+  delete next.scaled_high;
+  delete next.clamp_low;
+  delete next.clamp_high;
+  delete next.scaled_datatype;
+  if (scalingRes.scaling === 'linear') Object.assign(next, scalingRes.fields || {});
 
   const key = makeTagKey(next);
   if (!state.tagConfigEdited) state.tagConfigEdited = new Map();

@@ -504,6 +504,27 @@
                 <label class="check-pill"><input id="editTagMqttAllowed" type="checkbox" class="inline-check" /> MQTT command allowed</label>
               </div>
             </div>
+            <div class="form-row">
+              <label>Scaling</label>
+              <select id="editTagScaling">
+                <option value="none">None</option>
+                <option value="linear">Linear</option>
+              </select>
+            </div>
+            <div class="form-row" id="editTagScalingLinearRow" style="display:none;">
+              <label>Linear</label>
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div><div class="hint">Raw Low</div><input id="editTagRawLow" type="number" step="any" /></div>
+                <div><div class="hint">Raw High</div><input id="editTagRawHigh" type="number" step="any" /></div>
+                <div><div class="hint">Scaled Low</div><input id="editTagScaledLow" type="number" step="any" /></div>
+                <div><div class="hint">Scaled High</div><input id="editTagScaledHigh" type="number" step="any" /></div>
+                <div><div class="hint">Scaled Datatype</div><select id="editTagScaledDatatype"></select></div>
+                <div style="display:flex; align-items:center; gap: 12px; flex-wrap: wrap;">
+                  <label class="check-pill"><input id="editTagClampLow" type="checkbox" class="inline-check" /> Clamp Low</label>
+                  <label class="check-pill"><input id="editTagClampHigh" type="checkbox" class="inline-check" /> Clamp High</label>
+                </div>
+              </div>
+            </div>
             <div class="form-row"><label></label>
               <div class="row-actions">
                 <button class="btn" id="editTagCancelBtn" type="button">Cancel</button>
@@ -621,6 +642,27 @@
               <label class="check-pill"><input id="newTagEnabled" type="checkbox" class="inline-check" checked /> Enabled</label>
               <label class="check-pill"><input id="newTagWritable" type="checkbox" class="inline-check" /> Writable</label>
               <label class="check-pill"><input id="newTagMqttAllowed" type="checkbox" class="inline-check" /> MQTT command allowed</label>
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Scaling</label>
+            <select id="newTagScaling">
+              <option value="none">None</option>
+              <option value="linear">Linear</option>
+            </select>
+          </div>
+          <div class="form-row" id="newTagScalingLinearRow" style="display:none;">
+            <label>Linear</label>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div><div class="hint">Raw Low</div><input id="newTagRawLow" type="number" step="any" /></div>
+              <div><div class="hint">Raw High</div><input id="newTagRawHigh" type="number" step="any" /></div>
+              <div><div class="hint">Scaled Low</div><input id="newTagScaledLow" type="number" step="any" /></div>
+              <div><div class="hint">Scaled High</div><input id="newTagScaledHigh" type="number" step="any" /></div>
+              <div><div class="hint">Scaled Datatype</div><select id="newTagScaledDatatype"></select></div>
+              <div style="display:flex; align-items:center; gap: 12px; flex-wrap: wrap;">
+                <label class="check-pill"><input id="newTagClampLow" type="checkbox" class="inline-check" /> Clamp Low</label>
+                <label class="check-pill"><input id="newTagClampHigh" type="checkbox" class="inline-check" /> Clamp High</label>
+              </div>
             </div>
           </div>
           <div class="form-row"><label></label>

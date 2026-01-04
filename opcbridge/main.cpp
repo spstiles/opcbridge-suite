@@ -30,6 +30,7 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <limits>
 #include <cstdlib>
 #include <atomic>
 #include <queue>
@@ -163,6 +164,17 @@ struct TagConfig {
     bool enabled = true; // legacy configs default to enabled
     bool writable = false;
 
+    // Scaling (optional; default none)
+    // Linear: map [raw_low..raw_high] -> [scaled_low..scaled_high]
+    std::string scaling = "none"; // "none", "linear"
+    double raw_low = 0.0;
+    double raw_high = 1.0;
+    double scaled_low = 0.0;
+    double scaled_high = 1.0;
+    bool clamp_low = false;
+    bool clamp_high = false;
+    std::string scaled_datatype = ""; // "", "float32", "float64", "int32", "uint32", "int16", "uint16"
+
     // MQTT command and event logging
     bool mqtt_command_allowed = false;
     bool log_event_on_change  = false;
@@ -186,6 +198,15 @@ struct TagRuntime {
     TagConfig cfg;
     int32_t handle = PLCTAG_ERR_NOT_FOUND;
     std::chrono::steady_clock::time_point next_poll;
+
+    // Scaling runtime (precomputed)
+    bool scaling_linear = false;
+    bool scaling_valid = true;
+    double scale_slope = 1.0;  // raw -> scaled
+    double scale_offset = 0.0; // raw -> scaled
+    double inv_slope = 1.0;    // scaled -> raw
+    double inv_offset = 0.0;   // scaled -> raw
+    std::string out_datatype;  // published datatype (scaled)
 
     // Periodic logging runtime state
     bool periodic_enabled = false;
@@ -2080,6 +2101,26 @@ static int json_int_loose(const json &v, int def) {
     return def;
 }
 
+static double json_double_loose(const json &v, double def) {
+    try {
+        if (v.is_number_float()) return v.get<double>();
+        if (v.is_number_integer()) return static_cast<double>(v.get<long long>());
+        if (v.is_number_unsigned()) return static_cast<double>(v.get<unsigned long long>());
+        if (v.is_boolean()) return v.get<bool>() ? 1.0 : 0.0;
+        if (v.is_string()) {
+            const std::string s = trim_copy(v.get<std::string>());
+            if (s.empty()) return def;
+            size_t idx = 0;
+            double out = std::stod(s, &idx);
+            (void)idx;
+            return out;
+        }
+    } catch (...) {
+        return def;
+    }
+    return def;
+}
+
 static std::string json_string_loose(const json &v, const std::string &def) {
     try {
         if (v.is_string()) return v.get<std::string>();
@@ -2101,6 +2142,11 @@ static bool json_get_bool_loose(const json &obj, const char *key, bool def) {
 static int json_get_int_loose(const json &obj, const char *key, int def) {
     if (!obj.is_object() || !obj.contains(key) || obj.at(key).is_null()) return def;
     return json_int_loose(obj.at(key), def);
+}
+
+static double json_get_double_loose(const json &obj, const char *key, double def) {
+    if (!obj.is_object() || !obj.contains(key) || obj.at(key).is_null()) return def;
+    return json_double_loose(obj.at(key), def);
 }
 
 static std::string json_get_string_loose(const json &obj, const char *key, const std::string &def) {
@@ -2170,6 +2216,17 @@ TagFile load_tag_file(const std::string &path) {
             // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
             t.enabled              = json_get_bool_loose(jt, "enabled", true);
             t.writable             = json_get_bool_loose(jt, "writable", false);
+
+            // Scaling (optional)
+            t.scaling         = json_get_string_loose(jt, "scaling", std::string("none"));
+            t.raw_low         = json_get_double_loose(jt, "raw_low", t.raw_low);
+            t.raw_high        = json_get_double_loose(jt, "raw_high", t.raw_high);
+            t.scaled_low      = json_get_double_loose(jt, "scaled_low", t.scaled_low);
+            t.scaled_high     = json_get_double_loose(jt, "scaled_high", t.scaled_high);
+            t.clamp_low       = json_get_bool_loose(jt, "clamp_low", false);
+            t.clamp_high      = json_get_bool_loose(jt, "clamp_high", false);
+            t.scaled_datatype = json_get_string_loose(jt, "scaled_datatype", std::string{});
+
             t.mqtt_command_allowed = json_get_bool_loose(jt, "mqtt_command_allowed", false);
             t.log_event_on_change  = json_get_bool_loose(jt, "log_event_on_change", false);
 
@@ -2216,6 +2273,150 @@ static bool is_supported_datatype(const std::string &dt) {
         dt == "float32" ||
         dt == "float64"
     );
+}
+
+static bool is_numeric_datatype(const std::string &dt) {
+    return (
+        dt == "int16" || dt == "uint16" ||
+        dt == "int32" || dt == "uint32" ||
+        dt == "float32" || dt == "float64"
+    );
+}
+
+static std::string normalize_scaled_datatype(const std::string &dt) {
+    if (dt.empty()) return "";
+    if (dt == "int16" || dt == "uint16" || dt == "int32" || dt == "uint32" || dt == "float32" || dt == "float64") {
+        return dt;
+    }
+    return "";
+}
+
+static bool tagvalue_to_double(const TagValue &v, double &out) {
+    bool ok = true;
+    std::visit([&](auto &&arg) {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, bool>) {
+            ok = false;
+        } else {
+            out = static_cast<double>(arg);
+        }
+    }, v);
+    return ok;
+}
+
+static bool cast_double_to_tagvalue(double v, const std::string &dt, TagValue &out, std::string &outError) {
+    outError.clear();
+
+    if (dt == "float64") {
+        out = static_cast<double>(v);
+        return true;
+    }
+    if (dt == "float32") {
+        out = static_cast<float>(v);
+        return true;
+    }
+
+    if (dt == "int32") {
+        if (v < static_cast<double>(std::numeric_limits<int32_t>::min()) ||
+            v > static_cast<double>(std::numeric_limits<int32_t>::max())) {
+            outError = "Scaled value out of range for int32";
+            return false;
+        }
+        out = static_cast<int32_t>(std::llround(v));
+        return true;
+    }
+    if (dt == "uint32") {
+        if (v < 0.0 ||
+            v > static_cast<double>(std::numeric_limits<uint32_t>::max())) {
+            outError = "Scaled value out of range for uint32";
+            return false;
+        }
+        out = static_cast<uint32_t>(std::llround(v));
+        return true;
+    }
+    if (dt == "int16") {
+        if (v < static_cast<double>(std::numeric_limits<int16_t>::min()) ||
+            v > static_cast<double>(std::numeric_limits<int16_t>::max())) {
+            outError = "Scaled value out of range for int16";
+            return false;
+        }
+        out = static_cast<int16_t>(std::llround(v));
+        return true;
+    }
+    if (dt == "uint16") {
+        if (v < 0.0 ||
+            v > static_cast<double>(std::numeric_limits<uint16_t>::max())) {
+            outError = "Scaled value out of range for uint16";
+            return false;
+        }
+        out = static_cast<uint16_t>(std::llround(v));
+        return true;
+    }
+
+    outError = "Unsupported scaled datatype '" + dt + "'";
+    return false;
+}
+
+static void init_tag_scaling(TagRuntime &rt, const std::string &sourcePathForLogs = "") {
+    rt.scaling_linear = false;
+    rt.scaling_valid = true;
+    rt.scale_slope = 1.0;
+    rt.scale_offset = 0.0;
+    rt.inv_slope = 1.0;
+    rt.inv_offset = 0.0;
+    rt.out_datatype.clear();
+
+    std::string mode = rt.cfg.scaling;
+    for (char &c : mode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (mode.empty() || mode == "none") {
+        rt.out_datatype = rt.cfg.datatype;
+        return;
+    }
+
+    if (mode != "linear") {
+        std::cerr << "[scale] Warning: tag '" << rt.cfg.logical_name << "' has unsupported scaling='"
+                  << rt.cfg.scaling << "'; treating as none."
+                  << (sourcePathForLogs.empty() ? "" : (" (" + sourcePathForLogs + ")"))
+                  << "\n";
+        rt.cfg.scaling = "none";
+        rt.out_datatype = rt.cfg.datatype;
+        return;
+    }
+
+    if (!is_numeric_datatype(rt.cfg.datatype)) {
+        std::cerr << "[scale] Warning: tag '" << rt.cfg.logical_name << "' datatype '"
+                  << rt.cfg.datatype << "' cannot be scaled; treating scaling as none."
+                  << (sourcePathForLogs.empty() ? "" : (" (" + sourcePathForLogs + ")"))
+                  << "\n";
+        rt.out_datatype = rt.cfg.datatype;
+        return;
+    }
+
+    const double rawLow = rt.cfg.raw_low;
+    const double rawHigh = rt.cfg.raw_high;
+    const double scaledLow = rt.cfg.scaled_low;
+    const double scaledHigh = rt.cfg.scaled_high;
+
+    const double rawSpan = rawHigh - rawLow;
+    const double scaledSpan = scaledHigh - scaledLow;
+    if (rawSpan == 0.0 || scaledSpan == 0.0) {
+        std::cerr << "[scale] Warning: tag '" << rt.cfg.logical_name
+                  << "' has invalid scaling range; treating scaling as none."
+                  << (sourcePathForLogs.empty() ? "" : (" (" + sourcePathForLogs + ")"))
+                  << "\n";
+        rt.out_datatype = rt.cfg.datatype;
+        return;
+    }
+
+    rt.scaling_linear = true;
+    rt.scale_slope = scaledSpan / rawSpan;
+    rt.scale_offset = scaledLow - (rawLow * rt.scale_slope);
+
+    rt.inv_slope = rawSpan / scaledSpan;
+    rt.inv_offset = rawLow - (scaledLow * rt.inv_slope);
+
+    std::string outDt = normalize_scaled_datatype(rt.cfg.scaled_datatype);
+    rt.out_datatype = outDt.empty() ? std::string("float64") : outDt;
 }
 
 std::string build_base_conn_str(const ConnectionConfig &c) {
@@ -2273,105 +2474,59 @@ static void opcua_onWrite(UA_Server *server,
         return;
     }
 
-    std::unique_lock<std::shared_mutex> plcLock;
-    if (g_plcMutex) {
-        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
+    if (!g_mqttDrivers || !g_mqttTagTable || !g_mqttDriverMutex) {
+        std::cerr << "OPC UA write: missing driver context.\n";
+        return;
     }
 
     const UA_Variant &var = data->value;
-    const std::string &dt = binding->datatype;
-    int32_t st = PLCTAG_STATUS_OK;
+    std::string valueStr;
 
-    // Decode UA value and push into libplctag buffer
-    if (dt == "bool" || dt == "BOOL" || dt == "Bool") {
-        if (!UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_BOOLEAN])) {
-            std::cerr << "OPC UA write: type mismatch for BOOL tag ["
-                      << binding->conn->id << "]." << binding->logical_name << "\n";
-            return;
-        }
+    if (UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_BOOLEAN])) {
         UA_Boolean v = *(UA_Boolean*)var.data;
-        st = plc_tag_set_int8(binding->handle, 0, v ? 1 : 0);
-
-    } else if (dt == "int16" || dt == "INT" || dt == "Int16") {
-        if (!UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_INT16])) {
-            std::cerr << "OPC UA write: type mismatch for INT16 tag ["
-                      << binding->conn->id << "]." << binding->logical_name << "\n";
-            return;
-        }
+        valueStr = v ? "1" : "0";
+    } else if (UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_INT16])) {
         UA_Int16 v = *(UA_Int16*)var.data;
-        st = plc_tag_set_int16(binding->handle, 0, v);
-
-    } else if (dt == "uint16" || dt == "WORD" || dt == "Word") {
-        if (!UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_UINT16])) {
-            std::cerr << "OPC UA write: type mismatch for UINT16 tag ["
-                      << binding->conn->id << "]." << binding->logical_name << "\n";
-            return;
-        }
+        valueStr = std::to_string((int)v);
+    } else if (UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_UINT16])) {
         UA_UInt16 v = *(UA_UInt16*)var.data;
-        st = plc_tag_set_uint16(binding->handle, 0, v);
-
-    } else if (dt == "int32" || dt == "DINT" || dt == "Int32") {
-        if (!UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_INT32])) {
-            std::cerr << "OPC UA write: type mismatch for INT32 tag ["
-                      << binding->conn->id << "]." << binding->logical_name << "\n";
-            return;
-        }
+        valueStr = std::to_string((unsigned int)v);
+    } else if (UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_INT32])) {
         UA_Int32 v = *(UA_Int32*)var.data;
-        st = plc_tag_set_int32(binding->handle, 0, v);
-
-    } else if (dt == "uint32" || dt == "DWORD" || dt == "DWord") {
-        if (!UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_UINT32])) {
-            std::cerr << "OPC UA write: type mismatch for UINT32 tag ["
-                      << binding->conn->id << "]." << binding->logical_name << "\n";
-            return;
-        }
+        valueStr = std::to_string((int32_t)v);
+    } else if (UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_UINT32])) {
         UA_UInt32 v = *(UA_UInt32*)var.data;
-        st = plc_tag_set_uint32(binding->handle, 0, v);
-
-    } else if (dt == "float32" || dt == "REAL" || dt == "Real") {
-        if (!UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_FLOAT])) {
-            std::cerr << "OPC UA write: type mismatch for FLOAT32 tag ["
-                      << binding->conn->id << "]." << binding->logical_name << "\n";
-            return;
-        }
+        valueStr = std::to_string((uint32_t)v);
+    } else if (UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_FLOAT])) {
         UA_Float v = *(UA_Float*)var.data;
-        st = plc_tag_set_float32(binding->handle, 0, v);
-
-    } else if (dt == "float64" || dt == "LREAL" || dt == "LReal") {
-        if (!UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_DOUBLE])) {
-            std::cerr << "OPC UA write: type mismatch for FLOAT64 tag ["
-                      << binding->conn->id << "]." << binding->logical_name << "\n";
-            return;
-        }
+        std::ostringstream oss;
+        oss << std::setprecision(9) << (float)v;
+        valueStr = oss.str();
+    } else if (UA_Variant_hasScalarType(&var, &UA_TYPES[UA_TYPES_DOUBLE])) {
         UA_Double v = *(UA_Double*)var.data;
-        st = plc_tag_set_float64(binding->handle, 0, v);
-
+        std::ostringstream oss;
+        oss << std::setprecision(17) << (double)v;
+        valueStr = oss.str();
     } else {
-        std::cerr << "OPC UA write: unsupported datatype '" << dt
-                  << "' for tag [" << binding->conn->id << "]."
-                  << binding->logical_name << "\n";
+        std::cerr << "OPC UA write: unsupported UA variant type for ["
+                  << binding->conn->id << "]." << binding->logical_name << "\n";
         return;
     }
 
-    if (st != PLCTAG_STATUS_OK) {
-        std::cerr << "OPC UA write: plc_tag_set_* failed for ["
-                  << binding->conn->id << "]." << binding->logical_name
-                  << ": " << plc_tag_decode_error(st) << "\n";
+    const bool ok = write_tag_by_name(
+        *g_mqttDrivers,
+        binding->conn->id,
+        binding->logical_name,
+        valueStr,
+        *g_mqttTagTable,
+        *g_mqttDriverMutex
+    );
+
+    if (!ok) {
+        std::cerr << "OPC UA write: write_tag_by_name failed for ["
+                  << binding->conn->id << "]." << binding->logical_name << "\n";
         return;
     }
-
-    // Commit the buffer to the PLC
-    st = plc_tag_write(binding->handle, binding->conn->default_read_ms);
-    if (st != PLCTAG_STATUS_OK) {
-        std::cerr << "OPC UA write: plc_tag_write failed for ["
-                  << binding->conn->id << "]." << binding->logical_name
-                  << ": " << plc_tag_decode_error(st) << "\n";
-        return;
-    }
-
-    std::cout << "OPC UA write: wrote tag ["
-              << binding->conn->id << "]." << binding->logical_name
-              << " via OPC UA\n";
 }
 
 void update_snapshot_from_plc(TagSnapshot &snap,
@@ -2387,30 +2542,64 @@ void update_snapshot_from_plc(TagSnapshot &snap,
     const std::string &dt = tag.cfg.datatype;
     int32_t handle = tag.handle;
 
+    TagValue raw{};
     if (dt == "float32") {
         float v = plc_tag_get_float32(handle, 0);
-        snap.value = v;
+        raw = v;
     } else if (dt == "float64") {
         double v = plc_tag_get_float64(handle, 0);
-        snap.value = v;
+        raw = v;
     } else if (dt == "int32") {
         int32_t v = plc_tag_get_int32(handle, 0);
-        snap.value = v;
+        raw = v;
     } else if (dt == "uint32") {
         uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, 0));
-        snap.value = v;
+        raw = v;
     } else if (dt == "int16") {
         int16_t v = plc_tag_get_int16(handle, 0);
-        snap.value = v;
+        raw = v;
     } else if (dt == "uint16") {
         uint16_t v = static_cast<uint16_t>(plc_tag_get_uint16(handle, 0));
-        snap.value = v;
+        raw = v;
     } else if (dt == "bool") {
         int8_t v = plc_tag_get_int8(handle, 0);
-        snap.value = (v != 0);
+        raw = (v != 0);
     } else {
         snap.quality = 0;
+        return;
     }
+
+    if (!tag.scaling_linear) {
+        snap.value = raw;
+        snap.datatype = tag.cfg.datatype;
+        return;
+    }
+
+    double rawNum = 0.0;
+    if (!tagvalue_to_double(raw, rawNum)) {
+        // Should not happen because init_tag_scaling blocks non-numeric datatypes.
+        snap.value = raw;
+        snap.datatype = tag.cfg.datatype;
+        return;
+    }
+
+    double scaled = rawNum * tag.scale_slope + tag.scale_offset;
+    if (tag.cfg.clamp_low)  scaled = std::max(scaled, tag.cfg.scaled_low);
+    if (tag.cfg.clamp_high) scaled = std::min(scaled, tag.cfg.scaled_high);
+
+    TagValue out{};
+    std::string castErr;
+    if (!cast_double_to_tagvalue(scaled, tag.out_datatype.empty() ? std::string("float64") : tag.out_datatype, out, castErr)) {
+        std::cerr << "[scale] Warning: tag '" << tag.cfg.logical_name
+                  << "' cast failed (" << castErr << "); using float64.\n";
+        out = static_cast<double>(scaled);
+        snap.datatype = "float64";
+        snap.value = out;
+        return;
+    }
+
+    snap.value = out;
+    snap.datatype = tag.out_datatype.empty() ? std::string("float64") : tag.out_datatype;
 }
 
 void print_snapshot(const TagSnapshot &snap) {
@@ -2674,6 +2863,55 @@ static bool plc_set_value_from_string(const std::string &datatype,
     }
 }
 
+static bool plc_tag_set_from_tagvalue(const std::string &datatype,
+                                      int32_t handle,
+                                      const TagValue &v,
+                                      std::string &outError)
+{
+    outError.clear();
+    int status = PLCTAG_STATUS_OK;
+
+    if (datatype == "float32") {
+        const float *pv = std::get_if<float>(&v);
+        if (!pv) { outError = "Type mismatch: expected float32"; return false; }
+        status = plc_tag_set_float32(handle, 0, *pv);
+    } else if (datatype == "float64") {
+        const double *pv = std::get_if<double>(&v);
+        if (!pv) { outError = "Type mismatch: expected float64"; return false; }
+        status = plc_tag_set_float64(handle, 0, *pv);
+    } else if (datatype == "int32") {
+        const int32_t *pv = std::get_if<int32_t>(&v);
+        if (!pv) { outError = "Type mismatch: expected int32"; return false; }
+        status = plc_tag_set_int32(handle, 0, *pv);
+    } else if (datatype == "uint32") {
+        const uint32_t *pv = std::get_if<uint32_t>(&v);
+        if (!pv) { outError = "Type mismatch: expected uint32"; return false; }
+        status = plc_tag_set_uint32(handle, 0, *pv);
+    } else if (datatype == "int16") {
+        const int16_t *pv = std::get_if<int16_t>(&v);
+        if (!pv) { outError = "Type mismatch: expected int16"; return false; }
+        status = plc_tag_set_int16(handle, 0, *pv);
+    } else if (datatype == "uint16") {
+        const uint16_t *pv = std::get_if<uint16_t>(&v);
+        if (!pv) { outError = "Type mismatch: expected uint16"; return false; }
+        status = plc_tag_set_uint16(handle, 0, *pv);
+    } else if (datatype == "bool") {
+        const bool *pv = std::get_if<bool>(&v);
+        if (!pv) { outError = "Type mismatch: expected bool"; return false; }
+        int8_t raw = (*pv) ? 1 : 0;
+        status = plc_tag_set_int8(handle, 0, raw);
+    } else {
+        outError = "Unsupported datatype '" + datatype + "'";
+        return false;
+    }
+
+    if (status != PLCTAG_STATUS_OK) {
+        outError = plc_tag_decode_error(status);
+        return false;
+    }
+    return true;
+}
+
 bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &conn_id,
                        const std::string &logical_name,
@@ -2690,6 +2928,10 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     ConnectionConfig conn;
     TagConfig cfg;
     int32_t handle = PLCTAG_ERR_NOT_FOUND;
+    bool scaling_linear = false;
+    double inv_slope = 1.0;
+    double inv_offset = 0.0;
+    std::string out_datatype;
     TagSnapshot prevSnap;
     bool hadPrev = false;
     bool found = false;
@@ -2706,6 +2948,10 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                 if (t.cfg.logical_name == logical_name) {
                     cfg = t.cfg;
                     handle = t.handle;
+                    scaling_linear = t.scaling_linear;
+                    inv_slope = t.inv_slope;
+                    inv_offset = t.inv_offset;
+                    out_datatype = t.out_datatype;
                     found = true;
                     break;
                 }
@@ -2738,13 +2984,63 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         return false;
     }
 
-    TagValue value{};
+    TagValue rawValue{};
+    TagValue scaledValue{};
     std::string parseErr;
-    if (!plc_set_value_from_string(cfg.datatype, handle, value_str, value, parseErr)) {
-        std::cerr << "Write parse/set failed for ["
-                  << conn_id << "]." << logical_name
-                  << ": " << parseErr << "\n";
-        return false;
+
+    if (scaling_linear) {
+        if (!is_numeric_datatype(cfg.datatype)) {
+            std::cerr << "Tag '" << logical_name
+                      << "' has scaling enabled but non-numeric datatype '" << cfg.datatype
+                      << "'.\n";
+            return false;
+        }
+
+        double scaledNum = 0.0;
+        try {
+            std::string s = trim_copy(value_str);
+            if (s.empty()) {
+                std::cerr << "Write value is empty.\n";
+                return false;
+            }
+            scaledNum = std::stod(s);
+        } catch (const std::exception &ex) {
+            std::cerr << "Write parse failed for scaled value '"
+                      << value_str << "': " << ex.what() << "\n";
+            return false;
+        }
+
+        if (cfg.clamp_low)  scaledNum = std::max(scaledNum, cfg.scaled_low);
+        if (cfg.clamp_high) scaledNum = std::min(scaledNum, cfg.scaled_high);
+
+        const double rawNum = scaledNum * inv_slope + inv_offset;
+
+        std::string castErr;
+        if (!cast_double_to_tagvalue(rawNum, cfg.datatype, rawValue, castErr)) {
+            std::cerr << "Write scaling cast failed for raw datatype '" << cfg.datatype
+                      << "': " << castErr << "\n";
+            return false;
+        }
+
+        const std::string dtOut = out_datatype.empty() ? std::string("float64") : out_datatype;
+        if (!cast_double_to_tagvalue(scaledNum, dtOut, scaledValue, castErr)) {
+            scaledValue = static_cast<double>(scaledNum);
+        }
+
+        if (!plc_tag_set_from_tagvalue(cfg.datatype, handle, rawValue, parseErr)) {
+            std::cerr << "Write set failed for ["
+                      << conn_id << "]." << logical_name
+                      << ": " << parseErr << "\n";
+            return false;
+        }
+    } else {
+        if (!plc_set_value_from_string(cfg.datatype, handle, value_str, rawValue, parseErr)) {
+            std::cerr << "Write parse/set failed for ["
+                      << conn_id << "]." << logical_name
+                      << ": " << parseErr << "\n";
+            return false;
+        }
+        scaledValue = rawValue;
     }
 
     int status = plc_tag_write(handle, conn.default_write_ms);
@@ -2758,10 +3054,10 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     TagSnapshot snap;
     snap.connection_id = conn.id;
     snap.logical_name  = logical_name;
-    snap.datatype      = cfg.datatype;
+    snap.datatype      = scaling_linear ? (out_datatype.empty() ? std::string("float64") : out_datatype) : cfg.datatype;
     snap.timestamp     = std::chrono::system_clock::now();
     snap.quality       = 1;
-    snap.value         = value;
+    snap.value         = scaling_linear ? scaledValue : rawValue;
 
     {
         std::lock_guard<std::mutex> lock(driverMutex);
@@ -3259,6 +3555,7 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
 
 		                    TagRuntime rt;
 		                    rt.cfg = tc;
+		                    init_tag_scaling(rt);
 
 		                    // Disabled tags stay visible in /tags, but we don't create handles or poll them.
 		                    if (!tc.enabled) {
@@ -4397,7 +4694,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
 
             std::cout << "OPC UA: building node for [" << conn.id << "]."
                       << cfg.logical_name << " (datatype='"
-                      << cfg.datatype << "')\n";
+                      << (tag.out_datatype.empty() ? cfg.datatype : tag.out_datatype) << "')\n";
 
             UA_VariableAttributes vAttr = UA_VariableAttributes_default;
             vAttr.displayName = UA_LOCALIZEDTEXT_ALLOC(
@@ -4409,42 +4706,48 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 vAttr.accessLevel |= UA_ACCESSLEVELMASK_WRITE;
             }
 
-            bool supported = true;
-            const std::string &dt = cfg.datatype;
+            TagSnapshot seed;
+            update_snapshot_from_plc(seed, conn, tag);
 
-            // Seed initial UA value based on datatype (from libplctag buffer)
-            if (dt == "bool" || dt == "BOOL" || dt == "Bool") {
-                UA_Boolean v = (plc_tag_get_int8(tag.handle, 0) != 0);
+            bool supported = true;
+            const std::string &dt = seed.datatype;
+
+            // Seed initial UA value from the current snapshot (scaled if configured).
+            if (dt == "bool") {
+                UA_Boolean v = std::get<bool>(seed.value) ? (UA_Boolean)true : (UA_Boolean)false;
                 vAttr.dataType  = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
                 vAttr.valueRank = UA_VALUERANK_SCALAR;
                 UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
-                std::cout << "OPC UA: [" << conn.id << "]." << cfg.logical_name
-                          << " initial BOOL value = " << (int)v << "\n";
-
-            } else if (dt == "int16" || dt == "INT" || dt == "Int16") {
-                UA_Int16 v = plc_tag_get_int16(tag.handle, 0);
+            } else if (dt == "int16") {
+                UA_Int16 v = (UA_Int16)std::get<int16_t>(seed.value);
+                vAttr.dataType  = UA_TYPES[UA_TYPES_INT16].typeId;
+                vAttr.valueRank = UA_VALUERANK_SCALAR;
                 UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_INT16]);
-
-            } else if (dt == "uint16" || dt == "WORD" || dt == "Word") {
-                UA_UInt16 v = static_cast<UA_UInt16>(plc_tag_get_uint16(tag.handle, 0));
+            } else if (dt == "uint16") {
+                UA_UInt16 v = (UA_UInt16)std::get<uint16_t>(seed.value);
+                vAttr.dataType  = UA_TYPES[UA_TYPES_UINT16].typeId;
+                vAttr.valueRank = UA_VALUERANK_SCALAR;
                 UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_UINT16]);
-
-            } else if (dt == "int32" || dt == "DINT" || dt == "Int32") {
-                UA_Int32 v = plc_tag_get_int32(tag.handle, 0);
+            } else if (dt == "int32") {
+                UA_Int32 v = (UA_Int32)std::get<int32_t>(seed.value);
+                vAttr.dataType  = UA_TYPES[UA_TYPES_INT32].typeId;
+                vAttr.valueRank = UA_VALUERANK_SCALAR;
                 UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_INT32]);
-
-            } else if (dt == "uint32" || dt == "DWORD" || dt == "DWord") {
-                UA_UInt32 v = static_cast<UA_UInt32>(plc_tag_get_uint32(tag.handle, 0));
+            } else if (dt == "uint32") {
+                UA_UInt32 v = (UA_UInt32)std::get<uint32_t>(seed.value);
+                vAttr.dataType  = UA_TYPES[UA_TYPES_UINT32].typeId;
+                vAttr.valueRank = UA_VALUERANK_SCALAR;
                 UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_UINT32]);
-
-            } else if (dt == "float32" || dt == "REAL" || dt == "Real") {
-                UA_Float v = plc_tag_get_float32(tag.handle, 0);
+            } else if (dt == "float32") {
+                UA_Float v = (UA_Float)std::get<float>(seed.value);
+                vAttr.dataType  = UA_TYPES[UA_TYPES_FLOAT].typeId;
+                vAttr.valueRank = UA_VALUERANK_SCALAR;
                 UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_FLOAT]);
-
-            } else if (dt == "float64" || dt == "LREAL" || dt == "LReal") {
-                UA_Double v = plc_tag_get_float64(tag.handle, 0);
+            } else if (dt == "float64") {
+                UA_Double v = (UA_Double)std::get<double>(seed.value);
+                vAttr.dataType  = UA_TYPES[UA_TYPES_DOUBLE].typeId;
+                vAttr.valueRank = UA_VALUERANK_SCALAR;
                 UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
-
             } else {
                 std::cerr << "OPC UA: unsupported datatype '" << dt
                           << "' for tag '" << cfg.logical_name << "'. Skipping.\n";
@@ -4475,7 +4778,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
 
             UaTagBinding b;
             b.handle       = tag.handle;
-            b.datatype     = cfg.datatype;
+            b.datatype     = dt;
             b.nodeId       = varId;
             b.conn         = &conn;
             b.logical_name = cfg.logical_name;
@@ -6335,6 +6638,21 @@ int main(int argc, char **argv) {
 											<label class="ws-inline"><input id="ws-tag-writable" type="checkbox" /> Writable</label>
 											<label class="ws-inline"><input id="ws-tag-mqtt-allowed" type="checkbox" /> MQTT Command Allowed</label>
 										</div>
+										<label>Scaling <select id="ws-tag-scaling">
+											<option value="none">None</option>
+											<option value="linear">Linear</option>
+										</select></label>
+										<div id="ws-tag-scaling-linear" class="ws-form-two" style="display:none;">
+											<label>Raw Low <input id="ws-tag-raw-low" type="number" step="any" /></label>
+											<label>Raw High <input id="ws-tag-raw-high" type="number" step="any" /></label>
+											<label>Scaled Low <input id="ws-tag-scaled-low" type="number" step="any" /></label>
+											<label>Scaled High <input id="ws-tag-scaled-high" type="number" step="any" /></label>
+											<label>Scaled Datatype <select id="ws-tag-scaled-dt"></select></label>
+											<div class="ws-inline-row">
+												<label class="ws-inline"><input id="ws-tag-clamp-low" type="checkbox" /> Clamp Low</label>
+												<label class="ws-inline"><input id="ws-tag-clamp-high" type="checkbox" /> Clamp High</label>
+											</div>
+										</div>
 									</div>
 									<div class="small" id="ws-tag-status"></div>
 									<div class="ws-modal-actions">
@@ -6778,6 +7096,7 @@ const WS_PLC_TYPE_LABELS = {
 };
 
 const WS_TAG_DATATYPES = ["bool", "int16", "uint16", "int32", "uint32", "float32", "float64"];
+const WS_SCALED_DATATYPES = ["float64", "float32", "int32", "uint32", "int16", "uint16"];
 
 const wsLabelForDriver = (code) => {
     const k = String(code || "").trim();
@@ -6887,6 +7206,15 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 	    tagEnabled: document.getElementById("ws-tag-enabled"),
 	    tagWritable: document.getElementById("ws-tag-writable"),
 	    tagMqttAllowed: document.getElementById("ws-tag-mqtt-allowed"),
+	    tagScaling: document.getElementById("ws-tag-scaling"),
+	    tagScalingLinear: document.getElementById("ws-tag-scaling-linear"),
+	    tagRawLow: document.getElementById("ws-tag-raw-low"),
+	    tagRawHigh: document.getElementById("ws-tag-raw-high"),
+	    tagScaledLow: document.getElementById("ws-tag-scaled-low"),
+	    tagScaledHigh: document.getElementById("ws-tag-scaled-high"),
+	    tagScaledDt: document.getElementById("ws-tag-scaled-dt"),
+	    tagClampLow: document.getElementById("ws-tag-clamp-low"),
+	    tagClampHigh: document.getElementById("ws-tag-clamp-high"),
 		    tagStatus: document.getElementById("ws-tag-status"),
 		    tagCancelBtn: document.getElementById("ws-tag-cancel-btn"),
 		    tagSaveBtn: document.getElementById("ws-tag-save-btn"),
@@ -7166,6 +7494,22 @@ const wsFillDatatypeSelect = (sel, selected) => {
     sel.value = selected && WS_TAG_DATATYPES.includes(selected) ? selected : "bool";
 };
 
+const wsFillScaledDatatypeSelect = (sel, selected) => {
+    if (!sel) return;
+    sel.textContent = "";
+    const opts = [{ value: "", label: "(default float64)" }].concat(
+        WS_SCALED_DATATYPES.map((dt) => ({ value: dt, label: dt }))
+    );
+    opts.forEach((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        sel.appendChild(opt);
+    });
+    const s = selected == null ? "" : String(selected);
+    sel.value = (s === "" || WS_SCALED_DATATYPES.includes(s)) ? s : "";
+};
+
 		let wsDeviceModalMode = "new";
 		let wsDeviceEditingId = "";
 		let wsTagModalMode = "new";
@@ -7266,6 +7610,36 @@ const wsFillDatatypeSelect = (sel, selected) => {
 	    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
 	    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
 	    if (el.tagMqttAllowed) el.tagMqttAllowed.checked = existing ? (existing?.mqtt_command_allowed === true) : false;
+
+	    const applyScalingUi = () => {
+	        const mode = String(el.tagScaling?.value || "none").toLowerCase();
+	        if (el.tagScalingLinear) {
+	            el.tagScalingLinear.style.display = (mode === "linear") ? "grid" : "none";
+	        }
+	    };
+	    if (el.tagScaling) {
+	        el.tagScaling.value = existing ? String(existing?.scaling || "none") : "none";
+	        el.tagScaling.disabled = !wsIsEditable();
+	        el.tagScaling.onchange = applyScalingUi;
+	    }
+	    wsFillScaledDatatypeSelect(el.tagScaledDt, existing ? (existing?.scaled_datatype ?? "") : "");
+	    if (el.tagRawLow) el.tagRawLow.value = existing && existing?.raw_low != null ? String(existing.raw_low) : "0";
+	    if (el.tagRawHigh) el.tagRawHigh.value = existing && existing?.raw_high != null ? String(existing.raw_high) : "100";
+	    if (el.tagScaledLow) el.tagScaledLow.value = existing && existing?.scaled_low != null ? String(existing.scaled_low) : "0";
+	    if (el.tagScaledHigh) el.tagScaledHigh.value = existing && existing?.scaled_high != null ? String(existing.scaled_high) : "100";
+	    if (el.tagClampLow) el.tagClampLow.checked = existing ? (existing?.clamp_low === true) : false;
+	    if (el.tagClampHigh) el.tagClampHigh.checked = existing ? (existing?.clamp_high === true) : false;
+
+	    const canEdit = wsIsEditable();
+	    if (el.tagRawLow) el.tagRawLow.disabled = !canEdit;
+	    if (el.tagRawHigh) el.tagRawHigh.disabled = !canEdit;
+	    if (el.tagScaledLow) el.tagScaledLow.disabled = !canEdit;
+	    if (el.tagScaledHigh) el.tagScaledHigh.disabled = !canEdit;
+	    if (el.tagScaledDt) el.tagScaledDt.disabled = !canEdit;
+	    if (el.tagClampLow) el.tagClampLow.disabled = !canEdit;
+	    if (el.tagClampHigh) el.tagClampHigh.disabled = !canEdit;
+	    if (el.tagScalingLinear) el.tagScalingLinear.style.pointerEvents = canEdit ? "" : "none";
+	    applyScalingUi();
 
     el.tagModal.style.display = "flex";
     el.tagName?.focus?.();
@@ -7913,6 +8287,66 @@ const wsRenderTree = () => {
         return;
     }
 
+	    const scalingMode = String(el.tagScaling?.value || "none").trim().toLowerCase();
+	    const applyScalingToTag = (obj) => {
+	        // Clear scaling fields by default (so switching back to None removes them).
+	        delete obj.scaling;
+	        delete obj.raw_low;
+	        delete obj.raw_high;
+	        delete obj.scaled_low;
+	        delete obj.scaled_high;
+	        delete obj.clamp_low;
+	        delete obj.clamp_high;
+	        delete obj.scaled_datatype;
+
+	        if (scalingMode !== "linear") return true;
+
+	        if (String(datatype || "").toLowerCase() === "bool") {
+	            if (el.tagStatus) el.tagStatus.textContent = "Scaling is only supported for numeric datatypes.";
+	            return false;
+	        }
+
+	        const rawLowStr = String(el.tagRawLow?.value || "").trim();
+	        const rawHighStr = String(el.tagRawHigh?.value || "").trim();
+	        const scaledLowStr = String(el.tagScaledLow?.value || "").trim();
+	        const scaledHighStr = String(el.tagScaledHigh?.value || "").trim();
+
+	        if (rawLowStr === "" || rawHighStr === "" || scaledLowStr === "" || scaledHighStr === "") {
+	            if (el.tagStatus) el.tagStatus.textContent = "Raw Low/High and Scaled Low/High are required for Linear scaling.";
+	            return false;
+	        }
+
+	        const rawLow = Number(rawLowStr);
+	        const rawHigh = Number(rawHighStr);
+	        const scaledLow = Number(scaledLowStr);
+	        const scaledHigh = Number(scaledHighStr);
+	        if (!Number.isFinite(rawLow) || !Number.isFinite(rawHigh) || !Number.isFinite(scaledLow) || !Number.isFinite(scaledHigh)) {
+	            if (el.tagStatus) el.tagStatus.textContent = "Scaling bounds must be valid numbers.";
+	            return false;
+	        }
+	        if (rawHigh === rawLow) {
+	            if (el.tagStatus) el.tagStatus.textContent = "Raw High must be different from Raw Low.";
+	            return false;
+	        }
+	        if (scaledHigh === scaledLow) {
+	            if (el.tagStatus) el.tagStatus.textContent = "Scaled High must be different from Scaled Low.";
+	            return false;
+	        }
+
+	        obj.scaling = "linear";
+	        obj.raw_low = rawLow;
+	        obj.raw_high = rawHigh;
+	        obj.scaled_low = scaledLow;
+	        obj.scaled_high = scaledHigh;
+	        obj.clamp_low = Boolean(el.tagClampLow?.checked);
+	        obj.clamp_high = Boolean(el.tagClampHigh?.checked);
+
+	        const sdt = String(el.tagScaledDt?.value || "").trim();
+	        if (sdt) obj.scaled_datatype = sdt;
+
+	        return true;
+	    };
+
 	    let tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
 
 	    if (wsTagModalMode === "new") {
@@ -7927,6 +8361,7 @@ const wsRenderTree = () => {
 	        next.enabled = enabled;
 	        next.writable = writable;
 	        next.mqtt_command_allowed = mqtt_command_allowed;
+	        if (!applyScalingToTag(next)) return;
 	        tags.push(next);
 		    } else {
 		        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
@@ -7948,6 +8383,7 @@ const wsRenderTree = () => {
 		        next.enabled = enabled;
 		        next.writable = writable;
 		        next.mqtt_command_allowed = mqtt_command_allowed;
+		        if (!applyScalingToTag(next)) return;
 		        tags[idx] = next;
 
 		        // If the user changed the Device, fully move the tag: remove any remaining copies
@@ -11014,7 +11450,7 @@ window.addEventListener("load", startAutoRefresh);
 										TagRow row;
 										row.connection_id = driver.conn.id;
 										row.name          = t.cfg.logical_name;
-										row.datatype      = t.cfg.datatype;
+										row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
 										row.enabled       = t.cfg.enabled;
 										row.writable      = t.cfg.writable;
 										row.handle_ok     = (t.handle >= 0);
@@ -11165,6 +11601,7 @@ window.addEventListener("load", startAutoRefresh);
                         TagRuntime tmp;
                         tmp.cfg = cfg;
                         tmp.handle = handle;
+                        init_tag_scaling(tmp);
                         update_snapshot_from_plc(snap, conn, tmp);
                     }
                 }
@@ -11178,7 +11615,7 @@ window.addEventListener("load", startAutoRefresh);
 	                json jt;
 	                jt["connection_id"] = conn_id;
 	                jt["name"]          = tag_name;
-	                jt["datatype"]      = cfg.datatype;
+	                jt["datatype"]      = (status == PLCTAG_STATUS_OK) ? snap.datatype : cfg.datatype;
 	                jt["enabled"]       = cfg.enabled;
 	                jt["writable"]      = cfg.writable;
 	                jt["timestamp_ms"]  = ms;
@@ -11190,10 +11627,13 @@ window.addEventListener("load", startAutoRefresh);
 
                     {
                         std::lock_guard<std::mutex> lock(driverMutex);
+                        TagRuntime dtTmp;
+                        dtTmp.cfg = cfg;
+                        init_tag_scaling(dtTmp);
                         TagSnapshot &s = tagTable[make_tag_key(conn_id, tag_name)];
                         s.connection_id = conn_id;
                         s.logical_name  = tag_name;
-                        s.datatype      = cfg.datatype;
+                        s.datatype      = dtTmp.out_datatype.empty() ? cfg.datatype : dtTmp.out_datatype;
                         s.timestamp     = now;
                         s.quality       = 0;
                     }
@@ -11689,6 +12129,14 @@ window.addEventListener("load", startAutoRefresh);
 									"scan_ms",
 									"enabled",
 									"writable",
+									"scaling",
+									"raw_low",
+									"raw_high",
+									"scaled_low",
+									"scaled_high",
+									"clamp_low",
+									"clamp_high",
+									"scaled_datatype",
 									"mqtt_command_allowed",
 									"log_event_on_change",
 									"log_periodic",
@@ -13970,6 +14418,12 @@ window.addEventListener("load", startAutoRefresh);
 	            int32_t handle = PLCTAG_ERR_NOT_FOUND;
 	            std::chrono::steady_clock::time_point next_poll;
 
+	            // Scaling runtime (copied from TagRuntime so pollers can publish scaled values)
+	            bool scaling_linear = false;
+	            double scale_slope = 1.0;
+	            double scale_offset = 0.0;
+	            std::string out_datatype;
+
 	            bool periodic_enabled = false;
 	            std::chrono::system_clock::time_point next_periodic_log;
 	            bool periodic_init = false;
@@ -14023,11 +14477,15 @@ window.addEventListener("load", startAutoRefresh);
 
 		                    // Actually build tag list; skip invalid handles (they'll show as bad_handle)
 		                    spec.tags.clear();
-		                    for (const auto &t : d.tags) {
+	                    for (const auto &t : d.tags) {
 	                        if (t.handle < 0) continue;
 	                        PollTagItem it;
 	                        it.cfg = t.cfg;
 	                        it.handle = t.handle;
+	                        it.scaling_linear = t.scaling_linear;
+	                        it.scale_slope = t.scale_slope;
+	                        it.scale_offset = t.scale_offset;
+	                        it.out_datatype = t.out_datatype;
 
 	                        int scan_ms = it.cfg.scan_ms;
 	                        if (scan_ms <= 0) scan_ms = 1000;
@@ -14138,6 +14596,10 @@ window.addEventListener("load", startAutoRefresh);
 	                                    TagRuntime tmp;
 	                                    tmp.cfg = t.cfg;
 	                                    tmp.handle = t.handle;
+	                                    tmp.scaling_linear = t.scaling_linear;
+	                                    tmp.scale_slope = t.scale_slope;
+	                                    tmp.scale_offset = t.scale_offset;
+	                                    tmp.out_datatype = t.out_datatype;
 	                                    update_snapshot_from_plc(snap, spec.conn, tmp);
 	                                }
 	                            }
@@ -14171,7 +14633,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                    TagSnapshot &s = tagTable[key];
 	                                    s.connection_id = spec.conn.id;
 	                                    s.logical_name  = t.cfg.logical_name;
-	                                    s.datatype      = t.cfg.datatype;
+	                                    s.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
 	                                    s.timestamp     = std::chrono::system_clock::now();
 	                                    s.quality       = 0;
 	                                    snap = s;
