@@ -7564,12 +7564,12 @@ const wsFillScaledDatatypeSelect = (sel, selected) => {
 			const wsOpenTagModal = ({ mode, connection_id, name }) => {
 		    const el = wsEls();
 		    if (!el.tagModal) return;
-		    wsTagModalMode = mode === "edit" ? "edit" : "new";
-		    wsTagEditingConn = String(connection_id || "").trim();
-		    wsTagEditingName = String(name || "").trim();
-		    wsReturnSelectId = wsTagEditingConn.empty() || wsTagEditingName.empty()
-		        ? "ws:connectivity"
-		        : ("ws:tag:" + encodeURIComponent(wsTagEditingConn) + ":" + encodeURIComponent(wsTagEditingName));
+			    wsTagModalMode = mode === "edit" ? "edit" : "new";
+			    wsTagEditingConn = String(connection_id || "").trim();
+			    wsTagEditingName = String(name || "").trim();
+			    wsReturnSelectId = !wsTagEditingConn || !wsTagEditingName
+			        ? "ws:connectivity"
+			        : ("ws:tag:" + encodeURIComponent(wsTagEditingConn) + ":" + encodeURIComponent(wsTagEditingName));
 
 	    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections : [];
 	    const connIds = conns
@@ -7655,12 +7655,12 @@ const wsFillScaledDatatypeSelect = (sel, selected) => {
 
 		const wsOpenAlarmModal = ({ mode, alarm_id, group, site }) => {
 		    const el = wsEls();
-		    if (!el.alarmModal) return;
-		    wsAlarmModalMode = mode === "edit" ? "edit" : "new";
-		    wsAlarmEditingId = String(alarm_id || "").trim();
-		    wsReturnSelectId = wsAlarmEditingId.empty()
-		        ? "ws:alarms"
-		        : ("ws:alarm:" + encodeURIComponent(wsAlarmEditingId));
+			    if (!el.alarmModal) return;
+			    wsAlarmModalMode = mode === "edit" ? "edit" : "new";
+			    wsAlarmEditingId = String(alarm_id || "").trim();
+			    wsReturnSelectId = !wsAlarmEditingId
+			        ? "ws:alarms"
+			        : ("ws:alarm:" + encodeURIComponent(wsAlarmEditingId));
 
 	    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections : [];
 	    const connIds = conns.map((c) => String(c?.id || "")).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
