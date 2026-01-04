@@ -6411,16 +6411,90 @@ int main(int argc, char **argv) {
 				  gap: 6px;
 				  margin-top: 10px;
 				}
-				.ws-modal-actions button {
-				  min-width: 120px;
-				  margin-top: 0;
-				  padding: 6px 12px;
-				  line-height: 1;
-				  height: 30px;
-				}
-	</style>
-</head>
-<body>
+					.ws-modal-actions button {
+					  min-width: 120px;
+					  margin-top: 0;
+					  padding: 6px 12px;
+					  line-height: 1;
+					  height: 30px;
+					}
+
+					/* SCADA-style layout for the workspace Tag modal (scoped). */
+					#ws-tag-modal .ws-s-form {
+					  max-width: 720px;
+					}
+					#ws-tag-modal .ws-s-form-row {
+					  display: grid;
+					  grid-template-columns: 160px 1fr;
+					  gap: 10px;
+					  align-items: center;
+					  margin-bottom: 10px;
+					}
+					@media (max-width: 700px) {
+					  #ws-tag-modal .ws-s-form-row {
+					    grid-template-columns: 1fr;
+					  }
+					}
+					#ws-tag-modal .ws-s-form-row > label {
+					  color: #aaa;
+					  font-size: 12px;
+					  user-select: text;
+					  -webkit-user-select: text;
+					}
+					#ws-tag-modal .ws-s-form input,
+					#ws-tag-modal .ws-s-form select {
+					  width: 100%;
+					  background: #0b0b0b;
+					  color: #eee;
+					  border: 1px solid #333;
+					  border-radius: 8px;
+					  padding: 8px 10px;
+					  font-size: 12px;
+					  user-select: text;
+					  -webkit-user-select: text;
+					}
+					#ws-tag-modal .ws-s-form input.ws-inline-check {
+					  width: auto;
+					  transform: scale(1.15);
+					  transform-origin: left;
+					}
+					#ws-tag-modal .ws-s-hint {
+					  font-size: 11px;
+					  color: #888;
+					}
+					#ws-tag-modal .ws-s-check-row {
+					  display: flex;
+					  flex-wrap: wrap;
+					  gap: 10px;
+					  align-items: center;
+					}
+					#ws-tag-modal .ws-s-check-pill {
+					  display: inline-flex;
+					  align-items: center;
+					  gap: 6px;
+					  user-select: none;
+					  white-space: nowrap;
+					  color: #ddd;
+					}
+					#ws-tag-modal .ws-s-grid-derived {
+					  display: grid;
+					  grid-template-columns: 1fr 140px;
+					  gap: 10px;
+					}
+					#ws-tag-modal .ws-s-grid-linear {
+					  display: grid;
+					  grid-template-columns: 1fr 1fr;
+					  gap: 10px;
+					}
+					#ws-tag-modal .ws-s-flex-wrap {
+					  display: flex;
+					  align-items: center;
+					  gap: 12px;
+					  flex-wrap: wrap;
+					}
+		</style>
+	</head>
+	<body>
 	<header>
 	    <h1>OPC Bridge Dashboard</h1>
 		<div id="admin-chip" class="admin-chip" style="display:none;">
@@ -6680,51 +6754,87 @@ int main(int argc, char **argv) {
 					</div>
 
 							<!-- Tag properties modal -->
-							<div id="ws-tag-modal" class="ws-modal" style="display:none;">
-								<div class="ws-modal-card">
-									<div class="ws-modal-title" id="ws-tag-title">Tag</div>
-										<div class="ws-form">
-											<label>Device <select id="ws-tag-conn"></select></label>
-											<label>Name <input id="ws-tag-name" type="text" /></label>
-											<label>Source <select id="ws-tag-source-kind">
-												<option value="plc">PLC Tag</option>
-												<option value="derived_bit">Derived Bit</option>
-											</select></label>
-											<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
-											<div id="ws-tag-derived-row" class="ws-form-two" style="display:none;">
-												<label>Source Tag <select id="ws-tag-source-tag"></select></label>
-												<label>Bit (0=LSB) <input id="ws-tag-bit" type="number" min="0" max="63" step="1" /></label>
-											</div>
-											<label>Datatype <select id="ws-tag-dt"></select></label>
-											<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
-										<div class="ws-inline-row">
-											<label class="ws-inline"><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
-											<label class="ws-inline"><input id="ws-tag-writable" type="checkbox" /> Writable</label>
-											<label class="ws-inline"><input id="ws-tag-mqtt-allowed" type="checkbox" /> MQTT Command Allowed</label>
+								<div id="ws-tag-modal" class="ws-modal" style="display:none;">
+									<div class="ws-modal-card">
+										<div class="ws-modal-title" id="ws-tag-title">Tag</div>
+										<div class="ws-s-form">
+										  <div class="ws-s-form-row">
+										    <label>Device</label>
+										    <select id="ws-tag-conn"></select>
+										  </div>
+										  <div class="ws-s-form-row">
+										    <label>Tag Name</label>
+										    <input id="ws-tag-name" type="text" placeholder="Pump1.Running" />
+										  </div>
+										  <div class="ws-s-form-row">
+										    <label>Source</label>
+										    <select id="ws-tag-source-kind">
+										      <option value="plc">PLC Tag</option>
+										      <option value="derived_bit">Derived Bit</option>
+										    </select>
+										  </div>
+										  <div class="ws-s-form-row">
+										    <label>PLC Tag</label>
+										    <input id="ws-tag-plc" type="text" placeholder="Pump1.Running" />
+										  </div>
+										  <div class="ws-s-form-row" id="ws-tag-derived-row" style="display:none;">
+										    <label>Derived</label>
+										    <div class="ws-s-grid-derived">
+										      <div>
+										        <div class="ws-s-hint">Source Tag</div>
+										        <select id="ws-tag-source-tag"></select>
+										      </div>
+										      <div>
+										        <div class="ws-s-hint">Bit (0=LSB)</div>
+										        <input id="ws-tag-bit" type="number" min="0" max="63" step="1" placeholder="0" />
+										      </div>
+										    </div>
+										  </div>
+										  <div class="ws-s-form-row">
+										    <label>Datatype</label>
+										    <select id="ws-tag-dt"></select>
+										  </div>
+										  <div class="ws-s-form-row">
+										    <label>Scan (ms)</label>
+										    <input id="ws-tag-scan" type="number" min="0" step="1" placeholder="1000" />
+										  </div>
+										  <div class="ws-s-form-row">
+										    <label>Options</label>
+										    <div class="ws-s-check-row">
+										      <label class="ws-s-check-pill"><input id="ws-tag-enabled" type="checkbox" class="ws-inline-check" /> Enabled</label>
+										      <label class="ws-s-check-pill"><input id="ws-tag-writable" type="checkbox" class="ws-inline-check" /> Writable</label>
+										      <label class="ws-s-check-pill"><input id="ws-tag-mqtt-allowed" type="checkbox" class="ws-inline-check" /> MQTT command allowed</label>
+										    </div>
+										  </div>
+										  <div class="ws-s-form-row">
+										    <label>Scaling</label>
+										    <select id="ws-tag-scaling">
+										      <option value="none">None</option>
+										      <option value="linear">Linear</option>
+										    </select>
+										  </div>
+										  <div class="ws-s-form-row" id="ws-tag-scaling-linear" style="display:none;">
+										    <label>Linear</label>
+										    <div class="ws-s-grid-linear">
+										      <div><div class="ws-s-hint">Raw Low</div><input id="ws-tag-raw-low" type="number" step="any" /></div>
+										      <div><div class="ws-s-hint">Raw High</div><input id="ws-tag-raw-high" type="number" step="any" /></div>
+										      <div><div class="ws-s-hint">Scaled Low</div><input id="ws-tag-scaled-low" type="number" step="any" /></div>
+										      <div><div class="ws-s-hint">Scaled High</div><input id="ws-tag-scaled-high" type="number" step="any" /></div>
+										      <div><div class="ws-s-hint">Scaled Datatype</div><select id="ws-tag-scaled-dt"></select></div>
+										      <div class="ws-s-flex-wrap">
+										        <label class="ws-s-check-pill"><input id="ws-tag-clamp-low" type="checkbox" class="ws-inline-check" /> Clamp Low</label>
+										        <label class="ws-s-check-pill"><input id="ws-tag-clamp-high" type="checkbox" class="ws-inline-check" /> Clamp High</label>
+										      </div>
+										    </div>
+										  </div>
 										</div>
-										<label>Scaling <select id="ws-tag-scaling">
-											<option value="none">None</option>
-											<option value="linear">Linear</option>
-										</select></label>
-										<div id="ws-tag-scaling-linear" class="ws-form-two" style="display:none;">
-											<label>Raw Low <input id="ws-tag-raw-low" type="number" step="any" /></label>
-											<label>Raw High <input id="ws-tag-raw-high" type="number" step="any" /></label>
-											<label>Scaled Low <input id="ws-tag-scaled-low" type="number" step="any" /></label>
-											<label>Scaled High <input id="ws-tag-scaled-high" type="number" step="any" /></label>
-											<label>Scaled Datatype <select id="ws-tag-scaled-dt"></select></label>
-											<div class="ws-inline-row">
-												<label class="ws-inline"><input id="ws-tag-clamp-low" type="checkbox" /> Clamp Low</label>
-												<label class="ws-inline"><input id="ws-tag-clamp-high" type="checkbox" /> Clamp High</label>
-											</div>
-										</div>
+										<div class="small" id="ws-tag-status"></div>
+										<div class="ws-modal-actions">
+											<button class="btn-write" id="ws-tag-cancel-btn">Cancel</button>
+										<button class="btn-reload" id="ws-tag-save-btn">Save</button>
 									</div>
-									<div class="small" id="ws-tag-status"></div>
-									<div class="ws-modal-actions">
-										<button class="btn-write" id="ws-tag-cancel-btn">Cancel</button>
-									<button class="btn-reload" id="ws-tag-save-btn">Save</button>
 								</div>
 							</div>
-						</div>
 
 						<!-- Alarm properties modal -->
 						<div id="ws-alarm-modal" class="ws-modal" style="display:none;">
