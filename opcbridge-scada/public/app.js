@@ -1893,6 +1893,8 @@ function downloadDeviceTagsCsv(connectionId) {
 	    'connection_id',
 	    'name',
 	    'plc_tag_name',
+	    'source_tag',
+	    'bit',
 	    'datatype',
 	    'scan_ms',
 	    'enabled',
@@ -1913,9 +1915,13 @@ function downloadDeviceTagsCsv(connectionId) {
 	  ];
 
 	  const rows = tags.map((t) => ({
+	    // Derived tags: (source_tag + bit) and no plc_tag_name
+	    // Direct tags: plc_tag_name and no source_tag/bit
 	    connection_id: cid,
 	    name: String(t?.name || '').trim(),
-	    plc_tag_name: String(t?.plc_tag_name || '').trim(),
+	    plc_tag_name: (String(t?.source_tag || '').trim() !== '' && Number(t?.bit) >= 0) ? '' : String(t?.plc_tag_name || '').trim(),
+	    source_tag: String(t?.source_tag || '').trim(),
+	    bit: (t?.bit == null || String(t?.source_tag || '').trim() === '') ? '' : String(t.bit),
 	    datatype: String(t?.datatype || '').trim(),
 	    scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
 	    enabled: (t?.enabled !== false) ? 'true' : 'false',
@@ -2302,15 +2308,38 @@ async function importTagsCsvIntoWorkspace(connectionId) {
     }
     const base = (idx >= 0) ? { ...(all[idx] || {}) } : { connection_id: rowCid, name };
 
+    const source_tag = String(
+      csvGet(r, 'source_tag') ||
+      csvGet(r, 'source') ||
+      ''
+    ).trim();
+    const bit = parseIntLoose(csvGet(r, 'bit'), null);
+    const isDerived = (source_tag !== '' && bit != null && bit >= 0);
+
     const plc_tag_name = String(
       csvGet(r, 'plc_tag_name') ||
       csvGet(r, 'plc_tag') ||
       csvGet(r, 'plc_tagname') ||
       ''
     ).trim();
-    if (plc_tag_name) base.plc_tag_name = plc_tag_name;
     const datatype = String(csvGet(r, 'datatype') || '').trim();
-    if (datatype) base.datatype = datatype;
+
+    if (isDerived) {
+      delete base.plc_tag_name;
+      base.source_tag = source_tag;
+      base.bit = bit;
+
+      // Backend requires derived tags be bool; if user provided a different datatype,
+      // coerce to bool so the tag doesn't get silently skipped at runtime.
+      if (!datatype || String(datatype).trim().toLowerCase() !== 'bool') base.datatype = 'bool';
+      else base.datatype = datatype;
+    } else {
+      delete base.source_tag;
+      delete base.bit;
+      if (plc_tag_name) base.plc_tag_name = plc_tag_name;
+      if (datatype) base.datatype = datatype;
+    }
+
     const scan = parseIntLoose(csvGet(r, 'scan_ms') || csvGet(r, 'scan') || csvGet(r, 'scanms'), null);
 	    if (scan == null) delete base.scan_ms;
 	    else base.scan_ms = Math.max(0, scan);
