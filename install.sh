@@ -610,6 +610,21 @@ EOF
 install_hmi() {
   echo "Installing opcbridge-hmi..."
   mkdir -p "$PREFIX/hmi"
+
+  # Preserve user-uploaded images across installs. The HMI upload feature writes into
+  # $PREFIX/hmi/public/img, so a clean rsync install would otherwise delete them.
+  local hmi_img_dir="$PREFIX/hmi/public/img"
+  local hmi_img_backup=""
+  if [[ -d "$hmi_img_dir" ]]; then
+    hmi_img_backup="$(mktemp -d)"
+    if have_cmd rsync; then
+      rsync -a "$hmi_img_dir/" "$hmi_img_backup/" || true
+    else
+      mkdir -p "$hmi_img_backup"
+      (cd "$hmi_img_dir" && tar -cf - .) | (cd "$hmi_img_backup" && tar -xf -) || true
+    fi
+  fi
+
   if have_cmd rsync; then
     rsync -a --delete \
       --exclude 'node_modules' \
@@ -634,6 +649,16 @@ install_hmi() {
     echo "ERROR: install_hmi requires either rsync or tar." >&2
     echo "Install rsync (recommended) or tar, then rerun the installer." >&2
     exit 1
+  fi
+
+  if [[ -n "$hmi_img_backup" ]]; then
+    mkdir -p "$hmi_img_dir"
+    if have_cmd rsync; then
+      rsync -a "$hmi_img_backup/" "$hmi_img_dir/" || true
+    else
+      (cd "$hmi_img_backup" && tar -cf - .) | (cd "$hmi_img_dir" && tar -xf -) || true
+    fi
+    rm -rf "$hmi_img_backup" || true
   fi
 
   if [[ "$WITH_NODE_DEPS" -eq 1 ]]; then
