@@ -156,13 +156,19 @@ struct ConnectionConfig {
     int debug              = 0;
 };
 
-struct TagConfig {
-    std::string logical_name;
-    std::string plc_tag_name;
-    std::string datatype;
-    int scan_ms = 1000;
-    bool enabled = true; // legacy configs default to enabled
-    bool writable = false;
+	struct TagConfig {
+	    std::string logical_name;
+	    std::string plc_tag_name;
+	    std::string datatype;
+	    int scan_ms = 1000;
+	    bool enabled = true; // legacy configs default to enabled
+	    bool writable = false;
+
+	    // Derived (memory) tags (optional)
+	    // If source_tag is set, this tag is derived from another tag in the same connection.
+	    // Currently supported: bit extraction from an integer source tag.
+	    std::string source_tag; // logical name of the source tag
+	    int bit = -1;           // bit index (0 = LSB)
 
     // Scaling (optional; default none)
     // Linear: map [raw_low..raw_high] -> [scaled_low..scaled_high]
@@ -2190,32 +2196,53 @@ ConnectionConfig load_connection_config(const std::string &path) {
     return c;
 }
 
-TagFile load_tag_file(const std::string &path) {
-    json j = load_json_with_comments(path);
+	TagFile load_tag_file(const std::string &path) {
+	    json j = load_json_with_comments(path);
 
     TagFile tf;
     tf.connection_id = j.at("connection_id").get<std::string>();
 
-	for (const auto &jt : j.at("tags")) {
-        try {
-            TagConfig t;
-            if (!jt.is_object()) continue;
-            if (!jt.contains("name") || !jt.contains("plc_tag_name") || !jt.contains("datatype")) continue;
+		for (const auto &jt : j.at("tags")) {
+	        try {
+	            TagConfig t;
+	            if (!jt.is_object()) continue;
 
-            t.logical_name = json_get_string_loose(jt, "name", std::string{});
-            t.plc_tag_name = json_get_string_loose(jt, "plc_tag_name", std::string{});
-            t.datatype     = json_get_string_loose(jt, "datatype", std::string{});
-            if (t.logical_name.empty() || t.plc_tag_name.empty() || t.datatype.empty()) continue;
-            if (!is_supported_datatype(t.datatype)) {
-                std::cerr << "[load] Warning: skipping tag '" << t.logical_name
-                          << "' in " << path << " due to unsupported datatype '" << t.datatype << "'.\n";
-                continue;
-            }
+	            if (!jt.contains("name")) continue;
+	            t.logical_name = json_get_string_loose(jt, "name", std::string{});
+	            if (t.logical_name.empty()) continue;
 
-            t.scan_ms              = json_get_int_loose(jt, "scan_ms", 1000);
-            // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
-            t.enabled              = json_get_bool_loose(jt, "enabled", true);
-            t.writable             = json_get_bool_loose(jt, "writable", false);
+	            // Derived tag: { name, source_tag, bit, datatype? }
+	            const std::string source_tag = json_get_string_loose(jt, "source_tag", json_get_string_loose(jt, "source", std::string{}));
+	            const int bit = json_get_int_loose(jt, "bit", -1);
+	            const bool isDerived = (!source_tag.empty() && bit >= 0);
+
+	            if (isDerived) {
+	                t.source_tag = source_tag;
+	                t.bit = bit;
+	                t.plc_tag_name.clear();
+	                t.datatype = json_get_string_loose(jt, "datatype", std::string("bool"));
+	                if (t.datatype.empty()) t.datatype = "bool";
+	                if (t.datatype != "bool") {
+	                    std::cerr << "[load] Warning: skipping derived tag '" << t.logical_name
+	                              << "' in " << path << " because datatype must be 'bool'.\n";
+	                    continue;
+	                }
+	            } else {
+	                if (!jt.contains("plc_tag_name") || !jt.contains("datatype")) continue;
+	                t.plc_tag_name = json_get_string_loose(jt, "plc_tag_name", std::string{});
+	                t.datatype     = json_get_string_loose(jt, "datatype", std::string{});
+	                if (t.plc_tag_name.empty() || t.datatype.empty()) continue;
+	                if (!is_supported_datatype(t.datatype)) {
+	                    std::cerr << "[load] Warning: skipping tag '" << t.logical_name
+	                              << "' in " << path << " due to unsupported datatype '" << t.datatype << "'.\n";
+	                    continue;
+	                }
+	            }
+
+	            t.scan_ms              = json_get_int_loose(jt, "scan_ms", 1000);
+	            // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
+	            t.enabled              = json_get_bool_loose(jt, "enabled", true);
+	            t.writable             = json_get_bool_loose(jt, "writable", false);
 
             // Scaling (optional)
             t.scaling         = json_get_string_loose(jt, "scaling", std::string("none"));
@@ -2243,11 +2270,11 @@ TagFile load_tag_file(const std::string &path) {
             t.log_daily_hour    = json_get_int_loose(jt, "log_daily_hour", 0);
             t.log_daily_minute  = json_get_int_loose(jt, "log_daily_minute", 0);
 
-            tf.tags.push_back(t);
-        } catch (const std::exception &ex) {
-            std::cerr << "[load] Warning: skipping malformed tag in " << path << ": " << ex.what() << "\n";
-        }
-	}
+	            tf.tags.push_back(t);
+	        } catch (const std::exception &ex) {
+	            std::cerr << "[load] Warning: skipping malformed tag in " << path << ": " << ex.what() << "\n";
+	        }
+		}
     
     return tf;
 }
@@ -2275,7 +2302,7 @@ static bool is_supported_datatype(const std::string &dt) {
     );
 }
 
-static bool is_numeric_datatype(const std::string &dt) {
+	static bool is_numeric_datatype(const std::string &dt) {
     return (
         dt == "int16" || dt == "uint16" ||
         dt == "int32" || dt == "uint32" ||
@@ -2681,6 +2708,27 @@ static std::string snapshot_value_to_string(const TagSnapshot &snap) {
     std::ostringstream oss;
     std::visit([&oss](auto &&arg) { oss << arg; }, snap.value);
     return oss.str();
+}
+
+static bool extract_bit_from_snapshot(const TagSnapshot &src, int bit, bool &outBit) {
+    if (bit < 0) return false;
+
+    bool ok = false;
+    uint64_t word = 0;
+    std::visit([&](auto &&arg) {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, int16_t>) { ok = true; word = static_cast<uint16_t>(arg); }
+        else if constexpr (std::is_same_v<T, uint16_t>) { ok = true; word = arg; }
+        else if constexpr (std::is_same_v<T, int32_t>) { ok = true; word = static_cast<uint32_t>(arg); }
+        else if constexpr (std::is_same_v<T, uint32_t>) { ok = true; word = arg; }
+        else if constexpr (std::is_same_v<T, bool>) { ok = (bit == 0); word = arg ? 1u : 0u; }
+        else { ok = false; }
+    }, src.value);
+    if (!ok) return false;
+
+    if (bit >= 64) return false;
+    outBit = ((word >> static_cast<uint64_t>(bit)) & 1ULL) != 0ULL;
+    return true;
 }
 
 // =========================
@@ -3553,21 +3601,29 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
 		                        }
 		                    }
 
-		                    TagRuntime rt;
-		                    rt.cfg = tc;
-		                    init_tag_scaling(rt);
+			                    TagRuntime rt;
+			                    rt.cfg = tc;
+			                    init_tag_scaling(rt);
 
-		                    // Disabled tags stay visible in /tags, but we don't create handles or poll them.
-		                    if (!tc.enabled) {
-			                    rt.handle = PLCTAG_ERR_NOT_FOUND;
-			                    ctx.tags.push_back(std::move(rt));
-			                    continue;
-		                    }
+			                    // Disabled tags stay visible in /tags, but we don't create handles or poll them.
+			                    if (!tc.enabled) {
+				                    rt.handle = PLCTAG_ERR_NOT_FOUND;
+				                    ctx.tags.push_back(std::move(rt));
+				                    continue;
+			                    }
 
-                            if (!is_supported_datatype(tc.datatype)) {
-                                std::cerr << "[load] Warning: skipping tag '" << tc.logical_name
-                                          << "' on connection '" << conn_id
-                                          << "' due to unsupported datatype '" << tc.datatype << "'.\n";
+			                    // Derived tags do not create PLC handles; they are computed from a source tag.
+			                    if (!tc.source_tag.empty() && tc.bit >= 0) {
+			                        rt.handle = PLCTAG_ERR_NOT_FOUND;
+			                        rt.next_poll = std::chrono::steady_clock::time_point{};
+			                        ctx.tags.push_back(std::move(rt));
+			                        continue;
+			                    }
+
+	                            if (!is_supported_datatype(tc.datatype)) {
+	                                std::cerr << "[load] Warning: skipping tag '" << tc.logical_name
+	                                          << "' on connection '" << conn_id
+	                                          << "' due to unsupported datatype '" << tc.datatype << "'.\n";
                                 rt.handle = PLCTAG_ERR_NOT_FOUND;
                                 ctx.tags.push_back(std::move(rt));
                                 continue;
@@ -5153,9 +5209,9 @@ bool sqlite_fetch_recent_events(int limit, json &outArray) {
 		outArray.push_back(ev);
 	}
 
-    if (rc != SQLITE_DONE) {
-        std::cerr << "[sqlite] select step error: "
-                  << sqlite3_errmsg(g_alarmDb) << "\n";
+	    if (rc != SQLITE_DONE) {
+	        std::cerr << "[sqlite] select step error: "
+	                  << sqlite3_errmsg(g_alarmDb) << "\n";
         sqlite3_finalize(stmt);
         return false;
     }
@@ -8274,18 +8330,14 @@ const wsRenderTree = () => {
         if (el.tagStatus) el.tagStatus.textContent = "Device is required.";
         return;
     }
-    if (!name) {
-        if (el.tagStatus) el.tagStatus.textContent = "Tag name is required.";
-        return;
-    }
-    if (!plc_tag_name) {
-        if (el.tagStatus) el.tagStatus.textContent = "PLC Tag is required.";
-        return;
-    }
-    if (!datatype) {
-        if (el.tagStatus) el.tagStatus.textContent = "Datatype is required.";
-        return;
-    }
+	    if (!name) {
+	        if (el.tagStatus) el.tagStatus.textContent = "Tag name is required.";
+	        return;
+	    }
+	    if (!datatype) {
+	        if (el.tagStatus) el.tagStatus.textContent = "Datatype is required.";
+	        return;
+	    }
 
 	    const scalingMode = String(el.tagScaling?.value || "none").trim().toLowerCase();
 	    const applyScalingToTag = (obj) => {
@@ -8349,35 +8401,43 @@ const wsRenderTree = () => {
 
 	    let tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
 
-	    if (wsTagModalMode === "new") {
-	        if (tags.some((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name)) {
-	            if (el.tagStatus) el.tagStatus.textContent = "Tag name already exists for this device.";
-	            return;
-	        }
-	        const next = { connection_id: cid, name };
-	        next.plc_tag_name = plc_tag_name;
-	        next.datatype = datatype;
-	        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
-	        next.enabled = enabled;
-	        next.writable = writable;
-	        next.mqtt_command_allowed = mqtt_command_allowed;
-	        if (!applyScalingToTag(next)) return;
-	        tags.push(next);
-		    } else {
-		        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
-		        if (idx < 0) {
-		            if (el.tagStatus) el.tagStatus.textContent = "Tag not found.";
+		    if (wsTagModalMode === "new") {
+		        if (tags.some((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name)) {
+		            if (el.tagStatus) el.tagStatus.textContent = "Tag name already exists for this device.";
 		            return;
 		        }
-		        if (tags.some((t, i) => i != idx && String(t?.connection_id || "") == cid && String(t?.name || "") == name)) {
-		            if (el.tagStatus) el.tagStatus.textContent = "A tag with this name already exists for the selected device.";
-		            return;
-		        }
-		        const next = Object.assign({}, tags[idx]);
-		        next.connection_id = cid;
-		        next.name = name;
-		        next.plc_tag_name = plc_tag_name;
+		        const next = { connection_id: cid, name };
+		        if (plc_tag_name) next.plc_tag_name = plc_tag_name;
 		        next.datatype = datatype;
+		        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
+		        next.enabled = enabled;
+		        next.writable = writable;
+		        next.mqtt_command_allowed = mqtt_command_allowed;
+		        if (!applyScalingToTag(next)) return;
+		        tags.push(next);
+				    } else {
+				        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
+			        if (idx < 0) {
+			            if (el.tagStatus) el.tagStatus.textContent = "Tag not found.";
+			            return;
+			        }
+			        const existingObj = tags[idx] || {};
+			        const existingIsDerived = Boolean(existingObj?.source_tag) && Number(existingObj?.bit) >= 0;
+			        if (!plc_tag_name && !existingIsDerived) {
+			            if (el.tagStatus) el.tagStatus.textContent = "PLC Tag is required.";
+			            return;
+			        }
+			        if (tags.some((t, i) => i != idx && String(t?.connection_id || "") == cid && String(t?.name || "") == name)) {
+			            if (el.tagStatus) el.tagStatus.textContent = "A tag with this name already exists for the selected device.";
+			            return;
+			        }
+				        const next = Object.assign({}, existingObj);
+			        next.connection_id = cid;
+			        next.name = name;
+			        // Allow derived tags (source_tag/bit) to keep plc_tag_name empty.
+			        if (plc_tag_name) next.plc_tag_name = plc_tag_name;
+			        else delete next.plc_tag_name;
+			        next.datatype = datatype;
 		        if (scanRaw === "") delete next.scan_ms;
 		        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 		        next.enabled = enabled;
@@ -11450,11 +11510,11 @@ window.addEventListener("load", startAutoRefresh);
 										TagRow row;
 										row.connection_id = driver.conn.id;
 										row.name          = t.cfg.logical_name;
-										row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
-										row.enabled       = t.cfg.enabled;
-										row.writable      = t.cfg.writable;
-										row.handle_ok     = (t.handle >= 0);
-										row.has_snapshot  = (it != tagTable.end());
+											row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+											row.enabled       = t.cfg.enabled;
+											row.writable      = t.cfg.writable;
+											row.handle_ok     = (t.handle >= 0) || (!t.cfg.source_tag.empty() && t.cfg.bit >= 0);
+											row.has_snapshot  = (it != tagTable.end());
 										if (row.has_snapshot) {
 											row.snap = it->second;
 										}
@@ -12121,14 +12181,16 @@ window.addEventListener("load", startAutoRefresh);
 								"default_read_ms",
 								"default_write_ms",
 								"debug"};
-								const std::vector<std::string> tagKeys = {
-									"connection_id",
-									"name",
-									"plc_tag_name",
-									"datatype",
-									"scan_ms",
-									"enabled",
-									"writable",
+									const std::vector<std::string> tagKeys = {
+										"connection_id",
+										"name",
+										"plc_tag_name",
+										"source_tag",
+										"bit",
+										"datatype",
+										"scan_ms",
+										"enabled",
+										"writable",
 									"scaling",
 									"raw_low",
 									"raw_high",
@@ -13024,7 +13086,7 @@ window.addEventListener("load", startAutoRefresh);
 					std::map<std::string, json> byConn; // connId -> { connection_id, tags: [...] }
 
 					int idx = 0;
-					for (const auto &t : body["tags"]) {
+						for (const auto &t : body["tags"]) {
 						++idx;
 						if (!t.is_object()) {
 							throw std::runtime_error("Tag at index " + std::to_string(idx) +
@@ -13036,20 +13098,22 @@ window.addEventListener("load", startAutoRefresh);
 							throw std::runtime_error("Tag at index " + std::to_string(idx) +
 													 " is missing 'connection_id'.");
 						}
-						if (!t.contains("name")) {
-							throw std::runtime_error("Tag at index " + std::to_string(idx) +
-													 " is missing 'name'.");
-						}
-						if (!t.contains("plc_tag_name")) {
-							throw std::runtime_error("Tag '" +
-													 t.value("name", std::string{"<unnamed>"}) +
-													 "' is missing 'plc_tag_name'.");
-						}
-						if (!t.contains("datatype")) {
-							throw std::runtime_error("Tag '" +
-													 t.value("name", std::string{"<unnamed>"}) +
-													 "' is missing 'datatype'.");
-						}
+							if (!t.contains("name")) {
+								throw std::runtime_error("Tag at index " + std::to_string(idx) +
+														 " is missing 'name'.");
+							}
+							if (!t.contains("datatype")) {
+								throw std::runtime_error("Tag '" +
+														 t.value("name", std::string{"<unnamed>"}) +
+														 "' is missing 'datatype'.");
+							}
+							const bool hasPlc = t.contains("plc_tag_name") && t["plc_tag_name"].is_string() && !t["plc_tag_name"].get<std::string>().empty();
+							const bool hasDerived = (t.contains("source_tag") && t.contains("bit"));
+							if (!hasPlc && !hasDerived) {
+								throw std::runtime_error("Tag '" +
+														 t.value("name", std::string{"<unnamed>"}) +
+														 "' must contain either 'plc_tag_name' or ('source_tag' and 'bit').");
+							}
 
 						json tagCopy = t;
 						// We store connection_id at the file level, so remove it from the tag object
@@ -14433,6 +14497,7 @@ window.addEventListener("load", startAutoRefresh);
 	            uint64_t gen = 0;
 	            ConnectionConfig conn;
 	            std::vector<PollTagItem> tags;
+	            std::unordered_map<std::string, std::vector<TagConfig>> derived_bits_by_source; // source logical_name -> derived tags
 	            std::shared_ptr<ConnPollMetrics> metrics;
 	        };
 
@@ -14475,12 +14540,16 @@ window.addEventListener("load", startAutoRefresh);
 		                        spec.metrics = ptr;
 		                    }
 
-		                    // Actually build tag list; skip invalid handles (they'll show as bad_handle)
-		                    spec.tags.clear();
-	                    for (const auto &t : d.tags) {
-	                        if (t.handle < 0) continue;
-	                        PollTagItem it;
-	                        it.cfg = t.cfg;
+			                    // Actually build tag list; skip invalid handles (they'll show as bad_handle)
+			                    spec.tags.clear();
+			                    spec.derived_bits_by_source.clear();
+		                    for (const auto &t : d.tags) {
+		                        if (t.cfg.enabled && !t.cfg.source_tag.empty() && t.cfg.bit >= 0) {
+		                            spec.derived_bits_by_source[t.cfg.source_tag].push_back(t.cfg);
+		                        }
+		                        if (t.handle < 0) continue;
+		                        PollTagItem it;
+		                        it.cfg = t.cfg;
 	                        it.handle = t.handle;
 	                        it.scaling_linear = t.scaling_linear;
 	                        it.scale_slope = t.scale_slope;
@@ -14604,18 +14673,30 @@ window.addEventListener("load", startAutoRefresh);
 	                                }
 	                            }
 
-	                            TagSnapshot prevSnap;
-	                            bool hadPrev = false;
-	                            bool doWsTagUpdate = false;
-	                            bool doWsEventRow = false;
-	                            bool valueChangedForEvent = false;
-	                            bool doUaUpdate = false;
-	                            bool doMqttPublish = false;
+		                            TagSnapshot prevSnap;
+		                            bool hadPrev = false;
+		                            bool doWsTagUpdate = false;
+		                            bool doWsEventRow = false;
+		                            bool valueChangedForEvent = false;
+		                            bool doUaUpdate = false;
+		                            bool doMqttPublish = false;
+		                            struct DerivedAction {
+		                                TagSnapshot snap;
+		                                TagSnapshot prev;
+		                                bool hadPrev = false;
+		                                bool doWsTagUpdate = false;
+		                                bool doWsEventRow = false;
+		                                bool valueChangedForEvent = false;
+		                                bool doUaUpdate = false;
+		                                bool doMqttPublish = false;
+		                                TagConfig cfg;
+		                            };
+		                            std::vector<DerivedAction> derivedActions;
 
-	                            {
-	                                std::lock_guard<std::mutex> lock(driverMutex);
-	                                if (g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
-	                                    continue;
+		                            {
+		                                std::lock_guard<std::mutex> lock(driverMutex);
+		                                if (g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
+		                                    continue;
 	                                }
 
 	                                auto itPrev = tagTable.find(key);
@@ -14645,13 +14726,81 @@ window.addEventListener("load", startAutoRefresh);
 	                                    doWsTagUpdate = !hadPrev || !snapshot_values_equal(snap, prevSnap);
 	                                }
 
-	                                if (!g_alarms.empty()) {
-	                                    evaluate_tag_alarms(spec.conn.id, t.cfg.logical_name, snap);
-	                                }
+		                                if (!g_alarms.empty()) {
+		                                    evaluate_tag_alarms(spec.conn.id, t.cfg.logical_name, snap);
+		                                }
 
-	                                if (t.cfg.log_event_on_change && hadPrev) {
-	                                    valueChangedForEvent = !snapshot_values_equal(snap, prevSnap);
-	                                    if (valueChangedForEvent) {
+		                                // Derived (memory) bit tags: compute from this source tag and publish as normal bool tags.
+		                                auto itDerived = spec.derived_bits_by_source.find(t.cfg.logical_name);
+		                                if (itDerived != spec.derived_bits_by_source.end()) {
+		                                    for (const auto &dcfg : itDerived->second) {
+		                                        DerivedAction a;
+		                                        a.cfg = dcfg;
+		                                        a.doMqttPublish = mqttMode;
+
+		                                        const std::string dkey = make_tag_key(spec.conn.id, dcfg.logical_name);
+		                                        auto itPrevD = tagTable.find(dkey);
+		                                        if (itPrevD != tagTable.end()) {
+		                                            a.prev = itPrevD->second;
+		                                            a.hadPrev = true;
+		                                        }
+
+		                                        TagSnapshot dsnap;
+		                                        dsnap.connection_id = spec.conn.id;
+		                                        dsnap.logical_name = dcfg.logical_name;
+		                                        dsnap.datatype = "bool";
+		                                        dsnap.timestamp = snap.timestamp;
+		                                        dsnap.quality = snap.quality;
+		                                        bool bitVal = false;
+		                                        if (!extract_bit_from_snapshot(snap, dcfg.bit, bitVal)) {
+		                                            dsnap.quality = 0;
+		                                            bitVal = false;
+		                                        }
+		                                        dsnap.value = bitVal;
+
+		                                        tagTable[dkey] = dsnap;
+		                                        a.snap = dsnap;
+
+		                                        if (ws_is_enabled()) {
+		                                            a.doWsTagUpdate = !a.hadPrev || !snapshot_values_equal(a.snap, a.prev);
+		                                        }
+
+		                                        if (!g_alarms.empty()) {
+		                                            evaluate_tag_alarms(spec.conn.id, dcfg.logical_name, dsnap);
+		                                        }
+
+		                                        if (dcfg.log_event_on_change && a.hadPrev) {
+		                                            a.valueChangedForEvent = !snapshot_values_equal(a.snap, a.prev);
+		                                            if (a.valueChangedForEvent) {
+		                                                int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                                                    dsnap.timestamp.time_since_epoch()
+		                                                ).count();
+
+		                                                sqlite_log_event(
+		                                                    spec.conn.id,
+		                                                    dcfg.logical_name,
+		                                                    snapshot_value_to_string(a.prev),
+		                                                    snapshot_value_to_string(a.snap),
+		                                                    a.prev.quality,
+		                                                    a.snap.quality,
+		                                                    ts_ms,
+		                                                    "" // extra_json
+		                                                );
+		                                                a.doWsEventRow = ws_is_enabled();
+		                                            }
+		                                        }
+
+		                                        if (g_uaServer && dsnap.quality == 1) {
+		                                            a.doUaUpdate = true;
+		                                        }
+
+		                                        derivedActions.push_back(std::move(a));
+		                                    }
+		                                }
+
+		                                if (t.cfg.log_event_on_change && hadPrev) {
+		                                    valueChangedForEvent = !snapshot_values_equal(snap, prevSnap);
+		                                    if (valueChangedForEvent) {
 	                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 	                                            snap.timestamp.time_since_epoch()
 	                                        ).count();
@@ -14712,12 +14861,35 @@ window.addEventListener("load", startAutoRefresh);
 	                                }
 	                            }
 
-	                            if (doWsTagUpdate) {
-	                                ws_notify_tag_update(snap, t.cfg);
-	                            }
-	                            if (doWsEventRow && valueChangedForEvent) {
-	                                ws_notify_event_log_row(&prevSnap, snap);
-	                            }
+		                            if (doWsTagUpdate) {
+		                                ws_notify_tag_update(snap, t.cfg);
+		                            }
+		                            if (doWsEventRow && valueChangedForEvent) {
+		                                ws_notify_event_log_row(&prevSnap, snap);
+		                            }
+
+		                            for (const auto &a : derivedActions) {
+		                                if (a.doWsTagUpdate) {
+		                                    ws_notify_tag_update(a.snap, a.cfg);
+		                                }
+		                                if (a.doWsEventRow && a.valueChangedForEvent && a.hadPrev) {
+		                                    ws_notify_event_log_row(&a.prev, a.snap);
+		                                }
+
+		                                if (a.doUaUpdate) {
+		                                    std::lock_guard<std::mutex> ql(uaQueueMutex);
+		                                    uaQueue.push_back(UaUpdate{spec.conn.id, a.cfg.logical_name, a.snap.value});
+		                                }
+
+		                                if (a.doMqttPublish) {
+		                                    std::lock_guard<std::mutex> ql(mqttQueueMutex);
+		                                    MqttPublishJob j;
+		                                    j.snap = a.snap;
+		                                    j.hadPrev = a.hadPrev;
+		                                    if (a.hadPrev) j.prev = a.prev;
+		                                    mqttQueue.push_back(std::move(j));
+		                                }
+		                            }
 	                            if (doConsolePrint) {
 	                                print_snapshot(snap);
 	                            }
