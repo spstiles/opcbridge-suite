@@ -3049,6 +3049,36 @@ function sanitizeTagForPost(tag) {
   return out;
 }
 
+function listConnectionIdsFromTags(tags) {
+  const set = new Set();
+  (Array.isArray(tags) ? tags : []).forEach((t) => {
+    const cid = String(t?.connection_id || '').trim();
+    if (cid) set.add(cid);
+  });
+  return set;
+}
+
+function computeEmptiedTagConnectionIds(baseTags, nextTags) {
+  const base = listConnectionIdsFromTags(baseTags);
+  const next = listConnectionIdsFromTags(nextTags);
+  const emptied = [];
+  base.forEach((cid) => {
+    if (cid && !next.has(cid)) emptied.push(cid);
+  });
+  emptied.sort();
+  return emptied;
+}
+
+async function writeEmptyCanonicalTagFilesForConnections(connectionIds) {
+  const ids = Array.isArray(connectionIds) ? connectionIds : [];
+  for (const cid of ids) {
+    const c = String(cid || '').trim();
+    if (!c) continue;
+    const content = prettyJson({ connection_id: c, tags: [] });
+    await apiPostJson('/api/opcbridge/config/file', { path: `tags/${c}.json`, content });
+  }
+}
+
 function getEffectiveTagsAll() {
   if (!state.tagConfigEdited || state.tagConfigEdited.size === 0) return state.tagConfigAll;
   const map = state.tagConfigEdited;
@@ -3296,7 +3326,10 @@ async function loadTagsConfig() {
   try {
     const data = await apiGet('/api/opcbridge/config/tags');
     const tags = Array.isArray(data?.tags) ? data.tags : [];
-    state.tagConfigAll = tags;
+    // Keep an immutable snapshot of what was loaded so we can determine
+    // which connections were emptied (e.g., deleting the last tag for a device).
+    state.tagConfigLoadedAll = tags.map((t) => ({ ...(t || {}) }));
+    state.tagConfigAll = tags.map((t) => ({ ...(t || {}) }));
     state.tagConfigEdited = new Map();
     markTagsDirty(false);
     renderTagsConfigFilters();
@@ -3310,13 +3343,23 @@ async function loadTagsConfig() {
 async function saveTagsConfig({ reload }) {
   setTagsConfigStatus('Saving…');
   try {
+    const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
     const merged = state.tagConfigAll.map((t) => {
       const key = makeTagKey(t);
       return state.tagConfigEdited.get(key) || t;
     });
 
     const tagsOut = merged.map(sanitizeTagForPost);
-    await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
+    const emptied = computeEmptiedTagConnectionIds(baseTags, merged);
+
+    // If the entire config is empty, opcbridge rejects /config/tags (byConn.empty()),
+    // so just write empty canonical tag files for any connections that were emptied.
+    if (tagsOut.length > 0) {
+      await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
+    }
+    if (emptied.length > 0) {
+      await writeEmptyCanonicalTagFilesForConnections(emptied);
+    }
 
     if (reload) {
       await apiPostJson('/api/opcbridge/reload', {});
@@ -3519,9 +3562,16 @@ async function deleteTagById(connectionId, tagName) {
   if (!window.confirm(`Delete tag '${cid}:${name}'?`)) return;
 
   try {
+    const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
     const remaining = state.tagConfigAll.filter((t) => !(String(t?.connection_id || '') === cid && String(t?.name || '') === name));
     const tagsOut = remaining.map(sanitizeTagForPost);
-    await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
+    const emptied = computeEmptiedTagConnectionIds(baseTags, remaining);
+    if (tagsOut.length > 0) {
+      await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
+    }
+    if (emptied.length > 0) {
+      await writeEmptyCanonicalTagFilesForConnections(emptied);
+    }
     await loadTagsConfig();
 
     renderWorkspaceTree();
@@ -4407,9 +4457,16 @@ async function deleteDeviceById(connectionId, pathRel) {
 
     // Remove tags for this connection_id
     try {
+      const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
       const remaining = state.tagConfigAll.filter((t) => String(t?.connection_id || '') !== cid);
       const tagsOut = remaining.map(sanitizeTagForPost);
-      await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
+      const emptied = computeEmptiedTagConnectionIds(baseTags, remaining);
+      if (tagsOut.length > 0) {
+        await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
+      }
+      if (emptied.length > 0) {
+        await writeEmptyCanonicalTagFilesForConnections(emptied);
+      }
       await loadTagsConfig();
     } catch {
       // ignore
@@ -5307,9 +5364,16 @@ async function saveWorkspaceAll({ reload }) {
 
     // 2) Save tags config (includes any edits staged in tags config page + workspace popups)
     if (state.tagConfigDirty) {
+      const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
       const effective = getEffectiveTagsAll();
       const tagsOut = effective.map(sanitizeTagForPost);
-      await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
+      const emptied = computeEmptiedTagConnectionIds(baseTags, effective);
+      if (tagsOut.length > 0) {
+        await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
+      }
+      if (emptied.length > 0) {
+        await writeEmptyCanonicalTagFilesForConnections(emptied);
+      }
     }
 
     // 3) Save alarms config (only if we staged updates, e.g., renaming a device)
