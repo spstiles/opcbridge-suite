@@ -6683,12 +6683,20 @@ int main(int argc, char **argv) {
 							<div id="ws-tag-modal" class="ws-modal" style="display:none;">
 								<div class="ws-modal-card">
 									<div class="ws-modal-title" id="ws-tag-title">Tag</div>
-									<div class="ws-form">
-										<label>Device <select id="ws-tag-conn"></select></label>
-										<label>Name <input id="ws-tag-name" type="text" /></label>
-										<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
-										<label>Datatype <select id="ws-tag-dt"></select></label>
-										<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
+										<div class="ws-form">
+											<label>Device <select id="ws-tag-conn"></select></label>
+											<label>Name <input id="ws-tag-name" type="text" /></label>
+											<label>Source <select id="ws-tag-source-kind">
+												<option value="plc">PLC Tag</option>
+												<option value="derived_bit">Derived Bit</option>
+											</select></label>
+											<label>PLC Tag <input id="ws-tag-plc" type="text" /></label>
+											<div id="ws-tag-derived-row" class="ws-form-two" style="display:none;">
+												<label>Source Tag <select id="ws-tag-source-tag"></select></label>
+												<label>Bit (0=LSB) <input id="ws-tag-bit" type="number" min="0" max="63" step="1" /></label>
+											</div>
+											<label>Datatype <select id="ws-tag-dt"></select></label>
+											<label>Scan (ms) <input id="ws-tag-scan" type="number" min="0" step="1" /></label>
 										<div class="ws-inline-row">
 											<label class="ws-inline"><input id="ws-tag-enabled" type="checkbox" /> Enabled</label>
 											<label class="ws-inline"><input id="ws-tag-writable" type="checkbox" /> Writable</label>
@@ -7252,13 +7260,17 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
     deviceCancelBtn: document.getElementById("ws-device-cancel-btn"),
     deviceSaveBtn: document.getElementById("ws-device-save-btn"),
 
-    tagModal: document.getElementById("ws-tag-modal"),
-    tagTitle: document.getElementById("ws-tag-title"),
-	    tagConn: document.getElementById("ws-tag-conn"),
-	    tagName: document.getElementById("ws-tag-name"),
-	    tagPlc: document.getElementById("ws-tag-plc"),
-	    tagDt: document.getElementById("ws-tag-dt"),
-	    tagScan: document.getElementById("ws-tag-scan"),
+	    tagModal: document.getElementById("ws-tag-modal"),
+	    tagTitle: document.getElementById("ws-tag-title"),
+		    tagConn: document.getElementById("ws-tag-conn"),
+		    tagName: document.getElementById("ws-tag-name"),
+		    tagSourceKind: document.getElementById("ws-tag-source-kind"),
+		    tagPlc: document.getElementById("ws-tag-plc"),
+		    tagDerivedRow: document.getElementById("ws-tag-derived-row"),
+		    tagSourceTag: document.getElementById("ws-tag-source-tag"),
+		    tagBit: document.getElementById("ws-tag-bit"),
+		    tagDt: document.getElementById("ws-tag-dt"),
+		    tagScan: document.getElementById("ws-tag-scan"),
 	    tagEnabled: document.getElementById("ws-tag-enabled"),
 	    tagWritable: document.getElementById("ws-tag-writable"),
 	    tagMqttAllowed: document.getElementById("ws-tag-mqtt-allowed"),
@@ -7566,8 +7578,74 @@ const wsFillScaledDatatypeSelect = (sel, selected) => {
     sel.value = (s === "" || WS_SCALED_DATATYPES.includes(s)) ? s : "";
 };
 
-		let wsDeviceModalMode = "new";
-		let wsDeviceEditingId = "";
+const wsIsNumericBitSourceDatatype = (dt) => {
+    const s = String(dt || "").trim().toLowerCase();
+    return s === "int16" || s === "uint16" || s === "int32" || s === "uint32";
+};
+
+const wsGetDerivedBitSourceOptions = (connection_id, excludeName) => {
+    const cid = String(connection_id || "").trim();
+    const ex  = String(excludeName || "").trim();
+    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
+    const names = tags
+        .filter((t) => String(t?.connection_id || "") === cid)
+        .filter((t) => String(t?.name || "") !== ex)
+        .filter((t) => String(t?.plc_tag_name || "").trim() !== "")
+        .filter((t) => wsIsNumericBitSourceDatatype(t?.datatype))
+        .map((t) => String(t?.name || "").trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+    return names;
+};
+
+const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
+    const el = wsEls();
+    const kind = String(el.tagSourceKind?.value || "plc").trim().toLowerCase();
+    const isDerived = (kind === "derived_bit");
+    const canEdit = wsIsEditable();
+
+    if (el.tagDerivedRow) el.tagDerivedRow.style.display = isDerived ? "grid" : "none";
+    if (el.tagPlc) el.tagPlc.disabled = isDerived || !canEdit;
+    if (el.tagSourceTag) el.tagSourceTag.disabled = !canEdit;
+    if (el.tagBit) el.tagBit.disabled = !canEdit;
+
+    if (el.tagWritable) {
+        if (isDerived) {
+            el.tagWritable.checked = false;
+            el.tagWritable.disabled = true;
+        } else {
+            el.tagWritable.disabled = !canEdit;
+        }
+    }
+
+    if (el.tagDt) {
+        if (isDerived) {
+            wsFillDatatypeSelect(el.tagDt, "bool");
+            el.tagDt.disabled = true;
+        } else {
+            el.tagDt.disabled = !canEdit;
+        }
+    }
+
+    if (el.tagScaling) {
+        if (isDerived) {
+            el.tagScaling.value = "none";
+            el.tagScaling.disabled = true;
+            if (el.tagScalingLinear) el.tagScalingLinear.style.display = "none";
+        } else {
+            el.tagScaling.disabled = !canEdit;
+        }
+    }
+
+    if (isDerived && el.tagSourceTag) {
+        const opts = wsGetDerivedBitSourceOptions(connId, excludeName);
+        const selected = String(el.tagSourceTag.value || "").trim();
+        wsFillSelect(el.tagSourceTag, opts.map((n) => ({ value: n, label: n })), selected);
+    }
+};
+
+			let wsDeviceModalMode = "new";
+			let wsDeviceEditingId = "";
 		let wsTagModalMode = "new";
 			let wsTagEditingConn = "";
 			let wsTagEditingName = "";
@@ -7645,27 +7723,31 @@ const wsFillScaledDatatypeSelect = (sel, selected) => {
 	            ? `Tag Properties: ${wsTagEditingConn}:${wsTagEditingName}`
 	            : `New Tag: ${curConn}`;
 	    }
-	    if (el.tagStatus) el.tagStatus.textContent = "";
+		    if (el.tagStatus) el.tagStatus.textContent = "";
 
-	    if (el.tagConn) {
-	        el.tagConn.value = wsTagEditingConn || String(el.tagConn.value || "");
-	        el.tagConn.onchange = () => {
-	            if (!el.tagTitle) return;
-	            if (wsTagModalMode !== "new") return;
-	            const curConn = String(el.tagConn?.value || "").trim();
-	            el.tagTitle.textContent = `New Tag: ${curConn}`;
-	        };
-	    }
-		    if (el.tagName) {
-		        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
-		        el.tagName.disabled = !wsIsEditable();
+		    if (el.tagConn) {
+		        el.tagConn.value = wsTagEditingConn || String(el.tagConn.value || "");
+		        el.tagConn.onchange = () => {
+		            if (!el.tagTitle) return;
+		            if (wsTagModalMode !== "new") return;
+		            const curConn = String(el.tagConn?.value || "").trim();
+		            el.tagTitle.textContent = `New Tag: ${curConn}`;
+		            wsApplyTagSourceKindUi({ connId: curConn, excludeName: "" });
+		        };
 		    }
-	    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
-	    wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
-	    if (el.tagScan) el.tagScan.value = existing && existing?.scan_ms != null ? String(existing.scan_ms) : "";
-	    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
-	    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
-	    if (el.tagMqttAllowed) el.tagMqttAllowed.checked = existing ? (existing?.mqtt_command_allowed === true) : false;
+			    if (el.tagName) {
+			        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
+			        el.tagName.disabled = !wsIsEditable();
+			    }
+		    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
+		    if (el.tagSourceKind) el.tagSourceKind.value = (existing && String(existing?.source_tag || "").trim() && Number(existing?.bit) >= 0) ? "derived_bit" : "plc";
+		    if (el.tagSourceTag) el.tagSourceTag.value = existing ? String(existing?.source_tag || "") : "";
+		    if (el.tagBit) el.tagBit.value = existing && existing?.bit != null ? String(existing.bit) : "0";
+		    wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
+		    if (el.tagScan) el.tagScan.value = existing && existing?.scan_ms != null ? String(existing.scan_ms) : "";
+		    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
+		    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
+		    if (el.tagMqttAllowed) el.tagMqttAllowed.checked = existing ? (existing?.mqtt_command_allowed === true) : false;
 
 	    const applyScalingUi = () => {
 	        const mode = String(el.tagScaling?.value || "none").toLowerCase();
@@ -7694,12 +7776,24 @@ const wsFillScaledDatatypeSelect = (sel, selected) => {
 	    if (el.tagScaledDt) el.tagScaledDt.disabled = !canEdit;
 	    if (el.tagClampLow) el.tagClampLow.disabled = !canEdit;
 	    if (el.tagClampHigh) el.tagClampHigh.disabled = !canEdit;
-	    if (el.tagScalingLinear) el.tagScalingLinear.style.pointerEvents = canEdit ? "" : "none";
-	    applyScalingUi();
+		    if (el.tagScalingLinear) el.tagScalingLinear.style.pointerEvents = canEdit ? "" : "none";
+		    applyScalingUi();
 
-    el.tagModal.style.display = "flex";
-    el.tagName?.focus?.();
-};
+		    if (el.tagSourceKind) {
+		        el.tagSourceKind.disabled = !wsIsEditable();
+		        el.tagSourceKind.onchange = () => {
+		            const curConn = String(el.tagConn?.value || wsTagEditingConn || "").trim();
+		            wsApplyTagSourceKindUi({ connId: curConn, excludeName: wsTagModalMode === "edit" ? wsTagEditingName : "" });
+		        };
+		    }
+		    {
+		        const curConn = String(el.tagConn?.value || wsTagEditingConn || "").trim();
+		        wsApplyTagSourceKindUi({ connId: curConn, excludeName: wsTagModalMode === "edit" ? wsTagEditingName : "" });
+		    }
+
+	    el.tagModal.style.display = "flex";
+	    el.tagName?.focus?.();
+	};
 
 	const wsOpenPropertiesForNode = (nodeId) => {
 	    const node = wsNodeById.get(nodeId);
@@ -8316,20 +8410,25 @@ const wsRenderTree = () => {
 	};
 
 	const wsSaveTagFromModal = () => {
-	    const el = wsEls();
-	    const cid = String(el.tagConn?.value || "").trim();
-	    const name = String(el.tagName?.value || "").trim();
-    const plc_tag_name = String(el.tagPlc?.value || "").trim();
-    const datatype = String(el.tagDt?.value || "").trim();
-	    const scanRaw = String(el.tagScan?.value || "").trim();
-	    const enabled = Boolean(el.tagEnabled?.checked);
-	    const writable = Boolean(el.tagWritable?.checked);
-	    const mqtt_command_allowed = Boolean(el.tagMqttAllowed?.checked);
+		    const el = wsEls();
+		    const cid = String(el.tagConn?.value || "").trim();
+		    const name = String(el.tagName?.value || "").trim();
+	    const plc_tag_name = String(el.tagPlc?.value || "").trim();
+	    const datatype = String(el.tagDt?.value || "").trim();
+		    const scanRaw = String(el.tagScan?.value || "").trim();
+		    const enabled = Boolean(el.tagEnabled?.checked);
+		    const sourceKind = String(el.tagSourceKind?.value || "plc").trim().toLowerCase();
+		    const isDerived = (sourceKind === "derived_bit");
+		    const source_tag = String(el.tagSourceTag?.value || "").trim();
+		    const bitRaw = String(el.tagBit?.value || "").trim();
+		    const bit = bitRaw === "" ? null : Math.trunc(Number(bitRaw));
+		    const writable = isDerived ? false : Boolean(el.tagWritable?.checked);
+		    const mqtt_command_allowed = Boolean(el.tagMqttAllowed?.checked);
 
-    if (!cid) {
-        if (el.tagStatus) el.tagStatus.textContent = "Device is required.";
-        return;
-    }
+	    if (!cid) {
+	        if (el.tagStatus) el.tagStatus.textContent = "Device is required.";
+	        return;
+	    }
 	    if (!name) {
 	        if (el.tagStatus) el.tagStatus.textContent = "Tag name is required.";
 	        return;
@@ -8338,9 +8437,23 @@ const wsRenderTree = () => {
 	        if (el.tagStatus) el.tagStatus.textContent = "Datatype is required.";
 	        return;
 	    }
+	    if (!isDerived && !plc_tag_name) {
+	        if (el.tagStatus) el.tagStatus.textContent = "PLC Tag is required.";
+	        return;
+	    }
+	    if (isDerived) {
+	        if (!source_tag) {
+	            if (el.tagStatus) el.tagStatus.textContent = "Source Tag is required for a Derived Bit.";
+	            return;
+	        }
+	        if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) {
+	            if (el.tagStatus) el.tagStatus.textContent = "Bit must be between 0 and 63.";
+	            return;
+	        }
+	    }
 
-	    const scalingMode = String(el.tagScaling?.value || "none").trim().toLowerCase();
-	    const applyScalingToTag = (obj) => {
+		    const scalingMode = isDerived ? "none" : String(el.tagScaling?.value || "none").trim().toLowerCase();
+		    const applyScalingToTag = (obj) => {
 	        // Clear scaling fields by default (so switching back to None removes them).
 	        delete obj.scaling;
 	        delete obj.raw_low;
@@ -8351,7 +8464,7 @@ const wsRenderTree = () => {
 	        delete obj.clamp_high;
 	        delete obj.scaled_datatype;
 
-	        if (scalingMode !== "linear") return true;
+		        if (scalingMode !== "linear") return true;
 
 	        if (String(datatype || "").toLowerCase() === "bool") {
 	            if (el.tagStatus) el.tagStatus.textContent = "Scaling is only supported for numeric datatypes.";
@@ -8399,7 +8512,7 @@ const wsRenderTree = () => {
 	        return true;
 	    };
 
-	    let tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
+		    let tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
 
 		    if (wsTagModalMode === "new") {
 		        if (tags.some((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name)) {
@@ -8407,15 +8520,21 @@ const wsRenderTree = () => {
 		            return;
 		        }
 		        const next = { connection_id: cid, name };
-		        if (plc_tag_name) next.plc_tag_name = plc_tag_name;
-		        next.datatype = datatype;
+		        if (!isDerived) {
+		            next.plc_tag_name = plc_tag_name;
+		            next.datatype = datatype;
+		            if (!applyScalingToTag(next)) return;
+		        } else {
+		            next.source_tag = source_tag;
+		            next.bit = bit;
+		            next.datatype = "bool";
+		        }
 		        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 		        next.enabled = enabled;
 		        next.writable = writable;
 		        next.mqtt_command_allowed = mqtt_command_allowed;
-		        if (!applyScalingToTag(next)) return;
 		        tags.push(next);
-				    } else {
+			    } else {
 				        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
 			        if (idx < 0) {
 			            if (el.tagStatus) el.tagStatus.textContent = "Tag not found.";
@@ -8431,20 +8550,27 @@ const wsRenderTree = () => {
 			            if (el.tagStatus) el.tagStatus.textContent = "A tag with this name already exists for the selected device.";
 			            return;
 			        }
-				        const next = Object.assign({}, existingObj);
+			        const next = Object.assign({}, existingObj);
 			        next.connection_id = cid;
 			        next.name = name;
-			        // Allow derived tags (source_tag/bit) to keep plc_tag_name empty.
-			        if (plc_tag_name) next.plc_tag_name = plc_tag_name;
-			        else delete next.plc_tag_name;
-			        next.datatype = datatype;
-		        if (scanRaw === "") delete next.scan_ms;
-		        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
-		        next.enabled = enabled;
-		        next.writable = writable;
-		        next.mqtt_command_allowed = mqtt_command_allowed;
-		        if (!applyScalingToTag(next)) return;
-		        tags[idx] = next;
+			        if (!isDerived) {
+			            next.plc_tag_name = plc_tag_name;
+			            delete next.source_tag;
+			            delete next.bit;
+			            next.datatype = datatype;
+			            if (!applyScalingToTag(next)) return;
+			        } else {
+			            delete next.plc_tag_name;
+			            next.source_tag = source_tag;
+			            next.bit = bit;
+			            next.datatype = "bool";
+			        }
+			        if (scanRaw === "") delete next.scan_ms;
+			        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
+			        next.enabled = enabled;
+			        next.writable = writable;
+			        next.mqtt_command_allowed = mqtt_command_allowed;
+			        tags[idx] = next;
 
 		        // If the user changed the Device, fully move the tag: remove any remaining copies
 		        // of the old (connection_id,name) from the draft list (helps with legacy duplicates).

@@ -489,13 +489,33 @@
           </div>
         </section>
 
-        <section id="workspaceItemTagEdit" style="display:none;">
-          <div class="form" style="max-width: 720px;">
-            <div class="form-row"><label>Connection</label><input id="editTagConn" type="text" disabled /></div>
-            <div class="form-row"><label>Tag Name</label><input id="editTagName" type="text" disabled /></div>
-            <div class="form-row"><label>PLC Tag</label><input id="editTagPlc" type="text" placeholder="Pump1.Running" /></div>
-            <div class="form-row"><label>Datatype</label><select id="editTagDatatype"></select></div>
-            <div class="form-row"><label>Scan (ms)</label><input id="editTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
+	        <section id="workspaceItemTagEdit" style="display:none;">
+	          <div class="form" style="max-width: 720px;">
+	            <div class="form-row"><label>Connection</label><input id="editTagConn" type="text" disabled /></div>
+	            <div class="form-row"><label>Tag Name</label><input id="editTagName" type="text" disabled /></div>
+	            <div class="form-row">
+	              <label>Source</label>
+	              <select id="editTagSourceKind">
+	                <option value="plc">PLC Tag</option>
+	                <option value="derived_bit">Derived Bit</option>
+	              </select>
+	            </div>
+	            <div class="form-row"><label>PLC Tag</label><input id="editTagPlc" type="text" placeholder="Pump1.Running" /></div>
+	            <div class="form-row" id="editTagDerivedRow" style="display:none;">
+	              <label>Derived</label>
+	              <div style="display:grid; grid-template-columns: 1fr 140px; gap: 10px;">
+	                <div>
+	                  <div class="hint">Source Tag</div>
+	                  <select id="editTagSourceTag"></select>
+	                </div>
+	                <div>
+	                  <div class="hint">Bit (0=LSB)</div>
+	                  <input id="editTagBit" type="number" min="0" max="63" step="1" placeholder="0" />
+	                </div>
+	              </div>
+	            </div>
+	            <div class="form-row"><label>Datatype</label><select id="editTagDatatype"></select></div>
+	            <div class="form-row"><label>Scan (ms)</label><input id="editTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
             <div class="form-row">
               <label>Options</label>
               <div class="check-row">
@@ -623,19 +643,39 @@
   </div>
 
 
-  <div class="modal-overlay" id="newTagModal" style="display:none;">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newTagModalTitle">
+	  <div class="modal-overlay" id="newTagModal" style="display:none;">
+	    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newTagModalTitle">
       <div class="modal-titlebar">
         <div class="modal-title" id="newTagModalTitle">New Tag</div>
         <button class="btn" id="newTagCloseBtn" type="button">Close</button>
       </div>
       <div class="modal-body">
-        <div class="hint" id="newTagHint"></div>
-        <div class="form" style="max-width: 720px;">
-          <div class="form-row"><label>Tag Name</label><input id="newTagName" type="text" placeholder="Pump1.Running" /></div>
-          <div class="form-row"><label>PLC Tag</label><input id="newTagPlc" type="text" placeholder="Pump1.Running" /></div>
-          <div class="form-row"><label>Datatype</label><select id="newTagDatatype"></select></div>
-          <div class="form-row"><label>Scan (ms)</label><input id="newTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
+	        <div class="hint" id="newTagHint"></div>
+	        <div class="form" style="max-width: 720px;">
+	          <div class="form-row"><label>Tag Name</label><input id="newTagName" type="text" placeholder="Pump1.Running" /></div>
+	          <div class="form-row">
+	            <label>Source</label>
+	            <select id="newTagSourceKind">
+	              <option value="plc">PLC Tag</option>
+	              <option value="derived_bit">Derived Bit</option>
+	            </select>
+	          </div>
+	          <div class="form-row"><label>PLC Tag</label><input id="newTagPlc" type="text" placeholder="Pump1.Running" /></div>
+	          <div class="form-row" id="newTagDerivedRow" style="display:none;">
+	            <label>Derived</label>
+	            <div style="display:grid; grid-template-columns: 1fr 140px; gap: 10px;">
+	              <div>
+	                <div class="hint">Source Tag</div>
+	                <select id="newTagSourceTag"></select>
+	              </div>
+	              <div>
+	                <div class="hint">Bit (0=LSB)</div>
+	                <input id="newTagBit" type="number" min="0" max="63" step="1" placeholder="0" />
+	              </div>
+	            </div>
+	          </div>
+	          <div class="form-row"><label>Datatype</label><select id="newTagDatatype"></select></div>
+	          <div class="form-row"><label>Scan (ms)</label><input id="newTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
           <div class="form-row">
             <label>Options</label>
             <div class="check-row">

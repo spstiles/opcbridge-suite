@@ -202,7 +202,11 @@ const els = {
   newTagCloseBtn: document.getElementById('newTagCloseBtn'),
   newTagHint: document.getElementById('newTagHint'),
   newTagName: document.getElementById('newTagName'),
+  newTagSourceKind: document.getElementById('newTagSourceKind'),
   newTagPlc: document.getElementById('newTagPlc'),
+  newTagDerivedRow: document.getElementById('newTagDerivedRow'),
+  newTagSourceTag: document.getElementById('newTagSourceTag'),
+  newTagBit: document.getElementById('newTagBit'),
   newTagDatatype: document.getElementById('newTagDatatype'),
   newTagScan: document.getElementById('newTagScan'),
   newTagEnabled: document.getElementById('newTagEnabled'),
@@ -236,7 +240,11 @@ const els = {
 
   editTagConn: document.getElementById('editTagConn'),
   editTagName: document.getElementById('editTagName'),
+  editTagSourceKind: document.getElementById('editTagSourceKind'),
   editTagPlc: document.getElementById('editTagPlc'),
+  editTagDerivedRow: document.getElementById('editTagDerivedRow'),
+  editTagSourceTag: document.getElementById('editTagSourceTag'),
+  editTagBit: document.getElementById('editTagBit'),
   editTagDatatype: document.getElementById('editTagDatatype'),
   editTagScan: document.getElementById('editTagScan'),
   editTagEnabled: document.getElementById('editTagEnabled'),
@@ -2060,6 +2068,77 @@ function parseFloatLoose(value, defaultValue) {
   return n;
 }
 
+function isNumericBitSourceDatatype(dt) {
+  const s = String(dt || '').trim().toLowerCase();
+  return s === 'int16' || s === 'uint16' || s === 'int32' || s === 'uint32';
+}
+
+function getDerivedBitSourceOptions(connectionId, excludeTagName) {
+  const cid = String(connectionId || '').trim();
+  const ex = String(excludeTagName || '').trim();
+  const all = getEffectiveTagsAll();
+  const names = all
+    .filter((t) => String(t?.connection_id || '') === cid)
+    .filter((t) => String(t?.name || '') !== ex)
+    .filter((t) => String(t?.plc_tag_name || '').trim() !== '')
+    .filter((t) => isNumericBitSourceDatatype(t?.datatype))
+    .map((t) => String(t?.name || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  return names;
+}
+
+function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitEl, datatypeEl, writableEl, scalingEl, scalingLinearRowEl }, { connId, excludeTagName }) {
+  const kind = String(kindEl?.value || 'plc').trim().toLowerCase();
+  const isDerived = (kind === 'derived_bit');
+
+  if (derivedRowEl) derivedRowEl.style.display = isDerived ? '' : 'none';
+  if (plcEl) plcEl.disabled = isDerived || !canEditConfig();
+  if (sourceEl) sourceEl.disabled = !canEditConfig();
+  if (bitEl) bitEl.disabled = !canEditConfig();
+
+  if (datatypeEl) {
+    if (isDerived) {
+      fillTagDatatypeSelect(datatypeEl, 'bool');
+      datatypeEl.disabled = true;
+    } else {
+      datatypeEl.disabled = !canEditConfig();
+    }
+  }
+
+  if (writableEl) {
+    if (isDerived) {
+      writableEl.checked = false;
+      writableEl.disabled = true;
+    } else {
+      writableEl.disabled = !canEditConfig();
+    }
+  }
+
+  if (scalingEl) {
+    if (isDerived) {
+      scalingEl.value = 'none';
+      scalingEl.disabled = true;
+      if (scalingLinearRowEl) scalingLinearRowEl.style.display = 'none';
+    } else {
+      scalingEl.disabled = !canEditConfig();
+    }
+  }
+
+  if (isDerived && sourceEl) {
+    const opts = getDerivedBitSourceOptions(connId, excludeTagName);
+    const selected = String(sourceEl.value || '').trim();
+    sourceEl.innerHTML = '';
+    opts.forEach((n) => {
+      const o = document.createElement('option');
+      o.value = n;
+      o.textContent = n;
+      sourceEl.appendChild(o);
+    });
+    if (selected && opts.includes(selected)) sourceEl.value = selected;
+  }
+}
+
 function csvNormalizeHeaderKey(key) {
   return String(key || '')
     .trim()
@@ -3369,7 +3448,9 @@ function showNewTagModal(connectionId) {
 
   if (els.newTagHint) els.newTagHint.textContent = `Creating a new tag under device '${cid}'.`;
   if (els.newTagName) els.newTagName.value = '';
+  if (els.newTagSourceKind) els.newTagSourceKind.value = 'plc';
   if (els.newTagPlc) els.newTagPlc.value = '';
+  if (els.newTagBit) els.newTagBit.value = '0';
   fillTagDatatypeSelect(els.newTagDatatype, 'bool');
   if (els.newTagScan) els.newTagScan.value = '';
   if (els.newTagEnabled) els.newTagEnabled.checked = true;
@@ -3391,6 +3472,32 @@ function showNewTagModal(connectionId) {
   [els.newTagScaling, els.newTagRawLow, els.newTagRawHigh, els.newTagScaledLow, els.newTagScaledHigh, els.newTagScaledDatatype, els.newTagClampLow, els.newTagClampHigh]
     .filter(Boolean)
     .forEach((e) => { e.disabled = !canEditConfig(); });
+
+  if (els.newTagSourceKind) {
+    els.newTagSourceKind.onchange = () => applyTagSourceKindUi({
+      kindEl: els.newTagSourceKind,
+      plcEl: els.newTagPlc,
+      derivedRowEl: els.newTagDerivedRow,
+      sourceEl: els.newTagSourceTag,
+      bitEl: els.newTagBit,
+      datatypeEl: els.newTagDatatype,
+      writableEl: els.newTagWritable,
+      scalingEl: els.newTagScaling,
+      scalingLinearRowEl: els.newTagScalingLinearRow
+    }, { connId: cid, excludeTagName: '' });
+    applyTagSourceKindUi({
+      kindEl: els.newTagSourceKind,
+      plcEl: els.newTagPlc,
+      derivedRowEl: els.newTagDerivedRow,
+      sourceEl: els.newTagSourceTag,
+      bitEl: els.newTagBit,
+      datatypeEl: els.newTagDatatype,
+      writableEl: els.newTagWritable,
+      scalingEl: els.newTagScaling,
+      scalingLinearRowEl: els.newTagScalingLinearRow
+    }, { connId: cid, excludeTagName: '' });
+    els.newTagSourceKind.disabled = !canEditConfig();
+  }
 
   setNewTagStatus('');
   if (els.newTagModal) els.newTagModal.style.display = 'flex';
@@ -3430,30 +3537,46 @@ async function createNewTagFromModal() {
   const name = String(els.newTagName?.value || '').trim();
   if (!name) { setNewTagStatus('Tag Name is required.'); return; }
 
-  const plc_tag_name = String(els.newTagPlc?.value || '').trim();
-  if (!plc_tag_name) { setNewTagStatus('PLC Tag is required.'); return; }
+  const sourceKind = String(els.newTagSourceKind?.value || 'plc').trim().toLowerCase();
+  const isDerived = (sourceKind === 'derived_bit');
 
-  const datatype = String(els.newTagDatatype?.value || '').trim();
+  const plc_tag_name = String(els.newTagPlc?.value || '').trim();
+  const source_tag = String(els.newTagSourceTag?.value || '').trim();
+  const bitRaw = String(els.newTagBit?.value || '').trim();
+  const bit = bitRaw === '' ? null : Math.trunc(Number(bitRaw));
+
+  if (!isDerived && !plc_tag_name) { setNewTagStatus('PLC Tag is required.'); return; }
+  if (isDerived) {
+    if (!source_tag) { setNewTagStatus('Source Tag is required for a Derived Bit.'); return; }
+    if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) { setNewTagStatus('Bit must be between 0 and 63.'); return; }
+  }
+
+  const datatype = isDerived ? 'bool' : String(els.newTagDatatype?.value || '').trim();
   const scanRaw = String(els.newTagScan?.value || '').trim();
   const scan_ms = scanRaw === '' ? null : Math.max(0, Math.trunc(Number(scanRaw) || 0));
   const enabled = Boolean(els.newTagEnabled?.checked);
-  const writable = Boolean(els.newTagWritable?.checked);
+  const writable = isDerived ? false : Boolean(els.newTagWritable?.checked);
   const mqtt_command_allowed = Boolean(els.newTagMqttAllowed?.checked);
-  const scalingRes = readLinearScalingFromUi({
-    scalingEl: els.newTagScaling,
-    rawLowEl: els.newTagRawLow,
-    rawHighEl: els.newTagRawHigh,
-    scaledLowEl: els.newTagScaledLow,
-    scaledHighEl: els.newTagScaledHigh,
-    scaledDatatypeEl: els.newTagScaledDatatype,
-    clampLowEl: els.newTagClampLow,
-    clampHighEl: els.newTagClampHigh,
-  }, datatype);
-  if (!scalingRes.ok) { setNewTagStatus(String(scalingRes.error || 'Invalid scaling settings.')); return; }
-
-  const tag = { connection_id: cid, name, plc_tag_name, datatype, enabled, writable, mqtt_command_allowed };
+  const tag = { connection_id: cid, name, datatype, enabled, writable, mqtt_command_allowed };
+  if (!isDerived) {
+    tag.plc_tag_name = plc_tag_name;
+    const scalingRes = readLinearScalingFromUi({
+      scalingEl: els.newTagScaling,
+      rawLowEl: els.newTagRawLow,
+      rawHighEl: els.newTagRawHigh,
+      scaledLowEl: els.newTagScaledLow,
+      scaledHighEl: els.newTagScaledHigh,
+      scaledDatatypeEl: els.newTagScaledDatatype,
+      clampLowEl: els.newTagClampLow,
+      clampHighEl: els.newTagClampHigh,
+    }, datatype);
+    if (!scalingRes.ok) { setNewTagStatus(String(scalingRes.error || 'Invalid scaling settings.')); return; }
+    if (scalingRes.scaling === 'linear') Object.assign(tag, scalingRes.fields || {});
+  } else {
+    tag.source_tag = source_tag;
+    tag.bit = bit;
+  }
   if (scan_ms != null) tag.scan_ms = scan_ms;
-  if (scalingRes.scaling === 'linear') Object.assign(tag, scalingRes.fields || {});
 
   const key = makeTagKey(tag);
   const exists = state.tagConfigAll.some((t) => makeTagKey(t) === key);
@@ -3615,7 +3738,10 @@ function openWorkspaceItemModal(node) {
 
     const row = getEffectiveTagsAll().find((tt) => String(tt?.connection_id || '') === conn && String(tt?.name || '') === name) || null;
     if (!row) {
+      if (els.editTagSourceKind) els.editTagSourceKind.value = 'plc';
       if (els.editTagPlc) els.editTagPlc.value = '';
+      if (els.editTagSourceTag) els.editTagSourceTag.textContent = '';
+      if (els.editTagBit) els.editTagBit.value = '0';
       fillTagDatatypeSelect(els.editTagDatatype, 'bool');
       if (els.editTagScan) els.editTagScan.value = '';
       if (els.editTagEnabled) els.editTagEnabled.checked = true;
@@ -3632,7 +3758,11 @@ function openWorkspaceItemModal(node) {
       if (els.editTagSaveBtn) els.editTagSaveBtn.disabled = true;
       setEditTagStatus('Tag not found in config. Refresh tag config.');
     } else {
+      const isDerived = (String(row?.source_tag || '').trim() !== '' && Number(row?.bit) >= 0);
+      if (els.editTagSourceKind) els.editTagSourceKind.value = isDerived ? 'derived_bit' : 'plc';
       if (els.editTagPlc) els.editTagPlc.value = String(row?.plc_tag_name || '');
+      if (els.editTagSourceTag) els.editTagSourceTag.value = String(row?.source_tag || '');
+      if (els.editTagBit) els.editTagBit.value = (row?.bit == null) ? '0' : String(row.bit);
       fillTagDatatypeSelect(els.editTagDatatype, String(row?.datatype || 'bool'));
       if (els.editTagScan) els.editTagScan.value = (row?.scan_ms == null) ? '' : String(row.scan_ms);
       if (els.editTagEnabled) els.editTagEnabled.checked = (row?.enabled !== false);
@@ -3648,6 +3778,32 @@ function openWorkspaceItemModal(node) {
       if (els.editTagClampHigh) els.editTagClampHigh.checked = (row?.clamp_high === true);
       if (els.editTagSaveBtn) els.editTagSaveBtn.disabled = false;
       setEditTagStatus('');
+    }
+
+    if (els.editTagSourceKind) {
+      els.editTagSourceKind.onchange = () => applyTagSourceKindUi({
+        kindEl: els.editTagSourceKind,
+        plcEl: els.editTagPlc,
+        derivedRowEl: els.editTagDerivedRow,
+        sourceEl: els.editTagSourceTag,
+        bitEl: els.editTagBit,
+        datatypeEl: els.editTagDatatype,
+        writableEl: els.editTagWritable,
+        scalingEl: els.editTagScaling,
+        scalingLinearRowEl: els.editTagScalingLinearRow
+      }, { connId: conn, excludeTagName: name });
+      applyTagSourceKindUi({
+        kindEl: els.editTagSourceKind,
+        plcEl: els.editTagPlc,
+        derivedRowEl: els.editTagDerivedRow,
+        sourceEl: els.editTagSourceTag,
+        bitEl: els.editTagBit,
+        datatypeEl: els.editTagDatatype,
+        writableEl: els.editTagWritable,
+        scalingEl: els.editTagScaling,
+        scalingLinearRowEl: els.editTagScalingLinearRow
+      }, { connId: conn, excludeTagName: name });
+      els.editTagSourceKind.disabled = !canEditConfig();
     }
 
     if (els.editTagScaling) {
@@ -3846,25 +4002,40 @@ async function saveEditedTagFromModal() {
   if (!newName) { setEditTagStatus('Tag name is required.'); return; }
   if (!canEditConfig() && newName !== name) { setEditTagStatus('Login required to rename tags.'); return; }
 
+  const sourceKind = String(els.editTagSourceKind?.value || 'plc').trim().toLowerCase();
+  const isDerived = (sourceKind === 'derived_bit');
+
   const plc_tag_name = String(els.editTagPlc?.value || '').trim();
-  const datatype = String(els.editTagDatatype?.value || '').trim();
+  const source_tag = String(els.editTagSourceTag?.value || '').trim();
+  const bitRaw = String(els.editTagBit?.value || '').trim();
+  const bit = bitRaw === '' ? null : Math.trunc(Number(bitRaw));
+
+  const datatype = isDerived ? 'bool' : String(els.editTagDatatype?.value || '').trim();
   const scanRaw = String(els.editTagScan?.value || '').trim();
   const enabled = Boolean(els.editTagEnabled?.checked);
-  const writable = Boolean(els.editTagWritable?.checked);
+  const writable = isDerived ? false : Boolean(els.editTagWritable?.checked);
   const mqtt_command_allowed = Boolean(els.editTagMqttAllowed?.checked);
-  const scalingRes = readLinearScalingFromUi({
-    scalingEl: els.editTagScaling,
-    rawLowEl: els.editTagRawLow,
-    rawHighEl: els.editTagRawHigh,
-    scaledLowEl: els.editTagScaledLow,
-    scaledHighEl: els.editTagScaledHigh,
-    scaledDatatypeEl: els.editTagScaledDatatype,
-    clampLowEl: els.editTagClampLow,
-    clampHighEl: els.editTagClampHigh,
-  }, datatype);
 
-  if (!plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
+
+  if (!isDerived && !plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
+  if (isDerived) {
+    if (!source_tag) { setEditTagStatus('Source Tag is required for a Derived Bit.'); return; }
+    if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) { setEditTagStatus('Bit must be between 0 and 63.'); return; }
+  }
+
+  const scalingRes = isDerived
+    ? { ok: true, scaling: 'none', fields: {} }
+    : readLinearScalingFromUi({
+      scalingEl: els.editTagScaling,
+      rawLowEl: els.editTagRawLow,
+      rawHighEl: els.editTagRawHigh,
+      scaledLowEl: els.editTagScaledLow,
+      scaledHighEl: els.editTagScaledHigh,
+      scaledDatatypeEl: els.editTagScaledDatatype,
+      clampLowEl: els.editTagClampLow,
+      clampHighEl: els.editTagClampHigh,
+    }, datatype);
   if (!scalingRes.ok) { setEditTagStatus(String(scalingRes.error || 'Invalid scaling settings.')); return; }
 
   // If renaming, update the base row so the new key is part of the canonical tag list.
@@ -3888,7 +4059,15 @@ async function saveEditedTagFromModal() {
   }
 
   const next = { ...(state.tagConfigAll[idx] || {}) };
-  next.plc_tag_name = plc_tag_name;
+  if (!isDerived) {
+    next.plc_tag_name = plc_tag_name;
+    delete next.source_tag;
+    delete next.bit;
+  } else {
+    delete next.plc_tag_name;
+    next.source_tag = source_tag;
+    next.bit = bit;
+  }
   next.datatype = datatype;
   next.enabled = enabled;
   next.writable = writable;
