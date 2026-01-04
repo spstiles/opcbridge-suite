@@ -1881,35 +1881,51 @@ function downloadDeviceTagsCsv(connectionId) {
     .slice()
     .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
 
-  const headers = [
-    'connection_id',
-    'name',
-    'plc_tag_name',
-    'datatype',
-    'scan_ms',
-    'enabled',
-    'writable',
-    'mqtt_command_allowed',
-    'log_event_on_change',
-    'log_periodic_mode',
-    'log_periodic_interval_sec',
-    'action'
-  ];
+	  const headers = [
+	    'connection_id',
+	    'name',
+	    'plc_tag_name',
+	    'datatype',
+	    'scan_ms',
+	    'enabled',
+	    'writable',
+	    'mqtt_command_allowed',
+	    'scaling',
+	    'raw_low',
+	    'raw_high',
+	    'scaled_low',
+	    'scaled_high',
+	    'clamp_low',
+	    'clamp_high',
+	    'scaled_datatype',
+	    'log_event_on_change',
+	    'log_periodic_mode',
+	    'log_periodic_interval_sec',
+	    'action'
+	  ];
 
-  const rows = tags.map((t) => ({
-    connection_id: cid,
-    name: String(t?.name || '').trim(),
-    plc_tag_name: String(t?.plc_tag_name || '').trim(),
-    datatype: String(t?.datatype || '').trim(),
-    scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
-    enabled: (t?.enabled !== false) ? 'true' : 'false',
-    writable: (t?.writable === true) ? 'true' : 'false',
-    mqtt_command_allowed: (t?.mqtt_command_allowed === true) ? 'true' : 'false',
-    log_event_on_change: (t?.log_event_on_change === true) ? 'true' : 'false',
-    log_periodic_mode: String(t?.log_periodic_mode || '').trim(),
-    log_periodic_interval_sec: (t?.log_periodic_interval_sec == null) ? '' : String(t.log_periodic_interval_sec),
-    action: ''
-  }));
+	  const rows = tags.map((t) => ({
+	    connection_id: cid,
+	    name: String(t?.name || '').trim(),
+	    plc_tag_name: String(t?.plc_tag_name || '').trim(),
+	    datatype: String(t?.datatype || '').trim(),
+	    scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
+	    enabled: (t?.enabled !== false) ? 'true' : 'false',
+	    writable: (t?.writable === true) ? 'true' : 'false',
+	    mqtt_command_allowed: (t?.mqtt_command_allowed === true) ? 'true' : 'false',
+	    scaling: String(t?.scaling || '').trim(),
+	    raw_low: (t?.raw_low == null) ? '' : String(t.raw_low),
+	    raw_high: (t?.raw_high == null) ? '' : String(t.raw_high),
+	    scaled_low: (t?.scaled_low == null) ? '' : String(t.scaled_low),
+	    scaled_high: (t?.scaled_high == null) ? '' : String(t.scaled_high),
+	    clamp_low: (t?.clamp_low === true) ? 'true' : 'false',
+	    clamp_high: (t?.clamp_high === true) ? 'true' : 'false',
+	    scaled_datatype: String(t?.scaled_datatype || '').trim(),
+	    log_event_on_change: (t?.log_event_on_change === true) ? 'true' : 'false',
+	    log_periodic_mode: String(t?.log_periodic_mode || '').trim(),
+	    log_periodic_interval_sec: (t?.log_periodic_interval_sec == null) ? '' : String(t.log_periodic_interval_sec),
+	    action: ''
+	  }));
 
   const safe = cid.replace(/[^a-z0-9._-]+/gi, '_');
   downloadTextFile({
@@ -2034,6 +2050,14 @@ function parseIntLoose(value, defaultValue) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return defaultValue;
   return Math.trunc(n);
+}
+
+function parseFloatLoose(value, defaultValue) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return defaultValue;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return defaultValue;
+  return n;
 }
 
 function csvNormalizeHeaderKey(key) {
@@ -2209,15 +2233,43 @@ async function importTagsCsvIntoWorkspace(connectionId) {
     const datatype = String(csvGet(r, 'datatype') || '').trim();
     if (datatype) base.datatype = datatype;
     const scan = parseIntLoose(csvGet(r, 'scan_ms') || csvGet(r, 'scan') || csvGet(r, 'scanms'), null);
-    if (scan == null) delete base.scan_ms;
-    else base.scan_ms = Math.max(0, scan);
-    base.enabled = parseBoolLoose(csvGet(r, 'enabled'), true);
-    base.writable = parseBoolLoose(csvGet(r, 'writable'), false);
-    base.mqtt_command_allowed = parseBoolLoose(csvGet(r, 'mqtt_command_allowed') || csvGet(r, 'mqtt_allowed') || csvGet(r, 'mqtt_command'), false);
-    base.log_event_on_change = parseBoolLoose(csvGet(r, 'log_event_on_change') || csvGet(r, 'log_on_change'), false);
+	    if (scan == null) delete base.scan_ms;
+	    else base.scan_ms = Math.max(0, scan);
+	    base.enabled = parseBoolLoose(csvGet(r, 'enabled'), true);
+	    base.writable = parseBoolLoose(csvGet(r, 'writable'), false);
+	    base.mqtt_command_allowed = parseBoolLoose(csvGet(r, 'mqtt_command_allowed') || csvGet(r, 'mqtt_allowed') || csvGet(r, 'mqtt_command'), false);
 
-    const mode = String(csvGet(r, 'log_periodic_mode') || '').trim();
-    if (mode) base.log_periodic_mode = mode;
+	    const scaling = String(csvGet(r, 'scaling') || '').trim().toLowerCase();
+	    if (scaling === 'none' || scaling === 'linear') base.scaling = scaling;
+	    else if (scaling) delete base.scaling;
+
+	    const rawLow = parseFloatLoose(csvGet(r, 'raw_low'), null);
+	    if (rawLow == null) delete base.raw_low;
+	    else base.raw_low = rawLow;
+	    const rawHigh = parseFloatLoose(csvGet(r, 'raw_high'), null);
+	    if (rawHigh == null) delete base.raw_high;
+	    else base.raw_high = rawHigh;
+	    const scaledLow = parseFloatLoose(csvGet(r, 'scaled_low'), null);
+	    if (scaledLow == null) delete base.scaled_low;
+	    else base.scaled_low = scaledLow;
+	    const scaledHigh = parseFloatLoose(csvGet(r, 'scaled_high'), null);
+	    if (scaledHigh == null) delete base.scaled_high;
+	    else base.scaled_high = scaledHigh;
+
+	    const clampLowRaw = csvGet(r, 'clamp_low');
+	    if (String(clampLowRaw ?? '').trim() === '') delete base.clamp_low;
+	    else base.clamp_low = parseBoolLoose(clampLowRaw, false);
+	    const clampHighRaw = csvGet(r, 'clamp_high');
+	    if (String(clampHighRaw ?? '').trim() === '') delete base.clamp_high;
+	    else base.clamp_high = parseBoolLoose(clampHighRaw, false);
+
+	    const scaledDatatype = String(csvGet(r, 'scaled_datatype') || '').trim();
+	    if (scaledDatatype) base.scaled_datatype = scaledDatatype;
+	    else delete base.scaled_datatype;
+	    base.log_event_on_change = parseBoolLoose(csvGet(r, 'log_event_on_change') || csvGet(r, 'log_on_change'), false);
+
+	    const mode = String(csvGet(r, 'log_periodic_mode') || '').trim();
+	    if (mode) base.log_periodic_mode = mode;
     else delete base.log_periodic_mode;
     const intervalSec = parseIntLoose(csvGet(r, 'log_periodic_interval_sec') || csvGet(r, 'log_interval_sec'), null);
     if (intervalSec == null) delete base.log_periodic_interval_sec;
