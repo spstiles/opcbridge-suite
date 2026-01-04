@@ -6422,6 +6422,7 @@ int main(int argc, char **argv) {
 					/* SCADA-style layout for the workspace Tag modal (scoped). */
 					#ws-tag-modal .ws-s-form {
 					  max-width: 720px;
+					  box-sizing: border-box;
 					}
 					#ws-tag-modal .ws-s-form-row {
 					  display: grid;
@@ -6429,6 +6430,8 @@ int main(int argc, char **argv) {
 					  gap: 10px;
 					  align-items: center;
 					  margin-bottom: 10px;
+					  min-width: 0;
+					  box-sizing: border-box;
 					}
 					@media (max-width: 700px) {
 					  #ws-tag-modal .ws-s-form-row {
@@ -6452,6 +6455,8 @@ int main(int argc, char **argv) {
 					  font-size: 12px;
 					  user-select: text;
 					  -webkit-user-select: text;
+					  box-sizing: border-box;
+					  min-width: 0;
 					}
 					#ws-tag-modal .ws-s-form input.ws-inline-check {
 					  width: auto;
