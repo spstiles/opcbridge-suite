@@ -2467,6 +2467,32 @@ std::string build_tag_conn_str(const ConnectionConfig &c,
     return s;
 }
 
+static bool wait_for_tag_ready(int32_t handle, int timeout_ms, std::string &outErr) {
+    if (handle < 0) {
+        outErr = std::string("plc_tag_create failed: ") + plc_tag_decode_error(handle);
+        return false;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(0, timeout_ms));
+    int32_t status = PLCTAG_STATUS_PENDING;
+    while (true) {
+        status = plc_tag_status(handle);
+        if (status == PLCTAG_STATUS_OK) {
+            outErr.clear();
+            return true;
+        }
+        if (status != PLCTAG_STATUS_PENDING) {
+            outErr = std::string("tag status: ") + plc_tag_decode_error(status);
+            return false;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            outErr = std::string("tag status: timeout (") + plc_tag_decode_error(status) + ")";
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 static void opcua_onWrite(UA_Server *server,
                           const UA_NodeId *sessionId,
                           void *sessionContext,
@@ -3640,23 +3666,19 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
                                 ctx.tags.push_back(std::move(rt));
                                 continue;
                             }
-                            std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
+            std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
 
-            int32_t handle = plc_tag_create(tag_str.c_str(),
-                                            conn_cfg.default_timeout_ms);
-            int32_t status = plc_tag_status(handle);
-
-            if (status != PLCTAG_STATUS_OK) {
-                std::cerr << "[load] Error creating tag "
-                          << tc.logical_name << " on connection '"
-                          << conn_id << "': "
-                          << plc_tag_decode_error(status) << std::endl;
-                plc_tag_destroy(handle);
+            const int32_t handle = plc_tag_create(tag_str.c_str(), conn_cfg.default_timeout_ms);
+            std::string readyErr;
+            if (!wait_for_tag_ready(handle, conn_cfg.default_timeout_ms, readyErr)) {
+                std::cerr << "[load] Error creating tag '" << tc.logical_name
+                          << "' on connection '" << conn_id << "': " << readyErr
+                          << " (timeout_ms=" << conn_cfg.default_timeout_ms << ")\n";
+                if (handle >= 0) plc_tag_destroy(handle);
                 rt.handle = PLCTAG_ERR_NOT_FOUND;
             } else {
-                rt.handle    = handle;
+                rt.handle = handle;
                 rt.next_poll = std::chrono::steady_clock::now();
-                // NEW: initialize periodic schedule if enabled
                 schedule_next_periodic(rt);
             }
             ctx.tags.push_back(rt);

@@ -128,6 +128,9 @@ Each file defines a single PLC:
   "debug": 0
 }
 
+Notes:
+- If tag creation or reads time out (common on slower links/VPNs or busy PLCs), raise `default_timeout_ms` and/or `default_read_ms` for that connection (e.g. 3000–10000ms).
+
 3.2 Tags — config/tags/*.json
 
 Each file defines a set of tags belonging to one connection:
