@@ -110,7 +110,7 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 /* Desktop-like workspace */
 .workspace {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 420px 1fr;
   grid-template-rows: 1fr 1fr;
   gap: 12px;
   height: min(72vh, 900px);

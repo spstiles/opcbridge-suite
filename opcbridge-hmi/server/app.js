@@ -31,6 +31,8 @@ const readVersionFile = (filePath) => {
 
 const SUITE_VERSION = readVersionFile(SUITE_VERSION_PATH);
 const COMPONENT_VERSION = readVersionFile(COMPONENT_VERSION_PATH);
+const IMAGE_UPLOAD_LIMIT_MB = Math.max(1, Math.min(1024, Number(process.env.OPCBRIDGE_HMI_IMAGE_UPLOAD_LIMIT_MB) || 250));
+const IMAGE_UPLOAD_LIMIT_BYTES = IMAGE_UPLOAD_LIMIT_MB * 1024 * 1024;
 
 const readConfig = async () => {
   let raw = "";
@@ -578,6 +580,71 @@ const createApp = () => {
     }
   });
 
+  // Streaming upload to avoid buffering large files in memory.
+  app.post("/api/img-files/upload", async (req, res) => {
+    try {
+      const filename = String(req.query?.filename || "").trim();
+      const info = resolveImagePath(filename);
+      if (!info) return res.status(400).json({ error: "Invalid image filename." });
+
+      const contentLength = Number(req.headers["content-length"] || 0);
+      if (Number.isFinite(contentLength) && contentLength > 0 && contentLength > IMAGE_UPLOAD_LIMIT_BYTES) {
+        return res.status(413).json({ error: `Upload too large (max ${IMAGE_UPLOAD_LIMIT_MB} MB).` });
+      }
+
+      await fsp.mkdir(IMAGES_DIR, { recursive: true });
+
+      const tmpPath = `${info.fullPath}.uploading`;
+      let written = 0;
+      let aborted = false;
+      const out = fs.createWriteStream(tmpPath, { flags: "w" });
+
+      const abort = async () => {
+        aborted = true;
+        try { out.destroy(new Error("upload_too_large")); } catch {}
+        try { req.destroy(); } catch {}
+        try { await fsp.unlink(tmpPath); } catch {}
+      };
+
+      req.on("data", (chunk) => {
+        written += chunk.length;
+        if (!aborted && written > IMAGE_UPLOAD_LIMIT_BYTES) {
+          abort()
+            .then(() => {
+              if (!res.headersSent) {
+                res.status(413).json({ error: `Upload too large (max ${IMAGE_UPLOAD_LIMIT_MB} MB).` });
+              }
+            })
+            .catch(() => {});
+        }
+      });
+
+      await new Promise((resolve, reject) => {
+        out.on("error", reject);
+        req.on("error", reject);
+        out.on("finish", resolve);
+        req.pipe(out);
+      });
+
+      if (aborted) return;
+
+      if (written <= 0) {
+        try { await fsp.unlink(tmpPath); } catch {}
+        return res.status(400).json({ error: "Missing image body." });
+      }
+
+      await fsp.rename(tmpPath, info.fullPath);
+      try { await audit?.(req, { event: "img.upload", filename: info.filename }); } catch {}
+      res.json({ ok: true, filename: info.filename });
+    } catch (error) {
+      if (res.headersSent) return;
+      if (String(error || "").includes("upload_too_large")) {
+        return res.status(413).json({ error: `Upload too large (max ${IMAGE_UPLOAD_LIMIT_MB} MB).` });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   app.get("/api/svg-files/:name", async (req, res) => {
     try {
       const info = resolveSvgPath(req.params.name);
@@ -587,6 +654,21 @@ const createApp = () => {
     } catch (error) {
       if (String(error).includes("ENOENT")) {
         return res.status(404).json({ error: "SVG not found." });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.delete("/api/img-files/:name", async (req, res) => {
+    try {
+      const info = resolveImagePath(req.params.name);
+      if (!info) return res.status(400).json({ error: "Invalid image filename." });
+      await fsp.unlink(info.fullPath);
+      try { await audit?.(req, { event: "img.delete", filename: info.filename }); } catch {}
+      res.json({ ok: true });
+    } catch (error) {
+      if (String(error).includes("ENOENT")) {
+        return res.status(404).json({ error: "Image not found." });
       }
       res.status(500).json({ error: String(error) });
     }
@@ -637,6 +719,14 @@ const createApp = () => {
       }
       res.status(500).json({ error: String(error) });
     }
+  });
+
+  // Make upload-size failures readable in the UI (instead of an HTML error page).
+  app.use((err, req, res, next) => {
+    if (!err) return next();
+    const isTooLarge = err?.type === "entity.too.large" || err?.name === "PayloadTooLargeError";
+    if (!isTooLarge) return next(err);
+    res.status(413).json({ error: `Upload too large (max ${IMAGE_UPLOAD_LIMIT_MB} MB).` });
   });
 
   return app;

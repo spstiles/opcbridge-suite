@@ -115,6 +115,8 @@ const indicatorAddStateBtn = document.getElementById("indicatorAddStateBtn");
 const indicatorRemoveStateBtn = document.getElementById("indicatorRemoveStateBtn");
 const indicatorStatesList = document.getElementById("indicatorStatesList");
 const libraryImagesGrid = document.getElementById("libraryImagesGrid");
+const imgUploadBtn = document.getElementById("imgUploadBtn");
+const imgUploadInput = document.getElementById("imgUploadInput");
 const hmiSvg = document.getElementById("hmi-svg");
 const jsoncApplyBtn = document.getElementById("jsoncApplyBtn");
 const jsoncSaveBtn = document.getElementById("jsoncSaveBtn");
@@ -252,6 +254,8 @@ const screenBgSwatches = document.getElementById("screenBgSwatches");
 const screenBorderSwatches = document.getElementById("screenBorderSwatches");
 const screenBgSwatchBtn = document.getElementById("screenBgSwatchBtn");
 const screenBorderSwatchBtn = document.getElementById("screenBorderSwatchBtn");
+const screenBgImageSelect = document.getElementById("screenBgImage");
+const screenBgImageClearBtn = document.getElementById("screenBgImageClear");
 const screenProps = document.getElementById("screenProps");
 const textProps = document.getElementById("textProps");
 const textValueInput = document.getElementById("textValue");
@@ -2727,7 +2731,7 @@ const explodeSelectedSvgImage = async () => {
   const src = String(obj.src || "").trim();
   if (!/\.svg$/i.test(src)) return;
 
-  const response = await fetch(`img/${encodeURIComponent(src)}`, { cache: "no-store" });
+  const response = await fetch(imgUrl(src), { cache: "no-store" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const raw = await response.text();
   const doc = new DOMParser().parseFromString(raw, "image/svg+xml");
@@ -4231,7 +4235,53 @@ const loadImageFiles = async () => {
   }
   imageFilesLoading = false;
   renderLibraryImages();
+  refreshScreenBackgroundImageOptions();
   updatePropertiesPanel();
+};
+
+const uploadImageFile = async (file) => {
+  if (!file) return null;
+  const name = String(file.name || "").trim();
+  if (!name) throw new Error("Missing filename.");
+  const response = await fetch(`/api/img-files/upload?filename=${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let message = text;
+    try { message = JSON.parse(text)?.error || text; } catch { /* ignore */ }
+    throw new Error(message || `HTTP ${response.status}`);
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed?.filename || name;
+  } catch {
+    return name;
+  }
+};
+
+const refreshScreenBackgroundImageOptions = () => {
+  if (!screenBgImageSelect) return;
+  const current = String(currentScreenObj?.backgroundImage || "").trim();
+  const prevValue = String(screenBgImageSelect.value || "").trim() || current;
+
+  const options = [{ value: "", label: "(none)" }];
+  (imageFilesCache || []).forEach((file) => {
+    options.push({ value: file, label: file });
+  });
+
+  screenBgImageSelect.textContent = "";
+  options.forEach((opt) => {
+    const o = document.createElement("option");
+    o.value = opt.value;
+    o.textContent = opt.label;
+    screenBgImageSelect.appendChild(o);
+  });
+
+  const desired = prevValue && options.some((o) => o.value === prevValue) ? prevValue : "";
+  screenBgImageSelect.value = desired;
 };
 
 const ensureImageLibraryContextMenu = () => {
@@ -4295,6 +4345,7 @@ const showImageLibraryContextMenu = (clientX, clientY, file) => {
   };
 
   const isSvg = /\.svg$/i.test(imageLibraryContextMenuFile);
+  const isImage = /\.(svg|png|jpe?g|gif|webp|bmp)$/i.test(imageLibraryContextMenuFile);
   addItem(
     "Delete SVG…",
     async () => {
@@ -4312,6 +4363,30 @@ const showImageLibraryContextMenu = (clientX, clientY, file) => {
       renderLibraryImages();
     },
     !isSvg
+  );
+
+  addItem(
+    "Delete image…",
+    async () => {
+      if (!isImage || isSvg) return;
+      const ok = window.confirm(`Delete ${imageLibraryContextMenuFile}? This cannot be undone.`);
+      if (!ok) return;
+      const response = await fetch(`/api/img-files/${encodeURIComponent(imageLibraryContextMenuFile)}`, { method: "DELETE" });
+      const text = await response.text();
+      if (!response.ok) {
+        let message = text;
+        try { message = JSON.parse(text)?.error || text; } catch { /* ignore */ }
+        throw new Error(message || `HTTP ${response.status}`);
+      }
+      imageFilesCache = imageFilesCache.filter((name) => name !== imageLibraryContextMenuFile);
+      // If the current screen is using this background image, clear it.
+      if (currentScreenObj && String(currentScreenObj.backgroundImage || "") === imageLibraryContextMenuFile) {
+        updateScreenProperty({ backgroundImage: "" });
+      }
+      renderLibraryImages();
+      refreshScreenBackgroundImageOptions();
+    },
+    !isImage || isSvg
   );
 
   addItem("Cancel", async () => {});
@@ -4360,13 +4435,13 @@ const renderLibraryImages = () => {
     thumb.alt = file;
     thumb.loading = "eager";
     thumb.decoding = "async";
-    thumb.src = `img/${encodeURIComponent(file)}`;
+    thumb.src = imgUrl(file);
     thumb.addEventListener("error", () => {
       thumb.style.display = "none";
       const fallback = document.createElement("div");
       fallback.className = "library-image-thumb library-image-thumb-fallback";
       fallback.textContent = "Image failed";
-      fallback.title = `Failed to load img/${file}`;
+      fallback.title = `Failed to load /img/${file}`;
       item.insertBefore(fallback, item.firstChild);
     });
 
@@ -4422,6 +4497,8 @@ const stripJsonComments = (raw) => {
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 };
+
+const imgUrl = (filename) => `/img/${encodeURIComponent(String(filename || ""))}`;
 
 const parseJsonc = (raw) => {
   const cleaned = stripJsonComments(raw);
@@ -4827,7 +4904,7 @@ const renderIndicatorInto = (parent, obj) => {
     image.setAttribute("width", imageW);
     image.setAttribute("height", imageH);
     image.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    setImageHref(image, `img/${encodeURIComponent(imageName)}`);
+    setImageHref(image, imgUrl(imageName));
     content.appendChild(image);
   }
 
@@ -4908,7 +4985,7 @@ const renderObjectInto = (parent, obj) => {
     image.setAttribute("width", w);
     image.setAttribute("height", h);
     image.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    setImageHref(image, `img/${encodeURIComponent(href)}`);
+    setImageHref(image, imgUrl(href));
     if (hasRotation) {
       const cx = x + w / 2;
       const cy = y + h / 2;
@@ -5863,7 +5940,20 @@ const renderScreen = () => {
   document.documentElement.style.setProperty("--screen-height", `${screenHeight}px`);
   hmiSvg.setAttribute("viewBox", `0 0 ${screenWidth} ${screenHeight}`);
   const resolvedBg = (background && background !== "none") ? background : "transparent";
-  hmiSvg.style.background = resolvedBg;
+  hmiSvg.style.background = "";
+  hmiSvg.style.backgroundColor = resolvedBg;
+  const bgImage = String(currentScreenObj.backgroundImage || "").trim();
+  if (bgImage) {
+    hmiSvg.style.backgroundImage = `url("${imgUrl(bgImage)}")`;
+    hmiSvg.style.backgroundSize = "cover";
+    hmiSvg.style.backgroundRepeat = "no-repeat";
+    hmiSvg.style.backgroundPosition = "center";
+  } else {
+    hmiSvg.style.backgroundImage = "";
+    hmiSvg.style.backgroundSize = "";
+    hmiSvg.style.backgroundRepeat = "";
+    hmiSvg.style.backgroundPosition = "";
+  }
   document.documentElement.style.setProperty("--screen-bg", resolvedBg);
   hmiSvg.textContent = "";
   didClear = true;
@@ -5928,7 +6018,7 @@ const renderScreen = () => {
 	        const cy = y + h / 2;
 	        image.setAttribute("transform", `rotate(${rotation} ${cx} ${cy})`);
 	      }
-	      setImageHref(image, `img/${encodeURIComponent(href)}`);
+	      setImageHref(image, imgUrl(href));
 	      hmiSvg.appendChild(image);
 	      renderedElements.push(image);
 	      renderedElementMeta.push({ el: image, index, type: "image" });
@@ -6828,11 +6918,13 @@ const syncEditorFromScreen = () => {
 
 const syncPropertiesFromScreen = () => {
   if (!currentScreenObj) return;
-  const { width, height, background, border } = currentScreenObj;
+  const { width, height, background, border, backgroundImage } = currentScreenObj;
   if (screenWidthInput) screenWidthInput.value = Number(width) || "";
   if (screenHeightInput) screenHeightInput.value = Number(height) || "";
   if (screenBgInput) screenBgInput.value = background || "#202533";
   if (screenBgTextInput) screenBgTextInput.value = background || "";
+  refreshScreenBackgroundImageOptions();
+  if (screenBgImageSelect) screenBgImageSelect.value = String(backgroundImage || "").trim();
   const borderEnabled = Boolean(border?.enabled);
   if (screenBorderEnabledInput) screenBorderEnabledInput.checked = borderEnabled;
   if (screenBorderColorRow) screenBorderColorRow.classList.toggle("is-hidden", !borderEnabled);
@@ -9912,6 +10004,40 @@ if (jsoncEditor) {
   });
 }
 
+if (imgUploadBtn && imgUploadInput) {
+  imgUploadBtn.addEventListener("click", () => {
+    if (!isEditMode) {
+      showHmiToast("Switch to Edit mode to upload images.");
+      return;
+    }
+    if (!canEdit()) {
+      showHmiToast("Login required to upload images.");
+      return;
+    }
+    imgUploadInput.value = "";
+    imgUploadInput.click();
+  });
+
+  imgUploadInput.addEventListener("change", async () => {
+    if (!canEdit()) return;
+    const files = Array.from(imgUploadInput.files || []);
+    if (!files.length) return;
+    try {
+      setEditorStatusSafe("Uploading image(s)…");
+      showHmiToast(`Uploading ${files.length} image(s)…`, 4000);
+      for (const file of files) {
+        await uploadImageFile(file);
+      }
+      await loadImageFiles();
+      setEditorStatusSafe("Image upload complete.");
+      showHmiToast(`Uploaded ${files.length} image(s).`, 6000);
+    } catch (error) {
+      setEditorStatusSafe(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
+      showHmiToast(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`, 15000);
+    }
+  });
+}
+
 if (screenWidthInput) {
   screenWidthInput.addEventListener("change", () => {
     const value = Number(screenWidthInput.value);
@@ -9944,6 +10070,20 @@ if (screenBgTextInput) {
       updateScreenProperty({ background: value });
       if (screenBgInput) screenBgInput.value = value;
     }
+  });
+}
+
+if (screenBgImageSelect) {
+  screenBgImageSelect.addEventListener("change", () => {
+    const value = String(screenBgImageSelect.value || "").trim();
+    updateScreenProperty({ backgroundImage: value || "" });
+  });
+}
+
+if (screenBgImageClearBtn) {
+  screenBgImageClearBtn.addEventListener("click", () => {
+    if (screenBgImageSelect) screenBgImageSelect.value = "";
+    updateScreenProperty({ backgroundImage: "" });
   });
 }
 

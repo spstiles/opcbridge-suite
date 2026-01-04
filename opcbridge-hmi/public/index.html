@@ -156,6 +156,10 @@
 	            <button id="indicatorToolBtn" class="panel-btn" type="button" draggable="true">Indicator</button>
 	          </div>
 	          <div class="editor-section-title">Images</div>
+            <div class="library-items" style="margin-bottom: 6px;">
+              <button id="imgUploadBtn" class="panel-btn" type="button">Upload image…</button>
+              <input id="imgUploadInput" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,image/*" multiple hidden />
+            </div>
 	          <div id="libraryImagesGrid" class="library-images-grid" aria-label="Image library"></div>
 	        </div>
 
@@ -177,6 +181,13 @@
                 <input id="screenBgText" type="text" placeholder="#202533" />
                 <button id="screenBgSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
                 <div id="screenBgSwatches" class="swatch-popover" aria-label="Background swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="screenBgImage">Background Image</label>
+              <div class="prop-inline">
+                <select id="screenBgImage"></select>
+                <button id="screenBgImageClear" class="panel-btn" type="button">Clear</button>
               </div>
             </div>
             <div class="prop-group-title">Border</div>

@@ -831,6 +831,7 @@ function isAllowedOpcbridgePath(upstreamPathname) {
   if (upstreamPathname === '/health' || upstreamPathname === '/tags' || upstreamPathname === '/events') return true;
   if (upstreamPathname === '/alarms' || upstreamPathname === '/alarm-history') return true;
   if (upstreamPathname === '/info' || upstreamPathname === '/metadata' || upstreamPathname === '/metrics') return true;
+  if (upstreamPathname === '/reload/status') return true;
   if (upstreamPathname.startsWith('/auth/')) return true;
   if (upstreamPathname.startsWith('/config/')) return true;
   if (upstreamPathname === '/reload' || upstreamPathname === '/write') return true;

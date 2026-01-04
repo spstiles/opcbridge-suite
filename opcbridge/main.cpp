@@ -9352,8 +9352,9 @@ async function doWrite(connectionId, tagName) {
             body: JSON.stringify({ token: WRITE_TOKEN })
         });
         const data = await resp.json();
-        if (data.ok) {
-            setStatus("Reload OK: " + (data.message || ""), "status-ok");
+
+        const applyReloadSuccessUi = async (message) => {
+            setStatus("Reload OK: " + (message || ""), "status-ok");
             const now = new Date();
             if (lastEl) {
                 lastEl.textContent = "Last successful reload: " + now.toLocaleString();
@@ -9370,11 +9371,51 @@ async function doWrite(connectionId, tagName) {
                 // Refresh workspace config view after reload so the tree/properties reflect what's on disk.
                 wsInit();
             }
-            return true;
-        } else {
-            setStatus("Reload FAILED: " + (data.error || "unknown error"), "status-error");
-            return false;
+        };
+
+        const waitForReloadDone = async ({ gen, maxWaitMs = 180000, intervalMs = 750 } = {}) => {
+            const start = Date.now();
+            while ((Date.now() - start) < maxWaitMs) {
+                try {
+                    const r = await fetch("/reload/status");
+                    const s = await r.json();
+                    const sGen = (typeof s.gen === "number") ? s.gen : 0;
+                    if (typeof gen === "number" && sGen < gen) {
+                        // status still points at an older reload; keep polling
+                    } else if (s && s.done) {
+                        return { done: true, ok: !!s.ok, error: (s.error || "") };
+                    }
+                } catch (e) {
+                    // ignore and retry
+                }
+                await new Promise(resolve => setTimeout(resolve, intervalMs));
+            }
+            return { done: false, ok: false, timeout: true };
+        };
+
+        if (data.ok && data.pending) {
+            const gen = (typeof data.gen === "number") ? data.gen : undefined;
+            setStatus("Reload in progress...", "status-degraded");
+            const r = await waitForReloadDone({ gen });
+            if (r.done && r.ok) {
+                await applyReloadSuccessUi("Config reload successful.");
+                return true;
+            }
+            if (r.done && !r.ok) {
+                setStatus("Reload FAILED: " + (r.error || "unknown error"), "status-error");
+                return false;
+            }
+            setStatus("Reload still in progress. Please wait and refresh.", "status-degraded");
+            return true; // not a failure; avoid misleading error messages
         }
+
+        if (data.ok) {
+            await applyReloadSuccessUi(data.message || "");
+            return true;
+        }
+
+        setStatus("Reload FAILED: " + (data.error || "unknown error"), "status-error");
+        return false;
     } catch (e) {
         setStatus("Reload exception: " + e.toString(), "status-error");
         return false;
@@ -11175,7 +11216,7 @@ window.addEventListener("load", startAutoRefresh);
                 res.set_content(jt.dump(2), "application/json");
             });
 
-            // POST /write
+	            // POST /write
             svr.Post("/write", [&](const httplib::Request &req, httplib::Response &res) {
                 json resp;
                 try {
@@ -11258,9 +11299,13 @@ window.addEventListener("load", startAutoRefresh);
 	                            return g_reloadState.done;
 	                        });
 	                        if (!finished) {
-	                            resp["ok"] = false;
-	                            resp["error"] = "Reload timed out waiting for main thread.";
-	                            res.status = 504;
+	                            // Reload is still in progress; return a non-error so callers don't show a
+	                            // misleading failure when large configs take longer than the wait timeout.
+	                            resp["ok"] = true;
+	                            resp["pending"] = true;
+	                            resp["gen"] = newGen;
+	                            resp["message"] = "Reload started; still in progress.";
+	                            res.status = 202;
 	                            res.set_content(resp.dump(2), "application/json");
 	                            return;
 	                        }
@@ -11277,6 +11322,8 @@ window.addEventListener("load", startAutoRefresh);
 	                    }
 
 	                    resp["ok"] = true;
+	                    resp["pending"] = false;
+	                    resp["gen"] = newGen;
 	                    resp["message"] = "Config reload successful.";
 	                    res.status = 200;
 	                } catch (const std::exception &ex) {
@@ -11287,6 +11334,24 @@ window.addEventListener("load", startAutoRefresh);
 
                 res.set_content(resp.dump(2), "application/json");
             });
+
+	            // GET /reload/status
+	            // Public (read-only) status so UIs can show progress without incorrectly reporting failure.
+	            svr.Get("/reload/status", [&](const httplib::Request &, httplib::Response &res) {
+	                json resp;
+	                {
+	                    std::lock_guard<std::mutex> lk(g_reloadMutex);
+	                    resp["requested"] = g_reloadState.requested;
+	                    resp["in_progress"] = g_reloadState.in_progress;
+	                    resp["done"] = g_reloadState.done;
+	                    resp["ok"] = g_reloadState.ok;
+	                    resp["gen"] = g_reloadState.gen;
+	                    resp["error"] = g_reloadState.error;
+	                }
+	                resp["ok_status"] = true;
+	                res.status = 200;
+	                res.set_content(resp.dump(2), "application/json");
+	            });
 
 	            // /health
 	            svr.Get("/health", [&](const httplib::Request &, httplib::Response &res) {

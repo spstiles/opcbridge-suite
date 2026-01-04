@@ -1723,7 +1723,33 @@ async function apiJson(url, { method, bodyObj } = {}) {
 }
 
 async function opcbridgeReload() {
-  await apiPostJson('/api/opcbridge/reload', {});
+  const r = await apiPostJson('/api/opcbridge/reload', {});
+  if (r && r.pending) {
+    const gen = (typeof r.gen === 'number') ? r.gen : null;
+    await waitForOpcbridgeReloadDone({ gen });
+  }
+}
+
+async function waitForOpcbridgeReloadDone({ gen, maxWaitMs = 180000, intervalMs = 750 } = {}) {
+  const start = Date.now();
+  while ((Date.now() - start) < maxWaitMs) {
+    try {
+      const s = await apiGet('/api/opcbridge/reload/status');
+      const sGen = (typeof s?.gen === 'number') ? s.gen : 0;
+      if (typeof gen === 'number' && sGen < gen) {
+        // Still reporting an older reload; keep polling.
+      } else if (s && s.done) {
+        if (s.ok) return true;
+        throw new Error(String(s.error || 'Reload failed'));
+      }
+    } catch (err) {
+      // If the status endpoint is temporarily unavailable during reload, keep waiting.
+      const msg = String(err?.message || err || '');
+      if (msg.toLowerCase().includes('blocked path')) throw err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
 }
 
 function stripJsonComments(text) {
