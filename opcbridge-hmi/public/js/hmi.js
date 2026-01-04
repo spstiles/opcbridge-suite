@@ -1887,6 +1887,8 @@ let runtimeScreenHistory = [];
 let runtimeScreenHistoryIndex = -1;
 let runtimeHasNavigated = false;
 
+let viewportScreenHistoryById = new Map(); // viewportId -> { stack: string[], index: number }
+
 window.addEventListener("error", (event) => {
   const message = event?.message || "Unknown error";
   setEditorStatusSafe(`Runtime error: ${message}`);
@@ -2021,6 +2023,23 @@ const setRuntimeHistoryBase = (id) => {
   runtimeScreenHistory = [cleaned];
   runtimeScreenHistoryIndex = 0;
   runtimeHasNavigated = false;
+};
+
+const initViewportHistoriesForCurrentScreen = () => {
+  // Viewports are part of the current (top-level) screen; reset when the main screen changes.
+  viewportScreenHistoryById = new Map();
+  if (!currentScreenObj || !Array.isArray(currentScreenObj.objects)) return;
+  currentScreenObj.objects.forEach((obj) => {
+    if (!obj || obj.type !== "viewport") return;
+    const viewportId = String(obj.id || "").trim();
+    if (!viewportId) return;
+    const targetId = String(obj.target || obj.screenId || obj.targetScreen || obj.targetId || "").trim();
+    if (targetId) {
+      viewportScreenHistoryById.set(viewportId, { stack: [targetId], index: 0 });
+    } else {
+      viewportScreenHistoryById.set(viewportId, { stack: [], index: -1 });
+    }
+  });
 };
 
 const ensureRuntimeHistoryForCurrentScreen = () => {
@@ -5773,9 +5792,64 @@ const loadViewportTarget = (viewportId, screenId) => {
     (obj) => obj?.type === "viewport" && obj.id === viewportId
   );
   if (!viewport) return;
+
+  if (!isEditMode) {
+    const id = String(viewportId || "").trim();
+    const target = String(screenId || "").trim();
+    if (id && target) {
+      const entry = viewportScreenHistoryById.get(id) || { stack: [], index: -1 };
+      if (entry.index >= 0 && entry.index < entry.stack.length && entry.stack[entry.index] === target) {
+        // no-op
+      } else {
+        if (entry.index >= 0 && entry.index < entry.stack.length - 1) {
+          entry.stack = entry.stack.slice(0, entry.index + 1);
+        }
+        entry.stack.push(target);
+        entry.index = entry.stack.length - 1;
+      }
+      viewportScreenHistoryById.set(id, entry);
+    }
+  }
+
   viewport.target = screenId;
   renderScreen();
   scheduleWsSubscribeRefresh();
+};
+
+const viewportGoBack = (viewportId) => {
+  const id = String(viewportId || "").trim();
+  if (!id) return false;
+  const entry = viewportScreenHistoryById.get(id);
+  if (!entry || entry.index <= 0) return false;
+  entry.index -= 1;
+  viewportScreenHistoryById.set(id, entry);
+  const target = entry.stack[entry.index];
+  if (target) {
+    const viewport = currentScreenObj?.objects?.find((obj) => obj?.type === "viewport" && obj.id === id);
+    if (viewport) viewport.target = target;
+    renderScreen();
+    scheduleWsSubscribeRefresh();
+    return true;
+  }
+  return false;
+};
+
+const viewportGoForward = (viewportId) => {
+  const id = String(viewportId || "").trim();
+  if (!id) return false;
+  const entry = viewportScreenHistoryById.get(id);
+  if (!entry || entry.index < 0 || entry.index >= entry.stack.length - 1) return false;
+  entry.index += 1;
+  viewportScreenHistoryById.set(id, entry);
+  const target = entry.stack[entry.index];
+  if (target) {
+    const viewport = currentScreenObj?.objects?.find((obj) => obj?.type === "viewport" && obj.id === id);
+    if (viewport) viewport.target = target;
+    renderScreen();
+    scheduleWsSubscribeRefresh();
+    return true;
+  }
+  return false;
 };
 
 const closePopup = () => {
@@ -8832,6 +8906,7 @@ const setMode = (next) => {
   if (!isEditMode && wasEditMode) {
     const baseId = currentScreenId || currentScreenFilename.replace(/\.jsonc$/i, "");
     setRuntimeHistoryBase(baseId);
+    initViewportHistoriesForCurrentScreen();
   }
   applyScale();
   renderScreen();
@@ -9234,6 +9309,7 @@ const loadJsonc = async () => {
       };
       migrateButtonFlags(currentScreenObj?.objects);
       screenCache.set(currentScreenId, currentScreenObj);
+      initViewportHistoriesForCurrentScreen();
       selectedIndices = [];
       groupEditStack.length = 0;
       undoStack.length = 0;
@@ -17267,9 +17343,27 @@ if (hmiSvg) {
 	        openPopup(obj.action.screenId);
 	      }
 	      if (obj?.type === "button" && obj?.action?.type === "history-back") {
+	        const isViewportChild =
+	          hitMeta?.type === "viewport" &&
+	          Array.isArray(hitMeta?.viewportChildPath) &&
+	          hitMeta.viewportChildPath.length > 0;
+	        if (isViewportChild) {
+	          const viewportObj = currentScreenObj?.objects?.[hitMeta.index];
+	          const viewportId = viewportObj?.type === "viewport" ? viewportObj?.id : null;
+	          if (viewportId && viewportGoBack(viewportId)) return;
+	        }
 	        runtimeGoBack();
 	      }
 	      if (obj?.type === "button" && obj?.action?.type === "history-forward") {
+	        const isViewportChild =
+	          hitMeta?.type === "viewport" &&
+	          Array.isArray(hitMeta?.viewportChildPath) &&
+	          hitMeta.viewportChildPath.length > 0;
+	        if (isViewportChild) {
+	          const viewportObj = currentScreenObj?.objects?.[hitMeta.index];
+	          const viewportId = viewportObj?.type === "viewport" ? viewportObj?.id : null;
+	          if (viewportId && viewportGoForward(viewportId)) return;
+	        }
 	        runtimeGoForward();
 	      }
 		      if (obj?.type === "button" && obj?.action?.type === "toggle-write") {
