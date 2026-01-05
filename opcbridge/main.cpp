@@ -1779,6 +1779,9 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
 
     // Rolling activity
     it->second.last_activity_at = now;
+    // Rolling expiry: keep the session alive while the user is active.
+    // (Idle timeout still applies if configured.)
+    it->second.expires_at = now + std::chrono::hours(8);
     out = it->second;
     return true;
 }

@@ -407,6 +407,8 @@ const state = {
 
   // auth status cache (opcbridge cookie-based)
   opcbridgeAuthStatus: null,
+  authWasLoggedIn: false,
+  authLastLogoutAtMs: 0,
 
   // reporter (data logger)
   reporterDatabases: [],
@@ -1704,7 +1706,16 @@ function badge(status) {
 
 async function apiGet(url) {
   const res = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      refreshUserAuthLine().catch(() => {});
+      if (state.opcbridgeAuthStatus?.configured) {
+        setWorkspaceSaveStatus('Login required.');
+        openLoginModal();
+      }
+    }
+    throw new Error(`HTTP ${res.status}`);
+  }
   return res.json();
 }
 
@@ -1724,6 +1735,13 @@ async function apiPostJson(url, bodyObj) {
   let parsed = null;
   try { parsed = JSON.parse(text); } catch { parsed = { ok: false, error: text || `HTTP ${res.status}` }; }
   if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      refreshUserAuthLine().catch(() => {});
+      if (state.opcbridgeAuthStatus?.configured) {
+        setWorkspaceSaveStatus('Login required.');
+        openLoginModal();
+      }
+    }
     const msg = parsed?.error || `HTTP ${res.status}`;
     throw new Error(msg);
   }
@@ -1742,6 +1760,13 @@ async function apiJson(url, { method, bodyObj } = {}) {
   let parsed = null;
   try { parsed = JSON.parse(text); } catch { parsed = { ok: false, error: text || `HTTP ${res.status}` }; }
   if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      refreshUserAuthLine().catch(() => {});
+      if (state.opcbridgeAuthStatus?.configured) {
+        setWorkspaceSaveStatus('Login required.');
+        openLoginModal();
+      }
+    }
     const msg = parsed?.error || `HTTP ${res.status}`;
     throw new Error(msg);
   }
@@ -5708,6 +5733,16 @@ async function refreshUserAuthLine() {
     const loggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
     const username = String(s?.user?.username || '').trim();
     const role = String(s?.user?.role || '').trim();
+
+    if (state.authWasLoggedIn && configured && !loggedIn) {
+      const sinceLogout = Date.now() - (Number(state.authLastLogoutAtMs) || 0);
+      if (sinceLogout > 5000) {
+        setWorkspaceSaveStatus('Session expired; please log in again.');
+        openLoginModal();
+      }
+    }
+    state.authWasLoggedIn = loggedIn;
+
     if (!configured) {
       els.authLine.innerHTML = `<span class="badge warn">auth</span> not configured`;
       return;
@@ -6324,6 +6359,7 @@ async function loginUser() {
 
 async function logoutUser() {
   try {
+    state.authLastLogoutAtMs = Date.now();
     await apiPostJson('/api/opcbridge/auth/logout', {});
     await refreshUserAuthLine();
   } catch (err) {
