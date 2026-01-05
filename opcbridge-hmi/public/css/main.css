@@ -1378,7 +1378,9 @@ body:not(.edit-mode) #workspace {
 }
 
 .tags-list {
-  display: grid;
+  /* Use a normal flow layout so sticky group headers behave consistently. */
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   flex: 1 1 auto;
   min-height: 0;
@@ -1397,6 +1399,7 @@ body:not(.edit-mode) #workspace {
   z-index: 1;
   background: #151c28;
   padding: 6px 0;
+  border-bottom: 1px solid rgba(45, 58, 77, 0.9);
 }
 
 .tag-item {
