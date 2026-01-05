@@ -211,6 +211,7 @@ const els = {
   newTagScan: document.getElementById('newTagScan'),
   newTagEnabled: document.getElementById('newTagEnabled'),
   newTagWritable: document.getElementById('newTagWritable'),
+  newTagInvert: document.getElementById('newTagInvert'),
   newTagMqttAllowed: document.getElementById('newTagMqttAllowed'),
   newTagScaling: document.getElementById('newTagScaling'),
   newTagScalingLinearRow: document.getElementById('newTagScalingLinearRow'),
@@ -249,6 +250,7 @@ const els = {
   editTagScan: document.getElementById('editTagScan'),
   editTagEnabled: document.getElementById('editTagEnabled'),
   editTagWritable: document.getElementById('editTagWritable'),
+  editTagInvert: document.getElementById('editTagInvert'),
   editTagMqttAllowed: document.getElementById('editTagMqttAllowed'),
   editTagScaling: document.getElementById('editTagScaling'),
   editTagScalingLinearRow: document.getElementById('editTagScalingLinearRow'),
@@ -1920,6 +1922,7 @@ function downloadDeviceTagsCsv(connectionId) {
 	    'plc_tag_name',
 	    'source_tag',
 	    'bit',
+	    'invert',
 	    'datatype',
 	    'scan_ms',
 	    'enabled',
@@ -1947,6 +1950,7 @@ function downloadDeviceTagsCsv(connectionId) {
 	    plc_tag_name: (String(t?.source_tag || '').trim() !== '' && Number(t?.bit) >= 0) ? '' : String(t?.plc_tag_name || '').trim(),
 	    source_tag: String(t?.source_tag || '').trim(),
 	    bit: (t?.bit == null || String(t?.source_tag || '').trim() === '') ? '' : String(t.bit),
+	    invert: (t?.invert === true) ? 'true' : 'false',
 	    datatype: String(t?.datatype || '').trim(),
 	    scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
 	    enabled: (t?.enabled !== false) ? 'true' : 'false',
@@ -2332,6 +2336,10 @@ async function importTagsCsvIntoWorkspace(connectionId) {
       return;
     }
     const base = (idx >= 0) ? { ...(all[idx] || {}) } : { connection_id: rowCid, name };
+
+    const invertRaw = csvGet(r, 'invert');
+    if (String(invertRaw ?? '').trim() === '') delete base.invert;
+    else base.invert = parseBoolLoose(invertRaw, false);
 
     const source_tag = String(
       csvGet(r, 'source_tag') ||
@@ -3660,6 +3668,7 @@ async function createNewTagFromModal() {
   const scan_ms = scanRaw === '' ? null : Math.max(0, Math.trunc(Number(scanRaw) || 0));
   const enabled = Boolean(els.newTagEnabled?.checked);
   const writable = isDerived ? false : Boolean(els.newTagWritable?.checked);
+  const invert = Boolean(els.newTagInvert?.checked);
   const mqtt_command_allowed = Boolean(els.newTagMqttAllowed?.checked);
   const tag = { connection_id: cid, name, datatype, enabled, writable, mqtt_command_allowed };
   if (!isDerived) {
@@ -3681,6 +3690,7 @@ async function createNewTagFromModal() {
     tag.bit = bit;
   }
   if (scan_ms != null) tag.scan_ms = scan_ms;
+  if (invert) tag.invert = true;
 
   const key = makeTagKey(tag);
   const exists = state.tagConfigAll.some((t) => makeTagKey(t) === key);
@@ -3850,6 +3860,7 @@ function openWorkspaceItemModal(node) {
       if (els.editTagScan) els.editTagScan.value = '';
       if (els.editTagEnabled) els.editTagEnabled.checked = true;
       if (els.editTagWritable) els.editTagWritable.checked = false;
+      if (els.editTagInvert) els.editTagInvert.checked = false;
       if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = false;
       if (els.editTagScaling) els.editTagScaling.value = 'none';
       fillScaledDatatypeSelect(els.editTagScaledDatatype, '');
@@ -3871,6 +3882,7 @@ function openWorkspaceItemModal(node) {
       if (els.editTagScan) els.editTagScan.value = (row?.scan_ms == null) ? '' : String(row.scan_ms);
       if (els.editTagEnabled) els.editTagEnabled.checked = (row?.enabled !== false);
       if (els.editTagWritable) els.editTagWritable.checked = (row?.writable === true);
+      if (els.editTagInvert) els.editTagInvert.checked = (row?.invert === true);
       if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = (row?.mqtt_command_allowed === true);
       if (els.editTagScaling) els.editTagScaling.value = String(row?.scaling || 'none').trim().toLowerCase() || 'none';
       fillScaledDatatypeSelect(els.editTagScaledDatatype, row?.scaled_datatype ?? '');
@@ -4118,6 +4130,7 @@ async function saveEditedTagFromModal() {
   const scanRaw = String(els.editTagScan?.value || '').trim();
   const enabled = Boolean(els.editTagEnabled?.checked);
   const writable = isDerived ? false : Boolean(els.editTagWritable?.checked);
+  const invert = Boolean(els.editTagInvert?.checked);
   const mqtt_command_allowed = Boolean(els.editTagMqttAllowed?.checked);
 
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
@@ -4176,6 +4189,8 @@ async function saveEditedTagFromModal() {
   next.enabled = enabled;
   next.writable = writable;
   next.mqtt_command_allowed = mqtt_command_allowed;
+  if (invert) next.invert = true;
+  else delete next.invert;
   if (scanRaw === '') delete next.scan_ms;
   else next.scan_ms = Math.max(0, Math.trunc(Number(scanRaw) || 0));
 

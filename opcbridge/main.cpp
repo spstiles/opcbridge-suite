@@ -163,6 +163,7 @@ struct ConnectionConfig {
 	    int scan_ms = 1000;
 	    bool enabled = true; // legacy configs default to enabled
 	    bool writable = false;
+        bool invert = false; // bool only: publish logical NOT of the value
 
 	    // Derived (memory) tags (optional)
 	    // If source_tag is set, this tag is derived from another tag in the same connection.
@@ -2246,6 +2247,7 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	            // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
 	            t.enabled              = json_get_bool_loose(jt, "enabled", true);
 	            t.writable             = json_get_bool_loose(jt, "writable", false);
+                t.invert               = json_get_bool_loose(jt, "invert", false);
 
             // Scaling (optional)
             t.scaling         = json_get_string_loose(jt, "scaling", std::string("none"));
@@ -2619,7 +2621,9 @@ void update_snapshot_from_plc(TagSnapshot &snap,
         raw = v;
     } else if (dt == "bool") {
         int8_t v = plc_tag_get_int8(handle, 0);
-        raw = (v != 0);
+        bool b = (v != 0);
+        if (tag.cfg.invert) b = !b;
+        raw = b;
     } else {
         snap.quality = 0;
         return;
@@ -12453,6 +12457,7 @@ window.addEventListener("load", startAutoRefresh);
 										"plc_tag_name",
 										"source_tag",
 										"bit",
+										"invert",
 										"datatype",
 										"scan_ms",
 										"enabled",
@@ -15021,6 +15026,9 @@ window.addEventListener("load", startAutoRefresh);
 		                                        if (!extract_bit_from_snapshot(snap, dcfg.bit, bitVal)) {
 		                                            dsnap.quality = 0;
 		                                            bitVal = false;
+		                                        }
+		                                        if (dsnap.quality == 1 && dcfg.invert) {
+		                                            bitVal = !bitVal;
 		                                        }
 		                                        dsnap.value = bitVal;
 
