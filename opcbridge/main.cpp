@@ -160,6 +160,7 @@ struct ConnectionConfig {
 	    std::string logical_name;
 	    std::string plc_tag_name;
 	    std::string datatype;
+	    int elem_count = 1; // for Logix arrays: number of elements to read (default 1)
 	    int scan_ms = 1000;
 	    bool enabled = true; // legacy configs default to enabled
 	    bool writable = false;
@@ -2244,10 +2245,14 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	            }
 
 	            t.scan_ms              = json_get_int_loose(jt, "scan_ms", 1000);
+	            t.elem_count           = std::max(1, json_get_int_loose(jt, "elem_count", 1));
 	            // Legacy tag JSON did not have "enabled"; default to true so old configs keep working.
 	            t.enabled              = json_get_bool_loose(jt, "enabled", true);
 	            t.writable             = json_get_bool_loose(jt, "writable", false);
                 t.invert               = json_get_bool_loose(jt, "invert", false);
+	            if (isDerived) {
+	                t.elem_count = 1;
+	            }
 
             // Scaling (optional)
             t.scaling         = json_get_string_loose(jt, "scaling", std::string("none"));
@@ -2468,7 +2473,7 @@ std::string build_tag_conn_str(const ConnectionConfig &c,
     std::string s = build_base_conn_str(c);
     s += "&name=" + t.plc_tag_name;
     s += "&elem_size=" + std::to_string(datatype_size_bytes(t.datatype));
-    s += "&elem_count=1";
+    s += "&elem_count=" + std::to_string(std::max(1, t.elem_count));
     return s;
 }
 
@@ -2764,6 +2769,80 @@ static bool extract_bit_from_snapshot(const TagSnapshot &src, int bit, bool &out
     return true;
 }
 
+static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
+                                               const ConnectionConfig &conn,
+                                               const TagRuntime &tag,
+                                               int byteOffset)
+{
+    snap.connection_id = conn.id;
+    snap.logical_name  = tag.cfg.logical_name;
+    snap.datatype      = tag.cfg.datatype;
+    snap.timestamp     = std::chrono::system_clock::now();
+    snap.quality       = 1;
+
+    const std::string &dt = tag.cfg.datatype;
+    const int32_t handle = tag.handle;
+
+    TagValue raw{};
+    if (dt == "float32") {
+        float v = plc_tag_get_float32(handle, byteOffset);
+        raw = v;
+    } else if (dt == "float64") {
+        double v = plc_tag_get_float64(handle, byteOffset);
+        raw = v;
+    } else if (dt == "int32") {
+        int32_t v = plc_tag_get_int32(handle, byteOffset);
+        raw = v;
+    } else if (dt == "uint32") {
+        uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, byteOffset));
+        raw = v;
+    } else if (dt == "int16") {
+        int16_t v = plc_tag_get_int16(handle, byteOffset);
+        raw = v;
+    } else if (dt == "uint16") {
+        uint16_t v = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset));
+        raw = v;
+    } else if (dt == "bool") {
+        int8_t v = plc_tag_get_int8(handle, byteOffset);
+        bool b = (v != 0);
+        if (tag.cfg.invert) b = !b;
+        raw = b;
+    } else {
+        snap.quality = 0;
+        return false;
+    }
+
+    if (!tag.scaling_linear) {
+        snap.value = raw;
+        snap.datatype = tag.cfg.datatype;
+        return true;
+    }
+
+    double rawNum = 0.0;
+    if (!tagvalue_to_double(raw, rawNum)) {
+        snap.value = raw;
+        snap.datatype = tag.cfg.datatype;
+        return true;
+    }
+
+    double scaled = rawNum * tag.scale_slope + tag.scale_offset;
+    if (tag.cfg.clamp_low)  scaled = std::max(scaled, tag.cfg.scaled_low);
+    if (tag.cfg.clamp_high) scaled = std::min(scaled, tag.cfg.scaled_high);
+
+    TagValue out{};
+    std::string castErr;
+    if (!cast_double_to_tagvalue(scaled, tag.out_datatype.empty() ? std::string("float64") : tag.out_datatype, out, castErr)) {
+        out = static_cast<double>(scaled);
+        snap.datatype = "float64";
+        snap.value = out;
+        return true;
+    }
+
+    snap.value = out;
+    snap.datatype = tag.out_datatype.empty() ? std::string("float64") : tag.out_datatype;
+    return true;
+}
+
 // =========================
 // WebSocket JSON notifiers
 // =========================
@@ -2993,6 +3072,73 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
     return true;
 }
 
+static bool plc_tag_get_word_u64(const std::string &datatype,
+                                 int32_t handle,
+                                 uint64_t &outWord,
+                                 int &outBits,
+                                 std::string &outError)
+{
+    outWord = 0;
+    outBits = 0;
+    outError.clear();
+
+    if (datatype == "int16") {
+        int16_t v = plc_tag_get_int16(handle, 0);
+        outWord = static_cast<uint16_t>(v);
+        outBits = 16;
+        return true;
+    }
+    if (datatype == "uint16") {
+        uint16_t v = static_cast<uint16_t>(plc_tag_get_uint16(handle, 0));
+        outWord = v;
+        outBits = 16;
+        return true;
+    }
+    if (datatype == "int32") {
+        int32_t v = plc_tag_get_int32(handle, 0);
+        outWord = static_cast<uint32_t>(v);
+        outBits = 32;
+        return true;
+    }
+    if (datatype == "uint32") {
+        uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, 0));
+        outWord = v;
+        outBits = 32;
+        return true;
+    }
+
+    outError = "Unsupported source datatype for derived-bit write: '" + datatype + "'";
+    return false;
+}
+
+static bool plc_tag_set_word_u64(const std::string &datatype,
+                                 int32_t handle,
+                                 uint64_t word,
+                                 std::string &outError)
+{
+    outError.clear();
+    int status = PLCTAG_STATUS_OK;
+
+    if (datatype == "int16") {
+        status = plc_tag_set_int16(handle, 0, static_cast<int16_t>(static_cast<uint16_t>(word)));
+    } else if (datatype == "uint16") {
+        status = plc_tag_set_uint16(handle, 0, static_cast<uint16_t>(word));
+    } else if (datatype == "int32") {
+        status = plc_tag_set_int32(handle, 0, static_cast<int32_t>(static_cast<uint32_t>(word)));
+    } else if (datatype == "uint32") {
+        status = plc_tag_set_uint32(handle, 0, static_cast<uint32_t>(word));
+    } else {
+        outError = "Unsupported source datatype for derived-bit write: '" + datatype + "'";
+        return false;
+    }
+
+    if (status != PLCTAG_STATUS_OK) {
+        outError = plc_tag_decode_error(status);
+        return false;
+    }
+    return true;
+}
+
 bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &conn_id,
                        const std::string &logical_name,
@@ -3059,6 +3205,263 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                   << "' is not marked writable in config.\n";
         return false;
     }
+
+    const bool isDerivedBit = (!cfg.source_tag.empty() && cfg.bit >= 0);
+    if (isDerivedBit) {
+        if (cfg.datatype != "bool") {
+            std::cerr << "Derived tag '" << logical_name
+                      << "' must have datatype 'bool'.\n";
+            return false;
+        }
+        // Strict derived-bit write: read source tag immediately, modify the bit, write, then verify by re-reading.
+        bool desiredPublished = false;
+        if (!parse_bool(value_str, desiredPublished)) {
+            std::cerr << "Write parse failed for derived bool value '"
+                      << value_str << "' for [" << conn_id << "]." << logical_name << "\n";
+            return false;
+        }
+
+        const bool desiredUnderlying = cfg.invert ? (!desiredPublished) : desiredPublished;
+
+        TagConfig srcCfg;
+
+        const std::string srcName = cfg.source_tag;
+        const std::string srcKey = make_tag_key(conn_id, srcName);
+        TagSnapshot prevDerived;
+        bool hadPrevDerived = false;
+        TagSnapshot prevSrc;
+        bool hadPrevSrc = false;
+
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            for (auto &driver : drivers) {
+                if (driver.conn.id != conn_id) continue;
+                for (auto &t : driver.tags) {
+                    if (t.cfg.logical_name == srcName) {
+                        srcCfg = t.cfg;
+                        break;
+                    }
+                }
+                break;
+            }
+
+            auto itPrevD = table.find(key);
+            if (itPrevD != table.end()) {
+                prevDerived = itPrevD->second;
+                hadPrevDerived = true;
+            }
+            auto itPrevS = table.find(srcKey);
+            if (itPrevS != table.end()) {
+                prevSrc = itPrevS->second;
+                hadPrevSrc = true;
+            }
+        }
+
+        if (srcCfg.logical_name.empty()) {
+            std::cerr << "Derived tag '" << logical_name
+                      << "' source tag '" << srcName
+                      << "' not found.\n";
+            return false;
+        }
+
+        if (!srcCfg.writable) {
+            std::cerr << "Derived tag '" << logical_name
+                      << "' source tag '" << srcName
+                      << "' is not marked writable.\n";
+            return false;
+        }
+
+        if (srcCfg.plc_tag_name.empty()) {
+            std::cerr << "Derived tag '" << logical_name
+                      << "' source tag '" << srcName
+                      << "' is missing plc_tag_name.\n";
+            return false;
+        }
+
+        if (srcCfg.elem_count > 1) {
+            std::cerr << "Derived tag '" << logical_name
+                      << "' source tag '" << srcName
+                      << "' has elem_count > 1; derived-bit writes require a scalar source (e.g. TagName[0]).\n";
+            return false;
+        }
+
+        // Use a temporary, scalar handle for strict read-modify-write so we don't risk
+        // overwriting other elements of an array handle's buffer.
+        TagConfig srcTmp = srcCfg;
+        srcTmp.elem_count = 1;
+
+        std::string srcTagStr;
+        try {
+            srcTagStr = build_tag_conn_str(conn, srcTmp);
+        } catch (const std::exception &ex) {
+            std::cerr << "Derived write failed building source tag string for ["
+                      << conn_id << "]." << srcName << ": " << ex.what() << "\n";
+            return false;
+        }
+
+        const int32_t srcHandle = plc_tag_create(srcTagStr.c_str(), conn.default_timeout_ms);
+        std::string readyErr;
+        if (!wait_for_tag_ready(srcHandle, conn.default_timeout_ms, readyErr)) {
+            std::cerr << "Derived write failed creating source handle for ["
+                      << conn_id << "]." << srcName << ": " << readyErr << "\n";
+            if (srcHandle >= 0) plc_tag_destroy(srcHandle);
+            return false;
+        }
+
+        // Read source fresh
+        int rs = plc_tag_read(srcHandle, conn.default_read_ms);
+        if (rs != PLCTAG_STATUS_OK) {
+            std::cerr << "Derived write read failed for source ["
+                      << conn_id << "]." << srcName
+                      << ": " << plc_tag_decode_error(rs) << "\n";
+            plc_tag_destroy(srcHandle);
+            return false;
+        }
+
+        uint64_t curWord = 0;
+        int wordBits = 0;
+        std::string rwErr;
+        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, curWord, wordBits, rwErr)) {
+            std::cerr << "Derived write failed for ["
+                      << conn_id << "]." << logical_name
+                      << ": " << rwErr << "\n";
+            plc_tag_destroy(srcHandle);
+            return false;
+        }
+        if (cfg.bit >= wordBits) {
+            std::cerr << "Derived write failed for ["
+                      << conn_id << "]." << logical_name
+                      << ": bit " << cfg.bit << " out of range for " << srcCfg.datatype
+                      << " (" << wordBits << " bits)\n";
+            plc_tag_destroy(srcHandle);
+            return false;
+        }
+
+        const uint64_t mask = (1ULL << static_cast<uint64_t>(cfg.bit));
+        uint64_t nextWord = desiredUnderlying ? (curWord | mask) : (curWord & ~mask);
+
+        if (!plc_tag_set_word_u64(srcCfg.datatype, srcHandle, nextWord, rwErr)) {
+            std::cerr << "Derived write set failed for source ["
+                      << conn_id << "]." << srcName
+                      << ": " << rwErr << "\n";
+            plc_tag_destroy(srcHandle);
+            return false;
+        }
+
+        int ws = plc_tag_write(srcHandle, conn.default_write_ms);
+        if (ws != PLCTAG_STATUS_OK) {
+            std::cerr << "Derived write plc_tag_write failed for source ["
+                      << conn_id << "]." << srcName
+                      << ": " << plc_tag_decode_error(ws) << "\n";
+            plc_tag_destroy(srcHandle);
+            return false;
+        }
+
+        // Verify by re-reading
+        int vs = plc_tag_read(srcHandle, conn.default_read_ms);
+        if (vs != PLCTAG_STATUS_OK) {
+            std::cerr << "Derived write verify read failed for source ["
+                      << conn_id << "]." << srcName
+                      << ": " << plc_tag_decode_error(vs) << "\n";
+            plc_tag_destroy(srcHandle);
+            return false;
+        }
+
+        uint64_t verifyWord = 0;
+        int verifyBits = 0;
+        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, verifyWord, verifyBits, rwErr)) {
+            std::cerr << "Derived write verify get failed for source ["
+                      << conn_id << "]." << srcName
+                      << ": " << rwErr << "\n";
+            plc_tag_destroy(srcHandle);
+            return false;
+        }
+
+        const bool verifyUnderlying = ((verifyWord >> static_cast<uint64_t>(cfg.bit)) & 1ULL) != 0ULL;
+        if (verifyUnderlying != desiredUnderlying) {
+            std::cerr << "Derived write verify mismatch for ["
+                      << conn_id << "]." << logical_name
+                      << ": wrote bit=" << (desiredUnderlying ? "1" : "0")
+                      << " but read back " << (verifyUnderlying ? "1" : "0") << "\n";
+            plc_tag_destroy(srcHandle);
+            return false;
+        }
+
+        const auto now = std::chrono::system_clock::now();
+        TagSnapshot srcSnap;
+        srcSnap.connection_id = conn.id;
+        srcSnap.logical_name = srcName;
+        srcSnap.datatype = srcCfg.datatype;
+        srcSnap.timestamp = now;
+        srcSnap.quality = 1;
+        if (srcCfg.datatype == "int16") srcSnap.value = static_cast<int16_t>(static_cast<uint16_t>(verifyWord));
+        else if (srcCfg.datatype == "uint16") srcSnap.value = static_cast<uint16_t>(verifyWord);
+        else if (srcCfg.datatype == "int32") srcSnap.value = static_cast<int32_t>(static_cast<uint32_t>(verifyWord));
+        else if (srcCfg.datatype == "uint32") srcSnap.value = static_cast<uint32_t>(verifyWord);
+
+        TagSnapshot dSnap;
+        dSnap.connection_id = conn.id;
+        dSnap.logical_name = logical_name;
+        dSnap.datatype = "bool";
+        dSnap.timestamp = now;
+        dSnap.quality = 1;
+        const bool published = cfg.invert ? (!verifyUnderlying) : verifyUnderlying;
+        dSnap.value = published;
+
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            table[srcKey] = srcSnap;
+            table[key] = dSnap;
+        }
+
+        plc_tag_destroy(srcHandle);
+
+        std::cout << "Write OK (derived): [" << conn.id << "] "
+                  << logical_name << " := " << value_str
+                  << " (source=" << srcName << " bit=" << cfg.bit << ")\n";
+
+        if (cfg.log_event_on_change) {
+            const bool valueChanged = !hadPrevDerived || !snapshot_values_equal(dSnap, prevDerived);
+            if (valueChanged) {
+                int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now.time_since_epoch()
+                ).count();
+                sqlite_log_event(
+                    conn.id,
+                    logical_name,
+                    hadPrevDerived ? snapshot_value_to_string(prevDerived) : std::string{},
+                    snapshot_value_to_string(dSnap),
+                    hadPrevDerived ? prevDerived.quality : -1,
+                    dSnap.quality,
+                    ts_ms,
+                    R"({"source":"write_derived"})"
+                );
+            }
+        }
+
+        // (Optional) event log for the source tag too if it is configured to log on change.
+        if (srcCfg.log_event_on_change) {
+            const bool valueChanged = !hadPrevSrc || !snapshot_values_equal(srcSnap, prevSrc);
+            if (valueChanged) {
+                int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now.time_since_epoch()
+                ).count();
+                sqlite_log_event(
+                    conn.id,
+                    srcName,
+                    hadPrevSrc ? snapshot_value_to_string(prevSrc) : std::string{},
+                    snapshot_value_to_string(srcSnap),
+                    hadPrevSrc ? prevSrc.quality : -1,
+                    srcSnap.quality,
+                    ts_ms,
+                    R"({"source":"write_derived"})"
+                );
+            }
+        }
+
+        return true;
+    }
+
     if (handle < 0) {
         std::cerr << "Tag '" << logical_name
                   << "' has invalid handle; cannot write.\n";
@@ -3204,25 +3607,59 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             int32_t status = plc_tag_read(t.handle,
                                           driver.conn.default_read_ms);
 
-            std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
+            const bool isArray = (t.cfg.elem_count > 1);
+            if (!isArray) {
+                std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
 
-            if (status != PLCTAG_STATUS_OK) {
-                std::cerr << "Read error for ["
-                          << driver.conn.id << "]."
-                          << t.cfg.logical_name << ": "
-                          << plc_tag_decode_error(status) << std::endl;
+                if (status != PLCTAG_STATUS_OK) {
+                    std::cerr << "Read error for ["
+                              << driver.conn.id << "]."
+                              << t.cfg.logical_name << ": "
+                              << plc_tag_decode_error(status) << std::endl;
 
-                TagSnapshot &snap = tagTable[key];
-                snap.connection_id = driver.conn.id;
-                snap.logical_name  = t.cfg.logical_name;
-                snap.datatype      = t.cfg.datatype;
-                snap.timestamp     = std::chrono::system_clock::now();
-                snap.quality       = 0;
+                    TagSnapshot &snap = tagTable[key];
+                    snap.connection_id = driver.conn.id;
+                    snap.logical_name  = t.cfg.logical_name;
+                    snap.datatype      = t.cfg.datatype;
+                    snap.timestamp     = std::chrono::system_clock::now();
+                    snap.quality       = 0;
 
-                all_ok = false;
+                    all_ok = false;
+                } else {
+                    TagSnapshot &snap = tagTable[key];
+                    update_snapshot_from_plc(snap, driver.conn, t);
+                }
             } else {
-                TagSnapshot &snap = tagTable[key];
-                update_snapshot_from_plc(snap, driver.conn, t);
+                const int ec = std::max(1, t.cfg.elem_count);
+                const int elemSize = static_cast<int>(datatype_size_bytes(t.cfg.datatype));
+                const auto ts = std::chrono::system_clock::now();
+
+                if (status != PLCTAG_STATUS_OK) {
+                    std::cerr << "Read error for ["
+                              << driver.conn.id << "]."
+                              << t.cfg.logical_name << ": "
+                              << plc_tag_decode_error(status) << std::endl;
+                    all_ok = false;
+                }
+
+                for (int i = 0; i < ec; i++) {
+                    TagRuntime etmp = t;
+                    etmp.cfg.elem_count = 1;
+                    etmp.cfg.logical_name = t.cfg.logical_name + "[" + std::to_string(i) + "]";
+
+                    const std::string ekey = make_tag_key(driver.conn.id, etmp.cfg.logical_name);
+                    TagSnapshot &esnap = tagTable[ekey];
+                    if (status != PLCTAG_STATUS_OK) {
+                        esnap.connection_id = driver.conn.id;
+                        esnap.logical_name  = etmp.cfg.logical_name;
+                        esnap.datatype      = t.cfg.datatype;
+                        esnap.timestamp     = ts;
+                        esnap.quality       = 0;
+                    } else {
+                        update_snapshot_from_plc_at_offset(esnap, driver.conn, etmp, i * elemSize);
+                        esnap.timestamp = ts;
+                    }
+                }
             }
         }
     }
@@ -3689,6 +4126,27 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
                 schedule_next_periodic(rt);
             }
             ctx.tags.push_back(rt);
+
+            // If this is an array tag (elem_count > 1), create lightweight element stubs so
+            // derived tags can reference TagName[0] style sources. These stubs are not polled
+            // (no handle); poller fan-out populates snapshots for them.
+            if (tc.elem_count > 1) {
+                for (int i = 0; i < tc.elem_count; i++) {
+                    TagRuntime e;
+                    e.cfg = tc;
+                    e.cfg.elem_count = 1;
+                    e.cfg.source_tag.clear();
+                    e.cfg.bit = -1;
+                    e.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
+                    e.cfg.plc_tag_name = tc.plc_tag_name + "[" + std::to_string(i) + "]";
+                    e.handle = PLCTAG_ERR_NOT_FOUND;
+                    const std::string elName = e.cfg.logical_name;
+                    if (!elName.empty() && !seen_logical_names.insert(elName).second) {
+                        continue;
+                    }
+                    ctx.tags.push_back(std::move(e));
+                }
+            }
         }
 
         driversLocal.push_back(std::move(ctx));
@@ -6832,11 +7290,16 @@ int main(int argc, char **argv) {
 										    <label>Scan (ms)</label>
 										    <input id="ws-tag-scan" type="number" min="0" step="1" placeholder="1000" />
 										  </div>
+										  <div class="ws-s-form-row" id="ws-tag-elem-count-row">
+										    <label>Elem Count</label>
+										    <input id="ws-tag-elem-count" type="number" min="1" step="1" placeholder="1" />
+										  </div>
 										  <div class="ws-s-form-row">
 										    <label>Options</label>
 										    <div class="ws-s-check-row">
 										      <label class="ws-s-check-pill"><input id="ws-tag-enabled" type="checkbox" class="ws-inline-check" /> Enabled</label>
 										      <label class="ws-s-check-pill"><input id="ws-tag-writable" type="checkbox" class="ws-inline-check" /> Writable</label>
+										      <label class="ws-s-check-pill"><input id="ws-tag-invert" type="checkbox" class="ws-inline-check" /> Invert</label>
 										      <label class="ws-s-check-pill"><input id="ws-tag-mqtt-allowed" type="checkbox" class="ws-inline-check" /> MQTT command allowed</label>
 										    </div>
 										  </div>
@@ -7415,8 +7878,11 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 		    tagBit: document.getElementById("ws-tag-bit"),
 		    tagDt: document.getElementById("ws-tag-dt"),
 		    tagScan: document.getElementById("ws-tag-scan"),
+		    tagElemCountRow: document.getElementById("ws-tag-elem-count-row"),
+		    tagElemCount: document.getElementById("ws-tag-elem-count"),
 	    tagEnabled: document.getElementById("ws-tag-enabled"),
 	    tagWritable: document.getElementById("ws-tag-writable"),
+	    tagInvert: document.getElementById("ws-tag-invert"),
 	    tagMqttAllowed: document.getElementById("ws-tag-mqtt-allowed"),
 	    tagScaling: document.getElementById("ws-tag-scaling"),
 	    tagScalingLinear: document.getElementById("ws-tag-scaling-linear"),
@@ -7736,7 +8202,15 @@ const wsGetDerivedBitSourceOptions = (connection_id, excludeName) => {
         .filter((t) => String(t?.name || "") !== ex)
         .filter((t) => String(t?.plc_tag_name || "").trim() !== "")
         .filter((t) => wsIsNumericBitSourceDatatype(t?.datatype))
-        .map((t) => String(t?.name || "").trim())
+        .flatMap((t) => {
+            const name = String(t?.name || "").trim();
+            if (!name) return [];
+            const ec = Math.max(1, Math.floor(Number(t?.elem_count) || 1));
+            if (ec <= 1) return [name];
+            const out = [];
+            for (let i = 0; i < ec; i++) out.push(`${name}[${i}]`);
+            return out;
+        })
         .filter(Boolean)
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
     return names;
@@ -7754,12 +8228,7 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
     if (el.tagBit) el.tagBit.disabled = !canEdit;
 
     if (el.tagWritable) {
-        if (isDerived) {
-            el.tagWritable.checked = false;
-            el.tagWritable.disabled = true;
-        } else {
-            el.tagWritable.disabled = !canEdit;
-        }
+        el.tagWritable.disabled = !canEdit;
     }
 
     if (el.tagDt) {
@@ -7770,6 +8239,9 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
             el.tagDt.disabled = !canEdit;
         }
     }
+
+    if (el.tagElemCountRow) el.tagElemCountRow.style.display = isDerived ? "none" : "grid";
+    if (el.tagElemCount) el.tagElemCount.disabled = isDerived || !canEdit;
 
     if (el.tagScaling) {
         if (isDerived) {
@@ -7889,8 +8361,10 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 		    if (el.tagBit) el.tagBit.value = existing && existing?.bit != null ? String(existing.bit) : "0";
 		    wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
 		    if (el.tagScan) el.tagScan.value = existing && existing?.scan_ms != null ? String(existing.scan_ms) : "";
+		    if (el.tagElemCount) el.tagElemCount.value = existing && existing?.elem_count != null ? String(existing.elem_count) : "1";
 		    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
 		    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
+		    if (el.tagInvert) el.tagInvert.checked = existing ? (existing?.invert === true) : false;
 		    if (el.tagMqttAllowed) el.tagMqttAllowed.checked = existing ? (existing?.mqtt_command_allowed === true) : false;
 
 	    const applyScalingUi = () => {
@@ -8162,6 +8636,9 @@ const wsRenderTree = () => {
     const el = wsEls();
     if (!el.tree) return;
 
+    const prevScrollTop = el.tree.scrollTop;
+    const prevScrollLeft = el.tree.scrollLeft;
+
     const root = wsBuildTree();
 
     const rows = [];
@@ -8210,6 +8687,10 @@ const wsRenderTree = () => {
     renderNode(root, 0);
     el.tree.textContent = "";
     rows.forEach((r) => el.tree.appendChild(r));
+
+    // Preserve scroll position across re-renders to avoid jump/offset on long lists.
+    el.tree.scrollTop = prevScrollTop;
+    el.tree.scrollLeft = prevScrollLeft;
 };
 
 		const wsRenderChildrenTable = () => {
@@ -8560,13 +9041,15 @@ const wsRenderTree = () => {
 	    const plc_tag_name = String(el.tagPlc?.value || "").trim();
 	    const datatype = String(el.tagDt?.value || "").trim();
 		    const scanRaw = String(el.tagScan?.value || "").trim();
+		    const elemCountRaw = String(el.tagElemCount?.value || "").trim();
 		    const enabled = Boolean(el.tagEnabled?.checked);
+		    const invert = Boolean(el.tagInvert?.checked);
 		    const sourceKind = String(el.tagSourceKind?.value || "plc").trim().toLowerCase();
 		    const isDerived = (sourceKind === "derived_bit");
 		    const source_tag = String(el.tagSourceTag?.value || "").trim();
 		    const bitRaw = String(el.tagBit?.value || "").trim();
 		    const bit = bitRaw === "" ? null : Math.trunc(Number(bitRaw));
-		    const writable = isDerived ? false : Boolean(el.tagWritable?.checked);
+		    const writable = Boolean(el.tagWritable?.checked);
 		    const mqtt_command_allowed = Boolean(el.tagMqttAllowed?.checked);
 
 	    if (!cid) {
@@ -8667,6 +9150,8 @@ const wsRenderTree = () => {
 		        if (!isDerived) {
 		            next.plc_tag_name = plc_tag_name;
 		            next.datatype = datatype;
+		            const ec = Math.max(1, Math.floor(Number(elemCountRaw) || 1));
+		            if (ec != 1) next.elem_count = ec;
 		            if (!applyScalingToTag(next)) return;
 		        } else {
 		            next.source_tag = source_tag;
@@ -8676,6 +9161,8 @@ const wsRenderTree = () => {
 		        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 		        next.enabled = enabled;
 		        next.writable = writable;
+		        if (invert) next.invert = true;
+		        else delete next.invert;
 		        next.mqtt_command_allowed = mqtt_command_allowed;
 		        tags.push(next);
 			    } else {
@@ -8702,9 +9189,13 @@ const wsRenderTree = () => {
 			            delete next.source_tag;
 			            delete next.bit;
 			            next.datatype = datatype;
+			            const ec = Math.max(1, Math.floor(Number(elemCountRaw) || 1));
+			            if (ec == 1) delete next.elem_count;
+			            else next.elem_count = ec;
 			            if (!applyScalingToTag(next)) return;
 			        } else {
 			            delete next.plc_tag_name;
+			            delete next.elem_count;
 			            next.source_tag = source_tag;
 			            next.bit = bit;
 			            next.datatype = "bool";
@@ -8713,6 +9204,8 @@ const wsRenderTree = () => {
 			        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 			        next.enabled = enabled;
 			        next.writable = writable;
+			        if (invert) next.invert = true;
+			        else delete next.invert;
 			        next.mqtt_command_allowed = mqtt_command_allowed;
 			        tags[idx] = next;
 
@@ -12459,6 +12952,7 @@ window.addEventListener("load", startAutoRefresh);
 										"bit",
 										"invert",
 										"datatype",
+										"elem_count",
 										"scan_ms",
 										"enabled",
 										"writable",
@@ -14900,6 +15394,8 @@ window.addEventListener("load", startAutoRefresh);
 
 		                            int32_t status = PLCTAG_STATUS_OK;
 		                            TagSnapshot snap;
+		                            const bool isArray = (t.cfg.elem_count > 1);
+		                            std::vector<TagSnapshot> elemSnaps;
 
 		                            {
 	                                std::shared_lock<std::shared_mutex> plcLock;
@@ -14940,7 +15436,22 @@ window.addEventListener("load", startAutoRefresh);
 	                                    tmp.scale_slope = t.scale_slope;
 	                                    tmp.scale_offset = t.scale_offset;
 	                                    tmp.out_datatype = t.out_datatype;
-	                                    update_snapshot_from_plc(snap, spec.conn, tmp);
+	                                    if (!isArray) {
+	                                        update_snapshot_from_plc(snap, spec.conn, tmp);
+	                                    } else {
+	                                        const int elemSize = static_cast<int>(datatype_size_bytes(t.cfg.datatype));
+	                                        const auto ts = std::chrono::system_clock::now();
+	                                        const int ec = std::max(1, t.cfg.elem_count);
+	                                        elemSnaps.reserve(static_cast<size_t>(ec));
+	                                        for (int i = 0; i < ec; i++) {
+	                                            TagSnapshot es;
+	                                            TagRuntime etmp = tmp;
+	                                            etmp.cfg.logical_name = t.cfg.logical_name + "[" + std::to_string(i) + "]";
+	                                            update_snapshot_from_plc_at_offset(es, spec.conn, etmp, i * elemSize);
+	                                            es.timestamp = ts;
+	                                            elemSnaps.push_back(std::move(es));
+	                                        }
+	                                    }
 	                                }
 	                            }
 
@@ -14962,6 +15473,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                bool doMqttPublish = false;
 		                                TagConfig cfg;
 		                            };
+		                            std::vector<DerivedAction> elementActions;
 		                            std::vector<DerivedAction> derivedActions;
 
 		                            {
@@ -14976,170 +15488,337 @@ window.addEventListener("load", startAutoRefresh);
 	                                    hadPrev = true;
 	                                }
 
-	                                if (status != PLCTAG_STATUS_OK) {
-	                                    std::cerr << "Read error for ["
-	                                              << spec.conn.id << "]."
-	                                              << t.cfg.logical_name << ": "
-	                                              << plc_tag_decode_error(status) << std::endl;
+	                                if (!isArray) {
+	                                    if (status != PLCTAG_STATUS_OK) {
+	                                        std::cerr << "Read error for ["
+	                                                  << spec.conn.id << "]."
+	                                                  << t.cfg.logical_name << ": "
+	                                                  << plc_tag_decode_error(status) << std::endl;
 
-	                                    TagSnapshot &s = tagTable[key];
-	                                    s.connection_id = spec.conn.id;
-	                                    s.logical_name  = t.cfg.logical_name;
-	                                    s.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
-	                                    s.timestamp     = std::chrono::system_clock::now();
-	                                    s.quality       = 0;
-	                                    snap = s;
-	                                } else {
-	                                    tagTable[key] = snap;
-	                                }
+	                                        TagSnapshot &s = tagTable[key];
+	                                        s.connection_id = spec.conn.id;
+	                                        s.logical_name  = t.cfg.logical_name;
+	                                        s.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+	                                        s.timestamp     = std::chrono::system_clock::now();
+	                                        s.quality       = 0;
+	                                        snap = s;
+	                                    } else {
+	                                        tagTable[key] = snap;
+	                                    }
 
-	                                if (ws_is_enabled()) {
-	                                    doWsTagUpdate = !hadPrev || !snapshot_values_equal(snap, prevSnap);
-	                                }
+	                                    if (ws_is_enabled()) {
+	                                        doWsTagUpdate = !hadPrev || !snapshot_values_equal(snap, prevSnap);
+	                                    }
 
-		                                if (!g_alarms.empty()) {
-		                                    evaluate_tag_alarms(spec.conn.id, t.cfg.logical_name, snap);
-		                                }
+		                                    if (!g_alarms.empty()) {
+		                                        evaluate_tag_alarms(spec.conn.id, t.cfg.logical_name, snap);
+		                                    }
 
-		                                // Derived (memory) bit tags: compute from this source tag and publish as normal bool tags.
-		                                auto itDerived = spec.derived_bits_by_source.find(t.cfg.logical_name);
-		                                if (itDerived != spec.derived_bits_by_source.end()) {
-		                                    for (const auto &dcfg : itDerived->second) {
-		                                        DerivedAction a;
-		                                        a.cfg = dcfg;
-		                                        a.doMqttPublish = mqttMode;
+		                                    // Derived (memory) bit tags: compute from this source tag and publish as normal bool tags.
+		                                    auto itDerived = spec.derived_bits_by_source.find(t.cfg.logical_name);
+		                                    if (itDerived != spec.derived_bits_by_source.end()) {
+		                                        for (const auto &dcfg : itDerived->second) {
+		                                            DerivedAction a;
+		                                            a.cfg = dcfg;
+		                                            a.doMqttPublish = mqttMode;
 
-		                                        const std::string dkey = make_tag_key(spec.conn.id, dcfg.logical_name);
-		                                        auto itPrevD = tagTable.find(dkey);
-		                                        if (itPrevD != tagTable.end()) {
-		                                            a.prev = itPrevD->second;
-		                                            a.hadPrev = true;
-		                                        }
-
-		                                        TagSnapshot dsnap;
-		                                        dsnap.connection_id = spec.conn.id;
-		                                        dsnap.logical_name = dcfg.logical_name;
-		                                        dsnap.datatype = "bool";
-		                                        dsnap.timestamp = snap.timestamp;
-		                                        dsnap.quality = snap.quality;
-		                                        bool bitVal = false;
-		                                        if (!extract_bit_from_snapshot(snap, dcfg.bit, bitVal)) {
-		                                            dsnap.quality = 0;
-		                                            bitVal = false;
-		                                        }
-		                                        if (dsnap.quality == 1 && dcfg.invert) {
-		                                            bitVal = !bitVal;
-		                                        }
-		                                        dsnap.value = bitVal;
-
-		                                        tagTable[dkey] = dsnap;
-		                                        a.snap = dsnap;
-
-		                                        if (ws_is_enabled()) {
-		                                            a.doWsTagUpdate = !a.hadPrev || !snapshot_values_equal(a.snap, a.prev);
-		                                        }
-
-		                                        if (!g_alarms.empty()) {
-		                                            evaluate_tag_alarms(spec.conn.id, dcfg.logical_name, dsnap);
-		                                        }
-
-		                                        if (dcfg.log_event_on_change && a.hadPrev) {
-		                                            a.valueChangedForEvent = !snapshot_values_equal(a.snap, a.prev);
-		                                            if (a.valueChangedForEvent) {
-		                                                int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-		                                                    dsnap.timestamp.time_since_epoch()
-		                                                ).count();
-
-		                                                sqlite_log_event(
-		                                                    spec.conn.id,
-		                                                    dcfg.logical_name,
-		                                                    snapshot_value_to_string(a.prev),
-		                                                    snapshot_value_to_string(a.snap),
-		                                                    a.prev.quality,
-		                                                    a.snap.quality,
-		                                                    ts_ms,
-		                                                    "" // extra_json
-		                                                );
-		                                                a.doWsEventRow = ws_is_enabled();
+		                                            const std::string dkey = make_tag_key(spec.conn.id, dcfg.logical_name);
+		                                            auto itPrevD = tagTable.find(dkey);
+		                                            if (itPrevD != tagTable.end()) {
+		                                                a.prev = itPrevD->second;
+		                                                a.hadPrev = true;
 		                                            }
+
+		                                            TagSnapshot dsnap;
+		                                            dsnap.connection_id = spec.conn.id;
+		                                            dsnap.logical_name = dcfg.logical_name;
+		                                            dsnap.datatype = "bool";
+		                                            dsnap.timestamp = snap.timestamp;
+		                                            dsnap.quality = snap.quality;
+		                                            bool bitVal = false;
+		                                            if (!extract_bit_from_snapshot(snap, dcfg.bit, bitVal)) {
+		                                                dsnap.quality = 0;
+		                                                bitVal = false;
+		                                            }
+		                                            if (dsnap.quality == 1 && dcfg.invert) {
+		                                                bitVal = !bitVal;
+		                                            }
+		                                            dsnap.value = bitVal;
+
+		                                            tagTable[dkey] = dsnap;
+		                                            a.snap = dsnap;
+
+		                                            if (ws_is_enabled()) {
+		                                                a.doWsTagUpdate = !a.hadPrev || !snapshot_values_equal(a.snap, a.prev);
+		                                            }
+
+		                                            if (!g_alarms.empty()) {
+		                                                evaluate_tag_alarms(spec.conn.id, dcfg.logical_name, dsnap);
+		                                            }
+
+		                                            if (dcfg.log_event_on_change && a.hadPrev) {
+		                                                a.valueChangedForEvent = !snapshot_values_equal(a.snap, a.prev);
+		                                                if (a.valueChangedForEvent) {
+		                                                    int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                                                        dsnap.timestamp.time_since_epoch()
+		                                                    ).count();
+
+		                                                    sqlite_log_event(
+		                                                        spec.conn.id,
+		                                                        dcfg.logical_name,
+		                                                        snapshot_value_to_string(a.prev),
+		                                                        snapshot_value_to_string(a.snap),
+		                                                        a.prev.quality,
+		                                                        a.snap.quality,
+		                                                        ts_ms,
+		                                                        "" // extra_json
+		                                                    );
+		                                                    a.doWsEventRow = ws_is_enabled();
+		                                                }
+		                                            }
+
+		                                            if (g_uaServer && dsnap.quality == 1) {
+		                                                a.doUaUpdate = true;
+		                                            }
+
+		                                            derivedActions.push_back(std::move(a));
+		                                        }
+		                                    }
+	                                } else {
+	                                    const int ec = std::max(1, t.cfg.elem_count);
+	                                    const auto ts = std::chrono::system_clock::now();
+	                                    for (int i = 0; i < ec; i++) {
+	                                        DerivedAction a;
+	                                        a.doMqttPublish = mqttMode;
+	                                        a.cfg = t.cfg;
+	                                        a.cfg.elem_count = 1;
+	                                        a.cfg.logical_name = t.cfg.logical_name + "[" + std::to_string(i) + "]";
+	                                        a.cfg.plc_tag_name = t.cfg.plc_tag_name + "[" + std::to_string(i) + "]";
+
+	                                        const std::string ekey = make_tag_key(spec.conn.id, a.cfg.logical_name);
+	                                        auto itPrevE = tagTable.find(ekey);
+	                                        if (itPrevE != tagTable.end()) {
+	                                            a.prev = itPrevE->second;
+	                                            a.hadPrev = true;
+	                                        }
+
+	                                        if (status != PLCTAG_STATUS_OK || static_cast<size_t>(i) >= elemSnaps.size()) {
+	                                            TagSnapshot &s = tagTable[ekey];
+	                                            s.connection_id = spec.conn.id;
+	                                            s.logical_name = a.cfg.logical_name;
+	                                            s.datatype = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+	                                            s.timestamp = ts;
+	                                            s.quality = 0;
+	                                            a.snap = s;
+	                                        } else {
+	                                            tagTable[ekey] = elemSnaps[static_cast<size_t>(i)];
+	                                            a.snap = elemSnaps[static_cast<size_t>(i)];
+	                                        }
+
+	                                        if (ws_is_enabled()) {
+	                                            a.doWsTagUpdate = !a.hadPrev || !snapshot_values_equal(a.snap, a.prev);
+	                                        }
+
+	                                        if (!g_alarms.empty()) {
+	                                            evaluate_tag_alarms(spec.conn.id, a.cfg.logical_name, a.snap);
+	                                        }
+
+	                                        if (t.cfg.log_event_on_change && a.hadPrev) {
+	                                            a.valueChangedForEvent = !snapshot_values_equal(a.snap, a.prev);
+	                                            if (a.valueChangedForEvent) {
+	                                                int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                                                    a.snap.timestamp.time_since_epoch()
+	                                                ).count();
+	                                                sqlite_log_event(
+	                                                    spec.conn.id,
+	                                                    a.cfg.logical_name,
+	                                                    snapshot_value_to_string(a.prev),
+	                                                    snapshot_value_to_string(a.snap),
+	                                                    a.prev.quality,
+	                                                    a.snap.quality,
+	                                                    ts_ms,
+	                                                    "" // extra_json
+	                                                );
+	                                                a.doWsEventRow = ws_is_enabled();
+	                                            }
+	                                        }
+
+	                                        if (g_uaServer && a.snap.quality == 1) {
+	                                            a.doUaUpdate = true;
+	                                        }
+
+	                                        // Derived bits where the source is this array element (TagName[i]).
+	                                        auto itDerived = spec.derived_bits_by_source.find(a.cfg.logical_name);
+	                                        if (itDerived != spec.derived_bits_by_source.end()) {
+	                                            for (const auto &dcfg : itDerived->second) {
+	                                                DerivedAction da;
+	                                                da.cfg = dcfg;
+	                                                da.doMqttPublish = mqttMode;
+
+	                                                const std::string dkey = make_tag_key(spec.conn.id, dcfg.logical_name);
+	                                                auto itPrevD = tagTable.find(dkey);
+	                                                if (itPrevD != tagTable.end()) {
+	                                                    da.prev = itPrevD->second;
+	                                                    da.hadPrev = true;
+	                                                }
+
+	                                                TagSnapshot dsnap;
+	                                                dsnap.connection_id = spec.conn.id;
+	                                                dsnap.logical_name = dcfg.logical_name;
+	                                                dsnap.datatype = "bool";
+	                                                dsnap.timestamp = a.snap.timestamp;
+	                                                dsnap.quality = a.snap.quality;
+	                                                bool bitVal = false;
+	                                                if (!extract_bit_from_snapshot(a.snap, dcfg.bit, bitVal)) {
+	                                                    dsnap.quality = 0;
+	                                                    bitVal = false;
+	                                                }
+	                                                if (dsnap.quality == 1 && dcfg.invert) {
+	                                                    bitVal = !bitVal;
+	                                                }
+	                                                dsnap.value = bitVal;
+
+	                                                tagTable[dkey] = dsnap;
+	                                                da.snap = dsnap;
+
+	                                                if (ws_is_enabled()) {
+	                                                    da.doWsTagUpdate = !da.hadPrev || !snapshot_values_equal(da.snap, da.prev);
+	                                                }
+
+	                                                if (!g_alarms.empty()) {
+	                                                    evaluate_tag_alarms(spec.conn.id, dcfg.logical_name, dsnap);
+	                                                }
+
+	                                                if (dcfg.log_event_on_change && da.hadPrev) {
+	                                                    da.valueChangedForEvent = !snapshot_values_equal(da.snap, da.prev);
+	                                                    if (da.valueChangedForEvent) {
+	                                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                                                            dsnap.timestamp.time_since_epoch()
+	                                                        ).count();
+	                                                        sqlite_log_event(
+	                                                            spec.conn.id,
+	                                                            dcfg.logical_name,
+	                                                            snapshot_value_to_string(da.prev),
+	                                                            snapshot_value_to_string(da.snap),
+	                                                            da.prev.quality,
+	                                                            da.snap.quality,
+	                                                            ts_ms,
+	                                                            "" // extra_json
+	                                                        );
+	                                                        da.doWsEventRow = ws_is_enabled();
+	                                                    }
+	                                                }
+
+	                                                if (g_uaServer && dsnap.quality == 1) {
+	                                                    da.doUaUpdate = true;
+	                                                }
+
+	                                                derivedActions.push_back(std::move(da));
+	                                            }
+	                                        }
+
+	                                        elementActions.push_back(std::move(a));
+	                                    }
+	                                }
+
+		                                if (!isArray) {
+		                                    if (t.cfg.log_event_on_change && hadPrev) {
+		                                        valueChangedForEvent = !snapshot_values_equal(snap, prevSnap);
+		                                        if (valueChangedForEvent) {
+			                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+			                                            snap.timestamp.time_since_epoch()
+			                                        ).count();
+
+			                                        sqlite_log_event(
+			                                            spec.conn.id,
+			                                            t.cfg.logical_name,
+			                                            snapshot_value_to_string(prevSnap),
+			                                            snapshot_value_to_string(snap),
+			                                            prevSnap.quality,
+			                                            snap.quality,
+			                                            ts_ms,
+			                                            "" // extra_json
+			                                        );
+			                                        doWsEventRow = ws_is_enabled();
+		                                        }
+		                                    }
+
+		                                    // Periodic logging (interval mode only)
+		                                    if (t.cfg.log_periodic && !t.cfg.log_periodic_mode.empty()) {
+		                                        if (!t.periodic_init) {
+		                                            schedule_next_periodic_local(t.cfg, t.periodic_enabled, t.next_periodic_log);
+		                                            t.periodic_init = true;
 		                                        }
 
-		                                        if (g_uaServer && dsnap.quality == 1) {
-		                                            a.doUaUpdate = true;
-		                                        }
+		                                        if (t.periodic_enabled &&
+		                                            t.next_periodic_log.time_since_epoch().count() > 0 &&
+		                                            std::chrono::system_clock::now() >= t.next_periodic_log)
+		                                        {
+		                                            int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                                                snap.timestamp.time_since_epoch()
+		                                            ).count();
 
-		                                        derivedActions.push_back(std::move(a));
+		                                            std::string valStr = snapshot_value_to_string(snap);
+		                                            int q = snap.quality;
+		                                            std::string extra = R"({"source":"periodic_interval"})";
+
+		                                            sqlite_log_event(
+		                                                spec.conn.id,
+		                                                t.cfg.logical_name,
+		                                                valStr,
+		                                                valStr,
+		                                                q,
+		                                                q,
+		                                                ts_ms,
+		                                                extra
+		                                            );
+
+		                                            schedule_next_periodic_local(t.cfg, t.periodic_enabled, t.next_periodic_log);
+		                                        }
+		                                    }
+
+		                                    if (mqttMode) {
+		                                        doMqttPublish = true;
+		                                    }
+		                                    if (g_uaServer && snap.quality == 1) {
+		                                        doUaUpdate = true;
 		                                    }
 		                                }
-
-		                                if (t.cfg.log_event_on_change && hadPrev) {
-		                                    valueChangedForEvent = !snapshot_values_equal(snap, prevSnap);
-		                                    if (valueChangedForEvent) {
-	                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-	                                            snap.timestamp.time_since_epoch()
-	                                        ).count();
-
-	                                        sqlite_log_event(
-	                                            spec.conn.id,
-	                                            t.cfg.logical_name,
-	                                            snapshot_value_to_string(prevSnap),
-	                                            snapshot_value_to_string(snap),
-	                                            prevSnap.quality,
-	                                            snap.quality,
-	                                            ts_ms,
-	                                            "" // extra_json
-	                                        );
-	                                        doWsEventRow = ws_is_enabled();
-	                                    }
-	                                }
-
-	                                // Periodic logging (interval mode only)
-	                                if (t.cfg.log_periodic && !t.cfg.log_periodic_mode.empty()) {
-	                                    if (!t.periodic_init) {
-	                                        schedule_next_periodic_local(t.cfg, t.periodic_enabled, t.next_periodic_log);
-	                                        t.periodic_init = true;
-	                                    }
-
-	                                    if (t.periodic_enabled &&
-	                                        t.next_periodic_log.time_since_epoch().count() > 0 &&
-	                                        std::chrono::system_clock::now() >= t.next_periodic_log)
-	                                    {
-	                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-	                                            snap.timestamp.time_since_epoch()
-	                                        ).count();
-
-	                                        std::string valStr = snapshot_value_to_string(snap);
-	                                        int q = snap.quality;
-	                                        std::string extra = R"({"source":"periodic_interval"})";
-
-	                                        sqlite_log_event(
-	                                            spec.conn.id,
-	                                            t.cfg.logical_name,
-	                                            valStr,
-	                                            valStr,
-	                                            q,
-	                                            q,
-	                                            ts_ms,
-	                                            extra
-	                                        );
-
-	                                        schedule_next_periodic_local(t.cfg, t.periodic_enabled, t.next_periodic_log);
-	                                    }
-	                                }
-
-	                                if (mqttMode) {
-	                                    doMqttPublish = true;
-	                                }
-	                                if (g_uaServer && snap.quality == 1) {
-	                                    doUaUpdate = true;
-	                                }
 	                            }
 
-		                            if (doWsTagUpdate) {
-		                                ws_notify_tag_update(snap, t.cfg);
+		                            if (!isArray) {
+		                                if (doWsTagUpdate) {
+		                                    ws_notify_tag_update(snap, t.cfg);
+		                                }
+		                                if (doWsEventRow && valueChangedForEvent) {
+		                                    ws_notify_event_log_row(&prevSnap, snap);
+		                                }
 		                            }
-		                            if (doWsEventRow && valueChangedForEvent) {
-		                                ws_notify_event_log_row(&prevSnap, snap);
+
+		                            if (isArray) {
+		                                for (const auto &a : elementActions) {
+		                                    if (a.doWsTagUpdate) {
+		                                        ws_notify_tag_update(a.snap, a.cfg);
+		                                    }
+		                                    if (a.doWsEventRow && a.valueChangedForEvent && a.hadPrev) {
+		                                        ws_notify_event_log_row(&a.prev, a.snap);
+		                                    }
+		                                    if (a.doUaUpdate) {
+		                                        std::lock_guard<std::mutex> ql(uaQueueMutex);
+		                                        uaQueue.push_back(UaUpdate{spec.conn.id, a.cfg.logical_name, a.snap.value});
+		                                    }
+		                                    if (a.doMqttPublish) {
+		                                        std::lock_guard<std::mutex> ql(mqttQueueMutex);
+		                                        MqttPublishJob j;
+		                                        j.snap = a.snap;
+		                                        j.hadPrev = a.hadPrev;
+		                                        if (a.hadPrev) j.prev = a.prev;
+		                                        mqttQueue.push_back(std::move(j));
+		                                    }
+		                                    if (doConsolePrint) {
+		                                        print_snapshot(a.snap);
+		                                    }
+		                                }
 		                            }
 
 		                            for (const auto &a : derivedActions) {
@@ -15164,23 +15843,25 @@ window.addEventListener("load", startAutoRefresh);
 		                                    mqttQueue.push_back(std::move(j));
 		                                }
 		                            }
-	                            if (doConsolePrint) {
-	                                print_snapshot(snap);
-	                            }
+	                            if (!isArray) {
+	                                if (doConsolePrint) {
+	                                    print_snapshot(snap);
+	                                }
 
-	                            if (doUaUpdate) {
-	                                std::lock_guard<std::mutex> ql(uaQueueMutex);
-	                                uaQueue.push_back(UaUpdate{spec.conn.id, t.cfg.logical_name, snap.value});
-	                            }
+	                                if (doUaUpdate) {
+	                                    std::lock_guard<std::mutex> ql(uaQueueMutex);
+	                                    uaQueue.push_back(UaUpdate{spec.conn.id, t.cfg.logical_name, snap.value});
+	                                }
 
-		                            if (doMqttPublish) {
-		                                std::lock_guard<std::mutex> ql(mqttQueueMutex);
-		                                MqttPublishJob j;
-		                                j.snap = snap;
-		                                j.hadPrev = hadPrev;
-		                                if (hadPrev) j.prev = prevSnap;
-		                                mqttQueue.push_back(std::move(j));
-		                            }
+		                                if (doMqttPublish) {
+		                                    std::lock_guard<std::mutex> ql(mqttQueueMutex);
+		                                    MqttPublishJob j;
+		                                    j.snap = snap;
+	                                j.hadPrev = hadPrev;
+	                                if (hadPrev) j.prev = prevSnap;
+	                                mqttQueue.push_back(std::move(j));
+		                                }
+	                            }
 		                    }
 		                });
 		            }

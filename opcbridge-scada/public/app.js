@@ -209,6 +209,7 @@ const els = {
   newTagBit: document.getElementById('newTagBit'),
   newTagDatatype: document.getElementById('newTagDatatype'),
   newTagScan: document.getElementById('newTagScan'),
+  newTagElemCount: document.getElementById('newTagElemCount'),
   newTagEnabled: document.getElementById('newTagEnabled'),
   newTagWritable: document.getElementById('newTagWritable'),
   newTagInvert: document.getElementById('newTagInvert'),
@@ -248,6 +249,7 @@ const els = {
   editTagBit: document.getElementById('editTagBit'),
   editTagDatatype: document.getElementById('editTagDatatype'),
   editTagScan: document.getElementById('editTagScan'),
+  editTagElemCount: document.getElementById('editTagElemCount'),
   editTagEnabled: document.getElementById('editTagEnabled'),
   editTagWritable: document.getElementById('editTagWritable'),
   editTagInvert: document.getElementById('editTagInvert'),
@@ -1924,6 +1926,7 @@ function downloadDeviceTagsCsv(connectionId) {
 	    'bit',
 	    'invert',
 	    'datatype',
+	    'elem_count',
 	    'scan_ms',
 	    'enabled',
 	    'writable',
@@ -1952,6 +1955,7 @@ function downloadDeviceTagsCsv(connectionId) {
 	    bit: (t?.bit == null || String(t?.source_tag || '').trim() === '') ? '' : String(t.bit),
 	    invert: (t?.invert === true) ? 'true' : 'false',
 	    datatype: String(t?.datatype || '').trim(),
+	    elem_count: (t?.elem_count == null) ? '' : String(t.elem_count),
 	    scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
 	    enabled: (t?.enabled !== false) ? 'true' : 'false',
 	    writable: (t?.writable === true) ? 'true' : 'false',
@@ -2117,13 +2121,21 @@ function getDerivedBitSourceOptions(connectionId, excludeTagName) {
     .filter((t) => String(t?.name || '') !== ex)
     .filter((t) => String(t?.plc_tag_name || '').trim() !== '')
     .filter((t) => isNumericBitSourceDatatype(t?.datatype))
-    .map((t) => String(t?.name || '').trim())
+    .flatMap((t) => {
+      const name = String(t?.name || '').trim();
+      if (!name) return [];
+      const ec = Math.max(1, Math.floor(Number(t?.elem_count) || 1));
+      if (ec <= 1) return [name];
+      const out = [];
+      for (let i = 0; i < ec; i++) out.push(`${name}[${i}]`);
+      return out;
+    })
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   return names;
 }
 
-function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitEl, datatypeEl, writableEl, scalingEl, scalingLinearRowEl }, { connId, excludeTagName }) {
+function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitEl, datatypeEl, elemCountEl, writableEl, scalingEl, scalingLinearRowEl }, { connId, excludeTagName }) {
   const kind = String(kindEl?.value || 'plc').trim().toLowerCase();
   const isDerived = (kind === 'derived_bit');
 
@@ -2141,14 +2153,8 @@ function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitEl, da
     }
   }
 
-  if (writableEl) {
-    if (isDerived) {
-      writableEl.checked = false;
-      writableEl.disabled = true;
-    } else {
-      writableEl.disabled = !canEditConfig();
-    }
-  }
+  if (elemCountEl) elemCountEl.disabled = isDerived || !canEditConfig();
+  if (writableEl) writableEl.disabled = !canEditConfig();
 
   if (scalingEl) {
     if (isDerived) {
@@ -2340,6 +2346,10 @@ async function importTagsCsvIntoWorkspace(connectionId) {
     const invertRaw = csvGet(r, 'invert');
     if (String(invertRaw ?? '').trim() === '') delete base.invert;
     else base.invert = parseBoolLoose(invertRaw, false);
+
+    const elemCount = parseIntLoose(csvGet(r, 'elem_count') || csvGet(r, 'elemcount'), null);
+    if (elemCount == null || elemCount <= 1) delete base.elem_count;
+    else base.elem_count = Math.max(1, elemCount);
 
     const source_tag = String(
       csvGet(r, 'source_tag') ||
@@ -3558,8 +3568,10 @@ function showNewTagModal(connectionId) {
   if (els.newTagBit) els.newTagBit.value = '0';
   fillTagDatatypeSelect(els.newTagDatatype, 'bool');
   if (els.newTagScan) els.newTagScan.value = '';
+  if (els.newTagElemCount) els.newTagElemCount.value = '1';
   if (els.newTagEnabled) els.newTagEnabled.checked = true;
   if (els.newTagWritable) els.newTagWritable.checked = false;
+  if (els.newTagInvert) els.newTagInvert.checked = false;
   if (els.newTagMqttAllowed) els.newTagMqttAllowed.checked = false;
   if (els.newTagScaling) {
     els.newTagScaling.value = 'none';
@@ -3586,6 +3598,7 @@ function showNewTagModal(connectionId) {
       sourceEl: els.newTagSourceTag,
       bitEl: els.newTagBit,
       datatypeEl: els.newTagDatatype,
+      elemCountEl: els.newTagElemCount,
       writableEl: els.newTagWritable,
       scalingEl: els.newTagScaling,
       scalingLinearRowEl: els.newTagScalingLinearRow
@@ -3597,6 +3610,7 @@ function showNewTagModal(connectionId) {
       sourceEl: els.newTagSourceTag,
       bitEl: els.newTagBit,
       datatypeEl: els.newTagDatatype,
+      elemCountEl: els.newTagElemCount,
       writableEl: els.newTagWritable,
       scalingEl: els.newTagScaling,
       scalingLinearRowEl: els.newTagScalingLinearRow
@@ -3664,15 +3678,17 @@ async function createNewTagFromModal() {
   }
 
   const datatype = isDerived ? 'bool' : String(els.newTagDatatype?.value || '').trim();
+  const elemCount = Math.max(1, Math.trunc(Number(String(els.newTagElemCount?.value || '').trim() || '1') || 1));
   const scanRaw = String(els.newTagScan?.value || '').trim();
   const scan_ms = scanRaw === '' ? null : Math.max(0, Math.trunc(Number(scanRaw) || 0));
   const enabled = Boolean(els.newTagEnabled?.checked);
-  const writable = isDerived ? false : Boolean(els.newTagWritable?.checked);
+  const writable = Boolean(els.newTagWritable?.checked);
   const invert = Boolean(els.newTagInvert?.checked);
   const mqtt_command_allowed = Boolean(els.newTagMqttAllowed?.checked);
   const tag = { connection_id: cid, name, datatype, enabled, writable, mqtt_command_allowed };
   if (!isDerived) {
     tag.plc_tag_name = plc_tag_name;
+    if (elemCount !== 1) tag.elem_count = elemCount;
     const scalingRes = readLinearScalingFromUi({
       scalingEl: els.newTagScaling,
       rawLowEl: els.newTagRawLow,
@@ -3880,6 +3896,7 @@ function openWorkspaceItemModal(node) {
       if (els.editTagBit) els.editTagBit.value = (row?.bit == null) ? '0' : String(row.bit);
       fillTagDatatypeSelect(els.editTagDatatype, String(row?.datatype || 'bool'));
       if (els.editTagScan) els.editTagScan.value = (row?.scan_ms == null) ? '' : String(row.scan_ms);
+      if (els.editTagElemCount) els.editTagElemCount.value = (row?.elem_count == null) ? '1' : String(row.elem_count);
       if (els.editTagEnabled) els.editTagEnabled.checked = (row?.enabled !== false);
       if (els.editTagWritable) els.editTagWritable.checked = (row?.writable === true);
       if (els.editTagInvert) els.editTagInvert.checked = (row?.invert === true);
@@ -3904,6 +3921,7 @@ function openWorkspaceItemModal(node) {
         sourceEl: els.editTagSourceTag,
         bitEl: els.editTagBit,
         datatypeEl: els.editTagDatatype,
+        elemCountEl: els.editTagElemCount,
         writableEl: els.editTagWritable,
         scalingEl: els.editTagScaling,
         scalingLinearRowEl: els.editTagScalingLinearRow
@@ -3915,6 +3933,7 @@ function openWorkspaceItemModal(node) {
         sourceEl: els.editTagSourceTag,
         bitEl: els.editTagBit,
         datatypeEl: els.editTagDatatype,
+        elemCountEl: els.editTagElemCount,
         writableEl: els.editTagWritable,
         scalingEl: els.editTagScaling,
         scalingLinearRowEl: els.editTagScalingLinearRow
@@ -4123,13 +4142,14 @@ async function saveEditedTagFromModal() {
 
   const plc_tag_name = String(els.editTagPlc?.value || '').trim();
   const source_tag = String(els.editTagSourceTag?.value || '').trim();
+  const elemCount = Math.max(1, Math.trunc(Number(String(els.editTagElemCount?.value || '').trim() || '1') || 1));
   const bitRaw = String(els.editTagBit?.value || '').trim();
   const bit = bitRaw === '' ? null : Math.trunc(Number(bitRaw));
 
   const datatype = isDerived ? 'bool' : String(els.editTagDatatype?.value || '').trim();
   const scanRaw = String(els.editTagScan?.value || '').trim();
   const enabled = Boolean(els.editTagEnabled?.checked);
-  const writable = isDerived ? false : Boolean(els.editTagWritable?.checked);
+  const writable = Boolean(els.editTagWritable?.checked);
   const invert = Boolean(els.editTagInvert?.checked);
   const mqtt_command_allowed = Boolean(els.editTagMqttAllowed?.checked);
 
@@ -4178,10 +4198,13 @@ async function saveEditedTagFromModal() {
   const next = { ...(state.tagConfigAll[idx] || {}) };
   if (!isDerived) {
     next.plc_tag_name = plc_tag_name;
+    if (elemCount === 1) delete next.elem_count;
+    else next.elem_count = elemCount;
     delete next.source_tag;
     delete next.bit;
   } else {
     delete next.plc_tag_name;
+    delete next.elem_count;
     next.source_tag = source_tag;
     next.bit = bit;
   }
