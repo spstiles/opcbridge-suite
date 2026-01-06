@@ -206,6 +206,7 @@ const els = {
   newTagPlc: document.getElementById('newTagPlc'),
   newTagDerivedRow: document.getElementById('newTagDerivedRow'),
   newTagSourceTag: document.getElementById('newTagSourceTag'),
+  newTagBitBox: document.getElementById('newTagBitBox'),
   newTagBit: document.getElementById('newTagBit'),
   newTagDatatype: document.getElementById('newTagDatatype'),
   newTagScan: document.getElementById('newTagScan'),
@@ -246,6 +247,7 @@ const els = {
   editTagPlc: document.getElementById('editTagPlc'),
   editTagDerivedRow: document.getElementById('editTagDerivedRow'),
   editTagSourceTag: document.getElementById('editTagSourceTag'),
+  editTagBitBox: document.getElementById('editTagBitBox'),
   editTagBit: document.getElementById('editTagBit'),
   editTagDatatype: document.getElementById('editTagDatatype'),
   editTagScan: document.getElementById('editTagScan'),
@@ -1946,11 +1948,11 @@ function downloadDeviceTagsCsv(connectionId) {
 	  ];
 
 	  const rows = tags.map((t) => ({
-	    // Derived tags: (source_tag + bit) and no plc_tag_name
+	    // Derived tags: source_tag is set (bit optional) and no plc_tag_name
 	    // Direct tags: plc_tag_name and no source_tag/bit
 	    connection_id: cid,
 	    name: String(t?.name || '').trim(),
-	    plc_tag_name: (String(t?.source_tag || '').trim() !== '' && Number(t?.bit) >= 0) ? '' : String(t?.plc_tag_name || '').trim(),
+	    plc_tag_name: (String(t?.source_tag || '').trim() !== '') ? '' : String(t?.plc_tag_name || '').trim(),
 	    source_tag: String(t?.source_tag || '').trim(),
 	    bit: (t?.bit == null || String(t?.source_tag || '').trim() === '') ? '' : String(t.bit),
 	    invert: (t?.invert === true) ? 'true' : 'false',
@@ -2135,17 +2137,42 @@ function getDerivedBitSourceOptions(connectionId, excludeTagName) {
   return names;
 }
 
-function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitEl, datatypeEl, elemCountEl, writableEl, scalingEl, scalingLinearRowEl }, { connId, excludeTagName }) {
+function getDerivedAliasSourceOptions(connectionId, excludeTagName) {
+  const cid = String(connectionId || '').trim();
+  const ex = String(excludeTagName || '').trim();
+  const all = getEffectiveTagsAll();
+  const names = all
+    .filter((t) => String(t?.connection_id || '') === cid)
+    .filter((t) => String(t?.name || '') !== ex)
+    .filter((t) => String(t?.plc_tag_name || '').trim() !== '')
+    .flatMap((t) => {
+      const name = String(t?.name || '').trim();
+      if (!name) return [];
+      const ec = Math.max(1, Math.floor(Number(t?.elem_count) || 1));
+      if (ec <= 1) return [name];
+      const out = [];
+      for (let i = 0; i < ec; i++) out.push(`${name}[${i}]`);
+      return out;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  return names;
+}
+
+function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitBoxEl, bitEl, datatypeEl, elemCountEl, writableEl, mqttAllowedEl, scalingEl, scalingLinearRowEl }, { connId, excludeTagName }) {
   const kind = String(kindEl?.value || 'plc').trim().toLowerCase();
-  const isDerived = (kind === 'derived_bit');
+  const isDerivedBit = (kind === 'derived_bit');
+  const isDerivedAlias = (kind === 'derived_alias');
+  const isDerived = (isDerivedBit || isDerivedAlias);
 
   if (derivedRowEl) derivedRowEl.style.display = isDerived ? '' : 'none';
+  if (bitBoxEl) bitBoxEl.style.display = isDerivedBit ? '' : 'none';
   if (plcEl) plcEl.disabled = isDerived || !canEditConfig();
   if (sourceEl) sourceEl.disabled = !canEditConfig();
-  if (bitEl) bitEl.disabled = !canEditConfig();
+  if (bitEl) bitEl.disabled = isDerivedAlias || !canEditConfig();
 
   if (datatypeEl) {
-    if (isDerived) {
+    if (isDerivedBit) {
       fillTagDatatypeSelect(datatypeEl, 'bool');
       datatypeEl.disabled = true;
     } else {
@@ -2154,10 +2181,17 @@ function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitEl, da
   }
 
   if (elemCountEl) elemCountEl.disabled = isDerived || !canEditConfig();
-  if (writableEl) writableEl.disabled = !canEditConfig();
+  if (writableEl) {
+    if (isDerivedAlias) writableEl.checked = false;
+    writableEl.disabled = isDerivedAlias || !canEditConfig();
+  }
+  if (mqttAllowedEl) {
+    if (isDerivedAlias) mqttAllowedEl.checked = false;
+    mqttAllowedEl.disabled = isDerivedAlias || !canEditConfig();
+  }
 
   if (scalingEl) {
-    if (isDerived) {
+    if (isDerivedBit) {
       scalingEl.value = 'none';
       scalingEl.disabled = true;
       if (scalingLinearRowEl) scalingLinearRowEl.style.display = 'none';
@@ -2166,8 +2200,20 @@ function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitEl, da
     }
   }
 
-  if (isDerived && sourceEl) {
+  if (isDerivedBit && sourceEl) {
     const opts = getDerivedBitSourceOptions(connId, excludeTagName);
+    const selected = String(sourceEl.value || '').trim();
+    sourceEl.innerHTML = '';
+    opts.forEach((n) => {
+      const o = document.createElement('option');
+      o.value = n;
+      o.textContent = n;
+      sourceEl.appendChild(o);
+    });
+    if (selected && opts.includes(selected)) sourceEl.value = selected;
+  }
+  if (isDerivedAlias && sourceEl) {
+    const opts = getDerivedAliasSourceOptions(connId, excludeTagName);
     const selected = String(sourceEl.value || '').trim();
     sourceEl.innerHTML = '';
     opts.forEach((n) => {
@@ -2357,7 +2403,8 @@ async function importTagsCsvIntoWorkspace(connectionId) {
       ''
     ).trim();
     const bit = parseIntLoose(csvGet(r, 'bit'), null);
-    const isDerived = (source_tag !== '' && bit != null && bit >= 0);
+    const isDerivedBit = (source_tag !== '' && bit != null && bit >= 0);
+    const isDerivedAlias = (source_tag !== '' && !isDerivedBit);
 
     const plc_tag_name = String(
       csvGet(r, 'plc_tag_name') ||
@@ -2367,8 +2414,9 @@ async function importTagsCsvIntoWorkspace(connectionId) {
     ).trim();
     const datatype = String(csvGet(r, 'datatype') || '').trim();
 
-    if (isDerived) {
+    if (isDerivedBit) {
       delete base.plc_tag_name;
+      delete base.elem_count;
       base.source_tag = source_tag;
       base.bit = bit;
 
@@ -2376,6 +2424,14 @@ async function importTagsCsvIntoWorkspace(connectionId) {
       // coerce to bool so the tag doesn't get silently skipped at runtime.
       if (!datatype || String(datatype).trim().toLowerCase() !== 'bool') base.datatype = 'bool';
       else base.datatype = datatype;
+    } else if (isDerivedAlias) {
+      delete base.plc_tag_name;
+      delete base.elem_count;
+      base.source_tag = source_tag;
+      delete base.bit;
+      if (datatype) base.datatype = datatype;
+      base.writable = false;
+      base.mqtt_command_allowed = false;
     } else {
       delete base.source_tag;
       delete base.bit;
@@ -3596,10 +3652,12 @@ function showNewTagModal(connectionId) {
       plcEl: els.newTagPlc,
       derivedRowEl: els.newTagDerivedRow,
       sourceEl: els.newTagSourceTag,
+      bitBoxEl: els.newTagBitBox,
       bitEl: els.newTagBit,
       datatypeEl: els.newTagDatatype,
       elemCountEl: els.newTagElemCount,
       writableEl: els.newTagWritable,
+      mqttAllowedEl: els.newTagMqttAllowed,
       scalingEl: els.newTagScaling,
       scalingLinearRowEl: els.newTagScalingLinearRow
     }, { connId: cid, excludeTagName: '' });
@@ -3608,10 +3666,12 @@ function showNewTagModal(connectionId) {
       plcEl: els.newTagPlc,
       derivedRowEl: els.newTagDerivedRow,
       sourceEl: els.newTagSourceTag,
+      bitBoxEl: els.newTagBitBox,
       bitEl: els.newTagBit,
       datatypeEl: els.newTagDatatype,
       elemCountEl: els.newTagElemCount,
       writableEl: els.newTagWritable,
+      mqttAllowedEl: els.newTagMqttAllowed,
       scalingEl: els.newTagScaling,
       scalingLinearRowEl: els.newTagScalingLinearRow
     }, { connId: cid, excludeTagName: '' });
@@ -3664,7 +3724,9 @@ async function createNewTagFromModal() {
   if (!name) { setNewTagStatus('Tag Name is required.'); return; }
 
   const sourceKind = String(els.newTagSourceKind?.value || 'plc').trim().toLowerCase();
-  const isDerived = (sourceKind === 'derived_bit');
+  const isDerivedBit = (sourceKind === 'derived_bit');
+  const isDerivedAlias = (sourceKind === 'derived_alias');
+  const isDerived = (isDerivedBit || isDerivedAlias);
 
   const plc_tag_name = String(els.newTagPlc?.value || '').trim();
   const source_tag = String(els.newTagSourceTag?.value || '').trim();
@@ -3672,12 +3734,15 @@ async function createNewTagFromModal() {
   const bit = bitRaw === '' ? null : Math.trunc(Number(bitRaw));
 
   if (!isDerived && !plc_tag_name) { setNewTagStatus('PLC Tag is required.'); return; }
-  if (isDerived) {
+  if (isDerivedBit) {
     if (!source_tag) { setNewTagStatus('Source Tag is required for a Derived Bit.'); return; }
     if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) { setNewTagStatus('Bit must be between 0 and 63.'); return; }
   }
+  if (isDerivedAlias) {
+    if (!source_tag) { setNewTagStatus('Source Tag is required for a Derived Alias.'); return; }
+  }
 
-  const datatype = isDerived ? 'bool' : String(els.newTagDatatype?.value || '').trim();
+  const datatype = isDerivedBit ? 'bool' : String(els.newTagDatatype?.value || '').trim();
   const elemCount = Math.max(1, Math.trunc(Number(String(els.newTagElemCount?.value || '').trim() || '1') || 1));
   const scanRaw = String(els.newTagScan?.value || '').trim();
   const scan_ms = scanRaw === '' ? null : Math.max(0, Math.trunc(Number(scanRaw) || 0));
@@ -3685,7 +3750,14 @@ async function createNewTagFromModal() {
   const writable = Boolean(els.newTagWritable?.checked);
   const invert = Boolean(els.newTagInvert?.checked);
   const mqtt_command_allowed = Boolean(els.newTagMqttAllowed?.checked);
-  const tag = { connection_id: cid, name, datatype, enabled, writable, mqtt_command_allowed };
+  const tag = {
+    connection_id: cid,
+    name,
+    datatype,
+    enabled,
+    writable: isDerivedAlias ? false : writable,
+    mqtt_command_allowed: isDerivedAlias ? false : mqtt_command_allowed
+  };
   if (!isDerived) {
     tag.plc_tag_name = plc_tag_name;
     if (elemCount !== 1) tag.elem_count = elemCount;
@@ -3701,9 +3773,23 @@ async function createNewTagFromModal() {
     }, datatype);
     if (!scalingRes.ok) { setNewTagStatus(String(scalingRes.error || 'Invalid scaling settings.')); return; }
     if (scalingRes.scaling === 'linear') Object.assign(tag, scalingRes.fields || {});
-  } else {
+  } else if (isDerivedBit) {
     tag.source_tag = source_tag;
     tag.bit = bit;
+  } else {
+    tag.source_tag = source_tag;
+    const scalingRes = readLinearScalingFromUi({
+      scalingEl: els.newTagScaling,
+      rawLowEl: els.newTagRawLow,
+      rawHighEl: els.newTagRawHigh,
+      scaledLowEl: els.newTagScaledLow,
+      scaledHighEl: els.newTagScaledHigh,
+      scaledDatatypeEl: els.newTagScaledDatatype,
+      clampLowEl: els.newTagClampLow,
+      clampHighEl: els.newTagClampHigh,
+    }, datatype);
+    if (!scalingRes.ok) { setNewTagStatus(String(scalingRes.error || 'Invalid scaling settings.')); return; }
+    if (scalingRes.scaling === 'linear') Object.assign(tag, scalingRes.fields || {});
   }
   if (scan_ms != null) tag.scan_ms = scan_ms;
   if (invert) tag.invert = true;
@@ -3889,8 +3975,13 @@ function openWorkspaceItemModal(node) {
       if (els.editTagSaveBtn) els.editTagSaveBtn.disabled = true;
       setEditTagStatus('Tag not found in config. Refresh tag config.');
     } else {
-      const isDerived = (String(row?.source_tag || '').trim() !== '' && Number(row?.bit) >= 0);
-      if (els.editTagSourceKind) els.editTagSourceKind.value = isDerived ? 'derived_bit' : 'plc';
+      const hasSource = (String(row?.source_tag || '').trim() !== '');
+      const bitNum = (row?.bit == null) ? -1 : Number(row.bit);
+      if (els.editTagSourceKind) {
+        els.editTagSourceKind.value = hasSource
+          ? ((Number.isFinite(bitNum) && bitNum >= 0) ? 'derived_bit' : 'derived_alias')
+          : 'plc';
+      }
       if (els.editTagPlc) els.editTagPlc.value = String(row?.plc_tag_name || '');
       if (els.editTagSourceTag) els.editTagSourceTag.value = String(row?.source_tag || '');
       if (els.editTagBit) els.editTagBit.value = (row?.bit == null) ? '0' : String(row.bit);
@@ -3919,10 +4010,12 @@ function openWorkspaceItemModal(node) {
         plcEl: els.editTagPlc,
         derivedRowEl: els.editTagDerivedRow,
         sourceEl: els.editTagSourceTag,
+        bitBoxEl: els.editTagBitBox,
         bitEl: els.editTagBit,
         datatypeEl: els.editTagDatatype,
         elemCountEl: els.editTagElemCount,
         writableEl: els.editTagWritable,
+        mqttAllowedEl: els.editTagMqttAllowed,
         scalingEl: els.editTagScaling,
         scalingLinearRowEl: els.editTagScalingLinearRow
       }, { connId: conn, excludeTagName: name });
@@ -3931,10 +4024,12 @@ function openWorkspaceItemModal(node) {
         plcEl: els.editTagPlc,
         derivedRowEl: els.editTagDerivedRow,
         sourceEl: els.editTagSourceTag,
+        bitBoxEl: els.editTagBitBox,
         bitEl: els.editTagBit,
         datatypeEl: els.editTagDatatype,
         elemCountEl: els.editTagElemCount,
         writableEl: els.editTagWritable,
+        mqttAllowedEl: els.editTagMqttAllowed,
         scalingEl: els.editTagScaling,
         scalingLinearRowEl: els.editTagScalingLinearRow
       }, { connId: conn, excludeTagName: name });
@@ -4138,7 +4233,9 @@ async function saveEditedTagFromModal() {
   if (!canEditConfig() && newName !== name) { setEditTagStatus('Login required to rename tags.'); return; }
 
   const sourceKind = String(els.editTagSourceKind?.value || 'plc').trim().toLowerCase();
-  const isDerived = (sourceKind === 'derived_bit');
+  const isDerivedBit = (sourceKind === 'derived_bit');
+  const isDerivedAlias = (sourceKind === 'derived_alias');
+  const isDerived = (isDerivedBit || isDerivedAlias);
 
   const plc_tag_name = String(els.editTagPlc?.value || '').trim();
   const source_tag = String(els.editTagSourceTag?.value || '').trim();
@@ -4146,7 +4243,7 @@ async function saveEditedTagFromModal() {
   const bitRaw = String(els.editTagBit?.value || '').trim();
   const bit = bitRaw === '' ? null : Math.trunc(Number(bitRaw));
 
-  const datatype = isDerived ? 'bool' : String(els.editTagDatatype?.value || '').trim();
+  const datatype = isDerivedBit ? 'bool' : String(els.editTagDatatype?.value || '').trim();
   const scanRaw = String(els.editTagScan?.value || '').trim();
   const enabled = Boolean(els.editTagEnabled?.checked);
   const writable = Boolean(els.editTagWritable?.checked);
@@ -4156,12 +4253,15 @@ async function saveEditedTagFromModal() {
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
 
   if (!isDerived && !plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
-  if (isDerived) {
+  if (isDerivedBit) {
     if (!source_tag) { setEditTagStatus('Source Tag is required for a Derived Bit.'); return; }
     if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) { setEditTagStatus('Bit must be between 0 and 63.'); return; }
   }
+  if (isDerivedAlias) {
+    if (!source_tag) { setEditTagStatus('Source Tag is required for a Derived Alias.'); return; }
+  }
 
-  const scalingRes = isDerived
+  const scalingRes = isDerivedBit
     ? { ok: true, scaling: 'none', fields: {} }
     : readLinearScalingFromUi({
       scalingEl: els.editTagScaling,
@@ -4202,16 +4302,21 @@ async function saveEditedTagFromModal() {
     else next.elem_count = elemCount;
     delete next.source_tag;
     delete next.bit;
-  } else {
+  } else if (isDerivedBit) {
     delete next.plc_tag_name;
     delete next.elem_count;
     next.source_tag = source_tag;
     next.bit = bit;
+  } else {
+    delete next.plc_tag_name;
+    delete next.elem_count;
+    next.source_tag = source_tag;
+    delete next.bit;
   }
   next.datatype = datatype;
   next.enabled = enabled;
-  next.writable = writable;
-  next.mqtt_command_allowed = mqtt_command_allowed;
+  next.writable = isDerivedAlias ? false : writable;
+  next.mqtt_command_allowed = isDerivedAlias ? false : mqtt_command_allowed;
   if (invert) next.invert = true;
   else delete next.invert;
   if (scanRaw === '') delete next.scan_ms;

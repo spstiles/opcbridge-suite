@@ -498,6 +498,7 @@
 	              <select id="editTagSourceKind">
 	                <option value="plc">PLC Tag</option>
 	                <option value="derived_bit">Derived Bit</option>
+	                <option value="derived_alias">Derived Alias</option>
 	              </select>
 	            </div>
 	            <div class="form-row"><label>PLC Tag</label><input id="editTagPlc" type="text" placeholder="Pump1.Running" /></div>
@@ -508,7 +509,7 @@
 	                  <div class="hint">Source Tag</div>
 	                  <select id="editTagSourceTag"></select>
 	                </div>
-	                <div>
+	                <div id="editTagBitBox">
 	                  <div class="hint">Bit (0=LSB)</div>
 	                  <input id="editTagBit" type="number" min="0" max="63" step="1" placeholder="0" />
 	                </div>
@@ -660,6 +661,7 @@
 	            <select id="newTagSourceKind">
 	              <option value="plc">PLC Tag</option>
 	              <option value="derived_bit">Derived Bit</option>
+	              <option value="derived_alias">Derived Alias</option>
 	            </select>
 	          </div>
 	          <div class="form-row"><label>PLC Tag</label><input id="newTagPlc" type="text" placeholder="Pump1.Running" /></div>
@@ -670,7 +672,7 @@
 	                <div class="hint">Source Tag</div>
 	                <select id="newTagSourceTag"></select>
 	              </div>
-	              <div>
+	              <div id="newTagBitBox">
 	                <div class="hint">Bit (0=LSB)</div>
 	                <input id="newTagBit" type="number" min="0" max="63" step="1" placeholder="0" />
 	              </div>

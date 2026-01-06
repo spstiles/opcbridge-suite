@@ -2216,21 +2216,43 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	            t.logical_name = json_get_string_loose(jt, "name", std::string{});
 	            if (t.logical_name.empty()) continue;
 
-	            // Derived tag: { name, source_tag, bit, datatype? }
+	            // Derived tags:
+	            // - Derived bit:   { name, source_tag, bit >= 0, datatype=bool }
+	            // - Derived alias: { name, source_tag, datatype=(any supported), bit omitted or < 0 }
 	            const std::string source_tag = json_get_string_loose(jt, "source_tag", json_get_string_loose(jt, "source", std::string{}));
 	            const int bit = json_get_int_loose(jt, "bit", -1);
-	            const bool isDerived = (!source_tag.empty() && bit >= 0);
+	            const bool hasSource = (!source_tag.empty());
+	            const bool isDerivedBit = (hasSource && bit >= 0);
+	            const bool isDerivedAlias = (hasSource && bit < 0);
 
-	            if (isDerived) {
+	            if (hasSource) {
 	                t.source_tag = source_tag;
 	                t.bit = bit;
 	                t.plc_tag_name.clear();
-	                t.datatype = json_get_string_loose(jt, "datatype", std::string("bool"));
-	                if (t.datatype.empty()) t.datatype = "bool";
-	                if (t.datatype != "bool") {
-	                    std::cerr << "[load] Warning: skipping derived tag '" << t.logical_name
-	                              << "' in " << path << " because datatype must be 'bool'.\n";
-	                    continue;
+
+	                t.datatype = json_get_string_loose(jt, "datatype", std::string{});
+	                if (t.datatype.empty()) {
+	                    t.datatype = isDerivedBit ? std::string("bool") : std::string{};
+	                }
+
+	                if (isDerivedBit) {
+	                    if (t.datatype.empty()) t.datatype = "bool";
+	                    if (t.datatype != "bool") {
+	                        std::cerr << "[load] Warning: skipping derived-bit tag '" << t.logical_name
+	                                  << "' in " << path << " because datatype must be 'bool'.\n";
+	                        continue;
+	                    }
+	                } else {
+	                    if (t.datatype.empty()) {
+	                        std::cerr << "[load] Warning: skipping derived-alias tag '" << t.logical_name
+	                                  << "' in " << path << " because datatype is missing.\n";
+	                        continue;
+	                    }
+	                    if (!is_supported_datatype(t.datatype)) {
+	                        std::cerr << "[load] Warning: skipping derived-alias tag '" << t.logical_name
+	                                  << "' in " << path << " due to unsupported datatype '" << t.datatype << "'.\n";
+	                        continue;
+	                    }
 	                }
 	            } else {
 	                if (!jt.contains("plc_tag_name") || !jt.contains("datatype")) continue;
@@ -2250,8 +2272,18 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	            t.enabled              = json_get_bool_loose(jt, "enabled", true);
 	            t.writable             = json_get_bool_loose(jt, "writable", false);
                 t.invert               = json_get_bool_loose(jt, "invert", false);
-	            if (isDerived) {
+	            if (hasSource) {
 	                t.elem_count = 1;
+	            }
+	            if (isDerivedAlias) {
+	                // Derived-alias tags are currently read-only; strict writes are only supported for derived-bit tags.
+	                t.writable = false;
+	                t.bit = -1; // keep the stored config canonical for alias tags
+	            }
+	            if (t.invert && t.datatype != "bool") {
+	                std::cerr << "[load] Warning: tag '" << t.logical_name
+	                          << "' invert=true ignored because datatype is not bool.\n";
+	                t.invert = false;
 	            }
 
             // Scaling (optional)
@@ -2265,6 +2297,9 @@ ConnectionConfig load_connection_config(const std::string &path) {
             t.scaled_datatype = json_get_string_loose(jt, "scaled_datatype", std::string{});
 
             t.mqtt_command_allowed = json_get_bool_loose(jt, "mqtt_command_allowed", false);
+            if (isDerivedAlias) {
+                t.mqtt_command_allowed = false;
+            }
             t.log_event_on_change  = json_get_bool_loose(jt, "log_event_on_change", false);
 
             // Periodic logging config (all optional)
@@ -4083,7 +4118,7 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
 			                    }
 
 			                    // Derived tags do not create PLC handles; they are computed from a source tag.
-			                    if (!tc.source_tag.empty() && tc.bit >= 0) {
+			                    if (!tc.source_tag.empty()) {
 			                        rt.handle = PLCTAG_ERR_NOT_FOUND;
 			                        rt.next_poll = std::chrono::steady_clock::time_point{};
 			                        ctx.tags.push_back(std::move(rt));
@@ -7263,6 +7298,7 @@ int main(int argc, char **argv) {
 										    <select id="ws-tag-source-kind">
 										      <option value="plc">PLC Tag</option>
 										      <option value="derived_bit">Derived Bit</option>
+										      <option value="derived_alias">Derived Alias</option>
 										    </select>
 										  </div>
 										  <div class="ws-s-form-row">
@@ -7276,7 +7312,7 @@ int main(int argc, char **argv) {
 										        <div class="ws-s-hint">Source Tag</div>
 										        <select id="ws-tag-source-tag"></select>
 										      </div>
-										      <div>
+										      <div id="ws-tag-bit-box">
 										        <div class="ws-s-hint">Bit (0=LSB)</div>
 										        <input id="ws-tag-bit" type="number" min="0" max="63" step="1" placeholder="0" />
 										      </div>
@@ -7875,6 +7911,7 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 		    tagPlc: document.getElementById("ws-tag-plc"),
 		    tagDerivedRow: document.getElementById("ws-tag-derived-row"),
 		    tagSourceTag: document.getElementById("ws-tag-source-tag"),
+		    tagBitBox: document.getElementById("ws-tag-bit-box"),
 		    tagBit: document.getElementById("ws-tag-bit"),
 		    tagDt: document.getElementById("ws-tag-dt"),
 		    tagScan: document.getElementById("ws-tag-scan"),
@@ -8216,23 +8253,53 @@ const wsGetDerivedBitSourceOptions = (connection_id, excludeName) => {
     return names;
 };
 
+const wsGetDerivedAliasSourceOptions = (connection_id, excludeName) => {
+    const cid = String(connection_id || "").trim();
+    const ex  = String(excludeName || "").trim();
+    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
+    const names = tags
+        .filter((t) => String(t?.connection_id || "") === cid)
+        .filter((t) => String(t?.name || "") !== ex)
+        .filter((t) => String(t?.plc_tag_name || "").trim() !== "")
+        .flatMap((t) => {
+            const name = String(t?.name || "").trim();
+            if (!name) return [];
+            const ec = Math.max(1, Math.floor(Number(t?.elem_count) || 1));
+            if (ec <= 1) return [name];
+            const out = [];
+            for (let i = 0; i < ec; i++) out.push(`${name}[${i}]`);
+            return out;
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+    return names;
+};
+
 const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
     const el = wsEls();
     const kind = String(el.tagSourceKind?.value || "plc").trim().toLowerCase();
-    const isDerived = (kind === "derived_bit");
+    const isDerivedBit = (kind === "derived_bit");
+    const isDerivedAlias = (kind === "derived_alias");
+    const isDerived = (isDerivedBit || isDerivedAlias);
     const canEdit = wsIsEditable();
 
     if (el.tagDerivedRow) el.tagDerivedRow.style.display = isDerived ? "grid" : "none";
+    if (el.tagBitBox) el.tagBitBox.style.display = isDerivedBit ? "" : "none";
     if (el.tagPlc) el.tagPlc.disabled = isDerived || !canEdit;
     if (el.tagSourceTag) el.tagSourceTag.disabled = !canEdit;
-    if (el.tagBit) el.tagBit.disabled = !canEdit;
+    if (el.tagBit) el.tagBit.disabled = isDerivedAlias || !canEdit;
 
     if (el.tagWritable) {
-        el.tagWritable.disabled = !canEdit;
+        if (isDerivedAlias) el.tagWritable.checked = false;
+        el.tagWritable.disabled = isDerivedAlias || !canEdit;
+    }
+    if (el.tagMqttAllowed) {
+        if (isDerivedAlias) el.tagMqttAllowed.checked = false;
+        el.tagMqttAllowed.disabled = isDerivedAlias || !canEdit;
     }
 
     if (el.tagDt) {
-        if (isDerived) {
+        if (isDerivedBit) {
             wsFillDatatypeSelect(el.tagDt, "bool");
             el.tagDt.disabled = true;
         } else {
@@ -8244,7 +8311,7 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
     if (el.tagElemCount) el.tagElemCount.disabled = isDerived || !canEdit;
 
     if (el.tagScaling) {
-        if (isDerived) {
+        if (isDerivedBit) {
             el.tagScaling.value = "none";
             el.tagScaling.disabled = true;
             if (el.tagScalingLinear) el.tagScalingLinear.style.display = "none";
@@ -8253,8 +8320,13 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
         }
     }
 
-    if (isDerived && el.tagSourceTag) {
+    if (isDerivedBit && el.tagSourceTag) {
         const opts = wsGetDerivedBitSourceOptions(connId, excludeName);
+        const selected = String(el.tagSourceTag.value || "").trim();
+        wsFillSelect(el.tagSourceTag, opts.map((n) => ({ value: n, label: n })), selected);
+    }
+    if (isDerivedAlias && el.tagSourceTag) {
+        const opts = wsGetDerivedAliasSourceOptions(connId, excludeName);
         const selected = String(el.tagSourceTag.value || "").trim();
         wsFillSelect(el.tagSourceTag, opts.map((n) => ({ value: n, label: n })), selected);
     }
@@ -8356,7 +8428,13 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 			        el.tagName.disabled = !wsIsEditable();
 			    }
 		    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
-		    if (el.tagSourceKind) el.tagSourceKind.value = (existing && String(existing?.source_tag || "").trim() && Number(existing?.bit) >= 0) ? "derived_bit" : "plc";
+		    if (el.tagSourceKind) {
+		        const hasSource = existing && String(existing?.source_tag || "").trim();
+		        const bitNum = existing && existing?.bit != null ? Number(existing.bit) : -1;
+		        el.tagSourceKind.value = hasSource
+		            ? ((Number.isFinite(bitNum) && bitNum >= 0) ? "derived_bit" : "derived_alias")
+		            : "plc";
+		    }
 		    if (el.tagSourceTag) el.tagSourceTag.value = existing ? String(existing?.source_tag || "") : "";
 		    if (el.tagBit) el.tagBit.value = existing && existing?.bit != null ? String(existing.bit) : "0";
 		    wsFillDatatypeSelect(el.tagDt, existing ? String(existing?.datatype || "bool") : "bool");
@@ -9045,7 +9123,9 @@ const wsRenderTree = () => {
 		    const enabled = Boolean(el.tagEnabled?.checked);
 		    const invert = Boolean(el.tagInvert?.checked);
 		    const sourceKind = String(el.tagSourceKind?.value || "plc").trim().toLowerCase();
-		    const isDerived = (sourceKind === "derived_bit");
+		    const isDerivedBit = (sourceKind === "derived_bit");
+		    const isDerivedAlias = (sourceKind === "derived_alias");
+		    const isDerived = (isDerivedBit || isDerivedAlias);
 		    const source_tag = String(el.tagSourceTag?.value || "").trim();
 		    const bitRaw = String(el.tagBit?.value || "").trim();
 		    const bit = bitRaw === "" ? null : Math.trunc(Number(bitRaw));
@@ -9068,7 +9148,7 @@ const wsRenderTree = () => {
 	        if (el.tagStatus) el.tagStatus.textContent = "PLC Tag is required.";
 	        return;
 	    }
-	    if (isDerived) {
+	    if (isDerivedBit) {
 	        if (!source_tag) {
 	            if (el.tagStatus) el.tagStatus.textContent = "Source Tag is required for a Derived Bit.";
 	            return;
@@ -9078,8 +9158,14 @@ const wsRenderTree = () => {
 	            return;
 	        }
 	    }
+	    if (isDerivedAlias) {
+	        if (!source_tag) {
+	            if (el.tagStatus) el.tagStatus.textContent = "Source Tag is required for a Derived Alias.";
+	            return;
+	        }
+	    }
 
-		    const scalingMode = isDerived ? "none" : String(el.tagScaling?.value || "none").trim().toLowerCase();
+		    const scalingMode = isDerivedBit ? "none" : String(el.tagScaling?.value || "none").trim().toLowerCase();
 		    const applyScalingToTag = (obj) => {
 	        // Clear scaling fields by default (so switching back to None removes them).
 	        delete obj.scaling;
@@ -9153,17 +9239,21 @@ const wsRenderTree = () => {
 		            const ec = Math.max(1, Math.floor(Number(elemCountRaw) || 1));
 		            if (ec != 1) next.elem_count = ec;
 		            if (!applyScalingToTag(next)) return;
-		        } else {
+		        } else if (isDerivedBit) {
 		            next.source_tag = source_tag;
 		            next.bit = bit;
 		            next.datatype = "bool";
+		        } else {
+		            next.source_tag = source_tag;
+		            next.datatype = datatype;
+		            if (!applyScalingToTag(next)) return;
 		        }
 		        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 		        next.enabled = enabled;
-		        next.writable = writable;
+		        next.writable = isDerivedAlias ? false : writable;
 		        if (invert) next.invert = true;
 		        else delete next.invert;
-		        next.mqtt_command_allowed = mqtt_command_allowed;
+		        next.mqtt_command_allowed = isDerivedAlias ? false : mqtt_command_allowed;
 		        tags.push(next);
 			    } else {
 				        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
@@ -9172,8 +9262,8 @@ const wsRenderTree = () => {
 			            return;
 			        }
 			        const existingObj = tags[idx] || {};
-			        const existingIsDerived = Boolean(existingObj?.source_tag) && Number(existingObj?.bit) >= 0;
-			        if (!plc_tag_name && !existingIsDerived) {
+			        const existingHasSource = Boolean(existingObj?.source_tag);
+			        if (!plc_tag_name && !existingHasSource) {
 			            if (el.tagStatus) el.tagStatus.textContent = "PLC Tag is required.";
 			            return;
 			        }
@@ -9193,20 +9283,27 @@ const wsRenderTree = () => {
 			            if (ec == 1) delete next.elem_count;
 			            else next.elem_count = ec;
 			            if (!applyScalingToTag(next)) return;
-			        } else {
+			        } else if (isDerivedBit) {
 			            delete next.plc_tag_name;
 			            delete next.elem_count;
 			            next.source_tag = source_tag;
 			            next.bit = bit;
 			            next.datatype = "bool";
+			        } else {
+			            delete next.plc_tag_name;
+			            delete next.elem_count;
+			            next.source_tag = source_tag;
+			            delete next.bit;
+			            next.datatype = datatype;
+			            if (!applyScalingToTag(next)) return;
 			        }
 			        if (scanRaw === "") delete next.scan_ms;
 			        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 			        next.enabled = enabled;
-			        next.writable = writable;
+			        next.writable = isDerivedAlias ? false : writable;
 			        if (invert) next.invert = true;
 			        else delete next.invert;
-			        next.mqtt_command_allowed = mqtt_command_allowed;
+			        next.mqtt_command_allowed = isDerivedAlias ? false : mqtt_command_allowed;
 			        tags[idx] = next;
 
 		        // If the user changed the Device, fully move the tag: remove any remaining copies
@@ -12273,11 +12370,11 @@ window.addEventListener("load", startAutoRefresh);
 										TagRow row;
 										row.connection_id = driver.conn.id;
 										row.name          = t.cfg.logical_name;
-											row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+										row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
 											row.enabled       = t.cfg.enabled;
 											row.writable      = t.cfg.writable;
-											row.handle_ok     = (t.handle >= 0) || (!t.cfg.source_tag.empty() && t.cfg.bit >= 0);
 											row.has_snapshot  = (it != tagTable.end());
+											row.handle_ok     = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || row.has_snapshot;
 										if (row.has_snapshot) {
 											row.snap = it->second;
 										}
@@ -13873,11 +13970,11 @@ window.addEventListener("load", startAutoRefresh);
 														 "' is missing 'datatype'.");
 							}
 							const bool hasPlc = t.contains("plc_tag_name") && t["plc_tag_name"].is_string() && !t["plc_tag_name"].get<std::string>().empty();
-							const bool hasDerived = (t.contains("source_tag") && t.contains("bit"));
+							const bool hasDerived = (t.contains("source_tag") && t["source_tag"].is_string() && !t["source_tag"].get<std::string>().empty());
 							if (!hasPlc && !hasDerived) {
 								throw std::runtime_error("Tag '" +
 														 t.value("name", std::string{"<unnamed>"}) +
-														 "' must contain either 'plc_tag_name' or ('source_tag' and 'bit').");
+														 "' must contain either 'plc_tag_name' or 'source_tag'.");
 							}
 
 						json tagCopy = t;
@@ -15258,11 +15355,22 @@ window.addEventListener("load", startAutoRefresh);
 	            bool periodic_init = false;
 	        };
 
+	        struct DerivedAliasItem {
+	            TagConfig cfg;
+
+	            // Scaling runtime (copied from TagRuntime)
+	            bool scaling_linear = false;
+	            double scale_slope = 1.0;
+	            double scale_offset = 0.0;
+	            std::string out_datatype;
+	        };
+
 	        struct PollerSpec {
 	            uint64_t gen = 0;
 	            ConnectionConfig conn;
 	            std::vector<PollTagItem> tags;
 	            std::unordered_map<std::string, std::vector<TagConfig>> derived_bits_by_source; // source logical_name -> derived tags
+	            std::unordered_map<std::string, std::vector<DerivedAliasItem>> derived_alias_by_source; // source logical_name -> derived alias tags
 	            std::shared_ptr<ConnPollMetrics> metrics;
 	        };
 
@@ -15308,9 +15416,20 @@ window.addEventListener("load", startAutoRefresh);
 			                    // Actually build tag list; skip invalid handles (they'll show as bad_handle)
 			                    spec.tags.clear();
 			                    spec.derived_bits_by_source.clear();
+			                    spec.derived_alias_by_source.clear();
 		                    for (const auto &t : d.tags) {
-		                        if (t.cfg.enabled && !t.cfg.source_tag.empty() && t.cfg.bit >= 0) {
-		                            spec.derived_bits_by_source[t.cfg.source_tag].push_back(t.cfg);
+		                        if (t.cfg.enabled && !t.cfg.source_tag.empty()) {
+		                            if (t.cfg.bit >= 0) {
+		                                spec.derived_bits_by_source[t.cfg.source_tag].push_back(t.cfg);
+		                            } else {
+		                                DerivedAliasItem a;
+		                                a.cfg = t.cfg;
+		                                a.scaling_linear = t.scaling_linear;
+		                                a.scale_slope = t.scale_slope;
+		                                a.scale_offset = t.scale_offset;
+		                                a.out_datatype = t.out_datatype;
+		                                spec.derived_alias_by_source[t.cfg.source_tag].push_back(std::move(a));
+		                            }
 		                        }
 		                        if (t.handle < 0) continue;
 		                        PollTagItem it;
@@ -15584,6 +15703,124 @@ window.addEventListener("load", startAutoRefresh);
 		                                            derivedActions.push_back(std::move(a));
 		                                        }
 		                                    }
+
+		                                    // Derived (memory) alias tags: copy (and optionally scale) this source tag into other logical tags.
+		                                    auto itAlias = spec.derived_alias_by_source.find(t.cfg.logical_name);
+		                                    if (itAlias != spec.derived_alias_by_source.end()) {
+		                                        for (const auto &acfg : itAlias->second) {
+		                                            DerivedAction a;
+		                                            a.cfg = acfg.cfg;
+		                                            a.doMqttPublish = mqttMode;
+
+		                                            const std::string dkey = make_tag_key(spec.conn.id, acfg.cfg.logical_name);
+		                                            auto itPrevD = tagTable.find(dkey);
+		                                            if (itPrevD != tagTable.end()) {
+		                                                a.prev = itPrevD->second;
+		                                                a.hadPrev = true;
+		                                            }
+
+		                                            TagSnapshot dsnap;
+		                                            dsnap.connection_id = spec.conn.id;
+		                                            dsnap.logical_name = acfg.cfg.logical_name;
+		                                            dsnap.timestamp = snap.timestamp;
+		                                            dsnap.quality = snap.quality;
+
+		                                            const std::string outDt = acfg.out_datatype.empty() ? acfg.cfg.datatype : acfg.out_datatype;
+		                                            dsnap.datatype = outDt;
+
+		                                            auto set_default = [&](const std::string &dt) {
+		                                                dsnap.datatype = dt;
+		                                                if (dt == "bool") dsnap.value = false;
+		                                                else if (dt == "int16") dsnap.value = static_cast<int16_t>(0);
+		                                                else if (dt == "uint16") dsnap.value = static_cast<uint16_t>(0);
+		                                                else if (dt == "int32") dsnap.value = static_cast<int32_t>(0);
+		                                                else if (dt == "uint32") dsnap.value = static_cast<uint32_t>(0);
+		                                                else if (dt == "float32") dsnap.value = static_cast<float>(0.0f);
+		                                                else dsnap.value = static_cast<double>(0.0);
+		                                            };
+
+		                                            if (dsnap.quality != 1) {
+		                                                set_default(outDt);
+		                                            } else if (outDt == "bool") {
+		                                                bool b = false;
+		                                                std::visit([&](auto &&arg) {
+		                                                    using T = std::decay_t<decltype(arg)>;
+		                                                    if constexpr (std::is_same_v<T, bool>) b = arg;
+		                                                    else b = (static_cast<double>(arg) != 0.0);
+		                                                }, snap.value);
+		                                                if (acfg.cfg.invert) b = !b;
+		                                                dsnap.value = b;
+		                                                dsnap.datatype = "bool";
+		                                            } else {
+		                                                double rawNum = 0.0;
+		                                                bool okNum = true;
+		                                                if (std::holds_alternative<bool>(snap.value)) {
+		                                                    rawNum = std::get<bool>(snap.value) ? 1.0 : 0.0;
+		                                                } else {
+		                                                    okNum = tagvalue_to_double(snap.value, rawNum);
+		                                                }
+		                                                if (!okNum) {
+		                                                    dsnap.quality = 0;
+		                                                    set_default(outDt);
+		                                                } else {
+		                                                    double v = rawNum;
+		                                                    if (acfg.scaling_linear) {
+		                                                        v = rawNum * acfg.scale_slope + acfg.scale_offset;
+		                                                        if (acfg.cfg.clamp_low)  v = std::max(v, acfg.cfg.scaled_low);
+		                                                        if (acfg.cfg.clamp_high) v = std::min(v, acfg.cfg.scaled_high);
+		                                                    }
+
+		                                                    TagValue out{};
+		                                                    std::string castErr;
+		                                                    if (!cast_double_to_tagvalue(v, outDt, out, castErr)) {
+		                                                        dsnap.quality = 0;
+		                                                        set_default(outDt);
+		                                                    } else {
+		                                                        dsnap.value = out;
+		                                                        dsnap.datatype = outDt;
+		                                                    }
+		                                                }
+		                                            }
+
+		                                            tagTable[dkey] = dsnap;
+		                                            a.snap = dsnap;
+
+		                                            if (ws_is_enabled()) {
+		                                                a.doWsTagUpdate = !a.hadPrev || !snapshot_values_equal(a.snap, a.prev);
+		                                            }
+
+		                                            if (!g_alarms.empty()) {
+		                                                evaluate_tag_alarms(spec.conn.id, acfg.cfg.logical_name, dsnap);
+		                                            }
+
+		                                            if (acfg.cfg.log_event_on_change && a.hadPrev) {
+		                                                a.valueChangedForEvent = !snapshot_values_equal(a.snap, a.prev);
+		                                                if (a.valueChangedForEvent) {
+		                                                    int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                                                        dsnap.timestamp.time_since_epoch()
+		                                                    ).count();
+
+		                                                    sqlite_log_event(
+		                                                        spec.conn.id,
+		                                                        acfg.cfg.logical_name,
+		                                                        snapshot_value_to_string(a.prev),
+		                                                        snapshot_value_to_string(a.snap),
+		                                                        a.prev.quality,
+		                                                        a.snap.quality,
+		                                                        ts_ms,
+		                                                        "" // extra_json
+		                                                    );
+		                                                    a.doWsEventRow = ws_is_enabled();
+		                                                }
+		                                            }
+
+		                                            if (g_uaServer && dsnap.quality == 1) {
+		                                                a.doUaUpdate = true;
+		                                            }
+
+		                                            derivedActions.push_back(std::move(a));
+		                                        }
+		                                    }
 	                                } else {
 	                                    const int ec = std::max(1, t.cfg.elem_count);
 	                                    const auto ts = std::chrono::system_clock::now();
@@ -15698,6 +15935,123 @@ window.addEventListener("load", startAutoRefresh);
 	                                                        sqlite_log_event(
 	                                                            spec.conn.id,
 	                                                            dcfg.logical_name,
+	                                                            snapshot_value_to_string(da.prev),
+	                                                            snapshot_value_to_string(da.snap),
+	                                                            da.prev.quality,
+	                                                            da.snap.quality,
+	                                                            ts_ms,
+	                                                            "" // extra_json
+	                                                        );
+	                                                        da.doWsEventRow = ws_is_enabled();
+	                                                    }
+	                                                }
+
+	                                                if (g_uaServer && dsnap.quality == 1) {
+	                                                    da.doUaUpdate = true;
+	                                                }
+
+	                                                derivedActions.push_back(std::move(da));
+	                                            }
+	                                        }
+
+	                                        // Derived alias tags where the source is this array element (TagName[i]).
+	                                        auto itAlias = spec.derived_alias_by_source.find(a.cfg.logical_name);
+	                                        if (itAlias != spec.derived_alias_by_source.end()) {
+	                                            for (const auto &acfg : itAlias->second) {
+	                                                DerivedAction da;
+	                                                da.cfg = acfg.cfg;
+	                                                da.doMqttPublish = mqttMode;
+
+	                                                const std::string dkey = make_tag_key(spec.conn.id, acfg.cfg.logical_name);
+	                                                auto itPrevD = tagTable.find(dkey);
+	                                                if (itPrevD != tagTable.end()) {
+	                                                    da.prev = itPrevD->second;
+	                                                    da.hadPrev = true;
+	                                                }
+
+	                                                TagSnapshot dsnap;
+	                                                dsnap.connection_id = spec.conn.id;
+	                                                dsnap.logical_name = acfg.cfg.logical_name;
+	                                                dsnap.timestamp = a.snap.timestamp;
+	                                                dsnap.quality = a.snap.quality;
+
+	                                                const std::string outDt = acfg.out_datatype.empty() ? acfg.cfg.datatype : acfg.out_datatype;
+	                                                dsnap.datatype = outDt;
+
+	                                                auto set_default = [&](const std::string &dt) {
+	                                                    dsnap.datatype = dt;
+	                                                    if (dt == "bool") dsnap.value = false;
+	                                                    else if (dt == "int16") dsnap.value = static_cast<int16_t>(0);
+	                                                    else if (dt == "uint16") dsnap.value = static_cast<uint16_t>(0);
+	                                                    else if (dt == "int32") dsnap.value = static_cast<int32_t>(0);
+	                                                    else if (dt == "uint32") dsnap.value = static_cast<uint32_t>(0);
+	                                                    else if (dt == "float32") dsnap.value = static_cast<float>(0.0f);
+	                                                    else dsnap.value = static_cast<double>(0.0);
+	                                                };
+
+	                                                if (dsnap.quality != 1) {
+	                                                    set_default(outDt);
+	                                                } else if (outDt == "bool") {
+	                                                    bool b = false;
+	                                                    std::visit([&](auto &&arg) {
+	                                                        using T = std::decay_t<decltype(arg)>;
+	                                                        if constexpr (std::is_same_v<T, bool>) b = arg;
+	                                                        else b = (static_cast<double>(arg) != 0.0);
+	                                                    }, a.snap.value);
+	                                                    if (acfg.cfg.invert) b = !b;
+	                                                    dsnap.value = b;
+	                                                    dsnap.datatype = "bool";
+	                                                } else {
+	                                                    double rawNum = 0.0;
+	                                                    bool okNum = true;
+	                                                    if (std::holds_alternative<bool>(a.snap.value)) {
+	                                                        rawNum = std::get<bool>(a.snap.value) ? 1.0 : 0.0;
+	                                                    } else {
+	                                                        okNum = tagvalue_to_double(a.snap.value, rawNum);
+	                                                    }
+	                                                    if (!okNum) {
+	                                                        dsnap.quality = 0;
+	                                                        set_default(outDt);
+	                                                    } else {
+	                                                        double v = rawNum;
+	                                                        if (acfg.scaling_linear) {
+	                                                            v = rawNum * acfg.scale_slope + acfg.scale_offset;
+	                                                            if (acfg.cfg.clamp_low)  v = std::max(v, acfg.cfg.scaled_low);
+	                                                            if (acfg.cfg.clamp_high) v = std::min(v, acfg.cfg.scaled_high);
+	                                                        }
+
+	                                                        TagValue out{};
+	                                                        std::string castErr;
+	                                                        if (!cast_double_to_tagvalue(v, outDt, out, castErr)) {
+	                                                            dsnap.quality = 0;
+	                                                            set_default(outDt);
+	                                                        } else {
+	                                                            dsnap.value = out;
+	                                                            dsnap.datatype = outDt;
+	                                                        }
+	                                                    }
+	                                                }
+
+	                                                tagTable[dkey] = dsnap;
+	                                                da.snap = dsnap;
+
+	                                                if (ws_is_enabled()) {
+	                                                    da.doWsTagUpdate = !da.hadPrev || !snapshot_values_equal(da.snap, da.prev);
+	                                                }
+
+	                                                if (!g_alarms.empty()) {
+	                                                    evaluate_tag_alarms(spec.conn.id, acfg.cfg.logical_name, dsnap);
+	                                                }
+
+	                                                if (acfg.cfg.log_event_on_change && da.hadPrev) {
+	                                                    da.valueChangedForEvent = !snapshot_values_equal(da.snap, da.prev);
+	                                                    if (da.valueChangedForEvent) {
+	                                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                                                            dsnap.timestamp.time_since_epoch()
+	                                                        ).count();
+	                                                        sqlite_log_event(
+	                                                            spec.conn.id,
+	                                                            acfg.cfg.logical_name,
 	                                                            snapshot_value_to_string(da.prev),
 	                                                            snapshot_value_to_string(da.snap),
 	                                                            da.prev.quality,
