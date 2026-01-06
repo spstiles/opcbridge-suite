@@ -5685,12 +5685,16 @@ function filterLiveTagsForWorkspace(tags) {
 function computeTagStatus(t) {
   const hasSnap = (t?.has_snapshot !== false);
   const handleOk = (t?.handle_ok !== false);
+  const isArrayRoot = (t?.is_array_root === true);
 
   let status = 'BAD';
   let cls = 'status-error';
 
   if (!handleOk) {
     status = 'BAD_HANDLE';
+  } else if (!hasSnap && isArrayRoot) {
+    status = 'ARRAY';
+    cls = 'status-ok';
   } else if (!hasSnap) {
     status = 'MISSING';
   } else if (t?.quality === 1 || t?.quality === 'good') {
@@ -5713,9 +5717,11 @@ function renderLiveTagsInto(tbody, tags) {
     const name = String(t?.tag || t?.name || '');
     const datatype = String(t?.datatype || '');
 
-    const value = (t?.value == null)
-      ? ''
-      : (typeof t.value === 'string' ? t.value : JSON.stringify(t.value));
+    const value = (() => {
+      if (status === 'ARRAY') return '(array)';
+      if (t?.value == null) return '';
+      return (typeof t.value === 'string' ? t.value : JSON.stringify(t.value));
+    })();
 
     const writable = (t?.writable === true) ? 'yes' : 'no';
 

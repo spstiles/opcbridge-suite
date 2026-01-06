@@ -10598,7 +10598,7 @@ async function doWrite(connectionId, tagName) {
 	        const t1 = performance.now();
 
 		        const tags = data.tags || [];
-		        const missing = tags.filter(t => t && t.has_snapshot === false).length;
+		        const missing = tags.filter(t => t && t.has_snapshot === false && !t.is_array_root).length;
 		        const badHandles = tags.filter(t => t && t.handle_ok === false).length;
 		        metaEl.textContent = "Count: " + tags.length +
 		            " | Missing: " + missing +
@@ -10614,6 +10614,9 @@ async function doWrite(connectionId, tagName) {
 	            let qCls = "status-error";
 	            if (!handleOk) {
 	                qual = "bad_handle";
+	            } else if (!hasSnap && t.is_array_root) {
+	                qual = "array";
+	                qCls = "status-ok";
 	            } else if (!hasSnap) {
 	                qual = "missing";
 	            } else if (t.quality === 1 || t.quality === "good") {
@@ -12357,6 +12360,7 @@ window.addEventListener("load", startAutoRefresh);
 								bool writable;
 								bool handle_ok;
 								bool has_snapshot;
+								bool is_array_root;
 							};
 
 						std::vector<TagRow> rows;
@@ -12370,10 +12374,11 @@ window.addEventListener("load", startAutoRefresh);
 										TagRow row;
 										row.connection_id = driver.conn.id;
 										row.name          = t.cfg.logical_name;
-										row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+											row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
 											row.enabled       = t.cfg.enabled;
 											row.writable      = t.cfg.writable;
 											row.has_snapshot  = (it != tagTable.end());
+											row.is_array_root = (t.handle >= 0) && (t.cfg.elem_count > 1);
 											row.handle_ok     = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || row.has_snapshot;
 										if (row.has_snapshot) {
 											row.snap = it->second;
@@ -12395,6 +12400,7 @@ window.addEventListener("load", startAutoRefresh);
 								jt["writable"]      = r.writable;
 								jt["handle_ok"]     = r.handle_ok;
 								jt["has_snapshot"]  = r.has_snapshot;
+								jt["is_array_root"] = r.is_array_root;
 
 								if (!r.enabled) {
 									jt["reason"] = "disabled";
