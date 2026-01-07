@@ -84,3 +84,13 @@ This uses HTTP Basic Auth and allows remote channel/config changes without requi
 
 Notes:
 - You can still force remote config updates without auth by setting `OPCBRIDGE_SCADA_ALLOW_REMOTE_CONFIG=true` (not recommended).
+
+## Tag Schema Notes
+
+`opcbridge-scada` supports the core tag features supported by `opcbridge`, including:
+- Array/block reads via `elem_count` (element values appear as `TagName[0]`, `TagName[1]`, ...)
+- Derived tags:
+  - Derived Bit: `source_tag` + `bit`
+  - Derived Alias: `source_tag` (no `bit`) with optional scaling
+
+For the canonical tag schema and examples, see `opcbridge/docs/manual.md`.

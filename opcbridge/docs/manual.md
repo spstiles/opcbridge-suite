@@ -1,5 +1,5 @@
 opcbridge — Installation, Configuration, and API Manual
-Version: 0.2.2
+Version: 0.2.9
 Project: opcbridge (SCADA Communication Core)
 1. Introduction
 
@@ -67,7 +67,7 @@ Build script: build.sh
 #!/bin/bash
 set -e
 
-VERSION="0.2.2"
+VERSION="0.2.9"
 
 CXX_FLAGS="-std=c++17 -Wall -Wextra -O2"
 C_FLAGS="-std=c99 -O2"
@@ -155,15 +155,61 @@ Each file defines a set of tags belonging to one connection:
 
 Tag fields:
 
+Tag types:
+
+- Direct PLC tag:
+  - Requires: `plc_tag_name`, `datatype`
+- Array/block read (Logix arrays):
+  - Direct PLC tag with `elem_count > 1`
+  - The polled “root” tag (e.g. `TagName`) is the array handle; element values are published as `TagName[0]`, `TagName[1]`, ...
+  - The root tag shows status `ARRAY` in tag lists (it has a handle but no scalar snapshot).
+- Derived bit tag:
+  - Requires: `source_tag`, `bit` (0–63)
+  - Publishes a bool by extracting a bit from an integer source tag (or from an array element like `TagName[0]`)
+  - `datatype` is forced to `bool`
+- Derived alias tag:
+  - Requires: `source_tag` (no `bit`)
+  - Publishes the source tag’s value (or array element’s value) under another name, with optional scaling
+  - `datatype` is required and supports the same types as direct tags
+
+Common fields:
+
 - name: Logical name (used by the dashboard, REST, MQTT, and OPC UA).
-- plc_tag_name: PLC tag/address to read/write via libplctag.
 - datatype: One of the supported datatypes below.
 - scan_ms: Target poll interval in milliseconds (best-effort; actual timing depends on load/timeouts).
+- enabled: Optional (default true). Disabled tags remain visible but are not polled.
+- invert: Optional (bool only). Publishes the logical NOT of the bool value (applies to direct bool tags, derived-bit tags, and derived-alias bool tags).
+
+Direct PLC tag fields:
+
+- plc_tag_name: PLC tag/address to read/write via libplctag.
+- elem_count: Optional (default 1). If > 1, reads an array/block in one request and publishes element snapshots as `TagName[i]`.
 - writable: If true, the tag can be written via REST (/write), MQTT commands (if enabled), and OPC UA (if enabled).
 
 MQTT controls:
 
 - mqtt_command_allowed: If true, this tag accepts MQTT command writes (still also requires writable=true and MQTT enabled).
+
+Derived tag fields:
+
+- source_tag: Logical name of another tag in the same connection.
+  - For arrays, source tags can be `TagName[0]` style element names.
+- bit: (Derived bit only) Bit index (0 = LSB). If omitted or < 0, the tag is treated as a derived alias.
+
+Notes:
+- Derived alias tags are currently read-only (writes and MQTT commands are disabled).
+- Derived bit tags support strict write behavior (read source immediately, modify bit, write, then re-read to confirm).
+
+Scaling (optional):
+
+- scaling: `"none"` (default) or `"linear"`
+- raw_low, raw_high, scaled_low, scaled_high: linear mapping bounds
+- clamp_low, clamp_high: clamp to scaled bounds after mapping
+- scaled_datatype: optional output datatype (defaults to float64 when scaling is enabled)
+
+Notes:
+- Scaling is only supported on numeric datatypes (not bool).
+- Scaling can be used on direct PLC tags and derived alias tags.
 
 SQLite tag event logging:
 
@@ -193,6 +239,14 @@ int16 / uint16
 int32 / uint32
 
 float32 / float64
+
+3.2.1 Array sizing guidance (Logix)
+
+When using `elem_count`, prefer multiple smaller blocks over one huge block:
+
+- Bytes per read: `elem_count * elem_size_bytes` (int16=2, int32/float32=4, float64=8)
+- A conservative starting point is ~200–500 bytes per request (e.g. 100–250 int16s, 50–125 float32s).
+- Split by scan rate: put fast-changing values in small fast blocks, slow values in separate slow blocks.
 
 3.3 Alarms — config/alarms.json
 {

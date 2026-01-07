@@ -1,6 +1,11 @@
-opcbridge — Installation, Configuration, and API Manual
-Version: 0.1.0
+opcbridge — Installation, Configuration, and API Manual (Deprecated Copy)
+Version: 0.2.9
 Project: opcbridge (SCADA Communication Core)
+
+NOTE:
+This file is kept for historical reference. The up-to-date manual lives at:
+- `opcbridge/docs/manual.md`
+
 1. Introduction
 
 opcbridge is a high-performance communications core designed for SCADA, telemetry, and industrial automation systems. It bridges Allen-Bradley PLCs (via libplctag/EtherNet-IP) to modern protocols:

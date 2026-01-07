@@ -8,6 +8,20 @@ Monorepo for the opcbridge ecosystem:
 - `opcbridge-hmi/` (HMI)
 - `opcbridge-reporter/` (optional reporter)
 
+## Documentation
+
+- Core engine manual: `opcbridge/docs/manual.md`
+- Suite architecture: `docs/architecture.md`
+- SCADA app readme: `opcbridge-scada/README.md`
+
+## Tag Features (Highlights)
+
+- Array/block reads: configure one tag with `elem_count`, and use `TagName[0]` style element names for derived tags.
+- Derived tags:
+  - `derived_bit`: `source_tag` + `bit` (bool) with optional `invert`.
+  - `derived_alias`: `source_tag` (no `bit`) with full datatype + optional scaling.
+- Scaling: linear scaling via `scaling: "linear"` and bounds (`raw_*`, `scaled_*`, clamps, output datatype).
+
 ## Install (Debian 13 derivatives)
 
 - Install OS deps first (recommended):
