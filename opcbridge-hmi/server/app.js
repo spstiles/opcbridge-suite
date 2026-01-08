@@ -86,9 +86,67 @@ const hashPassword = ({ password, saltB64, iterations }) => {
   return key.toString("base64");
 };
 
-const getClientIp = (req) => {
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return forwarded || req.socket?.remoteAddress || "";
+const normalizeRemoteAddress = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw === "::1") return "127.0.0.1";
+  if (raw.startsWith("::ffff:")) return raw.slice("::ffff:".length);
+  return raw;
+};
+
+const parseIpv4ToInt = (ip) => {
+  const parts = String(ip || "").trim().split(".");
+  if (parts.length !== 4) return null;
+  let out = 0;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return null;
+    const n = Number(part);
+    if (!Number.isFinite(n) || n < 0 || n > 255) return null;
+    out = (out << 8) | (n & 0xff);
+  }
+  return out >>> 0;
+};
+
+const parseCidr = (entry) => {
+  const raw = String(entry || "").trim();
+  if (!raw) return null;
+  const [ipPart, prefixPart] = raw.split("/");
+  const ip = String(ipPart || "").trim();
+  const ipInt = parseIpv4ToInt(ip);
+  if (ipInt == null) return null;
+  let prefix = 32;
+  if (prefixPart != null) {
+    if (!/^\d+$/.test(prefixPart)) return null;
+    prefix = Number(prefixPart);
+  }
+  if (!Number.isFinite(prefix) || prefix < 0 || prefix > 32) return null;
+  return { ip, ipInt, prefix };
+};
+
+const ipInCidr = (ipInt, cidr) => {
+  const prefix = cidr.prefix;
+  if (prefix === 0) return true;
+  const mask = (0xffffffff << (32 - prefix)) >>> 0;
+  return ((ipInt & mask) >>> 0) === ((cidr.ipInt & mask) >>> 0);
+};
+
+const clientIpMatchesList = (clientIp, entries) => {
+  const ip = normalizeRemoteAddress(clientIp);
+  const ipInt = parseIpv4ToInt(ip);
+  if (!ip || ipInt == null) return false;
+  const arr = Array.isArray(entries) ? entries : [];
+  for (const entry of arr) {
+    const cidr = parseCidr(entry);
+    if (!cidr) continue;
+    if (ipInCidr(ipInt, cidr)) return true;
+  }
+  return false;
+};
+
+const getClientIp = (req, { trustProxyHeaders } = {}) => {
+  const trust = Boolean(trustProxyHeaders);
+  const forwarded = trust ? String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() : "";
+  return normalizeRemoteAddress(forwarded || req.socket?.remoteAddress || "");
 };
 
 const pruneAuditLog = async () => {
@@ -438,6 +496,31 @@ const createApp = () => {
     try {
       const { config: parsed } = await readConfig();
       const opcbridge = parsed?.opcbridge || {};
+      const hmi = parsed?.hmi || {};
+
+      if (Boolean(hmi.viewOnlyMode)) {
+        return res.status(403).json({ error: "HMI is in view-only mode (writes disabled)." });
+      }
+
+      const access = hmi?.writeAccess;
+      const accessConfigured = (access && typeof access === "object");
+      if (accessConfigured) {
+        const trustProxyHeaders = Boolean(access.trustProxyHeaders);
+        const clientIp = getClientIp(req, { trustProxyHeaders });
+        const deny = access?.deny;
+        const allow = access?.allow;
+
+        if (clientIpMatchesList(clientIp, deny)) {
+          return res.status(403).json({ error: `Write blocked for client ${clientIp} (deny list).` });
+        }
+        if (!Array.isArray(allow) || allow.length === 0) {
+          return res.status(403).json({ error: "Writes are disabled (no writeAccess.allow entries configured)." });
+        }
+        if (!clientIpMatchesList(clientIp, allow)) {
+          return res.status(403).json({ error: `Write blocked for client ${clientIp} (not in allow list).` });
+        }
+      }
+
       const host = opcbridge.host || "127.0.0.1";
       const port = Number(opcbridge.httpPort) || 8080;
       const token = String(opcbridge.writeToken || "");

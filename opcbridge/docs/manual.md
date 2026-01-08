@@ -248,6 +248,17 @@ When using `elem_count`, prefer multiple smaller blocks over one huge block:
 - A conservative starting point is ~200–500 bytes per request (e.g. 100–250 int16s, 50–125 float32s).
 - Split by scan rate: put fast-changing values in small fast blocks, slow values in separate slow blocks.
 
+3.2.2 HMI write access control (opcbridge-hmi)
+
+If your HMI is configured to write via `opcbridge-hmi` (default), you can restrict writes by client IP/subnet
+in `opcbridge-hmi/public/js/config.jsonc`:
+
+- `hmi.viewOnlyMode`: if true, disables all writes.
+- `hmi.writeAccess` (optional):
+  - When present, write access is default-deny: only `writeAccess.allow` entries may write.
+  - Supports IPv4 CIDR entries like `192.168.100.0/24` and single-IP entries like `10.20.30.77/32`.
+  - `trustProxyHeaders` should be false unless you are behind a reverse proxy that sets `X-Forwarded-For`.
+
 3.3 Alarms — config/alarms.json
 {
   "alarms": [
