@@ -1502,6 +1502,7 @@ body:not(.edit-mode) #workspace {
   display: flex;
   flex-direction: column;
   width: min(520px, 92vw);
+  max-height: 90vh;
 }
 
 .auth-modal {
@@ -1566,6 +1567,8 @@ body:not(.edit-mode) #workspace {
   flex-direction: column;
   gap: 12px;
   padding: 14px 16px 16px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .settings-section {
