@@ -232,6 +232,11 @@ const settingsAlarmsWsPortInput = document.getElementById("settingsAlarmsWsPort"
 const settingsDefaultScreenSelect = document.getElementById("settingsDefaultScreen");
 const settingsTouchscreenModeInput = document.getElementById("settingsTouchscreenMode");
 const settingsViewOnlyModeInput = document.getElementById("settingsViewOnlyMode");
+const settingsWriteAccessEnabledInput = document.getElementById("settingsWriteAccessEnabled");
+const settingsWriteAllowRow = document.getElementById("settingsWriteAllowRow");
+const settingsWriteAllowListInput = document.getElementById("settingsWriteAllowList");
+const settingsWriteDenyRow = document.getElementById("settingsWriteDenyRow");
+const settingsWriteDenyListInput = document.getElementById("settingsWriteDenyList");
 const settingsTestBtn = document.getElementById("settingsTestBtn");
 const settingsApplyBtn = document.getElementById("settingsApplyBtn");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
@@ -4628,11 +4633,38 @@ const readSettingsForm = () => {
   const defaultScreen = String(settingsDefaultScreenSelect?.value || "").trim();
   const touchscreenMode = Boolean(settingsTouchscreenModeInput?.checked);
   const viewOnlyMode = Boolean(settingsViewOnlyModeInput?.checked);
+  const writeAccessEnabled = Boolean(settingsWriteAccessEnabledInput?.checked);
+
+  const parseLines = (raw) => String(raw || "")
+    .split(/\r?\n/g)
+    .map((line) => String(line || "").trim())
+    .filter((line) => line && !line.startsWith("#") && !line.startsWith("//"));
+
+  const allow = parseLines(settingsWriteAllowListInput?.value || "");
+  const deny = parseLines(settingsWriteDenyListInput?.value || "");
+
+  const hmi = { defaultScreen, touchscreenMode, viewOnlyMode };
+  if (writeAccessEnabled) {
+    hmi.writeAccess = {
+      allow,
+      deny,
+      trustProxyHeaders: false
+    };
+  }
+
   return {
     opcbridge: { host, httpPort, wsPort, writeToken },
     alarms: { host: alarmsHost, httpPort: alarmsHttpPort, wsPort: alarmsWsPort },
-    hmi: { defaultScreen, touchscreenMode, viewOnlyMode }
+    hmi
   };
+};
+
+const applyWriteAccessUi = () => {
+  const enabled = Boolean(settingsWriteAccessEnabledInput?.checked);
+  if (settingsWriteAllowRow) settingsWriteAllowRow.style.display = enabled ? "" : "none";
+  if (settingsWriteDenyRow) settingsWriteDenyRow.style.display = enabled ? "" : "none";
+  if (settingsWriteAllowListInput) settingsWriteAllowListInput.disabled = !enabled;
+  if (settingsWriteDenyListInput) settingsWriteDenyListInput.disabled = !enabled;
 };
 
 const populateSettingsForm = (config) => {
@@ -4649,6 +4681,19 @@ const populateSettingsForm = (config) => {
   populateDefaultScreenOptions(settingsDefaultScreenSelect, String(hmi.defaultScreen || ""));
   if (settingsTouchscreenModeInput) settingsTouchscreenModeInput.checked = Boolean(hmi.touchscreenMode);
   if (settingsViewOnlyModeInput) settingsViewOnlyModeInput.checked = Boolean(hmi.viewOnlyMode);
+
+  const wa = hmi?.writeAccess;
+  const enabled = Boolean(wa && typeof wa === "object");
+  if (settingsWriteAccessEnabledInput) settingsWriteAccessEnabledInput.checked = enabled;
+  if (settingsWriteAllowListInput) {
+    const list = Array.isArray(wa?.allow) ? wa.allow : [];
+    settingsWriteAllowListInput.value = list.map((v) => String(v || "").trim()).filter(Boolean).join("\n");
+  }
+  if (settingsWriteDenyListInput) {
+    const list = Array.isArray(wa?.deny) ? wa.deny : [];
+    settingsWriteDenyListInput.value = list.map((v) => String(v || "").trim()).filter(Boolean).join("\n");
+  }
+  applyWriteAccessUi();
 };
 
 const openSettings = async () => {
@@ -4658,6 +4703,10 @@ const openSettings = async () => {
   try {
     const data = await apiGetConfig();
     populateSettingsForm(data?.config || {});
+    if (settingsWriteAccessEnabledInput) {
+      settingsWriteAccessEnabledInput.onchange = applyWriteAccessUi;
+      applyWriteAccessUi();
+    }
     if (settingsStatus) settingsStatus.textContent = "Ready.";
   } catch (error) {
     if (settingsStatus) settingsStatus.textContent = `Load failed: ${error.message}`;
@@ -4679,6 +4728,13 @@ const saveSettings = async (apply) => {
   if (settingsStatus) settingsStatus.textContent = apply ? "Applying…" : "Saving…";
   try {
     const next = readSettingsForm();
+    const wa = next?.hmi?.writeAccess;
+    if (wa && typeof wa === "object") {
+      if (!Array.isArray(wa.allow) || wa.allow.length === 0) {
+        if (settingsStatus) settingsStatus.textContent = "Save blocked: Write allowlist is enabled but empty.";
+        return;
+      }
+    }
     await apiSaveConfig(next);
     opcbridgeConfig = { ...opcbridgeConfig, ...next.opcbridge };
     alarmsConfig = { ...alarmsConfig, ...next.alarms };

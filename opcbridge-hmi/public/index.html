@@ -2127,6 +2127,25 @@
 	          </div>
 	          <div class="settings-hint">Touchscreen mode uses the on-screen keypad. View-only mode disables all writes in runtime.</div>
 	        </div>
+
+	        <div class="settings-section">
+	          <div class="prop-group-title">Write Access</div>
+	          <div class="prop-row prop-row-inline">
+	            <label for="settingsWriteAccessEnabled">Restrict writes by client IP (allowlist)</label>
+	            <input id="settingsWriteAccessEnabled" type="checkbox" />
+	          </div>
+	          <div class="prop-row" id="settingsWriteAllowRow">
+	            <label for="settingsWriteAllowList">Allowed IPs/Subnets</label>
+	            <textarea id="settingsWriteAllowList" rows="3" placeholder="192.168.100.0/24&#10;10.20.30.77/32"></textarea>
+	          </div>
+	          <div class="prop-row" id="settingsWriteDenyRow">
+	            <label for="settingsWriteDenyList">Denied IPs/Subnets (optional)</label>
+	            <textarea id="settingsWriteDenyList" rows="2" placeholder="10.20.30.0/24"></textarea>
+	          </div>
+	          <div class="settings-hint">
+	            Default allow-all. Enable this only if you need to restrict control access. When enabled, writes are denied unless the client is in the allow list.
+	          </div>
+	        </div>
 	
 	        <div class="settings-actions">
 	          <button id="settingsTestBtn" class="panel-btn" type="button">Test</button>

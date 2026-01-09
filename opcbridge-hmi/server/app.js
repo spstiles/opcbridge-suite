@@ -198,6 +198,23 @@ const writeConfig = async (nextConfig) => {
   const alarms = nextConfig?.alarms || {};
   const hmi = nextConfig?.hmi || {};
   const defaultScreen = String(hmi.defaultScreen || "overview").trim().replace(/\.jsonc$/i, "") || "overview";
+
+  const sanitizeCidrList = (value) => {
+    const arr = Array.isArray(value) ? value : [];
+    return arr
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+  };
+
+  const writeAccessIn = hmi?.writeAccess;
+  const writeAccess = (writeAccessIn && typeof writeAccessIn === "object")
+    ? {
+        allow: sanitizeCidrList(writeAccessIn.allow),
+        deny: sanitizeCidrList(writeAccessIn.deny),
+        trustProxyHeaders: Boolean(writeAccessIn.trustProxyHeaders)
+      }
+    : null;
+
   const cleaned = {
     opcbridge: {
       host: String(opcbridge.host || "127.0.0.1"),
@@ -213,7 +230,8 @@ const writeConfig = async (nextConfig) => {
     hmi: {
       defaultScreen,
       touchscreenMode: Boolean(hmi.touchscreenMode),
-      viewOnlyMode: Boolean(hmi.viewOnlyMode)
+      viewOnlyMode: Boolean(hmi.viewOnlyMode),
+      ...(writeAccess ? { writeAccess } : {})
     }
   };
   const opcbridgeJson = JSON.stringify(cleaned.opcbridge, null, 2).replace(/\n/g, "\n  ");

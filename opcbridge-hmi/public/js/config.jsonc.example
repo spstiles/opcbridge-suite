@@ -13,21 +13,15 @@
   "hmi": {
     "defaultScreen": "console_background",
     "touchscreenMode": false,
-    "viewOnlyMode": false,
+    "viewOnlyMode": false
 
     // Optional: write access control for HMI -> opcbridge writes (POST /api/opc/write).
-    // Default deny: if writeAccess is present, only clients in writeAccess.allow can write.
+    // Default is allow-all (no restrictions). Add writeAccess only if you want to restrict writes.
     //
-    // Examples:
-    // - Allow SCADA subnet only: ["192.168.100.0/24"]
-    // - Allow one public IP too: ["192.168.100.0/24", "10.20.30.77/32"]
-    //
-    // NOTE: trustProxyHeaders should remain false unless you are running behind a reverse proxy
-    // that correctly sets X-Forwarded-For.
-    "writeAccess": {
-      "allow": [],
-      "deny": [],
-      "trustProxyHeaders": false
-    }
+    // "writeAccess": {
+    //   "allow": ["192.168.100.0/24", "10.20.30.77/32"],
+    //   "deny": [],
+    //   "trustProxyHeaders": false
+    // }
   }
 }
