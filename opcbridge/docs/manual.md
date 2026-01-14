@@ -259,6 +259,15 @@ in `opcbridge-hmi/public/js/config.jsonc`:
   - Supports IPv4 CIDR entries like `192.168.100.0/24` and single-IP entries like `10.20.30.77/32`.
   - `trustProxyHeaders` should be false unless you are behind a reverse proxy that sets `X-Forwarded-For`.
 
+3.2.3 HMI edit mode (screen builder)
+
+In `opcbridge-hmi`, the screen editor is toggled with:
+
+- Windows/Linux: `Ctrl+E`
+- macOS: `Cmd+E`
+
+If edit mode is requested while not logged in as an editor, the HMI prompts for login.
+
 3.3 Alarms — config/alarms.json
 {
   "alarms": [
