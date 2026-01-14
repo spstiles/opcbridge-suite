@@ -14,6 +14,14 @@ Monorepo for the opcbridge ecosystem:
 - Suite architecture: `docs/architecture.md`
 - SCADA app readme: `opcbridge-scada/README.md`
 
+## HMI Shortcuts
+
+- Toggle screen editor: `Ctrl+E` (Windows/Linux) or `Cmd+E` (macOS)
+- Open login/account panel: `Ctrl+Shift+L` or `Cmd+Shift+L`
+- Logout: `Ctrl+L` or `Cmd+L`
+
+Full HMI details live in `opcbridge/docs/manual.md`.
+
 ## Tag Features (Highlights)
 
 - Array/block reads: configure one tag with `elem_count`, and use `TagName[0]` style element names for derived tags.
