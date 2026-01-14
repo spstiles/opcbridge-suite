@@ -268,6 +268,11 @@ In `opcbridge-hmi`, the screen editor is toggled with:
 
 If edit mode is requested while not logged in as an editor, the HMI prompts for login.
 
+Login/logout shortcuts:
+
+- Open login/account panel: `Ctrl+Shift+L` (Windows/Linux) or `Cmd+Shift+L` (macOS)
+- Logout: `Ctrl+L` (Windows/Linux) or `Cmd+L` (macOS)
+
 3.3 Alarms — config/alarms.json
 {
   "alarms": [
