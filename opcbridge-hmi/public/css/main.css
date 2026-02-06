@@ -7,48 +7,80 @@ html, body {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    font-family: Arial, sans-serif;
+    /* Modern system font stack for desktop-app feel */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Inter", "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-body.theme-dark { background: #202020; color: #ffffff; }
-body.theme-light { background: #f0f0f0; color: #000000; }
+body.theme-dark {
+    background: #1e1e1e;
+    color: #cccccc;
+}
+body.theme-light {
+    background: #f3f3f3;
+    color: #1e1e1e;
+}
 
 :root {
     --screen-width: 1920px;
     --screen-height: 1080px;
-    --toolbar-height: 50px;
+    --toolbar-height: 48px;
+
+    /* Modern color palette for desktop app */
+    --bg-primary: #1e1e1e;
+    --bg-secondary: #252526;
+    --bg-tertiary: #2d2d30;
+    --bg-elevated: #3e3e42;
+
+    --border-subtle: #3e3e42;
+    --border-default: #454545;
+    --border-focus: #007acc;
+
+    --text-primary: #cccccc;
+    --text-secondary: #9d9d9d;
+    --text-muted: #6e6e6e;
+
+    --accent-primary: #007acc;
+    --accent-hover: #0098ff;
+    --accent-active: #005a9e;
+
+    --danger: #f48771;
+    --warning: #cca700;
+    --success: #89d185;
 
     --wm-light: rgba(255, 0, 0, 0.05);
     --wm-dark:  rgba(0, 0, 0, 0.05);
+
+    /* Shadows for depth */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 /* ================================================
-   TOOLBAR
+   TOOLBAR - Modern Desktop Style
    ================================================ */
 #toolbar {
     position: fixed;
     top: 0; left: 0;
     width: 100%;
     height: var(--toolbar-height);
-    color: #fff;
-    border-bottom: 1px solid #222;
-    padding: 0 15px;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-default);
+    padding: 0 16px;
     display: none;
     align-items: center;
     z-index: 1000;
     pointer-events: auto;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
-body.edit-mode #toolbar { display: flex; }
-
 body.edit-mode #toolbar {
-    background-image: repeating-linear-gradient(
-        45deg,
-        rgba(255, 0, 0, 0.08) 0px,
-        rgba(255, 0, 0, 0.08) 10px,
-        rgba(0, 0, 0, 0.08) 10px,
-        rgba(0, 0, 0, 0.08) 20px
-    );
+    display: flex;
+    /* Subtle left border accent for edit mode */
+    border-left: 3px solid var(--accent-primary);
 }
 
 .toolbar-content {
@@ -58,25 +90,33 @@ body.edit-mode #toolbar {
     align-items: center;
 }
 
+.project-title {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+
 .toolbar-left {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 16px;
 }
 
 .screen-title-wrap {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
 }
 
 .screen-title {
-    margin-left: 12px;
-    font-size: 0.9rem;
-    color: #fff;
-    opacity: 0.85;
-    padding: 2px 8px;
-    border-radius: 6px;
+    margin-left: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    font-weight: 500;
 }
 
 .group-breadcrumb {
@@ -116,18 +156,20 @@ body.edit-mode #toolbar {
 }
 
 .ws-status {
-    font-size: 0.8rem;
-    color: #fff;
-    opacity: 0.7;
-    padding: 2px 6px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.08);
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    font-weight: 500;
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', monospace;
+    letter-spacing: -0.02em;
 }
 
 .ws-status.is-connected {
-    background: rgba(60, 190, 120, 0.25);
-    color: #d7ffe7;
-    opacity: 0.95;
+    background: rgba(137, 209, 133, 0.15);
+    color: var(--success);
+    border: 1px solid rgba(137, 209, 133, 0.3);
 }
 
 .hmi-alarms-panel {
@@ -245,29 +287,30 @@ body.edit-mode #toolbar {
 }
 
 .alarms-badge {
-    font-size: 0.8rem;
-    color: #fff;
-    opacity: 0.9;
-    padding: 3px 10px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 5px 12px;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
     cursor: pointer;
+    transition: all 0.15s ease;
 }
 
 .alarms-badge.is-connected {
-    border-color: rgba(60, 190, 120, 0.35);
+    border-color: rgba(137, 209, 133, 0.4);
 }
 
 .alarms-badge.is-active {
-    background: rgba(235, 75, 75, 0.25);
-    border-color: rgba(235, 75, 75, 0.6);
-    color: #ffd7d7;
-    opacity: 0.98;
+    background: rgba(244, 135, 113, 0.15);
+    border-color: rgba(244, 135, 113, 0.5);
+    color: var(--danger);
 }
 
 .alarms-badge:hover {
-    opacity: 1;
+    background: var(--bg-elevated);
+    border-color: var(--border-default);
 }
 
 .alarm-row-shelved {
@@ -329,13 +372,18 @@ body.runtime-mode .ws-badge {
     font-size: 0.9rem;
 }
 
-#modeToggleBtn, #reloadBtn, #applyBtn, #saveBtn, #togglePanelBtn, #newScreenBtn, #duplicateScreenBtn, #groupToggleBtn, #snapToggleBtn, #menuToggleBtn, #propertiesSaveBtn, #propertiesCancelBtn, #propertiesApplyBtn, #screenSaveBtn {
-    background: #2b2b2b;
-    color: #fff;
-    border: 1px solid #555;
-    border-radius: 6px;
-    padding: 6px 10px;
+.toolbar-btn,
+#modeToggleBtn, #reloadBtn, #applyBtn, #saveBtn, #togglePanelBtn, #newScreenBtn, #duplicateScreenBtn, #groupToggleBtn, #snapToggleBtn, #menuToggleBtn, #propertiesSaveBtn, #propertiesCancelBtn, #propertiesApplyBtn, #screenSaveBtn,
+#runtimeBtn {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    padding: 5px 12px;
     cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s ease;
 }
 
 .screen-save-btn {
@@ -346,37 +394,50 @@ body.runtime-mode .ws-badge {
     display: inline-flex;
 }
 
-#modeToggleBtn:hover, #reloadBtn:hover, #applyBtn:hover, #saveBtn:hover, #togglePanelBtn:hover, #newScreenBtn:hover, #duplicateScreenBtn:hover, #groupToggleBtn:hover, #snapToggleBtn:hover, #menuToggleBtn:hover {
-    background: #3a3a3a;
+.toolbar-btn:hover,
+#modeToggleBtn:hover, #reloadBtn:hover, #applyBtn:hover, #saveBtn:hover, #togglePanelBtn:hover, #newScreenBtn:hover, #duplicateScreenBtn:hover, #groupToggleBtn:hover, #snapToggleBtn:hover, #menuToggleBtn:hover,
+#runtimeBtn:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-default);
 }
 
+.toolbar-btn.is-active,
 #snapToggleBtn.is-active {
-    background: #203552;
-    border-color: #4aa3ff;
-    box-shadow: 0 0 0 1px rgba(74, 163, 255, 0.35);
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: #ffffff;
+    box-shadow: 0 0 0 1px rgba(0, 122, 204, 0.4);
 }
 
 .menu-wrap {
     position: relative;
     display: inline-flex;
+    /* Add a subtle separator line after the menu */
+    padding-right: 16px;
+    margin-right: 16px;
+    border-right: 1px solid var(--border-subtle);
 }
 
 .menu-toggle {
-    font-size: 1.1rem;
+    font-size: 18px;
     line-height: 1;
-    padding: 6px 9px;
+    padding: 6px 10px;
+    min-width: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .menu-dropdown {
     position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    min-width: 210px;
-    background: #1d1f24;
-    border: 1px solid #3a3a3a;
-    border-radius: 8px;
-    padding: 6px 0;
-    box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+    top: calc(100% + 8px);
+    left: 0;
+    min-width: 220px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    padding: 4px;
+    box-shadow: var(--shadow-lg);
     display: none;
     z-index: 1001;
 }
@@ -386,11 +447,12 @@ body.runtime-mode .ws-badge {
 }
 
 .menu-heading {
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
-    opacity: 0.6;
-    padding: 6px 12px 4px;
+    color: var(--text-muted);
+    padding: 8px 12px 4px;
 }
 
 .menu-item {
@@ -399,13 +461,16 @@ body.runtime-mode .ws-badge {
     text-align: left;
     background: transparent;
     border: 0;
-    color: #fff;
-    padding: 8px 12px;
+    color: var(--text-primary);
+    padding: 7px 12px;
     cursor: pointer;
+    font-size: 13px;
+    border-radius: 4px;
+    transition: background 0.1s ease;
 }
 
 .menu-item:hover {
-    background: #2b2f36;
+    background: var(--bg-elevated);
 }
 
 .menu-item.is-disabled {
@@ -414,10 +479,65 @@ body.runtime-mode .ws-badge {
     pointer-events: none;
 }
 
+.menu-item.danger {
+    color: var(--danger);
+}
+
+.menu-item.danger:hover {
+    background: rgba(244, 135, 113, 0.15);
+}
+
 .menu-separator {
     height: 1px;
-    background: #2d2f35;
-    margin: 6px 0;
+    background: var(--border-subtle);
+    margin: 4px 8px;
+}
+
+/* Open File Dialog */
+.open-file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.open-file-item {
+    padding: 10px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-size: 13px;
+}
+
+.open-file-item:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-default);
+}
+
+.open-file-item.is-selected {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: #ffffff;
+}
+
+.open-file-item.is-current {
+    border-left: 3px solid var(--success);
+    padding-left: 9px;
+}
+
+.screen-manager-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.screen-manager-actions .panel-btn {
+    min-width: 80px;
 }
 
 /* ================================================
@@ -465,11 +585,12 @@ body.runtime-mode #editor-pane {
 body.edit-mode #editor-pane {
     display: flex;
     flex-direction: column;
-    width: 520px;
-    min-width: 320px;
+    width: 360px;
+    min-width: 280px;
     max-width: 50vw;
-    border-left: 1px solid #333;
-    background: #151515;
+    border-left: 1px solid var(--border-default);
+    background: var(--bg-secondary);
+    box-shadow: -2px 0 8px rgba(0, 0, 0, 0.2);
 }
 
 body.editor-panel-hidden #editor-pane {
@@ -481,30 +602,39 @@ body.editor-panel-hidden #editor-resizer {
 }
 
 /* ================================================
-   EDITOR TABS
+   EDITOR TABS - Modern Desktop Style
    ================================================ */
 .editor-tabs {
     display: flex;
-    gap: 6px;
-    padding: 8px 10px;
-    border-bottom: 1px solid #2a2a2a;
-    background: #121212;
+    gap: 2px;
+    padding: 8px 12px 0;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-primary);
 }
 
 .editor-tab {
-    background: #1c1c1c;
-    color: #ddd;
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 6px 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 8px 14px;
     cursor: pointer;
     font-size: 12px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+    position: relative;
+}
+
+.editor-tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
 }
 
 .editor-tab.is-active {
-    background: #2a2a2a;
-    border-color: #444;
-    color: #fff;
+    background: var(--bg-secondary);
+    border-bottom-color: var(--accent-primary);
+    color: var(--text-primary);
 }
 
 .editor-panel {
@@ -609,12 +739,20 @@ body.editor-panel-hidden #editor-resizer {
 .property-row input,
 .property-row select {
     flex: 1 1 auto;
-    background: #1c1c1c;
-    color: #e6e6e6;
-    border: 1px solid #333;
-    border-radius: 6px;
-    padding: 7px 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    padding: 6px 8px;
     font-size: 12px;
+    transition: border-color 0.15s ease;
+}
+
+.property-row input:focus,
+.property-row select:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .color-inputs {
@@ -1448,10 +1586,10 @@ body:not(.edit-mode) #workspace {
 }
 
 .popup-modal {
-  background: #101622;
-  border: 1px solid #2a2f3a;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   max-width: 80vw;
@@ -1462,14 +1600,16 @@ body:not(.edit-mode) #workspace {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid #2a2f3a;
-  color: #e5e7eb;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
   font-size: 14px;
+  background: var(--bg-tertiary);
 }
 
 .popup-title {
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .popup-body {
@@ -1943,26 +2083,36 @@ body.runtime-mode #editor-pane {
 }
 
 .panel-btn {
-  background: #1e2533;
-  color: #e6e9ef;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 0.85rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .panel-btn:hover {
-  background: #2a3448;
+  background: var(--bg-elevated);
+  border-color: var(--border-default);
 }
 
 .panel-btn.danger {
-  border-color: rgba(255, 99, 99, 0.5);
-  color: #ffb3b3;
+  border-color: rgba(244, 135, 113, 0.4);
+  color: var(--danger);
 }
 
 .panel-btn.danger:hover {
-  background: rgba(255, 99, 99, 0.15);
+  background: rgba(244, 135, 113, 0.1);
+  border-color: rgba(244, 135, 113, 0.6);
+}
+
+.panel-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .screen-hint {
@@ -2099,11 +2249,19 @@ body.runtime-mode #editor-pane {
 
 .prop-row input[type="number"],
 .prop-row input[type="text"] {
-  background: #0f131d;
-  color: #e6e9ef;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
   padding: 6px 8px;
+  transition: border-color 0.15s ease;
+}
+
+.prop-row input[type="number"]:focus,
+.prop-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .prop-row textarea {
@@ -2133,11 +2291,18 @@ body.runtime-mode #editor-pane {
 }
 
 .prop-row select {
-  background: #0f131d;
-  color: #e6e9ef;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
   padding: 6px 8px;
+  transition: border-color 0.15s ease;
+}
+
+.prop-row select:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .prop-inline {

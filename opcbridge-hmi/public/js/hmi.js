@@ -15,10 +15,6 @@ const editorFilename = document.getElementById("editor-filename");
 const jsoncEditor = document.getElementById("jsoncEditor");
 const editorStatus = document.getElementById("editorStatus");
 const screenList = document.getElementById("screenList");
-const screenOpenBtn = document.getElementById("screenOpenBtn");
-const screenNewBtn = document.getElementById("screenNewBtn");
-const screenDuplicateBtn = document.getElementById("screenDuplicateBtn");
-const screenDeleteBtn = document.getElementById("screenDeleteBtn");
 const textToolBtn = document.getElementById("textToolBtn");
 const buttonToolBtn = document.getElementById("buttonToolBtn");
 const navToolBtn = document.getElementById("navToolBtn");
@@ -155,6 +151,15 @@ const setEditorStatusSafe = (message) => {
 };
 const usersMenuBtn = document.getElementById("usersMenuBtn");
 const auditMenuBtn = document.getElementById("auditMenuBtn");
+const screenManagerMenuBtn = document.getElementById("screenManagerMenuBtn");
+const screenSaveMenuBtn = document.getElementById("screenSaveMenuBtn");
+const openFileOverlay = document.getElementById("openFileOverlay");
+const openFileList = document.getElementById("openFileList");
+const screenMgrOpenBtn = document.getElementById("screenMgrOpenBtn");
+const screenMgrNewBtn = document.getElementById("screenMgrNewBtn");
+const screenMgrDuplicateBtn = document.getElementById("screenMgrDuplicateBtn");
+const screenMgrDeleteBtn = document.getElementById("screenMgrDeleteBtn");
+const screenMgrCancelBtn = document.getElementById("screenMgrCancelBtn");
 
 let hmiToastTimer = null;
 const showHmiToast = (message, durationMs = 15000) => {
@@ -173,6 +178,74 @@ const showHmiToast = (message, durationMs = 15000) => {
     el.classList.remove("is-show");
   }, Math.max(250, Number(durationMs) || 15000));
 };
+
+// Screen Manager Dialog
+let selectedOpenFileItem = null;
+
+const updateScreenManagerButtons = () => {
+  const hasSelection = selectedOpenFileItem !== null;
+  if (screenMgrOpenBtn) screenMgrOpenBtn.disabled = !hasSelection;
+  if (screenMgrDuplicateBtn) screenMgrDuplicateBtn.disabled = !hasSelection;
+  if (screenMgrDeleteBtn) screenMgrDeleteBtn.disabled = !hasSelection;
+};
+
+const showOpenFileDialog = () => {
+  if (!openFileOverlay || !openFileList) return;
+
+  // Clear previous selection
+  selectedOpenFileItem = null;
+  openFileList.innerHTML = "";
+  updateScreenManagerButtons();
+
+  // Get current screen ID
+  const currentScreenId = window.location.hash.replace("#", "");
+
+  // Populate with screens from the dropdown
+  if (screenList && screenList.options) {
+    for (let i = 0; i < screenList.options.length; i++) {
+      const option = screenList.options[i];
+      const item = document.createElement("div");
+      item.className = "open-file-item";
+      item.textContent = option.value;
+      item.dataset.screenId = option.value;
+      item.dataset.filename = option.dataset.filename;
+
+      // Mark current screen
+      if (option.value === currentScreenId) {
+        item.classList.add("is-current");
+      }
+
+      // Handle selection
+      item.addEventListener("click", () => {
+        // Remove previous selection
+        const prevSelected = openFileList.querySelector(".is-selected");
+        if (prevSelected) prevSelected.classList.remove("is-selected");
+
+        // Mark this item as selected
+        item.classList.add("is-selected");
+        selectedOpenFileItem = {
+          id: item.dataset.screenId,
+          filename: item.dataset.filename
+        };
+        updateScreenManagerButtons();
+      });
+
+      // Double-click to open immediately
+      item.addEventListener("dblclick", () => {
+        if (selectedOpenFileItem) {
+          applyScreenSelection(selectedOpenFileItem.id, selectedOpenFileItem.filename);
+          openFileOverlay.classList.add("is-hidden");
+        }
+      });
+
+      openFileList.appendChild(item);
+    }
+  }
+
+  // Show the dialog
+  openFileOverlay.classList.remove("is-hidden");
+};
+
 const aboutOverlay = document.getElementById("aboutOverlay");
 const aboutCloseBtn = document.getElementById("aboutCloseBtn");
 const aboutRefreshBtn = document.getElementById("aboutRefreshBtn");
@@ -8851,27 +8924,28 @@ async function refreshScreensList() {
 }
 
 function bindScreenManager() {
-  if (screenList) {
-    screenList.addEventListener("change", () => {
-      const selected = screenList.options[screenList.selectedIndex];
-      if (!selected) return;
-      if (editorStatus) {
-        editorStatus.textContent = `Selected "${selected.value}". Click Open to load.`;
+  // Screen Manager menu button
+  if (screenManagerMenuBtn) {
+    screenManagerMenuBtn.addEventListener("click", () => {
+      if (menuDropdown) menuDropdown.classList.remove("is-open");
+      showOpenFileDialog();
+    });
+  }
+
+  // Screen Manager action buttons
+  if (screenMgrOpenBtn) {
+    screenMgrOpenBtn.addEventListener("click", () => {
+      if (selectedOpenFileItem) {
+        applyScreenSelection(selectedOpenFileItem.id, selectedOpenFileItem.filename);
+        openFileOverlay.classList.add("is-hidden");
       }
     });
   }
 
-  if (screenOpenBtn) {
-    screenOpenBtn.addEventListener("click", () => {
-      const selected = screenList?.options[screenList.selectedIndex];
-      if (!selected) return;
-      applyScreenSelection(selected.value, selected.dataset.filename);
-    });
-  }
-
-  if (screenNewBtn) {
-    screenNewBtn.addEventListener("click", async () => {
+  if (screenMgrNewBtn) {
+    screenMgrNewBtn.addEventListener("click", async () => {
       const desiredId = window.prompt("New screen id (optional):", "");
+      if (desiredId === null) return; // User clicked Cancel
       try {
         const response = await fetch("/api/screens", {
           method: "POST",
@@ -8881,6 +8955,7 @@ function bindScreenManager() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         await refreshScreensList();
+        openFileOverlay.classList.add("is-hidden");
         applyScreenSelection(data.id, data.filename);
       } catch (error) {
         if (editorStatus) editorStatus.textContent = `Create failed: ${error.message}`;
@@ -8888,13 +8963,13 @@ function bindScreenManager() {
     });
   }
 
-  if (screenDuplicateBtn) {
-    screenDuplicateBtn.addEventListener("click", async () => {
-      const selected = screenList?.options[screenList.selectedIndex];
-      if (!selected) return;
-      const desiredId = window.prompt("Duplicate to id (optional):", `${selected.value}_copy`);
+  if (screenMgrDuplicateBtn) {
+    screenMgrDuplicateBtn.addEventListener("click", async () => {
+      if (!selectedOpenFileItem) return;
+      const desiredId = window.prompt("Duplicate to id (optional):", `${selectedOpenFileItem.id}_copy`);
+      if (desiredId === null) return; // User clicked Cancel
       try {
-        const response = await fetch(`/api/screens/${encodeURIComponent(selected.value)}/duplicate`, {
+        const response = await fetch(`/api/screens/${encodeURIComponent(selectedOpenFileItem.id)}/duplicate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(desiredId ? { id: desiredId } : {})
@@ -8902,6 +8977,7 @@ function bindScreenManager() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         await refreshScreensList();
+        openFileOverlay.classList.add("is-hidden");
         applyScreenSelection(data.id, data.filename);
       } catch (error) {
         if (editorStatus) editorStatus.textContent = `Duplicate failed: ${error.message}`;
@@ -8909,20 +8985,43 @@ function bindScreenManager() {
     });
   }
 
-  if (screenDeleteBtn) {
-    screenDeleteBtn.addEventListener("click", async () => {
-      const selected = screenList?.options[screenList.selectedIndex];
-      if (!selected) return;
-      const ok = window.confirm(`Delete screen "${selected.value}"? This cannot be undone.`);
+  if (screenMgrDeleteBtn) {
+    screenMgrDeleteBtn.addEventListener("click", async () => {
+      if (!selectedOpenFileItem) return;
+      const ok = window.confirm(`Delete screen "${selectedOpenFileItem.id}"? This cannot be undone.`);
       if (!ok) return;
       try {
-        const response = await fetch(`/api/screens/${encodeURIComponent(selected.value)}`, {
+        const response = await fetch(`/api/screens/${encodeURIComponent(selectedOpenFileItem.id)}`, {
           method: "DELETE"
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await refreshScreensList();
+        openFileOverlay.classList.add("is-hidden");
       } catch (error) {
         if (editorStatus) editorStatus.textContent = `Delete failed: ${error.message}`;
+      }
+    });
+  }
+
+  if (screenMgrCancelBtn) {
+    screenMgrCancelBtn.addEventListener("click", () => {
+      openFileOverlay.classList.add("is-hidden");
+    });
+  }
+
+  // Screen Save menu button
+  if (screenSaveMenuBtn) {
+    screenSaveMenuBtn.addEventListener("click", () => {
+      if (menuDropdown) menuDropdown.classList.remove("is-open");
+      saveJsoncEditor();
+    });
+  }
+
+  // Close screen manager dialog when clicking outside
+  if (openFileOverlay) {
+    openFileOverlay.addEventListener("click", (e) => {
+      if (e.target === openFileOverlay) {
+        openFileOverlay.classList.add("is-hidden");
       }
     });
   }

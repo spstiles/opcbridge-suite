@@ -7,27 +7,17 @@
   <link rel="stylesheet" href="css/main.css" />
 </head>
 <body>
+  <!-- Hidden select to maintain screen list state -->
+  <select id="screenList" style="display: none;"></select>
+
   <header id="toolbar" class="toolbar is-hidden">
     <div class="toolbar-left">
-      <span class="project-title">opcbridge-HMI</span>
-      <span class="screen-title-wrap">
-        <span id="screen-title" class="screen-title">Screen</span>
-        <span id="groupBreadcrumb" class="group-breadcrumb is-hidden" title="Editing a group (Esc to exit)">Group edit</span>
-        <button id="screenSaveBtn" class="screen-save-btn toolbar-btn" type="button">Save</button>
-      </span>
-	      <span id="toolHint" class="tool-hint is-hidden" aria-live="polite"></span>
-	      <span id="wsStatus" class="ws-status" aria-live="polite">ws://</span>
-	      <button id="alarmsBadge" class="alarms-badge" type="button" aria-live="polite" title="View alarms">Alarms: 0</button>
-	    </div>
-    <div class="toolbar-right">
-      <button id="snapToggleBtn" class="toolbar-btn" type="button" title="Toggle snap to grid">Snap</button>
-      <button id="groupToggleBtn" class="toolbar-btn" type="button" title="Group selected items">Group</button>
-      <a id="svgLabBtn" class="toolbar-btn" href="svg-lab.html">SVG Lab</a>
-      <button id="runtimeBtn" class="toolbar-btn" type="button">Switch to Runtime</button>
       <div class="menu-wrap">
         <button id="menuToggleBtn" class="toolbar-btn menu-toggle" type="button" aria-haspopup="true" aria-expanded="false">☰</button>
         <div id="menuDropdown" class="menu-dropdown" role="menu">
-          <div class="menu-heading">Edit</div>
+          <button id="screenManagerMenuBtn" class="menu-item" type="button">Screen...</button>
+          <button id="screenSaveMenuBtn" class="menu-item" type="button">Save</button>
+          <div class="menu-separator"></div>
           <button id="groupMenuBtn" class="menu-item" type="button">Group</button>
           <button id="ungroupMenuBtn" class="menu-item" type="button">Ungroup</button>
           <div class="menu-separator"></div>
@@ -62,6 +52,21 @@
 		          <button id="auditMenuBtn" class="menu-item" type="button">Audit Log…</button>
 		        </div>
 	      </div>
+      <span class="project-title">opcbridge-HMI</span>
+      <span class="screen-title-wrap">
+        <span id="screen-title" class="screen-title">Screen</span>
+        <span id="groupBreadcrumb" class="group-breadcrumb is-hidden" title="Editing a group (Esc to exit)">Group edit</span>
+        <button id="screenSaveBtn" class="screen-save-btn toolbar-btn" type="button">Save</button>
+      </span>
+	      <span id="toolHint" class="tool-hint is-hidden" aria-live="polite"></span>
+	      <span id="wsStatus" class="ws-status" aria-live="polite">ws://</span>
+	      <button id="alarmsBadge" class="alarms-badge" type="button" aria-live="polite" title="View alarms">Alarms: 0</button>
+	    </div>
+    <div class="toolbar-right">
+      <button id="snapToggleBtn" class="toolbar-btn" type="button" title="Toggle snap to grid">Snap</button>
+      <button id="groupToggleBtn" class="toolbar-btn" type="button" title="Group selected items">Group</button>
+      <a id="svgLabBtn" class="toolbar-btn" href="svg-lab.html">SVG Lab</a>
+      <button id="runtimeBtn" class="toolbar-btn" type="button">Switch to Runtime</button>
 	    </div>
 		  </header>
 
@@ -82,28 +87,13 @@
       <div id="editor-resizer" class="editor-resizer" aria-hidden="true"></div>
       <aside id="editor-pane" class="editor-pane is-hidden">
         <div class="editor-tabs" role="tablist" aria-label="Editor Tabs">
-          <button class="editor-tab is-active" data-tab="files" role="tab" aria-selected="true">Files</button>
-          <button class="editor-tab" data-tab="library" role="tab" aria-selected="false">Library</button>
+          <button class="editor-tab is-active" data-tab="library" role="tab" aria-selected="true">Library</button>
           <button class="editor-tab" data-tab="properties" role="tab" aria-selected="false">Properties</button>
           <button class="editor-tab" data-tab="tags" role="tab" aria-selected="false">Tags</button>
           <button class="editor-tab" data-tab="jsonc" role="tab" aria-selected="false">JSONC</button>
         </div>
 
-        <div class="editor-panel is-active" data-panel="files" role="tabpanel">
-          <div class="editor-section-title">Screens</div>
-          <div class="screen-manager">
-            <select id="screenList" class="screen-select"></select>
-            <div class="screen-actions">
-              <button id="screenOpenBtn" class="panel-btn" type="button">Open</button>
-              <button id="screenNewBtn" class="panel-btn" type="button">New</button>
-              <button id="screenDuplicateBtn" class="panel-btn" type="button">Duplicate</button>
-              <button id="screenDeleteBtn" class="panel-btn danger" type="button">Delete</button>
-            </div>
-            <div class="screen-hint">Manage JSONC screens stored in `screens/`.</div>
-          </div>
-        </div>
-
-        <div class="editor-panel" data-panel="library" role="tabpanel">
+        <div class="editor-panel is-active" data-panel="library" role="tabpanel">
           <div class="editor-section-title">Tools</div>
 	          <div class="library-toolbar">
 	            <button id="textToolBtn" class="tool-btn" type="button" title="Text tool">
@@ -2047,6 +2037,25 @@
 	      </div>
 	      <div class="popup-body">
 	        <svg id="popupSvg" class="popup-svg" role="img" aria-label="Popup screen"></svg>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="openFileOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Screens</div>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div id="openFileList" class="open-file-list"></div>
+	        </div>
+	        <div class="settings-actions screen-manager-actions">
+	          <button id="screenMgrOpenBtn" class="panel-btn" type="button">Open</button>
+	          <button id="screenMgrNewBtn" class="panel-btn" type="button">New</button>
+	          <button id="screenMgrDuplicateBtn" class="panel-btn" type="button">Duplicate</button>
+	          <button id="screenMgrDeleteBtn" class="panel-btn danger" type="button">Delete</button>
+	          <button id="screenMgrCancelBtn" class="panel-btn" type="button">Cancel</button>
+	        </div>
 	      </div>
 	    </div>
 	  </div>

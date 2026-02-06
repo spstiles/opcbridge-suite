@@ -873,21 +873,7 @@ RestartSec=2
     done
   fi
 
-  if [[ "$START_SERVICES" -eq 1 ]]; then
-    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi; do
-      if systemctl cat "$svc" >/dev/null 2>&1; then
-        if [[ "$svc" == "opcbridge-hmi" ]]; then
-          if ! node_deps_installed "$PREFIX/hmi"; then
-            echo "ERROR: opcbridge-hmi selected but Node dependencies are not installed."
-            print_node_deps_install_instructions "opcbridge-hmi" "$PREFIX/hmi"
-            mark_install_error
-            continue
-          fi
-        fi
-        systemctl restart "$svc" >/dev/null 2>&1 || true
-      fi
-    done
-  fi
+  # Service restart is now handled per-component in main() for better feedback.
 }
 
 main() {
@@ -1023,6 +1009,40 @@ main() {
   fi
 
   install_systemd_units
+
+  # Restart services individually for better feedback.
+  if [[ "$START_SERVICES" -eq 1 ]]; then
+    for c in "${COMPONENTS[@]}"; do
+      local svc=""
+      case "$c" in
+        opcbridge) svc="opcbridge";;
+        alarms) svc="opcbridge-alarms";;
+        scada) svc="opcbridge-scada";;
+        hmi) svc="opcbridge-hmi";;
+        reporter) svc="opcbridge-reporter";;
+      esac
+
+      if [[ -n "$svc" ]] && systemctl cat "$svc" >/dev/null 2>&1; then
+        # Special check for HMI: ensure Node deps are installed.
+        if [[ "$svc" == "opcbridge-hmi" ]]; then
+          if ! node_deps_installed "$PREFIX/hmi"; then
+            echo "ERROR: opcbridge-hmi selected but Node dependencies are not installed."
+            print_node_deps_install_instructions "opcbridge-hmi" "$PREFIX/hmi"
+            mark_install_error
+            continue
+          fi
+        fi
+
+        echo "Starting/restarting $svc..."
+        if systemctl restart "$svc" 2>/dev/null; then
+          echo "  ✓ $svc started successfully"
+        else
+          echo "  ✗ Failed to start $svc (check: journalctl -u $svc -n 50)"
+          mark_install_error
+        fi
+      fi
+    done
+  fi
 
   if [[ "$INSTALL_HAD_ERRORS" -eq 1 ]]; then
     echo ""
