@@ -348,8 +348,8 @@
               </div>
 
               <div class="form-row">
-                <label>Repeat (ms)</label>
-                <input id="alarmNotifRepeatMs" type="number" min="0" step="1000" placeholder="30000" />
+                <label>Repeat (sec)</label>
+                <input id="alarmNotifRepeatMs" type="number" min="0" step="1" placeholder="30" />
               </div>
 
               <div class="form-row">
@@ -710,6 +710,17 @@
               </div>
             </div>
             <div class="form-row"><label></label><div class="hint" id="editAlarmAudioHint"></div></div>
+            <div class="form-row">
+              <label>Repeat</label>
+              <div style="display:grid; grid-template-columns: 180px 1fr; gap: 10px;">
+                <select id="editAlarmRepeatMode">
+                  <option value="inherit">Use inherited setting</option>
+                  <option value="on">Enabled</option>
+                  <option value="off">Disabled</option>
+                </select>
+                <input id="editAlarmRepeatSec" type="number" min="1" step="1" placeholder="Seconds (e.g. 30)" />
+              </div>
+            </div>
             <div class="form-row">
               <label>Audio Files</label>
               <div class="row-actions">

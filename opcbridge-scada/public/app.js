@@ -311,6 +311,8 @@ const els = {
   editAlarmAudioUpload: document.getElementById('editAlarmAudioUpload'),
   editAlarmAudioUploadBtn: document.getElementById('editAlarmAudioUploadBtn'),
   editAlarmAudioDeleteBtn: document.getElementById('editAlarmAudioDeleteBtn'),
+  editAlarmRepeatMode: document.getElementById('editAlarmRepeatMode'),
+  editAlarmRepeatSec: document.getElementById('editAlarmRepeatSec'),
   editAlarmSeverityPreset: document.getElementById('editAlarmSeverityPreset'),
   editAlarmSeverity: document.getElementById('editAlarmSeverity'),
   editAlarmThresholdRow: document.getElementById('editAlarmThresholdRow'),
@@ -2982,6 +2984,15 @@ function applyAlarmTypeUi() {
   updateAlarmPreview();
 }
 
+function applyAlarmRepeatUi() {
+  const mode = String(els.editAlarmRepeatMode?.value || 'inherit').trim();
+  const enabled = (mode === 'on');
+  if (els.editAlarmRepeatSec) {
+    els.editAlarmRepeatSec.disabled = !enabled;
+  }
+  updateAlarmPreview();
+}
+
 function severityLabel(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 'Unknown';
@@ -3017,6 +3028,10 @@ function updateAlarmPreview() {
   const hysteresis = String(els.editAlarmHysteresis?.value ?? '').trim();
   const compareValue = String(els.editAlarmValue?.value ?? '').trim();
   const enabled = Boolean(els.editAlarmEnabled?.checked);
+  const repeatMode = String(els.editAlarmRepeatMode?.value || 'inherit').trim();
+  const repeatOn = (repeatMode === 'on');
+  const repeatSecRaw = String(els.editAlarmRepeatSec?.value ?? '').trim();
+  const repeatSec = Math.trunc(Number(repeatSecRaw || '0') || 0);
 
   let condition = '';
   if (type === 'high') condition = `is greater than or equal to ${threshold || '<threshold>'}`;
@@ -3028,7 +3043,8 @@ function updateAlarmPreview() {
 
   const h = (type === 'high' || type === 'low') && hysteresis ? ` with ${hysteresis} hysteresis` : '';
   const disabled = enabled ? '' : ' Disabled rules do not evaluate.';
-  els.editAlarmPreview.textContent = `${name} triggers when ${conn}:${tag} ${condition}${h}. Severity: ${severityLabel(sev)} (${sev}).${disabled}`;
+  const rpt = repeatOn && repeatSec > 0 ? ` Repeats every ${repeatSec}s until acknowledged or returned.` : (repeatMode === 'off' ? ' Repeat disabled.' : '');
+  els.editAlarmPreview.textContent = `${name} triggers when ${conn}:${tag} ${condition}${h}. Severity: ${severityLabel(sev)} (${sev}).${rpt}${disabled}`;
 }
 
 function slugAlarmPart(value) {
@@ -3395,6 +3411,30 @@ function getInheritedAudioForScope(cfg, scope, groupName, siteName) {
   return { audible_enabled: false, audio_file: '', source: 'system' };
 }
 
+function notificationDefaultRepeatMs(cfg) {
+  const routes = (cfg && cfg.notifications && Array.isArray(cfg.notifications.routes)) ? cfg.notifications.routes : [];
+  const best = routes.find((r) => r && typeof r === 'object' && r.enabled !== false && String(r.type || '') === 'audio_command')
+    || routes.find((r) => r && typeof r === 'object' && r.enabled !== false);
+  const ms = Math.trunc(Number(best?.repeat_ms ?? 0) || 0);
+  return (ms > 0) ? ms : 0;
+}
+
+function getInheritedRepeatForScope(cfg, scope, groupName, siteName) {
+  const global = notificationDefaultRepeatMs(cfg);
+  if (scope === 'site') {
+    const g = groupName ? findAlarmGroupConfig(cfg, groupName) : null;
+    if (g && Object.prototype.hasOwnProperty.call(g, 'repeat_ms')) {
+      const ms = Math.trunc(Number(g.repeat_ms ?? 0) || 0);
+      return { repeat_ms: ms < 0 ? 0 : ms, source: 'group' };
+    }
+    return { repeat_ms: global, source: 'global' };
+  }
+  if (scope === 'group') {
+    return { repeat_ms: global, source: 'global' };
+  }
+  return { repeat_ms: 0, source: 'system' };
+}
+
 function refreshAudioScopeUi() {
   const pending = state.pendingWorkspaceItem || {};
   const scope = String(pending.scope || '').trim();
@@ -3529,6 +3569,8 @@ function wireAlarmPreviewInputs() {
     els.editAlarmEnabled,
     els.editAlarmAudibleMode,
     els.editAlarmAudioFile,
+    els.editAlarmRepeatMode,
+    els.editAlarmRepeatSec,
     els.editAlarmSeverity,
     els.editAlarmThreshold,
     els.editAlarmHysteresis,
@@ -3559,8 +3601,12 @@ function wireAlarmPreviewInputs() {
       if (el === els.editAlarmSeverity) syncSeverityPresetFromValue();
       if (el === els.editAlarmTagFilter) refreshAlarmTagSelect();
       if ([els.editAlarmConn, els.editAlarmTag, els.editAlarmType].includes(el)) syncNewAlarmDefaults();
-      if (el === els.editAlarmGroup) fillAlarmSiteSelect(String(els.editAlarmGroup?.value || ''), String(els.editAlarmSite?.value || ''));
+      if (el === els.editAlarmGroup) {
+        const g = String(els.editAlarmGroup?.value || '').trim();
+        fillAlarmSiteSelect(g, g ? String(els.editAlarmSite?.value || '') : '');
+      }
       if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioFile].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
+      if ([els.editAlarmRepeatMode, els.editAlarmRepeatSec].includes(el)) applyAlarmRepeatUi();
       updateAlarmPreview();
     });
     el.addEventListener('change', () => {
@@ -3570,8 +3616,12 @@ function wireAlarmPreviewInputs() {
         syncNewAlarmDefaults();
       }
       if ([els.editAlarmTag, els.editAlarmType].includes(el)) syncNewAlarmDefaults();
-      if (el === els.editAlarmGroup) fillAlarmSiteSelect(String(els.editAlarmGroup?.value || ''), String(els.editAlarmSite?.value || ''));
+      if (el === els.editAlarmGroup) {
+        const g = String(els.editAlarmGroup?.value || '').trim();
+        fillAlarmSiteSelect(g, g ? String(els.editAlarmSite?.value || '') : '');
+      }
       if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioFile].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
+      if ([els.editAlarmRepeatMode, els.editAlarmRepeatSec].includes(el)) applyAlarmRepeatUi();
       updateAlarmPreview();
     });
   });
@@ -3730,6 +3780,24 @@ function audioOutputFromRoute(route) {
   return 'default';
 }
 
+function normalizeRepeatMs(raw, def = 0) {
+  if (raw == null) return def;
+  const s = String(raw).trim();
+  if (s === '') return def;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(0, Math.trunc(n));
+}
+
+function normalizeRepeatSec(raw, defSec = 0) {
+  if (raw == null) return defSec;
+  const s = String(raw).trim();
+  if (s === '') return defSec;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return defSec;
+  return Math.max(0, Math.trunc(n));
+}
+
 async function loadAlarmNotificationSettings() {
   setAlarmNotifStatus('Loading…');
   try {
@@ -3741,8 +3809,8 @@ async function loadAlarmNotificationSettings() {
 
     if (els.alarmNotifEnabled) els.alarmNotifEnabled.checked = Boolean(cfg?.notifications?.enabled);
 
-    const repeatMs = Number(route?.repeat_ms ?? 30000) || 30000;
-    if (els.alarmNotifRepeatMs) els.alarmNotifRepeatMs.value = String(repeatMs);
+    const repeatMs = normalizeRepeatMs(route?.repeat_ms, 0);
+    if (els.alarmNotifRepeatMs) els.alarmNotifRepeatMs.value = String(Math.max(0, Math.trunc(repeatMs / 1000)));
 
     const until = String(route?.until || 'acked_or_returned');
     if (els.alarmNotifUntil) els.alarmNotifUntil.value = until;
@@ -3787,7 +3855,8 @@ async function saveAlarmNotificationSettings() {
   setAlarmNotifStatus('Saving…');
   try {
     const enabled = Boolean(els.alarmNotifEnabled?.checked);
-    const repeatMs = Math.max(0, Math.trunc(Number(els.alarmNotifRepeatMs?.value ?? 30000) || 30000));
+    const repeatSec = normalizeRepeatSec(els.alarmNotifRepeatMs?.value, 0);
+    const repeatMs = repeatSec * 1000;
     const until = String(els.alarmNotifUntil?.value || 'acked_or_returned').trim() || 'acked_or_returned';
     const output = String(els.alarmNotifOutputDevice?.value || 'default').trim() || 'default';
 
@@ -3887,7 +3956,8 @@ async function saveSoundSettings() {
     route.on = Array.isArray(route.on) && route.on.length ? route.on : ['active'];
     route.command = '/usr/bin/aplay';
     route.args = output === 'default' ? ['{audio_path}'] : ['-D', output, '{audio_path}'];
-    route.repeat_ms = Number(route.repeat_ms ?? 30000) || 30000;
+    // Preserve the existing repeat_ms exactly (including 0 = disabled). Default to 0 if unset.
+    route.repeat_ms = normalizeRepeatMs(route.repeat_ms, 0);
     route.until = String(route.until || 'acked_or_returned');
 
     await saveOpcbridgeAlarmsConfig(cfg);
@@ -5321,6 +5391,13 @@ function openWorkspaceItemModal(node) {
     if (els.editAlarmValue) els.editAlarmValue.value = alarmCompareValueToText(existing);
     if (els.editAlarmMsgOn) els.editAlarmMsgOn.value = existing ? String(existing.message_on_active || '') : '';
     if (els.editAlarmMsgOff) els.editAlarmMsgOff.value = existing ? String(existing.message_on_return || '') : '';
+    {
+      const hasRepeatField = existing && Object.prototype.hasOwnProperty.call(existing, 'repeat_ms');
+      const repeatMs = hasRepeatField ? Math.trunc(Number(existing.repeat_ms) || 0) : 0;
+      if (els.editAlarmRepeatMode) els.editAlarmRepeatMode.value = hasRepeatField ? (repeatMs > 0 ? 'on' : 'off') : 'inherit';
+      if (els.editAlarmRepeatSec) els.editAlarmRepeatSec.value = repeatMs > 0 ? String(Math.max(1, Math.trunc(repeatMs / 1000))) : '';
+      applyAlarmRepeatUi();
+    }
     refreshAlarmAudioUi(existing || {});
     if (els.editAlarmType) {
       els.editAlarmType.onchange = applyAlarmTypeUi;
@@ -5413,11 +5490,11 @@ function openNewAlarmModal({ group, site } = {}) {
   if (!state.alarmsConfig) {
     loadOpcbridgeAlarmsConfig().then(() => {
       fillAlarmGroupSelect(wantGroup);
-      fillAlarmSiteSelect(wantGroup, wantSite);
+      fillAlarmSiteSelect(wantGroup, wantGroup ? wantSite : '');
     }).catch(() => {});
   }
   fillAlarmGroupSelect(wantGroup);
-  fillAlarmSiteSelect(wantGroup, wantSite);
+  fillAlarmSiteSelect(wantGroup, wantGroup ? wantSite : '');
 
   if (els.editAlarmTagFilter) els.editAlarmTagFilter.value = '';
   fillAlarmConnectionSelect();
@@ -5432,6 +5509,9 @@ function openNewAlarmModal({ group, site } = {}) {
   if (els.editAlarmValue) els.editAlarmValue.value = '';
   if (els.editAlarmMsgOn) els.editAlarmMsgOn.value = '';
   if (els.editAlarmMsgOff) els.editAlarmMsgOff.value = '';
+  if (els.editAlarmRepeatMode) els.editAlarmRepeatMode.value = 'inherit';
+  if (els.editAlarmRepeatSec) els.editAlarmRepeatSec.value = '';
+  applyAlarmRepeatUi();
   refreshAlarmAudioUi({});
   if (els.editAlarmType) {
     els.editAlarmType.onchange = applyAlarmTypeUi;
@@ -5597,6 +5677,10 @@ async function saveEditedAlarmFromModal() {
   const message_on_return = String(els.editAlarmMsgOff?.value || '').trim();
   const audibleMode = String(els.editAlarmAudibleMode?.value || 'inherit').trim();
   const audio_file = String(els.editAlarmAudioFile?.value || '').trim();
+  const repeatMode = String(els.editAlarmRepeatMode?.value || 'inherit').trim();
+  const repeatSecRaw = String(els.editAlarmRepeatSec?.value ?? '').trim();
+  const repeatSec = Math.trunc(Number(repeatSecRaw || '0') || 0);
+  const repeat_ms = (repeatMode === 'on') ? (repeatSec * 1000) : (repeatMode === 'off' ? 0 : -1);
   const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
   if (!Array.isArray(cfg.alarms)) cfg.alarms = [];
 
@@ -5613,6 +5697,10 @@ async function saveEditedAlarmFromModal() {
   if (!selectedTagExists) { setEditAlarmStatus(`Tag '${connection_id}:${tag_name}' was not found in the tag config.`); return; }
   if (!['inherit', 'on', 'off'].includes(audibleMode)) { setEditAlarmStatus('Audible setting is invalid.'); return; }
   if (audio_file && !getAlarmAudioFiles(cfg).some((f) => f.id === audio_file)) { setEditAlarmStatus(`Audio file '${audio_file}' is not in the audio files list.`); return; }
+  if (repeatMode === 'on') {
+    if (!Number.isFinite(repeatSec) || repeatSec <= 0) { setEditAlarmStatus('Repeat interval is required when Repeat is enabled.'); return; }
+    if (repeatSec > 86400) { setEditAlarmStatus('Repeat interval is too large.'); return; }
+  }
   if ((type === 'high' || type === 'low') && thresholdRaw === '') {
     setEditAlarmStatus('Threshold is required for high/low alarms.');
     return;
@@ -5640,6 +5728,8 @@ async function saveEditedAlarmFromModal() {
     message_on_active,
     message_on_return
   };
+  if (repeatMode === 'on') next.repeat_ms = repeat_ms;
+  else if (repeatMode === 'off') next.repeat_ms = 0;
   if (audibleMode === 'on') next.audible_enabled = true;
   else if (audibleMode === 'off') next.audible_enabled = false;
   if (audio_file) next.audio_file = audio_file;
@@ -5681,6 +5771,7 @@ async function saveEditedAlarmFromModal() {
     const merged = { ...(cfg.alarms[origIdx] || {}), ...next };
     if (audibleMode === 'inherit') delete merged.audible_enabled;
     if (!audio_file) delete merged.audio_file;
+    if (repeatMode === 'inherit') delete merged.repeat_ms;
     if (type === 'high' || type === 'low') {
       delete merged.value;
       delete merged.equals_value;
@@ -5701,6 +5792,25 @@ async function saveEditedAlarmFromModal() {
   await loadOpcbridgeAlarmsConfig();
   closeWorkspaceItemModal();
   renderWorkspaceTree();
+
+  // If the user is currently in the Alarms & Events tab, refresh its tree/children
+  // immediately so the new/edited alarm appears without requiring a tree click.
+  const alarmsEventsPanel = document.getElementById('tab-alarms_events');
+  if (alarmsEventsPanel && alarmsEventsPanel.classList.contains('is-active')) {
+    if (mode === 'new') {
+      const safeKey = (s) => {
+        const k = String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+        return k || 'none';
+      };
+      const groupLabel = group ? group : '(No group)';
+      const siteLabel = site ? site : '(No site)';
+      const groupNodeId = `alarm_group:${safeKey(groupLabel)}`;
+      const siteNodeId = `${groupNodeId}:site:${safeKey(siteLabel)}`;
+      state.alarmsEventsSelectedNodeId = siteNodeId;
+      state.alarmsEventsSelectedChildId = `alarm:${id}`;
+    }
+    renderAlarmsEventsTree();
+  }
 }
 
 async function saveEditedAlarmFromModalReload() {
@@ -6764,6 +6874,33 @@ function renderAlarmsEventsProperties(item, parentNode) {
     audioSel.value = String(cur?.audio_file || '');
     addRow('Audio File', audioSel);
 
+    const hasRepeatField = Object.prototype.hasOwnProperty.call(cur || {}, 'repeat_ms');
+    const curRepeatMs = hasRepeatField ? Math.trunc(Number(cur?.repeat_ms ?? 0) || 0) : 0;
+    const repeatMode = document.createElement('select');
+    repeatMode.innerHTML = [
+      { v: 'inherit', l: 'Inherit' },
+      { v: 'on', l: 'Enable' },
+      { v: 'off', l: 'Disable' }
+    ].map((o) => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.l)}</option>`).join('');
+    repeatMode.value = hasRepeatField ? (curRepeatMs > 0 ? 'on' : 'off') : 'inherit';
+
+    const repeatSec = document.createElement('input');
+    repeatSec.type = 'number';
+    repeatSec.min = '1';
+    repeatSec.step = '1';
+    repeatSec.placeholder = 'Seconds (e.g. 30)';
+    repeatSec.value = curRepeatMs > 0 ? String(Math.max(1, Math.trunc(curRepeatMs / 1000))) : '';
+    repeatSec.disabled = (repeatMode.value !== 'on');
+    repeatMode.addEventListener('change', () => { repeatSec.disabled = (String(repeatMode.value || 'inherit') !== 'on'); });
+
+    const repeatWrap = document.createElement('div');
+    repeatWrap.style.display = 'grid';
+    repeatWrap.style.gridTemplateColumns = '180px 1fr';
+    repeatWrap.style.gap = '10px';
+    repeatWrap.appendChild(repeatMode);
+    repeatWrap.appendChild(repeatSec);
+    addRow('Repeat', repeatWrap);
+
     const effectiveLine = document.createElement('div');
     effectiveLine.className = 'hint';
     effectiveLine.style.marginTop = '6px';
@@ -6817,6 +6954,20 @@ function renderAlarmsEventsProperties(item, parentNode) {
         if (!af) delete next.audio_file;
         else next.audio_file = af;
 
+        {
+          const repMode = String(repeatMode.value || 'inherit');
+          if (repMode === 'inherit') {
+            delete next.repeat_ms;
+          } else if (repMode === 'off') {
+            next.repeat_ms = 0;
+          } else if (repMode === 'on') {
+            const sec = Math.trunc(Number(String(repeatSec.value ?? '').trim() || '0') || 0);
+            if (!Number.isFinite(sec) || sec <= 0) throw new Error('Repeat interval is required when Repeat is enabled.');
+            if (sec > 86400) throw new Error('Repeat interval is too large.');
+            next.repeat_ms = sec * 1000;
+          }
+        }
+
         nextCfg.alarms[idx] = next;
         await saveOpcbridgeAlarmsConfig(nextCfg);
         await doReload();
@@ -6842,18 +6993,218 @@ function renderAlarmsEventsProperties(item, parentNode) {
   }
 
   if (type === 'alarm_group' || type === 'alarm_site') {
-    const group = String(item?.meta?.group || item?.label || '').trim();
-    const site = type === 'alarm_site' ? String(item?.meta?.site || item?.label || '').trim() : '';
-    const effective = (type === 'alarm_group')
-      ? { ...getInheritedAudioForScope(cfg, 'group', group, ''), ...(findAlarmGroupConfig(cfg, group) || {}) }
+    const group = String(item?.meta?.group || '').trim();
+    const site = type === 'alarm_site' ? String(item?.meta?.site || '').trim() : '';
+    const scope = (type === 'alarm_site') ? 'site' : 'group';
+
+    // Unassigned buckets in the tree are not real config scopes.
+    if (!group || (scope === 'site' && !site)) {
+      addPropRow('Type', type === 'alarm_group' ? 'Alarm Group' : 'Alarm Site');
+      addPropRow('Group', group || '(Unassigned)');
+      if (scope === 'site') addPropRow('Site', site || '(Unassigned)');
+      addPropRow('Note', 'Unassigned alarms do not have group/site properties.');
+      return;
+    }
+
+    const target = getAudioScopeConfig(cfg, scope, group, site) || {};
+    const inherited = getInheritedAudioForScope(cfg, scope, group, site);
+    const selectedFile = String(target?.audio_file || '').trim();
+    const effective = (scope === 'group')
+      ? { ...inherited, ...(findAlarmGroupConfig(cfg, group) || {}) }
       : resolveInheritedAlarmAudio(cfg, group, site);
 
-    addPropRow('Type', type === 'alarm_group' ? 'Alarm Group' : 'Alarm Site');
-    addPropRow('Group', group);
-    if (type === 'alarm_site') addPropRow('Site', site);
-    addPropRow('Audible (effective)', effective?.audible_enabled ? 'enabled' : 'disabled');
-    addPropRow('Audio file (effective)', effective?.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none');
+    showEditor();
+    const host = els.alarmsEventsPropsEditor;
+    if (!host) return;
 
+    const form = document.createElement('div');
+    form.className = 'form';
+    form.style.maxWidth = '900px';
+
+    const addRow2 = (labelText, inputEl) => {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      const lab = document.createElement('label');
+      lab.textContent = labelText;
+      row.appendChild(lab);
+      row.appendChild(inputEl);
+      form.appendChild(row);
+      return inputEl;
+    };
+
+    const groupBox = document.createElement('input');
+    groupBox.type = 'text';
+    groupBox.value = group;
+    groupBox.disabled = true;
+    addRow2('Group', groupBox);
+
+    if (scope === 'site') {
+      const siteBox = document.createElement('input');
+      siteBox.type = 'text';
+      siteBox.value = site;
+      siteBox.disabled = true;
+      addRow2('Site', siteBox);
+    }
+
+    const audibleMode = document.createElement('select');
+    audibleMode.innerHTML = [
+      { v: 'inherit', l: 'Use inherited setting' },
+      { v: 'on', l: 'Enabled' },
+      { v: 'off', l: 'Disabled' }
+    ].map((o) => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.l)}</option>`).join('');
+    audibleMode.value = Object.prototype.hasOwnProperty.call(target, 'audible_enabled')
+      ? (target.audible_enabled === false ? 'off' : 'on')
+      : 'inherit';
+    audibleMode.disabled = !canEditConfig();
+    addRow2('Audible', audibleMode);
+
+    const audioSel = document.createElement('select');
+    audioSel.textContent = '';
+    const base = document.createElement('option');
+    base.value = '';
+    base.textContent = inherited.audio_file
+      ? `Use inherited: ${alarmAudioFileText(inherited.audio_file, cfg)}`
+      : 'Use inherited: none';
+    audioSel.appendChild(base);
+    getAlarmAudioFiles(cfg || {}).forEach((f) => {
+      const opt = document.createElement('option');
+      opt.value = String(f?.id || '').trim();
+      opt.textContent = f?.path ? `${f.name || f.id} (${f.path})` : `${f.name || f.id} (${f.id})`;
+      if (opt.value) audioSel.appendChild(opt);
+    });
+    audioSel.value = selectedFile;
+    audioSel.disabled = !canEditConfig();
+    addRow2('Audio File', audioSel);
+
+    const inheritedRepeat = getInheritedRepeatForScope(cfg, scope, group, site);
+    const hasRepeatField = Object.prototype.hasOwnProperty.call(target, 'repeat_ms');
+    const repeatMs = hasRepeatField ? Math.trunc(Number(target?.repeat_ms ?? 0) || 0) : 0;
+    const repeatMode = document.createElement('select');
+    repeatMode.innerHTML = [
+      { v: 'inherit', l: 'Use inherited setting' },
+      { v: 'on', l: 'Enabled' },
+      { v: 'off', l: 'Disabled' }
+    ].map((o) => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.l)}</option>`).join('');
+    repeatMode.value = hasRepeatField ? (repeatMs > 0 ? 'on' : 'off') : 'inherit';
+    repeatMode.disabled = !canEditConfig();
+
+    const repeatSec = document.createElement('input');
+    repeatSec.type = 'number';
+    repeatSec.min = '1';
+    repeatSec.step = '1';
+    repeatSec.placeholder = 'Seconds (e.g. 30)';
+    repeatSec.value = repeatMs > 0 ? String(Math.max(1, Math.trunc(repeatMs / 1000))) : '';
+    repeatSec.disabled = (repeatMode.value !== 'on') || !canEditConfig();
+    repeatMode.addEventListener('change', () => {
+      repeatSec.disabled = (String(repeatMode.value || 'inherit') !== 'on') || !canEditConfig();
+    });
+    const repeatWrap = document.createElement('div');
+    repeatWrap.style.display = 'grid';
+    repeatWrap.style.gridTemplateColumns = '180px 1fr';
+    repeatWrap.style.gap = '10px';
+    repeatWrap.appendChild(repeatMode);
+    repeatWrap.appendChild(repeatSec);
+    addRow2('Repeat', repeatWrap);
+
+    const effectiveLine = document.createElement('div');
+    effectiveLine.className = 'hint';
+    effectiveLine.style.marginTop = '6px';
+    {
+      const effectiveRepeatMs = hasRepeatField ? repeatMs : inheritedRepeat.repeat_ms;
+      const repeatText = effectiveRepeatMs > 0 ? `every ${Math.max(1, Math.trunc(effectiveRepeatMs / 1000))}s` : 'off';
+      effectiveLine.textContent = `Effective: audible=${effective?.audible_enabled ? 'enabled' : 'disabled'} · audio=${effective?.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none'} · repeat=${repeatText}`;
+    }
+    form.appendChild(effectiveLine);
+
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn primary';
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save';
+    saveBtn.disabled = !canEditConfig();
+    const revertBtn = document.createElement('button');
+    revertBtn.className = 'btn';
+    revertBtn.type = 'button';
+    revertBtn.textContent = 'Revert';
+    actions.appendChild(saveBtn);
+    actions.appendChild(revertBtn);
+    form.appendChild(actions);
+
+    const doReload = async () => {
+      await loadOpcbridgeAlarmsConfig().catch(() => null);
+      await refreshAll().catch(() => {});
+      renderAlarmsEventsTree();
+    };
+
+    saveBtn.addEventListener('click', async () => {
+      if (!canEditConfig()) { setStatus('Login required to edit.'); return; }
+      setStatus('Saving…');
+      try {
+        const nextCfg = await loadOpcbridgeAlarmsConfig();
+        ensureAlarmGroupsTree(nextCfg || {});
+        if (scope === 'group') {
+          upsertAlarmGroup(nextCfg, group);
+          const g = findAlarmGroupConfig(nextCfg, group);
+          if (!g) throw new Error(`Group '${group}' not found.`);
+          const mode = String(audibleMode.value || 'inherit');
+          if (mode === 'inherit') delete g.audible_enabled;
+          else g.audible_enabled = (mode === 'on');
+          const af = String(audioSel.value || '').trim();
+          if (!af) delete g.audio_file;
+          else g.audio_file = af;
+
+          const repMode = String(repeatMode.value || 'inherit');
+          if (repMode === 'inherit') {
+            delete g.repeat_ms;
+          } else if (repMode === 'off') {
+            g.repeat_ms = 0;
+          } else if (repMode === 'on') {
+            const sec = Math.trunc(Number(String(repeatSec.value ?? '').trim() || '0') || 0);
+            if (!Number.isFinite(sec) || sec <= 0) throw new Error('Repeat interval is required when Repeat is enabled.');
+            if (sec > 86400) throw new Error('Repeat interval is too large.');
+            g.repeat_ms = sec * 1000;
+          }
+        } else {
+          ensureGroupSiteInConfig(nextCfg, group, site);
+          const s = findAlarmSiteConfig(nextCfg, group, site);
+          if (!s) throw new Error(`Site '${site}' not found under group '${group}'.`);
+          const mode = String(audibleMode.value || 'inherit');
+          if (mode === 'inherit') delete s.audible_enabled;
+          else s.audible_enabled = (mode === 'on');
+          const af = String(audioSel.value || '').trim();
+          if (!af) delete s.audio_file;
+          else s.audio_file = af;
+
+          const repMode = String(repeatMode.value || 'inherit');
+          if (repMode === 'inherit') {
+            delete s.repeat_ms;
+          } else if (repMode === 'off') {
+            s.repeat_ms = 0;
+          } else if (repMode === 'on') {
+            const sec = Math.trunc(Number(String(repeatSec.value ?? '').trim() || '0') || 0);
+            if (!Number.isFinite(sec) || sec <= 0) throw new Error('Repeat interval is required when Repeat is enabled.');
+            if (sec > 86400) throw new Error('Repeat interval is too large.');
+            s.repeat_ms = sec * 1000;
+          }
+        }
+
+        await saveOpcbridgeAlarmsConfig(nextCfg);
+        await doReload();
+        setStatus('Saved.');
+      } catch (err) {
+        setStatus(`Save failed: ${err.message}`);
+      }
+    });
+
+    revertBtn.addEventListener('click', async () => {
+      setStatus('Reverting…');
+      await doReload();
+      setStatus('Reverted.');
+    });
+
+    host.appendChild(form);
     return;
   }
 

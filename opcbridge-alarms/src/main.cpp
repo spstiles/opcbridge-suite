@@ -873,6 +873,12 @@ struct AlarmRule
     bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
+
+    // Repeat behavior for audible notifications.
+    // If repeat_override is false, fall back to the notification route default repeat_ms.
+    // If true, repeat_ms may be 0 (explicit off) or >0 (repeat interval).
+    bool repeat_override = false;
+    int64_t repeat_ms = 0;
 };
 
 struct AlarmState
@@ -902,6 +908,12 @@ struct AlarmState
     bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
+
+    // Repeat behavior for audible notifications.
+    // If repeat_override is false, fall back to the notification route default repeat_ms.
+    // If true, repeat_ms may be 0 (explicit off) or >0 (repeat interval).
+    bool repeat_override = false;
+    int64_t repeat_ms = 0;
 };
 
 static json alarm_state_to_json(const AlarmState &s)
@@ -929,6 +941,8 @@ static json alarm_state_to_json(const AlarmState &s)
     j["audible_enabled"] = s.audible_enabled;
     j["audio_file"] = s.audio_file.empty() ? nullptr : json(s.audio_file);
     j["audio_path"] = s.audio_path.empty() ? nullptr : json(s.audio_path);
+    j["repeat_override"] = s.repeat_override;
+    j["repeat_ms"] = s.repeat_ms;
     return j;
 }
 
@@ -937,6 +951,12 @@ struct ResolvedAlarmAudio
     bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
+};
+
+struct ResolvedAlarmRepeat
+{
+    bool repeat_override = false;
+    int64_t repeat_ms = 0;
 };
 
 static std::string json_string_or_empty(const json& obj, const char* key)
@@ -1015,6 +1035,46 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
     return out;
 }
 
+static ResolvedAlarmRepeat resolve_alarm_repeat(const json& root, const json& rule)
+{
+    ResolvedAlarmRepeat out;
+    const std::string groupName = json_string_or_empty(rule, "group");
+    const std::string siteName = json_string_or_empty(rule, "site");
+
+    auto apply = [&](const json& obj) {
+        if (!obj.is_object()) return;
+        if (!obj.contains("repeat_ms")) return;
+        const json& v = obj["repeat_ms"];
+        if (!v.is_number()) return;
+        out.repeat_override = true;
+        if (v.is_number_integer()) out.repeat_ms = v.get<int64_t>();
+        else out.repeat_ms = static_cast<int64_t>(v.get<double>());
+    };
+
+    if (root.contains("groups") && root["groups"].is_array())
+    {
+        for (const auto& g : root["groups"])
+        {
+            if (!g.is_object() || json_string_or_empty(g, "name") != groupName) continue;
+            apply(g);
+            if (!siteName.empty() && g.contains("sites") && g["sites"].is_array())
+            {
+                for (const auto& s : g["sites"])
+                {
+                    if (!s.is_object() || json_string_or_empty(s, "name") != siteName) continue;
+                    apply(s);
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+    apply(rule);
+    if (out.repeat_ms < 0) out.repeat_ms = 0;
+    return out;
+}
+
 static json notification_config_from_root(const json& root)
 {
     if (root.contains("notifications") && root["notifications"].is_object()) return root["notifications"];
@@ -1034,7 +1094,8 @@ static json notification_config_from_root(const json& root)
                 {"on", json::array({"active"})},
                 {"command", "/usr/bin/aplay"},
                 {"args", json::array({"{audio_path}"})},
-                {"repeat_ms", 30000},
+                // Default to no repeat; individual alarms can opt-in with repeat_ms.
+                {"repeat_ms", 0},
                 {"until", "acked_or_returned"}
             }
         })}
@@ -1209,6 +1270,11 @@ public:
             job.alarm = alarm;
             job.event_type = event_type;
             job.due_ms = now_ms();
+            // Allow alarm/group/site repeat settings to override the route default (audible-only).
+            // repeat_ms may be 0 (explicit off) or >0 (repeat interval).
+            if (job.route.type == "audio_command" && job.event_type == "active" && alarm.repeat_override) {
+                job.route.repeat_ms = alarm.repeat_ms;
+            }
             apply_audio_default_arg(job);
             jobs_.push_back(std::move(job));
         }
@@ -1695,6 +1761,7 @@ struct AlarmEngine
                 r["message_on_return"] = a.value("message_on_return", "");
                 r["group"] = a.value("group", "");
                 r["site"] = a.value("site", "");
+                if (a.contains("repeat_ms")) r["repeat_ms"] = a["repeat_ms"];
                 if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 r["source"] = {
@@ -1766,6 +1833,9 @@ struct AlarmEngine
             r.audible_enabled = audio.audible_enabled;
             r.audio_file = audio.audio_file;
             r.audio_path = audio.audio_path;
+            const ResolvedAlarmRepeat rep = resolve_alarm_repeat(root, it);
+            r.repeat_override = rep.repeat_override;
+            r.repeat_ms = rep.repeat_ms;
 
             if (r.id.empty() || r.connection_id.empty() || r.tag.empty()) continue;
 
@@ -1791,6 +1861,8 @@ struct AlarmEngine
             s.audible_enabled = r.audible_enabled;
             s.audio_file = r.audio_file;
             s.audio_path = r.audio_path;
+            s.repeat_override = r.repeat_override;
+            s.repeat_ms = r.repeat_ms;
             nextStates[r.id] = s;
 
             const std::string key = r.connection_id + ":" + r.tag;
@@ -2782,6 +2854,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 r["message_on_return"] = a.value("message_on_return", "");
                 r["group"] = a.value("group", "");
                 r["site"] = a.value("site", "");
+                if (a.contains("repeat_ms")) r["repeat_ms"] = a["repeat_ms"];
                 if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 r["source"] = {
@@ -2844,6 +2917,9 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             r.audible_enabled = audio.audible_enabled;
             r.audio_file = audio.audio_file;
             r.audio_path = audio.audio_path;
+            const ResolvedAlarmRepeat rep = resolve_alarm_repeat(rulesRoot, it);
+            r.repeat_override = rep.repeat_override;
+            r.repeat_ms = rep.repeat_ms;
 
             if (r.id.empty() || r.connection_id.empty() || r.tag.empty()) continue;
             nextRules[r.id] = r;
@@ -2868,6 +2944,8 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.audible_enabled = r.audible_enabled;
             s.audio_file = r.audio_file;
             s.audio_path = r.audio_path;
+            s.repeat_override = r.repeat_override;
+            s.repeat_ms = r.repeat_ms;
             nextStates[r.id] = s;
 
             const std::string key = r.connection_id + ":" + r.tag;
