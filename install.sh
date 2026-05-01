@@ -170,6 +170,8 @@ install_deps() {
   # - It avoids "missing *.so" surprises for users.
   pkgs+=(build-essential pkg-config)
   pkgs+=(libssl-dev zlib1g-dev libsqlite3-dev)
+  # JSON header-only library used across components (e.g., opcbridge-alarms).
+  pkgs+=(nlohmann-json3-dev)
   # MQTT client dev (opcbridge links mosquitto)
   pkgs+=(libmosquitto-dev)
   # Handy for quick inspection/debugging on servers.
