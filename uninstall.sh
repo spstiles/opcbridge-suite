@@ -31,7 +31,7 @@ done
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 if have_cmd systemctl; then
-  for svc in opcbridge-hmi opcbridge-scada opcbridge-alarms opcbridge; do
+  for svc in opcbridge-hmi opcbridge-scada opcbridge-historian opcbridge-alarms opcbridge; do
     if systemctl cat "$svc" >/dev/null 2>&1; then
       systemctl stop "$svc" >/dev/null 2>&1 || true
       systemctl disable "$svc" >/dev/null 2>&1 || true

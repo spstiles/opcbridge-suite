@@ -69,3 +69,39 @@ Then open:
   - `Ack(actor, note) -> ok`
   - `Shelve(duration_ms, actor, note) -> ok`
   - `Unshelve(actor, note) -> ok`
+
+## Notifications / Annunciation
+
+`alarms.json` can include a top-level `notifications` object. The first supported route type is
+`audio_command`, intended for local speakers, amplifiers, or PA systems.
+
+Example:
+
+```json
+{
+  "notifications": {
+    "enabled": true,
+    "routes": [
+      {
+        "name": "plant_pa",
+        "type": "audio_command",
+        "min_severity": 500,
+        "on": ["active"],
+        "command": "/usr/bin/aplay",
+        "args": ["{audio_path}"],
+        "repeat_ms": 30000,
+        "until": "acked_or_returned"
+      }
+    ]
+  }
+}
+```
+
+Audio routes only run for alarms whose effective `audible_enabled` setting is true. The
+effective audio file resolves from global `audio.default_file`, then group, site, and alarm
+overrides. Use `{audio_path}` in route arguments to play the resolved file; if an
+`audio_command` route has no `args`, the resolved audio path is supplied automatically.
+
+The command runs asynchronously and does not block alarm evaluation. Attempts are recorded in
+SQLite in the `notification_attempts` table, and current notification health appears in
+`GET /alarm/api/status`.

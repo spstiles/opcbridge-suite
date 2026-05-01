@@ -1,4 +1,14 @@
 {
+  "audio": {
+    "default_file": "",
+    "files": [
+      {
+        "id": "default_alarm",
+        "name": "Default Alarm",
+        "path": "default_alarm.wav"
+      }
+    ]
+  },
   "alarms": [
     {
       "id": "Alarm001",

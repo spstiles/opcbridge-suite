@@ -1,4 +1,30 @@
 {
+  "audio": {
+    "default_file": "",
+    "files": [
+      {
+        "id": "default_alarm",
+        "name": "Default Alarm",
+        "path": "default_alarm.wav"
+      }
+    ]
+  },
+  "notifications": {
+    "enabled": false,
+    "routes": [
+      {
+        "name": "plant_pa",
+        "type": "audio_command",
+        "enabled": true,
+        "min_severity": 500,
+        "on": ["active"],
+        "command": "/usr/bin/aplay",
+        "args": ["{audio_path}"],
+        "repeat_ms": 30000,
+        "until": "acked_or_returned"
+      }
+    ]
+  },
   "rules": [
     {
       "id": "example_pump_fail",
@@ -7,6 +33,8 @@
       "site": "Building 30",
       "enabled": true,
       "severity": 800,
+      "audible_enabled": true,
+      "audio_file": "default_alarm",
       "source": { "connection_id": "b030", "tag": "Pump1.Fail" },
       "condition": { "type": "equals", "value": true },
       "message_on_active": "Pump 1 Fail is ON",

@@ -705,6 +705,43 @@ function installSystemdUnitFile(content, dstPath) {
   }
 }
 
+function listAudioPlaybackDevices() {
+  const r = child_process.spawnSync('aplay', ['-l'], { encoding: 'utf8', timeout: 5000 });
+  const stdout = String(r.stdout || '');
+  const stderr = String(r.stderr || '');
+  const devices = [];
+  const seen = new Set();
+  const re = /^card\s+(\d+):\s+([^\[]+)\[([^\]]+)\],\s+device\s+(\d+):\s+([^\[]+)\[([^\]]+)\]/gm;
+  let match = null;
+  while ((match = re.exec(stdout)) !== null) {
+    const card = Number(match[1]);
+    const device = Number(match[4]);
+    const alsa = `plughw:${card},${device}`;
+    if (seen.has(alsa)) continue;
+    seen.add(alsa);
+    const cardName = String(match[3] || match[2] || '').trim();
+    const deviceName = String(match[6] || match[5] || '').trim();
+    devices.push({
+      id: alsa,
+      alsa,
+      card,
+      device,
+      card_name: cardName,
+      device_name: deviceName,
+      label: `card ${card}, device ${device}: ${cardName} - ${deviceName}`
+    });
+  }
+  return {
+    ok: r.status === 0,
+    command: 'aplay -l',
+    status: r.status,
+    devices,
+    stdout,
+    stderr,
+    error: r.status === 0 ? '' : (stderr.trim() || stdout.trim() || 'aplay -l failed')
+  };
+}
+
 function contentTypeFor(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.html') return 'text/html; charset=utf-8';
@@ -846,6 +883,8 @@ function needsWriteToken(upstreamPathname) {
     upstreamPathname === '/config/tags' ||
     upstreamPathname === '/config/bundle' ||
     upstreamPathname === '/config/delete' ||
+    upstreamPathname === '/config/audio/upload' ||
+    upstreamPathname === '/config/audio/delete' ||
     upstreamPathname === '/config/cert/upload'
   );
 }
@@ -1726,6 +1765,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/scada/audio/devices') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    sendJson(res, 200, listAudioPlaybackDevices());
     return;
   }
 

@@ -2,8 +2,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <ifaddrs.h>
 #include <mutex>
@@ -12,6 +14,7 @@
 #include <arpa/inet.h>
 #include <random>
 #include <string>
+#include <sys/wait.h>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -80,6 +83,32 @@ static std::string read_file(const std::string &path)
     if (!ifs) throw std::runtime_error("Failed to open file: " + path);
     return std::string((std::istreambuf_iterator<char>(ifs)),
                        std::istreambuf_iterator<char>());
+}
+
+static std::string join_path(const std::string& a, const std::string& b)
+{
+    if (a.empty()) return b;
+    if (b.empty()) return a;
+    if (!b.empty() && b.front() == '/') return b;
+    if (a.back() == '/') return a + b;
+    return a + "/" + b;
+}
+
+static std::string dirname_of(const std::string& path)
+{
+    const auto slash = path.find_last_of('/');
+    if (slash == std::string::npos) return ".";
+    if (slash == 0) return "/";
+    return path.substr(0, slash);
+}
+
+static std::string resolve_audio_path(const std::string& configDir, const std::string& raw)
+{
+    std::string p = raw;
+    if (p.empty()) return "";
+    if (p.front() == '/') return p;
+    if (p.rfind("audio/", 0) == 0) return join_path(configDir, p);
+    return join_path(join_path(configDir, "audio"), p);
 }
 
 struct AlarmDb
@@ -181,6 +210,23 @@ struct AlarmDb
         exec_ignore("CREATE INDEX IF NOT EXISTS idx_alarm_events_alarm ON alarm_events(alarm_id, ts_ms);");
         exec_ignore("CREATE INDEX IF NOT EXISTS idx_alarm_events_tag ON alarm_events(connection_id, tag, ts_ms);");
         exec_ignore("CREATE INDEX IF NOT EXISTS idx_alarm_events_group_site ON alarm_events(group_name, site, ts_ms);");
+
+        exec_ignore(R"SQL(
+            CREATE TABLE IF NOT EXISTS notification_attempts (
+                attempt_id   TEXT PRIMARY KEY,
+                ts_ms        INTEGER NOT NULL,
+                route_name   TEXT NOT NULL,
+                route_type   TEXT NOT NULL,
+                alarm_id     TEXT NOT NULL,
+                severity     INTEGER NOT NULL,
+                event_type   TEXT NOT NULL,
+                ok           INTEGER NOT NULL,
+                result       TEXT,
+                command      TEXT
+            );
+        )SQL");
+        exec_ignore("CREATE INDEX IF NOT EXISTS idx_notification_attempts_ts ON notification_attempts(ts_ms);");
+        exec_ignore("CREATE INDEX IF NOT EXISTS idx_notification_attempts_alarm ON notification_attempts(alarm_id, ts_ms);");
 
         return true;
     }
@@ -285,6 +331,67 @@ struct AlarmDb
         else sqlite3_bind_null(stmt, idx++);
 
         if (!note.empty()) sqlite3_bind_text(stmt, idx++, note.c_str(), -1, SQLITE_TRANSIENT);
+        else sqlite3_bind_null(stmt, idx++);
+
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE)
+        {
+            err = sqlite3_errmsg(db);
+            last_error = err;
+            sqlite3_finalize(stmt);
+            return false;
+        }
+
+        sqlite3_finalize(stmt);
+        last_error.clear();
+        return true;
+    }
+
+    bool insert_notification_attempt(const json& attempt, std::string& err)
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        if (!db)
+        {
+            err = "DB not open";
+            last_error = err;
+            return false;
+        }
+
+        const char* sql = R"SQL(
+            INSERT INTO notification_attempts (
+                attempt_id, ts_ms, route_name, route_type, alarm_id, severity, event_type, ok, result, command
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        )SQL";
+
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK)
+        {
+            err = sqlite3_errmsg(db);
+            last_error = err;
+            return false;
+        }
+
+        const std::string attempt_id = attempt.value("attempt_id", "");
+        const std::string route_name = attempt.value("route_name", "");
+        const std::string route_type = attempt.value("route_type", "");
+        const std::string alarm_id = attempt.value("alarm_id", "");
+        const std::string event_type = attempt.value("event_type", "");
+        const std::string result = attempt.value("result", "");
+        const std::string command = attempt.value("command", "");
+
+        int idx = 1;
+        sqlite3_bind_text(stmt, idx++, attempt_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, idx++, attempt.value("ts_ms", 0LL));
+        sqlite3_bind_text(stmt, idx++, route_name.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, idx++, route_type.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, idx++, alarm_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, idx++, attempt.value("severity", 0));
+        sqlite3_bind_text(stmt, idx++, event_type.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, idx++, attempt.value("ok", false) ? 1 : 0);
+        if (!result.empty()) sqlite3_bind_text(stmt, idx++, result.c_str(), -1, SQLITE_TRANSIENT);
+        else sqlite3_bind_null(stmt, idx++);
+        if (!command.empty()) sqlite3_bind_text(stmt, idx++, command.c_str(), -1, SQLITE_TRANSIENT);
         else sqlite3_bind_null(stmt, idx++);
 
         rc = sqlite3_step(stmt);
@@ -763,6 +870,9 @@ struct AlarmRule
     double hysteresis = 0.0;    // used for high/low
     std::string message_on_active;
     std::string message_on_return;
+    bool audible_enabled = false;
+    std::string audio_file;
+    std::string audio_path;
 };
 
 struct AlarmState
@@ -789,6 +899,9 @@ struct AlarmState
     // Operator-facing configured messages (copied from rule)
     std::string message_on_active;
     std::string message_on_return;
+    bool audible_enabled = false;
+    std::string audio_file;
+    std::string audio_path;
 };
 
 static json alarm_state_to_json(const AlarmState &s)
@@ -813,7 +926,119 @@ static json alarm_state_to_json(const AlarmState &s)
     j["message"] = s.message;
     j["message_on_active"] = s.message_on_active;
     j["message_on_return"] = s.message_on_return;
+    j["audible_enabled"] = s.audible_enabled;
+    j["audio_file"] = s.audio_file.empty() ? nullptr : json(s.audio_file);
+    j["audio_path"] = s.audio_path.empty() ? nullptr : json(s.audio_path);
     return j;
+}
+
+struct ResolvedAlarmAudio
+{
+    bool audible_enabled = false;
+    std::string audio_file;
+    std::string audio_path;
+};
+
+static std::string json_string_or_empty(const json& obj, const char* key)
+{
+    if (!obj.is_object() || !obj.contains(key) || !obj[key].is_string()) return "";
+    return obj[key].get<std::string>();
+}
+
+static void apply_audio_scope(const json& scope, bool& audible, std::string& audioFile)
+{
+    if (!scope.is_object()) return;
+    if (scope.contains("audible_enabled") && scope["audible_enabled"].is_boolean())
+    {
+        audible = scope["audible_enabled"].get<bool>();
+    }
+    const std::string file = json_string_or_empty(scope, "audio_file");
+    if (!file.empty()) audioFile = file;
+}
+
+static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule, const std::string& configDir)
+{
+    ResolvedAlarmAudio out;
+    std::unordered_map<std::string, std::string> audioPaths;
+
+    const json audio = (root.contains("audio") && root["audio"].is_object()) ? root["audio"] : json::object();
+    if (audio.contains("audible_enabled") && audio["audible_enabled"].is_boolean())
+    {
+        out.audible_enabled = audio["audible_enabled"].get<bool>();
+    }
+    if (audio.contains("default_file") && audio["default_file"].is_string())
+    {
+        out.audio_file = audio["default_file"].get<std::string>();
+    }
+    if (audio.contains("files") && audio["files"].is_array())
+    {
+        for (const auto& f : audio["files"])
+        {
+            if (!f.is_object()) continue;
+            const std::string id = json_string_or_empty(f, "id");
+            if (id.empty()) continue;
+            std::string path = json_string_or_empty(f, "path");
+            if (path.empty()) path = id;
+            audioPaths[id] = path;
+        }
+    }
+
+    const std::string groupName = json_string_or_empty(rule, "group");
+    const std::string siteName = json_string_or_empty(rule, "site");
+    if (root.contains("groups") && root["groups"].is_array())
+    {
+        for (const auto& g : root["groups"])
+        {
+            if (!g.is_object() || json_string_or_empty(g, "name") != groupName) continue;
+            apply_audio_scope(g, out.audible_enabled, out.audio_file);
+            if (!siteName.empty() && g.contains("sites") && g["sites"].is_array())
+            {
+                for (const auto& s : g["sites"])
+                {
+                    if (!s.is_object() || json_string_or_empty(s, "name") != siteName) continue;
+                    apply_audio_scope(s, out.audible_enabled, out.audio_file);
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+    apply_audio_scope(rule, out.audible_enabled, out.audio_file);
+
+    if (!out.audio_file.empty())
+    {
+        const auto it = audioPaths.find(out.audio_file);
+        const std::string configuredPath = (it == audioPaths.end()) ? out.audio_file : it->second;
+        out.audio_path = resolve_audio_path(configDir, configuredPath);
+    }
+    return out;
+}
+
+static json notification_config_from_root(const json& root)
+{
+    if (root.contains("notifications") && root["notifications"].is_object()) return root["notifications"];
+
+    const json audio = (root.contains("audio") && root["audio"].is_object()) ? root["audio"] : json::object();
+    const bool hasAudioFiles = audio.contains("files") && audio["files"].is_array() && !audio["files"].empty();
+    if (!hasAudioFiles) return json::object();
+
+    return {
+        {"enabled", true},
+        {"routes", json::array({
+            {
+                {"name", "default_audio"},
+                {"type", "audio_command"},
+                {"enabled", true},
+                {"min_severity", 0},
+                {"on", json::array({"active"})},
+                {"command", "/usr/bin/aplay"},
+                {"args", json::array({"{audio_path}"})},
+                {"repeat_ms", 30000},
+                {"until", "acked_or_returned"}
+            }
+        })}
+    };
 }
 
 static bool json_equalish(const json &a, const json &b)
@@ -845,6 +1070,370 @@ static std::optional<double> coerce_number(const json &v)
     }
     return std::nullopt;
 }
+
+class NotificationManager
+{
+public:
+    struct Route
+    {
+        std::string name;
+        std::string type;
+        bool enabled = true;
+        int min_severity = 0;
+        std::vector<std::string> on{"active"};
+        std::string command;
+        std::vector<std::string> args;
+        int64_t repeat_ms = 0;
+        std::string until = "acked_or_returned";
+    };
+
+    struct Job
+    {
+        Route route;
+        AlarmState alarm;
+        std::string event_type;
+        int64_t due_ms = 0;
+    };
+
+    void set_db(AlarmDb* ptr)
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        db_ = ptr;
+    }
+
+    void set_should_continue(std::function<bool(const std::string&, const std::string&)> fn)
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        should_continue_ = std::move(fn);
+    }
+
+    void set_config_dir(std::string dir)
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        config_dir_ = std::move(dir);
+    }
+
+    void configure(const json& cfg)
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        enabled_ = cfg.is_object() ? cfg.value("enabled", false) : false;
+        routes_.clear();
+        jobs_.clear();
+        if (!enabled_ || !cfg.is_object() || !cfg.contains("routes") || !cfg["routes"].is_array())
+        {
+            cv_.notify_all();
+            return;
+        }
+
+        for (const auto& item : cfg["routes"])
+        {
+            if (!item.is_object()) continue;
+            Route r;
+            r.name = item.value("name", "");
+            r.type = item.value("type", "");
+            r.enabled = item.value("enabled", true);
+            r.min_severity = item.value("min_severity", 0);
+            r.command = item.value("command", "");
+            r.repeat_ms = item.value("repeat_ms", 0LL);
+            r.until = item.value("until", r.until);
+
+            if (item.contains("on") && item["on"].is_array())
+            {
+                r.on.clear();
+                for (const auto& ev : item["on"])
+                {
+                    if (ev.is_string()) r.on.push_back(ev.get<std::string>());
+                }
+            }
+
+            if (item.contains("args") && item["args"].is_array())
+            {
+                for (const auto& arg : item["args"])
+                {
+                    if (arg.is_string()) r.args.push_back(arg.get<std::string>());
+                }
+            }
+
+            if (r.name.empty()) r.name = r.type.empty() ? "notification" : r.type;
+            if (r.type == "audio_command" && !r.command.empty()) routes_.push_back(std::move(r));
+        }
+
+        cv_.notify_all();
+    }
+
+    void start()
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (running_) return;
+        stop_ = false;
+        running_ = true;
+        worker_ = std::thread([this]() { worker_loop(); });
+    }
+
+    void stop()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            stop_ = true;
+            cv_.notify_all();
+        }
+        if (worker_.joinable()) worker_.join();
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            running_ = false;
+        }
+    }
+
+    void notify_event(const AlarmState& alarm, const std::string& event_type)
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!enabled_) return;
+        for (const auto& route : routes_)
+        {
+            if (!route.enabled) continue;
+            if (alarm.severity < route.min_severity) continue;
+            bool eventMatch = false;
+            for (const auto& ev : route.on)
+            {
+                if (ev == event_type) { eventMatch = true; break; }
+            }
+            if (!eventMatch) continue;
+            if (route.type == "audio_command")
+            {
+                if (!alarm.audible_enabled) continue;
+                if (route_needs_audio_path(route) && alarm.audio_path.empty()) continue;
+            }
+
+            Job job;
+            job.route = route;
+            job.alarm = alarm;
+            job.event_type = event_type;
+            job.due_ms = now_ms();
+            apply_audio_default_arg(job);
+            jobs_.push_back(std::move(job));
+        }
+        cv_.notify_all();
+    }
+
+    json status_json() const
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        json routes = json::array();
+        for (const auto& r : routes_)
+        {
+            routes.push_back({
+                {"name", r.name},
+                {"type", r.type},
+                {"enabled", r.enabled},
+                {"min_severity", r.min_severity},
+                {"repeat_ms", r.repeat_ms},
+                {"until", r.until}
+            });
+        }
+        return {
+            {"enabled", enabled_},
+            {"running", running_},
+            {"queued", static_cast<int>(jobs_.size())},
+            {"attempts", attempts_},
+            {"successes", successes_},
+            {"failures", failures_},
+            {"last_attempt_ms", last_attempt_ms_},
+            {"routes", routes}
+        };
+    }
+
+private:
+    static std::string format_arg(std::string value, const AlarmState& alarm)
+    {
+        auto replace_all = [&](const std::string& from, const std::string& to) {
+            size_t pos = 0;
+            while ((pos = value.find(from, pos)) != std::string::npos)
+            {
+                value.replace(pos, from.size(), to);
+                pos += to.size();
+            }
+        };
+        replace_all("{alarm_id}", alarm.alarm_id);
+        replace_all("{name}", alarm.name);
+        replace_all("{group}", alarm.group);
+        replace_all("{site}", alarm.site);
+        replace_all("{message}", alarm.message);
+        replace_all("{connection_id}", alarm.connection_id);
+        replace_all("{tag}", alarm.tag);
+        replace_all("{severity}", std::to_string(alarm.severity));
+        replace_all("{audio_file}", alarm.audio_file);
+        replace_all("{audio_path}", alarm.audio_path);
+        return value;
+    }
+
+    void apply_audio_default_arg(Job& job) const
+    {
+        if (job.route.type != "audio_command") return;
+        if (!job.route.args.empty()) return;
+        if (!job.alarm.audible_enabled) return;
+        if (job.alarm.audio_path.empty()) return;
+        job.route.args.push_back(job.alarm.audio_path);
+    }
+
+    static bool route_needs_audio_path(const Route& route)
+    {
+        if (route.args.empty()) return true;
+        for (const auto& arg : route.args)
+        {
+            if (arg.find("{audio_path}") != std::string::npos || arg.find("{audio_file}") != std::string::npos) return true;
+        }
+        return false;
+    }
+
+    static std::string command_string(const Job& job)
+    {
+        std::string out = job.route.command;
+        for (const auto& arg : job.route.args)
+        {
+            out += " ";
+            out += format_arg(arg, job.alarm);
+        }
+        return out;
+    }
+
+    static int run_command(const Job& job)
+    {
+        std::vector<std::string> args;
+        args.push_back(job.route.command);
+        for (const auto& arg : job.route.args) args.push_back(format_arg(arg, job.alarm));
+
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& arg : args) argv.push_back(arg.data());
+        argv.push_back(nullptr);
+
+        pid_t pid = fork();
+        if (pid < 0) return -1;
+        if (pid == 0)
+        {
+            execvp(argv[0], argv.data());
+            _exit(127);
+        }
+
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0) return -1;
+        if (WIFEXITED(status)) return WEXITSTATUS(status);
+        if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+        return -1;
+    }
+
+    bool should_continue_job(const Job& job)
+    {
+        std::function<bool(const std::string&, const std::string&)> fn;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            fn = should_continue_;
+        }
+        if (!fn) return false;
+        return fn(job.alarm.alarm_id, job.route.until);
+    }
+
+    void record_attempt(const Job& job, bool ok, const std::string& result)
+    {
+        AlarmDb* db = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            attempts_++;
+            if (ok) successes_++;
+            else failures_++;
+            last_attempt_ms_ = now_ms();
+            db = db_;
+        }
+        if (!db) return;
+
+        json attempt;
+        attempt["attempt_id"] = "ntf_" + random_hex(16);
+        attempt["ts_ms"] = now_ms();
+        attempt["route_name"] = job.route.name;
+        attempt["route_type"] = job.route.type;
+        attempt["alarm_id"] = job.alarm.alarm_id;
+        attempt["severity"] = job.alarm.severity;
+        attempt["event_type"] = job.event_type;
+        attempt["ok"] = ok;
+        attempt["result"] = result;
+        attempt["command"] = command_string(job);
+
+        std::string err;
+        if (!db->insert_notification_attempt(attempt, err))
+        {
+            std::cerr << "[alarms] notification attempt DB insert failed: " << err << "\n";
+        }
+    }
+
+    void worker_loop()
+    {
+        while (true)
+        {
+            Job job;
+            {
+                std::unique_lock<std::mutex> lock(mu_);
+                cv_.wait(lock, [&]() { return stop_ || !jobs_.empty(); });
+                if (stop_) return;
+
+                auto best = jobs_.begin();
+                for (auto it = jobs_.begin(); it != jobs_.end(); ++it)
+                {
+                    if (it->due_ms < best->due_ms) best = it;
+                }
+
+                const int64_t delay = best->due_ms - now_ms();
+                if (delay > 0)
+                {
+                    cv_.wait_for(lock, std::chrono::milliseconds(delay));
+                    continue;
+                }
+
+                job = std::move(*best);
+                jobs_.erase(best);
+            }
+
+            if (job.event_type == "active" && !should_continue_job(job)) continue;
+
+            bool ok = false;
+            std::string result;
+            if (job.route.type == "audio_command")
+            {
+                const int rc = run_command(job);
+                ok = (rc == 0);
+                result = "exit_code=" + std::to_string(rc);
+            }
+            else
+            {
+                result = "unsupported route type";
+            }
+            record_attempt(job, ok, result);
+
+            if (job.event_type == "active" && job.route.repeat_ms > 0 && should_continue_job(job))
+            {
+                job.due_ms = now_ms() + job.route.repeat_ms;
+                std::lock_guard<std::mutex> lock(mu_);
+                jobs_.push_back(std::move(job));
+                cv_.notify_all();
+            }
+        }
+    }
+
+    mutable std::mutex mu_;
+    std::condition_variable cv_;
+    bool enabled_ = false;
+    bool running_ = false;
+    bool stop_ = false;
+    std::vector<Route> routes_;
+    std::deque<Job> jobs_;
+    AlarmDb* db_ = nullptr;
+    std::function<bool(const std::string&, const std::string&)> should_continue_;
+    std::string config_dir_;
+    std::thread worker_;
+    int64_t attempts_ = 0;
+    int64_t successes_ = 0;
+    int64_t failures_ = 0;
+    int64_t last_attempt_ms_ = 0;
+};
 
 struct AlarmEngine;
 
@@ -928,10 +1517,29 @@ struct AlarmEngine
     AlarmDb* db = nullptr;
     AlarmWs* ws = nullptr;
     AlarmUa* ua = nullptr;
+    NotificationManager* notifications = nullptr;
 
     void set_db(AlarmDb* ptr) { db = ptr; }
     void set_ws(AlarmWs* ptr) { ws = ptr; }
     void set_ua(AlarmUa* ptr) { ua = ptr; }
+    void set_notifications(NotificationManager* ptr) { notifications = ptr; }
+
+    bool should_continue_notification(const std::string& alarm_id, const std::string& until) const
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        auto it = states.find(alarm_id);
+        if (it == states.end()) return false;
+
+        const AlarmState& s = it->second;
+        const int64_t t = now_ms();
+        const bool shelved = s.shelved_until_ms.has_value() && t < s.shelved_until_ms.value();
+        if (!s.enabled || shelved) return false;
+
+        if (until == "returned") return s.active;
+        if (until == "acked") return s.active && !s.acked;
+        if (until == "manual") return s.active;
+        return s.active && !s.acked;
+    }
 
     void restore_state_from_db(int64_t since_ms)
     {
@@ -1087,6 +1695,8 @@ struct AlarmEngine
                 r["message_on_return"] = a.value("message_on_return", "");
                 r["group"] = a.value("group", "");
                 r["site"] = a.value("site", "");
+                if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
+                if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 r["source"] = {
                     {"connection_id", a.value("connection_id", "")},
                     {"tag", a.value("tag_name", a.value("tag", ""))}
@@ -1115,6 +1725,11 @@ struct AlarmEngine
         else
         {
             throw std::runtime_error("Invalid alarms.json; expected {\"rules\":[...]} or {\"alarms\":[...]}");
+        }
+
+        if (notifications)
+        {
+            notifications->configure(notification_config_from_root(root));
         }
 
         for (const auto &it : rulesArr)
@@ -1147,6 +1762,10 @@ struct AlarmEngine
             }
             r.message_on_active = it.value("message_on_active", "");
             r.message_on_return = it.value("message_on_return", "");
+            const ResolvedAlarmAudio audio = resolve_alarm_audio(root, it, dirname_of(path));
+            r.audible_enabled = audio.audible_enabled;
+            r.audio_file = audio.audio_file;
+            r.audio_path = audio.audio_path;
 
             if (r.id.empty() || r.connection_id.empty() || r.tag.empty()) continue;
 
@@ -1169,6 +1788,9 @@ struct AlarmEngine
             s.message = "";
             s.message_on_active = r.message_on_active;
             s.message_on_return = r.message_on_return;
+            s.audible_enabled = r.audible_enabled;
+            s.audio_file = r.audio_file;
+            s.audio_path = r.audio_path;
             nextStates[r.id] = s;
 
             const std::string key = r.connection_id + ":" + r.tag;
@@ -1280,6 +1902,7 @@ struct AlarmEngine
                                   << " value=" << s.last_value.dump()
                                   << " severity=" << s.severity << "\n";
                         log_event(s, "active", s.last_value);
+                        if (notifications) notifications->notify_event(s, "active");
                     }
                     if (ws && ws->enabled.load()) {
                         json msg;
@@ -1302,6 +1925,7 @@ struct AlarmEngine
                                   << " (" << s.connection_id << ":" << s.tag << ")"
                                   << " value=" << s.last_value.dump() << "\n";
                         log_event(s, "return", s.last_value);
+                        if (notifications) notifications->notify_event(s, "return");
                     }
                     if (ws && ws->enabled.load()) {
                         json msg;
@@ -1332,6 +1956,7 @@ struct AlarmEngine
             it->second.last_change_ms = now_ms();
             last_alarm_change_ms.store(it->second.last_change_ms);
             log_event(it->second, "ack", it->second.last_value, actor, note);
+            if (notifications) notifications->notify_event(it->second, "ack");
             if (ws && ws->enabled.load()) {
                 json msg;
                 msg["type"] = "alarm_state";
@@ -1358,6 +1983,7 @@ struct AlarmEngine
             json v;
             v["until_ms"] = until_ms;
             log_event(it->second, "shelve", v, actor, note);
+            if (notifications) notifications->notify_event(it->second, "shelve");
             if (ws && ws->enabled.load()) {
                 json msg;
                 msg["type"] = "alarm_state";
@@ -1382,6 +2008,7 @@ struct AlarmEngine
             it->second.last_change_ms = now_ms();
             last_alarm_change_ms.store(it->second.last_change_ms);
             log_event(it->second, "unshelve", it->second.last_value, actor, note);
+            if (notifications) notifications->notify_event(it->second, "unshelve");
             if (ws && ws->enabled.load()) {
                 json msg;
                 msg["type"] = "alarm_state";
@@ -2046,6 +2673,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                                       const std::string &host,
                                       uint16_t port,
                                       const std::string &adminToken,
+                                      const std::string &configDir,
                                       std::string &err)
 {
     httplib::Client cli(host, port);
@@ -2117,6 +2745,11 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
         rulesRoot["rules"] = json::array();
     }
 
+    if (engine.notifications)
+    {
+        engine.notifications->configure(notification_config_from_root(rulesRoot));
+    }
+
     // Serialize to reuse existing loader/parser.
     const std::string tmp = rulesRoot.dump(2);
     try {
@@ -2149,6 +2782,8 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 r["message_on_return"] = a.value("message_on_return", "");
                 r["group"] = a.value("group", "");
                 r["site"] = a.value("site", "");
+                if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
+                if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 r["source"] = {
                     {"connection_id", a.value("connection_id", "")},
                     {"tag", a.value("tag_name", a.value("tag", ""))}
@@ -2205,6 +2840,10 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             }
             r.message_on_active = it.value("message_on_active", "");
             r.message_on_return = it.value("message_on_return", "");
+            const ResolvedAlarmAudio audio = resolve_alarm_audio(rulesRoot, it, dirname_of(configDir));
+            r.audible_enabled = audio.audible_enabled;
+            r.audio_file = audio.audio_file;
+            r.audio_path = audio.audio_path;
 
             if (r.id.empty() || r.connection_id.empty() || r.tag.empty()) continue;
             nextRules[r.id] = r;
@@ -2226,6 +2865,9 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.message = "";
             s.message_on_active = r.message_on_active;
             s.message_on_return = r.message_on_return;
+            s.audible_enabled = r.audible_enabled;
+            s.audio_file = r.audio_file;
+            s.audio_path = r.audio_path;
             nextStates[r.id] = s;
 
             const std::string key = r.connection_id + ":" + r.tag;
@@ -2233,6 +2875,26 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
         }
 
         std::lock_guard<std::mutex> lock(engine.mu);
+        // Preserve runtime state across config reloads to avoid re-annunciating alarms
+        // simply because alarms.json changed. Do this at swap time so we don't race
+        // ongoing tag updates.
+        for (auto &kv : nextStates)
+        {
+            const std::string &id = kv.first;
+            AlarmState &s = kv.second;
+            auto it = engine.states.find(id);
+            if (it == engine.states.end()) continue;
+            const AlarmState &prev = it->second;
+
+            // Carry over live state; keep rule-derived fields from the new config.
+            s.active = prev.active;
+            s.acked = prev.acked;
+            s.active_since_ms = prev.active_since_ms;
+            s.last_change_ms = prev.last_change_ms;
+            s.last_value = prev.last_value;
+            s.message = prev.message;
+            s.shelved_until_ms = prev.shelved_until_ms;
+        }
         engine.rules.swap(nextRules);
         engine.states.swap(nextStates);
         engine.rulesByTagKey.swap(nextByKey);
@@ -2303,6 +2965,11 @@ int main(int argc, char **argv)
     AlarmDb db;
     AlarmWs wsServer;
     AlarmUa uaServer;
+    NotificationManager notifications;
+    engine.set_notifications(&notifications);
+    notifications.set_should_continue([&engine](const std::string& alarm_id, const std::string& until) {
+        return engine.should_continue_notification(alarm_id, until);
+    });
     try
     {
         const char* env = std::getenv("OPCBRIDGE_ADMIN_SERVICE_TOKEN");
@@ -2312,7 +2979,7 @@ int main(int argc, char **argv)
         bool loadedFromOpcbridge = false;
         if (!adminToken.empty())
         {
-            loadedFromOpcbridge = fetch_rules_from_opcbridge(engine, opcbridgeHost, opcbridgeHttpPort, adminToken, err);
+            loadedFromOpcbridge = fetch_rules_from_opcbridge(engine, opcbridgeHost, opcbridgeHttpPort, adminToken, configDir, err);
             if (!loadedFromOpcbridge) {
                 std::cerr << "[alarms] Failed to load alarms from opcbridge: " << err << "\n";
             }
@@ -2347,6 +3014,8 @@ int main(int argc, char **argv)
             std::cout << "[alarms] DB: " << db.path << "\n";
         }
         engine.set_db(&db);
+        notifications.set_db(&db);
+        notifications.start();
     }
 
     // Restore last-known alarm state from history (so /alarm/api/alarms/all is populated after restart).
@@ -2424,7 +3093,7 @@ int main(int argc, char **argv)
             std::this_thread::sleep_for(std::chrono::seconds(5));
             std::string err;
             const int64_t prev = engine.last_config_mtime_ms.load();
-            if (!fetch_rules_from_opcbridge(engine, opcbridgeHost, opcbridgeHttpPort, adminToken, err)) {
+            if (!fetch_rules_from_opcbridge(engine, opcbridgeHost, opcbridgeHttpPort, adminToken, configDir, err)) {
                 continue;
             }
             if (!rulesFromOpcbridge.load()) {
@@ -2483,6 +3152,7 @@ int main(int argc, char **argv)
             {"port", static_cast<int>(opcuaPort)},
             {"endpoint", std::string("opc.tcp://0.0.0.0:") + std::to_string(opcuaPort)}
         };
+        j["notifications"] = notifications.status_json();
         j["counts"] = {
             {"active", active},
             {"unacked", unacked},
@@ -2655,6 +3325,7 @@ int main(int argc, char **argv)
     stop.store(true);
     if (wsThread.joinable()) wsThread.join();
     if (configThread.joinable()) configThread.join();
+    notifications.stop();
     wsServer.stop();
     uaServer.stop();
     db.close();

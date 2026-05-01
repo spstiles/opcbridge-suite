@@ -17,6 +17,7 @@
 	    <nav class="tabs" id="tabs">
 		      <button data-tab="overview" class="tab is-active">Overview</button>
 		      <button data-tab="configure" class="tab">Configure Server</button>
+		      <button data-tab="alarms_events" class="tab">Alarms &amp; Events</button>
 		      <button data-tab="workspace" class="tab">Workspace</button>
 		      <button data-tab="logger" class="tab">Data Logger</button>
 		      <button data-tab="logs" class="tab">Logs</button>
@@ -139,6 +140,27 @@
             </div>
 
             <div class="hint mono" id="scadaSettingsStatus"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 14px;">
+        <div class="card-title">Sound Settings</div>
+        <div class="hint">Alarm annunciation output for local speakers, amplifiers, or PA systems.</div>
+        <div class="card-body">
+          <div class="form" style="max-width: 720px;">
+            <div class="form-row">
+              <label>Alarm Output</label>
+              <select id="soundOutputDevice"></select>
+            </div>
+            <div class="form-row">
+              <label></label>
+              <div class="row-actions">
+                <button class="btn" id="soundReloadBtn" type="button">Reload Outputs</button>
+                <button class="btn primary" id="soundSaveBtn" type="button">Save Sound Settings</button>
+              </div>
+            </div>
+            <div class="hint mono" id="soundSettingsStatus"></div>
           </div>
         </div>
       </div>
@@ -306,9 +328,105 @@
         </div>
       </div>
     </section>
+
+    <section id="tab-alarms_events" class="panel">
+      <h2>Alarms &amp; Events</h2>
+      <div class="hint">Alarm configuration, event logging configuration, and notification behavior.</div>
+
+      <div class="grid" style="grid-template-columns: 1fr;">
+        <div class="card">
+          <div class="card-title">Notifications</div>
+          <div class="hint">Controls how alarms are annunciated (repeat delay, output device, etc.).</div>
+          <div class="card-body">
+            <div class="form" style="max-width: 900px;">
+              <div class="form-row">
+                <label>Enable Notifications</label>
+                <label style="display:flex; align-items:center; gap:8px;">
+                  <input id="alarmNotifEnabled" type="checkbox" />
+                  Enabled
+                </label>
+              </div>
+
+              <div class="form-row">
+                <label>Repeat (ms)</label>
+                <input id="alarmNotifRepeatMs" type="number" min="0" step="1000" placeholder="30000" />
+              </div>
+
+              <div class="form-row">
+                <label>Until</label>
+                <select id="alarmNotifUntil">
+                  <option value="acked_or_returned">Acked or returned</option>
+                  <option value="returned">Returned (ignore ack)</option>
+                  <option value="acked">Acked (ignore return)</option>
+                </select>
+              </div>
+
+              <div class="form-row">
+                <label>Output Device</label>
+                <select id="alarmNotifOutputDevice"></select>
+              </div>
+
+              <div class="form-row">
+                <label></label>
+                <div class="row-actions">
+                  <button class="btn" id="alarmNotifReloadBtn" type="button">Reload</button>
+                  <button class="btn primary" id="alarmNotifSaveBtn" type="button">Save</button>
+                </div>
+              </div>
+
+              <div class="hint mono" id="alarmNotifStatus"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+	      <section class="editor ae-alarms-events" style="min-height: 560px; margin-top: 14px;">
+	        <div class="editor-toolbar">
+	          <div class="editor-title">Alarms &amp; Events</div>
+	        </div>
+	        <div class="editor-body ae-alarms-events-body">
+	          <div class="ae-left">
+	            <div class="hint" id="alarmsEventsTreeNote"></div>
+	            <div id="alarmsEventsTreeView" class="ae-tree-view"></div>
+	          </div>
+
+	          <div class="ae-right" id="alarmsEventsDetailsPanel">
+	            <div class="ae-pane ae-children-pane">
+	              <div class="hint" id="alarmsEventsListHint" style="margin:0 0 6px 0;">Children</div>
+	              <div class="table-wrap ae-pane-body">
+	                <table class="table" id="alarmsEventsChildrenTable">
+	                  <thead><tr><th>Name</th></tr></thead>
+	                  <tbody id="alarmsEventsChildrenTbody"></tbody>
+	                </table>
+	              </div>
+	            </div>
+
+	            <div class="ae-pane ae-props-pane">
+	              <div class="ae-pane-header">
+	                <div class="hint" id="alarmsEventsPropsHint" style="margin:0;">Properties</div>
+	                <div class="spacer"></div>
+	                <button class="btn" id="alarmsEventsPropsDeleteBtn" type="button" style="display:none;">Delete…</button>
+	              </div>
+	              <div class="details ae-pane-body">
+	                <div id="alarmsEventsPropsEditor" style="display:none;"></div>
+	                <div class="hint mono" id="alarmsEventsPropsStatus" style="margin: 6px 0 10px 0;"></div>
+	                <table class="table" id="alarmsEventsPropsTable">
+	                  <thead><tr><th style="width: 220px;">Field</th><th>Value</th></tr></thead>
+	                  <tbody id="alarmsEventsPropsTbody"></tbody>
+	                </table>
+	                <details class="details" style="margin-top: 10px;">
+	                  <summary class="small">Raw JSON</summary>
+	                  <pre class="mono" id="alarmsEventsPropsJson"></pre>
+	                </details>
+	              </div>
+	            </div>
+	          </div>
+	        </div>
+	      </section>
+	    </section>
 	    <section id="tab-workspace" class="panel">
 	      <h2>Workspace</h2>
-	      <div class="hint">Tree view (Connectivity → Devices → Tags).</div>
+	      <div class="hint">Tree view for connectivity, tag configuration, alarm rules, and recent alarm/event history.</div>
 
       <div class="row-actions" style="margin: 10px 0;">
         <button class="btn primary" id="workspaceSaveBtn" type="button" disabled>Save</button>
@@ -525,6 +643,7 @@
                 <label class="check-pill"><input id="editTagWritable" type="checkbox" class="inline-check" /> Writable</label>
                 <label class="check-pill"><input id="editTagInvert" type="checkbox" class="inline-check" /> Invert</label>
                 <label class="check-pill"><input id="editTagMqttAllowed" type="checkbox" class="inline-check" /> MQTT command allowed</label>
+                <label class="check-pill"><input id="editTagLogEvent" type="checkbox" class="inline-check" /> Event on change</label>
               </div>
             </div>
             <div class="form-row">
@@ -560,16 +679,16 @@
 
         <section id="workspaceItemAlarmEdit" style="display:none;">
           <div class="form" style="max-width: 860px;">
-            <div class="form-row"><label>Alarm ID</label><input id="editAlarmId" type="text" placeholder="High_WetwellLevel" /></div>
-            <div class="form-row"><label>Name</label><input id="editAlarmName" type="text" placeholder="Wetwell High Level" /></div>
-            <div class="form-row"><label>Group</label><input id="editAlarmGroup" type="text" placeholder="Plant" /></div>
-            <div class="form-row"><label>Site</label><input id="editAlarmSite" type="text" placeholder="Building 30" /></div>
-            <div class="form-row"><label>Connection</label><select id="editAlarmConn"></select></div>
-            <div class="form-row"><label>Tag</label><select id="editAlarmTag"></select></div>
+	            <div class="form-row"><label>Alarm ID</label><input id="editAlarmId" type="text" placeholder="High_WetwellLevel" /></div>
+	            <div class="form-row"><label>Name</label><input id="editAlarmName" type="text" placeholder="Wetwell High Level" /></div>
+	            <div class="form-row"><label>Group</label><select id="editAlarmGroup"></select></div>
+	            <div class="form-row"><label>Site</label><select id="editAlarmSite"></select></div>
+	            <div class="form-row"><label>Connection</label><select id="editAlarmConn"></select></div>
+            <div class="form-row"><label>Filter Tags</label><input id="editAlarmTagFilter" type="search" placeholder="Type part of a tag name" /></div>
+            <div class="form-row"><label>Tag</label><select id="editAlarmTag" size="8" style="min-height: 180px;"></select></div>
             <div class="form-row"><label>Type</label><select id="editAlarmType">
               <option value="high">High</option>
               <option value="low">Low</option>
-              <option value="change">Change</option>
               <option value="equals">Equals</option>
               <option value="not_equals">Not-equals</option>
             </select></div>
@@ -579,11 +698,46 @@
                 <label class="check-pill"><input id="editAlarmEnabled" type="checkbox" class="inline-check" /> Enabled</label>
               </div>
             </div>
-            <div class="form-row"><label>Severity (0-1000)</label><input id="editAlarmSeverity" type="number" min="0" max="1000" step="1" placeholder="500" /></div>
-            <div class="form-row"><label>Threshold</label><input id="editAlarmThreshold" type="number" step="any" placeholder="1000" /></div>
-            <div class="form-row"><label>Hysteresis</label><input id="editAlarmHysteresis" type="number" step="any" placeholder="0" /></div>
+            <div class="form-row">
+              <label>Audible</label>
+              <div style="display:grid; grid-template-columns: 180px 1fr; gap: 10px;">
+                <select id="editAlarmAudibleMode">
+                  <option value="inherit">Use inherited setting</option>
+                  <option value="on">Enabled</option>
+                  <option value="off">Disabled</option>
+                </select>
+                <select id="editAlarmAudioFile"></select>
+              </div>
+            </div>
+            <div class="form-row"><label></label><div class="hint" id="editAlarmAudioHint"></div></div>
+            <div class="form-row">
+              <label>Audio Files</label>
+              <div class="row-actions">
+                <input id="editAlarmAudioUpload" type="file" accept=".wav,.mp3,.ogg,.flac,audio/*" />
+                <button class="btn" id="editAlarmAudioUploadBtn" type="button">Upload</button>
+                <button class="btn" id="editAlarmAudioDeleteBtn" type="button">Delete Selected</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <label>Severity</label>
+              <div style="display:grid; grid-template-columns: 180px 1fr; gap: 10px;">
+                <select id="editAlarmSeverityPreset">
+                  <option value="">Custom</option>
+                  <option value="100">Info (100)</option>
+                  <option value="300">Low (300)</option>
+                  <option value="500">Medium (500)</option>
+                  <option value="700">High (700)</option>
+                  <option value="900">Critical (900)</option>
+                </select>
+                <input id="editAlarmSeverity" type="number" min="0" max="1000" step="1" placeholder="500" />
+              </div>
+            </div>
+            <div class="form-row" id="editAlarmThresholdRow"><label>Threshold</label><input id="editAlarmThreshold" type="number" step="any" placeholder="1000" /></div>
+            <div class="form-row" id="editAlarmHysteresisRow"><label>Hysteresis</label><input id="editAlarmHysteresis" type="number" step="any" placeholder="0" /></div>
+            <div class="form-row" id="editAlarmValueRow" style="display:none;"><label>Compare Value</label><input id="editAlarmValue" type="text" placeholder="true, false, 1, or text" /></div>
             <div class="form-row"><label>Message on active</label><input id="editAlarmMsgOn" type="text" /></div>
             <div class="form-row"><label>Message on return</label><input id="editAlarmMsgOff" type="text" /></div>
+            <div class="form-row"><label>Preview</label><div class="hint mono" id="editAlarmPreview"></div></div>
             <div class="form-row"><label></label>
               <div class="row-actions">
                 <button class="btn" id="editAlarmCancelBtn" type="button">Cancel</button>
@@ -591,6 +745,49 @@
               </div>
             </div>
             <div class="hint mono" id="editAlarmStatus"></div>
+          </div>
+        </section>
+
+        <section id="workspaceItemEventEdit" style="display:none;">
+          <div class="form" style="max-width: 760px;">
+            <div class="form-row"><label>Connection</label><select id="newEventConn"></select></div>
+            <div class="form-row"><label>Filter Tags</label><input id="newEventSearch" type="search" placeholder="Type part of a tag name" /></div>
+            <div class="form-row">
+              <label>Tag</label>
+              <select id="newEventTag" size="12" style="min-height: 260px;"></select>
+            </div>
+            <div class="form-row"><label></label>
+              <div class="row-actions">
+                <button class="btn" id="newEventCancelBtn" type="button">Cancel</button>
+                <button class="btn primary" id="newEventSaveBtn" type="button">Add Event</button>
+              </div>
+            </div>
+            <div class="hint mono" id="newEventStatus"></div>
+          </div>
+        </section>
+
+        <section id="workspaceItemAudioScopeEdit" style="display:none;">
+          <div class="form" style="max-width: 760px;">
+            <div class="form-row"><label>Scope</label><input id="editAudioScopeName" type="text" disabled /></div>
+            <div class="form-row">
+              <label>Audible</label>
+              <div style="display:grid; grid-template-columns: 180px 1fr; gap: 10px;">
+                <select id="editAudioScopeAudibleMode">
+                  <option value="inherit">Use inherited setting</option>
+                  <option value="on">Enabled</option>
+                  <option value="off">Disabled</option>
+                </select>
+                <select id="editAudioScopeAudioFile"></select>
+              </div>
+            </div>
+            <div class="form-row"><label></label><div class="hint" id="editAudioScopeHint"></div></div>
+            <div class="form-row"><label></label>
+              <div class="row-actions">
+                <button class="btn" id="editAudioScopeCancelBtn" type="button">Cancel</button>
+                <button class="btn primary" id="editAudioScopeSaveBtn" type="button">Save</button>
+              </div>
+            </div>
+            <div class="hint mono" id="editAudioScopeStatus"></div>
           </div>
         </section>
 
@@ -688,6 +885,7 @@
               <label class="check-pill"><input id="newTagWritable" type="checkbox" class="inline-check" /> Writable</label>
               <label class="check-pill"><input id="newTagInvert" type="checkbox" class="inline-check" /> Invert</label>
               <label class="check-pill"><input id="newTagMqttAllowed" type="checkbox" class="inline-check" /> MQTT command allowed</label>
+              <label class="check-pill"><input id="newTagLogEvent" type="checkbox" class="inline-check" /> Event on change</label>
             </div>
           </div>
           <div class="form-row">

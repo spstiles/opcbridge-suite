@@ -4,6 +4,7 @@ Monorepo for the opcbridge ecosystem:
 
 - `opcbridge/` (core industrial data bridge)
 - `opcbridge-alarms/` (alarm server)
+- `opcbridge-historian/` (tag historian to Postgres/TimescaleDB)
 - `opcbridge-scada/` (SCADA configuration/console UI)
 - `opcbridge-hmi/` (HMI)
 - `opcbridge-reporter/` (optional reporter)

@@ -32,6 +32,29 @@ const els = {
   scadaSettingsReloadBtn: document.getElementById('scadaSettingsReloadBtn'),
   scadaSettingsSaveBtn: document.getElementById('scadaSettingsSaveBtn'),
   scadaSettingsStatus: document.getElementById('scadaSettingsStatus'),
+  soundOutputDevice: document.getElementById('soundOutputDevice'),
+  soundReloadBtn: document.getElementById('soundReloadBtn'),
+  soundSaveBtn: document.getElementById('soundSaveBtn'),
+  soundSettingsStatus: document.getElementById('soundSettingsStatus'),
+  alarmNotifEnabled: document.getElementById('alarmNotifEnabled'),
+  alarmNotifRepeatMs: document.getElementById('alarmNotifRepeatMs'),
+  alarmNotifUntil: document.getElementById('alarmNotifUntil'),
+  alarmNotifOutputDevice: document.getElementById('alarmNotifOutputDevice'),
+  alarmNotifReloadBtn: document.getElementById('alarmNotifReloadBtn'),
+  alarmNotifSaveBtn: document.getElementById('alarmNotifSaveBtn'),
+  alarmNotifStatus: document.getElementById('alarmNotifStatus'),
+  alarmsEventsTreeView: document.getElementById('alarmsEventsTreeView'),
+  alarmsEventsTreeNote: document.getElementById('alarmsEventsTreeNote'),
+  alarmsEventsListHint: document.getElementById('alarmsEventsListHint'),
+  alarmsEventsChildrenTable: document.getElementById('alarmsEventsChildrenTable'),
+  alarmsEventsChildrenTbody: document.getElementById('alarmsEventsChildrenTbody'),
+  alarmsEventsPropsHint: document.getElementById('alarmsEventsPropsHint'),
+  alarmsEventsPropsDeleteBtn: document.getElementById('alarmsEventsPropsDeleteBtn'),
+  alarmsEventsPropsEditor: document.getElementById('alarmsEventsPropsEditor'),
+  alarmsEventsPropsStatus: document.getElementById('alarmsEventsPropsStatus'),
+  alarmsEventsPropsTable: document.getElementById('alarmsEventsPropsTable'),
+  alarmsEventsPropsTbody: document.getElementById('alarmsEventsPropsTbody'),
+  alarmsEventsPropsJson: document.getElementById('alarmsEventsPropsJson'),
 
   // opcbridge systemd service settings
   svcOpcbridgeBin: document.getElementById('svcOpcbridgeBin'),
@@ -215,6 +238,7 @@ const els = {
   newTagWritable: document.getElementById('newTagWritable'),
   newTagInvert: document.getElementById('newTagInvert'),
   newTagMqttAllowed: document.getElementById('newTagMqttAllowed'),
+  newTagLogEvent: document.getElementById('newTagLogEvent'),
   newTagScaling: document.getElementById('newTagScaling'),
   newTagScalingLinearRow: document.getElementById('newTagScalingLinearRow'),
   newTagRawLow: document.getElementById('newTagRawLow'),
@@ -230,6 +254,8 @@ const els = {
   workspaceItemDeviceEdit: document.getElementById('workspaceItemDeviceEdit'),
   workspaceItemTagEdit: document.getElementById('workspaceItemTagEdit'),
   workspaceItemAlarmEdit: document.getElementById('workspaceItemAlarmEdit'),
+  workspaceItemEventEdit: document.getElementById('workspaceItemEventEdit'),
+  workspaceItemAudioScopeEdit: document.getElementById('workspaceItemAudioScopeEdit'),
   workspaceItemGeneric: document.getElementById('workspaceItemGeneric'),
   editDevId: document.getElementById('editDevId'),
   editDevDriver: document.getElementById('editDevDriver'),
@@ -256,6 +282,7 @@ const els = {
   editTagWritable: document.getElementById('editTagWritable'),
   editTagInvert: document.getElementById('editTagInvert'),
   editTagMqttAllowed: document.getElementById('editTagMqttAllowed'),
+  editTagLogEvent: document.getElementById('editTagLogEvent'),
   editTagScaling: document.getElementById('editTagScaling'),
   editTagScalingLinearRow: document.getElementById('editTagScalingLinearRow'),
   editTagRawLow: document.getElementById('editTagRawLow'),
@@ -274,17 +301,44 @@ const els = {
   editAlarmGroup: document.getElementById('editAlarmGroup'),
   editAlarmSite: document.getElementById('editAlarmSite'),
   editAlarmConn: document.getElementById('editAlarmConn'),
+  editAlarmTagFilter: document.getElementById('editAlarmTagFilter'),
   editAlarmTag: document.getElementById('editAlarmTag'),
   editAlarmType: document.getElementById('editAlarmType'),
   editAlarmEnabled: document.getElementById('editAlarmEnabled'),
+  editAlarmAudibleMode: document.getElementById('editAlarmAudibleMode'),
+  editAlarmAudioFile: document.getElementById('editAlarmAudioFile'),
+  editAlarmAudioHint: document.getElementById('editAlarmAudioHint'),
+  editAlarmAudioUpload: document.getElementById('editAlarmAudioUpload'),
+  editAlarmAudioUploadBtn: document.getElementById('editAlarmAudioUploadBtn'),
+  editAlarmAudioDeleteBtn: document.getElementById('editAlarmAudioDeleteBtn'),
+  editAlarmSeverityPreset: document.getElementById('editAlarmSeverityPreset'),
   editAlarmSeverity: document.getElementById('editAlarmSeverity'),
+  editAlarmThresholdRow: document.getElementById('editAlarmThresholdRow'),
   editAlarmThreshold: document.getElementById('editAlarmThreshold'),
+  editAlarmHysteresisRow: document.getElementById('editAlarmHysteresisRow'),
   editAlarmHysteresis: document.getElementById('editAlarmHysteresis'),
+  editAlarmValueRow: document.getElementById('editAlarmValueRow'),
+  editAlarmValue: document.getElementById('editAlarmValue'),
   editAlarmMsgOn: document.getElementById('editAlarmMsgOn'),
   editAlarmMsgOff: document.getElementById('editAlarmMsgOff'),
+  editAlarmPreview: document.getElementById('editAlarmPreview'),
   editAlarmCancelBtn: document.getElementById('editAlarmCancelBtn'),
   editAlarmSaveBtn: document.getElementById('editAlarmSaveBtn'),
   editAlarmStatus: document.getElementById('editAlarmStatus'),
+  newEventConn: document.getElementById('newEventConn'),
+  newEventSearch: document.getElementById('newEventSearch'),
+  newEventTag: document.getElementById('newEventTag'),
+  newEventCancelBtn: document.getElementById('newEventCancelBtn'),
+  newEventSaveBtn: document.getElementById('newEventSaveBtn'),
+  newEventStatus: document.getElementById('newEventStatus'),
+
+  editAudioScopeName: document.getElementById('editAudioScopeName'),
+  editAudioScopeAudibleMode: document.getElementById('editAudioScopeAudibleMode'),
+  editAudioScopeAudioFile: document.getElementById('editAudioScopeAudioFile'),
+  editAudioScopeHint: document.getElementById('editAudioScopeHint'),
+  editAudioScopeCancelBtn: document.getElementById('editAudioScopeCancelBtn'),
+  editAudioScopeSaveBtn: document.getElementById('editAudioScopeSaveBtn'),
+  editAudioScopeStatus: document.getElementById('editAudioScopeStatus'),
 
   newDeviceHint: document.getElementById('newDeviceHint'),
   newDevId: document.getElementById('newDevId'),
@@ -400,6 +454,10 @@ const state = {
   expanded: new Set(['project:opcbridge', 'folder:connectivity', 'folder:alarms_events']),
   selectedNodeId: '',
   workspaceTreeRoot: null,
+  alarmsEventsExpanded: new Set(['folder:alarms', 'folder:events', 'folder:audio_files']),
+  alarmsEventsSelectedNodeId: '',
+  alarmsEventsTreeRoot: null,
+  alarmsEventsSelectedChildId: '',
   pendingNewDevice: null,
   pendingNewTag: null,
   pendingWorkspaceItem: null,
@@ -507,6 +565,11 @@ function canAccessWorkspaceTab() {
   return hasPerm('opcbridge.edit_config');
 }
 
+function canAccessAlarmsEventsTab() {
+  // Requires both: editing config (alarms/events) + managing server (notification behavior / outputs).
+  return hasPerm('opcbridge.edit_config') && hasPerm('suite.manage_server');
+}
+
 function canAccessLoggerTab() {
   return hasPerm('suite.manage_server');
 }
@@ -552,6 +615,20 @@ function updateWorkspaceTabVisibility() {
   if (!canSee) {
     const activePanel = document.querySelector('.panel.is-active');
     if (activePanel && activePanel.id === 'tab-workspace') {
+      setTab('overview');
+    }
+  }
+}
+
+function updateAlarmsEventsTabVisibility() {
+  const aeBtn = document.querySelector('.tabs .tab[data-tab="alarms_events"]');
+  if (!aeBtn) return;
+  const canSee = canAccessAlarmsEventsTab();
+  aeBtn.style.display = canSee ? '' : 'none';
+
+  if (!canSee) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel && activePanel.id === 'tab-alarms_events') {
       setTab('overview');
     }
   }
@@ -1622,6 +1699,9 @@ function setTab(id) {
   if (next === 'workspace' && !canAccessWorkspaceTab()) {
     id = 'overview';
   }
+  if (next === 'alarms_events' && !canAccessAlarmsEventsTab()) {
+    id = 'overview';
+  }
   if (next === 'logger' && !canAccessLoggerTab()) {
     id = 'overview';
   }
@@ -1644,6 +1724,13 @@ function setTab(id) {
   }
   if (id === 'logger') {
     refreshReporterAll().catch(() => {});
+  }
+  if (id === 'configure') {
+    loadSoundSettings().catch(() => {});
+  }
+  if (id === 'alarms_events') {
+    loadAlarmNotificationSettings().catch(() => {});
+    renderAlarmsEventsTree();
   }
 }
 
@@ -2631,6 +2718,17 @@ function normalizeAlarmSiteName(name) {
 
 function ensureAlarmGroupsTree(cfgObj) {
   const obj = (cfgObj && typeof cfgObj === 'object' && !Array.isArray(cfgObj)) ? cfgObj : {};
+  if (!obj.audio || typeof obj.audio !== 'object' || Array.isArray(obj.audio)) obj.audio = {};
+  if (!Array.isArray(obj.audio.files)) obj.audio.files = [];
+  obj.audio.files = obj.audio.files
+    .filter((f) => f && typeof f === 'object' && !Array.isArray(f))
+    .map((f) => ({
+      ...f,
+      id: String(f.id || '').trim(),
+      name: String(f.name || f.id || '').trim(),
+      path: String(f.path || '').trim()
+    }))
+    .filter((f) => f.id);
   if (!Array.isArray(obj.groups)) obj.groups = [];
   obj.groups = obj.groups.filter((g) => g && typeof g === 'object' && !Array.isArray(g));
   obj.groups.forEach((g) => {
@@ -2644,14 +2742,159 @@ function ensureAlarmGroupsTree(cfgObj) {
   return obj;
 }
 
+function getAlarmAudioFiles(cfgObj = state.alarmsConfig) {
+  const cfg = (cfgObj && typeof cfgObj === 'object' && !Array.isArray(cfgObj)) ? cfgObj : {};
+  const files = Array.isArray(cfg.audio?.files) ? cfg.audio.files : [];
+  return files
+    .filter((f) => f && typeof f === 'object' && !Array.isArray(f) && String(f.id || '').trim())
+    .map((f) => ({
+      id: String(f.id || '').trim(),
+      name: String(f.name || f.id || '').trim(),
+      path: String(f.path || '').trim()
+    }))
+    .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function alarmAudioFileText(fileId, cfgObj = state.alarmsConfig) {
+  const id = String(fileId || '').trim();
+  if (!id) return 'none';
+  const f = getAlarmAudioFiles(cfgObj).find((x) => x.id === id);
+  return f ? `${f.name || f.id} (${f.id})` : id;
+}
+
+function findAlarmGroupConfig(cfgObj, groupName) {
+  const want = normalizeAlarmGroupName(groupName).toLowerCase();
+  if (!want) return null;
+  const groups = Array.isArray(cfgObj?.groups) ? cfgObj.groups : [];
+  return groups.find((g) => String(g?.name || '').trim().toLowerCase() === want) || null;
+}
+
+function findAlarmSiteConfig(cfgObj, groupName, siteName) {
+  const group = findAlarmGroupConfig(cfgObj, groupName);
+  const want = normalizeAlarmSiteName(siteName).toLowerCase();
+  if (!group || !want) return null;
+  const sites = Array.isArray(group.sites) ? group.sites : [];
+  return sites.find((s) => String(s?.name || '').trim().toLowerCase() === want) || null;
+}
+
+function resolveInheritedAlarmAudio(cfgObj, groupName, siteName) {
+  const cfg = (cfgObj && typeof cfgObj === 'object' && !Array.isArray(cfgObj)) ? cfgObj : {};
+  const out = {
+    audible_enabled: cfg.audio && Object.prototype.hasOwnProperty.call(cfg.audio, 'audible_enabled') ? Boolean(cfg.audio.audible_enabled) : false,
+    audio_file: String(cfg.audio?.default_file || '').trim(),
+    source: 'global'
+  };
+  const group = findAlarmGroupConfig(cfg, groupName);
+  if (group) {
+    if (Object.prototype.hasOwnProperty.call(group, 'audible_enabled')) {
+      out.audible_enabled = Boolean(group.audible_enabled);
+      out.source = 'group';
+    }
+    if (String(group.audio_file || '').trim()) {
+      out.audio_file = String(group.audio_file || '').trim();
+      out.source = 'group';
+    }
+  }
+  const site = findAlarmSiteConfig(cfg, groupName, siteName);
+  if (site) {
+    if (Object.prototype.hasOwnProperty.call(site, 'audible_enabled')) {
+      out.audible_enabled = Boolean(site.audible_enabled);
+      out.source = 'site';
+    }
+    if (String(site.audio_file || '').trim()) {
+      out.audio_file = String(site.audio_file || '').trim();
+      out.source = 'site';
+    }
+  }
+  return out;
+}
+
+function resolveAlarmAudio(cfgObj, alarm) {
+  const inherited = resolveInheritedAlarmAudio(cfgObj, alarm?.group, alarm?.site);
+  return {
+    audible_enabled: Object.prototype.hasOwnProperty.call(alarm || {}, 'audible_enabled') ? Boolean(alarm.audible_enabled) : inherited.audible_enabled,
+    audio_file: String(alarm?.audio_file || inherited.audio_file || '').trim(),
+    source: Object.prototype.hasOwnProperty.call(alarm || {}, 'audible_enabled') || String(alarm?.audio_file || '').trim() ? 'alarm' : inherited.source
+  };
+}
+
 function parseOpcbridgeAlarmsConfig(resp) {
   // Expected: { ok, json: { alarms: [...] , groups?: [...] }, mtime_ms }
   const cfg = resp?.json;
   if (!cfg || typeof cfg !== 'object') return { alarms: [], groups: [] };
   const out = { ...(cfg || {}) };
-  if (!Array.isArray(out.alarms)) out.alarms = [];
+  if (Array.isArray(out.rules) && out.rules.length > 0) {
+    out.alarms = out.rules.map(alarmRuleToUiAlarm).filter(Boolean);
+  } else if (!Array.isArray(out.alarms)) {
+    out.alarms = [];
+  }
   ensureAlarmGroupsTree(out);
   return out;
+}
+
+function alarmRuleToUiAlarm(rule) {
+  if (!rule || typeof rule !== 'object' || Array.isArray(rule)) return null;
+  const source = (rule.source && typeof rule.source === 'object' && !Array.isArray(rule.source)) ? rule.source : {};
+  const condition = (rule.condition && typeof rule.condition === 'object' && !Array.isArray(rule.condition)) ? rule.condition : {};
+  const type = String(condition.type || rule.type || '').trim();
+  const out = {
+    id: String(rule.id || '').trim(),
+    name: String(rule.name || rule.id || '').trim(),
+    group: String(rule.group || '').trim(),
+    site: String(rule.site || '').trim(),
+    connection_id: String(source.connection_id || rule.connection_id || '').trim(),
+    tag_name: String(source.tag || rule.tag_name || rule.tag || '').trim(),
+    type,
+    enabled: rule.enabled !== false,
+    severity: Number.isFinite(Number(rule.severity)) ? Math.trunc(Number(rule.severity)) : 500,
+    message_on_active: String(rule.message_on_active || '').trim(),
+    message_on_return: String(rule.message_on_return || '').trim()
+  };
+  if (Object.prototype.hasOwnProperty.call(rule, 'audible_enabled')) out.audible_enabled = Boolean(rule.audible_enabled);
+  if (String(rule.audio_file || '').trim()) out.audio_file = String(rule.audio_file || '').trim();
+  if (type === 'high' || type === 'low') {
+    if (condition.threshold != null) out.threshold = condition.threshold;
+    if (condition.hysteresis != null) out.hysteresis = condition.hysteresis;
+  } else if (type === 'equals' || type === 'not_equals') {
+    if (Object.prototype.hasOwnProperty.call(condition, 'value')) out.value = condition.value;
+  }
+  return out.id ? out : null;
+}
+
+function uiAlarmToRule(alarm) {
+  const a = (alarm && typeof alarm === 'object' && !Array.isArray(alarm)) ? alarm : {};
+  const type = String(a.type || '').trim();
+  const rule = {
+    id: String(a.id || '').trim(),
+    name: String(a.name || a.id || '').trim(),
+    group: String(a.group || '').trim(),
+    site: String(a.site || '').trim(),
+    enabled: a.enabled !== false,
+    severity: Number.isFinite(Number(a.severity)) ? Math.trunc(Number(a.severity)) : 500,
+    source: {
+      connection_id: String(a.connection_id || '').trim(),
+      tag: String(a.tag_name || a.tag || '').trim()
+    },
+    condition: { type },
+    message_on_active: String(a.message_on_active || '').trim(),
+    message_on_return: String(a.message_on_return || '').trim()
+  };
+  if (Object.prototype.hasOwnProperty.call(a, 'audible_enabled')) rule.audible_enabled = Boolean(a.audible_enabled);
+  if (String(a.audio_file || '').trim()) rule.audio_file = String(a.audio_file || '').trim();
+  if (type === 'high' || type === 'low') {
+    rule.condition.threshold = Number(a.threshold);
+    if (a.hysteresis != null && String(a.hysteresis).trim() !== '') rule.condition.hysteresis = Number(a.hysteresis);
+  } else if (type === 'equals' || type === 'not_equals') {
+    rule.condition.value = Object.prototype.hasOwnProperty.call(a, 'value') ? a.value : a.equals_value;
+  }
+  return rule;
+}
+
+function syncAlarmRulesFromAlarms(cfg) {
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return cfg;
+  if (!Array.isArray(cfg.alarms)) cfg.alarms = [];
+  cfg.rules = cfg.alarms.map(uiAlarmToRule).filter((r) => r.id && r.source.connection_id && r.source.tag && r.condition.type);
+  return cfg;
 }
 
 async function loadOpcbridgeAlarmsConfig() {
@@ -2666,6 +2909,7 @@ async function saveOpcbridgeAlarmsConfig(nextCfg) {
   const obj = (nextCfg && typeof nextCfg === 'object' && !Array.isArray(nextCfg)) ? nextCfg : {};
   if (!Array.isArray(obj.alarms)) obj.alarms = [];
   ensureAlarmGroupsTree(obj);
+  syncAlarmRulesFromAlarms(obj);
   const content = JSON.stringify(obj, null, 2) + '\n';
   await apiPostJson('/api/opcbridge/config/file', { path: 'alarms.json', content });
 }
@@ -2700,10 +2944,662 @@ function ensureGroupSiteInConfig(cfg, groupName, siteName) {
   if (g && s) upsertAlarmSite(cfg, g, s);
 }
 
+function parseAlarmCompareValue(raw) {
+  const text = String(raw ?? '').trim();
+  if (text === '') return { ok: false, error: 'Compare value is required for equals/not_equals alarms.' };
+  if (/^(true|false)$/i.test(text)) return { ok: true, value: text.toLowerCase() === 'true' };
+  if (/^null$/i.test(text)) return { ok: true, value: null };
+  if (/^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(text)) return { ok: true, value: Number(text) };
+  if ((text.startsWith('"') && text.endsWith('"')) || text.startsWith('{') || text.startsWith('[')) {
+    try { return { ok: true, value: JSON.parse(text) }; } catch { /* treat as plain text below */ }
+  }
+  return { ok: true, value: text };
+}
+
+function alarmCompareValueToText(alarm) {
+  if (!alarm || typeof alarm !== 'object') return '';
+  if (Object.prototype.hasOwnProperty.call(alarm, 'value')) {
+    const v = alarm.value;
+    if (typeof v === 'string') return v;
+    try { return JSON.stringify(v); } catch { return String(v ?? ''); }
+  }
+  if (Object.prototype.hasOwnProperty.call(alarm, 'equals_value')) {
+    const v = alarm.equals_value;
+    if (typeof v === 'string') return v;
+    try { return JSON.stringify(v); } catch { return String(v ?? ''); }
+  }
+  if (Object.prototype.hasOwnProperty.call(alarm, 'threshold')) return String(alarm.threshold);
+  return '';
+}
+
+function applyAlarmTypeUi() {
+  const type = String(els.editAlarmType?.value || '').trim();
+  const isEquals = type === 'equals' || type === 'not_equals';
+  const isLimit = type === 'high' || type === 'low';
+  if (els.editAlarmValueRow) els.editAlarmValueRow.style.display = isEquals ? '' : 'none';
+  if (els.editAlarmThresholdRow) els.editAlarmThresholdRow.style.display = isLimit ? '' : 'none';
+  if (els.editAlarmHysteresisRow) els.editAlarmHysteresisRow.style.display = isLimit ? '' : 'none';
+  updateAlarmPreview();
+}
+
+function severityLabel(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 'Unknown';
+  if (n >= 900) return 'Critical';
+  if (n >= 700) return 'High';
+  if (n >= 500) return 'Medium';
+  if (n >= 300) return 'Low';
+  return 'Info';
+}
+
+function severityClass(value) {
+  const label = severityLabel(value).toLowerCase();
+  return `sev-${label}`;
+}
+
+function syncSeverityPresetFromValue() {
+  if (!els.editAlarmSeverityPreset || !els.editAlarmSeverity) return;
+  const val = String(Math.trunc(Number(els.editAlarmSeverity.value || '')));
+  const matches = Array.from(els.editAlarmSeverityPreset.options || []).some((opt) => opt.value === val);
+  els.editAlarmSeverityPreset.value = matches ? val : '';
+}
+
+function updateAlarmPreview() {
+  if (!els.editAlarmPreview) return;
+  const id = String(els.editAlarmId?.value || '').trim() || 'Alarm';
+  const name = String(els.editAlarmName?.value || '').trim() || id;
+  const conn = String(els.editAlarmConn?.value || '').trim() || '<connection>';
+  const tag = String(els.editAlarmTag?.value || '').trim() || '<tag>';
+  const type = String(els.editAlarmType?.value || '').trim() || '<type>';
+  const sevText = String(els.editAlarmSeverity?.value ?? '').trim();
+  const sev = Math.max(0, Math.min(1000, Math.trunc(Number(sevText || '500') || 500)));
+  const threshold = String(els.editAlarmThreshold?.value ?? '').trim();
+  const hysteresis = String(els.editAlarmHysteresis?.value ?? '').trim();
+  const compareValue = String(els.editAlarmValue?.value ?? '').trim();
+  const enabled = Boolean(els.editAlarmEnabled?.checked);
+
+  let condition = '';
+  if (type === 'high') condition = `is greater than or equal to ${threshold || '<threshold>'}`;
+  else if (type === 'low') condition = `is less than or equal to ${threshold || '<threshold>'}`;
+  else if (type === 'equals') condition = `equals ${compareValue || '<value>'}`;
+  else if (type === 'not_equals') condition = `does not equal ${compareValue || '<value>'}`;
+  else if (type === 'change') condition = 'changes value';
+  else condition = `matches ${type}`;
+
+  const h = (type === 'high' || type === 'low') && hysteresis ? ` with ${hysteresis} hysteresis` : '';
+  const disabled = enabled ? '' : ' Disabled rules do not evaluate.';
+  els.editAlarmPreview.textContent = `${name} triggers when ${conn}:${tag} ${condition}${h}. Severity: ${severityLabel(sev)} (${sev}).${disabled}`;
+}
+
+function slugAlarmPart(value) {
+  return String(value || '').trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function alarmTypeLabel(type) {
+  const t = String(type || '').trim();
+  if (t === 'not_equals') return 'not equals';
+  return t.replace(/_/g, ' ');
+}
+
+function generatedAlarmId(connectionId, tagName, type) {
+  return [connectionId, tagName, type].map(slugAlarmPart).filter(Boolean).join('_');
+}
+
+function syncNewAlarmDefaults() {
+  if (String(state.pendingWorkspaceItem?.mode || '') !== 'new') return;
+  // Intentionally do not auto-fill text fields for new objects.
+  // Keep this function around to update preview as the user selects fields.
+  updateAlarmPreview();
+}
+
+function fillAlarmConnectionSelect(want = '') {
+  if (!els.editAlarmConn) return;
+  const conns = state.connFiles.slice().map((f) => connectionIdForConnFilePath(String(f?.path || ''))).filter(Boolean);
+  conns.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+  els.editAlarmConn.textContent = '';
+  conns.forEach((cid) => {
+    const opt = document.createElement('option');
+    opt.value = cid;
+    opt.textContent = cid;
+    els.editAlarmConn.appendChild(opt);
+  });
+  if (want) els.editAlarmConn.value = want;
+  else if (els.editAlarmConn.options.length) els.editAlarmConn.value = String(els.editAlarmConn.options[0].value || '');
+}
+
+function alarmGroupsSorted(cfgObj = state.alarmsConfig) {
+  const cfg = ensureAlarmGroupsTree(cfgObj || {});
+  return (Array.isArray(cfg.groups) ? cfg.groups : [])
+    .slice()
+    .filter((g) => String(g?.name || '').trim())
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function fillAlarmGroupSelect(want = '') {
+  if (!els.editAlarmGroup) return;
+  const wantNorm = normalizeAlarmGroupName(want);
+  const groups = alarmGroupsSorted(state.alarmsConfig);
+
+  els.editAlarmGroup.textContent = '';
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = 'Unassigned';
+  els.editAlarmGroup.appendChild(noneOpt);
+
+  groups.forEach((g) => {
+    const name = normalizeAlarmGroupName(g?.name || '');
+    if (!name) return;
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    els.editAlarmGroup.appendChild(opt);
+  });
+
+  if (wantNorm && !groups.some((g) => String(g?.name || '').trim().toLowerCase() === wantNorm.toLowerCase())) {
+    const opt = document.createElement('option');
+    opt.value = wantNorm;
+    opt.textContent = `${wantNorm} (missing)`;
+    els.editAlarmGroup.appendChild(opt);
+  }
+
+  els.editAlarmGroup.value = wantNorm || '';
+  els.editAlarmGroup.disabled = !canEditConfig();
+}
+
+function fillAlarmSiteSelect(groupName, wantSite = '') {
+  if (!els.editAlarmSite) return;
+  const groupNorm = normalizeAlarmGroupName(groupName);
+  const siteNorm = normalizeAlarmSiteName(wantSite);
+  const group = groupNorm ? findAlarmGroupConfig(state.alarmsConfig || {}, groupNorm) : null;
+  const sites = Array.isArray(group?.sites) ? group.sites : [];
+  const siteNames = sites.map((s) => normalizeAlarmSiteName(s?.name || '')).filter(Boolean)
+    .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+
+  els.editAlarmSite.textContent = '';
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = 'Unassigned';
+  els.editAlarmSite.appendChild(noneOpt);
+
+  siteNames.forEach((name) => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    els.editAlarmSite.appendChild(opt);
+  });
+
+  if (siteNorm && !siteNames.some((s) => s.toLowerCase() === siteNorm.toLowerCase())) {
+    const opt = document.createElement('option');
+    opt.value = siteNorm;
+    opt.textContent = `${siteNorm} (missing)`;
+    els.editAlarmSite.appendChild(opt);
+  }
+
+  els.editAlarmSite.value = siteNorm || '';
+  els.editAlarmSite.disabled = !canEditConfig() || !groupNorm;
+}
+
+function refreshAlarmTagSelect(want = '') {
+  const cid = String(els.editAlarmConn?.value || '').trim();
+  if (!els.editAlarmTag) return;
+  const filter = String(els.editAlarmTagFilter?.value || '').trim().toLowerCase();
+  els.editAlarmTag.textContent = '';
+  const tags = getEffectiveTagsAll()
+    .filter((t) => String(t?.connection_id || '') === cid)
+    .filter((t) => {
+      if (!filter) return true;
+      return String(t?.name || '').toLowerCase().includes(filter) || String(t?.plc_tag_name || '').toLowerCase().includes(filter);
+    })
+    .slice()
+    .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  const frag = document.createDocumentFragment();
+  tags.forEach((t) => {
+    const name = String(t?.name || '');
+    const plc = String(t?.plc_tag_name || '').trim();
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = plc && plc !== name ? `${name}  (${plc})` : name;
+    frag.appendChild(opt);
+  });
+  els.editAlarmTag.appendChild(frag);
+  if (want) els.editAlarmTag.value = want;
+  else if (els.editAlarmTag.options.length) els.editAlarmTag.value = String(els.editAlarmTag.options[0].value || '');
+  if (filter && !els.editAlarmTag.options.length) setEditAlarmStatus('No matching tags found.');
+  else if (filter) setEditAlarmStatus(`Showing ${tags.length} matching tag(s).`);
+  else setEditAlarmStatus('');
+}
+
+function readAlarmAudioFromUi() {
+  const mode = String(els.editAlarmAudibleMode?.value || 'inherit').trim();
+  const out = {
+    group: String(els.editAlarmGroup?.value || '').trim(),
+    site: String(els.editAlarmSite?.value || '').trim(),
+    audio_file: String(els.editAlarmAudioFile?.value || '').trim()
+  };
+  if (mode === 'on') out.audible_enabled = true;
+  else if (mode === 'off') out.audible_enabled = false;
+  return out;
+}
+
+function audioFileIdFromFilename(filename) {
+  return String(filename || '')
+    .trim()
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase() || 'audio';
+}
+
+function audioFilenameFromConfigFile(file) {
+  const raw = String(file?.path || file?.id || '').trim();
+  const parts = raw.split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : raw;
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function uploadAlarmAudioFile(file) {
+  const filename = String(file.name || '').trim();
+  if (!/\.(wav|mp3|ogg|flac)$/i.test(filename)) {
+    throw new Error('Audio upload supports .wav, .mp3, .ogg, and .flac files.');
+  }
+
+  const content_b64 = arrayBufferToBase64(await file.arrayBuffer());
+  const resp = await apiPostJson('/api/opcbridge/config/audio/upload', { filename, content_b64 });
+  if (!resp?.ok) throw new Error(resp?.error || 'Audio upload failed.');
+
+  const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
+  if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
+  if (!Array.isArray(cfg.audio.files)) cfg.audio.files = [];
+  const idBase = audioFileIdFromFilename(filename);
+  let id = idBase;
+  let suffix = 2;
+  const existing = new Set(cfg.audio.files.map((f) => String(f?.id || '').trim()).filter(Boolean));
+  const existingForPath = cfg.audio.files.find((f) => String(f?.path || '').trim() === String(resp.path || `audio/${filename}`));
+  if (existingForPath?.id) id = String(existingForPath.id);
+  else {
+    while (existing.has(id)) id = `${idBase}_${suffix++}`;
+    cfg.audio.files.push({
+      id,
+      name: filename.replace(/\.[^.]+$/, ''),
+      path: String(resp.path || `audio/${filename}`)
+    });
+  }
+
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  return { id, filename };
+}
+
+async function uploadAlarmAudioFileFromUi() {
+  const file = els.editAlarmAudioUpload?.files?.[0] || null;
+  if (!file) { setEditAlarmStatus('Choose an audio file to upload.'); return; }
+
+  setEditAlarmStatus('Uploading audio file…');
+  const result = await uploadAlarmAudioFile(file);
+  if (els.editAlarmAudioUpload) els.editAlarmAudioUpload.value = '';
+  refreshAlarmAudioUi({ ...readAlarmAudioFromUi(), audio_file: result.id });
+  if (els.editAlarmAudioFile) els.editAlarmAudioFile.value = result.id;
+  setEditAlarmStatus(`Uploaded audio file '${result.filename}'.`);
+}
+
+async function deleteAlarmAudioFileById(id) {
+  const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
+  const file = getAlarmAudioFiles(cfg).find((f) => f.id === id) || null;
+  if (!file) throw new Error(`Audio file '${id}' is not in the audio files list.`);
+
+  const usedByAlarm = (Array.isArray(cfg.alarms) ? cfg.alarms : []).some((a) => String(a?.audio_file || '') === id);
+  const usedByGroup = (Array.isArray(cfg.groups) ? cfg.groups : []).some((g) => {
+    if (String(g?.audio_file || '') === id) return true;
+    return (Array.isArray(g?.sites) ? g.sites : []).some((s) => String(s?.audio_file || '') === id);
+  });
+  const usedByDefault = String(cfg.audio?.default_file || '') === id;
+  const usage = [usedByDefault ? 'global default' : '', usedByGroup ? 'group/site' : '', usedByAlarm ? 'alarm' : ''].filter(Boolean).join(', ');
+  const prompt = usage
+    ? `Delete audio file '${file.name || id}'? It is referenced by ${usage}; references will be cleared.`
+    : `Delete audio file '${file.name || id}'?`;
+  if (!window.confirm(prompt)) return null;
+
+  const filename = audioFilenameFromConfigFile(file);
+  const resp = await apiPostJson('/api/opcbridge/config/audio/delete', { filename });
+  if (!resp?.ok) throw new Error(resp?.error || 'Audio delete failed.');
+
+  cfg.audio.files = (Array.isArray(cfg.audio?.files) ? cfg.audio.files : []).filter((f) => String(f?.id || '') !== id);
+  if (String(cfg.audio?.default_file || '') === id) delete cfg.audio.default_file;
+  (Array.isArray(cfg.groups) ? cfg.groups : []).forEach((g) => {
+    if (String(g?.audio_file || '') === id) delete g.audio_file;
+    (Array.isArray(g?.sites) ? g.sites : []).forEach((s) => {
+      if (String(s?.audio_file || '') === id) delete s.audio_file;
+    });
+  });
+  (Array.isArray(cfg.alarms) ? cfg.alarms : []).forEach((a) => {
+    if (String(a?.audio_file || '') === id) delete a.audio_file;
+  });
+
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  return { id, filename };
+}
+
+async function deleteSelectedAlarmAudioFileFromUi() {
+  const id = String(els.editAlarmAudioFile?.value || '').trim();
+  if (!id) { setEditAlarmStatus('Select a configured audio file to delete.'); return; }
+
+  setEditAlarmStatus('Deleting audio file…');
+  const result = await deleteAlarmAudioFileById(id);
+  if (!result) return;
+  refreshAlarmAudioUi(readAlarmAudioFromUi());
+  setEditAlarmStatus(`Deleted audio file '${result.filename}'.`);
+}
+
+function chooseAndUploadAlarmAudioFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.wav,.mp3,.ogg,.flac,audio/*';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0] || null;
+    if (!file) return;
+    uploadAlarmAudioFile(file)
+      .then((result) => {
+        state.selectedNodeId = `audio_file:${result.id}`;
+        state.expanded.add('folder:alarms_events');
+        state.expanded.add('folder:audio_files');
+        renderWorkspaceTree();
+      })
+      .catch((err) => window.alert(`Audio upload failed: ${err.message}`));
+  }, { once: true });
+  input.click();
+}
+
+function refreshAlarmAudioUi(existingAlarm = null) {
+  const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
+  const group = String(els.editAlarmGroup?.value || existingAlarm?.group || '').trim();
+  const site = String(els.editAlarmSite?.value || existingAlarm?.site || '').trim();
+  const alarm = existingAlarm || {};
+  const inherited = resolveInheritedAlarmAudio(cfg, group, site);
+  const effectiveAlarm = { ...alarm, group, site, audio_file: String(alarm.audio_file || '').trim() };
+  if (!Object.prototype.hasOwnProperty.call(alarm, 'audible_enabled')) delete effectiveAlarm.audible_enabled;
+  const effective = resolveAlarmAudio(cfg, effectiveAlarm);
+
+  if (els.editAlarmAudibleMode) {
+    els.editAlarmAudibleMode.value = Object.prototype.hasOwnProperty.call(alarm, 'audible_enabled')
+      ? (alarm.audible_enabled === false ? 'off' : 'on')
+      : 'inherit';
+  }
+
+  if (els.editAlarmAudioFile) {
+    const selected = String(alarm.audio_file || '').trim();
+    els.editAlarmAudioFile.textContent = '';
+    const inherit = document.createElement('option');
+    inherit.value = '';
+    inherit.textContent = inherited.audio_file
+      ? `Use inherited: ${alarmAudioFileText(inherited.audio_file, cfg)}`
+      : 'Use inherited: none';
+    els.editAlarmAudioFile.appendChild(inherit);
+    const files = getAlarmAudioFiles(cfg);
+    if (!files.length) {
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = 'No audio files configured';
+      none.disabled = true;
+      els.editAlarmAudioFile.appendChild(none);
+    }
+    files.forEach((f) => {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = f.path ? `${f.name || f.id} (${f.path})` : `${f.name || f.id} (${f.id})`;
+      els.editAlarmAudioFile.appendChild(opt);
+    });
+    if (selected && !Array.from(els.editAlarmAudioFile.options || []).some((opt) => opt.value === selected)) {
+      const missing = document.createElement('option');
+      missing.value = selected;
+      missing.textContent = `${selected} (not in audio files list)`;
+      els.editAlarmAudioFile.appendChild(missing);
+    }
+    els.editAlarmAudioFile.value = selected;
+  }
+
+  if (els.editAlarmAudioHint) {
+    const modeText = effective.audible_enabled ? 'enabled' : 'disabled';
+    const fileText = effective.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none';
+    els.editAlarmAudioHint.textContent = `Effective audible notification is ${modeText}; audio file: ${fileText}; source: ${effective.source}.`;
+  }
+}
+
+function getAudioScopeConfig(cfg, scope, groupName, siteName) {
+  if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
+  if (scope === 'global') return cfg.audio;
+  if (scope === 'group') return findAlarmGroupConfig(cfg, groupName);
+  if (scope === 'site') return findAlarmSiteConfig(cfg, groupName, siteName);
+  return null;
+}
+
+function getInheritedAudioForScope(cfg, scope, groupName, siteName) {
+  if (scope === 'site') return resolveInheritedAlarmAudio(cfg, groupName, '');
+  if (scope === 'group') {
+    return {
+      audible_enabled: cfg.audio && Object.prototype.hasOwnProperty.call(cfg.audio, 'audible_enabled') ? Boolean(cfg.audio.audible_enabled) : false,
+      audio_file: String(cfg.audio?.default_file || '').trim(),
+      source: 'global'
+    };
+  }
+  return { audible_enabled: false, audio_file: '', source: 'system' };
+}
+
+function refreshAudioScopeUi() {
+  const pending = state.pendingWorkspaceItem || {};
+  const scope = String(pending.scope || '').trim();
+  const group = String(pending.group || '').trim();
+  const site = String(pending.site || '').trim();
+  const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
+  ensureAlarmGroupsTree(cfg);
+  const target = getAudioScopeConfig(cfg, scope, group, site) || {};
+  const inherited = getInheritedAudioForScope(cfg, scope, group, site);
+  const selected = scope === 'global'
+    ? String(cfg.audio?.default_file || '').trim()
+    : String(target?.audio_file || '').trim();
+
+  if (els.editAudioScopeName) {
+    els.editAudioScopeName.value = scope === 'global' ? 'Global alarm audio defaults' : (scope === 'site' ? `${group} / ${site}` : group);
+  }
+  if (els.editAudioScopeAudibleMode) {
+    const inheritOpt = Array.from(els.editAudioScopeAudibleMode.options || []).find((opt) => opt.value === 'inherit');
+    if (inheritOpt) inheritOpt.disabled = scope === 'global';
+    els.editAudioScopeAudibleMode.value = scope === 'global'
+      ? (target.audible_enabled === true ? 'on' : 'off')
+      : (Object.prototype.hasOwnProperty.call(target, 'audible_enabled') ? (target.audible_enabled === false ? 'off' : 'on') : 'inherit');
+    els.editAudioScopeAudibleMode.disabled = !canEditConfig();
+  }
+  if (els.editAudioScopeAudioFile) {
+    els.editAudioScopeAudioFile.textContent = '';
+    const base = document.createElement('option');
+    base.value = '';
+    base.textContent = scope === 'global'
+      ? 'No default audio file'
+      : (inherited.audio_file ? `Use inherited: ${alarmAudioFileText(inherited.audio_file, cfg)}` : 'Use inherited: none');
+    els.editAudioScopeAudioFile.appendChild(base);
+    getAlarmAudioFiles(cfg).forEach((f) => {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = f.path ? `${f.name || f.id} (${f.path})` : `${f.name || f.id} (${f.id})`;
+      els.editAudioScopeAudioFile.appendChild(opt);
+    });
+    els.editAudioScopeAudioFile.value = selected;
+    els.editAudioScopeAudioFile.disabled = !canEditConfig();
+  }
+  if (els.editAudioScopeHint) {
+    const mode = String(els.editAudioScopeAudibleMode?.value || '').trim();
+    const effectiveAudible = scope === 'global' ? mode === 'on' : (mode === 'inherit' ? inherited.audible_enabled : mode === 'on');
+    const effectiveFile = selected || (scope === 'global' ? '' : inherited.audio_file);
+    const source = scope === 'global' ? 'global' : (mode === 'inherit' && !selected ? inherited.source : scope);
+    els.editAudioScopeHint.textContent = `Effective audible notification is ${effectiveAudible ? 'enabled' : 'disabled'}; audio file: ${effectiveFile ? alarmAudioFileText(effectiveFile, cfg) : 'none'}; source: ${source}.`;
+  }
+  if (els.editAudioScopeSaveBtn) els.editAudioScopeSaveBtn.disabled = !canEditConfig();
+}
+
+function openAudioScopeModal({ scope, group = '', site = '' }) {
+  if (!els.workspaceItemModal) return;
+  const normalizedScope = String(scope || '').trim();
+  state.pendingWorkspaceItem = { id: `audio_scope:${normalizedScope}:${group}:${site}`, type: 'audio_scope', scope: normalizedScope, group, site };
+  if (els.workspaceItemModal) els.workspaceItemModal.style.display = 'flex';
+  if (els.workspaceItemHint) {
+    els.workspaceItemHint.textContent = normalizedScope === 'global'
+      ? 'Default alarm audio settings.'
+      : 'Alarm audio settings for this hierarchy level.';
+  }
+  if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
+  if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
+  if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
+  if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
+  if (els.workspaceItemAudioScopeEdit) els.workspaceItemAudioScopeEdit.style.display = 'none';
+  if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
+  if (els.workspaceItemAudioScopeEdit) els.workspaceItemAudioScopeEdit.style.display = 'block';
+  const titleEl = document.getElementById('workspaceItemModalTitle');
+  if (titleEl) titleEl.textContent = normalizedScope === 'global' ? 'Audio Defaults' : 'Alarm Audio Properties';
+  setWorkspaceItemStatus('');
+  setEditAudioScopeStatus('');
+  refreshAudioScopeUi();
+  els.editAudioScopeAudibleMode?.focus?.();
+}
+
+async function saveAudioScopeFromModal() {
+  if (!canEditConfig()) { setEditAudioScopeStatus('Login required to edit audio settings.'); return; }
+  const pending = state.pendingWorkspaceItem || {};
+  const scope = String(pending.scope || '').trim();
+  const group = String(pending.group || '').trim();
+  const site = String(pending.site || '').trim();
+  const mode = String(els.editAudioScopeAudibleMode?.value || '').trim();
+  const audioFile = String(els.editAudioScopeAudioFile?.value || '').trim();
+  const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
+  ensureAlarmGroupsTree(cfg);
+  if (!['global', 'group', 'site'].includes(scope)) { setEditAudioScopeStatus('Audio scope is invalid.'); return; }
+  if (scope === 'global' && !['on', 'off'].includes(mode)) { setEditAudioScopeStatus('Global audible setting must be enabled or disabled.'); return; }
+  if (scope !== 'global' && !['inherit', 'on', 'off'].includes(mode)) { setEditAudioScopeStatus('Audible setting is invalid.'); return; }
+  if (audioFile && !getAlarmAudioFiles(cfg).some((f) => f.id === audioFile)) { setEditAudioScopeStatus(`Audio file '${audioFile}' is not in the audio files list.`); return; }
+
+  if (scope === 'global') {
+    if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
+    cfg.audio.audible_enabled = mode === 'on';
+    if (audioFile) cfg.audio.default_file = audioFile;
+    else delete cfg.audio.default_file;
+  } else if (scope === 'group') {
+    upsertAlarmGroup(cfg, group);
+    const target = findAlarmGroupConfig(cfg, group);
+    if (!target) { setEditAudioScopeStatus('Group was not found.'); return; }
+    if (mode === 'inherit') delete target.audible_enabled;
+    else target.audible_enabled = mode === 'on';
+    if (audioFile) target.audio_file = audioFile;
+    else delete target.audio_file;
+  } else if (scope === 'site') {
+    ensureGroupSiteInConfig(cfg, group, site);
+    const target = findAlarmSiteConfig(cfg, group, site);
+    if (!target) { setEditAudioScopeStatus('Site was not found.'); return; }
+    if (mode === 'inherit') delete target.audible_enabled;
+    else target.audible_enabled = mode === 'on';
+    if (audioFile) target.audio_file = audioFile;
+    else delete target.audio_file;
+  }
+
+  setEditAudioScopeStatus('Saving…');
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  closeWorkspaceItemModal();
+  renderWorkspaceTree();
+}
+
+function wireAlarmPreviewInputs() {
+  const inputs = [
+    els.editAlarmId,
+    els.editAlarmName,
+    els.editAlarmGroup,
+    els.editAlarmSite,
+    els.editAlarmConn,
+    els.editAlarmTagFilter,
+    els.editAlarmTag,
+    els.editAlarmType,
+    els.editAlarmEnabled,
+    els.editAlarmAudibleMode,
+    els.editAlarmAudioFile,
+    els.editAlarmSeverity,
+    els.editAlarmThreshold,
+    els.editAlarmHysteresis,
+    els.editAlarmValue
+  ].filter(Boolean);
+
+  // Some browsers can "lose" a listbox selection if the mouse is released outside the control.
+  // Commit selection on mousedown so the chosen tag sticks even if the user slips off the modal.
+  if (els.editAlarmTag && els.editAlarmTag.dataset.forceSelectWired !== '1') {
+    els.editAlarmTag.dataset.forceSelectWired = '1';
+    els.editAlarmTag.addEventListener('mousedown', (e) => {
+      const opt = e.target && e.target.tagName === 'OPTION' ? e.target : null;
+      if (!opt) return;
+      const v = String(opt.value || '').trim();
+      if (!v) return;
+      els.editAlarmTag.value = v;
+      opt.selected = true;
+      // prevent accidental text selection/drag causing selection rollback
+      e.preventDefault();
+      updateAlarmPreview();
+    }, true);
+  }
+
+  inputs.forEach((el) => {
+    if (el.dataset.alarmPreviewWired === '1') return;
+    el.dataset.alarmPreviewWired = '1';
+    el.addEventListener('input', () => {
+      if (el === els.editAlarmSeverity) syncSeverityPresetFromValue();
+      if (el === els.editAlarmTagFilter) refreshAlarmTagSelect();
+      if ([els.editAlarmConn, els.editAlarmTag, els.editAlarmType].includes(el)) syncNewAlarmDefaults();
+      if (el === els.editAlarmGroup) fillAlarmSiteSelect(String(els.editAlarmGroup?.value || ''), String(els.editAlarmSite?.value || ''));
+      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioFile].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
+      updateAlarmPreview();
+    });
+    el.addEventListener('change', () => {
+      if (el === els.editAlarmSeverity) syncSeverityPresetFromValue();
+      if (el === els.editAlarmConn) {
+        refreshAlarmTagSelect();
+        syncNewAlarmDefaults();
+      }
+      if ([els.editAlarmTag, els.editAlarmType].includes(el)) syncNewAlarmDefaults();
+      if (el === els.editAlarmGroup) fillAlarmSiteSelect(String(els.editAlarmGroup?.value || ''), String(els.editAlarmSite?.value || ''));
+      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioFile].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
+      updateAlarmPreview();
+    });
+  });
+
+  if (els.editAlarmSeverityPreset && els.editAlarmSeverityPreset.dataset.alarmPreviewWired !== '1') {
+    els.editAlarmSeverityPreset.dataset.alarmPreviewWired = '1';
+    els.editAlarmSeverityPreset.addEventListener('change', () => {
+      const val = String(els.editAlarmSeverityPreset.value || '');
+      if (val && els.editAlarmSeverity) els.editAlarmSeverity.value = val;
+      updateAlarmPreview();
+    });
+  }
+
+  updateAlarmPreview();
+}
+
 // ---------------- Configure ----------------
 
 function setScadaSettingsStatus(msg) {
   if (els.scadaSettingsStatus) els.scadaSettingsStatus.textContent = String(msg || '');
+}
+
+function setSoundSettingsStatus(msg) {
+  if (els.soundSettingsStatus) els.soundSettingsStatus.textContent = String(msg || '');
+}
+
+function setAlarmNotifStatus(msg) {
+  if (els.alarmNotifStatus) els.alarmNotifStatus.textContent = String(msg || '');
 }
 
 function setSvcStatus(msg) {
@@ -2814,6 +3710,194 @@ function readScadaSettingsFromForm() {
   };
 }
 
+function getAlarmNotificationRoutes(cfg) {
+  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
+  if (!Array.isArray(cfg.notifications.routes)) cfg.notifications.routes = [];
+  return cfg.notifications.routes;
+}
+
+function findDefaultAudioRoute(cfg) {
+  const routes = getAlarmNotificationRoutes(cfg);
+  return routes.find((r) => r && typeof r === 'object' && String(r.name || '') === 'default_audio')
+    || routes.find((r) => r && typeof r === 'object' && String(r.type || '') === 'audio_command')
+    || null;
+}
+
+function audioOutputFromRoute(route) {
+  const args = Array.isArray(route?.args) ? route.args.map((a) => String(a || '')) : [];
+  const idx = args.indexOf('-D');
+  if (idx >= 0 && args[idx + 1]) return args[idx + 1];
+  return 'default';
+}
+
+async function loadAlarmNotificationSettings() {
+  setAlarmNotifStatus('Loading…');
+  try {
+    const [devicesResp, cfg] = await Promise.all([
+      apiGet('/api/scada/audio/devices').catch(() => ({ ok: false, devices: [] })),
+      loadOpcbridgeAlarmsConfig()
+    ]);
+    const route = findDefaultAudioRoute(cfg) || {};
+
+    if (els.alarmNotifEnabled) els.alarmNotifEnabled.checked = Boolean(cfg?.notifications?.enabled);
+
+    const repeatMs = Number(route?.repeat_ms ?? 30000) || 30000;
+    if (els.alarmNotifRepeatMs) els.alarmNotifRepeatMs.value = String(repeatMs);
+
+    const until = String(route?.until || 'acked_or_returned');
+    if (els.alarmNotifUntil) els.alarmNotifUntil.value = until;
+
+    const selected = audioOutputFromRoute(route);
+    if (els.alarmNotifOutputDevice) {
+      els.alarmNotifOutputDevice.textContent = '';
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = 'default';
+      defaultOpt.textContent = 'System default';
+      els.alarmNotifOutputDevice.appendChild(defaultOpt);
+
+      const devices = Array.isArray(devicesResp?.devices) ? devicesResp.devices : [];
+      devices.forEach((d) => {
+        const value = String(d?.alsa || d?.id || '').trim();
+        if (!value) return;
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = String(d?.label || value);
+        els.alarmNotifOutputDevice.appendChild(opt);
+      });
+
+      if (selected && !Array.from(els.alarmNotifOutputDevice.options || []).some((opt) => opt.value === selected)) {
+        const opt = document.createElement('option');
+        opt.value = selected;
+        opt.textContent = `${selected} (configured)`;
+        els.alarmNotifOutputDevice.appendChild(opt);
+      }
+      els.alarmNotifOutputDevice.value = selected || 'default';
+    }
+
+    const count = Array.isArray(devicesResp?.devices) ? devicesResp.devices.length : 0;
+    const enabledText = (cfg?.notifications?.enabled === true) ? 'enabled' : 'disabled';
+    const suffix = devicesResp?.ok === false ? ` (${devicesResp.error || 'device scan failed'})` : '';
+    setAlarmNotifStatus(`Ready. Notifications ${enabledText}. ${count} hardware output(s) found.${suffix}`);
+  } catch (err) {
+    setAlarmNotifStatus(`Load failed: ${err.message}`);
+  }
+}
+
+async function saveAlarmNotificationSettings() {
+  setAlarmNotifStatus('Saving…');
+  try {
+    const enabled = Boolean(els.alarmNotifEnabled?.checked);
+    const repeatMs = Math.max(0, Math.trunc(Number(els.alarmNotifRepeatMs?.value ?? 30000) || 30000));
+    const until = String(els.alarmNotifUntil?.value || 'acked_or_returned').trim() || 'acked_or_returned';
+    const output = String(els.alarmNotifOutputDevice?.value || 'default').trim() || 'default';
+
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
+    cfg.notifications.enabled = enabled;
+
+    const routes = getAlarmNotificationRoutes(cfg);
+    let route = routes.find((r) => r && typeof r === 'object' && String(r.name || '') === 'default_audio')
+      || routes.find((r) => r && typeof r === 'object' && String(r.type || '') === 'audio_command');
+    if (!route) {
+      route = {};
+      routes.push(route);
+    }
+
+    route.name = String(route.name || 'default_audio');
+    route.type = 'audio_command';
+    route.enabled = true;
+    route.min_severity = Number(route.min_severity ?? 0) || 0;
+    route.on = Array.isArray(route.on) && route.on.length ? route.on : ['active'];
+    route.command = '/usr/bin/aplay';
+    route.args = output === 'default' ? ['{audio_path}'] : ['-D', output, '{audio_path}'];
+    route.repeat_ms = repeatMs;
+    route.until = until;
+
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+
+    setAlarmNotifStatus('Saved.');
+    // Keep the Configure->Sound Settings in sync if the user switches tabs.
+    renderWorkspaceTree();
+  } catch (err) {
+    setAlarmNotifStatus(`Save failed: ${err.message}`);
+  }
+}
+
+async function loadSoundSettings() {
+  setSoundSettingsStatus('Loading outputs...');
+  try {
+    const devicesResp = await apiGet('/api/scada/audio/devices');
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const route = findDefaultAudioRoute(cfg);
+    const selected = audioOutputFromRoute(route);
+
+    if (els.soundOutputDevice) {
+      els.soundOutputDevice.textContent = '';
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = 'default';
+      defaultOpt.textContent = 'System default';
+      els.soundOutputDevice.appendChild(defaultOpt);
+
+      const devices = Array.isArray(devicesResp?.devices) ? devicesResp.devices : [];
+      devices.forEach((d) => {
+        const value = String(d?.alsa || d?.id || '').trim();
+        if (!value) return;
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = String(d?.label || value);
+        els.soundOutputDevice.appendChild(opt);
+      });
+
+      if (selected && !Array.from(els.soundOutputDevice.options || []).some((opt) => opt.value === selected)) {
+        const opt = document.createElement('option');
+        opt.value = selected;
+        opt.textContent = `${selected} (configured)`;
+        els.soundOutputDevice.appendChild(opt);
+      }
+      els.soundOutputDevice.value = selected || 'default';
+    }
+
+    const count = Array.isArray(devicesResp?.devices) ? devicesResp.devices.length : 0;
+    const suffix = devicesResp?.ok === false ? ` (${devicesResp.error || 'device scan failed'})` : '';
+    setSoundSettingsStatus(`Ready. ${count} hardware output(s) found.${suffix}`);
+  } catch (err) {
+    setSoundSettingsStatus(`Load failed: ${err.message}`);
+  }
+}
+
+async function saveSoundSettings() {
+  setSoundSettingsStatus('Saving...');
+  try {
+    const output = String(els.soundOutputDevice?.value || 'default').trim() || 'default';
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const routes = getAlarmNotificationRoutes(cfg);
+    let route = routes.find((r) => r && typeof r === 'object' && String(r.name || '') === 'default_audio')
+      || routes.find((r) => r && typeof r === 'object' && String(r.type || '') === 'audio_command');
+    if (!route) {
+      route = {};
+      routes.push(route);
+    }
+
+    cfg.notifications.enabled = true;
+    route.name = String(route.name || 'default_audio');
+    route.type = 'audio_command';
+    route.enabled = true;
+    route.min_severity = Number(route.min_severity ?? 0) || 0;
+    route.on = Array.isArray(route.on) && route.on.length ? route.on : ['active'];
+    route.command = '/usr/bin/aplay';
+    route.args = output === 'default' ? ['{audio_path}'] : ['-D', output, '{audio_path}'];
+    route.repeat_ms = Number(route.repeat_ms ?? 30000) || 30000;
+    route.until = String(route.until || 'acked_or_returned');
+
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    setSoundSettingsStatus('Saved. Alarm server will reload the setting automatically.');
+  } catch (err) {
+    setSoundSettingsStatus(`Save failed: ${err.message}`);
+  }
+}
+
 async function loadScadaSettings() {
   setScadaSettingsStatus('Loading…');
   try {
@@ -2852,6 +3936,8 @@ async function saveScadaSettings() {
 function wireScadaSettingsUi() {
   els.scadaSettingsReloadBtn?.addEventListener('click', loadScadaSettings);
   els.scadaSettingsSaveBtn?.addEventListener('click', saveScadaSettings);
+  els.soundReloadBtn?.addEventListener('click', loadSoundSettings);
+  els.soundSaveBtn?.addEventListener('click', saveSoundSettings);
   els.scadaOpenHmiBtn?.addEventListener('click', () => {
     window.open(hmiUrlFromForm(), '_blank', 'noopener,noreferrer');
   });
@@ -2864,6 +3950,17 @@ function wireScadaSettingsUi() {
   [
     els.scadaOpcbridgeScheme, els.scadaHmiScheme
   ].forEach((el) => el?.addEventListener?.('change', refreshTopLinks));
+}
+
+function wireAlarmNotificationUi() {
+  if (els.alarmNotifReloadBtn && els.alarmNotifReloadBtn.dataset.wired !== '1') {
+    els.alarmNotifReloadBtn.dataset.wired = '1';
+    els.alarmNotifReloadBtn.addEventListener('click', loadAlarmNotificationSettings);
+  }
+  if (els.alarmNotifSaveBtn && els.alarmNotifSaveBtn.dataset.wired !== '1') {
+    els.alarmNotifSaveBtn.dataset.wired = '1';
+    els.alarmNotifSaveBtn.addEventListener('click', saveAlarmNotificationSettings);
+  }
 }
 
 // ---------------- opcbridge service (systemd) ----------------
@@ -3592,8 +4689,8 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevId) els.newDevId.value = '';
   if (els.newDevDriver) els.newDevDriver.value = 'ab_eip';
   if (els.newDevGateway) els.newDevGateway.value = '';
-  if (els.newDevPath) els.newDevPath.value = '1,0';
-  if (els.newDevSlot) els.newDevSlot.value = '0';
+  if (els.newDevPath) els.newDevPath.value = '';
+  if (els.newDevSlot) els.newDevSlot.value = '';
   if (els.newDevPlcType) els.newDevPlcType.value = 'lgx';
 
   setNewDevStatus('');
@@ -3621,28 +4718,29 @@ function showNewTagModal(connectionId) {
   if (els.newTagName) els.newTagName.value = '';
   if (els.newTagSourceKind) els.newTagSourceKind.value = 'plc';
   if (els.newTagPlc) els.newTagPlc.value = '';
-  if (els.newTagBit) els.newTagBit.value = '0';
+  if (els.newTagBit) els.newTagBit.value = '';
   fillTagDatatypeSelect(els.newTagDatatype, 'bool');
   if (els.newTagScan) els.newTagScan.value = '';
-  if (els.newTagElemCount) els.newTagElemCount.value = '1';
+  if (els.newTagElemCount) els.newTagElemCount.value = '';
   if (els.newTagEnabled) els.newTagEnabled.checked = true;
   if (els.newTagWritable) els.newTagWritable.checked = false;
   if (els.newTagInvert) els.newTagInvert.checked = false;
   if (els.newTagMqttAllowed) els.newTagMqttAllowed.checked = false;
+  if (els.newTagLogEvent) els.newTagLogEvent.checked = false;
   if (els.newTagScaling) {
     els.newTagScaling.value = 'none';
     els.newTagScaling.onchange = () => applyScalingModeUi(els.newTagScaling, els.newTagScalingLinearRow);
     applyScalingModeUi(els.newTagScaling, els.newTagScalingLinearRow);
   }
   fillScaledDatatypeSelect(els.newTagScaledDatatype, '');
-  if (els.newTagRawLow) els.newTagRawLow.value = '0';
-  if (els.newTagRawHigh) els.newTagRawHigh.value = '100';
-  if (els.newTagScaledLow) els.newTagScaledLow.value = '0';
-  if (els.newTagScaledHigh) els.newTagScaledHigh.value = '100';
+  if (els.newTagRawLow) els.newTagRawLow.value = '';
+  if (els.newTagRawHigh) els.newTagRawHigh.value = '';
+  if (els.newTagScaledLow) els.newTagScaledLow.value = '';
+  if (els.newTagScaledHigh) els.newTagScaledHigh.value = '';
   if (els.newTagClampLow) els.newTagClampLow.checked = false;
   if (els.newTagClampHigh) els.newTagClampHigh.checked = false;
 
-  [els.newTagScaling, els.newTagRawLow, els.newTagRawHigh, els.newTagScaledLow, els.newTagScaledHigh, els.newTagScaledDatatype, els.newTagClampLow, els.newTagClampHigh]
+  [els.newTagLogEvent, els.newTagScaling, els.newTagRawLow, els.newTagRawHigh, els.newTagScaledLow, els.newTagScaledHigh, els.newTagScaledDatatype, els.newTagClampLow, els.newTagClampHigh]
     .filter(Boolean)
     .forEach((e) => { e.disabled = !canEditConfig(); });
 
@@ -3716,6 +4814,26 @@ async function deleteTagById(connectionId, tagName) {
   }
 }
 
+function setTagEventLogging(connectionId, tagName, enabled) {
+  const cid = String(connectionId || '').trim();
+  const name = String(tagName || '').trim();
+  if (!cid || !name) return;
+
+  const idx = state.tagConfigAll.findIndex((t) => String(t?.connection_id || '') === cid && String(t?.name || '') === name);
+  if (idx < 0) {
+    window.alert(`Tag '${cid}:${name}' was not found in the tag config.`);
+    return;
+  }
+
+  const next = { ...(state.tagConfigAll[idx] || {}), log_event_on_change: Boolean(enabled) };
+  state.tagConfigAll[idx] = next;
+  if (!state.tagConfigEdited) state.tagConfigEdited = new Map();
+  const key = makeTagKey(next);
+  if (key) state.tagConfigEdited.set(key, next);
+  markTagsDirty(true);
+  renderWorkspaceTree();
+}
+
 async function createNewTagFromModal() {
   const cid = String(state.pendingNewTag?.connection_id || '').trim();
   if (!cid) return;
@@ -3750,13 +4868,15 @@ async function createNewTagFromModal() {
   const writable = Boolean(els.newTagWritable?.checked);
   const invert = Boolean(els.newTagInvert?.checked);
   const mqtt_command_allowed = Boolean(els.newTagMqttAllowed?.checked);
+  const log_event_on_change = Boolean(els.newTagLogEvent?.checked);
   const tag = {
     connection_id: cid,
     name,
     datatype,
     enabled,
     writable: isDerivedAlias ? false : writable,
-    mqtt_command_allowed: isDerivedAlias ? false : mqtt_command_allowed
+    mqtt_command_allowed: isDerivedAlias ? false : mqtt_command_allowed,
+    log_event_on_change
   };
   if (!isDerived) {
     tag.plc_tag_name = plc_tag_name;
@@ -3820,9 +4940,19 @@ function wireNewTagModalUi() {
   els.newTagCancelBtn?.addEventListener('click', close);
   els.newTagCreateBtn?.addEventListener('click', createNewTagFromModal);
 
-  els.newTagModal?.addEventListener('click', (e) => {
-    if (e.target === els.newTagModal) close();
-  });
+  // Keep modal open unless explicitly closed via buttons.
+  if (els.newTagModal && els.newTagModal.dataset.noOverlayClose !== '1') {
+    els.newTagModal.dataset.noOverlayClose = '1';
+    const swallow = (e) => {
+      if (e.target === els.newTagModal) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    els.newTagModal.addEventListener('mousedown', swallow, true);
+    els.newTagModal.addEventListener('mouseup', swallow, true);
+    els.newTagModal.addEventListener('click', swallow, true);
+  }
 
   [els.newTagName, els.newTagPlc, els.newTagDatatype, els.newTagScan]
     .filter(Boolean)
@@ -3844,9 +4974,12 @@ function closeWorkspaceItemModal() {
   setEditDevStatus('');
   setEditTagStatus('');
   setEditAlarmStatus('');
+  setEditAudioScopeStatus('');
   if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
   if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
   if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
+  if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
+  if (els.workspaceItemAudioScopeEdit) els.workspaceItemAudioScopeEdit.style.display = 'none';
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
   if (els.workspaceItemModal) els.workspaceItemModal.style.display = 'none';
 }
@@ -3861,6 +4994,104 @@ function setEditTagStatus(msg) {
 
 function setEditAlarmStatus(msg) {
   if (els.editAlarmStatus) els.editAlarmStatus.textContent = String(msg || '');
+}
+
+function setEditAudioScopeStatus(msg) {
+  if (els.editAudioScopeStatus) els.editAudioScopeStatus.textContent = String(msg || '');
+}
+
+function setNewEventStatus(msg) {
+  if (els.newEventStatus) els.newEventStatus.textContent = String(msg || '');
+}
+
+function getEventCandidateTags(connectionId) {
+  const cid = String(connectionId || '').trim();
+  return getEffectiveTagsAll()
+    .filter((t) => String(t?.connection_id || '') === cid)
+    .filter((t) => String(t?.name || '').trim())
+    .filter((t) => t?.log_event_on_change !== true)
+    .slice()
+    .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function refreshNewEventTagPicker() {
+  if (!els.newEventTag) return;
+
+  const cid = String(els.newEventConn?.value || '').trim();
+  const q = String(els.newEventSearch?.value || '').trim().toLowerCase();
+  const candidates = getEventCandidateTags(cid)
+    .filter((t) => !q || String(t?.name || '').toLowerCase().includes(q) || String(t?.plc_tag_name || '').toLowerCase().includes(q));
+
+  els.newEventTag.textContent = '';
+  const frag = document.createDocumentFragment();
+  candidates.forEach((t) => {
+    const name = String(t?.name || '').trim();
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = String(t?.plc_tag_name || '').trim() && String(t.plc_tag_name) !== name
+      ? `${name}  (${String(t.plc_tag_name)})`
+      : name;
+    frag.appendChild(opt);
+  });
+  els.newEventTag.appendChild(frag);
+
+  if (els.newEventSaveBtn) els.newEventSaveBtn.disabled = !canEditConfig() || candidates.length === 0;
+  if (!cid) setNewEventStatus('Select a connection.');
+  else if (!candidates.length && q) setNewEventStatus('No matching tags found.');
+  else if (!candidates.length) setNewEventStatus('All tags on this connection are already events.');
+  else setNewEventStatus(`Showing ${candidates.length} matching tag(s).`);
+}
+
+function openNewEventModal(preferredConnectionId = '') {
+  if (!els.workspaceItemModal) return;
+
+  closeContextMenu?.();
+  state.pendingWorkspaceItem = { id: 'event:new', type: 'event', mode: 'new' };
+
+  const titleEl = document.getElementById('workspaceItemModalTitle');
+  if (titleEl) titleEl.textContent = 'New Event';
+  if (els.workspaceItemHint) els.workspaceItemHint.textContent = 'Select an existing tag to log as an event on change.';
+  if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
+  if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
+  if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
+  if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
+  if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
+  if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'block';
+
+  const conns = Array.from(new Set(getEffectiveTagsAll().map((t) => String(t?.connection_id || '').trim()).filter(Boolean)));
+  conns.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+  if (els.newEventConn) {
+    els.newEventConn.textContent = '';
+    conns.forEach((cid) => {
+      const opt = document.createElement('option');
+      opt.value = cid;
+      opt.textContent = cid;
+      els.newEventConn.appendChild(opt);
+    });
+    const preferred = String(preferredConnectionId || '').trim();
+    if (preferred && conns.includes(preferred)) els.newEventConn.value = preferred;
+    els.newEventConn.disabled = !canEditConfig();
+  }
+  if (els.newEventSearch) {
+    els.newEventSearch.value = '';
+    els.newEventSearch.disabled = !canEditConfig();
+  }
+  if (els.newEventTag) els.newEventTag.disabled = !canEditConfig();
+
+  refreshNewEventTagPicker();
+  els.workspaceItemModal.style.display = 'flex';
+  els.newEventSearch?.focus?.();
+}
+
+function saveNewEventFromModal() {
+  const cid = String(els.newEventConn?.value || '').trim();
+  const name = String(els.newEventTag?.value || '').trim();
+  if (!canEditConfig()) { setNewEventStatus('Login required to edit events.'); return; }
+  if (!cid) { setNewEventStatus('Connection is required.'); return; }
+  if (!name) { setNewEventStatus('Select a tag.'); return; }
+
+  setTagEventLogging(cid, name, true);
+  closeWorkspaceItemModal();
 }
 
 function openWorkspaceItemModal(node) {
@@ -3880,6 +5111,8 @@ function openWorkspaceItemModal(node) {
   if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
   if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
   if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
+  if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
+  if (els.workspaceItemAudioScopeEdit) els.workspaceItemAudioScopeEdit.style.display = 'none';
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
 
   const type = String(node.type || '');
@@ -3964,6 +5197,7 @@ function openWorkspaceItemModal(node) {
       if (els.editTagWritable) els.editTagWritable.checked = false;
       if (els.editTagInvert) els.editTagInvert.checked = false;
       if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = false;
+      if (els.editTagLogEvent) els.editTagLogEvent.checked = false;
       if (els.editTagScaling) els.editTagScaling.value = 'none';
       fillScaledDatatypeSelect(els.editTagScaledDatatype, '');
       if (els.editTagRawLow) els.editTagRawLow.value = '0';
@@ -3992,6 +5226,7 @@ function openWorkspaceItemModal(node) {
       if (els.editTagWritable) els.editTagWritable.checked = (row?.writable === true);
       if (els.editTagInvert) els.editTagInvert.checked = (row?.invert === true);
       if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = (row?.mqtt_command_allowed === true);
+      if (els.editTagLogEvent) els.editTagLogEvent.checked = (row?.log_event_on_change === true);
       if (els.editTagScaling) els.editTagScaling.value = String(row?.scaling || 'none').trim().toLowerCase() || 'none';
       fillScaledDatatypeSelect(els.editTagScaledDatatype, row?.scaled_datatype ?? '');
       if (els.editTagRawLow) els.editTagRawLow.value = (row?.raw_low == null) ? '0' : String(row.raw_low);
@@ -4041,7 +5276,7 @@ function openWorkspaceItemModal(node) {
       applyScalingModeUi(els.editTagScaling, els.editTagScalingLinearRow);
       els.editTagScaling.disabled = !canEditConfig();
     }
-    [els.editTagRawLow, els.editTagRawHigh, els.editTagScaledLow, els.editTagScaledHigh, els.editTagScaledDatatype, els.editTagClampLow, els.editTagClampHigh]
+    [els.editTagLogEvent, els.editTagRawLow, els.editTagRawHigh, els.editTagScaledLow, els.editTagScaledHigh, els.editTagScaledDatatype, els.editTagClampLow, els.editTagClampHigh]
       .filter(Boolean)
       .forEach((e) => { e.disabled = !canEditConfig(); });
 
@@ -4066,52 +5301,49 @@ function openWorkspaceItemModal(node) {
       els.editAlarmId.disabled = true; // immutable
     }
     if (els.editAlarmName) els.editAlarmName.value = existing ? String(existing.name || '') : String(node.label || '');
-    if (els.editAlarmGroup) els.editAlarmGroup.value = existing ? String(existing.group || '') : String(node.meta?.group || '');
-    if (els.editAlarmSite) els.editAlarmSite.value = existing ? String(existing.site || '') : String(node.meta?.site || '');
+    const wantGroup = existing ? String(existing.group || '') : String(node.meta?.group || '');
+    const wantSite = existing ? String(existing.site || '') : String(node.meta?.site || '');
+    fillAlarmGroupSelect(wantGroup);
+    fillAlarmSiteSelect(wantGroup, wantSite);
 
-    // Fill connection options from loaded connections
-    if (els.editAlarmConn) {
-      const conns = state.connFiles.slice().map((f) => connectionIdForConnFilePath(String(f?.path || ''))).filter(Boolean);
-      conns.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
-      els.editAlarmConn.textContent = '';
-      conns.forEach((cid) => {
-        const opt = document.createElement('option');
-        opt.value = cid;
-        opt.textContent = cid;
-        els.editAlarmConn.appendChild(opt);
-      });
-      const want = existing ? String(existing.connection_id || '') : String(node.meta?.source?.connection_id || '');
-      if (want) els.editAlarmConn.value = want;
-    }
-
-    const refreshTagSelect = () => {
-      const cid = String(els.editAlarmConn?.value || '').trim();
-      if (!els.editAlarmTag) return;
-      els.editAlarmTag.textContent = '';
-      const tags = getEffectiveTagsAll().filter((t) => String(t?.connection_id || '') === cid);
-      tags.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
-      tags.forEach((t) => {
-        const opt = document.createElement('option');
-        opt.value = String(t?.name || '');
-        opt.textContent = String(t?.name || '');
-        els.editAlarmTag.appendChild(opt);
-      });
-      const wantTag = existing ? String(existing.tag_name || '') : String(node.meta?.source?.tag || '');
-      if (wantTag) els.editAlarmTag.value = wantTag;
-    };
-
-    if (els.editAlarmConn) els.editAlarmConn.onchange = refreshTagSelect;
-    refreshTagSelect();
+    const want = existing ? String(existing.connection_id || '') : String(node.meta?.source?.connection_id || '');
+    const wantTag = existing ? String(existing.tag_name || '') : String(node.meta?.source?.tag || '');
+    if (els.editAlarmTagFilter) els.editAlarmTagFilter.value = '';
+    fillAlarmConnectionSelect(want);
+    refreshAlarmTagSelect(wantTag);
 
     if (els.editAlarmType) els.editAlarmType.value = existing ? String(existing.type || 'high') : 'high';
     if (els.editAlarmEnabled) els.editAlarmEnabled.checked = existing ? (existing.enabled !== false) : true;
     if (els.editAlarmSeverity) els.editAlarmSeverity.value = existing && existing.severity != null ? String(existing.severity) : '500';
+    syncSeverityPresetFromValue();
     if (els.editAlarmThreshold) els.editAlarmThreshold.value = existing && existing.threshold != null ? String(existing.threshold) : '';
     if (els.editAlarmHysteresis) els.editAlarmHysteresis.value = existing && existing.hysteresis != null ? String(existing.hysteresis) : '';
+    if (els.editAlarmValue) els.editAlarmValue.value = alarmCompareValueToText(existing);
     if (els.editAlarmMsgOn) els.editAlarmMsgOn.value = existing ? String(existing.message_on_active || '') : '';
     if (els.editAlarmMsgOff) els.editAlarmMsgOff.value = existing ? String(existing.message_on_return || '') : '';
+    refreshAlarmAudioUi(existing || {});
+    if (els.editAlarmType) {
+      els.editAlarmType.onchange = applyAlarmTypeUi;
+      applyAlarmTypeUi();
+    }
+    wireAlarmPreviewInputs();
 
     (els.editAlarmName || els.editAlarmGroup || els.editAlarmSite || els.editAlarmConn)?.focus?.();
+    return;
+  }
+
+  if (type === 'audio_files_root') {
+    openAudioScopeModal({ scope: 'global' });
+    return;
+  }
+
+  if (type === 'alarm_group') {
+    openAudioScopeModal({ scope: 'group', group: String(node.meta?.group || node.label || '') });
+    return;
+  }
+
+  if (type === 'alarm_site') {
+    openAudioScopeModal({ scope: 'site', group: String(node.meta?.group || ''), site: String(node.meta?.site || node.label || '') });
     return;
   }
 
@@ -4166,6 +5398,8 @@ function openNewAlarmModal({ group, site } = {}) {
 
   if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
   if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
+  if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
+  if (els.workspaceItemAudioScopeEdit) els.workspaceItemAudioScopeEdit.style.display = 'none';
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
   if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'block';
 
@@ -4174,47 +5408,37 @@ function openNewAlarmModal({ group, site } = {}) {
 
   if (els.editAlarmId) { els.editAlarmId.value = ''; els.editAlarmId.disabled = false; }
   if (els.editAlarmName) els.editAlarmName.value = '';
-  if (els.editAlarmGroup) els.editAlarmGroup.value = String(group || '');
-  if (els.editAlarmSite) els.editAlarmSite.value = String(site || '');
-
-  // Connections
-  if (els.editAlarmConn) {
-    const conns = state.connFiles.slice().map((f) => connectionIdForConnFilePath(String(f?.path || ''))).filter(Boolean);
-    conns.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
-    els.editAlarmConn.textContent = '';
-    conns.forEach((cid) => {
-      const opt = document.createElement('option');
-      opt.value = cid;
-      opt.textContent = cid;
-      els.editAlarmConn.appendChild(opt);
-    });
-    if (els.editAlarmConn.options.length) els.editAlarmConn.value = String(els.editAlarmConn.options[0].value || '');
+  const wantGroup = String(group || '');
+  const wantSite = String(site || '');
+  if (!state.alarmsConfig) {
+    loadOpcbridgeAlarmsConfig().then(() => {
+      fillAlarmGroupSelect(wantGroup);
+      fillAlarmSiteSelect(wantGroup, wantSite);
+    }).catch(() => {});
   }
+  fillAlarmGroupSelect(wantGroup);
+  fillAlarmSiteSelect(wantGroup, wantSite);
 
-  const refreshTags = () => {
-    const cid = String(els.editAlarmConn?.value || '').trim();
-    if (!els.editAlarmTag) return;
-    els.editAlarmTag.textContent = '';
-    const tags = getEffectiveTagsAll().filter((t) => String(t?.connection_id || '') === cid);
-    tags.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
-    tags.forEach((t) => {
-      const opt = document.createElement('option');
-      opt.value = String(t?.name || '');
-      opt.textContent = String(t?.name || '');
-      els.editAlarmTag.appendChild(opt);
-    });
-    if (els.editAlarmTag.options.length) els.editAlarmTag.value = String(els.editAlarmTag.options[0].value || '');
-  };
-  if (els.editAlarmConn) els.editAlarmConn.onchange = refreshTags;
-  refreshTags();
+  if (els.editAlarmTagFilter) els.editAlarmTagFilter.value = '';
+  fillAlarmConnectionSelect();
+  refreshAlarmTagSelect();
 
   if (els.editAlarmType) els.editAlarmType.value = 'high';
   if (els.editAlarmEnabled) els.editAlarmEnabled.checked = true;
-  if (els.editAlarmSeverity) els.editAlarmSeverity.value = '500';
+  if (els.editAlarmSeverity) els.editAlarmSeverity.value = '';
+  syncSeverityPresetFromValue();
   if (els.editAlarmThreshold) els.editAlarmThreshold.value = '';
   if (els.editAlarmHysteresis) els.editAlarmHysteresis.value = '';
+  if (els.editAlarmValue) els.editAlarmValue.value = '';
   if (els.editAlarmMsgOn) els.editAlarmMsgOn.value = '';
   if (els.editAlarmMsgOff) els.editAlarmMsgOff.value = '';
+  refreshAlarmAudioUi({});
+  if (els.editAlarmType) {
+    els.editAlarmType.onchange = applyAlarmTypeUi;
+    applyAlarmTypeUi();
+  }
+  wireAlarmPreviewInputs();
+  syncNewAlarmDefaults();
 
   els.workspaceItemModal.style.display = 'flex';
   els.editAlarmId?.focus?.();
@@ -4227,6 +5451,7 @@ async function saveEditedTagFromModal() {
 
   const idx = state.tagConfigAll.findIndex((t) => String(t?.connection_id || '') === conn && String(t?.name || '') === name);
   if (idx < 0) { setEditTagStatus('Tag not found in config (try Refresh).'); return; }
+  const row = state.tagConfigAll[idx] || {};
 
   const newName = String(els.editTagName?.value || '').trim();
   if (!newName) { setEditTagStatus('Tag name is required.'); return; }
@@ -4249,6 +5474,7 @@ async function saveEditedTagFromModal() {
   const writable = Boolean(els.editTagWritable?.checked);
   const invert = Boolean(els.editTagInvert?.checked);
   const mqtt_command_allowed = Boolean(els.editTagMqttAllowed?.checked);
+  const log_event_on_change = Boolean(els.editTagLogEvent?.checked);
 
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
 
@@ -4317,6 +5543,7 @@ async function saveEditedTagFromModal() {
   next.enabled = enabled;
   next.writable = isDerivedAlias ? false : writable;
   next.mqtt_command_allowed = isDerivedAlias ? false : mqtt_command_allowed;
+  next.log_event_on_change = log_event_on_change;
   if (invert) next.invert = true;
   else delete next.invert;
   if (scanRaw === '') delete next.scan_ms;
@@ -4361,19 +5588,40 @@ async function saveEditedAlarmFromModal() {
   const tag_name = String(els.editAlarmTag?.value || '').trim();
   const type = String(els.editAlarmType?.value || '').trim();
   const enabled = Boolean(els.editAlarmEnabled?.checked);
-  const severity = Math.max(0, Math.min(1000, Math.trunc(Number(els.editAlarmSeverity?.value ?? 500) || 500)));
+  const severityRaw = String(els.editAlarmSeverity?.value ?? '').trim();
+  const severity = Math.trunc(Number(severityRaw || '500'));
   const thresholdRaw = String(els.editAlarmThreshold?.value ?? '').trim();
   const hysteresisRaw = String(els.editAlarmHysteresis?.value ?? '').trim();
+  const compareValueRaw = String(els.editAlarmValue?.value ?? '').trim();
   const message_on_active = String(els.editAlarmMsgOn?.value || '').trim();
   const message_on_return = String(els.editAlarmMsgOff?.value || '').trim();
+  const audibleMode = String(els.editAlarmAudibleMode?.value || 'inherit').trim();
+  const audio_file = String(els.editAlarmAudioFile?.value || '').trim();
+  const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
+  if (!Array.isArray(cfg.alarms)) cfg.alarms = [];
 
   if (!id) { setEditAlarmStatus('Alarm ID is required.'); return; }
+  if (!/^[A-Za-z0-9_.:-]+$/.test(id)) { setEditAlarmStatus('Alarm ID may only contain letters, numbers, underscore, dash, period, or colon.'); return; }
+  if (site && !group) { setEditAlarmStatus('Group is required when Site is set.'); return; }
+  if (group && !findAlarmGroupConfig(cfg, group)) { setEditAlarmStatus(`Group '${group}' does not exist. Create it first, then select it.`); return; }
+  if (site && !findAlarmSiteConfig(cfg, group, site)) { setEditAlarmStatus(`Site '${site}' does not exist under group '${group}'. Create it first, then select it.`); return; }
   if (!connection_id) { setEditAlarmStatus('Connection is required.'); return; }
   if (!tag_name) { setEditAlarmStatus('Tag is required.'); return; }
-  if (!type) { setEditAlarmStatus('Type is required.'); return; }
-
-  const cfg = state.alarmsConfig || { alarms: [], groups: [] };
-  if (!Array.isArray(cfg.alarms)) cfg.alarms = [];
+  if (!['high', 'low', 'equals', 'not_equals'].includes(type)) { setEditAlarmStatus('Type is invalid.'); return; }
+  if (!Number.isFinite(severity) || severity < 0 || severity > 1000) { setEditAlarmStatus('Severity must be a number from 0 to 1000.'); return; }
+  const selectedTagExists = getEffectiveTagsAll().some((t) => String(t?.connection_id || '') === connection_id && String(t?.name || '') === tag_name);
+  if (!selectedTagExists) { setEditAlarmStatus(`Tag '${connection_id}:${tag_name}' was not found in the tag config.`); return; }
+  if (!['inherit', 'on', 'off'].includes(audibleMode)) { setEditAlarmStatus('Audible setting is invalid.'); return; }
+  if (audio_file && !getAlarmAudioFiles(cfg).some((f) => f.id === audio_file)) { setEditAlarmStatus(`Audio file '${audio_file}' is not in the audio files list.`); return; }
+  if ((type === 'high' || type === 'low') && thresholdRaw === '') {
+    setEditAlarmStatus('Threshold is required for high/low alarms.');
+    return;
+  }
+  const compareValue = (type === 'equals' || type === 'not_equals') ? parseAlarmCompareValue(compareValueRaw) : null;
+  if (compareValue && !compareValue.ok) {
+    setEditAlarmStatus(compareValue.error);
+    return;
+  }
 
   const idx = cfg.alarms.findIndex((a) => String(a?.id || '').trim() === id);
   if (mode === 'new' && idx >= 0) { setEditAlarmStatus('Alarm ID already exists.'); return; }
@@ -4392,8 +5640,30 @@ async function saveEditedAlarmFromModal() {
     message_on_active,
     message_on_return
   };
-  if (thresholdRaw !== '') next.threshold = Number(thresholdRaw);
-  if (hysteresisRaw !== '') next.hysteresis = Number(hysteresisRaw);
+  if (audibleMode === 'on') next.audible_enabled = true;
+  else if (audibleMode === 'off') next.audible_enabled = false;
+  if (audio_file) next.audio_file = audio_file;
+  if (type === 'high' || type === 'low') {
+    next.threshold = Number(thresholdRaw);
+    if (!Number.isFinite(next.threshold)) { setEditAlarmStatus('Threshold must be numeric.'); return; }
+    if (hysteresisRaw !== '') {
+      next.hysteresis = Number(hysteresisRaw);
+      if (!Number.isFinite(next.hysteresis)) { setEditAlarmStatus('Hysteresis must be numeric.'); return; }
+      if (next.hysteresis < 0) { setEditAlarmStatus('Hysteresis cannot be negative.'); return; }
+    }
+    delete next.value;
+    delete next.equals_value;
+  } else if (type === 'equals' || type === 'not_equals') {
+    next.value = compareValue.value;
+    delete next.threshold;
+    delete next.hysteresis;
+    delete next.equals_value;
+  } else {
+    delete next.value;
+    delete next.equals_value;
+    delete next.threshold;
+    delete next.hysteresis;
+  }
 
   // Ensure folder nodes exist if user filled group/site.
   if (group || site) {
@@ -4408,7 +5678,22 @@ async function saveEditedAlarmFromModal() {
     const origIdx = cfg.alarms.findIndex((a) => String(a?.id || '').trim() === origId);
     if (origIdx < 0) { setEditAlarmStatus('Alarm not found in config (try Refresh).'); return; }
     next.id = origId;
-    cfg.alarms[origIdx] = { ...(cfg.alarms[origIdx] || {}), ...next };
+    const merged = { ...(cfg.alarms[origIdx] || {}), ...next };
+    if (audibleMode === 'inherit') delete merged.audible_enabled;
+    if (!audio_file) delete merged.audio_file;
+    if (type === 'high' || type === 'low') {
+      delete merged.value;
+      delete merged.equals_value;
+    } else {
+      delete merged.threshold;
+      delete merged.hysteresis;
+      delete merged.value_json;
+      if (type !== 'equals' && type !== 'not_equals') {
+        delete merged.value;
+        delete merged.equals_value;
+      }
+    }
+    cfg.alarms[origIdx] = merged;
   }
 
   setEditAlarmStatus('Saving…');
@@ -4541,13 +5826,48 @@ function wireWorkspaceItemModalUi() {
 
   els.editAlarmCancelBtn?.addEventListener('click', close);
   els.editAlarmSaveBtn?.addEventListener('click', saveEditedAlarmFromModalReload);
-  els.workspaceItemModal?.addEventListener('click', (e) => {
-    if (e.target === els.workspaceItemModal) close();
-  });
+  els.editAlarmAudioUploadBtn?.addEventListener('click', () => uploadAlarmAudioFileFromUi().catch((err) => setEditAlarmStatus(`Audio upload failed: ${err.message}`)));
+  els.editAlarmAudioDeleteBtn?.addEventListener('click', () => deleteSelectedAlarmAudioFileFromUi().catch((err) => setEditAlarmStatus(`Audio delete failed: ${err.message}`)));
 
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && els.workspaceItemModal?.style.display === 'flex') close();
-  });
+  els.editAudioScopeCancelBtn?.addEventListener('click', close);
+  els.editAudioScopeSaveBtn?.addEventListener('click', () => saveAudioScopeFromModal().catch((err) => setEditAudioScopeStatus(`Save failed: ${err.message}`)));
+  els.editAudioScopeAudibleMode?.addEventListener('change', refreshAudioScopeUi);
+  els.editAudioScopeAudioFile?.addEventListener('change', refreshAudioScopeUi);
+
+  els.newEventCancelBtn?.addEventListener('click', close);
+  els.newEventSaveBtn?.addEventListener('click', saveNewEventFromModal);
+  els.newEventConn?.addEventListener('change', refreshNewEventTagPicker);
+  els.newEventSearch?.addEventListener('input', refreshNewEventTagPicker);
+  els.newEventTag?.addEventListener('dblclick', saveNewEventFromModal);
+
+  if (els.newEventTag && els.newEventTag.dataset.forceSelectWired !== '1') {
+    els.newEventTag.dataset.forceSelectWired = '1';
+    els.newEventTag.addEventListener('mousedown', (e) => {
+      const opt = e.target && e.target.tagName === 'OPTION' ? e.target : null;
+      if (!opt) return;
+      const v = String(opt.value || '').trim();
+      if (!v) return;
+      els.newEventTag.value = v;
+      opt.selected = true;
+      e.preventDefault();
+    }, true);
+  }
+
+  // Keep modal open unless explicitly closed via buttons.
+  if (els.workspaceItemModal && els.workspaceItemModal.dataset.noOverlayClose !== '1') {
+    els.workspaceItemModal.dataset.noOverlayClose = '1';
+    const swallow = (e) => {
+      if (e.target === els.workspaceItemModal) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    els.workspaceItemModal.addEventListener('mousedown', swallow, true);
+    els.workspaceItemModal.addEventListener('mouseup', swallow, true);
+    els.workspaceItemModal.addEventListener('click', swallow, true);
+  }
+
+  // Intentionally do not close modals on overlay click or Escape. Close via explicit UI buttons.
   [els.editDevGateway, els.editDevPath, els.editDevSlot, els.editDevPlcType, els.editDevDriver]
     .filter(Boolean)
     .forEach((el) => el.addEventListener('keydown', (e) => {
@@ -4563,6 +5883,15 @@ function wireWorkspaceItemModalUi() {
       if (e.key === 'Enter' && els.workspaceItemModal?.style.display === 'flex') {
         e.preventDefault();
         saveEditedTagFromModal();
+      }
+    }));
+
+  [els.newEventSearch, els.newEventTag]
+    .filter(Boolean)
+    .forEach((el) => el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && els.workspaceItemModal?.style.display === 'flex' && els.workspaceItemEventEdit?.style.display === 'block') {
+        e.preventDefault();
+        saveNewEventFromModal();
       }
     }));
 
@@ -4612,11 +5941,21 @@ function wireNewDeviceFormUi() {
 
   els.newDevCancelBtn?.addEventListener('click', closeWorkspaceNewDeviceForm);
   els.newDevModalCloseBtn?.addEventListener('click', closeWorkspaceNewDeviceForm);
-
-  els.workspaceNewDevicePanel?.addEventListener('click', (e) => {
-    if (e.target === els.workspaceNewDevicePanel) closeWorkspaceNewDeviceForm();
-  });
   els.newDevCreateBtn?.addEventListener('click', createNewDeviceFromWorkspace);
+
+  // Keep modal open unless explicitly closed via buttons.
+  if (els.workspaceNewDevicePanel && els.workspaceNewDevicePanel.dataset.noOverlayClose !== '1') {
+    els.workspaceNewDevicePanel.dataset.noOverlayClose = '1';
+    const swallow = (e) => {
+      if (e.target === els.workspaceNewDevicePanel) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    els.workspaceNewDevicePanel.addEventListener('mousedown', swallow, true);
+    els.workspaceNewDevicePanel.addEventListener('mouseup', swallow, true);
+    els.workspaceNewDevicePanel.addEventListener('click', swallow, true);
+  }
 
   // Enter to create when focused in an input
   [els.newDevId, els.newDevDriver, els.newDevGateway, els.newDevPath, els.newDevSlot, els.newDevPlcType]
@@ -4727,9 +6066,870 @@ async function deleteAlarmById(alarmId) {
     await opcbridgeReload().catch(() => {});
     await refreshAll().catch(() => {});
     renderWorkspaceTree();
+    // Keep Alarms & Events tab in sync if open.
+    renderAlarmsEventsTree();
   } catch (err) {
     window.alert(`Failed to delete alarm: ${err.message}`);
   }
+}
+
+// ---------------- Alarms & Events tab (tree) ----------------
+
+function buildAlarmsEventsTree() {
+  const root = { id: 'folder:alarms_events', type: 'folder', label: 'Alarms & Events', children: [] };
+
+  const alarmsRoot = { id: 'folder:alarms', type: 'alarms_root', label: 'Alarms', children: [] };
+  const eventLoggingRoot = { id: 'folder:events', type: 'event_logging_root', label: 'Events', children: [] };
+  const audioFilesRoot = { id: 'folder:audio_files', type: 'audio_files_root', label: 'Audio Files', children: [] };
+
+  root.children.push(alarmsRoot, eventLoggingRoot, audioFilesRoot);
+
+  const cfg = state.alarmsConfig || null;
+  const cfgAlarms = Array.isArray(cfg?.alarms) ? cfg.alarms : [];
+  const cfgGroups = Array.isArray(cfg?.groups) ? cfg.groups : [];
+  const runtime = Array.isArray(state.alarmsAll) ? state.alarmsAll : [];
+
+  const runtimeById = new Map();
+  runtime.forEach((a) => {
+    const id = String(a?.alarm_id || a?.id || '').trim();
+    if (id) runtimeById.set(id, a);
+  });
+
+  const safeKey = (s) => {
+    const k = String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    return k || 'none';
+  };
+
+  const groups = new Map();
+
+  // Add configured group/site folders (even if empty).
+  cfgGroups.forEach((g) => {
+    const groupName = String(g?.name || '').trim();
+    if (!groupName) return;
+    const groupId = `alarm_group:${safeKey(groupName)}`;
+    let groupNode = groups.get(groupId);
+    if (!groupNode) {
+      groupNode = { id: groupId, type: 'alarm_group', label: groupName, meta: { group: groupName }, children: [] };
+      groups.set(groupId, groupNode);
+    }
+    const sites = Array.isArray(g?.sites) ? g.sites : [];
+    sites.forEach((s) => {
+      const siteName = String(s?.name || '').trim();
+      if (!siteName) return;
+      const siteId = `${groupId}:site:${safeKey(siteName)}`;
+      if ((groupNode.children || []).some((n) => String(n?.id || '') === siteId)) return;
+      groupNode.children.push({ id: siteId, type: 'alarm_site', label: siteName, meta: { group: groupName, site: siteName }, children: [] });
+    });
+  });
+
+  // Place alarms into folders.
+  cfgAlarms.forEach((a) => {
+    const alarm_id = String(a?.id || '').trim();
+    if (!alarm_id) return;
+
+    const groupRaw = String(a?.group || '').trim();
+    const siteRaw = String(a?.site || '').trim();
+    const groupLabel = groupRaw || '(No group)';
+    const siteLabel = siteRaw || '(No site)';
+
+    const groupId = `alarm_group:${safeKey(groupLabel)}`;
+    let groupNode = groups.get(groupId);
+    if (!groupNode) {
+      groupNode = { id: groupId, type: 'alarm_group', label: groupLabel, meta: { group: groupRaw }, children: [] };
+      groups.set(groupId, groupNode);
+    }
+
+    const siteId = `${groupId}:site:${safeKey(siteLabel)}`;
+    let siteNode = (groupNode.children || []).find((n) => String(n?.id || '') === siteId) || null;
+    if (!siteNode) {
+      siteNode = { id: siteId, type: 'alarm_site', label: siteLabel, meta: { group: groupRaw, site: siteRaw }, children: [] };
+      groupNode.children.push(siteNode);
+    }
+
+    const runtimeRow = runtimeById.get(alarm_id) || null;
+    const name = String(a?.name || alarm_id).trim() || alarm_id;
+    const sev = (a?.severity == null) ? '' : Number(a.severity);
+    const enabled = (a?.enabled !== false);
+    const active = Boolean(runtimeRow?.active);
+    const acked = Boolean(runtimeRow?.acked);
+    const srcConn = String(a?.connection_id || '').trim();
+    const srcTag = String(a?.tag_name || '').trim();
+    const message = String(runtimeRow?.message || '').trim();
+
+    siteNode.children.push({
+      id: `alarm:${alarm_id}`,
+      type: 'alarm',
+      label: name,
+      meta: {
+        alarm_id,
+        group: groupRaw,
+        site: siteRaw,
+        severity: sev,
+        enabled,
+        active,
+        acked,
+        source: { connection_id: srcConn, tag: srcTag },
+        message
+      },
+      children: []
+    });
+  });
+
+  if (!cfgAlarms.length && !cfgGroups.length) {
+    alarmsRoot.children.push({ id: 'hint:no_alarms', type: 'hint', label: '(no alarms configured)', children: [] });
+  }
+
+  const groupNodes = Array.from(groups.values()).sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
+  groupNodes.forEach((g) => {
+    g.children = (g.children || []).slice().sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
+    g.children.forEach((s) => {
+      s.children = (s.children || []).slice().sort((a, b) => Number(b?.meta?.severity || 0) - Number(a?.meta?.severity || 0));
+    });
+    alarmsRoot.children.push(g);
+  });
+
+  const eventTags = getEffectiveTagsAll()
+    .filter((t) => t?.log_event_on_change === true)
+    .slice()
+    .sort((a, b) => {
+      return `${String(a?.connection_id || '')}:${String(a?.name || '')}`.localeCompare(`${String(b?.connection_id || '')}:${String(b?.name || '')}`, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  const eventConnections = new Map();
+  eventTags.forEach((t) => {
+    const conn = String(t?.connection_id || '').trim();
+    const name = String(t?.name || '').trim();
+    if (!conn || !name) return;
+    let connNode = eventConnections.get(conn);
+    if (!connNode) {
+      connNode = {
+        id: `event_connection:${conn}`,
+        type: 'event_connection',
+        label: conn,
+        meta: { connection_id: conn },
+        children: []
+      };
+      eventConnections.set(conn, connNode);
+    }
+    connNode.children.push({
+      id: `event_tag:${conn}::${name}`,
+      type: 'event_tag',
+      label: name,
+      meta: { connection_id: conn, name, enabled: t?.log_event_on_change === true },
+      children: []
+    });
+  });
+  Array.from(eventConnections.values())
+    .sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }))
+    .forEach((node) => {
+      node.children = (node.children || []).slice().sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
+      eventLoggingRoot.children.push(node);
+    });
+  if (!eventLoggingRoot.children.length) {
+    eventLoggingRoot.children.push({ id: 'hint:no_events', type: 'hint', label: '(no events configured)', children: [] });
+  }
+
+  getAlarmAudioFiles(cfg || {}).forEach((f) => {
+    const id = String(f?.id || '').trim();
+    if (!id) return;
+    audioFilesRoot.children.push({
+      id: `audio_file:${id}`,
+      type: 'audio_file',
+      label: String(f?.name || id),
+      meta: { ...f, id },
+      children: []
+    });
+  });
+  audioFilesRoot.children.sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  if (!audioFilesRoot.children.length) {
+    audioFilesRoot.children.push({ id: 'hint:no_audio_files', type: 'hint', label: '(no audio files configured)', children: [] });
+  }
+
+  return root;
+}
+
+function findAlarmsEventsNodeById(node, id) {
+  if (!node) return null;
+  if (String(node.id) === String(id)) return node;
+  const children = Array.isArray(node.children) ? node.children : [];
+  for (const c of children) {
+    const found = findAlarmsEventsNodeById(c, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function isAlarmsEventsLeafType(type) {
+  const t = String(type || '').trim();
+  // These are displayed in the right-side list, not in the left tree.
+  return ['alarm', 'event_tag', 'audio_file', 'hint'].includes(t);
+}
+
+function renderAlarmsEventsTreeNode(node, container) {
+  if (isAlarmsEventsLeafType(node?.type)) return;
+  const canExpand = ['folder', 'alarms_root', 'alarm_group', 'alarm_site', 'event_logging_root', 'event_connection', 'audio_files_root'].includes(String(node.type || ''));
+  const expanded = state.alarmsEventsExpanded?.has?.(node.id);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tree-item';
+  btn.classList.toggle('is-active', state.alarmsEventsSelectedNodeId === node.id);
+
+  const twisty = document.createElement('span');
+  twisty.className = 'twisty';
+  twisty.classList.toggle('is-empty', !canExpand);
+  twisty.textContent = canExpand ? (expanded ? '−' : '+') : '';
+  if (canExpand) {
+    twisty.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!state.alarmsEventsExpanded) state.alarmsEventsExpanded = new Set();
+      if (state.alarmsEventsExpanded.has(node.id)) state.alarmsEventsExpanded.delete(node.id);
+      else state.alarmsEventsExpanded.add(node.id);
+      renderAlarmsEventsTree();
+    });
+  }
+
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.textContent = node.label;
+
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  if (node.type === 'event_connection') {
+    const n = Array.isArray(node.children) ? node.children.length : 0;
+    meta.textContent = n ? `${n} event(s)` : '';
+  } else if (node.type === 'audio_files_root') {
+    const n = getAlarmAudioFiles(state.alarmsConfig || {}).length;
+    meta.textContent = n ? `${n} file(s)` : '';
+  }
+
+  btn.appendChild(twisty);
+  btn.appendChild(label);
+  btn.appendChild(meta);
+
+  btn.addEventListener('click', () => {
+    state.alarmsEventsSelectedNodeId = node.id;
+    renderAlarmsEventsTree();
+  });
+
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    state.alarmsEventsSelectedNodeId = node.id;
+    renderAlarmsEventsTree();
+
+    const items = [];
+
+    if (node.type === 'alarms_root') {
+      items.push({ label: 'Add Group…', onClick: () => addAlarmGroupInteractive() });
+      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal() });
+      items.push('sep');
+    }
+
+    if (node.type === 'alarm_group') {
+      items.push({ label: 'Add Site…', onClick: () => addAlarmSiteInteractive(String(node.meta?.group || node.label || '')) });
+      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || node.label || '') }) });
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
+      items.push('sep');
+    }
+
+    if (node.type === 'alarm_site') {
+      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || ''), site: String(node.meta?.site || '') }) });
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
+      items.push('sep');
+    }
+
+    if (node.type === 'alarm') {
+      const aid = String(node.meta?.alarm_id || '').trim();
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
+      items.push({ label: 'Delete Alarm…', onClick: () => deleteAlarmById(aid) });
+      items.push('sep');
+    }
+
+    if (node.type === 'event_logging_root') {
+      items.push({ label: 'Add Event…', onClick: () => openNewEventModal() });
+      items.push('sep');
+    }
+
+    if (node.type === 'event_connection') {
+      const cid = String(node.meta?.connection_id || node.label || '').trim();
+      items.push({ label: 'Add Event…', onClick: () => openNewEventModal(cid) });
+      items.push('sep');
+    }
+
+    if (node.type === 'event_tag') {
+      const cid = String(node.meta?.connection_id || '').trim();
+      const name = String(node.meta?.name || node.label || '').trim();
+      const eventTag = getEffectiveTagsAll().find((t) => String(t?.connection_id || '') === cid && String(t?.name || '') === name) || {};
+      const eventLoggingEnabled = eventTag?.log_event_on_change === true;
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal({ id: `tag:${cid}::${name}`, type: 'tag', label: name, meta: { connection_id: cid, name }, children: [] }) });
+      items.push({ label: eventLoggingEnabled ? 'Delete Event…' : 'Add Event', onClick: () => setTagEventLogging(cid, name, !eventLoggingEnabled) });
+      items.push('sep');
+    }
+
+    if (node.type === 'audio_files_root') {
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
+      items.push({ label: 'Upload Audio File…', onClick: () => chooseAndUploadAlarmAudioFile() });
+      items.push('sep');
+    }
+
+    if (node.type === 'audio_file') {
+      const audioId = String(node.meta?.id || '').trim();
+      items.push({ label: 'Delete Audio File…', onClick: () => deleteAlarmAudioFileById(audioId).then((result) => { if (result) { state.alarmsEventsSelectedNodeId = 'folder:audio_files'; renderAlarmsEventsTree(); } }).catch((err) => window.alert(`Audio delete failed: ${err.message}`)) });
+      items.push('sep');
+    }
+
+    items.push({ label: 'Refresh', onClick: async () => { await loadTagsConfig().catch(() => {}); await refreshAll().catch(() => {}); renderAlarmsEventsTree(); } });
+
+    if (!items.length) return;
+    showContextMenu(e.clientX, e.clientY, items);
+  });
+
+  container.appendChild(btn);
+
+  if (canExpand && expanded) {
+    const childrenWrap = document.createElement('div');
+    childrenWrap.className = 'tree-children';
+    (node.children || []).forEach((c) => renderAlarmsEventsTreeNode(c, childrenWrap));
+    container.appendChild(childrenWrap);
+  }
+}
+
+function renderAlarmsEventsDetails(node) {
+  if (!node) return;
+
+  const isAlarmsEvents = node.id === 'folder:alarms_events';
+  const isAlarmsRoot = String(node.type || '') === 'alarms_root';
+  const isAlarmGroup = String(node.type || '') === 'alarm_group';
+  const isAlarmSite = String(node.type || '') === 'alarm_site';
+  const isAlarm = String(node.type || '') === 'alarm';
+  const isEventLoggingRoot = String(node.type || '') === 'event_logging_root';
+  const isEventConnection = String(node.type || '') === 'event_connection';
+  const isEventTag = String(node.type || '') === 'event_tag';
+  const isAudioFilesRoot = String(node.type || '') === 'audio_files_root';
+  const isAudioFile = String(node.type || '') === 'audio_file';
+
+  const columns = (isEventConnection || isEventTag)
+    ? ['Name', 'Source', 'Datatype', 'Writable', 'Enabled']
+    : (isAudioFilesRoot || isAudioFile)
+    ? ['Name', 'ID', 'Path']
+    : (isAlarmsRoot || isAlarmGroup)
+    ? ['Name', 'Audible', 'Audio']
+    : (isAlarmSite || isAlarm)
+    ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Audible', 'Audio', 'Group', 'Site']
+    : ['Name'];
+
+  const colCount = columns.length;
+
+  if (els.alarmsEventsChildrenTable) {
+    const headRow = els.alarmsEventsChildrenTable.querySelector('thead tr');
+    if (headRow) {
+      headRow.textContent = '';
+      columns.forEach((c) => {
+        const th = document.createElement('th');
+        th.textContent = c;
+        headRow.appendChild(th);
+      });
+    }
+  }
+
+  if (!els.alarmsEventsChildrenTbody) return;
+  els.alarmsEventsChildrenTbody.textContent = '';
+
+  if (els.alarmsEventsListHint) {
+    const label = String(node?.label || '').trim();
+    const title = label ? `Children · ${label}` : 'Children';
+    els.alarmsEventsListHint.textContent = title;
+  }
+
+  const addCell = (tr, text, dim = false) => {
+    const td = document.createElement('td');
+    td.textContent = String(text ?? '');
+    if (dim) td.className = 'audit-cell-dim';
+    tr.appendChild(td);
+    return td;
+  };
+  const addBadgeCell = (tr, text, className) => {
+    const td = document.createElement('td');
+    const span = document.createElement('span');
+    span.className = `badge ${className || ''}`.trim();
+    span.textContent = String(text ?? '');
+    td.appendChild(span);
+    tr.appendChild(td);
+    return td;
+  };
+
+  const rows = (isAlarm || isEventTag || isAudioFile) ? [node] : (Array.isArray(node.children) ? node.children : []);
+
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = colCount;
+    td.className = 'audit-cell-dim';
+    td.textContent = 'No items.';
+    tr.appendChild(td);
+    els.alarmsEventsChildrenTbody.appendChild(tr);
+    renderAlarmsEventsProperties(null, node);
+    return;
+  }
+
+  const rowIds = rows.map((r) => String(r?.id || '')).filter(Boolean);
+  const selId = String(state.alarmsEventsSelectedChildId || '').trim();
+  if (!selId || !rowIds.includes(selId)) {
+    state.alarmsEventsSelectedChildId = rowIds[0] || '';
+  }
+
+  let selectedRow = rows.find((r) => String(r?.id || '') === String(state.alarmsEventsSelectedChildId || '')) || null;
+
+  rows.forEach((c) => {
+    const tr = document.createElement('tr');
+    const type = String(c?.type || '');
+    const childId = String(c?.id || '');
+    if (childId) tr.dataset.rowId = childId;
+    tr.classList.toggle('is-selected', childId && childId === String(state.alarmsEventsSelectedChildId || ''));
+
+    if ((isEventConnection || isEventTag) && type === 'event_tag') {
+      const meta = c?.meta || {};
+      const conn = String(meta?.connection_id || '').trim();
+      const name = String(meta?.name || c?.label || '').trim();
+      const tagRow = getEffectiveTagsAll().find((t) => String(t?.connection_id || '') === conn && String(t?.name || '') === name) || {};
+      addCell(tr, name, false);
+      addCell(tr, `${conn}:${name}`, false);
+      addCell(tr, String(tagRow?.datatype || ''), !String(tagRow?.datatype || '').trim());
+      addBadgeCell(tr, tagRow?.writable === true ? 'WRITABLE' : 'READ', tagRow?.writable === true ? 'warn' : 'ok');
+      addBadgeCell(tr, tagRow?.log_event_on_change === true ? 'ENABLED' : 'DISABLED', tagRow?.log_event_on_change === true ? 'ok' : 'bad');
+    } else if ((isAudioFilesRoot || isAudioFile) && type === 'audio_file') {
+      const meta = c?.meta || {};
+      addCell(tr, String(meta?.name || c?.label || ''), false);
+      addCell(tr, String(meta?.id || '').trim(), !String(meta?.id || '').trim());
+      addCell(tr, String(meta?.path || '').trim(), !String(meta?.path || '').trim());
+    } else if ((isAlarmsRoot || isAlarmGroup) && (type === 'alarm_group' || type === 'alarm_site')) {
+      const cfg = state.alarmsConfig || {};
+      const group = type === 'alarm_group' ? String(c?.meta?.group || c?.label || '') : String(c?.meta?.group || '');
+      const site = type === 'alarm_site' ? String(c?.meta?.site || c?.label || '') : '';
+      const target = type === 'alarm_group' ? findAlarmGroupConfig(cfg, group) : findAlarmSiteConfig(cfg, group, site);
+      const effective = type === 'alarm_group'
+        ? { ...getInheritedAudioForScope(cfg, 'group', group, ''), ...(target || {}) }
+        : resolveInheritedAlarmAudio(cfg, group, site);
+      addCell(tr, String(c?.label || c?.id || ''), false);
+      addBadgeCell(tr, effective?.audible_enabled ? 'ENABLED' : 'DISABLED', effective?.audible_enabled ? 'ok' : 'bad');
+      addCell(tr, effective?.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none', !effective?.audio_file);
+    } else if ((isAlarmSite || isAlarm) && type === 'alarm') {
+      const cfg = state.alarmsConfig || {};
+      const meta = c?.meta || {};
+      const alarmId = String(meta?.alarm_id || '').trim();
+      const alarmConfig = (Array.isArray(cfg?.alarms) ? cfg.alarms : []).find((a) => String(a?.id || '').trim() === alarmId) || null;
+      const effectiveAudio = resolveAlarmAudio(cfg, alarmConfig || { group: meta?.group, site: meta?.site });
+      const src = meta?.source || {};
+      const stateStr = (meta?.enabled === false) ? 'DISABLED' : (meta?.active ? 'ACTIVE' : 'OK');
+      addCell(tr, String(c?.label || meta?.alarm_id || ''), false);
+      addBadgeCell(tr, meta?.severity == null ? '' : `${severityLabel(meta.severity)} ${meta.severity}`, severityClass(meta.severity));
+      addCell(tr, `${String(src?.connection_id || '')}:${String(src?.tag || '')}`.replace(/^:$/, ''), !(src?.connection_id || src?.tag));
+      addBadgeCell(tr, stateStr, meta?.enabled === false ? 'bad' : (meta?.active ? 'warn' : 'ok'));
+      addBadgeCell(tr, meta?.acked ? 'ACKED' : 'UNACKED', meta?.acked ? 'ok' : (meta?.active ? 'warn' : ''));
+      addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
+      addBadgeCell(tr, effectiveAudio.audible_enabled ? 'ENABLED' : 'DISABLED', effectiveAudio.audible_enabled ? 'ok' : 'bad');
+      addCell(tr, effectiveAudio.audio_file ? alarmAudioFileText(effectiveAudio.audio_file, cfg) : 'none', !effectiveAudio.audio_file);
+      addCell(tr, String(meta?.group || ''), !String(meta?.group || '').trim());
+      addCell(tr, String(meta?.site || ''), !String(meta?.site || '').trim());
+    } else {
+      addCell(tr, String(c?.label || c?.id || ''), false);
+    }
+
+    tr.style.cursor = 'default';
+
+    tr.addEventListener('click', () => {
+      const trs = Array.from(els.alarmsEventsChildrenTbody.querySelectorAll('tr'));
+      trs.forEach((r) => r.classList.remove('is-selected'));
+      tr.classList.add('is-selected');
+      state.alarmsEventsSelectedChildId = childId;
+      renderAlarmsEventsProperties(c, node);
+    });
+
+    tr.addEventListener('dblclick', () => {
+      if (String(c?.type || '') === 'event_connection') {
+        state.alarmsEventsSelectedNodeId = String(c?.id || '');
+        renderAlarmsEventsTree();
+        renderAlarmsEventsDetails(c);
+        return;
+      }
+      if (String(c?.type || '') === 'event_tag') {
+        const cid = String(c?.meta?.connection_id || '').trim();
+        const name = String(c?.meta?.name || c?.label || '').trim();
+        openWorkspaceItemModal({ id: `tag:${cid}::${name}`, type: 'tag', label: name, meta: { connection_id: cid, name }, children: [] });
+        return;
+      }
+      if (String(c?.type || '') === 'audio_file') {
+        state.alarmsEventsSelectedNodeId = String(c?.id || '');
+        renderAlarmsEventsTree();
+        return;
+      }
+      if (isAlarmsEvents || isAlarmsRoot || isAlarmGroup || isAlarmSite || isAlarm || isEventLoggingRoot || isEventConnection || isEventTag || isAudioFilesRoot || isAudioFile) {
+        openWorkspaceItemModal(c);
+      }
+    });
+
+    els.alarmsEventsChildrenTbody.appendChild(tr);
+  });
+
+  selectedRow = rows.find((r) => String(r?.id || '') === String(state.alarmsEventsSelectedChildId || '')) || selectedRow;
+  renderAlarmsEventsProperties(selectedRow, node);
+}
+
+function renderAlarmsEventsProperties(item, parentNode) {
+  const tbody = els.alarmsEventsPropsTbody;
+  if (tbody) tbody.textContent = '';
+  if (els.alarmsEventsPropsJson) els.alarmsEventsPropsJson.textContent = '';
+  if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = '';
+  if (els.alarmsEventsPropsEditor) {
+    els.alarmsEventsPropsEditor.textContent = '';
+    els.alarmsEventsPropsEditor.style.display = 'none';
+  }
+  if (els.alarmsEventsPropsTable) els.alarmsEventsPropsTable.style.display = '';
+
+  const delBtn = els.alarmsEventsPropsDeleteBtn;
+  if (delBtn) delBtn.style.display = 'none';
+  if (delBtn) delBtn.onclick = null;
+  if (delBtn) delBtn.textContent = 'Delete…';
+
+  const addPropRow = (k, v) => {
+    if (!tbody) return;
+    const tr = document.createElement('tr');
+    const tdK = document.createElement('td');
+    const tdV = document.createElement('td');
+    tdK.textContent = String(k || '');
+    tdK.className = 'audit-cell-dim';
+    tdV.textContent = String(v ?? '');
+    tr.appendChild(tdK);
+    tr.appendChild(tdV);
+    tbody.appendChild(tr);
+  };
+
+  const setHint = (text) => {
+    if (els.alarmsEventsPropsHint) els.alarmsEventsPropsHint.textContent = String(text || 'Properties');
+  };
+
+  const setStatus = (text) => {
+    if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = String(text || '');
+  };
+
+  const showEditor = () => {
+    if (els.alarmsEventsPropsEditor) els.alarmsEventsPropsEditor.style.display = 'block';
+    if (els.alarmsEventsPropsTable) els.alarmsEventsPropsTable.style.display = 'none';
+  };
+
+  if (!item) {
+    const label = String(parentNode?.label || '').trim();
+    setHint(label ? `Properties · ${label}` : 'Properties');
+    addPropRow('Selection', 'Select an item above to view properties.');
+    return;
+  }
+
+  const type = String(item?.type || '').trim();
+  const label = String(item?.label || item?.id || '').trim();
+  setHint(label ? `Properties · ${label}` : 'Properties');
+
+  const cfg = state.alarmsConfig || {};
+
+  const raw = (() => {
+    try { return JSON.stringify(item, null, 2); } catch { return String(item || ''); }
+  })();
+  if (els.alarmsEventsPropsJson) els.alarmsEventsPropsJson.textContent = raw;
+
+  if (type === 'alarm') {
+    const alarmId = String(item?.meta?.alarm_id || '').trim();
+    const alarmCfg = (Array.isArray(cfg?.alarms) ? cfg.alarms : []).find((a) => String(a?.id || '').trim() === alarmId) || null;
+    const effectiveAudio = resolveAlarmAudio(cfg, alarmCfg || item?.meta || {});
+
+    // Inline editor (replaces modal behavior for this tab)
+    showEditor();
+    const host = els.alarmsEventsPropsEditor;
+    if (!host) return;
+
+    const cur = alarmCfg || {};
+
+    const form = document.createElement('div');
+    form.className = 'form';
+    form.style.maxWidth = '900px';
+
+    const addRow = (labelText, inputEl) => {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      const lab = document.createElement('label');
+      lab.textContent = labelText;
+      row.appendChild(lab);
+      row.appendChild(inputEl);
+      form.appendChild(row);
+      return inputEl;
+    };
+
+    const idBox = document.createElement('input');
+    idBox.type = 'text';
+    idBox.value = alarmId;
+    idBox.disabled = true;
+    addRow('Alarm ID', idBox);
+
+    const nameBox = document.createElement('input');
+    nameBox.type = 'text';
+    nameBox.value = String(cur?.name || item?.label || alarmId);
+    addRow('Name', nameBox);
+
+    const enabledBox = document.createElement('input');
+    enabledBox.type = 'checkbox';
+    enabledBox.checked = (cur?.enabled !== false);
+    const enabledWrap = document.createElement('div');
+    enabledWrap.className = 'row-actions';
+    enabledWrap.style.justifyContent = 'flex-start';
+    const enabledLab = document.createElement('label');
+    enabledLab.style.display = 'flex';
+    enabledLab.style.alignItems = 'center';
+    enabledLab.style.gap = '8px';
+    enabledLab.appendChild(enabledBox);
+    enabledLab.appendChild(document.createTextNode('Enabled'));
+    enabledWrap.appendChild(enabledLab);
+    addRow('Enabled', enabledWrap);
+
+    const sevBox = document.createElement('input');
+    sevBox.type = 'number';
+    sevBox.step = '1';
+    sevBox.value = String(Number(cur?.severity ?? item?.meta?.severity ?? 500) || 0);
+    addRow('Severity', sevBox);
+
+    const groupSel = document.createElement('select');
+    const groupWant = String(cur?.group || item?.meta?.group || '').trim();
+    const groups = alarmGroupsSorted(cfg);
+    const groupNames = groups.map((g) => String(g?.name || '').trim()).filter(Boolean);
+    groupSel.innerHTML = [{ v: '', l: 'Unassigned' }]
+      .concat(groupNames.map((g) => ({ v: g, l: g })))
+      .map((o) => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.l)}</option>`).join('');
+    if (groupWant && !groupNames.some((g) => g.toLowerCase() === groupWant.toLowerCase())) {
+      const opt = document.createElement('option');
+      opt.value = groupWant;
+      opt.textContent = `${groupWant} (missing)`;
+      groupSel.appendChild(opt);
+    }
+    groupSel.value = groupWant;
+    addRow('Group', groupSel);
+
+    const siteSel = document.createElement('select');
+    const siteWant = String(cur?.site || item?.meta?.site || '').trim();
+    const fillSites = (groupName, want) => {
+      const g = groupName ? findAlarmGroupConfig(cfg, groupName) : null;
+      const sites = Array.isArray(g?.sites) ? g.sites : [];
+      const names = sites.map((s) => String(s?.name || '').trim()).filter(Boolean)
+        .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+      siteSel.textContent = '';
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = 'Unassigned';
+      siteSel.appendChild(none);
+      names.forEach((n) => {
+        const opt = document.createElement('option');
+        opt.value = n;
+        opt.textContent = n;
+        siteSel.appendChild(opt);
+      });
+      if (want && !names.some((n) => n.toLowerCase() === want.toLowerCase())) {
+        const opt = document.createElement('option');
+        opt.value = want;
+        opt.textContent = `${want} (missing)`;
+        siteSel.appendChild(opt);
+      }
+      siteSel.value = want || '';
+      siteSel.disabled = !groupName;
+    };
+    fillSites(groupWant, siteWant);
+    groupSel.addEventListener('change', () => {
+      fillSites(String(groupSel.value || '').trim(), '');
+    });
+    addRow('Site', siteSel);
+
+    const audibleMode = document.createElement('select');
+    audibleMode.innerHTML = [
+      { v: 'inherit', l: 'Inherit' },
+      { v: 'enable', l: 'Enable' },
+      { v: 'disable', l: 'Disable' }
+    ].map((o) => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.l)}</option>`).join('');
+    const hasOverride = Object.prototype.hasOwnProperty.call(cur || {}, 'audible_enabled');
+    audibleMode.value = hasOverride ? (cur.audible_enabled ? 'enable' : 'disable') : 'inherit';
+    addRow('Audible', audibleMode);
+
+    const audioSel = document.createElement('select');
+    const audioFiles = getAlarmAudioFiles(cfg || {});
+    const audioOpts = [{ v: '', l: 'Inherit' }].concat(audioFiles.map((f) => ({
+      v: String(f?.id || '').trim(),
+      l: String(f?.name || f?.id || '').trim()
+    })).filter((o) => o.v));
+    audioSel.innerHTML = audioOpts.map((o) => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.l)}</option>`).join('');
+    audioSel.value = String(cur?.audio_file || '');
+    addRow('Audio File', audioSel);
+
+    const effectiveLine = document.createElement('div');
+    effectiveLine.className = 'hint';
+    effectiveLine.style.marginTop = '6px';
+    effectiveLine.textContent = `Effective: audible=${effectiveAudio.audible_enabled ? 'enabled' : 'disabled'} · audio=${effectiveAudio.audio_file ? alarmAudioFileText(effectiveAudio.audio_file, cfg) : 'none'}`;
+    form.appendChild(effectiveLine);
+
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn primary';
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save';
+    const revertBtn = document.createElement('button');
+    revertBtn.className = 'btn';
+    revertBtn.type = 'button';
+    revertBtn.textContent = 'Revert';
+    actions.appendChild(saveBtn);
+    actions.appendChild(revertBtn);
+    form.appendChild(actions);
+
+    const doReload = async () => {
+      await loadOpcbridgeAlarmsConfig().catch(() => null);
+      await refreshAll().catch(() => {});
+      renderAlarmsEventsTree();
+    };
+
+    saveBtn.addEventListener('click', async () => {
+      setStatus('Saving…');
+      try {
+        const nextCfg = await loadOpcbridgeAlarmsConfig();
+        if (!Array.isArray(nextCfg.alarms)) nextCfg.alarms = [];
+        const idx = nextCfg.alarms.findIndex((a) => String(a?.id || '').trim() === alarmId);
+        if (idx < 0) throw new Error(`Alarm '${alarmId}' not found in config.`);
+
+        const next = { ...(nextCfg.alarms[idx] || {}) };
+        next.name = String(nameBox.value || '').trim() || alarmId;
+        next.enabled = Boolean(enabledBox.checked);
+        next.severity = Math.trunc(Number(sevBox.value ?? 0) || 0);
+        next.group = String(groupSel.value || '').trim();
+        next.site = String(siteSel.value || '').trim();
+        if (next.site && !next.group) throw new Error('Group is required when Site is set.');
+        if (next.group && !findAlarmGroupConfig(nextCfg, next.group)) throw new Error(`Group '${next.group}' does not exist.`);
+        if (next.site && !findAlarmSiteConfig(nextCfg, next.group, next.site)) throw new Error(`Site '${next.site}' does not exist under group '${next.group}'.`);
+
+        const aud = String(audibleMode.value || 'inherit');
+        if (aud === 'inherit') delete next.audible_enabled;
+        else next.audible_enabled = (aud === 'enable');
+
+        const af = String(audioSel.value || '').trim();
+        if (!af) delete next.audio_file;
+        else next.audio_file = af;
+
+        nextCfg.alarms[idx] = next;
+        await saveOpcbridgeAlarmsConfig(nextCfg);
+        await doReload();
+        setStatus('Saved.');
+      } catch (err) {
+        setStatus(`Save failed: ${err.message}`);
+      }
+    });
+
+    revertBtn.addEventListener('click', async () => {
+      setStatus('Reverting…');
+      await doReload();
+      setStatus('Reverted.');
+    });
+
+    host.appendChild(form);
+
+    if (delBtn) {
+      delBtn.style.display = '';
+      delBtn.onclick = () => deleteAlarmById(alarmId);
+    }
+    return;
+  }
+
+  if (type === 'alarm_group' || type === 'alarm_site') {
+    const group = String(item?.meta?.group || item?.label || '').trim();
+    const site = type === 'alarm_site' ? String(item?.meta?.site || item?.label || '').trim() : '';
+    const effective = (type === 'alarm_group')
+      ? { ...getInheritedAudioForScope(cfg, 'group', group, ''), ...(findAlarmGroupConfig(cfg, group) || {}) }
+      : resolveInheritedAlarmAudio(cfg, group, site);
+
+    addPropRow('Type', type === 'alarm_group' ? 'Alarm Group' : 'Alarm Site');
+    addPropRow('Group', group);
+    if (type === 'alarm_site') addPropRow('Site', site);
+    addPropRow('Audible (effective)', effective?.audible_enabled ? 'enabled' : 'disabled');
+    addPropRow('Audio file (effective)', effective?.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none');
+
+    return;
+  }
+
+  if (type === 'event_tag') {
+    const conn = String(item?.meta?.connection_id || '').trim();
+    const name = String(item?.meta?.name || item?.label || '').trim();
+    const tagRow = getEffectiveTagsAll().find((t) => String(t?.connection_id || '') === conn && String(t?.name || '') === name) || {};
+
+    addPropRow('Type', 'Event');
+    addPropRow('Connection', conn);
+    addPropRow('Tag', name);
+    addPropRow('Datatype', String(tagRow?.datatype || ''));
+    addPropRow('Writable', tagRow?.writable === true ? 'yes' : 'no');
+    addPropRow('Event logging', tagRow?.log_event_on_change === true ? 'enabled' : 'disabled');
+
+    if (delBtn) {
+      delBtn.style.display = '';
+      delBtn.textContent = (tagRow?.log_event_on_change === true) ? 'Delete Event…' : 'Add Event…';
+      delBtn.onclick = () => setTagEventLogging(conn, name, !(tagRow?.log_event_on_change === true));
+    }
+    return;
+  }
+
+  if (type === 'audio_file') {
+    const audioId = String(item?.meta?.id || '').trim();
+    addPropRow('Type', 'Audio File');
+    addPropRow('ID', audioId);
+    addPropRow('Name', String(item?.meta?.name || item?.label || ''));
+    addPropRow('Path', String(item?.meta?.path || ''));
+
+    if (delBtn) {
+      delBtn.style.display = '';
+      delBtn.textContent = 'Delete…';
+      delBtn.onclick = () => deleteAlarmAudioFileById(audioId).then((ok) => { if (ok) renderAlarmsEventsTree(); }).catch((err) => window.alert(`Audio delete failed: ${err.message}`));
+    }
+    return;
+  }
+
+  if (type === 'event_connection') {
+    const conn = String(item?.meta?.connection_id || item?.label || '').trim();
+    const count = Array.isArray(item?.children) ? item.children.length : 0;
+    addPropRow('Type', 'Event Connection');
+    addPropRow('Connection', conn);
+    addPropRow('Events', String(count));
+    return;
+  }
+
+  addPropRow('Type', type || '(unknown)');
+  addPropRow('ID', String(item?.id || ''));
+}
+
+function renderAlarmsEventsTree() {
+  if (!els.alarmsEventsTreeView) return;
+  els.alarmsEventsTreeView.textContent = '';
+
+  const tree = buildAlarmsEventsTree();
+  state.alarmsEventsTreeRoot = tree;
+  renderAlarmsEventsTreeNode(tree, els.alarmsEventsTreeView);
+
+  if (els.alarmsEventsTreeNote) {
+    const alarmCount = Array.isArray(state.alarmsConfig?.alarms) ? state.alarmsConfig.alarms.length : 0;
+    const eventCount = getEffectiveTagsAll().filter((t) => t?.log_event_on_change === true).length;
+    const audioCount = getAlarmAudioFiles(state.alarmsConfig || {}).length;
+    els.alarmsEventsTreeNote.textContent = `Alarms: ${alarmCount} · Events: ${eventCount} · Audio: ${audioCount}`;
+  }
+
+  const selectedId = String(state.alarmsEventsSelectedNodeId || '').trim();
+  const selected = selectedId ? findAlarmsEventsNodeById(tree, selectedId) : null;
+  if (selected && !isAlarmsEventsLeafType(selected.type)) {
+    renderAlarmsEventsDetails(selected);
+    return;
+  }
+
+  state.alarmsEventsSelectedNodeId = 'folder:alarms';
+  const fallback = findAlarmsEventsNodeById(tree, state.alarmsEventsSelectedNodeId) || tree;
+  renderAlarmsEventsDetails(fallback);
 }
 
 // ---------------- Workspace tree ----------------
@@ -4772,8 +6972,12 @@ function buildTree() {
   root.children.push(alarmsEvents);
 
   const alarmsRoot = { id: 'folder:alarms', type: 'alarms_root', label: 'Alarms', children: [] };
+  const eventLoggingRoot = { id: 'folder:events', type: 'event_logging_root', label: 'Events', children: [] };
+  const audioFilesRoot = { id: 'folder:audio_files', type: 'audio_files_root', label: 'Audio Files', children: [] };
 
   alarmsEvents.children.push(alarmsRoot);
+  alarmsEvents.children.push(eventLoggingRoot);
+  alarmsEvents.children.push(audioFilesRoot);
 
   const connItems = state.connFiles.slice().sort((a, b) => String(a?.path || '').localeCompare(String(b?.path || '')));
   connItems.forEach((f) => {
@@ -4914,11 +7118,67 @@ function buildTree() {
     alarmsRoot.children.push(g);
   });
 
+  const eventTags = getEffectiveTagsAll()
+    .filter((t) => t?.log_event_on_change === true)
+    .slice()
+    .sort((a, b) => {
+      return `${String(a?.connection_id || '')}:${String(a?.name || '')}`.localeCompare(`${String(b?.connection_id || '')}:${String(b?.name || '')}`, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  const eventConnections = new Map();
+  eventTags.forEach((t) => {
+    const conn = String(t?.connection_id || '').trim();
+    const name = String(t?.name || '').trim();
+    if (!conn || !name) return;
+    let connNode = eventConnections.get(conn);
+    if (!connNode) {
+      connNode = {
+        id: `event_connection:${conn}`,
+        type: 'event_connection',
+        label: conn,
+        meta: { connection_id: conn },
+        children: []
+      };
+      eventConnections.set(conn, connNode);
+    }
+    connNode.children.push({
+      id: `event_tag:${conn}::${name}`,
+      type: 'event_tag',
+      label: name,
+      meta: { connection_id: conn, name, enabled: t?.log_event_on_change === true },
+      children: []
+    });
+  });
+  Array.from(eventConnections.values())
+    .sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }))
+    .forEach((node) => {
+      node.children = (node.children || []).slice().sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
+      eventLoggingRoot.children.push(node);
+    });
+  if (!eventLoggingRoot.children.length) {
+    eventLoggingRoot.children.push({ id: 'hint:no_events', type: 'hint', label: '(no events configured)', children: [] });
+  }
+
+  getAlarmAudioFiles(cfg || {}).forEach((f) => {
+    const id = String(f?.id || '').trim();
+    if (!id) return;
+    audioFilesRoot.children.push({
+      id: `audio_file:${id}`,
+      type: 'audio_file',
+      label: String(f?.name || id),
+      meta: { ...f, id },
+      children: []
+    });
+  });
+  audioFilesRoot.children.sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  if (!audioFilesRoot.children.length) {
+    audioFilesRoot.children.push({ id: 'hint:no_audio_files', type: 'hint', label: '(no audio files configured)', children: [] });
+  }
+
   return root;
 }
 
 function renderTreeNode(node, container) {
-  const canExpand = ['project', 'folder', 'device', 'alarms_root', 'alarm_group', 'alarm_site'].includes(String(node.type || ''));
+  const canExpand = ['project', 'folder', 'device', 'alarms_root', 'alarm_group', 'alarm_site', 'event_logging_root', 'event_connection', 'audio_files_root'].includes(String(node.type || ''));
   const expanded = state.expanded.has(node.id);
 
   const btn = document.createElement('button');
@@ -4949,6 +7209,12 @@ function renderTreeNode(node, container) {
   if (node.type === 'device') {
     const n = tagCountForConn(node.meta?.connection_id);
     meta.textContent = n ? `${n} tag(s)` : '';
+  } else if (node.type === 'event_connection') {
+    const n = Array.isArray(node.children) ? node.children.length : 0;
+    meta.textContent = n ? `${n} event(s)` : '';
+  } else if (node.type === 'audio_files_root') {
+    const n = getAlarmAudioFiles(state.alarmsConfig || {}).length;
+    meta.textContent = n ? `${n} file(s)` : '';
   }
 
   btn.appendChild(twisty);
@@ -4990,11 +7256,13 @@ function renderTreeNode(node, container) {
     if (node.type === 'alarm_group') {
       items.push({ label: 'Add Site…', onClick: () => addAlarmSiteInteractive(String(node.meta?.group || node.label || '')) });
       items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || node.label || '') }) });
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push('sep');
     }
 
     if (node.type === 'alarm_site') {
       items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || ''), site: String(node.meta?.site || '') }) });
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push('sep');
     }
 
@@ -5002,6 +7270,41 @@ function renderTreeNode(node, container) {
       const aid = String(node.meta?.alarm_id || '').trim();
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Delete Alarm…', onClick: () => deleteAlarmById(aid) });
+      items.push('sep');
+    }
+
+    if (node.type === 'event_logging_root') {
+      items.push({ label: 'Add Event…', onClick: () => openNewEventModal() });
+      items.push({ label: 'Refresh', onClick: () => refreshAll().catch((err) => window.alert(`Refresh failed: ${err.message}`)) });
+      items.push('sep');
+    }
+
+    if (node.type === 'event_connection') {
+      const cid = String(node.meta?.connection_id || node.label || '').trim();
+      items.push({ label: 'Add Event…', onClick: () => openNewEventModal(cid) });
+      items.push({ label: 'Refresh', onClick: () => refreshAll().catch((err) => window.alert(`Refresh failed: ${err.message}`)) });
+      items.push('sep');
+    }
+
+    if (node.type === 'event_tag') {
+      const cid = String(node.meta?.connection_id || '').trim();
+      const name = String(node.meta?.name || node.label || '').trim();
+      const eventTag = getEffectiveTagsAll().find((t) => String(t?.connection_id || '') === cid && String(t?.name || '') === name) || {};
+      const eventLoggingEnabled = eventTag?.log_event_on_change === true;
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal({ id: `tag:${cid}::${name}`, type: 'tag', label: name, meta: { connection_id: cid, name }, children: [] }) });
+      items.push({ label: eventLoggingEnabled ? 'Delete Event…' : 'Add Event', onClick: () => setTagEventLogging(cid, name, !eventLoggingEnabled) });
+      items.push('sep');
+    }
+
+    if (node.type === 'audio_files_root') {
+      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
+      items.push({ label: 'Upload Audio File…', onClick: () => chooseAndUploadAlarmAudioFile() });
+      items.push('sep');
+    }
+
+    if (node.type === 'audio_file') {
+      const audioId = String(node.meta?.id || '').trim();
+      items.push({ label: 'Delete Audio File…', onClick: () => deleteAlarmAudioFileById(audioId).then((result) => { if (result) { state.selectedNodeId = 'folder:audio_files'; renderWorkspaceTree(); } }).catch((err) => window.alert(`Audio delete failed: ${err.message}`)) });
       items.push('sep');
     }
 
@@ -5057,11 +7360,22 @@ function renderWorkspaceDetails(node) {
   const isAlarmGroup = String(node.type || '') === 'alarm_group';
   const isAlarmSite = String(node.type || '') === 'alarm_site';
   const isAlarm = String(node.type || '') === 'alarm';
+  const isEventLoggingRoot = String(node.type || '') === 'event_logging_root';
+  const isEventConnection = String(node.type || '') === 'event_connection';
+  const isEventTag = String(node.type || '') === 'event_tag';
+  const isAudioFilesRoot = String(node.type || '') === 'audio_files_root';
+  const isAudioFile = String(node.type || '') === 'audio_file';
 
-  // ---------- Alarms & Events (alarms only for now) ----------
-  if (isAlarmsEvents || isAlarmsRoot || isAlarmGroup || isAlarmSite || isAlarm) {
-    const columns = (isAlarmSite || isAlarm)
-      ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Group', 'Site']
+  // ---------- Alarms & Events ----------
+  if (isAlarmsEvents || isAlarmsRoot || isAlarmGroup || isAlarmSite || isAlarm || isEventLoggingRoot || isEventConnection || isEventTag || isAudioFilesRoot || isAudioFile) {
+    const columns = (isEventConnection || isEventTag)
+      ? ['Name', 'Source', 'Datatype', 'Writable', 'Enabled']
+      : (isAudioFilesRoot || isAudioFile)
+      ? ['Name', 'ID', 'Path']
+      : (isAlarmsRoot || isAlarmGroup)
+      ? ['Name', 'Audible', 'Audio']
+      : (isAlarmSite || isAlarm)
+      ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Audible', 'Audio', 'Group', 'Site']
       : ['Name'];
 
     const colCount = columns.length;
@@ -5089,8 +7403,17 @@ function renderWorkspaceDetails(node) {
       tr.appendChild(td);
       return td;
     };
+    const addBadgeCell = (tr, text, className) => {
+      const td = document.createElement('td');
+      const span = document.createElement('span');
+      span.className = `badge ${className || ''}`.trim();
+      span.textContent = String(text ?? '');
+      td.appendChild(span);
+      tr.appendChild(td);
+      return td;
+    };
 
-    const rows = isAlarm ? [node] : (Array.isArray(node.children) ? node.children : []);
+    const rows = (isAlarm || isEventTag || isAudioFile) ? [node] : (Array.isArray(node.children) ? node.children : []);
 
     if (!rows.length) {
       const tr = document.createElement('tr');
@@ -5107,16 +7430,48 @@ function renderWorkspaceDetails(node) {
       const tr = document.createElement('tr');
       const type = String(c?.type || '');
 
-      if ((isAlarmSite || isAlarm) && type === 'alarm') {
+      if ((isEventConnection || isEventTag) && type === 'event_tag') {
         const meta = c?.meta || {};
+        const conn = String(meta?.connection_id || '').trim();
+        const name = String(meta?.name || c?.label || '').trim();
+        const tagRow = getEffectiveTagsAll().find((t) => String(t?.connection_id || '') === conn && String(t?.name || '') === name) || {};
+        addCell(tr, name, false);
+        addCell(tr, `${conn}:${name}`, false);
+        addCell(tr, String(tagRow?.datatype || ''), !String(tagRow?.datatype || '').trim());
+        addBadgeCell(tr, tagRow?.writable === true ? 'WRITABLE' : 'READ', tagRow?.writable === true ? 'warn' : 'ok');
+        addBadgeCell(tr, tagRow?.log_event_on_change === true ? 'ENABLED' : 'DISABLED', tagRow?.log_event_on_change === true ? 'ok' : 'bad');
+      } else if ((isAudioFilesRoot || isAudioFile) && type === 'audio_file') {
+        const meta = c?.meta || {};
+        addCell(tr, String(meta?.name || c?.label || ''), false);
+        addCell(tr, String(meta?.id || '').trim(), !String(meta?.id || '').trim());
+        addCell(tr, String(meta?.path || '').trim(), !String(meta?.path || '').trim());
+      } else if ((isAlarmsRoot || isAlarmGroup) && (type === 'alarm_group' || type === 'alarm_site')) {
+        const cfg = state.alarmsConfig || {};
+        const group = type === 'alarm_group' ? String(c?.meta?.group || c?.label || '') : String(c?.meta?.group || '');
+        const site = type === 'alarm_site' ? String(c?.meta?.site || c?.label || '') : '';
+        const target = type === 'alarm_group' ? findAlarmGroupConfig(cfg, group) : findAlarmSiteConfig(cfg, group, site);
+        const effective = type === 'alarm_group'
+          ? { ...getInheritedAudioForScope(cfg, 'group', group, ''), ...(target || {}) }
+          : resolveInheritedAlarmAudio(cfg, group, site);
+        addCell(tr, String(c?.label || c?.id || ''), false);
+        addBadgeCell(tr, effective?.audible_enabled ? 'ENABLED' : 'DISABLED', effective?.audible_enabled ? 'ok' : 'bad');
+        addCell(tr, effective?.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none', !effective?.audio_file);
+      } else if ((isAlarmSite || isAlarm) && type === 'alarm') {
+        const cfg = state.alarmsConfig || {};
+        const meta = c?.meta || {};
+        const alarmId = String(meta?.alarm_id || '').trim();
+        const alarmConfig = (Array.isArray(cfg?.alarms) ? cfg.alarms : []).find((a) => String(a?.id || '').trim() === alarmId) || null;
+        const effectiveAudio = resolveAlarmAudio(cfg, alarmConfig || { group: meta?.group, site: meta?.site });
         const src = meta?.source || {};
         const stateStr = (meta?.enabled === false) ? 'DISABLED' : (meta?.active ? 'ACTIVE' : 'OK');
         addCell(tr, String(c?.label || meta?.alarm_id || ''), false);
-        addCell(tr, meta?.severity == null ? '' : String(meta.severity), meta?.severity == null);
+        addBadgeCell(tr, meta?.severity == null ? '' : `${severityLabel(meta.severity)} ${meta.severity}`, severityClass(meta.severity));
         addCell(tr, `${String(src?.connection_id || '')}:${String(src?.tag || '')}`.replace(/^:$/, ''), !(src?.connection_id || src?.tag));
-        addCell(tr, stateStr, false);
-        addCell(tr, meta?.acked ? 'yes' : 'no', false);
-        addCell(tr, meta?.enabled === false ? 'no' : 'yes', false);
+        addBadgeCell(tr, stateStr, meta?.enabled === false ? 'bad' : (meta?.active ? 'warn' : 'ok'));
+        addBadgeCell(tr, meta?.acked ? 'ACKED' : 'UNACKED', meta?.acked ? 'ok' : (meta?.active ? 'warn' : ''));
+        addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
+        addBadgeCell(tr, effectiveAudio.audible_enabled ? 'ENABLED' : 'DISABLED', effectiveAudio.audible_enabled ? 'ok' : 'bad');
+        addCell(tr, effectiveAudio.audio_file ? alarmAudioFileText(effectiveAudio.audio_file, cfg) : 'none', !effectiveAudio.audio_file);
         addCell(tr, String(meta?.group || ''), !String(meta?.group || '').trim());
         addCell(tr, String(meta?.site || ''), !String(meta?.site || '').trim());
       } else {
@@ -5132,6 +7487,23 @@ function renderWorkspaceDetails(node) {
       });
 
       tr.addEventListener('dblclick', () => {
+        if (String(c?.type || '') === 'event_connection') {
+          state.selectedNodeId = String(c?.id || '');
+          renderWorkspaceTree();
+          renderWorkspaceDetails(c);
+          return;
+        }
+        if (String(c?.type || '') === 'event_tag') {
+          const cid = String(c?.meta?.connection_id || '').trim();
+          const name = String(c?.meta?.name || c?.label || '').trim();
+          openWorkspaceItemModal({ id: `tag:${cid}::${name}`, type: 'tag', label: name, meta: { connection_id: cid, name }, children: [] });
+          return;
+        }
+        if (String(c?.type || '') === 'audio_file') {
+          state.selectedNodeId = String(c?.id || '');
+          renderWorkspaceTree();
+          return;
+        }
         openWorkspaceItemModal(c);
       });
 
@@ -5875,6 +8247,7 @@ async function refreshUserAuthLine() {
     state.opcbridgeAuthStatus = s || null;
     updateConfigureTabVisibility();
     updateWorkspaceTabVisibility();
+    updateAlarmsEventsTabVisibility();
     updateLogsTabVisibility();
     updateUsersTabVisibility();
     updateLoggerTabVisibility();
@@ -6468,14 +8841,20 @@ function wireLoginModalUi() {
 
   els.loginCloseBtn?.addEventListener('click', closeLoginModal);
   els.loginCancelBtn?.addEventListener('click', closeLoginModal);
-  els.loginModal.addEventListener('click', (e) => {
-    if (e.target === els.loginModal) closeLoginModal();
-  });
+  // Keep modal open unless explicitly closed via buttons.
+  if (els.loginModal.dataset.noOverlayClose !== '1') {
+    els.loginModal.dataset.noOverlayClose = '1';
+    const swallow = (e) => {
+      if (e.target === els.loginModal) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    els.loginModal.addEventListener('mousedown', swallow, true);
+    els.loginModal.addEventListener('mouseup', swallow, true);
+    els.loginModal.addEventListener('click', swallow, true);
+  }
   els.loginModal.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeLoginModal();
-    }
     if (e.key === 'Enter') {
       e.preventDefault();
       els.loginOkBtn?.click?.();
@@ -6529,6 +8908,7 @@ async function main() {
   setTab('overview');
   updateConfigureTabVisibility();
   updateWorkspaceTabVisibility();
+  updateAlarmsEventsTabVisibility();
   updateLoggerTabVisibility();
   updateLogsTabVisibility();
   updateUsersTabVisibility();
@@ -6536,6 +8916,7 @@ async function main() {
   startUserAuthPolling();
 
   wireScadaSettingsUi();
+  wireAlarmNotificationUi();
   wireSvcUi();
   wireMqttCaUi();
   wireLoggerUi();
@@ -6569,6 +8950,7 @@ async function main() {
 
   try {
     await loadScadaSettings();
+    await loadSoundSettings();
     await loadSvcSettings();
   } catch {
     // ignore

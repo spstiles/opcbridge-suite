@@ -26,6 +26,7 @@ ODBC_DRIVER=""
 
 PROFILE=""
 COMPONENTS=()
+INIT_HISTORIAN_DB=0
 
 usage() {
   cat <<USAGE
@@ -33,10 +34,10 @@ Usage: sudo ./install.sh [options]
 
 Profiles:
   --opcbridge-only        Install only opcbridge (communication layer)
-  --full                  Install opcbridge + alarms + scada + hmi + reporter
+  --full                  Install opcbridge + alarms + scada + hmi + reporter + historian
 
 Component selection (overrides profiles):
-  --components LIST       Comma-separated: opcbridge,alarms,scada,hmi,reporter
+  --components LIST       Comma-separated: opcbridge,alarms,scada,hmi,reporter,historian
 
 Options:
   --prefix DIR            Install prefix (default: ${PREFIX})
@@ -50,6 +51,7 @@ Options:
   --with-odbc             Install ODBC deps (SQL Server support for reporter)
   --odbc-driver NAME      ODBC driver: freetds | ms (default: freetds)
   --with-node-deps        Run npm install for Node services (requires network)
+  --init-historian-db     Create local Postgres role/db and load historian schema
   --no-start              Do not start services
   --no-enable             Do not enable services at boot
   --scada-systemd-sudo    Configure sudoers so opcbridge-scada can manage opcbridge.service
@@ -196,6 +198,12 @@ install_deps() {
     fi
   fi
 
+  # Historian deps (Postgres + libpq headers)
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
+    pkgs+=(postgresql postgresql-contrib)
+    pkgs+=(libpq-dev)
+  fi
+
   # De-dupe
   local -a uniq
   uniq=()
@@ -208,7 +216,7 @@ install_deps() {
     fi
   done
 
-  echo "Installing OS dependencies via apt:" 
+  echo "Installing OS dependencies via apt:"
   printf '  %s\n' "${uniq[@]}"
 
   apt_install "${uniq[@]}"
@@ -329,7 +337,7 @@ split_csv() {
 choose_interactive() {
   echo "Select what to install:"
   echo "  1) opcbridge only"
-  echo "  2) full suite (opcbridge + alarms + scada + hmi + reporter)"
+  echo "  2) full suite (opcbridge + alarms + scada + hmi + reporter + historian)"
   echo "  3) custom"
 
   local choice
@@ -349,6 +357,7 @@ choose_interactive() {
       prompt_yn "Install scada app?" y && COMPONENTS+=(scada)
       prompt_yn "Install hmi app?" y && COMPONENTS+=(hmi)
       prompt_yn "Install reporter?" n && COMPONENTS+=(reporter)
+      prompt_yn "Install historian?" n && COMPONENTS+=(historian)
       ;;
     *)
       echo "Invalid choice." >&2
@@ -361,7 +370,7 @@ validate_components() {
   local ok=1
   for c in "${COMPONENTS[@]}"; do
     case "$c" in
-      opcbridge|alarms|scada|hmi|reporter) : ;;
+      opcbridge|alarms|scada|hmi|reporter|historian) : ;;
       *) echo "Unknown component: $c" >&2; ok=0;;
     esac
   done
@@ -374,6 +383,11 @@ validate_components() {
     fi
   fi
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
+    if ! printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
+      COMPONENTS+=(opcbridge)
+    fi
+  fi
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
     if ! printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
       COMPONENTS+=(opcbridge)
     fi
@@ -419,6 +433,20 @@ ensure_logs_group_access() {
   fi
 }
 
+ensure_audio_group_access() {
+  # Alarm annunciation may run aplay/paplay from the service user. On ALSA systems,
+  # access to /dev/snd/* is commonly granted through the audio group.
+  if ! have_cmd usermod; then
+    return 0
+  fi
+  if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    return 0
+  fi
+  if getent group audio >/dev/null 2>&1; then
+    usermod -aG audio "$SERVICE_USER" >/dev/null 2>&1 || true
+  fi
+}
+
 ensure_dirs() {
   mkdir -p "$PREFIX/bin" "$CONFIG_ROOT" "$DATA_ROOT" "$LOG_ROOT"
 
@@ -450,6 +478,13 @@ fix_config_permissions() {
 write_env_file() {
   if [[ -f "$ENV_FILE" ]]; then
     echo "Keeping existing env file: $ENV_FILE"
+    # Ensure historian-related keys exist without overwriting existing values.
+    if ! grep -Eq '^HISTORIAN_PGHOST=' "$ENV_FILE" 2>/dev/null; then echo "HISTORIAN_PGHOST=127.0.0.1" >>"$ENV_FILE"; fi
+    if ! grep -Eq '^HISTORIAN_PGPORT=' "$ENV_FILE" 2>/dev/null; then echo "HISTORIAN_PGPORT=5432" >>"$ENV_FILE"; fi
+    if ! grep -Eq '^HISTORIAN_PGDB=' "$ENV_FILE" 2>/dev/null; then echo "HISTORIAN_PGDB=opcbridge_historian" >>"$ENV_FILE"; fi
+    if ! grep -Eq '^HISTORIAN_PGUSER=' "$ENV_FILE" 2>/dev/null; then echo "HISTORIAN_PGUSER=opcbridge_historian" >>"$ENV_FILE"; fi
+    if ! grep -Eq '^HISTORIAN_PGPASSWORD=' "$ENV_FILE" 2>/dev/null; then echo "HISTORIAN_PGPASSWORD=" >>"$ENV_FILE"; fi
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
     return 0
   fi
 
@@ -474,6 +509,13 @@ ALARMS_OPCUA_PORT=4841
 
 SCADA_PORT=3010
 HMI_PORT=3000
+
+# Historian (Postgres)
+HISTORIAN_PGHOST=127.0.0.1
+HISTORIAN_PGPORT=5432
+HISTORIAN_PGDB=opcbridge_historian
+HISTORIAN_PGUSER=opcbridge_historian
+HISTORIAN_PGPASSWORD=
 ENV
 
   chmod 600 "$ENV_FILE"
@@ -482,7 +524,7 @@ ENV
 build_if_needed() {
   [[ "$BUILD" -eq 1 ]] || return 0
 
-  if ! printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(opcbridge|alarms|reporter)'; then
+  if ! printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(opcbridge|alarms|reporter|historian)'; then
     return 0
   fi
 
@@ -499,6 +541,12 @@ build_if_needed() {
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
     if [[ -f "$ROOT_DIR/opcbridge-reporter/Makefile" ]]; then
       (cd "$ROOT_DIR/opcbridge-reporter" && make)
+    fi
+  fi
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
+    if [[ -f "$ROOT_DIR/opcbridge-historian/build.sh" ]]; then
+      (cd "$ROOT_DIR/opcbridge-historian" && ./build.sh)
     fi
   fi
 }
@@ -731,6 +779,109 @@ install_reporter() {
   install -m 0644 "$ROOT_DIR/opcbridge-reporter/config.json.example" "$CONFIG_ROOT/reporter/config.json.example" 2>/dev/null || true
 }
 
+install_historian() {
+  echo "Installing opcbridge-historian..."
+  local src="$ROOT_DIR/opcbridge-historian/opcbridge-historian"
+  [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
+  install -m 0755 "$src" "$PREFIX/bin/opcbridge-historian"
+
+  mkdir -p "$PREFIX/share/opcbridge-historian" "$CONFIG_ROOT/historian"
+  install -m 0644 "$ROOT_DIR/opcbridge-historian/schema.sql" "$PREFIX/share/opcbridge-historian/schema.sql" 2>/dev/null || true
+  install -m 0644 "$ROOT_DIR/opcbridge-historian/schema.sql" "$CONFIG_ROOT/historian/schema.sql" 2>/dev/null || true
+  install -m 0644 "$ROOT_DIR/opcbridge-historian/config.json.example" "$CONFIG_ROOT/historian/config.json.example" 2>/dev/null || true
+  install -m 0644 "$ROOT_DIR/opcbridge-historian/README.md" "$PREFIX/share/opcbridge-historian/README.md" 2>/dev/null || true
+
+  # Create a non-secret default config (Postgres creds are provided via systemd env vars).
+  if [[ ! -f "$CONFIG_ROOT/historian/config.json" ]]; then
+    umask 027
+    cat >"$CONFIG_ROOT/historian/config.json" <<'JSON'
+{
+  // opcbridge-historian default config (managed by installer)
+  "subscribe_mode": "all",
+
+  "change_only": {
+    "enabled": true,
+    "deadband": 0.0,
+    "min_interval_ms": 250,
+    "max_interval_ms": 60000
+  },
+
+  "snapshot": {
+    "enabled": false,
+    "interval_ms": 60000
+  },
+
+  "postgres": {
+    "conninfo": "",
+    "table": "tag_samples",
+    "batch_size": 500,
+    "flush_interval_ms": 250
+  }
+}
+JSON
+  fi
+}
+
+init_historian_db() {
+  # Creates a local Postgres role/db and loads the historian schema.
+  have_cmd systemctl || { echo "systemctl not found; cannot init Postgres automatically." >&2; return 1; }
+  have_cmd psql || { echo "psql not found; install Postgres packages (use --deps)." >&2; return 1; }
+
+  # shellcheck disable=SC1090
+  set +u
+  [[ -f "$ENV_FILE" ]] && . "$ENV_FILE"
+  set -u
+
+  local db="${HISTORIAN_PGDB:-opcbridge_historian}"
+  local user="${HISTORIAN_PGUSER:-opcbridge_historian}"
+  local pass="${HISTORIAN_PGPASSWORD:-}"
+  local schema_path="${CONFIG_ROOT}/historian/schema.sql"
+
+  if [[ ! -f "$schema_path" ]]; then
+    schema_path="$PREFIX/share/opcbridge-historian/schema.sql"
+  fi
+  [[ -f "$schema_path" ]] || { echo "Historian schema not found (expected ${CONFIG_ROOT}/historian/schema.sql)." >&2; return 1; }
+
+  systemctl enable --now postgresql >/dev/null 2>&1 || true
+  systemctl start postgresql >/dev/null 2>&1 || true
+
+  if [[ -z "$pass" ]]; then
+    pass="$(gen_token)"
+    if grep -Eq '^HISTORIAN_PGPASSWORD=' "$ENV_FILE" 2>/dev/null; then
+      sed -i "s/^HISTORIAN_PGPASSWORD=.*/HISTORIAN_PGPASSWORD=${pass}/" "$ENV_FILE"
+    else
+      echo "HISTORIAN_PGPASSWORD=${pass}" >>"$ENV_FILE"
+    fi
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
+  fi
+
+  local -a as_pg
+  if have_cmd runuser; then
+    as_pg=(runuser -u postgres --)
+  else
+    as_pg=(su -s /bin/sh postgres -c)
+  fi
+
+  if have_cmd runuser; then
+    if ! "${as_pg[@]}" psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${user}'" | grep -q 1; then
+      "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE ROLE \"${user}\" LOGIN PASSWORD '${pass}';"
+    fi
+    if ! "${as_pg[@]}" psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
+      "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${db}\" OWNER \"${user}\";"
+    fi
+    "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" -f "${schema_path}"
+  else
+    "${as_pg[@]}" "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${user}'\" | grep -q 1 || psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE \\\"${user}\\\" LOGIN PASSWORD '${pass}';\""
+    "${as_pg[@]}" "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='${db}'\" | grep -q 1 || psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"${db}\\\" OWNER \\\"${user}\\\";\""
+    "${as_pg[@]}" "psql -v ON_ERROR_STOP=1 -d \"${db}\" -f \"${schema_path}\""
+  fi
+
+  echo "Initialized Postgres for historian:"
+  echo "  db=${db}"
+  echo "  user=${user}"
+  echo "  password stored in ${ENV_FILE} as HISTORIAN_PGPASSWORD"
+}
+
 node_deps_installed() {
   local dir="$1"
   [[ -d "$dir/node_modules" ]] || return 1
@@ -855,16 +1006,46 @@ RestartSec=2
 	"
   fi
 
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
+      write_unit "opcbridge-historian.service" "[Unit]
+Description=opcbridge historian
+After=network.target opcbridge.service
+Wants=opcbridge.service
+
+[Service]
+Type=simple
+EnvironmentFile=${ENV_FILE}
+WorkingDirectory=${PREFIX}
+ExecStart=/bin/sh -c 'export PGPASSWORD=\"\${HISTORIAN_PGPASSWORD:-}\"; exec ${PREFIX}/bin/opcbridge-historian --config ${CONFIG_ROOT}/historian/config.json --opcbridge-host 127.0.0.1 --opcbridge-http-port \"\${OPCBRIDGE_HTTP_PORT:-8080}\" --opcbridge-ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --pg-conninfo \"host=\${HISTORIAN_PGHOST:-127.0.0.1} port=\${HISTORIAN_PGPORT:-5432} dbname=\${HISTORIAN_PGDB:-opcbridge_historian} user=\${HISTORIAN_PGUSER:-opcbridge_historian}\"'
+User=${SERVICE_USER}
+Group=${SERVICE_GROUP}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+"
+  fi
+
   systemctl daemon-reload
 
   if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
-    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi; do
+    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi opcbridge-historian; do
       if systemctl cat "$svc" >/dev/null 2>&1; then
         if [[ "$svc" == "opcbridge-hmi" ]]; then
           if ! node_deps_installed "$PREFIX/hmi"; then
             echo "ERROR: opcbridge-hmi selected but Node dependencies are not installed."
             print_node_deps_install_instructions "opcbridge-hmi" "$PREFIX/hmi"
             mark_install_error
+            continue
+          fi
+        fi
+        if [[ "$svc" == "opcbridge-historian" ]]; then
+          # Keep the unit installed but skip enable unless initialized.
+          if ! grep -Eq '^HISTORIAN_PGPASSWORD=.+$' "$ENV_FILE" 2>/dev/null; then
+            echo "NOTE: opcbridge-historian installed but HISTORIAN_PGPASSWORD is not set in ${ENV_FILE}."
+            echo "      Set HISTORIAN_* vars (or re-run with --init-historian-db), then:"
+            echo "        sudo systemctl enable --now opcbridge-historian"
             continue
           fi
         fi
@@ -897,8 +1078,10 @@ main() {
       --logs) LOG_ROOT="${2:-}"; shift 2;;
       --user) SERVICE_USER="${2:-}"; shift 2;;
       --group) SERVICE_GROUP="${2:-}"; shift 2;;
-      --no-build) BUILD=0; shift;;      --with-node-deps) WITH_NODE_DEPS=1; shift;;
+      --no-build) BUILD=0; shift;;
+      --with-node-deps) WITH_NODE_DEPS=1; shift;;
       --deps) INSTALL_DEPS=1; shift;;
+      --init-historian-db) INIT_HISTORIAN_DB=1; shift;;
       --with-odbc) WITH_ODBC=1; shift;;
       --odbc-driver) ODBC_DRIVER="${2:-}"; shift 2;;
       --scada-systemd-sudo) SCADA_SYSTEMD_SUDO=1; shift;;
@@ -921,7 +1104,7 @@ main() {
   if [[ "${#COMPONENTS[@]}" -eq 0 ]]; then
     case "$PROFILE" in
       opcbridge-only) COMPONENTS=(opcbridge);;
-      full|"") COMPONENTS=(opcbridge alarms scada hmi reporter);;
+      full|"") COMPONENTS=(opcbridge alarms scada hmi reporter historian);;
       *) echo "Unknown profile: $PROFILE" >&2; exit 1;;
     esac
   fi
@@ -976,6 +1159,9 @@ main() {
   fi
 
   ensure_user
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(alarms|scada)'; then
+    ensure_audio_group_access
+  fi
   # If SCADA is installed, grant the service user journal access so the Logs tab works by default.
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
     ensure_logs_group_access
@@ -993,6 +1179,7 @@ main() {
       scada) install_scada;;
       hmi) install_hmi;;
       reporter) install_reporter;;
+      historian) install_historian;;
     esac
   done
   fix_config_permissions
@@ -1010,6 +1197,27 @@ main() {
 
   install_systemd_units
 
+  # Optional: initialize local Postgres and load schema after install (so service can start).
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
+    if have_cmd psql; then
+      if [[ "$INIT_HISTORIAN_DB" -eq 0 ]]; then
+        if prompt_yn "Initialize local Postgres DB for historian now (create role/db + load schema)?" y; then
+          INIT_HISTORIAN_DB=1
+        fi
+      fi
+      if [[ "$INIT_HISTORIAN_DB" -eq 1 ]]; then
+        init_historian_db || mark_install_error
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        if [[ "$ENABLE_SERVICES" -eq 1 ]] && systemctl cat "opcbridge-historian" >/dev/null 2>&1; then
+          systemctl enable "opcbridge-historian" >/dev/null 2>&1 || true
+        fi
+      fi
+    else
+      echo "Note: Postgres client (psql) not found; skipping historian DB initialization."
+      echo "      Re-run with --deps and/or --init-historian-db to auto-create the DB and load schema."
+    fi
+  fi
+
   # Restart services individually for better feedback.
   if [[ "$START_SERVICES" -eq 1 ]]; then
     for c in "${COMPONENTS[@]}"; do
@@ -1020,6 +1228,7 @@ main() {
         scada) svc="opcbridge-scada";;
         hmi) svc="opcbridge-hmi";;
         reporter) svc="opcbridge-reporter";;
+        historian) svc="opcbridge-historian";;
       esac
 
       if [[ -n "$svc" ]] && systemctl cat "$svc" >/dev/null 2>&1; then
@@ -1029,6 +1238,14 @@ main() {
             echo "ERROR: opcbridge-hmi selected but Node dependencies are not installed."
             print_node_deps_install_instructions "opcbridge-hmi" "$PREFIX/hmi"
             mark_install_error
+            continue
+          fi
+        fi
+        if [[ "$svc" == "opcbridge-historian" ]]; then
+          if ! grep -Eq '^HISTORIAN_PGPASSWORD=.+$' "$ENV_FILE" 2>/dev/null; then
+            echo "Skipping start of opcbridge-historian (HISTORIAN_PGPASSWORD is not set in ${ENV_FILE})."
+            echo "After configuring Postgres, start with:"
+            echo "  sudo systemctl restart opcbridge-historian"
             continue
           fi
         fi
@@ -1066,6 +1283,9 @@ main() {
   echo "  journalctl -u opcbridge-alarms -f"
   echo "  journalctl -u opcbridge-scada -f"
   echo "  journalctl -u opcbridge-hmi -f"
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
+    echo "  journalctl -u opcbridge-historian -f"
+  fi
 }
 
 main "$@"
