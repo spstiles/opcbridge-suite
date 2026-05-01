@@ -30,6 +30,7 @@ opcbridge/opcbridge
 opcbridge/opcbridge-alarms/opcbridge-alarms
 opcbridge-alarms/opcbridge-alarms
 opcbridge-reporter/opcbridge-reporter
+opcbridge-historian/opcbridge-historian
 
 # HMI local-only artifacts
 opcbridge-hmi/passwords.jsonc

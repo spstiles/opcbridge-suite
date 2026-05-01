@@ -1,0 +1,42 @@
+{
+  // opcbridge endpoints
+  "opcbridge_host": "127.0.0.1",
+  "opcbridge_http_port": 8080,
+  "opcbridge_ws_port": 8090,
+  "opcbridge_ws_path": "/",
+
+  // subscription selection:
+  // - "all": receive everything (server default)
+  // - "list": exact tag keys ("conn:Tag.Name")
+  // - "patterns": glob patterns resolved via HTTP /tags
+  "subscribe_mode": "all",
+  "tags": [
+    "field_ops:PLC_Second",
+    "field_ops:Pump01.Running"
+  ],
+  "patterns": [
+    { "connection_id": "field_ops", "name": "Pump*.Running" }
+  ],
+
+  // Change-only / throttle / deadband (applies to WS updates)
+  "change_only": {
+    "enabled": true,
+    "deadband": 0.0,
+    "min_interval_ms": 250,
+    "max_interval_ms": 60000
+  },
+
+  // Periodic sampling via HTTP snapshots (true periodic sampling)
+  "snapshot": {
+    "enabled": false,
+    "interval_ms": 60000
+  },
+
+  // Postgres
+  "postgres": {
+    "conninfo": "host=127.0.0.1 port=5432 dbname=opcbridge user=opcbridge password=CHANGE_ME",
+    "table": "tag_samples",
+    "batch_size": 500,
+    "flush_interval_ms": 250
+  }
+}
