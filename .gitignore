@@ -29,6 +29,8 @@
 opcbridge/opcbridge
 opcbridge/opcbridge-alarms/opcbridge-alarms
 opcbridge-alarms/opcbridge-alarms
+opcbridge-alarms/opcbridge-alarms.new
+opcbridge-alarms/voice-modem-test
 opcbridge-reporter/opcbridge-reporter
 opcbridge-historian/opcbridge-historian
 

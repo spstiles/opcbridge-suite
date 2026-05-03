@@ -1161,10 +1161,56 @@ static std::string safe_audio_filename_string(const std::string &raw) {
     return name;
 }
 
-static std::string ensure_directory_string(const std::string &dir) {
+static std::string safe_audio_folder_string(const std::string &raw) {
+    std::string out;
+    std::string part;
+    auto flush_part = [&]() -> bool {
+        if (part.empty() || part == "." || part == "..") return false;
+        if (!out.empty()) out += "/";
+        out += part;
+        part.clear();
+        return true;
+    };
+
+    for (char c : raw) {
+        if (c == '\\') c = '/';
+        if (c == '/') {
+            if (!flush_part()) return "";
+            continue;
+        }
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || c == '_' || c == '-' || c == ' ') {
+            part.push_back(c);
+            continue;
+        }
+        return "";
+    }
+    if (!part.empty() && !flush_part()) return "";
+    return out;
+}
+
+static std::string safe_audio_relative_path_string(const std::string &raw) {
+    std::string p = raw;
+    std::replace(p.begin(), p.end(), '\\', '/');
+    if (p.rfind("audio/", 0) == 0) p = p.substr(6);
+    if (p.empty() || p[0] == '/') return "";
+    const auto slash = p.find_last_of('/');
+    const std::string folder = (slash == std::string::npos) ? std::string{} : p.substr(0, slash);
+    const std::string filename = (slash == std::string::npos) ? p : p.substr(slash + 1);
+    const std::string safeName = safe_audio_filename_string(filename);
+    if (safeName.empty() || safeName != filename) return "";
+    if (folder.empty()) return std::string("audio/") + safeName;
+    const std::string safeFolder = safe_audio_folder_string(folder);
+    if (safeFolder.empty() || safeFolder != folder) return "";
+    return std::string("audio/") + safeFolder + "/" + safeName;
+}
+
+static std::string ensure_directories_string(const std::string &dir) {
     if (dir.empty()) return "directory path is empty";
-    if (::mkdir(dir.c_str(), 0770) == 0 || errno == EEXIST) return "";
-    return std::strerror(errno);
+    std::error_code ec;
+    fs::create_directories(fs::path(dir), ec);
+    if (ec) return ec.message();
+    return "";
 }
 
 bool pathExists(const std::string &p) {
@@ -13844,14 +13890,16 @@ window.addEventListener("load", startAutoRefresh);
 				std::error_code ec;
 				const fs::path dir(joinPath(configDir, "audio"));
 				if (fs::exists(dir, ec) && fs::is_directory(dir, ec)) {
-					for (const auto &entry : fs::directory_iterator(dir, ec)) {
+					for (const auto &entry : fs::recursive_directory_iterator(dir, ec)) {
 						if (ec) break;
 						if (!entry.is_regular_file()) continue;
 						const std::string name = entry.path().filename().string();
 						if (safe_audio_filename_string(name).empty()) continue;
+						std::string rel = fs::relative(entry.path(), fs::path(configDir), ec).generic_string();
+						if (ec || safe_audio_relative_path_string(rel).empty()) continue;
 						json f;
 						f["name"] = name;
-						f["path"] = std::string("audio/") + name;
+						f["path"] = rel;
 						auto sz = fs::file_size(entry.path(), ec);
 						if (!ec) f["size_bytes"] = static_cast<std::uintmax_t>(sz);
 						auto ft = fs::last_write_time(entry.path(), ec);
@@ -13867,6 +13915,142 @@ window.addEventListener("load", startAutoRefresh);
 				}
 
 				res.set_content(out.dump(2), "application/json");
+			});
+
+			// Create an alarm audio folder under <config>/audio.
+			// Body: { "token":"...", "folder":"Sites/Lift Station 10" }
+			svr.Post("/config/audio/folder", [&](const httplib::Request &req, httplib::Response &res) {
+				if (!is_admin_request(req)) {
+					json err;
+					err["ok"] = false;
+					err["error"] = "Admin login required.";
+					res.status = 403;
+					res.set_content(err.dump(2), "application/json");
+					return;
+				}
+
+				json resp;
+				try {
+					json body = json::parse(req.body.empty() ? "{}" : req.body);
+					if (!body.is_object()) body = json::object();
+					if (json_get_string_loose(body, "token", std::string{}) != writeToken) {
+						resp["ok"] = false;
+						resp["error"] = "Invalid or missing write token.";
+						res.status = 403;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					const std::string requestedFolder = json_get_string_loose(body, "folder", std::string{});
+					const std::string folder = safe_audio_folder_string(requestedFolder);
+					if (folder.empty() || folder != requestedFolder) {
+						resp["ok"] = false;
+						resp["error"] = "Unsupported audio folder. Use safe folder names under audio only.";
+						res.status = 400;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					const std::string dir = joinPath(joinPath(configDir, "audio"), folder);
+					const std::string mkdirErr = ensure_directories_string(dir);
+					if (!mkdirErr.empty()) {
+						resp["ok"] = false;
+						resp["error"] = std::string("Failed to create audio folder: ") + mkdirErr;
+						res.status = 500;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					resp["ok"] = true;
+					resp["folder"] = folder;
+					resp["path"] = std::string("audio/") + folder;
+					res.set_content(resp.dump(2), "application/json");
+				} catch (const std::exception &ex) {
+					resp["ok"] = false;
+					resp["error"] = std::string("Audio folder create failed: ") + ex.what();
+					res.status = 400;
+					res.set_content(resp.dump(2), "application/json");
+				}
+			});
+
+			// Delete an empty alarm audio folder under <config>/audio.
+			// Body: { "token":"...", "folder":"Sites/Lift Station 10" }
+			svr.Post("/config/audio/folder/delete", [&](const httplib::Request &req, httplib::Response &res) {
+				if (!is_admin_request(req)) {
+					json err;
+					err["ok"] = false;
+					err["error"] = "Admin login required.";
+					res.status = 403;
+					res.set_content(err.dump(2), "application/json");
+					return;
+				}
+
+				json resp;
+				try {
+					json body = json::parse(req.body.empty() ? "{}" : req.body);
+					if (!body.is_object()) body = json::object();
+					if (json_get_string_loose(body, "token", std::string{}) != writeToken) {
+						resp["ok"] = false;
+						resp["error"] = "Invalid or missing write token.";
+						res.status = 403;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					const std::string requestedFolder = json_get_string_loose(body, "folder", std::string{});
+					const std::string folder = safe_audio_folder_string(requestedFolder);
+					if (folder.empty() || folder != requestedFolder) {
+						resp["ok"] = false;
+						resp["error"] = "Unsupported audio folder. Use safe folder names under audio only.";
+						res.status = 400;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					const fs::path audioRoot(joinPath(configDir, "audio"));
+					const fs::path target = audioRoot / fs::path(folder);
+					std::error_code ec;
+					if (!fs::exists(target, ec)) {
+						resp["ok"] = true;
+						resp["folder"] = folder;
+						resp["path"] = std::string("audio/") + folder;
+						resp["removed"] = false;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+					if (!fs::is_directory(target, ec)) {
+						resp["ok"] = false;
+						resp["error"] = "Audio folder path is not a directory.";
+						res.status = 400;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+					if (!fs::is_empty(target, ec)) {
+						resp["ok"] = false;
+						resp["error"] = "Audio folder is not empty. Move or delete its files/subfolders first.";
+						res.status = 409;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+					if (!fs::remove(target, ec) || ec) {
+						resp["ok"] = false;
+						resp["error"] = std::string("Failed to delete audio folder: ") + (ec ? ec.message() : "remove returned false");
+						res.status = 500;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					resp["ok"] = true;
+					resp["folder"] = folder;
+					resp["path"] = std::string("audio/") + folder;
+					resp["removed"] = true;
+					res.set_content(resp.dump(2), "application/json");
+				} catch (const std::exception &ex) {
+					resp["ok"] = false;
+					resp["error"] = std::string("Audio folder delete failed: ") + ex.what();
+					res.status = 400;
+					res.set_content(resp.dump(2), "application/json");
+				}
 			});
 
 			// Upload an alarm audio file.
@@ -13904,6 +14088,15 @@ window.addEventListener("load", startAutoRefresh);
 						res.set_content(resp.dump(2), "application/json");
 						return;
 					}
+					const std::string folder = safe_audio_folder_string(json_get_string_loose(body, "folder", std::string{}));
+					const std::string requestedFolder = json_get_string_loose(body, "folder", std::string{});
+					if (!requestedFolder.empty() && folder.empty()) {
+						resp["ok"] = false;
+						resp["error"] = "Unsupported audio folder. Use safe folder names under audio only.";
+						res.status = 400;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
 
 					audioStep = "decode base64 content";
 					std::string bytes;
@@ -13923,8 +14116,9 @@ window.addEventListener("load", startAutoRefresh);
 					}
 
 					audioStep = "create audio directory";
-					const std::string dir = joinPath(configDir, "audio");
-					const std::string mkdirErr = ensure_directory_string(dir);
+					const std::string audioRoot = joinPath(configDir, "audio");
+					const std::string dir = folder.empty() ? audioRoot : joinPath(audioRoot, folder);
+					const std::string mkdirErr = ensure_directories_string(dir);
 					if (!mkdirErr.empty()) {
 						resp["ok"] = false;
 						resp["error"] = std::string("Failed to create audio directory: ") + mkdirErr;
@@ -13952,7 +14146,8 @@ window.addEventListener("load", startAutoRefresh);
 
 					resp["ok"] = true;
 					resp["filename"] = filename;
-					resp["path"] = std::string("audio/") + filename;
+					resp["folder"] = folder;
+					resp["path"] = folder.empty() ? (std::string("audio/") + filename) : (std::string("audio/") + folder + "/" + filename);
 					resp["size_bytes"] = bytes.size();
 					res.set_content(resp.dump(2), "application/json");
 				} catch (const std::exception &ex) {
@@ -13986,15 +14181,19 @@ window.addEventListener("load", startAutoRefresh);
 						res.set_content(resp.dump(2), "application/json");
 						return;
 					}
-					const std::string filename = safe_audio_filename_string(json_get_string_loose(body, "filename", std::string{}));
-					if (filename.empty()) {
+					std::string relPath = safe_audio_relative_path_string(json_get_string_loose(body, "path", std::string{}));
+					if (relPath.empty()) {
+						const std::string filename = safe_audio_filename_string(json_get_string_loose(body, "filename", std::string{}));
+						if (!filename.empty()) relPath = std::string("audio/") + filename;
+					}
+					if (relPath.empty()) {
 						resp["ok"] = false;
 						resp["error"] = "Unsupported audio filename.";
 						res.status = 400;
 						res.set_content(resp.dump(2), "application/json");
 						return;
 					}
-					const std::string target = joinPath(joinPath(configDir, "audio"), filename);
+					const std::string target = joinPath(configDir, relPath);
 					if (!pathExists(target)) {
 						resp["ok"] = false;
 						resp["error"] = "Audio file does not exist.";
@@ -14010,11 +14209,102 @@ window.addEventListener("load", startAutoRefresh);
 						return;
 					}
 					resp["ok"] = true;
-					resp["filename"] = filename;
+					resp["path"] = relPath;
 					res.set_content(resp.dump(2), "application/json");
 				} catch (const std::exception &ex) {
 					resp["ok"] = false;
 					resp["error"] = std::string("Audio delete failed: ") + ex.what();
+					res.status = 400;
+					res.set_content(resp.dump(2), "application/json");
+				}
+			});
+
+			// Move an alarm audio file under <config>/audio.
+			// Body: { "token":"...", "path":"audio/old.wav", "folder":"New Folder" }
+			svr.Post("/config/audio/move", [&](const httplib::Request &req, httplib::Response &res) {
+				if (!is_admin_request(req)) {
+					json err;
+					err["ok"] = false;
+					err["error"] = "Admin login required.";
+					res.status = 403;
+					res.set_content(err.dump(2), "application/json");
+					return;
+				}
+
+				json resp;
+				try {
+					json body = json::parse(req.body.empty() ? "{}" : req.body);
+					if (!body.is_object()) body = json::object();
+					if (json_get_string_loose(body, "token", std::string{}) != writeToken) {
+						resp["ok"] = false;
+						resp["error"] = "Invalid or missing write token.";
+						res.status = 403;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					const std::string oldRel = safe_audio_relative_path_string(json_get_string_loose(body, "path", std::string{}));
+					const std::string requestedFolder = json_get_string_loose(body, "folder", std::string{});
+					const std::string folder = safe_audio_folder_string(requestedFolder);
+					if (oldRel.empty() || (!requestedFolder.empty() && folder.empty())) {
+						resp["ok"] = false;
+						resp["error"] = "Unsupported audio path or folder.";
+						res.status = 400;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					const std::string filename = fs::path(oldRel).filename().string();
+					const std::string newRel = folder.empty() ? (std::string("audio/") + filename) : (std::string("audio/") + folder + "/" + filename);
+					if (oldRel == newRel) {
+						resp["ok"] = true;
+						resp["path"] = oldRel;
+						resp["old_path"] = oldRel;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					const std::string src = joinPath(configDir, oldRel);
+					const std::string dst = joinPath(configDir, newRel);
+					if (!pathExists(src)) {
+						resp["ok"] = false;
+						resp["error"] = "Audio file does not exist.";
+						res.status = 404;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+					if (pathExists(dst)) {
+						resp["ok"] = false;
+						resp["error"] = "An audio file with that name already exists in the target folder.";
+						res.status = 409;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					const std::string mkdirErr = ensure_directories_string(fs::path(dst).parent_path().string());
+					if (!mkdirErr.empty()) {
+						resp["ok"] = false;
+						resp["error"] = std::string("Failed to create target folder: ") + mkdirErr;
+						res.status = 500;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+					if (std::rename(src.c_str(), dst.c_str()) != 0) {
+						resp["ok"] = false;
+						resp["error"] = std::string("Failed to move audio file: ") + std::strerror(errno);
+						res.status = 500;
+						res.set_content(resp.dump(2), "application/json");
+						return;
+					}
+
+					resp["ok"] = true;
+					resp["old_path"] = oldRel;
+					resp["path"] = newRel;
+					resp["folder"] = folder;
+					res.set_content(resp.dump(2), "application/json");
+				} catch (const std::exception &ex) {
+					resp["ok"] = false;
+					resp["error"] = std::string("Audio move failed: ") + ex.what();
 					res.status = 400;
 					res.set_content(resp.dump(2), "application/json");
 				}

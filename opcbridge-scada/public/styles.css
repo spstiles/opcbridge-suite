@@ -74,6 +74,22 @@ code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
 
 .card-body { padding: 12px; }
 
+.card > summary.card-title {
+  cursor: pointer;
+  user-select: none;
+  list-style-position: inside;
+}
+
+.ae-notifications-card {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.ae-notifications-card > .hint {
+  padding: 10px 12px 0 12px;
+  margin-bottom: 0;
+}
+
 pre.mono { margin: 0; padding: 12px; overflow: auto; }
 
 .hint { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
@@ -112,7 +128,7 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 
 .ae-alarms-events-body {
   display: grid;
-  grid-template-columns: 420px 1fr;
+  grid-template-columns: minmax(250px, 0.7fr) minmax(330px, 1fr) minmax(390px, 1.15fr);
   gap: 12px;
   min-height: 0;
   height: 100%;
@@ -125,6 +141,12 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   }
 }
 
+.ae-alarms-events {
+  height: calc(100vh - 185px);
+  min-height: 560px;
+  margin-top: 10px;
+}
+
 .ae-left {
   display: flex;
   flex-direction: column;
@@ -134,11 +156,14 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 }
 
 .ae-right {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-  overflow: hidden;
+  display: contents;
+}
+
+@media (max-width: 1100px) {
+  .ae-right {
+    display: flex;
+    flex-direction: column;
+  }
 }
 
 .ae-pane {
@@ -146,23 +171,65 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  flex: 1 1 50%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(15,19,29,.35);
 }
 
-.ae-children-pane { flex: 1 1 55%; }
-.ae-props-pane { flex: 1 1 45%; }
+@media (max-width: 1100px) {
+  .ae-alarms-events {
+    height: auto;
+  }
+  .ae-pane {
+    min-height: 320px;
+  }
+}
+
+.ae-children-pane,
+.ae-props-pane { flex: initial; }
 
 .ae-pane-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  min-height: 42px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,.03);
+  margin-bottom: 0;
 }
 
 .ae-pane-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ae-pane-body.table-wrap {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ae-pane-body.details {
+  padding: 10px;
+}
+
+.ae-props-pane .form {
+  max-width: none;
+}
+
+.ae-props-pane .form-row {
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ae-props-pane textarea {
+  min-height: 70px;
 }
 
 

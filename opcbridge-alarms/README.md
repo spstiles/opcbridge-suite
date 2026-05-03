@@ -72,8 +72,8 @@ Then open:
 
 ## Notifications / Annunciation
 
-`alarms.json` can include a top-level `notifications` object. The first supported route type is
-`audio_command`, intended for local speakers, amplifiers, or PA systems.
+`alarms.json` can include a top-level `notifications` object. Supported notification paths are
+local `audio_command` annunciation and serial voice modem dial-out.
 
 Example:
 
@@ -102,6 +102,67 @@ effective audio file resolves from global `audio.default_file`, then group, site
 overrides. Use `{audio_path}` in route arguments to play the resolved file; if an
 `audio_command` route has no `args`, the resolved audio path is supplied automatically.
 
+Voice modem dial-out uses `notifications.voice_modem`, `notifications.contacts`,
+`notifications.contact_groups`, and `notifications.policies`. An alarm rule must reference a
+policy with `notification_policy`. When the alarm event matches that policy, enabled contacts are
+dialed sequentially on the notification worker.
+
+If the alarm has a resolved `audio_file`/`audio_path`, opcbridge-alarms attempts to play that WAV
+over the modem after dialing. Uncompressed 8-bit or 16-bit PCM WAV files are converted
+automatically to modem-compatible 8000 Hz mono audio before transmit.
+
+```json
+{
+  "notifications": {
+    "enabled": true,
+    "voice_modem": {
+      "enabled": true,
+      "device": "/dev/ttyUSB0",
+      "baud": 115200,
+      "voice_init": false,
+      "dial_seconds": 30
+    },
+    "contacts": [
+      { "id": "operator_1", "name": "Operator 1", "phone": "5551212", "enabled": true }
+    ],
+    "contact_groups": [
+      { "id": "operators", "name": "Operators", "enabled": true, "contacts": ["operator_1"] }
+    ],
+    "policies": [
+      {
+        "id": "critical_calls",
+        "name": "Critical Calls",
+        "enabled": true,
+        "min_severity": 700,
+        "on": ["active"],
+        "contacts": [],
+        "contact_groups": ["operators"]
+      }
+    ]
+  },
+  "alarms": [
+    {
+      "id": "example_alarm",
+      "notification_policy": "critical_calls"
+    }
+  ]
+}
+```
+
 The command runs asynchronously and does not block alarm evaluation. Attempts are recorded in
 SQLite in the `notification_attempts` table, and current notification health appears in
 `GET /alarm/api/status`.
+
+## Voice Modem Testing
+
+Use the standalone `voice-modem-test` utility to confirm that Linux can see the modem, that it
+responds to AT commands, and that it can place a voice call.
+
+```bash
+./build-modem-test.sh
+./voice-modem-test --list
+./voice-modem-test --device /dev/ttyUSB0
+./voice-modem-test --device /dev/ttyUSB0 --number 5551212 --dial-seconds 20
+```
+
+See `docs/voice-modem-test.md` for details and troubleshooting notes.

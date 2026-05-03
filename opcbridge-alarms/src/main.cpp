@@ -1,20 +1,28 @@
 #include <atomic>
+#include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <ifaddrs.h>
+#include <cstring>
 #include <mutex>
 #include <net/if.h>
 #include <optional>
 #include <arpa/inet.h>
 #include <random>
 #include <string>
+#include <sys/select.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -94,6 +102,36 @@ static std::string join_path(const std::string& a, const std::string& b)
     return a + "/" + b;
 }
 
+static std::string shell_quote(const std::string& value)
+{
+    std::string out = "'";
+    for (char ch : value)
+    {
+        if (ch == '\'') out += "'\\''";
+        else out.push_back(ch);
+    }
+    out += "'";
+    return out;
+}
+
+static bool command_exists(const std::string& name)
+{
+    if (name.empty()) return false;
+    if (name.find('/') != std::string::npos) return ::access(name.c_str(), X_OK) == 0;
+    const char* pathEnv = std::getenv("PATH");
+    std::string paths = pathEnv ? pathEnv : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+    size_t start = 0;
+    while (start <= paths.size())
+    {
+        const size_t end = paths.find(':', start);
+        const std::string dir = paths.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!dir.empty() && ::access(join_path(dir, name).c_str(), X_OK) == 0) return true;
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return false;
+}
+
 static std::string dirname_of(const std::string& path)
 {
     const auto slash = path.find_last_of('/');
@@ -110,6 +148,121 @@ static std::string resolve_audio_path(const std::string& configDir, const std::s
     if (p.rfind("audio/", 0) == 0) return join_path(configDir, p);
     return join_path(join_path(configDir, "audio"), p);
 }
+
+static std::optional<speed_t> modem_baud_to_speed(int baud)
+{
+    switch (baud) {
+    case 9600: return B9600;
+    case 19200: return B19200;
+    case 38400: return B38400;
+    case 57600: return B57600;
+    case 115200: return B115200;
+    default: return std::nullopt;
+    }
+}
+
+class ModemSerialPort
+{
+public:
+    ~ModemSerialPort()
+    {
+        if (fd_ >= 0) close(fd_);
+    }
+
+    bool open_port(const std::string& device, int baud, std::string& err)
+    {
+        auto speed = modem_baud_to_speed(baud);
+        if (!speed) {
+            err = "unsupported baud rate";
+            return false;
+        }
+
+        fd_ = open(device.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+        if (fd_ < 0) {
+            err = std::strerror(errno);
+            return false;
+        }
+
+        termios tio {};
+        if (tcgetattr(fd_, &tio) != 0) {
+            err = std::strerror(errno);
+            return false;
+        }
+
+        cfmakeraw(&tio);
+        cfsetispeed(&tio, *speed);
+        cfsetospeed(&tio, *speed);
+        tio.c_cflag |= static_cast<unsigned int>(CLOCAL | CREAD);
+        tio.c_cflag &= static_cast<unsigned int>(~PARENB);
+        tio.c_cflag &= static_cast<unsigned int>(~CSTOPB);
+        tio.c_cflag &= static_cast<unsigned int>(~CSIZE);
+        tio.c_cflag |= CS8;
+        tio.c_cflag &= static_cast<unsigned int>(~CRTSCTS);
+        tio.c_iflag &= static_cast<unsigned int>(~(IXON | IXOFF | IXANY));
+        tio.c_cc[VMIN] = 0;
+        tio.c_cc[VTIME] = 0;
+
+        if (tcsetattr(fd_, TCSANOW, &tio) != 0) {
+            err = std::strerror(errno);
+            return false;
+        }
+
+        tcflush(fd_, TCIOFLUSH);
+        return true;
+    }
+
+    bool write_all(const std::string& data, std::string& err)
+    {
+        size_t off = 0;
+        while (off < data.size()) {
+            ssize_t n = write(fd_, data.data() + off, data.size() - off);
+            if (n > 0) {
+                off += static_cast<size_t>(n);
+                continue;
+            }
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            err = std::strerror(errno);
+            return false;
+        }
+        tcdrain(fd_);
+        return true;
+    }
+
+    std::string read_for(int timeout_ms)
+    {
+        std::string out;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+        while (std::chrono::steady_clock::now() < deadline) {
+            auto remain = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now()).count();
+            timeval tv {};
+            tv.tv_sec = static_cast<int>(remain / 1000);
+            tv.tv_usec = static_cast<int>((remain % 1000) * 1000);
+
+            fd_set set;
+            FD_ZERO(&set);
+            FD_SET(fd_, &set);
+            int rc = select(fd_ + 1, &set, nullptr, nullptr, &tv);
+            if (rc > 0 && FD_ISSET(fd_, &set)) {
+                char buf[512];
+                ssize_t n = read(fd_, buf, sizeof(buf));
+                if (n > 0) out.append(buf, static_cast<size_t>(n));
+            } else if (rc == 0) {
+                break;
+            } else if (rc < 0 && errno != EINTR) {
+                break;
+            }
+        }
+        return out;
+    }
+
+private:
+    int fd_ = -1;
+};
 
 struct AlarmDb
 {
@@ -873,6 +1026,11 @@ struct AlarmRule
     bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
+    std::string speech_text;
+    std::vector<std::string> audio_files;
+    std::vector<std::string> audio_paths;
+    std::vector<std::string> speech_texts;
+    std::string notification_policy;
 
     // Repeat behavior for audible notifications.
     // If repeat_override is false, fall back to the notification route default repeat_ms.
@@ -908,6 +1066,11 @@ struct AlarmState
     bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
+    std::string speech_text;
+    std::vector<std::string> audio_files;
+    std::vector<std::string> audio_paths;
+    std::vector<std::string> speech_texts;
+    std::string notification_policy;
 
     // Repeat behavior for audible notifications.
     // If repeat_override is false, fall back to the notification route default repeat_ms.
@@ -941,6 +1104,11 @@ static json alarm_state_to_json(const AlarmState &s)
     j["audible_enabled"] = s.audible_enabled;
     j["audio_file"] = s.audio_file.empty() ? nullptr : json(s.audio_file);
     j["audio_path"] = s.audio_path.empty() ? nullptr : json(s.audio_path);
+    j["speech_text"] = s.speech_text.empty() ? nullptr : json(s.speech_text);
+    j["audio_files"] = s.audio_files;
+    j["audio_paths"] = s.audio_paths;
+    j["speech_texts"] = s.speech_texts;
+    j["notification_policy"] = s.notification_policy.empty() ? nullptr : json(s.notification_policy);
     j["repeat_override"] = s.repeat_override;
     j["repeat_ms"] = s.repeat_ms;
     return j;
@@ -951,6 +1119,10 @@ struct ResolvedAlarmAudio
     bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
+    std::string speech_text;
+    std::vector<std::string> audio_files;
+    std::vector<std::string> audio_paths;
+    std::vector<std::string> speech_texts;
 };
 
 struct ResolvedAlarmRepeat
@@ -965,7 +1137,19 @@ static std::string json_string_or_empty(const json& obj, const char* key)
     return obj[key].get<std::string>();
 }
 
-static void apply_audio_scope(const json& scope, bool& audible, std::string& audioFile)
+static void append_audio_file(std::vector<std::string>& files, const std::string& file)
+{
+    if (file.empty()) return;
+    files.push_back(file);
+}
+
+static void append_speech_text(std::vector<std::string>& texts, const std::string& text)
+{
+    if (text.empty()) return;
+    texts.push_back(text);
+}
+
+static void apply_audio_scope(const json& scope, bool& audible, std::string& audioFile, std::vector<std::string>& audioFiles, std::string& speechText, std::vector<std::string>& speechTexts)
 {
     if (!scope.is_object()) return;
     if (scope.contains("audible_enabled") && scope["audible_enabled"].is_boolean())
@@ -973,7 +1157,15 @@ static void apply_audio_scope(const json& scope, bool& audible, std::string& aud
         audible = scope["audible_enabled"].get<bool>();
     }
     const std::string file = json_string_or_empty(scope, "audio_file");
-    if (!file.empty()) audioFile = file;
+    if (!file.empty()) {
+        audioFile = file;
+        append_audio_file(audioFiles, file);
+    }
+    const std::string text = json_string_or_empty(scope, "speech_text");
+    if (!text.empty()) {
+        speechText = text;
+        append_speech_text(speechTexts, text);
+    }
 }
 
 static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule, const std::string& configDir)
@@ -989,6 +1181,12 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
     if (audio.contains("default_file") && audio["default_file"].is_string())
     {
         out.audio_file = audio["default_file"].get<std::string>();
+        append_audio_file(out.audio_files, out.audio_file);
+    }
+    if (audio.contains("speech_text") && audio["speech_text"].is_string())
+    {
+        out.speech_text = audio["speech_text"].get<std::string>();
+        append_speech_text(out.speech_texts, out.speech_text);
     }
     if (audio.contains("files") && audio["files"].is_array())
     {
@@ -1010,13 +1208,13 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
         for (const auto& g : root["groups"])
         {
             if (!g.is_object() || json_string_or_empty(g, "name") != groupName) continue;
-            apply_audio_scope(g, out.audible_enabled, out.audio_file);
+            apply_audio_scope(g, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts);
             if (!siteName.empty() && g.contains("sites") && g["sites"].is_array())
             {
                 for (const auto& s : g["sites"])
                 {
                     if (!s.is_object() || json_string_or_empty(s, "name") != siteName) continue;
-                    apply_audio_scope(s, out.audible_enabled, out.audio_file);
+                    apply_audio_scope(s, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts);
                     break;
                 }
             }
@@ -1024,13 +1222,19 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
         }
     }
 
-    apply_audio_scope(rule, out.audible_enabled, out.audio_file);
+    apply_audio_scope(rule, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts);
 
     if (!out.audio_file.empty())
     {
         const auto it = audioPaths.find(out.audio_file);
         const std::string configuredPath = (it == audioPaths.end()) ? out.audio_file : it->second;
         out.audio_path = resolve_audio_path(configDir, configuredPath);
+    }
+    for (const auto& file : out.audio_files)
+    {
+        const auto it = audioPaths.find(file);
+        const std::string configuredPath = (it == audioPaths.end()) ? file : it->second;
+        out.audio_paths.push_back(resolve_audio_path(configDir, configuredPath));
     }
     return out;
 }
@@ -1077,7 +1281,17 @@ static ResolvedAlarmRepeat resolve_alarm_repeat(const json& root, const json& ru
 
 static json notification_config_from_root(const json& root)
 {
-    if (root.contains("notifications") && root["notifications"].is_object()) return root["notifications"];
+    if (root.contains("notifications") && root["notifications"].is_object())
+    {
+        json cfg = root["notifications"];
+        // Voice-modem test calls need the top-level audio file map so a selected
+        // audio ID resolves exactly like a real alarm's audio_file setting.
+        if (root.contains("audio") && root["audio"].is_object() && !cfg.contains("audio"))
+        {
+            cfg["audio"] = root["audio"];
+        }
+        return cfg;
+    }
 
     const json audio = (root.contains("audio") && root["audio"].is_object()) ? root["audio"] : json::object();
     const bool hasAudioFiles = audio.contains("files") && audio["files"].is_array() && !audio["files"].empty();
@@ -1148,12 +1362,88 @@ public:
         std::string until = "acked_or_returned";
     };
 
+    struct VoiceModemConfig
+    {
+        bool enabled = false;
+        std::string device;
+        int baud = 115200;
+        bool voice_init = false;
+        int voice_line = 1;
+        int dial_seconds = 30;
+        int audio_delay_seconds = 8;
+        int audio_gap_ms = 50;
+        int command_timeout_ms = 3000;
+        std::string tts_engine = "auto";
+    };
+
+    struct Contact
+    {
+        std::string id;
+        std::string name;
+        std::string phone;
+        bool enabled = true;
+    };
+
+    struct TestCallRequest
+    {
+        std::string contact_id = "test";
+        std::string contact_name = "Test Call";
+        std::string phone;
+        std::string audio_file;
+        std::string tts_text;
+    };
+
+    struct ContactGroup
+    {
+        std::string id;
+        std::string name;
+        bool enabled = true;
+        std::vector<std::string> contacts;
+    };
+
+    struct PolicyTarget
+    {
+        std::string type;
+        std::string id;
+    };
+
+    struct Policy
+    {
+        std::string id;
+        std::string name;
+        bool enabled = true;
+        int min_severity = 0;
+        std::vector<std::string> on{"active"};
+        std::vector<PolicyTarget> targets;
+        std::vector<std::string> contacts;
+        std::vector<std::string> contact_groups;
+        int64_t repeat_ms = 0;
+        std::string until = "acked_or_returned";
+    };
+
     struct Job
     {
         Route route;
         AlarmState alarm;
         std::string event_type;
         int64_t due_ms = 0;
+        std::string phone;
+        std::string contact_id;
+        std::string contact_name;
+        std::string policy_id;
+    };
+
+    struct TtsPart
+    {
+        bool pause = false;
+        std::string text;
+        int pause_ms = 0;
+    };
+
+    enum class JobQueue
+    {
+        Audio,
+        Modem
     };
 
     void set_db(AlarmDb* ptr)
@@ -1179,10 +1469,140 @@ public:
         std::lock_guard<std::mutex> lock(mu_);
         enabled_ = cfg.is_object() ? cfg.value("enabled", false) : false;
         routes_.clear();
-        jobs_.clear();
-        if (!enabled_ || !cfg.is_object() || !cfg.contains("routes") || !cfg["routes"].is_array())
+        voice_modem_ = VoiceModemConfig{};
+        contacts_.clear();
+        contact_groups_.clear();
+        policies_.clear();
+        audio_paths_.clear();
+        audio_jobs_.clear();
+        modem_jobs_.clear();
+        if (!cfg.is_object())
         {
-            cv_.notify_all();
+            audio_cv_.notify_all();
+            modem_cv_.notify_all();
+            return;
+        }
+
+        if (cfg.contains("voice_modem") && cfg["voice_modem"].is_object())
+        {
+            const auto& vm = cfg["voice_modem"];
+            voice_modem_.enabled = vm.value("enabled", false);
+            voice_modem_.device = vm.value("device", "");
+            voice_modem_.baud = vm.value("baud", 115200);
+            voice_modem_.voice_init = vm.value("voice_init", false);
+            voice_modem_.voice_line = vm.value("voice_line", 1);
+            voice_modem_.dial_seconds = vm.value("dial_seconds", 30);
+            voice_modem_.audio_delay_seconds = vm.value("audio_delay_seconds", 8);
+            voice_modem_.audio_gap_ms = vm.value("audio_gap_ms", 50);
+            voice_modem_.command_timeout_ms = vm.value("command_timeout_ms", 3000);
+            voice_modem_.tts_engine = vm.value("tts_engine", "auto");
+        }
+
+        if (cfg.contains("audio") && cfg["audio"].is_object() && cfg["audio"].contains("files") && cfg["audio"]["files"].is_array())
+        {
+            for (const auto& f : cfg["audio"]["files"])
+            {
+                if (!f.is_object()) continue;
+                const std::string id = json_string_or_empty(f, "id");
+                if (id.empty()) continue;
+                std::string path = json_string_or_empty(f, "path");
+                if (path.empty()) path = id;
+                audio_paths_[id] = resolve_audio_path(config_dir_, path);
+            }
+        }
+
+        if (cfg.contains("contacts") && cfg["contacts"].is_array())
+        {
+            for (const auto& item : cfg["contacts"])
+            {
+                if (!item.is_object()) continue;
+                Contact c;
+                c.id = item.value("id", "");
+                c.name = item.value("name", c.id);
+                c.phone = item.value("phone", "");
+                c.enabled = item.value("enabled", true);
+                if (!c.id.empty()) contacts_[c.id] = std::move(c);
+            }
+        }
+
+        if (cfg.contains("contact_groups") && cfg["contact_groups"].is_array())
+        {
+            for (const auto& item : cfg["contact_groups"])
+            {
+                if (!item.is_object()) continue;
+                ContactGroup g;
+                g.id = item.value("id", "");
+                g.name = item.value("name", g.id);
+                g.enabled = item.value("enabled", true);
+                if (item.contains("contacts") && item["contacts"].is_array())
+                {
+                    for (const auto& cid : item["contacts"])
+                    {
+                        if (cid.is_string()) g.contacts.push_back(cid.get<std::string>());
+                    }
+                }
+                if (!g.id.empty()) contact_groups_[g.id] = std::move(g);
+            }
+        }
+
+        if (cfg.contains("policies") && cfg["policies"].is_array())
+        {
+            for (const auto& item : cfg["policies"])
+            {
+                if (!item.is_object()) continue;
+                Policy p;
+                p.id = item.value("id", "");
+                p.name = item.value("name", p.id);
+                p.enabled = item.value("enabled", true);
+                p.min_severity = item.value("min_severity", 0);
+                p.repeat_ms = item.value("repeat_ms", 0LL);
+                p.until = item.value("until", p.until);
+                if (item.contains("on") && item["on"].is_array())
+                {
+                    p.on.clear();
+                    for (const auto& ev : item["on"])
+                    {
+                        if (ev.is_string()) p.on.push_back(ev.get<std::string>());
+                    }
+                }
+                if (item.contains("contacts") && item["contacts"].is_array())
+                {
+                    for (const auto& cid : item["contacts"])
+                    {
+                        if (cid.is_string()) p.contacts.push_back(cid.get<std::string>());
+                    }
+                }
+                if (item.contains("contact_groups") && item["contact_groups"].is_array())
+                {
+                    for (const auto& gid : item["contact_groups"])
+                    {
+                        if (gid.is_string()) p.contact_groups.push_back(gid.get<std::string>());
+                    }
+                }
+                if (item.contains("targets") && item["targets"].is_array())
+                {
+                    for (const auto& target : item["targets"])
+                    {
+                        if (!target.is_object()) continue;
+                        PolicyTarget t;
+                        t.type = target.value("type", "");
+                        t.id = target.value("id", "");
+                        if ((t.type == "contact" || t.type == "group") && !t.id.empty()) p.targets.push_back(std::move(t));
+                    }
+                }
+                if (p.targets.empty())
+                {
+                    for (const auto& cid : p.contacts) p.targets.push_back({"contact", cid});
+                    for (const auto& gid : p.contact_groups) p.targets.push_back({"group", gid});
+                }
+                if (!p.id.empty()) policies_[p.id] = std::move(p);
+            }
+        }
+
+        if (!enabled_ || !cfg.contains("routes") || !cfg["routes"].is_array())
+        {
+            audio_cv_.notify_all();
+            modem_cv_.notify_all();
             return;
         }
 
@@ -1219,7 +1639,8 @@ public:
             if (r.type == "audio_command" && !r.command.empty()) routes_.push_back(std::move(r));
         }
 
-        cv_.notify_all();
+        audio_cv_.notify_all();
+        modem_cv_.notify_all();
     }
 
     void start()
@@ -1228,7 +1649,8 @@ public:
         if (running_) return;
         stop_ = false;
         running_ = true;
-        worker_ = std::thread([this]() { worker_loop(); });
+        audio_worker_ = std::thread([this]() { worker_loop(JobQueue::Audio); });
+        modem_worker_ = std::thread([this]() { worker_loop(JobQueue::Modem); });
     }
 
     void stop()
@@ -1236,9 +1658,11 @@ public:
         {
             std::lock_guard<std::mutex> lock(mu_);
             stop_ = true;
-            cv_.notify_all();
+            audio_cv_.notify_all();
+            modem_cv_.notify_all();
         }
-        if (worker_.joinable()) worker_.join();
+        if (audio_worker_.joinable()) audio_worker_.join();
+        if (modem_worker_.joinable()) modem_worker_.join();
         {
             std::lock_guard<std::mutex> lock(mu_);
             running_ = false;
@@ -1249,10 +1673,13 @@ public:
     {
         std::lock_guard<std::mutex> lock(mu_);
         if (!enabled_) return;
+        AlarmState alarmWithAudio = alarm;
+        add_tts_audio_paths_locked(alarmWithAudio);
+        enqueue_voice_modem_jobs_locked(alarmWithAudio, event_type);
         for (const auto& route : routes_)
         {
             if (!route.enabled) continue;
-            if (alarm.severity < route.min_severity) continue;
+            if (alarmWithAudio.severity < route.min_severity) continue;
             bool eventMatch = false;
             for (const auto& ev : route.on)
             {
@@ -1261,24 +1688,25 @@ public:
             if (!eventMatch) continue;
             if (route.type == "audio_command")
             {
-                if (!alarm.audible_enabled) continue;
-                if (route_needs_audio_path(route) && alarm.audio_path.empty()) continue;
+                if (!alarmWithAudio.audible_enabled) continue;
+                if (route_needs_audio_path(route) && alarmWithAudio.audio_path.empty()) continue;
             }
 
             Job job;
             job.route = route;
-            job.alarm = alarm;
+            job.alarm = alarmWithAudio;
             job.event_type = event_type;
             job.due_ms = now_ms();
             // Allow alarm/group/site repeat settings to override the route default (audible-only).
             // repeat_ms may be 0 (explicit off) or >0 (repeat interval).
-            if (job.route.type == "audio_command" && job.event_type == "active" && alarm.repeat_override) {
-                job.route.repeat_ms = alarm.repeat_ms;
+            if (job.route.type == "audio_command" && job.event_type == "active" && alarmWithAudio.repeat_override) {
+                job.route.repeat_ms = alarmWithAudio.repeat_ms;
             }
             apply_audio_default_arg(job);
-            jobs_.push_back(std::move(job));
+            audio_jobs_.push_back(std::move(job));
         }
-        cv_.notify_all();
+        audio_cv_.notify_all();
+        modem_cv_.notify_all();
     }
 
     json status_json() const
@@ -1299,16 +1727,422 @@ public:
         return {
             {"enabled", enabled_},
             {"running", running_},
-            {"queued", static_cast<int>(jobs_.size())},
+            {"queued", static_cast<int>(audio_jobs_.size() + modem_jobs_.size())},
+            {"queued_audio", static_cast<int>(audio_jobs_.size())},
+            {"queued_voice_modem", static_cast<int>(modem_jobs_.size())},
             {"attempts", attempts_},
             {"successes", successes_},
             {"failures", failures_},
             {"last_attempt_ms", last_attempt_ms_},
+            {"last_route_type", last_route_type_},
+            {"last_route_name", last_route_name_},
+            {"last_result", last_result_},
+            {"voice_modem", {
+                {"enabled", voice_modem_.enabled},
+                {"configured", !voice_modem_.device.empty()},
+                {"device", voice_modem_.device},
+                {"baud", voice_modem_.baud},
+                {"voice_line", voice_modem_.voice_line},
+                {"audio_delay_seconds", voice_modem_.audio_delay_seconds},
+                {"audio_gap_ms", voice_modem_.audio_gap_ms},
+                {"contacts", static_cast<int>(contacts_.size())},
+                {"contact_groups", static_cast<int>(contact_groups_.size())},
+                {"policies", static_cast<int>(policies_.size())}
+            }},
             {"routes", routes}
         };
     }
 
+    bool test_voice_modem_call(const TestCallRequest& request, std::string& result)
+    {
+        Job job;
+        job.route.name = "voice_modem:test";
+        job.route.type = "voice_modem";
+        job.event_type = "test";
+        job.due_ms = now_ms();
+        job.phone = request.phone;
+        job.contact_id = request.contact_id.empty() ? "test" : request.contact_id;
+        job.contact_name = request.contact_name.empty() ? job.contact_id : request.contact_name;
+        job.policy_id = "test";
+        job.alarm.alarm_id = "voice_modem_test";
+        job.alarm.name = "Voice Modem Test";
+        job.alarm.message = "Voice modem test call";
+        job.alarm.severity = 0;
+
+        if (!request.audio_file.empty())
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            job.alarm.audio_file = request.audio_file;
+            const auto it = audio_paths_.find(request.audio_file);
+            job.alarm.audio_path = (it == audio_paths_.end())
+                ? resolve_audio_path(config_dir_, request.audio_file)
+                : it->second;
+        }
+        else if (!request.tts_text.empty())
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            std::string err;
+            if (!append_tts_audio_paths_locked(job.alarm, request.tts_text, err))
+            {
+                result = err;
+                return false;
+            }
+        }
+
+        return run_voice_modem_call(job, result);
+    }
+
 private:
+    static bool vector_contains(const std::vector<std::string>& values, const std::string& needle)
+    {
+        for (const auto& v : values)
+        {
+            if (v == needle) return true;
+        }
+        return false;
+    }
+
+    static std::string sanitize_phone_number(const std::string& raw)
+    {
+        std::string out;
+        out.reserve(raw.size());
+        for (char ch : raw)
+        {
+            const unsigned char c = static_cast<unsigned char>(ch);
+            if (c >= '0' && c <= '9') out.push_back(static_cast<char>(c));
+            else if (ch == '*' || ch == '#' || ch == ',' || ch == '+') out.push_back(ch);
+            else if (ch == 'p' || ch == 'P') out.push_back('P');
+            else if (ch == 'w' || ch == 'W') out.push_back('W');
+            else if (ch == 't' || ch == 'T') out.push_back('T');
+        }
+        return out;
+    }
+
+    static std::string trim_tts_text(const std::string& raw)
+    {
+        std::string out;
+        out.reserve(raw.size());
+        bool lastSpace = false;
+        for (char ch : raw)
+        {
+            const unsigned char c = static_cast<unsigned char>(ch);
+            if (c == '\r' || c == '\n' || c == '\t' || c == ' ')
+            {
+                if (!lastSpace && !out.empty()) out.push_back(' ');
+                lastSpace = true;
+                continue;
+            }
+            if (c < 32) continue;
+            out.push_back(ch);
+            lastSpace = false;
+            if (out.size() >= 500) break;
+        }
+        while (!out.empty() && out.back() == ' ') out.pop_back();
+        return out;
+    }
+
+    static std::vector<TtsPart> parse_tts_parts(const std::string& raw)
+    {
+        std::vector<TtsPart> parts;
+        std::string text;
+        const std::string input = raw;
+        size_t pos = 0;
+        auto flush_text = [&]() {
+            const std::string clean = trim_tts_text(text);
+            if (!clean.empty()) parts.push_back(TtsPart{false, clean, 0});
+            text.clear();
+        };
+
+        while (pos < input.size())
+        {
+            if (input[pos] != '[')
+            {
+                text.push_back(input[pos++]);
+                continue;
+            }
+
+            const size_t close = input.find(']', pos + 1);
+            if (close == std::string::npos)
+            {
+                text.push_back(input[pos++]);
+                continue;
+            }
+
+            std::string token = input.substr(pos + 1, close - pos - 1);
+            std::string lowered;
+            lowered.reserve(token.size());
+            for (char ch : token) lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+
+            const std::string prefix = "pause:";
+            if (lowered.rfind(prefix, 0) != 0)
+            {
+                text.append(input.substr(pos, close - pos + 1));
+                pos = close + 1;
+                continue;
+            }
+
+            std::string value = lowered.substr(prefix.size());
+            value.erase(0, value.find_first_not_of(" \t"));
+            value.erase(value.find_last_not_of(" \t") == std::string::npos ? 0 : value.find_last_not_of(" \t") + 1);
+            char* end = nullptr;
+            const long parsed = std::strtol(value.c_str(), &end, 10);
+            if (end == value.c_str())
+            {
+                text.append(input.substr(pos, close - pos + 1));
+                pos = close + 1;
+                continue;
+            }
+
+            flush_text();
+            const int ms = std::max(0, std::min(60000, static_cast<int>(parsed)));
+            if (ms > 0) parts.push_back(TtsPart{true, "", ms});
+            pos = close + 1;
+        }
+
+        flush_text();
+        return parts;
+    }
+
+    static void append_le16(std::string& out, uint16_t value)
+    {
+        out.push_back(static_cast<char>(value & 0xff));
+        out.push_back(static_cast<char>((value >> 8) & 0xff));
+    }
+
+    static void append_le32(std::string& out, uint32_t value)
+    {
+        out.push_back(static_cast<char>(value & 0xff));
+        out.push_back(static_cast<char>((value >> 8) & 0xff));
+        out.push_back(static_cast<char>((value >> 16) & 0xff));
+        out.push_back(static_cast<char>((value >> 24) & 0xff));
+    }
+
+    bool generate_silence_wav_locked(int pause_ms, std::string& path, std::string& err) const
+    {
+        const int ms = std::max(1, std::min(60000, pause_ms));
+        const std::filesystem::path dir = std::filesystem::path(config_dir_) / "tts-cache";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec)
+        {
+            err = "Failed to create TTS cache directory: " + ec.message();
+            return false;
+        }
+
+        const uint32_t sampleRate = 8000;
+        const uint16_t channels = 1;
+        const uint16_t bitsPerSample = 16;
+        const uint32_t frames = std::max<uint32_t>(1, static_cast<uint32_t>((static_cast<uint64_t>(ms) * sampleRate) / 1000));
+        const uint32_t dataBytes = frames * channels * (bitsPerSample / 8);
+        const std::filesystem::path wav = dir / ("pause_" + std::to_string(ms) + "_" + random_hex(8) + ".wav");
+
+        std::string data;
+        data.reserve(44 + dataBytes);
+        data.append("RIFF", 4);
+        append_le32(data, 36 + dataBytes);
+        data.append("WAVE", 4);
+        data.append("fmt ", 4);
+        append_le32(data, 16);
+        append_le16(data, 1);
+        append_le16(data, channels);
+        append_le32(data, sampleRate);
+        append_le32(data, sampleRate * channels * (bitsPerSample / 8));
+        append_le16(data, channels * (bitsPerSample / 8));
+        append_le16(data, bitsPerSample);
+        data.append("data", 4);
+        append_le32(data, dataBytes);
+        data.append(dataBytes, '\0');
+
+        std::ofstream out(wav, std::ios::binary);
+        if (!out)
+        {
+            err = "Failed to create pause WAV file.";
+            return false;
+        }
+        out.write(data.data(), static_cast<std::streamsize>(data.size()));
+        out.close();
+        if (!out)
+        {
+            err = "Failed to write pause WAV file.";
+            return false;
+        }
+
+        path = wav.string();
+        return true;
+    }
+
+    bool generate_tts_wav_locked(const std::string& rawText, std::string& path, std::string& err) const
+    {
+        const std::string text = trim_tts_text(rawText);
+        if (text.empty())
+        {
+            err = "TTS text is empty.";
+            return false;
+        }
+
+        std::string engine = voice_modem_.tts_engine;
+        if (engine.empty() || engine == "auto")
+        {
+            if (command_exists("espeak-ng")) engine = "espeak-ng";
+            else if (command_exists("espeak")) engine = "espeak";
+            else if (command_exists("flite")) engine = "flite";
+            else
+            {
+                err = "No TTS engine found. Install espeak-ng, espeak, or flite.";
+                return false;
+            }
+        }
+        else if (!command_exists(engine))
+        {
+            err = "Configured TTS engine is not executable: " + engine;
+            return false;
+        }
+
+        const std::filesystem::path dir = std::filesystem::path(config_dir_) / "tts-cache";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec)
+        {
+            err = "Failed to create TTS cache directory: " + ec.message();
+            return false;
+        }
+
+        const std::filesystem::path wav = dir / ("tts_" + random_hex(8) + ".wav");
+        std::string cmd;
+        if (engine.find("flite") != std::string::npos)
+        {
+            cmd = shell_quote(engine) + " -t " + shell_quote(text) + " -o " + shell_quote(wav.string());
+        }
+        else
+        {
+            cmd = shell_quote(engine) + " -w " + shell_quote(wav.string()) + " " + shell_quote(text);
+        }
+
+        const int rc = std::system(cmd.c_str());
+        if (rc != 0)
+        {
+            const int exitCode = (rc == -1) ? -1 : (WIFEXITED(rc) ? WEXITSTATUS(rc) : rc);
+            err = "TTS command failed with exit code " + std::to_string(exitCode) + ": " + cmd;
+            return false;
+        }
+        if (!std::filesystem::exists(wav, ec) || std::filesystem::file_size(wav, ec) == 0)
+        {
+            err = "TTS command did not create a WAV file.";
+            return false;
+        }
+
+        path = wav.string();
+        return true;
+    }
+
+    bool append_tts_audio_paths_locked(AlarmState& alarm, const std::string& text, std::string& err) const
+    {
+        const std::vector<TtsPart> parts = parse_tts_parts(text);
+        if (parts.empty())
+        {
+            err = "TTS text is empty.";
+            return false;
+        }
+
+        bool added = false;
+        for (const auto& part : parts)
+        {
+            std::string path;
+            if (part.pause)
+            {
+                if (!generate_silence_wav_locked(part.pause_ms, path, err)) return false;
+                alarm.audio_files.push_back("pause");
+            }
+            else
+            {
+                if (!generate_tts_wav_locked(part.text, path, err)) return false;
+                alarm.audio_files.push_back("tts");
+            }
+
+            alarm.audio_paths.push_back(path);
+            if (alarm.audio_file.empty()) alarm.audio_file = part.pause ? "pause" : "tts";
+            if (alarm.audio_path.empty()) alarm.audio_path = path;
+            added = true;
+        }
+
+        if (!added) err = "TTS text is empty.";
+        return added;
+    }
+
+    void add_tts_audio_paths_locked(AlarmState& alarm) const
+    {
+        if (alarm.speech_texts.empty()) return;
+        for (const auto& text : alarm.speech_texts)
+        {
+            std::string err;
+            if (!append_tts_audio_paths_locked(alarm, text, err))
+            {
+                std::cerr << "[alarms] TTS generation failed for alarm " << alarm.alarm_id << ": " << err << "\n";
+                continue;
+            }
+        }
+    }
+
+    void add_voice_contact_job_locked(const Policy& policy, const Contact& contact, const AlarmState& alarm, const std::string& event_type, std::unordered_set<std::string>& seen)
+    {
+        if (!contact.enabled) return;
+        if (contact.phone.empty()) return;
+        if (!seen.insert(contact.id).second) return;
+
+        Route r;
+        r.name = policy.name.empty() ? ("voice_modem:" + policy.id) : ("voice_modem:" + policy.name);
+        r.type = "voice_modem";
+        r.enabled = true;
+        r.min_severity = policy.min_severity;
+        r.on = policy.on;
+        r.repeat_ms = policy.repeat_ms;
+        r.until = policy.until;
+
+        Job job;
+        job.route = std::move(r);
+        job.alarm = alarm;
+        job.event_type = event_type;
+        job.due_ms = now_ms();
+        job.phone = contact.phone;
+        job.contact_id = contact.id;
+        job.contact_name = contact.name;
+        job.policy_id = policy.id;
+        modem_jobs_.push_back(std::move(job));
+    }
+
+    void enqueue_voice_modem_jobs_locked(const AlarmState& alarm, const std::string& event_type)
+    {
+        if (!voice_modem_.enabled || voice_modem_.device.empty()) return;
+        if (alarm.notification_policy.empty()) return;
+
+        auto pit = policies_.find(alarm.notification_policy);
+        if (pit == policies_.end()) return;
+        const Policy& policy = pit->second;
+        if (!policy.enabled) return;
+        if (alarm.severity < policy.min_severity) return;
+        if (!vector_contains(policy.on, event_type)) return;
+
+        std::unordered_set<std::string> seen;
+        for (const auto& target : policy.targets)
+        {
+            if (target.type == "contact")
+            {
+                auto it = contacts_.find(target.id);
+                if (it != contacts_.end()) add_voice_contact_job_locked(policy, it->second, alarm, event_type, seen);
+            }
+            else if (target.type == "group")
+            {
+                auto git = contact_groups_.find(target.id);
+                if (git == contact_groups_.end() || !git->second.enabled) continue;
+                for (const auto& cid : git->second.contacts)
+                {
+                    auto it = contacts_.find(cid);
+                    if (it != contacts_.end()) add_voice_contact_job_locked(policy, it->second, alarm, event_type, seen);
+                }
+            }
+        }
+    }
+
     static std::string format_arg(std::string value, const AlarmState& alarm)
     {
         auto replace_all = [&](const std::string& from, const std::string& to) {
@@ -1332,13 +2166,45 @@ private:
         return value;
     }
 
+    static std::string basename_for_summary(const std::string& path)
+    {
+        const auto slash = path.find_last_of('/');
+        return slash == std::string::npos ? path : path.substr(slash + 1);
+    }
+
+    static std::string audio_sequence_summary(const AlarmState& alarm)
+    {
+        const std::vector<std::string> paths = !alarm.audio_paths.empty()
+            ? alarm.audio_paths
+            : (alarm.audio_path.empty() ? std::vector<std::string>{} : std::vector<std::string>{alarm.audio_path});
+        if (paths.empty()) return "none";
+
+        std::string out;
+        for (const auto& path : paths)
+        {
+            if (path.empty()) continue;
+            if (!out.empty()) out += " -> ";
+            out += basename_for_summary(path);
+        }
+        return out.empty() ? "none" : out;
+    }
+
+    static AlarmState alarm_with_audio_path(const AlarmState& alarm, size_t index)
+    {
+        AlarmState copy = alarm;
+        if (index < alarm.audio_files.size()) copy.audio_file = alarm.audio_files[index];
+        if (index < alarm.audio_paths.size()) copy.audio_path = alarm.audio_paths[index];
+        return copy;
+    }
+
     void apply_audio_default_arg(Job& job) const
     {
         if (job.route.type != "audio_command") return;
         if (!job.route.args.empty()) return;
         if (!job.alarm.audible_enabled) return;
-        if (job.alarm.audio_path.empty()) return;
-        job.route.args.push_back(job.alarm.audio_path);
+        const std::string path = !job.alarm.audio_paths.empty() ? job.alarm.audio_paths.front() : job.alarm.audio_path;
+        if (path.empty()) return;
+        job.route.args.push_back(path);
     }
 
     static bool route_needs_audio_path(const Route& route)
@@ -1353,6 +2219,10 @@ private:
 
     static std::string command_string(const Job& job)
     {
+        if (job.route.type == "voice_modem")
+        {
+            return "voice_modem contact=" + job.contact_id + " phone=" + job.phone + " policy=" + job.policy_id + " audio=" + audio_sequence_summary(job.alarm);
+        }
         std::string out = job.route.command;
         for (const auto& arg : job.route.args)
         {
@@ -1388,6 +2258,339 @@ private:
         return -1;
     }
 
+    static int run_audio_command_sequence(const Job& job)
+    {
+        if (!job.alarm.audible_enabled) return 0;
+        if (job.alarm.audio_paths.size() <= 1) return run_command(job);
+
+        int lastRc = 0;
+        for (size_t i = 0; i < job.alarm.audio_paths.size(); ++i)
+        {
+            Job part = job;
+            part.alarm = alarm_with_audio_path(job.alarm, i);
+            if (part.alarm.audio_path.empty()) continue;
+            lastRc = run_command(part);
+            if (lastRc != 0) return lastRc;
+        }
+        return lastRc;
+    }
+
+    static bool modem_response_ok(const std::string& response)
+    {
+        return response.find("OK") != std::string::npos ||
+               response.find("CONNECT") != std::string::npos ||
+               response.find("VCON") != std::string::npos;
+    }
+
+    static bool modem_response_error(const std::string& response)
+    {
+        return response.find("ERROR") != std::string::npos ||
+               response.find("NO CARRIER") != std::string::npos ||
+               response.find("NO DIALTONE") != std::string::npos ||
+               response.find("BUSY") != std::string::npos;
+    }
+
+    static bool send_modem_command(ModemSerialPort& port, const std::string& command, int timeout_ms, std::string& response, std::string& err)
+    {
+        if (!port.write_all(command + "\r", err)) return false;
+        response = port.read_for(timeout_ms);
+        if (response.empty()) {
+            err = "no modem response";
+            return false;
+        }
+        if (modem_response_error(response)) {
+            err = response;
+            return false;
+        }
+        return modem_response_ok(response);
+    }
+
+    static uint16_t read_le16(const std::vector<uint8_t>& data, size_t off)
+    {
+        if (off + 2 > data.size()) return 0;
+        return static_cast<uint16_t>(data[off]) | (static_cast<uint16_t>(data[off + 1]) << 8);
+    }
+
+    static uint32_t read_le32(const std::vector<uint8_t>& data, size_t off)
+    {
+        if (off + 4 > data.size()) return 0;
+        return static_cast<uint32_t>(data[off]) |
+               (static_cast<uint32_t>(data[off + 1]) << 8) |
+               (static_cast<uint32_t>(data[off + 2]) << 16) |
+               (static_cast<uint32_t>(data[off + 3]) << 24);
+    }
+
+    static bool load_wav_for_modem(const std::string& path, std::string& pcm, std::string& err)
+    {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            err = "failed to open WAV file: " + path + " (" + std::strerror(errno) + ")";
+            return false;
+        }
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (data.size() < 44 || std::string(reinterpret_cast<const char*>(data.data()), 4) != "RIFF" ||
+            std::string(reinterpret_cast<const char*>(data.data() + 8), 4) != "WAVE") {
+            err = "not a RIFF/WAVE file: " + path;
+            return false;
+        }
+
+        uint16_t audioFormat = 0;
+        uint16_t channels = 0;
+        uint32_t sampleRate = 0;
+        uint16_t bitsPerSample = 0;
+        size_t audioOff = 0;
+        size_t audioSize = 0;
+
+        size_t pos = 12;
+        while (pos + 8 <= data.size()) {
+            const std::string id(reinterpret_cast<const char*>(data.data() + pos), 4);
+            const uint32_t size = read_le32(data, pos + 4);
+            const size_t chunkData = pos + 8;
+            if (chunkData + size > data.size()) break;
+
+            if (id == "fmt ") {
+                if (size < 16) {
+                    err = "invalid WAV fmt chunk";
+                    return false;
+                }
+                audioFormat = read_le16(data, chunkData);
+                channels = read_le16(data, chunkData + 2);
+                sampleRate = read_le32(data, chunkData + 4);
+                bitsPerSample = read_le16(data, chunkData + 14);
+            } else if (id == "data") {
+                audioOff = chunkData;
+                audioSize = size;
+            }
+
+            pos = chunkData + size + (size % 2);
+        }
+
+        if (audioFormat != 1) {
+            err = "only PCM WAV files are supported";
+            return false;
+        }
+        if (channels < 1 || channels > 2) {
+            err = "only mono/stereo WAV files are supported";
+            return false;
+        }
+        if (bitsPerSample != 8 && bitsPerSample != 16) {
+            err = "voice modem playback requires 8-bit or 16-bit PCM WAV audio";
+            return false;
+        }
+        if (!audioOff || !audioSize) {
+            err = "WAV data chunk not found";
+            return false;
+        }
+
+        const size_t frameBytes = static_cast<size_t>(channels) * (bitsPerSample / 8);
+        const size_t frames = audioSize / frameBytes;
+        if (!frames || !sampleRate) {
+            err = "WAV file contains no playable samples";
+            return false;
+        }
+
+        std::vector<int32_t> mono;
+        mono.reserve(frames);
+        if (bitsPerSample == 8) {
+            for (size_t i = 0; i < frames; ++i) {
+                int32_t sum = 0;
+                for (uint16_t ch = 0; ch < channels; ++ch) {
+                    const uint8_t sample = data[audioOff + (i * frameBytes) + ch];
+                    sum += (static_cast<int32_t>(sample) - 128) << 8;
+                }
+                mono.push_back(sum / static_cast<int32_t>(channels));
+            }
+        } else {
+            for (size_t i = 0; i < frames; ++i) {
+                int32_t sum = 0;
+                for (uint16_t ch = 0; ch < channels; ++ch) {
+                    const size_t off = audioOff + (i * frameBytes) + (static_cast<size_t>(ch) * 2);
+                    const int16_t sample = static_cast<int16_t>(read_le16(data, off));
+                    sum += sample;
+                }
+                mono.push_back(sum / static_cast<int32_t>(channels));
+            }
+        }
+
+        if (mono.empty()) {
+            err = "WAV file contains no playable samples";
+            return false;
+        }
+
+        const uint32_t targetRate = 8000;
+        const size_t outFrames = std::max<size_t>(1, static_cast<size_t>((static_cast<uint64_t>(mono.size()) * targetRate) / sampleRate));
+        pcm.clear();
+        pcm.reserve(outFrames);
+        for (size_t outIdx = 0; outIdx < outFrames; ++outIdx) {
+            const double srcPos = static_cast<double>(outIdx) * static_cast<double>(sampleRate) / static_cast<double>(targetRate);
+            const size_t i0 = std::min(static_cast<size_t>(srcPos), mono.size() - 1);
+            const size_t i1 = std::min(i0 + 1, mono.size() - 1);
+            const double frac = srcPos - static_cast<double>(i0);
+            const double sample = static_cast<double>(mono[i0]) + (static_cast<double>(mono[i1] - mono[i0]) * frac);
+            const int32_t clamped = std::max<int32_t>(-32768, std::min<int32_t>(32767, static_cast<int32_t>(sample)));
+            const uint8_t u8 = static_cast<uint8_t>((clamped + 32768) >> 8);
+            pcm.push_back(static_cast<char>(u8));
+        }
+        return true;
+    }
+
+    static std::string dle_escape_voice_data(const std::string& pcm)
+    {
+        std::string out;
+        out.reserve(pcm.size() + 16);
+        for (unsigned char ch : pcm) {
+            out.push_back(static_cast<char>(ch));
+            if (ch == 0x10) out.push_back(static_cast<char>(0x10));
+        }
+        out.push_back(static_cast<char>(0x10));
+        out.push_back(static_cast<char>(0x03));
+        return out;
+    }
+
+    static bool play_wav_over_modem(ModemSerialPort& port, const std::string& path, int voice_line, int timeout_ms, int post_playback_drain_ms, std::string& result)
+    {
+        std::string pcm;
+        std::string err;
+        if (!load_wav_for_modem(path, pcm, err)) {
+            result = err;
+            return false;
+        }
+
+        std::string response;
+        // Select normal telephone-line voice path before entering transmit mode.
+        send_modem_command(port, "AT+VLS=" + std::to_string(voice_line), timeout_ms, response, err);
+
+        if (!send_modem_command(port, "AT+VSM=1", timeout_ms, response, err)) {
+            result = "AT+VSM=1 failed: " + err;
+            return false;
+        }
+        if (!send_modem_command(port, "AT+VTX", timeout_ms, response, err)) {
+            result = "AT+VTX failed: " + err;
+            return false;
+        }
+        if (response.find("CONNECT") == std::string::npos) {
+            result = "AT+VTX did not enter transmit mode";
+            return false;
+        }
+
+        const std::string payload = dle_escape_voice_data(pcm);
+        if (!port.write_all(payload, err)) {
+            result = "voice audio write failed: " + err;
+            return false;
+        }
+        if (post_playback_drain_ms > 0) port.read_for(post_playback_drain_ms);
+        result = "played " + std::to_string(pcm.size()) + " samples from " + path;
+        return true;
+    }
+
+    bool run_voice_modem_call(const Job& job, std::string& result)
+    {
+        VoiceModemConfig vm;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            vm = voice_modem_;
+        }
+
+        if (!vm.enabled) {
+            result = "voice modem disabled";
+            return false;
+        }
+        if (vm.device.empty()) {
+            result = "voice modem device not configured";
+            return false;
+        }
+
+        const std::string number = sanitize_phone_number(job.phone);
+        if (number.empty()) {
+            result = "contact has no dialable phone number";
+            return false;
+        }
+
+        ModemSerialPort port;
+        std::string err;
+        if (!port.open_port(vm.device, vm.baud, err)) {
+            result = "open " + vm.device + " failed: " + err;
+            return false;
+        }
+
+        std::string response;
+        if (!send_modem_command(port, "AT", vm.command_timeout_ms, response, err)) {
+            result = "AT failed: " + err;
+            return false;
+        }
+
+        // Disable echo when supported. A failure here should not block dialing.
+        send_modem_command(port, "ATE0", vm.command_timeout_ms, response, err);
+
+        const std::vector<std::string> playbackPaths = !job.alarm.audio_paths.empty()
+            ? job.alarm.audio_paths
+            : (job.alarm.audio_path.empty() ? std::vector<std::string>{} : std::vector<std::string>{job.alarm.audio_path});
+        const bool needsAudioPlayback = !playbackPaths.empty();
+        if ((vm.voice_init || needsAudioPlayback) && !send_modem_command(port, "AT+FCLASS=8", vm.command_timeout_ms, response, err)) {
+            result = "voice init failed: " + err;
+            return false;
+        }
+        const int voiceLine = std::max(0, std::min(255, vm.voice_line));
+        if (needsAudioPlayback && !send_modem_command(port, "AT+VLS=" + std::to_string(voiceLine), vm.command_timeout_ms, response, err)) {
+            result = "voice line select failed before dial: " + err;
+            return false;
+        }
+
+        response.clear();
+        err.clear();
+        const std::string dialCommand = needsAudioPlayback ? ("ATD" + number) : ("ATD" + number + ";");
+        if (!port.write_all(dialCommand + "\r", err)) {
+            result = "dial write failed: " + err;
+            return false;
+        }
+        response = port.read_for(vm.command_timeout_ms);
+        if (modem_response_error(response)) {
+            result = "dial failed: " + response;
+            return false;
+        }
+
+        const int dialSeconds = std::max(1, std::min(300, vm.dial_seconds));
+        const int audioDelaySeconds = std::max(0, std::min(120, vm.audio_delay_seconds));
+        const int audioGapMs = std::max(0, std::min(5000, vm.audio_gap_ms));
+        std::string playResult;
+        int playedCount = 0;
+        bool playFailed = false;
+        const auto callStarted = std::chrono::steady_clock::now();
+        if (needsAudioPlayback) {
+            std::this_thread::sleep_for(std::chrono::seconds(audioDelaySeconds));
+            // Drain any late dial/answer responses before requesting transmit mode.
+            port.read_for(500);
+            for (const auto& path : playbackPaths)
+            {
+                if (path.empty()) continue;
+                bool played = play_wav_over_modem(port, path, voiceLine, vm.command_timeout_ms, audioGapMs, playResult);
+                if (!played) {
+                    playFailed = true;
+                    break;
+                }
+                playedCount++;
+            }
+        }
+
+        const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - callStarted).count();
+        if (elapsed < dialSeconds) {
+            std::this_thread::sleep_for(std::chrono::seconds(dialSeconds - elapsed));
+        }
+
+        std::string hangupErr;
+        std::string hangupResponse;
+        send_modem_command(port, "ATH", vm.command_timeout_ms, hangupResponse, hangupErr);
+
+        result = "called contact=" + job.contact_id + " name=" + job.contact_name + " seconds=" + std::to_string(dialSeconds);
+        if (needsAudioPlayback) {
+            result += !playFailed
+                ? (" audio=played count=" + std::to_string(playedCount) + " files=" + audio_sequence_summary(job.alarm) + " delay=" + std::to_string(audioDelaySeconds) + " gap_ms=" + std::to_string(audioGapMs) + " vls=" + std::to_string(voiceLine))
+                : " audio_failed=" + playResult + " files=" + audio_sequence_summary(job.alarm) + " gap_ms=" + std::to_string(audioGapMs) + " vls=" + std::to_string(voiceLine);
+        }
+        if (playFailed) return false;
+        return true;
+    }
+
     bool should_continue_job(const Job& job)
     {
         std::function<bool(const std::string&, const std::string&)> fn;
@@ -1408,6 +2611,9 @@ private:
             if (ok) successes_++;
             else failures_++;
             last_attempt_ms_ = now_ms();
+            last_route_type_ = job.route.type;
+            last_route_name_ = job.route.name;
+            last_result_ = result;
             db = db_;
         }
         if (!db) return;
@@ -1431,18 +2637,30 @@ private:
         }
     }
 
-    void worker_loop()
+    std::deque<Job>& queue_for_locked(JobQueue queue)
+    {
+        return queue == JobQueue::Audio ? audio_jobs_ : modem_jobs_;
+    }
+
+    std::condition_variable& cv_for_locked(JobQueue queue)
+    {
+        return queue == JobQueue::Audio ? audio_cv_ : modem_cv_;
+    }
+
+    void worker_loop(JobQueue queue)
     {
         while (true)
         {
             Job job;
             {
                 std::unique_lock<std::mutex> lock(mu_);
-                cv_.wait(lock, [&]() { return stop_ || !jobs_.empty(); });
+                auto& jobs = queue_for_locked(queue);
+                auto& cv = cv_for_locked(queue);
+                cv.wait(lock, [&]() { return stop_ || !jobs.empty(); });
                 if (stop_) return;
 
-                auto best = jobs_.begin();
-                for (auto it = jobs_.begin(); it != jobs_.end(); ++it)
+                auto best = jobs.begin();
+                for (auto it = jobs.begin(); it != jobs.end(); ++it)
                 {
                     if (it->due_ms < best->due_ms) best = it;
                 }
@@ -1450,12 +2668,12 @@ private:
                 const int64_t delay = best->due_ms - now_ms();
                 if (delay > 0)
                 {
-                    cv_.wait_for(lock, std::chrono::milliseconds(delay));
+                    cv.wait_for(lock, std::chrono::milliseconds(delay));
                     continue;
                 }
 
                 job = std::move(*best);
-                jobs_.erase(best);
+                jobs.erase(best);
             }
 
             if (job.event_type == "active" && !should_continue_job(job)) continue;
@@ -1464,9 +2682,13 @@ private:
             std::string result;
             if (job.route.type == "audio_command")
             {
-                const int rc = run_command(job);
+                const int rc = run_audio_command_sequence(job);
                 ok = (rc == 0);
                 result = "exit_code=" + std::to_string(rc);
+            }
+            else if (job.route.type == "voice_modem")
+            {
+                ok = run_voice_modem_call(job, result);
             }
             else
             {
@@ -1478,27 +2700,38 @@ private:
             {
                 job.due_ms = now_ms() + job.route.repeat_ms;
                 std::lock_guard<std::mutex> lock(mu_);
-                jobs_.push_back(std::move(job));
-                cv_.notify_all();
+                queue_for_locked(queue).push_back(std::move(job));
+                cv_for_locked(queue).notify_all();
             }
         }
     }
 
     mutable std::mutex mu_;
-    std::condition_variable cv_;
+    std::condition_variable audio_cv_;
+    std::condition_variable modem_cv_;
     bool enabled_ = false;
     bool running_ = false;
     bool stop_ = false;
     std::vector<Route> routes_;
-    std::deque<Job> jobs_;
+    std::deque<Job> audio_jobs_;
+    std::deque<Job> modem_jobs_;
+    VoiceModemConfig voice_modem_;
+    std::unordered_map<std::string, Contact> contacts_;
+    std::unordered_map<std::string, ContactGroup> contact_groups_;
+    std::unordered_map<std::string, Policy> policies_;
+    std::unordered_map<std::string, std::string> audio_paths_;
     AlarmDb* db_ = nullptr;
     std::function<bool(const std::string&, const std::string&)> should_continue_;
     std::string config_dir_;
-    std::thread worker_;
+    std::thread audio_worker_;
+    std::thread modem_worker_;
     int64_t attempts_ = 0;
     int64_t successes_ = 0;
     int64_t failures_ = 0;
     int64_t last_attempt_ms_ = 0;
+    std::string last_route_type_;
+    std::string last_route_name_;
+    std::string last_result_;
 };
 
 struct AlarmEngine;
@@ -1764,6 +2997,7 @@ struct AlarmEngine
                 if (a.contains("repeat_ms")) r["repeat_ms"] = a["repeat_ms"];
                 if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
+                if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
                 r["source"] = {
                     {"connection_id", a.value("connection_id", "")},
                     {"tag", a.value("tag_name", a.value("tag", ""))}
@@ -1829,10 +3063,15 @@ struct AlarmEngine
             }
             r.message_on_active = it.value("message_on_active", "");
             r.message_on_return = it.value("message_on_return", "");
+            r.notification_policy = it.value("notification_policy", "");
             const ResolvedAlarmAudio audio = resolve_alarm_audio(root, it, dirname_of(path));
             r.audible_enabled = audio.audible_enabled;
             r.audio_file = audio.audio_file;
             r.audio_path = audio.audio_path;
+            r.speech_text = audio.speech_text;
+            r.audio_files = audio.audio_files;
+            r.audio_paths = audio.audio_paths;
+            r.speech_texts = audio.speech_texts;
             const ResolvedAlarmRepeat rep = resolve_alarm_repeat(root, it);
             r.repeat_override = rep.repeat_override;
             r.repeat_ms = rep.repeat_ms;
@@ -1861,6 +3100,11 @@ struct AlarmEngine
             s.audible_enabled = r.audible_enabled;
             s.audio_file = r.audio_file;
             s.audio_path = r.audio_path;
+            s.speech_text = r.speech_text;
+            s.audio_files = r.audio_files;
+            s.audio_paths = r.audio_paths;
+            s.speech_texts = r.speech_texts;
+            s.notification_policy = r.notification_policy;
             s.repeat_override = r.repeat_override;
             s.repeat_ms = r.repeat_ms;
             nextStates[r.id] = s;
@@ -2819,6 +4063,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
 
     if (engine.notifications)
     {
+        engine.notifications->set_config_dir(dirname_of(configDir));
         engine.notifications->configure(notification_config_from_root(rulesRoot));
     }
 
@@ -2857,6 +4102,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 if (a.contains("repeat_ms")) r["repeat_ms"] = a["repeat_ms"];
                 if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
+                if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
                 r["source"] = {
                     {"connection_id", a.value("connection_id", "")},
                     {"tag", a.value("tag_name", a.value("tag", ""))}
@@ -2913,10 +4159,15 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             }
             r.message_on_active = it.value("message_on_active", "");
             r.message_on_return = it.value("message_on_return", "");
+            r.notification_policy = it.value("notification_policy", "");
             const ResolvedAlarmAudio audio = resolve_alarm_audio(rulesRoot, it, dirname_of(configDir));
             r.audible_enabled = audio.audible_enabled;
             r.audio_file = audio.audio_file;
             r.audio_path = audio.audio_path;
+            r.speech_text = audio.speech_text;
+            r.audio_files = audio.audio_files;
+            r.audio_paths = audio.audio_paths;
+            r.speech_texts = audio.speech_texts;
             const ResolvedAlarmRepeat rep = resolve_alarm_repeat(rulesRoot, it);
             r.repeat_override = rep.repeat_override;
             r.repeat_ms = rep.repeat_ms;
@@ -2944,6 +4195,11 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.audible_enabled = r.audible_enabled;
             s.audio_file = r.audio_file;
             s.audio_path = r.audio_path;
+            s.speech_text = r.speech_text;
+            s.audio_files = r.audio_files;
+            s.audio_paths = r.audio_paths;
+            s.speech_texts = r.speech_texts;
+            s.notification_policy = r.notification_policy;
             s.repeat_override = r.repeat_override;
             s.repeat_ms = r.repeat_ms;
             nextStates[r.id] = s;
@@ -3045,6 +4301,7 @@ int main(int argc, char **argv)
     AlarmUa uaServer;
     NotificationManager notifications;
     engine.set_notifications(&notifications);
+    notifications.set_config_dir(configDir);
     notifications.set_should_continue([&engine](const std::string& alarm_id, const std::string& until) {
         return engine.should_continue_notification(alarm_id, until);
     });
@@ -3330,6 +4587,36 @@ int main(int argc, char **argv)
             } catch (...) {}
         }
         res.status = ok ? 200 : 500;
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    svr.Post("/alarm/api/voice-modem/test", [&](const httplib::Request &req, httplib::Response &res) {
+        json body;
+        try { body = json::parse(req.body); } catch (...) { body = json::object(); }
+
+        NotificationManager::TestCallRequest test;
+        test.contact_id = body.value("contact_id", "test");
+        test.contact_name = body.value("contact_name", "Test Call");
+        test.phone = body.value("phone", "");
+        test.audio_file = body.value("audio_file", "");
+        test.tts_text = body.value("tts_text", "");
+
+        json j;
+        if (test.phone.empty())
+        {
+            res.status = 400;
+            j["ok"] = false;
+            j["error"] = "Phone number is required.";
+            res.set_content(j.dump(2), "application/json");
+            return;
+        }
+
+        std::string result;
+        const bool ok = notifications.test_voice_modem_call(test, result);
+        res.status = ok ? 200 : 500;
+        j["ok"] = ok;
+        j["result"] = result;
+        if (!ok) j["error"] = result.empty() ? "Voice modem test call failed." : result;
         res.set_content(j.dump(2), "application/json");
     });
 

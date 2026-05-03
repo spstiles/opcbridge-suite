@@ -742,6 +742,41 @@ function listAudioPlaybackDevices() {
   };
 }
 
+function listSerialModemDevices() {
+  const devices = [];
+  const seen = new Set();
+
+  function addDevice(devicePath, labelSuffix = '') {
+    const p = String(devicePath || '').trim();
+    if (!p || seen.has(p)) return;
+    try {
+      if (!fs.existsSync(p)) return;
+      const st = fs.statSync(p);
+      if (!st.isCharacterDevice() && !st.isSymbolicLink()) return;
+      seen.add(p);
+      let label = p;
+      if (labelSuffix) label += ` ${labelSuffix}`;
+      devices.push({ path: p, id: p, label });
+    } catch {
+      // Device nodes can appear/disappear while scanning /dev.
+    }
+  }
+
+  addDevice('/dev/modem', '(modem symlink)');
+
+  try {
+    const names = fs.readdirSync('/dev');
+    names
+      .filter((name) => /^(ttyUSB|ttyACM|ttyS|ttyAMA|ttyTHS)\d+$/.test(name))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+      .forEach((name) => addDevice(path.join('/dev', name)));
+  } catch {
+    // Keep the endpoint usable even on systems with restricted /dev access.
+  }
+
+  return { ok: true, devices };
+}
+
 function contentTypeFor(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.html') return 'text/html; charset=utf-8';
@@ -885,6 +920,9 @@ function needsWriteToken(upstreamPathname) {
     upstreamPathname === '/config/delete' ||
     upstreamPathname === '/config/audio/upload' ||
     upstreamPathname === '/config/audio/delete' ||
+    upstreamPathname === '/config/audio/move' ||
+    upstreamPathname === '/config/audio/folder' ||
+    upstreamPathname === '/config/audio/folder/delete' ||
     upstreamPathname === '/config/cert/upload'
   );
 }
@@ -904,8 +942,20 @@ function upstreamTimeoutMs(prefixName, upstreamPathname, method) {
     if (p.startsWith('/config/')) return 60000;
     if (p === '/write') return 30000;
   }
+  if (prefixName === 'alarms') {
+    if (p === '/alarm/api/voice-modem/test') return 180000;
+  }
 
   return 8000;
+}
+
+function upstreamRequestBodyLimitBytes(prefixName, upstreamPathname) {
+  const p = String(upstreamPathname || '/');
+  if (prefixName === 'opcbridge' && p === '/config/audio/upload') {
+    // Backend accepts 50 MiB decoded audio. JSON + base64 adds about 33% overhead.
+    return 80 * 1024 * 1024;
+  }
+  return 2 * 1024 * 1024;
 }
 
 async function proxy(req, res, target, prefixName) {
@@ -941,7 +991,7 @@ async function proxy(req, res, target, prefixName) {
 
   let bodyBuf = null;
   if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
-    bodyBuf = await readBody(req);
+    bodyBuf = await readBody(req, upstreamRequestBodyLimitBytes(prefixName, upstreamPathname));
 
     if (prefixName === 'opcbridge' && needsWriteToken(upstreamPathname)) {
       const ct = String(req.headers['content-type'] || '').toLowerCase();
@@ -1774,6 +1824,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, listAudioPlaybackDevices());
+    return;
+  }
+
+  if (url.pathname === '/api/scada/modem/devices') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    sendJson(res, 200, listSerialModemDevices());
     return;
   }
 

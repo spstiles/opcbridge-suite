@@ -177,6 +177,11 @@ install_deps() {
   # Handy for quick inspection/debugging on servers.
   pkgs+=(sqlite3)
 
+  # Local text-to-speech for voice modem test calls and alarm speech playback.
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
+    pkgs+=(alsa-utils espeak-ng)
+  fi
+
   # Node runtime for scada/hmi services.
   for c in "${COMPONENTS[@]}"; do
     if [[ "$c" == "scada" || "$c" == "hmi" ]]; then
@@ -446,6 +451,20 @@ ensure_audio_group_access() {
   fi
   if getent group audio >/dev/null 2>&1; then
     usermod -aG audio "$SERVICE_USER" >/dev/null 2>&1 || true
+  fi
+}
+
+ensure_dialout_group_access() {
+  # Voice modem alarm dial-out uses USB/serial devices such as /dev/ttyACM* or /dev/ttyUSB*.
+  # Linux distributions commonly grant access to those device nodes through the dialout group.
+  if ! have_cmd usermod; then
+    return 0
+  fi
+  if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    return 0
+  fi
+  if getent group dialout >/dev/null 2>&1; then
+    usermod -aG dialout "$SERVICE_USER" >/dev/null 2>&1 || true
   fi
 }
 
@@ -956,6 +975,7 @@ install_systemd_units() {
 	ExecStart=/bin/sh -c 'exec ${PREFIX}/bin/opcbridge-alarms --config ${CONFIG_ROOT}/alarms --opcbridge-host 127.0.0.1 --opcbridge-http-port \"\${OPCBRIDGE_HTTP_PORT:-8080}\" --opcbridge-ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --http-port \"\${ALARMS_HTTP_PORT:-8085}\" --ws-port \"\${ALARMS_WS_PORT:-8086}\" --opcua --admin-token \"\${OPCBRIDGE_ADMIN_SERVICE_TOKEN}\"'
 	User=${SERVICE_USER}
 	Group=${SERVICE_GROUP}
+	SupplementaryGroups=audio dialout
 	Restart=always
 	RestartSec=2
 
@@ -1163,6 +1183,9 @@ main() {
   ensure_user
   if printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(alarms|scada)'; then
     ensure_audio_group_access
+  fi
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
+    ensure_dialout_group_access
   fi
   # If SCADA is installed, grant the service user journal access so the Logs tab works by default.
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then

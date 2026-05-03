@@ -145,6 +145,88 @@
       </div>
 
       <div class="card" style="margin-top: 14px;">
+        <div class="card-title">Voice Modem Settings</div>
+        <div class="hint">Hardware setup for USB/serial voice modem alarm dialing. Contacts and call lists are configured separately.</div>
+        <div class="card-body">
+          <div class="form" style="max-width: 720px;">
+            <div class="form-row">
+              <label>Enabled</label>
+              <label style="display:flex; align-items:center; gap:8px;">
+                <input id="voiceModemEnabled" type="checkbox" />
+                Use voice modem hardware
+              </label>
+            </div>
+            <div class="form-row">
+              <label>Detected Device</label>
+              <select id="voiceModemDevice"></select>
+            </div>
+            <div class="form-row">
+              <label>Manual Device</label>
+              <input id="voiceModemManualDevice" type="text" placeholder="/dev/ttyUSB0" />
+            </div>
+            <div class="form-row">
+              <label>Baud Rate</label>
+              <select id="voiceModemBaud">
+                <option value="9600">9600</option>
+                <option value="19200">19200</option>
+                <option value="38400">38400</option>
+                <option value="57600">57600</option>
+                <option value="115200">115200</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Voice Init</label>
+              <label style="display:flex; align-items:center; gap:8px;">
+                <input id="voiceModemVoiceInit" type="checkbox" />
+                Send AT+FCLASS=8 before dialing
+              </label>
+            </div>
+            <div class="form-row">
+              <label>Voice Line (VLS)</label>
+              <select id="voiceModemVoiceLine">
+                <option value="1">1 - telephone line</option>
+                <option value="5">5 - speaker/telephone line</option>
+                <option value="13">13 - mic/speaker/telephone line</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Dial Seconds</label>
+              <input id="voiceModemDialSeconds" type="number" min="5" max="300" step="1" />
+            </div>
+            <div class="form-row">
+              <label>Playback Delay Seconds</label>
+              <input id="voiceModemAudioDelaySeconds" type="number" min="0" max="120" step="1" />
+            </div>
+            <div class="form-row">
+              <label>Playback Gap Milliseconds</label>
+              <input id="voiceModemAudioGapMs" type="number" min="0" max="5000" step="10" />
+            </div>
+            <div class="form-row">
+              <label>Test Contact</label>
+              <select id="voiceModemTestContact"></select>
+            </div>
+            <div class="form-row">
+              <label>Test Audio File</label>
+              <select id="voiceModemTestAudioFile"></select>
+            </div>
+            <div class="form-row">
+              <label>Test Speech Text</label>
+              <textarea id="voiceModemTestTtsText" rows="3" placeholder="Optional text to speak if no test audio file is selected. Use [pause:500] for a 500 ms pause."></textarea>
+            </div>
+            <div class="form-row">
+              <label></label>
+              <div class="row-actions">
+                <button class="btn" id="voiceModemReloadBtn" type="button">Reload Devices</button>
+                <button class="btn primary" id="voiceModemSaveBtn" type="button">Save Voice Modem</button>
+                <button class="btn" id="voiceModemTestBtn" type="button">Test Call</button>
+              </div>
+            </div>
+            <div class="hint mono" id="voiceModemStatus"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 14px;">
         <div class="card-title">Sound Settings</div>
         <div class="hint">Alarm annunciation output for local speakers, amplifiers, or PA systems.</div>
         <div class="card-body">
@@ -333,9 +415,8 @@
       <h2>Alarms &amp; Events</h2>
       <div class="hint">Alarm configuration, event logging configuration, and notification behavior.</div>
 
-      <div class="grid" style="grid-template-columns: 1fr;">
-        <div class="card">
-          <div class="card-title">Notifications</div>
+      <details class="card ae-notifications-card">
+        <summary class="card-title">Notifications</summary>
           <div class="hint">Controls how alarms are annunciated (repeat delay, output device, etc.).</div>
           <div class="card-body">
             <div class="form" style="max-width: 900px;">
@@ -377,10 +458,9 @@
               <div class="hint mono" id="alarmNotifStatus"></div>
             </div>
           </div>
-        </div>
-      </div>
+      </details>
 
-	      <section class="editor ae-alarms-events" style="min-height: 560px; margin-top: 14px;">
+	      <section class="editor ae-alarms-events">
 	        <div class="editor-toolbar">
 	          <div class="editor-title">Alarms &amp; Events</div>
 	        </div>
@@ -392,7 +472,9 @@
 
 	          <div class="ae-right" id="alarmsEventsDetailsPanel">
 	            <div class="ae-pane ae-children-pane">
-	              <div class="hint" id="alarmsEventsListHint" style="margin:0 0 6px 0;">Children</div>
+	              <div class="ae-pane-header">
+	                <div class="hint" id="alarmsEventsListHint" style="margin:0;">Children</div>
+	              </div>
 	              <div class="table-wrap ae-pane-body">
 	                <table class="table" id="alarmsEventsChildrenTable">
 	                  <thead><tr><th>Name</th></tr></thead>
@@ -709,6 +791,10 @@
                 <select id="editAlarmAudioFile"></select>
               </div>
             </div>
+            <div class="form-row">
+              <label>Speech Text</label>
+              <textarea id="editAlarmSpeechText" rows="3" placeholder="Optional text-to-speech for this alarm. Use [pause:500] for a 500 ms pause."></textarea>
+            </div>
             <div class="form-row"><label></label><div class="hint" id="editAlarmAudioHint"></div></div>
             <div class="form-row">
               <label>Repeat</label>
@@ -724,7 +810,7 @@
             <div class="form-row">
               <label>Audio Files</label>
               <div class="row-actions">
-                <input id="editAlarmAudioUpload" type="file" accept=".wav,.mp3,.ogg,.flac,audio/*" />
+                <input id="editAlarmAudioUpload" type="file" multiple accept=".wav,.mp3,.ogg,.flac,audio/*" />
                 <button class="btn" id="editAlarmAudioUploadBtn" type="button">Upload</button>
                 <button class="btn" id="editAlarmAudioDeleteBtn" type="button">Delete Selected</button>
               </div>
@@ -790,6 +876,10 @@
                 </select>
                 <select id="editAudioScopeAudioFile"></select>
               </div>
+            </div>
+            <div class="form-row">
+              <label>Speech Text</label>
+              <textarea id="editAudioScopeSpeechText" rows="3" placeholder="Optional text-to-speech for this scope. Use [pause:500] for a 500 ms pause."></textarea>
             </div>
             <div class="form-row"><label></label><div class="hint" id="editAudioScopeHint"></div></div>
             <div class="form-row"><label></label>

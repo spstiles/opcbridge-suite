@@ -36,6 +36,22 @@ const els = {
   soundReloadBtn: document.getElementById('soundReloadBtn'),
   soundSaveBtn: document.getElementById('soundSaveBtn'),
   soundSettingsStatus: document.getElementById('soundSettingsStatus'),
+  voiceModemEnabled: document.getElementById('voiceModemEnabled'),
+  voiceModemDevice: document.getElementById('voiceModemDevice'),
+  voiceModemManualDevice: document.getElementById('voiceModemManualDevice'),
+  voiceModemBaud: document.getElementById('voiceModemBaud'),
+  voiceModemVoiceInit: document.getElementById('voiceModemVoiceInit'),
+  voiceModemVoiceLine: document.getElementById('voiceModemVoiceLine'),
+  voiceModemDialSeconds: document.getElementById('voiceModemDialSeconds'),
+  voiceModemAudioDelaySeconds: document.getElementById('voiceModemAudioDelaySeconds'),
+  voiceModemAudioGapMs: document.getElementById('voiceModemAudioGapMs'),
+  voiceModemTestContact: document.getElementById('voiceModemTestContact'),
+  voiceModemTestAudioFile: document.getElementById('voiceModemTestAudioFile'),
+  voiceModemTestTtsText: document.getElementById('voiceModemTestTtsText'),
+  voiceModemReloadBtn: document.getElementById('voiceModemReloadBtn'),
+  voiceModemSaveBtn: document.getElementById('voiceModemSaveBtn'),
+  voiceModemTestBtn: document.getElementById('voiceModemTestBtn'),
+  voiceModemStatus: document.getElementById('voiceModemStatus'),
   alarmNotifEnabled: document.getElementById('alarmNotifEnabled'),
   alarmNotifRepeatMs: document.getElementById('alarmNotifRepeatMs'),
   alarmNotifUntil: document.getElementById('alarmNotifUntil'),
@@ -307,6 +323,7 @@ const els = {
   editAlarmEnabled: document.getElementById('editAlarmEnabled'),
   editAlarmAudibleMode: document.getElementById('editAlarmAudibleMode'),
   editAlarmAudioFile: document.getElementById('editAlarmAudioFile'),
+  editAlarmSpeechText: document.getElementById('editAlarmSpeechText'),
   editAlarmAudioHint: document.getElementById('editAlarmAudioHint'),
   editAlarmAudioUpload: document.getElementById('editAlarmAudioUpload'),
   editAlarmAudioUploadBtn: document.getElementById('editAlarmAudioUploadBtn'),
@@ -337,6 +354,7 @@ const els = {
   editAudioScopeName: document.getElementById('editAudioScopeName'),
   editAudioScopeAudibleMode: document.getElementById('editAudioScopeAudibleMode'),
   editAudioScopeAudioFile: document.getElementById('editAudioScopeAudioFile'),
+  editAudioScopeSpeechText: document.getElementById('editAudioScopeSpeechText'),
   editAudioScopeHint: document.getElementById('editAudioScopeHint'),
   editAudioScopeCancelBtn: document.getElementById('editAudioScopeCancelBtn'),
   editAudioScopeSaveBtn: document.getElementById('editAudioScopeSaveBtn'),
@@ -453,10 +471,10 @@ const state = {
   workspaceDeletePaths: new Set(), // connection config paths to delete on Save/Save+Reload
 
   // tree
-  expanded: new Set(['project:opcbridge', 'folder:connectivity', 'folder:alarms_events']),
+  expanded: new Set(['project:opcbridge', 'folder:connectivity']),
   selectedNodeId: '',
   workspaceTreeRoot: null,
-  alarmsEventsExpanded: new Set(['folder:alarms', 'folder:events', 'folder:audio_files']),
+  alarmsEventsExpanded: new Set(['folder:alarms', 'folder:events', 'folder:audio_files', 'folder:notification_contacts', 'folder:notification_contact_groups', 'folder:notification_policies']),
   alarmsEventsSelectedNodeId: '',
   alarmsEventsTreeRoot: null,
   alarmsEventsSelectedChildId: '',
@@ -1729,6 +1747,7 @@ function setTab(id) {
   }
   if (id === 'configure') {
     loadSoundSettings().catch(() => {});
+    loadVoiceModemSettings().catch(() => {});
   }
   if (id === 'alarms_events') {
     loadAlarmNotificationSettings().catch(() => {});
@@ -2070,6 +2089,88 @@ function downloadDeviceTagsCsv(connectionId) {
     filename: `opcbridge-tags-${safe}.csv`,
     mime: 'text/csv',
     text: toCsv(rows, headers)
+  });
+}
+
+const ALARM_CSV_HEADERS = [
+  'id',
+  'name',
+  'group',
+  'site',
+  'connection_id',
+  'tag_name',
+  'type',
+  'value',
+  'threshold',
+  'hysteresis',
+  'severity',
+  'enabled',
+  'audible_enabled',
+  'audio_file',
+  'speech_text',
+  'notification_policy',
+  'message_on_active',
+  'message_on_return',
+  'action'
+];
+
+function alarmCsvValueText(alarm) {
+  if (!Object.prototype.hasOwnProperty.call(alarm || {}, 'value')) return '';
+  const value = alarm.value;
+  if (value == null) return '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function parseAlarmCompareValue(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  if (lower === 'true') return true;
+  if (lower === 'false') return false;
+  const n = Number(raw);
+  if (Number.isFinite(n) && raw !== '') return n;
+  try {
+    if ((raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'))) return JSON.parse(raw);
+  } catch {
+    // Keep plain text if the user did not enter valid JSON.
+  }
+  return raw;
+}
+
+function downloadAlarmsCsv() {
+  const cfg = state.alarmsConfig || { alarms: [] };
+  const alarms = (Array.isArray(cfg.alarms) ? cfg.alarms : [])
+    .slice()
+    .sort((a, b) => String(a?.group || '').localeCompare(String(b?.group || ''), undefined, { numeric: true, sensitivity: 'base' })
+      || String(a?.site || '').localeCompare(String(b?.site || ''), undefined, { numeric: true, sensitivity: 'base' })
+      || String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  const rows = alarms.map((a) => ({
+    id: String(a?.id || '').trim(),
+    name: String(a?.name || a?.id || '').trim(),
+    group: String(a?.group || '').trim(),
+    site: String(a?.site || '').trim(),
+    connection_id: String(a?.connection_id || '').trim(),
+    tag_name: String(a?.tag_name || a?.tag || '').trim(),
+    type: String(a?.type || '').trim(),
+    value: alarmCsvValueText(a),
+    threshold: (a?.threshold == null) ? '' : String(a.threshold),
+    hysteresis: (a?.hysteresis == null) ? '' : String(a.hysteresis),
+    severity: (a?.severity == null) ? '500' : String(a.severity),
+    enabled: (a?.enabled !== false) ? 'true' : 'false',
+    audible_enabled: Object.prototype.hasOwnProperty.call(a || {}, 'audible_enabled') ? (a.audible_enabled ? 'true' : 'false') : '',
+    audio_file: String(a?.audio_file || '').trim(),
+    speech_text: String(a?.speech_text || '').trim(),
+    notification_policy: String(a?.notification_policy || '').trim(),
+    message_on_active: String(a?.message_on_active || '').trim(),
+    message_on_return: String(a?.message_on_return || '').trim(),
+    action: ''
+  }));
+
+  downloadTextFile({
+    filename: 'opcbridge-alarms.csv',
+    mime: 'text/csv',
+    text: toCsv(rows, ALARM_CSV_HEADERS)
   });
 }
 
@@ -2595,6 +2696,141 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${upserts} tag(s)${deleted ? `, deleted ${deleted}` : ''}${skipped ? `, skipped ${skipped}${hint}` : ''}.${ex}`);
 }
 
+async function importAlarmsCsv() {
+  if (!canEditConfig()) { window.alert('Login required to import alarms.'); return; }
+  const csvText = await pickCsvText();
+  if (!csvText) return;
+
+  const { records } = parseCsv(csvText);
+  if (!records.length) { window.alert('CSV had no data rows (make sure the first row is a header).'); return; }
+
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  if (!Array.isArray(cfg.alarms)) cfg.alarms = [];
+  ensureAlarmGroupsTree(cfg);
+
+  let upserts = 0;
+  let deleted = 0;
+  let skipped = 0;
+  let skippedMissing = 0;
+  let skippedInvalid = 0;
+  let sampleMissing = null;
+  let sampleInvalid = null;
+
+  records.forEach((r) => {
+    const id = String(csvGet(r, 'id') || csvGet(r, 'alarm_id') || '').trim();
+    if (!id) {
+      skipped += 1;
+      skippedMissing += 1;
+      if (!sampleMissing) sampleMissing = { id, reason: 'missing id' };
+      return;
+    }
+
+    const idx = cfg.alarms.findIndex((a) => String(a?.id || '').trim() === id);
+    if (isDeleteAction(csvGet(r, 'action'))) {
+      if (idx >= 0) {
+        cfg.alarms.splice(idx, 1);
+        deleted += 1;
+      }
+      return;
+    }
+
+    const type = String(csvGet(r, 'type') || '').trim().toLowerCase();
+    if (!['equals', 'not_equals', 'high', 'low'].includes(type)) {
+      skipped += 1;
+      skippedInvalid += 1;
+      if (!sampleInvalid) sampleInvalid = { id, reason: `invalid type '${type || '(blank)'}'` };
+      return;
+    }
+
+    const connectionId = String(csvGet(r, 'connection_id') || '').trim();
+    const tagName = String(csvGet(r, 'tag_name') || csvGet(r, 'tag') || '').trim();
+    if (!connectionId || !tagName) {
+      skipped += 1;
+      skippedMissing += 1;
+      if (!sampleMissing) sampleMissing = { id, reason: 'missing connection_id or tag_name' };
+      return;
+    }
+
+    const alarm = (idx >= 0) ? { ...(cfg.alarms[idx] || {}) } : { id };
+    alarm.id = id;
+    alarm.name = String(csvGet(r, 'name') || alarm.name || id).trim() || id;
+    alarm.group = normalizeAlarmGroupName(csvGet(r, 'group'));
+    alarm.site = normalizeAlarmSiteName(csvGet(r, 'site'));
+    alarm.connection_id = connectionId;
+    alarm.tag_name = tagName;
+    alarm.type = type;
+    alarm.enabled = parseBoolLoose(csvGet(r, 'enabled'), true);
+
+    const sev = parseIntLoose(csvGet(r, 'severity'), 500);
+    alarm.severity = Math.max(0, sev == null ? 500 : sev);
+
+    const audibleRaw = csvGet(r, 'audible_enabled');
+    if (String(audibleRaw ?? '').trim() === '') delete alarm.audible_enabled;
+    else alarm.audible_enabled = parseBoolLoose(audibleRaw, false);
+
+    const audioFile = String(csvGet(r, 'audio_file') || '').trim();
+    if (audioFile) alarm.audio_file = audioFile;
+    else delete alarm.audio_file;
+
+    const speechText = String(csvGet(r, 'speech_text') || '').trim();
+    if (speechText) alarm.speech_text = speechText;
+    else delete alarm.speech_text;
+
+    const policy = String(csvGet(r, 'notification_policy') || csvGet(r, 'policy') || '').trim();
+    if (policy) alarm.notification_policy = policy;
+    else delete alarm.notification_policy;
+
+    alarm.message_on_active = String(csvGet(r, 'message_on_active') || '').trim();
+    alarm.message_on_return = String(csvGet(r, 'message_on_return') || '').trim();
+
+    if (type === 'high' || type === 'low') {
+      const threshold = parseFloatLoose(csvGet(r, 'threshold'), null);
+      if (threshold == null) {
+        skipped += 1;
+        skippedMissing += 1;
+        if (!sampleMissing) sampleMissing = { id, reason: 'missing threshold' };
+        return;
+      }
+      alarm.threshold = threshold;
+      delete alarm.value;
+      delete alarm.equals_value;
+      const hysteresis = parseFloatLoose(csvGet(r, 'hysteresis'), null);
+      if (hysteresis == null) delete alarm.hysteresis;
+      else alarm.hysteresis = hysteresis;
+    } else {
+      alarm.value = parseAlarmCompareValue(csvGet(r, 'value'));
+      delete alarm.threshold;
+      delete alarm.hysteresis;
+      delete alarm.equals_value;
+    }
+
+    if (alarm.group) {
+      upsertAlarmGroup(cfg, alarm.group);
+      if (alarm.site) ensureGroupSiteInConfig(cfg, alarm.group, alarm.site);
+    }
+
+    if (idx >= 0) cfg.alarms[idx] = alarm;
+    else cfg.alarms.push(alarm);
+    upserts += 1;
+  });
+
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  await opcbridgeReload().catch(() => {});
+  renderWorkspaceTree();
+  renderAlarmsEventsTree();
+
+  const details = [];
+  if (skippedMissing) details.push(`${skippedMissing} missing required fields`);
+  if (skippedInvalid) details.push(`${skippedInvalid} invalid value(s)`);
+  const sample = sampleInvalid || sampleMissing;
+  const suffix = details.length ? `, skipped ${skipped} (${details.join(', ')})` : (skipped ? `, skipped ${skipped}` : '');
+  const example = sample ? ` Example: ${sample.id || '(blank id)'} - ${sample.reason}.` : '';
+  const msg = `Imported alarms CSV: upserted ${upserts} alarm(s)${deleted ? `, deleted ${deleted}` : ''}${suffix}.${example}`;
+  setWorkspaceSaveStatus(msg);
+  window.alert(msg);
+}
+
 const TAG_DATATYPE_OPTIONS = [
   { value: 'bool', label: 'Boolean' },
   { value: 'int16', label: 'Int16' },
@@ -2784,8 +3020,13 @@ function resolveInheritedAlarmAudio(cfgObj, groupName, siteName) {
   const out = {
     audible_enabled: cfg.audio && Object.prototype.hasOwnProperty.call(cfg.audio, 'audible_enabled') ? Boolean(cfg.audio.audible_enabled) : false,
     audio_file: String(cfg.audio?.default_file || '').trim(),
+    audio_files: [],
+    speech_text: String(cfg.audio?.speech_text || '').trim(),
+    speech_texts: [],
     source: 'global'
   };
+  if (out.audio_file) out.audio_files.push(out.audio_file);
+  if (out.speech_text) out.speech_texts.push(out.speech_text);
   const group = findAlarmGroupConfig(cfg, groupName);
   if (group) {
     if (Object.prototype.hasOwnProperty.call(group, 'audible_enabled')) {
@@ -2794,6 +3035,12 @@ function resolveInheritedAlarmAudio(cfgObj, groupName, siteName) {
     }
     if (String(group.audio_file || '').trim()) {
       out.audio_file = String(group.audio_file || '').trim();
+      out.audio_files.push(out.audio_file);
+      out.source = 'group';
+    }
+    if (String(group.speech_text || '').trim()) {
+      out.speech_text = String(group.speech_text || '').trim();
+      out.speech_texts.push(out.speech_text);
       out.source = 'group';
     }
   }
@@ -2805,6 +3052,12 @@ function resolveInheritedAlarmAudio(cfgObj, groupName, siteName) {
     }
     if (String(site.audio_file || '').trim()) {
       out.audio_file = String(site.audio_file || '').trim();
+      out.audio_files.push(out.audio_file);
+      out.source = 'site';
+    }
+    if (String(site.speech_text || '').trim()) {
+      out.speech_text = String(site.speech_text || '').trim();
+      out.speech_texts.push(out.speech_text);
       out.source = 'site';
     }
   }
@@ -2813,11 +3066,29 @@ function resolveInheritedAlarmAudio(cfgObj, groupName, siteName) {
 
 function resolveAlarmAudio(cfgObj, alarm) {
   const inherited = resolveInheritedAlarmAudio(cfgObj, alarm?.group, alarm?.site);
+  const ownFile = String(alarm?.audio_file || '').trim();
+  const ownSpeech = String(alarm?.speech_text || '').trim();
+  const audioFiles = inherited.audio_files ? inherited.audio_files.slice() : [];
+  const speechTexts = inherited.speech_texts ? inherited.speech_texts.slice() : [];
+  if (ownFile) audioFiles.push(ownFile);
+  if (ownSpeech) speechTexts.push(ownSpeech);
   return {
     audible_enabled: Object.prototype.hasOwnProperty.call(alarm || {}, 'audible_enabled') ? Boolean(alarm.audible_enabled) : inherited.audible_enabled,
-    audio_file: String(alarm?.audio_file || inherited.audio_file || '').trim(),
-    source: Object.prototype.hasOwnProperty.call(alarm || {}, 'audible_enabled') || String(alarm?.audio_file || '').trim() ? 'alarm' : inherited.source
+    audio_file: String(ownFile || inherited.audio_file || '').trim(),
+    speech_text: String(ownSpeech || inherited.speech_text || '').trim(),
+    audio_files: audioFiles,
+    speech_texts: speechTexts,
+    source: Object.prototype.hasOwnProperty.call(alarm || {}, 'audible_enabled') || ownFile || ownSpeech ? 'alarm' : inherited.source
   };
+}
+
+function alarmAudioSequenceText(audioIds, cfgObj = state.alarmsConfig, speechTexts = []) {
+  const ids = (Array.isArray(audioIds) ? audioIds : []).map((id) => String(id || '').trim()).filter(Boolean);
+  const parts = ids.map((id) => alarmAudioFileText(id, cfgObj));
+  (Array.isArray(speechTexts) ? speechTexts : []).map((s) => String(s || '').trim()).filter(Boolean).forEach((text) => {
+    parts.push(`TTS: ${text.length > 40 ? `${text.slice(0, 40)}...` : text}`);
+  });
+  return parts.length ? parts.join(' -> ') : 'none';
 }
 
 function parseOpcbridgeAlarmsConfig(resp) {
@@ -2826,7 +3097,25 @@ function parseOpcbridgeAlarmsConfig(resp) {
   if (!cfg || typeof cfg !== 'object') return { alarms: [], groups: [] };
   const out = { ...(cfg || {}) };
   if (Array.isArray(out.rules) && out.rules.length > 0) {
-    out.alarms = out.rules.map(alarmRuleToUiAlarm).filter(Boolean);
+    const legacyById = new Map();
+    if (Array.isArray(out.alarms)) {
+      out.alarms.forEach((a) => {
+        const id = String(a?.id || '').trim();
+        if (id) legacyById.set(id, a);
+      });
+    }
+    out.alarms = out.rules.map((rule) => {
+      const a = alarmRuleToUiAlarm(rule);
+      if (!a) return null;
+      const legacy = legacyById.get(String(a.id || '').trim()) || {};
+      if (!String(a.notification_policy || '').trim() && String(legacy?.notification_policy || '').trim()) {
+        a.notification_policy = String(legacy.notification_policy || '').trim();
+      }
+      if (!String(a.speech_text || '').trim() && String(legacy?.speech_text || '').trim()) {
+        a.speech_text = String(legacy.speech_text || '').trim();
+      }
+      return a;
+    }).filter(Boolean);
   } else if (!Array.isArray(out.alarms)) {
     out.alarms = [];
   }
@@ -2854,6 +3143,8 @@ function alarmRuleToUiAlarm(rule) {
   };
   if (Object.prototype.hasOwnProperty.call(rule, 'audible_enabled')) out.audible_enabled = Boolean(rule.audible_enabled);
   if (String(rule.audio_file || '').trim()) out.audio_file = String(rule.audio_file || '').trim();
+  if (String(rule.speech_text || '').trim()) out.speech_text = String(rule.speech_text || '').trim();
+  if (String(rule.notification_policy || '').trim()) out.notification_policy = String(rule.notification_policy || '').trim();
   if (type === 'high' || type === 'low') {
     if (condition.threshold != null) out.threshold = condition.threshold;
     if (condition.hysteresis != null) out.hysteresis = condition.hysteresis;
@@ -2883,6 +3174,8 @@ function uiAlarmToRule(alarm) {
   };
   if (Object.prototype.hasOwnProperty.call(a, 'audible_enabled')) rule.audible_enabled = Boolean(a.audible_enabled);
   if (String(a.audio_file || '').trim()) rule.audio_file = String(a.audio_file || '').trim();
+  if (String(a.speech_text || '').trim()) rule.speech_text = String(a.speech_text || '').trim();
+  if (String(a.notification_policy || '').trim()) rule.notification_policy = String(a.notification_policy || '').trim();
   if (type === 'high' || type === 'low') {
     rule.condition.threshold = Number(a.threshold);
     if (a.hysteresis != null && String(a.hysteresis).trim() !== '') rule.condition.hysteresis = Number(a.hysteresis);
@@ -3190,7 +3483,8 @@ function readAlarmAudioFromUi() {
   const out = {
     group: String(els.editAlarmGroup?.value || '').trim(),
     site: String(els.editAlarmSite?.value || '').trim(),
-    audio_file: String(els.editAlarmAudioFile?.value || '').trim()
+    audio_file: String(els.editAlarmAudioFile?.value || '').trim(),
+    speech_text: String(els.editAlarmSpeechText?.value || '').trim()
   };
   if (mode === 'on') out.audible_enabled = true;
   else if (mode === 'off') out.audible_enabled = false;
@@ -3212,6 +3506,58 @@ function audioFilenameFromConfigFile(file) {
   return parts.length ? parts[parts.length - 1] : raw;
 }
 
+function audioFolderFromPath(pathValue) {
+  let p = String(pathValue || '').trim().replace(/\\/g, '/');
+  if (p.startsWith('audio/')) p = p.slice(6);
+  const parts = p.split('/').filter(Boolean);
+  parts.pop();
+  return parts.join('/');
+}
+
+function normalizeAudioFolderName(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .join('/');
+}
+
+function getConfiguredAudioFolders(cfgObj = state.alarmsConfig) {
+  const folders = new Set();
+  const explicit = Array.isArray(cfgObj?.audio?.folders) ? cfgObj.audio.folders : [];
+  explicit.forEach((f) => {
+    const folder = normalizeAudioFolderName(typeof f === 'string' ? f : f?.path);
+    if (folder) folders.add(folder);
+  });
+  getAlarmAudioFiles(cfgObj || {}).forEach((f) => {
+    const folder = normalizeAudioFolderName(audioFolderFromPath(f?.path));
+    if (folder) folders.add(folder);
+  });
+  return Array.from(folders).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function expandAudioFolderPath(folder) {
+  const clean = normalizeAudioFolderName(folder);
+  state.alarmsEventsExpanded?.add?.('folder:alarms_events');
+  state.alarmsEventsExpanded?.add?.('folder:audio_files');
+  if (!clean) return;
+  let cur = '';
+  clean.split('/').filter(Boolean).forEach((part) => {
+    cur = cur ? `${cur}/${part}` : part;
+    state.alarmsEventsExpanded?.add?.(`audio_folder:${cur}`);
+  });
+}
+
+function audioPathIsInFolder(pathValue, folder) {
+  const cleanFolder = normalizeAudioFolderName(folder);
+  if (!cleanFolder) return false;
+  let p = String(pathValue || '').trim().replace(/\\/g, '/');
+  if (p.startsWith('audio/')) p = p.slice(6);
+  return p === cleanFolder || p.startsWith(`${cleanFolder}/`);
+}
+
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -3223,14 +3569,15 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-async function uploadAlarmAudioFile(file) {
+async function uploadAlarmAudioFile(file, folder = '') {
   const filename = String(file.name || '').trim();
   if (!/\.(wav|mp3|ogg|flac)$/i.test(filename)) {
     throw new Error('Audio upload supports .wav, .mp3, .ogg, and .flac files.');
   }
 
+  const cleanFolder = normalizeAudioFolderName(folder);
   const content_b64 = arrayBufferToBase64(await file.arrayBuffer());
-  const resp = await apiPostJson('/api/opcbridge/config/audio/upload', { filename, content_b64 });
+  const resp = await apiPostJson('/api/opcbridge/config/audio/upload', { filename, folder: cleanFolder, content_b64 });
   if (!resp?.ok) throw new Error(resp?.error || 'Audio upload failed.');
 
   const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
@@ -3256,16 +3603,150 @@ async function uploadAlarmAudioFile(file) {
   return { id, filename };
 }
 
-async function uploadAlarmAudioFileFromUi() {
-  const file = els.editAlarmAudioUpload?.files?.[0] || null;
-  if (!file) { setEditAlarmStatus('Choose an audio file to upload.'); return; }
+async function uploadAlarmAudioFiles(files, folder = '') {
+  const list = Array.from(files || []).filter(Boolean);
+  if (!list.length) return [];
 
-  setEditAlarmStatus('Uploading audio file…');
-  const result = await uploadAlarmAudioFile(file);
+  const cleanFolder = normalizeAudioFolderName(folder);
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
+  if (!Array.isArray(cfg.audio.files)) cfg.audio.files = [];
+  if (cleanFolder) {
+    if (!Array.isArray(cfg.audio.folders)) cfg.audio.folders = [];
+    if (!cfg.audio.folders.includes(cleanFolder)) cfg.audio.folders.push(cleanFolder);
+  }
+
+  const existingIds = new Set(cfg.audio.files.map((f) => String(f?.id || '').trim()).filter(Boolean));
+  const results = [];
+  const failures = [];
+
+  for (const file of list) {
+    const filename = String(file?.name || '').trim();
+    try {
+      if (!/\.(wav|mp3|ogg|flac)$/i.test(filename)) {
+        throw new Error('unsupported file type');
+      }
+
+      const content_b64 = arrayBufferToBase64(await file.arrayBuffer());
+      const resp = await apiPostJson('/api/opcbridge/config/audio/upload', { filename, folder: cleanFolder, content_b64 });
+      if (!resp?.ok) throw new Error(resp?.error || 'Audio upload failed.');
+
+      const pathValue = String(resp.path || (cleanFolder ? `audio/${cleanFolder}/${filename}` : `audio/${filename}`));
+      const existingForPath = cfg.audio.files.find((f) => String(f?.path || '').trim() === pathValue);
+      let id = existingForPath ? String(existingForPath.id || '').trim() : '';
+      if (!id) {
+        const idBase = audioFileIdFromFilename(filename);
+        id = idBase;
+        let suffix = 2;
+        while (existingIds.has(id)) id = `${idBase}_${suffix++}`;
+        existingIds.add(id);
+        cfg.audio.files.push({
+          id,
+          name: filename.replace(/\.[^.]+$/, ''),
+          path: pathValue
+        });
+      } else {
+        existingForPath.name = existingForPath.name || filename.replace(/\.[^.]+$/, '');
+        existingForPath.path = pathValue;
+      }
+      results.push({ id, filename, path: pathValue });
+    } catch (err) {
+      failures.push({ filename: filename || '(unnamed)', error: String(err?.message || err) });
+    }
+  }
+
+  if (results.length) {
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+  }
+  if (failures.length) {
+    const msg = failures.map((f) => `${f.filename}: ${f.error}`).join('\n');
+    throw new Error(`${failures.length} upload(s) failed:\n${msg}`);
+  }
+  return results;
+}
+
+async function createAlarmAudioFolderInteractive(parentFolder = '') {
+  if (!canEditConfig()) { window.alert('Login required to edit audio folders.'); return; }
+  const base = normalizeAudioFolderName(parentFolder);
+  const name = normalizeAudioFolderName(window.prompt('New audio folder name:', '') || '');
+  if (!name) return;
+  const folder = base ? `${base}/${name}` : name;
+  const resp = await apiPostJson('/api/opcbridge/config/audio/folder', { folder });
+  if (!resp?.ok) throw new Error(resp?.error || 'Audio folder create failed.');
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
+  if (!Array.isArray(cfg.audio.folders)) cfg.audio.folders = [];
+  if (!cfg.audio.folders.includes(folder)) cfg.audio.folders.push(folder);
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  expandAudioFolderPath(folder);
+  state.alarmsEventsSelectedNodeId = `audio_folder:${folder}`;
+  renderAlarmsEventsTree();
+}
+
+async function moveAlarmAudioFileInteractive(id) {
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  const file = getAlarmAudioFiles(cfg).find((f) => f.id === id) || null;
+  if (!file) throw new Error(`Audio file '${id}' is not in the audio files list.`);
+  const current = audioFolderFromPath(file.path);
+  const folders = getConfiguredAudioFolders(cfg);
+  const hint = folders.length ? `\nExisting folders:\n${folders.join('\n')}` : '';
+  const folder = normalizeAudioFolderName(window.prompt(`Move '${file.name || id}' to folder. Leave blank for audio root.${hint}`, current) || '');
+  const resp = await apiPostJson('/api/opcbridge/config/audio/move', { path: String(file.path || ''), folder });
+  if (!resp?.ok) throw new Error(resp?.error || 'Audio move failed.');
+  const entry = (Array.isArray(cfg.audio?.files) ? cfg.audio.files : []).find((f) => String(f?.id || '') === id);
+  if (entry) entry.path = String(resp.path || entry.path || '');
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  state.alarmsEventsSelectedNodeId = folder ? `audio_folder:${folder}` : 'folder:audio_files';
+  state.alarmsEventsSelectedChildId = `audio_file:${id}`;
+  renderAlarmsEventsTree();
+}
+
+async function deleteAlarmAudioFolderInteractive(folder) {
+  const cleanFolder = normalizeAudioFolderName(folder);
+  if (!cleanFolder) throw new Error('Audio folder is required.');
+  if (!canEditConfig()) { window.alert('Login required to delete audio folders.'); return false; }
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  const filesInFolder = getAlarmAudioFiles(cfg).filter((file) => audioPathIsInFolder(file?.path, cleanFolder));
+  if (filesInFolder.length) {
+    throw new Error(`Folder contains ${filesInFolder.length} audio file(s). Move or delete those files first.`);
+  }
+  const childFolders = getConfiguredAudioFolders(cfg).filter((f) => {
+    const child = normalizeAudioFolderName(f);
+    return child && child !== cleanFolder && child.startsWith(`${cleanFolder}/`);
+  });
+  if (childFolders.length) {
+    throw new Error(`Folder contains ${childFolders.length} subfolder(s). Delete subfolders first.`);
+  }
+  if (!window.confirm(`Delete empty audio folder 'audio/${cleanFolder}'?`)) return false;
+  const resp = await apiPostJson('/api/opcbridge/config/audio/folder/delete', { folder: cleanFolder });
+  if (!resp?.ok) throw new Error(resp?.error || 'Audio folder delete failed.');
+  if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
+  if (Array.isArray(cfg.audio.folders)) {
+    cfg.audio.folders = cfg.audio.folders.filter((f) => normalizeAudioFolderName(f) !== cleanFolder);
+  }
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  const parent = cleanFolder.split('/').slice(0, -1).join('/');
+  expandAudioFolderPath(parent);
+  state.alarmsEventsSelectedNodeId = parent ? `audio_folder:${parent}` : 'folder:audio_files';
+  renderAlarmsEventsTree();
+  return true;
+}
+
+async function uploadAlarmAudioFileFromUi() {
+  const files = Array.from(els.editAlarmAudioUpload?.files || []);
+  if (!files.length) { setEditAlarmStatus('Choose one or more audio files to upload.'); return; }
+
+  setEditAlarmStatus(`Uploading ${files.length} audio file(s)…`);
+  const results = await uploadAlarmAudioFiles(files);
   if (els.editAlarmAudioUpload) els.editAlarmAudioUpload.value = '';
-  refreshAlarmAudioUi({ ...readAlarmAudioFromUi(), audio_file: result.id });
-  if (els.editAlarmAudioFile) els.editAlarmAudioFile.value = result.id;
-  setEditAlarmStatus(`Uploaded audio file '${result.filename}'.`);
+  const last = results[results.length - 1] || null;
+  refreshAlarmAudioUi({ ...readAlarmAudioFromUi(), audio_file: last?.id || '' });
+  if (els.editAlarmAudioFile && last?.id) els.editAlarmAudioFile.value = last.id;
+  setEditAlarmStatus(`Uploaded ${results.length} audio file(s).`);
 }
 
 async function deleteAlarmAudioFileById(id) {
@@ -3286,7 +3767,7 @@ async function deleteAlarmAudioFileById(id) {
   if (!window.confirm(prompt)) return null;
 
   const filename = audioFilenameFromConfigFile(file);
-  const resp = await apiPostJson('/api/opcbridge/config/audio/delete', { filename });
+  const resp = await apiPostJson('/api/opcbridge/config/audio/delete', { path: String(file.path || ''), filename });
   if (!resp?.ok) throw new Error(resp?.error || 'Audio delete failed.');
 
   cfg.audio.files = (Array.isArray(cfg.audio?.files) ? cfg.audio.files : []).filter((f) => String(f?.id || '') !== id);
@@ -3317,19 +3798,22 @@ async function deleteSelectedAlarmAudioFileFromUi() {
   setEditAlarmStatus(`Deleted audio file '${result.filename}'.`);
 }
 
-function chooseAndUploadAlarmAudioFile() {
+function chooseAndUploadAlarmAudioFile(folder = '') {
   const input = document.createElement('input');
   input.type = 'file';
+  input.multiple = true;
   input.accept = '.wav,.mp3,.ogg,.flac,audio/*';
   input.addEventListener('change', () => {
-    const file = input.files?.[0] || null;
-    if (!file) return;
-    uploadAlarmAudioFile(file)
-      .then((result) => {
-        state.selectedNodeId = `audio_file:${result.id}`;
-        state.expanded.add('folder:alarms_events');
-        state.expanded.add('folder:audio_files');
-        renderWorkspaceTree();
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+    uploadAlarmAudioFiles(files, folder)
+      .then((results) => {
+        const result = results[results.length - 1] || null;
+        const cleanFolder = normalizeAudioFolderName(folder);
+        state.alarmsEventsSelectedNodeId = cleanFolder ? `audio_folder:${cleanFolder}` : 'folder:audio_files';
+        if (result?.id) state.alarmsEventsSelectedChildId = `audio_file:${result.id}`;
+        expandAudioFolderPath(cleanFolder);
+        renderAlarmsEventsTree();
       })
       .catch((err) => window.alert(`Audio upload failed: ${err.message}`));
   }, { once: true });
@@ -3342,7 +3826,7 @@ function refreshAlarmAudioUi(existingAlarm = null) {
   const site = String(els.editAlarmSite?.value || existingAlarm?.site || '').trim();
   const alarm = existingAlarm || {};
   const inherited = resolveInheritedAlarmAudio(cfg, group, site);
-  const effectiveAlarm = { ...alarm, group, site, audio_file: String(alarm.audio_file || '').trim() };
+  const effectiveAlarm = { ...alarm, group, site, audio_file: String(alarm.audio_file || '').trim(), speech_text: String(alarm.speech_text || '').trim() };
   if (!Object.prototype.hasOwnProperty.call(alarm, 'audible_enabled')) delete effectiveAlarm.audible_enabled;
   const effective = resolveAlarmAudio(cfg, effectiveAlarm);
 
@@ -3383,11 +3867,14 @@ function refreshAlarmAudioUi(existingAlarm = null) {
     }
     els.editAlarmAudioFile.value = selected;
   }
+  if (els.editAlarmSpeechText && document.activeElement !== els.editAlarmSpeechText) {
+    els.editAlarmSpeechText.value = String(alarm.speech_text || '');
+  }
 
   if (els.editAlarmAudioHint) {
     const modeText = effective.audible_enabled ? 'enabled' : 'disabled';
-    const fileText = effective.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none';
-    els.editAlarmAudioHint.textContent = `Effective audible notification is ${modeText}; audio file: ${fileText}; source: ${effective.source}.`;
+    const sequenceText = alarmAudioSequenceText(effective.audio_files, cfg, effective.speech_texts);
+    els.editAlarmAudioHint.textContent = `Effective audible notification is ${modeText}; audio sequence: ${sequenceText}; source: ${effective.source}.`;
   }
 }
 
@@ -3405,10 +3892,12 @@ function getInheritedAudioForScope(cfg, scope, groupName, siteName) {
     return {
       audible_enabled: cfg.audio && Object.prototype.hasOwnProperty.call(cfg.audio, 'audible_enabled') ? Boolean(cfg.audio.audible_enabled) : false,
       audio_file: String(cfg.audio?.default_file || '').trim(),
+      speech_text: String(cfg.audio?.speech_text || '').trim(),
+      speech_texts: String(cfg.audio?.speech_text || '').trim() ? [String(cfg.audio?.speech_text || '').trim()] : [],
       source: 'global'
     };
   }
-  return { audible_enabled: false, audio_file: '', source: 'system' };
+  return { audible_enabled: false, audio_file: '', speech_text: '', speech_texts: [], source: 'system' };
 }
 
 function notificationDefaultRepeatMs(cfg) {
@@ -3447,6 +3936,7 @@ function refreshAudioScopeUi() {
   const selected = scope === 'global'
     ? String(cfg.audio?.default_file || '').trim()
     : String(target?.audio_file || '').trim();
+  const speechText = String(target?.speech_text || '').trim();
 
   if (els.editAudioScopeName) {
     els.editAudioScopeName.value = scope === 'global' ? 'Global alarm audio defaults' : (scope === 'site' ? `${group} / ${site}` : group);
@@ -3476,12 +3966,18 @@ function refreshAudioScopeUi() {
     els.editAudioScopeAudioFile.value = selected;
     els.editAudioScopeAudioFile.disabled = !canEditConfig();
   }
+  if (els.editAudioScopeSpeechText && document.activeElement !== els.editAudioScopeSpeechText) {
+    els.editAudioScopeSpeechText.value = speechText;
+    els.editAudioScopeSpeechText.disabled = !canEditConfig();
+  }
   if (els.editAudioScopeHint) {
     const mode = String(els.editAudioScopeAudibleMode?.value || '').trim();
     const effectiveAudible = scope === 'global' ? mode === 'on' : (mode === 'inherit' ? inherited.audible_enabled : mode === 'on');
     const effectiveFile = selected || (scope === 'global' ? '' : inherited.audio_file);
+    const effectiveSpeech = speechText || (scope === 'global' ? '' : inherited.speech_text);
     const source = scope === 'global' ? 'global' : (mode === 'inherit' && !selected ? inherited.source : scope);
-    els.editAudioScopeHint.textContent = `Effective audible notification is ${effectiveAudible ? 'enabled' : 'disabled'}; audio file: ${effectiveFile ? alarmAudioFileText(effectiveFile, cfg) : 'none'}; source: ${source}.`;
+    const sequence = alarmAudioSequenceText(effectiveFile ? [effectiveFile] : [], cfg, effectiveSpeech ? [effectiveSpeech] : []);
+    els.editAudioScopeHint.textContent = `Effective audible notification is ${effectiveAudible ? 'enabled' : 'disabled'}; audio sequence: ${sequence}; source: ${source}.`;
   }
   if (els.editAudioScopeSaveBtn) els.editAudioScopeSaveBtn.disabled = !canEditConfig();
 }
@@ -3519,6 +4015,7 @@ async function saveAudioScopeFromModal() {
   const site = String(pending.site || '').trim();
   const mode = String(els.editAudioScopeAudibleMode?.value || '').trim();
   const audioFile = String(els.editAudioScopeAudioFile?.value || '').trim();
+  const speechText = String(els.editAudioScopeSpeechText?.value || '').trim();
   const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
   ensureAlarmGroupsTree(cfg);
   if (!['global', 'group', 'site'].includes(scope)) { setEditAudioScopeStatus('Audio scope is invalid.'); return; }
@@ -3531,6 +4028,8 @@ async function saveAudioScopeFromModal() {
     cfg.audio.audible_enabled = mode === 'on';
     if (audioFile) cfg.audio.default_file = audioFile;
     else delete cfg.audio.default_file;
+    if (speechText) cfg.audio.speech_text = speechText;
+    else delete cfg.audio.speech_text;
   } else if (scope === 'group') {
     upsertAlarmGroup(cfg, group);
     const target = findAlarmGroupConfig(cfg, group);
@@ -3539,6 +4038,8 @@ async function saveAudioScopeFromModal() {
     else target.audible_enabled = mode === 'on';
     if (audioFile) target.audio_file = audioFile;
     else delete target.audio_file;
+    if (speechText) target.speech_text = speechText;
+    else delete target.speech_text;
   } else if (scope === 'site') {
     ensureGroupSiteInConfig(cfg, group, site);
     const target = findAlarmSiteConfig(cfg, group, site);
@@ -3547,6 +4048,8 @@ async function saveAudioScopeFromModal() {
     else target.audible_enabled = mode === 'on';
     if (audioFile) target.audio_file = audioFile;
     else delete target.audio_file;
+    if (speechText) target.speech_text = speechText;
+    else delete target.speech_text;
   }
 
   setEditAudioScopeStatus('Saving…');
@@ -3569,6 +4072,7 @@ function wireAlarmPreviewInputs() {
     els.editAlarmEnabled,
     els.editAlarmAudibleMode,
     els.editAlarmAudioFile,
+    els.editAlarmSpeechText,
     els.editAlarmRepeatMode,
     els.editAlarmRepeatSec,
     els.editAlarmSeverity,
@@ -3605,7 +4109,7 @@ function wireAlarmPreviewInputs() {
         const g = String(els.editAlarmGroup?.value || '').trim();
         fillAlarmSiteSelect(g, g ? String(els.editAlarmSite?.value || '') : '');
       }
-      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioFile].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
+      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioFile, els.editAlarmSpeechText].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
       if ([els.editAlarmRepeatMode, els.editAlarmRepeatSec].includes(el)) applyAlarmRepeatUi();
       updateAlarmPreview();
     });
@@ -3620,7 +4124,7 @@ function wireAlarmPreviewInputs() {
         const g = String(els.editAlarmGroup?.value || '').trim();
         fillAlarmSiteSelect(g, g ? String(els.editAlarmSite?.value || '') : '');
       }
-      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioFile].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
+      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioFile, els.editAlarmSpeechText].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
       if ([els.editAlarmRepeatMode, els.editAlarmRepeatSec].includes(el)) applyAlarmRepeatUi();
       updateAlarmPreview();
     });
@@ -3646,6 +4150,10 @@ function setScadaSettingsStatus(msg) {
 
 function setSoundSettingsStatus(msg) {
   if (els.soundSettingsStatus) els.soundSettingsStatus.textContent = String(msg || '');
+}
+
+function setVoiceModemStatus(msg) {
+  if (els.voiceModemStatus) els.voiceModemStatus.textContent = String(msg || '');
 }
 
 function setAlarmNotifStatus(msg) {
@@ -3764,6 +4272,228 @@ function getAlarmNotificationRoutes(cfg) {
   if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
   if (!Array.isArray(cfg.notifications.routes)) cfg.notifications.routes = [];
   return cfg.notifications.routes;
+}
+
+function getNotificationContacts(cfg) {
+  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
+  if (!Array.isArray(cfg.notifications.contacts)) cfg.notifications.contacts = [];
+  return cfg.notifications.contacts;
+}
+
+function getNotificationContactGroups(cfg) {
+  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
+  if (!Array.isArray(cfg.notifications.contact_groups)) cfg.notifications.contact_groups = [];
+  return cfg.notifications.contact_groups;
+}
+
+function getNotificationPolicies(cfg) {
+  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
+  if (!Array.isArray(cfg.notifications.policies)) cfg.notifications.policies = [];
+  return cfg.notifications.policies;
+}
+
+function dedupeStringsInOrder(values) {
+  const seen = new Set();
+  const out = [];
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const id = String(value || '').trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  });
+  return out;
+}
+
+function getPolicyTargets(policy) {
+  const targets = [];
+  const seen = new Set();
+  const add = (type, id) => {
+    const cleanType = String(type || '').trim();
+    const cleanId = String(id || '').trim();
+    const key = `${cleanType}:${cleanId}`;
+    if (!cleanId || (cleanType !== 'contact' && cleanType !== 'group') || seen.has(key)) return;
+    seen.add(key);
+    targets.push({ type: cleanType, id: cleanId });
+  };
+  if (Array.isArray(policy?.targets)) {
+    policy.targets.forEach((target) => add(target?.type, target?.id));
+  }
+  if (!targets.length) {
+    (Array.isArray(policy?.contacts) ? policy.contacts : []).forEach((id) => add('contact', id));
+    (Array.isArray(policy?.contact_groups) ? policy.contact_groups : []).forEach((id) => add('group', id));
+  }
+  return targets;
+}
+
+function makeOrderedSelectionEditor({ availableItems, selectedItems, emptyText, addLabel = 'Add', canEdit = canEditConfig() }) {
+  const root = document.createElement('div');
+  root.style.display = 'grid';
+  root.style.gap = '8px';
+
+  const available = new Map();
+  (Array.isArray(availableItems) ? availableItems : []).forEach((item) => {
+    const key = String(item?.key || item?.id || '').trim();
+    if (key) available.set(key, item);
+  });
+
+  const selected = [];
+  const seen = new Set();
+  (Array.isArray(selectedItems) ? selectedItems : []).forEach((item) => {
+    const key = String(item?.key || item?.id || '').trim();
+    if (!key || seen.has(key) || !available.has(key)) return;
+    seen.add(key);
+    selected.push(key);
+  });
+
+  const list = document.createElement('div');
+  list.style.display = 'grid';
+  list.style.gap = '6px';
+  list.style.maxHeight = '220px';
+  list.style.overflow = 'auto';
+  list.style.padding = '8px';
+  list.style.border = '1px solid var(--border)';
+  list.style.borderRadius = '8px';
+
+  const controls = document.createElement('div');
+  controls.className = 'row-actions';
+  const select = document.createElement('select');
+  select.disabled = !canEdit;
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn';
+  addBtn.type = 'button';
+  addBtn.textContent = addLabel;
+  addBtn.disabled = !canEdit;
+  controls.appendChild(select);
+  controls.appendChild(addBtn);
+
+  const renderSelect = () => {
+    select.textContent = '';
+    const remaining = Array.from(available.values()).filter((item) => !selected.includes(String(item?.key || item?.id || '').trim()));
+    if (!remaining.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No more items available';
+      select.appendChild(opt);
+      addBtn.disabled = true;
+      return;
+    }
+    remaining.forEach((item) => {
+      const opt = document.createElement('option');
+      opt.value = String(item?.key || item?.id || '').trim();
+      opt.textContent = String(item?.label || item?.name || item?.id || opt.value);
+      select.appendChild(opt);
+    });
+    addBtn.disabled = !canEdit;
+  };
+
+  const renderList = () => {
+    list.textContent = '';
+    if (!selected.length) {
+      const empty = document.createElement('div');
+      empty.className = 'hint';
+      empty.textContent = emptyText;
+      list.appendChild(empty);
+      renderSelect();
+      return;
+    }
+    selected.forEach((key, idx) => {
+      const item = available.get(key) || { key, label: key };
+      const row = document.createElement('div');
+      row.style.display = 'grid';
+      row.style.gridTemplateColumns = '1fr auto auto auto';
+      row.style.gap = '6px';
+      row.style.alignItems = 'center';
+      const text = document.createElement('div');
+      text.style.display = 'grid';
+      text.style.gap = '3px';
+      const title = document.createElement('select');
+      title.disabled = !canEdit;
+      const usedByOthers = new Set(selected.filter((_, otherIdx) => otherIdx !== idx));
+      Array.from(available.values()).forEach((candidate) => {
+        const candidateKey = String(candidate?.key || candidate?.id || '').trim();
+        if (!candidateKey || usedByOthers.has(candidateKey)) return;
+        const opt = document.createElement('option');
+        opt.value = candidateKey;
+        opt.textContent = String(candidate?.label || candidate?.name || candidate?.id || candidateKey);
+        title.appendChild(opt);
+      });
+      if (!available.has(key)) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = String(item.label || item.name || key);
+        title.appendChild(opt);
+      }
+      title.value = key;
+      title.onchange = () => {
+        const nextKey = String(title.value || '').trim();
+        if (!nextKey || usedByOthers.has(nextKey)) {
+          title.value = selected[idx] || '';
+          return;
+        }
+        selected[idx] = nextKey;
+        renderList();
+      };
+      const meta = document.createElement('div');
+      meta.className = 'hint mono';
+      meta.textContent = String(item.meta || key);
+      text.appendChild(title);
+      text.appendChild(meta);
+      const upBtn = document.createElement('button');
+      upBtn.className = 'btn';
+      upBtn.type = 'button';
+      upBtn.textContent = 'Up';
+      upBtn.disabled = !canEdit || idx === 0;
+      upBtn.onclick = () => {
+        [selected[idx - 1], selected[idx]] = [selected[idx], selected[idx - 1]];
+        renderList();
+      };
+      const downBtn = document.createElement('button');
+      downBtn.className = 'btn';
+      downBtn.type = 'button';
+      downBtn.textContent = 'Down';
+      downBtn.disabled = !canEdit || idx >= selected.length - 1;
+      downBtn.onclick = () => {
+        [selected[idx], selected[idx + 1]] = [selected[idx + 1], selected[idx]];
+        renderList();
+      };
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn bad';
+      removeBtn.type = 'button';
+      removeBtn.textContent = 'Remove';
+      removeBtn.disabled = !canEdit;
+      removeBtn.onclick = () => {
+        selected.splice(idx, 1);
+        renderList();
+      };
+      row.appendChild(text);
+      row.appendChild(upBtn);
+      row.appendChild(downBtn);
+      row.appendChild(removeBtn);
+      list.appendChild(row);
+    });
+    renderSelect();
+  };
+
+  addBtn.onclick = () => {
+    const key = String(select.value || '').trim();
+    if (!key || selected.includes(key)) return;
+    selected.push(key);
+    renderList();
+  };
+
+  root.appendChild(list);
+  root.appendChild(controls);
+  root.getSelectedKeys = () => selected.slice();
+  renderList();
+  return root;
+}
+
+function getVoiceModemConfig(cfg) {
+  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
+  if (!cfg.notifications.voice_modem || typeof cfg.notifications.voice_modem !== 'object' || Array.isArray(cfg.notifications.voice_modem)) {
+    cfg.notifications.voice_modem = {};
+  }
+  return cfg.notifications.voice_modem;
 }
 
 function findDefaultAudioRoute(cfg) {
@@ -3968,6 +4698,170 @@ async function saveSoundSettings() {
   }
 }
 
+async function loadVoiceModemSettings() {
+  setVoiceModemStatus('Loading modem devices...');
+  try {
+    const [devicesResp, cfg] = await Promise.all([
+      apiGet('/api/scada/modem/devices').catch(() => ({ ok: false, devices: [] })),
+      loadOpcbridgeAlarmsConfig()
+    ]);
+    const vm = getVoiceModemConfig(cfg);
+    const selected = String(vm.device || '').trim();
+    const devices = Array.isArray(devicesResp?.devices) ? devicesResp.devices : [];
+
+    if (els.voiceModemEnabled) els.voiceModemEnabled.checked = Boolean(vm.enabled);
+    if (els.voiceModemVoiceInit) els.voiceModemVoiceInit.checked = Boolean(vm.voice_init);
+    if (els.voiceModemVoiceLine) els.voiceModemVoiceLine.value = String(Number(vm.voice_line ?? 1) || 1);
+    if (els.voiceModemDialSeconds) els.voiceModemDialSeconds.value = String(Number(vm.dial_seconds ?? 30) || 30);
+    if (els.voiceModemAudioDelaySeconds) els.voiceModemAudioDelaySeconds.value = String(Number(vm.audio_delay_seconds ?? 8) || 8);
+    if (els.voiceModemAudioGapMs) els.voiceModemAudioGapMs.value = String(Number(vm.audio_gap_ms ?? 50) || 0);
+
+    if (els.voiceModemBaud) {
+      const baud = String(Number(vm.baud ?? 115200) || 115200);
+      if (!Array.from(els.voiceModemBaud.options || []).some((opt) => opt.value === baud)) {
+        const opt = document.createElement('option');
+        opt.value = baud;
+        opt.textContent = `${baud} (configured)`;
+        els.voiceModemBaud.appendChild(opt);
+      }
+      els.voiceModemBaud.value = baud;
+    }
+
+    if (els.voiceModemDevice) {
+      els.voiceModemDevice.textContent = '';
+      const emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = 'Select detected device';
+      els.voiceModemDevice.appendChild(emptyOpt);
+
+      devices.forEach((d) => {
+        const value = String(d?.path || d?.id || '').trim();
+        if (!value) return;
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = String(d?.label || value);
+        els.voiceModemDevice.appendChild(opt);
+      });
+
+      if (selected && !Array.from(els.voiceModemDevice.options || []).some((opt) => opt.value === selected)) {
+        const opt = document.createElement('option');
+        opt.value = selected;
+        opt.textContent = `${selected} (configured)`;
+        els.voiceModemDevice.appendChild(opt);
+      }
+      els.voiceModemDevice.value = selected;
+    }
+
+    if (els.voiceModemManualDevice) els.voiceModemManualDevice.value = '';
+
+    if (els.voiceModemTestContact) {
+      els.voiceModemTestContact.textContent = '';
+      const contacts = getNotificationContacts(cfg)
+        .filter((c) => c?.enabled !== false && String(c?.phone || '').trim())
+        .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+      contacts.forEach((contact) => {
+        const id = String(contact?.id || '').trim();
+        if (!id) return;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = `${String(contact?.name || id)} - ${String(contact?.phone || '').trim()}`;
+        els.voiceModemTestContact.appendChild(opt);
+      });
+      if (!contacts.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No enabled contacts with phone numbers';
+        els.voiceModemTestContact.appendChild(opt);
+      }
+    }
+
+    if (els.voiceModemTestAudioFile) {
+      els.voiceModemTestAudioFile.textContent = '';
+      const emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = 'No uploaded audio - use speech text if entered';
+      els.voiceModemTestAudioFile.appendChild(emptyOpt);
+      getAlarmAudioFiles(cfg).forEach((file) => {
+        const opt = document.createElement('option');
+        opt.value = file.id;
+        opt.textContent = `${file.name || file.id} (${file.id})`;
+        els.voiceModemTestAudioFile.appendChild(opt);
+      });
+      const defaultFile = String(cfg.audio?.default_file || '').trim();
+      if (defaultFile && Array.from(els.voiceModemTestAudioFile.options || []).some((opt) => opt.value === defaultFile)) {
+        els.voiceModemTestAudioFile.value = defaultFile;
+      }
+    }
+    if (els.voiceModemTestTtsText && !String(els.voiceModemTestTtsText.value || '').trim()) {
+      els.voiceModemTestTtsText.value = 'This is a test call from OPC Bridge.';
+    }
+
+    const suffix = devicesResp?.ok === false ? ` (${devicesResp.error || 'device scan failed'})` : '';
+    setVoiceModemStatus(`Ready. ${devices.length} serial modem candidate(s) found.${suffix}`);
+  } catch (err) {
+    setVoiceModemStatus(`Load failed: ${err.message}`);
+  }
+}
+
+async function saveVoiceModemSettings() {
+  setVoiceModemStatus('Saving...');
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const vm = getVoiceModemConfig(cfg);
+    const manualDevice = String(els.voiceModemManualDevice?.value || '').trim();
+    const selectedDevice = String(els.voiceModemDevice?.value || '').trim();
+    const baud = Number(els.voiceModemBaud?.value ?? 115200) || 115200;
+    const voiceLine = Number(els.voiceModemVoiceLine?.value ?? 1) || 1;
+    const dialSeconds = Number(els.voiceModemDialSeconds?.value ?? 30) || 30;
+    const audioDelaySeconds = Number(els.voiceModemAudioDelaySeconds?.value ?? 8) || 0;
+    const audioGapMs = Number(els.voiceModemAudioGapMs?.value ?? 50) || 0;
+
+    vm.enabled = Boolean(els.voiceModemEnabled?.checked);
+    vm.device = manualDevice || selectedDevice;
+    vm.baud = Math.max(300, Math.trunc(baud));
+    vm.voice_init = Boolean(els.voiceModemVoiceInit?.checked);
+    vm.voice_line = Math.max(0, Math.min(255, Math.trunc(voiceLine)));
+    vm.dial_seconds = Math.max(5, Math.min(300, Math.trunc(dialSeconds)));
+    vm.audio_delay_seconds = Math.max(0, Math.min(120, Math.trunc(audioDelaySeconds)));
+    vm.audio_gap_ms = Math.max(0, Math.min(5000, Math.trunc(audioGapMs)));
+
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    setVoiceModemStatus('Saved. Alarm server will reload the setting automatically.');
+  } catch (err) {
+    setVoiceModemStatus(`Save failed: ${err.message}`);
+  }
+}
+
+async function testVoiceModemCall() {
+  if (els.voiceModemTestBtn) els.voiceModemTestBtn.disabled = true;
+  setVoiceModemStatus('Placing test call...');
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const contactId = String(els.voiceModemTestContact?.value || '').trim();
+    const contact = getNotificationContacts(cfg).find((c) => String(c?.id || '').trim() === contactId);
+    if (!contact) throw new Error('Select a test contact first.');
+    const phone = String(contact?.phone || '').trim();
+    if (!phone) throw new Error('Selected contact has no phone number.');
+
+    const audioFile = String(els.voiceModemTestAudioFile?.value || '').trim();
+    const ttsText = audioFile ? '' : String(els.voiceModemTestTtsText?.value || '').trim();
+    const resp = await apiPostJson('/api/alarms/alarm/api/voice-modem/test', {
+      contact_id: contactId,
+      contact_name: String(contact?.name || contactId),
+      phone,
+      audio_file: audioFile,
+      tts_text: ttsText
+    });
+    if (!resp?.ok) throw new Error(resp?.error || 'Test call failed.');
+    setVoiceModemStatus(`Test call complete. ${resp.result || ''}`);
+  } catch (err) {
+    setVoiceModemStatus(`Test call failed: ${err.message}`);
+  } finally {
+    if (els.voiceModemTestBtn) els.voiceModemTestBtn.disabled = false;
+  }
+}
+
 async function loadScadaSettings() {
   setScadaSettingsStatus('Loading…');
   try {
@@ -4008,6 +4902,9 @@ function wireScadaSettingsUi() {
   els.scadaSettingsSaveBtn?.addEventListener('click', saveScadaSettings);
   els.soundReloadBtn?.addEventListener('click', loadSoundSettings);
   els.soundSaveBtn?.addEventListener('click', saveSoundSettings);
+  els.voiceModemReloadBtn?.addEventListener('click', loadVoiceModemSettings);
+  els.voiceModemSaveBtn?.addEventListener('click', saveVoiceModemSettings);
+  els.voiceModemTestBtn?.addEventListener('click', testVoiceModemCall);
   els.scadaOpenHmiBtn?.addEventListener('click', () => {
     window.open(hmiUrlFromForm(), '_blank', 'noopener,noreferrer');
   });
@@ -5175,6 +6072,7 @@ function openWorkspaceItemModal(node) {
 
   if (els.workspaceItemHint) els.workspaceItemHint.textContent = '';
   if (els.workspaceItemTbody) els.workspaceItemTbody.textContent = '';
+  els.workspaceItemGeneric?.querySelectorAll?.('.workspace-audio-actions')?.forEach((el) => el.remove());
   setWorkspaceItemStatus('');
   setEditDevStatus('');
 
@@ -5410,7 +6308,68 @@ function openWorkspaceItemModal(node) {
   }
 
   if (type === 'audio_files_root') {
-    openAudioScopeModal({ scope: 'global' });
+    if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'block';
+    addRow('Type', 'Audio Files');
+    addRow('Root', 'audio');
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const folderBtn = document.createElement('button');
+    folderBtn.className = 'btn';
+    folderBtn.type = 'button';
+    folderBtn.textContent = 'New Folder';
+    folderBtn.disabled = !canEditConfig();
+    folderBtn.onclick = () => createAlarmAudioFolderInteractive().catch((err) => window.alert(`Audio folder create failed: ${err.message}`));
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'btn primary';
+    uploadBtn.type = 'button';
+    uploadBtn.textContent = 'Upload Audio File';
+    uploadBtn.disabled = !canEditConfig();
+    uploadBtn.onclick = () => chooseAndUploadAlarmAudioFile();
+    const scopeBtn = document.createElement('button');
+    scopeBtn.className = 'btn';
+    scopeBtn.type = 'button';
+    scopeBtn.textContent = 'Global Audio Settings';
+    scopeBtn.onclick = () => openAudioScopeModal({ scope: 'global' });
+    actions.classList.add('workspace-audio-actions');
+    actions.appendChild(folderBtn);
+    actions.appendChild(uploadBtn);
+    actions.appendChild(scopeBtn);
+    if (els.workspaceItemGeneric) els.workspaceItemGeneric.appendChild(actions);
+    return;
+  }
+
+  if (type === 'audio_folder') {
+    const folder = String(node.meta?.folder || '').trim();
+    if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'block';
+    addRow('Type', 'Audio Folder');
+    addRow('Folder', folder ? `audio/${folder}` : 'audio');
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const folderBtn = document.createElement('button');
+    folderBtn.className = 'btn';
+    folderBtn.type = 'button';
+    folderBtn.textContent = 'New Subfolder';
+    folderBtn.disabled = !canEditConfig();
+    folderBtn.onclick = () => createAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder create failed: ${err.message}`));
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'btn primary';
+    uploadBtn.type = 'button';
+    uploadBtn.textContent = 'Upload Here';
+    uploadBtn.disabled = !canEditConfig();
+    uploadBtn.onclick = () => chooseAndUploadAlarmAudioFile(folder);
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn bad';
+    deleteBtn.type = 'button';
+    deleteBtn.textContent = 'Delete Folder';
+    deleteBtn.disabled = !canEditConfig();
+    deleteBtn.onclick = () => deleteAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder delete failed: ${err.message}`));
+    actions.classList.add('workspace-audio-actions');
+    actions.appendChild(folderBtn);
+    actions.appendChild(uploadBtn);
+    actions.appendChild(deleteBtn);
+    if (els.workspaceItemGeneric) els.workspaceItemGeneric.appendChild(actions);
     return;
   }
 
@@ -5677,6 +6636,7 @@ async function saveEditedAlarmFromModal() {
   const message_on_return = String(els.editAlarmMsgOff?.value || '').trim();
   const audibleMode = String(els.editAlarmAudibleMode?.value || 'inherit').trim();
   const audio_file = String(els.editAlarmAudioFile?.value || '').trim();
+  const speech_text = String(els.editAlarmSpeechText?.value || '').trim();
   const repeatMode = String(els.editAlarmRepeatMode?.value || 'inherit').trim();
   const repeatSecRaw = String(els.editAlarmRepeatSec?.value ?? '').trim();
   const repeatSec = Math.trunc(Number(repeatSecRaw || '0') || 0);
@@ -5733,6 +6693,7 @@ async function saveEditedAlarmFromModal() {
   if (audibleMode === 'on') next.audible_enabled = true;
   else if (audibleMode === 'off') next.audible_enabled = false;
   if (audio_file) next.audio_file = audio_file;
+  if (speech_text) next.speech_text = speech_text;
   if (type === 'high' || type === 'low') {
     next.threshold = Number(thresholdRaw);
     if (!Number.isFinite(next.threshold)) { setEditAlarmStatus('Threshold must be numeric.'); return; }
@@ -5771,6 +6732,7 @@ async function saveEditedAlarmFromModal() {
     const merged = { ...(cfg.alarms[origIdx] || {}), ...next };
     if (audibleMode === 'inherit') delete merged.audible_enabled;
     if (!audio_file) delete merged.audio_file;
+    if (!speech_text) delete merged.speech_text;
     if (repeatMode === 'inherit') delete merged.repeat_ms;
     if (type === 'high' || type === 'low') {
       delete merged.value;
@@ -5943,6 +6905,7 @@ function wireWorkspaceItemModalUi() {
   els.editAudioScopeSaveBtn?.addEventListener('click', () => saveAudioScopeFromModal().catch((err) => setEditAudioScopeStatus(`Save failed: ${err.message}`)));
   els.editAudioScopeAudibleMode?.addEventListener('change', refreshAudioScopeUi);
   els.editAudioScopeAudioFile?.addEventListener('change', refreshAudioScopeUi);
+  els.editAudioScopeSpeechText?.addEventListener('input', refreshAudioScopeUi);
 
   els.newEventCancelBtn?.addEventListener('click', close);
   els.newEventSaveBtn?.addEventListener('click', saveNewEventFromModal);
@@ -6191,8 +7154,11 @@ function buildAlarmsEventsTree() {
   const alarmsRoot = { id: 'folder:alarms', type: 'alarms_root', label: 'Alarms', children: [] };
   const eventLoggingRoot = { id: 'folder:events', type: 'event_logging_root', label: 'Events', children: [] };
   const audioFilesRoot = { id: 'folder:audio_files', type: 'audio_files_root', label: 'Audio Files', children: [] };
+  const contactsRoot = { id: 'folder:notification_contacts', type: 'notification_contacts_root', label: 'Notification Contacts', children: [] };
+  const contactGroupsRoot = { id: 'folder:notification_contact_groups', type: 'notification_contact_groups_root', label: 'Contact Groups', children: [] };
+  const policiesRoot = { id: 'folder:notification_policies', type: 'notification_policies_root', label: 'Notification Policies', children: [] };
 
-  root.children.push(alarmsRoot, eventLoggingRoot, audioFilesRoot);
+  root.children.push(alarmsRoot, eventLoggingRoot, audioFilesRoot, contactsRoot, contactGroupsRoot, policiesRoot);
 
   const cfg = state.alarmsConfig || null;
   const cfgAlarms = Array.isArray(cfg?.alarms) ? cfg.alarms : [];
@@ -6338,10 +7304,33 @@ function buildAlarmsEventsTree() {
     eventLoggingRoot.children.push({ id: 'hint:no_events', type: 'hint', label: '(no events configured)', children: [] });
   }
 
+  const audioFolderNodes = new Map();
+  const ensureAudioFolderNode = (folderPath) => {
+    const clean = normalizeAudioFolderName(folderPath);
+    if (!clean) return audioFilesRoot;
+    if (audioFolderNodes.has(clean)) return audioFolderNodes.get(clean);
+    const parts = clean.split('/').filter(Boolean);
+    let parent = audioFilesRoot;
+    let cur = '';
+    parts.forEach((part) => {
+      cur = cur ? `${cur}/${part}` : part;
+      let node = audioFolderNodes.get(cur);
+      if (!node) {
+        node = { id: `audio_folder:${cur}`, type: 'audio_folder', label: part, meta: { folder: cur }, children: [] };
+        audioFolderNodes.set(cur, node);
+        parent.children.push(node);
+      }
+      parent = node;
+    });
+    return parent;
+  };
+
+  getConfiguredAudioFolders(cfg || {}).forEach((folder) => ensureAudioFolderNode(folder));
   getAlarmAudioFiles(cfg || {}).forEach((f) => {
     const id = String(f?.id || '').trim();
     if (!id) return;
-    audioFilesRoot.children.push({
+    const parent = ensureAudioFolderNode(audioFolderFromPath(f?.path));
+    parent.children.push({
       id: `audio_file:${id}`,
       type: 'audio_file',
       label: String(f?.name || id),
@@ -6349,9 +7338,66 @@ function buildAlarmsEventsTree() {
       children: []
     });
   });
-  audioFilesRoot.children.sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  const sortAudioChildren = (node) => {
+    node.children = (node.children || []).slice().sort((a, b) => {
+      const at = String(a?.type || '');
+      const bt = String(b?.type || '');
+      if (at !== bt) return at === 'audio_folder' ? -1 : 1;
+      return String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' });
+    });
+    node.children.forEach((c) => { if (String(c?.type || '') === 'audio_folder') sortAudioChildren(c); });
+  };
+  sortAudioChildren(audioFilesRoot);
   if (!audioFilesRoot.children.length) {
     audioFilesRoot.children.push({ id: 'hint:no_audio_files', type: 'hint', label: '(no audio files configured)', children: [] });
+  }
+
+  getNotificationContacts(cfg || {}).forEach((contact) => {
+    const id = String(contact?.id || '').trim();
+    if (!id) return;
+    contactsRoot.children.push({
+      id: `notification_contact:${id}`,
+      type: 'notification_contact',
+      label: String(contact?.name || id),
+      meta: { ...contact, id },
+      children: []
+    });
+  });
+  contactsRoot.children.sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  if (!contactsRoot.children.length) {
+    contactsRoot.children.push({ id: 'hint:no_notification_contacts', type: 'hint', label: '(no contacts configured)', children: [] });
+  }
+
+  getNotificationContactGroups(cfg || {}).forEach((group) => {
+    const id = String(group?.id || '').trim();
+    if (!id) return;
+    contactGroupsRoot.children.push({
+      id: `notification_contact_group:${id}`,
+      type: 'notification_contact_group',
+      label: String(group?.name || id),
+      meta: { ...group, id },
+      children: []
+    });
+  });
+  contactGroupsRoot.children.sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  if (!contactGroupsRoot.children.length) {
+    contactGroupsRoot.children.push({ id: 'hint:no_notification_contact_groups', type: 'hint', label: '(no contact groups configured)', children: [] });
+  }
+
+  getNotificationPolicies(cfg || {}).forEach((policy) => {
+    const id = String(policy?.id || '').trim();
+    if (!id) return;
+    policiesRoot.children.push({
+      id: `notification_policy:${id}`,
+      type: 'notification_policy',
+      label: String(policy?.name || id),
+      meta: { ...policy, id },
+      children: []
+    });
+  });
+  policiesRoot.children.sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  if (!policiesRoot.children.length) {
+    policiesRoot.children.push({ id: 'hint:no_notification_policies', type: 'hint', label: '(no policies configured)', children: [] });
   }
 
   return root;
@@ -6368,15 +7414,110 @@ function findAlarmsEventsNodeById(node, id) {
   return null;
 }
 
+function notificationSlug(value) {
+  return String(value || '').trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
+}
+
+function uniqueNotificationId(base, usedIds) {
+  const root = notificationSlug(base) || 'item';
+  let id = root;
+  let n = 2;
+  while (usedIds.has(id)) {
+    id = `${root}_${n}`;
+    n += 1;
+  }
+  return id;
+}
+
+async function createNotificationContactInteractive() {
+  if (!canEditConfig()) { window.alert('Login required to edit notification contacts.'); return; }
+  const name = String(window.prompt('Contact name:', '') || '').trim();
+  if (!name) return;
+  const phone = String(window.prompt('Phone number:', '') || '').trim();
+  if (!phone) return;
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  const contacts = getNotificationContacts(cfg);
+  const used = new Set(contacts.map((c) => String(c?.id || '').trim()).filter(Boolean));
+  const id = uniqueNotificationId(name, used);
+  contacts.push({ id, name, phone, enabled: true, notes: '' });
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  state.alarmsEventsSelectedNodeId = 'folder:notification_contacts';
+  state.alarmsEventsSelectedChildId = `notification_contact:${id}`;
+  renderAlarmsEventsTree();
+}
+
+async function createNotificationContactGroupInteractive() {
+  if (!canEditConfig()) { window.alert('Login required to edit contact groups.'); return; }
+  const name = String(window.prompt('Contact group name:', '') || '').trim();
+  if (!name) return;
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  const groups = getNotificationContactGroups(cfg);
+  const used = new Set(groups.map((g) => String(g?.id || '').trim()).filter(Boolean));
+  const id = uniqueNotificationId(name, used);
+  groups.push({ id, name, enabled: true, contacts: [] });
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  state.alarmsEventsSelectedNodeId = 'folder:notification_contact_groups';
+  state.alarmsEventsSelectedChildId = `notification_contact_group:${id}`;
+  renderAlarmsEventsTree();
+}
+
+async function createNotificationPolicyInteractive() {
+  if (!canEditConfig()) { window.alert('Login required to edit notification policies.'); return; }
+  const name = String(window.prompt('Notification policy name:', '') || '').trim();
+  if (!name) return;
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  const policies = getNotificationPolicies(cfg);
+  const used = new Set(policies.map((p) => String(p?.id || '').trim()).filter(Boolean));
+  const id = uniqueNotificationId(name, used);
+  policies.push({ id, name, enabled: true, min_severity: 500, on: ['active'], contacts: [], contact_groups: [] });
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  state.alarmsEventsSelectedNodeId = 'folder:notification_policies';
+  state.alarmsEventsSelectedChildId = `notification_policy:${id}`;
+  renderAlarmsEventsTree();
+}
+
+async function deleteNotificationItem(kind, id) {
+  if (!canEditConfig()) { window.alert('Login required to edit notifications.'); return false; }
+  const cleanId = String(id || '').trim();
+  if (!cleanId) return false;
+  const label = kind === 'contact' ? 'contact' : (kind === 'group' ? 'contact group' : 'notification policy');
+  if (!window.confirm(`Delete ${label} '${cleanId}'?`)) return false;
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  if (kind === 'contact') {
+    const contacts = getNotificationContacts(cfg);
+    cfg.notifications.contacts = contacts.filter((c) => String(c?.id || '').trim() !== cleanId);
+    getNotificationContactGroups(cfg).forEach((g) => {
+      g.contacts = (Array.isArray(g.contacts) ? g.contacts : []).filter((cid) => String(cid || '').trim() !== cleanId);
+    });
+    getNotificationPolicies(cfg).forEach((p) => {
+      p.contacts = (Array.isArray(p.contacts) ? p.contacts : []).filter((cid) => String(cid || '').trim() !== cleanId);
+    });
+  } else if (kind === 'group') {
+    cfg.notifications.contact_groups = getNotificationContactGroups(cfg).filter((g) => String(g?.id || '').trim() !== cleanId);
+    getNotificationPolicies(cfg).forEach((p) => {
+      p.contact_groups = (Array.isArray(p.contact_groups) ? p.contact_groups : []).filter((gid) => String(gid || '').trim() !== cleanId);
+    });
+  } else if (kind === 'policy') {
+    cfg.notifications.policies = getNotificationPolicies(cfg).filter((p) => String(p?.id || '').trim() !== cleanId);
+  }
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  renderAlarmsEventsTree();
+  return true;
+}
+
 function isAlarmsEventsLeafType(type) {
   const t = String(type || '').trim();
   // These are displayed in the right-side list, not in the left tree.
-  return ['alarm', 'event_tag', 'audio_file', 'hint'].includes(t);
+  return ['alarm', 'event_tag', 'audio_file', 'notification_contact', 'notification_contact_group', 'notification_policy', 'hint'].includes(t);
 }
 
 function renderAlarmsEventsTreeNode(node, container) {
   if (isAlarmsEventsLeafType(node?.type)) return;
-  const canExpand = ['folder', 'alarms_root', 'alarm_group', 'alarm_site', 'event_logging_root', 'event_connection', 'audio_files_root'].includes(String(node.type || ''));
+  const canExpand = ['folder', 'alarms_root', 'alarm_group', 'alarm_site', 'event_logging_root', 'event_connection', 'audio_files_root', 'audio_folder', 'notification_contacts_root', 'notification_contact_groups_root', 'notification_policies_root'].includes(String(node.type || ''));
   const expanded = state.alarmsEventsExpanded?.has?.(node.id);
 
   const btn = document.createElement('button');
@@ -6411,6 +7552,19 @@ function renderAlarmsEventsTreeNode(node, container) {
   } else if (node.type === 'audio_files_root') {
     const n = getAlarmAudioFiles(state.alarmsConfig || {}).length;
     meta.textContent = n ? `${n} file(s)` : '';
+  } else if (node.type === 'audio_folder') {
+    const countFiles = (n) => (Array.isArray(n?.children) ? n.children.reduce((sum, c) => sum + (String(c?.type || '') === 'audio_file' ? 1 : countFiles(c)), 0) : 0);
+    const n = countFiles(node);
+    meta.textContent = n ? `${n} file(s)` : '';
+  } else if (node.type === 'notification_contacts_root') {
+    const n = getNotificationContacts(state.alarmsConfig || {}).length;
+    meta.textContent = n ? `${n} contact(s)` : '';
+  } else if (node.type === 'notification_contact_groups_root') {
+    const n = getNotificationContactGroups(state.alarmsConfig || {}).length;
+    meta.textContent = n ? `${n} group(s)` : '';
+  } else if (node.type === 'notification_policies_root') {
+    const n = getNotificationPolicies(state.alarmsConfig || {}).length;
+    meta.textContent = n ? `${n} policy(s)` : '';
   }
 
   btn.appendChild(twisty);
@@ -6419,6 +7573,9 @@ function renderAlarmsEventsTreeNode(node, container) {
 
   btn.addEventListener('click', () => {
     state.alarmsEventsSelectedNodeId = node.id;
+    if (node.type === 'audio_files_root' || node.type === 'audio_folder') {
+      state.alarmsEventsSelectedChildId = '';
+    }
     renderAlarmsEventsTree();
   });
 
@@ -6426,6 +7583,9 @@ function renderAlarmsEventsTreeNode(node, container) {
     e.preventDefault();
     e.stopPropagation();
     state.alarmsEventsSelectedNodeId = node.id;
+    if (node.type === 'audio_files_root' || node.type === 'audio_folder') {
+      state.alarmsEventsSelectedChildId = '';
+    }
     renderAlarmsEventsTree();
 
     const items = [];
@@ -6433,6 +7593,8 @@ function renderAlarmsEventsTreeNode(node, container) {
     if (node.type === 'alarms_root') {
       items.push({ label: 'Add Group…', onClick: () => addAlarmGroupInteractive() });
       items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal() });
+      items.push({ label: 'Download CSV', onClick: () => downloadAlarmsCsv() });
+      items.push({ label: 'Upload CSV…', onClick: () => importAlarmsCsv().catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
       items.push('sep');
     }
 
@@ -6479,13 +7641,38 @@ function renderAlarmsEventsTreeNode(node, container) {
 
     if (node.type === 'audio_files_root') {
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
+      items.push({ label: 'New Folder…', onClick: () => createAlarmAudioFolderInteractive().catch((err) => window.alert(`Audio folder create failed: ${err.message}`)) });
       items.push({ label: 'Upload Audio File…', onClick: () => chooseAndUploadAlarmAudioFile() });
+      items.push('sep');
+    }
+
+    if (node.type === 'audio_folder') {
+      const folder = String(node.meta?.folder || '').trim();
+      items.push({ label: 'New Folder…', onClick: () => createAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder create failed: ${err.message}`)) });
+      items.push({ label: 'Upload Audio File…', onClick: () => chooseAndUploadAlarmAudioFile(folder) });
+      items.push({ label: 'Delete Folder…', onClick: () => deleteAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder delete failed: ${err.message}`)) });
       items.push('sep');
     }
 
     if (node.type === 'audio_file') {
       const audioId = String(node.meta?.id || '').trim();
+      items.push({ label: 'Move Audio File…', onClick: () => moveAlarmAudioFileInteractive(audioId).catch((err) => window.alert(`Audio move failed: ${err.message}`)) });
       items.push({ label: 'Delete Audio File…', onClick: () => deleteAlarmAudioFileById(audioId).then((result) => { if (result) { state.alarmsEventsSelectedNodeId = 'folder:audio_files'; renderAlarmsEventsTree(); } }).catch((err) => window.alert(`Audio delete failed: ${err.message}`)) });
+      items.push('sep');
+    }
+
+    if (node.type === 'notification_contacts_root') {
+      items.push({ label: 'Add Contact…', onClick: () => createNotificationContactInteractive().catch((err) => window.alert(`Contact create failed: ${err.message}`)) });
+      items.push('sep');
+    }
+
+    if (node.type === 'notification_contact_groups_root') {
+      items.push({ label: 'Add Contact Group…', onClick: () => createNotificationContactGroupInteractive().catch((err) => window.alert(`Contact group create failed: ${err.message}`)) });
+      items.push('sep');
+    }
+
+    if (node.type === 'notification_policies_root') {
+      items.push({ label: 'Add Notification Policy…', onClick: () => createNotificationPolicyInteractive().catch((err) => window.alert(`Policy create failed: ${err.message}`)) });
       items.push('sep');
     }
 
@@ -6517,16 +7704,29 @@ function renderAlarmsEventsDetails(node) {
   const isEventConnection = String(node.type || '') === 'event_connection';
   const isEventTag = String(node.type || '') === 'event_tag';
   const isAudioFilesRoot = String(node.type || '') === 'audio_files_root';
+  const isAudioFolder = String(node.type || '') === 'audio_folder';
   const isAudioFile = String(node.type || '') === 'audio_file';
+  const isNotificationContactsRoot = String(node.type || '') === 'notification_contacts_root';
+  const isNotificationContact = String(node.type || '') === 'notification_contact';
+  const isNotificationContactGroupsRoot = String(node.type || '') === 'notification_contact_groups_root';
+  const isNotificationContactGroup = String(node.type || '') === 'notification_contact_group';
+  const isNotificationPoliciesRoot = String(node.type || '') === 'notification_policies_root';
+  const isNotificationPolicy = String(node.type || '') === 'notification_policy';
 
   const columns = (isEventConnection || isEventTag)
     ? ['Name', 'Source', 'Datatype', 'Writable', 'Enabled']
-    : (isAudioFilesRoot || isAudioFile)
+    : (isAudioFilesRoot || isAudioFolder || isAudioFile)
     ? ['Name', 'ID', 'Path']
+    : (isNotificationContactsRoot || isNotificationContact)
+    ? ['Name', 'Phone', 'Enabled', 'ID']
+    : (isNotificationContactGroupsRoot || isNotificationContactGroup)
+    ? ['Name', 'Contacts', 'Enabled', 'ID']
+    : (isNotificationPoliciesRoot || isNotificationPolicy)
+    ? ['Name', 'Targets', 'Min Severity', 'Events', 'Enabled', 'ID']
     : (isAlarmsRoot || isAlarmGroup)
-    ? ['Name', 'Audible', 'Audio']
+    ? ['Name', 'Audible', 'Audio Sequence']
     : (isAlarmSite || isAlarm)
-    ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Audible', 'Audio', 'Group', 'Site']
+    ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Audible', 'Audio Sequence', 'Policy', 'Group', 'Site']
     : ['Name'];
 
   const colCount = columns.length;
@@ -6569,7 +7769,7 @@ function renderAlarmsEventsDetails(node) {
     return td;
   };
 
-  const rows = (isAlarm || isEventTag || isAudioFile) ? [node] : (Array.isArray(node.children) ? node.children : []);
+  const rows = (isAlarm || isEventTag || isAudioFile || isNotificationContact || isNotificationContactGroup || isNotificationPolicy) ? [node] : (Array.isArray(node.children) ? node.children : []);
 
   if (!rows.length) {
     const tr = document.createElement('tr');
@@ -6586,7 +7786,7 @@ function renderAlarmsEventsDetails(node) {
   const rowIds = rows.map((r) => String(r?.id || '')).filter(Boolean);
   const selId = String(state.alarmsEventsSelectedChildId || '').trim();
   if (!selId || !rowIds.includes(selId)) {
-    state.alarmsEventsSelectedChildId = rowIds[0] || '';
+    state.alarmsEventsSelectedChildId = (isAudioFilesRoot || isAudioFolder) ? '' : (rowIds[0] || '');
   }
 
   let selectedRow = rows.find((r) => String(r?.id || '') === String(state.alarmsEventsSelectedChildId || '')) || null;
@@ -6608,11 +7808,40 @@ function renderAlarmsEventsDetails(node) {
       addCell(tr, String(tagRow?.datatype || ''), !String(tagRow?.datatype || '').trim());
       addBadgeCell(tr, tagRow?.writable === true ? 'WRITABLE' : 'READ', tagRow?.writable === true ? 'warn' : 'ok');
       addBadgeCell(tr, tagRow?.log_event_on_change === true ? 'ENABLED' : 'DISABLED', tagRow?.log_event_on_change === true ? 'ok' : 'bad');
-    } else if ((isAudioFilesRoot || isAudioFile) && type === 'audio_file') {
+    } else if ((isAudioFilesRoot || isAudioFolder || isAudioFile) && type === 'audio_folder') {
+      addCell(tr, String(c?.label || ''), false);
+      addCell(tr, 'folder', false);
+      addCell(tr, `audio/${String(c?.meta?.folder || '').trim()}`, false);
+    } else if ((isAudioFilesRoot || isAudioFolder || isAudioFile) && type === 'audio_file') {
       const meta = c?.meta || {};
       addCell(tr, String(meta?.name || c?.label || ''), false);
       addCell(tr, String(meta?.id || '').trim(), !String(meta?.id || '').trim());
       addCell(tr, String(meta?.path || '').trim(), !String(meta?.path || '').trim());
+    } else if ((isNotificationContactsRoot || isNotificationContact) && type === 'notification_contact') {
+      const meta = c?.meta || {};
+      addCell(tr, String(meta?.name || c?.label || ''), false);
+      addCell(tr, String(meta?.phone || '').trim(), !String(meta?.phone || '').trim());
+      addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
+      addCell(tr, String(meta?.id || '').trim(), false);
+    } else if ((isNotificationContactGroupsRoot || isNotificationContactGroup) && type === 'notification_contact_group') {
+      const meta = c?.meta || {};
+      const contacts = Array.isArray(meta?.contacts) ? meta.contacts : [];
+      addCell(tr, String(meta?.name || c?.label || ''), false);
+      addCell(tr, String(contacts.length), contacts.length === 0);
+      addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
+      addCell(tr, String(meta?.id || '').trim(), false);
+    } else if ((isNotificationPoliciesRoot || isNotificationPolicy) && type === 'notification_policy') {
+      const meta = c?.meta || {};
+      const contacts = Array.isArray(meta?.contacts) ? meta.contacts : [];
+      const groups = Array.isArray(meta?.contact_groups) ? meta.contact_groups : [];
+      const targets = getPolicyTargets(meta);
+      const events = Array.isArray(meta?.on) ? meta.on.join(', ') : '';
+      addCell(tr, String(meta?.name || c?.label || ''), false);
+      addCell(tr, String(targets.length), targets.length === 0);
+      addBadgeCell(tr, `${severityLabel(meta?.min_severity ?? 0)} ${Number(meta?.min_severity ?? 0) || 0}`, severityClass(meta?.min_severity ?? 0));
+      addCell(tr, events, !events);
+      addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
+      addCell(tr, String(meta?.id || '').trim(), false);
     } else if ((isAlarmsRoot || isAlarmGroup) && (type === 'alarm_group' || type === 'alarm_site')) {
       const cfg = state.alarmsConfig || {};
       const group = type === 'alarm_group' ? String(c?.meta?.group || c?.label || '') : String(c?.meta?.group || '');
@@ -6623,7 +7852,7 @@ function renderAlarmsEventsDetails(node) {
         : resolveInheritedAlarmAudio(cfg, group, site);
       addCell(tr, String(c?.label || c?.id || ''), false);
       addBadgeCell(tr, effective?.audible_enabled ? 'ENABLED' : 'DISABLED', effective?.audible_enabled ? 'ok' : 'bad');
-      addCell(tr, effective?.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none', !effective?.audio_file);
+      addCell(tr, alarmAudioSequenceText(effective?.audio_files || (effective?.audio_file ? [effective.audio_file] : []), cfg, effective?.speech_texts || (effective?.speech_text ? [effective.speech_text] : [])), !(effective?.audio_files || []).length && !effective?.audio_file && !(effective?.speech_texts || []).length && !effective?.speech_text);
     } else if ((isAlarmSite || isAlarm) && type === 'alarm') {
       const cfg = state.alarmsConfig || {};
       const meta = c?.meta || {};
@@ -6639,7 +7868,8 @@ function renderAlarmsEventsDetails(node) {
       addBadgeCell(tr, meta?.acked ? 'ACKED' : 'UNACKED', meta?.acked ? 'ok' : (meta?.active ? 'warn' : ''));
       addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
       addBadgeCell(tr, effectiveAudio.audible_enabled ? 'ENABLED' : 'DISABLED', effectiveAudio.audible_enabled ? 'ok' : 'bad');
-      addCell(tr, effectiveAudio.audio_file ? alarmAudioFileText(effectiveAudio.audio_file, cfg) : 'none', !effectiveAudio.audio_file);
+      addCell(tr, alarmAudioSequenceText(effectiveAudio.audio_files || (effectiveAudio.audio_file ? [effectiveAudio.audio_file] : []), cfg, effectiveAudio.speech_texts || (effectiveAudio.speech_text ? [effectiveAudio.speech_text] : [])), !(effectiveAudio.audio_files || []).length && !effectiveAudio.audio_file && !(effectiveAudio.speech_texts || []).length && !effectiveAudio.speech_text);
+      addCell(tr, String(alarmConfig?.notification_policy || ''), !String(alarmConfig?.notification_policy || '').trim());
       addCell(tr, String(meta?.group || ''), !String(meta?.group || '').trim());
       addCell(tr, String(meta?.site || ''), !String(meta?.site || '').trim());
     } else {
@@ -6674,7 +7904,7 @@ function renderAlarmsEventsDetails(node) {
         renderAlarmsEventsTree();
         return;
       }
-      if (isAlarmsEvents || isAlarmsRoot || isAlarmGroup || isAlarmSite || isAlarm || isEventLoggingRoot || isEventConnection || isEventTag || isAudioFilesRoot || isAudioFile) {
+      if (isAlarmsEvents || isAlarmsRoot || isAlarmGroup || isAlarmSite || isAlarm || isEventLoggingRoot || isEventConnection || isEventTag || isAudioFilesRoot || isAudioFile || isNotificationContactsRoot || isNotificationContact || isNotificationContactGroupsRoot || isNotificationContactGroup || isNotificationPoliciesRoot || isNotificationPolicy) {
         openWorkspaceItemModal(c);
       }
     });
@@ -6731,6 +7961,80 @@ function renderAlarmsEventsProperties(item, parentNode) {
   if (!item) {
     const label = String(parentNode?.label || '').trim();
     setHint(label ? `Properties · ${label}` : 'Properties');
+    const ptype = String(parentNode?.type || '').trim();
+    if (['notification_contacts_root', 'notification_contact_groups_root', 'notification_policies_root'].includes(ptype)) {
+      showEditor();
+      const host = els.alarmsEventsPropsEditor;
+      if (!host) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'form';
+      wrap.style.maxWidth = '900px';
+      const note = document.createElement('div');
+      note.className = 'hint';
+      note.textContent = 'No items configured yet.';
+      wrap.appendChild(note);
+      const actions = document.createElement('div');
+      actions.className = 'row-actions';
+      actions.style.marginTop = '10px';
+      const addBtn = document.createElement('button');
+      addBtn.className = 'btn primary';
+      addBtn.type = 'button';
+      addBtn.disabled = !canEditConfig();
+      if (ptype === 'notification_contacts_root') {
+        addBtn.textContent = 'Add Contact';
+        addBtn.onclick = () => createNotificationContactInteractive().catch((err) => setStatus(`Create failed: ${err.message}`));
+      } else if (ptype === 'notification_contact_groups_root') {
+        addBtn.textContent = 'Add Contact Group';
+        addBtn.onclick = () => createNotificationContactGroupInteractive().catch((err) => setStatus(`Create failed: ${err.message}`));
+      } else {
+        addBtn.textContent = 'Add Notification Policy';
+        addBtn.onclick = () => createNotificationPolicyInteractive().catch((err) => setStatus(`Create failed: ${err.message}`));
+      }
+      actions.appendChild(addBtn);
+      wrap.appendChild(actions);
+      host.appendChild(wrap);
+      return;
+    }
+    if (ptype === 'audio_files_root' || ptype === 'audio_folder') {
+      showEditor();
+      const host = els.alarmsEventsPropsEditor;
+      if (!host) return;
+      const folder = ptype === 'audio_folder' ? String(parentNode?.meta?.folder || '').trim() : '';
+      const wrap = document.createElement('div');
+      wrap.className = 'form';
+      wrap.style.maxWidth = '900px';
+      const note = document.createElement('div');
+      note.className = 'hint';
+      note.textContent = folder ? `Audio folder: audio/${folder}` : 'Audio root folder.';
+      wrap.appendChild(note);
+      const actions = document.createElement('div');
+      actions.className = 'row-actions';
+      actions.style.marginTop = '10px';
+      const newBtn = document.createElement('button');
+      newBtn.className = 'btn';
+      newBtn.type = 'button';
+      newBtn.textContent = folder ? 'New Subfolder' : 'New Folder';
+      newBtn.disabled = !canEditConfig();
+      newBtn.onclick = () => createAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder create failed: ${err.message}`));
+      const uploadBtn = document.createElement('button');
+      uploadBtn.className = 'btn primary';
+      uploadBtn.type = 'button';
+      uploadBtn.textContent = folder ? 'Upload Here' : 'Upload Audio File';
+      uploadBtn.disabled = !canEditConfig();
+      uploadBtn.onclick = () => chooseAndUploadAlarmAudioFile(folder);
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn bad';
+      deleteBtn.type = 'button';
+      deleteBtn.textContent = 'Delete Folder';
+      deleteBtn.disabled = !canEditConfig() || !folder;
+      deleteBtn.onclick = () => deleteAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder delete failed: ${err.message}`));
+      actions.appendChild(newBtn);
+      actions.appendChild(uploadBtn);
+      if (folder) actions.appendChild(deleteBtn);
+      wrap.appendChild(actions);
+      host.appendChild(wrap);
+      return;
+    }
     addPropRow('Selection', 'Select an item above to view properties.');
     return;
   }
@@ -6745,6 +8049,442 @@ function renderAlarmsEventsProperties(item, parentNode) {
     try { return JSON.stringify(item, null, 2); } catch { return String(item || ''); }
   })();
   if (els.alarmsEventsPropsJson) els.alarmsEventsPropsJson.textContent = raw;
+
+  if (type === 'hint' && ['notification_contacts_root', 'notification_contact_groups_root', 'notification_policies_root'].includes(String(parentNode?.type || ''))) {
+    showEditor();
+    const host = els.alarmsEventsPropsEditor;
+    if (!host) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'form';
+    wrap.style.maxWidth = '900px';
+    const note = document.createElement('div');
+    note.className = 'hint';
+    note.textContent = String(item?.label || 'No items configured yet.');
+    wrap.appendChild(note);
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn primary';
+    addBtn.type = 'button';
+    addBtn.disabled = !canEditConfig();
+    const ptype = String(parentNode?.type || '');
+    if (ptype === 'notification_contacts_root') {
+      addBtn.textContent = 'Add Contact';
+      addBtn.onclick = () => createNotificationContactInteractive().catch((err) => setStatus(`Create failed: ${err.message}`));
+    } else if (ptype === 'notification_contact_groups_root') {
+      addBtn.textContent = 'Add Contact Group';
+      addBtn.onclick = () => createNotificationContactGroupInteractive().catch((err) => setStatus(`Create failed: ${err.message}`));
+    } else {
+      addBtn.textContent = 'Add Notification Policy';
+      addBtn.onclick = () => createNotificationPolicyInteractive().catch((err) => setStatus(`Create failed: ${err.message}`));
+    }
+    actions.appendChild(addBtn);
+    wrap.appendChild(actions);
+    host.appendChild(wrap);
+    return;
+  }
+
+  if (type === 'notification_contact') {
+    const contactId = String(item?.meta?.id || '').trim();
+    const cur = getNotificationContacts(cfg).find((c) => String(c?.id || '').trim() === contactId) || item?.meta || {};
+    showEditor();
+    const host = els.alarmsEventsPropsEditor;
+    if (!host) return;
+
+    const form = document.createElement('div');
+    form.className = 'form';
+    form.style.maxWidth = '900px';
+    const addRow = (labelText, inputEl) => {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      const lab = document.createElement('label');
+      lab.textContent = labelText;
+      row.appendChild(lab);
+      row.appendChild(inputEl);
+      form.appendChild(row);
+      return inputEl;
+    };
+
+    const idBox = document.createElement('input');
+    idBox.type = 'text';
+    idBox.value = contactId;
+    idBox.disabled = true;
+    addRow('Contact ID', idBox);
+
+    const nameBox = document.createElement('input');
+    nameBox.type = 'text';
+    nameBox.value = String(cur?.name || item?.label || contactId);
+    nameBox.disabled = !canEditConfig();
+    addRow('Name', nameBox);
+
+    const phoneBox = document.createElement('input');
+    phoneBox.type = 'text';
+    phoneBox.value = String(cur?.phone || '');
+    phoneBox.placeholder = '+15551234567';
+    phoneBox.disabled = !canEditConfig();
+    addRow('Phone', phoneBox);
+
+    const enabledBox = document.createElement('input');
+    enabledBox.type = 'checkbox';
+    enabledBox.checked = cur?.enabled !== false;
+    enabledBox.disabled = !canEditConfig();
+    const enabledWrap = document.createElement('label');
+    enabledWrap.style.display = 'flex';
+    enabledWrap.style.alignItems = 'center';
+    enabledWrap.style.gap = '8px';
+    enabledWrap.appendChild(enabledBox);
+    enabledWrap.appendChild(document.createTextNode('Enabled'));
+    addRow('Enabled', enabledWrap);
+
+    const notesBox = document.createElement('textarea');
+    notesBox.rows = 3;
+    notesBox.value = String(cur?.notes || '');
+    notesBox.disabled = !canEditConfig();
+    addRow('Notes', notesBox);
+
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn primary';
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save';
+    saveBtn.disabled = !canEditConfig();
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn';
+    addBtn.type = 'button';
+    addBtn.textContent = 'Add Contact';
+    addBtn.disabled = !canEditConfig();
+    actions.appendChild(saveBtn);
+    actions.appendChild(addBtn);
+    form.appendChild(actions);
+
+    saveBtn.addEventListener('click', async () => {
+      if (!canEditConfig()) { setStatus('Login required to edit contacts.'); return; }
+      setStatus('Saving…');
+      try {
+        const nextCfg = await loadOpcbridgeAlarmsConfig();
+        const contacts = getNotificationContacts(nextCfg);
+        const idx = contacts.findIndex((c) => String(c?.id || '').trim() === contactId);
+        if (idx < 0) throw new Error(`Contact '${contactId}' not found.`);
+        contacts[idx] = {
+          ...(contacts[idx] || {}),
+          id: contactId,
+          name: String(nameBox.value || '').trim() || contactId,
+          phone: String(phoneBox.value || '').trim(),
+          enabled: Boolean(enabledBox.checked),
+          notes: String(notesBox.value || '').trim()
+        };
+        if (!contacts[idx].phone) throw new Error('Phone is required.');
+        await saveOpcbridgeAlarmsConfig(nextCfg);
+        await loadOpcbridgeAlarmsConfig();
+        renderAlarmsEventsTree();
+        setStatus('Saved.');
+      } catch (err) {
+        setStatus(`Save failed: ${err.message}`);
+      }
+    });
+    addBtn.addEventListener('click', () => createNotificationContactInteractive().catch((err) => setStatus(`Create failed: ${err.message}`)));
+
+    host.appendChild(form);
+    if (delBtn) {
+      delBtn.style.display = '';
+      delBtn.textContent = 'Delete Contact…';
+      delBtn.onclick = () => deleteNotificationItem('contact', contactId).catch((err) => window.alert(`Contact delete failed: ${err.message}`));
+    }
+    return;
+  }
+
+  if (type === 'notification_contact_group') {
+    const groupId = String(item?.meta?.id || '').trim();
+    const cur = getNotificationContactGroups(cfg).find((g) => String(g?.id || '').trim() === groupId) || item?.meta || {};
+    showEditor();
+    const host = els.alarmsEventsPropsEditor;
+    if (!host) return;
+
+    const form = document.createElement('div');
+    form.className = 'form';
+    form.style.maxWidth = '900px';
+    const addRow = (labelText, inputEl) => {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      const lab = document.createElement('label');
+      lab.textContent = labelText;
+      row.appendChild(lab);
+      row.appendChild(inputEl);
+      form.appendChild(row);
+      return inputEl;
+    };
+
+    const idBox = document.createElement('input');
+    idBox.type = 'text';
+    idBox.value = groupId;
+    idBox.disabled = true;
+    addRow('Group ID', idBox);
+
+    const nameBox = document.createElement('input');
+    nameBox.type = 'text';
+    nameBox.value = String(cur?.name || item?.label || groupId);
+    nameBox.disabled = !canEditConfig();
+    addRow('Name', nameBox);
+
+    const enabledBox = document.createElement('input');
+    enabledBox.type = 'checkbox';
+    enabledBox.checked = cur?.enabled !== false;
+    enabledBox.disabled = !canEditConfig();
+    const enabledWrap = document.createElement('label');
+    enabledWrap.style.display = 'flex';
+    enabledWrap.style.alignItems = 'center';
+    enabledWrap.style.gap = '8px';
+    enabledWrap.appendChild(enabledBox);
+    enabledWrap.appendChild(document.createTextNode('Enabled'));
+    addRow('Enabled', enabledWrap);
+
+    const availableContacts = getNotificationContacts(cfg)
+      .slice()
+      .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+    const contactsList = makeOrderedSelectionEditor({
+      emptyText: 'No contacts selected.',
+      addLabel: 'Add Contact',
+      availableItems: availableContacts.map((contact) => {
+        const id = String(contact?.id || '').trim();
+        return {
+          key: id,
+          label: String(contact?.name || id),
+          meta: `${String(contact?.phone || 'no phone')} · ${id}${contact?.enabled === false ? ' · disabled' : ''}`
+        };
+      }),
+      selectedItems: dedupeStringsInOrder(cur?.contacts).map((id) => ({ key: id }))
+    });
+    addRow('Contacts In Call Order', contactsList);
+
+    const orderHint = document.createElement('div');
+    orderHint.className = 'hint';
+    orderHint.textContent = 'Contacts in this group are called in the order shown. Duplicate contacts from a policy are skipped at call time.';
+    form.appendChild(orderHint);
+
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn primary';
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save';
+    saveBtn.disabled = !canEditConfig();
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn';
+    addBtn.type = 'button';
+    addBtn.textContent = 'Add Contact Group';
+    addBtn.disabled = !canEditConfig();
+    actions.appendChild(saveBtn);
+    actions.appendChild(addBtn);
+    form.appendChild(actions);
+
+    saveBtn.addEventListener('click', async () => {
+      if (!canEditConfig()) { setStatus('Login required to edit contact groups.'); return; }
+      setStatus('Saving…');
+      try {
+        const nextCfg = await loadOpcbridgeAlarmsConfig();
+        const groups = getNotificationContactGroups(nextCfg);
+        const idx = groups.findIndex((g) => String(g?.id || '').trim() === groupId);
+        if (idx < 0) throw new Error(`Contact group '${groupId}' not found.`);
+        const validContacts = new Set(getNotificationContacts(nextCfg).map((c) => String(c?.id || '').trim()).filter(Boolean));
+        const contacts = contactsList.getSelectedKeys();
+        const missing = contacts.filter((cid) => !validContacts.has(cid));
+        if (missing.length) throw new Error(`Unknown contact ID(s): ${missing.join(', ')}`);
+        groups[idx] = {
+          ...(groups[idx] || {}),
+          id: groupId,
+          name: String(nameBox.value || '').trim() || groupId,
+          enabled: Boolean(enabledBox.checked),
+          contacts
+        };
+        await saveOpcbridgeAlarmsConfig(nextCfg);
+        await loadOpcbridgeAlarmsConfig();
+        renderAlarmsEventsTree();
+        setStatus('Saved.');
+      } catch (err) {
+        setStatus(`Save failed: ${err.message}`);
+      }
+    });
+    addBtn.addEventListener('click', () => createNotificationContactGroupInteractive().catch((err) => setStatus(`Create failed: ${err.message}`)));
+
+    host.appendChild(form);
+    if (delBtn) {
+      delBtn.style.display = '';
+      delBtn.textContent = 'Delete Group…';
+      delBtn.onclick = () => deleteNotificationItem('group', groupId).catch((err) => window.alert(`Group delete failed: ${err.message}`));
+    }
+    return;
+  }
+
+  if (type === 'notification_policy') {
+    const policyId = String(item?.meta?.id || '').trim();
+    const cur = getNotificationPolicies(cfg).find((p) => String(p?.id || '').trim() === policyId) || item?.meta || {};
+    showEditor();
+    const host = els.alarmsEventsPropsEditor;
+    if (!host) return;
+
+    const form = document.createElement('div');
+    form.className = 'form';
+    form.style.maxWidth = '900px';
+    const addRow = (labelText, inputEl) => {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      const lab = document.createElement('label');
+      lab.textContent = labelText;
+      row.appendChild(lab);
+      row.appendChild(inputEl);
+      form.appendChild(row);
+      return inputEl;
+    };
+
+    const idBox = document.createElement('input');
+    idBox.type = 'text';
+    idBox.value = policyId;
+    idBox.disabled = true;
+    addRow('Policy ID', idBox);
+
+    const nameBox = document.createElement('input');
+    nameBox.type = 'text';
+    nameBox.value = String(cur?.name || item?.label || policyId);
+    nameBox.disabled = !canEditConfig();
+    addRow('Name', nameBox);
+
+    const enabledBox = document.createElement('input');
+    enabledBox.type = 'checkbox';
+    enabledBox.checked = cur?.enabled !== false;
+    enabledBox.disabled = !canEditConfig();
+    const enabledWrap = document.createElement('label');
+    enabledWrap.style.display = 'flex';
+    enabledWrap.style.alignItems = 'center';
+    enabledWrap.style.gap = '8px';
+    enabledWrap.appendChild(enabledBox);
+    enabledWrap.appendChild(document.createTextNode('Enabled'));
+    addRow('Enabled', enabledWrap);
+
+    const sevBox = document.createElement('input');
+    sevBox.type = 'number';
+    sevBox.step = '1';
+    sevBox.value = String(Number(cur?.min_severity ?? 500) || 0);
+    sevBox.disabled = !canEditConfig();
+    addRow('Min Severity', sevBox);
+
+    const eventsBox = document.createElement('input');
+    eventsBox.type = 'text';
+    eventsBox.value = (Array.isArray(cur?.on) && cur.on.length ? cur.on : ['active']).join(', ');
+    eventsBox.placeholder = 'active, returned, acked';
+    eventsBox.disabled = !canEditConfig();
+    addRow('Events', eventsBox);
+
+    const availableContacts = getNotificationContacts(cfg)
+      .slice()
+      .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+    const availableGroups = getNotificationContactGroups(cfg)
+      .slice()
+      .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+    const targetItems = [
+      ...availableContacts.map((contact) => {
+        const id = String(contact?.id || '').trim();
+        if (!id) return null;
+        return {
+          key: `contact:${id}`,
+          label: `Contact: ${String(contact?.name || id)}`,
+          meta: `${String(contact?.phone || 'no phone')} · ${id}${contact?.enabled === false ? ' · disabled' : ''}`
+        };
+      }),
+      ...availableGroups.map((group) => {
+        const id = String(group?.id || '').trim();
+        if (!id) return null;
+        const count = Array.isArray(group?.contacts) ? group.contacts.length : 0;
+        return {
+          key: `group:${id}`,
+          label: `Group: ${String(group?.name || id)}`,
+          meta: `${count} contact(s) · ${id}${group?.enabled === false ? ' · disabled' : ''}`
+        };
+      })
+    ].filter(Boolean);
+    const targetsList = makeOrderedSelectionEditor({
+      emptyText: 'No contacts or groups selected.',
+      addLabel: 'Add Target',
+      availableItems: targetItems,
+      selectedItems: getPolicyTargets(cur).map((target) => ({ key: `${target.type}:${target.id}` }))
+    });
+    addRow('Call Targets In Order', targetsList);
+
+    const orderHint = document.createElement('div');
+    orderHint.className = 'hint';
+    orderHint.textContent = 'Calls follow this order. Groups expand to their ordered contacts. A contact already called earlier is skipped if it appears again.';
+    form.appendChild(orderHint);
+
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn primary';
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save';
+    saveBtn.disabled = !canEditConfig();
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn';
+    addBtn.type = 'button';
+    addBtn.textContent = 'Add Policy';
+    addBtn.disabled = !canEditConfig();
+    actions.appendChild(saveBtn);
+    actions.appendChild(addBtn);
+    form.appendChild(actions);
+
+    saveBtn.addEventListener('click', async () => {
+      if (!canEditConfig()) { setStatus('Login required to edit policies.'); return; }
+      setStatus('Saving…');
+      try {
+        const nextCfg = await loadOpcbridgeAlarmsConfig();
+        const policies = getNotificationPolicies(nextCfg);
+        const idx = policies.findIndex((p) => String(p?.id || '').trim() === policyId);
+        if (idx < 0) throw new Error(`Policy '${policyId}' not found.`);
+        const validContacts = new Set(getNotificationContacts(nextCfg).map((c) => String(c?.id || '').trim()).filter(Boolean));
+        const validGroups = new Set(getNotificationContactGroups(nextCfg).map((g) => String(g?.id || '').trim()).filter(Boolean));
+        const targets = targetsList.getSelectedKeys().map((key) => {
+          const [type, ...rest] = String(key || '').split(':');
+          return { type, id: rest.join(':') };
+        }).filter((target) => (target.type === 'contact' || target.type === 'group') && target.id);
+        const contacts = targets.filter((target) => target.type === 'contact').map((target) => target.id);
+        const groups = targets.filter((target) => target.type === 'group').map((target) => target.id);
+        const events = String(eventsBox.value || '').split(/[\n,]+/).map((s) => String(s || '').trim()).filter(Boolean);
+        const missingContacts = contacts.filter((cid) => !validContacts.has(cid));
+        const missingGroups = groups.filter((gid) => !validGroups.has(gid));
+        if (missingContacts.length) throw new Error(`Unknown contact ID(s): ${missingContacts.join(', ')}`);
+        if (missingGroups.length) throw new Error(`Unknown group ID(s): ${missingGroups.join(', ')}`);
+        policies[idx] = {
+          ...(policies[idx] || {}),
+          id: policyId,
+          name: String(nameBox.value || '').trim() || policyId,
+          enabled: Boolean(enabledBox.checked),
+          min_severity: Math.trunc(Number(sevBox.value ?? 0) || 0),
+          on: events.length ? events : ['active'],
+          targets,
+          contacts,
+          contact_groups: groups
+        };
+        await saveOpcbridgeAlarmsConfig(nextCfg);
+        await loadOpcbridgeAlarmsConfig();
+        renderAlarmsEventsTree();
+        setStatus('Saved.');
+      } catch (err) {
+        setStatus(`Save failed: ${err.message}`);
+      }
+    });
+    addBtn.addEventListener('click', () => createNotificationPolicyInteractive().catch((err) => setStatus(`Create failed: ${err.message}`)));
+
+    host.appendChild(form);
+    if (delBtn) {
+      delBtn.style.display = '';
+      delBtn.textContent = 'Delete Policy…';
+      delBtn.onclick = () => deleteNotificationItem('policy', policyId).catch((err) => window.alert(`Policy delete failed: ${err.message}`));
+    }
+    return;
+  }
 
   if (type === 'alarm') {
     const alarmId = String(item?.meta?.alarm_id || '').trim();
@@ -6874,6 +8614,30 @@ function renderAlarmsEventsProperties(item, parentNode) {
     audioSel.value = String(cur?.audio_file || '');
     addRow('Audio File', audioSel);
 
+    const speechBox = document.createElement('textarea');
+    speechBox.rows = 3;
+    speechBox.value = String(cur?.speech_text || '');
+    speechBox.placeholder = 'Optional text-to-speech for this alarm';
+    speechBox.disabled = !canEditConfig();
+    addRow('Speech Text', speechBox);
+
+    const policySel = document.createElement('select');
+    const policies = getNotificationPolicies(cfg || {});
+    const policyOpts = [{ v: '', l: 'No notification policy' }].concat(policies.map((p) => ({
+      v: String(p?.id || '').trim(),
+      l: String(p?.name || p?.id || '').trim()
+    })).filter((o) => o.v));
+    policySel.innerHTML = policyOpts.map((o) => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.l)}</option>`).join('');
+    const policyWant = String(cur?.notification_policy || '');
+    if (policyWant && !policyOpts.some((o) => o.v === policyWant)) {
+      const opt = document.createElement('option');
+      opt.value = policyWant;
+      opt.textContent = `${policyWant} (missing)`;
+      policySel.appendChild(opt);
+    }
+    policySel.value = policyWant;
+    addRow('Notification Policy', policySel);
+
     const hasRepeatField = Object.prototype.hasOwnProperty.call(cur || {}, 'repeat_ms');
     const curRepeatMs = hasRepeatField ? Math.trunc(Number(cur?.repeat_ms ?? 0) || 0) : 0;
     const repeatMode = document.createElement('select');
@@ -6904,7 +8668,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     const effectiveLine = document.createElement('div');
     effectiveLine.className = 'hint';
     effectiveLine.style.marginTop = '6px';
-    effectiveLine.textContent = `Effective: audible=${effectiveAudio.audible_enabled ? 'enabled' : 'disabled'} · audio=${effectiveAudio.audio_file ? alarmAudioFileText(effectiveAudio.audio_file, cfg) : 'none'}`;
+    effectiveLine.textContent = `Effective: audible=${effectiveAudio.audible_enabled ? 'enabled' : 'disabled'} · audio sequence=${alarmAudioSequenceText(effectiveAudio.audio_files || (effectiveAudio.audio_file ? [effectiveAudio.audio_file] : []), cfg, effectiveAudio.speech_texts || (effectiveAudio.speech_text ? [effectiveAudio.speech_text] : []))}`;
     form.appendChild(effectiveLine);
 
     const actions = document.createElement('div');
@@ -6953,6 +8717,16 @@ function renderAlarmsEventsProperties(item, parentNode) {
         const af = String(audioSel.value || '').trim();
         if (!af) delete next.audio_file;
         else next.audio_file = af;
+        const st = String(speechBox.value || '').trim();
+        if (!st) delete next.speech_text;
+        else next.speech_text = st;
+
+        const np = String(policySel.value || '').trim();
+        if (!np) delete next.notification_policy;
+        else {
+          if (!getNotificationPolicies(nextCfg).some((p) => String(p?.id || '').trim() === np)) throw new Error(`Notification policy '${np}' does not exist.`);
+          next.notification_policy = np;
+        }
 
         {
           const repMode = String(repeatMode.value || 'inherit');
@@ -7076,6 +8850,13 @@ function renderAlarmsEventsProperties(item, parentNode) {
     audioSel.disabled = !canEditConfig();
     addRow2('Audio File', audioSel);
 
+    const speechBox = document.createElement('textarea');
+    speechBox.rows = 3;
+    speechBox.value = String(target?.speech_text || '');
+    speechBox.placeholder = 'Optional text-to-speech for this scope';
+    speechBox.disabled = !canEditConfig();
+    addRow2('Speech Text', speechBox);
+
     const inheritedRepeat = getInheritedRepeatForScope(cfg, scope, group, site);
     const hasRepeatField = Object.prototype.hasOwnProperty.call(target, 'repeat_ms');
     const repeatMs = hasRepeatField ? Math.trunc(Number(target?.repeat_ms ?? 0) || 0) : 0;
@@ -7112,7 +8893,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     {
       const effectiveRepeatMs = hasRepeatField ? repeatMs : inheritedRepeat.repeat_ms;
       const repeatText = effectiveRepeatMs > 0 ? `every ${Math.max(1, Math.trunc(effectiveRepeatMs / 1000))}s` : 'off';
-      effectiveLine.textContent = `Effective: audible=${effective?.audible_enabled ? 'enabled' : 'disabled'} · audio=${effective?.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none'} · repeat=${repeatText}`;
+      effectiveLine.textContent = `Effective: audible=${effective?.audible_enabled ? 'enabled' : 'disabled'} · audio sequence=${alarmAudioSequenceText(effective?.audio_files || (effective?.audio_file ? [effective.audio_file] : []), cfg, effective?.speech_texts || (effective?.speech_text ? [effective.speech_text] : []))} · repeat=${repeatText}`;
     }
     form.appendChild(effectiveLine);
 
@@ -7154,6 +8935,9 @@ function renderAlarmsEventsProperties(item, parentNode) {
           const af = String(audioSel.value || '').trim();
           if (!af) delete g.audio_file;
           else g.audio_file = af;
+          const st = String(speechBox.value || '').trim();
+          if (!st) delete g.speech_text;
+          else g.speech_text = st;
 
           const repMode = String(repeatMode.value || 'inherit');
           if (repMode === 'inherit') {
@@ -7176,6 +8960,9 @@ function renderAlarmsEventsProperties(item, parentNode) {
           const af = String(audioSel.value || '').trim();
           if (!af) delete s.audio_file;
           else s.audio_file = af;
+          const st = String(speechBox.value || '').trim();
+          if (!st) delete s.speech_text;
+          else s.speech_text = st;
 
           const repMode = String(repeatMode.value || 'inherit');
           if (repMode === 'inherit') {
@@ -7230,6 +9017,8 @@ function renderAlarmsEventsProperties(item, parentNode) {
 
   if (type === 'audio_file') {
     const audioId = String(item?.meta?.id || '').trim();
+    const folder = audioFolderFromPath(item?.meta?.path);
+    const host = els.alarmsEventsPropsEditor;
     addPropRow('Type', 'Audio File');
     addPropRow('ID', audioId);
     addPropRow('Name', String(item?.meta?.name || item?.label || ''));
@@ -7239,6 +9028,70 @@ function renderAlarmsEventsProperties(item, parentNode) {
       delBtn.style.display = '';
       delBtn.textContent = 'Delete…';
       delBtn.onclick = () => deleteAlarmAudioFileById(audioId).then((ok) => { if (ok) renderAlarmsEventsTree(); }).catch((err) => window.alert(`Audio delete failed: ${err.message}`));
+    }
+    const moveBtn = document.createElement('button');
+    moveBtn.className = 'btn';
+    moveBtn.type = 'button';
+    moveBtn.textContent = 'Move…';
+    moveBtn.disabled = !canEditConfig();
+    moveBtn.onclick = () => moveAlarmAudioFileInteractive(audioId).catch((err) => window.alert(`Audio move failed: ${err.message}`));
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const folderBtn = document.createElement('button');
+    folderBtn.className = 'btn';
+    folderBtn.type = 'button';
+    folderBtn.textContent = 'New Folder';
+    folderBtn.disabled = !canEditConfig();
+    folderBtn.onclick = () => createAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder create failed: ${err.message}`));
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'btn primary';
+    uploadBtn.type = 'button';
+    uploadBtn.textContent = folder ? 'Upload Here' : 'Upload Audio File';
+    uploadBtn.disabled = !canEditConfig();
+    uploadBtn.onclick = () => chooseAndUploadAlarmAudioFile(folder);
+    actions.appendChild(moveBtn);
+    actions.appendChild(folderBtn);
+    actions.appendChild(uploadBtn);
+    if (host) {
+      host.style.display = 'block';
+      host.appendChild(actions);
+    }
+    return;
+  }
+
+  if (type === 'audio_folder') {
+    const folder = String(item?.meta?.folder || '').trim();
+    const host = els.alarmsEventsPropsEditor;
+    addPropRow('Type', 'Audio Folder');
+    addPropRow('Folder', folder ? `audio/${folder}` : 'audio');
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '10px';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn';
+    addBtn.type = 'button';
+    addBtn.textContent = 'New Subfolder';
+    addBtn.disabled = !canEditConfig();
+    addBtn.onclick = () => createAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder create failed: ${err.message}`));
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'btn primary';
+    uploadBtn.type = 'button';
+    uploadBtn.textContent = 'Upload Here';
+    uploadBtn.disabled = !canEditConfig();
+    uploadBtn.onclick = () => chooseAndUploadAlarmAudioFile(folder);
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn bad';
+    deleteBtn.type = 'button';
+    deleteBtn.textContent = 'Delete Folder';
+    deleteBtn.disabled = !canEditConfig();
+    deleteBtn.onclick = () => deleteAlarmAudioFolderInteractive(folder).catch((err) => window.alert(`Audio folder delete failed: ${err.message}`));
+    actions.appendChild(addBtn);
+    actions.appendChild(uploadBtn);
+    actions.appendChild(deleteBtn);
+    if (host) {
+      host.style.display = 'block';
+      host.appendChild(actions);
     }
     return;
   }
@@ -7268,7 +9121,9 @@ function renderAlarmsEventsTree() {
     const alarmCount = Array.isArray(state.alarmsConfig?.alarms) ? state.alarmsConfig.alarms.length : 0;
     const eventCount = getEffectiveTagsAll().filter((t) => t?.log_event_on_change === true).length;
     const audioCount = getAlarmAudioFiles(state.alarmsConfig || {}).length;
-    els.alarmsEventsTreeNote.textContent = `Alarms: ${alarmCount} · Events: ${eventCount} · Audio: ${audioCount}`;
+    const contactCount = getNotificationContacts(state.alarmsConfig || {}).length;
+    const policyCount = getNotificationPolicies(state.alarmsConfig || {}).length;
+    els.alarmsEventsTreeNote.textContent = `Alarms: ${alarmCount} · Events: ${eventCount} · Audio: ${audioCount} · Contacts: ${contactCount} · Policies: ${policyCount}`;
   }
 
   const selectedId = String(state.alarmsEventsSelectedNodeId || '').trim();
@@ -7319,16 +9174,6 @@ function buildTree() {
 
   const connectivity = { id: 'folder:connectivity', type: 'folder', label: 'Connectivity', children: [] };
   root.children.push(connectivity);
-  const alarmsEvents = { id: 'folder:alarms_events', type: 'folder', label: 'Alarms & Events', children: [] };
-  root.children.push(alarmsEvents);
-
-  const alarmsRoot = { id: 'folder:alarms', type: 'alarms_root', label: 'Alarms', children: [] };
-  const eventLoggingRoot = { id: 'folder:events', type: 'event_logging_root', label: 'Events', children: [] };
-  const audioFilesRoot = { id: 'folder:audio_files', type: 'audio_files_root', label: 'Audio Files', children: [] };
-
-  alarmsEvents.children.push(alarmsRoot);
-  alarmsEvents.children.push(eventLoggingRoot);
-  alarmsEvents.children.push(audioFilesRoot);
 
   const connItems = state.connFiles.slice().sort((a, b) => String(a?.path || '').localeCompare(String(b?.path || '')));
   connItems.forEach((f) => {
@@ -7366,170 +9211,11 @@ function buildTree() {
     connectivity.children.push(deviceNode);
   });
 
-  // Build alarms tree: Group -> Site -> Alarm (config-driven)
-  const cfg = state.alarmsConfig || null;
-  const cfgAlarms = Array.isArray(cfg?.alarms) ? cfg.alarms : [];
-  const cfgGroups = Array.isArray(cfg?.groups) ? cfg.groups : [];
-  const runtime = Array.isArray(state.alarmsAll) ? state.alarmsAll : [];
-  const runtimeById = new Map();
-  runtime.forEach((a) => {
-    const id = String(a?.alarm_id || a?.id || '').trim();
-    if (id) runtimeById.set(id, a);
-  });
-  const safeKey = (s) => {
-    const k = String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    return k || 'none';
-  };
-
-  const groups = new Map();
-
-  // Add configured group/site folders (even if empty).
-  cfgGroups.forEach((g) => {
-    const groupName = String(g?.name || '').trim();
-    if (!groupName) return;
-    const groupId = `alarm_group:${safeKey(groupName)}`;
-    let groupNode = groups.get(groupId);
-    if (!groupNode) {
-      groupNode = { id: groupId, type: 'alarm_group', label: groupName, meta: { group: groupName }, children: [] };
-      groups.set(groupId, groupNode);
-    }
-    const sites = Array.isArray(g?.sites) ? g.sites : [];
-    sites.forEach((s) => {
-      const siteName = String(s?.name || '').trim();
-      if (!siteName) return;
-      const siteId = `${groupId}:site:${safeKey(siteName)}`;
-      if ((groupNode.children || []).some((n) => String(n?.id || '') === siteId)) return;
-      groupNode.children.push({ id: siteId, type: 'alarm_site', label: siteName, meta: { group: groupName, site: siteName }, children: [] });
-    });
-  });
-
-  // Place alarms into folders.
-  cfgAlarms.forEach((a) => {
-    const alarm_id = String(a?.id || '').trim();
-    if (!alarm_id) return;
-
-    const groupRaw = String(a?.group || '').trim();
-    const siteRaw = String(a?.site || '').trim();
-    const groupLabel = groupRaw || '(No group)';
-    const siteLabel = siteRaw || '(No site)';
-
-    const groupId = `alarm_group:${safeKey(groupLabel)}`;
-    let groupNode = groups.get(groupId);
-    if (!groupNode) {
-      groupNode = { id: groupId, type: 'alarm_group', label: groupLabel, meta: { group: groupRaw }, children: [] };
-      groups.set(groupId, groupNode);
-    }
-
-    const siteId = `${groupId}:site:${safeKey(siteLabel)}`;
-    let siteNode = (groupNode.children || []).find((n) => String(n?.id || '') === siteId) || null;
-    if (!siteNode) {
-      siteNode = { id: siteId, type: 'alarm_site', label: siteLabel, meta: { group: groupRaw, site: siteRaw }, children: [] };
-      groupNode.children.push(siteNode);
-    }
-
-    const runtimeRow = runtimeById.get(alarm_id) || null;
-    const name = String(a?.name || alarm_id).trim() || alarm_id;
-    const sev = (a?.severity == null) ? '' : Number(a.severity);
-    const enabled = (a?.enabled !== false);
-    const active = Boolean(runtimeRow?.active);
-    const acked = Boolean(runtimeRow?.acked);
-    const srcConn = String(a?.connection_id || '').trim();
-    const srcTag = String(a?.tag_name || '').trim();
-    const message = String(runtimeRow?.message || '').trim();
-
-    siteNode.children.push({
-      id: `alarm:${alarm_id}`,
-      type: 'alarm',
-      label: name,
-      meta: {
-        alarm_id,
-        group: groupRaw,
-        site: siteRaw,
-        severity: sev,
-        enabled,
-        active,
-        acked,
-        source: { connection_id: srcConn, tag: srcTag },
-        message
-      },
-      children: []
-    });
-  });
-
-  if (!cfgAlarms.length && !cfgGroups.length) {
-    alarmsRoot.children.push({ id: 'hint:no_alarms', type: 'hint', label: '(no alarms configured)', children: [] });
-  }
-
-  const groupNodes = Array.from(groups.values()).sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
-  groupNodes.forEach((g) => {
-    g.children = (g.children || []).slice().sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || '')));
-    g.children.forEach((s) => {
-      s.children = (s.children || []).slice().sort((a, b) => Number(b?.meta?.severity || 0) - Number(a?.meta?.severity || 0));
-    });
-    alarmsRoot.children.push(g);
-  });
-
-  const eventTags = getEffectiveTagsAll()
-    .filter((t) => t?.log_event_on_change === true)
-    .slice()
-    .sort((a, b) => {
-      return `${String(a?.connection_id || '')}:${String(a?.name || '')}`.localeCompare(`${String(b?.connection_id || '')}:${String(b?.name || '')}`, undefined, { numeric: true, sensitivity: 'base' });
-    });
-  const eventConnections = new Map();
-  eventTags.forEach((t) => {
-    const conn = String(t?.connection_id || '').trim();
-    const name = String(t?.name || '').trim();
-    if (!conn || !name) return;
-    let connNode = eventConnections.get(conn);
-    if (!connNode) {
-      connNode = {
-        id: `event_connection:${conn}`,
-        type: 'event_connection',
-        label: conn,
-        meta: { connection_id: conn },
-        children: []
-      };
-      eventConnections.set(conn, connNode);
-    }
-    connNode.children.push({
-      id: `event_tag:${conn}::${name}`,
-      type: 'event_tag',
-      label: name,
-      meta: { connection_id: conn, name, enabled: t?.log_event_on_change === true },
-      children: []
-    });
-  });
-  Array.from(eventConnections.values())
-    .sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }))
-    .forEach((node) => {
-      node.children = (node.children || []).slice().sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
-      eventLoggingRoot.children.push(node);
-    });
-  if (!eventLoggingRoot.children.length) {
-    eventLoggingRoot.children.push({ id: 'hint:no_events', type: 'hint', label: '(no events configured)', children: [] });
-  }
-
-  getAlarmAudioFiles(cfg || {}).forEach((f) => {
-    const id = String(f?.id || '').trim();
-    if (!id) return;
-    audioFilesRoot.children.push({
-      id: `audio_file:${id}`,
-      type: 'audio_file',
-      label: String(f?.name || id),
-      meta: { ...f, id },
-      children: []
-    });
-  });
-  audioFilesRoot.children.sort((a, b) => String(a?.label || '').localeCompare(String(b?.label || ''), undefined, { numeric: true, sensitivity: 'base' }));
-  if (!audioFilesRoot.children.length) {
-    audioFilesRoot.children.push({ id: 'hint:no_audio_files', type: 'hint', label: '(no audio files configured)', children: [] });
-  }
-
   return root;
 }
 
 function renderTreeNode(node, container) {
-  const canExpand = ['project', 'folder', 'device', 'alarms_root', 'alarm_group', 'alarm_site', 'event_logging_root', 'event_connection', 'audio_files_root'].includes(String(node.type || ''));
+  const canExpand = ['project', 'folder', 'device'].includes(String(node.type || ''));
   const expanded = state.expanded.has(node.id);
 
   const btn = document.createElement('button');
@@ -7598,67 +9284,6 @@ function renderTreeNode(node, container) {
       items.push('sep');
     }
 
-    if (node.type === 'alarms_root') {
-      items.push({ label: 'Add Group…', onClick: () => addAlarmGroupInteractive() });
-      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal() });
-      items.push('sep');
-    }
-
-    if (node.type === 'alarm_group') {
-      items.push({ label: 'Add Site…', onClick: () => addAlarmSiteInteractive(String(node.meta?.group || node.label || '')) });
-      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || node.label || '') }) });
-      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
-      items.push('sep');
-    }
-
-    if (node.type === 'alarm_site') {
-      items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || ''), site: String(node.meta?.site || '') }) });
-      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
-      items.push('sep');
-    }
-
-    if (node.type === 'alarm') {
-      const aid = String(node.meta?.alarm_id || '').trim();
-      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
-      items.push({ label: 'Delete Alarm…', onClick: () => deleteAlarmById(aid) });
-      items.push('sep');
-    }
-
-    if (node.type === 'event_logging_root') {
-      items.push({ label: 'Add Event…', onClick: () => openNewEventModal() });
-      items.push({ label: 'Refresh', onClick: () => refreshAll().catch((err) => window.alert(`Refresh failed: ${err.message}`)) });
-      items.push('sep');
-    }
-
-    if (node.type === 'event_connection') {
-      const cid = String(node.meta?.connection_id || node.label || '').trim();
-      items.push({ label: 'Add Event…', onClick: () => openNewEventModal(cid) });
-      items.push({ label: 'Refresh', onClick: () => refreshAll().catch((err) => window.alert(`Refresh failed: ${err.message}`)) });
-      items.push('sep');
-    }
-
-    if (node.type === 'event_tag') {
-      const cid = String(node.meta?.connection_id || '').trim();
-      const name = String(node.meta?.name || node.label || '').trim();
-      const eventTag = getEffectiveTagsAll().find((t) => String(t?.connection_id || '') === cid && String(t?.name || '') === name) || {};
-      const eventLoggingEnabled = eventTag?.log_event_on_change === true;
-      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal({ id: `tag:${cid}::${name}`, type: 'tag', label: name, meta: { connection_id: cid, name }, children: [] }) });
-      items.push({ label: eventLoggingEnabled ? 'Delete Event…' : 'Add Event', onClick: () => setTagEventLogging(cid, name, !eventLoggingEnabled) });
-      items.push('sep');
-    }
-
-    if (node.type === 'audio_files_root') {
-      items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
-      items.push({ label: 'Upload Audio File…', onClick: () => chooseAndUploadAlarmAudioFile() });
-      items.push('sep');
-    }
-
-    if (node.type === 'audio_file') {
-      const audioId = String(node.meta?.id || '').trim();
-      items.push({ label: 'Delete Audio File…', onClick: () => deleteAlarmAudioFileById(audioId).then((result) => { if (result) { state.selectedNodeId = 'folder:audio_files'; renderWorkspaceTree(); } }).catch((err) => window.alert(`Audio delete failed: ${err.message}`)) });
-      items.push('sep');
-    }
-
     if (node.type === 'device') {
       const cid = String(node.meta?.connection_id || '').trim();
       const relPath = String(node.meta?.path || '').trim();
@@ -7705,164 +9330,6 @@ function renderWorkspaceDetails(node) {
   const isConnectivity = node.id === 'folder:connectivity';
   const isDevice = String(node.type || '') === 'device';
   const isTag = String(node.type || '') === 'tag';
-
-  const isAlarmsEvents = node.id === 'folder:alarms_events';
-  const isAlarmsRoot = String(node.type || '') === 'alarms_root';
-  const isAlarmGroup = String(node.type || '') === 'alarm_group';
-  const isAlarmSite = String(node.type || '') === 'alarm_site';
-  const isAlarm = String(node.type || '') === 'alarm';
-  const isEventLoggingRoot = String(node.type || '') === 'event_logging_root';
-  const isEventConnection = String(node.type || '') === 'event_connection';
-  const isEventTag = String(node.type || '') === 'event_tag';
-  const isAudioFilesRoot = String(node.type || '') === 'audio_files_root';
-  const isAudioFile = String(node.type || '') === 'audio_file';
-
-  // ---------- Alarms & Events ----------
-  if (isAlarmsEvents || isAlarmsRoot || isAlarmGroup || isAlarmSite || isAlarm || isEventLoggingRoot || isEventConnection || isEventTag || isAudioFilesRoot || isAudioFile) {
-    const columns = (isEventConnection || isEventTag)
-      ? ['Name', 'Source', 'Datatype', 'Writable', 'Enabled']
-      : (isAudioFilesRoot || isAudioFile)
-      ? ['Name', 'ID', 'Path']
-      : (isAlarmsRoot || isAlarmGroup)
-      ? ['Name', 'Audible', 'Audio']
-      : (isAlarmSite || isAlarm)
-      ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Audible', 'Audio', 'Group', 'Site']
-      : ['Name'];
-
-    const colCount = columns.length;
-
-    // Header
-    if (els.workspaceChildrenTable) {
-      const headRow = els.workspaceChildrenTable.querySelector('thead tr');
-      if (headRow) {
-        headRow.textContent = '';
-        columns.forEach((c) => {
-          const th = document.createElement('th');
-          th.textContent = c;
-          headRow.appendChild(th);
-        });
-      }
-    }
-
-    if (!els.workspaceChildrenTbody) return;
-    els.workspaceChildrenTbody.textContent = '';
-
-    const addCell = (tr, text, dim = false) => {
-      const td = document.createElement('td');
-      td.textContent = String(text ?? '');
-      if (dim) td.className = 'audit-cell-dim';
-      tr.appendChild(td);
-      return td;
-    };
-    const addBadgeCell = (tr, text, className) => {
-      const td = document.createElement('td');
-      const span = document.createElement('span');
-      span.className = `badge ${className || ''}`.trim();
-      span.textContent = String(text ?? '');
-      td.appendChild(span);
-      tr.appendChild(td);
-      return td;
-    };
-
-    const rows = (isAlarm || isEventTag || isAudioFile) ? [node] : (Array.isArray(node.children) ? node.children : []);
-
-    if (!rows.length) {
-      const tr = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = colCount;
-      td.className = 'audit-cell-dim';
-      td.textContent = 'No items.';
-      tr.appendChild(td);
-      els.workspaceChildrenTbody.appendChild(tr);
-      return;
-    }
-
-    rows.forEach((c) => {
-      const tr = document.createElement('tr');
-      const type = String(c?.type || '');
-
-      if ((isEventConnection || isEventTag) && type === 'event_tag') {
-        const meta = c?.meta || {};
-        const conn = String(meta?.connection_id || '').trim();
-        const name = String(meta?.name || c?.label || '').trim();
-        const tagRow = getEffectiveTagsAll().find((t) => String(t?.connection_id || '') === conn && String(t?.name || '') === name) || {};
-        addCell(tr, name, false);
-        addCell(tr, `${conn}:${name}`, false);
-        addCell(tr, String(tagRow?.datatype || ''), !String(tagRow?.datatype || '').trim());
-        addBadgeCell(tr, tagRow?.writable === true ? 'WRITABLE' : 'READ', tagRow?.writable === true ? 'warn' : 'ok');
-        addBadgeCell(tr, tagRow?.log_event_on_change === true ? 'ENABLED' : 'DISABLED', tagRow?.log_event_on_change === true ? 'ok' : 'bad');
-      } else if ((isAudioFilesRoot || isAudioFile) && type === 'audio_file') {
-        const meta = c?.meta || {};
-        addCell(tr, String(meta?.name || c?.label || ''), false);
-        addCell(tr, String(meta?.id || '').trim(), !String(meta?.id || '').trim());
-        addCell(tr, String(meta?.path || '').trim(), !String(meta?.path || '').trim());
-      } else if ((isAlarmsRoot || isAlarmGroup) && (type === 'alarm_group' || type === 'alarm_site')) {
-        const cfg = state.alarmsConfig || {};
-        const group = type === 'alarm_group' ? String(c?.meta?.group || c?.label || '') : String(c?.meta?.group || '');
-        const site = type === 'alarm_site' ? String(c?.meta?.site || c?.label || '') : '';
-        const target = type === 'alarm_group' ? findAlarmGroupConfig(cfg, group) : findAlarmSiteConfig(cfg, group, site);
-        const effective = type === 'alarm_group'
-          ? { ...getInheritedAudioForScope(cfg, 'group', group, ''), ...(target || {}) }
-          : resolveInheritedAlarmAudio(cfg, group, site);
-        addCell(tr, String(c?.label || c?.id || ''), false);
-        addBadgeCell(tr, effective?.audible_enabled ? 'ENABLED' : 'DISABLED', effective?.audible_enabled ? 'ok' : 'bad');
-        addCell(tr, effective?.audio_file ? alarmAudioFileText(effective.audio_file, cfg) : 'none', !effective?.audio_file);
-      } else if ((isAlarmSite || isAlarm) && type === 'alarm') {
-        const cfg = state.alarmsConfig || {};
-        const meta = c?.meta || {};
-        const alarmId = String(meta?.alarm_id || '').trim();
-        const alarmConfig = (Array.isArray(cfg?.alarms) ? cfg.alarms : []).find((a) => String(a?.id || '').trim() === alarmId) || null;
-        const effectiveAudio = resolveAlarmAudio(cfg, alarmConfig || { group: meta?.group, site: meta?.site });
-        const src = meta?.source || {};
-        const stateStr = (meta?.enabled === false) ? 'DISABLED' : (meta?.active ? 'ACTIVE' : 'OK');
-        addCell(tr, String(c?.label || meta?.alarm_id || ''), false);
-        addBadgeCell(tr, meta?.severity == null ? '' : `${severityLabel(meta.severity)} ${meta.severity}`, severityClass(meta.severity));
-        addCell(tr, `${String(src?.connection_id || '')}:${String(src?.tag || '')}`.replace(/^:$/, ''), !(src?.connection_id || src?.tag));
-        addBadgeCell(tr, stateStr, meta?.enabled === false ? 'bad' : (meta?.active ? 'warn' : 'ok'));
-        addBadgeCell(tr, meta?.acked ? 'ACKED' : 'UNACKED', meta?.acked ? 'ok' : (meta?.active ? 'warn' : ''));
-        addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
-        addBadgeCell(tr, effectiveAudio.audible_enabled ? 'ENABLED' : 'DISABLED', effectiveAudio.audible_enabled ? 'ok' : 'bad');
-        addCell(tr, effectiveAudio.audio_file ? alarmAudioFileText(effectiveAudio.audio_file, cfg) : 'none', !effectiveAudio.audio_file);
-        addCell(tr, String(meta?.group || ''), !String(meta?.group || '').trim());
-        addCell(tr, String(meta?.site || ''), !String(meta?.site || '').trim());
-      } else {
-        addCell(tr, String(c?.label || c?.id || ''), false);
-      }
-
-      tr.style.cursor = 'default';
-
-      tr.addEventListener('click', () => {
-        const trs = Array.from(els.workspaceChildrenTbody.querySelectorAll('tr'));
-        trs.forEach((r) => r.classList.remove('is-selected'));
-        tr.classList.add('is-selected');
-      });
-
-      tr.addEventListener('dblclick', () => {
-        if (String(c?.type || '') === 'event_connection') {
-          state.selectedNodeId = String(c?.id || '');
-          renderWorkspaceTree();
-          renderWorkspaceDetails(c);
-          return;
-        }
-        if (String(c?.type || '') === 'event_tag') {
-          const cid = String(c?.meta?.connection_id || '').trim();
-          const name = String(c?.meta?.name || c?.label || '').trim();
-          openWorkspaceItemModal({ id: `tag:${cid}::${name}`, type: 'tag', label: name, meta: { connection_id: cid, name }, children: [] });
-          return;
-        }
-        if (String(c?.type || '') === 'audio_file') {
-          state.selectedNodeId = String(c?.id || '');
-          renderWorkspaceTree();
-          return;
-        }
-        openWorkspaceItemModal(c);
-      });
-
-      els.workspaceChildrenTbody.appendChild(tr);
-    });
-
-    return;
-  }
 
   // ---------- Connectivity / tags ----------
 
@@ -9302,6 +10769,7 @@ async function main() {
   try {
     await loadScadaSettings();
     await loadSoundSettings();
+    await loadVoiceModemSettings();
     await loadSvcSettings();
   } catch {
     // ignore
