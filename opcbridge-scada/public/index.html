@@ -43,11 +43,19 @@
             <pre class="mono" id="healthJson">Loading…</pre>
           </details>
         </div>
-        <div class="card">
-          <div class="card-title">opcbridge-alarms /alarm/api/status</div>
-          <pre class="mono" id="alarmsStatusJson">Loading…</pre>
-        </div>
-      </div>
+	        <div class="card">
+	          <div class="card-title">opcbridge-alarms /alarm/api/status</div>
+	          <pre class="mono" id="alarmsStatusJson">Loading…</pre>
+	        </div>
+	        <div class="card">
+	          <div class="card-title">Runtime Rebuild</div>
+	          <div class="status" id="overviewRebuildStatus">Checking…</div>
+	          <div class="small" id="overviewRebuildHint"></div>
+	          <div class="form-actions" style="margin-top: 10px;">
+	            <button class="btn" id="overviewRebuildBtn" type="button">Rebuild Full Runtime</button>
+	          </div>
+	        </div>
+	      </div>
     </section>
 
     <section id="tab-configure" class="panel">

@@ -10,6 +10,9 @@ const els = {
   overviewHealthOverall: document.getElementById('overviewHealthOverall'),
   overviewHealthMeta: document.getElementById('overviewHealthMeta'),
   overviewHealthConnections: document.getElementById('overviewHealthConnections'),
+  overviewRebuildStatus: document.getElementById('overviewRebuildStatus'),
+  overviewRebuildHint: document.getElementById('overviewRebuildHint'),
+  overviewRebuildBtn: document.getElementById('overviewRebuildBtn'),
   healthJson: document.getElementById('healthJson'),
   alarmsStatusJson: document.getElementById('alarmsStatusJson'),
 
@@ -1895,6 +1898,58 @@ async function opcbridgeReload() {
   }
 }
 
+async function opcbridgeReloadConnection(connectionId) {
+  const cid = String(connectionId || '').trim();
+  if (!cid) return opcbridgeReload();
+  const r = await apiPostJson('/api/opcbridge/reload/connection', { connection_id: cid });
+  if (r && r.pending) {
+    const gen = (typeof r.gen === 'number') ? r.gen : null;
+    await waitForOpcbridgeReloadDone({ gen });
+  }
+}
+
+function renderRuntimeRebuildStatus(status) {
+  const required = Boolean(status?.full_rebuild_required);
+  if (els.overviewRebuildStatus) {
+    els.overviewRebuildStatus.textContent = required ? 'Full rebuild required.' : 'Full runtime is current.';
+    els.overviewRebuildStatus.className = required ? 'status warn' : 'status ok';
+  }
+  if (els.overviewRebuildHint) {
+    els.overviewRebuildHint.textContent = required
+      ? 'A targeted connection reload was used. Press Rebuild Full Runtime to refresh OPC UA nodes and rebuild all runtime bindings.'
+      : 'Targeted connection reloads can be used for normal tag commissioning.';
+  }
+  if (els.overviewRebuildBtn) {
+    els.overviewRebuildBtn.disabled = !canEditConfig() || Boolean(status?.in_progress);
+  }
+}
+
+function wireOverviewRuntimeUi() {
+  if (!els.overviewRebuildBtn || els.overviewRebuildBtn.dataset.wired === '1') return;
+  els.overviewRebuildBtn.dataset.wired = '1';
+  els.overviewRebuildBtn.addEventListener('click', async () => {
+    if (!canEditConfig()) {
+      openLoginModal();
+      return;
+    }
+    if (!window.confirm('Rebuild the full opcbridge runtime? This pauses all pollers and rebuilds OPC UA nodes.')) return;
+    try {
+      els.overviewRebuildBtn.disabled = true;
+      if (els.overviewRebuildStatus) {
+        els.overviewRebuildStatus.textContent = 'Rebuilding full runtime…';
+        els.overviewRebuildStatus.className = 'status warn';
+      }
+      await opcbridgeReload();
+      await refreshAll();
+    } catch (err) {
+      if (els.overviewRebuildStatus) {
+        els.overviewRebuildStatus.textContent = `Rebuild failed: ${err.message}`;
+        els.overviewRebuildStatus.className = 'status bad';
+      }
+    }
+  });
+}
+
 async function waitForOpcbridgeReloadDone({ gen, maxWaitMs = 180000, intervalMs = 750 } = {}) {
   const start = Date.now();
   while ((Date.now() - start) < maxWaitMs) {
@@ -2537,163 +2592,33 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   const cid = String(connectionId || '').trim();
   if (!cid) return;
 
+  if (workspaceIsDirty()) {
+    window.alert('Please Save or Discard current Workspace changes before importing a tag CSV. Server-side CSV import writes directly to the tag file.');
+    return;
+  }
+
   const csvText = await pickCsvText();
   if (!csvText) return;
 
-  const { records } = parseCsv(csvText);
-  if (!records.length) { setWorkspaceSaveStatus('CSV had no data rows (make sure the first row is a header).'); return; }
+  setWorkspaceSaveStatus(`Importing tags CSV for ${cid} on server...`);
+  renderWorkspaceSaveBar();
 
-  let upserts = 0;
-  let deleted = 0;
-  let skipped = 0;
-  let skippedWrongConn = 0;
-  let skippedMissing = 0;
-  let sampleWrongConn = null;
-  let sampleMissing = null;
-  const all = Array.isArray(state.tagConfigAll) ? state.tagConfigAll.slice() : [];
-
-  records.forEach((r) => {
-    const rowCid = String(csvGet(r, 'connection_id') || '').trim() || cid;
-    const name = String(csvGet(r, 'name') || '').trim();
-    if (!rowCid || !name) {
-      skipped += 1;
-      skippedMissing += 1;
-      if (!sampleMissing) sampleMissing = { connection_id: rowCid, name };
-      return;
-    }
-    if (rowCid !== cid) {
-      skipped += 1;
-      skippedWrongConn += 1;
-      if (!sampleWrongConn) sampleWrongConn = { connection_id: rowCid, name };
-      return;
-    }
-
-    const idx = all.findIndex((t) => String(t?.connection_id || '') === rowCid && String(t?.name || '') === name);
-    if (isDeleteAction(csvGet(r, 'action'))) {
-      if (idx >= 0) {
-        all.splice(idx, 1);
-        deleted += 1;
-      }
-      state.tagConfigEdited?.delete?.(`${rowCid}::${name}`);
-      return;
-    }
-    const base = (idx >= 0) ? { ...(all[idx] || {}) } : { connection_id: rowCid, name };
-
-    const invertRaw = csvGet(r, 'invert');
-    if (String(invertRaw ?? '').trim() === '') delete base.invert;
-    else base.invert = parseBoolLoose(invertRaw, false);
-
-    const elemCount = parseIntLoose(csvGet(r, 'elem_count') || csvGet(r, 'elemcount'), null);
-    if (elemCount == null || elemCount <= 1) delete base.elem_count;
-    else base.elem_count = Math.max(1, elemCount);
-
-    const source_tag = String(
-      csvGet(r, 'source_tag') ||
-      csvGet(r, 'source') ||
-      ''
-    ).trim();
-    const bit = parseIntLoose(csvGet(r, 'bit'), null);
-    const isDerivedBit = (source_tag !== '' && bit != null && bit >= 0);
-    const isDerivedAlias = (source_tag !== '' && !isDerivedBit);
-
-    const plc_tag_name = String(
-      csvGet(r, 'plc_tag_name') ||
-      csvGet(r, 'plc_tag') ||
-      csvGet(r, 'plc_tagname') ||
-      ''
-    ).trim();
-    const datatype = String(csvGet(r, 'datatype') || '').trim();
-
-    if (isDerivedBit) {
-      delete base.plc_tag_name;
-      delete base.elem_count;
-      base.source_tag = source_tag;
-      base.bit = bit;
-
-      // Backend requires derived tags be bool; if user provided a different datatype,
-      // coerce to bool so the tag doesn't get silently skipped at runtime.
-      if (!datatype || String(datatype).trim().toLowerCase() !== 'bool') base.datatype = 'bool';
-      else base.datatype = datatype;
-    } else if (isDerivedAlias) {
-      delete base.plc_tag_name;
-      delete base.elem_count;
-      base.source_tag = source_tag;
-      delete base.bit;
-      if (datatype) base.datatype = datatype;
-      base.writable = false;
-      base.mqtt_command_allowed = false;
-    } else {
-      delete base.source_tag;
-      delete base.bit;
-      if (plc_tag_name) base.plc_tag_name = plc_tag_name;
-      if (datatype) base.datatype = datatype;
-    }
-
-    const scan = parseIntLoose(csvGet(r, 'scan_ms') || csvGet(r, 'scan') || csvGet(r, 'scanms'), null);
-	    if (scan == null) delete base.scan_ms;
-	    else base.scan_ms = Math.max(0, scan);
-	    base.enabled = parseBoolLoose(csvGet(r, 'enabled'), true);
-	    base.writable = parseBoolLoose(csvGet(r, 'writable'), false);
-	    base.mqtt_command_allowed = parseBoolLoose(csvGet(r, 'mqtt_command_allowed') || csvGet(r, 'mqtt_allowed') || csvGet(r, 'mqtt_command'), false);
-
-	    const scaling = String(csvGet(r, 'scaling') || '').trim().toLowerCase();
-	    if (scaling === 'none' || scaling === 'linear') base.scaling = scaling;
-	    else if (scaling) delete base.scaling;
-
-	    const rawLow = parseFloatLoose(csvGet(r, 'raw_low'), null);
-	    if (rawLow == null) delete base.raw_low;
-	    else base.raw_low = rawLow;
-	    const rawHigh = parseFloatLoose(csvGet(r, 'raw_high'), null);
-	    if (rawHigh == null) delete base.raw_high;
-	    else base.raw_high = rawHigh;
-	    const scaledLow = parseFloatLoose(csvGet(r, 'scaled_low'), null);
-	    if (scaledLow == null) delete base.scaled_low;
-	    else base.scaled_low = scaledLow;
-	    const scaledHigh = parseFloatLoose(csvGet(r, 'scaled_high'), null);
-	    if (scaledHigh == null) delete base.scaled_high;
-	    else base.scaled_high = scaledHigh;
-
-	    const clampLowRaw = csvGet(r, 'clamp_low');
-	    if (String(clampLowRaw ?? '').trim() === '') delete base.clamp_low;
-	    else base.clamp_low = parseBoolLoose(clampLowRaw, false);
-	    const clampHighRaw = csvGet(r, 'clamp_high');
-	    if (String(clampHighRaw ?? '').trim() === '') delete base.clamp_high;
-	    else base.clamp_high = parseBoolLoose(clampHighRaw, false);
-
-	    const scaledDatatype = String(csvGet(r, 'scaled_datatype') || '').trim();
-	    if (scaledDatatype) base.scaled_datatype = scaledDatatype;
-	    else delete base.scaled_datatype;
-	    base.log_event_on_change = parseBoolLoose(csvGet(r, 'log_event_on_change') || csvGet(r, 'log_on_change'), false);
-
-	    const mode = String(csvGet(r, 'log_periodic_mode') || '').trim();
-	    if (mode) base.log_periodic_mode = mode;
-    else delete base.log_periodic_mode;
-    const intervalSec = parseIntLoose(csvGet(r, 'log_periodic_interval_sec') || csvGet(r, 'log_interval_sec'), null);
-    if (intervalSec == null) delete base.log_periodic_interval_sec;
-    else base.log_periodic_interval_sec = Math.max(0, intervalSec);
-
-    if (idx >= 0) all[idx] = base;
-    else all.push(base);
-    upserts += 1;
-  });
-
-  state.tagConfigAll = all;
-  state.tagConfigEdited = new Map();
-  markTagsDirty(true);
-  saveWorkspaceDraft();
+  const result = await apiPostJson('/api/opcbridge/config/tags/import_csv', { connection_id: cid, csv: csvText });
+  setWorkspaceSaveStatus(`Imported CSV. Reloading ${cid}…`);
+  renderWorkspaceSaveBar();
+  await opcbridgeReloadConnection(cid);
+  await loadTagsConfig();
+  await refreshAll().catch(() => {});
   renderWorkspaceTree();
-  const parts = [];
-  if (skippedWrongConn) {
-    parts.push(`${skippedWrongConn} wrong connection_id`);
-  }
-  if (skippedMissing) {
-    parts.push(`${skippedMissing} missing required fields`);
-  }
-  const hint = parts.length ? ` (${parts.join(', ')})` : '';
-  const ex = sampleWrongConn
-    ? ` Example wrong connection_id: connection_id='${String(sampleWrongConn.connection_id)}' name='${String(sampleWrongConn.name)}' (upload target is '${cid}').`
-    : (sampleMissing ? ` Example missing fields: connection_id='${String(sampleMissing.connection_id)}' name='${String(sampleMissing.name)}'.` : '');
-  setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${upserts} tag(s)${deleted ? `, deleted ${deleted}` : ''}${skipped ? `, skipped ${skipped}${hint}` : ''}.${ex}`);
+
+  const skipped = Number(result?.skipped || 0);
+  const wrong = Number(result?.skipped_wrong_connection_id || 0);
+  const missing = Number(result?.skipped_missing_required_fields || 0);
+  const skipParts = [];
+  if (wrong) skipParts.push(`${wrong} wrong connection_id`);
+  if (missing) skipParts.push(`${missing} missing required fields`);
+  const skipText = skipped ? `, skipped ${skipped}${skipParts.length ? ` (${skipParts.join(', ')})` : ''}` : '';
+  setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${Number(result?.upserted || 0)}, deleted ${Number(result?.deleted || 0)}${skipText}. Reloaded ${cid}.`);
 }
 
 async function importAlarmsCsv() {
@@ -5115,8 +5040,15 @@ async function loadConnectionsList() {
     const files = Array.isArray(data?.files) ? data.files : [];
     state.connFiles = files.filter((f) => String(f?.kind) === 'connection');
 
-    // Preload connection configs so we can key devices/tags by true connection_id (not filename).
-    await Promise.allSettled(state.connFiles.map(async (f) => {
+    // Render immediately from filenames so Workspace does not appear empty while
+    // individual config file reads are waiting behind a busy opcbridge process.
+    renderConnList();
+    renderWorkspaceTree();
+    setConnStatus('Ready.');
+
+    // Preload connection configs in the background so we can key devices/tags by
+    // true connection_id (not filename) and fill detail columns when available.
+    Promise.allSettled(state.connFiles.map(async (f) => {
       const rel = String(f?.path || '').trim();
       if (!rel) return;
       try {
@@ -5124,13 +5056,14 @@ async function loadConnectionsList() {
       } catch {
         // ignore
       }
-    }));
-
-    renderConnList();
-    renderWorkspaceTree();
-    setConnStatus('Ready.');
+    })).then(() => {
+      renderConnList();
+      renderWorkspaceTree();
+    }).catch(() => {});
   } catch (err) {
     setConnStatus(`Failed: ${err.message}`);
+    renderConnList();
+    renderWorkspaceTree();
   }
 }
 
@@ -5178,17 +5111,19 @@ async function saveSelectedConnection({ reload }) {
   if (!state.selectedConnPath) return;
   setConnStatus('Saving…');
 
-  try {
-    const obj = readConnObjFromForm();
-    const content = prettyJson(obj);
-    await apiPostJson('/api/opcbridge/config/file', { path: state.selectedConnPath, content });
-    if (state.connObjCache) state.connObjCache.set(String(state.selectedConnPath), obj);
-    setConnStatus(reload ? 'Saved. Reloading…' : 'Saved.');
+	  try {
+	    const obj = readConnObjFromForm();
+	    const content = prettyJson(obj);
+	    await apiPostJson('/api/opcbridge/config/file', { path: state.selectedConnPath, content });
+	    if (state.connObjCache) state.connObjCache.set(String(state.selectedConnPath), obj);
+	    const cid = String(obj?.id || obj?.connection_id || connectionIdForConnFilePath(state.selectedConnPath) || '').trim();
+	    setConnStatus(reload ? `Saved. Reloading ${cid || 'connection'}…` : 'Saved.');
 
-    if (reload) {
-      await apiPostJson('/api/opcbridge/reload', {});
-      setConnStatus('Saved + Reloaded.');
-    }
+	    if (reload) {
+	      if (cid) await opcbridgeReloadConnection(cid);
+	      else await opcbridgeReload();
+	      setConnStatus(cid ? `Saved + Reloaded ${cid}.` : 'Saved + Reloaded.');
+	    }
 
     await loadConnectionsList();
   } catch (err) {
@@ -5259,6 +5194,44 @@ function computeEmptiedTagConnectionIds(baseTags, nextTags) {
   });
   emptied.sort();
   return emptied;
+}
+
+function computeWorkspaceTargetReloadConnection() {
+  if (state.alarmsConfigDirty) return '';
+  if (state.workspaceDeletePaths && state.workspaceDeletePaths.size > 0) return '';
+
+  const affected = new Set();
+  if (state.workspaceConnDirty && state.workspaceConnDirty.size) {
+    for (const [pathRel, obj] of state.workspaceConnDirty.entries()) {
+      const cid = String(obj?.id || obj?.connection_id || connectionIdForConnFilePath(pathRel) || '').trim();
+      if (cid) affected.add(cid);
+    }
+  }
+
+  if (state.tagConfigDirty) {
+    const base = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : [];
+    const next = getEffectiveTagsAll();
+    const baseMap = new Map();
+    const nextMap = new Map();
+    base.forEach((t) => {
+      const key = makeTagKey(t);
+      if (key) baseMap.set(key, sanitizeTagForPost(t));
+    });
+    next.forEach((t) => {
+      const key = makeTagKey(t);
+      if (key) nextMap.set(key, sanitizeTagForPost(t));
+    });
+    const keys = new Set([...baseMap.keys(), ...nextMap.keys()]);
+    keys.forEach((key) => {
+      const a = baseMap.get(key);
+      const b = nextMap.get(key);
+      if (JSON.stringify(a || null) === JSON.stringify(b || null)) return;
+      const cid = String((b || a)?.connection_id || key.split('::')[0] || '').trim();
+      if (cid) affected.add(cid);
+    });
+  }
+
+  return affected.size === 1 ? Array.from(affected)[0] : '';
 }
 
 async function writeEmptyCanonicalTagFilesForConnections(connectionIds) {
@@ -5553,12 +5526,33 @@ async function saveTagsConfig({ reload }) {
       await writeEmptyCanonicalTagFilesForConnections(emptied);
     }
 
-    if (reload) {
-      await apiPostJson('/api/opcbridge/reload', {});
-      setTagsConfigStatus('Saved + Reloaded.');
-    } else {
-      setTagsConfigStatus('Saved.');
-    }
+	    if (reload) {
+	      const changed = new Set();
+	      const baseMap = new Map();
+	      const nextMap = new Map();
+	      baseTags.forEach((t) => { const k = makeTagKey(t); if (k) baseMap.set(k, sanitizeTagForPost(t)); });
+	      merged.forEach((t) => { const k = makeTagKey(t); if (k) nextMap.set(k, sanitizeTagForPost(t)); });
+	      new Set([...baseMap.keys(), ...nextMap.keys()]).forEach((k) => {
+	        const a = baseMap.get(k);
+	        const b = nextMap.get(k);
+	        if (JSON.stringify(a || null) !== JSON.stringify(b || null)) {
+	          const cid = String((b || a)?.connection_id || k.split('::')[0] || '').trim();
+	          if (cid) changed.add(cid);
+	        }
+	      });
+	      if (changed.size === 1) {
+	        const cid = Array.from(changed)[0];
+	        setTagsConfigStatus(`Saved. Reloading ${cid}…`);
+	        await opcbridgeReloadConnection(cid);
+	        setTagsConfigStatus(`Saved + Reloaded ${cid}.`);
+	      } else {
+	        setTagsConfigStatus('Saved. Rebuilding full runtime…');
+	        await opcbridgeReload();
+	        setTagsConfigStatus('Saved + Reloaded.');
+	      }
+	    } else {
+	      setTagsConfigStatus('Saved.');
+	    }
 
     await loadTagsConfig();
   } catch (err) {
@@ -9723,6 +9717,7 @@ async function saveWorkspaceAll({ reload }) {
   setWorkspaceSaveStatus('Saving…');
   renderWorkspaceSaveBar();
   try {
+    const reloadTarget = reload ? computeWorkspaceTargetReloadConnection() : '';
     // 0) Apply staged deletes
     if (state.workspaceDeletePaths && state.workspaceDeletePaths.size) {
       for (const relPath of Array.from(state.workspaceDeletePaths.values())) {
@@ -9770,9 +9765,17 @@ async function saveWorkspaceAll({ reload }) {
       state.alarmsConfigDirty = false;
     }
 
-    if (reload) {
-      await opcbridgeReload();
-    }
+	    if (reload) {
+	      if (reloadTarget) {
+	        setWorkspaceSaveStatus(`Saved. Reloading ${reloadTarget}…`);
+	        renderWorkspaceSaveBar();
+	        await opcbridgeReloadConnection(reloadTarget);
+	      } else {
+	        setWorkspaceSaveStatus('Saved. Rebuilding full runtime…');
+	        renderWorkspaceSaveBar();
+	        await opcbridgeReload();
+	      }
+	    }
 
     // Clear dirty state and refresh
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
@@ -9782,7 +9785,7 @@ async function saveWorkspaceAll({ reload }) {
 
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
     renderWorkspaceTree();
-    setWorkspaceSaveStatus(reload ? 'Saved + Reloaded.' : 'Saved.');
+	    setWorkspaceSaveStatus(reload ? (reloadTarget ? `Saved + Reloaded ${reloadTarget}.` : 'Saved + Reloaded.') : 'Saved.');
   } catch (err) {
     const msg = String(err?.message || err || '');
     if (msg.toLowerCase().includes('upstream timeout')) {
@@ -9988,12 +9991,14 @@ function renderAlarmEvents(histResp) {
 async function refreshAll() {
   const started = Date.now();
   try {
-    const [health, alarmsStatus] = await Promise.all([
+    const [health, alarmsStatus, reloadStatus] = await Promise.all([
       apiGet('/api/opcbridge/health'),
-      apiGet('/api/alarms/alarm/api/status')
+      apiGet('/api/alarms/alarm/api/status'),
+      apiGet('/api/opcbridge/reload/status').catch(() => null)
     ]);
 
     renderOverviewHealth(health);
+    renderRuntimeRebuildStatus(reloadStatus);
     renderJson(els.healthJson, health);
     renderJson(els.alarmsStatusJson, alarmsStatus);
 
@@ -10738,6 +10743,7 @@ async function main() {
   wireSvcUi();
   wireMqttCaUi();
   wireLoggerUi();
+  wireOverviewRuntimeUi();
   wireConnectionsUi();
   wireTagsConfigUi();
   wireLoginModalUi();

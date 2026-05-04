@@ -906,16 +906,18 @@ function isAllowedOpcbridgePath(upstreamPathname) {
   if (upstreamPathname === '/reload/status') return true;
   if (upstreamPathname.startsWith('/auth/')) return true;
   if (upstreamPathname.startsWith('/config/')) return true;
-  if (upstreamPathname === '/reload' || upstreamPathname === '/write') return true;
+  if (upstreamPathname === '/reload' || upstreamPathname === '/reload/connection' || upstreamPathname === '/write') return true;
   return false;
 }
 
 function needsWriteToken(upstreamPathname) {
   return (
     upstreamPathname === '/reload' ||
+    upstreamPathname === '/reload/connection' ||
     upstreamPathname === '/write' ||
     upstreamPathname === '/config/file' ||
     upstreamPathname === '/config/tags' ||
+    upstreamPathname === '/config/tags/import_csv' ||
     upstreamPathname === '/config/bundle' ||
     upstreamPathname === '/config/delete' ||
     upstreamPathname === '/config/audio/upload' ||
@@ -937,7 +939,9 @@ function upstreamTimeoutMs(prefixName, upstreamPathname, method) {
   // Some writes can legitimately take a long time (large tag lists, reload).
   if (prefixName === 'opcbridge') {
     if (p === '/reload') return 120000;
+    if (p === '/reload/connection') return 120000;
     if (p === '/config/tags') return 120000;
+    if (p === '/config/tags/import_csv') return 120000;
     if (p === '/config/bundle') return 120000;
     if (p.startsWith('/config/')) return 60000;
     if (p === '/write') return 30000;
@@ -953,6 +957,9 @@ function upstreamRequestBodyLimitBytes(prefixName, upstreamPathname) {
   const p = String(upstreamPathname || '/');
   if (prefixName === 'opcbridge' && p === '/config/audio/upload') {
     // Backend accepts 50 MiB decoded audio. JSON + base64 adds about 33% overhead.
+    return 80 * 1024 * 1024;
+  }
+  if (prefixName === 'opcbridge' && p === '/config/tags/import_csv') {
     return 80 * 1024 * 1024;
   }
   return 2 * 1024 * 1024;

@@ -37,6 +37,7 @@
 #include <cstring>
 #include <atomic>
 #include <queue>
+#include <algorithm>
 
 // Version info (wired in via build.sh)
 #ifndef OPCBRIDGE_VERSION
@@ -453,12 +454,14 @@ struct ReloadState {
     bool done = false;
     bool ok = false;
     uint64_t gen = 0;
+    std::string target_connection_id;
     std::string error;
 };
 
 static std::mutex g_reloadMutex;
 static std::condition_variable g_reloadCv;
 static ReloadState g_reloadState;
+static std::atomic<bool> g_full_rebuild_required{false};
 
 // Forward declaration so mqtt_on_message can publish results
 void mqtt_publish_raw(const std::string &topic,
@@ -2238,6 +2241,204 @@ static std::string json_get_string_loose(const json &obj, const char *key, const
     return json_string_loose(obj.at(key), def);
 }
 
+static std::string csv_normalize_header_key(const std::string &key) {
+    std::string out;
+    bool lastUnderscore = false;
+    for (unsigned char ch : trim_copy(key)) {
+        if (std::isspace(ch)) {
+            if (!lastUnderscore) out.push_back('_');
+            lastUnderscore = true;
+            continue;
+        }
+        char c = static_cast<char>(std::tolower(ch));
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+            out.push_back(c);
+            lastUnderscore = (c == '_');
+        }
+    }
+    return out;
+}
+
+struct CsvTable {
+    std::vector<std::string> headers;
+    std::vector<std::map<std::string, std::string>> records;
+};
+
+static CsvTable parse_csv_table(const std::string &input) {
+    std::string firstNonEmpty;
+    {
+        std::istringstream iss(input);
+        std::string line;
+        while (std::getline(iss, line)) {
+            if (!trim_copy(line).empty()) {
+                firstNonEmpty = line;
+                break;
+            }
+        }
+    }
+
+    auto countChar = [&](char ch) {
+        return static_cast<int>(std::count(firstNonEmpty.begin(), firstNonEmpty.end(), ch));
+    };
+    char delimiter = ',';
+    const int commas = countChar(',');
+    const int tabs = countChar('\t');
+    const int semis = countChar(';');
+    if (tabs > commas && tabs >= semis) delimiter = '\t';
+    else if (semis > commas && semis > tabs) delimiter = ';';
+
+    std::vector<std::vector<std::string>> rows;
+    std::vector<std::string> row;
+    std::string field;
+    bool inQuotes = false;
+
+    auto pushField = [&]() {
+        row.push_back(field);
+        field.clear();
+    };
+    auto pushRow = [&]() {
+        if (row.size() == 1 && trim_copy(row[0]).empty() && rows.empty()) {
+            row.clear();
+            return;
+        }
+        rows.push_back(row);
+        row.clear();
+    };
+
+    for (size_t i = 0; i < input.size();) {
+        char ch = input[i];
+        if (inQuotes) {
+            if (ch == '"') {
+                if (i + 1 < input.size() && input[i + 1] == '"') {
+                    field.push_back('"');
+                    i += 2;
+                    continue;
+                }
+                inQuotes = false;
+                ++i;
+                continue;
+            }
+            field.push_back(ch);
+            ++i;
+            continue;
+        }
+
+        if (ch == '"') {
+            inQuotes = true;
+            ++i;
+            continue;
+        }
+        if (ch == delimiter) {
+            pushField();
+            ++i;
+            continue;
+        }
+        if (ch == '\r') {
+            ++i;
+            continue;
+        }
+        if (ch == '\n') {
+            pushField();
+            pushRow();
+            ++i;
+            continue;
+        }
+        field.push_back(ch);
+        ++i;
+    }
+    pushField();
+    if (std::any_of(row.begin(), row.end(), [](const std::string &c) { return !c.empty(); })) {
+        pushRow();
+    }
+
+    CsvTable table;
+    if (rows.empty()) return table;
+    for (const auto &h : rows[0]) table.headers.push_back(trim_copy(h));
+
+    for (size_t r = 1; r < rows.size(); ++r) {
+        std::map<std::string, std::string> obj;
+        bool hasAny = false;
+        for (size_t i = 0; i < table.headers.size(); ++i) {
+            const std::string val = (i < rows[r].size()) ? rows[r][i] : std::string{};
+            obj[table.headers[i]] = val;
+            if (!trim_copy(val).empty()) hasAny = true;
+        }
+        if (hasAny) table.records.push_back(obj);
+    }
+    return table;
+}
+
+static std::string csv_get(const std::map<std::string, std::string> &row, const std::string &key) {
+    auto it = row.find(key);
+    if (it != row.end()) return it->second;
+    const std::string want = csv_normalize_header_key(key);
+    for (const auto &kv : row) {
+        if (csv_normalize_header_key(kv.first) == want) return kv.second;
+    }
+    return {};
+}
+
+static bool parse_bool_loose(const std::string &value, bool def) {
+    const std::string raw = to_lower_copy(trim_copy(value));
+    if (raw.empty()) return def;
+    if (raw == "true" || raw == "1" || raw == "yes" || raw == "y" || raw == "on") return true;
+    if (raw == "false" || raw == "0" || raw == "no" || raw == "n" || raw == "off") return false;
+    return def;
+}
+
+static int parse_int_loose(const std::string &value, int def) {
+    const std::string raw = trim_copy(value);
+    if (raw.empty()) return def;
+    try {
+        size_t pos = 0;
+        double d = std::stod(raw, &pos);
+        (void)pos;
+        if (!std::isfinite(d)) return def;
+        return static_cast<int>(d);
+    } catch (...) {
+        return def;
+    }
+}
+
+static double parse_double_loose(const std::string &value, double def, bool &ok) {
+    const std::string raw = trim_copy(value);
+    if (raw.empty()) {
+        ok = false;
+        return def;
+    }
+    try {
+        size_t pos = 0;
+        double d = std::stod(raw, &pos);
+        (void)pos;
+        if (!std::isfinite(d)) {
+            ok = false;
+            return def;
+        }
+        ok = true;
+        return d;
+    } catch (...) {
+        ok = false;
+        return def;
+    }
+}
+
+static bool csv_is_delete_action(const std::string &value) {
+    const std::string raw = to_lower_copy(trim_copy(value));
+    return raw == "delete" || raw == "deleted" || raw == "remove" || raw == "removed" || raw == "del";
+}
+
+static bool is_safe_connection_id_filename(const std::string &cid) {
+    if (cid.empty() || cid == "." || cid == "..") return false;
+    for (unsigned char ch : cid) {
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+            ch == '_' || ch == '-' || ch == '.') {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 // -----------------------------
 // Config loading
 // -----------------------------
@@ -3816,20 +4017,213 @@ void schedule_next_periodic(TagRuntime &tagRt);
 // Driver loading / reload
 // -----------------------------
 
-	void destroy_all_handles(std::vector<DriverContext> &drivers, bool plcAlreadyLocked = false) {
-	    std::unique_lock<std::shared_mutex> plcLock;
-	    if (!plcAlreadyLocked && g_plcMutex) {
-	        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
-	    }
+		void destroy_all_handles(std::vector<DriverContext> &drivers, bool plcAlreadyLocked = false) {
+		    std::unique_lock<std::shared_mutex> plcLock;
+		    if (!plcAlreadyLocked && g_plcMutex) {
+		        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
+		    }
 
 	    for (auto &driver : drivers) {
 	        for (auto &t : driver.tags) {
 	            if (t.handle >= 0) {
                 plc_tag_destroy(t.handle);
-                t.handle = PLCTAG_ERR_NOT_FOUND;
+	                t.handle = PLCTAG_ERR_NOT_FOUND;
+	            }
+	        }
+	    }
+	}
+
+static void destroy_driver_handles(DriverContext &driver, bool plcAlreadyLocked = false) {
+    std::unique_lock<std::shared_mutex> plcLock;
+    if (!plcAlreadyLocked && g_plcMutex) {
+        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
+    }
+    for (auto &t : driver.tags) {
+        if (t.handle >= 0) {
+            plc_tag_destroy(t.handle);
+            t.handle = PLCTAG_ERR_NOT_FOUND;
+        }
+    }
+}
+
+static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg,
+                                                const std::vector<TagConfig> &tag_cfgs,
+                                                DriverContext &out,
+                                                std::string &err)
+{
+    DriverContext ctx;
+    ctx.conn = conn_cfg;
+    std::unordered_set<std::string> seen_logical_names;
+
+    for (const auto &tc : tag_cfgs) {
+        const std::string logical = tc.logical_name;
+        if (!logical.empty() && !seen_logical_names.insert(logical).second) {
+            std::cerr << "[load] Warning: duplicate tag logical_name '" << logical
+                      << "' for connection '" << conn_cfg.id << "'. Skipping duplicate.\n";
+            continue;
+        }
+
+        TagRuntime rt;
+        rt.cfg = tc;
+        init_tag_scaling(rt);
+
+        if (!tc.enabled) {
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+            ctx.tags.push_back(std::move(rt));
+            continue;
+        }
+
+        if (!tc.source_tag.empty()) {
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+            rt.next_poll = std::chrono::steady_clock::time_point{};
+            ctx.tags.push_back(std::move(rt));
+            continue;
+        }
+
+        if (!is_supported_datatype(tc.datatype)) {
+            std::cerr << "[load] Warning: skipping tag '" << tc.logical_name
+                      << "' on connection '" << conn_cfg.id
+                      << "' due to unsupported datatype '" << tc.datatype << "'.\n";
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+            ctx.tags.push_back(std::move(rt));
+            continue;
+        }
+
+        std::string tag_str;
+        try {
+            tag_str = build_tag_conn_str(conn_cfg, tc);
+        } catch (const std::exception &ex) {
+            std::cerr << "[load] Warning: skipping tag '" << tc.logical_name
+                      << "' on connection '" << conn_cfg.id
+                      << "' due to error building connection string: " << ex.what() << "\n";
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+            ctx.tags.push_back(std::move(rt));
+            continue;
+        }
+
+        std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
+        const int32_t handle = plc_tag_create(tag_str.c_str(), conn_cfg.default_timeout_ms);
+        std::string readyErr;
+        if (!wait_for_tag_ready(handle, conn_cfg.default_timeout_ms, readyErr)) {
+            std::cerr << "[load] Error creating tag '" << tc.logical_name
+                      << "' on connection '" << conn_cfg.id << "': " << readyErr
+                      << " (timeout_ms=" << conn_cfg.default_timeout_ms << ")\n";
+            if (handle >= 0) plc_tag_destroy(handle);
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+        } else {
+            rt.handle = handle;
+            rt.next_poll = std::chrono::steady_clock::now();
+            schedule_next_periodic(rt);
+        }
+        ctx.tags.push_back(rt);
+
+        if (tc.elem_count > 1) {
+            for (int i = 0; i < tc.elem_count; i++) {
+                TagRuntime e;
+                e.cfg = tc;
+                e.cfg.elem_count = 1;
+                e.cfg.source_tag.clear();
+                e.cfg.bit = -1;
+                e.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
+                e.cfg.plc_tag_name = tc.plc_tag_name + "[" + std::to_string(i) + "]";
+                e.handle = PLCTAG_ERR_NOT_FOUND;
+                const std::string elName = e.cfg.logical_name;
+                if (!elName.empty() && !seen_logical_names.insert(elName).second) {
+                    continue;
+                }
+                ctx.tags.push_back(std::move(e));
             }
         }
     }
+
+    out = std::move(ctx);
+    err.clear();
+    return true;
+}
+
+static bool load_single_driver_for_connection(DriverContext &out,
+                                              bool &hasDriver,
+                                              const std::string &configDir,
+                                              const std::string &connId,
+                                              std::string &err)
+{
+    hasDriver = false;
+    err.clear();
+    if (connId.empty()) {
+        err = "Missing connection_id.";
+        return false;
+    }
+
+    const std::string connDir = joinPath(configDir, "connections");
+    const std::string tagDir = joinPath(configDir, "tags");
+
+    bool foundConn = false;
+    ConnectionConfig conn_cfg;
+    if (!fs::exists(connDir)) {
+        err = "Connections directory does not exist.";
+        return false;
+    }
+    for (const auto &entry : fs::directory_iterator(connDir)) {
+        if (!entry.is_regular_file()) continue;
+        if (entry.path().extension() != ".json") continue;
+        try {
+            ConnectionConfig c = load_connection_config(entry.path().string());
+            if (c.id == connId) {
+                conn_cfg = c;
+                foundConn = true;
+                break;
+            }
+        } catch (const std::exception &ex) {
+            std::cerr << "[reload] Error reading connection file " << entry.path().string()
+                      << ": " << ex.what() << "\n";
+        }
+    }
+    if (!foundConn) {
+        err = "Connection '" + connId + "' not found.";
+        return false;
+    }
+
+    const std::string canonicalJson = joinPath(tagDir, connId + ".json");
+    const std::string canonicalJsonc = joinPath(tagDir, connId + ".jsonc");
+    std::string tagPath;
+    if (fs::exists(canonicalJson)) tagPath = canonicalJson;
+    else if (fs::exists(canonicalJsonc)) tagPath = canonicalJsonc;
+    else if (fs::exists(tagDir)) {
+        for (const auto &entry : fs::directory_iterator(tagDir)) {
+            if (!entry.is_regular_file()) continue;
+            const std::string ext = entry.path().extension().string();
+            if (ext != ".json" && ext != ".jsonc") continue;
+            try {
+                TagFile tf = load_tag_file(entry.path().string());
+                if (tf.connection_id == connId) {
+                    tagPath = entry.path().string();
+                    break;
+                }
+            } catch (...) {
+                // Ignore malformed unrelated tag files here; full reload reports them.
+            }
+        }
+    }
+
+    if (tagPath.empty()) {
+        std::cerr << "[reload] Info: no tags defined for connection '" << connId << "'.\n";
+        hasDriver = false;
+        return true;
+    }
+
+    TagFile tf = load_tag_file(tagPath);
+    if (tf.connection_id != connId) {
+        err = "Tag file connection_id does not match target connection.";
+        return false;
+    }
+
+    DriverContext ctx;
+    if (!build_driver_context_for_connection(conn_cfg, tf.tags, ctx, err)) {
+        return false;
+    }
+    hasDriver = true;
+    out = std::move(ctx);
+    return true;
 }
 
 bool load_mqtt_config(const std::string &configDir) {
@@ -12727,10 +13121,11 @@ window.addEventListener("load", startAutoRefresh);
 	                        }
 	                        g_reloadState.requested = true;
 	                        g_reloadState.in_progress = false;
-	                        g_reloadState.done = false;
-	                        g_reloadState.ok = false;
-	                        g_reloadState.gen = newGen;
-	                        g_reloadState.error.clear();
+		                        g_reloadState.done = false;
+		                        g_reloadState.ok = false;
+		                        g_reloadState.gen = newGen;
+		                        g_reloadState.target_connection_id.clear();
+		                        g_reloadState.error.clear();
 	                        g_reloadCv.notify_all();
 
 	                        // Wait for completion (up to 30s)
@@ -12760,10 +13155,11 @@ window.addEventListener("load", startAutoRefresh);
 	                        }
 	                    }
 
-	                    resp["ok"] = true;
-	                    resp["pending"] = false;
-	                    resp["gen"] = newGen;
-	                    resp["message"] = "Config reload successful.";
+		                    resp["ok"] = true;
+		                    resp["pending"] = false;
+		                    resp["gen"] = newGen;
+		                    resp["full_rebuild_required"] = g_full_rebuild_required.load(std::memory_order_relaxed);
+		                    resp["message"] = "Config reload successful.";
 	                    res.status = 200;
 	                } catch (const std::exception &ex) {
                     resp["ok"] = false;
@@ -12771,10 +13167,93 @@ window.addEventListener("load", startAutoRefresh);
                     res.status = 400;
                 }
 
-                res.set_content(resp.dump(2), "application/json");
-            });
+	                res.set_content(resp.dump(2), "application/json");
+	            });
 
-	            // GET /reload/status
+		            svr.Post("/reload/connection", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                try {
+		                    json body = json::parse(req.body.empty() ? "{}" : req.body);
+		                    std::string clientToken = body.value("token", std::string{});
+		                    bool hasWriteToken = (clientToken == writeToken);
+		                    bool isAdmin = is_admin_request(req);
+		                    if (!hasWriteToken && !isAdmin) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Invalid or missing write token and not admin.";
+		                        res.status = 403;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+
+		                    const std::string targetConn = trim_copy(json_get_string_loose(body, "connection_id", std::string{}));
+		                    if (targetConn.empty()) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Missing connection_id.";
+		                        res.status = 400;
+		                        res.set_content(resp.dump(2), "application/json");
+		                        return;
+		                    }
+
+		                    uint64_t newGen = g_configGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+		                    {
+		                        std::unique_lock<std::mutex> lk(g_reloadMutex);
+		                        if (g_reloadState.requested || g_reloadState.in_progress) {
+		                            resp["ok"] = false;
+		                            resp["error"] = "Reload already in progress.";
+		                            res.status = 409;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                        g_reloadState.requested = true;
+		                        g_reloadState.in_progress = false;
+		                        g_reloadState.done = false;
+		                        g_reloadState.ok = false;
+		                        g_reloadState.gen = newGen;
+		                        g_reloadState.target_connection_id = targetConn;
+		                        g_reloadState.error.clear();
+		                        g_reloadCv.notify_all();
+
+		                        bool finished = g_reloadCv.wait_for(lk, std::chrono::seconds(30), [&]() {
+		                            return g_reloadState.done;
+		                        });
+		                        if (!finished) {
+		                            resp["ok"] = true;
+		                            resp["pending"] = true;
+		                            resp["gen"] = newGen;
+		                            resp["connection_id"] = targetConn;
+		                            resp["message"] = "Connection reload started; still in progress.";
+		                            res.status = 202;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+
+		                        resp["ok"] = g_reloadState.ok;
+		                        if (!g_reloadState.ok) {
+		                            resp["error"] = g_reloadState.error.empty()
+		                                ? "Connection reload failed (see server log)."
+		                                : g_reloadState.error;
+		                            res.status = 500;
+		                            res.set_content(resp.dump(2), "application/json");
+		                            return;
+		                        }
+		                    }
+
+		                    resp["ok"] = true;
+		                    resp["pending"] = false;
+		                    resp["gen"] = newGen;
+		                    resp["connection_id"] = targetConn;
+		                    resp["full_rebuild_required"] = g_full_rebuild_required.load(std::memory_order_relaxed);
+		                    resp["message"] = "Connection reload successful.";
+		                    res.status = 200;
+		                } catch (const std::exception &ex) {
+		                    resp["ok"] = false;
+		                    resp["error"] = std::string("Invalid JSON or fields: ") + ex.what();
+		                    res.status = 400;
+		                }
+		                res.set_content(resp.dump(2), "application/json");
+		            });
+
+		            // GET /reload/status
 	            // Public (read-only) status so UIs can show progress without incorrectly reporting failure.
 	            svr.Get("/reload/status", [&](const httplib::Request &, httplib::Response &res) {
 	                json resp;
@@ -12782,12 +13261,14 @@ window.addEventListener("load", startAutoRefresh);
 	                    std::lock_guard<std::mutex> lk(g_reloadMutex);
 	                    resp["requested"] = g_reloadState.requested;
 	                    resp["in_progress"] = g_reloadState.in_progress;
-	                    resp["done"] = g_reloadState.done;
-	                    resp["ok"] = g_reloadState.ok;
-	                    resp["gen"] = g_reloadState.gen;
-	                    resp["error"] = g_reloadState.error;
-	                }
-	                resp["ok_status"] = true;
+		                    resp["done"] = g_reloadState.done;
+		                    resp["ok"] = g_reloadState.ok;
+		                    resp["gen"] = g_reloadState.gen;
+		                    resp["target_connection_id"] = g_reloadState.target_connection_id;
+		                    resp["error"] = g_reloadState.error;
+		                }
+		                resp["full_rebuild_required"] = g_full_rebuild_required.load(std::memory_order_relaxed);
+		                resp["ok_status"] = true;
 	                res.status = 200;
 	                res.set_content(resp.dump(2), "application/json");
 	            });
@@ -14431,7 +14912,7 @@ window.addEventListener("load", startAutoRefresh);
 			});
 
 			// POST /config/tags  -> overwrite tag config files from a flat tag list
-			svr.Post("/config/tags", [&](const httplib::Request &req, httplib::Response &res) {
+				svr.Post("/config/tags", [&](const httplib::Request &req, httplib::Response &res) {
                 if (!is_admin_request(req)) {
                     json err;
                     err["ok"] = false;
@@ -14569,12 +15050,267 @@ window.addEventListener("load", startAutoRefresh);
 					res.status    = 400;
 				}
 
-				res.set_content(resp.dump(2), "application/json");
-			});
+					res.set_content(resp.dump(2), "application/json");
+				});
+
+				// POST /config/tags/import_csv
+				// Body: { "token":"...", "connection_id":"B030", "csv":"connection_id,name,..." }
+				// Upserts/deletes rows into the canonical tags/<connection_id>.json file.
+				svr.Post("/config/tags/import_csv", [&](const httplib::Request &req, httplib::Response &res) {
+					if (!is_admin_request(req)) {
+						json err;
+						err["ok"] = false;
+						err["error"] = "Admin login required.";
+						res.status = 403;
+						res.set_content(err.dump(2), "application/json");
+						return;
+					}
+
+					std::lock_guard<std::mutex> lock(driverMutex);
+					json resp;
+					resp["ok"] = false;
+
+					try {
+						json body = json::parse(req.body);
+						if (json_get_string_loose(body, "token", std::string{}) != writeToken) {
+							resp["error"] = "Invalid or missing write token.";
+							res.status = 403;
+							res.set_content(resp.dump(2), "application/json");
+							return;
+						}
+
+						const std::string cid = trim_copy(json_get_string_loose(body, "connection_id", std::string{}));
+						const std::string csvText = json_get_string_loose(body, "csv", std::string{});
+						if (!is_safe_connection_id_filename(cid)) {
+							resp["error"] = "Invalid or unsafe connection_id.";
+							res.status = 400;
+							res.set_content(resp.dump(2), "application/json");
+							return;
+						}
+						if (trim_copy(csvText).empty()) {
+							resp["error"] = "Missing or empty CSV content.";
+							res.status = 400;
+							res.set_content(resp.dump(2), "application/json");
+							return;
+						}
+
+						CsvTable table = parse_csv_table(csvText);
+						if (table.records.empty()) {
+							resp["error"] = "CSV had no data rows.";
+							res.status = 400;
+							res.set_content(resp.dump(2), "application/json");
+							return;
+						}
+
+						const std::string tagDir = joinPath(configDir, "tags");
+						std::error_code ec;
+						fs::create_directories(tagDir, ec);
+						if (ec) throw std::runtime_error("Failed to create tags directory: " + ec.message());
+
+						const std::string path = joinPath(tagDir, cid + ".json");
+						json fileJson = json::object();
+						fileJson["connection_id"] = cid;
+						fileJson["tags"] = json::array();
+						if (fs::exists(path)) {
+							fileJson = load_json_with_comments(path);
+							if (!fileJson.is_object()) throw std::runtime_error("Existing tag file is not a JSON object.");
+							if (fileJson.value("connection_id", std::string{}) != cid) {
+								throw std::runtime_error("Existing tag file connection_id does not match import target.");
+							}
+							if (!fileJson.contains("tags") || !fileJson["tags"].is_array()) {
+								fileJson["tags"] = json::array();
+							}
+						}
+
+						json &tags = fileJson["tags"];
+						int upserts = 0;
+						int created = 0;
+						int updated = 0;
+						int deleted = 0;
+						int skipped = 0;
+						int skippedWrongConn = 0;
+						int skippedMissing = 0;
+
+						for (const auto &row : table.records) {
+							const std::string rowCidRaw = trim_copy(csv_get(row, "connection_id"));
+							const std::string rowCid = rowCidRaw.empty() ? cid : rowCidRaw;
+							const std::string name = trim_copy(csv_get(row, "name"));
+							if (rowCid.empty() || name.empty()) {
+								++skipped;
+								++skippedMissing;
+								continue;
+							}
+							if (rowCid != cid) {
+								++skipped;
+								++skippedWrongConn;
+								continue;
+							}
+
+							size_t idx = tags.size();
+							for (size_t i = 0; i < tags.size(); ++i) {
+								if (tags[i].is_object() && tags[i].value("name", std::string{}) == name) {
+									idx = i;
+									break;
+								}
+							}
+
+							if (csv_is_delete_action(csv_get(row, "action"))) {
+								if (idx < tags.size()) {
+									auto it = tags.begin();
+									std::advance(it, static_cast<long>(idx));
+									tags.erase(it);
+									++deleted;
+								}
+								continue;
+							}
+
+							json base = (idx < tags.size() && tags[idx].is_object()) ? tags[idx] : json::object();
+							if (idx >= tags.size()) {
+								base["name"] = name;
+								++created;
+							} else {
+								++updated;
+							}
+
+							const std::string invertRaw = csv_get(row, "invert");
+							if (trim_copy(invertRaw).empty()) base.erase("invert");
+							else base["invert"] = parse_bool_loose(invertRaw, false);
+
+							const int elemCount = parse_int_loose(!trim_copy(csv_get(row, "elem_count")).empty() ? csv_get(row, "elem_count") : csv_get(row, "elemcount"), -1);
+							if (elemCount <= 1) base.erase("elem_count");
+							else base["elem_count"] = std::max(1, elemCount);
+
+							const std::string sourceTag = trim_copy(!trim_copy(csv_get(row, "source_tag")).empty() ? csv_get(row, "source_tag") :
+								(!trim_copy(csv_get(row, "source")).empty() ? csv_get(row, "source") : std::string{}));
+							const int bit = parse_int_loose(csv_get(row, "bit"), -1);
+							const bool isDerivedBit = !sourceTag.empty() && bit >= 0;
+							const bool isDerivedAlias = !sourceTag.empty() && !isDerivedBit;
+
+							const std::string plcTagName = trim_copy(!trim_copy(csv_get(row, "plc_tag_name")).empty() ? csv_get(row, "plc_tag_name") :
+								(!trim_copy(csv_get(row, "plc_tag")).empty() ? csv_get(row, "plc_tag") : csv_get(row, "plc_tagname")));
+							const std::string datatype = trim_copy(csv_get(row, "datatype"));
+
+							if (isDerivedBit) {
+								base.erase("plc_tag_name");
+								base.erase("elem_count");
+								base["source_tag"] = sourceTag;
+								base["bit"] = bit;
+								base["datatype"] = (to_lower_copy(datatype) == "bool") ? datatype : std::string("bool");
+							} else if (isDerivedAlias) {
+								base.erase("plc_tag_name");
+								base.erase("elem_count");
+								base["source_tag"] = sourceTag;
+								base.erase("bit");
+								if (!datatype.empty()) base["datatype"] = datatype;
+								base["writable"] = false;
+								base["mqtt_command_allowed"] = false;
+							} else {
+								base.erase("source_tag");
+								base.erase("bit");
+								if (!plcTagName.empty()) base["plc_tag_name"] = plcTagName;
+								if (!datatype.empty()) base["datatype"] = datatype;
+							}
+
+							const std::string scanRaw = !trim_copy(csv_get(row, "scan_ms")).empty() ? csv_get(row, "scan_ms") :
+								(!trim_copy(csv_get(row, "scan")).empty() ? csv_get(row, "scan") : csv_get(row, "scanms"));
+							const int scan = parse_int_loose(scanRaw, -1);
+							if (scan < 0) base.erase("scan_ms");
+							else base["scan_ms"] = std::max(0, scan);
+
+							base["enabled"] = parse_bool_loose(csv_get(row, "enabled"), true);
+							base["writable"] = parse_bool_loose(csv_get(row, "writable"), false);
+							base["mqtt_command_allowed"] = parse_bool_loose(!trim_copy(csv_get(row, "mqtt_command_allowed")).empty() ? csv_get(row, "mqtt_command_allowed") :
+								(!trim_copy(csv_get(row, "mqtt_allowed")).empty() ? csv_get(row, "mqtt_allowed") : csv_get(row, "mqtt_command")), false);
+
+							const std::string scaling = to_lower_copy(trim_copy(csv_get(row, "scaling")));
+							if (scaling == "none" || scaling == "linear") base["scaling"] = scaling;
+							else if (!scaling.empty()) base.erase("scaling");
+
+							bool okDouble = false;
+							double d = parse_double_loose(csv_get(row, "raw_low"), 0.0, okDouble);
+							if (okDouble) base["raw_low"] = d; else base.erase("raw_low");
+							d = parse_double_loose(csv_get(row, "raw_high"), 0.0, okDouble);
+							if (okDouble) base["raw_high"] = d; else base.erase("raw_high");
+							d = parse_double_loose(csv_get(row, "scaled_low"), 0.0, okDouble);
+							if (okDouble) base["scaled_low"] = d; else base.erase("scaled_low");
+							d = parse_double_loose(csv_get(row, "scaled_high"), 0.0, okDouble);
+							if (okDouble) base["scaled_high"] = d; else base.erase("scaled_high");
+
+							const std::string clampLowRaw = csv_get(row, "clamp_low");
+							if (trim_copy(clampLowRaw).empty()) base.erase("clamp_low");
+							else base["clamp_low"] = parse_bool_loose(clampLowRaw, false);
+							const std::string clampHighRaw = csv_get(row, "clamp_high");
+							if (trim_copy(clampHighRaw).empty()) base.erase("clamp_high");
+							else base["clamp_high"] = parse_bool_loose(clampHighRaw, false);
+
+							const std::string scaledDatatype = trim_copy(csv_get(row, "scaled_datatype"));
+							if (!scaledDatatype.empty()) base["scaled_datatype"] = scaledDatatype;
+							else base.erase("scaled_datatype");
+
+							base["log_event_on_change"] = parse_bool_loose(!trim_copy(csv_get(row, "log_event_on_change")).empty() ? csv_get(row, "log_event_on_change") : csv_get(row, "log_on_change"), false);
+
+							const std::string mode = trim_copy(csv_get(row, "log_periodic_mode"));
+							if (!mode.empty()) base["log_periodic_mode"] = mode;
+							else base.erase("log_periodic_mode");
+							const int intervalSec = parse_int_loose(!trim_copy(csv_get(row, "log_periodic_interval_sec")).empty() ? csv_get(row, "log_periodic_interval_sec") : csv_get(row, "log_interval_sec"), -1);
+							if (intervalSec < 0) base.erase("log_periodic_interval_sec");
+							else base["log_periodic_interval_sec"] = std::max(0, intervalSec);
+
+							if (idx < tags.size()) tags[idx] = base;
+							else tags.push_back(base);
+							++upserts;
+						}
+
+						std::string validateError;
+						if (!validate_tags_json(fileJson.dump(2), validateError)) {
+							throw std::runtime_error(validateError);
+						}
+
+						const std::string backupPath = path + ".bak";
+						if (fs::exists(path)) {
+							std::error_code bec;
+							fs::rename(path, backupPath, bec);
+							if (bec) {
+								std::cerr << "[config] Warning: failed to backup " << path
+										  << " -> " << backupPath << ": " << bec.message() << "\n";
+							}
+						}
+
+						const std::string tempPath = path + ".tmp";
+						{
+							std::ofstream ofs(tempPath, std::ios::binary | std::ios::trunc);
+							if (!ofs) throw std::runtime_error("Failed to open temp tag file for write.");
+							ofs << fileJson.dump(2) << "\n";
+						}
+						std::error_code rec;
+						fs::rename(tempPath, path, rec);
+						if (rec) throw std::runtime_error("Failed to rename temp tag file: " + rec.message());
+
+						resp["ok"] = true;
+						resp["connection_id"] = cid;
+						resp["file"] = std::string("tags/") + cid + ".json";
+						resp["upserted"] = upserts;
+						resp["created"] = created;
+						resp["updated"] = updated;
+						resp["deleted"] = deleted;
+						resp["skipped"] = skipped;
+						resp["skipped_wrong_connection_id"] = skippedWrongConn;
+						resp["skipped_missing_required_fields"] = skippedMissing;
+						resp["total_tags"] = tags.size();
+						resp["reload_required"] = true;
+						resp["message"] = "CSV imported. Use /reload to apply.";
+						res.status = 200;
+					} catch (const std::exception &ex) {
+						resp["error"] = std::string("Exception in /config/tags/import_csv: ") + ex.what();
+						res.status = 400;
+					}
+
+					res.set_content(resp.dump(2), "application/json");
+				});
 
 
-			// ------------------------------------------------------------
-			// GET /config/bundle
+				// ------------------------------------------------------------
+				// GET /config/bundle
 			// Returns a JSON bundle of all known config files so user can
 			// download/backup in one shot.
 			// ------------------------------------------------------------
@@ -16757,60 +17493,109 @@ window.addEventListener("load", startAutoRefresh);
 
 	        while (true) {
 	            // Handle /reload requests (triggered by the HTTP thread) in the main thread.
-	            bool doReload = false;
-	            uint64_t requestedGen = 0;
-	            {
-	                std::lock_guard<std::mutex> lk(g_reloadMutex);
-	                if (g_reloadState.requested && !g_reloadState.in_progress) {
-	                    g_reloadState.in_progress = true;
-	                    doReload = true;
-	                    requestedGen = g_reloadState.gen;
-	                }
-	            }
-
-	            if (doReload) {
-	                std::cout << "[reload] Starting reload (gen=" << requestedGen << ")...\n";
-
-	                stopPollers();
-
-	                bool ok = false;
-	                std::string err;
-
-		                try {
-		                    std::unique_lock<std::shared_mutex> plcLock(plcMutex);
-		                    std::vector<DriverContext> newDrivers;
-
-		                    if (!load_all_drivers(newDrivers, configDir)) {
-		                        err = "Reload failed (see server log for details).";
-		                    } else {
-		                        {
-		                            std::lock_guard<std::mutex> lock(driverMutex);
-		                            destroy_all_handles(drivers, true /*plcAlreadyLocked*/);
-		                            drivers = std::move(newDrivers);
-		                            tagTable.clear();
-		                        }
-
-		                        // Rebuild OPC UA server to refresh node contexts / handles.
-		                        if (g_uaServer) {
-		                            std::cout << "[reload] Rebuilding OPC UA server...\n";
-		                            shutdown_opcua_server();
-		                            if (!init_opcua_server(opcuaPort, drivers)) {
-		                                err = "OPC UA reinit failed after reload (see server log).";
-		                            }
-		                        }
-
-		                        ok = err.empty();
-		                    }
-		                } catch (const std::exception &ex) {
-		                    ok = false;
-		                    err = std::string("Reload exception: ") + ex.what();
-		                    std::cerr << "[reload] " << err << "\n";
+		            bool doReload = false;
+		            uint64_t requestedGen = 0;
+		            std::string requestedTargetConn;
+		            {
+		                std::lock_guard<std::mutex> lk(g_reloadMutex);
+		                if (g_reloadState.requested && !g_reloadState.in_progress) {
+		                    g_reloadState.in_progress = true;
+		                    doReload = true;
+		                    requestedGen = g_reloadState.gen;
+		                    requestedTargetConn = g_reloadState.target_connection_id;
 		                }
+		            }
 
-	                {
-	                    std::lock_guard<std::mutex> mlock(g_metricsMutex);
-	                    g_connPollMetrics.clear();
-	                }
+		            if (doReload) {
+		                const bool targetedReload = !requestedTargetConn.empty();
+		                std::cout << "[reload] Starting "
+		                          << (targetedReload ? ("connection reload for '" + requestedTargetConn + "'") : std::string("full reload"))
+		                          << " (gen=" << requestedGen << ")...\n";
+
+		                stopPollers();
+
+		                bool ok = false;
+		                std::string err;
+
+			                try {
+			                    std::unique_lock<std::shared_mutex> plcLock(plcMutex);
+			                    if (targetedReload) {
+			                        DriverContext newDriver;
+			                        bool hasDriver = false;
+			                        if (!load_single_driver_for_connection(newDriver, hasDriver, configDir, requestedTargetConn, err)) {
+			                            if (err.empty()) err = "Connection reload failed (see server log for details).";
+			                        } else {
+			                            {
+			                                std::lock_guard<std::mutex> lock(driverMutex);
+			                                auto it = std::find_if(drivers.begin(), drivers.end(), [&](const DriverContext &d) {
+			                                    return d.conn.id == requestedTargetConn;
+			                                });
+			                                if (it != drivers.end()) {
+			                                    destroy_driver_handles(*it, true /*plcAlreadyLocked*/);
+			                                    if (hasDriver) {
+			                                        *it = std::move(newDriver);
+			                                    } else {
+			                                        drivers.erase(it);
+			                                    }
+			                                } else if (hasDriver) {
+			                                    drivers.push_back(std::move(newDriver));
+			                                }
+
+			                                const std::string prefix = requestedTargetConn + ":";
+			                                for (auto tt = tagTable.begin(); tt != tagTable.end();) {
+			                                    if (tt->first.rfind(prefix, 0) == 0) tt = tagTable.erase(tt);
+			                                    else ++tt;
+			                                }
+			                            }
+			                            {
+			                                std::lock_guard<std::mutex> mlock(g_metricsMutex);
+			                                g_connPollMetrics.erase(requestedTargetConn);
+			                            }
+			                            // Targeted reload does not rebuild OPC UA nodes. Existing nodes keep updating,
+			                            // but added/removed tags need a later full rebuild to sync the OPC UA namespace.
+			                            if (g_uaServer) {
+			                                g_full_rebuild_required.store(true, std::memory_order_relaxed);
+			                            }
+			                            ok = true;
+			                        }
+			                    } else {
+			                        std::vector<DriverContext> newDrivers;
+
+			                        if (!load_all_drivers(newDrivers, configDir)) {
+			                            err = "Reload failed (see server log for details).";
+			                        } else {
+			                            {
+			                                std::lock_guard<std::mutex> lock(driverMutex);
+			                                destroy_all_handles(drivers, true /*plcAlreadyLocked*/);
+			                                drivers = std::move(newDrivers);
+			                                tagTable.clear();
+			                            }
+
+			                            // Rebuild OPC UA server to refresh node contexts / handles.
+			                            if (g_uaServer) {
+			                                std::cout << "[reload] Rebuilding OPC UA server...\n";
+			                                shutdown_opcua_server();
+			                                if (!init_opcua_server(opcuaPort, drivers)) {
+			                                    err = "OPC UA reinit failed after reload (see server log).";
+			                                }
+			                            }
+
+			                            ok = err.empty();
+			                            if (ok) {
+			                                g_full_rebuild_required.store(false, std::memory_order_relaxed);
+			                            }
+			                        }
+			                    }
+			                } catch (const std::exception &ex) {
+			                    ok = false;
+			                    err = std::string("Reload exception: ") + ex.what();
+			                    std::cerr << "[reload] " << err << "\n";
+			                }
+
+		                if (!targetedReload) {
+		                    std::lock_guard<std::mutex> mlock(g_metricsMutex);
+		                    g_connPollMetrics.clear();
+		                }
 
 	                // Resume pollers on the new config generation.
 	                activeGen = g_configGeneration.load(std::memory_order_relaxed);
@@ -16819,11 +17604,11 @@ window.addEventListener("load", startAutoRefresh);
 
 	                {
 	                    std::lock_guard<std::mutex> lk(g_reloadMutex);
-	                    g_reloadState.ok = ok;
-	                    g_reloadState.error = err;
-	                    g_reloadState.done = true;
-	                    g_reloadState.requested = false;
-	                    g_reloadState.in_progress = false;
+		                    g_reloadState.ok = ok;
+		                    g_reloadState.error = err;
+		                    g_reloadState.done = true;
+		                    g_reloadState.requested = false;
+		                    g_reloadState.in_progress = false;
 	                }
 	                g_reloadCv.notify_all();
 
