@@ -291,6 +291,10 @@ const els = {
   editDevPath: document.getElementById('editDevPath'),
   editDevSlot: document.getElementById('editDevSlot'),
   editDevPlcType: document.getElementById('editDevPlcType'),
+  editDevPollingMode: document.getElementById('editDevPollingMode'),
+  editDevPollingPacing: document.getElementById('editDevPollingPacing'),
+  editDevPollBatchSize: document.getElementById('editDevPollBatchSize'),
+  editDevPollTimeBudgetMs: document.getElementById('editDevPollTimeBudgetMs'),
   editDevCancelBtn: document.getElementById('editDevCancelBtn'),
   editDevSaveBtn: document.getElementById('editDevSaveBtn'),
   editDevStatus: document.getElementById('editDevStatus'),
@@ -380,6 +384,10 @@ const els = {
   newDevPath: document.getElementById('newDevPath'),
   newDevSlot: document.getElementById('newDevSlot'),
   newDevPlcType: document.getElementById('newDevPlcType'),
+  newDevPollingMode: document.getElementById('newDevPollingMode'),
+  newDevPollingPacing: document.getElementById('newDevPollingPacing'),
+  newDevPollBatchSize: document.getElementById('newDevPollBatchSize'),
+  newDevPollTimeBudgetMs: document.getElementById('newDevPollTimeBudgetMs'),
   newDevCancelBtn: document.getElementById('newDevCancelBtn'),
   newDevCreateBtn: document.getElementById('newDevCreateBtn'),
   newDevModalCloseBtn: document.getElementById('newDevModalCloseBtn'),
@@ -2606,8 +2614,15 @@ async function importDevicesCsvIntoWorkspace() {
     const pathVal = String(csvGet(r, 'path') || '').trim() || '1,0';
     const slot = parseIntLoose(csvGet(r, 'slot'), 0) || 0;
     const description = String(csvGet(r, 'description') || '').trim();
+    const pollingMode = normalizePollingMode(csvGet(r, 'polling_mode'));
+    const pollingPacing = normalizePollingPacing(csvGet(r, 'polling_pacing'));
+    const pollBatchSize = parseIntLoose(csvGet(r, 'poll_batch_size'), 0) || 0;
+    const pollTimeBudgetMs = parseIntLoose(csvGet(r, 'poll_time_budget_ms'), 0) || 0;
 
-    const obj = { id: connection_id, description, driver, gateway, path: pathVal, slot, plc_type };
+    const obj = applyPollingConfigToConnection(
+      { id: connection_id, description, driver, gateway, path: pathVal, slot, plc_type },
+      { mode: pollingMode, pacing: pollingPacing, batchSize: pollBatchSize, timeBudgetMs: pollTimeBudgetMs }
+    );
 
     if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
     state.workspaceConnDirty.set(relPath, obj);
@@ -5304,6 +5319,35 @@ function setConnEditorEnabled(enabled) {
     .forEach((el) => { el.disabled = !enabled; });
 }
 
+function normalizePollingMode(value) {
+  return String(value || '').trim() === 'time_sliced' ? 'time_sliced' : 'standard';
+}
+
+function normalizePollingPacing(value) {
+  const v = String(value || '').trim();
+  return ['gentle', 'balanced', 'fast'].includes(v) ? v : 'balanced';
+}
+
+function readOptionalPositiveInt(el) {
+  const raw = String(el?.value ?? '').trim();
+  if (!raw) return null;
+  const n = Math.trunc(Number(raw));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs }) {
+  const out = obj || {};
+  out.polling_mode = normalizePollingMode(mode);
+  out.polling_pacing = normalizePollingPacing(pacing);
+  const batch = Math.trunc(Number(batchSize || 0));
+  const budget = Math.trunc(Number(timeBudgetMs || 0));
+  if (Number.isFinite(batch) && batch > 0) out.poll_batch_size = batch;
+  else delete out.poll_batch_size;
+  if (Number.isFinite(budget) && budget > 0) out.poll_time_budget_ms = budget;
+  else delete out.poll_time_budget_ms;
+  return out;
+}
+
 function fillConnForm(obj) {
   state.selectedConnObj = obj;
   state.selectedConnRawDirty = false;
@@ -5963,6 +6007,10 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevPath) els.newDevPath.value = '';
   if (els.newDevSlot) els.newDevSlot.value = '';
   if (els.newDevPlcType) els.newDevPlcType.value = 'lgx';
+  if (els.newDevPollingMode) els.newDevPollingMode.value = 'standard';
+  if (els.newDevPollingPacing) els.newDevPollingPacing.value = 'balanced';
+  if (els.newDevPollBatchSize) els.newDevPollBatchSize.value = '';
+  if (els.newDevPollTimeBudgetMs) els.newDevPollTimeBudgetMs.value = '';
 
   setNewDevStatus('');
   els.newDevId?.focus?.();
@@ -6429,6 +6477,10 @@ function openWorkspaceItemModal(node) {
         if (els.editDevPath) els.editDevPath.value = String(obj?.path || '1,0') || '1,0';
         if (els.editDevSlot) els.editDevSlot.value = (obj?.slot == null) ? '' : String(obj.slot);
         if (els.editDevPlcType) els.editDevPlcType.value = String(obj?.plc_type || obj?.plcType || 'lgx') || 'lgx';
+        if (els.editDevPollingMode) els.editDevPollingMode.value = normalizePollingMode(obj?.polling_mode);
+        if (els.editDevPollingPacing) els.editDevPollingPacing.value = normalizePollingPacing(obj?.polling_pacing);
+        if (els.editDevPollBatchSize) els.editDevPollBatchSize.value = obj?.poll_batch_size == null ? '' : String(obj.poll_batch_size);
+        if (els.editDevPollTimeBudgetMs) els.editDevPollTimeBudgetMs.value = obj?.poll_time_budget_ms == null ? '' : String(obj.poll_time_budget_ms);
         setEditDevStatus('');
       }).catch((err) => {
         setEditDevStatus(`Load failed: ${err.message}`);
@@ -7105,7 +7157,15 @@ async function saveEditedDeviceFromModal() {
 
   const existing = state.connObjCache?.get?.(relPath) || {};
   const description = String(existing?.description || '').trim();
-  const obj = { id: newId, description, driver, gateway, path: pathVal, slot, plc_type };
+  const obj = applyPollingConfigToConnection(
+    { id: newId, description, driver, gateway, path: pathVal, slot, plc_type },
+    {
+      mode: els.editDevPollingMode?.value,
+      pacing: els.editDevPollingPacing?.value,
+      batchSize: readOptionalPositiveInt(els.editDevPollBatchSize),
+      timeBudgetMs: readOptionalPositiveInt(els.editDevPollTimeBudgetMs)
+    }
+  );
 
   let targetRelPath = relPath;
   if (oldId && newId !== oldId) {
@@ -7282,7 +7342,15 @@ async function createNewDeviceFromWorkspace() {
   const plc_type = String(els.newDevPlcType?.value || '').trim() || 'lgx';
 
   // opcbridge connection config requires `id` (not `connection_id`).
-  const obj = { id: connection_id, description: '', driver, gateway, path: pathVal, slot, plc_type };
+  const obj = applyPollingConfigToConnection(
+    { id: connection_id, description: '', driver, gateway, path: pathVal, slot, plc_type },
+    {
+      mode: els.newDevPollingMode?.value,
+      pacing: els.newDevPollingPacing?.value,
+      batchSize: readOptionalPositiveInt(els.newDevPollBatchSize),
+      timeBudgetMs: readOptionalPositiveInt(els.newDevPollTimeBudgetMs)
+    }
+  );
   const relPath = `connections/${connection_id}.json`;
 
   const exists = state.connFiles.some((f) => String(f?.path || '') === relPath);

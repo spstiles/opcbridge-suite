@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>opcbridge SCADA</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="styles.css?v=20260505_target_editor_refresh" />
+  <link rel="stylesheet" href="styles.css?v=20260505_time_sliced_polling" />
 </head>
 <body>
   <header class="topbar">
@@ -730,6 +730,17 @@
               <option value="lgx-pccc">Logix (PCCC gateway mode)</option>
               <option value="omron-njnx">OMRON NJ/NX</option>
             </select></div>
+            <div class="form-row"><label>Polling Mode</label><select id="editDevPollingMode">
+              <option value="standard">Standard</option>
+              <option value="time_sliced">Time Sliced</option>
+            </select></div>
+            <div class="form-row"><label>Pacing</label><select id="editDevPollingPacing">
+              <option value="balanced">Balanced</option>
+              <option value="gentle">Gentle</option>
+              <option value="fast">Fast</option>
+            </select></div>
+            <div class="form-row"><label>Batch Size</label><input id="editDevPollBatchSize" type="number" step="1" min="0" placeholder="Auto" /></div>
+            <div class="form-row"><label>Time Budget (ms)</label><input id="editDevPollTimeBudgetMs" type="number" step="1" min="0" placeholder="Auto" /></div>
             <div class="form-row"><label></label>
               <div class="row-actions">
                 <button class="btn" id="editDevCancelBtn" type="button">Cancel</button>
@@ -987,6 +998,17 @@
             <option value="lgx-pccc">Logix (PCCC gateway mode)</option>
             <option value="omron-njnx">OMRON NJ/NX</option>
           </select></div>
+          <div class="form-row"><label>Polling Mode</label><select id="newDevPollingMode">
+            <option value="standard">Standard</option>
+            <option value="time_sliced">Time Sliced</option>
+          </select></div>
+          <div class="form-row"><label>Pacing</label><select id="newDevPollingPacing">
+            <option value="balanced">Balanced</option>
+            <option value="gentle">Gentle</option>
+            <option value="fast">Fast</option>
+          </select></div>
+          <div class="form-row"><label>Batch Size</label><input id="newDevPollBatchSize" type="number" step="1" min="0" placeholder="Auto" /></div>
+          <div class="form-row"><label>Time Budget (ms)</label><input id="newDevPollTimeBudgetMs" type="number" step="1" min="0" placeholder="Auto" /></div>
           <div class="form-row"><label></label>
             <div class="row-actions">
               <button class="btn" id="newDevCancelBtn" type="button">Cancel</button>
@@ -1332,6 +1354,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260505_target_editor_refresh"></script>
+  <script src="app.js?v=20260505_time_sliced_polling"></script>
 </body>
 </html>

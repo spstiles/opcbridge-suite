@@ -153,6 +153,10 @@ struct ConnectionConfig {
     std::string gateway;     // IP/host of PLC or ENxT
     std::string path;        // CIP path ("1,0"), built from slot if empty
     std::string plc_type;    // "lgx", "mlgx", "plc5", "slc"
+    std::string polling_mode = "standard"; // "standard" or "time_sliced"
+    std::string polling_pacing = "balanced"; // "gentle", "balanced", "fast"
+    int poll_batch_size = 0; // 0 = auto
+    int poll_time_budget_ms = 0; // 0 = auto
     int slot = 0;
     int default_timeout_ms = 1000;
     int default_read_ms    = 1000;
@@ -439,6 +443,14 @@ struct ConnPollMetrics {
 
     std::atomic<int64_t> last_ok_ts_ms{-1};
     std::atomic<int64_t> last_err_ts_ms{-1};
+
+    std::atomic<uint64_t> batches_total{0};
+    std::atomic<uint64_t> batch_us_last{0};
+    std::atomic<uint64_t> batch_us_max{0};
+    std::atomic<uint64_t> batch_reads_last{0};
+    std::atomic<uint64_t> yield_count{0};
+    std::atomic<uint64_t> poll_cursor{0};
+    std::atomic<uint64_t> poll_tag_count{0};
 };
 
 static std::mutex g_metricsMutex;
@@ -2455,6 +2467,12 @@ ConnectionConfig load_connection_config(const std::string &path) {
     std::string raw_path = j.value("path", std::string{});
     c.slot     = j.value("slot", 0);
     c.plc_type = j.value("plc_type", std::string("lgx"));
+    c.polling_mode = to_lower_copy(trim_copy(json_get_string_loose(j, "polling_mode", "standard")));
+    if (c.polling_mode != "time_sliced") c.polling_mode = "standard";
+    c.polling_pacing = to_lower_copy(trim_copy(json_get_string_loose(j, "polling_pacing", "balanced")));
+    if (c.polling_pacing != "gentle" && c.polling_pacing != "fast") c.polling_pacing = "balanced";
+    c.poll_batch_size = std::max(0, json_get_int_loose(j, "poll_batch_size", 0));
+    c.poll_time_budget_ms = std::max(0, json_get_int_loose(j, "poll_time_budget_ms", 0));
     c.default_timeout_ms = j.value("default_timeout_ms", 1000);
     c.default_read_ms    = j.value("default_read_ms", 1000);
     c.default_write_ms   = j.value("default_write_ms", 1000);
@@ -12742,6 +12760,10 @@ window.addEventListener("load", startAutoRefresh);
                     jc["path"]               = c.path;
                     jc["slot"]               = c.slot;
                     jc["plc_type"]           = c.plc_type;
+                    jc["polling_mode"]       = c.polling_mode;
+                    jc["polling_pacing"]     = c.polling_pacing;
+                    jc["poll_batch_size"]    = c.poll_batch_size;
+                    jc["poll_time_budget_ms"] = c.poll_time_budget_ms;
                     jc["default_timeout_ms"] = c.default_timeout_ms;
                     jc["default_read_ms"]    = c.default_read_ms;
                     jc["default_write_ms"]   = c.default_write_ms;
@@ -12803,6 +12825,22 @@ window.addEventListener("load", startAutoRefresh);
 		                    j["read_ms_max"]  = static_cast<double>(us_max) / 1000.0;
 		                    j["read_ms_avg"]  = (total > 0)
 		                        ? (static_cast<double>(us_total) / 1000.0) / static_cast<double>(total)
+		                        : 0.0;
+
+		                    uint64_t batch_us_last = m->batch_us_last.load(std::memory_order_relaxed);
+		                    uint64_t batch_us_max = m->batch_us_max.load(std::memory_order_relaxed);
+		                    uint64_t batch_reads_last = m->batch_reads_last.load(std::memory_order_relaxed);
+		                    uint64_t tag_count = m->poll_tag_count.load(std::memory_order_relaxed);
+		                    uint64_t cursor = m->poll_cursor.load(std::memory_order_relaxed);
+		                    j["batches_total"] = m->batches_total.load(std::memory_order_relaxed);
+		                    j["batch_ms_last"] = static_cast<double>(batch_us_last) / 1000.0;
+		                    j["batch_ms_max"] = static_cast<double>(batch_us_max) / 1000.0;
+		                    j["batch_reads_last"] = batch_reads_last;
+		                    j["yield_count"] = m->yield_count.load(std::memory_order_relaxed);
+		                    j["poll_cursor"] = cursor;
+		                    j["poll_tag_count"] = tag_count;
+		                    j["poll_progress_pct"] = tag_count > 0
+		                        ? (100.0 * static_cast<double>(std::min(cursor, tag_count)) / static_cast<double>(tag_count))
 		                        : 0.0;
 
 		                    j["last_ok_ts_ms"]  = (last_ok >= 0) ? json(last_ok) : json(nullptr);
@@ -16735,6 +16773,22 @@ window.addEventListener("load", startAutoRefresh);
 								heap.push(HeapItem{spec.tags[i].next_poll, i});
 							}
 
+							const bool timeSliced = (spec.conn.polling_mode == "time_sliced");
+							const int autoBatchSize = (spec.conn.polling_pacing == "gentle")
+								? 25
+								: ((spec.conn.polling_pacing == "fast") ? 250 : 100);
+							const int autoBudgetMs = (spec.conn.polling_pacing == "gentle")
+								? 15
+								: ((spec.conn.polling_pacing == "fast") ? 75 : 35);
+							const int batchSize = std::max(1, spec.conn.poll_batch_size > 0 ? spec.conn.poll_batch_size : autoBatchSize);
+							const int budgetMs = std::max(1, spec.conn.poll_time_budget_ms > 0 ? spec.conn.poll_time_budget_ms : autoBudgetMs);
+							const int yieldMs = (spec.conn.polling_pacing == "gentle") ? 5 : ((spec.conn.polling_pacing == "fast") ? 1 : 2);
+							size_t batchReads = 0;
+							auto batchStarted = std::chrono::steady_clock::now();
+							if (spec.metrics) {
+								spec.metrics->poll_tag_count.store(static_cast<uint64_t>(spec.tags.size()), std::memory_order_relaxed);
+							}
+
 		                    while (g_configGeneration.load(std::memory_order_relaxed) == spec.gen) {
 								if (g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
 									return;
@@ -17467,9 +17521,30 @@ window.addEventListener("load", startAutoRefresh);
 		                                    j.snap = snap;
 	                                j.hadPrev = hadPrev;
 	                                if (hadPrev) j.prev = prevSnap;
-	                                mqttQueue.push_back(std::move(j));
+		                                mqttQueue.push_back(std::move(j));
 		                                }
 	                            }
+								if (timeSliced) {
+									batchReads++;
+									const auto afterRead = std::chrono::steady_clock::now();
+									const auto batchElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(afterRead - batchStarted).count();
+									if (batchReads >= static_cast<size_t>(batchSize) || batchElapsed >= budgetMs) {
+										if (spec.metrics) {
+											const uint64_t us = static_cast<uint64_t>(
+												std::chrono::duration_cast<std::chrono::microseconds>(afterRead - batchStarted).count()
+											);
+											spec.metrics->batches_total.fetch_add(1, std::memory_order_relaxed);
+											spec.metrics->batch_us_last.store(us, std::memory_order_relaxed);
+											atomic_update_max(spec.metrics->batch_us_max, us);
+											spec.metrics->batch_reads_last.store(static_cast<uint64_t>(batchReads), std::memory_order_relaxed);
+											spec.metrics->yield_count.fetch_add(1, std::memory_order_relaxed);
+											spec.metrics->poll_cursor.store(static_cast<uint64_t>((top.idx + 1) % std::max<size_t>(spec.tags.size(), 1)), std::memory_order_relaxed);
+										}
+										std::this_thread::sleep_for(std::chrono::milliseconds(yieldMs));
+										batchReads = 0;
+										batchStarted = std::chrono::steady_clock::now();
+									}
+								}
 		                    }
 		                });
 		            }
