@@ -2080,6 +2080,10 @@ async function downloadConnectivityCsv() {
     'slot',
     'plc_type',
     'plc_type_label',
+    'polling_mode',
+    'polling_pacing',
+    'poll_batch_size',
+    'poll_time_budget_ms',
     'source_file',
     'action'
   ];
@@ -2088,6 +2092,10 @@ async function downloadConnectivityCsv() {
     const cid = String(obj?.connection_id || obj?.id || '') || inferConnectionIdFromPath(rel);
     const driver = String(obj?.driver || '').trim();
     const plcType = String(obj?.plc_type || obj?.plcType || '').trim();
+    const pollingMode = normalizePollingMode(obj?.polling_mode);
+    const pollingPacing = normalizePollingPacing(obj?.polling_pacing);
+    const pollBatchSize = Number(obj?.poll_batch_size);
+    const pollTimeBudgetMs = Number(obj?.poll_time_budget_ms);
     return {
       connection_id: cid,
       description: String(obj?.description || '').trim(),
@@ -2098,6 +2106,10 @@ async function downloadConnectivityCsv() {
       slot: (obj?.slot == null) ? '' : String(obj.slot),
       plc_type: plcType,
       plc_type_label: labelForPlcType(plcType),
+      polling_mode: pollingMode,
+      polling_pacing: pollingPacing,
+      poll_batch_size: Number.isFinite(pollBatchSize) && pollBatchSize > 0 ? String(Math.trunc(pollBatchSize)) : '',
+      poll_time_budget_ms: Number.isFinite(pollTimeBudgetMs) && pollTimeBudgetMs > 0 ? String(Math.trunc(pollTimeBudgetMs)) : '',
       source_file: rel,
       action: ''
     };
