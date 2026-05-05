@@ -1014,6 +1014,7 @@ struct AlarmRule
     std::string group;
     std::string site;
     bool enabled = true;
+    bool site_enabled = true;
     int severity = 500;
     std::string connection_id;
     std::string tag;
@@ -1047,9 +1048,11 @@ struct AlarmState
     std::string site;
     int severity = 500;
     bool enabled = true;
+    bool site_enabled = true;
 
     bool active = false;
     bool acked = false;
+    bool initialized = false;
     std::optional<int64_t> shelved_until_ms;
 
     int64_t active_since_ms = 0;
@@ -1088,6 +1091,7 @@ static json alarm_state_to_json(const AlarmState &s)
     j["site"] = s.site;
     j["severity"] = s.severity;
     j["enabled"] = s.enabled;
+    j["site_enabled"] = s.site_enabled;
     j["active"] = s.active;
     j["acked"] = s.acked;
     if (s.shelved_until_ms.has_value())
@@ -1237,6 +1241,31 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
         out.audio_paths.push_back(resolve_audio_path(configDir, configuredPath));
     }
     return out;
+}
+
+static bool resolve_alarm_site_enabled(const json& root, const json& rule)
+{
+    const std::string groupName = json_string_or_empty(rule, "group");
+    const std::string siteName = json_string_or_empty(rule, "site");
+    if (groupName.empty() || siteName.empty()) return true;
+    if (!root.contains("groups") || !root["groups"].is_array()) return true;
+
+    for (const auto& g : root["groups"])
+    {
+        if (!g.is_object() || json_string_or_empty(g, "name") != groupName) continue;
+        if (!g.contains("sites") || !g["sites"].is_array()) return true;
+        for (const auto& s : g["sites"])
+        {
+            if (!s.is_object() || json_string_or_empty(s, "name") != siteName) continue;
+            if (s.contains("alarms_enabled") && s["alarms_enabled"].is_boolean())
+            {
+                return s["alarms_enabled"].get<bool>();
+            }
+            return true;
+        }
+        return true;
+    }
+    return true;
 }
 
 static ResolvedAlarmRepeat resolve_alarm_repeat(const json& root, const json& rule)
@@ -1419,6 +1448,8 @@ public:
         std::vector<std::string> contact_groups;
         int64_t repeat_ms = 0;
         std::string until = "acked_or_returned";
+        int audio_delay_seconds = -1;
+        int audio_gap_ms = -1;
     };
 
     struct Job
@@ -1431,6 +1462,8 @@ public:
         std::string contact_id;
         std::string contact_name;
         std::string policy_id;
+        int audio_delay_seconds = -1;
+        int audio_gap_ms = -1;
     };
 
     struct TtsPart
@@ -1557,6 +1590,14 @@ public:
                 p.min_severity = item.value("min_severity", 0);
                 p.repeat_ms = item.value("repeat_ms", 0LL);
                 p.until = item.value("until", p.until);
+                if (item.contains("audio_delay_seconds") && item["audio_delay_seconds"].is_number_integer())
+                {
+                    p.audio_delay_seconds = std::max(0, std::min(120, item["audio_delay_seconds"].get<int>()));
+                }
+                if (item.contains("audio_gap_ms") && item["audio_gap_ms"].is_number_integer())
+                {
+                    p.audio_gap_ms = std::max(0, std::min(5000, item["audio_gap_ms"].get<int>()));
+                }
                 if (item.contains("on") && item["on"].is_array())
                 {
                     p.on.clear();
@@ -2107,6 +2148,8 @@ private:
         job.contact_id = contact.id;
         job.contact_name = contact.name;
         job.policy_id = policy.id;
+        job.audio_delay_seconds = policy.audio_delay_seconds;
+        job.audio_gap_ms = policy.audio_gap_ms;
         modem_jobs_.push_back(std::move(job));
     }
 
@@ -2483,6 +2526,61 @@ private:
         return true;
     }
 
+    static bool play_wavs_over_modem(ModemSerialPort& port, const std::vector<std::string>& paths, int voice_line, int timeout_ms, int gap_ms, std::string& result, int& played_count)
+    {
+        std::string combined;
+        std::string err;
+        played_count = 0;
+
+        const int clean_gap_ms = std::max(0, std::min(5000, gap_ms));
+        const size_t gap_samples = static_cast<size_t>((8000LL * clean_gap_ms) / 1000LL);
+        const std::string silence(gap_samples, static_cast<char>(0x80));
+
+        for (const auto& path : paths) {
+            if (path.empty()) continue;
+            std::string pcm;
+            if (!load_wav_for_modem(path, pcm, err)) {
+                result = err;
+                return false;
+            }
+            if (!combined.empty() && !silence.empty()) combined.append(silence);
+            combined.append(pcm);
+            played_count++;
+        }
+
+        if (combined.empty() || played_count <= 0) {
+            result = "no playable WAV files";
+            return false;
+        }
+
+        std::string response;
+        // Keep the modem in one transmit session. Re-entering AT+VTX per file can
+        // add several seconds of modem-controlled silence between short messages.
+        send_modem_command(port, "AT+VLS=" + std::to_string(voice_line), timeout_ms, response, err);
+
+        if (!send_modem_command(port, "AT+VSM=1", timeout_ms, response, err)) {
+            result = "AT+VSM=1 failed: " + err;
+            return false;
+        }
+        if (!send_modem_command(port, "AT+VTX", timeout_ms, response, err)) {
+            result = "AT+VTX failed: " + err;
+            return false;
+        }
+        if (response.find("CONNECT") == std::string::npos) {
+            result = "AT+VTX did not enter transmit mode";
+            return false;
+        }
+
+        const std::string payload = dle_escape_voice_data(combined);
+        if (!port.write_all(payload, err)) {
+            result = "voice audio write failed: " + err;
+            return false;
+        }
+        if (clean_gap_ms > 0) port.read_for(clean_gap_ms);
+        result = "played " + std::to_string(combined.size()) + " samples from " + std::to_string(played_count) + " file(s)";
+        return true;
+    }
+
     bool run_voice_modem_call(const Job& job, std::string& result)
     {
         VoiceModemConfig vm;
@@ -2550,8 +2648,8 @@ private:
         }
 
         const int dialSeconds = std::max(1, std::min(300, vm.dial_seconds));
-        const int audioDelaySeconds = std::max(0, std::min(120, vm.audio_delay_seconds));
-        const int audioGapMs = std::max(0, std::min(5000, vm.audio_gap_ms));
+        const int audioDelaySeconds = std::max(0, std::min(120, job.audio_delay_seconds >= 0 ? job.audio_delay_seconds : vm.audio_delay_seconds));
+        const int audioGapMs = std::max(0, std::min(5000, job.audio_gap_ms >= 0 ? job.audio_gap_ms : vm.audio_gap_ms));
         std::string playResult;
         int playedCount = 0;
         bool playFailed = false;
@@ -2560,15 +2658,8 @@ private:
             std::this_thread::sleep_for(std::chrono::seconds(audioDelaySeconds));
             // Drain any late dial/answer responses before requesting transmit mode.
             port.read_for(500);
-            for (const auto& path : playbackPaths)
-            {
-                if (path.empty()) continue;
-                bool played = play_wav_over_modem(port, path, voiceLine, vm.command_timeout_ms, audioGapMs, playResult);
-                if (!played) {
-                    playFailed = true;
-                    break;
-                }
-                playedCount++;
+            if (!play_wavs_over_modem(port, playbackPaths, voiceLine, vm.command_timeout_ms, audioGapMs, playResult, playedCount)) {
+                playFailed = true;
             }
         }
 
@@ -2832,7 +2923,7 @@ struct AlarmEngine
         const AlarmState& s = it->second;
         const int64_t t = now_ms();
         const bool shelved = s.shelved_until_ms.has_value() && t < s.shelved_until_ms.value();
-        if (!s.enabled || shelved) return false;
+        if (!s.enabled || !s.site_enabled || shelved) return false;
 
         if (until == "returned") return s.active;
         if (until == "acked") return s.active && !s.acked;
@@ -2866,6 +2957,7 @@ struct AlarmEngine
                 auto it = states.find(alarmId);
                 if (it == states.end()) continue;
                 AlarmState& s = it->second;
+                s.initialized = true;
 
                 s.last_change_ms = ts;
                 if (ts > lastChange) lastChange = ts;
@@ -3042,6 +3134,7 @@ struct AlarmEngine
             r.group = it.value("group", "");
             r.site = it.value("site", "");
             r.enabled = it.value("enabled", true);
+            r.site_enabled = resolve_alarm_site_enabled(root, it);
             r.severity = it.value("severity", 500);
             if (it.contains("source") && it["source"].is_object())
             {
@@ -3087,10 +3180,12 @@ struct AlarmEngine
             s.site = r.site;
             s.severity = r.severity;
             s.enabled = r.enabled;
+            s.site_enabled = r.site_enabled;
             s.connection_id = r.connection_id;
             s.tag = r.tag;
             s.active = false;
             s.acked = false;
+            s.initialized = false;
             s.active_since_ms = 0;
             s.last_change_ms = 0;
             s.last_value = nullptr;
@@ -3169,6 +3264,30 @@ struct AlarmEngine
 
                 const int64_t t = now_ms();
                 const bool shelved = s.shelved_until_ms.has_value() && t < s.shelved_until_ms.value();
+                if (!r.site_enabled)
+                {
+                    // Re-enable should baseline before notifying, so keep disabled
+                    // sites uninitialized while they are suppressed.
+                    s.initialized = false;
+                    s.site_enabled = false;
+                    if (s.active)
+                    {
+                        s.active = false;
+                        s.last_change_ms = t;
+                        s.message = "";
+                        last_alarm_change_ms.store(t);
+                        if (ws && ws->enabled.load()) {
+                            json msg;
+                            msg["type"] = "alarm_state";
+                            msg["ts_ms"] = t;
+                            msg["alarm"] = alarm_state_to_json(s);
+                            ws->broadcast(msg);
+                        }
+                        changed.push_back(s);
+                    }
+                    continue;
+                }
+                s.site_enabled = true;
                 const bool can_eval = r.enabled && !shelved;
 
                 bool should_be_active = false;
@@ -3205,6 +3324,28 @@ struct AlarmEngine
 
                 if (should_be_active && !s.active)
                 {
+                    if (!s.initialized)
+                    {
+                        // First value after a new/reloaded alarm is a baseline, not a
+                        // new active transition. Update live state without notifications.
+                        s.initialized = true;
+                        s.active = true;
+                        s.acked = false;
+                        s.active_since_ms = t;
+                        s.last_change_ms = t;
+                        s.message = r.message_on_active.empty() ? s.name : r.message_on_active;
+                        last_alarm_change_ms.store(t);
+                        if (ws && ws->enabled.load()) {
+                            json msg;
+                            msg["type"] = "alarm_state";
+                            msg["ts_ms"] = t;
+                            msg["alarm"] = alarm_state_to_json(s);
+                            ws->broadcast(msg);
+                        }
+                        changed.push_back(s);
+                        continue;
+                    }
+
                     s.active = true;
                     s.acked = false;
                     s.active_since_ms = t;
@@ -3251,6 +3392,10 @@ struct AlarmEngine
                         ws->broadcast(msg);
                     }
                     changed.push_back(s);
+                }
+                else if (!s.initialized)
+                {
+                    s.initialized = true;
                 }
             }
         }
@@ -4138,6 +4283,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             r.group = it.value("group", "");
             r.site = it.value("site", "");
             r.enabled = it.value("enabled", true);
+            r.site_enabled = resolve_alarm_site_enabled(rulesRoot, it);
             r.severity = it.value("severity", 500);
             if (it.contains("source") && it["source"].is_object())
             {
@@ -4182,10 +4328,12 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.site = r.site;
             s.severity = r.severity;
             s.enabled = r.enabled;
+            s.site_enabled = r.site_enabled;
             s.connection_id = r.connection_id;
             s.tag = r.tag;
             s.active = false;
             s.acked = false;
+            s.initialized = false;
             s.active_since_ms = 0;
             s.last_change_ms = 0;
             s.last_value = nullptr;
@@ -4223,6 +4371,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             // Carry over live state; keep rule-derived fields from the new config.
             s.active = prev.active;
             s.acked = prev.acked;
+            s.initialized = prev.initialized;
             s.active_since_ms = prev.active_since_ms;
             s.last_change_ms = prev.last_change_ms;
             s.last_value = prev.last_value;

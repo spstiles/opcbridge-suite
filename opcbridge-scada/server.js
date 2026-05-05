@@ -143,6 +143,11 @@ const SUITE_SERVICE_GROUP = String(process.env.OPCBRIDGE_SERVICE_GROUP || SUITE_
 
 const DEFAULT_OPCBRIDGE_BIN = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_BIN || '/opt/opcbridge-suite/bin/opcbridge').trim();
 const DEFAULT_OPCBRIDGE_CONFIG_DIR = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_CONFIG_DIR || '/etc/opcbridge').trim();
+const HMI_ROOT = String(process.env.OPCBRIDGE_HMI_ROOT || path.join(SUITE_PREFIX, 'hmi')).trim();
+const PROJECT_BACKUP_MAX_FILE_BYTES = Number(process.env.OPCBRIDGE_PROJECT_BACKUP_MAX_FILE_BYTES || 80 * 1024 * 1024);
+const PROJECT_BACKUP_MAX_TOTAL_BYTES = Number(process.env.OPCBRIDGE_PROJECT_BACKUP_MAX_TOTAL_BYTES || 250 * 1024 * 1024);
+const OPCBRIDGE_ALARMS_DB_PATH = String(process.env.OPCBRIDGE_ALARMS_DB_PATH || '/var/lib/opcbridge/alarms.db').trim();
+const OPCBRIDGE_ENV_PATH = String(process.env.OPCBRIDGE_ENV_PATH || '/etc/opcbridge/opcbridge.env').trim();
 
 const defaultConfig = {
   listen: { host: '0.0.0.0', port: 3010 },
@@ -814,6 +819,461 @@ function readBody(req, maxBytes = 2 * 1024 * 1024) {
   });
 }
 
+function projectBackupSafeRel(relPath) {
+  const raw = String(relPath || '').replace(/\0/g, '').replace(/\\/g, '/').trim();
+  if (!raw || raw.startsWith('/') || raw.includes('..')) return '';
+  const parts = raw.split('/').filter(Boolean);
+  if (!parts.length) return '';
+  for (const p of parts) {
+    if (p === '.' || p === '..') return '';
+  }
+  return parts.join('/');
+}
+
+function projectBackupAddFile(files, section, rootDir, relPath, opts = {}) {
+  const rel = projectBackupSafeRel(relPath);
+  if (!rel) return { ok: false, skipped: true, reason: 'unsafe relative path' };
+  const root = path.resolve(String(rootDir || ''));
+  const full = path.resolve(root, rel);
+  if (!full.startsWith(root + path.sep) && full !== root) return { ok: false, skipped: true, reason: 'path outside root' };
+  let st = null;
+  try {
+    st = fs.statSync(full);
+  } catch {
+    if (opts.optional !== false) return { ok: true, skipped: true, reason: 'missing' };
+    return { ok: false, skipped: true, reason: 'missing' };
+  }
+  if (!st.isFile()) return { ok: true, skipped: true, reason: 'not a file' };
+  if (st.size > PROJECT_BACKUP_MAX_FILE_BYTES) return { ok: false, skipped: true, reason: `file too large (${st.size} bytes)` };
+  const buf = fs.readFileSync(full);
+  files.push({
+    section: String(section || ''),
+    path: rel,
+    size: buf.length,
+    mtime_ms: Math.trunc(st.mtimeMs || 0),
+    mode: st.mode & 0o777,
+    encoding: 'base64',
+    content_b64: buf.toString('base64')
+  });
+  return { ok: true, skipped: false, size: buf.length };
+}
+
+function projectBackupAddGeneratedFile(files, section, relPath, buf, opts = {}) {
+  const rel = projectBackupSafeRel(relPath);
+  if (!rel) return { ok: false, skipped: true, reason: 'unsafe relative path' };
+  const data = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf || ''), 'utf8');
+  if (!opts.allowEmpty && data.length < 1) return { ok: false, skipped: true, reason: 'empty generated file' };
+  if (data.length > PROJECT_BACKUP_MAX_FILE_BYTES) return { ok: false, skipped: true, reason: `file too large (${data.length} bytes)` };
+  files.push({
+    section: String(section || ''),
+    path: rel,
+    size: data.length,
+    mtime_ms: Date.now(),
+    mode: Number(opts.mode || 0o600) & 0o777,
+    encoding: 'base64',
+    generated: true,
+    content_b64: data.toString('base64')
+  });
+  return { ok: true, skipped: false, size: data.length };
+}
+
+function readEnvKeyValueFile(filePath) {
+  const out = {};
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    String(raw || '').split(/\r?\n/g).forEach((line) => {
+      let s = String(line || '').trim();
+      if (!s || s.startsWith('#')) return;
+      if (s.startsWith('export ')) s = s.slice('export '.length).trim();
+      const idx = s.indexOf('=');
+      if (idx <= 0) return;
+      const key = s.slice(0, idx).trim();
+      let val = s.slice(idx + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (key) out[key] = val;
+    });
+  } catch {
+    // ignore unreadable/missing env files
+  }
+  return out;
+}
+
+function historianPgSettings() {
+  const envFile = readEnvKeyValueFile(OPCBRIDGE_ENV_PATH);
+  const get = (key, def = '') => String(process.env[key] || envFile[key] || def || '').trim();
+  return {
+    host: get('HISTORIAN_PGHOST', '127.0.0.1'),
+    port: get('HISTORIAN_PGPORT', '5432'),
+    db: get('HISTORIAN_PGDB', 'opcbridge_historian'),
+    user: get('HISTORIAN_PGUSER', 'opcbridge_historian'),
+    password: get('HISTORIAN_PGPASSWORD', '')
+  };
+}
+
+function buildHistorianSqlDump() {
+  const pgDump = child_process.spawnSync('pg_dump', ['--version'], { encoding: 'utf8' });
+  if (pgDump.status !== 0) {
+    return { ok: false, error: 'pg_dump is not installed or not in PATH.' };
+  }
+  const pg = historianPgSettings();
+  const args = [
+    '--host', pg.host,
+    '--port', pg.port,
+    '--username', pg.user,
+    '--dbname', pg.db,
+    '--format', 'plain',
+    '--no-owner',
+    '--no-privileges'
+  ];
+  const env = { ...process.env };
+  if (pg.password) env.PGPASSWORD = pg.password;
+  const r = child_process.spawnSync('pg_dump', args, {
+    encoding: null,
+    env,
+    maxBuffer: PROJECT_BACKUP_MAX_FILE_BYTES
+  });
+  if (r.status !== 0) {
+    return {
+      ok: false,
+      error: String((r.stderr || Buffer.alloc(0)).toString('utf8') || r.error?.message || 'pg_dump failed').trim()
+    };
+  }
+  return { ok: true, buffer: r.stdout || Buffer.alloc(0), settings: { host: pg.host, port: pg.port, db: pg.db, user: pg.user } };
+}
+
+function projectBackupWalkFiles(rootDir, dirRel, opts = {}) {
+  const root = path.resolve(String(rootDir || ''));
+  const startRel = projectBackupSafeRel(dirRel || '.') || '.';
+  const start = path.resolve(root, startRel);
+  if (!start.startsWith(root + path.sep) && start !== root) return [];
+
+  const out = [];
+  const excludeDirs = new Set((opts.excludeDirs || []).map((s) => String(s || '')));
+  const excludeNames = new Set((opts.excludeNames || []).map((s) => String(s || '')));
+  const includeExts = opts.includeExts ? new Set(opts.includeExts.map((s) => String(s || '').toLowerCase())) : null;
+
+  function walk(absDir, relDir) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    for (const ent of entries) {
+      if (!ent || !ent.name || ent.name.includes('\0')) continue;
+      if (excludeNames.has(ent.name)) continue;
+      const rel = relDir === '.' ? ent.name : `${relDir}/${ent.name}`;
+      const abs = path.join(absDir, ent.name);
+      if (ent.isDirectory()) {
+        if (excludeDirs.has(ent.name) || excludeDirs.has(rel)) continue;
+        walk(abs, rel);
+      } else if (ent.isFile()) {
+        if (includeExts && !includeExts.has(path.extname(ent.name).toLowerCase())) continue;
+        out.push(rel);
+      }
+    }
+  }
+
+  try {
+    const st = fs.statSync(start);
+    if (st.isDirectory()) walk(start, startRel === '.' ? '.' : startRel);
+    else if (st.isFile()) out.push(startRel);
+  } catch {
+    // ignore
+  }
+  return out;
+}
+
+function buildProjectBackup({ includeSecrets = false, includeHistory = false, includeHistorianData = false, onProgress = null } = {}) {
+  const files = [];
+  const warnings = [];
+  let totalBytes = 0;
+  const progress = (message, percent) => {
+    if (typeof onProgress === 'function') {
+      try { onProgress(String(message || ''), Number(percent || 0)); } catch { /* ignore */ }
+    }
+  };
+
+  const add = (section, root, rel, opts = {}) => {
+    const before = files.length;
+    const r = projectBackupAddFile(files, section, root, rel, opts);
+    if (!r.ok && !r.skipped) warnings.push(`${section}/${rel}: ${r.reason || 'failed'}`);
+    if (r.skipped && r.reason && opts.warnMissing) warnings.push(`${section}/${rel}: ${r.reason}`);
+    if (files.length > before) {
+      totalBytes += files[files.length - 1].size || 0;
+      if (totalBytes > PROJECT_BACKUP_MAX_TOTAL_BYTES) {
+        throw new Error(`Project backup exceeded maximum total size (${PROJECT_BACKUP_MAX_TOTAL_BYTES} bytes).`);
+      }
+    }
+  };
+
+  progress('Collecting opcbridge configuration...', 10);
+  const opcExts = ['.json', '.jsonc', '.crt', '.pem', '.cer', '.wav', '.mp3', '.ogg', '.flac'];
+  projectBackupWalkFiles(DEFAULT_OPCBRIDGE_CONFIG_DIR, '.', {
+    includeExts: opcExts,
+    excludeNames: ['admin_auth.json.bak']
+  }).forEach((rel) => {
+    if (!includeSecrets && ['passwords.jsonc', 'admin_auth.json', 'config.secrets.json'].includes(path.basename(rel))) return;
+    add('opcbridge_config', DEFAULT_OPCBRIDGE_CONFIG_DIR, rel);
+  });
+
+  add('scada_config', path.dirname(CONFIG_PATH), path.basename(CONFIG_PATH));
+  if (includeSecrets) add('scada_config', path.dirname(SECRETS_PATH), path.basename(SECRETS_PATH));
+
+  progress('Collecting HMI screens and graphics...', 30);
+  const hmiFiles = [
+    ...projectBackupWalkFiles(HMI_ROOT, 'screens', { includeExts: ['.json', '.jsonc'] }),
+    ...projectBackupWalkFiles(HMI_ROOT, 'public/img', {
+      includeExts: ['.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif']
+    }),
+    ...projectBackupWalkFiles(HMI_ROOT, 'public/js/config.jsonc', { includeExts: ['.json', '.jsonc'] })
+  ];
+  Array.from(new Set(hmiFiles)).forEach((rel) => add('hmi_project', HMI_ROOT, rel));
+  if (includeSecrets) add('hmi_project', HMI_ROOT, 'passwords.jsonc');
+
+  progress('Collecting data logger configuration...', 45);
+  [
+    REPORTER_CONFIG_PATH,
+    REPORTER_REPORTS_PATH
+  ].forEach((absPath) => {
+    const p = String(absPath || '').trim();
+    if (!p) return;
+    add('reporter_config', path.dirname(p), path.basename(p));
+  });
+  if (includeSecrets) {
+    const p = String(REPORTER_DATABASES_PATH || '').trim();
+    if (p) add('reporter_config', path.dirname(p), path.basename(p));
+  }
+  projectBackupWalkFiles(REPORTER_REPORTS_DIR, '.', { includeExts: ['.json', '.jsonc', '.sql', '.txt', '.md'] })
+    .forEach((rel) => add('reporter_reports', REPORTER_REPORTS_DIR, rel));
+
+  if (includeHistory) {
+    progress('Collecting alarm/event history database...', 60);
+    const dbPath = String(OPCBRIDGE_ALARMS_DB_PATH || '').trim();
+    if (dbPath) add('runtime_history', path.dirname(dbPath), path.basename(dbPath), { warnMissing: true });
+  }
+
+  if (includeHistorianData) {
+    progress('Dumping historian PostgreSQL data...', 75);
+    const dump = buildHistorianSqlDump();
+    if (dump.ok) {
+      const r = projectBackupAddGeneratedFile(files, 'historian_data', 'opcbridge_historian.sql', dump.buffer, { mode: 0o600 });
+      if (r.ok && !r.skipped) {
+        totalBytes += r.size || 0;
+        if (totalBytes > PROJECT_BACKUP_MAX_TOTAL_BYTES) {
+          throw new Error(`Project backup exceeded maximum total size (${PROJECT_BACKUP_MAX_TOTAL_BYTES} bytes).`);
+        }
+      } else {
+        warnings.push(`historian_data/opcbridge_historian.sql: ${r.reason || 'failed'}`);
+      }
+    } else {
+      warnings.push(`historian_data: ${dump.error || 'pg_dump failed'}`);
+    }
+  }
+
+  progress('Finalizing backup manifest...', 90);
+  return {
+    type: 'opcbridge-suite-project-backup',
+    schema_version: 1,
+    created_at: new Date().toISOString(),
+    host: os.hostname(),
+    suite_version: SUITE_VERSION,
+    scada_version: COMPONENT_VERSION,
+    include_secrets: Boolean(includeSecrets),
+    include_history: Boolean(includeHistory),
+    include_historian_data: Boolean(includeHistorianData),
+    roots: {
+      opcbridge_config: DEFAULT_OPCBRIDGE_CONFIG_DIR,
+      scada_config: path.dirname(CONFIG_PATH),
+      hmi_project: HMI_ROOT,
+      reporter_config: path.dirname(REPORTER_CONFIG_PATH),
+      reporter_reports: REPORTER_REPORTS_DIR,
+      runtime_history: path.dirname(OPCBRIDGE_ALARMS_DB_PATH),
+      historian_data: os.tmpdir()
+    },
+    counts: {
+      files: files.length,
+      bytes: totalBytes
+    },
+    warnings,
+    files
+  };
+}
+
+function projectRestoreRootForSection(section) {
+  const s = String(section || '');
+  if (s === 'opcbridge_config') return DEFAULT_OPCBRIDGE_CONFIG_DIR;
+  if (s === 'scada_config') return path.dirname(CONFIG_PATH);
+  if (s === 'hmi_project') return HMI_ROOT;
+  if (s === 'reporter_config') return path.dirname(REPORTER_CONFIG_PATH);
+  if (s === 'reporter_reports') return REPORTER_REPORTS_DIR;
+  if (s === 'runtime_history') return path.dirname(OPCBRIDGE_ALARMS_DB_PATH);
+  if (s === 'historian_data') return os.tmpdir();
+  return '';
+}
+
+function previewProjectBackup(backup) {
+  const files = Array.isArray(backup?.files) ? backup.files : [];
+  const sections = {};
+  let bytes = 0;
+  files.forEach((f) => {
+    const s = String(f?.section || 'unknown');
+    if (!sections[s]) sections[s] = { files: 0, bytes: 0 };
+    const size = Number(f?.size || 0) || 0;
+    sections[s].files += 1;
+    sections[s].bytes += size;
+    bytes += size;
+  });
+  return {
+    ok: true,
+    type: String(backup?.type || ''),
+    schema_version: backup?.schema_version,
+    created_at: backup?.created_at || null,
+    host: backup?.host || null,
+    suite_version: backup?.suite_version || null,
+    include_secrets: Boolean(backup?.include_secrets),
+    include_history: Boolean(backup?.include_history),
+    include_historian_data: Boolean(backup?.include_historian_data),
+    files: files.length,
+    bytes,
+    sections
+  };
+}
+
+function restoreProjectBackup(backup) {
+  if (!backup || typeof backup !== 'object' || Array.isArray(backup)) throw new Error('Backup must be a JSON object.');
+  if (backup.type !== 'opcbridge-suite-project-backup') throw new Error('Unsupported backup type.');
+  if (Number(backup.schema_version) !== 1) throw new Error('Unsupported backup schema version.');
+  const files = Array.isArray(backup.files) ? backup.files : [];
+  if (!files.length) throw new Error('Backup contains no files.');
+
+  const preRestore = buildProjectBackup({ includeSecrets: true, includeHistory: true, includeHistorianData: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const preRestorePath = path.join(os.tmpdir(), `opcbridge-suite-pre-restore-${stamp}.json`);
+  fs.writeFileSync(preRestorePath, JSON.stringify(preRestore, null, 2) + '\n', 'utf8');
+
+  const written = [];
+  for (const f of files) {
+    const section = String(f?.section || '');
+    const rel = projectBackupSafeRel(f?.path || '');
+    if (!section || !rel) throw new Error(`Unsafe backup file entry: ${section}/${f?.path || ''}`);
+    const root = projectRestoreRootForSection(section);
+    if (!root) throw new Error(`Unsupported backup section: ${section}`);
+    const full = path.resolve(root, rel);
+    const resolvedRoot = path.resolve(root);
+    if (!full.startsWith(resolvedRoot + path.sep) && full !== resolvedRoot) throw new Error(`Restore path escapes root: ${section}/${rel}`);
+    const b64 = String(f?.content_b64 || '');
+    if (!b64) throw new Error(`Backup file has no content: ${section}/${rel}`);
+    const buf = Buffer.from(b64, 'base64');
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, buf);
+    if (Number.isFinite(Number(f?.mode))) {
+      try { fs.chmodSync(full, Number(f.mode) & 0o777); } catch { /* ignore */ }
+    }
+    written.push({ section, path: rel, bytes: buf.length });
+  }
+
+  return { ok: true, written, pre_restore_backup: preRestorePath };
+}
+
+const PROJECT_BACKUP_JOBS = new Map();
+
+function cleanupProjectBackupJobs() {
+  const now = Date.now();
+  for (const [id, job] of PROJECT_BACKUP_JOBS.entries()) {
+    const ageMs = now - Number(job?.created_ms || 0);
+    if (ageMs < 60 * 60 * 1000) continue;
+    if (job?.file_path) {
+      try { fs.unlinkSync(job.file_path); } catch { /* ignore */ }
+    }
+    PROJECT_BACKUP_JOBS.delete(id);
+  }
+}
+
+function projectBackupJobStatus(job) {
+  if (!job) return null;
+  return {
+    ok: true,
+    id: job.id,
+    state: job.state,
+    message: job.message || '',
+    percent: Number(job.percent || 0),
+    created_at: new Date(Number(job.created_ms || Date.now())).toISOString(),
+    finished_at: job.finished_ms ? new Date(Number(job.finished_ms)).toISOString() : null,
+    error: job.error || '',
+    download_url: job.state === 'done' ? `/api/project/backup/download?id=${encodeURIComponent(job.id)}` : '',
+    summary: job.summary || null,
+    warnings: job.warnings || []
+  };
+}
+
+function startProjectBackupJob(options = {}) {
+  cleanupProjectBackupJobs();
+  const id = crypto.randomBytes(12).toString('hex');
+  const job = {
+    id,
+    state: 'queued',
+    message: 'Queued...',
+    percent: 0,
+    created_ms: Date.now(),
+    finished_ms: 0,
+    error: '',
+    file_path: '',
+    filename: '',
+    summary: null,
+    warnings: []
+  };
+  PROJECT_BACKUP_JOBS.set(id, job);
+
+  setImmediate(() => {
+    try {
+      job.state = 'running';
+      job.message = 'Preparing backup...';
+      job.percent = 2;
+      const backup = buildProjectBackup({
+        includeSecrets: Boolean(options.includeSecrets),
+        includeHistory: Boolean(options.includeHistory),
+        includeHistorianData: Boolean(options.includeHistorianData),
+        onProgress: (message, percent) => {
+          job.message = message;
+          job.percent = Math.max(0, Math.min(99, Math.trunc(percent || 0)));
+        }
+      });
+      job.message = 'Writing backup file...';
+      job.percent = 95;
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `opcbridge-suite-project-backup-${stamp}.json`;
+      const filePath = path.join(os.tmpdir(), `${id}-${filename}`);
+      fs.writeFileSync(filePath, JSON.stringify(backup, null, 2) + '\n', 'utf8');
+      job.file_path = filePath;
+      job.filename = filename;
+      job.summary = {
+        files: Number(backup?.counts?.files || 0),
+        bytes: Number(backup?.counts?.bytes || 0),
+        include_secrets: Boolean(backup?.include_secrets),
+        include_history: Boolean(backup?.include_history),
+        include_historian_data: Boolean(backup?.include_historian_data)
+      };
+      job.warnings = Array.isArray(backup?.warnings) ? backup.warnings : [];
+      job.state = 'done';
+      job.message = 'Backup ready.';
+      job.percent = 100;
+      job.finished_ms = Date.now();
+    } catch (err) {
+      job.state = 'error';
+      job.message = 'Backup failed.';
+      job.error = String(err?.message || err);
+      job.percent = 100;
+      job.finished_ms = Date.now();
+    }
+  });
+
+  return job;
+}
+
 let _localAddrCache = null;
 let _localAddrCacheMs = 0;
 
@@ -962,6 +1422,10 @@ function upstreamRequestBodyLimitBytes(prefixName, upstreamPathname) {
   if (prefixName === 'opcbridge' && p === '/config/tags/import_csv') {
     return 80 * 1024 * 1024;
   }
+  if (prefixName === 'opcbridge' && p === '/config/tags') {
+    // Large systems post the flattened tag list here. Current installs can exceed 3 MiB.
+    return 80 * 1024 * 1024;
+  }
   return 2 * 1024 * 1024;
 }
 
@@ -1083,6 +1547,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (!authStatusHasPerm(status, 'suite.manage_server')) {
       sendJson(res, 403, { ok: false, error: 'Insufficient permissions (suite.manage_server required).' });
+      return null;
+    }
+    return status;
+  }
+
+  async function requireProjectBackupPerm() {
+    let status = null;
+    try {
+      status = await fetchOpcbridgeAuthStatus(req, cfg);
+    } catch (err) {
+      sendJson(res, 502, { ok: false, error: String(err.message || err) });
+      return null;
+    }
+    if (!authStatusHasPerm(status, 'opcbridge.edit_config') && !authStatusHasPerm(status, 'suite.manage_server')) {
+      sendJson(res, 403, { ok: false, error: 'Insufficient permissions (opcbridge.edit_config required).' });
       return null;
     }
     return status;
@@ -1840,6 +2319,137 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, listSerialModemDevices());
+    return;
+  }
+
+  if (url.pathname === '/api/project/backup/start') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireProjectBackupPerm()) return;
+    try {
+      const bodyBuf = await readBody(req, 1024 * 1024);
+      const body = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const job = startProjectBackupJob({
+        includeSecrets: Boolean(body.include_secrets),
+        includeHistory: Boolean(body.include_history),
+        includeHistorianData: Boolean(body.include_historian_data)
+      });
+      sendJson(res, 202, projectBackupJobStatus(job));
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/project/backup/status') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireProjectBackupPerm()) return;
+    cleanupProjectBackupJobs();
+    const id = String(url.searchParams.get('id') || '').trim();
+    const job = PROJECT_BACKUP_JOBS.get(id);
+    if (!job) {
+      sendJson(res, 404, { ok: false, error: 'Backup job not found.' });
+      return;
+    }
+    sendJson(res, 200, projectBackupJobStatus(job));
+    return;
+  }
+
+  if (url.pathname === '/api/project/backup/download') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireProjectBackupPerm()) return;
+    cleanupProjectBackupJobs();
+    const id = String(url.searchParams.get('id') || '').trim();
+    const job = PROJECT_BACKUP_JOBS.get(id);
+    if (!job) {
+      sendJson(res, 404, { ok: false, error: 'Backup job not found.' });
+      return;
+    }
+    if (job.state !== 'done' || !job.file_path) {
+      sendJson(res, 409, { ok: false, error: 'Backup job is not ready.', status: projectBackupJobStatus(job) });
+      return;
+    }
+    fs.readFile(job.file_path, (err, data) => {
+      if (err) {
+        sendJson(res, 404, { ok: false, error: 'Backup file is no longer available.' });
+        return;
+      }
+      send(res, 200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Disposition': `attachment; filename="${job.filename || 'opcbridge-suite-project-backup.json'}"`
+      }, data);
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/project/backup') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireProjectBackupPerm()) return;
+    try {
+      const includeSecrets = ['1', 'true', 'yes'].includes(String(url.searchParams.get('include_secrets') || '').toLowerCase());
+      const includeHistory = ['1', 'true', 'yes'].includes(String(url.searchParams.get('include_history') || '').toLowerCase());
+      const includeHistorianData = ['1', 'true', 'yes'].includes(String(url.searchParams.get('include_historian_data') || '').toLowerCase());
+      const backup = buildProjectBackup({ includeSecrets, includeHistory, includeHistorianData });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      send(res, 200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Disposition': `attachment; filename="opcbridge-suite-project-backup-${stamp}.json"`
+      }, JSON.stringify(backup, null, 2) + '\n');
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/project/restore/preview') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireProjectBackupPerm()) return;
+    try {
+      const bodyBuf = await readBody(req, 120 * 1024 * 1024);
+      const body = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const backup = body.backup || body;
+      sendJson(res, 200, previewProjectBackup(backup));
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/project/restore') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireProjectBackupPerm()) return;
+    try {
+      const bodyBuf = await readBody(req, 120 * 1024 * 1024);
+      const body = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const backup = body.backup || body;
+      const result = restoreProjectBackup(backup);
+      sendJson(res, 200, {
+        ok: true,
+        message: 'Project backup restored. Restart/reload opcbridge, SCADA, alarms, and HMI before using the restored project.',
+        ...result
+      });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
     return;
   }
 
