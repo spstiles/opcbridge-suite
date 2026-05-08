@@ -11094,9 +11094,27 @@ function renderAlarmsEventsProperties(item, parentNode) {
       addRow('Callout Targets', targetList);
       const targetHint = document.createElement('div');
       targetHint.className = 'hint';
-      targetHint.textContent = 'Select contacts and/or contact groups for this phone policy.';
+      targetHint.textContent = 'Select contacts and/or contact groups in call order. Calls stop when acknowledged.';
       form.appendChild(targetHint);
     }
+
+    const ackDtmfBox = document.createElement('input');
+    ackDtmfBox.type = 'text';
+    ackDtmfBox.value = Array.isArray(cur?.ack_dtmf) && cur.ack_dtmf.length
+      ? cur.ack_dtmf.map((v) => String(v || '').trim()).filter(Boolean).join(',')
+      : '1';
+    ackDtmfBox.placeholder = '1';
+    ackDtmfBox.disabled = !canEditConfig() || !isPhonePolicy;
+    addRow('Acknowledge Keys', ackDtmfBox);
+
+    const ackWaitBox = document.createElement('input');
+    ackWaitBox.type = 'number';
+    ackWaitBox.min = '0';
+    ackWaitBox.max = '120';
+    ackWaitBox.step = '1';
+    ackWaitBox.value = String(Math.max(0, Math.trunc(Number(cur?.ack_wait_sec ?? 8) || 8)));
+    ackWaitBox.disabled = !canEditConfig() || !isPhonePolicy;
+    addRow('Acknowledge Wait (sec)', ackWaitBox);
 
 
     const actions = document.createElement('div');
@@ -11128,10 +11146,16 @@ function renderAlarmsEventsProperties(item, parentNode) {
         const repeatEnabledNow = Boolean(repeatEnabledBox.checked);
         const delayRaw = String(policyAudioDelayBox.value ?? '').trim();
         const gapRaw = String(policyAudioGapBox.value ?? '').trim();
+        const ackRaw = String(ackDtmfBox.value ?? '').trim();
+        const ackWaitRaw = String(ackWaitBox.value ?? '').trim();
         const policyAudioDelay = delayRaw === '' ? null : Math.trunc(Number(delayRaw));
         const policyAudioGap = gapRaw === '' ? null : Math.trunc(Number(gapRaw));
+        const ackWaitSec = ackWaitRaw === '' ? 8 : Math.trunc(Number(ackWaitRaw));
         if (policyAudioDelay != null && (!Number.isFinite(policyAudioDelay) || policyAudioDelay < 0 || policyAudioDelay > 120)) throw new Error('Playback Delay Seconds must be blank or 0-120.');
         if (policyAudioGap != null && (!Number.isFinite(policyAudioGap) || policyAudioGap < 0 || policyAudioGap > 5000)) throw new Error('Playback Gap Milliseconds must be blank or 0-5000.');
+        if (!Number.isFinite(ackWaitSec) || ackWaitSec < 0 || ackWaitSec > 120) throw new Error('Acknowledge Wait (sec) must be 0-120.');
+        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
+        if (isPhonePolicy && !ackDtmf.length) ackDtmf.push('1');
         const normalizedTargets = [];
         const contactsSelected = [];
         const groupsSelected = [];
@@ -11188,6 +11212,13 @@ function renderAlarmsEventsProperties(item, parentNode) {
         else policies[idx].audio_delay_seconds = policyAudioDelay;
         if (policyAudioGap == null) delete policies[idx].audio_gap_ms;
         else policies[idx].audio_gap_ms = policyAudioGap;
+        if (isPhonePolicy) {
+          policies[idx].ack_dtmf = ackDtmf;
+          policies[idx].ack_wait_sec = ackWaitSec;
+        } else {
+          delete policies[idx].ack_dtmf;
+          delete policies[idx].ack_wait_sec;
+        }
         if (nextId !== policyId) {
           (Array.isArray(nextCfg.alarms) ? nextCfg.alarms : []).forEach((alarm) => {
             if (String(alarm?.notification_policy || '').trim() === policyId) alarm.notification_policy = nextId;

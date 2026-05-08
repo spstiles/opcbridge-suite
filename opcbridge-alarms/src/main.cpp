@@ -2212,6 +2212,8 @@ public:
         int audio_delay_seconds = -1;
         int audio_gap_ms = -1;
         std::string schedule_id = "always";
+        std::vector<std::string> ack_dtmf{"1"};
+        int ack_wait_sec = 8;
     };
     struct Assignment
     {
@@ -2260,6 +2262,8 @@ public:
         std::string policy_id;
         int audio_delay_seconds = -1;
         int audio_gap_ms = -1;
+        std::vector<std::string> ack_dtmf{"1"};
+        int ack_wait_sec = 8;
     };
 
     struct TtsPart
@@ -2285,6 +2289,12 @@ public:
     {
         std::lock_guard<std::mutex> lock(mu_);
         should_continue_ = std::move(fn);
+    }
+
+    void set_ack_alarm(std::function<bool(const std::string&, const std::string&, const std::string&)> fn)
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        ack_alarm_ = std::move(fn);
     }
 
     void set_config_dir(std::string dir)
@@ -2529,6 +2539,22 @@ public:
                         if ((t.type == "contact" || t.type == "group") && !t.id.empty()) p.targets.push_back(std::move(t));
                     }
                 }
+                if (item.contains("ack_dtmf") && item["ack_dtmf"].is_array())
+                {
+                    p.ack_dtmf.clear();
+                    for (const auto& dv : item["ack_dtmf"])
+                    {
+                        if (!dv.is_string()) continue;
+                        const std::string key = dv.get<std::string>();
+                        if (key.empty()) continue;
+                        p.ack_dtmf.push_back(key);
+                    }
+                    if (p.ack_dtmf.empty()) p.ack_dtmf.push_back("1");
+                }
+                if (item.contains("ack_wait_sec") && item["ack_wait_sec"].is_number_integer())
+                {
+                    p.ack_wait_sec = std::max(0, std::min(120, item["ack_wait_sec"].get<int>()));
+                }
                 if (p.targets.empty())
                 {
                     for (const auto& cid : p.contacts) p.targets.push_back({"contact", cid});
@@ -2768,6 +2794,13 @@ public:
                 {"contacts", static_cast<int>(contacts_.size())},
                 {"contact_groups", static_cast<int>(contact_groups_.size())},
                 {"policies", static_cast<int>(policies_.size())}
+            }},
+            {"last_phone_ack", {
+                {"ts_ms", last_phone_ack_ts_ms_},
+                {"alarm_id", last_phone_ack_alarm_id_},
+                {"policy_id", last_phone_ack_policy_id_},
+                {"contact_id", last_phone_ack_contact_id_},
+                {"dtmf", last_phone_ack_dtmf_}
             }},
             {"routes", routes}
         };
@@ -3158,6 +3191,8 @@ private:
         job.policy_id = policy.id;
         job.audio_delay_seconds = policy.audio_delay_seconds;
         job.audio_gap_ms = (alarm.audio_gap_ms >= 0) ? alarm.audio_gap_ms : policy.audio_gap_ms;
+        job.ack_dtmf = policy.ack_dtmf;
+        job.ack_wait_sec = policy.ack_wait_sec;
         modem_jobs_.push_back(std::move(job));
     }
 
@@ -3903,6 +3938,40 @@ private:
             return false;
         }
 
+        auto detect_ack_digit = [&](const std::string& input, std::string& outKey) -> bool {
+            auto allowed = [&](char ch) -> bool {
+                for (const auto& key : job.ack_dtmf)
+                {
+                    if (key.size() == 1 && key[0] == ch) return true;
+                }
+                return false;
+            };
+            for (char ch : input)
+            {
+                if (allowed(ch))
+                {
+                    outKey.assign(1, ch);
+                    return true;
+                }
+            }
+            return false;
+        };
+        auto acknowledge_alarm_from_phone = [&](const std::string& key) -> bool {
+            std::function<bool(const std::string&, const std::string&, const std::string&)> fn;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                fn = ack_alarm_;
+                last_phone_ack_ts_ms_ = now_ms();
+                last_phone_ack_alarm_id_ = job.alarm.alarm_id;
+                last_phone_ack_policy_id_ = job.policy_id;
+                last_phone_ack_contact_id_ = job.contact_id;
+                last_phone_ack_dtmf_ = key;
+            }
+            if (!fn) return false;
+            const std::string note = "dtmf=" + key + " policy=" + job.policy_id + " contact=" + job.contact_id;
+            return fn(job.alarm.alarm_id, "phone_policy", note);
+        };
+
         ModemSerialPort port;
         std::string err;
         if (!port.open_port(vm.device, vm.baud, err)) {
@@ -3965,6 +4034,23 @@ private:
         const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - callStarted).count();
         if (elapsed < dialSeconds) {
             std::this_thread::sleep_for(std::chrono::seconds(dialSeconds - elapsed));
+        }
+
+        const int ackWaitMs = std::max(0, std::min(120000, job.ack_wait_sec * 1000));
+        if (ackWaitMs > 0)
+        {
+            const auto waitStart = std::chrono::steady_clock::now();
+            std::string key;
+            while (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - waitStart).count() < ackWaitMs)
+            {
+                const std::string toneBuf = port.read_for(500);
+                if (toneBuf.empty()) continue;
+                if (detect_ack_digit(toneBuf, key) && acknowledge_alarm_from_phone(key))
+                {
+                    result = "called contact=" + job.contact_id + " name=" + job.contact_name + " acked_dtmf=" + key;
+                    return true;
+                }
+            }
         }
 
         std::string hangupErr;
@@ -4115,6 +4201,7 @@ private:
     std::unordered_map<std::string, std::string> audio_paths_;
     AlarmDb* db_ = nullptr;
     std::function<bool(const std::string&, const std::string&)> should_continue_;
+    std::function<bool(const std::string&, const std::string&, const std::string&)> ack_alarm_;
     std::string config_dir_;
     std::thread audio_worker_;
     std::thread modem_worker_;
@@ -4134,6 +4221,11 @@ private:
     std::string last_policy_skip_event_type_;
     std::string last_policy_skip_alarm_id_;
     std::string last_policy_skip_reason_;
+    int64_t last_phone_ack_ts_ms_ = 0;
+    std::string last_phone_ack_alarm_id_;
+    std::string last_phone_ack_policy_id_;
+    std::string last_phone_ack_contact_id_;
+    std::string last_phone_ack_dtmf_;
     int64_t last_attempt_ms_ = 0;
     std::string last_route_type_;
     std::string last_route_name_;
@@ -5884,6 +5976,9 @@ int main(int argc, char **argv)
     notifications.set_config_dir(configDir);
     notifications.set_should_continue([&engine](const std::string& alarm_id, const std::string& until) {
         return engine.should_continue_notification(alarm_id, until);
+    });
+    notifications.set_ack_alarm([&engine](const std::string& alarm_id, const std::string& actor, const std::string& note) {
+        return engine.ack(alarm_id, actor, note);
     });
     try
     {
