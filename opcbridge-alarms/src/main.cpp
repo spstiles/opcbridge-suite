@@ -1,5 +1,6 @@
 #include <atomic>
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <chrono>
 #include <cctype>
@@ -14,6 +15,8 @@
 #include <iostream>
 #include <ifaddrs.h>
 #include <cstring>
+#include <ctime>
+#include <limits>
 #include <mutex>
 #include <net/if.h>
 #include <optional>
@@ -1031,6 +1034,8 @@ struct AlarmRule
     std::vector<std::string> audio_files;
     std::vector<std::string> audio_paths;
     std::vector<std::string> speech_texts;
+    int audio_gap_ms = -1;
+    std::string audio_mode = "audio_then_speech";
     std::string notification_policy;
 
     // Repeat behavior for audible notifications.
@@ -1073,6 +1078,8 @@ struct AlarmState
     std::vector<std::string> audio_files;
     std::vector<std::string> audio_paths;
     std::vector<std::string> speech_texts;
+    int audio_gap_ms = -1;
+    std::string audio_mode = "audio_then_speech";
     std::string notification_policy;
 
     // Repeat behavior for audible notifications.
@@ -1112,6 +1119,8 @@ static json alarm_state_to_json(const AlarmState &s)
     j["audio_files"] = s.audio_files;
     j["audio_paths"] = s.audio_paths;
     j["speech_texts"] = s.speech_texts;
+    j["audio_gap_ms"] = s.audio_gap_ms;
+    j["audio_mode"] = s.audio_mode;
     j["notification_policy"] = s.notification_policy.empty() ? nullptr : json(s.notification_policy);
     j["repeat_override"] = s.repeat_override;
     j["repeat_ms"] = s.repeat_ms;
@@ -1127,6 +1136,8 @@ struct ResolvedAlarmAudio
     std::vector<std::string> audio_files;
     std::vector<std::string> audio_paths;
     std::vector<std::string> speech_texts;
+    int audio_gap_ms = -1;
+    std::string audio_mode = "audio_then_speech";
 };
 
 struct ResolvedAlarmRepeat
@@ -1153,22 +1164,67 @@ static void append_speech_text(std::vector<std::string>& texts, const std::strin
     texts.push_back(text);
 }
 
-static void apply_audio_scope(const json& scope, bool& audible, std::string& audioFile, std::vector<std::string>& audioFiles, std::string& speechText, std::vector<std::string>& speechTexts)
+static void apply_audio_scope(const json& scope, bool& audible, std::string& audioFile, std::vector<std::string>& audioFiles, std::string& speechText, std::vector<std::string>& speechTexts, int& audioGapMs, std::string& audioMode)
 {
     if (!scope.is_object()) return;
     if (scope.contains("audible_enabled") && scope["audible_enabled"].is_boolean())
     {
         audible = scope["audible_enabled"].get<bool>();
     }
+    if (scope.contains("audio_gap_ms") && scope["audio_gap_ms"].is_number_integer())
+    {
+        audioGapMs = std::max(0, std::min(5000, scope["audio_gap_ms"].get<int>()));
+    }
+    if (scope.contains("audio_mode") && scope["audio_mode"].is_string())
+    {
+        std::string mode = scope["audio_mode"].get<std::string>();
+        if (mode == "audio_only" || mode == "speech_only" || mode == "audio_then_speech" || mode == "speech_then_audio")
+        {
+            audioMode = mode;
+        }
+    }
     const std::string file = json_string_or_empty(scope, "audio_file");
+    bool hasAudioFilesArray = scope.contains("audio_files") && scope["audio_files"].is_array();
     if (!file.empty()) {
         audioFile = file;
-        append_audio_file(audioFiles, file);
+        if (!hasAudioFilesArray) append_audio_file(audioFiles, file);
+    }
+    if (hasAudioFilesArray)
+    {
+        bool setDefaultFromList = audioFile.empty();
+        for (const auto& fv : scope["audio_files"])
+        {
+            if (!fv.is_string()) continue;
+            const std::string f = fv.get<std::string>();
+            if (f.empty()) continue;
+            append_audio_file(audioFiles, f);
+            if (setDefaultFromList)
+            {
+                audioFile = f;
+                setDefaultFromList = false;
+            }
+        }
     }
     const std::string text = json_string_or_empty(scope, "speech_text");
     if (!text.empty()) {
         speechText = text;
         append_speech_text(speechTexts, text);
+    }
+    if (scope.contains("speech_texts") && scope["speech_texts"].is_array())
+    {
+        bool setDefaultTextFromList = speechText.empty();
+        for (const auto& tv : scope["speech_texts"])
+        {
+            if (!tv.is_string()) continue;
+            const std::string t = tv.get<std::string>();
+            if (t.empty()) continue;
+            append_speech_text(speechTexts, t);
+            if (setDefaultTextFromList)
+            {
+                speechText = t;
+                setDefaultTextFromList = false;
+            }
+        }
     }
 }
 
@@ -1212,13 +1268,13 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
         for (const auto& g : root["groups"])
         {
             if (!g.is_object() || json_string_or_empty(g, "name") != groupName) continue;
-            apply_audio_scope(g, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts);
+            apply_audio_scope(g, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
             if (!siteName.empty() && g.contains("sites") && g["sites"].is_array())
             {
                 for (const auto& s : g["sites"])
                 {
                     if (!s.is_object() || json_string_or_empty(s, "name") != siteName) continue;
-                    apply_audio_scope(s, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts);
+                    apply_audio_scope(s, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
                     break;
                 }
             }
@@ -1226,7 +1282,19 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
         }
     }
 
-    apply_audio_scope(rule, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts);
+    apply_audio_scope(rule, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
+    if (out.audio_mode == "audio_only")
+    {
+        out.speech_text.clear();
+        out.speech_texts.clear();
+    }
+    else if (out.audio_mode == "speech_only")
+    {
+        out.audio_file.clear();
+        out.audio_path.clear();
+        out.audio_files.clear();
+        out.audio_paths.clear();
+    }
 
     if (!out.audio_file.empty())
     {
@@ -1308,8 +1376,696 @@ static ResolvedAlarmRepeat resolve_alarm_repeat(const json& root, const json& ru
     return out;
 }
 
+static bool is_v2_config_root(const json& root)
+{
+    return root.is_object() &&
+           root.contains("schema_version") &&
+           root["schema_version"].is_number_integer() &&
+           root["schema_version"].get<int>() == 2;
+}
+
+static bool is_v3_config_root(const json& root)
+{
+    return root.is_object() &&
+           root.contains("schema_version") &&
+           root["schema_version"].is_number_integer() &&
+           root["schema_version"].get<int>() == 3;
+}
+
+struct V2TransformMeta
+{
+    bool downgraded = false;
+    std::vector<std::string> notes;
+};
+
+static bool assignment_matches_alarm_v3(const json& assignment, const json& alarm)
+{
+    json scope = assignment.contains("scope") && assignment["scope"].is_object() ? assignment["scope"] : assignment;
+    const std::string alarmId = alarm.value("id", "");
+    const std::string group = alarm.value("group", "");
+    const std::string site = alarm.value("site", "");
+    const int severity = alarm.value("severity", 0);
+
+    if (scope.contains("alarm_id") && scope["alarm_id"].is_string())
+    {
+        return scope["alarm_id"].get<std::string>() == alarmId;
+    }
+    if (scope.contains("group") && scope["group"].is_string())
+    {
+        const std::string g = scope["group"].get<std::string>();
+        if (g != group) return false;
+        if (scope.contains("site") && scope["site"].is_string())
+        {
+            return scope["site"].get<std::string>() == site;
+        }
+        return true;
+    }
+    if (scope.contains("severity_min") || scope.contains("severity_max"))
+    {
+        const int minv = scope.contains("severity_min") ? scope.value("severity_min", 0) : std::numeric_limits<int>::min();
+        const int maxv = scope.contains("severity_max") ? scope.value("severity_max", 1000) : std::numeric_limits<int>::max();
+        return severity >= minv && severity <= maxv;
+    }
+    return false;
+}
+
+static json make_v2_root_from_v3(const json& v3Root)
+{
+    json out = {
+        {"schema_version", 2},
+        {"timezone", v3Root.value("timezone", "")},
+        {"schedules", json::array()},
+        {"targets", json::array()},
+        {"routes", json::array()},
+        {"policies", json::array()},
+        {"alarms", json::array()}
+    };
+
+    if (!v3Root.is_object()) return out;
+    if (v3Root.contains("audio") && v3Root["audio"].is_object()) out["audio"] = v3Root["audio"];
+    if (v3Root.contains("groups") && v3Root["groups"].is_array()) out["groups"] = v3Root["groups"];
+    if (v3Root.contains("schedules") && v3Root["schedules"].is_array()) out["schedules"] = v3Root["schedules"];
+    if (v3Root.contains("targets") && v3Root["targets"].is_array()) out["targets"] = v3Root["targets"];
+    if (v3Root.contains("routes") && v3Root["routes"].is_array()) out["routes"] = v3Root["routes"];
+    if (v3Root.contains("assignments") && v3Root["assignments"].is_array()) out["assignments"] = v3Root["assignments"];
+
+    std::unordered_set<std::string> planIds;
+    if (v3Root.contains("escalation_plans") && v3Root["escalation_plans"].is_array())
+    {
+        for (const auto& plan : v3Root["escalation_plans"])
+        {
+            if (!plan.is_object()) continue;
+            const std::string id = plan.value("id", "");
+            if (id.empty()) continue;
+            planIds.insert(id);
+            json p;
+            p["id"] = id;
+            p["name"] = plan.value("name", id);
+            p["enabled"] = plan.value("enabled", true);
+            p["schedule_id"] = plan.value("schedule_id", "always");
+            p["triggers"] = plan.contains("triggers") && plan["triggers"].is_array() ? plan["triggers"] : json::array({"active"});
+            p["repeat"] = plan.contains("repeat") && plan["repeat"].is_object() ? plan["repeat"] : json::object();
+            p["steps"] = plan.contains("steps") && plan["steps"].is_array() ? plan["steps"] : json::array();
+            out["policies"].push_back(std::move(p));
+        }
+    }
+
+    std::vector<json> assignments;
+    if (v3Root.contains("assignments") && v3Root["assignments"].is_array())
+    {
+        for (const auto& a : v3Root["assignments"]) if (a.is_object() && a.value("enabled", true)) assignments.push_back(a);
+    }
+
+    if (v3Root.contains("alarm_rules") && v3Root["alarm_rules"].is_array())
+    {
+        for (const auto& rule : v3Root["alarm_rules"])
+        {
+            if (!rule.is_object()) continue;
+            json a;
+            a["id"] = rule.value("id", "");
+            a["name"] = rule.value("name", rule.value("id", ""));
+            a["group"] = rule.value("group", "");
+            a["site"] = rule.value("site", "");
+            a["enabled"] = rule.value("enabled", true);
+            a["severity"] = rule.value("severity", 500);
+            if (rule.contains("source") && rule["source"].is_object()) a["source"] = rule["source"];
+            if (rule.contains("condition") && rule["condition"].is_object()) a["condition"] = rule["condition"];
+            a["message_on_active"] = rule.value("message_on_active", "");
+            a["message_on_return"] = rule.value("message_on_return", "");
+            if (rule.contains("audio") && rule["audio"].is_object())
+            {
+                const auto& audio = rule["audio"];
+                if (audio.contains("audible_enabled")) a["audible_enabled"] = audio["audible_enabled"];
+                if (audio.contains("audio_file")) a["audio_file"] = audio["audio_file"];
+                if (audio.contains("speech_text")) a["speech_text"] = audio["speech_text"];
+            }
+
+            int bestClass = 99;
+            int bestPriority = std::numeric_limits<int>::max();
+            std::string bestId;
+            for (const auto& asg : assignments)
+            {
+                if (!assignment_matches_alarm_v3(asg, a)) continue;
+                const std::string planId = asg.value("plan_id", "");
+                if (planId.empty() || planIds.find(planId) == planIds.end()) continue;
+                json scope = asg.contains("scope") && asg["scope"].is_object() ? asg["scope"] : asg;
+                int klass = 90;
+                if (scope.contains("alarm_id")) klass = 0;
+                else if (scope.contains("group") && scope.contains("site")) klass = 1;
+                else if (scope.contains("group")) klass = 2;
+                else if (scope.contains("severity_min") || scope.contains("severity_max")) klass = 3;
+                const int pri = asg.contains("priority") ? asg.value("priority", 1000) : 1000;
+                const std::string asgId = asg.value("id", "");
+                if (klass < bestClass || (klass == bestClass && (pri < bestPriority || (pri == bestPriority && asgId < bestId))))
+                {
+                    bestClass = klass;
+                    bestPriority = pri;
+                    bestId = asgId;
+                    a["policy_id"] = planId;
+                }
+            }
+
+            out["alarms"].push_back(std::move(a));
+        }
+    }
+
+    return out;
+}
+
+static bool validate_supported_v2_config(const json& root, std::string& err)
+{
+    if (!is_v2_config_root(root)) return true;
+
+    std::unordered_set<std::string> scheduleIds;
+    std::unordered_map<std::string, std::string> scheduleTypeById;
+    if (root.contains("schedules") && root["schedules"].is_array())
+    {
+        for (const auto& s : root["schedules"])
+        {
+            if (!s.is_object()) continue;
+            const std::string id = s.value("id", "");
+            const std::string type = s.value("type", "");
+            if (id.empty()) continue;
+            scheduleIds.insert(id);
+            scheduleTypeById[id] = type;
+            if (type != "always" && type != "inverse_of" && type != "custom")
+            {
+                err = "v2 schedule type '" + type + "' is not supported.";
+                return false;
+            }
+            if (type == "inverse_of")
+            {
+                const std::string ref = s.value("schedule_id", "");
+                if (ref.empty())
+                {
+                    err = "v2 inverse_of schedule '" + id + "' is missing schedule_id.";
+                    return false;
+                }
+            }
+        }
+    }
+
+    std::unordered_set<std::string> routeIds;
+    std::unordered_map<std::string, std::string> routeTypeById;
+    if (root.contains("routes") && root["routes"].is_array())
+    {
+        for (const auto& r : root["routes"])
+        {
+            if (!r.is_object()) continue;
+            const std::string id = r.value("id", "");
+            const std::string type = r.value("type", "");
+            if (!id.empty()) routeIds.insert(id);
+            routeTypeById[id] = type;
+            if (type != "voice_modem" && type != "audio_command")
+            {
+                err = "v2 route type '" + type + "' is not supported yet.";
+                return false;
+            }
+        }
+    }
+
+    std::unordered_set<std::string> policyIds;
+    if (root.contains("policies") && root["policies"].is_array())
+    {
+        for (const auto& p : root["policies"])
+        {
+            if (!p.is_object()) continue;
+            const std::string id = p.value("id", "");
+            if (!id.empty()) policyIds.insert(id);
+
+            const std::string scheduleId = p.value("schedule_id", "");
+            if (!scheduleId.empty() && scheduleIds.find(scheduleId) == scheduleIds.end())
+            {
+                err = "v2 policy '" + id + "' references missing schedule_id '" + scheduleId + "'.";
+                return false;
+            }
+
+            if (p.contains("steps") && p["steps"].is_array())
+            {
+                for (const auto& step : p["steps"])
+                {
+                    if (!step.is_object()) continue;
+                    const std::string routeId = step.value("route_id", "");
+                    if (!routeId.empty() && routeIds.find(routeId) == routeIds.end())
+                    {
+                        err = "v2 policy '" + id + "' references missing route_id '" + routeId + "'.";
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    if (root.contains("alarms") && root["alarms"].is_array())
+    {
+        for (const auto& a : root["alarms"])
+        {
+            if (!a.is_object()) continue;
+            const std::string id = a.value("id", "");
+            if (a.contains("policy_ids") && a["policy_ids"].is_array())
+            {
+                if (a["policy_ids"].size() > 1)
+                {
+                    err = "v2 alarm '" + id + "' uses multiple policy_ids, not supported yet.";
+                    return false;
+                }
+                if (!a["policy_ids"].empty())
+                {
+                    const auto& pv = a["policy_ids"][0];
+                    if (pv.is_string() && policyIds.find(pv.get<std::string>()) == policyIds.end())
+                    {
+                        err = "v2 alarm '" + id + "' references missing policy_id '" + pv.get<std::string>() + "'.";
+                        return false;
+                    }
+                }
+            }
+            if (a.contains("policy_id") && a["policy_id"].is_string())
+            {
+                const std::string pid = a["policy_id"].get<std::string>();
+                if (policyIds.find(pid) == policyIds.end())
+                {
+                    err = "v2 alarm '" + id + "' references missing policy_id '" + pid + "'.";
+                    return false;
+                }
+            }
+        }
+    }
+    for (const auto& kv : scheduleTypeById)
+    {
+        if (kv.second != "inverse_of") continue;
+        const std::string id = kv.first;
+        const json* sched = nullptr;
+        for (const auto& s : root["schedules"])
+        {
+            if (s.is_object() && s.value("id", "") == id) { sched = &s; break; }
+        }
+        if (!sched) continue;
+        const std::string ref = sched->value("schedule_id", "");
+        if (scheduleIds.find(ref) == scheduleIds.end())
+        {
+            err = "v2 schedule '" + id + "' references missing schedule_id '" + ref + "'.";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static json make_legacy_root_from_v2(const json& v2Root)
+{
+    json out = json::object();
+    out["rules"] = json::array();
+    if (v2Root.contains("audio") && v2Root["audio"].is_object())
+    {
+        out["audio"] = v2Root["audio"];
+    }
+    if (v2Root.contains("groups") && v2Root["groups"].is_array())
+    {
+        out["groups"] = v2Root["groups"];
+    }
+
+    if (!v2Root.is_object()) return out;
+    if (!v2Root.contains("alarms") || !v2Root["alarms"].is_array()) return out;
+
+    for (const auto& alarm : v2Root["alarms"])
+    {
+        if (!alarm.is_object()) continue;
+        const std::string legacyType = alarm.value("type", "");
+        json r;
+        r["id"] = alarm.value("id", "");
+        r["name"] = alarm.value("name", alarm.value("id", ""));
+        r["group"] = alarm.value("group", "");
+        r["site"] = alarm.value("site", "");
+        r["enabled"] = alarm.value("enabled", true);
+        r["severity"] = alarm.value("severity", 500);
+        r["message_on_active"] = alarm.value("message_on_active", "");
+        r["message_on_return"] = alarm.value("message_on_return", "");
+        if (alarm.contains("source") && alarm["source"].is_object())
+        {
+            r["source"] = {
+                {"connection_id", alarm["source"].value("connection_id", "")},
+                {"tag", alarm["source"].value("tag", "")}
+            };
+        }
+        else
+        {
+            // Backward-compatible: accept legacy alarm fields inside schema_version=2 documents.
+            r["source"] = {
+                {"connection_id", alarm.value("connection_id", "")},
+                {"tag", alarm.value("tag_name", alarm.value("tag", ""))}
+            };
+        }
+        if (alarm.contains("condition") && alarm["condition"].is_object())
+        {
+            r["condition"] = alarm["condition"];
+        }
+        else if (!legacyType.empty())
+        {
+            // Backward-compatible: map legacy condition fields.
+            r["condition"] = {{"type", legacyType}};
+            if (legacyType == "equals" || legacyType == "not_equals")
+            {
+                if (alarm.contains("value")) r["condition"]["value"] = alarm["value"];
+                else if (alarm.contains("equals_value")) r["condition"]["value"] = alarm["equals_value"];
+                else if (alarm.contains("threshold")) r["condition"]["value"] = alarm["threshold"];
+            }
+            else if (legacyType == "high" || legacyType == "low")
+            {
+                if (alarm.contains("threshold")) r["condition"]["threshold"] = alarm["threshold"];
+                if (alarm.contains("hysteresis")) r["condition"]["hysteresis"] = alarm["hysteresis"];
+            }
+        }
+        if (alarm.contains("audio") && alarm["audio"].is_object())
+        {
+            const auto& a = alarm["audio"];
+            if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
+            if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
+            if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
+            if (a.contains("audio_gap_ms")) r["audio_gap_ms"] = a["audio_gap_ms"];
+            if (a.contains("audio_mode")) r["audio_mode"] = a["audio_mode"];
+        }
+        if (alarm.contains("audio_file")) r["audio_file"] = alarm["audio_file"];
+        if (alarm.contains("speech_text")) r["speech_text"] = alarm["speech_text"];
+        if (alarm.contains("audio_files") && alarm["audio_files"].is_array()) r["audio_files"] = alarm["audio_files"];
+        if (alarm.contains("speech_texts") && alarm["speech_texts"].is_array()) r["speech_texts"] = alarm["speech_texts"];
+        if (alarm.contains("audio_gap_ms")) r["audio_gap_ms"] = alarm["audio_gap_ms"];
+        if (alarm.contains("audio_mode")) r["audio_mode"] = alarm["audio_mode"];
+        if (alarm.contains("policy_id") && alarm["policy_id"].is_string())
+        {
+            r["notification_policy"] = alarm["policy_id"];
+        }
+        else if (alarm.contains("policy_ids") && alarm["policy_ids"].is_array() && !alarm["policy_ids"].empty())
+        {
+            const auto& first = alarm["policy_ids"][0];
+            if (first.is_string()) r["notification_policy"] = first.get<std::string>();
+        }
+        out["rules"].push_back(std::move(r));
+    }
+
+    return out;
+}
+
+static json notification_config_from_v2(const json& v2Root, V2TransformMeta* meta = nullptr)
+{
+    json cfg = {
+        {"enabled", true},
+        {"timezone", v2Root.value("timezone", "")},
+        {"schedules", v2Root.contains("schedules") && v2Root["schedules"].is_array() ? v2Root["schedules"] : json::array()},
+        {"alarm_groups", v2Root.contains("alarm_groups") && v2Root["alarm_groups"].is_array() ? v2Root["alarm_groups"] : json::array()},
+        {"routes", json::array()},
+        {"contacts", json::array()},
+        {"contact_groups", json::array()},
+        {"policies", json::array()}
+    };
+
+    if (v2Root.contains("audio") && v2Root["audio"].is_object())
+    {
+        cfg["audio"] = v2Root["audio"];
+    }
+
+    std::unordered_map<std::string, json> targetById;
+    if (v2Root.contains("targets") && v2Root["targets"].is_array())
+    {
+        for (const auto& t : v2Root["targets"])
+        {
+            if (!t.is_object()) continue;
+            const std::string id = t.value("id", "");
+            const std::string type = t.value("type", "");
+            if (id.empty() || type.empty()) continue;
+            targetById[id] = t;
+
+            if (type == "phone" && t.value("enabled", true))
+            {
+                cfg["contacts"].push_back({
+                    {"id", id},
+                    {"name", t.value("name", id)},
+                    {"phone", t.value("value", "")},
+                    {"enabled", t.value("enabled", true)}
+                });
+            }
+            else if (type == "group")
+            {
+                json g = {
+                    {"id", id},
+                    {"name", t.value("name", id)},
+                    {"enabled", t.value("enabled", true)},
+                    {"contacts", json::array()}
+                };
+                if (t.contains("members") && t["members"].is_array())
+                {
+                    for (const auto& member : t["members"])
+                    {
+                        if (!member.is_string()) continue;
+                        const std::string m = member.get<std::string>();
+                        auto itMember = targetById.find(m);
+                        if (itMember != targetById.end() && itMember->second.value("type", "") == "phone")
+                        {
+                            g["contacts"].push_back(m);
+                        }
+                    }
+                }
+                cfg["contact_groups"].push_back(std::move(g));
+            }
+        }
+    }
+
+    std::unordered_map<std::string, json> routeById;
+    if (v2Root.contains("routes") && v2Root["routes"].is_array())
+    {
+        for (const auto& r : v2Root["routes"])
+        {
+            if (!r.is_object()) continue;
+            const std::string id = r.value("id", "");
+            const std::string type = r.value("type", "");
+            if (id.empty() || type.empty()) continue;
+            routeById[id] = r;
+
+            if (type == "voice_modem")
+            {
+                json vm = r.contains("config") && r["config"].is_object() ? r["config"] : json::object();
+                vm["enabled"] = r.value("enabled", true);
+                cfg["voice_modem"] = vm;
+            }
+            else if (type == "audio_command")
+            {
+                const json routeCfg = r.contains("config") && r["config"].is_object() ? r["config"] : json::object();
+                if (!routeCfg.contains("command") || !routeCfg["command"].is_string()) continue;
+                cfg["routes"].push_back({
+                    {"name", r.value("name", id)},
+                    {"type", "audio_command"},
+                    {"enabled", r.value("enabled", true)},
+                    {"min_severity", 0},
+                    {"on", json::array({"active"})},
+                    {"command", routeCfg.value("command", std::string("/usr/bin/aplay"))},
+                    {"args", routeCfg.value("args", json::array({"{audio_path}"}))},
+                    {"repeat_ms", 0},
+                    {"repeat_initial_delay_ms", 0},
+                    {"until", "acked_or_returned"},
+                    {"schedule_id", "always"}
+                });
+            }
+        }
+    }
+
+    if (v2Root.contains("policies") && v2Root["policies"].is_array())
+    {
+        for (const auto& p : v2Root["policies"])
+        {
+            if (!p.is_object()) continue;
+            const std::string policyId = p.value("id", "");
+            if (policyId.empty()) continue;
+            const bool policyEnabled = p.value("enabled", true);
+
+            std::vector<std::string> triggers{"active"};
+            if (p.contains("triggers") && p["triggers"].is_array() && !p["triggers"].empty())
+            {
+                triggers.clear();
+                for (const auto& ev : p["triggers"])
+                {
+                    if (ev.is_string()) triggers.push_back(ev.get<std::string>());
+                }
+            }
+            else if (p.contains("on") && p["on"].is_array() && !p["on"].empty())
+            {
+                triggers.clear();
+                for (const auto& ev : p["on"])
+                {
+                    if (ev.is_string()) triggers.push_back(ev.get<std::string>());
+                }
+            }
+
+            int64_t repeatMs = 0;
+            int64_t initialDelayMs = 0;
+            std::string until = "acked_or_returned";
+            if (p.contains("repeat") && p["repeat"].is_object())
+            {
+                const auto& rep = p["repeat"];
+                const bool repEnabled = rep.value("enabled", false);
+                const int64_t maxRepeats = rep.value("max_repeats", 0LL);
+                if (repEnabled && maxRepeats > 0) repeatMs = std::max<int64_t>(1, rep.value("interval_ms", 60000LL));
+                initialDelayMs = std::max<int64_t>(0, rep.value("initial_delay_ms", 0LL));
+                until = rep.value("stop_on", until);
+            }
+            const std::string scheduleId = p.value("schedule_id", "");
+
+            // New simplified v2 policy shape used by SCADA (no steps/routes),
+            // where alarm_groups carry policy assignments.
+            if ((!p.contains("steps") || !p["steps"].is_array()) &&
+                (p.contains("output_type") || p.contains("on") || p.contains("contact_groups") || p.contains("contacts")))
+            {
+                json normalized = {
+                    {"id", policyId},
+                    {"name", p.value("name", policyId)},
+                    {"enabled", policyEnabled},
+                    {"min_severity", p.value("min_severity", 0)},
+                    {"on", triggers},
+                    {"schedule_id", scheduleId.empty() ? "always" : scheduleId},
+                    {"output_type", p.value("output_type", p.value("type", std::string("phone")))}
+                };
+                if (normalized["output_type"].is_string() && normalized["output_type"].get<std::string>() == "voice")
+                {
+                    normalized["output_type"] = "phone";
+                }
+                if (p.contains("contacts") && p["contacts"].is_array()) normalized["contacts"] = p["contacts"];
+                if (p.contains("contact_groups") && p["contact_groups"].is_array()) normalized["contact_groups"] = p["contact_groups"];
+                if (repeatMs > 0) normalized["repeat_ms"] = repeatMs;
+                if (initialDelayMs > 0) normalized["repeat_initial_delay_ms"] = initialDelayMs;
+                normalized["until"] = until;
+                cfg["policies"].push_back(std::move(normalized));
+                continue;
+            }
+
+            json legacyPolicy = {
+                {"id", policyId},
+                {"name", p.value("name", policyId)},
+                {"enabled", policyEnabled},
+                {"min_severity", 0},
+                {"on", triggers},
+                {"targets", json::array()},
+                {"repeat_ms", repeatMs},
+                {"repeat_initial_delay_ms", initialDelayMs},
+                {"until", until},
+                {"schedule_id", scheduleId.empty() ? "always" : scheduleId}
+            };
+            bool policyHasVoiceStep = false;
+
+            if (!p.contains("steps") || !p["steps"].is_array()) continue;
+            size_t stepIndex = 0;
+            for (const auto& step : p["steps"])
+            {
+                stepIndex++;
+                if (!step.is_object()) continue;
+                const std::string routeId = step.value("route_id", "");
+                if (routeId.empty()) continue;
+                auto itRoute = routeById.find(routeId);
+                if (itRoute == routeById.end()) continue;
+                const json& route = itRoute->second;
+                const std::string routeType = route.value("type", "");
+                const bool routeEnabled = route.value("enabled", true);
+                const bool effectiveEnabled = policyEnabled && routeEnabled;
+
+                if (routeType == "audio_command")
+                {
+                    const json routeCfg = route.contains("config") && route["config"].is_object() ? route["config"] : json::object();
+                    if (!routeCfg.contains("command") || !routeCfg["command"].is_string()) continue;
+                    json legacyRoute = {
+                        {"name", policyId + "__step_" + std::to_string(stepIndex)},
+                        {"type", "audio_command"},
+                        {"enabled", effectiveEnabled},
+                        {"min_severity", 0},
+                        {"on", triggers},
+                        {"command", routeCfg.value("command", "")},
+                        {"args", routeCfg.value("args", json::array({"{audio_path}"}))},
+                        {"repeat_ms", repeatMs},
+                        {"repeat_initial_delay_ms", initialDelayMs},
+                        {"until", until},
+                        {"schedule_id", scheduleId.empty() ? "always" : scheduleId}
+                    };
+                    cfg["routes"].push_back(std::move(legacyRoute));
+                    if (step.contains("targets") && step["targets"].is_array() && !step["targets"].empty() && meta)
+                    {
+                        meta->downgraded = true;
+                        meta->notes.push_back("audio_command policy targets are ignored by current runtime");
+                    }
+                    continue;
+                }
+
+                if (routeType == "voice_modem")
+                {
+                    policyHasVoiceStep = true;
+                    if (!effectiveEnabled) legacyPolicy["enabled"] = false;
+                    if (step.contains("targets") && step["targets"].is_array())
+                    {
+                        const int64_t stepAfterMs = std::max<int64_t>(0, step.value("after_ms", 0LL));
+                        for (const auto& targetId : step["targets"])
+                        {
+                            if (!targetId.is_string()) continue;
+                            const std::string tid = targetId.get<std::string>();
+                            auto itTarget = targetById.find(tid);
+                            if (itTarget == targetById.end()) continue;
+                            const std::string type = itTarget->second.value("type", "");
+                            if (type == "phone")
+                            {
+                                legacyPolicy["targets"].push_back({{"type", "contact"}, {"id", tid}, {"after_ms", stepAfterMs}});
+                            }
+                            else if (type == "group")
+                            {
+                                legacyPolicy["targets"].push_back({{"type", "group"}, {"id", tid}, {"after_ms", stepAfterMs}});
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                std::cerr << "[alarms] v2 route type not yet supported by runtime: " << routeType << "\n";
+            }
+            if (policyHasVoiceStep)
+            {
+                cfg["policies"].push_back(std::move(legacyPolicy));
+            }
+        }
+    }
+
+    bool hasAudioPolicy = false;
+    if (cfg.contains("policies") && cfg["policies"].is_array())
+    {
+        for (const auto& p : cfg["policies"])
+        {
+            if (!p.is_object()) continue;
+            std::string t = p.value("output_type", p.value("type", std::string("")));
+            if (t == "voice") t = "phone";
+            if (t == "audio") { hasAudioPolicy = true; break; }
+        }
+    }
+    if (hasAudioPolicy && cfg.contains("routes") && cfg["routes"].is_array() && cfg["routes"].empty())
+    {
+        cfg["routes"].push_back({
+            {"name", "default_audio"},
+            {"type", "audio_command"},
+            {"enabled", true},
+            {"min_severity", 0},
+            {"on", json::array({"active"})},
+            {"command", "/usr/bin/aplay"},
+            {"args", json::array({"{audio_path}"})},
+            {"repeat_ms", 0},
+            {"until", "acked_or_returned"}
+        });
+    }
+
+    return cfg;
+}
+
 static json notification_config_from_root(const json& root)
 {
+    if (is_v3_config_root(root))
+    {
+        return notification_config_from_v2(make_v2_root_from_v3(root), nullptr);
+    }
+    if (is_v2_config_root(root))
+    {
+        return notification_config_from_v2(root, nullptr);
+    }
+
     if (root.contains("notifications") && root["notifications"].is_object())
     {
         json cfg = root["notifications"];
@@ -1388,7 +2144,9 @@ public:
         std::string command;
         std::vector<std::string> args;
         int64_t repeat_ms = 0;
+        int64_t repeat_initial_delay_ms = 0;
         std::string until = "acked_or_returned";
+        std::string schedule_id = "always";
     };
 
     struct VoiceModemConfig
@@ -1434,12 +2192,14 @@ public:
     {
         std::string type;
         std::string id;
+        int64_t after_ms = 0;
     };
 
     struct Policy
     {
         std::string id;
         std::string name;
+        std::string output_type = "phone";
         bool enabled = true;
         int min_severity = 0;
         std::vector<std::string> on{"active"};
@@ -1447,9 +2207,45 @@ public:
         std::vector<std::string> contacts;
         std::vector<std::string> contact_groups;
         int64_t repeat_ms = 0;
+        int64_t repeat_initial_delay_ms = 0;
         std::string until = "acked_or_returned";
         int audio_delay_seconds = -1;
         int audio_gap_ms = -1;
+        std::string schedule_id = "always";
+    };
+    struct Assignment
+    {
+        std::string id;
+        bool enabled = true;
+        std::string plan_id;
+        int priority = 1000;
+        std::string alarm_id;
+        std::string group;
+        std::string site;
+        std::optional<int> severity_min;
+        std::optional<int> severity_max;
+    };
+    struct AlarmRouteBinding
+    {
+        std::string id;
+        std::string name;
+        bool enabled = true;
+        std::string schedule_id = "always";
+        std::vector<std::string> alarms;
+        std::vector<std::string> policy_ids;
+    };
+
+    struct Schedule
+    {
+        std::string id;
+        std::string type = "always";
+        std::string schedule_id;
+        std::array<bool, 7> custom_days{{true, true, true, true, true, true, true}};
+        bool custom_has_days = false;
+        std::string start_date;
+        std::string end_date;
+        std::string start_time;
+        std::string end_time;
     };
 
     struct Job
@@ -1506,6 +2302,9 @@ public:
         contacts_.clear();
         contact_groups_.clear();
         policies_.clear();
+        assignments_.clear();
+        alarm_route_bindings_.clear();
+        schedules_.clear();
         audio_paths_.clear();
         audio_jobs_.clear();
         modem_jobs_.clear();
@@ -1514,6 +2313,100 @@ public:
             audio_cv_.notify_all();
             modem_cv_.notify_all();
             return;
+        }
+
+        if (cfg.contains("schedules") && cfg["schedules"].is_array())
+        {
+            auto parse_hhmm = [](const std::string& text, int& outMin) -> bool {
+                if (text.size() != 5 || text[2] != ':') return false;
+                if (!std::isdigit(static_cast<unsigned char>(text[0])) || !std::isdigit(static_cast<unsigned char>(text[1])) ||
+                    !std::isdigit(static_cast<unsigned char>(text[3])) || !std::isdigit(static_cast<unsigned char>(text[4]))) return false;
+                const int hh = (text[0] - '0') * 10 + (text[1] - '0');
+                const int mm = (text[3] - '0') * 10 + (text[4] - '0');
+                if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return false;
+                outMin = hh * 60 + mm;
+                return true;
+            };
+            auto day_index = [](const std::string& d) -> int {
+                if (d == "sun") return 0;
+                if (d == "mon") return 1;
+                if (d == "tue") return 2;
+                if (d == "wed") return 3;
+                if (d == "thu") return 4;
+                if (d == "fri") return 5;
+                if (d == "sat") return 6;
+                return -1;
+            };
+            auto parse_ymd = [](const std::string& text, int& outYmd) -> bool {
+                if (text.size() != 10 || text[4] != '-' || text[7] != '-') return false;
+                for (size_t i = 0; i < text.size(); ++i)
+                {
+                    if (i == 4 || i == 7) continue;
+                    if (!std::isdigit(static_cast<unsigned char>(text[i]))) return false;
+                }
+                const int yyyy = std::stoi(text.substr(0, 4));
+                const int mm = std::stoi(text.substr(5, 2));
+                const int dd = std::stoi(text.substr(8, 2));
+                if (yyyy < 1970 || mm < 1 || mm > 12 || dd < 1 || dd > 31) return false;
+                outYmd = (yyyy * 10000) + (mm * 100) + dd;
+                return true;
+            };
+            for (const auto& item : cfg["schedules"])
+            {
+                if (!item.is_object()) continue;
+                Schedule s;
+                s.id = item.value("id", "");
+                s.type = item.value("type", "always");
+                s.schedule_id = item.value("schedule_id", "");
+                if (s.id.empty()) continue;
+                if (s.type == "custom")
+                {
+                    s.start_date = item.value("start_date", "");
+                    s.end_date = item.value("end_date", "");
+                    s.start_time = item.value("start_time", "");
+                    s.end_time = item.value("end_time", "");
+                    if (item.contains("days") && item["days"].is_array())
+                    {
+                        s.custom_days = {{false, false, false, false, false, false, false}};
+                        s.custom_has_days = false;
+                        for (const auto& dv : item["days"])
+                        {
+                            if (!dv.is_string()) continue;
+                            const int idx = day_index(dv.get<std::string>());
+                            if (idx < 0) continue;
+                            s.custom_days[static_cast<size_t>(idx)] = true;
+                            s.custom_has_days = true;
+                        }
+                    }
+                    int y = 0;
+                    if (!s.start_date.empty() && !parse_ymd(s.start_date, y)) s.start_date.clear();
+                    if (!s.end_date.empty() && !parse_ymd(s.end_date, y)) s.end_date.clear();
+                    int tmin = 0;
+                    const bool hasStart = !s.start_time.empty();
+                    const bool hasEnd = !s.end_time.empty();
+                    if (hasStart && hasEnd)
+                    {
+                        if (!parse_hhmm(s.start_time, tmin) || !parse_hhmm(s.end_time, tmin))
+                        {
+                            s.start_time.clear();
+                            s.end_time.clear();
+                        }
+                    }
+                    else if (hasStart || hasEnd)
+                    {
+                        s.start_time.clear();
+                        s.end_time.clear();
+                    }
+                }
+                schedules_[s.id] = std::move(s);
+            }
+        }
+        if (schedules_.find("always") == schedules_.end())
+        {
+            Schedule always;
+            always.id = "always";
+            always.type = "always";
+            schedules_[always.id] = std::move(always);
         }
 
         if (cfg.contains("voice_modem") && cfg["voice_modem"].is_object())
@@ -1586,10 +2479,14 @@ public:
                 Policy p;
                 p.id = item.value("id", "");
                 p.name = item.value("name", p.id);
+                p.output_type = item.value("output_type", item.value("type", std::string("phone")));
+                if (p.output_type == "voice") p.output_type = "phone";
                 p.enabled = item.value("enabled", true);
                 p.min_severity = item.value("min_severity", 0);
                 p.repeat_ms = item.value("repeat_ms", 0LL);
+                p.repeat_initial_delay_ms = item.value("repeat_initial_delay_ms", 0LL);
                 p.until = item.value("until", p.until);
+                p.schedule_id = item.value("schedule_id", "always");
                 if (item.contains("audio_delay_seconds") && item["audio_delay_seconds"].is_number_integer())
                 {
                     p.audio_delay_seconds = std::max(0, std::min(120, item["audio_delay_seconds"].get<int>()));
@@ -1628,6 +2525,7 @@ public:
                         PolicyTarget t;
                         t.type = target.value("type", "");
                         t.id = target.value("id", "");
+                        t.after_ms = std::max<int64_t>(0, target.value("after_ms", 0LL));
                         if ((t.type == "contact" || t.type == "group") && !t.id.empty()) p.targets.push_back(std::move(t));
                     }
                 }
@@ -1637,6 +2535,56 @@ public:
                     for (const auto& gid : p.contact_groups) p.targets.push_back({"group", gid});
                 }
                 if (!p.id.empty()) policies_[p.id] = std::move(p);
+            }
+        }
+        if (cfg.contains("assignments") && cfg["assignments"].is_array())
+        {
+            for (const auto& item : cfg["assignments"])
+            {
+                if (!item.is_object()) continue;
+                Assignment a;
+                a.id = item.value("id", "");
+                a.enabled = item.value("enabled", true);
+                a.plan_id = item.value("plan_id", "");
+                a.priority = item.value("priority", 1000);
+                const json scope = item.contains("scope") && item["scope"].is_object() ? item["scope"] : item;
+                if (scope.contains("alarm_id") && scope["alarm_id"].is_string()) a.alarm_id = scope["alarm_id"].get<std::string>();
+                if (scope.contains("group") && scope["group"].is_string()) a.group = scope["group"].get<std::string>();
+                if (scope.contains("site") && scope["site"].is_string()) a.site = scope["site"].get<std::string>();
+                if (scope.contains("severity_min") && scope["severity_min"].is_number_integer()) a.severity_min = scope["severity_min"].get<int>();
+                if (scope.contains("severity_max") && scope["severity_max"].is_number_integer()) a.severity_max = scope["severity_max"].get<int>();
+                if (!a.plan_id.empty()) assignments_.push_back(std::move(a));
+            }
+        }
+        if (cfg.contains("alarm_groups") && cfg["alarm_groups"].is_array())
+        {
+            for (const auto& item : cfg["alarm_groups"])
+            {
+                if (!item.is_object()) continue;
+                AlarmRouteBinding route;
+                route.id = item.value("id", "");
+                route.name = item.value("name", route.id);
+                route.enabled = item.value("enabled", true);
+                route.schedule_id = item.value("schedule_id", "always");
+                if (item.contains("alarms") && item["alarms"].is_array())
+                {
+                    for (const auto& aid : item["alarms"])
+                    {
+                        if (!aid.is_string()) continue;
+                        const std::string id = aid.get<std::string>();
+                        if (!id.empty()) route.alarms.push_back(id);
+                    }
+                }
+                if (item.contains("policy_ids") && item["policy_ids"].is_array())
+                {
+                    for (const auto& pid : item["policy_ids"])
+                    {
+                        if (!pid.is_string()) continue;
+                        const std::string id = pid.get<std::string>();
+                        if (!id.empty()) route.policy_ids.push_back(id);
+                    }
+                }
+                if (!route.id.empty()) alarm_route_bindings_.push_back(std::move(route));
             }
         }
 
@@ -1657,7 +2605,9 @@ public:
             r.min_severity = item.value("min_severity", 0);
             r.command = item.value("command", "");
             r.repeat_ms = item.value("repeat_ms", 0LL);
+            r.repeat_initial_delay_ms = item.value("repeat_initial_delay_ms", 0LL);
             r.until = item.value("until", r.until);
+            r.schedule_id = item.value("schedule_id", "always");
 
             if (item.contains("on") && item["on"].is_array())
             {
@@ -1716,7 +2666,13 @@ public:
         if (!enabled_) return;
         AlarmState alarmWithAudio = alarm;
         add_tts_audio_paths_locked(alarmWithAudio);
-        enqueue_voice_modem_jobs_locked(alarmWithAudio, event_type);
+        enqueue_policy_jobs_locked(alarmWithAudio, event_type);
+        if (!alarm_route_bindings_.empty())
+        {
+            audio_cv_.notify_all();
+            modem_cv_.notify_all();
+            return;
+        }
         for (const auto& route : routes_)
         {
             if (!route.enabled) continue;
@@ -1727,9 +2683,13 @@ public:
                 if (ev == event_type) { eventMatch = true; break; }
             }
             if (!eventMatch) continue;
+            if (!schedule_is_active_locked(route.schedule_id))
+            {
+                record_schedule_skip_locked("route", route.name, route.schedule_id, event_type, alarmWithAudio.alarm_id);
+                continue;
+            }
             if (route.type == "audio_command")
             {
-                if (!alarmWithAudio.audible_enabled) continue;
                 if (route_needs_audio_path(route) && alarmWithAudio.audio_path.empty()) continue;
             }
 
@@ -1737,7 +2697,8 @@ public:
             job.route = route;
             job.alarm = alarmWithAudio;
             job.event_type = event_type;
-            job.due_ms = now_ms();
+            const int64_t tNow = now_ms();
+            job.due_ms = tNow + ((job.event_type == "active") ? std::max<int64_t>(0, job.route.repeat_initial_delay_ms) : 0LL);
             // Allow alarm/group/site repeat settings to override the route default (audible-only).
             // repeat_ms may be 0 (explicit off) or >0 (repeat interval).
             if (job.route.type == "audio_command" && job.event_type == "active" && alarmWithAudio.repeat_override) {
@@ -1778,6 +2739,24 @@ public:
             {"last_route_type", last_route_type_},
             {"last_route_name", last_route_name_},
             {"last_result", last_result_},
+            {"assignment_count", static_cast<int>(assignments_.size())},
+            {"schedule_skips", schedule_skips_},
+            {"last_schedule_skip", {
+                {"ts_ms", last_schedule_skip_ts_ms_},
+                {"scope", last_schedule_skip_scope_},
+                {"name", last_schedule_skip_name_},
+                {"schedule_id", last_schedule_skip_schedule_id_},
+                {"event_type", last_schedule_skip_event_type_},
+                {"alarm_id", last_schedule_skip_alarm_id_}
+            }},
+            {"last_policy_skip", {
+                {"ts_ms", last_policy_skip_ts_ms_},
+                {"scope_name", last_policy_skip_scope_name_},
+                {"policy_id", last_policy_skip_policy_id_},
+                {"event_type", last_policy_skip_event_type_},
+                {"alarm_id", last_policy_skip_alarm_id_},
+                {"reason", last_policy_skip_reason_}
+            }},
             {"voice_modem", {
                 {"enabled", voice_modem_.enabled},
                 {"configured", !voice_modem_.device.empty()},
@@ -1831,6 +2810,12 @@ public:
         }
 
         return run_voice_modem_call(job, result);
+    }
+
+    std::string resolve_policy_for_alarm(const AlarmState& alarm) const
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        return resolve_policy_for_alarm_locked(alarm);
     }
 
 private:
@@ -2113,6 +3098,20 @@ private:
     void add_tts_audio_paths_locked(AlarmState& alarm) const
     {
         if (alarm.speech_texts.empty()) return;
+        if (alarm.audio_mode == "audio_only") return;
+
+        std::vector<std::string> priorFiles;
+        std::vector<std::string> priorPaths;
+        const bool ttsFirst = (alarm.audio_mode == "speech_then_audio");
+        if (alarm.audio_mode == "speech_only" || ttsFirst)
+        {
+            priorFiles = alarm.audio_files;
+            priorPaths = alarm.audio_paths;
+            alarm.audio_files.clear();
+            alarm.audio_paths.clear();
+            alarm.audio_file.clear();
+            alarm.audio_path.clear();
+        }
         for (const auto& text : alarm.speech_texts)
         {
             std::string err;
@@ -2121,6 +3120,13 @@ private:
                 std::cerr << "[alarms] TTS generation failed for alarm " << alarm.alarm_id << ": " << err << "\n";
                 continue;
             }
+        }
+        if (ttsFirst)
+        {
+            alarm.audio_files.insert(alarm.audio_files.end(), priorFiles.begin(), priorFiles.end());
+            alarm.audio_paths.insert(alarm.audio_paths.end(), priorPaths.begin(), priorPaths.end());
+            if (!alarm.audio_files.empty()) alarm.audio_file = alarm.audio_files.front();
+            if (!alarm.audio_paths.empty()) alarm.audio_path = alarm.audio_paths.front();
         }
     }
 
@@ -2138,6 +3144,8 @@ private:
         r.on = policy.on;
         r.repeat_ms = policy.repeat_ms;
         r.until = policy.until;
+        r.repeat_initial_delay_ms = policy.repeat_initial_delay_ms;
+        r.schedule_id = policy.schedule_id;
 
         Job job;
         job.route = std::move(r);
@@ -2149,21 +3157,90 @@ private:
         job.contact_name = contact.name;
         job.policy_id = policy.id;
         job.audio_delay_seconds = policy.audio_delay_seconds;
-        job.audio_gap_ms = policy.audio_gap_ms;
+        job.audio_gap_ms = (alarm.audio_gap_ms >= 0) ? alarm.audio_gap_ms : policy.audio_gap_ms;
         modem_jobs_.push_back(std::move(job));
     }
 
-    void enqueue_voice_modem_jobs_locked(const AlarmState& alarm, const std::string& event_type)
+    const Route* select_audio_route_for_policy_locked() const
     {
-        if (!voice_modem_.enabled || voice_modem_.device.empty()) return;
-        if (alarm.notification_policy.empty()) return;
+        const Route* firstEnabledAudio = nullptr;
+        for (const auto& route : routes_)
+        {
+            if (route.type != "audio_command" || route.command.empty() || !route.enabled) continue;
+            if (!firstEnabledAudio) firstEnabledAudio = &route;
+            if (route.name == "default_audio") return &route;
+        }
+        return firstEnabledAudio;
+    }
 
-        auto pit = policies_.find(alarm.notification_policy);
-        if (pit == policies_.end()) return;
-        const Policy& policy = pit->second;
-        if (!policy.enabled) return;
-        if (alarm.severity < policy.min_severity) return;
-        if (!vector_contains(policy.on, event_type)) return;
+    bool enqueue_audio_policy_job_locked(const Policy& policy,
+                                         const AlarmState& alarm,
+                                         const std::string& event_type,
+                                         const std::string& schedule_id_override,
+                                         const std::string& scope_name)
+    {
+        const Route* baseRoute = select_audio_route_for_policy_locked();
+        if (!baseRoute)
+        {
+            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "no enabled audio_command route configured");
+            return false;
+        }
+        if (route_needs_audio_path(*baseRoute) && alarm.audio_path.empty())
+        {
+            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "audio route requires audio path but alarm has no audio");
+            return false;
+        }
+
+        Job job;
+        job.route = *baseRoute;
+        job.route.name = policy.name.empty() ? ("audio_policy:" + policy.id) : ("audio_policy:" + policy.name);
+        job.route.repeat_ms = policy.repeat_ms;
+        job.route.repeat_initial_delay_ms = policy.repeat_initial_delay_ms;
+        job.route.until = policy.until;
+        job.route.schedule_id = schedule_id_override.empty() ? policy.schedule_id : schedule_id_override;
+        if (event_type == "active" && alarm.repeat_override) {
+            job.route.repeat_ms = alarm.repeat_ms;
+        }
+        job.alarm = alarm;
+        job.event_type = event_type;
+        job.policy_id = policy.id;
+        job.audio_gap_ms = policy.audio_gap_ms;
+        const int64_t tNow = now_ms();
+        job.due_ms = tNow + ((event_type == "active") ? std::max<int64_t>(0, policy.repeat_initial_delay_ms) : 0LL);
+        apply_audio_default_arg(job);
+        audio_jobs_.push_back(std::move(job));
+        return true;
+    }
+
+    bool enqueue_policy_output_locked(const Policy& policy,
+                                      const std::string& schedule_id_override,
+                                      const AlarmState& alarm,
+                                      const std::string& event_type,
+                                      const std::string& scope_name)
+    {
+        if (!policy.enabled) return false;
+        if (alarm.severity < policy.min_severity) return false;
+        if (!vector_contains(policy.on, event_type)) return false;
+        const std::string effectiveScheduleId = schedule_id_override.empty() ? policy.schedule_id : schedule_id_override;
+        if (!schedule_is_active_locked(effectiveScheduleId))
+        {
+            record_schedule_skip_locked("alarm_route", scope_name.empty() ? policy.id : scope_name, effectiveScheduleId, event_type, alarm.alarm_id);
+            return false;
+        }
+
+        if (policy.output_type == "audio")
+        {
+            return enqueue_audio_policy_job_locked(policy, alarm, event_type, effectiveScheduleId, scope_name);
+        }
+        if (policy.output_type != "phone")
+        {
+            return false;
+        }
+        if (!voice_modem_.enabled || voice_modem_.device.empty())
+        {
+            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "voice modem is disabled or not configured");
+            return false;
+        }
 
         std::unordered_set<std::string> seen;
         for (const auto& target : policy.targets)
@@ -2171,7 +3248,17 @@ private:
             if (target.type == "contact")
             {
                 auto it = contacts_.find(target.id);
-                if (it != contacts_.end()) add_voice_contact_job_locked(policy, it->second, alarm, event_type, seen);
+                if (it != contacts_.end())
+                {
+                    const size_t before = modem_jobs_.size();
+                    add_voice_contact_job_locked(policy, it->second, alarm, event_type, seen);
+                    if (modem_jobs_.size() > before)
+                    {
+                        Job& j = modem_jobs_.back();
+                        const int64_t initialDelay = (event_type == "active") ? std::max<int64_t>(0, policy.repeat_initial_delay_ms) : 0LL;
+                        j.due_ms = now_ms() + std::max<int64_t>(0, target.after_ms) + initialDelay;
+                    }
+                }
             }
             else if (target.type == "group")
             {
@@ -2180,10 +3267,219 @@ private:
                 for (const auto& cid : git->second.contacts)
                 {
                     auto it = contacts_.find(cid);
-                    if (it != contacts_.end()) add_voice_contact_job_locked(policy, it->second, alarm, event_type, seen);
+                    if (it != contacts_.end())
+                    {
+                        const size_t before = modem_jobs_.size();
+                        add_voice_contact_job_locked(policy, it->second, alarm, event_type, seen);
+                        if (modem_jobs_.size() > before)
+                        {
+                            Job& j = modem_jobs_.back();
+                            const int64_t initialDelay = (event_type == "active") ? std::max<int64_t>(0, policy.repeat_initial_delay_ms) : 0LL;
+                            j.due_ms = now_ms() + std::max<int64_t>(0, target.after_ms) + initialDelay;
+                        }
+                    }
                 }
             }
         }
+        if (modem_jobs_.empty())
+        {
+            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "policy produced no callable phone targets");
+        }
+        return true;
+    }
+
+    void enqueue_policy_jobs_locked(const AlarmState& alarm, const std::string& event_type)
+    {
+        bool matchedAlarmRoute = false;
+        for (const auto& route : alarm_route_bindings_)
+        {
+            if (!route.enabled) continue;
+            if (!vector_contains(route.alarms, alarm.alarm_id)) continue;
+            matchedAlarmRoute = true;
+            for (const auto& policyId : route.policy_ids)
+            {
+                auto pit = policies_.find(policyId);
+                if (pit == policies_.end()) continue;
+                enqueue_policy_output_locked(pit->second, route.schedule_id, alarm, event_type, route.name.empty() ? route.id : route.name);
+            }
+        }
+        if (matchedAlarmRoute) return;
+
+        std::string selectedPolicyId = resolve_policy_for_alarm_locked(alarm);
+        if (selectedPolicyId.empty()) selectedPolicyId = alarm.notification_policy;
+        if (selectedPolicyId.empty()) return;
+        auto pit = policies_.find(selectedPolicyId);
+        if (pit == policies_.end()) return;
+        enqueue_policy_output_locked(pit->second, pit->second.schedule_id, alarm, event_type, pit->second.id);
+    }
+
+    bool schedule_is_active_locked(const std::string& schedule_id) const
+    {
+        std::unordered_set<std::string> visiting;
+        return schedule_is_active_recursive_locked(schedule_id.empty() ? "always" : schedule_id, visiting);
+    }
+
+    bool schedule_is_active_recursive_locked(const std::string& schedule_id, std::unordered_set<std::string>& visiting) const
+    {
+        auto it = schedules_.find(schedule_id);
+        if (it == schedules_.end()) return schedule_id == "always";
+        if (!visiting.insert(schedule_id).second) return false;
+
+        const Schedule& s = it->second;
+        bool out = true;
+        if (s.type == "always")
+        {
+            out = true;
+        }
+        else if (s.type == "custom")
+        {
+            std::time_t t = std::time(nullptr);
+            std::tm localTm {};
+#if defined(_WIN32)
+            localtime_s(&localTm, &t);
+#else
+            localtime_r(&t, &localTm);
+#endif
+            auto parse_ymd = [](const std::string& text, int& outYmd) -> bool {
+                if (text.size() != 10 || text[4] != '-' || text[7] != '-') return false;
+                for (size_t i = 0; i < text.size(); ++i)
+                {
+                    if (i == 4 || i == 7) continue;
+                    if (!std::isdigit(static_cast<unsigned char>(text[i]))) return false;
+                }
+                const int yyyy = std::stoi(text.substr(0, 4));
+                const int mm = std::stoi(text.substr(5, 2));
+                const int dd = std::stoi(text.substr(8, 2));
+                outYmd = (yyyy * 10000) + (mm * 100) + dd;
+                return true;
+            };
+            auto parse_hhmm = [](const std::string& text, int& outMin) -> bool {
+                if (text.size() != 5 || text[2] != ':') return false;
+                if (!std::isdigit(static_cast<unsigned char>(text[0])) || !std::isdigit(static_cast<unsigned char>(text[1])) ||
+                    !std::isdigit(static_cast<unsigned char>(text[3])) || !std::isdigit(static_cast<unsigned char>(text[4]))) return false;
+                const int hh = (text[0] - '0') * 10 + (text[1] - '0');
+                const int mm = (text[3] - '0') * 10 + (text[4] - '0');
+                if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return false;
+                outMin = hh * 60 + mm;
+                return true;
+            };
+            const int nowYmd = ((localTm.tm_year + 1900) * 10000) + ((localTm.tm_mon + 1) * 100) + localTm.tm_mday;
+            const int day = localTm.tm_wday;
+            const int minuteOfDay = (localTm.tm_hour * 60) + localTm.tm_min;
+            if (s.custom_has_days && (day < 0 || day > 6 || !s.custom_days[static_cast<size_t>(day)]))
+            {
+                out = false;
+            }
+            if (out && !s.start_date.empty())
+            {
+                int ymd = 0;
+                if (parse_ymd(s.start_date, ymd) && nowYmd < ymd) out = false;
+            }
+            if (out && !s.end_date.empty())
+            {
+                int ymd = 0;
+                if (parse_ymd(s.end_date, ymd) && nowYmd > ymd) out = false;
+            }
+            if (out)
+            {
+                const bool hasStart = !s.start_time.empty();
+                const bool hasEnd = !s.end_time.empty();
+                if (hasStart && hasEnd)
+                {
+                    int start = 0, end = 0;
+                    if (parse_hhmm(s.start_time, start) && parse_hhmm(s.end_time, end))
+                    {
+                        if (start == end) out = true;
+                        else if (start < end) out = (minuteOfDay >= start && minuteOfDay < end);
+                        else out = (minuteOfDay >= start || minuteOfDay < end);
+                    }
+                }
+            }
+        }
+        else if (s.type == "inverse_of")
+        {
+            out = !schedule_is_active_recursive_locked(s.schedule_id.empty() ? "always" : s.schedule_id, visiting);
+        }
+        visiting.erase(schedule_id);
+        return out;
+    }
+
+    std::string resolve_policy_for_alarm_locked(const AlarmState& alarm) const
+    {
+        int bestClass = 99;
+        int bestPriority = std::numeric_limits<int>::max();
+        std::string bestAssignmentId;
+        std::string bestPlanId;
+
+        auto assignment_class = [](const Assignment& a) -> int {
+            if (!a.alarm_id.empty()) return 0;
+            if (!a.group.empty() && !a.site.empty()) return 1;
+            if (!a.group.empty()) return 2;
+            if (a.severity_min.has_value() || a.severity_max.has_value()) return 3;
+            return 90;
+        };
+        auto matches = [&](const Assignment& a) -> bool {
+            if (!a.enabled || a.plan_id.empty()) return false;
+            if (!a.alarm_id.empty()) return a.alarm_id == alarm.alarm_id;
+            if (!a.group.empty())
+            {
+                if (a.group != alarm.group) return false;
+                if (!a.site.empty()) return a.site == alarm.site;
+                return true;
+            }
+            if (a.severity_min.has_value() || a.severity_max.has_value())
+            {
+                const int minv = a.severity_min.value_or(std::numeric_limits<int>::min());
+                const int maxv = a.severity_max.value_or(std::numeric_limits<int>::max());
+                return alarm.severity >= minv && alarm.severity <= maxv;
+            }
+            return false;
+        };
+
+        for (const auto& a : assignments_)
+        {
+            if (!matches(a)) continue;
+            if (policies_.find(a.plan_id) == policies_.end()) continue;
+            const int klass = assignment_class(a);
+            if (klass < bestClass ||
+                (klass == bestClass && (a.priority < bestPriority || (a.priority == bestPriority && a.id < bestAssignmentId))))
+            {
+                bestClass = klass;
+                bestPriority = a.priority;
+                bestAssignmentId = a.id;
+                bestPlanId = a.plan_id;
+            }
+        }
+        return bestPlanId;
+    }
+
+    void record_schedule_skip_locked(const std::string& scope,
+                                     const std::string& name,
+                                     const std::string& schedule_id,
+                                     const std::string& event_type,
+                                     const std::string& alarm_id)
+    {
+        schedule_skips_++;
+        last_schedule_skip_ts_ms_ = now_ms();
+        last_schedule_skip_scope_ = scope;
+        last_schedule_skip_name_ = name;
+        last_schedule_skip_schedule_id_ = schedule_id;
+        last_schedule_skip_event_type_ = event_type;
+        last_schedule_skip_alarm_id_ = alarm_id;
+    }
+
+    void record_policy_skip_locked(const std::string& scope_name,
+                                   const std::string& policy_id,
+                                   const std::string& event_type,
+                                   const std::string& alarm_id,
+                                   const std::string& reason)
+    {
+        last_policy_skip_ts_ms_ = now_ms();
+        last_policy_skip_scope_name_ = scope_name;
+        last_policy_skip_policy_id_ = policy_id;
+        last_policy_skip_event_type_ = event_type;
+        last_policy_skip_alarm_id_ = alarm_id;
+        last_policy_skip_reason_ = reason;
     }
 
     static std::string format_arg(std::string value, const AlarmState& alarm)
@@ -2244,7 +3540,6 @@ private:
     {
         if (job.route.type != "audio_command") return;
         if (!job.route.args.empty()) return;
-        if (!job.alarm.audible_enabled) return;
         const std::string path = !job.alarm.audio_paths.empty() ? job.alarm.audio_paths.front() : job.alarm.audio_path;
         if (path.empty()) return;
         job.route.args.push_back(path);
@@ -2303,10 +3598,10 @@ private:
 
     static int run_audio_command_sequence(const Job& job)
     {
-        if (!job.alarm.audible_enabled) return 0;
         if (job.alarm.audio_paths.size() <= 1) return run_command(job);
 
         int lastRc = 0;
+        const int gapMs = std::max(0, std::min(5000, job.audio_gap_ms));
         for (size_t i = 0; i < job.alarm.audio_paths.size(); ++i)
         {
             Job part = job;
@@ -2314,6 +3609,10 @@ private:
             if (part.alarm.audio_path.empty()) continue;
             lastRc = run_command(part);
             if (lastRc != 0) return lastRc;
+            if (gapMs > 0 && (i + 1) < job.alarm.audio_paths.size())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(gapMs));
+            }
         }
         return lastRc;
     }
@@ -2810,6 +4109,9 @@ private:
     std::unordered_map<std::string, Contact> contacts_;
     std::unordered_map<std::string, ContactGroup> contact_groups_;
     std::unordered_map<std::string, Policy> policies_;
+    std::vector<Assignment> assignments_;
+    std::vector<AlarmRouteBinding> alarm_route_bindings_;
+    std::unordered_map<std::string, Schedule> schedules_;
     std::unordered_map<std::string, std::string> audio_paths_;
     AlarmDb* db_ = nullptr;
     std::function<bool(const std::string&, const std::string&)> should_continue_;
@@ -2819,6 +4121,19 @@ private:
     int64_t attempts_ = 0;
     int64_t successes_ = 0;
     int64_t failures_ = 0;
+    int64_t schedule_skips_ = 0;
+    int64_t last_schedule_skip_ts_ms_ = 0;
+    std::string last_schedule_skip_scope_;
+    std::string last_schedule_skip_name_;
+    std::string last_schedule_skip_schedule_id_;
+    std::string last_schedule_skip_event_type_;
+    std::string last_schedule_skip_alarm_id_;
+    int64_t last_policy_skip_ts_ms_ = 0;
+    std::string last_policy_skip_scope_name_;
+    std::string last_policy_skip_policy_id_;
+    std::string last_policy_skip_event_type_;
+    std::string last_policy_skip_alarm_id_;
+    std::string last_policy_skip_reason_;
     int64_t last_attempt_ms_ = 0;
     std::string last_route_type_;
     std::string last_route_name_;
@@ -2902,6 +4217,18 @@ struct AlarmEngine
 
     std::atomic<int64_t> last_tag_update_ms{0};
     std::atomic<int64_t> last_alarm_change_ms{0};
+    std::atomic<bool> opcbridge_ws_connected{false};
+    std::atomic<int64_t> opcbridge_ws_last_open_ms{0};
+    std::atomic<int64_t> opcbridge_ws_last_close_ms{0};
+    std::atomic<int64_t> opcbridge_ws_last_error_ms{0};
+    std::atomic<int64_t> opcbridge_ws_last_message_ms{0};
+    std::atomic<uint64_t> opcbridge_ws_open_count{0};
+    std::atomic<uint64_t> opcbridge_ws_close_count{0};
+    std::atomic<uint64_t> opcbridge_ws_error_count{0};
+    mutable std::mutex config_meta_mu;
+    std::string config_mode{"v1"};
+    bool config_downgraded = false;
+    std::vector<std::string> config_notes;
 
     std::atomic<int64_t> last_config_mtime_ms{-1};
     AlarmDb* db = nullptr;
@@ -2913,6 +4240,24 @@ struct AlarmEngine
     void set_ws(AlarmWs* ptr) { ws = ptr; }
     void set_ua(AlarmUa* ptr) { ua = ptr; }
     void set_notifications(NotificationManager* ptr) { notifications = ptr; }
+    void set_config_meta(std::string mode, bool downgraded, std::vector<std::string> notes)
+    {
+        std::lock_guard<std::mutex> lock(config_meta_mu);
+        config_mode = std::move(mode);
+        config_downgraded = downgraded;
+        config_notes = std::move(notes);
+    }
+    json config_meta_json() const
+    {
+        std::lock_guard<std::mutex> lock(config_meta_mu);
+        json notes = json::array();
+        for (const auto& n : config_notes) notes.push_back(n);
+        return {
+            {"mode", config_mode},
+            {"downgraded", config_downgraded},
+            {"notes", notes}
+        };
+    }
 
     bool should_continue_notification(const std::string& alarm_id, const std::string& until) const
     {
@@ -3056,24 +4401,40 @@ struct AlarmEngine
         {
             throw std::runtime_error("Invalid alarms.json; expected a JSON object.");
         }
+        const bool isV3 = is_v3_config_root(root);
+        const bool isV2 = is_v2_config_root(root);
+        json v2Root = root;
+        if (isV3)
+        {
+            v2Root = make_v2_root_from_v3(root);
+        }
+        if (isV2 || isV3)
+        {
+            std::string validationErr;
+            if (!validate_supported_v2_config(v2Root, validationErr))
+            {
+                throw std::runtime_error("Unsupported v2 config: " + validationErr);
+            }
+        }
+        const json runtimeRoot = (isV2 || isV3) ? make_legacy_root_from_v2(v2Root) : root;
 
         std::unordered_map<std::string, AlarmRule> nextRules;
         std::unordered_map<std::string, AlarmState> nextStates;
         std::unordered_map<std::string, std::vector<std::string>> nextByKey;
 
         json rulesArr = json::array();
-        const bool hasRulesArr = root.contains("rules") && root["rules"].is_array();
-        const bool hasAlarmsArr = root.contains("alarms") && root["alarms"].is_array();
-        if (hasRulesArr && !root["rules"].empty())
+        const bool hasRulesArr = runtimeRoot.contains("rules") && runtimeRoot["rules"].is_array();
+        const bool hasAlarmsArr = runtimeRoot.contains("alarms") && runtimeRoot["alarms"].is_array();
+        if (hasRulesArr && !runtimeRoot["rules"].empty())
         {
-            rulesArr = root["rules"];
+            rulesArr = runtimeRoot["rules"];
         }
         else if (hasAlarmsArr)
         {
             // Backward-compatible: accept opcbridge's alarms.json schema:
             // { "alarms": [ { id, connection_id, tag_name, type, threshold, hysteresis, enabled }, ... ] }
             rulesArr = json::array();
-            for (const auto &a : root["alarms"])
+            for (const auto &a : runtimeRoot["alarms"])
             {
                 if (!a.is_object()) continue;
                 const std::string type = a.value("type", "");
@@ -3090,6 +4451,10 @@ struct AlarmEngine
                 if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
+                if (a.contains("audio_mode")) r["audio_mode"] = a["audio_mode"];
+                if (a.contains("audio_gap_ms")) r["audio_gap_ms"] = a["audio_gap_ms"];
+                if (a.contains("audio_files")) r["audio_files"] = a["audio_files"];
+                if (a.contains("speech_texts")) r["speech_texts"] = a["speech_texts"];
                 r["source"] = {
                     {"connection_id", a.value("connection_id", "")},
                     {"tag", a.value("tag_name", a.value("tag", ""))}
@@ -3113,7 +4478,7 @@ struct AlarmEngine
         else if (hasRulesArr)
         {
             // Accept an empty {"rules": []} config (no alarms configured).
-            rulesArr = root["rules"];
+            rulesArr = runtimeRoot["rules"];
         }
         else
         {
@@ -3122,7 +4487,21 @@ struct AlarmEngine
 
         if (notifications)
         {
-            notifications->configure(notification_config_from_root(root));
+            if (isV2 || isV3)
+            {
+                V2TransformMeta meta;
+                notifications->configure(notification_config_from_v2(v2Root, &meta));
+                set_config_meta(isV3 ? "v3" : "v2", meta.downgraded, meta.notes);
+            }
+            else
+            {
+                notifications->configure(notification_config_from_root(root));
+                set_config_meta("v1", false, {});
+            }
+        }
+        else
+        {
+            set_config_meta(isV3 ? "v3" : (isV2 ? "v2" : "v1"), false, {});
         }
 
         for (const auto &it : rulesArr)
@@ -3134,7 +4513,7 @@ struct AlarmEngine
             r.group = it.value("group", "");
             r.site = it.value("site", "");
             r.enabled = it.value("enabled", true);
-            r.site_enabled = resolve_alarm_site_enabled(root, it);
+            r.site_enabled = resolve_alarm_site_enabled(runtimeRoot, it);
             r.severity = it.value("severity", 500);
             if (it.contains("source") && it["source"].is_object())
             {
@@ -3157,7 +4536,7 @@ struct AlarmEngine
             r.message_on_active = it.value("message_on_active", "");
             r.message_on_return = it.value("message_on_return", "");
             r.notification_policy = it.value("notification_policy", "");
-            const ResolvedAlarmAudio audio = resolve_alarm_audio(root, it, dirname_of(path));
+            const ResolvedAlarmAudio audio = resolve_alarm_audio(runtimeRoot, it, dirname_of(path));
             r.audible_enabled = audio.audible_enabled;
             r.audio_file = audio.audio_file;
             r.audio_path = audio.audio_path;
@@ -3165,7 +4544,9 @@ struct AlarmEngine
             r.audio_files = audio.audio_files;
             r.audio_paths = audio.audio_paths;
             r.speech_texts = audio.speech_texts;
-            const ResolvedAlarmRepeat rep = resolve_alarm_repeat(root, it);
+            r.audio_gap_ms = audio.audio_gap_ms;
+            r.audio_mode = audio.audio_mode;
+            const ResolvedAlarmRepeat rep = resolve_alarm_repeat(runtimeRoot, it);
             r.repeat_override = rep.repeat_override;
             r.repeat_ms = rep.repeat_ms;
 
@@ -3199,6 +4580,8 @@ struct AlarmEngine
             s.audio_files = r.audio_files;
             s.audio_paths = r.audio_paths;
             s.speech_texts = r.speech_texts;
+            s.audio_gap_ms = r.audio_gap_ms;
+            s.audio_mode = r.audio_mode;
             s.notification_policy = r.notification_policy;
             s.repeat_override = r.repeat_override;
             s.repeat_ms = r.repeat_ms;
@@ -4075,6 +5458,9 @@ static void ws_client_loop(std::atomic<bool> &stop,
         if (msg->type == ix::WebSocketMessageType::Open)
         {
             connected.store(true);
+            engine.opcbridge_ws_connected.store(true);
+            engine.opcbridge_ws_last_open_ms.store(now_ms());
+            engine.opcbridge_ws_open_count.fetch_add(1);
             std::cout << "[alarms] opcbridge WS connected\n";
             lastSentGeneration = subscriptionGeneration.load();
             send_subscribe();
@@ -4084,6 +5470,9 @@ static void ws_client_loop(std::atomic<bool> &stop,
         if (msg->type == ix::WebSocketMessageType::Close)
         {
             connected.store(false);
+            engine.opcbridge_ws_connected.store(false);
+            engine.opcbridge_ws_last_close_ms.store(now_ms());
+            engine.opcbridge_ws_close_count.fetch_add(1);
             std::cout << "[alarms] opcbridge WS closed: "
                       << msg->closeInfo.code << " " << msg->closeInfo.reason << "\n";
             return;
@@ -4091,10 +5480,14 @@ static void ws_client_loop(std::atomic<bool> &stop,
         if (msg->type == ix::WebSocketMessageType::Error)
         {
             connected.store(false);
+            engine.opcbridge_ws_connected.store(false);
+            engine.opcbridge_ws_last_error_ms.store(now_ms());
+            engine.opcbridge_ws_error_count.fetch_add(1);
             std::cerr << "[alarms] opcbridge WS error: " << msg->errorInfo.reason << "\n";
             return;
         }
         if (msg->type != ix::WebSocketMessageType::Message) return;
+        engine.opcbridge_ws_last_message_ms.store(now_ms());
 
         json payload;
         try {
@@ -4128,6 +5521,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
     }
 
     ws.stop();
+    engine.opcbridge_ws_connected.store(false);
 }
 
 static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
@@ -4198,19 +5592,48 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
         rulesRoot = rulesRoot["json"];
     }
 
-    // Accept either schema:
-    // - {"rules":[...]} (alarm-server style)
-    // - {"alarms":[...]} (opcbridge style)
-    if (!rulesRoot.contains("rules") && !rulesRoot.contains("alarms")) {
-        // default empty
-        rulesRoot["rules"] = json::array();
-    }
-
     if (engine.notifications)
     {
-        engine.notifications->set_config_dir(dirname_of(configDir));
-        engine.notifications->configure(notification_config_from_root(rulesRoot));
+        engine.notifications->set_config_dir(configDir);
     }
+    const bool isV3 = is_v3_config_root(rulesRoot);
+    const bool isV2 = is_v2_config_root(rulesRoot);
+    json v2Root = rulesRoot;
+    if (isV3)
+    {
+        v2Root = make_v2_root_from_v3(rulesRoot);
+    }
+    if (isV2 || isV3)
+    {
+        if (!validate_supported_v2_config(v2Root, err))
+        {
+            err = "Unsupported v2 config: " + err;
+            return false;
+        }
+    }
+    else if (!rulesRoot.contains("rules") && !rulesRoot.contains("alarms")) {
+        // default empty for legacy mode only
+        rulesRoot["rules"] = json::array();
+    }
+    if (engine.notifications)
+    {
+        if (isV2 || isV3)
+        {
+            V2TransformMeta meta;
+            engine.notifications->configure(notification_config_from_v2(v2Root, &meta));
+            engine.set_config_meta(isV3 ? "v3" : "v2", meta.downgraded, meta.notes);
+        }
+        else
+        {
+            engine.notifications->configure(notification_config_from_root(rulesRoot));
+            engine.set_config_meta("v1", false, {});
+        }
+    }
+    else
+    {
+        engine.set_config_meta(isV3 ? "v3" : (isV2 ? "v2" : "v1"), false, {});
+    }
+    const json runtimeRoot = (isV2 || isV3) ? make_legacy_root_from_v2(v2Root) : rulesRoot;
 
     // Serialize to reuse existing loader/parser.
     const std::string tmp = rulesRoot.dump(2);
@@ -4221,16 +5644,16 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
 
         // Normalize into an array of rule objects.
         json rulesArr = json::array();
-        const bool hasRulesArr = rulesRoot.contains("rules") && rulesRoot["rules"].is_array();
-        const bool hasAlarmsArr = rulesRoot.contains("alarms") && rulesRoot["alarms"].is_array();
-        if (hasRulesArr && !rulesRoot["rules"].empty())
+        const bool hasRulesArr = runtimeRoot.contains("rules") && runtimeRoot["rules"].is_array();
+        const bool hasAlarmsArr = runtimeRoot.contains("alarms") && runtimeRoot["alarms"].is_array();
+        if (hasRulesArr && !runtimeRoot["rules"].empty())
         {
-            rulesArr = rulesRoot["rules"];
+            rulesArr = runtimeRoot["rules"];
         }
         else if (hasAlarmsArr)
         {
             rulesArr = json::array();
-            for (const auto &a : rulesRoot["alarms"])
+            for (const auto &a : runtimeRoot["alarms"])
             {
                 if (!a.is_object()) continue;
                 const std::string type = a.value("type", "");
@@ -4248,6 +5671,10 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
+                if (a.contains("audio_mode")) r["audio_mode"] = a["audio_mode"];
+                if (a.contains("audio_gap_ms")) r["audio_gap_ms"] = a["audio_gap_ms"];
+                if (a.contains("audio_files")) r["audio_files"] = a["audio_files"];
+                if (a.contains("speech_texts")) r["speech_texts"] = a["speech_texts"];
                 r["source"] = {
                     {"connection_id", a.value("connection_id", "")},
                     {"tag", a.value("tag_name", a.value("tag", ""))}
@@ -4270,7 +5697,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
         }
         else if (hasRulesArr)
         {
-            rulesArr = rulesRoot["rules"];
+            rulesArr = runtimeRoot["rules"];
         }
 
         if (!rulesArr.is_array()) throw std::runtime_error("rules must be an array");
@@ -4283,7 +5710,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             r.group = it.value("group", "");
             r.site = it.value("site", "");
             r.enabled = it.value("enabled", true);
-            r.site_enabled = resolve_alarm_site_enabled(rulesRoot, it);
+            r.site_enabled = resolve_alarm_site_enabled(runtimeRoot, it);
             r.severity = it.value("severity", 500);
             if (it.contains("source") && it["source"].is_object())
             {
@@ -4306,7 +5733,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             r.message_on_active = it.value("message_on_active", "");
             r.message_on_return = it.value("message_on_return", "");
             r.notification_policy = it.value("notification_policy", "");
-            const ResolvedAlarmAudio audio = resolve_alarm_audio(rulesRoot, it, dirname_of(configDir));
+            const ResolvedAlarmAudio audio = resolve_alarm_audio(runtimeRoot, it, configDir);
             r.audible_enabled = audio.audible_enabled;
             r.audio_file = audio.audio_file;
             r.audio_path = audio.audio_path;
@@ -4314,7 +5741,9 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             r.audio_files = audio.audio_files;
             r.audio_paths = audio.audio_paths;
             r.speech_texts = audio.speech_texts;
-            const ResolvedAlarmRepeat rep = resolve_alarm_repeat(rulesRoot, it);
+            r.audio_gap_ms = audio.audio_gap_ms;
+            r.audio_mode = audio.audio_mode;
+            const ResolvedAlarmRepeat rep = resolve_alarm_repeat(runtimeRoot, it);
             r.repeat_override = rep.repeat_override;
             r.repeat_ms = rep.repeat_ms;
 
@@ -4347,6 +5776,8 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.audio_files = r.audio_files;
             s.audio_paths = r.audio_paths;
             s.speech_texts = r.speech_texts;
+            s.audio_gap_ms = r.audio_gap_ms;
+            s.audio_mode = r.audio_mode;
             s.notification_policy = r.notification_policy;
             s.repeat_override = r.repeat_override;
             s.repeat_ms = r.repeat_ms;
@@ -4600,6 +6031,10 @@ int main(int argc, char **argv)
         int active = 0, unacked = 0, shelved = 0, disabled = 0;
         engine.counts(active, unacked, shelved, disabled);
         const auto keys = engine.subscription_keys();
+        const int64_t now = now_ms();
+        const int64_t lastTag = engine.last_tag_update_ms.load();
+        const int64_t staleThresholdMs = 30000;
+        const bool feedStale = lastTag > 0 && (now - lastTag) > staleThresholdMs;
 
 	        json j;
 	        j["ok"] = true;
@@ -4610,16 +6045,26 @@ int main(int argc, char **argv)
 	        j["uptime_ms"] = now_ms() - startMs;
         j["db"] = db.status_json();
         j["opcbridge"] = {
-            {"connected", true},
+            {"connected", engine.opcbridge_ws_connected.load()},
             {"base_url", "http://" + opcbridgeHost + ":" + std::to_string(opcbridgeHttpPort)},
-            {"ws_connected", true},
-            {"last_tag_update_ms", engine.last_tag_update_ms.load()}
+            {"ws_connected", engine.opcbridge_ws_connected.load()},
+            {"last_tag_update_ms", lastTag},
+            {"feed_stale", feedStale},
+            {"feed_stale_threshold_ms", staleThresholdMs},
+            {"ws_last_open_ms", engine.opcbridge_ws_last_open_ms.load()},
+            {"ws_last_close_ms", engine.opcbridge_ws_last_close_ms.load()},
+            {"ws_last_error_ms", engine.opcbridge_ws_last_error_ms.load()},
+            {"ws_last_message_ms", engine.opcbridge_ws_last_message_ms.load()},
+            {"ws_open_count", engine.opcbridge_ws_open_count.load()},
+            {"ws_close_count", engine.opcbridge_ws_close_count.load()},
+            {"ws_error_count", engine.opcbridge_ws_error_count.load()}
         };
         j["config"] = {
             {"rules_source", rulesFromOpcbridge.load() ? "opcbridge" : "local"},
             {"opcbridge_alarms_mtime_ms", engine.last_config_mtime_ms.load()},
             {"subscription_key_count", static_cast<int>(keys.size())}
         };
+        j["config"]["schema"] = engine.config_meta_json();
         {
             json sample = json::array();
             for (size_t i = 0; i < keys.size() && i < 10; i++) sample.push_back(keys[i]);
@@ -4660,7 +6105,10 @@ int main(int argc, char **argv)
             std::lock_guard<std::mutex> lock(engine.mu);
             for (const auto &kv : engine.states)
             {
-                out.push_back(alarm_state_to_json(kv.second));
+                json row = alarm_state_to_json(kv.second);
+                const std::string resolved = notifications.resolve_policy_for_alarm(kv.second);
+                row["resolved_notification_policy"] = resolved.empty() ? nullptr : json(resolved);
+                out.push_back(std::move(row));
             }
         }
         json j;

@@ -1952,10 +1952,18 @@ bool validate_alarms_json(const std::string &content, std::string &errMsg) {
             errMsg = "alarms.json must be a JSON object.";
             return false;
         }
-        if (!j.contains("alarms") || !j["alarms"].is_array()) {
-            errMsg = "alarms.json must contain an 'alarms' array.";
+
+        // Accept both legacy and current schemas:
+        // - legacy: { "alarms": [...] }
+        // - runtime/editor v2+: { "schema_version": 2, "rules": [...], ... }
+        // - tolerant fallback: { "rules": [...] }
+        const bool hasAlarmsArray = j.contains("alarms") && j["alarms"].is_array();
+        const bool hasRulesArray = j.contains("rules") && j["rules"].is_array();
+        if (!hasAlarmsArray && !hasRulesArray) {
+            errMsg = "alarms.json must contain an 'alarms' or 'rules' array.";
             return false;
         }
+
         return true;
     } catch (const std::exception &ex) {
         errMsg = std::string("Invalid JSON in alarms.json: ") + ex.what();

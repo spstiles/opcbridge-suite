@@ -45,6 +45,11 @@
         </div>
 	        <div class="card">
 	          <div class="card-title">opcbridge-alarms /alarm/api/status</div>
+            <div class="status status-degraded" id="overviewAlarmRuntimeWarning" style="display:none; margin:8px 0;"></div>
+            <div class="row-actions" id="overviewAlarmRuntimeWarningActions" style="display:none; margin:6px 0 8px 0;">
+              <button class="btn" id="alarmRuntimeRefreshBtn" type="button">Re-test Now</button>
+              <button class="btn" id="alarmRuntimeRestartBtn" type="button">Restart Alarm Runtime</button>
+            </div>
 	          <pre class="mono" id="alarmsStatusJson">Loading…</pre>
 	        </div>
 	        <div class="card">
@@ -152,7 +157,7 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top: 14px;">
+      <div class="card" id="authAdminCard" style="margin-top: 14px;">
         <div class="card-title">Project Backup / Restore</div>
         <div class="hint">Download or restore the complete project configuration: opcbridge config, alarms/audio, HMI screens/assets, SCADA settings, and data logger config. Database credentials and history are optional. Restore overwrites project files and creates a pre-restore backup in <code>/tmp</code>.</div>
         <div class="card-body">
@@ -187,6 +192,37 @@
               </div>
             </div>
             <pre class="mono" id="projectBackupStatus">Ready.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 14px;">
+        <div class="card-title">Auth / Admin</div>
+        <div class="hint">Service/admin tokens used by SCADA server for upstream admin endpoints.</div>
+        <div class="card-body">
+          <div class="form" style="max-width: 820px;">
+            <div class="form-row">
+              <label>Admin Token</label>
+              <div class="row-actions" style="gap:8px;">
+                <input id="authAdminTokenValue" type="text" readonly placeholder="Not configured" />
+                <button class="btn" id="authAdminTokenCopyBtn" type="button">Copy</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <label>Write Token</label>
+              <div class="row-actions" style="gap:8px;">
+                <input id="authWriteTokenValue" type="text" readonly placeholder="Not configured" />
+                <button class="btn" id="authWriteTokenCopyBtn" type="button">Copy</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <label></label>
+              <div class="row-actions">
+                <button class="btn" id="authAdminReloadBtn" type="button">Reload</button>
+                <button class="btn" id="authAdminTestAlarmsBtn" type="button">Test /config/alarms Access</button>
+              </div>
+            </div>
+            <div class="hint mono" id="authAdminStatus">Ready.</div>
           </div>
         </div>
       </div>
@@ -461,6 +497,15 @@
     <section id="tab-alarms_events" class="panel">
       <h2>Alarms &amp; Events</h2>
       <div class="hint">Alarm configuration, event logging configuration, and notification behavior.</div>
+      <div class="status" id="alarmsSchemaStatus">Schema compatibility: checking…</div>
+      <div class="status status-degraded" id="alarmsEventsRuntimeWarning" style="display:none; margin:8px 0;"></div>
+      <div class="row-actions" id="alarmsEventsRuntimeWarningActions" style="display:none; margin:6px 0 10px 0;">
+        <button class="btn" id="alarmsEventsRuntimeRefreshBtn" type="button">Re-test Now</button>
+        <button class="btn" id="alarmsEventsRuntimeRestartBtn" type="button">Restart Alarm Runtime</button>
+      </div>
+      <div class="row-actions" style="margin:8px 0 10px 0;">
+        <button class="btn" id="alarmsUpgradeV2Btn" type="button">Upgrade Config to v2</button>
+      </div>
 
       <details class="card ae-notifications-card">
         <summary class="card-title">Notifications</summary>
@@ -846,37 +891,28 @@
               </div>
             </div>
             <div class="form-row">
-              <label>Audible Mode</label>
-              <select id="editAlarmAudibleMode">
-                <option value="inherit">Use inherited setting</option>
-                <option value="on">Enabled</option>
-                <option value="off">Disabled</option>
+              <label>Playback Mode</label>
+              <select id="editAlarmAudioMode">
+                <option value="inherit">Use Inherited Mode</option>
+                <option value="audio_then_speech">Audio then Speech</option>
+                <option value="speech_then_audio">Speech then Audio</option>
+                <option value="audio_only">Audio Only</option>
+                <option value="speech_only">Speech Only</option>
               </select>
             </div>
             <div class="form-row">
-              <label>Audio File</label>
-              <input id="editAlarmAudioFile" type="text" placeholder="Blank = inherit; paste audio file ID">
+              <label>Audio Sequence</label>
+              <div id="editAlarmAudioSequenceMount"></div>
+            </div>
+            <div class="form-row">
+              <label>Audio Gap (ms)</label>
+              <input id="editAlarmAudioGap" type="number" min="0" max="5000" step="10" placeholder="Blank = policy default">
             </div>
             <div class="form-row">
               <label>Speech Text</label>
               <textarea id="editAlarmSpeechText" rows="3" placeholder="Optional text-to-speech for this alarm. Use [pause:500] for a 500 ms pause."></textarea>
             </div>
             <div class="form-row"><label></label><div class="hint" id="editAlarmAudioHint"></div></div>
-            <div class="form-row">
-              <label>Notification Policy</label>
-              <select id="editAlarmPolicy"></select>
-            </div>
-            <div class="form-row">
-              <label>Repeat</label>
-              <div style="display:grid; grid-template-columns: 180px 1fr; gap: 10px;">
-                <select id="editAlarmRepeatMode">
-                  <option value="inherit">Use inherited setting</option>
-                  <option value="on">Enabled</option>
-                  <option value="off">Disabled</option>
-                </select>
-                <input id="editAlarmRepeatSec" type="number" min="1" step="1" placeholder="Seconds (e.g. 30)" />
-              </div>
-            </div>
             <div class="form-row">
               <label>Audio Files</label>
               <div class="row-actions">

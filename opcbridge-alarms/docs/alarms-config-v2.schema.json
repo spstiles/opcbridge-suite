@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opcbridge.local/schemas/alarms-config-v2.schema.json",
+  "title": "OPCBridge Alarms Config v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "timezone", "schedules", "targets", "routes", "policies", "alarms"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "notification": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repeat": { "$ref": "#/$defs/repeatConfig" }
+          }
+        }
+      }
+    },
+    "schedules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/schedule" }
+    },
+    "targets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/target" }
+    },
+    "routes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/route" }
+    },
+    "policies": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/policy" }
+    },
+    "alarms": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/alarm" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "trigger": {
+      "type": "string",
+      "enum": ["active", "ack", "return", "still_active"]
+    },
+    "repeatStopOn": {
+      "type": "string",
+      "enum": ["acked", "returned", "acked_or_returned", "manual"]
+    },
+    "repeatConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "initial_delay_ms": { "type": "integer", "minimum": 0 },
+        "interval_ms": { "type": "integer", "minimum": 1 },
+        "max_repeats": { "type": "integer", "minimum": 0 },
+        "stop_on": { "$ref": "#/$defs/repeatStopOn" }
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "type": "string", "enum": ["always", "weekly", "inverse_of"] },
+        "windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["days", "start", "end"],
+            "properties": {
+              "days": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                },
+                "minItems": 1
+              },
+              "start": { "type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$" },
+              "end": { "type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$" }
+            }
+          }
+        },
+        "schedule_id": { "$ref": "#/$defs/id" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "weekly" } }, "required": ["type"] },
+          "then": { "required": ["windows"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "inverse_of" } }, "required": ["type"] },
+          "then": { "required": ["schedule_id"] }
+        }
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "type": "string", "enum": ["phone", "sip_uri", "audio_zone", "group"] },
+        "enabled": { "type": "boolean" },
+        "value": { "type": "string", "minLength": 1 },
+        "members": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "enum": ["phone", "sip_uri", "audio_zone"] } },
+            "required": ["type"]
+          },
+          "then": { "required": ["value"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "group" } }, "required": ["type"] },
+          "then": { "required": ["members"] }
+        }
+      ]
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "config"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "type": "string", "enum": ["voice_modem", "sip", "audio_command"] },
+        "enabled": { "type": "boolean" },
+        "config": { "type": "object" }
+      }
+    },
+    "policyStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["after_ms", "route_id", "targets"],
+      "properties": {
+        "after_ms": { "type": "integer", "minimum": 0 },
+        "route_id": { "$ref": "#/$defs/id" },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "schedule_id", "triggers", "steps"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "enabled": { "type": "boolean" },
+        "schedule_id": { "$ref": "#/$defs/id" },
+        "triggers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/trigger" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "repeat": { "$ref": "#/$defs/repeatConfig" },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/policyStep" },
+          "minItems": 1
+        }
+      }
+    },
+    "alarm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "condition", "severity"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "group": { "type": "string" },
+        "site": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "severity": { "type": "integer", "minimum": 0 },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["connection_id", "tag"],
+          "properties": {
+            "connection_id": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 }
+          }
+        },
+        "condition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "type": "string", "enum": ["equals", "not_equals", "high", "low"] },
+            "value": {},
+            "threshold": { "type": "number" },
+            "hysteresis": { "type": "number", "minimum": 0 }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "type": { "enum": ["equals", "not_equals"] } },
+                "required": ["type"]
+              },
+              "then": { "required": ["value"] }
+            },
+            {
+              "if": { "properties": { "type": { "enum": ["high", "low"] } }, "required": ["type"] },
+              "then": { "required": ["threshold"] }
+            }
+          ]
+        },
+        "message_on_active": { "type": "string" },
+        "message_on_return": { "type": "string" },
+        "policy_id": { "$ref": "#/$defs/id" },
+        "policy_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "repeat": { "$ref": "#/$defs/repeatConfig" },
+        "audio": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "audible_enabled": { "type": "boolean" },
+            "audio_file": { "type": "string" },
+            "speech_text": { "type": "string" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "anyOf": [
+            { "required": ["policy_id"] },
+            { "required": ["policy_ids"] }
+          ]
+        }
+      ]
+    }
+  }
+}

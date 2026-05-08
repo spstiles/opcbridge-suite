@@ -71,6 +71,7 @@ const UI_AUTH_ENABLED = false;
 
 const SYSTEMD_ENABLED = String(process.env.OPCBRIDGE_SCADA_SYSTEMD || 'true').trim().toLowerCase() === 'true';
 const SYSTEMD_UNIT = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNIT || 'opcbridge.service').trim();
+const ALARMS_SYSTEMD_UNIT = String(process.env.OPCBRIDGE_ALARMS_SYSTEMD_UNIT || 'opcbridge-alarms.service').trim();
 const SYSTEMD_DROPIN_DIR = String(
   process.env.OPCBRIDGE_SCADA_SYSTEMD_DROPIN_DIR ||
   path.join('/etc/systemd/system', `${SYSTEMD_UNIT}.d`)
@@ -1755,6 +1756,27 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/scada/auth-admin') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireManageServerPerm()) return;
+    sendJson(res, 200, {
+      ok: true,
+      auth: {
+        admin_token_configured: Boolean(ADMIN_TOKEN),
+        write_token_configured: Boolean(WRITE_TOKEN),
+        ui_auth_enabled: UI_AUTH_ENABLED
+      },
+      tokens: {
+        admin_token: String(ADMIN_TOKEN || ''),
+        write_token: String(WRITE_TOKEN || '')
+      }
+    });
+    return;
+  }
+
   if (url.pathname === '/api/scada/config') {
     if (req.method === 'GET') {
       sendJson(res, 200, { ok: true, config: cfg, config_path: CONFIG_PATH, local_only: !ALLOW_REMOTE_SCADA_CONFIG });
@@ -2301,6 +2323,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/alarms/systemd/restart') {
+    if (!SYSTEMD_ENABLED) {
+      sendJson(res, 200, { ok: false, error: 'Systemd management disabled in opcbridge-scada.' });
+      return;
+    }
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireManageServerPerm()) return;
+    const restart = runSystemctl(['restart', ALARMS_SYSTEMD_UNIT]);
+    if (!restart.ok) {
+      sendJson(res, 500, { ok: false, error: `systemctl restart ${ALARMS_SYSTEMD_UNIT} failed`, restart });
+      return;
+    }
+    sendJson(res, 200, { ok: true, unit: ALARMS_SYSTEMD_UNIT, restart });
     return;
   }
 

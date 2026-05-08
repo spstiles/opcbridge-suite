@@ -34,6 +34,9 @@ Usage: sudo ./install.sh [options]
 
 Profiles:
   --opcbridge-only        Install only opcbridge (communication layer)
+  --alarms-only           Install only opcbridge-alarms
+  --scada-only            Install only opcbridge-scada
+  --hmi-only              Install only opcbridge-hmi
   --full                  Install opcbridge + alarms + scada + hmi + reporter + historian
 
 Component selection (overrides profiles):
@@ -384,16 +387,6 @@ validate_components() {
   [[ "$ok" -eq 1 ]] || exit 1
 
   # Implicit dependencies
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
-    if ! printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
-      COMPONENTS+=(opcbridge)
-    fi
-  fi
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
-    if ! printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
-      COMPONENTS+=(opcbridge)
-    fi
-  fi
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
     if ! printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
       COMPONENTS+=(opcbridge)
@@ -605,15 +598,15 @@ install_alarms() {
 
   install -m 0755 "$src" "$PREFIX/bin/opcbridge-alarms"
 
-  mkdir -p "$CONFIG_ROOT/alarms"
-  if [[ ! -e "$CONFIG_ROOT/alarms/data" ]]; then
+  mkdir -p "$CONFIG_ROOT"
+  if [[ ! -e "$CONFIG_ROOT/data" ]]; then
     mkdir -p "$DATA_ROOT/opcbridge-alarms"
-    ln -s "$DATA_ROOT/opcbridge-alarms" "$CONFIG_ROOT/alarms/data"
+    ln -s "$DATA_ROOT/opcbridge-alarms" "$CONFIG_ROOT/data"
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/opcbridge-alarms" || true
   fi
 
   install -m 0644 "$ROOT_DIR/opcbridge-alarms/config/alarms.json.example" \
-    "$CONFIG_ROOT/alarms/alarms.json.example" 2>/dev/null || true
+    "$CONFIG_ROOT/alarms.json.example" 2>/dev/null || true
 }
 
 
@@ -972,7 +965,7 @@ install_systemd_units() {
 	Type=simple
 	EnvironmentFile=${ENV_FILE}
 	WorkingDirectory=${PREFIX}
-	ExecStart=/bin/sh -c 'exec ${PREFIX}/bin/opcbridge-alarms --config ${CONFIG_ROOT}/alarms --opcbridge-host 127.0.0.1 --opcbridge-http-port \"\${OPCBRIDGE_HTTP_PORT:-8080}\" --opcbridge-ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --http-port \"\${ALARMS_HTTP_PORT:-8085}\" --ws-port \"\${ALARMS_WS_PORT:-8086}\" --opcua --admin-token \"\${OPCBRIDGE_ADMIN_SERVICE_TOKEN}\"'
+	ExecStart=/bin/sh -c 'exec ${PREFIX}/bin/opcbridge-alarms --config ${CONFIG_ROOT} --opcbridge-host 127.0.0.1 --opcbridge-http-port \"\${OPCBRIDGE_HTTP_PORT:-8080}\" --opcbridge-ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --http-port \"\${ALARMS_HTTP_PORT:-8085}\" --ws-port \"\${ALARMS_WS_PORT:-8086}\" --opcua --admin-token \"\${OPCBRIDGE_ADMIN_SERVICE_TOKEN}\"'
 	User=${SERVICE_USER}
 	Group=${SERVICE_GROUP}
 	SupplementaryGroups=audio dialout
@@ -1092,6 +1085,9 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --opcbridge-only) PROFILE="opcbridge-only"; shift;;
+      --alarms-only) PROFILE="alarms-only"; shift;;
+      --scada-only) PROFILE="scada-only"; shift;;
+      --hmi-only) PROFILE="hmi-only"; shift;;
       --full|--suite) PROFILE="full"; shift;;
       --components) split_csv "${2:-}"; shift 2;;
       --prefix) PREFIX="${2:-}"; shift 2;;
@@ -1126,6 +1122,9 @@ main() {
   if [[ "${#COMPONENTS[@]}" -eq 0 ]]; then
     case "$PROFILE" in
       opcbridge-only) COMPONENTS=(opcbridge);;
+      alarms-only) COMPONENTS=(alarms);;
+      scada-only) COMPONENTS=(scada);;
+      hmi-only) COMPONENTS=(hmi);;
       full|"") COMPONENTS=(opcbridge alarms scada hmi reporter historian);;
       *) echo "Unknown profile: $PROFILE" >&2; exit 1;;
     esac
@@ -1275,12 +1274,22 @@ main() {
           fi
         fi
 
-        echo "Starting/restarting $svc..."
-        if systemctl restart "$svc" 2>/dev/null; then
-          echo "  ✓ $svc started successfully"
+        if systemctl is-active --quiet "$svc"; then
+          echo "Restarting $svc (currently running)..."
+          if systemctl restart "$svc" 2>/dev/null; then
+            echo "  ✓ $svc restarted successfully"
+          else
+            echo "  ✗ Failed to restart $svc (check: journalctl -u $svc -n 50)"
+            mark_install_error
+          fi
         else
-          echo "  ✗ Failed to start $svc (check: journalctl -u $svc -n 50)"
-          mark_install_error
+          echo "Starting $svc..."
+          if systemctl start "$svc" 2>/dev/null; then
+            echo "  ✓ $svc started successfully"
+          else
+            echo "  ✗ Failed to start $svc (check: journalctl -u $svc -n 50)"
+            mark_install_error
+          fi
         fi
       fi
     done
