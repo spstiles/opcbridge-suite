@@ -4583,14 +4583,19 @@ private:
 		            // Per current UX, "call" is a single policy type. SIP is a backend, not a policy type.
 		            return false;
 		        }
-		        // Phone/call policies can be delivered by SIP and/or voice modem.
-		        // If neither backend is configured, skip early with a clear reason.
-		        if ((!sip_.enabled || sip_.server.empty() || sip_.ext.empty() || sip_.pass.empty()) &&
-		            (!voice_modem_.enabled || voice_modem_.device.empty()))
-		        {
-		            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "no call backend configured (enable SIP or Voice Modem)");
-		            return false;
-		        }
+                // Phone/call policies can be delivered by SIP and/or voice modem.
+                // Backend availability rules:
+                // - For forced backends (policy.call_backend), we only require the backend to be configured.
+                // - For auto selection, we require both "enabled" + configured.
+                const bool sipConfigured = !sip_.server.empty() && !sip_.ext.empty() && !sip_.pass.empty();
+                const bool vmConfigured = !voice_modem_.device.empty();
+                const bool sipAvailable = (policy.call_backend == "sip") ? sipConfigured : (sip_.enabled && sipConfigured);
+                const bool vmAvailable = (policy.call_backend == "voice_modem") ? vmConfigured : (voice_modem_.enabled && vmConfigured);
+                if (!sipAvailable && !vmAvailable)
+                {
+                    record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "no call backend configured (enable SIP or Voice Modem)");
+                    return false;
+                }
 
 	        std::unordered_set<std::string> seen;
 	        for (const auto& target : policy.targets)
@@ -5336,35 +5341,37 @@ private:
 	            vm = voice_modem_;
 	        }
 
-	        const bool sipReady = sip.enabled && !sip.server.empty() && !sip.ext.empty() && !sip.pass.empty();
-	        const bool vmReady = vm.enabled && !vm.device.empty();
+            const bool sipConfigured = !sip.server.empty() && !sip.ext.empty() && !sip.pass.empty();
+            const bool vmConfigured = !vm.device.empty();
+	        const bool sipReadyAuto = sip.enabled && sipConfigured;
+	        const bool vmReadyAuto = vm.enabled && vmConfigured;
 
 	        const std::string backend = job.call_backend.empty() ? "auto" : job.call_backend;
 	        if (backend == "sip")
 	        {
-	            if (!sipReady)
+	            if (!sipConfigured)
 	            {
-	                result = "call_backend=sip but SIP is not configured/enabled";
+	                result = "call_backend=sip but SIP is not configured";
 	                return false;
 	            }
 	            return run_sip_call(job, result);
 	        }
 	        if (backend == "voice_modem")
 	        {
-	            if (!vmReady)
+	            if (!vmConfigured)
 	            {
-	                result = "call_backend=voice_modem but voice modem is not configured/enabled";
+	                result = "call_backend=voice_modem but voice modem is not configured";
 	                return false;
 	            }
 	            return run_voice_modem_call(job, result);
 	        }
 
 	        // auto
-	        if (sipReady)
+	        if (sipReadyAuto)
 	        {
 	            return run_sip_call(job, result);
 	        }
-	        if (vmReady)
+	        if (vmReadyAuto)
 	        {
 	            return run_voice_modem_call(job, result);
 	        }
