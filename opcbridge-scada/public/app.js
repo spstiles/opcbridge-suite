@@ -2781,6 +2781,26 @@ async function importAlarmsCsv() {
   if (!Array.isArray(cfg.alarms)) cfg.alarms = [];
   ensureAlarmGroupsTree(cfg);
 
+  // Build lookup maps so re-imports don't accidentally duplicate alarms if IDs differ.
+  const idxById = new Map();
+  const idxByConnTag = new Map(); // key: conn_id + \0 + tag_name
+  const idxByNameConnTag = new Map(); // key: name + \0 + conn_id + \0 + tag_name
+  cfg.alarms.forEach((a, i) => {
+    const id = String(a?.id || '').trim();
+    if (id && !idxById.has(id)) idxById.set(id, i);
+    const conn = String(a?.connection_id || '').trim();
+    const tag = String(a?.tag_name || a?.tag || '').trim();
+    const name = String(a?.name || '').trim();
+    if (conn && tag) {
+      const k = `${conn}\0${tag}`;
+      if (!idxByConnTag.has(k)) idxByConnTag.set(k, i);
+      if (name) {
+        const k2 = `${name.toLowerCase()}\0${conn}\0${tag}`;
+        if (!idxByNameConnTag.has(k2)) idxByNameConnTag.set(k2, i);
+      }
+    }
+  });
+
   let upserts = 0;
   let deleted = 0;
   let skipped = 0;
@@ -2798,7 +2818,7 @@ async function importAlarmsCsv() {
       return;
     }
 
-    const idx = cfg.alarms.findIndex((a) => String(a?.id || '').trim() === id);
+    let idx = idxById.has(id) ? idxById.get(id) : -1;
     if (isDeleteAction(csvGet(r, 'action'))) {
       if (idx >= 0) {
         cfg.alarms.splice(idx, 1);
@@ -2828,8 +2848,21 @@ async function importAlarmsCsv() {
       return;
     }
 
+    // If no direct ID match, attempt to match existing alarms by (name+conn+tag) or (conn+tag).
+    // This prevents accidental duplication when importing a CSV whose "id" column contains the display name.
+    if (idx < 0) {
+      const nameKey = String(csvGet(r, 'name') || '').trim();
+      const k2 = nameKey ? `${nameKey.toLowerCase()}\0${connectionId}\0${tagName}` : '';
+      if (k2 && idxByNameConnTag.has(k2)) idx = idxByNameConnTag.get(k2);
+      if (idx < 0) {
+        const k = `${connectionId}\0${tagName}`;
+        if (idxByConnTag.has(k)) idx = idxByConnTag.get(k);
+      }
+    }
+
     const alarm = (idx >= 0) ? { ...(cfg.alarms[idx] || {}) } : { id };
-    alarm.id = id;
+    // Preserve existing ID when matching by conn/tag, otherwise use CSV id.
+    alarm.id = (idx >= 0 && String((cfg.alarms[idx] || {}).id || '').trim()) ? String((cfg.alarms[idx] || {}).id || '').trim() : id;
     alarm.name = String(csvGet(r, 'name') || alarm.name || id).trim() || id;
     alarm.group = normalizeAlarmGroupName(csvGet(r, 'group'));
     alarm.site = normalizeAlarmSiteName(csvGet(r, 'site'));
@@ -2846,7 +2879,7 @@ async function importAlarmsCsv() {
     else alarm.audible_enabled = parseBoolLoose(audibleRaw, false);
 
     const audioFile = String(csvGet(r, 'audio_file') || '').trim();
-    if (audioFile) alarm.audio_file = audioFile;
+    if (audioFile) alarm.audio_file = validateAlarmAudioFileId(cfg, audioFile);
     else delete alarm.audio_file;
 
     const speechText = String(csvGet(r, 'speech_text') || '').trim();
