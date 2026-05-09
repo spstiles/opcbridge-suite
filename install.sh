@@ -24,6 +24,7 @@ INSTALL_HAD_ERRORS=0
 WITH_ODBC=0
 ODBC_DRIVER=""
 WITH_PJSIP=0
+WITH_PJSIP_EXPLICIT=0
 
 PROFILE=""
 COMPONENTS=()
@@ -56,6 +57,7 @@ Options:
   --odbc-driver NAME      ODBC driver: freetds | ms (default: freetds)
   --with-node-deps        Run npm install for Node services (requires network)
   --with-pjsip            Build/install pjproject (pjsua) for SIP callouts
+  --no-pjsip              Do not build/install pjproject (pjsua)
   --init-historian-db     Create local Postgres role/db and load historian schema
   --no-start              Do not start services
   --no-enable             Do not enable services at boot
@@ -548,7 +550,7 @@ maybe_prompt_install_deps() {
       missing+=("espeak-ng (or espeak/flite) for TTS")
     fi
     if [[ "$WITH_PJSIP" -eq 1 ]]; then
-      have_cmd pjsua || missing+=("pjproject/pjsua (re-run installer with --deps --with-pjsip)")
+      have_cmd pjsua || missing+=("pjproject/pjsua (re-run installer with --deps, or disable with --no-pjsip)")
     fi
   fi
 
@@ -562,10 +564,13 @@ maybe_prompt_install_deps() {
   echo ""
   echo "Tip: re-run with --deps to install dependencies via apt."
   echo ""
-  if [[ "$ASSUME_YES" -eq 0 ]]; then
-    if prompt_yn "Install dependencies now (recommended)?" y; then
-      INSTALL_DEPS=1
-    fi
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    # Non-interactive mode: treat missing deps as an implicit "yes" to install deps.
+    INSTALL_DEPS=1
+    return 0
+  fi
+  if prompt_yn "Install dependencies now (recommended)?" y; then
+    INSTALL_DEPS=1
   fi
 }
 
@@ -1274,7 +1279,8 @@ main() {
       --init-historian-db) INIT_HISTORIAN_DB=1; shift;;
       --with-odbc) WITH_ODBC=1; shift;;
       --odbc-driver) ODBC_DRIVER="${2:-}"; shift 2;;
-      --with-pjsip) WITH_PJSIP=1; shift;;
+      --with-pjsip) WITH_PJSIP=1; WITH_PJSIP_EXPLICIT=1; shift;;
+      --no-pjsip) WITH_PJSIP=0; WITH_PJSIP_EXPLICIT=1; shift;;
       --scada-systemd-sudo) SCADA_SYSTEMD_SUDO=1; shift;;
       --no-start) START_SERVICES=0; shift;;
       --no-enable) ENABLE_SERVICES=0; shift;;
@@ -1309,6 +1315,14 @@ main() {
   fi
 
   validate_components
+
+  # Default SIP UA behavior:
+  # If alarms are being installed and the user did not explicitly opt in/out,
+  # install pjproject/pjsua so SIP callouts work out of the box.
+  if [[ "$WITH_PJSIP_EXPLICIT" -eq 0 ]] && printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
+    WITH_PJSIP=1
+  fi
+
   maybe_prompt_install_deps
 
   # Optional: SQL Server support for opcbridge-reporter via ODBC (wizard-style).
