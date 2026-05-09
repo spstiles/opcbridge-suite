@@ -2839,12 +2839,28 @@ async function importAlarmsCsv() {
       return;
     }
 
-    const connectionId = String(csvGet(r, 'connection_id') || '').trim();
-    const tagName = String(csvGet(r, 'tag_name') || csvGet(r, 'tag') || '').trim();
+    const rawConn = String(csvGet(r, 'connection_id') || '');
+    const rawTag = String(csvGet(r, 'tag_name') || csvGet(r, 'tag') || '');
+    const connectionId = rawConn.trim();
+    const tagName = rawTag.trim();
     if (!connectionId || !tagName) {
       skipped += 1;
       skippedMissing += 1;
       if (!sampleMissing) sampleMissing = { id, reason: 'missing connection_id or tag_name' };
+      return;
+    }
+    // Guardrail: connection_id and tag_name should not contain whitespace.
+    // Whitespace (including accidental spaces) can cause imports to create duplicate alarms.
+    if (/\s/.test(connectionId)) {
+      skipped += 1;
+      skippedInvalid += 1;
+      if (!sampleInvalid) sampleInvalid = { id, reason: `invalid connection_id (contains whitespace): '${connectionId}'` };
+      return;
+    }
+    if (/\s/.test(tagName)) {
+      skipped += 1;
+      skippedInvalid += 1;
+      if (!sampleInvalid) sampleInvalid = { id, reason: `invalid tag_name (contains whitespace): '${tagName}'` };
       return;
     }
 
