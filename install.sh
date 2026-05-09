@@ -1317,9 +1317,9 @@ main() {
   validate_components
 
   # Default SIP UA behavior:
-  # If alarms are being installed and the user did not explicitly opt in/out,
-  # install pjproject/pjsua so SIP callouts work out of the box.
-  if [[ "$WITH_PJSIP_EXPLICIT" -eq 0 ]] && printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
+  # - Do NOT build/install pjsua unless the user asked for it (--with-pjsip), or they are doing a full deps install (--deps).
+  # - Treat pjproject/pjsua like a "dependency" only when --deps is used (opt-out with --no-pjsip).
+  if [[ "$WITH_PJSIP_EXPLICIT" -eq 0 ]] && [[ "$INSTALL_DEPS" -eq 1 ]] && printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
     WITH_PJSIP=1
   fi
 
