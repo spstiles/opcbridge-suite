@@ -56,9 +56,25 @@ const els = {
   projectRestoreApplyBtn: document.getElementById('projectRestoreApplyBtn'),
   projectBackupStatus: document.getElementById('projectBackupStatus'),
   soundOutputDevice: document.getElementById('soundOutputDevice'),
+  soundTestAudioFile: document.getElementById('soundTestAudioFile'),
+  soundTestTtsText: document.getElementById('soundTestTtsText'),
   soundReloadBtn: document.getElementById('soundReloadBtn'),
+  soundTestBtn: document.getElementById('soundTestBtn'),
   soundSaveBtn: document.getElementById('soundSaveBtn'),
   soundSettingsStatus: document.getElementById('soundSettingsStatus'),
+  sipTestTo: document.getElementById('sipTestTo'),
+  sipEnabled: document.getElementById('sipEnabled'),
+  sipServer: document.getElementById('sipServer'),
+  sipExt: document.getElementById('sipExt'),
+  sipPass: document.getElementById('sipPass'),
+  sipTransport: document.getElementById('sipTransport'),
+  sipNetIf: document.getElementById('sipNetIf'),
+  sipDurationSec: document.getElementById('sipDurationSec'),
+  sipTestAudioFile: document.getElementById('sipTestAudioFile'),
+  sipTestTtsText: document.getElementById('sipTestTtsText'),
+  sipSaveBtn: document.getElementById('sipSaveBtn'),
+  sipTestBtn: document.getElementById('sipTestBtn'),
+  sipStatus: document.getElementById('sipStatus'),
   voiceModemEnabled: document.getElementById('voiceModemEnabled'),
   voiceModemDevice: document.getElementById('voiceModemDevice'),
   voiceModemManualDevice: document.getElementById('voiceModemManualDevice'),
@@ -2791,11 +2807,15 @@ async function importAlarmsCsv() {
       return;
     }
 
-    const type = String(csvGet(r, 'type') || '').trim().toLowerCase();
+    const typeRaw = String(csvGet(r, 'type') || '').trim().toLowerCase();
+    let type = typeRaw.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+    if (type === 'not_equal' || type === 'notequals' || type === 'ne' || type === 'neq' || type === '!=')
+      type = 'not_equals';
+    if (type === 'equal' || type === 'eq' || type === '==') type = 'equals';
     if (!['equals', 'not_equals', 'high', 'low'].includes(type)) {
       skipped += 1;
       skippedInvalid += 1;
-      if (!sampleInvalid) sampleInvalid = { id, reason: `invalid type '${type || '(blank)'}'` };
+      if (!sampleInvalid) sampleInvalid = { id, reason: `invalid type '${typeRaw || '(blank)'}'` };
       return;
     }
 
@@ -2871,11 +2891,18 @@ async function importAlarmsCsv() {
     upserts += 1;
   });
 
-  await saveOpcbridgeAlarmsConfig(cfg);
-  await loadOpcbridgeAlarmsConfig();
-  await opcbridgeReload().catch(() => {});
-  renderWorkspaceTree();
-  renderAlarmsEventsTree();
+  try {
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    await opcbridgeReload().catch(() => {});
+    renderWorkspaceTree();
+    renderAlarmsEventsTree();
+  } catch (err) {
+    const msg = `CSV import failed: ${String(err?.message || err)}`;
+    setWorkspaceSaveStatus(msg);
+    window.alert(msg);
+    return;
+  }
 
   const details = [];
   if (skippedMissing) details.push(`${skippedMissing} missing required fields`);
@@ -4849,6 +4876,10 @@ function setSoundSettingsStatus(msg) {
   if (els.soundSettingsStatus) els.soundSettingsStatus.textContent = String(msg || '');
 }
 
+function setSipStatus(msg) {
+  if (els.sipStatus) els.sipStatus.textContent = String(msg || '');
+}
+
 function setVoiceModemStatus(msg) {
   if (els.voiceModemStatus) els.voiceModemStatus.textContent = String(msg || '');
 }
@@ -5144,7 +5175,9 @@ function getNotificationPolicies(cfg) {
 function getPolicyOutputType(policy) {
   const raw = String(policy?.output_type || policy?.type || '').trim().toLowerCase();
   if (raw === 'voice') return 'phone';
-  if (['phone', 'audio', 'sms', 'sip', 'email'].includes(raw)) return raw;
+  // "sip" is now treated as a phone delivery backend, not a separate policy type.
+  if (raw === 'sip') return 'phone';
+  if (['phone', 'audio', 'sms', 'email'].includes(raw)) return raw;
   return 'phone';
 }
 
@@ -5659,6 +5692,32 @@ async function loadSoundSettings() {
       els.soundOutputDevice.value = selected || 'default';
     }
 
+    if (els.soundTestAudioFile) {
+      const prev = String(els.soundTestAudioFile.value || '').trim();
+      els.soundTestAudioFile.textContent = '';
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '(Use Speech Text)';
+      els.soundTestAudioFile.appendChild(noneOpt);
+      const files = Array.isArray(cfg?.audio?.files) ? cfg.audio.files : [];
+      files
+        .slice()
+        .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }))
+        .forEach((f) => {
+          const id = String(f?.id || '').trim();
+          if (!id) return;
+          const opt = document.createElement('option');
+          opt.value = id;
+          opt.textContent = `${String(f?.name || id)} (${id})`;
+          els.soundTestAudioFile.appendChild(opt);
+        });
+      if (prev && Array.from(els.soundTestAudioFile.options).some((o) => o.value === prev)) {
+        els.soundTestAudioFile.value = prev;
+      } else {
+        els.soundTestAudioFile.value = '';
+      }
+    }
+
     const count = Array.isArray(devicesResp?.devices) ? devicesResp.devices.length : 0;
     const suffix = devicesResp?.ok === false ? ` (${devicesResp.error || 'device scan failed'})` : '';
     setSoundSettingsStatus(`Ready. ${count} hardware output(s) found.${suffix}`);
@@ -5698,6 +5757,138 @@ async function saveSoundSettings() {
     setSoundSettingsStatus('Saved. Alarm server will reload the setting automatically.');
   } catch (err) {
     setSoundSettingsStatus(`Save failed: ${err.message}`);
+  }
+}
+
+async function testSoundSettingsPlayback() {
+  setSoundSettingsStatus('Testing audio playback...');
+  try {
+    const audio_file = String(els.soundTestAudioFile?.value || '').trim();
+    const tts_text = String(els.soundTestTtsText?.value || '').trim();
+    if (!audio_file && !tts_text) throw new Error('Select a test audio file or enter speech text.');
+    const body = {};
+    if (audio_file) body.audio_file = audio_file;
+    if (tts_text) body.tts_text = tts_text;
+    const resp = await apiPostJson('/api/alarms/alarm/api/audio/test', body);
+    if (!resp?.ok) throw new Error(resp?.error || 'Audio test failed.');
+    setSoundSettingsStatus(`Test OK. ${String(resp?.result || '').trim()}`);
+  } catch (err) {
+    setSoundSettingsStatus(`Test failed: ${err.message}`);
+  }
+}
+
+async function loadSipSettings() {
+  setSipStatus('Loading...');
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const sip = (cfg && typeof cfg === 'object' && cfg.sip && typeof cfg.sip === 'object') ? cfg.sip : {};
+    if (els.sipEnabled) els.sipEnabled.checked = Boolean(sip.enabled);
+    if (els.sipServer) els.sipServer.value = String(sip.server || '').trim();
+    if (els.sipExt) els.sipExt.value = String(sip.ext || '').trim();
+    if (els.sipPass) els.sipPass.value = String(sip.pass || '').trim();
+    if (els.sipTransport) els.sipTransport.value = String(sip.transport || 'udp').trim().toLowerCase() || 'udp';
+    if (els.sipNetIf) els.sipNetIf.value = String(sip.net_if || '').trim();
+    // This is the default SIP call duration used by runtime (not just the test).
+    if (els.sipDurationSec) els.sipDurationSec.value = String(Number(sip.duration_sec ?? 20) || 20);
+
+    if (els.sipTestAudioFile) {
+      els.sipTestAudioFile.textContent = '';
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '(Use Speech Text)';
+      els.sipTestAudioFile.appendChild(noneOpt);
+      const files = Array.isArray(cfg?.audio?.files) ? cfg.audio.files : [];
+      files
+        .slice()
+        .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }))
+        .forEach((f) => {
+          const id = String(f?.id || '').trim();
+          if (!id) return;
+          const opt = document.createElement('option');
+          opt.value = id;
+          opt.textContent = `${String(f?.name || id)} (${id})`;
+          els.sipTestAudioFile.appendChild(opt);
+        });
+      // Always reflect saved config (avoid "Not yet configured" getting stuck until manual reload).
+      const saved = String(sip.test_audio_file || '').trim();
+      if (saved && Array.from(els.sipTestAudioFile.options).some((o) => o.value === saved)) {
+        els.sipTestAudioFile.value = saved;
+      } else {
+        els.sipTestAudioFile.value = '';
+      }
+    }
+    if (els.sipTestTtsText) {
+      els.sipTestTtsText.value = String(sip.test_tts_text || '').trim();
+    }
+    if (els.sipTestTo) els.sipTestTo.value = String(sip.test_to || '').trim();
+
+    setSipStatus('Ready.');
+  } catch (err) {
+    setSipStatus(`Load failed: ${err.message}`);
+  }
+}
+
+async function saveSipSettings() {
+  if (els.sipSaveBtn) els.sipSaveBtn.disabled = true;
+  setSipStatus('Saving...');
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    cfg.sip = cfg.sip && typeof cfg.sip === 'object' ? cfg.sip : {};
+    cfg.sip.enabled = Boolean(els.sipEnabled?.checked);
+    cfg.sip.server = String(els.sipServer?.value || '').trim();
+    cfg.sip.ext = String(els.sipExt?.value || '').trim();
+    const pass = String(els.sipPass?.value || '').trim();
+    cfg.sip.pass = pass;
+    cfg.sip.transport = String(els.sipTransport?.value || 'udp').trim().toLowerCase() || 'udp';
+    cfg.sip.net_if = String(els.sipNetIf?.value || '').trim();
+    cfg.sip.duration_sec = Math.max(5, Math.min(300, Math.trunc(Number(els.sipDurationSec?.value ?? 20) || 20)));
+    cfg.sip.test_to = String(els.sipTestTo?.value || '').trim();
+    cfg.sip.test_audio_file = String(els.sipTestAudioFile?.value || '').trim();
+    cfg.sip.test_tts_text = String(els.sipTestTtsText?.value || '').trim();
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    setSipStatus('Saved. Alarm server will reload the setting automatically.');
+  } catch (err) {
+    setSipStatus(`Save failed: ${err.message}`);
+  } finally {
+    if (els.sipSaveBtn) els.sipSaveBtn.disabled = false;
+  }
+}
+
+async function testSipCall() {
+  if (els.sipTestBtn) els.sipTestBtn.disabled = true;
+  setSipStatus('Placing SIP test call...');
+  try {
+    const to = String(els.sipTestTo?.value || '').trim();
+    if (!to) throw new Error('Enter a destination phone number.');
+    const audio_file = String(els.sipTestAudioFile?.value || '').trim();
+    const tts_text = audio_file ? '' : String(els.sipTestTtsText?.value || '').trim();
+    const body = {
+      to,
+      duration: Math.max(5, Math.min(300, Math.trunc(Number(els.sipDurationSec?.value ?? 20) || 20))),
+      transport: String(els.sipTransport?.value || 'udp').trim().toLowerCase() || 'udp',
+      net_if: String(els.sipNetIf?.value || '').trim()
+    };
+    // Allow testing before saving by passing explicit overrides when present.
+    const server = String(els.sipServer?.value || '').trim();
+    const ext = String(els.sipExt?.value || '').trim();
+    const passRaw = els.sipPass?.value;
+    const pass = String(passRaw ?? '').trim();
+    // For Test, always use the current visible values (even if blank) so
+    // users can validate changes without saving, and so blanks fail loudly.
+    body.server = server;
+    body.ext = ext;
+    body.pass = pass;
+    if (audio_file) body.audio_file = audio_file;
+    if (tts_text) body.tts_text = tts_text;
+    const resp = await apiPostJson('/api/alarms/alarm/api/sip/test', body, { timeoutMs: 180000 });
+    if (!resp?.ok) throw new Error(resp?.error || 'SIP test call failed.');
+    const codes = Array.isArray(resp?.codes) ? resp.codes.join(',') : '';
+    setSipStatus(`OK. net_if=${resp?.net_if || ''} codes=[${codes}]`);
+  } catch (err) {
+    setSipStatus(`Test failed: ${err.message}`);
+  } finally {
+    if (els.sipTestBtn) els.sipTestBtn.disabled = false;
   }
 }
 
@@ -5977,7 +6168,10 @@ function wireScadaSettingsUi() {
   els.projectRestorePreviewBtn?.addEventListener('click', previewProjectRestore);
   els.projectRestoreApplyBtn?.addEventListener('click', applyProjectRestore);
   els.soundReloadBtn?.addEventListener('click', loadSoundSettings);
+  els.soundTestBtn?.addEventListener('click', testSoundSettingsPlayback);
   els.soundSaveBtn?.addEventListener('click', saveSoundSettings);
+  els.sipSaveBtn?.addEventListener('click', saveSipSettings);
+  els.sipTestBtn?.addEventListener('click', testSipCall);
   els.voiceModemReloadBtn?.addEventListener('click', loadVoiceModemSettings);
   els.voiceModemSaveBtn?.addEventListener('click', saveVoiceModemSettings);
   els.voiceModemTestBtn?.addEventListener('click', testVoiceModemCall);
@@ -8682,7 +8876,7 @@ function buildAlarmsEventsTree() {
     contactGroupsRoot.children.push({ id: 'hint:no_notification_contact_groups', type: 'hint', label: '(no contact groups configured)', children: [] });
   }
 
-  const policyTypeLabels = { phone: 'Phone', audio: 'Audio', sms: 'SMS', sip: 'SIP', email: 'Email' };
+  const policyTypeLabels = { phone: 'Phone', audio: 'Audio', sms: 'SMS', email: 'Email' };
   const policyTypeRoots = {};
   Object.entries(policyTypeLabels).forEach(([type, label]) => {
     const node = {
@@ -9037,7 +9231,7 @@ async function createNotificationContactGroupInteractive() {
 
 async function createNotificationPolicyInteractive(outputType = 'phone') {
   if (!canEditConfig()) { window.alert('Login required to edit notification policies.'); return; }
-  const type = ['phone', 'audio', 'sms', 'sip', 'email'].includes(String(outputType || '').trim().toLowerCase())
+  const type = ['phone', 'audio', 'sms', 'email'].includes(String(outputType || '').trim().toLowerCase())
     ? String(outputType).trim().toLowerCase()
     : 'phone';
   const name = String(window.prompt(`${type.toUpperCase()} policy name:`, '') || '').trim();
@@ -9046,10 +9240,13 @@ async function createNotificationPolicyInteractive(outputType = 'phone') {
   const policies = getNotificationPolicies(cfg);
   const used = new Set(policies.map((p) => String(p?.id || '').trim()).filter(Boolean));
   const id = uniqueNotificationId(name, used);
-  policies.push({ id, name, output_type: type, enabled: true, min_severity: 500, on: ['active'], contacts: [], contact_groups: [] });
+  const base = { id, name, output_type: type, enabled: true, min_severity: 500, on: ['active'], contacts: [], contact_groups: [] };
+  if (type === 'phone') base.call_backend = 'auto';
+  policies.push(base);
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
-  state.alarmsEventsSelectedNodeId = 'folder:notification_policies';
+  // After creating, focus the policy type group so the user can see it in context.
+  state.alarmsEventsSelectedNodeId = `notification_policy_type:${type}`;
   state.alarmsEventsSelectedChildId = `notification_policy:${id}`;
   renderAlarmsEventsTree();
 }
@@ -9357,7 +9554,7 @@ function renderAlarmsEventsTreeNode(node, container) {
     }
     if (node.type === 'notification_policy_type_root') {
       const ptype = String(node?.meta?.policy_type || 'phone').trim().toLowerCase();
-      const label = ptype === 'sms' || ptype === 'sip' ? ptype.toUpperCase() : `${ptype.charAt(0).toUpperCase()}${ptype.slice(1)}`;
+      const label = ptype === 'sms' ? ptype.toUpperCase() : `${ptype.charAt(0).toUpperCase()}${ptype.slice(1)}`;
       items.push({ label: `Add ${label} Policy…`, onClick: () => createNotificationPolicyInteractive(ptype).catch((err) => window.alert(`Policy create failed: ${err.message}`)) });
       items.push('sep');
     }
@@ -11052,14 +11249,35 @@ function renderAlarmsEventsProperties(item, parentNode) {
     policyAudioGapBox.disabled = !canEditConfig();
     addRow('Playback Gap Milliseconds', policyAudioGapBox);
 
+    const policyOutputType = String(getPolicyOutputType(cur) || 'phone').trim().toLowerCase();
     const outputTypeHint = document.createElement('div');
     outputTypeHint.className = 'hint';
-    outputTypeHint.textContent = `Output Type: ${String(getPolicyOutputType(cur) || 'phone').toUpperCase()}`;
+    outputTypeHint.textContent = `Output Type: ${String(policyOutputType || 'phone').toUpperCase()}`;
     form.appendChild(outputTypeHint);
-    const policyOutputType = String(getPolicyOutputType(cur) || 'phone').trim().toLowerCase();
-    const isPhonePolicy = policyOutputType === 'phone';
+
     let targetList = null;
-    if (isPhonePolicy) {
+    const targetHint = document.createElement('div');
+    targetHint.className = 'hint';
+    targetHint.textContent = 'Select contacts and/or contact groups in call order. Calls stop when acknowledged.';
+
+    const insertRowBefore = (labelText, inputEl, beforeEl) => {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      const lab = document.createElement('label');
+      lab.textContent = labelText;
+      row.appendChild(lab);
+      row.appendChild(inputEl);
+      form.insertBefore(row, beforeEl);
+      return row;
+    };
+
+    // Marker so we can insert the call-target editor above the acknowledge fields.
+    const beforeAckMarker = document.createElement('div');
+    beforeAckMarker.style.display = 'none';
+    form.appendChild(beforeAckMarker);
+
+    const ensureTargetEditor = () => {
+      if (targetList) return;
       const currentTargets = getPolicyTargets(cur);
       const contacts = getNotificationContacts(cfg)
         .slice()
@@ -11091,12 +11309,23 @@ function renderAlarmsEventsProperties(item, parentNode) {
         ],
         selectedItems: currentTargets.map((target) => ({ key: `${String(target?.type || '')}:${String(target?.id || '')}` }))
       });
-      addRow('Callout Targets', targetList);
-      const targetHint = document.createElement('div');
-      targetHint.className = 'hint';
-      targetHint.textContent = 'Select contacts and/or contact groups in call order. Calls stop when acknowledged.';
-      form.appendChild(targetHint);
-    }
+      // Insert the row/hint above the acknowledge fields.
+      insertRowBefore('Callout Targets', targetList, beforeAckMarker);
+      form.insertBefore(targetHint, beforeAckMarker);
+    };
+
+    const isPhonePolicyNow = () => policyOutputType === 'phone';
+
+    // For phone policies only: choose which call backend to use.
+    const callBackendSel = document.createElement('select');
+    callBackendSel.disabled = !canEditConfig() || !isPhonePolicyNow();
+    [
+      { v: 'auto', l: 'Auto (prefer SIP)' },
+      { v: 'sip', l: 'SIP' },
+      { v: 'voice_modem', l: 'Voice Modem' }
+    ].forEach((o) => callBackendSel.appendChild(new Option(o.l, o.v)));
+    callBackendSel.value = ['auto', 'sip', 'voice_modem'].includes(String(cur?.call_backend || 'auto')) ? String(cur?.call_backend || 'auto') : 'auto';
+    addRow('Call Backend', callBackendSel);
 
     const ackDtmfBox = document.createElement('input');
     ackDtmfBox.type = 'text';
@@ -11104,7 +11333,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
       ? cur.ack_dtmf.map((v) => String(v || '').trim()).filter(Boolean).join(',')
       : '1';
     ackDtmfBox.placeholder = '1';
-    ackDtmfBox.disabled = !canEditConfig() || !isPhonePolicy;
+    ackDtmfBox.disabled = !canEditConfig() || !isPhonePolicyNow();
     addRow('Acknowledge Keys', ackDtmfBox);
 
     const ackWaitBox = document.createElement('input');
@@ -11113,8 +11342,24 @@ function renderAlarmsEventsProperties(item, parentNode) {
     ackWaitBox.max = '120';
     ackWaitBox.step = '1';
     ackWaitBox.value = String(Math.max(0, Math.trunc(Number(cur?.ack_wait_sec ?? 8) || 8)));
-    ackWaitBox.disabled = !canEditConfig() || !isPhonePolicy;
+    ackWaitBox.disabled = !canEditConfig() || !isPhonePolicyNow();
     addRow('Acknowledge Wait (sec)', ackWaitBox);
+
+    const syncPolicyTypeUiLocal = () => {
+      const phone = isPhonePolicyNow();
+      if (phone) {
+        ensureTargetEditor();
+      } else {
+        // Hide targets hint if present; the selection editor row will remain but
+        // is irrelevant for non-phone policies.
+        if (targetHint) targetHint.style.display = 'none';
+      }
+      ackDtmfBox.disabled = !canEditConfig() || !phone;
+      ackWaitBox.disabled = !canEditConfig() || !phone;
+      callBackendSel.disabled = !canEditConfig() || !phone;
+      if (targetHint) targetHint.style.display = phone ? '' : 'none';
+    };
+    syncPolicyTypeUiLocal();
 
 
     const actions = document.createElement('div');
@@ -11146,19 +11391,21 @@ function renderAlarmsEventsProperties(item, parentNode) {
         const repeatEnabledNow = Boolean(repeatEnabledBox.checked);
         const delayRaw = String(policyAudioDelayBox.value ?? '').trim();
         const gapRaw = String(policyAudioGapBox.value ?? '').trim();
-        const ackRaw = String(ackDtmfBox.value ?? '').trim();
-        const ackWaitRaw = String(ackWaitBox.value ?? '').trim();
-        const policyAudioDelay = delayRaw === '' ? null : Math.trunc(Number(delayRaw));
-        const policyAudioGap = gapRaw === '' ? null : Math.trunc(Number(gapRaw));
-        const ackWaitSec = ackWaitRaw === '' ? 8 : Math.trunc(Number(ackWaitRaw));
+	        const ackRaw = String(ackDtmfBox.value ?? '').trim();
+	        const ackWaitRaw = String(ackWaitBox.value ?? '').trim();
+	        const policyAudioDelay = delayRaw === '' ? null : Math.trunc(Number(delayRaw));
+	        const policyAudioGap = gapRaw === '' ? null : Math.trunc(Number(gapRaw));
+	        const ackWaitSec = ackWaitRaw === '' ? 8 : Math.trunc(Number(ackWaitRaw));
         if (policyAudioDelay != null && (!Number.isFinite(policyAudioDelay) || policyAudioDelay < 0 || policyAudioDelay > 120)) throw new Error('Playback Delay Seconds must be blank or 0-120.');
         if (policyAudioGap != null && (!Number.isFinite(policyAudioGap) || policyAudioGap < 0 || policyAudioGap > 5000)) throw new Error('Playback Gap Milliseconds must be blank or 0-5000.');
         if (!Number.isFinite(ackWaitSec) || ackWaitSec < 0 || ackWaitSec > 120) throw new Error('Acknowledge Wait (sec) must be 0-120.');
-        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
-        if (isPhonePolicy && !ackDtmf.length) ackDtmf.push('1');
-        const normalizedTargets = [];
-        const contactsSelected = [];
-        const groupsSelected = [];
+	        const selectedOutputType = getPolicyOutputType(policies[idx] || cur);
+	        const isPhonePolicy = selectedOutputType === 'phone';
+	        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
+	        if (isPhonePolicy && !ackDtmf.length) ackDtmf.push('1');
+	        const normalizedTargets = [];
+	        const contactsSelected = [];
+	        const groupsSelected = [];
         if (isPhonePolicy && targetList) {
           const selectedTargets = targetList.getSelectedKeys();
           const validContactIds = new Set(getNotificationContacts(nextCfg).map((c) => String(c?.id || '').trim()).filter(Boolean));
@@ -11185,7 +11432,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
           ...(policies[idx] || {}),
           id: nextId,
           name: String(nameBox.value || '').trim() || nextId,
-          output_type: getPolicyOutputType(policies[idx] || cur),
+          output_type: selectedOutputType,
           enabled: Boolean(enabledBox.checked),
           min_severity: Math.trunc(Number(sevBox.value ?? 0) || 0),
           targets: isPhonePolicy ? normalizedTargets : (Array.isArray((policies[idx] || {}).targets) ? (policies[idx] || {}).targets : []),
@@ -11213,9 +11460,11 @@ function renderAlarmsEventsProperties(item, parentNode) {
         if (policyAudioGap == null) delete policies[idx].audio_gap_ms;
         else policies[idx].audio_gap_ms = policyAudioGap;
         if (isPhonePolicy) {
+          policies[idx].call_backend = String(callBackendSel.value || 'auto').trim() || 'auto';
           policies[idx].ack_dtmf = ackDtmf;
           policies[idx].ack_wait_sec = ackWaitSec;
         } else {
+          delete policies[idx].call_backend;
           delete policies[idx].ack_dtmf;
           delete policies[idx].ack_wait_sec;
         }
@@ -11230,7 +11479,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
         }
         await saveOpcbridgeAlarmsConfig(nextCfg);
         await loadOpcbridgeAlarmsConfig();
-        state.alarmsEventsSelectedNodeId = 'folder:notification_policies';
+        state.alarmsEventsSelectedNodeId = `notification_policy_type:${selectedOutputType}`;
         state.alarmsEventsSelectedChildId = `notification_policy:${nextId}`;
         renderAlarmsEventsTree();
         setStatus('Saved.');
@@ -13828,6 +14077,7 @@ async function main() {
     await loadScadaSettings();
     await loadAuthAdminPanel();
     await loadSoundSettings();
+    await loadSipSettings();
     await loadVoiceModemSettings();
     await loadSvcSettings();
   } catch {

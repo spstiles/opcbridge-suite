@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -26,11 +27,13 @@
 #include <sys/select.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <unistd.h>
 #include <vector>
+#include <pty.h>
 
 #include "../httplib.h"
 #include <ixwebsocket/IXWebSocket.h>
@@ -115,6 +118,1183 @@ static std::string shell_quote(const std::string& value)
     }
     out += "'";
     return out;
+}
+
+static std::string exec_capture(const std::string& cmd, int& exit_code, size_t max_bytes = 256 * 1024)
+{
+    exit_code = -1;
+    std::string out;
+    FILE* fp = popen(cmd.c_str(), "r");
+    if (!fp)
+    {
+        exit_code = 127;
+        return "";
+    }
+    char buf[4096];
+    while (!feof(fp))
+    {
+        const size_t n = fread(buf, 1, sizeof(buf), fp);
+        if (n == 0) break;
+        if (out.size() + n > max_bytes)
+        {
+            const size_t avail = max_bytes > out.size() ? (max_bytes - out.size()) : 0;
+            if (avail > 0) out.append(buf, buf + avail);
+            break;
+        }
+        out.append(buf, buf + n);
+    }
+    const int rc = pclose(fp);
+    if (WIFEXITED(rc)) exit_code = WEXITSTATUS(rc);
+    else if (WIFSIGNALED(rc)) exit_code = 128 + WTERMSIG(rc);
+    else exit_code = rc;
+    return out;
+}
+
+static std::string detect_route_interface_for_host(const std::string& host)
+{
+    if (host.empty()) return "";
+    int rc = 0;
+    const std::string cmd = "ip route get " + shell_quote(host) + " 2>/dev/null";
+    const std::string out = exec_capture(cmd, rc, 32 * 1024);
+    if (rc != 0 || out.empty()) return "";
+    // Example: "10.20.30.162 via 172.22.44.60 dev tun1 src 172.18.0.65 uid 1000"
+    const std::string needle = " dev ";
+    const size_t pos = out.find(needle);
+    if (pos == std::string::npos) return "";
+    size_t start = pos + needle.size();
+    while (start < out.size() && out[start] == ' ') start++;
+    size_t end = start;
+    while (end < out.size() && out[end] != ' ' && out[end] != '\n' && out[end] != '\r' && out[end] != '\t') end++;
+    if (end <= start) return "";
+    return out.substr(start, end - start);
+}
+
+static std::vector<int> sip_response_codes(const std::string& log)
+{
+    std::vector<int> codes;
+    auto strip_ansi = [](const std::string& s) -> std::string {
+        std::string out;
+        out.reserve(s.size());
+        for (size_t i = 0; i < s.size(); ++i)
+        {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            if (c == 0x1B) // ESC
+            {
+                // Skip ANSI CSI: ESC [ ... letter
+                if ((i + 1) < s.size() && s[i + 1] == '[')
+                {
+                    i += 2;
+                    while (i < s.size())
+                    {
+                        const unsigned char cc = static_cast<unsigned char>(s[i]);
+                        if ((cc >= 'A' && cc <= 'Z') || (cc >= 'a' && cc <= 'z')) break;
+                        ++i;
+                    }
+                    continue;
+                }
+                continue;
+            }
+            out.push_back(static_cast<char>(c));
+        }
+        return out;
+    };
+
+    size_t pos = 0;
+    while (pos < log.size())
+    {
+        const size_t lineEnd = log.find('\n', pos);
+        const size_t len = (lineEnd == std::string::npos) ? (log.size() - pos) : (lineEnd - pos);
+        std::string line = log.substr(pos, len);
+        line = strip_ansi(line);
+
+        const size_t p0 = line.find("SIP/2.0");
+        if (p0 != std::string::npos)
+        {
+            size_t p = p0 + 8;
+            while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) p++;
+            int code = 0;
+            int digits = 0;
+            while (p < line.size() && digits < 3 && std::isdigit(static_cast<unsigned char>(line[p])))
+            {
+                code = code * 10 + (line[p] - '0');
+                digits++;
+                p++;
+            }
+            if (digits == 3) codes.push_back(code);
+        }
+
+        if (lineEnd == std::string::npos) break;
+        pos = lineEnd + 1;
+    }
+    std::sort(codes.begin(), codes.end());
+    codes.erase(std::unique(codes.begin(), codes.end()), codes.end());
+    return codes;
+}
+
+struct SipMethodStats
+{
+    std::vector<int> codes;
+    bool req_tx = false;
+    bool req_rx = false;
+};
+
+struct SipLogParsed
+{
+    std::string local_ip;
+    std::unordered_map<std::string, SipMethodStats> methods;
+};
+
+static SipLogParsed sip_parse_log(const std::string& rawLog)
+{
+    auto strip_ansi = [](const std::string& s) -> std::string {
+        std::string out;
+        out.reserve(s.size());
+        for (size_t i = 0; i < s.size(); ++i)
+        {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            if (c == 0x1B)
+            {
+                if ((i + 1) < s.size() && s[i + 1] == '[')
+                {
+                    i += 2;
+                    while (i < s.size())
+                    {
+                        const unsigned char cc = static_cast<unsigned char>(s[i]);
+                        if ((cc >= 'A' && cc <= 'Z') || (cc >= 'a' && cc <= 'z')) break;
+                        ++i;
+                    }
+                    continue;
+                }
+                continue;
+            }
+            out.push_back(static_cast<char>(c));
+        }
+        return out;
+    };
+
+    const std::string log = strip_ansi(rawLog);
+    SipLogParsed parsed;
+
+    auto add_code = [&](const std::string& method, int code) {
+        if (method.empty() || code <= 0) return;
+        auto& st = parsed.methods[method];
+        st.codes.push_back(code);
+    };
+    auto mark_req = [&](const std::string& method, bool tx, bool rx) {
+        if (method.empty()) return;
+        auto& st = parsed.methods[method];
+        if (tx) st.req_tx = true;
+        if (rx) st.req_rx = true;
+    };
+
+    // Determine local IP (best-effort) from: "Local network address:  IPv4=tun1|172.18.0.65"
+    {
+        const std::string needle = "Local network address:";
+        const size_t p = log.find(needle);
+        if (p != std::string::npos)
+        {
+            const size_t eol = log.find('\n', p);
+            const std::string line = (eol == std::string::npos) ? log.substr(p) : log.substr(p, eol - p);
+            const size_t ipv4 = line.find("IPv4=");
+            if (ipv4 != std::string::npos)
+            {
+                const size_t bar = line.find('|', ipv4);
+                if (bar != std::string::npos)
+                {
+                    size_t start = bar + 1;
+                    while (start < line.size() && line[start] == ' ') start++;
+                    size_t end = start;
+                    while (end < line.size() && (std::isdigit(static_cast<unsigned char>(line[end])) || line[end] == '.')) end++;
+                    if (end > start) parsed.local_ip = line.substr(start, end - start);
+                }
+            }
+        }
+    }
+
+    enum class Dir { Unknown, Tx, Rx };
+    Dir curDir = Dir::Unknown;
+
+    auto dir_from_udp = [&](const std::string& udpLine) -> Dir {
+        // "UDP <src> -> <dst>"
+        const size_t arrow = udpLine.find(" -> ");
+        if (arrow == std::string::npos) return Dir::Unknown;
+        const std::string left = udpLine.substr(4, arrow - 4);
+        const std::string right = udpLine.substr(arrow + 4);
+        auto ip_of = [](const std::string& ep) -> std::string {
+            const size_t colon = ep.find(':');
+            return colon == std::string::npos ? ep : ep.substr(0, colon);
+        };
+        const std::string srcIp = ip_of(left);
+        const std::string dstIp = ip_of(right);
+        if (!parsed.local_ip.empty())
+        {
+            if (srcIp == parsed.local_ip) return Dir::Tx;
+            if (dstIp == parsed.local_ip) return Dir::Rx;
+        }
+        return Dir::Unknown;
+    };
+
+    // Parse SIP messages by blank-line separation after a UDP marker.
+    bool inMsg = false;
+    bool isResponse = false;
+    int respCode = 0;
+    std::string cseqMethod;
+    std::string firstMethod;
+
+    auto flush_msg = [&]() {
+        if (!inMsg) return;
+        if (!firstMethod.empty())
+        {
+            mark_req(firstMethod, curDir == Dir::Tx, curDir == Dir::Rx);
+        }
+        if (isResponse && respCode > 0 && !cseqMethod.empty())
+        {
+            add_code(cseqMethod, respCode);
+        }
+        inMsg = false;
+        isResponse = false;
+        respCode = 0;
+        cseqMethod.clear();
+        firstMethod.clear();
+    };
+
+    size_t pos = 0;
+    while (pos < log.size())
+    {
+        const size_t lineEnd = log.find('\n', pos);
+        std::string line = (lineEnd == std::string::npos) ? log.substr(pos) : log.substr(pos, lineEnd - pos);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        if (line.rfind("UDP ", 0) == 0)
+        {
+            flush_msg();
+            curDir = dir_from_udp(line);
+        }
+        else if (line.empty())
+        {
+            flush_msg();
+        }
+        else
+        {
+            if (!inMsg)
+            {
+                inMsg = true;
+                if (line.rfind("SIP/2.0", 0) == 0)
+                {
+                    isResponse = true;
+                    // SIP/2.0 180 Ringing
+                    size_t p = 8;
+                    while (p < line.size() && std::isspace(static_cast<unsigned char>(line[p]))) p++;
+                    int code = 0;
+                    int digits = 0;
+                    while (p < line.size() && digits < 3 && std::isdigit(static_cast<unsigned char>(line[p])))
+                    {
+                        code = code * 10 + (line[p] - '0');
+                        digits++;
+                        p++;
+                    }
+                    if (digits == 3) respCode = code;
+                }
+                else
+                {
+                    // INVITE sip:... SIP/2.0
+                    const size_t sp = line.find(' ');
+                    if (sp != std::string::npos)
+                    {
+                        firstMethod = line.substr(0, sp);
+                    }
+                }
+            }
+            else
+            {
+                if (line.rfind("CSeq:", 0) == 0)
+                {
+                    // CSeq: 12345 INVITE
+                    const size_t sp1 = line.find(' ');
+                    if (sp1 != std::string::npos)
+                    {
+                        const size_t sp2 = line.find(' ', sp1 + 1);
+                        if (sp2 != std::string::npos)
+                        {
+                            cseqMethod = line.substr(sp2 + 1);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (lineEnd == std::string::npos) break;
+        pos = lineEnd + 1;
+    }
+    flush_msg();
+
+    // Dedupe/sort codes per method
+    for (auto& kv : parsed.methods)
+    {
+        auto& v = kv.second.codes;
+        std::sort(v.begin(), v.end());
+        v.erase(std::unique(v.begin(), v.end()), v.end());
+    }
+    return parsed;
+}
+
+static bool sip_method_has_code(const SipLogParsed& parsed, const std::string& method, int code)
+{
+    const auto it = parsed.methods.find(method);
+    if (it == parsed.methods.end()) return false;
+    const auto& v = it->second.codes;
+    return std::find(v.begin(), v.end(), code) != v.end();
+}
+
+static bool sip_method_has_any_code_in_range(const SipLogParsed& parsed, const std::string& method, int lo, int hi)
+{
+    const auto it = parsed.methods.find(method);
+    if (it == parsed.methods.end()) return false;
+    for (const int c : it->second.codes)
+    {
+        if (c >= lo && c <= hi) return true;
+    }
+    return false;
+}
+
+static std::vector<int> sip_method_codes(const SipLogParsed& parsed, const std::string& method)
+{
+    const auto it = parsed.methods.find(method);
+    if (it == parsed.methods.end()) return {};
+    return it->second.codes;
+}
+
+static bool sip_method_req_tx(const SipLogParsed& parsed, const std::string& method)
+{
+    const auto it = parsed.methods.find(method);
+    if (it == parsed.methods.end()) return false;
+    return it->second.req_tx;
+}
+
+static bool sip_method_req_rx(const SipLogParsed& parsed, const std::string& method)
+{
+    const auto it = parsed.methods.find(method);
+    if (it == parsed.methods.end()) return false;
+    return it->second.req_rx;
+}
+
+static std::string sip_run_baresip_call_interactive(
+    const std::string& cfgdir,
+    const std::string& net_if,
+    const std::string& dest,
+    int ring_timeout_sec,
+    int talk_duration_sec,
+    int hard_timeout_sec,
+    int& exit_code,
+    int64_t& elapsed_ms,
+    int64_t* answered_offset_ms = nullptr,
+    std::string* stop_reason = nullptr,
+    bool ignore_session_closed_for = false,
+    int ignore_session_closed_window_ms = 0
+)
+{
+    exit_code = -1;
+    elapsed_ms = 0;
+    if (answered_offset_ms) *answered_offset_ms = -1;
+    if (stop_reason) *stop_reason = "";
+    if (cfgdir.empty() || dest.empty()) return "";
+
+    ring_timeout_sec = std::max(5, std::min(600, ring_timeout_sec));
+    talk_duration_sec = std::max(5, std::min(600, talk_duration_sec));
+    hard_timeout_sec = std::max(10, std::min(1200, hard_timeout_sec));
+
+    int inpipe[2]{-1, -1};
+    int outpipe[2]{-1, -1};
+    if (pipe(inpipe) != 0) return "";
+    if (pipe(outpipe) != 0)
+    {
+        close(inpipe[0]); close(inpipe[1]);
+        return "";
+    }
+
+    pid_t pid = fork();
+    if (pid < 0)
+    {
+        close(inpipe[0]); close(inpipe[1]);
+        close(outpipe[0]); close(outpipe[1]);
+        return "";
+    }
+    if (pid == 0)
+    {
+        // Child: connect stdin/stdout/stderr
+        dup2(inpipe[0], STDIN_FILENO);
+        dup2(outpipe[1], STDOUT_FILENO);
+        dup2(outpipe[1], STDERR_FILENO);
+        close(inpipe[0]); close(inpipe[1]);
+        close(outpipe[0]); close(outpipe[1]);
+
+        std::vector<std::string> args;
+        args.push_back("baresip");
+        args.push_back("-f");
+        args.push_back(cfgdir);
+        if (!net_if.empty())
+        {
+            args.push_back("-n");
+            args.push_back(net_if);
+        }
+        args.push_back("-v");
+        args.push_back("-s");
+
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& a : args) argv.push_back(a.data());
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    // Parent
+    close(inpipe[0]);
+    close(outpipe[1]);
+
+    // Make stdout non-blocking.
+    {
+        const int flags = fcntl(outpipe[0], F_GETFL, 0);
+        if (flags >= 0) fcntl(outpipe[0], F_SETFL, flags | O_NONBLOCK);
+    }
+
+    auto write_all = [&](const std::string& s) {
+        const char* p = s.data();
+        size_t n = s.size();
+        while (n > 0)
+        {
+            const ssize_t w = ::write(inpipe[1], p, n);
+            if (w < 0)
+            {
+                if (errno == EINTR) continue;
+                break;
+            }
+            p += static_cast<size_t>(w);
+            n -= static_cast<size_t>(w);
+        }
+    };
+
+    auto steady_ms = []() -> int64_t {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+
+    const int64_t t0 = steady_ms();
+    std::string out;
+    out.reserve(64 * 1024);
+
+    write_all("/dial " + dest + "\n");
+
+    bool answered = false;
+    int64_t answered_at_ms = -1;
+    bool sent_hangup = false;
+    bool sent_quit = false;
+    const int64_t ignore_session_closed_until = (ignore_session_closed_for && ignore_session_closed_window_ms > 0)
+        ? (t0 + std::max<int>(0, ignore_session_closed_window_ms))
+        : t0;
+
+    const int64_t hard_deadline = t0 + static_cast<int64_t>(hard_timeout_sec) * 1000;
+    const int64_t ring_deadline = t0 + static_cast<int64_t>(ring_timeout_sec) * 1000;
+
+    while (steady_ms() < hard_deadline)
+    {
+        // Reap if the process already exited.
+        int status = 0;
+        const pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid)
+        {
+            if (WIFEXITED(status)) exit_code = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status)) exit_code = 128 + WTERMSIG(status);
+            else exit_code = status;
+            break;
+        }
+
+        // Read any available output.
+        {
+            char buf[4096];
+            while (true)
+            {
+                const ssize_t r = ::read(outpipe[0], buf, sizeof(buf));
+                if (r < 0)
+                {
+                    if (errno == EINTR) continue;
+                    break;
+                }
+                if (r == 0) break;
+                if (out.size() + static_cast<size_t>(r) > (512 * 1024))
+                {
+                    const size_t avail = (512 * 1024) > out.size() ? ((512 * 1024) - out.size()) : 0;
+                    if (avail > 0) out.append(buf, buf + avail);
+                    break;
+                }
+                out.append(buf, buf + r);
+            }
+        }
+
+        // Update call state based on parsed SIP messages.
+        const SipLogParsed parsed = sip_parse_log(out);
+        const int64_t now = steady_ms();
+        if (!answered)
+        {
+            answered = sip_method_has_code(parsed, "INVITE", 200);
+            if (answered)
+            {
+                answered_at_ms = steady_ms();
+                if (answered_offset_ms) *answered_offset_ms = std::max<int64_t>(0, answered_at_ms - t0);
+            }
+        }
+
+        // If the far-end ended the call (BYE received) or baresip reports session closed,
+        // proactively quit so the HTTP request returns quickly.
+        const bool sessionClosedRaw = out.find("session closed:") != std::string::npos ||
+            out.find("call: terminate call") != std::string::npos ||
+            out.find("call: terminated") != std::string::npos;
+        const bool sessionClosed = sessionClosedRaw && (now >= ignore_session_closed_until);
+        const bool byeRx = sip_method_req_rx(parsed, "BYE");
+        if (!sent_quit && (sessionClosed || byeRx))
+        {
+            if (stop_reason && stop_reason->empty()) *stop_reason = sessionClosed ? "session_closed" : "bye_rx";
+            write_all("/quit\n");
+            if (inpipe[1] >= 0) { close(inpipe[1]); inpipe[1] = -1; }
+            sent_quit = true;
+        }
+
+        const bool ring_timed_out = !answered && now >= ring_deadline;
+        const bool talk_elapsed = answered && answered_at_ms > 0 && now >= (answered_at_ms + static_cast<int64_t>(talk_duration_sec) * 1000);
+
+        if (!sent_hangup && (ring_timed_out || talk_elapsed))
+        {
+            if (stop_reason && stop_reason->empty()) *stop_reason = ring_timed_out ? "ring_timeout" : "talk_elapsed";
+            write_all("/hangup\n");
+            write_all("/quit\n");
+            // Close stdin to let stdio mode shut down even if it ignores /quit.
+            close(inpipe[1]);
+            inpipe[1] = -1;
+            sent_hangup = true;
+            sent_quit = true;
+        }
+
+        // Sleep/poll.
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(outpipe[0], &rfds);
+        timeval tv{};
+        tv.tv_sec = 0;
+        tv.tv_usec = 200000; // 200ms
+        select(outpipe[0] + 1, &rfds, nullptr, nullptr, &tv);
+    }
+
+    // If still running, force terminate.
+    if (exit_code < 0)
+    {
+        if (stop_reason && stop_reason->empty()) *stop_reason = "hard_timeout";
+        kill(pid, SIGTERM);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status)) exit_code = WEXITSTATUS(status);
+        else if (WIFSIGNALED(status)) exit_code = 128 + WTERMSIG(status);
+        else exit_code = status;
+    }
+
+    if (inpipe[1] >= 0) close(inpipe[1]);
+    close(outpipe[0]);
+    elapsed_ms = std::max<int64_t>(0, steady_ms() - t0);
+    return out;
+}
+
+struct PjsuaRunResult
+{
+    int exit_code = -1;
+    int64_t elapsed_ms = 0;
+    int64_t answered_offset_ms = -1;
+    std::string stop_reason;
+    std::vector<int> invite_codes;
+    std::vector<int> register_codes;
+    std::string log;
+    bool invite_answered = false;
+    bool invite_ringing = false;
+    bool bye_tx = false;
+    bool bye_rx = false;
+    bool cancel_tx = false;
+    bool cancel_rx = false;
+    int file_port = -1;
+    int call_port = -1;
+    bool file_connected_to_call = false;
+};
+
+static std::string ipv4_for_interface_name(const std::string& ifname)
+{
+    if (ifname.empty()) return "";
+    struct ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) != 0) return "";
+    std::string ip;
+    for (struct ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next)
+    {
+        if (!ifa->ifa_addr) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (ifname != ifa->ifa_name) continue;
+        char buf[INET_ADDRSTRLEN]{0};
+        const auto* sin = reinterpret_cast<const struct sockaddr_in*>(ifa->ifa_addr);
+        if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf))) { ip = buf; break; }
+    }
+    freeifaddrs(ifaddr);
+    return ip;
+}
+
+static int parse_pjsua_port_line_number(const std::string& line)
+{
+    // Example: "Port #01[48KHz/20ms/1] /path/file.wav  transmitting to:"
+    const size_t p = line.find("Port #");
+    if (p == std::string::npos) return -1;
+    size_t i = p + 6;
+    while (i < line.size() && line[i] == ' ') i++;
+    int num = 0;
+    int digits = 0;
+    while (i < line.size() && std::isdigit(static_cast<unsigned char>(line[i])))
+    {
+        num = (num * 10) + (line[i] - '0');
+        digits++;
+        i++;
+    }
+    return digits ? num : -1;
+}
+
+static std::vector<int> pjsua_invite_response_codes(const std::string& log)
+{
+    // Parse pjsua lines like:
+    //   "RX ... Response msg 180/INVITE/cseq=..."
+    std::vector<int> codes;
+    size_t pos = 0;
+    while (pos < log.size())
+    {
+        const size_t eol = log.find('\n', pos);
+        const std::string line = (eol == std::string::npos) ? log.substr(pos) : log.substr(pos, eol - pos);
+        const std::string needle = " Response msg ";
+        const size_t p = line.find(needle);
+        if (p != std::string::npos)
+        {
+            size_t i = p + needle.size();
+            int code = 0;
+            int digits = 0;
+            while (i < line.size() && digits < 3 && std::isdigit(static_cast<unsigned char>(line[i])))
+            {
+                code = code * 10 + (line[i] - '0');
+                digits++;
+                i++;
+            }
+            if (digits == 3)
+            {
+                const size_t slash = line.find('/', i);
+                if (slash != std::string::npos)
+                {
+                    const std::string method = line.substr(slash + 1, 6);
+                    if (method.rfind("INVITE", 0) == 0) codes.push_back(code);
+                }
+            }
+        }
+        if (eol == std::string::npos) break;
+        pos = eol + 1;
+    }
+    std::sort(codes.begin(), codes.end());
+    codes.erase(std::unique(codes.begin(), codes.end()), codes.end());
+    return codes;
+}
+
+static std::vector<int> pjsua_response_codes_for_method(const std::string& log, const std::string& method)
+{
+    // Parse pjsua lines like:
+    //   "RX ... Response msg 180/INVITE/cseq=..."
+    std::vector<int> codes;
+    if (method.empty()) return codes;
+    size_t pos = 0;
+    while (pos < log.size())
+    {
+        const size_t eol = log.find('\n', pos);
+        const std::string line = (eol == std::string::npos) ? log.substr(pos) : log.substr(pos, eol - pos);
+        const size_t m = line.find("Response msg ");
+        if (m != std::string::npos)
+        {
+            size_t i = m + 13;
+            while (i < line.size() && line[i] == ' ') i++;
+            int code = 0;
+            int digits = 0;
+            while (i < line.size() && std::isdigit(static_cast<unsigned char>(line[i])))
+            {
+                code = code * 10 + (line[i] - '0');
+                digits++;
+                i++;
+            }
+            if (digits == 3)
+            {
+                const size_t slash = line.find('/', i);
+                if (slash != std::string::npos)
+                {
+                    const std::string mth = line.substr(slash + 1, method.size());
+                    if (mth == method) codes.push_back(code);
+                }
+            }
+        }
+        if (eol == std::string::npos) break;
+        pos = eol + 1;
+    }
+    std::sort(codes.begin(), codes.end());
+    codes.erase(std::unique(codes.begin(), codes.end()), codes.end());
+    return codes;
+}
+
+static int parse_int_after_token(const std::string& line, const std::string& token)
+{
+    const size_t p = line.find(token);
+    if (p == std::string::npos) return -1;
+    size_t i = p + token.size();
+    while (i < line.size() && line[i] == ' ') i++;
+    int n = 0;
+    int digits = 0;
+    while (i < line.size() && std::isdigit(static_cast<unsigned char>(line[i])))
+    {
+        n = (n * 10) + (line[i] - '0');
+        digits++;
+        i++;
+    }
+    return digits ? n : -1;
+}
+
+static int pjsua_find_port_for_wav(const std::string& log, const std::string& wav_path)
+{
+    if (wav_path.empty()) return -1;
+    std::string filename;
+    try { filename = std::filesystem::path(wav_path).filename().string(); } catch (...) {}
+    int port = -1;
+    size_t pos = 0;
+    while (pos < log.size())
+    {
+        const size_t eol = log.find('\n', pos);
+        const std::string line = (eol == std::string::npos) ? log.substr(pos) : log.substr(pos, eol - pos);
+        const bool match = line.find(wav_path) != std::string::npos || (!filename.empty() && line.find(filename) != std::string::npos);
+        if (match)
+        {
+            int n = parse_int_after_token(line, "Added port ");
+            if (n < 0) n = parse_pjsua_port_line_number(line);
+            if (n < 0) n = parse_int_after_token(line, "Port ");
+            if (n >= 0) port = n;
+        }
+        if (eol == std::string::npos) break;
+        pos = eol + 1;
+    }
+    return port;
+}
+
+static int pjsua_find_call_port(const std::string& log)
+{
+    // Heuristic: use the last "Added port N (sip:...)" seen.
+    int port = -1;
+    size_t pos = 0;
+    while (pos < log.size())
+    {
+        const size_t eol = log.find('\n', pos);
+        const std::string line = (eol == std::string::npos) ? log.substr(pos) : log.substr(pos, eol - pos);
+        if (line.find("Added port ") != std::string::npos && line.find("(sip:") != std::string::npos)
+        {
+            const int n = parse_int_after_token(line, "Added port ");
+            if (n > 0) port = n;
+        }
+        if (eol == std::string::npos) break;
+        pos = eol + 1;
+    }
+    return port;
+}
+
+static std::string pjsua_run_call_with_file(
+    const std::string& pjsua_path,
+    const std::string& host,
+    const std::string& port,
+    const std::string& ext,
+    const std::string& pass,
+    const std::string& transport,
+    const std::string& net_if,
+    const std::string& dest,
+    const std::string& wav_path,
+    int duration_sec,
+    PjsuaRunResult& outRes
+)
+{
+    outRes = PjsuaRunResult{};
+    duration_sec = std::max(5, std::min(300, duration_sec));
+    if (pjsua_path.empty() || host.empty() || ext.empty() || pass.empty() || dest.empty()) return "";
+
+    const std::string bind_ip = net_if.empty() ? "" : ipv4_for_interface_name(net_if);
+
+    std::vector<std::string> args;
+    args.push_back(pjsua_path);
+    args.push_back("--no-color");
+    args.push_back("--null-audio");
+    args.push_back("--log-level=5");
+    args.push_back("--app-log-level=4");
+
+    // Transport selection.
+    const std::string t = transport.empty() ? "udp" : transport;
+    if (t == "udp") args.push_back("--no-tcp");
+    else if (t == "tcp") args.push_back("--no-udp");
+
+    // Bind to interface IP when provided (helps VPN/tunnel routing).
+    if (!bind_ip.empty())
+    {
+        args.push_back("--bound-addr=" + bind_ip);
+        args.push_back("--ip-addr=" + bind_ip);
+    }
+
+    // Account.
+    const std::string hp = port.empty() ? host : (host + ":" + port);
+    args.push_back("--registrar=sip:" + hp);
+    args.push_back("--id=sip:" + ext + "@" + hp);
+    args.push_back("--realm=*");
+    args.push_back("--username=" + ext);
+    args.push_back("--password=" + pass);
+
+    if (!wav_path.empty())
+    {
+        args.push_back("--play-file=" + wav_path);
+    }
+
+    args.push_back(dest);
+
+    // Spawn pjsua under a PTY so interactive commands work.
+    int master_fd = -1;
+    pid_t pid = forkpty(&master_fd, nullptr, nullptr, nullptr);
+    if (pid < 0) return "";
+    if (pid == 0)
+    {
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& a : args) argv.push_back(a.data());
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    auto write_str = [&](const std::string& s) {
+        if (master_fd < 0) return;
+        const char* p = s.data();
+        size_t n = s.size();
+        while (n > 0)
+        {
+            const ssize_t w = ::write(master_fd, p, n);
+            if (w < 0)
+            {
+                if (errno == EINTR) continue;
+                break;
+            }
+            p += static_cast<size_t>(w);
+            n -= static_cast<size_t>(w);
+        }
+    };
+
+    // Non-blocking read.
+    {
+        const int flags = fcntl(master_fd, F_GETFL, 0);
+        if (flags >= 0) fcntl(master_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
+    auto steady_ms = []() -> int64_t {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+
+    const int64_t t0 = steady_ms();
+    const int64_t hard_deadline = t0 + static_cast<int64_t>(duration_sec + 60) * 1000;
+    std::string log;
+    log.reserve(256 * 1024);
+    bool answered = false;
+    int64_t answered_at = -1;
+    bool connected = false;
+    int filePort = -1;
+    int callPort = -1;
+    bool sent_ports_list = false;
+    bool sent_connect = false;
+    int64_t last_cl_ms = 0;
+
+    while (steady_ms() < hard_deadline)
+    {
+        // Reap if exited.
+        int status = 0;
+        const pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid)
+        {
+            if (WIFEXITED(status)) outRes.exit_code = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status)) outRes.exit_code = 128 + WTERMSIG(status);
+            else outRes.exit_code = status;
+            break;
+        }
+
+        // Read available output.
+        char buf[4096];
+        while (true)
+        {
+            const ssize_t r = ::read(master_fd, buf, sizeof(buf));
+            if (r < 0)
+            {
+                if (errno == EINTR) continue;
+                break;
+            }
+            if (r == 0) break;
+            if (log.size() + static_cast<size_t>(r) > (512 * 1024))
+            {
+                const size_t avail = (512 * 1024) > log.size() ? ((512 * 1024) - log.size()) : 0;
+                if (avail > 0) log.append(buf, buf + avail);
+                break;
+            }
+            log.append(buf, buf + r);
+        }
+
+        // Detect call confirmed/answered.
+        if (!answered && (log.find(" state changed to CONFIRMED") != std::string::npos ||
+                          log.find("Call established") != std::string::npos ||
+                          log.find("Call connected") != std::string::npos ||
+                          log.find(" 200/INVITE") != std::string::npos))
+        {
+            answered = true;
+            answered_at = steady_ms();
+            outRes.answered_offset_ms = std::max<int64_t>(0, answered_at - t0);
+            outRes.invite_answered = true;
+            // Ask for conference ports so we can connect wav -> call.
+            write_str("cl\n");
+            sent_ports_list = true;
+            last_cl_ms = answered_at;
+        }
+
+        // Parse conference ports after "Conference ports:" appears.
+        if (answered && !connected && !wav_path.empty())
+        {
+            // Try to learn ports from log lines first (these appear even if "cl" output
+            // isn't captured for some reason).
+            if (filePort < 0) filePort = pjsua_find_port_for_wav(log, wav_path);
+            if (callPort < 0) callPort = pjsua_find_call_port(log);
+
+            const size_t p = [&]() -> size_t {
+                size_t q = log.rfind("Conference ports:");
+                if (q != std::string::npos) return q;
+                // Some builds print without colon.
+                q = log.rfind("Conference ports");
+                return q;
+            }();
+            if (p != std::string::npos)
+            {
+                // Scan lines after that marker (best-effort).
+                const std::string tail = log.substr(p);
+                std::istringstream iss(tail);
+                std::string line;
+                while (std::getline(iss, line))
+                {
+                    if (filePort < 0 && line.find(wav_path) != std::string::npos)
+                    {
+                        filePort = parse_pjsua_port_line_number(line);
+                    }
+                    // Call port line contains the remote SIP URI, not ring/ringback.
+                    if (callPort < 0 && line.find("sip:") != std::string::npos &&
+                        line.find("ringback") == std::string::npos &&
+                        line.find(" ring") == std::string::npos &&
+                        line.find("Master/sound") == std::string::npos)
+                    {
+                        // Avoid matching registrar/account display; require "Port #"
+                        if (line.find("Port #") != std::string::npos)
+                        {
+                            const int n = parse_pjsua_port_line_number(line);
+                            // Ignore master/sound and file ports.
+                            if (n > 0 && n != filePort) callPort = n;
+                        }
+                    }
+                }
+
+                if (filePort > 0 && callPort > 0 && !sent_connect)
+                {
+                    // Connect file -> call (source to destination).
+                    // Prefer one-line form first (works on some pjsua builds):
+                    write_str("cc " + std::to_string(filePort) + " " + std::to_string(callPort) + "\n");
+                    // Also send interactive form (harmless if the one-line worked):
+                    write_str("cc\n");
+                    write_str(std::to_string(filePort) + "\n");
+                    write_str(std::to_string(callPort) + "\n");
+                    connected = true;
+                    sent_connect = true;
+                    outRes.file_port = filePort;
+                    outRes.call_port = callPort;
+                    outRes.file_connected_to_call = true;
+                }
+            }
+            // If we don't have a call port yet, keep requesting `cl` until it shows up
+            // (the call audio port is typically added shortly after CONFIRMED).
+            const int64_t now = steady_ms();
+            if (!sent_connect && callPort < 0 && (now - last_cl_ms) >= 500)
+            {
+                write_str("cl\n");
+                sent_ports_list = true;
+                last_cl_ms = now;
+            }
+        }
+
+        // If pjsua re-negotiates media (e.g., sends UPDATE), the SIP media port can be removed
+        // and re-added with a new port number (e.g., 4 -> 5). If we've already connected the
+        // wav to the call once, keep it connected to the latest SIP media port.
+        if (answered && !wav_path.empty())
+        {
+            if (filePort < 0) filePort = pjsua_find_port_for_wav(log, wav_path);
+            const int latestCallPort = pjsua_find_call_port(log);
+            if (latestCallPort > 0 && filePort > 0 && latestCallPort != callPort)
+            {
+                callPort = latestCallPort;
+                // (Re)connect file -> call.
+                write_str("cc " + std::to_string(filePort) + " " + std::to_string(callPort) + "\n");
+                write_str("cc\n");
+                write_str(std::to_string(filePort) + "\n");
+                write_str(std::to_string(callPort) + "\n");
+                connected = true;
+                sent_connect = true;
+                outRes.file_port = filePort;
+                outRes.call_port = callPort;
+                outRes.file_connected_to_call = true;
+            }
+        }
+
+        // Hang up after duration from answer.
+        if (answered && answered_at > 0 && steady_ms() >= (answered_at + static_cast<int64_t>(duration_sec) * 1000))
+        {
+            write_str("h\n");
+            write_str("q\n");
+            outRes.stop_reason = "talk_elapsed";
+            break;
+        }
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(master_fd, &rfds);
+        timeval tv{};
+        tv.tv_sec = 0;
+        tv.tv_usec = 200000;
+        select(master_fd + 1, &rfds, nullptr, nullptr, &tv);
+    }
+
+    // Force terminate if still running.
+    if (outRes.exit_code < 0)
+    {
+        outRes.stop_reason = outRes.stop_reason.empty() ? "hard_timeout" : outRes.stop_reason;
+        kill(pid, SIGTERM);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status)) outRes.exit_code = WEXITSTATUS(status);
+        else if (WIFSIGNALED(status)) outRes.exit_code = 128 + WTERMSIG(status);
+        else outRes.exit_code = status;
+    }
+
+    close(master_fd);
+    outRes.elapsed_ms = std::max<int64_t>(0, steady_ms() - t0);
+    outRes.log = log;
+    outRes.invite_codes = pjsua_response_codes_for_method(log, "INVITE");
+    outRes.register_codes = pjsua_response_codes_for_method(log, "REGISTER");
+    outRes.invite_ringing =
+        std::find(outRes.invite_codes.begin(), outRes.invite_codes.end(), 180) != outRes.invite_codes.end() ||
+        std::find(outRes.invite_codes.begin(), outRes.invite_codes.end(), 183) != outRes.invite_codes.end();
+    return log;
+}
+
+static std::string patch_baresip_config_audio_source(const std::string& config, const std::string& wav_path)
+{
+    if (wav_path.empty()) return config;
+    std::string out = config;
+
+    // Ensure aufile module is loaded.
+    if (out.find("aufile.so") == std::string::npos)
+    {
+        out += "\nmodule\t\taufile.so\n";
+    }
+
+    const std::string desired = "audio_source\t\taufile," + wav_path;
+
+    // Replace existing audio_source line if present.
+    size_t pos = out.find("\naudio_source");
+    if (pos == std::string::npos && out.rfind("audio_source", 0) == 0) pos = 0;
+    if (pos != std::string::npos)
+    {
+        size_t lineStart = (pos == 0) ? 0 : (pos + 1);
+        size_t lineEnd = out.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = out.size();
+        out.replace(lineStart, lineEnd - lineStart, desired);
+        return out;
+    }
+
+    // Otherwise append.
+    out += "\n" + desired + "\n";
+    return out;
+}
+
+static std::string tmp_audio_copy_path(const std::filesystem::path& tmpdir)
+{
+    return (tmpdir / "sip-audio.wav").string();
+}
+
+static bool copy_file_best_effort(const std::string& src, const std::string& dst, std::string& err)
+{
+    err.clear();
+    if (src.empty() || dst.empty()) { err = "missing src/dst"; return false; }
+    std::error_code ec;
+    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+    if (!ec) return true;
+    // Try a manual copy (some filesystems/permissions may block copy_file metadata ops)
+    try {
+        std::ifstream in(src, std::ios::binary);
+        if (!in) { err = "open src failed: " + src; return false; }
+        std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+        if (!out) { err = "open dst failed: " + dst; return false; }
+        out << in.rdbuf();
+        if (!out) { err = "write dst failed: " + dst; return false; }
+        return true;
+    } catch (const std::exception& e) {
+        err = e.what();
+        return false;
+    }
+}
+
+static std::string patch_baresip_config_module_path(const std::string& config)
+{
+    std::string out = config;
+    const std::string desired = "module_path\t\t/usr/lib/baresip/modules";
+
+    // If module_path is already set (commented or not), replace the first occurrence.
+    size_t pos = out.find("\nmodule_path");
+    if (pos == std::string::npos && out.rfind("module_path", 0) == 0) pos = 0;
+    if (pos != std::string::npos)
+    {
+        size_t lineStart = (pos == 0) ? 0 : (pos + 1);
+        size_t lineEnd = out.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = out.size();
+        out.replace(lineStart, lineEnd - lineStart, desired);
+        return out;
+    }
+
+    // If only a commented module_path exists, replace that.
+    pos = out.find("\n#module_path");
+    if (pos == std::string::npos && out.rfind("#module_path", 0) == 0) pos = 0;
+    if (pos != std::string::npos)
+    {
+        size_t lineStart = (pos == 0) ? 0 : (pos + 1);
+        size_t lineEnd = out.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = out.size();
+        out.replace(lineStart, lineEnd - lineStart, desired);
+        return out;
+    }
+
+    out += "\n" + desired + "\n";
+    return out;
+}
+
+static std::string patch_baresip_config_headless_audio(const std::string& config)
+{
+    // Previous attempts to force a headless audio_player via `aufile,/dev/null`
+    // caused baresip to error because aufile expects a real file. For now, leave
+    // audio_player/audio_alert as-is and only override the audio_source when we
+    // have a wav to inject.
+    return config;
 }
 
 static bool command_exists(const std::string& name)
@@ -1783,6 +2963,12 @@ static json notification_config_from_v2(const json& v2Root, V2TransformMeta* met
         cfg["audio"] = v2Root["audio"];
     }
 
+    // SIP settings live at the config root (configured via SCADA "Configure Server").
+    if (v2Root.contains("sip") && v2Root["sip"].is_object())
+    {
+        cfg["sip"] = v2Root["sip"];
+    }
+
     std::unordered_map<std::string, json> targetById;
     if (v2Root.contains("targets") && v2Root["targets"].is_array())
     {
@@ -2075,6 +3261,11 @@ static json notification_config_from_root(const json& root)
         {
             cfg["audio"] = root["audio"];
         }
+        // SIP settings are configured at the root and consumed by notifications.
+        if (root.contains("sip") && root["sip"].is_object() && !cfg.contains("sip"))
+        {
+            cfg["sip"] = root["sip"];
+        }
         return cfg;
     }
 
@@ -2149,19 +3340,52 @@ public:
         std::string schedule_id = "always";
     };
 
-    struct VoiceModemConfig
-    {
-        bool enabled = false;
-        std::string device;
-        int baud = 115200;
-        bool voice_init = false;
-        int voice_line = 1;
-        int dial_seconds = 30;
-        int audio_delay_seconds = 8;
-        int audio_gap_ms = 50;
-        int command_timeout_ms = 3000;
-        std::string tts_engine = "auto";
-    };
+	    struct VoiceModemConfig
+	    {
+	        bool enabled = false;
+	        std::string device;
+	        int baud = 115200;
+	        bool voice_init = false;
+	        int voice_line = 1;
+	        int dial_seconds = 30;
+	        int audio_delay_seconds = 8;
+	        int audio_gap_ms = 50;
+	        int command_timeout_ms = 3000;
+	        std::string tts_engine = "auto";
+	    };
+
+	    struct SipConfig
+	    {
+	        bool enabled = false;
+	        std::string server;
+	        std::string ext;
+	        std::string pass;
+	        std::string transport = "udp";
+	        std::string net_if;
+	        int duration_sec = 20;
+	        std::string test_to;
+	        std::string test_audio_file;
+	        std::string test_tts_text;
+	    };
+
+	    SipConfig sip_config_copy() const
+	    {
+	        std::lock_guard<std::mutex> lock(mu_);
+	        return sip_;
+	    }
+
+	    std::string audio_path_for_id_copy(const std::string& id) const
+	    {
+	        std::lock_guard<std::mutex> lock(mu_);
+	        const auto it = audio_paths_.find(id);
+	        return it == audio_paths_.end() ? "" : it->second;
+	    }
+
+	    bool generate_tts_wav_public(const std::string& rawText, std::string& path, std::string& err) const
+	    {
+	        std::lock_guard<std::mutex> lock(mu_);
+	        return generate_tts_wav_locked(rawText, path, err);
+	    }
 
     struct Contact
     {
@@ -2195,17 +3419,21 @@ public:
         int64_t after_ms = 0;
     };
 
-    struct Policy
-    {
-        std::string id;
-        std::string name;
-        std::string output_type = "phone";
-        bool enabled = true;
-        int min_severity = 0;
-        std::vector<std::string> on{"active"};
-        std::vector<PolicyTarget> targets;
-        std::vector<std::string> contacts;
-        std::vector<std::string> contact_groups;
+	    struct Policy
+	    {
+	        std::string id;
+	        std::string name;
+	        std::string output_type = "phone";
+	        // For call/phone policies, allow choosing which backend to use.
+	        // "auto" (default) prefers SIP when configured, otherwise uses voice modem.
+	        // "sip" forces SIP, "voice_modem" forces voice modem.
+	        std::string call_backend = "auto";
+	        bool enabled = true;
+	        int min_severity = 0;
+	        std::vector<std::string> on{"active"};
+	        std::vector<PolicyTarget> targets;
+	        std::vector<std::string> contacts;
+	        std::vector<std::string> contact_groups;
         int64_t repeat_ms = 0;
         int64_t repeat_initial_delay_ms = 0;
         std::string until = "acked_or_returned";
@@ -2213,8 +3441,8 @@ public:
         int audio_gap_ms = -1;
         std::string schedule_id = "always";
         std::vector<std::string> ack_dtmf{"1"};
-        int ack_wait_sec = 8;
-    };
+	        int ack_wait_sec = 8;
+	    };
     struct Assignment
     {
         std::string id;
@@ -2250,21 +3478,22 @@ public:
         std::string end_time;
     };
 
-    struct Job
-    {
-        Route route;
-        AlarmState alarm;
-        std::string event_type;
-        int64_t due_ms = 0;
-        std::string phone;
-        std::string contact_id;
-        std::string contact_name;
-        std::string policy_id;
-        int audio_delay_seconds = -1;
-        int audio_gap_ms = -1;
-        std::vector<std::string> ack_dtmf{"1"};
-        int ack_wait_sec = 8;
-    };
+	    struct Job
+	    {
+	        Route route;
+	        AlarmState alarm;
+	        std::string event_type;
+	        int64_t due_ms = 0;
+	        std::string phone;
+	        std::string contact_id;
+	        std::string contact_name;
+	        std::string policy_id;
+	        std::string call_backend = "auto";
+	        int audio_delay_seconds = -1;
+	        int audio_gap_ms = -1;
+	        std::vector<std::string> ack_dtmf{"1"};
+	        int ack_wait_sec = 8;
+	    };
 
     struct TtsPart
     {
@@ -2419,10 +3648,10 @@ public:
             schedules_[always.id] = std::move(always);
         }
 
-        if (cfg.contains("voice_modem") && cfg["voice_modem"].is_object())
-        {
-            const auto& vm = cfg["voice_modem"];
-            voice_modem_.enabled = vm.value("enabled", false);
+	        if (cfg.contains("voice_modem") && cfg["voice_modem"].is_object())
+	        {
+	            const auto& vm = cfg["voice_modem"];
+	            voice_modem_.enabled = vm.value("enabled", false);
             voice_modem_.device = vm.value("device", "");
             voice_modem_.baud = vm.value("baud", 115200);
             voice_modem_.voice_init = vm.value("voice_init", false);
@@ -2431,8 +3660,24 @@ public:
             voice_modem_.audio_delay_seconds = vm.value("audio_delay_seconds", 8);
             voice_modem_.audio_gap_ms = vm.value("audio_gap_ms", 50);
             voice_modem_.command_timeout_ms = vm.value("command_timeout_ms", 3000);
-            voice_modem_.tts_engine = vm.value("tts_engine", "auto");
-        }
+	            voice_modem_.tts_engine = vm.value("tts_engine", "auto");
+	        }
+
+	        sip_ = SipConfig{};
+	        if (cfg.contains("sip") && cfg["sip"].is_object())
+	        {
+	            const auto& s = cfg["sip"];
+	            sip_.enabled = s.value("enabled", false);
+	            sip_.server = s.value("server", "");
+	            sip_.ext = s.value("ext", "");
+	            sip_.pass = s.value("pass", "");
+	            sip_.transport = s.value("transport", "udp");
+	            sip_.net_if = s.value("net_if", "");
+	            sip_.duration_sec = std::max(5, std::min(300, s.value("duration_sec", 20)));
+	            sip_.test_to = s.value("test_to", "");
+	            sip_.test_audio_file = s.value("test_audio_file", "");
+	            sip_.test_tts_text = s.value("test_tts_text", "");
+	        }
 
         if (cfg.contains("audio") && cfg["audio"].is_object() && cfg["audio"].contains("files") && cfg["audio"]["files"].is_array())
         {
@@ -2491,6 +3736,8 @@ public:
                 p.name = item.value("name", p.id);
                 p.output_type = item.value("output_type", item.value("type", std::string("phone")));
                 if (p.output_type == "voice") p.output_type = "phone";
+                p.call_backend = item.value("call_backend", "auto");
+                if (p.call_backend != "auto" && p.call_backend != "sip" && p.call_backend != "voice_modem") p.call_backend = "auto";
                 p.enabled = item.value("enabled", true);
                 p.min_severity = item.value("min_severity", 0);
                 p.repeat_ms = item.value("repeat_ms", 0LL);
@@ -2844,6 +4091,69 @@ public:
 
         return run_voice_modem_call(job, result);
     }
+
+	    bool test_audio_playback(const std::string& audio_file, const std::string& tts_text, std::string& result)
+	    {
+	        Route route;
+	        AlarmState alarm;
+	        {
+	            std::lock_guard<std::mutex> lock(mu_);
+	            const Route* baseRoute = select_audio_route_for_policy_locked();
+	            if (!baseRoute)
+	            {
+	                result = "no enabled audio_command route configured";
+	                return false;
+	            }
+	            route = *baseRoute;
+	            route.name = "audio:test";
+	            route.repeat_ms = 0;
+	            route.repeat_initial_delay_ms = 0;
+
+	            std::string fileId = audio_file;
+	            const std::string cleanTts = trim_tts_text(tts_text);
+	            if (fileId.empty() && cleanTts.empty() && !audio_paths_.empty()) fileId = audio_paths_.begin()->first;
+	            if (!fileId.empty())
+	            {
+	                const auto it = audio_paths_.find(fileId);
+	                if (it == audio_paths_.end() || it->second.empty())
+	                {
+	                    result = "audio_file not found: " + fileId;
+	                    return false;
+	                }
+	                alarm.audio_file = fileId;
+	                alarm.audio_path = it->second;
+	                alarm.audio_files = {fileId};
+	                alarm.audio_paths = {it->second};
+	            }
+	            alarm.alarm_id = "audio_test";
+	            alarm.name = "Audio Test";
+	            if (!cleanTts.empty())
+	            {
+	                std::string err;
+	                if (!append_tts_audio_paths_locked(alarm, cleanTts, err))
+	                {
+	                    result = err;
+	                    return false;
+	                }
+	            }
+	            if (alarm.audio_paths.empty())
+	            {
+	                result = "no audio selected: choose a file or enter speech text";
+	                return false;
+	            }
+	        }
+
+        Job job;
+	        job.route = std::move(route);
+	        job.alarm = std::move(alarm);
+	        apply_audio_default_arg(job);
+	        const int rc = run_audio_command_sequence(job);
+	        result = "exit_code=" + std::to_string(rc)
+	            + " files=" + std::to_string(job.alarm.audio_paths.size())
+	            + " first_file=" + job.alarm.audio_file
+	            + " first_path=" + job.alarm.audio_path;
+	        return rc == 0;
+	    }
 
     std::string resolve_policy_for_alarm(const AlarmState& alarm) const
     {
@@ -3263,65 +4573,122 @@ private:
             return false;
         }
 
-        if (policy.output_type == "audio")
-        {
-            return enqueue_audio_policy_job_locked(policy, alarm, event_type, effectiveScheduleId, scope_name);
-        }
-        if (policy.output_type != "phone")
-        {
-            return false;
-        }
-        if (!voice_modem_.enabled || voice_modem_.device.empty())
-        {
-            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "voice modem is disabled or not configured");
-            return false;
-        }
+	        if (policy.output_type == "audio")
+	        {
+	            return enqueue_audio_policy_job_locked(policy, alarm, event_type, effectiveScheduleId, scope_name);
+	        }
+		        const bool isPhone = (policy.output_type == "phone");
+		        if (!isPhone)
+		        {
+		            // Per current UX, "call" is a single policy type. SIP is a backend, not a policy type.
+		            return false;
+		        }
+		        // Phone/call policies can be delivered by SIP and/or voice modem.
+		        // If neither backend is configured, skip early with a clear reason.
+		        if ((!sip_.enabled || sip_.server.empty() || sip_.ext.empty() || sip_.pass.empty()) &&
+		            (!voice_modem_.enabled || voice_modem_.device.empty()))
+		        {
+		            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "no call backend configured (enable SIP or Voice Modem)");
+		            return false;
+		        }
 
-        std::unordered_set<std::string> seen;
-        for (const auto& target : policy.targets)
-        {
-            if (target.type == "contact")
-            {
-                auto it = contacts_.find(target.id);
-                if (it != contacts_.end())
-                {
-                    const size_t before = modem_jobs_.size();
-                    add_voice_contact_job_locked(policy, it->second, alarm, event_type, seen);
-                    if (modem_jobs_.size() > before)
-                    {
-                        Job& j = modem_jobs_.back();
-                        const int64_t initialDelay = (event_type == "active") ? std::max<int64_t>(0, policy.repeat_initial_delay_ms) : 0LL;
-                        j.due_ms = now_ms() + std::max<int64_t>(0, target.after_ms) + initialDelay;
-                    }
-                }
-            }
-            else if (target.type == "group")
-            {
-                auto git = contact_groups_.find(target.id);
+	        std::unordered_set<std::string> seen;
+	        for (const auto& target : policy.targets)
+	        {
+	            if (target.type == "contact")
+	            {
+	                auto it = contacts_.find(target.id);
+	                if (it != contacts_.end())
+	                {
+	                    const size_t before = modem_jobs_.size();
+		                    // Queue as a generic call job; backend selection happens at execution time.
+		                    if (!it->second.enabled) continue;
+		                    const std::string dial = it->second.phone;
+		                    if (dial.empty()) continue;
+		                    if (seen.insert(dial).second)
+		                    {
+		                        Job job;
+		                        job.route.name = policy.name.empty() ? ("phone_policy:" + policy.id) : ("phone_policy:" + policy.name);
+		                        job.route.type = "call";
+		                        job.event_type = event_type;
+		                        job.due_ms = now_ms();
+		                        job.phone = dial;
+		                        job.contact_id = it->second.id;
+		                        job.contact_name = it->second.name;
+		                        job.policy_id = policy.id;
+		                        job.call_backend = policy.call_backend;
+		                        job.route.repeat_ms = policy.repeat_ms;
+		                        job.route.repeat_initial_delay_ms = policy.repeat_initial_delay_ms;
+		                        job.route.until = policy.until;
+		                        job.route.schedule_id = effectiveScheduleId;
+		                        job.alarm = alarm;
+		                        job.ack_dtmf = policy.ack_dtmf;
+		                        job.ack_wait_sec = policy.ack_wait_sec;
+		                        job.audio_delay_seconds = policy.audio_delay_seconds;
+		                        job.audio_gap_ms = (alarm.audio_gap_ms >= 0) ? alarm.audio_gap_ms : policy.audio_gap_ms;
+		                        modem_jobs_.push_back(std::move(job));
+		                    }
+	                    if (modem_jobs_.size() > before)
+	                    {
+	                        Job& j = modem_jobs_.back();
+	                        const int64_t initialDelay = (event_type == "active") ? std::max<int64_t>(0, policy.repeat_initial_delay_ms) : 0LL;
+	                        j.due_ms = now_ms() + std::max<int64_t>(0, target.after_ms) + initialDelay;
+	                    }
+	                }
+	            }
+	            else if (target.type == "group")
+	            {
+	                auto git = contact_groups_.find(target.id);
                 if (git == contact_groups_.end() || !git->second.enabled) continue;
                 for (const auto& cid : git->second.contacts)
                 {
                     auto it = contacts_.find(cid);
-                    if (it != contacts_.end())
-                    {
-                        const size_t before = modem_jobs_.size();
-                        add_voice_contact_job_locked(policy, it->second, alarm, event_type, seen);
-                        if (modem_jobs_.size() > before)
-                        {
-                            Job& j = modem_jobs_.back();
-                            const int64_t initialDelay = (event_type == "active") ? std::max<int64_t>(0, policy.repeat_initial_delay_ms) : 0LL;
-                            j.due_ms = now_ms() + std::max<int64_t>(0, target.after_ms) + initialDelay;
-                        }
-                    }
-                }
-            }
-        }
-        if (modem_jobs_.empty())
-        {
-            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "policy produced no callable phone targets");
-        }
-        return true;
-    }
+	                    if (it != contacts_.end())
+	                    {
+	                        const size_t before = modem_jobs_.size();
+		                        if (!it->second.enabled) continue;
+		                        const std::string dial = it->second.phone;
+		                        if (dial.empty()) continue;
+		                        if (seen.insert(dial).second)
+		                        {
+		                            Job job;
+		                            job.route.name = policy.name.empty() ? ("phone_policy:" + policy.id) : ("phone_policy:" + policy.name);
+		                            job.route.type = "call";
+		                            job.event_type = event_type;
+		                            job.due_ms = now_ms();
+		                            job.phone = dial;
+		                            job.contact_id = it->second.id;
+		                            job.contact_name = it->second.name;
+		                            job.policy_id = policy.id;
+		                            job.call_backend = policy.call_backend;
+		                            job.route.repeat_ms = policy.repeat_ms;
+		                            job.route.repeat_initial_delay_ms = policy.repeat_initial_delay_ms;
+		                            job.route.until = policy.until;
+		                            job.route.schedule_id = effectiveScheduleId;
+		                            job.alarm = alarm;
+		                            job.ack_dtmf = policy.ack_dtmf;
+		                            job.ack_wait_sec = policy.ack_wait_sec;
+		                            job.audio_delay_seconds = policy.audio_delay_seconds;
+		                            job.audio_gap_ms = (alarm.audio_gap_ms >= 0) ? alarm.audio_gap_ms : policy.audio_gap_ms;
+		                            modem_jobs_.push_back(std::move(job));
+		                        }
+	                        if (modem_jobs_.size() > before)
+	                        {
+	                            Job& j = modem_jobs_.back();
+	                            const int64_t initialDelay = (event_type == "active") ? std::max<int64_t>(0, policy.repeat_initial_delay_ms) : 0LL;
+	                            j.due_ms = now_ms() + std::max<int64_t>(0, target.after_ms) + initialDelay;
+	                        }
+	                    }
+	                }
+	            }
+	        }
+		        if (modem_jobs_.empty())
+		        {
+		            record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id,
+		                "policy produced no callable targets");
+		        }
+	        return true;
+	    }
 
     void enqueue_policy_jobs_locked(const AlarmState& alarm, const std::string& event_type)
     {
@@ -3631,9 +4998,9 @@ private:
         return -1;
     }
 
-    static int run_audio_command_sequence(const Job& job)
-    {
-        if (job.alarm.audio_paths.size() <= 1) return run_command(job);
+	    static int run_audio_command_sequence(const Job& job)
+	    {
+	        if (job.alarm.audio_paths.size() <= 1) return run_command(job);
 
         int lastRc = 0;
         const int gapMs = std::max(0, std::min(5000, job.audio_gap_ms));
@@ -3649,8 +5016,361 @@ private:
                 std::this_thread::sleep_for(std::chrono::milliseconds(gapMs));
             }
         }
-        return lastRc;
-    }
+	        return lastRc;
+	    }
+
+	    bool run_sip_call(const Job& job, std::string& result)
+	    {
+	        SipConfig sip;
+	        {
+	            std::lock_guard<std::mutex> lock(mu_);
+	            sip = sip_;
+	        }
+	        if (!sip.enabled)
+	        {
+	            result = "sip is disabled";
+	            return false;
+	        }
+	        if (sip.server.empty() || sip.ext.empty() || sip.pass.empty())
+	        {
+	            result = "sip is not configured (missing server/ext/pass)";
+	            return false;
+	        }
+
+	        std::string host = sip.server;
+	        std::string port = "5060";
+	        const auto colon = sip.server.find(':');
+	        if (colon != std::string::npos)
+	        {
+	            host = sip.server.substr(0, colon);
+	            port = sip.server.substr(colon + 1);
+	            if (host.empty()) host = sip.server;
+	            if (port.empty()) port = "5060";
+	        }
+
+	        std::string netIf = sip.net_if;
+	        if (netIf.empty())
+	        {
+	            netIf = detect_route_interface_for_host(host);
+	        }
+
+	        const std::filesystem::path tmpdir = std::filesystem::path("/tmp") / ("opcbridge-sipcall-" + random_hex(8));
+	        std::error_code ec;
+	        std::filesystem::create_directories(tmpdir, ec);
+	        if (ec)
+	        {
+	            result = "Failed to create temp dir: " + ec.message();
+	            return false;
+	        }
+
+	        std::string dest = job.phone.empty() ? "" : job.phone;
+	        if (dest.empty())
+	        {
+	            result = "sip call missing destination";
+	            std::filesystem::remove_all(tmpdir, ec);
+	            return false;
+	        }
+	        if (dest.rfind("sip:", 0) != 0)
+	        {
+	            const std::string dial = sanitize_phone_number(dest);
+	            if (dial.empty())
+	            {
+	                result = "sip call has no dialable destination";
+	                std::filesystem::remove_all(tmpdir, ec);
+	                return false;
+	            }
+	            dest = "sip:" + dial + "@" + host + ":" + port;
+	        }
+
+	        const int duration = std::max(5, std::min(300, sip.duration_sec));
+
+	        // Build the wav to play: prefer alarm audio sequence, else speech text (TTS).
+	        auto parse_wav_pcm = [&](const std::string& path,
+	                                 uint16_t& outChannels,
+	                                 uint32_t& outRate,
+	                                 uint16_t& outBps,
+	                                 size_t& outDataOff,
+	                                 size_t& outDataSize,
+	                                 std::string& err) -> bool {
+	            std::ifstream in(path, std::ios::binary);
+	            if (!in) { err = "failed to open wav: " + path; return false; }
+	            std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	            if (data.size() < 44) { err = "wav too small: " + path; return false; }
+	            if (std::string(reinterpret_cast<const char*>(data.data()), 4) != "RIFF" ||
+	                std::string(reinterpret_cast<const char*>(data.data() + 8), 4) != "WAVE")
+	            {
+	                err = "not a RIFF/WAVE file: " + path;
+	                return false;
+	            }
+	            uint16_t audioFormat = 0;
+	            uint16_t channels = 0;
+	            uint32_t sampleRate = 0;
+	            uint16_t bitsPerSample = 0;
+	            size_t audioOff = 0;
+	            size_t audioSize = 0;
+	            size_t pos = 12;
+	            auto rd16 = [&](size_t off) -> uint16_t {
+	                if (off + 2 > data.size()) return 0;
+	                return static_cast<uint16_t>(data[off]) | (static_cast<uint16_t>(data[off + 1]) << 8);
+	            };
+	            auto rd32 = [&](size_t off) -> uint32_t {
+	                if (off + 4 > data.size()) return 0;
+	                return static_cast<uint32_t>(data[off]) |
+	                       (static_cast<uint32_t>(data[off + 1]) << 8) |
+	                       (static_cast<uint32_t>(data[off + 2]) << 16) |
+	                       (static_cast<uint32_t>(data[off + 3]) << 24);
+	            };
+	            while (pos + 8 <= data.size())
+	            {
+	                const std::string id(reinterpret_cast<const char*>(data.data() + pos), 4);
+	                const uint32_t size = rd32(pos + 4);
+	                const size_t chunkData = pos + 8;
+	                if (chunkData + size > data.size()) break;
+	                if (id == "fmt ")
+	                {
+	                    if (size < 16) { err = "invalid wav fmt chunk"; return false; }
+	                    audioFormat = rd16(chunkData);
+	                    channels = rd16(chunkData + 2);
+	                    sampleRate = rd32(chunkData + 4);
+	                    bitsPerSample = rd16(chunkData + 14);
+	                }
+	                else if (id == "data")
+	                {
+	                    audioOff = chunkData;
+	                    audioSize = size;
+	                }
+	                pos = chunkData + size + (size % 2);
+	            }
+	            if (audioFormat != 1) { err = "only PCM wav supported for SIP playback: " + path; return false; }
+	            if (channels < 1 || channels > 2) { err = "unsupported wav channels: " + path; return false; }
+	            if (bitsPerSample != 8 && bitsPerSample != 16 && bitsPerSample != 24 && bitsPerSample != 32)
+	            {
+	                err = "unsupported wav bits/sample: " + path;
+	                return false;
+	            }
+	            if (!audioOff || !audioSize) { err = "wav data chunk not found: " + path; return false; }
+	            outChannels = channels;
+	            outRate = sampleRate;
+	            outBps = bitsPerSample;
+	            outDataOff = audioOff;
+	            outDataSize = audioSize;
+	            return true;
+	        };
+
+	        auto concat_pcm_wavs = [&](const std::vector<std::string>& paths, int gapMs, const std::string& outPath, std::string& err) -> bool {
+	            if (paths.empty()) { err = "no wav paths"; return false; }
+	            uint16_t channels = 0;
+	            uint32_t rate = 0;
+	            uint16_t bps = 0;
+	            std::vector<uint8_t> outData;
+	            const int cleanGapMs = std::max(0, std::min(5000, gapMs));
+	            for (const auto& p : paths)
+	            {
+	                if (p.empty()) continue;
+	                std::ifstream in(p, std::ios::binary);
+	                if (!in) { err = "failed to open wav: " + p; return false; }
+	                std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	                uint16_t ch = 0;
+	                uint32_t sr = 0;
+	                uint16_t bits = 0;
+	                size_t off = 0;
+	                size_t sz = 0;
+	                if (!parse_wav_pcm(p, ch, sr, bits, off, sz, err)) return false;
+	                if (channels == 0) { channels = ch; rate = sr; bps = bits; }
+	                else if (channels != ch || rate != sr || bps != bits)
+	                {
+	                    err = "wav formats must match to concatenate for SIP playback (channels/rate/bps mismatch): " + p;
+	                    return false;
+	                }
+	                if (!outData.empty() && cleanGapMs > 0)
+	                {
+	                    const size_t bytesPerSample = static_cast<size_t>(channels) * static_cast<size_t>(bps / 8);
+	                    const size_t gapFrames = static_cast<size_t>((static_cast<uint64_t>(rate) * static_cast<uint64_t>(cleanGapMs)) / 1000ULL);
+	                    const size_t gapBytes = gapFrames * bytesPerSample;
+	                    const uint8_t silenceByte = (bps == 8) ? 128 : 0;
+	                    outData.insert(outData.end(), gapBytes, silenceByte);
+	                }
+	                if (off + sz > data.size()) { err = "wav data out of range: " + p; return false; }
+	                outData.insert(outData.end(), data.begin() + static_cast<long>(off), data.begin() + static_cast<long>(off + sz));
+	            }
+	            if (channels == 0 || rate == 0 || bps == 0 || outData.empty())
+	            {
+	                err = "no playable wav data";
+	                return false;
+	            }
+	            const uint32_t byteRate = rate * static_cast<uint32_t>(channels) * static_cast<uint32_t>(bps / 8);
+	            const uint16_t blockAlign = static_cast<uint16_t>(channels * (bps / 8));
+	            const uint32_t dataSize = static_cast<uint32_t>(std::min<size_t>(outData.size(), 0xFFFFFFFFu));
+	            const uint32_t riffSize = 36u + dataSize;
+	            std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+	            if (!out) { err = "failed to write wav: " + outPath; return false; }
+	            auto wr16 = [&](uint16_t v) {
+	                out.put(static_cast<char>(v & 0xFF));
+	                out.put(static_cast<char>((v >> 8) & 0xFF));
+	            };
+	            auto wr32 = [&](uint32_t v) {
+	                out.put(static_cast<char>(v & 0xFF));
+	                out.put(static_cast<char>((v >> 8) & 0xFF));
+	                out.put(static_cast<char>((v >> 16) & 0xFF));
+	                out.put(static_cast<char>((v >> 24) & 0xFF));
+	            };
+	            out.write("RIFF", 4);
+	            wr32(riffSize);
+	            out.write("WAVE", 4);
+	            out.write("fmt ", 4);
+	            wr32(16);
+	            wr16(1); // PCM
+	            wr16(channels);
+	            wr32(rate);
+	            wr32(byteRate);
+	            wr16(blockAlign);
+	            wr16(bps);
+	            out.write("data", 4);
+	            wr32(dataSize);
+	            out.write(reinterpret_cast<const char*>(outData.data()), static_cast<std::streamsize>(dataSize));
+	            if (!out) { err = "failed to write wav data"; return false; }
+	            return true;
+	        };
+
+	        std::string wav_path;
+	        if (!job.alarm.audio_paths.empty())
+	        {
+	            const int gapMs = std::max(0, std::min(5000, job.audio_gap_ms));
+	            const std::string outPath = (tmpdir / "sip-audio.wav").string();
+	            std::string err;
+	            if (!concat_pcm_wavs(job.alarm.audio_paths, gapMs, outPath, err))
+	            {
+	                result = "sip wav concat failed: " + (err.empty() ? "unknown error" : err);
+	                std::filesystem::remove_all(tmpdir, ec);
+	                return false;
+	            }
+	            wav_path = outPath;
+	        }
+	        else
+	        {
+	            const std::string tts = !job.alarm.speech_text.empty()
+	                ? job.alarm.speech_text
+	                : (!job.alarm.speech_texts.empty() ? job.alarm.speech_texts[0] : "");
+	            if (std::any_of(tts.begin(), tts.end(), [](unsigned char c) { return !std::isspace(c); }))
+	            {
+	                std::string err;
+	                if (!generate_tts_wav_public(tts, wav_path, err))
+	                {
+	                    result = err.empty() ? "sip tts failed" : err;
+	                    std::filesystem::remove_all(tmpdir, ec);
+	                    return false;
+	                }
+	                const std::string staged = (tmpdir / "sip-audio.wav").string();
+	                std::string copyErr;
+	                if (!copy_file_best_effort(wav_path, staged, copyErr))
+	                {
+	                    result = "sip tts stage failed: " + (copyErr.empty() ? "copy failed" : copyErr);
+	                    std::filesystem::remove_all(tmpdir, ec);
+	                    return false;
+	                }
+	                wav_path = staged;
+	            }
+	        }
+
+	        const std::string pjsuaPath = "/opt/opcbridge-suite/bin/pjsua";
+	        if (!command_exists(pjsuaPath))
+	        {
+	            result = "pjsua not installed. Re-run installer with --with-pjsip.";
+	            std::filesystem::remove_all(tmpdir, ec);
+	            return false;
+	        }
+
+	        PjsuaRunResult rr;
+	        pjsua_run_call_with_file(
+	            pjsuaPath,
+	            host,
+	            port,
+	            sip.ext,
+	            sip.pass,
+	            sip.transport,
+	            netIf,
+	            dest,
+	            wav_path,
+	            duration,
+	            rr
+	        );
+
+	        bool fatal = false;
+	        for (const int c : rr.invite_codes)
+	        {
+	            if (c == 401 || c == 407) continue;
+	            if (c >= 400) fatal = true;
+	        }
+	        const bool ok = rr.invite_answered && !fatal;
+	        result = "exit_code=" + std::to_string(rr.exit_code) +
+	            " net_if=" + netIf +
+	            " dest=" + dest +
+	            " duration=" + std::to_string(duration) +
+	            " elapsed_ms=" + std::to_string(rr.elapsed_ms) +
+	            " answered_offset_ms=" + std::to_string(rr.answered_offset_ms) +
+	            " file_port=" + std::to_string(rr.file_port) +
+	            " call_port=" + std::to_string(rr.call_port);
+	        if (!rr.invite_codes.empty())
+	        {
+	            result += " invite_codes=";
+	            for (size_t i = 0; i < rr.invite_codes.size(); ++i)
+	            {
+	                if (i) result += ",";
+	                result += std::to_string(rr.invite_codes[i]);
+	            }
+	        }
+
+	        std::filesystem::remove_all(tmpdir, ec);
+	        return ok;
+	    }
+
+	    bool run_call(const Job& job, std::string& result)
+	    {
+	        // Prefer SIP when configured/enabled; fall back to voice modem.
+	        // Policy/job do not contain backend-specific parameters.
+	        SipConfig sip;
+	        VoiceModemConfig vm;
+	        {
+	            std::lock_guard<std::mutex> lock(mu_);
+	            sip = sip_;
+	            vm = voice_modem_;
+	        }
+
+	        const bool sipReady = sip.enabled && !sip.server.empty() && !sip.ext.empty() && !sip.pass.empty();
+	        const bool vmReady = vm.enabled && !vm.device.empty();
+
+	        const std::string backend = job.call_backend.empty() ? "auto" : job.call_backend;
+	        if (backend == "sip")
+	        {
+	            if (!sipReady)
+	            {
+	                result = "call_backend=sip but SIP is not configured/enabled";
+	                return false;
+	            }
+	            return run_sip_call(job, result);
+	        }
+	        if (backend == "voice_modem")
+	        {
+	            if (!vmReady)
+	            {
+	                result = "call_backend=voice_modem but voice modem is not configured/enabled";
+	                return false;
+	            }
+	            return run_voice_modem_call(job, result);
+	        }
+
+	        // auto
+	        if (sipReady)
+	        {
+	            return run_sip_call(job, result);
+	        }
+	        if (vmReady)
+	        {
+	            return run_voice_modem_call(job, result);
+	        }
+	        result = "no call backend configured (enable SIP or Voice Modem)";
+	        return false;
+	    }
 
     static bool modem_response_ok(const std::string& response)
     {
@@ -4162,14 +5882,23 @@ private:
                 ok = (rc == 0);
                 result = "exit_code=" + std::to_string(rc);
             }
-            else if (job.route.type == "voice_modem")
-            {
-                ok = run_voice_modem_call(job, result);
-            }
-            else
-            {
-                result = "unsupported route type";
-            }
+	            else if (job.route.type == "voice_modem")
+	            {
+	                ok = run_voice_modem_call(job, result);
+	            }
+	            else if (job.route.type == "sip")
+	            {
+	                // Legacy route type (kept for backward compatibility with existing configs).
+	                ok = run_sip_call(job, result);
+	            }
+	            else if (job.route.type == "call")
+	            {
+	                ok = run_call(job, result);
+	            }
+	            else
+	            {
+	                result = "unsupported route type";
+	            }
             record_attempt(job, ok, result);
 
             if (job.event_type == "active" && job.route.repeat_ms > 0 && should_continue_job(job))
@@ -4189,10 +5918,11 @@ private:
     bool running_ = false;
     bool stop_ = false;
     std::vector<Route> routes_;
-    std::deque<Job> audio_jobs_;
-    std::deque<Job> modem_jobs_;
-    VoiceModemConfig voice_modem_;
-    std::unordered_map<std::string, Contact> contacts_;
+	    std::deque<Job> audio_jobs_;
+	    std::deque<Job> modem_jobs_;
+	    VoiceModemConfig voice_modem_;
+	    SipConfig sip_;
+	    std::unordered_map<std::string, Contact> contacts_;
     std::unordered_map<std::string, ContactGroup> contact_groups_;
     std::unordered_map<std::string, Policy> policies_;
     std::vector<Assignment> assignments_;
@@ -6310,6 +8040,248 @@ int main(int argc, char **argv)
         j["result"] = result;
         if (!ok) j["error"] = result.empty() ? "Voice modem test call failed." : result;
         res.set_content(j.dump(2), "application/json");
+    });
+
+    svr.Post("/alarm/api/audio/test", [&](const httplib::Request &req, httplib::Response &res) {
+        json body;
+        try { body = json::parse(req.body); } catch (...) { body = json::object(); }
+        const std::string audio_file = body.value("audio_file", "");
+        const std::string tts_text = body.value("tts_text", "");
+
+        json j;
+        std::string result;
+        const bool ok = notifications.test_audio_playback(audio_file, tts_text, result);
+        res.status = ok ? 200 : 500;
+        j["ok"] = ok;
+        j["result"] = result;
+        if (!ok) j["error"] = result.empty() ? "Audio test failed." : result;
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    svr.Post("/alarm/api/sip/test", [&](const httplib::Request &req, httplib::Response &res) {
+        json body;
+        try { body = json::parse(req.body); } catch (...) { body = json::object(); }
+
+	        const std::string to = body.value("to", "");
+	        const std::string audio_file = body.value("audio_file", "");
+	        const std::string tts_text = body.value("tts_text", "");
+	        const std::string transportOverride = body.value("transport", "");
+	        const int durationOverride = body.contains("duration") ? body.value("duration", 0) : 0;
+	        std::string net_if = body.value("net_if", "");
+
+	        json j;
+	        j["ok"] = false;
+
+	        const NotificationManager::SipConfig sipCfg = notifications.sip_config_copy();
+	        std::string effectiveTo = to;
+	        if (effectiveTo.empty() && !sipCfg.test_to.empty()) effectiveTo = sipCfg.test_to;
+	        if (effectiveTo.empty())
+	        {
+	            res.status = 400;
+	            j["error"] = "Missing required field: to";
+	            res.set_content(j.dump(2), "application/json");
+	            return;
+	        }
+
+	        // Allow explicit overrides for ad-hoc testing if provided.
+        const std::string server = body.value("server", sipCfg.server);
+        const std::string ext = body.value("ext", sipCfg.ext);
+        const std::string pass = body.value("pass", sipCfg.pass);
+        const std::string transport = transportOverride.empty() ? (sipCfg.transport.empty() ? "udp" : sipCfg.transport) : transportOverride;
+        const int duration = durationOverride > 0 ? std::max(5, std::min(300, durationOverride)) : std::max(5, std::min(300, sipCfg.duration_sec));
+
+        if (server.empty() || ext.empty() || pass.empty())
+        {
+            res.status = 500;
+            j["error"] = "SIP is not configured (missing server/ext/pass). Configure SIP Settings first.";
+            res.set_content(j.dump(2), "application/json");
+            return;
+        }
+
+        std::string host = server;
+        std::string port = "5060";
+        const auto colon = server.find(':');
+        if (colon != std::string::npos)
+        {
+            host = server.substr(0, colon);
+            port = server.substr(colon + 1);
+            if (host.empty()) host = server;
+            if (port.empty()) port = "5060";
+        }
+
+        if (net_if.empty())
+        {
+            net_if = !sipCfg.net_if.empty() ? sipCfg.net_if : detect_route_interface_for_host(host);
+        }
+
+        const std::filesystem::path tmpdir = std::filesystem::path("/tmp") / ("opcbridge-siptest-" + random_hex(8));
+        std::error_code ec;
+        std::filesystem::create_directories(tmpdir, ec);
+        if (ec)
+        {
+            res.status = 500;
+            j["error"] = "Failed to create temp dir: " + ec.message();
+            res.set_content(j.dump(2), "application/json");
+            return;
+        }
+
+	        std::string effectiveAudioFile = audio_file.empty() ? sipCfg.test_audio_file : audio_file;
+	        std::string effectiveTtsText = tts_text.empty() ? sipCfg.test_tts_text : tts_text;
+
+	        std::string wav_path;
+	        if (!effectiveAudioFile.empty())
+	        {
+	            wav_path = notifications.audio_path_for_id_copy(effectiveAudioFile);
+	            if (wav_path.empty())
+	            {
+	                res.status = 400;
+	                j["error"] = "Unknown audio_file id: " + effectiveAudioFile;
+	                res.set_content(j.dump(2), "application/json");
+	                return;
+	            }
+	        }
+	        else if (std::any_of(effectiveTtsText.begin(), effectiveTtsText.end(), [](unsigned char c) { return !std::isspace(c); }))
+	        {
+	            std::string err;
+	            if (!notifications.generate_tts_wav_public(effectiveTtsText, wav_path, err))
+	            {
+	                res.status = 500;
+	                j["error"] = err.empty() ? "Failed to generate TTS wav." : err;
+	                res.set_content(j.dump(2), "application/json");
+	                return;
+	            }
+	        }
+        // Stage wav into tmpdir (avoid permission issues and allow temp cleanup).
+        if (!wav_path.empty())
+        {
+            const std::string staged = (tmpdir / "sip-audio.wav").string();
+            std::string copyErr;
+            if (!copy_file_best_effort(wav_path, staged, copyErr))
+            {
+                res.status = 500;
+                j["error"] = "Failed to stage wav for SIP test: " + (copyErr.empty() ? "copy failed" : copyErr);
+                res.set_content(j.dump(2), "application/json");
+                std::filesystem::remove_all(tmpdir, ec);
+                return;
+            }
+            wav_path = staged;
+        }
+
+	        std::string dest = effectiveTo;
+        if (dest.rfind("sip:", 0) != 0)
+        {
+            dest = "sip:" + dest + "@" + host + ":" + port;
+        }
+
+        const std::string pjsuaPath = "/opt/opcbridge-suite/bin/pjsua";
+        if (!command_exists(pjsuaPath))
+        {
+            res.status = 500;
+            j["error"] = "pjsua not installed. Re-run installer with --with-pjsip.";
+            res.set_content(j.dump(2), "application/json");
+            std::filesystem::remove_all(tmpdir, ec);
+            return;
+        }
+
+        PjsuaRunResult rr;
+        pjsua_run_call_with_file(
+            pjsuaPath,
+            host,
+            port,
+            ext,
+            pass,
+            transport,
+            net_if,
+            dest,
+            wav_path,
+            duration,
+            rr
+        );
+
+        // pjsua output format differs from baresip, so use pjsua-parsed fields.
+        const std::vector<int> inviteCodes = rr.invite_codes;
+        const std::vector<int> registerCodes = rr.register_codes;
+
+        j["exit_code"] = rr.exit_code;
+        j["net_if"] = net_if;
+        j["dest"] = dest;
+        j["duration"] = duration;
+        j["elapsed_ms"] = rr.elapsed_ms;
+        j["answered_offset_ms"] = rr.answered_offset_ms;
+        j["stop_reason"] = rr.stop_reason;
+        j["transport"] = transport;
+        j["codes"] = inviteCodes;
+        j["register_codes"] = registerCodes;
+        const bool inviteAnswered = rr.invite_answered || std::find(inviteCodes.begin(), inviteCodes.end(), 200) != inviteCodes.end();
+        const bool inviteRinging =
+            rr.invite_ringing ||
+            std::find(inviteCodes.begin(), inviteCodes.end(), 180) != inviteCodes.end() ||
+            std::find(inviteCodes.begin(), inviteCodes.end(), 183) != inviteCodes.end();
+        j["invite_answered"] = inviteAnswered;
+        j["invite_ringing"] = inviteRinging;
+        j["bye_tx"] = rr.bye_tx;
+        j["bye_rx"] = rr.bye_rx;
+        j["cancel_tx"] = rr.cancel_tx;
+        j["cancel_rx"] = rr.cancel_rx;
+        j["file_port"] = rr.file_port;
+        j["call_port"] = rr.call_port;
+        j["file_connected_to_call"] = rr.file_connected_to_call;
+
+        const bool hasProgress = std::any_of(inviteCodes.begin(), inviteCodes.end(), [](int c) { return c >= 100 && c <= 199; });
+        const bool hasSuccess =
+            std::find(inviteCodes.begin(), inviteCodes.end(), 200) != inviteCodes.end() ||
+            std::find(inviteCodes.begin(), inviteCodes.end(), 180) != inviteCodes.end() ||
+            std::find(inviteCodes.begin(), inviteCodes.end(), 183) != inviteCodes.end();
+        bool hasFatal = false;
+        for (const int c : inviteCodes)
+        {
+            if (c == 401 || c == 407) continue;
+            if (c >= 400) hasFatal = true;
+        }
+        const bool ok = (hasSuccess || hasProgress) && !hasFatal;
+
+        j["ok"] = ok;
+        if (!ok)
+        {
+            j["error"] = inviteCodes.empty()
+                ? "No SIP responses detected. Check VPN routing/firewall and bind interface."
+                : "SIP call did not succeed. Check response codes.";
+        }
+
+        const int64_t holdMs = (rr.answered_offset_ms >= 0 && rr.elapsed_ms >= rr.answered_offset_ms) ? (rr.elapsed_ms - rr.answered_offset_ms) : -1;
+        j["hold_ms"] = holdMs;
+        j["expected_hold_ms"] = static_cast<int64_t>(duration) * 1000;
+        j["audio_file"] = effectiveAudioFile;
+        j["tts_text"] = effectiveTtsText;
+        j["wav_path"] = wav_path;
+        j["tmpdir"] = tmpdir.string();
+
+        // Provide a short tail for UI troubleshooting (even if empty, return an empty string).
+        {
+            const size_t keep = std::min<size_t>(20000, rr.log.size());
+            j["log_tail"] = rr.log.empty() ? "" : rr.log.substr(rr.log.size() - keep);
+        }
+
+        // For test calls, treat "answered but didn't stay up for duration" as failure.
+        if (inviteAnswered && holdMs >= 0 && holdMs < (static_cast<int64_t>(duration) * 1000 - 500))
+        {
+            j["ok"] = false;
+            j["error"] = "Call answered but ended early (before duration).";
+            res.status = 500;
+        }
+        else
+        {
+            res.status = ok ? 200 : 500;
+        }
+        res.set_content(j.dump(2), "application/json");
+
+        // Keep tmpdir when the call ended early to aid debugging.
+        const bool endedEarly = inviteAnswered && holdMs >= 0 && holdMs < (static_cast<int64_t>(duration) * 1000 - 500);
+        j["kept_tmpdir"] = endedEarly;
+        if (!endedEarly)
+        {
+            std::filesystem::remove_all(tmpdir, ec);
+        }
     });
 
     svr.Post(R"(/alarm/api/alarms/([A-Za-z0-9_.:-]+)/ack)", [&](const httplib::Request &req, httplib::Response &res) {

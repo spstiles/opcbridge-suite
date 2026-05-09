@@ -23,6 +23,7 @@ SCADA_SYSTEMD_SUDO=0
 INSTALL_HAD_ERRORS=0
 WITH_ODBC=0
 ODBC_DRIVER=""
+WITH_PJSIP=0
 
 PROFILE=""
 COMPONENTS=()
@@ -54,6 +55,7 @@ Options:
   --with-odbc             Install ODBC deps (SQL Server support for reporter)
   --odbc-driver NAME      ODBC driver: freetds | ms (default: freetds)
   --with-node-deps        Run npm install for Node services (requires network)
+  --with-pjsip            Build/install pjproject (pjsua) for SIP callouts
   --init-historian-db     Create local Postgres role/db and load historian schema
   --no-start              Do not start services
   --no-enable             Do not enable services at boot
@@ -76,6 +78,129 @@ need_root() {
 }
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+download_file() {
+  local url="$1"
+  local dst="$2"
+  if [[ -z "$url" || -z "$dst" ]]; then
+    echo "download_file: missing url/dst" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "$dst")"
+  if have_cmd curl; then
+    curl -fsSL "$url" -o "$dst"
+  elif have_cmd wget; then
+    wget -qO "$dst" "$url"
+  else
+    echo "Neither curl nor wget is available to download: $url" >&2
+    return 1
+  fi
+}
+
+install_pjproject() {
+  local ver="2.15.1"
+  local prefix_dir="${PREFIX}/third_party/pjproject"
+  local marker="${prefix_dir}/.installed-${ver}"
+
+  local need_rebuild=0
+  if [[ -f "$marker" && -x "${PREFIX}/bin/pjsua" ]]; then
+    echo "pjproject ${ver} already installed at ${prefix_dir}"
+    # Ensure shared libs are discoverable (idempotent).
+    local ldconf="/etc/ld.so.conf.d/opcbridge-pjproject.conf"
+    mkdir -p "$(dirname "$ldconf")"
+    printf '%s\n' "${prefix_dir}/lib" >"$ldconf"
+    if have_cmd ldconfig; then
+      ldconfig >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+  if [[ -f "$marker" && ! -x "${PREFIX}/bin/pjsua" ]]; then
+    echo "pjproject ${ver} marker exists but pjsua is missing; rebuilding."
+    need_rebuild=1
+  fi
+
+  echo "Installing pjproject ${ver} (pjsua)..."
+  rm -rf "${prefix_dir}"
+  mkdir -p "${prefix_dir}"
+
+  local workdir=""
+  workdir="$(mktemp -d -t opcbridge-pjproject.XXXXXX)"
+
+  local tar="${workdir}/pjproject-${ver}.tar.gz"
+  download_file "https://github.com/pjsip/pjproject/archive/refs/tags/${ver}.tar.gz" "$tar"
+  tar -xzf "$tar" -C "$workdir"
+
+  local src="${workdir}/pjproject-${ver}"
+  if [[ ! -d "$src" ]]; then
+    src="$(find "$workdir" -maxdepth 1 -type d -name 'pjproject-*' | head -n 1 || true)"
+  fi
+  if [[ -z "$src" || ! -d "$src" ]]; then
+    echo "Failed to locate extracted pjproject source in $workdir" >&2
+    return 1
+  fi
+
+  pushd "$src" >/dev/null
+
+  export CFLAGS="${CFLAGS:-} -O2"
+  export CXXFLAGS="${CXXFLAGS:-} -O2"
+
+  ./configure --prefix="$prefix_dir" --enable-shared >/dev/null
+  make dep >/dev/null
+  make -j"$(nproc)" >/dev/null
+  make install >/dev/null
+
+  # Build the pjsua CLI app (not installed by `make install`).
+  if [[ -f "pjsip-apps/src/pjsua/Makefile" ]]; then
+    make -C pjsip-apps/src/pjsua >/dev/null
+  elif [[ -f "pjsip-apps/build/Makefile" ]]; then
+    make -C pjsip-apps/build pjsua >/dev/null
+  else
+    echo "ERROR: Could not locate pjsua Makefile in pjproject source." >&2
+    popd >/dev/null
+    return 1
+  fi
+
+  # Locate the built pjsua binary (in-tree). On Linux it is commonly named:
+  #   pjsip-apps/bin/pjsua-<triplet>
+  local pjsua_bin=""
+  if [[ -d "pjsip-apps/bin" ]]; then
+    # pjproject commonly names it pjsua-<triplet>. Some environments may not preserve exec bits
+    # when building as root with restrictive umask, so don't require -perm -111.
+    pjsua_bin="$(find "pjsip-apps/bin" -maxdepth 1 -type f -name 'pjsua*' 2>/dev/null | head -n 1 || true)"
+  fi
+  if [[ -z "$pjsua_bin" ]]; then
+    pjsua_bin="$(find . -maxdepth 8 -type f -name 'pjsua*' 2>/dev/null | head -n 1 || true)"
+  fi
+  if [[ -z "$pjsua_bin" || ! -f "$pjsua_bin" ]]; then
+    echo "ERROR: pjproject build did not produce a pjsua binary." >&2
+    if [[ -d "pjsip-apps/bin" ]]; then
+      echo "Debug: contents of pjsip-apps/bin:" >&2
+      ls -la "pjsip-apps/bin" >&2 || true
+    fi
+    popd >/dev/null
+    return 1
+  fi
+
+  mkdir -p "${prefix_dir}/bin" "${PREFIX}/bin"
+  chmod +x "$pjsua_bin" 2>/dev/null || true
+  install -m 0755 "$pjsua_bin" "${prefix_dir}/bin/pjsua"
+  install -m 0755 "$pjsua_bin" "${PREFIX}/bin/pjsua"
+
+  popd >/dev/null
+
+  # Make pjproject shared libs discoverable at runtime.
+  local ldconf="/etc/ld.so.conf.d/opcbridge-pjproject.conf"
+  mkdir -p "$(dirname "$ldconf")"
+  printf '%s\n' "${prefix_dir}/lib" >"$ldconf"
+  if have_cmd ldconfig; then
+    ldconfig >/dev/null 2>&1 || true
+  fi
+
+  date >"$marker"
+  echo "pjproject ${ver} installed."
+
+  rm -rf "$workdir" || true
+}
 
 install_licenses() {
   # Keep the installed suite self-contained for license compliance.
@@ -183,6 +308,15 @@ install_deps() {
   # Local text-to-speech for voice modem test calls and alarm speech playback.
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
     pkgs+=(alsa-utils espeak-ng)
+    # SIP test/policy callout uses baresip as a simple headless SIP UA.
+    pkgs+=(baresip baresip-core)
+    # Optional: build/install pjproject for wideband SIP callouts.
+    if [[ "$WITH_PJSIP" -eq 1 ]]; then
+      pkgs+=(libasound2-dev)
+      pkgs+=(libopus-dev)
+      pkgs+=(libsrtp2-dev)
+      pkgs+=(libspeexdsp-dev)
+    fi
   fi
 
   # Node runtime for scada/hmi services.
@@ -395,6 +529,44 @@ validate_components() {
 
   # Unique
   mapfile -t COMPONENTS < <(printf '%s\n' "${COMPONENTS[@]}" | awk '!seen[$0]++')
+}
+
+maybe_prompt_install_deps() {
+  if [[ "$INSTALL_DEPS" -ne 0 ]]; then
+    return 0
+  fi
+  if ! have_cmd apt-get || ! is_debian_like; then
+    return 0
+  fi
+
+  local -a missing
+  missing=()
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
+    have_cmd aplay || missing+=("alsa-utils (aplay)")
+    if ! have_cmd espeak-ng && ! have_cmd espeak && ! have_cmd flite; then
+      missing+=("espeak-ng (or espeak/flite) for TTS")
+    fi
+    if [[ "$WITH_PJSIP" -eq 1 ]]; then
+      have_cmd pjsua || missing+=("pjproject/pjsua (re-run installer with --deps --with-pjsip)")
+    fi
+  fi
+
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  echo ""
+  echo "Warning: required OS dependencies appear to be missing:"
+  printf '  - %s\n' "${missing[@]}"
+  echo ""
+  echo "Tip: re-run with --deps to install dependencies via apt."
+  echo ""
+  if [[ "$ASSUME_YES" -eq 0 ]]; then
+    if prompt_yn "Install dependencies now (recommended)?" y; then
+      INSTALL_DEPS=1
+    fi
+  fi
 }
 
 gen_token() {
@@ -1102,6 +1274,7 @@ main() {
       --init-historian-db) INIT_HISTORIAN_DB=1; shift;;
       --with-odbc) WITH_ODBC=1; shift;;
       --odbc-driver) ODBC_DRIVER="${2:-}"; shift 2;;
+      --with-pjsip) WITH_PJSIP=1; shift;;
       --scada-systemd-sudo) SCADA_SYSTEMD_SUDO=1; shift;;
       --no-start) START_SERVICES=0; shift;;
       --no-enable) ENABLE_SERVICES=0; shift;;
@@ -1112,6 +1285,11 @@ main() {
   done
 
   if [[ "${#COMPONENTS[@]}" -eq 0 ]]; then
+    # Allow `--deps` to be used as a standalone "install dependencies" action without
+    # forcing an interactive component selection prompt (useful for headless/server installs).
+    if [[ -z "$PROFILE" && "$INSTALL_DEPS" -eq 1 ]]; then
+      PROFILE="full"
+    fi
     if [[ -n "$PROFILE" ]]; then
       :
     else
@@ -1131,6 +1309,7 @@ main() {
   fi
 
   validate_components
+  maybe_prompt_install_deps
 
   # Optional: SQL Server support for opcbridge-reporter via ODBC (wizard-style).
   if [[ "$INSTALL_DEPS" -eq 1 ]] && printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
@@ -1165,6 +1344,14 @@ main() {
     install_deps
     echo ""
     echo "Dependencies installed."
+    echo ""
+  fi
+
+  # Optional: install pjproject (pjsua) for SIP callouts.
+  if [[ "$WITH_PJSIP" -eq 1 ]]; then
+    install_pjproject
+    echo ""
+    echo "pjproject installed."
     echo ""
   fi
 

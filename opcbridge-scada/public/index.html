@@ -227,9 +227,9 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top: 14px;">
-        <div class="card-title">Voice Modem Settings</div>
-        <div class="hint">Hardware setup for USB/serial voice modem alarm dialing. Contacts and call lists are configured separately.</div>
+	      <div class="card" style="margin-top: 14px;">
+	        <div class="card-title">Voice Modem Settings</div>
+	        <div class="hint">Hardware setup for USB/serial voice modem alarm dialing. Contacts and call lists are configured separately.</div>
         <div class="card-body">
           <div class="form" style="max-width: 720px;">
             <div class="form-row">
@@ -307,28 +307,101 @@
             <div class="hint mono" id="voiceModemStatus"></div>
           </div>
         </div>
-      </div>
+	      </div>
 
-      <div class="card" style="margin-top: 14px;">
-        <div class="card-title">Sound Settings</div>
-        <div class="hint">Alarm annunciation output for local speakers, amplifiers, or PA systems.</div>
-        <div class="card-body">
-          <div class="form" style="max-width: 720px;">
+	      <div class="card" style="margin-top: 14px;">
+	        <div class="card-title">SIP Settings</div>
+	        <div class="hint">Account and server settings for SIP-based callout (VPN-friendly). Used by SIP notification policies and SIP test.</div>
+	        <div class="card-body">
+	          <div class="form" style="max-width: 720px;">
+	            <div class="form-row">
+	              <label>Enabled</label>
+	              <label style="display:flex; align-items:center; gap:8px;">
+	                <input id="sipEnabled" type="checkbox" />
+	                Enable SIP callout
+	              </label>
+	            </div>
+	            <div class="form-row">
+	              <label>Server</label>
+	              <input id="sipServer" type="text" placeholder="10.0.0.10:5060" />
+	            </div>
+	            <div class="form-row">
+	              <label>Extension</label>
+	              <input id="sipExt" type="text" placeholder="1000" />
+	            </div>
+	            <div class="form-row">
+	              <label>Password</label>
+	              <input id="sipPass" type="password" placeholder="(stored in alarms config)" />
+	            </div>
+	            <div class="form-row">
+	              <label>Transport</label>
+	              <select id="sipTransport">
+	                <option value="udp">UDP</option>
+	                <option value="tcp">TCP</option>
+	                <option value="tls">TLS</option>
+	              </select>
+	            </div>
+	            <div class="form-row">
+	              <label>Net Interface</label>
+	              <input id="sipNetIf" type="text" placeholder="(optional, auto-detect via route)" />
+	            </div>
+	            <div class="form-row">
+	              <label>Test / To (number)</label>
+	              <input id="sipTestTo" type="text" placeholder="15555551212" />
+	            </div>
+	            <div class="form-row">
+	              <label>Test Audio File</label>
+	              <select id="sipTestAudioFile"></select>
+	            </div>
+	            <div class="form-row">
+	              <label>Test Speech Text</label>
+	              <textarea id="sipTestTtsText" rows="3" placeholder="Optional. Used when no test audio file is selected. Use [pause:500] for a 500 ms pause."></textarea>
+	            </div>
+	            <div class="form-row">
+	              <label>Test Duration (sec)</label>
+	              <input id="sipDurationSec" type="number" min="5" max="300" step="1" value="20" />
+	            </div>
+	            <div class="form-row">
+	              <label></label>
+	              <div class="row-actions">
+	                <button class="btn primary" id="sipSaveBtn" type="button">Save SIP Settings</button>
+	                <button class="btn" id="sipTestBtn" type="button">Test SIP Call</button>
+	              </div>
+	            </div>
+	            <div class="hint mono" id="sipStatus"></div>
+	          </div>
+	        </div>
+	      </div>
+
+	      <div class="card" style="margin-top: 14px;">
+	        <div class="card-title">Sound Settings</div>
+	        <div class="hint">Alarm annunciation output for local speakers, amplifiers, or PA systems.</div>
+	        <div class="card-body">
+	          <div class="form" style="max-width: 720px;">
             <div class="form-row">
               <label>Alarm Output</label>
               <select id="soundOutputDevice"></select>
             </div>
             <div class="form-row">
+              <label>Test Audio File</label>
+              <select id="soundTestAudioFile"></select>
+            </div>
+            <div class="form-row">
+              <label>Test Speech Text</label>
+              <textarea id="soundTestTtsText" rows="3" placeholder="Optional. Used when no test audio file is selected. Use [pause:500] for a 500 ms pause."></textarea>
+            </div>
+            <div class="form-row">
               <label></label>
               <div class="row-actions">
                 <button class="btn" id="soundReloadBtn" type="button">Reload Outputs</button>
+                <button class="btn" id="soundTestBtn" type="button">Test Audio</button>
                 <button class="btn primary" id="soundSaveBtn" type="button">Save Sound Settings</button>
               </div>
             </div>
             <div class="hint mono" id="soundSettingsStatus"></div>
-          </div>
-        </div>
-      </div>
+	          </div>
+	        </div>
+	      </div>
 
       <div class="card" style="margin-top: 14px;">
         <div class="card-title">opcbridge Service (systemd drop-in)</div>

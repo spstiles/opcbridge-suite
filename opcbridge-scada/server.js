@@ -1409,6 +1409,8 @@ function upstreamTimeoutMs(prefixName, upstreamPathname, method) {
   }
   if (prefixName === 'alarms') {
     if (p === '/alarm/api/voice-modem/test') return 180000;
+    if (p === '/alarm/api/audio/test') return 60000;
+    if (p === '/alarm/api/sip/test') return 180000;
   }
 
   return 8000;
@@ -1419,6 +1421,11 @@ function upstreamRequestBodyLimitBytes(prefixName, upstreamPathname) {
   if (prefixName === 'opcbridge' && p === '/config/audio/upload') {
     // Backend accepts 50 MiB decoded audio. JSON + base64 adds about 33% overhead.
     return 80 * 1024 * 1024;
+  }
+  if (prefixName === 'opcbridge' && p === '/config/file') {
+    // Large installs can write multi-megabyte configs (e.g. alarms.json with rules).
+    // If this is too small, the proxy aborts and the browser reports a generic NetworkError.
+    return 20 * 1024 * 1024;
   }
   if (prefixName === 'opcbridge' && p === '/config/tags/import_csv') {
     return 80 * 1024 * 1024;
@@ -1463,7 +1470,14 @@ async function proxy(req, res, target, prefixName) {
 
   let bodyBuf = null;
   if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
-    bodyBuf = await readBody(req, upstreamRequestBodyLimitBytes(prefixName, upstreamPathname));
+    try {
+      bodyBuf = await readBody(req, upstreamRequestBodyLimitBytes(prefixName, upstreamPathname));
+    } catch (err) {
+      const msg = String(err?.message || err);
+      const tooLarge = msg.toLowerCase().includes('too large');
+      sendJson(res, tooLarge ? 413 : 400, { ok: false, error: msg });
+      return;
+    }
 
     if (prefixName === 'opcbridge' && needsWriteToken(upstreamPathname)) {
       const ct = String(req.headers['content-type'] || '').toLowerCase();
