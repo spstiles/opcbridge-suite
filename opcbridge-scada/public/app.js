@@ -1368,6 +1368,7 @@ function renderLoggerTagPickerTable() {
     const tr = document.createElement('tr');
 
     const td0 = document.createElement('td');
+    td0.className = 'cell-check';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = state.loggerTagPickerSelected.has(key);

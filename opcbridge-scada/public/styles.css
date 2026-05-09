@@ -111,6 +111,17 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 .table th.sortable:hover { text-decoration: underline; }
 #alarmsEventsChildrenTable th.sortable { color: var(--text); }
 
+/* Checkbox-only table cells (align left instead of visually centered). */
+.table td.cell-check,
+.table th.cell-check {
+  padding-left: 10px;
+  padding-right: 4px;
+  text-align: left;
+}
+.table td.cell-check > input[type="checkbox"] {
+  margin: 0;
+}
+
 .alarm-audio-picker-list {
   width: 100%;
   min-height: 96px;
