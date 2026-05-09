@@ -13337,6 +13337,74 @@ if (isPanelActive('tab-alarms_events') && !isAlarmsEventsPropertiesEditorOpen())
   }
 }
 
+// Visible-scope refresh:
+// - Always fetch a small baseline for the top status line.
+// - Only fetch "heavy" data sets for the currently visible tab(s).
+async function refreshVisible() {
+  const started = Date.now();
+  try {
+    const [health, alarmsStatus, reloadStatus] = await Promise.all([
+      apiGet('/api/opcbridge/health'),
+      apiGet('/api/alarms/alarm/api/status'),
+      apiGet('/api/opcbridge/reload/status').catch(() => null)
+    ]);
+
+    // Baseline render (safe even if tab not visible).
+    renderJson(els.healthJson, health);
+    renderJson(els.alarmsStatusJson, alarmsStatus);
+    state.alarmsStatusLast = alarmsStatus;
+    renderRuntimeRebuildStatus(reloadStatus);
+    renderAlarmsSchemaStatus(alarmsStatus);
+    renderOverviewHealth(health);
+
+    const wantLiveTags = isPanelActive('tab-overview') || isPanelActive('tab-workspace');
+    if (wantLiveTags) {
+      const tags = await apiGet('/api/opcbridge/tags');
+      renderLiveTags(tags);
+    }
+
+    const wantAlarmsEvents = isPanelActive('tab-alarms_events');
+    if (wantAlarmsEvents) {
+      const [active, history, all] = await Promise.all([
+        apiGet('/api/alarms/alarm/api/alarms/active').catch(() => ({ ok: false, alarms: [] })),
+        apiGet('/api/alarms/alarm/api/alarms/history?limit=200').catch(() => ({ ok: false, events: [] })),
+        apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] }))
+      ]);
+      renderActiveAlarms(active);
+      renderAlarmEvents(history);
+
+      state.alarmsAllLast = all;
+      state.alarmsAll = Array.isArray(all?.alarms) ? all.alarms : [];
+
+      // Keep alarms config fresh for Alarms & Events editing (and runtime warning accuracy).
+      try { await loadOpcbridgeAlarmsConfig(); } catch { /* ignore */ }
+      setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
+
+      // Keep the Alarms & Events child status columns live while the tab is open.
+      // Do not repaint over an active properties edit form.
+      if (!isAlarmsEventsPropertiesEditorOpen()) {
+        if (els.alarmsEventsChildrenTbody?.children?.length) updateAlarmsEventsLiveCells();
+        else renderAlarmsEventsTree();
+      }
+    }
+
+    // Workspace is mostly local state; avoid network chatter during edits.
+    if (isPanelActive('tab-workspace') &&
+        !els.workspaceItemModal?.contains?.(document.activeElement) &&
+        !els.newTagModal?.contains?.(document.activeElement)) {
+      renderWorkspaceTree();
+    }
+
+    const overall = String(health?.status || 'unknown');
+    const elapsed = Date.now() - started;
+    if (els.statusLine) {
+      els.statusLine.innerHTML = `opcbridge: ${badge(overall)} · alarms: <span class="badge ok">${alarmsStatus?.ok ? 'ok' : 'bad'}</span> · refresh ${elapsed}ms`;
+    }
+  } catch (err) {
+    if (els.statusLine) els.statusLine.textContent = `Refresh failed: ${err.message}`;
+  }
+}
+
 async function loadBootstrapConfig() {
   const cfg = await apiGet('/api/config');
   state.cfg = cfg?.config;
@@ -14024,7 +14092,7 @@ function restartRefreshLoop() {
     state.refreshTimer = null;
   }
   const ms = Number(state.cfg?.refresh_ms ?? 2000) || 2000;
-  state.refreshTimer = window.setInterval(refreshAll, ms);
+  state.refreshTimer = window.setInterval(refreshVisible, ms);
 }
 
 async function main() {
@@ -14106,7 +14174,7 @@ async function main() {
   renderWorkspaceTree();
 
   try {
-    await refreshAll();
+    await refreshVisible();
   } catch {
     // ignore
   }
