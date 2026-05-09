@@ -11399,14 +11399,14 @@ function renderAlarmsEventsProperties(item, parentNode) {
         if (policyAudioDelay != null && (!Number.isFinite(policyAudioDelay) || policyAudioDelay < 0 || policyAudioDelay > 120)) throw new Error('Playback Delay Seconds must be blank or 0-120.');
         if (policyAudioGap != null && (!Number.isFinite(policyAudioGap) || policyAudioGap < 0 || policyAudioGap > 5000)) throw new Error('Playback Gap Milliseconds must be blank or 0-5000.');
         if (!Number.isFinite(ackWaitSec) || ackWaitSec < 0 || ackWaitSec > 120) throw new Error('Acknowledge Wait (sec) must be 0-120.');
-	        const selectedOutputType = getPolicyOutputType(policies[idx] || cur);
-	        const isPhonePolicy = selectedOutputType === 'phone';
-	        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
-	        if (isPhonePolicy && !ackDtmf.length) ackDtmf.push('1');
-	        const normalizedTargets = [];
-	        const contactsSelected = [];
-	        const groupsSelected = [];
-        if (isPhonePolicy && targetList) {
+        const selectedOutputType = getPolicyOutputType(policies[idx] || cur);
+        const isPhonePolicyNow = selectedOutputType === 'phone';
+        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
+        if (isPhonePolicyNow && !ackDtmf.length) ackDtmf.push('1');
+        const normalizedTargets = [];
+        const contactsSelected = [];
+        const groupsSelected = [];
+        if (isPhonePolicyNow && targetList) {
           const selectedTargets = targetList.getSelectedKeys();
           const validContactIds = new Set(getNotificationContacts(nextCfg).map((c) => String(c?.id || '').trim()).filter(Boolean));
           const validGroupIds = new Set(getNotificationContactGroups(nextCfg).map((g) => String(g?.id || '').trim()).filter(Boolean));
@@ -11435,9 +11435,9 @@ function renderAlarmsEventsProperties(item, parentNode) {
           output_type: selectedOutputType,
           enabled: Boolean(enabledBox.checked),
           min_severity: Math.trunc(Number(sevBox.value ?? 0) || 0),
-          targets: isPhonePolicy ? normalizedTargets : (Array.isArray((policies[idx] || {}).targets) ? (policies[idx] || {}).targets : []),
-          contacts: isPhonePolicy ? dedupeStringsInOrder(contactsSelected) : dedupeStringsInOrder((policies[idx] || {}).contacts),
-          contact_groups: isPhonePolicy ? dedupeStringsInOrder(groupsSelected) : dedupeStringsInOrder((policies[idx] || {}).contact_groups)
+          targets: isPhonePolicyNow ? normalizedTargets : (Array.isArray((policies[idx] || {}).targets) ? (policies[idx] || {}).targets : []),
+          contacts: isPhonePolicyNow ? dedupeStringsInOrder(contactsSelected) : dedupeStringsInOrder((policies[idx] || {}).contacts),
+          contact_groups: isPhonePolicyNow ? dedupeStringsInOrder(groupsSelected) : dedupeStringsInOrder((policies[idx] || {}).contact_groups)
         };
         if (isV2) {
           basePolicy.schedule_id = 'always';
@@ -11459,7 +11459,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
         else policies[idx].audio_delay_seconds = policyAudioDelay;
         if (policyAudioGap == null) delete policies[idx].audio_gap_ms;
         else policies[idx].audio_gap_ms = policyAudioGap;
-        if (isPhonePolicy) {
+        if (isPhonePolicyNow) {
           policies[idx].call_backend = String(callBackendSel.value || 'auto').trim() || 'auto';
           policies[idx].ack_dtmf = ackDtmf;
           policies[idx].ack_wait_sec = ackWaitSec;
