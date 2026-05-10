@@ -413,6 +413,124 @@ static std::string ua_key(const std::string &connId,
 
 static sqlite3 *g_alarmDb = nullptr;
 static std::mutex g_alarmDbMutex;
+
+// Dedicated config DB for alarms configuration (canonical store for /config/alarms).
+static sqlite3 *g_alarmsConfigDb = nullptr;
+static std::mutex g_alarmsConfigDbMutex;
+
+static bool sqlite_alarms_config_exec(const std::string &sql) {
+    if (!g_alarmsConfigDb) return false;
+    char *errmsg = nullptr;
+    const int rc = sqlite3_exec(g_alarmsConfigDb, sql.c_str(), nullptr, nullptr, &errmsg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "[sqlite] alarms_config schema error: " << (errmsg ? errmsg : "") << "\n";
+        if (errmsg) sqlite3_free(errmsg);
+        return false;
+    }
+    return true;
+}
+
+static bool sqlite_alarms_config_init(const std::string &configDir) {
+    if (g_alarmsConfigDb) return true;
+    const std::string dataDir = (fs::path(configDir) / "data").string();
+    fs::create_directories(dataDir);
+    const std::string dbPath = (fs::path(dataDir) / "alarms_config.db").string();
+    std::cout << "[sqlite] Opening alarms config DB at: " << dbPath << "\n";
+
+    int rc = sqlite3_open(dbPath.c_str(), &g_alarmsConfigDb);
+    if (rc != SQLITE_OK) {
+        std::cerr << "[sqlite] Failed to open alarms_config DB '" << dbPath << "': "
+                  << sqlite3_errmsg(g_alarmsConfigDb) << "\n";
+        sqlite3_close(g_alarmsConfigDb);
+        g_alarmsConfigDb = nullptr;
+        return false;
+    }
+
+    const char *SQL_CREATE = R"SQL(
+        CREATE TABLE IF NOT EXISTS alarms_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            updated_ms INTEGER NOT NULL,
+            json TEXT NOT NULL
+        );
+    )SQL";
+    if (!sqlite_alarms_config_exec(SQL_CREATE)) {
+        sqlite3_close(g_alarmsConfigDb);
+        g_alarmsConfigDb = nullptr;
+        return false;
+    }
+    return true;
+}
+
+static bool sqlite_alarms_config_get(json &outCfg, int64_t &outUpdatedMs, std::string &err) {
+    outCfg = json::object();
+    outUpdatedMs = -1;
+    err.clear();
+    if (!g_alarmsConfigDb) { err = "alarms_config DB not open"; return false; }
+
+    std::lock_guard<std::mutex> lock(g_alarmsConfigDbMutex);
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql = "SELECT updated_ms, json FROM alarms_config WHERE id=1;";
+    const int rc = sqlite3_prepare_v2(g_alarmsConfigDb, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        err = sqlite3_errmsg(g_alarmsConfigDb);
+        return false;
+    }
+    const int step = sqlite3_step(stmt);
+    if (step == SQLITE_ROW) {
+        outUpdatedMs = sqlite3_column_int64(stmt, 0);
+        const unsigned char *txt = sqlite3_column_text(stmt, 1);
+        const std::string raw = txt ? reinterpret_cast<const char*>(txt) : std::string{};
+        try {
+            outCfg = json::parse(raw);
+        } catch (const std::exception &ex) {
+            err = std::string("Invalid JSON in alarms_config.db: ") + ex.what();
+            sqlite3_finalize(stmt);
+            return false;
+        }
+        sqlite3_finalize(stmt);
+        return true;
+    }
+    sqlite3_finalize(stmt);
+    // Not found: return false but no error.
+    return false;
+}
+
+static bool sqlite_alarms_config_put(const json &cfg, int64_t updatedMs, std::string &err) {
+    err.clear();
+    if (!g_alarmsConfigDb) { err = "alarms_config DB not open"; return false; }
+    if (updatedMs <= 0) updatedMs = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    const std::string raw = cfg.dump(2);
+    std::lock_guard<std::mutex> lock(g_alarmsConfigDbMutex);
+    char *errmsg = nullptr;
+    int rc = sqlite3_exec(g_alarmsConfigDb, "BEGIN IMMEDIATE;", nullptr, nullptr, &errmsg);
+    if (rc != SQLITE_OK) {
+        err = errmsg ? errmsg : "BEGIN failed";
+        if (errmsg) sqlite3_free(errmsg);
+        return false;
+    }
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql = "INSERT INTO alarms_config (id, updated_ms, json) VALUES (1, ?, ?) "
+                      "ON CONFLICT(id) DO UPDATE SET updated_ms=excluded.updated_ms, json=excluded.json;";
+    rc = sqlite3_prepare_v2(g_alarmsConfigDb, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        err = sqlite3_errmsg(g_alarmsConfigDb);
+        sqlite3_exec(g_alarmsConfigDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return false;
+    }
+    sqlite3_bind_int64(stmt, 1, updatedMs);
+    sqlite3_bind_text(stmt, 2, raw.c_str(), -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        err = sqlite3_errmsg(g_alarmsConfigDb);
+        sqlite3_exec(g_alarmsConfigDb, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return false;
+    }
+    sqlite3_exec(g_alarmsConfigDb, "COMMIT;", nullptr, nullptr, nullptr);
+    return true;
+}
 bool sqlite_init(const std::string &configDir);
 
 using TagTable = std::map<std::string, TagSnapshot>; // key "conn:tag"
@@ -1953,10 +2071,9 @@ bool validate_alarms_json(const std::string &content, std::string &errMsg) {
             return false;
         }
 
-        // Accept both legacy and current schemas:
-        // - legacy: { "alarms": [...] }
-        // - runtime/editor v2+: { "schema_version": 2, "rules": [...], ... }
-        // - tolerant fallback: { "rules": [...] }
+        // Accept either shape:
+        // - { "alarms": [...] }
+        // - { "rules": [...] }
         const bool hasAlarmsArray = j.contains("alarms") && j["alarms"].is_array();
         const bool hasRulesArray = j.contains("rules") && j["rules"].is_array();
         if (!hasAlarmsArray && !hasRulesArray) {
@@ -4699,19 +4816,30 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
 bool load_alarms(const std::string &configDir,
                  std::vector<AlarmRuntime> &outAlarms)
 {
-    std::string path = joinPath(configDir, "alarms.json");
-
-    if (!fs::exists(path)) {
-        std::cout << "[alarms] alarms.json not found, no alarms configured.\n";
-        outAlarms.clear();
-        return true;
-    }
-
     try {
-        json j = load_json_with_comments(path);
-        if (!j.contains("alarms") || !j["alarms"].is_array()) {
-            std::cerr << "[alarms] alarms.json must contain an 'alarms' array.\n";
-            return false;
+        json j;
+
+        // Prefer alarms_config.db (canonical) if present; fall back to alarms.json if needed.
+        {
+            std::string errMsg;
+            int64_t updatedMs = -1;
+            if (sqlite_alarms_config_init(configDir) &&
+                sqlite_alarms_config_get(j, updatedMs, errMsg)) {
+                // ok
+            } else {
+                const std::string path = joinPath(configDir, "alarms.json");
+                if (!fs::exists(path)) {
+                    outAlarms.clear();
+                    return true;
+                }
+                j = load_json_with_comments(path);
+            }
+        }
+
+        if (!j.is_object() || !j.contains("alarms") || !j["alarms"].is_array()) {
+            // This runtime alarm loader only consumes the legacy "alarms" array shape.
+            outAlarms.clear();
+            return true;
         }
 
         std::vector<AlarmRuntime> tmp;
@@ -4777,10 +4905,10 @@ bool load_alarms(const std::string &configDir,
         outAlarms = std::move(tmp);
 
         std::cout << "[alarms] Loaded " << outAlarms.size()
-                  << " alarm(s) from " << path << "\n";
+                  << " alarm(s)\n";
         return true;
     } catch (const std::exception &ex) {
-        std::cerr << "[alarms] Error loading alarms.json: " << ex.what() << "\n";
+        std::cerr << "[alarms] Error loading alarms config: " << ex.what() << "\n";
         return false;
     }
 }
@@ -6346,19 +6474,30 @@ static std::vector<std::string> list_config_files_for_bundle(const std::string &
         }
     }
 
-    // Single-file configs at root
-    const char *rootFiles[] = {
-        "alarms.json",
-        "mqtt.json",
-        "mqtt_inputs.json",
-        "ca.crt"
-    };
-    for (auto *name : rootFiles) {
-        fs::path p = fs::path(configDir) / name;
-        if (fs::exists(p) && fs::is_regular_file(p)) {
-            relPaths.push_back(name);
-        }
-    }
+	    // Single-file configs at root
+	    const char *rootFiles[] = {
+	        "alarms.json",
+	        "mqtt.json",
+	        "mqtt_inputs.json",
+	        "ca.crt"
+	    };
+	    for (auto *name : rootFiles) {
+	        fs::path p = fs::path(configDir) / name;
+	        if (fs::exists(p) && fs::is_regular_file(p)) {
+	            relPaths.push_back(name);
+	        }
+	    }
+
+	    // alarms.json may live only in alarms_config.db (canonical store). Include it if present.
+	    {
+	        json cfg;
+	        int64_t updatedMs = -1;
+	        std::string errMsg;
+	        if (sqlite_alarms_config_init(configDir) &&
+	            sqlite_alarms_config_get(cfg, updatedMs, errMsg)) {
+	            relPaths.push_back("alarms.json");
+	        }
+	    }
 
     std::sort(relPaths.begin(), relPaths.end());
     relPaths.erase(std::unique(relPaths.begin(), relPaths.end()), relPaths.end());
@@ -6384,15 +6523,29 @@ static bool build_config_bundle_json(const std::string &configDir, json &bundleO
 
         json jfiles = json::array();
 
-        for (const auto &rel : files) {
-            std::string fullPath = joinPath(configDir, rel);
-            try {
-                std::string txt = read_file_to_string(fullPath);
-                json jf;
-                jf["path"]     = rel;
-                jf["contents"] = txt;
-                jfiles.push_back(jf);
-            } catch (const std::exception &ex) {
+	        for (const auto &rel : files) {
+	            std::string fullPath = joinPath(configDir, rel);
+	            try {
+	                std::string txt;
+	                if (rel == "alarms.json" && !fs::exists(fullPath)) {
+	                    json cfg;
+	                    int64_t updatedMs = -1;
+	                    std::string errMsg;
+	                    if (sqlite_alarms_config_init(configDir) &&
+	                        sqlite_alarms_config_get(cfg, updatedMs, errMsg)) {
+	                        txt = cfg.dump(2) + "\n";
+	                    } else {
+	                        // If not present, skip (do not fail the whole bundle).
+	                        continue;
+	                    }
+	                } else {
+	                    txt = read_file_to_string(fullPath);
+	                }
+	                json jf;
+	                jf["path"]     = rel;
+	                jf["contents"] = txt;
+	                jfiles.push_back(jf);
+	            } catch (const std::exception &ex) {
                 std::cerr << "[bundle] Failed to read '" << fullPath
                           << "': " << ex.what() << "\n";
                 // We continue; missing file is not fatal, but we log it.
@@ -6435,9 +6588,9 @@ static bool apply_config_bundle_json(const std::string &configDir,
         const auto &jfiles = bundle["files"];
         int applied = 0;
 
-        for (const auto &jf : jfiles) {
-            if (!jf.is_object()) continue;
-            if (!jf.contains("path") || !jf.contains("contents")) continue;
+	        for (const auto &jf : jfiles) {
+	            if (!jf.is_object()) continue;
+	            if (!jf.contains("path") || !jf.contains("contents")) continue;
 
             std::string relPath = jf["path"].get<std::string>();
             std::string contents= jf["contents"].get<std::string>();
@@ -6450,14 +6603,41 @@ static bool apply_config_bundle_json(const std::string &configDir,
             }
 
             // Only allow known config kinds
-            ConfigFileKind kind = classify_config_path(relPath);
-            if (kind == ConfigFileKind::UNKNOWN) {
-                std::cerr << "[bundle] Skipping unsupported config path '" << relPath << "'\n";
-                continue;
-            }
+	            ConfigFileKind kind = classify_config_path(relPath);
+	            if (kind == ConfigFileKind::UNKNOWN) {
+	                std::cerr << "[bundle] Skipping unsupported config path '" << relPath << "'\n";
+	                continue;
+	            }
 
-            fs::path dest = fs::path(configDir) / relPath;
-            fs::create_directories(dest.parent_path());
+	            if (kind == ConfigFileKind::ALARMS) {
+	                // alarms.json is now stored in alarms_config.db (canonical store).
+	                std::string validateErr;
+	                if (!validate_alarms_json(contents, validateErr)) {
+	                    std::cerr << "[bundle] Skipping invalid alarms config: " << validateErr << "\n";
+	                    continue;
+	                }
+	                if (!sqlite_alarms_config_init(configDir)) {
+	                    std::cerr << "[bundle] Failed to open alarms_config.db for restore\n";
+	                    continue;
+	                }
+	                try {
+	                    json cfg = json::parse(strip_json_comments(contents));
+	                    const int64_t nowMs = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+	                        std::chrono::system_clock::now().time_since_epoch()).count();
+	                    std::string putErr;
+	                    if (!sqlite_alarms_config_put(cfg, nowMs, putErr)) {
+	                        std::cerr << "[bundle] Failed to write alarms_config.db: " << putErr << "\n";
+	                        continue;
+	                    }
+	                    ++applied;
+	                } catch (const std::exception &ex) {
+	                    std::cerr << "[bundle] Exception restoring alarms config to alarms_config.db: " << ex.what() << "\n";
+	                }
+	                continue;
+	            }
+
+	            fs::path dest = fs::path(configDir) / relPath;
+	            fs::create_directories(dest.parent_path());
 
             try {
                 std::ofstream ofs(dest, std::ios::binary | std::ios::trunc);
@@ -6492,18 +6672,19 @@ static bool apply_config_bundle_json(const std::string &configDir,
 // main()
 // -----------------------------
 
-int main(int argc, char **argv) {
-    try {
-        auto processStartTime = std::chrono::system_clock::now();
+	int main(int argc, char **argv) {
+	    try {
+	        auto processStartTime = std::chrono::system_clock::now();
 
-        bool writeMode    = false;
-        bool dumpMode     = false;
-        bool dumpJsonMode = false;
-        bool httpMode     = false;
-        bool opcuaMode    = false;
-        bool versionMode  = false;
-        bool mqttMode    = false;
-		bool wsMode = false;
+	        bool writeMode    = false;
+	        bool dumpMode     = false;
+	        bool dumpJsonMode = false;
+	        bool httpMode     = false;
+	        bool opcuaMode    = false;
+	        bool versionMode  = false;
+	        bool mqttMode    = false;
+			bool wsMode = false;
+	        bool selftestAlarmsConfigDb = false;
 
 		uint16_t wsPort = 8090;
 
@@ -6519,7 +6700,7 @@ int main(int argc, char **argv) {
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
 
-            if (arg == "--write") {
+	            if (arg == "--write") {
                 if (i + 3 >= argc) {
                     std::cerr << "Error: --write requires 3 arguments: "
                               << "--write <conn_id> <logical_tag_name> <value>\n";
@@ -6530,11 +6711,13 @@ int main(int argc, char **argv) {
                 writeTagName= argv[i + 2];
                 writeValue  = argv[i + 3];
                 i += 3;
-            } else if (arg == "--dump-json") {
-                dumpJsonMode = true;
-            } else if (arg == "--dump") {
-                dumpMode = true;
-            } else if (arg == "--config" || arg == "--config-dir") {
+	            } else if (arg == "--dump-json") {
+	                dumpJsonMode = true;
+	            } else if (arg == "--dump") {
+	                dumpMode = true;
+	            } else if (arg == "--selftest-alarms-config-db") {
+	                selftestAlarmsConfigDb = true;
+	            } else if (arg == "--config" || arg == "--config-dir") {
                 if (i + 1 >= argc) {
                     std::cerr << "Error: --config requires a directory path.\n";
                     return 1;
@@ -6583,23 +6766,25 @@ int main(int argc, char **argv) {
             return 0;
         }
 
-        // Priority: write > dump-json > dump, then combinations of http/opcua/mqtt + poll
-        if (writeMode) {
-            dumpMode = dumpJsonMode = httpMode = opcuaMode = mqttMode = false;
-        } else if (dumpJsonMode) {
-            dumpMode = httpMode = opcuaMode = mqttMode = false;
-        } else if (dumpMode) {
-            httpMode = opcuaMode = mqttMode = false;
-        }
+	        // Priority: write > dump-json > dump, then combinations of http/opcua/mqtt + poll
+	        if (writeMode) {
+	            dumpMode = dumpJsonMode = httpMode = opcuaMode = mqttMode = false;
+	        } else if (dumpJsonMode) {
+	            dumpMode = httpMode = opcuaMode = mqttMode = false;
+	        } else if (dumpMode) {
+	            httpMode = opcuaMode = mqttMode = false;
+	        }
 
-        std::cout << "Mode: ";
-        if (writeMode) {
-            std::cout << "write\n";
-        } else if (dumpJsonMode) {
-            std::cout << "dump-json\n";
-        } else if (dumpMode) {
-            std::cout << "dump\n";
-        } else {
+	        std::cout << "Mode: ";
+	        if (writeMode) {
+	            std::cout << "write\n";
+	        } else if (dumpJsonMode) {
+	            std::cout << "dump-json\n";
+	        } else if (dumpMode) {
+	            std::cout << "dump\n";
+	        } else if (selftestAlarmsConfigDb) {
+	            std::cout << "selftest-alarms-config-db\n";
+	        } else {
             // poll is always active here
             std::cout << "poll";
             if (httpMode)  std::cout << " + http";
@@ -6609,9 +6794,9 @@ int main(int argc, char **argv) {
         }
 
         // ----------------- Config & drivers -----------------
-        std::string configDir = configDirOverride.empty() ? findConfigDir() : configDirOverride;
-        std::string connDir = joinPath(configDir, "connections");
-        std::string tagDir  = joinPath(configDir, "tags");
+		        std::string configDir = configDirOverride.empty() ? findConfigDir() : configDirOverride;
+	        std::string connDir = joinPath(configDir, "connections");
+	        std::string tagDir  = joinPath(configDir, "tags");
 
 	        std::string adminAuthPath = joinPath(configDir, "admin_auth.json");
 	        load_admin_auth(adminAuthPath);
@@ -6619,15 +6804,44 @@ int main(int argc, char **argv) {
 	        std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
 	        load_passwords_store(passwordsPath);
 
-        std::cout << "Executable directory: " << getExecutableDir() << "\n";
-        std::cout << "Using configDir:      " << configDir << "\n";
-        std::cout << "Connections dir:      " << connDir << "\n";
-        std::cout << "Tags dir:             " << tagDir << "\n";
+		        std::cout << "Executable directory: " << getExecutableDir() << "\n";
+		        std::cout << "Using configDir:      " << configDir << "\n";
+	        std::cout << "Connections dir:      " << connDir << "\n";
+	        std::cout << "Tags dir:             " << tagDir << "\n";
 
-		// After load_all_drivers(...)
-		if (!sqlite_init(configDir)) {
-			std::cerr << "[sqlite] Alarm DB init failed; continuing without DB.\n";
-		}
+		        if (selftestAlarmsConfigDb) {
+		            if (!sqlite_alarms_config_init(configDir)) {
+		                std::cerr << "[selftest] Failed to init alarms_config.db\n";
+		                return 1;
+		            }
+		            json doc = json::object({
+		                {"rules", json::array()},
+		                {"policies", json::array()}
+		            });
+		            std::string putErr;
+		            if (!sqlite_alarms_config_put(doc, 0, putErr)) {
+		                std::cerr << "[selftest] Failed to write alarms_config.db: " << putErr << "\n";
+		                return 1;
+		            }
+		            json readBack;
+		            int64_t updatedMs = -1;
+		            std::string getErr;
+		            if (!sqlite_alarms_config_get(readBack, updatedMs, getErr)) {
+		                std::cerr << "[selftest] Failed to read alarms_config.db: " << (getErr.empty() ? "not found" : getErr) << "\n";
+		                return 1;
+		            }
+		            if (!readBack.is_object() || !readBack.contains("rules") || !readBack["rules"].is_array()) {
+		                std::cerr << "[selftest] Read-back doc invalid\n";
+		                return 1;
+		            }
+		            std::cout << "[selftest] alarms_config.db OK (updated_ms=" << updatedMs << ")\n";
+		            return 0;
+		        }
+
+			// After load_all_drivers(...)
+			if (!sqlite_init(configDir)) {
+				std::cerr << "[sqlite] Alarm DB init failed; continuing without DB.\n";
+			}
 
         std::vector<DriverContext> drivers;
         if (!load_all_drivers(drivers, configDir)) {
@@ -11324,9 +11538,9 @@ async function refreshAlarms() {
     }
 }
 
-// ---------------------------
-// Alarms editor (alarms.json)
-// ---------------------------
+	// ---------------------------
+	// Alarms editor (stored in alarms_config.db)
+	// ---------------------------
 let g_alarmsEditorOpen = false;
 
 function toggleAlarmsEditor() {
@@ -11335,13 +11549,13 @@ function toggleAlarmsEditor() {
     const statusEl = document.getElementById("alarms-editor-status");
     if (!wrap || !btn) return;
 
-    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
-        if (statusEl) {
-            statusEl.textContent = "Admin login required to edit alarms.json.";
-            statusEl.className   = "small status-error";
-        }
-        return;
-    }
+	    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
+	        if (statusEl) {
+	            statusEl.textContent = "Admin login required to edit alarms config.";
+	            statusEl.className   = "small status-error";
+	        }
+	        return;
+	    }
 
     g_alarmsEditorOpen = !g_alarmsEditorOpen;
     wrap.style.display = g_alarmsEditorOpen ? "" : "none";
@@ -11358,14 +11572,14 @@ async function alarmsEditorLoad() {
     const ta       = document.getElementById("alarms-edit-json");
     if (!statusEl || !metaEl || !ta) return;
 
-    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
-        statusEl.textContent = "Admin login required to load alarms.json.";
-        statusEl.className   = "small status-error";
-        return;
-    }
+	    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
+	        statusEl.textContent = "Admin login required to load alarms config.";
+	        statusEl.className   = "small status-error";
+	        return;
+	    }
 
-    statusEl.textContent = "Loading alarms.json...";
-    statusEl.className   = "small";
+	    statusEl.textContent = "Loading alarms config...";
+	    statusEl.className   = "small";
 
     try {
         const resp = await fetch("/config/alarms", {
@@ -11377,14 +11591,14 @@ async function alarmsEditorLoad() {
             throw new Error((data && data.error) ? data.error : ("HTTP " + resp.status));
         }
 
-        const cfg = data.json || { rules: [] };
-        const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
-        const mtime = (typeof data.mtime_ms === "number") ? formatTs(data.mtime_ms) : "(missing)";
-        metaEl.textContent = "File: alarms.json • Rules: " + rules.length + " • Modified: " + mtime;
+	        const cfg = data.json || { rules: [] };
+	        const rules = Array.isArray(cfg.rules) ? cfg.rules : [];
+	        const mtime = (typeof data.mtime_ms === "number") ? formatTs(data.mtime_ms) : "(missing)";
+	        metaEl.textContent = "Store: alarms_config.db • Rules: " + rules.length + " • Modified: " + mtime;
 
         ta.value = JSON.stringify(cfg, null, 2) + "\n";
-        statusEl.textContent = "Loaded alarms.json.";
-        statusEl.className   = "small status-ok";
+	        statusEl.textContent = "Loaded alarms config.";
+	        statusEl.className   = "small status-ok";
     } catch (e) {
         statusEl.textContent = "Load failed: " + e.toString();
         statusEl.className   = "small status-error";
@@ -11396,19 +11610,19 @@ async function alarmsEditorSave(reloadAfter) {
     const ta       = document.getElementById("alarms-edit-json");
     if (!statusEl || !ta) return;
 
-    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
-        statusEl.textContent = "Admin login required to save alarms.json.";
-        statusEl.className   = "small status-error";
-        return;
-    }
+	    if (!ADMIN_CONFIGURED || !ADMIN_LOGGED_IN) {
+	        statusEl.textContent = "Admin login required to save alarms config.";
+	        statusEl.className   = "small status-error";
+	        return;
+	    }
     if (!WRITE_TOKEN) {
         statusEl.textContent = "Save blocked: write token missing.";
         statusEl.className   = "small status-error";
         return;
     }
 
-    statusEl.textContent = "Saving alarms.json...";
-    statusEl.className   = "small";
+	    statusEl.textContent = "Saving alarms config...";
+	    statusEl.className   = "small";
 
     try {
         const parsed = JSON.parse(ta.value);
@@ -11429,8 +11643,8 @@ async function alarmsEditorSave(reloadAfter) {
             throw new Error((data && data.error) ? data.error : ("HTTP " + resp.status));
         }
 
-        statusEl.textContent = "Saved alarms.json.";
-        statusEl.className   = "small status-ok";
+	        statusEl.textContent = "Saved alarms config.";
+	        statusEl.className   = "small status-ok";
         refreshConfigFiles();
         if (reloadAfter) {
             await reloadConfig();
@@ -14069,10 +14283,28 @@ window.addEventListener("load", startAutoRefresh);
 					}
 				}
 
-				// Root-level JSON configs
-				add_file("mqtt.json",        "mqtt");
-				add_file("mqtt_inputs.json", "mqtt_inputs");
-				add_file("alarms.json",      "alarms");
+					// Root-level JSON configs
+					add_file("mqtt.json",        "mqtt");
+					add_file("mqtt_inputs.json", "mqtt_inputs");
+					add_file("alarms.json",      "alarms");
+					// alarms.json may be stored only in alarms_config.db (canonical store).
+					{
+					    const std::string fullPath = joinPath(configDir, "alarms.json");
+					    if (!fs::exists(fullPath)) {
+					        json cfg;
+					        int64_t updatedMs = -1;
+					        std::string errMsg;
+					        if (sqlite_alarms_config_init(configDir) &&
+					            sqlite_alarms_config_get(cfg, updatedMs, errMsg)) {
+					            json jf;
+					            jf["path"] = "alarms.json";
+					            jf["kind"] = "alarms";
+					            jf["size_bytes"] = static_cast<std::uintmax_t>(cfg.dump().size());
+					            jf["mtime_ms"] = (updatedMs > 0 ? json(updatedMs) : json(nullptr));
+					            files.push_back(jf);
+					        }
+					    }
+					}
 
 					// MQTT CA certificate
 					add_file("ca.crt",           "tls_cert");
@@ -14113,15 +14345,69 @@ window.addEventListener("load", startAutoRefresh);
 					return;
 				}
 
-				std::string fullPath = joinPath(configDir, relPath);
-				if (!fs::exists(fullPath)) {
-					res.status = 404;
-					json err;
-					err["error"] = "Config file not found.";
-					err["path"]  = relPath;
-					res.set_content(err.dump(2), "application/json");
-					return;
-				}
+					std::string fullPath = joinPath(configDir, relPath);
+					if (kind == ConfigFileKind::ALARMS) {
+					    json out;
+					    out["ok"] = true;
+					    out["path"] = "alarms_config.db";
+					    out["mtime_ms"] = nullptr;
+					    out["json"] = json::object({{"rules", json::array()}});
+
+					    try {
+					        if (!sqlite_alarms_config_init(configDir)) {
+					            out["ok"] = false;
+					            out["error"] = "Failed to open alarms_config.db";
+					            res.status = 500;
+					            res.set_content(out.dump(2), "application/json");
+					            return;
+					        }
+
+					        json cfg;
+					        int64_t updatedMs = -1;
+					        std::string errMsg;
+					        if (!sqlite_alarms_config_get(cfg, updatedMs, errMsg)) {
+					            if (!errMsg.empty()) {
+					                out["ok"] = false;
+					                out["error"] = errMsg;
+					                res.status = 500;
+					                res.set_content(out.dump(2), "application/json");
+					                return;
+					            }
+					            // If the DB is empty, fall back to the file if present (one-time read).
+					            if (fs::exists(fullPath)) {
+					                std::string txt = read_file_to_string(fullPath);
+					                cfg = json::parse(strip_json_comments(txt));
+					            } else {
+					                cfg = json::object({{"rules", json::array()}});
+					            }
+					        }
+
+					        // Return as plain JSON text (this is the "alarms.json" view for tooling).
+					        fs::path p(relPath);
+					        std::string downloadName = p.filename().string();
+					        if (downloadName.empty()) downloadName = "alarms.json";
+					        res.set_header("Content-Disposition",
+					                       "attachment; filename=\"" + downloadName + "\"");
+					        res.set_content(cfg.dump(2) + "\n", "application/json; charset=utf-8");
+					        return;
+					    } catch (const std::exception &ex) {
+					        res.status = 500;
+					        json err;
+					        err["error"] = std::string("Failed to read alarms config: ") + ex.what();
+					        err["path"]  = relPath;
+					        res.set_content(err.dump(2), "application/json");
+					        return;
+					    }
+					}
+
+					if (!fs::exists(fullPath)) {
+					    res.status = 404;
+					    json err;
+					    err["error"] = "Config file not found.";
+					    err["path"]  = relPath;
+					    res.set_content(err.dump(2), "application/json");
+					    return;
+					}
 
 				try {
 					std::string txt = read_file_to_string(fullPath);
@@ -14261,53 +14547,79 @@ window.addEventListener("load", startAutoRefresh);
 							return;
 					}
 
-					// Build full path and ensure parent directory exists
-					std::string fullPath = joinPath(configDir, relPath);
-					fs::path p(fullPath);
-					if (!p.parent_path().empty()) {
+						if (kind == ConfigFileKind::ALARMS) {
+						    if (!sqlite_alarms_config_init(configDir)) {
+						        resp["ok"] = false;
+						        resp["error"] = "Failed to open alarms_config.db";
+						        res.status = 500;
+						        res.set_content(resp.dump(2), "application/json");
+						        return;
+						    }
+						    json cfg = json::parse(strip_json_comments(newText));
+						    const int64_t nowMs = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+						        std::chrono::system_clock::now().time_since_epoch()).count();
+						    std::string putErr;
+						    if (!sqlite_alarms_config_put(cfg, nowMs, putErr)) {
+						        resp["ok"] = false;
+						        resp["error"] = "Failed to write alarms_config.db: " + putErr;
+						        res.status = 500;
+						        res.set_content(resp.dump(2), "application/json");
+						        return;
+						    }
+						    resp["ok"] = true;
+						    resp["path"] = "alarms_config.db";
+						    res.status = 200;
+						    res.set_content(resp.dump(2), "application/json");
+						    return;
+						}
+
+						// Build full path and ensure parent directory exists
+						std::string fullPath = joinPath(configDir, relPath);
+						fs::path p(fullPath);
+						if (!p.parent_path().empty()) {
+							std::error_code ec;
+							fs::create_directories(p.parent_path(), ec);
+							if (ec) {
+								resp["ok"] = false;
+								resp["error"] = std::string("Failed to create directory: ") + ec.message();
+								res.status = 500;
+								res.set_content(resp.dump(2), "application/json");
+								return;
+							}
+						}
+
+						// Write to temp file then rename
+						std::string tempPath = fullPath + ".tmp";
+						{
+							std::ofstream ofs(tempPath, std::ios::binary | std::ios::trunc);
+							if (!ofs) {
+								resp["ok"] = false;
+								resp["error"] = "Failed to open temp file for write.";
+								res.status = 500;
+								res.set_content(resp.dump(2), "application/json");
+								return;
+							}
+							ofs << newText;
+						}
+
 						std::error_code ec;
-						fs::create_directories(p.parent_path(), ec);
+						fs::rename(tempPath, fullPath, ec);
 						if (ec) {
 							resp["ok"] = false;
-							resp["error"] = std::string("Failed to create directory: ") + ec.message();
+							resp["error"] = std::string("Failed to rename temp file: ") + ec.message();
 							res.status = 500;
 							res.set_content(resp.dump(2), "application/json");
 							return;
 						}
-					}
 
-					// Write to temp file then rename
-					std::string tempPath = fullPath + ".tmp";
-					{
-						std::ofstream ofs(tempPath, std::ios::binary | std::ios::trunc);
-						if (!ofs) {
-							resp["ok"] = false;
-							resp["error"] = "Failed to open temp file for write.";
-							res.status = 500;
-							res.set_content(resp.dump(2), "application/json");
-							return;
-						}
-						ofs << newText;
-					}
-
-					std::error_code ec;
-					fs::rename(tempPath, fullPath, ec);
-					if (ec) {
-						resp["ok"] = false;
-						resp["error"] = std::string("Failed to rename temp file: ") + ec.message();
-						res.status = 500;
+						resp["ok"]   = true;
+						resp["path"] = relPath;
+						res.status   = 200;
 						res.set_content(resp.dump(2), "application/json");
-						return;
-					}
 
-					resp["ok"]   = true;
-					resp["path"] = relPath;
-					res.status   = 200;
-					res.set_content(resp.dump(2), "application/json");
-
-				} catch (const std::exception &ex) {
-					resp["ok"] = false;
-					resp["error"] = std::string("Invalid JSON or fields: ") + ex.what();
+					} catch (const std::exception &ex) {
+						resp["ok"] = false;
+						resp["error"] = std::string("Invalid JSON or fields: ") + ex.what();
 					res.status = 400;
 					res.set_content(resp.dump(2), "application/json");
 				}
@@ -15438,52 +15750,81 @@ window.addEventListener("load", startAutoRefresh);
 				}
 				});
 
-				// ------------------------------------------------------------
-				// GET /config/alarms
-				// Returns the alarms.json config (or empty rules if missing).
-				// Intended for opcbridge-alarms and admin tooling.
-				// ------------------------------------------------------------
-				svr.Get("/config/alarms", [&](const httplib::Request &req, httplib::Response &res) {
-	                if (!is_admin_request(req)) {
-	                    json err;
-	                    err["ok"] = false;
-	                    err["error"] = "Admin login required.";
+					// ------------------------------------------------------------
+					// GET /config/alarms
+					// Returns the alarms config document from alarms_config.db.
+					// Falls back to alarms.json on first run (and imports it into the DB).
+					// Intended for opcbridge-alarms and admin tooling.
+					// ------------------------------------------------------------
+					svr.Get("/config/alarms", [&](const httplib::Request &req, httplib::Response &res) {
+		                if (!is_admin_request(req)) {
+		                    json err;
+		                    err["ok"] = false;
+		                    err["error"] = "Admin login required.";
 	                    res.status = 403;
 	                    res.set_content(err.dump(2), "application/json");
 	                    return;
 	                }
 
-					const std::string alarmsPath = joinPath(configDir, "alarms.json");
-
-					json out;
-					out["ok"] = true;
-					out["path"] = "alarms.json";
-					out["mtime_ms"] = nullptr;
-					out["json"] = json::object({{"rules", json::array()}});
+						json out;
+						out["ok"] = true;
+						out["path"] = "alarms_config.db";
+						out["mtime_ms"] = nullptr;
+						out["json"] = json::object({{"rules", json::array()}});
 
 						try {
-							if (fs::exists(alarmsPath)) {
-								auto ftime = fs::last_write_time(alarmsPath);
-								// Convert filesystem clock to system_clock in C++17
-								// (C++20 has file_clock::to_sys, but we build as C++17).
-								auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-									ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now()
-								);
-								auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(sctp.time_since_epoch()).count();
-								out["mtime_ms"] = ms;
+						    if (!sqlite_alarms_config_init(configDir)) {
+						        out["ok"] = false;
+						        out["error"] = "Failed to open alarms_config.db";
+						        res.status = 500;
+						        res.set_content(out.dump(2), "application/json");
+						        return;
+						    }
 
-							std::string raw = read_file_to_string(alarmsPath);
-							std::string stripped = strip_json_comments(raw);
-							out["json"] = json::parse(stripped);
+						    json cfg;
+						    int64_t updatedMs = -1;
+						    std::string errMsg;
+						    if (sqlite_alarms_config_get(cfg, updatedMs, errMsg)) {
+						        out["json"] = cfg;
+						        out["mtime_ms"] = (updatedMs > 0 ? json(updatedMs) : json(nullptr));
+						        res.set_content(out.dump(2), "application/json");
+						        return;
+						    }
+						    if (!errMsg.empty()) {
+						        out["ok"] = false;
+						        out["error"] = errMsg;
+						        res.status = 500;
+						        res.set_content(out.dump(2), "application/json");
+						        return;
+						    }
+
+						    // First-run fallback: import alarms.json if present.
+						    const std::string alarmsPath = joinPath(configDir, "alarms.json");
+						    if (fs::exists(alarmsPath)) {
+						        std::string raw = read_file_to_string(alarmsPath);
+						        std::string stripped = strip_json_comments(raw);
+						        cfg = json::parse(stripped);
+						        const int64_t nowMs = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+						            std::chrono::system_clock::now().time_since_epoch()).count();
+						        std::string putErr;
+						        if (!sqlite_alarms_config_put(cfg, nowMs, putErr)) {
+						            out["ok"] = false;
+						            out["error"] = "Failed to import alarms.json into alarms_config.db: " + putErr;
+						            res.status = 500;
+						            res.set_content(out.dump(2), "application/json");
+						            return;
+						        }
+						        out["json"] = cfg;
+						        out["mtime_ms"] = nowMs;
+						    }
+						} catch (const std::exception &ex) {
+						    out["ok"] = false;
+						    out["error"] = std::string("Failed to read alarms config: ") + ex.what();
+						    res.status = 500;
 						}
-					} catch (const std::exception &ex) {
-						out["ok"] = false;
-						out["error"] = std::string("Failed to read alarms.json: ") + ex.what();
-						res.status = 500;
-					}
 
-					res.set_content(out.dump(2), "application/json");
-				});
+						res.set_content(out.dump(2), "application/json");
+					});
 
 	            // ---------- ADMIN AUTH ENDPOINTS ----------
 
