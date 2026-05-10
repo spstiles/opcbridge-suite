@@ -292,13 +292,17 @@
               <label>Test Audio File</label>
               <select id="voiceModemTestAudioFile"></select>
             </div>
-            <div class="form-row">
-              <label>Test Speech Text</label>
-              <textarea id="voiceModemTestTtsText" rows="3" placeholder="Optional text to speak if no test audio file is selected. Use [pause:500] for a 500 ms pause."></textarea>
-            </div>
-            <div class="form-row">
-              <label></label>
-              <div class="row-actions">
+	            <div class="form-row">
+	              <label>Test Speech Text</label>
+	              <textarea id="voiceModemTestTtsText" rows="3" placeholder="Optional text to speak if no test audio file is selected. Use [pause:500] for a 500 ms pause."></textarea>
+	            </div>
+	            <div class="form-row">
+	              <label>TTS Speed (WPM)</label>
+	              <input id="voiceModemTtsSpeedWpm" type="number" min="80" max="450" step="5" />
+	            </div>
+	            <div class="form-row">
+	              <label></label>
+	              <div class="row-actions">
                 <button class="btn" id="voiceModemReloadBtn" type="button">Reload Devices</button>
                 <button class="btn primary" id="voiceModemSaveBtn" type="button">Save Voice Modem</button>
                 <button class="btn" id="voiceModemTestBtn" type="button">Test Call</button>
@@ -361,11 +365,30 @@
 	              <label>Test Duration (sec)</label>
 	              <input id="sipDurationSec" type="number" min="5" max="300" step="1" value="20" />
 	            </div>
-	            <div class="form-row">
-	              <label></label>
-	              <div class="row-actions">
-	                <button class="btn primary" id="sipSaveBtn" type="button">Save SIP Settings</button>
-	                <button class="btn" id="sipTestBtn" type="button">Test SIP Call</button>
+		            <div class="form-row">
+		              <label>Ack Confirm Audio</label>
+		              <select id="sipAckConfirmAudioFile"></select>
+		            </div>
+		            <div class="form-row">
+		              <label>Ack Confirm Speech</label>
+		              <textarea id="sipAckConfirmTtsText" rows="2" placeholder="Optional. Used when no ack confirm audio file is selected."></textarea>
+		            </div>
+		            <div class="form-row">
+		              <label>Ack Confirm Max (ms)</label>
+		              <input id="sipAckConfirmMaxMs" type="number" min="0" max="30000" step="100" value="4000" />
+		            </div>
+		            <div class="form-row">
+		              <label>Ack Prompt (TTS)</label>
+		              <label style="display:flex; align-items:center; gap:8px;">
+		                <input id="sipAckPromptTts" type="checkbox" />
+		                Append “Press &lt;key&gt; to acknowledge” after audio
+		              </label>
+		            </div>
+		            <div class="form-row">
+		              <label></label>
+		              <div class="row-actions">
+		                <button class="btn primary" id="sipSaveBtn" type="button">Save SIP Settings</button>
+		                <button class="btn" id="sipTestBtn" type="button">Test SIP Call</button>
 	              </div>
 	            </div>
 	            <div class="hint mono" id="sipStatus"></div>
@@ -577,7 +600,7 @@
         <button class="btn" id="alarmsEventsRuntimeRestartBtn" type="button">Restart Alarm Runtime</button>
       </div>
       <div class="row-actions" style="margin:8px 0 10px 0;">
-        <button class="btn" id="alarmsUpgradeV2Btn" type="button">Upgrade Config to v2</button>
+        <button class="btn" id="alarmsUpgradeV2Btn" type="button">Reset Alarms Config</button>
       </div>
 
       <details class="card ae-notifications-card">
@@ -1463,6 +1486,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260505_time_sliced_polling"></script>
+  <script src="app.js?v=20260509_v2_targets_migration"></script>
 </body>
 </html>

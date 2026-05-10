@@ -72,6 +72,10 @@ const els = {
   sipDurationSec: document.getElementById('sipDurationSec'),
   sipTestAudioFile: document.getElementById('sipTestAudioFile'),
   sipTestTtsText: document.getElementById('sipTestTtsText'),
+  sipAckConfirmAudioFile: document.getElementById('sipAckConfirmAudioFile'),
+  sipAckConfirmTtsText: document.getElementById('sipAckConfirmTtsText'),
+  sipAckConfirmMaxMs: document.getElementById('sipAckConfirmMaxMs'),
+  sipAckPromptTts: document.getElementById('sipAckPromptTts'),
   sipSaveBtn: document.getElementById('sipSaveBtn'),
   sipTestBtn: document.getElementById('sipTestBtn'),
   sipStatus: document.getElementById('sipStatus'),
@@ -84,6 +88,7 @@ const els = {
   voiceModemDialSeconds: document.getElementById('voiceModemDialSeconds'),
   voiceModemAudioDelaySeconds: document.getElementById('voiceModemAudioDelaySeconds'),
   voiceModemAudioGapMs: document.getElementById('voiceModemAudioGapMs'),
+  voiceModemTtsSpeedWpm: document.getElementById('voiceModemTtsSpeedWpm'),
   voiceModemTestContact: document.getElementById('voiceModemTestContact'),
   voiceModemTestAudioFile: document.getElementById('voiceModemTestAudioFile'),
   voiceModemTestTtsText: document.getElementById('voiceModemTestTtsText'),
@@ -3850,15 +3855,36 @@ function buildV2ConfigFromLegacy(cfgObj) {
   return out;
 }
 
+function buildEmptySchema2Config() {
+  return {
+    schema_version: 2,
+    timezone: 'America/Chicago',
+    schedules: [{ id: 'always', type: 'always' }],
+    groups: [],
+    alarms: [],
+    rules: [],
+    // Current notification model:
+    targets: [],
+    routes: [],
+    policies: [],
+    assignments: [],
+    alarm_groups: [],
+    // Other top-level sections:
+    audio: { files: [] },
+    sip: {},
+    scada: {}
+  };
+}
+
 async function upgradeAlarmsConfigToV2Interactive() {
   if (!canEditConfig()) { window.alert('Login required to upgrade alarms config.'); return; }
   const cfg = state.alarmsConfig || await loadOpcbridgeAlarmsConfig();
   if (Number(cfg?.schema_version) === 2) {
-    if (els.alarmsSchemaStatus) els.alarmsSchemaStatus.textContent = 'Schema compatibility: already v2.';
+    if (els.alarmsSchemaStatus) els.alarmsSchemaStatus.textContent = 'Config compatibility: already current.';
     return;
   }
-  if (!window.confirm('Upgrade alarms config to schema_version=2? This updates alarms.json format and keeps legacy fields for compatibility.')) return;
-  const nextCfg = buildV2ConfigFromLegacy(cfg);
+  if (!window.confirm('Reset alarms config?\n\nThis will replace alarms.json with a new, empty config (breaking change).')) return;
+  const nextCfg = buildEmptySchema2Config();
   await saveOpcbridgeAlarmsConfig(nextCfg);
   await loadOpcbridgeAlarmsConfig();
   await refreshAll();
@@ -3917,6 +3943,159 @@ function normalizeAlarmsConfigInvariants(cfg) {
   const out = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? cfg : {};
   const fixes = [];
 
+  // For schema_version=2, the runtime consumes v2 fields (targets/routes/policies),
+  // but the SCADA UI still primarily edits legacy notifications.* lists.
+  // To avoid persisting legacy fields while keeping the UI working, we:
+  // - Build in-memory legacy "views" from v2 when legacy fields are missing.
+  // - Materialize v2 from legacy on save (see saveOpcbridgeAlarmsConfig()).
+  const syncLegacyViewsFromV2 = () => {
+    if (!isV2AlarmsConfig(out)) return;
+    if (!out.notifications || typeof out.notifications !== 'object' || Array.isArray(out.notifications)) out.notifications = {};
+    if (!Array.isArray(out.notifications.contacts)) out.notifications.contacts = [];
+    if (!Array.isArray(out.notifications.contact_groups)) out.notifications.contact_groups = [];
+    if (!Array.isArray(out.notifications.routes)) out.notifications.routes = [];
+    if (!out.notifications.voice_modem || typeof out.notifications.voice_modem !== 'object' || Array.isArray(out.notifications.voice_modem)) {
+      out.notifications.voice_modem = {};
+    }
+
+    const targets = Array.isArray(out.targets) ? out.targets : [];
+    if ((!out.notifications.contacts.length && !out.notifications.contact_groups.length) && targets.length) {
+      const byId = new Map();
+      targets.forEach((t) => {
+        const id = String(t?.id || '').trim();
+        if (!id) return;
+        byId.set(id, t);
+      });
+
+      const contacts = [];
+      const groups = [];
+      targets.forEach((t) => {
+        const id = String(t?.id || '').trim();
+        const type = String(t?.type || '').trim();
+        if (!id || !type) return;
+        if (type === 'phone') {
+          contacts.push({
+            id,
+            name: String(t?.name || id).trim() || id,
+            phone: String(t?.value || '').trim(),
+            enabled: t?.enabled !== false
+          });
+          return;
+        }
+        if (type === 'group') {
+          const members = (Array.isArray(t?.members) ? t.members : [])
+            .map((m) => String(m || '').trim())
+            .filter(Boolean);
+          // Keep only phone members for UI list rendering.
+          const phoneMembers = members.filter((mid) => String(byId.get(mid)?.type || '') === 'phone');
+          groups.push({
+            id,
+            name: String(t?.name || id).trim() || id,
+            enabled: t?.enabled !== false,
+            contacts: phoneMembers
+          });
+        }
+      });
+
+      // Only populate views when they were absent.
+      out.notifications.contacts = contacts;
+      out.notifications.contact_groups = groups;
+    }
+
+    const v2Routes = Array.isArray(out.routes) ? out.routes : [];
+    if (!out.notifications.routes.length && v2Routes.length) {
+      const legacyRoutes = [];
+      v2Routes.forEach((r, idx) => {
+        const type = String(r?.type || '').trim();
+        const id = String(r?.id || r?.name || `route_${idx + 1}`).trim();
+        if (!id || !type) return;
+        if (type === 'audio_command') {
+          const cfg = (r?.config && typeof r.config === 'object' && !Array.isArray(r.config)) ? r.config : {};
+          legacyRoutes.push({
+            name: String(r?.name || id).trim() || id,
+            type: 'audio_command',
+            enabled: r?.enabled !== false,
+            command: String(cfg.command || '').trim(),
+            args: Array.isArray(cfg.args) ? cfg.args : []
+          });
+          return;
+        }
+        if (type === 'voice_modem') {
+          const vm = (r?.config && typeof r.config === 'object' && !Array.isArray(r.config)) ? { ...r.config } : {};
+          vm.enabled = r?.enabled !== false;
+          out.notifications.voice_modem = vm;
+        }
+      });
+      if (legacyRoutes.length) out.notifications.routes = legacyRoutes;
+    }
+
+    // Derive configured output device from the default_audio route (UI convenience).
+    if (!String(out.notifications.audio_output_device || '').trim()) {
+      const route = findDefaultAudioRoute(out);
+      if (route && route.type === 'audio_command') {
+        const dev = audioOutputFromRoute(route);
+        if (dev && dev !== 'default') out.notifications.audio_output_device = dev;
+      }
+    }
+  };
+
+  // Keep v2/v3 'targets' in sync with legacy notifications.contacts/contact_groups if present.
+  // The UI currently edits the legacy lists, but the runtime uses 'targets' for phone policies.
+  const syncTargetsFromLegacy = () => {
+    const legacy = (out.notifications && typeof out.notifications === 'object' && !Array.isArray(out.notifications)) ? out.notifications : null;
+    if (!legacy) return;
+    const legacyContacts = Array.isArray(legacy.contacts) ? legacy.contacts : [];
+    const legacyGroups = Array.isArray(legacy.contact_groups) ? legacy.contact_groups : [];
+    if (!legacyContacts.length && !legacyGroups.length) return;
+
+    const targets = [];
+    const seen = new Set();
+    const push = (t) => {
+      const id = String(t?.id || '').trim();
+      if (!id) return;
+      if (seen.has(id)) return;
+      seen.add(id);
+      targets.push(t);
+    };
+
+    legacyContacts.forEach((c) => {
+      if (!c || typeof c !== 'object' || Array.isArray(c)) return;
+      const id = String(c.id || '').trim();
+      const phone = String(c.phone || '').trim();
+      if (!id || !phone) return;
+      push({
+        id,
+        type: 'phone',
+        value: phone,
+        enabled: c.enabled !== false,
+        name: String(c.name || id).trim()
+      });
+    });
+    legacyGroups.forEach((g) => {
+      if (!g || typeof g !== 'object' || Array.isArray(g)) return;
+      const id = String(g.id || '').trim();
+      if (!id) return;
+      const members = (Array.isArray(g.contacts) ? g.contacts : [])
+        .map((x) => String(x || '').trim())
+        .filter(Boolean);
+      push({
+        id,
+        type: 'group',
+        enabled: g.enabled !== false,
+        name: String(g.name || id).trim(),
+        members
+      });
+    });
+
+    const cur = Array.isArray(out.targets) ? out.targets : [];
+    const curJson = JSON.stringify(cur);
+    const nextJson = JSON.stringify(targets);
+    if (curJson !== nextJson) {
+      out.targets = targets;
+      fixes.push('synced targets from contacts/groups');
+    }
+  };
+
   const schedules = getSchedules(out);
   const hasAlways = schedules.some((s) => String(s?.id || '').trim() === 'always');
   const policies = getNotificationPolicies(out);
@@ -3927,6 +4106,66 @@ function normalizeAlarmsConfigInvariants(cfg) {
   }
 
   if (!out.notifications || typeof out.notifications !== 'object' || Array.isArray(out.notifications)) out.notifications = {};
+
+  syncLegacyViewsFromV2();
+  syncTargetsFromLegacy();
+
+  // Prune phone policy target references to only known contacts/groups.
+  // This avoids confusing UI states where a policy shows N targets but only
+  // M exist after legacy->v2 migration or manual edits.
+  const prunePhonePolicyTargets = () => {
+    const policies = getNotificationPolicies(out);
+    if (!policies.length) return;
+    const validContactIds = new Set(getNotificationContacts(out).map((c) => String(c?.id || '').trim()).filter(Boolean));
+    const validGroupIds = new Set(getNotificationContactGroups(out).map((g) => String(g?.id || '').trim()).filter(Boolean));
+
+    let changed = false;
+    policies.forEach((p) => {
+      if (!p || typeof p !== 'object' || Array.isArray(p)) return;
+      const outputType = getPolicyOutputType(p);
+      if (outputType !== 'phone') return;
+
+      const targets = Array.isArray(p.targets) ? p.targets : [];
+      const nextTargets = [];
+      const seen = new Set();
+      const add = (type, id) => {
+        const t = String(type || '').trim();
+        const cid = String(id || '').trim();
+        if (!cid) return;
+        const key = `${t}:${cid}`;
+        if (seen.has(key)) return;
+        if (t === 'contact' && !validContactIds.has(cid)) return;
+        if (t === 'group' && !validGroupIds.has(cid)) return;
+        if (t !== 'contact' && t !== 'group') return;
+        seen.add(key);
+        nextTargets.push({ type: t, id: cid });
+      };
+
+      if (targets.length) {
+        targets.forEach((t) => add(t?.type, t?.id));
+      } else {
+        (Array.isArray(p.contacts) ? p.contacts : []).forEach((id) => add('contact', id));
+        (Array.isArray(p.contact_groups) ? p.contact_groups : []).forEach((id) => add('group', id));
+      }
+
+      const nextContacts = nextTargets.filter((t) => t.type === 'contact').map((t) => t.id);
+      const nextGroups = nextTargets.filter((t) => t.type === 'group').map((t) => t.id);
+
+      const curJson = JSON.stringify({ targets: p.targets || [], contacts: p.contacts || [], groups: p.contact_groups || [] });
+      const nextJson = JSON.stringify({ targets: nextTargets, contacts: nextContacts, groups: nextGroups });
+      if (curJson !== nextJson) {
+        p.targets = nextTargets;
+        p.contacts = nextContacts;
+        p.contact_groups = nextGroups;
+        changed = true;
+      }
+    });
+
+    if (changed) fixes.push('pruned phone policy targets to known contacts/groups');
+  };
+
+  prunePhonePolicyTargets();
+
   const configuredOutput = getConfiguredAudioOutput(out);
   const route = findDefaultAudioRoute(out);
   if (route && route.type === 'audio_command') {
@@ -3986,6 +4225,105 @@ async function saveOpcbridgeAlarmsConfig(nextCfg) {
   normalizeAlarmsConfigInvariants(obj);
   ensureAlarmGroupsTree(obj);
   syncAlarmRulesFromAlarms(obj);
+
+  // In schema_version=2, persist v2 fields and drop legacy notification fields.
+  // This keeps alarms.json clean (v2-only) while still allowing the UI to edit via legacy views.
+  if (isV2AlarmsConfig(obj)) {
+    // Materialize v2 targets from legacy views (if present).
+    const legacy = (obj.notifications && typeof obj.notifications === 'object' && !Array.isArray(obj.notifications)) ? obj.notifications : null;
+    if (legacy) {
+      const legacyContacts = Array.isArray(legacy.contacts) ? legacy.contacts : [];
+      const legacyGroups = Array.isArray(legacy.contact_groups) ? legacy.contact_groups : [];
+      if (legacyContacts.length || legacyGroups.length) {
+        const targets = [];
+        const seen = new Set();
+        const push = (t) => {
+          const id = String(t?.id || '').trim();
+          if (!id || seen.has(id)) return;
+          seen.add(id);
+          targets.push(t);
+        };
+        legacyContacts.forEach((c) => {
+          if (!c || typeof c !== 'object' || Array.isArray(c)) return;
+          const id = String(c.id || '').trim();
+          const phone = String(c.phone || '').trim();
+          if (!id || !phone) return;
+          push({
+            id,
+            type: 'phone',
+            value: phone,
+            enabled: c.enabled !== false,
+            name: String(c.name || id).trim()
+          });
+        });
+        legacyGroups.forEach((g) => {
+          if (!g || typeof g !== 'object' || Array.isArray(g)) return;
+          const id = String(g.id || '').trim();
+          if (!id) return;
+          const members = (Array.isArray(g.contacts) ? g.contacts : [])
+            .map((x) => String(x || '').trim())
+            .filter(Boolean);
+          push({
+            id,
+            type: 'group',
+            enabled: g.enabled !== false,
+            name: String(g.name || id).trim(),
+            members
+          });
+        });
+        obj.targets = targets;
+      }
+
+      // Materialize v2 routes from legacy views (audio_command + voice_modem).
+      const legacyRoutes = Array.isArray(legacy.routes) ? legacy.routes : [];
+      const vm = (legacy.voice_modem && typeof legacy.voice_modem === 'object' && !Array.isArray(legacy.voice_modem)) ? legacy.voice_modem : null;
+      const routes = [];
+      const pushRoute = (r) => {
+        const id = String(r?.id || '').trim();
+        if (!id) return;
+        routes.push(r);
+      };
+
+      if (vm && Object.keys(vm).length) {
+        const enabled = vm.enabled !== false;
+        const cfg = { ...vm };
+        delete cfg.enabled;
+        pushRoute({ id: 'voice_modem', type: 'voice_modem', enabled, config: cfg });
+      }
+
+      legacyRoutes.forEach((r, idx) => {
+        if (!r || typeof r !== 'object' || Array.isArray(r)) return;
+        if (String(r.type || '').trim() !== 'audio_command') return;
+        const id = String(r.name || `audio_route_${idx + 1}`).trim();
+        const command = String(r.command || '').trim();
+        if (!id || !command) return;
+        pushRoute({
+          id,
+          type: 'audio_command',
+          enabled: r.enabled !== false,
+          name: String(r.name || id).trim() || id,
+          config: {
+            command,
+            args: Array.isArray(r.args) ? r.args : []
+          }
+        });
+      });
+      if (routes.length) obj.routes = routes;
+
+      // Drop legacy fields from persisted config.
+      delete legacy.contacts;
+      delete legacy.contact_groups;
+      delete legacy.routes;
+      delete legacy.policies;
+      delete legacy.voice_modem;
+      delete legacy.audio_output_device;
+      if (!Object.keys(legacy).length) delete obj.notifications;
+    } else {
+      // Ensure we don't accidentally re-introduce legacy subtree.
+      if (Object.prototype.hasOwnProperty.call(obj, 'notifications')) delete obj.notifications;
+    }
+  }
+
   const content = JSON.stringify(obj, null, 2) + '\n';
   await apiPostJson('/api/opcbridge/config/file', { path: 'alarms.json', content });
 }
@@ -5203,12 +5541,58 @@ function isV2AlarmsConfig(cfg) {
 function getNotificationContacts(cfg) {
   if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
   if (!Array.isArray(cfg.notifications.contacts)) cfg.notifications.contacts = [];
+  // In schema_version=2, contacts are stored as v2 targets; rebuild an in-memory
+  // legacy view when the legacy list is empty so the UI can render/edit them.
+  if (isV2AlarmsConfig(cfg) && cfg.notifications.contacts.length === 0) {
+    const targets = Array.isArray(cfg.targets) ? cfg.targets : [];
+    const contacts = targets
+      .filter((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'phone')
+      .map((t) => {
+        const id = String(t.id || '').trim();
+        return id ? {
+          id,
+          name: String(t.name || id).trim() || id,
+          phone: String(t.value || '').trim(),
+          enabled: t.enabled !== false
+        } : null;
+      })
+      .filter(Boolean);
+    if (contacts.length) cfg.notifications.contacts = contacts;
+  }
   return cfg.notifications.contacts;
 }
 
 function getNotificationContactGroups(cfg) {
   if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
   if (!Array.isArray(cfg.notifications.contact_groups)) cfg.notifications.contact_groups = [];
+  // In schema_version=2, groups are stored as v2 targets; rebuild an in-memory
+  // legacy view when the legacy list is empty so the UI can render/edit them.
+  if (isV2AlarmsConfig(cfg) && cfg.notifications.contact_groups.length === 0) {
+    const targets = Array.isArray(cfg.targets) ? cfg.targets : [];
+    const byId = new Map();
+    targets.forEach((t) => {
+      const id = String(t?.id || '').trim();
+      if (id) byId.set(id, t);
+    });
+    const groups = targets
+      .filter((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'group')
+      .map((t) => {
+        const id = String(t.id || '').trim();
+        if (!id) return null;
+        const members = (Array.isArray(t.members) ? t.members : [])
+          .map((m) => String(m || '').trim())
+          .filter(Boolean)
+          .filter((mid) => String(byId.get(mid)?.type || '') === 'phone');
+        return {
+          id,
+          name: String(t.name || id).trim() || id,
+          enabled: t.enabled !== false,
+          contacts: members
+        };
+      })
+      .filter(Boolean);
+    if (groups.length) cfg.notifications.contact_groups = groups;
+  }
   return cfg.notifications.contact_groups;
 }
 
@@ -5840,40 +6224,50 @@ async function loadSipSettings() {
     if (els.sipNetIf) els.sipNetIf.value = String(sip.net_if || '').trim();
     // This is the default SIP call duration used by runtime (not just the test).
     if (els.sipDurationSec) els.sipDurationSec.value = String(Number(sip.duration_sec ?? 20) || 20);
+	    const files = Array.isArray(cfg?.audio?.files) ? cfg.audio.files : [];
+	    const sortedFiles = files
+	      .slice()
+	      .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+	    const fillAudioSelect = (sel, { noneLabel, selectedId } = {}) => {
+	      if (!sel) return;
+	      sel.textContent = '';
+	      const noneOpt = document.createElement('option');
+	      noneOpt.value = '';
+	      noneOpt.textContent = noneLabel || '(None)';
+	      sel.appendChild(noneOpt);
+	      sortedFiles.forEach((f) => {
+	        const id = String(f?.id || '').trim();
+	        if (!id) return;
+	        const opt = document.createElement('option');
+	        opt.value = id;
+	        opt.textContent = `${String(f?.name || id)} (${id})`;
+	        sel.appendChild(opt);
+	      });
+	      const saved = String(selectedId || '').trim();
+	      if (saved && Array.from(sel.options).some((o) => o.value === saved)) sel.value = saved;
+	      else sel.value = '';
+	    };
 
-    if (els.sipTestAudioFile) {
-      els.sipTestAudioFile.textContent = '';
-      const noneOpt = document.createElement('option');
-      noneOpt.value = '';
-      noneOpt.textContent = '(Use Speech Text)';
-      els.sipTestAudioFile.appendChild(noneOpt);
-      const files = Array.isArray(cfg?.audio?.files) ? cfg.audio.files : [];
-      files
-        .slice()
-        .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }))
-        .forEach((f) => {
-          const id = String(f?.id || '').trim();
-          if (!id) return;
-          const opt = document.createElement('option');
-          opt.value = id;
-          opt.textContent = `${String(f?.name || id)} (${id})`;
-          els.sipTestAudioFile.appendChild(opt);
-        });
-      // Always reflect saved config (avoid "Not yet configured" getting stuck until manual reload).
-      const saved = String(sip.test_audio_file || '').trim();
-      if (saved && Array.from(els.sipTestAudioFile.options).some((o) => o.value === saved)) {
-        els.sipTestAudioFile.value = saved;
-      } else {
-        els.sipTestAudioFile.value = '';
-      }
-    }
-    if (els.sipTestTtsText) {
-      els.sipTestTtsText.value = String(sip.test_tts_text || '').trim();
-    }
-    if (els.sipTestTo) els.sipTestTo.value = String(sip.test_to || '').trim();
+	    fillAudioSelect(els.sipTestAudioFile, { noneLabel: '(Use Speech Text)', selectedId: sip.test_audio_file });
+	    fillAudioSelect(els.sipAckConfirmAudioFile, { noneLabel: '(No Ack Confirm)', selectedId: sip.ack_confirm_audio_file });
 
-    setSipStatus('Ready.');
-  } catch (err) {
+	    if (els.sipTestTtsText) {
+	      els.sipTestTtsText.value = String(sip.test_tts_text || '').trim();
+	    }
+	    if (els.sipAckConfirmTtsText) {
+	      els.sipAckConfirmTtsText.value = String(sip.ack_confirm_tts_text || '').trim();
+	    }
+	    if (els.sipAckConfirmMaxMs) {
+	      els.sipAckConfirmMaxMs.value = String(Math.max(0, Math.min(30000, Math.trunc(Number(sip.ack_confirm_max_ms ?? 4000) || 4000))));
+	    }
+	    if (els.sipAckPromptTts) {
+	      // Default true when missing (more user-friendly for ack-based callouts).
+	      els.sipAckPromptTts.checked = sip.ack_prompt_tts !== false;
+	    }
+	    if (els.sipTestTo) els.sipTestTo.value = String(sip.test_to || '').trim();
+
+	    setSipStatus('Ready.');
+	  } catch (err) {
     setSipStatus(`Load failed: ${err.message}`);
   }
 }
@@ -5891,14 +6285,21 @@ async function saveSipSettings() {
     cfg.sip.pass = pass;
     cfg.sip.transport = String(els.sipTransport?.value || 'udp').trim().toLowerCase() || 'udp';
     cfg.sip.net_if = String(els.sipNetIf?.value || '').trim();
-    cfg.sip.duration_sec = Math.max(5, Math.min(300, Math.trunc(Number(els.sipDurationSec?.value ?? 20) || 20)));
-    cfg.sip.test_to = String(els.sipTestTo?.value || '').trim();
-    cfg.sip.test_audio_file = String(els.sipTestAudioFile?.value || '').trim();
-    cfg.sip.test_tts_text = String(els.sipTestTtsText?.value || '').trim();
-    await saveOpcbridgeAlarmsConfig(cfg);
-    await loadOpcbridgeAlarmsConfig();
-    setSipStatus('Saved. Alarm server will reload the setting automatically.');
-  } catch (err) {
+	    cfg.sip.duration_sec = Math.max(5, Math.min(300, Math.trunc(Number(els.sipDurationSec?.value ?? 20) || 20)));
+	    // Note: ring cadence/max rings were removed; use policy ring_timeout_sec only.
+	    cfg.sip.test_to = String(els.sipTestTo?.value || '').trim();
+	    cfg.sip.test_audio_file = String(els.sipTestAudioFile?.value || '').trim();
+	    cfg.sip.test_tts_text = String(els.sipTestTtsText?.value || '').trim();
+	    cfg.sip.ack_confirm_audio_file = String(els.sipAckConfirmAudioFile?.value || '').trim();
+	    cfg.sip.ack_confirm_tts_text = String(els.sipAckConfirmTtsText?.value || '').trim();
+	    cfg.sip.ack_confirm_max_ms = Math.max(0, Math.min(30000, Math.trunc(Number(els.sipAckConfirmMaxMs?.value ?? 4000) || 4000)));
+	    cfg.sip.ack_prompt_tts = Boolean(els.sipAckPromptTts?.checked);
+	    // Prefer the audio file when both are set.
+	    if (cfg.sip.ack_confirm_audio_file) cfg.sip.ack_confirm_tts_text = '';
+	    await saveOpcbridgeAlarmsConfig(cfg);
+	    await loadOpcbridgeAlarmsConfig();
+	    setSipStatus('Saved. Alarm server will reload the setting automatically.');
+	  } catch (err) {
     setSipStatus(`Save failed: ${err.message}`);
   } finally {
     if (els.sipSaveBtn) els.sipSaveBtn.disabled = false;
@@ -5959,6 +6360,7 @@ async function loadVoiceModemSettings() {
     if (els.voiceModemDialSeconds) els.voiceModemDialSeconds.value = String(Number(vm.dial_seconds ?? 30) || 30);
     if (els.voiceModemAudioDelaySeconds) els.voiceModemAudioDelaySeconds.value = String(Number(vm.audio_delay_seconds ?? 8) || 8);
     if (els.voiceModemAudioGapMs) els.voiceModemAudioGapMs.value = String(Number(vm.audio_gap_ms ?? 50) || 0);
+    if (els.voiceModemTtsSpeedWpm) els.voiceModemTtsSpeedWpm.value = String(Math.max(80, Math.min(450, Math.trunc(Number(vm.tts_speed_wpm ?? 175) || 175))));
 
     if (els.voiceModemBaud) {
       const baud = String(Number(vm.baud ?? 115200) || 115200);
@@ -6059,6 +6461,7 @@ async function saveVoiceModemSettings() {
     const dialSeconds = Number(els.voiceModemDialSeconds?.value ?? 30) || 30;
     const audioDelaySeconds = Number(els.voiceModemAudioDelaySeconds?.value ?? 8) || 0;
     const audioGapMs = Number(els.voiceModemAudioGapMs?.value ?? 50) || 0;
+    const ttsSpeedWpm = Number(els.voiceModemTtsSpeedWpm?.value ?? 175) || 175;
 
     vm.enabled = Boolean(els.voiceModemEnabled?.checked);
     vm.device = manualDevice || selectedDevice;
@@ -6068,6 +6471,7 @@ async function saveVoiceModemSettings() {
     vm.dial_seconds = Math.max(5, Math.min(300, Math.trunc(dialSeconds)));
     vm.audio_delay_seconds = Math.max(0, Math.min(120, Math.trunc(audioDelaySeconds)));
     vm.audio_gap_ms = Math.max(0, Math.min(5000, Math.trunc(audioGapMs)));
+    vm.tts_speed_wpm = Math.max(80, Math.min(450, Math.trunc(ttsSpeedWpm)));
 
     await saveOpcbridgeAlarmsConfig(cfg);
     await loadOpcbridgeAlarmsConfig();
@@ -10308,62 +10712,6 @@ function renderAlarmsEventsProperties(item, parentNode) {
     const { checkbox: enabledBox, wrap: enabledWrap } = makeLabeledCheckbox('Enabled', cur?.enabled !== false, !canEditConfig());
     addRow('Enabled', enabledWrap);
 
-    const scheduleSel = document.createElement('select');
-    scheduleSel.disabled = !canEditConfig();
-    const schedules = getSchedules(cfg)
-      .map((s) => ({ id: String(s?.id || '').trim(), type: String(s?.type || '').trim() }))
-      .filter((s) => s.id);
-    if (!schedules.some((s) => s.id === 'always')) schedules.unshift({ id: 'always', type: 'always' });
-    schedules.forEach((s) => scheduleSel.appendChild(new Option(`${s.id} (${s.type || 'always'})`, s.id)));
-    const scheduleWant = String(cur?.schedule_id || 'always').trim() || 'always';
-    if (!schedules.some((s) => s.id === scheduleWant)) scheduleSel.appendChild(new Option(`${scheduleWant} (missing)`, scheduleWant));
-    scheduleSel.value = scheduleWant;
-    addRow('Schedule', scheduleSel);
-
-    const selectedPolicies = new Set(dedupeStringsInOrder(cur?.policy_ids));
-    const policyPickWrap = document.createElement('div');
-    policyPickWrap.style.display = 'grid';
-    policyPickWrap.style.gap = '6px';
-    policyPickWrap.style.maxHeight = '220px';
-    policyPickWrap.style.overflow = 'auto';
-    policyPickWrap.style.padding = '8px';
-    policyPickWrap.style.border = '1px solid var(--border)';
-    policyPickWrap.style.borderRadius = '8px';
-    const policies = getNotificationPolicies(cfg)
-      .slice()
-      .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
-    if (!policies.length) {
-      const empty = document.createElement('div');
-      empty.className = 'hint';
-      empty.textContent = 'No policies configured.';
-      policyPickWrap.appendChild(empty);
-    } else {
-      policies.forEach((policy) => {
-        const id = String(policy?.id || '').trim();
-        if (!id) return;
-        const row = document.createElement('label');
-        row.style.display = 'flex';
-        row.style.alignItems = 'center';
-        row.style.gap = '8px';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.disabled = !canEditConfig();
-        cb.checked = selectedPolicies.has(id);
-        cb.addEventListener('change', () => {
-          if (cb.checked) selectedPolicies.add(id);
-          else selectedPolicies.delete(id);
-        });
-        const ptype = getPolicyOutputType(policy).toUpperCase();
-        const txt = document.createElement('span');
-        txt.textContent = `[${ptype}] ${String(policy?.name || id)} (${id})${policy?.enabled === false ? ' · disabled' : ''}`;
-        row.appendChild(cb);
-        row.appendChild(txt);
-        policyPickWrap.appendChild(row);
-      });
-    }
-    policyPickWrap.getSelectedKeys = () => Array.from(selectedPolicies.values());
-    addRow('Outputs', policyPickWrap);
-
     const notesBox = document.createElement('textarea');
     notesBox.rows = 3;
     notesBox.value = String(cur?.notes || '');
@@ -10397,15 +10745,15 @@ function renderAlarmsEventsProperties(item, parentNode) {
         if (idx < 0) throw new Error(`Contact '${contactId}' not found.`);
         const nextId = validateConfigId(idBox.value, 'Contact ID');
         if (nextId !== contactId && contacts.some((c) => String(c?.id || '').trim() === nextId)) throw new Error(`Contact ID '${nextId}' already exists.`);
-        contacts[idx] = {
-          ...(contacts[idx] || {}),
+        const nextContact = {
           id: nextId,
           name: String(nameBox.value || '').trim() || nextId,
           phone: String(phoneBox.value || '').trim(),
           enabled: Boolean(enabledBox.checked),
           notes: String(notesBox.value || '').trim()
         };
-        if (!contacts[idx].phone) throw new Error('Phone is required.');
+        if (!nextContact.phone) throw new Error('Phone is required.');
+        contacts[idx] = nextContact;
         if (nextId !== contactId) {
           getNotificationContactGroups(nextCfg).forEach((g) => {
             g.contacts = (Array.isArray(g.contacts) ? g.contacts : []).map((cid) => String(cid || '').trim() === contactId ? nextId : cid);
@@ -11395,6 +11743,16 @@ function renderAlarmsEventsProperties(item, parentNode) {
     ackWaitBox.disabled = !canEditConfig() || !isPhonePolicyNow();
     addRow('Acknowledge Wait (sec)', ackWaitBox);
 
+    const ringTimeoutBox = document.createElement('input');
+    ringTimeoutBox.type = 'number';
+    ringTimeoutBox.min = '5';
+    ringTimeoutBox.max = '600';
+    ringTimeoutBox.step = '1';
+    ringTimeoutBox.value = String(Math.max(5, Math.trunc(Number(cur?.ring_timeout_sec ?? 15) || 15)));
+    ringTimeoutBox.placeholder = '15';
+    ringTimeoutBox.disabled = !canEditConfig() || !isPhonePolicyNow();
+    addRow('Ring Timeout (sec)', ringTimeoutBox);
+
     const syncPolicyTypeUiLocal = () => {
       const phone = isPhonePolicyNow();
       if (phone) {
@@ -11406,6 +11764,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
       }
       ackDtmfBox.disabled = !canEditConfig() || !phone;
       ackWaitBox.disabled = !canEditConfig() || !phone;
+      ringTimeoutBox.disabled = !canEditConfig() || !phone;
       callBackendSel.disabled = !canEditConfig() || !phone;
       if (targetHint) targetHint.style.display = phone ? '' : 'none';
     };
@@ -11443,19 +11802,42 @@ function renderAlarmsEventsProperties(item, parentNode) {
         const gapRaw = String(policyAudioGapBox.value ?? '').trim();
 	        const ackRaw = String(ackDtmfBox.value ?? '').trim();
 	        const ackWaitRaw = String(ackWaitBox.value ?? '').trim();
+          const ringTimeoutRaw = String(ringTimeoutBox.value ?? '').trim();
+          const maxRingsRaw = '';
 	        const policyAudioDelay = delayRaw === '' ? null : Math.trunc(Number(delayRaw));
 	        const policyAudioGap = gapRaw === '' ? null : Math.trunc(Number(gapRaw));
 	        const ackWaitSec = ackWaitRaw === '' ? 8 : Math.trunc(Number(ackWaitRaw));
+          const ringTimeoutSec = ringTimeoutRaw === '' ? 15 : Math.trunc(Number(ringTimeoutRaw));
+          const maxRings = 0;
         if (policyAudioDelay != null && (!Number.isFinite(policyAudioDelay) || policyAudioDelay < 0 || policyAudioDelay > 120)) throw new Error('Playback Delay Seconds must be blank or 0-120.');
         if (policyAudioGap != null && (!Number.isFinite(policyAudioGap) || policyAudioGap < 0 || policyAudioGap > 5000)) throw new Error('Playback Gap Milliseconds must be blank or 0-5000.');
         if (!Number.isFinite(ackWaitSec) || ackWaitSec < 0 || ackWaitSec > 120) throw new Error('Acknowledge Wait (sec) must be 0-120.');
-        const selectedOutputType = getPolicyOutputType(policies[idx] || cur);
-        const isPhonePolicyNow = selectedOutputType === 'phone';
-        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
-        if (isPhonePolicyNow && !ackDtmf.length) ackDtmf.push('1');
-        const normalizedTargets = [];
-        const contactsSelected = [];
-        const groupsSelected = [];
+          if (!Number.isFinite(ringTimeoutSec) || ringTimeoutSec < 5 || ringTimeoutSec > 600) throw new Error('Ring Timeout (sec) must be 5-600.');
+          // max_rings removed; use Ring Timeout (sec) only.
+	        const selectedOutputType = getPolicyOutputType(policies[idx] || cur);
+	        const isPhonePolicyNow = selectedOutputType === 'phone';
+	        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
+	        if (isPhonePolicyNow && !ackDtmf.length) ackDtmf.push('1');
+	        // Guardrail: if repeat is enabled and stop condition includes ACK, ensure ACK is actually enabled.
+	        if (isPhonePolicyNow && repeatEnabledNow && ['acked', 'acked_or_returned'].includes(repeatStopOn)) {
+	          const ackEnabled = Number.isFinite(ackWaitSec) && ackWaitSec > 0 && ackDtmf.length > 0;
+	          if (!ackEnabled) {
+	            const fix = window.confirm(
+	              'This policy is set to repeat and stop on ACK, but ACK is disabled.\n\n' +
+	              'Click OK to auto-fix by setting:\n' +
+	              '- Acknowledge Wait (sec) = 8\n' +
+	              '- Acknowledge Keys = 1\n\n' +
+	              'Click Cancel to go back and edit manually.'
+	            );
+	            if (!fix) throw new Error('Repeat Stop On requires ACK to be enabled.');
+	            // Apply fix to UI inputs so the user sees the effective values.
+	            if (ackWaitBox) ackWaitBox.value = '8';
+	            if (ackDtmfBox) ackDtmfBox.value = '1';
+	          }
+	        }
+	        const normalizedTargets = [];
+	        const contactsSelected = [];
+	        const groupsSelected = [];
         if (isPhonePolicyNow && targetList) {
           const selectedTargets = targetList.getSelectedKeys();
           const validContactIds = new Set(getNotificationContacts(nextCfg).map((c) => String(c?.id || '').trim()).filter(Boolean));
@@ -11509,15 +11891,17 @@ function renderAlarmsEventsProperties(item, parentNode) {
         else policies[idx].audio_delay_seconds = policyAudioDelay;
         if (policyAudioGap == null) delete policies[idx].audio_gap_ms;
         else policies[idx].audio_gap_ms = policyAudioGap;
-        if (isPhonePolicyNow) {
-          policies[idx].call_backend = String(callBackendSel.value || 'auto').trim() || 'auto';
-          policies[idx].ack_dtmf = ackDtmf;
-          policies[idx].ack_wait_sec = ackWaitSec;
-        } else {
-          delete policies[idx].call_backend;
-          delete policies[idx].ack_dtmf;
-          delete policies[idx].ack_wait_sec;
-        }
+          if (isPhonePolicyNow) {
+            policies[idx].call_backend = String(callBackendSel.value || 'auto').trim() || 'auto';
+            policies[idx].ack_dtmf = ackDtmf;
+            policies[idx].ack_wait_sec = ackWaitSec;
+            policies[idx].ring_timeout_sec = ringTimeoutSec;
+          } else {
+            delete policies[idx].call_backend;
+            delete policies[idx].ack_dtmf;
+            delete policies[idx].ack_wait_sec;
+            delete policies[idx].ring_timeout_sec;
+          }
         if (nextId !== policyId) {
           (Array.isArray(nextCfg.alarms) ? nextCfg.alarms : []).forEach((alarm) => {
             if (String(alarm?.notification_policy || '').trim() === policyId) alarm.notification_policy = nextId;
@@ -13266,18 +13650,21 @@ function renderAlarmsSchemaStatus(alarmsStatus) {
     els.alarmsSchemaStatus.textContent = 'Schema compatibility: unavailable (missing config.schema)';
     return;
   }
-  const mode = String(schema.mode || 'unknown').toUpperCase();
+  const modeRaw = String(schema.mode || 'unknown').trim().toLowerCase();
+  const mode =
+    modeRaw === 'current' ? 'CURRENT' :
+    String(schema.mode || 'unknown').toUpperCase();
   const downgraded = Boolean(schema.downgraded);
   const notes = Array.isArray(schema.notes)
     ? schema.notes.filter((n) => typeof n === 'string' && n.trim())
     : [];
   if (downgraded) {
     els.alarmsSchemaStatus.className = 'status status-degraded';
-    els.alarmsSchemaStatus.textContent = `Schema compatibility: ${mode} with compatibility downgrade${notes.length ? ` (${notes.join('; ')})` : ''}`;
+    els.alarmsSchemaStatus.textContent = `Config compatibility: ${mode} with compatibility downgrade${notes.length ? ` (${notes.join('; ')})` : ''}`;
     return;
   }
   els.alarmsSchemaStatus.className = 'status status-ok';
-  els.alarmsSchemaStatus.textContent = `Schema compatibility: ${mode} fully supported by current runtime`;
+  els.alarmsSchemaStatus.textContent = `Config compatibility: ${mode} fully supported by current runtime`;
 }
 
 function setAlarmRuntimeWarningUi(text) {

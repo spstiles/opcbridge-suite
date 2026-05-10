@@ -310,6 +310,11 @@ install_deps() {
   # Local text-to-speech for voice modem test calls and alarm speech playback.
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
     pkgs+=(alsa-utils espeak-ng)
+    # SIP callouts may need to normalize user audio files to a consistent format.
+    # Installing sox avoids confusing "formats must match" failures for multi-file sequences.
+    pkgs+=(sox)
+    # Optional, but recommended: handle MP3 sources if users upload them (common in the field).
+    pkgs+=(libsox-fmt-mp3)
     # SIP test/policy callout uses baresip as a simple headless SIP UA.
     pkgs+=(baresip baresip-core)
     # Optional: build/install pjproject for wideband SIP callouts.
