@@ -783,6 +783,90 @@ function listSerialModemDevices() {
   return { ok: true, devices };
 }
 
+function listTtsVoices() {
+  const candidates = [
+    { engine: 'espeak-ng', cmd: 'espeak-ng', args: ['--voices'], timeout: 8000 },
+    { engine: 'espeak', cmd: 'espeak', args: ['--voices'], timeout: 8000 },
+    { engine: 'flite', cmd: 'flite', args: ['-lv'], timeout: 8000 }
+  ];
+  const pick = candidates.find((c) => {
+    try {
+      const r = child_process.spawnSync(c.cmd, ['--version'], { encoding: 'utf8', timeout: 2000 });
+      return r.status === 0;
+    } catch {
+      return false;
+    }
+  }) || candidates.find((c) => {
+    try {
+      const r = child_process.spawnSync(c.cmd, ['-h'], { encoding: 'utf8', timeout: 2000 });
+      return r.status === 0;
+    } catch {
+      return false;
+    }
+  }) || null;
+
+  if (!pick) {
+    return { ok: false, engine: '', voices: [], error: 'No supported TTS engine found (espeak-ng/espeak/flite).' };
+  }
+
+  const r = child_process.spawnSync(pick.cmd, pick.args, { encoding: 'utf8', timeout: pick.timeout });
+  const stdout = String(r.stdout || '');
+  const stderr = String(r.stderr || '');
+  const voices = [];
+  const seen = new Set();
+
+  if (pick.engine === 'flite') {
+    // flite -lv output is a list of voice names and possibly descriptions; keep first token per line.
+    stdout.split('\n').forEach((line) => {
+      const s = String(line || '').trim();
+      if (!s) return;
+      const name = s.split(/\s+/)[0];
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      voices.push({ id: name, name, label: name, engine: 'flite' });
+    });
+  } else {
+    // espeak/espeak-ng --voices:
+    // Example:
+    // Pty Language       Age/Gender VoiceName          File                 Other Languages
+    //  2  en-us           --/M      English_(America)  gmw/en-US            (en 3)
+    stdout.split('\n').forEach((line) => {
+      const s = String(line || '').trim();
+      if (!s) return;
+      if (/^Pty\s+Language\b/i.test(s)) return; // header
+      const parts = s.split(/\s+/).filter(Boolean);
+      if (parts.length < 5) return;
+      const language = String(parts[1] || '').trim();
+      const ageGender = String(parts[2] || '').trim(); // e.g. --/M
+      const voiceName = String(parts[3] || '').trim(); // e.g. English_(America)
+      if (!language) return;
+      if (seen.has(language)) return;
+      seen.add(language);
+      const label = voiceName ? voiceName.replace(/_/g, ' ') : language;
+      voices.push({
+        id: language,
+        name: language,
+        label,
+        language,
+        age_gender: ageGender,
+        engine: pick.engine
+      });
+    });
+  }
+
+  voices.sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }));
+  return {
+    ok: r.status === 0,
+    engine: pick.engine,
+    command: `${pick.cmd} ${pick.args.join(' ')}`,
+    status: r.status,
+    voices,
+    stdout,
+    stderr,
+    error: r.status === 0 ? '' : (stderr.trim() || stdout.trim() || 'TTS voices command failed')
+  };
+}
+
 function contentTypeFor(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.html') return 'text/html; charset=utf-8';
@@ -2374,6 +2458,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, listSerialModemDevices());
+    return;
+  }
+
+  if (url.pathname === '/api/scada/tts/voices') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    sendJson(res, 200, listTtsVoices());
     return;
   }
 

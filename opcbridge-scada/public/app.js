@@ -1,6 +1,6 @@
 // opcbridge-scada UI (no external deps)
 
-const els = {
+  const els = {
   statusLine: document.getElementById('statusLine'),
   buildLine: document.getElementById('buildLine'),
   authLine: document.getElementById('authLine'),
@@ -79,6 +79,8 @@ const els = {
   sipSaveBtn: document.getElementById('sipSaveBtn'),
   sipTestBtn: document.getElementById('sipTestBtn'),
   sipStatus: document.getElementById('sipStatus'),
+  ttsSaveBtn: document.getElementById('ttsSaveBtn'),
+  ttsStatus: document.getElementById('ttsStatus'),
   voiceModemEnabled: document.getElementById('voiceModemEnabled'),
   voiceModemDevice: document.getElementById('voiceModemDevice'),
   voiceModemManualDevice: document.getElementById('voiceModemManualDevice'),
@@ -88,7 +90,7 @@ const els = {
   voiceModemDialSeconds: document.getElementById('voiceModemDialSeconds'),
   voiceModemAudioDelaySeconds: document.getElementById('voiceModemAudioDelaySeconds'),
   voiceModemAudioGapMs: document.getElementById('voiceModemAudioGapMs'),
-  voiceModemTtsSpeedWpm: document.getElementById('voiceModemTtsSpeedWpm'),
+  ttsSpeedWpm: document.getElementById('ttsSpeedWpm'),
   voiceModemTestContact: document.getElementById('voiceModemTestContact'),
   voiceModemTestAudioFile: document.getElementById('voiceModemTestAudioFile'),
   voiceModemTestTtsText: document.getElementById('voiceModemTestTtsText'),
@@ -108,7 +110,6 @@ const els = {
   alarmsEventsRuntimeWarningActions: document.getElementById('alarmsEventsRuntimeWarningActions'),
   alarmsEventsRuntimeRefreshBtn: document.getElementById('alarmsEventsRuntimeRefreshBtn'),
   alarmsEventsRuntimeRestartBtn: document.getElementById('alarmsEventsRuntimeRestartBtn'),
-  alarmsUpgradeV2Btn: document.getElementById('alarmsUpgradeV2Btn'),
   alarmsEventsTreeView: document.getElementById('alarmsEventsTreeView'),
   alarmsEventsTreeNote: document.getElementById('alarmsEventsTreeNote'),
   alarmsEventsListHint: document.getElementById('alarmsEventsListHint'),
@@ -480,8 +481,120 @@ const els = {
   usersFormConfirm: document.getElementById('usersFormConfirm'),
   usersFormCancelBtn: document.getElementById('usersFormCancelBtn'),
   usersFormSaveBtn: document.getElementById('usersFormSaveBtn'),
-  usersFormStatus: document.getElementById('usersFormStatus')
+  usersFormStatus: document.getElementById('usersFormStatus'),
+  // TTS
+  ttsVoice: document.getElementById('ttsVoice'),
+  ttsVoiceSelect: document.getElementById('ttsVoiceSelect'),
+  ttsVoiceHint: document.getElementById('ttsVoiceHint')
 };
+
+function setTtsStatus(msg) {
+  if (!els.ttsStatus) return;
+  els.ttsStatus.textContent = String(msg || '');
+}
+
+	async function loadTtsSettings() {
+	  try {
+	    const voicesResp = await apiGet('/api/scada/tts/voices').catch(() => ({ ok: false, voices: [], engine: '', error: '' }));
+	    const cfg = await loadOpcbridgeAlarmsConfig();
+	    const tts = cfg.tts && typeof cfg.tts === 'object' ? cfg.tts : {};
+	    const wpmRaw = Number(tts.speed_wpm ?? 175);
+	    const wpm = Number.isFinite(wpmRaw) ? wpmRaw : 175;
+	    if (els.ttsSpeedWpm) {
+	      els.ttsSpeedWpm.value = String(Math.max(80, Math.min(450, Math.trunc(wpm))));
+	    }
+	    const currentVoice = String(tts.voice || '').trim();
+	    const voices = Array.isArray(voicesResp?.voices) ? voicesResp.voices : [];
+	    const engine = String(voicesResp?.engine || '').trim();
+	    const ok = voicesResp?.ok === true;
+
+	    if (els.ttsVoiceSelect) {
+	      els.ttsVoiceSelect.textContent = '';
+	      const autoOpt = document.createElement('option');
+	      autoOpt.value = '';
+	      autoOpt.textContent = '(Default voice)';
+	      els.ttsVoiceSelect.appendChild(autoOpt);
+
+	      voices.forEach((v) => {
+	        const id = String(v?.id || v?.name || '').trim();
+	        if (!id) return;
+	        const opt = document.createElement('option');
+	        opt.value = id;
+	        const label = String(v?.label || v?.name || id).trim() || id;
+	        const meta = String(v?.age_gender || '').trim();
+	        opt.textContent = meta ? `${label} — ${id} (${meta})` : `${label} — ${id}`;
+	        els.ttsVoiceSelect.appendChild(opt);
+	      });
+
+	      const customOpt = document.createElement('option');
+	      customOpt.value = '__custom__';
+	      customOpt.textContent = '(Custom…)';
+	      els.ttsVoiceSelect.appendChild(customOpt);
+
+	      const has = currentVoice && Array.from(els.ttsVoiceSelect.options).some((o) => o.value === currentVoice);
+	      els.ttsVoiceSelect.value = has ? currentVoice : (currentVoice ? '__custom__' : '');
+	    }
+
+	    if (els.ttsVoice) {
+	      const isCustom = String(els.ttsVoiceSelect?.value || '') === '__custom__';
+	      els.ttsVoice.disabled = !isCustom || !canEditConfig();
+	      els.ttsVoice.value = isCustom ? currentVoice : '';
+	    }
+
+	    if (els.ttsVoiceHint) {
+	      if (!ok) {
+	        els.ttsVoiceHint.textContent = `Voice list unavailable${voicesResp?.error ? `: ${voicesResp.error}` : '.'}`;
+	      } else if (engine) {
+	        els.ttsVoiceHint.textContent = `Detected TTS engine: ${engine}. ${voices.length} voice(s) found. Tip: you can enter a comma-separated fallback list in Custom (e.g. en-us,en-gb,en).`;
+	      } else {
+	        els.ttsVoiceHint.textContent = voices.length ? `${voices.length} voice(s) found.` : '';
+	      }
+	    }
+
+	    if (els.ttsVoiceSelect) {
+	      els.ttsVoiceSelect.disabled = !canEditConfig();
+	      els.ttsVoiceSelect.onchange = () => {
+	        const isCustom = String(els.ttsVoiceSelect.value || '') === '__custom__';
+	        if (els.ttsVoice) {
+	          els.ttsVoice.disabled = !isCustom || !canEditConfig();
+	          if (!isCustom) els.ttsVoice.value = '';
+	        }
+	      };
+	    }
+	    setTtsStatus('Ready.');
+	  } catch (err) {
+	    setTtsStatus(`Load failed: ${err.message}`);
+	  }
+	}
+
+	async function saveTtsSettings() {
+	  if (els.ttsSaveBtn) els.ttsSaveBtn.disabled = true;
+	  setTtsStatus('Saving...');
+	  try {
+	    const cfg = await loadOpcbridgeAlarmsConfig();
+	    cfg.tts = cfg.tts && typeof cfg.tts === 'object' ? cfg.tts : {};
+	    const raw = Number(els.ttsSpeedWpm?.value ?? 175);
+	    const ttsSpeedWpm = Number.isFinite(raw) ? raw : 175;
+	    cfg.tts.speed_wpm = Math.max(80, Math.min(450, Math.trunc(ttsSpeedWpm)));
+	    const sel = String(els.ttsVoiceSelect?.value || '').trim();
+	    const voice = sel === '__custom__' ? String(els.ttsVoice?.value || '').trim() : sel;
+	    cfg.tts.voice = String(voice || '').trim();
+	    if (!cfg.tts.voice) delete cfg.tts.voice;
+	    await saveOpcbridgeAlarmsConfig(cfg);
+	    // Verify persistence so we don't show "Saved" when a NaN/null sneaks in.
+	    const after = await loadOpcbridgeAlarmsConfig();
+	    const afterWpm = Number(after?.tts?.speed_wpm ?? NaN);
+	    if (!Number.isFinite(afterWpm) || Math.trunc(afterWpm) !== Math.trunc(cfg.tts.speed_wpm)) {
+	      throw new Error(`Saved but did not persist (wanted ${cfg.tts.speed_wpm}, got ${Number.isFinite(afterWpm) ? afterWpm : 'missing'}).`);
+	    }
+	    await loadTtsSettings();
+	    setTtsStatus('Saved. Alarm server will reload the settings automatically.');
+	  } catch (err) {
+	    setTtsStatus(`Save failed: ${err.message}`);
+	  } finally {
+	    if (els.ttsSaveBtn) els.ttsSaveBtn.disabled = false;
+	  }
+	}
 
 const state = {
   cfg: null,
@@ -536,9 +649,11 @@ const state = {
   workspaceTreeRoot: null,
   alarmsEventsExpanded: new Set(['folder:alarms', 'folder:alarm_groups', 'folder:events', 'folder:routing_groups', 'folder:schedules', 'folder:audio_files', 'folder:notification_contacts', 'folder:notification_contact_groups', 'folder:notification_policies']),
   alarmsEventsSelectedNodeId: '',
-  alarmsEventsTreeRoot: null,
-  alarmsEventsSelectedChildId: '',
-  alarmsEventsChildrenSort: {},
+	  alarmsEventsTreeRoot: null,
+	  alarmsEventsSelectedChildId: '',
+	  alarmsEventsSelectedChildIds: [],
+	  alarmsEventsSelectedChildAnchorId: '',
+	  alarmsEventsChildrenSort: {},
   alarmsEventsPropsDirty: false,
   pendingNewDevice: null,
   pendingNewTag: null,
@@ -2340,9 +2455,19 @@ function unwrapAlarmCompareValue(value) {
   return cur;
 }
 
-function downloadAlarmsCsv() {
+function downloadAlarmsCsv({ group = '', site = '' } = {}) {
   const cfg = state.alarmsConfig || { alarms: [] };
+  const g = String(group || '').trim();
+  const s = String(site || '').trim();
   const alarms = (Array.isArray(cfg.alarms) ? cfg.alarms : [])
+    .filter((a) => {
+      if (!g && !s) return true;
+      const ag = String(a?.group || '').trim();
+      const as = String(a?.site || '').trim();
+      if (g && ag !== g) return false;
+      if (s && as !== s) return false;
+      return true;
+    })
     .slice()
     .sort((a, b) => String(a?.group || '').localeCompare(String(b?.group || ''), undefined, { numeric: true, sensitivity: 'base' })
       || String(a?.site || '').localeCompare(String(b?.site || ''), undefined, { numeric: true, sensitivity: 'base' })
@@ -2370,7 +2495,9 @@ function downloadAlarmsCsv() {
   }));
 
   downloadTextFile({
-    filename: 'opcbridge-alarms.csv',
+    filename: (g || s)
+      ? `opcbridge-alarms-${(g || 'all').replace(/[^a-z0-9._-]+/gi, '_')}${s ? `-${s.replace(/[^a-z0-9._-]+/gi, '_')}` : ''}.csv`
+      : 'opcbridge-alarms.csv',
     mime: 'text/csv',
     text: toCsv(rows, ALARM_CSV_HEADERS)
   });
@@ -2821,6 +2948,14 @@ async function importAlarmsCsv() {
       skipped += 1;
       skippedMissing += 1;
       if (!sampleMissing) sampleMissing = { id, reason: 'missing id' };
+      return;
+    }
+    // Guardrail: alarm IDs should not contain whitespace.
+    // Whitespace (including accidental spaces) can cause imports to create duplicates and break routing.
+    if (/\s/.test(id)) {
+      skipped += 1;
+      skippedInvalid += 1;
+      if (!sampleInvalid) sampleInvalid = { id, reason: `invalid id (contains whitespace): '${id}'` };
       return;
     }
 
@@ -3713,153 +3848,17 @@ function syncAlarmRulesFromAlarms(cfg) {
   if (invalid.length) {
     throw new Error(`Cannot save alarms config. Invalid trigger fields for: ${invalid.join(', ')}`);
   }
-  cfg.rules = rules;
-  return cfg;
-}
-
-function buildV2ConfigFromLegacy(cfgObj) {
-  const cfg = (cfgObj && typeof cfgObj === 'object' && !Array.isArray(cfgObj)) ? cfgObj : {};
-  const out = JSON.parse(JSON.stringify(cfg || {}));
-
-  const notifications = (cfg.notifications && typeof cfg.notifications === 'object' && !Array.isArray(cfg.notifications))
-    ? cfg.notifications
-    : {};
-  const legacyPolicies = Array.isArray(notifications.policies) ? notifications.policies : [];
-  const legacyRoutes = Array.isArray(notifications.routes) ? notifications.routes : [];
-  const legacyContacts = Array.isArray(notifications.contacts) ? notifications.contacts : [];
-  const legacyGroups = Array.isArray(notifications.contact_groups) ? notifications.contact_groups : [];
-  const legacyVoiceModem = (notifications.voice_modem && typeof notifications.voice_modem === 'object' && !Array.isArray(notifications.voice_modem))
-    ? notifications.voice_modem
-    : null;
-
-  out.schema_version = 2;
-  if (!String(out.timezone || '').trim()) out.timezone = 'America/Chicago';
-  out.schedules = [{ id: 'always', type: 'always' }];
-
-  const targets = [];
-  legacyContacts.forEach((c) => {
-    const id = String(c?.id || '').trim();
-    const phone = String(c?.phone || '').trim();
-    if (!id || !phone) return;
-    targets.push({
-      id,
-      type: 'phone',
-      value: phone,
-      enabled: c?.enabled !== false,
-      name: String(c?.name || id).trim()
-    });
-  });
-  legacyGroups.forEach((g) => {
-    const id = String(g?.id || '').trim();
-    if (!id) return;
-    const members = (Array.isArray(g?.contacts) ? g.contacts : [])
-      .map((x) => String(x || '').trim())
-      .filter(Boolean);
-    targets.push({
-      id,
-      type: 'group',
-      enabled: g?.enabled !== false,
-      name: String(g?.name || id).trim(),
-      members
-    });
-  });
-  out.targets = targets;
-
-  const routes = [];
-  if (legacyVoiceModem) {
-    routes.push({
-      id: 'legacy_voice_modem',
-      type: 'voice_modem',
-      enabled: legacyVoiceModem.enabled !== false,
-      config: { ...legacyVoiceModem }
-    });
-  }
-  legacyRoutes.forEach((r, idx) => {
-    if (!r || typeof r !== 'object' || Array.isArray(r)) return;
-    if (String(r.type || '') !== 'audio_command') return;
-    routes.push({
-      id: String(r.name || `legacy_audio_route_${idx + 1}`).trim(),
-      type: 'audio_command',
-      enabled: r.enabled !== false,
-      config: {
-        command: String(r.command || '').trim(),
-        args: Array.isArray(r.args) ? r.args : []
-      }
-    });
-  });
-  out.routes = routes;
-
-  const fallbackRouteId = routes.find((r) => r.type === 'voice_modem')?.id
-    || routes.find((r) => r.type === 'audio_command')?.id
-    || '';
-  const policies = [];
-  legacyPolicies.forEach((p) => {
-    const id = String(p?.id || '').trim();
-    if (!id || !fallbackRouteId) return;
-    const triggers = (Array.isArray(p?.on) ? p.on : ['active'])
-      .map((x) => String(x || '').trim())
-      .filter(Boolean);
-    const targetsList = (Array.isArray(p?.targets) ? p.targets : [])
-      .map((t) => String(t?.id || '').trim())
-      .filter(Boolean);
-    policies.push({
-      id,
-      enabled: p?.enabled !== false,
-      schedule_id: 'always',
-      triggers: triggers.length ? triggers : ['active'],
-      repeat: {
-        enabled: Number(p?.repeat_ms || 0) > 0,
-        initial_delay_ms: 0,
-        interval_ms: Math.max(1, Number(p?.repeat_ms || 0) || 1),
-        max_repeats: Number(p?.repeat_ms || 0) > 0 ? 999999 : 0,
-        stop_on: String(p?.until || 'acked_or_returned')
-      },
-      steps: [{
-        after_ms: 0,
-        route_id: fallbackRouteId,
-        targets: targetsList
-      }]
-    });
-  });
-  out.policies = policies;
-
-  const uiAlarms = Array.isArray(cfg.alarms) ? cfg.alarms : [];
-  out.alarms = uiAlarms.map((alarm) => {
-    const rule = uiAlarmToRule(alarm);
-    if (!rule) return null;
-    const a = {
-      id: String(rule.id || '').trim(),
-      name: String(rule.name || rule.id || '').trim(),
-      group: String(rule.group || '').trim(),
-      site: String(rule.site || '').trim(),
-      enabled: rule.enabled !== false,
-      severity: Number.isFinite(Number(rule.severity)) ? Math.trunc(Number(rule.severity)) : 500,
-      source: {
-        connection_id: String(rule.source?.connection_id || '').trim(),
-        tag: String(rule.source?.tag || '').trim()
-      },
-      condition: rule.condition || { type: '' },
-      message_on_active: String(rule.message_on_active || '').trim(),
-      message_on_return: String(rule.message_on_return || '').trim()
-    };
-    const policyId = String(rule.notification_policy || '').trim();
-    if (policyId && policies.some((p) => p.id === policyId)) a.policy_id = policyId;
-    const audio = {};
-    if (Object.prototype.hasOwnProperty.call(rule, 'audible_enabled')) audio.audible_enabled = Boolean(rule.audible_enabled);
-    if (String(rule.audio_file || '').trim()) audio.audio_file = String(rule.audio_file || '').trim();
-    if (String(rule.speech_text || '').trim()) audio.speech_text = String(rule.speech_text || '').trim();
-    if (Object.keys(audio).length) a.audio = audio;
-    return a;
-  }).filter(Boolean);
-
-  return out;
-}
+	  cfg.rules = rules;
+	  return cfg;
+	}
 
 function buildEmptySchema2Config() {
   return {
     schema_version: 2,
     timezone: 'America/Chicago',
-    schedules: [{ id: 'always', type: 'always' }],
+    // Schedules are user-defined. The special schedule_id "always" is virtual/implicit
+    // and should not be persisted as a schedule row.
+    schedules: [],
     groups: [],
     alarms: [],
     rules: [],
@@ -3874,20 +3873,6 @@ function buildEmptySchema2Config() {
     sip: {},
     scada: {}
   };
-}
-
-async function upgradeAlarmsConfigToV2Interactive() {
-  if (!canEditConfig()) { window.alert('Login required to upgrade alarms config.'); return; }
-  const cfg = state.alarmsConfig || await loadOpcbridgeAlarmsConfig();
-  if (Number(cfg?.schema_version) === 2) {
-    if (els.alarmsSchemaStatus) els.alarmsSchemaStatus.textContent = 'Config compatibility: already current.';
-    return;
-  }
-  if (!window.confirm('Reset alarms config?\n\nThis will replace alarms.json with a new, empty config (breaking change).')) return;
-  const nextCfg = buildEmptySchema2Config();
-  await saveOpcbridgeAlarmsConfig(nextCfg);
-  await loadOpcbridgeAlarmsConfig();
-  await refreshAll();
 }
 
 function alarmTreeSafeKey(value) {
@@ -3943,228 +3928,28 @@ function normalizeAlarmsConfigInvariants(cfg) {
   const out = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? cfg : {};
   const fixes = [];
 
-  // For schema_version=2, the runtime consumes v2 fields (targets/routes/policies),
-  // but the SCADA UI still primarily edits legacy notifications.* lists.
-  // To avoid persisting legacy fields while keeping the UI working, we:
-  // - Build in-memory legacy "views" from v2 when legacy fields are missing.
-  // - Materialize v2 from legacy on save (see saveOpcbridgeAlarmsConfig()).
-  const syncLegacyViewsFromV2 = () => {
-    if (!isV2AlarmsConfig(out)) return;
-    if (!out.notifications || typeof out.notifications !== 'object' || Array.isArray(out.notifications)) out.notifications = {};
-    if (!Array.isArray(out.notifications.contacts)) out.notifications.contacts = [];
-    if (!Array.isArray(out.notifications.contact_groups)) out.notifications.contact_groups = [];
-    if (!Array.isArray(out.notifications.routes)) out.notifications.routes = [];
-    if (!out.notifications.voice_modem || typeof out.notifications.voice_modem !== 'object' || Array.isArray(out.notifications.voice_modem)) {
-      out.notifications.voice_modem = {};
-    }
-
-    const targets = Array.isArray(out.targets) ? out.targets : [];
-    if ((!out.notifications.contacts.length && !out.notifications.contact_groups.length) && targets.length) {
-      const byId = new Map();
-      targets.forEach((t) => {
-        const id = String(t?.id || '').trim();
-        if (!id) return;
-        byId.set(id, t);
-      });
-
-      const contacts = [];
-      const groups = [];
-      targets.forEach((t) => {
-        const id = String(t?.id || '').trim();
-        const type = String(t?.type || '').trim();
-        if (!id || !type) return;
-        if (type === 'phone') {
-          contacts.push({
-            id,
-            name: String(t?.name || id).trim() || id,
-            phone: String(t?.value || '').trim(),
-            enabled: t?.enabled !== false
-          });
-          return;
-        }
-        if (type === 'group') {
-          const members = (Array.isArray(t?.members) ? t.members : [])
-            .map((m) => String(m || '').trim())
-            .filter(Boolean);
-          // Keep only phone members for UI list rendering.
-          const phoneMembers = members.filter((mid) => String(byId.get(mid)?.type || '') === 'phone');
-          groups.push({
-            id,
-            name: String(t?.name || id).trim() || id,
-            enabled: t?.enabled !== false,
-            contacts: phoneMembers
-          });
-        }
-      });
-
-      // Only populate views when they were absent.
-      out.notifications.contacts = contacts;
-      out.notifications.contact_groups = groups;
-    }
-
-    const v2Routes = Array.isArray(out.routes) ? out.routes : [];
-    if (!out.notifications.routes.length && v2Routes.length) {
-      const legacyRoutes = [];
-      v2Routes.forEach((r, idx) => {
-        const type = String(r?.type || '').trim();
-        const id = String(r?.id || r?.name || `route_${idx + 1}`).trim();
-        if (!id || !type) return;
-        if (type === 'audio_command') {
-          const cfg = (r?.config && typeof r.config === 'object' && !Array.isArray(r.config)) ? r.config : {};
-          legacyRoutes.push({
-            name: String(r?.name || id).trim() || id,
-            type: 'audio_command',
-            enabled: r?.enabled !== false,
-            command: String(cfg.command || '').trim(),
-            args: Array.isArray(cfg.args) ? cfg.args : []
-          });
-          return;
-        }
-        if (type === 'voice_modem') {
-          const vm = (r?.config && typeof r.config === 'object' && !Array.isArray(r.config)) ? { ...r.config } : {};
-          vm.enabled = r?.enabled !== false;
-          out.notifications.voice_modem = vm;
-        }
-      });
-      if (legacyRoutes.length) out.notifications.routes = legacyRoutes;
-    }
-
-    // Derive configured output device from the default_audio route (UI convenience).
-    if (!String(out.notifications.audio_output_device || '').trim()) {
-      const route = findDefaultAudioRoute(out);
-      if (route && route.type === 'audio_command') {
-        const dev = audioOutputFromRoute(route);
-        if (dev && dev !== 'default') out.notifications.audio_output_device = dev;
-      }
-    }
-  };
-
-  // Keep v2/v3 'targets' in sync with legacy notifications.contacts/contact_groups if present.
-  // The UI currently edits the legacy lists, but the runtime uses 'targets' for phone policies.
-  const syncTargetsFromLegacy = () => {
-    const legacy = (out.notifications && typeof out.notifications === 'object' && !Array.isArray(out.notifications)) ? out.notifications : null;
-    if (!legacy) return;
-    const legacyContacts = Array.isArray(legacy.contacts) ? legacy.contacts : [];
-    const legacyGroups = Array.isArray(legacy.contact_groups) ? legacy.contact_groups : [];
-    if (!legacyContacts.length && !legacyGroups.length) return;
-
-    const targets = [];
-    const seen = new Set();
-    const push = (t) => {
-      const id = String(t?.id || '').trim();
-      if (!id) return;
-      if (seen.has(id)) return;
-      seen.add(id);
-      targets.push(t);
-    };
-
-    legacyContacts.forEach((c) => {
-      if (!c || typeof c !== 'object' || Array.isArray(c)) return;
-      const id = String(c.id || '').trim();
-      const phone = String(c.phone || '').trim();
-      if (!id || !phone) return;
-      push({
-        id,
-        type: 'phone',
-        value: phone,
-        enabled: c.enabled !== false,
-        name: String(c.name || id).trim()
-      });
-    });
-    legacyGroups.forEach((g) => {
-      if (!g || typeof g !== 'object' || Array.isArray(g)) return;
-      const id = String(g.id || '').trim();
-      if (!id) return;
-      const members = (Array.isArray(g.contacts) ? g.contacts : [])
-        .map((x) => String(x || '').trim())
-        .filter(Boolean);
-      push({
-        id,
-        type: 'group',
-        enabled: g.enabled !== false,
-        name: String(g.name || id).trim(),
-        members
-      });
-    });
-
-    const cur = Array.isArray(out.targets) ? out.targets : [];
-    const curJson = JSON.stringify(cur);
-    const nextJson = JSON.stringify(targets);
-    if (curJson !== nextJson) {
-      out.targets = targets;
-      fixes.push('synced targets from contacts/groups');
-    }
-  };
-
-  const schedules = getSchedules(out);
-  const hasAlways = schedules.some((s) => String(s?.id || '').trim() === 'always');
-  const policies = getNotificationPolicies(out);
-  const needsAlways = policies.some((p) => String(p?.schedule_id || '').trim() === 'always');
-  if (needsAlways && !hasAlways) {
-    schedules.unshift({ id: 'always', name: 'Always', type: 'always', enabled: true });
-    fixes.push("added missing 'always' schedule referenced by policy");
+  // v2-only: enforce one schema and remove any legacy subtree.
+  out.schema_version = 2;
+  if (Object.prototype.hasOwnProperty.call(out, 'notifications')) {
+    delete out.notifications;
+    fixes.push('removed legacy notifications subtree');
   }
+  if (!Array.isArray(out.targets)) out.targets = [];
+  if (!Array.isArray(out.routes)) out.routes = [];
+  if (!Array.isArray(out.policies)) out.policies = [];
+  if (!Array.isArray(out.alarm_groups)) out.alarm_groups = [];
+  if (!Array.isArray(out.schedules)) out.schedules = [];
+  if (!out.audio || typeof out.audio !== 'object' || Array.isArray(out.audio)) out.audio = {};
+  if (!Array.isArray(out.audio.files)) out.audio.files = [];
 
-  if (!out.notifications || typeof out.notifications !== 'object' || Array.isArray(out.notifications)) out.notifications = {};
-
-  syncLegacyViewsFromV2();
-  syncTargetsFromLegacy();
-
-  // Prune phone policy target references to only known contacts/groups.
-  // This avoids confusing UI states where a policy shows N targets but only
-  // M exist after legacy->v2 migration or manual edits.
-  const prunePhonePolicyTargets = () => {
-    const policies = getNotificationPolicies(out);
-    if (!policies.length) return;
-    const validContactIds = new Set(getNotificationContacts(out).map((c) => String(c?.id || '').trim()).filter(Boolean));
-    const validGroupIds = new Set(getNotificationContactGroups(out).map((g) => String(g?.id || '').trim()).filter(Boolean));
-
-    let changed = false;
-    policies.forEach((p) => {
-      if (!p || typeof p !== 'object' || Array.isArray(p)) return;
-      const outputType = getPolicyOutputType(p);
-      if (outputType !== 'phone') return;
-
-      const targets = Array.isArray(p.targets) ? p.targets : [];
-      const nextTargets = [];
-      const seen = new Set();
-      const add = (type, id) => {
-        const t = String(type || '').trim();
-        const cid = String(id || '').trim();
-        if (!cid) return;
-        const key = `${t}:${cid}`;
-        if (seen.has(key)) return;
-        if (t === 'contact' && !validContactIds.has(cid)) return;
-        if (t === 'group' && !validGroupIds.has(cid)) return;
-        if (t !== 'contact' && t !== 'group') return;
-        seen.add(key);
-        nextTargets.push({ type: t, id: cid });
-      };
-
-      if (targets.length) {
-        targets.forEach((t) => add(t?.type, t?.id));
-      } else {
-        (Array.isArray(p.contacts) ? p.contacts : []).forEach((id) => add('contact', id));
-        (Array.isArray(p.contact_groups) ? p.contact_groups : []).forEach((id) => add('group', id));
-      }
-
-      const nextContacts = nextTargets.filter((t) => t.type === 'contact').map((t) => t.id);
-      const nextGroups = nextTargets.filter((t) => t.type === 'group').map((t) => t.id);
-
-      const curJson = JSON.stringify({ targets: p.targets || [], contacts: p.contacts || [], groups: p.contact_groups || [] });
-      const nextJson = JSON.stringify({ targets: nextTargets, contacts: nextContacts, groups: nextGroups });
-      if (curJson !== nextJson) {
-        p.targets = nextTargets;
-        p.contacts = nextContacts;
-        p.contact_groups = nextGroups;
-        changed = true;
-      }
-    });
-
-    if (changed) fixes.push('pruned phone policy targets to known contacts/groups');
-  };
-
-  prunePhonePolicyTargets();
+  // Option A: schedule_id="always" is virtual/implicit and should not be persisted.
+  // If an 'always' schedule row exists (legacy), prune it.
+  {
+    const schedules = getSchedules(out);
+    const before = schedules.length;
+    out.schedules = schedules.filter((s) => String(s?.id || '').trim() !== 'always');
+    if (out.schedules.length !== before) fixes.push("removed persisted 'always' schedule (virtual)");
+  }
 
   const configuredOutput = getConfiguredAudioOutput(out);
   const route = findDefaultAudioRoute(out);
@@ -4187,10 +3972,27 @@ async function loadOpcbridgeAlarmsConfig() {
   state.alarmsConfig = parseOpcbridgeAlarmsConfig(resp);
   const leakedChanged = cleanupLeakedRouteGroupAssignments(state.alarmsConfig);
   const fixes = normalizeAlarmsConfigInvariants(state.alarmsConfig);
+  // Auto-fix should never clobber user edits. If we need to persist fixes,
+  // do it only when we can prove we're saving the latest server version.
   if (leakedChanged || fixes.length) {
-    await saveOpcbridgeAlarmsConfig(state.alarmsConfig);
-    if (els.alarmsEventsPropsStatus && fixes.length) {
-      els.alarmsEventsPropsStatus.textContent = `Auto-fixed config: ${fixes.join('; ')}`;
+    try {
+      const live = await apiGet('/api/opcbridge/config/alarms');
+      const liveMs = Number(live?.mtime_ms || 0) || 0;
+      // Only persist fixes if the server version we just read matches what we're holding.
+      if (liveMs && state.alarmsConfigMtimeMs && liveMs !== state.alarmsConfigMtimeMs) {
+        // Skip persisting; show hint so user can reload rather than risk overwriting.
+        if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `Auto-fix available (not applied): config changed on server. Reload to apply: ${fixes.join('; ')}`;
+      } else {
+        await saveOpcbridgeAlarmsConfig(state.alarmsConfig);
+        if (els.alarmsEventsPropsStatus && fixes.length) {
+          els.alarmsEventsPropsStatus.textContent = `Auto-fixed config: ${fixes.join('; ')}`;
+        }
+      }
+    } catch {
+      // If we can't verify freshness, don't risk overwriting.
+      if (els.alarmsEventsPropsStatus && fixes.length) {
+        els.alarmsEventsPropsStatus.textContent = `Auto-fix available (not applied): ${fixes.join('; ')}`;
+      }
     }
   }
   return state.alarmsConfig;
@@ -4201,6 +4003,14 @@ async function saveOpcbridgeAlarmsConfig(nextCfg) {
   const allowAlarmDrop = obj.__allow_alarm_drop === true;
   if (Object.prototype.hasOwnProperty.call(obj, '__allow_alarm_drop')) delete obj.__allow_alarm_drop;
   if (!Array.isArray(obj.alarms)) obj.alarms = [];
+
+  // Option A: schedule_id="always" is virtual/implicit. Ensure we never persist an 'always' schedule row.
+  if (Array.isArray(obj.schedules)) {
+    const before = obj.schedules.length;
+    obj.schedules = obj.schedules.filter((s) => String(s?.id || '').trim() !== 'always');
+    // Keep normalization side-effect silent here; normalizeAlarmsConfigInvariants() may add a fix note elsewhere.
+    void before;
+  }
 
   // Guardrail: this editor writes the full alarms.json document.
   // If our in-memory view is stale/partial, a normal save can accidentally wipe alarms/rules.
@@ -4226,103 +4036,8 @@ async function saveOpcbridgeAlarmsConfig(nextCfg) {
   ensureAlarmGroupsTree(obj);
   syncAlarmRulesFromAlarms(obj);
 
-  // In schema_version=2, persist v2 fields and drop legacy notification fields.
-  // This keeps alarms.json clean (v2-only) while still allowing the UI to edit via legacy views.
-  if (isV2AlarmsConfig(obj)) {
-    // Materialize v2 targets from legacy views (if present).
-    const legacy = (obj.notifications && typeof obj.notifications === 'object' && !Array.isArray(obj.notifications)) ? obj.notifications : null;
-    if (legacy) {
-      const legacyContacts = Array.isArray(legacy.contacts) ? legacy.contacts : [];
-      const legacyGroups = Array.isArray(legacy.contact_groups) ? legacy.contact_groups : [];
-      if (legacyContacts.length || legacyGroups.length) {
-        const targets = [];
-        const seen = new Set();
-        const push = (t) => {
-          const id = String(t?.id || '').trim();
-          if (!id || seen.has(id)) return;
-          seen.add(id);
-          targets.push(t);
-        };
-        legacyContacts.forEach((c) => {
-          if (!c || typeof c !== 'object' || Array.isArray(c)) return;
-          const id = String(c.id || '').trim();
-          const phone = String(c.phone || '').trim();
-          if (!id || !phone) return;
-          push({
-            id,
-            type: 'phone',
-            value: phone,
-            enabled: c.enabled !== false,
-            name: String(c.name || id).trim()
-          });
-        });
-        legacyGroups.forEach((g) => {
-          if (!g || typeof g !== 'object' || Array.isArray(g)) return;
-          const id = String(g.id || '').trim();
-          if (!id) return;
-          const members = (Array.isArray(g.contacts) ? g.contacts : [])
-            .map((x) => String(x || '').trim())
-            .filter(Boolean);
-          push({
-            id,
-            type: 'group',
-            enabled: g.enabled !== false,
-            name: String(g.name || id).trim(),
-            members
-          });
-        });
-        obj.targets = targets;
-      }
-
-      // Materialize v2 routes from legacy views (audio_command + voice_modem).
-      const legacyRoutes = Array.isArray(legacy.routes) ? legacy.routes : [];
-      const vm = (legacy.voice_modem && typeof legacy.voice_modem === 'object' && !Array.isArray(legacy.voice_modem)) ? legacy.voice_modem : null;
-      const routes = [];
-      const pushRoute = (r) => {
-        const id = String(r?.id || '').trim();
-        if (!id) return;
-        routes.push(r);
-      };
-
-      if (vm && Object.keys(vm).length) {
-        const enabled = vm.enabled !== false;
-        const cfg = { ...vm };
-        delete cfg.enabled;
-        pushRoute({ id: 'voice_modem', type: 'voice_modem', enabled, config: cfg });
-      }
-
-      legacyRoutes.forEach((r, idx) => {
-        if (!r || typeof r !== 'object' || Array.isArray(r)) return;
-        if (String(r.type || '').trim() !== 'audio_command') return;
-        const id = String(r.name || `audio_route_${idx + 1}`).trim();
-        const command = String(r.command || '').trim();
-        if (!id || !command) return;
-        pushRoute({
-          id,
-          type: 'audio_command',
-          enabled: r.enabled !== false,
-          name: String(r.name || id).trim() || id,
-          config: {
-            command,
-            args: Array.isArray(r.args) ? r.args : []
-          }
-        });
-      });
-      if (routes.length) obj.routes = routes;
-
-      // Drop legacy fields from persisted config.
-      delete legacy.contacts;
-      delete legacy.contact_groups;
-      delete legacy.routes;
-      delete legacy.policies;
-      delete legacy.voice_modem;
-      delete legacy.audio_output_device;
-      if (!Object.keys(legacy).length) delete obj.notifications;
-    } else {
-      // Ensure we don't accidentally re-introduce legacy subtree.
-      if (Object.prototype.hasOwnProperty.call(obj, 'notifications')) delete obj.notifications;
-    }
-  }
+	  // v2-only: never persist legacy notification subtree.
+	  if (Object.prototype.hasOwnProperty.call(obj, 'notifications')) delete obj.notifications;
 
   const content = JSON.stringify(obj, null, 2) + '\n';
   await apiPostJson('/api/opcbridge/config/file', { path: 'alarms.json', content });
@@ -4921,6 +4636,60 @@ async function deleteAlarmAudioFileById(id) {
   return { id, filename };
 }
 
+async function deleteAlarmAudioFilesByIds(ids) {
+  const unique = Array.from(new Set((Array.isArray(ids) ? ids : []).map((x) => String(x || '').trim()).filter(Boolean)));
+  if (!unique.length) return [];
+
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  const files = getAlarmAudioFiles(cfg).filter((f) => unique.includes(String(f?.id || '').trim()));
+  if (!files.length) throw new Error('No matching audio files found to delete.');
+
+  const names = files.map((f) => String(f?.name || f?.id || '').trim()).filter(Boolean);
+  const prompt = `Delete ${files.length} audio file(s)? This cannot be undone.`;
+  if (!window.confirm(prompt + (names.length ? `\n\n${names.slice(0, 15).join('\n')}${names.length > 15 ? '\n…' : ''}` : ''))) return [];
+
+  const results = [];
+  const failures = [];
+  for (const file of files) {
+    const id = String(file?.id || '').trim();
+    if (!id) continue;
+    const filename = audioFilenameFromConfigFile(file);
+    try {
+      const resp = await apiPostJson('/api/opcbridge/config/audio/delete', { path: String(file.path || ''), filename });
+      if (!resp?.ok) throw new Error(resp?.error || `Audio delete failed for '${id}'.`);
+      results.push({ id, filename });
+    } catch (err) {
+      failures.push({ id, error: String(err?.message || err) });
+      continue;
+    }
+
+    // Remove from list and clear references.
+    cfg.audio.files = (Array.isArray(cfg.audio?.files) ? cfg.audio.files : []).filter((f) => String(f?.id || '') !== id);
+    if (String(cfg.audio?.default_file || '') === id) delete cfg.audio.default_file;
+    (Array.isArray(cfg.groups) ? cfg.groups : []).forEach((g) => {
+      if (String(g?.audio_file || '') === id) delete g.audio_file;
+      if (Array.isArray(g?.audio_files)) g.audio_files = g.audio_files.map((v) => String(v || '')).filter((v) => v !== id);
+      (Array.isArray(g?.sites) ? g.sites : []).forEach((s) => {
+        if (String(s?.audio_file || '') === id) delete s.audio_file;
+        if (Array.isArray(s?.audio_files)) s.audio_files = s.audio_files.map((v) => String(v || '')).filter((v) => v !== id);
+      });
+    });
+    (Array.isArray(cfg.alarms) ? cfg.alarms : []).forEach((a) => {
+      if (String(a?.audio_file || '') === id) delete a.audio_file;
+      if (Array.isArray(a?.audio_files)) a.audio_files = a.audio_files.map((v) => String(v || '')).filter((v) => v !== id);
+    });
+  }
+
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  if (failures.length) {
+    const head = `Deleted ${results.length}/${files.length} audio file(s).`;
+    const body = failures.slice(0, 15).map((f) => `${f.id}: ${f.error}`).join('\n');
+    window.alert(`${head}\n\nFailures:\n${body}${failures.length > 15 ? '\n…' : ''}`);
+  }
+  return results;
+}
+
 async function deleteSelectedAlarmAudioFileFromUi() {
   const id = String(state.alarmModalAudioSequenceInput?.getSelectedValue?.() || '').trim();
   if (!id) { setEditAlarmStatus('Select a configured audio file to delete.'); return; }
@@ -5011,13 +4780,13 @@ function getInheritedAudioForScope(cfg, scope, groupName, siteName) {
   return { audible_enabled: false, audio_file: '', speech_text: '', speech_texts: [], source: 'system' };
 }
 
-function notificationDefaultRepeatMs(cfg) {
-  const routes = (cfg && cfg.notifications && Array.isArray(cfg.notifications.routes)) ? cfg.notifications.routes : [];
-  const best = routes.find((r) => r && typeof r === 'object' && r.enabled !== false && String(r.type || '') === 'audio_command')
-    || routes.find((r) => r && typeof r === 'object' && r.enabled !== false);
-  const ms = Math.trunc(Number(best?.repeat_ms ?? 0) || 0);
-  return (ms > 0) ? ms : 0;
-}
+	function notificationDefaultRepeatMs(cfg) {
+	  const routes = getAlarmNotificationRoutes(cfg);
+	  const best = routes.find((r) => r && typeof r === 'object' && r.enabled !== false && String(r.type || '') === 'audio_command')
+	    || routes.find((r) => r && typeof r === 'object' && r.enabled !== false);
+	  const ms = Math.trunc(Number(best?.repeat_ms ?? best?.config?.repeat_ms ?? 0) || 0);
+	  return (ms > 0) ? ms : 0;
+	}
 
 function getInheritedRepeatForScope(cfg, scope, groupName, siteName) {
   const global = notificationDefaultRepeatMs(cfg);
@@ -5528,82 +5297,61 @@ function readScadaSettingsFromForm() {
   };
 }
 
-function getAlarmNotificationRoutes(cfg) {
-  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
-  if (!Array.isArray(cfg.notifications.routes)) cfg.notifications.routes = [];
-  return cfg.notifications.routes;
-}
-
 function isV2AlarmsConfig(cfg) {
+  // Single supported schema in SCADA going forward.
   return Number(cfg?.schema_version) === 2;
 }
 
 function getNotificationContacts(cfg) {
-  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
-  if (!Array.isArray(cfg.notifications.contacts)) cfg.notifications.contacts = [];
-  // In schema_version=2, contacts are stored as v2 targets; rebuild an in-memory
-  // legacy view when the legacy list is empty so the UI can render/edit them.
-  if (isV2AlarmsConfig(cfg) && cfg.notifications.contacts.length === 0) {
-    const targets = Array.isArray(cfg.targets) ? cfg.targets : [];
-    const contacts = targets
-      .filter((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'phone')
-      .map((t) => {
-        const id = String(t.id || '').trim();
-        return id ? {
-          id,
-          name: String(t.name || id).trim() || id,
-          phone: String(t.value || '').trim(),
-          enabled: t.enabled !== false
-        } : null;
-      })
-      .filter(Boolean);
-    if (contacts.length) cfg.notifications.contacts = contacts;
-  }
-  return cfg.notifications.contacts;
+  // v2-only: contacts are targets[] entries with type="phone".
+  if (!Array.isArray(cfg.targets)) cfg.targets = [];
+  return (Array.isArray(cfg.targets) ? cfg.targets : [])
+    .filter((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'phone')
+    .map((t) => {
+      const id = String(t.id || '').trim();
+      return id ? {
+        id,
+        name: String(t.name || id).trim() || id,
+        phone: String(t.value || '').trim(),
+        enabled: t.enabled !== false,
+        notes: String(t.notes || '').trim()
+      } : null;
+    })
+    .filter(Boolean);
 }
 
 function getNotificationContactGroups(cfg) {
-  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
-  if (!Array.isArray(cfg.notifications.contact_groups)) cfg.notifications.contact_groups = [];
-  // In schema_version=2, groups are stored as v2 targets; rebuild an in-memory
-  // legacy view when the legacy list is empty so the UI can render/edit them.
-  if (isV2AlarmsConfig(cfg) && cfg.notifications.contact_groups.length === 0) {
-    const targets = Array.isArray(cfg.targets) ? cfg.targets : [];
-    const byId = new Map();
-    targets.forEach((t) => {
-      const id = String(t?.id || '').trim();
-      if (id) byId.set(id, t);
-    });
-    const groups = targets
-      .filter((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'group')
-      .map((t) => {
-        const id = String(t.id || '').trim();
-        if (!id) return null;
-        const members = (Array.isArray(t.members) ? t.members : [])
-          .map((m) => String(m || '').trim())
-          .filter(Boolean)
-          .filter((mid) => String(byId.get(mid)?.type || '') === 'phone');
-        return {
-          id,
-          name: String(t.name || id).trim() || id,
-          enabled: t.enabled !== false,
-          contacts: members
-        };
-      })
-      .filter(Boolean);
-    if (groups.length) cfg.notifications.contact_groups = groups;
-  }
-  return cfg.notifications.contact_groups;
+  // v2-only: groups are targets[] entries with type="group" and members[].
+  if (!Array.isArray(cfg.targets)) cfg.targets = [];
+  const targets = Array.isArray(cfg.targets) ? cfg.targets : [];
+  const byId = new Map();
+  targets.forEach((t) => {
+    const id = String(t?.id || '').trim();
+    if (id) byId.set(id, t);
+  });
+  return targets
+    .filter((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'group')
+    .map((t) => {
+      const id = String(t.id || '').trim();
+      if (!id) return null;
+      const members = (Array.isArray(t.members) ? t.members : [])
+        .map((m) => String(m || '').trim())
+        .filter(Boolean)
+        .filter((mid) => String(byId.get(mid)?.type || '') === 'phone');
+      return {
+        id,
+        name: String(t.name || id).trim() || id,
+        enabled: t.enabled !== false,
+        contacts: members
+      };
+    })
+    .filter(Boolean);
 }
 
 function getNotificationPolicies(cfg) {
-  if (isV2AlarmsConfig(cfg)) {
-    if (!Array.isArray(cfg.policies)) cfg.policies = [];
-    return cfg.policies;
-  }
-  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
-  if (!Array.isArray(cfg.notifications.policies)) cfg.notifications.policies = [];
-  return cfg.notifications.policies;
+  // v2-only
+  if (!Array.isArray(cfg.policies)) cfg.policies = [];
+  return cfg.policies;
 }
 
 function getPolicyOutputType(policy) {
@@ -5762,10 +5510,10 @@ function makeLabeledCheckbox(text, checked, disabled = false) {
   return { checkbox, wrap };
 }
 
-function getPolicyTargets(policy) {
-  const targets = [];
-  const seen = new Set();
-  const add = (type, id) => {
+	function getPolicyTargets(policy) {
+	  const targets = [];
+	  const seen = new Set();
+	  const add = (type, id) => {
     const cleanType = String(type || '').trim();
     const cleanId = String(id || '').trim();
     const key = `${cleanType}:${cleanId}`;
@@ -5773,15 +5521,11 @@ function getPolicyTargets(policy) {
     seen.add(key);
     targets.push({ type: cleanType, id: cleanId });
   };
-  if (Array.isArray(policy?.targets)) {
-    policy.targets.forEach((target) => add(target?.type, target?.id));
-  }
-  if (!targets.length) {
-    (Array.isArray(policy?.contacts) ? policy.contacts : []).forEach((id) => add('contact', id));
-    (Array.isArray(policy?.contact_groups) ? policy.contact_groups : []).forEach((id) => add('group', id));
-  }
-  return targets;
-}
+	  if (Array.isArray(policy?.targets)) {
+	    policy.targets.forEach((target) => add(target?.type, target?.id));
+	  }
+	  return targets;
+	}
 
 function makeOrderedSelectionEditor({ availableItems, selectedItems, emptyText, addLabel = 'Add', canEdit = canEditConfig() }) {
   const root = document.createElement('div');
@@ -5946,13 +5690,17 @@ function makeOrderedSelectionEditor({ availableItems, selectedItems, emptyText, 
   return root;
 }
 
-function getVoiceModemConfig(cfg) {
-  if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
-  if (!cfg.notifications.voice_modem || typeof cfg.notifications.voice_modem !== 'object' || Array.isArray(cfg.notifications.voice_modem)) {
-    cfg.notifications.voice_modem = {};
-  }
-  return cfg.notifications.voice_modem;
-}
+	function getVoiceModemConfig(cfg) {
+	  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return {};
+	  if (!cfg.voice_modem || typeof cfg.voice_modem !== 'object' || Array.isArray(cfg.voice_modem)) cfg.voice_modem = {};
+	  return cfg.voice_modem;
+	}
+
+	function getAlarmNotificationRoutes(cfg) {
+	  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return [];
+	  if (!Array.isArray(cfg.routes)) cfg.routes = [];
+	  return cfg.routes;
+	}
 
 function findDefaultAudioRoute(cfg) {
   const routes = getAlarmNotificationRoutes(cfg);
@@ -5961,10 +5709,10 @@ function findDefaultAudioRoute(cfg) {
     || null;
 }
 
-function getConfiguredAudioOutput(cfg) {
-  const raw = String(cfg?.notifications?.audio_output_device || '').trim();
-  return raw || 'default';
-}
+	function getConfiguredAudioOutput(cfg) {
+	  const raw = String(cfg?.audio?.output_device || '').trim();
+	  return raw || 'default';
+	}
 
 function buildAudioRouteArgsForOutput(outputRaw) {
   const output = String(outputRaw || 'default').trim() || 'default';
@@ -5996,16 +5744,16 @@ function normalizeRepeatSec(raw, defSec = 0) {
   return Math.max(0, Math.trunc(n));
 }
 
-async function loadAlarmNotificationSettings() {
-  setAlarmNotifStatus('Loading…');
-  try {
+	async function loadAlarmNotificationSettings() {
+	  setAlarmNotifStatus('Loading…');
+	  try {
     const [devicesResp, cfg] = await Promise.all([
       apiGet('/api/scada/audio/devices').catch(() => ({ ok: false, devices: [] })),
       loadOpcbridgeAlarmsConfig()
-    ]);
-    const route = findDefaultAudioRoute(cfg) || {};
+	    ]);
+	    const route = findDefaultAudioRoute(cfg) || {};
 
-    if (els.alarmNotifEnabled) els.alarmNotifEnabled.checked = Boolean(cfg?.notifications?.enabled);
+	    if (els.alarmNotifEnabled) els.alarmNotifEnabled.checked = Boolean(cfg?.audio?.notifications_enabled);
 
     const repeatMs = normalizeRepeatMs(route?.repeat_ms, 0);
     if (els.alarmNotifRepeatMs) els.alarmNotifRepeatMs.value = String(Math.max(0, Math.trunc(repeatMs / 1000)));
@@ -6038,34 +5786,34 @@ async function loadAlarmNotificationSettings() {
         els.alarmNotifOutputDevice.appendChild(opt);
       }
       els.alarmNotifOutputDevice.value = selected || 'default';
-    }
+	    }
 
-    const count = Array.isArray(devicesResp?.devices) ? devicesResp.devices.length : 0;
-    const enabledText = (cfg?.notifications?.enabled === true) ? 'enabled' : 'disabled';
-    const suffix = devicesResp?.ok === false ? ` (${devicesResp.error || 'device scan failed'})` : '';
-    setAlarmNotifStatus(`Ready. Notifications ${enabledText}. ${count} hardware output(s) found.${suffix}`);
-  } catch (err) {
-    setAlarmNotifStatus(`Load failed: ${err.message}`);
-  }
-}
+	    const count = Array.isArray(devicesResp?.devices) ? devicesResp.devices.length : 0;
+	    const enabledText = (cfg?.audio?.notifications_enabled === true) ? 'enabled' : 'disabled';
+	    const suffix = devicesResp?.ok === false ? ` (${devicesResp.error || 'device scan failed'})` : '';
+	    setAlarmNotifStatus(`Ready. Notifications ${enabledText}. ${count} hardware output(s) found.${suffix}`);
+	  } catch (err) {
+	    setAlarmNotifStatus(`Load failed: ${err.message}`);
+	  }
+	}
 
-async function saveAlarmNotificationSettings() {
-  setAlarmNotifStatus('Saving…');
-  try {
+	async function saveAlarmNotificationSettings() {
+	  setAlarmNotifStatus('Saving…');
+	  try {
     const enabled = Boolean(els.alarmNotifEnabled?.checked);
     const repeatSec = normalizeRepeatSec(els.alarmNotifRepeatMs?.value, 0);
     const repeatMs = repeatSec * 1000;
     const until = String(els.alarmNotifUntil?.value || 'acked_or_returned').trim() || 'acked_or_returned';
-    const output = String(els.alarmNotifOutputDevice?.value || 'default').trim() || 'default';
+	    const output = String(els.alarmNotifOutputDevice?.value || 'default').trim() || 'default';
 
-    const cfg = await loadOpcbridgeAlarmsConfig();
-    if (!cfg.notifications || typeof cfg.notifications !== 'object' || Array.isArray(cfg.notifications)) cfg.notifications = {};
-    cfg.notifications.enabled = enabled;
-    cfg.notifications.audio_output_device = output;
+	    const cfg = await loadOpcbridgeAlarmsConfig();
+	    if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
+	    cfg.audio.notifications_enabled = enabled;
+	    cfg.audio.output_device = output;
 
-    const routes = getAlarmNotificationRoutes(cfg);
-    let route = routes.find((r) => r && typeof r === 'object' && String(r.name || '') === 'default_audio')
-      || routes.find((r) => r && typeof r === 'object' && String(r.type || '') === 'audio_command');
+	    const routes = getAlarmNotificationRoutes(cfg);
+	    let route = routes.find((r) => r && typeof r === 'object' && String(r.name || '') === 'default_audio')
+	      || routes.find((r) => r && typeof r === 'object' && String(r.type || '') === 'audio_command');
     if (!route) {
       route = {};
       routes.push(route);
@@ -6160,24 +5908,25 @@ async function loadSoundSettings() {
   }
 }
 
-async function saveSoundSettings() {
-  setSoundSettingsStatus('Saving...');
-  try {
-    const output = String(els.soundOutputDevice?.value || 'default').trim() || 'default';
-    const cfg = await loadOpcbridgeAlarmsConfig();
+	async function saveSoundSettings() {
+	  setSoundSettingsStatus('Saving...');
+	  try {
+	    const output = String(els.soundOutputDevice?.value || 'default').trim() || 'default';
+	    const cfg = await loadOpcbridgeAlarmsConfig();
     const routes = getAlarmNotificationRoutes(cfg);
     let route = routes.find((r) => r && typeof r === 'object' && String(r.name || '') === 'default_audio')
       || routes.find((r) => r && typeof r === 'object' && String(r.type || '') === 'audio_command');
     if (!route) {
       route = {};
       routes.push(route);
-    }
+	    }
 
-    cfg.notifications.enabled = true;
-    cfg.notifications.audio_output_device = output;
-    route.name = String(route.name || 'default_audio');
-    route.type = 'audio_command';
-    route.enabled = true;
+	    if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
+	    cfg.audio.notifications_enabled = true;
+	    cfg.audio.output_device = output;
+	    route.name = String(route.name || 'default_audio');
+	    route.type = 'audio_command';
+	    route.enabled = true;
     route.min_severity = Number(route.min_severity ?? 0) || 0;
     route.on = Array.isArray(route.on) && route.on.length ? route.on : ['active'];
     route.command = '/usr/bin/aplay';
@@ -6270,9 +6019,9 @@ async function loadSipSettings() {
 	  } catch (err) {
     setSipStatus(`Load failed: ${err.message}`);
   }
-}
+  }
 
-async function saveSipSettings() {
+  async function saveSipSettings() {
   if (els.sipSaveBtn) els.sipSaveBtn.disabled = true;
   setSipStatus('Saving...');
   try {
@@ -6360,7 +6109,7 @@ async function loadVoiceModemSettings() {
     if (els.voiceModemDialSeconds) els.voiceModemDialSeconds.value = String(Number(vm.dial_seconds ?? 30) || 30);
     if (els.voiceModemAudioDelaySeconds) els.voiceModemAudioDelaySeconds.value = String(Number(vm.audio_delay_seconds ?? 8) || 8);
     if (els.voiceModemAudioGapMs) els.voiceModemAudioGapMs.value = String(Number(vm.audio_gap_ms ?? 50) || 0);
-    if (els.voiceModemTtsSpeedWpm) els.voiceModemTtsSpeedWpm.value = String(Math.max(80, Math.min(450, Math.trunc(Number(vm.tts_speed_wpm ?? 175) || 175))));
+    // Shared TTS settings are loaded via loadTtsSettings().
 
     if (els.voiceModemBaud) {
       const baud = String(Number(vm.baud ?? 115200) || 115200);
@@ -6447,9 +6196,9 @@ async function loadVoiceModemSettings() {
   } catch (err) {
     setVoiceModemStatus(`Load failed: ${err.message}`);
   }
-}
+  }
 
-async function saveVoiceModemSettings() {
+  async function saveVoiceModemSettings() {
   setVoiceModemStatus('Saving...');
   try {
     const cfg = await loadOpcbridgeAlarmsConfig();
@@ -6461,8 +6210,6 @@ async function saveVoiceModemSettings() {
     const dialSeconds = Number(els.voiceModemDialSeconds?.value ?? 30) || 30;
     const audioDelaySeconds = Number(els.voiceModemAudioDelaySeconds?.value ?? 8) || 0;
     const audioGapMs = Number(els.voiceModemAudioGapMs?.value ?? 50) || 0;
-    const ttsSpeedWpm = Number(els.voiceModemTtsSpeedWpm?.value ?? 175) || 175;
-
     vm.enabled = Boolean(els.voiceModemEnabled?.checked);
     vm.device = manualDevice || selectedDevice;
     vm.baud = Math.max(300, Math.trunc(baud));
@@ -6471,11 +6218,9 @@ async function saveVoiceModemSettings() {
     vm.dial_seconds = Math.max(5, Math.min(300, Math.trunc(dialSeconds)));
     vm.audio_delay_seconds = Math.max(0, Math.min(120, Math.trunc(audioDelaySeconds)));
     vm.audio_gap_ms = Math.max(0, Math.min(5000, Math.trunc(audioGapMs)));
-    vm.tts_speed_wpm = Math.max(80, Math.min(450, Math.trunc(ttsSpeedWpm)));
-
     await saveOpcbridgeAlarmsConfig(cfg);
     await loadOpcbridgeAlarmsConfig();
-    setVoiceModemStatus('Saved. Alarm server will reload the setting automatically.');
+    setVoiceModemStatus('Saved. Alarm server will reload the settings automatically.');
   } catch (err) {
     setVoiceModemStatus(`Save failed: ${err.message}`);
   }
@@ -6626,6 +6371,7 @@ function wireScadaSettingsUi() {
   els.soundSaveBtn?.addEventListener('click', saveSoundSettings);
   els.sipSaveBtn?.addEventListener('click', saveSipSettings);
   els.sipTestBtn?.addEventListener('click', testSipCall);
+  els.ttsSaveBtn?.addEventListener('click', saveTtsSettings);
   els.voiceModemReloadBtn?.addEventListener('click', loadVoiceModemSettings);
   els.voiceModemSaveBtn?.addEventListener('click', saveVoiceModemSettings);
   els.voiceModemTestBtn?.addEventListener('click', testVoiceModemCall);
@@ -6651,14 +6397,6 @@ function wireAlarmNotificationUi() {
   if (els.alarmNotifSaveBtn && els.alarmNotifSaveBtn.dataset.wired !== '1') {
     els.alarmNotifSaveBtn.dataset.wired = '1';
     els.alarmNotifSaveBtn.addEventListener('click', saveAlarmNotificationSettings);
-  }
-  if (els.alarmsUpgradeV2Btn && els.alarmsUpgradeV2Btn.dataset.wired !== '1') {
-    els.alarmsUpgradeV2Btn.dataset.wired = '1';
-    els.alarmsUpgradeV2Btn.addEventListener('click', () => {
-      upgradeAlarmsConfigToV2Interactive().catch((err) => {
-        window.alert(`Upgrade failed: ${err.message}`);
-      });
-    });
   }
 }
 
@@ -7261,8 +6999,8 @@ function renderTagsConfigTable() {
       <td><code>${String(t.plc_tag_name || '')}</code></td>
       <td><code>${String(t.datatype || '')}</code></td>
       <td><input class="inline-input" id="${scanInputId}" type="number" min="0" step="1" value="${String(scan)}" /></td>
-      <td><input class="inline-check" id="${enabledInputId}" type="checkbox" ${enabled ? 'checked' : ''} /></td>
-      <td><input class="inline-check" id="${writableInputId}" type="checkbox" ${t.writable ? 'checked' : ''} /></td>
+      <td class="cell-check"><input class="inline-check" id="${enabledInputId}" type="checkbox" ${enabled ? 'checked' : ''} /></td>
+      <td class="cell-check"><input class="inline-check" id="${writableInputId}" type="checkbox" ${t.writable ? 'checked' : ''} /></td>
       <td><code>${String(t.source_file || '')}</code></td>
     `;
 
@@ -8952,15 +8690,15 @@ async function deleteAlarmGroupInteractive(groupName) {
   if (groupIdx < 0 && !assigned.length) throw new Error(`Group '${group}' not found.`);
 
   const msg = assigned.length
-    ? `Delete group '${group}' and unassign ${assigned.length} alarm${assigned.length === 1 ? '' : 's'} from that group and its sites? The alarms will not be deleted.`
+    ? `Delete group '${group}' and delete ${assigned.length} alarm${assigned.length === 1 ? '' : 's'} in that group (and its sites)?`
     : `Delete group '${group}'?`;
   if (!window.confirm(msg)) return false;
 
   if (groupIdx >= 0) cfg.groups.splice(groupIdx, 1);
-  assigned.forEach((alarm) => {
-    alarm.group = '';
-    alarm.site = '';
-  });
+  if (assigned.length) {
+    const want = group.toLowerCase();
+    cfg.alarms = (Array.isArray(cfg.alarms) ? cfg.alarms : []).filter((a) => String(a?.group || '').trim().toLowerCase() !== want);
+  }
 
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
@@ -8971,7 +8709,7 @@ async function deleteAlarmGroupInteractive(groupName) {
   await refreshAll().catch(() => {});
   if (els.alarmsEventsPropsStatus) {
     els.alarmsEventsPropsStatus.textContent = assigned.length
-      ? `Deleted group '${group}' and unassigned ${assigned.length} alarm${assigned.length === 1 ? '' : 's'}.`
+      ? `Deleted group '${group}' and deleted ${assigned.length} alarm${assigned.length === 1 ? '' : 's'}.`
       : `Deleted group '${group}'.`;
   }
   return true;
@@ -8993,12 +8731,19 @@ async function deleteAlarmSiteInteractive(groupName, siteName) {
 
   const assigned = alarmsForSite(cfg, group, site);
   const msg = assigned.length
-    ? `Delete site '${site}' and unassign ${assigned.length} alarm${assigned.length === 1 ? '' : 's'} from that site? The alarms will remain in group '${group}'.`
+    ? `Delete site '${site}' and delete ${assigned.length} alarm${assigned.length === 1 ? '' : 's'} in that site?`
     : `Delete site '${site}'?`;
   if (!window.confirm(msg)) return false;
 
   g.sites.splice(siteIdx, 1);
-  assigned.forEach((alarm) => { alarm.site = ''; });
+  if (assigned.length) {
+    const gWant = group.toLowerCase();
+    const sWant = site.toLowerCase();
+    cfg.alarms = (Array.isArray(cfg.alarms) ? cfg.alarms : []).filter((a) => !(
+      String(a?.group || '').trim().toLowerCase() === gWant &&
+      String(a?.site || '').trim().toLowerCase() === sWant
+    ));
+  }
 
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
@@ -9009,9 +8754,92 @@ async function deleteAlarmSiteInteractive(groupName, siteName) {
   await refreshAll().catch(() => {});
   if (els.alarmsEventsPropsStatus) {
     els.alarmsEventsPropsStatus.textContent = assigned.length
-      ? `Deleted site '${site}' and unassigned ${assigned.length} alarm${assigned.length === 1 ? '' : 's'}.`
+      ? `Deleted site '${site}' and deleted ${assigned.length} alarm${assigned.length === 1 ? '' : 's'}.`
       : `Deleted site '${site}'.`;
   }
+  return true;
+}
+
+async function deleteAlarmGroupsBulk(groupNames) {
+  if (!canEditConfig()) { window.alert('Login required to edit alarms.'); return false; }
+  const names = Array.from(new Set((Array.isArray(groupNames) ? groupNames : [])
+    .map((x) => normalizeAlarmGroupName(x))
+    .filter(Boolean)));
+  if (!names.length) return false;
+
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  ensureAlarmGroupsTree(cfg || {});
+
+  const wantSet = new Set(names.map((n) => n.toLowerCase()));
+  const beforeGroups = Array.isArray(cfg.groups) ? cfg.groups.length : 0;
+  cfg.groups = (Array.isArray(cfg.groups) ? cfg.groups : []).filter((g) => !wantSet.has(String(g?.name || '').trim().toLowerCase()));
+  const removedGroups = beforeGroups - cfg.groups.length;
+
+  const assigned = (Array.isArray(cfg.alarms) ? cfg.alarms : []).filter((a) => wantSet.has(String(a?.group || '').trim().toLowerCase()));
+  if (assigned.length) {
+    cfg.alarms = (Array.isArray(cfg.alarms) ? cfg.alarms : []).filter((a) => !wantSet.has(String(a?.group || '').trim().toLowerCase()));
+  }
+
+  if (removedGroups === 0 && assigned.length === 0) throw new Error('No matching alarm groups found to delete.');
+
+  const msg = `Delete ${removedGroups || names.length} alarm group${(removedGroups || names.length) === 1 ? '' : 's'} and delete ${assigned.length} alarm${assigned.length === 1 ? '' : 's'} in those groups/sites?`;
+  if (!window.confirm(msg)) return false;
+
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  state.alarmsEventsSelectedNodeId = 'folder:alarms';
+  state.alarmsEventsSelectedChildId = '';
+  state.alarmsEventsSelectedChildIds = [];
+  renderAlarmsEventsTree();
+  await opcbridgeReload().catch(() => {});
+  await refreshAll().catch(() => {});
+  return true;
+}
+
+async function deleteAlarmSitesBulk(groupName, siteNames) {
+  if (!canEditConfig()) { window.alert('Login required to edit alarms.'); return false; }
+  const group = normalizeAlarmGroupName(groupName);
+  if (!group) return false;
+  const sites = Array.from(new Set((Array.isArray(siteNames) ? siteNames : [])
+    .map((x) => normalizeAlarmSiteName(x))
+    .filter(Boolean)));
+  if (!sites.length) return false;
+
+  const cfg = await loadOpcbridgeAlarmsConfig();
+  ensureAlarmGroupsTree(cfg || {});
+  const g = findAlarmGroupConfig(cfg, group);
+  if (!g) throw new Error(`Group '${group}' not found.`);
+
+  const wantSet = new Set(sites.map((s) => s.toLowerCase()));
+  const beforeSites = Array.isArray(g.sites) ? g.sites.length : 0;
+  g.sites = (Array.isArray(g.sites) ? g.sites : []).filter((s) => !wantSet.has(String(s?.name || '').trim().toLowerCase()));
+  const removedSites = beforeSites - g.sites.length;
+
+  const assigned = (Array.isArray(cfg.alarms) ? cfg.alarms : []).filter((a) =>
+    String(a?.group || '').trim().toLowerCase() === group.toLowerCase() &&
+    wantSet.has(String(a?.site || '').trim().toLowerCase())
+  );
+  if (assigned.length) {
+    const gWant = group.toLowerCase();
+    cfg.alarms = (Array.isArray(cfg.alarms) ? cfg.alarms : []).filter((a) => !(
+      String(a?.group || '').trim().toLowerCase() === gWant &&
+      wantSet.has(String(a?.site || '').trim().toLowerCase())
+    ));
+  }
+
+  if (removedSites === 0 && assigned.length === 0) throw new Error('No matching sites found to delete.');
+
+  const msg = `Delete ${removedSites || sites.length} site${(removedSites || sites.length) === 1 ? '' : 's'} under group '${group}' and delete ${assigned.length} alarm${assigned.length === 1 ? '' : 's'} in those sites?`;
+  if (!window.confirm(msg)) return false;
+
+  await saveOpcbridgeAlarmsConfig(cfg);
+  await loadOpcbridgeAlarmsConfig();
+  state.alarmsEventsSelectedNodeId = `alarm_group:${alarmTreeSafeKey(group)}`;
+  state.alarmsEventsSelectedChildId = '';
+  state.alarmsEventsSelectedChildIds = [];
+  renderAlarmsEventsTree();
+  await opcbridgeReload().catch(() => {});
+  await refreshAll().catch(() => {});
   return true;
 }
 
@@ -9608,11 +9436,11 @@ async function setAudioFileForAlarmScope(scope, groupName, siteName = '') {
   return true;
 }
 
-async function duplicateNotificationItem(kind, id) {
-  if (!canEditConfig()) { window.alert('Login required to edit notifications.'); return false; }
-  const cleanId = String(id || '').trim();
-  if (!cleanId) return false;
-  const cfg = await loadOpcbridgeAlarmsConfig();
+	async function duplicateNotificationItem(kind, id) {
+	  if (!canEditConfig()) { window.alert('Login required to edit notifications.'); return false; }
+	  const cleanId = String(id || '').trim();
+	  if (!cleanId) return false;
+	  const cfg = await loadOpcbridgeAlarmsConfig();
   let items = [];
   let selectedNodeId = '';
   let selectedChildPrefix = '';
@@ -9635,16 +9463,22 @@ async function duplicateNotificationItem(kind, id) {
   const source = items.find((item) => String(item?.id || '').trim() === cleanId) || null;
   if (!source) throw new Error(`Item '${cleanId}' not found.`);
   const used = new Set(items.map((item) => String(item?.id || '').trim()).filter(Boolean));
-  const newId = uniqueCopyId(cleanId, used);
-  const next = JSON.parse(JSON.stringify(source));
-  next.id = newId;
-  next.name = copyName(next.name || source.name || cleanId);
-  items.push(next);
+	  const newId = uniqueCopyId(cleanId, used);
+	  const next = JSON.parse(JSON.stringify(source));
+	  next.id = newId;
+	  next.name = copyName(next.name || source.name || cleanId);
+	  if (kind === 'contact' || kind === 'group') {
+	    if (!Array.isArray(cfg.targets)) cfg.targets = [];
+	    cfg.targets.push(next);
+	  } else if (kind === 'policy') {
+	    if (!Array.isArray(cfg.policies)) cfg.policies = [];
+	    cfg.policies.push(next);
+	  }
 
-  await saveOpcbridgeAlarmsConfig(cfg);
-  await loadOpcbridgeAlarmsConfig();
-  state.alarmsEventsSelectedNodeId = selectedNodeId;
-  state.alarmsEventsSelectedChildId = `${selectedChildPrefix}:${newId}`;
+	  await saveOpcbridgeAlarmsConfig(cfg);
+	  await loadOpcbridgeAlarmsConfig();
+	  state.alarmsEventsSelectedNodeId = selectedNodeId;
+	  state.alarmsEventsSelectedChildId = `${selectedChildPrefix}:${newId}`;
   renderAlarmsEventsTree();
   return true;
 }
@@ -9656,10 +9490,10 @@ async function createNotificationContactInteractive() {
   const phone = String(window.prompt('Phone number:', '') || '').trim();
   if (!phone) return;
   const cfg = await loadOpcbridgeAlarmsConfig();
-  const contacts = getNotificationContacts(cfg);
-  const used = new Set(contacts.map((c) => String(c?.id || '').trim()).filter(Boolean));
+  if (!Array.isArray(cfg.targets)) cfg.targets = [];
+  const used = new Set((Array.isArray(cfg.targets) ? cfg.targets : []).map((t) => String(t?.id || '').trim()).filter(Boolean));
   const id = uniqueNotificationId(name, used);
-  contacts.push({ id, name, phone, enabled: true, notes: '' });
+  cfg.targets.push({ id, name, type: 'phone', value: phone, enabled: true });
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = 'folder:notification_contacts';
@@ -9672,10 +9506,10 @@ async function createNotificationContactGroupInteractive() {
   const name = String(window.prompt('Contact group name:', '') || '').trim();
   if (!name) return;
   const cfg = await loadOpcbridgeAlarmsConfig();
-  const groups = getNotificationContactGroups(cfg);
-  const used = new Set(groups.map((g) => String(g?.id || '').trim()).filter(Boolean));
+  if (!Array.isArray(cfg.targets)) cfg.targets = [];
+  const used = new Set((Array.isArray(cfg.targets) ? cfg.targets : []).map((t) => String(t?.id || '').trim()).filter(Boolean));
   const id = uniqueNotificationId(name, used);
-  groups.push({ id, name, enabled: true, contacts: [] });
+  cfg.targets.push({ id, name, type: 'group', enabled: true, members: [] });
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = 'folder:notification_contact_groups';
@@ -9694,7 +9528,7 @@ async function createNotificationPolicyInteractive(outputType = 'phone') {
   const policies = getNotificationPolicies(cfg);
   const used = new Set(policies.map((p) => String(p?.id || '').trim()).filter(Boolean));
   const id = uniqueNotificationId(name, used);
-  const base = { id, name, output_type: type, enabled: true, min_severity: 500, on: ['active'], contacts: [], contact_groups: [] };
+  const base = { id, name, output_type: type, enabled: true, min_severity: 500, on: ['active'], targets: [] };
   if (type === 'phone') base.call_backend = 'auto';
   policies.push(base);
   await saveOpcbridgeAlarmsConfig(cfg);
@@ -9709,43 +9543,77 @@ async function createScheduleInteractive() {
   if (!canEditConfig()) { window.alert('Login required to edit schedules.'); return; }
   const name = String(window.prompt('Schedule name/ID:', '') || '').trim();
   if (!name) return;
-  const cfg = await loadOpcbridgeAlarmsConfig();
-  const schedules = getSchedules(cfg);
-  const used = new Set(schedules.map((s) => String(s?.id || '').trim()).filter(Boolean));
-  const id = uniqueNotificationId(name, used);
-  schedules.push({
-    id,
-    name,
-    type: 'custom',
-    enabled: true,
-    days: ['mon', 'tue', 'wed', 'thu', 'fri'],
-    start_time: '',
-    end_time: '',
-    start_date: '',
-    end_date: '',
-    targets: []
-  });
-  await saveOpcbridgeAlarmsConfig(cfg);
-  await loadOpcbridgeAlarmsConfig();
-  state.alarmsEventsSelectedNodeId = 'folder:schedules';
-  state.alarmsEventsSelectedChildId = `schedule:${id}`;
-  renderAlarmsEventsTree();
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const schedules = getSchedules(cfg);
+    const used = new Set(schedules.map((s) => String(s?.id || '').trim()).filter(Boolean));
+    const id = uniqueNotificationId(name, used);
+    if (id === 'always') throw new Error("Schedule ID 'always' is reserved (virtual). Choose a different ID.");
+    schedules.push({
+      id,
+      name,
+      type: 'custom',
+      enabled: true,
+      days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+      start_time: '',
+      end_time: '',
+      start_date: '',
+      end_date: '',
+      targets: []
+    });
+    await saveOpcbridgeAlarmsConfig(cfg);
+    const reloaded = await loadOpcbridgeAlarmsConfig();
+    const ok = getSchedules(reloaded).some((s) => String(s?.id || '').trim() === id);
+    if (!ok) throw new Error(`Saved but did not persist (wanted schedule '${id}', got missing).`);
+    state.alarmsEventsSelectedNodeId = 'folder:schedules';
+    state.alarmsEventsSelectedChildId = `schedule:${id}`;
+    renderAlarmsEventsTree();
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `Create failed: ${msg}`;
+    window.alert(`Create schedule failed: ${msg}`);
+  }
 }
 
 async function createRoutingGroupInteractive() {
   if (!canEditConfig()) { window.alert('Login required to edit alarm routes.'); return; }
   const name = String(window.prompt('Alarm route name/ID:', '') || '').trim();
   if (!name) return;
-  const cfg = await loadOpcbridgeAlarmsConfig();
-  const groups = getRoutingAlarmGroups(cfg);
-  const used = new Set(groups.map((g) => String(g?.id || '').trim()).filter(Boolean));
-  const id = uniqueNotificationId(name, used);
-  groups.push({ id, name, enabled: true, schedule_id: 'always', alarms: [], policy_ids: [] });
-  await saveOpcbridgeAlarmsConfig(cfg);
-  await loadOpcbridgeAlarmsConfig();
-  state.alarmsEventsSelectedNodeId = 'folder:routing_groups';
-  state.alarmsEventsSelectedChildId = `routing_group:${id}`;
-  renderAlarmsEventsTree();
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const groups = getRoutingAlarmGroups(cfg);
+    const used = new Set(groups.map((g) => String(g?.id || '').trim()).filter(Boolean));
+    const id = uniqueNotificationId(name, used);
+    groups.push({ id, name, enabled: true, schedule_id: 'always', alarms: [], policy_ids: [] });
+    await saveOpcbridgeAlarmsConfig(cfg);
+    // Verify persistence via both endpoints:
+    // - /config/file?path=alarms.json (raw stored document)
+    // - /config/alarms (API wrapper)
+    let rawHas = null;
+    try {
+      const raw = await apiGetText(`/api/opcbridge/config/file?path=${encodeURIComponent('alarms.json')}`);
+      const j = JSON.parse(String(raw || '{}'));
+      const arr = Array.isArray(j?.alarm_groups) ? j.alarm_groups : [];
+      rawHas = arr.some((g) => String(g?.id || '').trim() === id);
+    } catch {
+      // ignore raw check errors; rely on /config/alarms reload
+    }
+
+    const reloaded = await loadOpcbridgeAlarmsConfig();
+    const ok = getRoutingAlarmGroups(reloaded).some((g) => String(g?.id || '').trim() === id);
+    if (!ok) {
+      const hint = (rawHas === true) ? 'It appears in alarms.json raw, but is missing via /config/alarms (something is rewriting the DB).' :
+        (rawHas === false ? 'It is missing from alarms.json raw after save (save path likely stripped it).' : 'Could not verify via alarms.json raw.');
+      throw new Error(`Saved but did not persist (wanted routing group '${id}', but it was missing after reload). ${hint}`);
+    }
+    state.alarmsEventsSelectedNodeId = 'folder:routing_groups';
+    state.alarmsEventsSelectedChildId = `routing_group:${id}`;
+    renderAlarmsEventsTree();
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `Create failed: ${msg}`;
+    window.alert(`Create alarm route failed: ${msg}`);
+  }
 }
 
 async function deleteRoutingGroupItem(id) {
@@ -9764,54 +9632,69 @@ async function deleteRoutingGroupItem(id) {
   return true;
 }
 
-async function deleteScheduleItem(id) {
-  if (!canEditConfig()) { window.alert('Login required to edit schedules.'); return false; }
-  const cleanId = String(id || '').trim();
-  if (!cleanId) return false;
-  if (!window.confirm(`Delete schedule '${cleanId}'?`)) return false;
-  const cfg = await loadOpcbridgeAlarmsConfig();
-  cfg.schedules = getSchedules(cfg).filter((s) => String(s?.id || '').trim() !== cleanId);
-  getNotificationPolicies(cfg).forEach((policy) => {
-    if (String(policy?.schedule_id || '').trim() === cleanId) policy.schedule_id = 'always';
-  });
-  await saveOpcbridgeAlarmsConfig(cfg);
-  await loadOpcbridgeAlarmsConfig();
-  state.alarmsEventsSelectedNodeId = 'folder:schedules';
-  state.alarmsEventsSelectedChildId = '';
-  renderAlarmsEventsTree();
-  return true;
-}
+	async function deleteScheduleItem(id) {
+	  if (!canEditConfig()) { window.alert('Login required to edit schedules.'); return false; }
+	  const cleanId = String(id || '').trim();
+	  if (!cleanId) return false;
+	  if (!window.confirm(`Delete schedule '${cleanId}'?`)) return false;
+	  const cfg = await loadOpcbridgeAlarmsConfig();
+	  cfg.schedules = getSchedules(cfg).filter((s) => String(s?.id || '').trim() !== cleanId);
+	  getRoutingAlarmGroups(cfg).forEach((route) => {
+	    if (String(route?.schedule_id || '').trim() === cleanId) route.schedule_id = 'always';
+	  });
+	  await saveOpcbridgeAlarmsConfig(cfg);
+	  await loadOpcbridgeAlarmsConfig();
+	  state.alarmsEventsSelectedNodeId = 'folder:schedules';
+	  state.alarmsEventsSelectedChildId = '';
+	  renderAlarmsEventsTree();
+	  return true;
+	}
 
-async function deleteNotificationItem(kind, id) {
-  if (!canEditConfig()) { window.alert('Login required to edit notifications.'); return false; }
-  const cleanId = String(id || '').trim();
-  if (!cleanId) return false;
-  const label = kind === 'contact' ? 'contact' : (kind === 'group' ? 'contact group' : 'notification policy');
-  if (!window.confirm(`Delete ${label} '${cleanId}'?`)) return false;
-  const cfg = await loadOpcbridgeAlarmsConfig();
-  if (kind === 'contact') {
-    const contacts = getNotificationContacts(cfg);
-    cfg.notifications.contacts = contacts.filter((c) => String(c?.id || '').trim() !== cleanId);
-    getNotificationContactGroups(cfg).forEach((g) => {
-      g.contacts = (Array.isArray(g.contacts) ? g.contacts : []).filter((cid) => String(cid || '').trim() !== cleanId);
-    });
-    getNotificationPolicies(cfg).forEach((p) => {
-      p.contacts = (Array.isArray(p.contacts) ? p.contacts : []).filter((cid) => String(cid || '').trim() !== cleanId);
-    });
-  } else if (kind === 'group') {
-    cfg.notifications.contact_groups = getNotificationContactGroups(cfg).filter((g) => String(g?.id || '').trim() !== cleanId);
-    getNotificationPolicies(cfg).forEach((p) => {
-      p.contact_groups = (Array.isArray(p.contact_groups) ? p.contact_groups : []).filter((gid) => String(gid || '').trim() !== cleanId);
-    });
-  } else if (kind === 'policy') {
-    if (isV2AlarmsConfig(cfg)) cfg.policies = getNotificationPolicies(cfg).filter((p) => String(p?.id || '').trim() !== cleanId);
-    else cfg.notifications.policies = getNotificationPolicies(cfg).filter((p) => String(p?.id || '').trim() !== cleanId);
-  }
-  await saveOpcbridgeAlarmsConfig(cfg);
-  await loadOpcbridgeAlarmsConfig();
-  renderAlarmsEventsTree();
-  return true;
-}
+	async function deleteNotificationItem(kind, id) {
+	  if (!canEditConfig()) { window.alert('Login required to edit notifications.'); return false; }
+	  const cleanId = String(id || '').trim();
+	  if (!cleanId) return false;
+	  const label = kind === 'contact' ? 'contact' : (kind === 'group' ? 'contact group' : 'notification policy');
+	  if (!window.confirm(`Delete ${label} '${cleanId}'?`)) return false;
+	  const cfg = await loadOpcbridgeAlarmsConfig();
+	  if (kind === 'contact') {
+	    if (!Array.isArray(cfg.targets)) cfg.targets = [];
+	    cfg.targets = cfg.targets.filter((t) => {
+	      const tid = String(t?.id || '').trim();
+	      if (tid !== cleanId) return true;
+	      return String(t?.type || '').trim() !== 'phone';
+	    });
+	    cfg.targets.forEach((t) => {
+	      if (!t || typeof t !== 'object' || Array.isArray(t)) return;
+	      if (String(t.type || '').trim() !== 'group') return;
+	      t.members = (Array.isArray(t.members) ? t.members : []).filter((mid) => String(mid || '').trim() !== cleanId);
+	    });
+	    (Array.isArray(cfg.policies) ? cfg.policies : []).forEach((p) => {
+	      if (!p || typeof p !== 'object' || Array.isArray(p)) return;
+	      p.targets = (Array.isArray(p.targets) ? p.targets : []).filter((ref) => !(String(ref?.type || '').trim() === 'contact' && String(ref?.id || '').trim() === cleanId));
+	    });
+	  } else if (kind === 'group') {
+	    if (!Array.isArray(cfg.targets)) cfg.targets = [];
+	    cfg.targets = cfg.targets.filter((t) => {
+	      const tid = String(t?.id || '').trim();
+	      if (tid !== cleanId) return true;
+	      return String(t?.type || '').trim() !== 'group';
+	    });
+	    (Array.isArray(cfg.policies) ? cfg.policies : []).forEach((p) => {
+	      if (!p || typeof p !== 'object' || Array.isArray(p)) return;
+	      p.targets = (Array.isArray(p.targets) ? p.targets : []).filter((ref) => !(String(ref?.type || '').trim() === 'group' && String(ref?.id || '').trim() === cleanId));
+	    });
+	  } else if (kind === 'policy') {
+	    cfg.policies = (Array.isArray(cfg.policies) ? cfg.policies : []).filter((p) => String(p?.id || '').trim() !== cleanId);
+	    getRoutingAlarmGroups(cfg).forEach((route) => {
+	      route.policy_ids = (Array.isArray(route.policy_ids) ? route.policy_ids : []).filter((pid) => String(pid || '').trim() !== cleanId);
+	    });
+	  }
+	  await saveOpcbridgeAlarmsConfig(cfg);
+	  await loadOpcbridgeAlarmsConfig();
+	  renderAlarmsEventsTree();
+	  return true;
+	}
 
 function isAlarmsEventsLeafType(type) {
   const t = String(type || '').trim();
@@ -9913,6 +9796,8 @@ function renderAlarmsEventsTreeNode(node, container) {
     if (node.type === 'alarm_groups_root') {
       items.push({ label: 'Add Group…', onClick: () => addAlarmGroupInteractive() });
       items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal() });
+      items.push({ label: 'Download CSV', onClick: () => downloadAlarmsCsv() });
+      items.push({ label: 'Upload CSV…', onClick: () => importAlarmsCsv().catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
       items.push('sep');
     }
 
@@ -9920,6 +9805,8 @@ function renderAlarmsEventsTreeNode(node, container) {
       const group = String(node.meta?.group || node.label || '').trim();
       items.push({ label: 'Add Site…', onClick: () => addAlarmSiteInteractive(String(node.meta?.group || node.label || '')) });
       items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || node.label || '') }) });
+      items.push({ label: 'Download CSV (Group)', onClick: () => downloadAlarmsCsv({ group }) });
+      items.push({ label: 'Upload CSV…', onClick: () => importAlarmsCsv().catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Set Audio File For Group Alarms…', onClick: () => setAudioFileForAlarmScope('group', group).catch((err) => window.alert(`Bulk audio update failed: ${err.message}`)) });
       items.push({ label: 'Delete Group…', onClick: () => deleteAlarmGroupInteractive(group).catch((err) => window.alert(`Group delete failed: ${err.message}`)) });
@@ -9931,6 +9818,8 @@ function renderAlarmsEventsTreeNode(node, container) {
       const site = String(node.meta?.site || '').trim();
       const processingEnabled = isAlarmSiteProcessingEnabled(state.alarmsConfig || {}, group, site);
       items.push({ label: 'Add Alarm…', onClick: () => openNewAlarmModal({ group: String(node.meta?.group || ''), site: String(node.meta?.site || '') }) });
+      items.push({ label: 'Download CSV (Site)', onClick: () => downloadAlarmsCsv({ group, site }) });
+      items.push({ label: 'Upload CSV…', onClick: () => importAlarmsCsv().catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: processingEnabled ? 'Disable Site Alarm Processing' : 'Enable Site Alarm Processing', onClick: () => setSiteAlarmProcessing(group, site, !processingEnabled).catch((err) => window.alert(`Site alarm processing update failed: ${err.message}`)) });
       items.push({ label: 'Set All Alarms Enabled…', onClick: () => setAllAlarmsInSiteEnabled(group, site, true).catch((err) => window.alert(`Bulk alarm update failed: ${err.message}`)) });
@@ -10168,18 +10057,35 @@ function renderAlarmsEventsDetails(node) {
 
   const rowIds = rows.map((r) => String(r?.id || '')).filter(Boolean);
   const selId = String(state.alarmsEventsSelectedChildId || '').trim();
-  if (!selId || !rowIds.includes(selId)) {
-    state.alarmsEventsSelectedChildId = (isAudioFilesRoot || isAudioFolder) ? '' : (rowIds[0] || '');
+  const multiSelect = Boolean(isAudioFilesRoot || isAudioFolder || isAlarmGroupsRoot || isAlarmGroup);
+  if (!Array.isArray(state.alarmsEventsSelectedChildIds)) state.alarmsEventsSelectedChildIds = [];
+
+  if (multiSelect) {
+    const nextSel = state.alarmsEventsSelectedChildIds
+      .map((id) => String(id || '').trim())
+      .filter((id) => id && rowIds.includes(id));
+    state.alarmsEventsSelectedChildIds = nextSel;
+    state.alarmsEventsSelectedChildId = nextSel[0] || '';
+  } else {
+    state.alarmsEventsSelectedChildIds = [];
+    if (!selId || !rowIds.includes(selId)) {
+      state.alarmsEventsSelectedChildId = rowIds[0] || '';
+    }
   }
 
   let selectedRow = rows.find((r) => String(r?.id || '') === String(state.alarmsEventsSelectedChildId || '')) || null;
+  const selectedSet = new Set(
+    multiSelect
+      ? (state.alarmsEventsSelectedChildIds || []).map((x) => String(x || '').trim()).filter(Boolean)
+      : [String(state.alarmsEventsSelectedChildId || '').trim()].filter(Boolean)
+  );
 
   rows.forEach((c) => {
     const tr = document.createElement('tr');
     const type = String(c?.type || '');
     const childId = String(c?.id || '');
     if (childId) tr.dataset.rowId = childId;
-    tr.classList.toggle('is-selected', childId && childId === String(state.alarmsEventsSelectedChildId || ''));
+    tr.classList.toggle('is-selected', childId && selectedSet.has(childId));
 
     if ((isEventConnection || isEventTag) && type === 'event_tag') {
       const meta = c?.meta || {};
@@ -10219,12 +10125,10 @@ function renderAlarmsEventsDetails(node) {
         : 0;
       addCell(tr, String(c?.label || c?.id || ''), false);
       addCell(tr, String(policyCount), policyCount === 0);
-    } else if ((isNotificationPolicyTypeRoot || isNotificationPolicy) && type === 'notification_policy') {
-      const meta = c?.meta || {};
-      const contacts = Array.isArray(meta?.contacts) ? meta.contacts : [];
-      const groups = Array.isArray(meta?.contact_groups) ? meta.contact_groups : [];
-      const targets = getPolicyTargets(meta);
-      const events = Array.isArray(meta?.on) ? meta.on.join(', ') : '';
+	    } else if ((isNotificationPolicyTypeRoot || isNotificationPolicy) && type === 'notification_policy') {
+	      const meta = c?.meta || {};
+	      const targets = getPolicyTargets(meta);
+	      const events = Array.isArray(meta?.on) ? meta.on.join(', ') : '';
       const delay = meta?.audio_delay_seconds == null ? 'default' : `${Math.max(0, Math.trunc(Number(meta.audio_delay_seconds) || 0))}s`;
       const gap = meta?.audio_gap_ms == null ? 'default' : `${Math.max(0, Math.trunc(Number(meta.audio_gap_ms) || 0))}ms`;
       addCell(tr, String(meta?.name || c?.label || ''), false);
@@ -10296,29 +10200,128 @@ function renderAlarmsEventsDetails(node) {
 
     tr.style.cursor = 'default';
 
-    tr.addEventListener('click', () => {
+    tr.addEventListener('click', (e) => {
+      if (!multiSelect) {
+        const trs = Array.from(els.alarmsEventsChildrenTbody.querySelectorAll('tr'));
+        trs.forEach((r) => r.classList.remove('is-selected'));
+        tr.classList.add('is-selected');
+        state.alarmsEventsSelectedChildId = childId;
+        renderAlarmsEventsProperties(c, node);
+        return;
+      }
+
+      const ids = rowIds;
+      const idx = ids.indexOf(childId);
+      if (idx < 0) return;
+
+      let sel = new Set((state.alarmsEventsSelectedChildIds || []).map((x) => String(x || '').trim()).filter(Boolean));
+
+      if (e.shiftKey) {
+        const anchor = String(state.alarmsEventsSelectedChildAnchorId || state.alarmsEventsSelectedChildId || childId).trim();
+        const aidx = ids.indexOf(anchor);
+        const from = (aidx >= 0) ? Math.min(aidx, idx) : idx;
+        const to = (aidx >= 0) ? Math.max(aidx, idx) : idx;
+        sel = new Set(ids.slice(from, to + 1));
+      } else if (e.ctrlKey || e.metaKey) {
+        if (sel.has(childId)) sel.delete(childId);
+        else sel.add(childId);
+        state.alarmsEventsSelectedChildAnchorId = childId;
+      } else {
+        sel = new Set([childId]);
+        state.alarmsEventsSelectedChildAnchorId = childId;
+      }
+
+      const next = Array.from(sel).filter(Boolean);
+      state.alarmsEventsSelectedChildIds = next;
+      state.alarmsEventsSelectedChildId = next[0] || '';
+
+      // Update row highlights in-place.
       const trs = Array.from(els.alarmsEventsChildrenTbody.querySelectorAll('tr'));
-      trs.forEach((r) => r.classList.remove('is-selected'));
-      tr.classList.add('is-selected');
-      state.alarmsEventsSelectedChildId = childId;
-      renderAlarmsEventsProperties(c, node);
+      trs.forEach((r) => {
+        const rid = String(r.dataset.rowId || '').trim();
+        r.classList.toggle('is-selected', rid && sel.has(rid));
+      });
+
+      const primary = rows.find((r) => String(r?.id || '') === String(state.alarmsEventsSelectedChildId || '')) || null;
+      renderAlarmsEventsProperties(primary, node);
     });
 
     tr.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      const ptype = String(node?.type || '').trim();
+      const allowMulti = (ptype === 'audio_files_root' || ptype === 'audio_folder' || ptype === 'alarm_groups_root' || ptype === 'alarm_group');
+      const currentSel = new Set((allowMulti ? (state.alarmsEventsSelectedChildIds || []) : [state.alarmsEventsSelectedChildId])
+        .map((x) => String(x || '').trim()).filter(Boolean));
+      // If multi-select is active and the right-clicked row is already selected, keep selection.
+      // Otherwise, select only that row (consistent with most UIs).
+      const keepMulti = allowMulti && childId && currentSel.has(childId);
       const trs = Array.from(els.alarmsEventsChildrenTbody.querySelectorAll('tr'));
       trs.forEach((r) => r.classList.remove('is-selected'));
-      tr.classList.add('is-selected');
-      state.alarmsEventsSelectedChildId = childId;
+      if (keepMulti) {
+        trs.forEach((r) => {
+          const rid = String(r.dataset.rowId || '').trim();
+          if (rid && currentSel.has(rid)) r.classList.add('is-selected');
+        });
+        state.alarmsEventsSelectedChildIds = Array.from(currentSel);
+        state.alarmsEventsSelectedChildId = Array.from(currentSel)[0] || childId;
+      } else {
+        tr.classList.add('is-selected');
+        state.alarmsEventsSelectedChildId = childId;
+        state.alarmsEventsSelectedChildIds = allowMulti ? [childId] : [];
+      }
       renderAlarmsEventsProperties(c, node);
 
       const menu = [];
+      if (allowMulti) {
+        const selectedIds = Array.isArray(state.alarmsEventsSelectedChildIds) ? state.alarmsEventsSelectedChildIds : [];
+        const selected = selectedIds.map((x) => String(x || '').trim()).filter(Boolean);
+        if (ptype === 'alarm_groups_root' && selected.length > 1) {
+          menu.push({
+            label: `Delete Selected (${selected.length})…`,
+            onClick: async () => {
+              const tree = state.alarmsEventsTreeRoot;
+              const nodes = selected.map((id) => findAlarmsEventsNodeById(tree, id)).filter(Boolean);
+              const names = nodes.filter((n) => String(n?.type || '') === 'alarm_group')
+                .map((n) => String(n?.meta?.group || n?.label || '').trim()).filter(Boolean);
+              await deleteAlarmGroupsBulk(names);
+            }
+          });
+          menu.push('sep');
+        }
+        if (ptype === 'alarm_group' && selected.length > 1) {
+          const group = String(node?.meta?.group || node?.label || '').trim();
+          menu.push({
+            label: `Delete Selected (${selected.length})…`,
+            onClick: async () => {
+              const tree = state.alarmsEventsTreeRoot;
+              const nodes = selected.map((id) => findAlarmsEventsNodeById(tree, id)).filter(Boolean);
+              const sites = nodes.filter((n) => String(n?.type || '') === 'alarm_site')
+                .map((n) => String(n?.meta?.site || n?.label || '').trim()).filter(Boolean);
+              await deleteAlarmSitesBulk(group, sites);
+            }
+          });
+          menu.push('sep');
+        }
+      }
       if (type === 'alarm') {
         const aid = String(c?.meta?.alarm_id || '').trim();
         menu.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(c) });
         menu.push({ label: 'Duplicate Alarm', onClick: () => duplicateAlarmById(aid).catch((err) => window.alert(`Alarm duplicate failed: ${err.message}`)) });
         menu.push({ label: 'Delete Alarm…', onClick: () => deleteAlarmById(aid) });
+      } else if (type === 'alarm_group') {
+        const group = String(c?.meta?.group || c?.label || '').trim();
+        if (group) {
+          menu.push({ label: 'Download CSV (Group)', onClick: () => downloadAlarmsCsv({ group }) });
+          menu.push({ label: 'Delete Group…', onClick: () => deleteAlarmGroupInteractive(group).catch((err) => window.alert(`Group delete failed: ${err.message}`)) });
+        }
+      } else if (type === 'alarm_site') {
+        const group = String(c?.meta?.group || '').trim();
+        const site = String(c?.meta?.site || c?.label || '').trim();
+        if (group && site) {
+          menu.push({ label: 'Download CSV (Site)', onClick: () => downloadAlarmsCsv({ group, site }) });
+          menu.push({ label: 'Delete Site…', onClick: () => deleteAlarmSiteInteractive(group, site).catch((err) => window.alert(`Site delete failed: ${err.message}`)) });
+        }
       } else if (type === 'notification_contact') {
         const id = String(c?.meta?.id || '').trim();
         menu.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(c) });
@@ -10519,6 +10522,88 @@ function renderAlarmsEventsProperties(item, parentNode) {
     if (els.alarmsEventsPropsEditor) els.alarmsEventsPropsEditor.style.display = 'block';
     if (els.alarmsEventsPropsTable) els.alarmsEventsPropsTable.style.display = 'none';
   };
+
+  // Multi-select delete for audio files (children list supports multi-select in audio folders/root).
+  {
+    const ptype = String(parentNode?.type || '').trim();
+    const selectedIds = Array.isArray(state.alarmsEventsSelectedChildIds) ? state.alarmsEventsSelectedChildIds : [];
+    if ((ptype === 'audio_files_root' || ptype === 'audio_folder') && selectedIds.length > 1 && delBtn) {
+      const tree = state.alarmsEventsTreeRoot;
+      const selectedNodes = selectedIds
+        .map((id) => findAlarmsEventsNodeById(tree, String(id || '')))
+        .filter(Boolean);
+      const selectedAudio = selectedNodes.filter((c) => String(c?.type || '') === 'audio_file');
+      if (selectedAudio.length) {
+        delBtn.style.display = '';
+        delBtn.textContent = `Delete Selected (${selectedAudio.length})…`;
+        delBtn.onclick = async () => {
+          if (!canEditConfig()) { window.alert('Login required to delete.'); return; }
+          const ids = selectedAudio.map((n) => String(n?.meta?.id || '').trim()).filter(Boolean);
+          try {
+            await deleteAlarmAudioFilesByIds(ids);
+          } catch (err) {
+            window.alert(`Delete failed: ${err.message}`);
+          } finally {
+            state.alarmsEventsSelectedChildIds = [];
+            state.alarmsEventsSelectedChildId = '';
+            renderAlarmsEventsTree();
+          }
+        };
+        // Keep the properties pane as-is (single-item properties still render below).
+      }
+    }
+  }
+
+  // Multi-select delete for alarm groups/sites (children list supports multi-select in Alarm Groups).
+  {
+    const ptype = String(parentNode?.type || '').trim();
+    const selectedIds = Array.isArray(state.alarmsEventsSelectedChildIds) ? state.alarmsEventsSelectedChildIds : [];
+    if ((ptype === 'alarm_groups_root' || ptype === 'alarm_group') && selectedIds.length > 1 && delBtn) {
+      const tree = state.alarmsEventsTreeRoot;
+      const selectedNodes = selectedIds
+        .map((id) => findAlarmsEventsNodeById(tree, String(id || '')))
+        .filter(Boolean);
+
+      if (ptype === 'alarm_groups_root') {
+        const selectedGroups = selectedNodes.filter((c) => String(c?.type || '') === 'alarm_group');
+        if (selectedGroups.length) {
+          delBtn.style.display = '';
+          delBtn.textContent = `Delete Selected (${selectedGroups.length})…`;
+          delBtn.onclick = async () => {
+            const names = selectedGroups.map((n) => String(n?.meta?.group || n?.label || '').trim()).filter(Boolean);
+            try {
+              await deleteAlarmGroupsBulk(names);
+            } catch (err) {
+              window.alert(`Delete failed: ${err.message}`);
+            } finally {
+              state.alarmsEventsSelectedChildIds = [];
+              state.alarmsEventsSelectedChildId = '';
+              renderAlarmsEventsTree();
+            }
+          };
+        }
+      } else if (ptype === 'alarm_group') {
+        const group = String(parentNode?.meta?.group || parentNode?.label || '').trim();
+        const selectedSites = selectedNodes.filter((c) => String(c?.type || '') === 'alarm_site');
+        if (group && selectedSites.length) {
+          delBtn.style.display = '';
+          delBtn.textContent = `Delete Selected (${selectedSites.length})…`;
+          delBtn.onclick = async () => {
+            const names = selectedSites.map((n) => String(n?.meta?.site || n?.label || '').trim()).filter(Boolean);
+            try {
+              await deleteAlarmSitesBulk(group, names);
+            } catch (err) {
+              window.alert(`Delete failed: ${err.message}`);
+            } finally {
+              state.alarmsEventsSelectedChildIds = [];
+              state.alarmsEventsSelectedChildId = '';
+              renderAlarmsEventsTree();
+            }
+          };
+        }
+      }
+    }
+  }
 
   if (!item) {
     const label = String(parentNode?.label || '').trim();
@@ -10738,34 +10823,39 @@ function renderAlarmsEventsProperties(item, parentNode) {
     saveBtn.addEventListener('click', async () => {
       if (!canEditConfig()) { setStatus('Login required to edit contacts.'); return; }
       setStatus('Saving…');
-      try {
-        const nextCfg = await loadOpcbridgeAlarmsConfig();
-        const contacts = getNotificationContacts(nextCfg);
-        const idx = contacts.findIndex((c) => String(c?.id || '').trim() === contactId);
-        if (idx < 0) throw new Error(`Contact '${contactId}' not found.`);
-        const nextId = validateConfigId(idBox.value, 'Contact ID');
-        if (nextId !== contactId && contacts.some((c) => String(c?.id || '').trim() === nextId)) throw new Error(`Contact ID '${nextId}' already exists.`);
-        const nextContact = {
-          id: nextId,
-          name: String(nameBox.value || '').trim() || nextId,
-          phone: String(phoneBox.value || '').trim(),
-          enabled: Boolean(enabledBox.checked),
-          notes: String(notesBox.value || '').trim()
-        };
-        if (!nextContact.phone) throw new Error('Phone is required.');
-        contacts[idx] = nextContact;
-        if (nextId !== contactId) {
-          getNotificationContactGroups(nextCfg).forEach((g) => {
-            g.contacts = (Array.isArray(g.contacts) ? g.contacts : []).map((cid) => String(cid || '').trim() === contactId ? nextId : cid);
-          });
-          getNotificationPolicies(nextCfg).forEach((p) => {
-            p.contacts = (Array.isArray(p.contacts) ? p.contacts : []).map((cid) => String(cid || '').trim() === contactId ? nextId : cid);
-            p.targets = (Array.isArray(p.targets) ? p.targets : []).map((target) => {
-              if (String(target?.type || '') === 'contact' && String(target?.id || '').trim() === contactId) return { ...target, id: nextId };
-              return target;
-            });
-          });
-        }
+	      try {
+	        const nextCfg = await loadOpcbridgeAlarmsConfig();
+	        if (!Array.isArray(nextCfg.targets)) nextCfg.targets = [];
+	        const idx = nextCfg.targets.findIndex((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'phone' && String(t.id || '').trim() === contactId);
+	        if (idx < 0) throw new Error(`Contact '${contactId}' not found.`);
+	        const nextId = validateConfigId(idBox.value, 'Contact ID');
+	        if (nextId !== contactId && nextCfg.targets.some((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'phone' && String(t.id || '').trim() === nextId)) {
+	          throw new Error(`Contact ID '${nextId}' already exists.`);
+	        }
+	        const phone = String(phoneBox.value || '').trim();
+	        if (!phone) throw new Error('Phone is required.');
+	        nextCfg.targets[idx] = {
+	          ...(nextCfg.targets[idx] || {}),
+	          id: nextId,
+	          type: 'phone',
+	          name: String(nameBox.value || '').trim() || nextId,
+	          value: phone,
+	          enabled: Boolean(enabledBox.checked),
+	          notes: String(notesBox.value || '').trim()
+	        };
+	        if (nextId !== contactId) {
+	          nextCfg.targets.forEach((t) => {
+	            if (!t || typeof t !== 'object' || Array.isArray(t)) return;
+	            if (String(t.type || '').trim() !== 'group') return;
+	            t.members = (Array.isArray(t.members) ? t.members : []).map((cid) => String(cid || '').trim() === contactId ? nextId : cid);
+	          });
+	          getNotificationPolicies(nextCfg).forEach((p) => {
+	            p.targets = (Array.isArray(p.targets) ? p.targets : []).map((target) => {
+	              if (String(target?.type || '') === 'contact' && String(target?.id || '').trim() === contactId) return { ...target, id: nextId };
+	              return target;
+	            });
+	          });
+	        }
         await saveOpcbridgeAlarmsConfig(nextCfg);
         await loadOpcbridgeAlarmsConfig();
         state.alarmsEventsSelectedNodeId = 'folder:notification_contacts';
@@ -10865,34 +10955,36 @@ function renderAlarmsEventsProperties(item, parentNode) {
 
     saveBtn.addEventListener('click', async () => {
       if (!canEditConfig()) { setStatus('Login required to edit contact groups.'); return; }
-      setStatus('Saving…');
-      try {
-        const nextCfg = await loadOpcbridgeAlarmsConfig();
-        const groups = getNotificationContactGroups(nextCfg);
-        const idx = groups.findIndex((g) => String(g?.id || '').trim() === groupId);
-        if (idx < 0) throw new Error(`Contact group '${groupId}' not found.`);
-        const nextId = validateConfigId(idBox.value, 'Group ID');
-        if (nextId !== groupId && groups.some((g) => String(g?.id || '').trim() === nextId)) throw new Error(`Group ID '${nextId}' already exists.`);
-        const validContacts = new Set(getNotificationContacts(nextCfg).map((c) => String(c?.id || '').trim()).filter(Boolean));
-        const contacts = contactsList.getSelectedKeys();
-        const missing = contacts.filter((cid) => !validContacts.has(cid));
-        if (missing.length) throw new Error(`Unknown contact ID(s): ${missing.join(', ')}`);
-        groups[idx] = {
-          ...(groups[idx] || {}),
-          id: nextId,
-          name: String(nameBox.value || '').trim() || nextId,
-          enabled: Boolean(enabledBox.checked),
-          contacts
-        };
-        if (nextId !== groupId) {
-          getNotificationPolicies(nextCfg).forEach((p) => {
-            p.contact_groups = (Array.isArray(p.contact_groups) ? p.contact_groups : []).map((gid) => String(gid || '').trim() === groupId ? nextId : gid);
-            p.targets = (Array.isArray(p.targets) ? p.targets : []).map((target) => {
-              if (String(target?.type || '') === 'group' && String(target?.id || '').trim() === groupId) return { ...target, id: nextId };
-              return target;
-            });
-          });
-        }
+	      setStatus('Saving…');
+	      try {
+	        const nextCfg = await loadOpcbridgeAlarmsConfig();
+	        if (!Array.isArray(nextCfg.targets)) nextCfg.targets = [];
+	        const idx = nextCfg.targets.findIndex((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'group' && String(t.id || '').trim() === groupId);
+	        if (idx < 0) throw new Error(`Contact group '${groupId}' not found.`);
+	        const nextId = validateConfigId(idBox.value, 'Group ID');
+	        if (nextId !== groupId && nextCfg.targets.some((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'group' && String(t.id || '').trim() === nextId)) {
+	          throw new Error(`Group ID '${nextId}' already exists.`);
+	        }
+	        const validContacts = new Set(getNotificationContacts(nextCfg).map((c) => String(c?.id || '').trim()).filter(Boolean));
+	        const contacts = contactsList.getSelectedKeys();
+	        const missing = contacts.filter((cid) => !validContacts.has(cid));
+	        if (missing.length) throw new Error(`Unknown contact ID(s): ${missing.join(', ')}`);
+	        nextCfg.targets[idx] = {
+	          ...(nextCfg.targets[idx] || {}),
+	          id: nextId,
+	          type: 'group',
+	          name: String(nameBox.value || '').trim() || nextId,
+	          enabled: Boolean(enabledBox.checked),
+	          members: contacts
+	        };
+	        if (nextId !== groupId) {
+	          getNotificationPolicies(nextCfg).forEach((p) => {
+	            p.targets = (Array.isArray(p.targets) ? p.targets : []).map((target) => {
+	              if (String(target?.type || '') === 'group' && String(target?.id || '').trim() === groupId) return { ...target, id: nextId };
+	              return target;
+	            });
+	          });
+	        }
         await saveOpcbridgeAlarmsConfig(nextCfg);
         await loadOpcbridgeAlarmsConfig();
         state.alarmsEventsSelectedNodeId = 'folder:notification_contact_groups';
@@ -11860,17 +11952,18 @@ function renderAlarmsEventsProperties(item, parentNode) {
             }
           });
         }
-        const basePolicy = {
-          ...(policies[idx] || {}),
-          id: nextId,
-          name: String(nameBox.value || '').trim() || nextId,
-          output_type: selectedOutputType,
-          enabled: Boolean(enabledBox.checked),
-          min_severity: Math.trunc(Number(sevBox.value ?? 0) || 0),
-          targets: isPhonePolicyNow ? normalizedTargets : (Array.isArray((policies[idx] || {}).targets) ? (policies[idx] || {}).targets : []),
-          contacts: isPhonePolicyNow ? dedupeStringsInOrder(contactsSelected) : dedupeStringsInOrder((policies[idx] || {}).contacts),
-          contact_groups: isPhonePolicyNow ? dedupeStringsInOrder(groupsSelected) : dedupeStringsInOrder((policies[idx] || {}).contact_groups)
-        };
+	        const basePolicy = {
+	          ...(policies[idx] || {}),
+	          id: nextId,
+	          name: String(nameBox.value || '').trim() || nextId,
+	          output_type: selectedOutputType,
+	          enabled: Boolean(enabledBox.checked),
+	          min_severity: Math.trunc(Number(sevBox.value ?? 0) || 0),
+	          targets: isPhonePolicyNow ? normalizedTargets : (Array.isArray((policies[idx] || {}).targets) ? (policies[idx] || {}).targets : [])
+	        };
+	        // v2-only: legacy per-policy contact arrays are not supported.
+	        delete basePolicy.contacts;
+	        delete basePolicy.contact_groups;
         if (isV2) {
           basePolicy.schedule_id = 'always';
           basePolicy.triggers = [selectedEvent];
@@ -13644,27 +13737,10 @@ function renderAlarmEvents(histResp) {
 
 function renderAlarmsSchemaStatus(alarmsStatus) {
   if (!els.alarmsSchemaStatus) return;
-  const schema = alarmsStatus?.config?.schema;
-  if (!schema || typeof schema !== 'object') {
-    els.alarmsSchemaStatus.className = 'status status-degraded';
-    els.alarmsSchemaStatus.textContent = 'Schema compatibility: unavailable (missing config.schema)';
-    return;
-  }
-  const modeRaw = String(schema.mode || 'unknown').trim().toLowerCase();
-  const mode =
-    modeRaw === 'current' ? 'CURRENT' :
-    String(schema.mode || 'unknown').toUpperCase();
-  const downgraded = Boolean(schema.downgraded);
-  const notes = Array.isArray(schema.notes)
-    ? schema.notes.filter((n) => typeof n === 'string' && n.trim())
-    : [];
-  if (downgraded) {
-    els.alarmsSchemaStatus.className = 'status status-degraded';
-    els.alarmsSchemaStatus.textContent = `Config compatibility: ${mode} with compatibility downgrade${notes.length ? ` (${notes.join('; ')})` : ''}`;
-    return;
-  }
-  els.alarmsSchemaStatus.className = 'status status-ok';
-  els.alarmsSchemaStatus.textContent = `Config compatibility: ${mode} fully supported by current runtime`;
+  // Config schema/version messaging is intentionally suppressed. We support a
+  // single current config shape and avoid surfacing schema/version terms in UI.
+  els.alarmsSchemaStatus.style.display = 'none';
+  els.alarmsSchemaStatus.textContent = '';
 }
 
 function setAlarmRuntimeWarningUi(text) {
@@ -14582,6 +14658,7 @@ async function main() {
     await loadScadaSettings();
     await loadAuthAdminPanel();
     await loadSoundSettings();
+    await loadTtsSettings();
     await loadSipSettings();
     await loadVoiceModemSettings();
     await loadSvcSettings();

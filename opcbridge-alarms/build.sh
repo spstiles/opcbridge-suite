@@ -9,12 +9,12 @@ COMPONENT_VERSION="$(cat "$ROOT/VERSION" 2>/dev/null | tr -d '\r\n' || true)"
 : "${SUITE_VERSION:=dev}"
 : "${COMPONENT_VERSION:=${SUITE_VERSION}}"
 
-CXX_FLAGS="-std=c++17 -Wall -Wextra -O2"
+CXX_FLAGS="-std=c++17 -Wall -Wextra -Wno-cpp -O2"
 CC_FLAGS="-std=c99 -O2"
 INCLUDES="-I. -I./src -I.. -I/usr/local/include"
 LIBS="-L/usr/local/lib -lixwebsocket -lssl -lcrypto -lz -lsqlite3 -pthread -ldl -lm"
 
-OUT="./opcbridge-alarms"
+OUT="./build/opcbridge-alarms"
 UA_OBJ="./build/open62541.o"
 
 UA_DIR="$ROOT/../opcbridge"

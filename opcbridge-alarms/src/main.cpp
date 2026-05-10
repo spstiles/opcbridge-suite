@@ -173,7 +173,7 @@ static std::string detect_route_interface_for_host(const std::string& host)
     return out.substr(start, end - start);
 }
 
-static std::vector<int> sip_response_codes(const std::string& log)
+[[maybe_unused]] static std::vector<int> sip_response_codes(const std::string& log)
 {
     std::vector<int> codes;
     auto strip_ansi = [](const std::string& s) -> std::string {
@@ -450,7 +450,7 @@ static bool sip_method_has_code(const SipLogParsed& parsed, const std::string& m
     return std::find(v.begin(), v.end(), code) != v.end();
 }
 
-static bool sip_method_has_any_code_in_range(const SipLogParsed& parsed, const std::string& method, int lo, int hi)
+[[maybe_unused]] static bool sip_method_has_any_code_in_range(const SipLogParsed& parsed, const std::string& method, int lo, int hi)
 {
     const auto it = parsed.methods.find(method);
     if (it == parsed.methods.end()) return false;
@@ -461,14 +461,14 @@ static bool sip_method_has_any_code_in_range(const SipLogParsed& parsed, const s
     return false;
 }
 
-static std::vector<int> sip_method_codes(const SipLogParsed& parsed, const std::string& method)
+[[maybe_unused]] static std::vector<int> sip_method_codes(const SipLogParsed& parsed, const std::string& method)
 {
     const auto it = parsed.methods.find(method);
     if (it == parsed.methods.end()) return {};
     return it->second.codes;
 }
 
-static bool sip_method_req_tx(const SipLogParsed& parsed, const std::string& method)
+[[maybe_unused]] static bool sip_method_req_tx(const SipLogParsed& parsed, const std::string& method)
 {
     const auto it = parsed.methods.find(method);
     if (it == parsed.methods.end()) return false;
@@ -482,7 +482,7 @@ static bool sip_method_req_rx(const SipLogParsed& parsed, const std::string& met
     return it->second.req_rx;
 }
 
-static std::string sip_run_baresip_call_interactive(
+[[maybe_unused]] static std::string sip_run_baresip_call_interactive(
     const std::string& cfgdir,
     const std::string& net_if,
     const std::string& dest,
@@ -765,7 +765,7 @@ static int parse_pjsua_port_line_number(const std::string& line)
     return digits ? num : -1;
 }
 
-static std::vector<int> pjsua_invite_response_codes(const std::string& log)
+[[maybe_unused]] static std::vector<int> pjsua_invite_response_codes(const std::string& log)
 {
     // Parse pjsua lines like:
     //   "RX ... Response msg 180/INVITE/cseq=..."
@@ -1146,7 +1146,6 @@ static std::string pjsua_run_call_with_file(
     bool connected = false;
     int filePort = -1;
     int callPort = -1;
-    bool sent_ports_list = false;
     bool sent_connect = false;
     int64_t last_cl_ms = 0;
     bool audio_disconnected = false;
@@ -1265,7 +1264,6 @@ static std::string pjsua_run_call_with_file(
             outRes.invite_answered = true;
             // Ask for conference ports so we can connect wav -> call.
             write_str("cl\n");
-            sent_ports_list = true;
             last_cl_ms = answered_at;
         }
 
@@ -1359,7 +1357,6 @@ static std::string pjsua_run_call_with_file(
             if (!sent_connect && callPort < 0 && (now - last_cl_ms) >= 500)
             {
                 write_str("cl\n");
-                sent_ports_list = true;
                 last_cl_ms = now;
             }
         }
@@ -1889,7 +1886,7 @@ static std::string pjsua2_run_call_with_file(
 } // namespace
 #endif
 
-static std::string patch_baresip_config_audio_source(const std::string& config, const std::string& wav_path)
+[[maybe_unused]] static std::string patch_baresip_config_audio_source(const std::string& config, const std::string& wav_path)
 {
     if (wav_path.empty()) return config;
     std::string out = config;
@@ -1919,7 +1916,7 @@ static std::string patch_baresip_config_audio_source(const std::string& config, 
     return out;
 }
 
-static std::string tmp_audio_copy_path(const std::filesystem::path& tmpdir)
+[[maybe_unused]] static std::string tmp_audio_copy_path(const std::filesystem::path& tmpdir)
 {
     return (tmpdir / "sip-audio.wav").string();
 }
@@ -1946,7 +1943,7 @@ static bool copy_file_best_effort(const std::string& src, const std::string& dst
     }
 }
 
-static std::string patch_baresip_config_module_path(const std::string& config)
+[[maybe_unused]] static std::string patch_baresip_config_module_path(const std::string& config)
 {
     std::string out = config;
     const std::string desired = "module_path\t\t/usr/lib/baresip/modules";
@@ -1979,7 +1976,7 @@ static std::string patch_baresip_config_module_path(const std::string& config)
     return out;
 }
 
-static std::string patch_baresip_config_headless_audio(const std::string& config)
+[[maybe_unused]] static std::string patch_baresip_config_headless_audio(const std::string& config)
 {
     // Previous attempts to force a headless audio_player via `aufile,/dev/null`
     // caused baresip to error because aufile expects a real file. For now, leave
@@ -3247,267 +3244,15 @@ static ResolvedAlarmRepeat resolve_alarm_repeat(const json& root, const json& ru
     return out;
 }
 
-static bool is_v2_config_root(const json& root)
+static bool validate_supported_config(const json& root, std::string& err)
 {
-    return root.is_object() &&
-           root.contains("schema_version") &&
-           root["schema_version"].is_number_integer() &&
-           root["schema_version"].get<int>() == 2;
+    // Single-schema: keep validation permissive. The runtime defaults missing fields and ignores unknowns.
+    // We only fail if the root isn't an object.
+    (void)err;
+    return root.is_object();
 }
 
-static json coerce_root_to_schema2_best_effort(const json& root)
-{
-    // We prefer a strict schema_version=2 config, but to make early development
-    // less painful we accept "mostly schema2" documents:
-    // - Ignore unknown fields
-    // - Allow missing fields (we'll default them)
-    // - If schema_version is missing/other, we'll still consume known schema2 keys
-    //   and persist as schema_version=2 on next save in SCADA.
-    //
-    // This does NOT attempt multi-version transforms; it just selects the fields
-    // we understand today.
-    json out = json::object();
-    if (!root.is_object()) return out;
-
-    out["schema_version"] = 2;
-    if (root.contains("timezone")) out["timezone"] = root["timezone"];
-    if (root.contains("audio")) out["audio"] = root["audio"];
-    if (root.contains("sip")) out["sip"] = root["sip"];
-    if (root.contains("schedules")) out["schedules"] = root["schedules"];
-    if (root.contains("groups")) out["groups"] = root["groups"];
-    if (root.contains("targets")) out["targets"] = root["targets"];
-    if (root.contains("routes")) out["routes"] = root["routes"];
-    if (root.contains("policies")) out["policies"] = root["policies"];
-    if (root.contains("assignments")) out["assignments"] = root["assignments"];
-    if (root.contains("alarm_groups")) out["alarm_groups"] = root["alarm_groups"];
-
-    // Rules and/or alarms are accepted. If both exist, rules win (same behavior as before).
-    if (root.contains("rules")) out["rules"] = root["rules"];
-    if (root.contains("alarms")) out["alarms"] = root["alarms"];
-
-    return out;
-}
-
-struct V2TransformMeta
-{
-    bool downgraded = false;
-    std::vector<std::string> notes;
-};
-
-static bool validate_supported_v2_config(const json& root, std::string& err, bool strict)
-{
-    // In "strict" mode we treat schema_version=2 as an explicit contract and validate
-    // cross-references. In non-strict mode (best-effort coercion), we intentionally
-    // do not fail on missing/unknown/deprecated fields because early dev configs and
-    // hand-edited files should still load.
-    if (!strict) return true;
-    if (!is_v2_config_root(root)) return true;
-
-    std::unordered_set<std::string> scheduleIds;
-    std::unordered_map<std::string, std::string> scheduleTypeById;
-    if (root.contains("schedules") && root["schedules"].is_array())
-    {
-        for (const auto& s : root["schedules"])
-        {
-            if (!s.is_object()) continue;
-            const std::string id = s.value("id", "");
-            const std::string type = s.value("type", "");
-            if (id.empty()) continue;
-            scheduleIds.insert(id);
-            scheduleTypeById[id] = type;
-            if (type != "always" && type != "inverse_of" && type != "custom")
-            {
-                // Ignore unknown schedule types for forward/backward compatibility.
-                continue;
-            }
-            if (type == "inverse_of")
-            {
-                const std::string ref = s.value("schedule_id", "");
-                (void)ref;
-            }
-        }
-    }
-
-    std::unordered_set<std::string> routeIds;
-    std::unordered_map<std::string, std::string> routeTypeById;
-    if (root.contains("routes") && root["routes"].is_array())
-    {
-        for (const auto& r : root["routes"])
-        {
-            if (!r.is_object()) continue;
-            const std::string id = r.value("id", "");
-            const std::string type = r.value("type", "");
-            if (!id.empty()) routeIds.insert(id);
-            routeTypeById[id] = type;
-            if (type != "voice_modem" && type != "audio_command")
-            {
-                // Ignore unknown route types for forward/backward compatibility.
-                continue;
-            }
-        }
-    }
-
-    std::unordered_set<std::string> policyIds;
-    if (root.contains("policies") && root["policies"].is_array())
-    {
-        for (const auto& p : root["policies"])
-        {
-            if (!p.is_object()) continue;
-            const std::string id = p.value("id", "");
-            if (!id.empty()) policyIds.insert(id);
-
-            const std::string scheduleId = p.value("schedule_id", "");
-            (void)scheduleId;
-
-            if (p.contains("steps") && p["steps"].is_array())
-            {
-                for (const auto& step : p["steps"])
-                {
-                    if (!step.is_object()) continue;
-                    const std::string routeId = step.value("route_id", "");
-                    (void)routeId;
-                }
-            }
-        }
-    }
-
-    if (root.contains("alarms") && root["alarms"].is_array())
-    {
-        for (const auto& a : root["alarms"])
-        {
-            if (!a.is_object()) continue;
-            const std::string id = a.value("id", "");
-            if (a.contains("policy_ids") && a["policy_ids"].is_array())
-            {
-                if (a["policy_ids"].size() > 1)
-                {
-                    // Keep going; we'll only use one policy at runtime.
-                    continue;
-                }
-                if (!a["policy_ids"].empty())
-                {
-                    const auto& pv = a["policy_ids"][0];
-                    (void)pv;
-                }
-            }
-            if (a.contains("policy_id") && a["policy_id"].is_string())
-            {
-                // Ignore missing policy references; runtime will treat as no policy.
-            }
-        }
-    }
-    for (const auto& kv : scheduleTypeById)
-    {
-        if (kv.second != "inverse_of") continue;
-        const std::string id = kv.first;
-        const json* sched = nullptr;
-        for (const auto& s : root["schedules"])
-        {
-            if (s.is_object() && s.value("id", "") == id) { sched = &s; break; }
-        }
-        if (!sched) continue;
-        const std::string ref = sched->value("schedule_id", "");
-        (void)ref;
-    }
-
-    return true;
-}
-
-static json make_legacy_root_from_v2(const json& v2Root)
-{
-    json out = json::object();
-    out["rules"] = json::array();
-    if (v2Root.contains("audio") && v2Root["audio"].is_object())
-    {
-        out["audio"] = v2Root["audio"];
-    }
-    if (v2Root.contains("groups") && v2Root["groups"].is_array())
-    {
-        out["groups"] = v2Root["groups"];
-    }
-
-    if (!v2Root.is_object()) return out;
-    if (!v2Root.contains("alarms") || !v2Root["alarms"].is_array()) return out;
-
-    for (const auto& alarm : v2Root["alarms"])
-    {
-        if (!alarm.is_object()) continue;
-        const std::string legacyType = alarm.value("type", "");
-        json r;
-        r["id"] = alarm.value("id", "");
-        r["name"] = alarm.value("name", alarm.value("id", ""));
-        r["group"] = alarm.value("group", "");
-        r["site"] = alarm.value("site", "");
-        r["enabled"] = alarm.value("enabled", true);
-        r["severity"] = alarm.value("severity", 500);
-        r["message_on_active"] = alarm.value("message_on_active", "");
-        r["message_on_return"] = alarm.value("message_on_return", "");
-        if (alarm.contains("source") && alarm["source"].is_object())
-        {
-            r["source"] = {
-                {"connection_id", alarm["source"].value("connection_id", "")},
-                {"tag", alarm["source"].value("tag", "")}
-            };
-        }
-        else
-        {
-            // Backward-compatible: accept legacy alarm fields inside schema_version=2 documents.
-            r["source"] = {
-                {"connection_id", alarm.value("connection_id", "")},
-                {"tag", alarm.value("tag_name", alarm.value("tag", ""))}
-            };
-        }
-        if (alarm.contains("condition") && alarm["condition"].is_object())
-        {
-            r["condition"] = alarm["condition"];
-        }
-        else if (!legacyType.empty())
-        {
-            // Backward-compatible: map legacy condition fields.
-            r["condition"] = {{"type", legacyType}};
-            if (legacyType == "equals" || legacyType == "not_equals")
-            {
-                if (alarm.contains("value")) r["condition"]["value"] = alarm["value"];
-                else if (alarm.contains("equals_value")) r["condition"]["value"] = alarm["equals_value"];
-                else if (alarm.contains("threshold")) r["condition"]["value"] = alarm["threshold"];
-            }
-            else if (legacyType == "high" || legacyType == "low")
-            {
-                if (alarm.contains("threshold")) r["condition"]["threshold"] = alarm["threshold"];
-                if (alarm.contains("hysteresis")) r["condition"]["hysteresis"] = alarm["hysteresis"];
-            }
-        }
-        if (alarm.contains("audio") && alarm["audio"].is_object())
-        {
-            const auto& a = alarm["audio"];
-            if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
-            if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
-            if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
-            if (a.contains("audio_gap_ms")) r["audio_gap_ms"] = a["audio_gap_ms"];
-            if (a.contains("audio_mode")) r["audio_mode"] = a["audio_mode"];
-        }
-        if (alarm.contains("audio_file")) r["audio_file"] = alarm["audio_file"];
-        if (alarm.contains("speech_text")) r["speech_text"] = alarm["speech_text"];
-        if (alarm.contains("audio_files") && alarm["audio_files"].is_array()) r["audio_files"] = alarm["audio_files"];
-        if (alarm.contains("speech_texts") && alarm["speech_texts"].is_array()) r["speech_texts"] = alarm["speech_texts"];
-        if (alarm.contains("audio_gap_ms")) r["audio_gap_ms"] = alarm["audio_gap_ms"];
-        if (alarm.contains("audio_mode")) r["audio_mode"] = alarm["audio_mode"];
-        if (alarm.contains("policy_id") && alarm["policy_id"].is_string())
-        {
-            r["notification_policy"] = alarm["policy_id"];
-        }
-        else if (alarm.contains("policy_ids") && alarm["policy_ids"].is_array() && !alarm["policy_ids"].empty())
-        {
-            const auto& first = alarm["policy_ids"][0];
-            if (first.is_string()) r["notification_policy"] = first.get<std::string>();
-        }
-        out["rules"].push_back(std::move(r));
-    }
-
-    return out;
-}
-
-static json notification_config_from_v2(const json& v2Root, V2TransformMeta* meta = nullptr)
+static json notification_config_from_root_current(const json& v2Root)
 {
     json cfg = {
         {"enabled", true},
@@ -3523,6 +3268,12 @@ static json notification_config_from_v2(const json& v2Root, V2TransformMeta* met
     if (v2Root.contains("audio") && v2Root["audio"].is_object())
     {
         cfg["audio"] = v2Root["audio"];
+    }
+
+    // Shared TTS settings live at the config root (configured via SCADA "Configure Server").
+    if (v2Root.contains("tts") && v2Root["tts"].is_object())
+    {
+        cfg["tts"] = v2Root["tts"];
     }
 
     // SIP settings live at the config root (configured via SCADA "Configure Server").
@@ -3596,16 +3347,31 @@ static json notification_config_from_v2(const json& v2Root, V2TransformMeta* met
             }
             else if (type == "audio_command")
             {
+                // Support both shapes:
+                // - canonical/simple: {command,args} at the route root (what SCADA writes)
+                // - legacy/compat:    {config:{command,args}} nested
+                //
+                // Prefer the top-level fields when present so device-specific args (e.g. `-D plughw:*`)
+                // are not lost when a route also carries a `config` block for backward compatibility.
                 const json routeCfg = r.contains("config") && r["config"].is_object() ? r["config"] : json::object();
-                if (!routeCfg.contains("command") || !routeCfg["command"].is_string()) continue;
+
+                const bool hasTopCmd = r.contains("command") && r["command"].is_string();
+                const bool hasCfgCmd = routeCfg.contains("command") && routeCfg["command"].is_string();
+                if (!hasTopCmd && !hasCfgCmd) continue;
+
+                const std::string cmd = hasTopCmd ? r["command"].get<std::string>() : routeCfg.value("command", std::string("/usr/bin/aplay"));
+                json args = json::array({"{audio_path}"});
+                if (r.contains("args") && r["args"].is_array()) args = r["args"];
+                else if (routeCfg.contains("args") && routeCfg["args"].is_array()) args = routeCfg["args"];
+
                 cfg["routes"].push_back({
                     {"name", r.value("name", id)},
                     {"type", "audio_command"},
                     {"enabled", r.value("enabled", true)},
                     {"min_severity", 0},
                     {"on", json::array({"active"})},
-                    {"command", routeCfg.value("command", std::string("/usr/bin/aplay"))},
-                    {"args", routeCfg.value("args", json::array({"{audio_path}"}))},
+                    {"command", cmd.empty() ? std::string("/usr/bin/aplay") : cmd},
+                    {"args", std::move(args)},
                     {"repeat_ms", 0},
                     {"repeat_initial_delay_ms", 0},
                     {"until", "acked_or_returned"},
@@ -3768,11 +3534,6 @@ static json notification_config_from_v2(const json& v2Root, V2TransformMeta* met
                         {"schedule_id", scheduleId.empty() ? "always" : scheduleId}
                     };
                     cfg["routes"].push_back(std::move(legacyRoute));
-                    if (step.contains("targets") && step["targets"].is_array() && !step["targets"].empty() && meta)
-                    {
-                        meta->downgraded = true;
-                        meta->notes.push_back("audio_command policy targets are ignored by current runtime");
-                    }
                     continue;
                 }
 
@@ -3803,7 +3564,7 @@ static json notification_config_from_v2(const json& v2Root, V2TransformMeta* met
                     continue;
                 }
 
-                std::cerr << "[alarms] v2 route type not yet supported by runtime: " << routeType << "\n";
+                std::cerr << "[alarms] route type not yet supported by runtime: " << routeType << "\n";
             }
             if (policyHasVoiceStep)
             {
@@ -3843,49 +3604,7 @@ static json notification_config_from_v2(const json& v2Root, V2TransformMeta* met
 
 static json notification_config_from_root(const json& root)
 {
-    if (is_v2_config_root(root))
-    {
-        return notification_config_from_v2(root, nullptr);
-    }
-
-    if (root.contains("notifications") && root["notifications"].is_object())
-    {
-        json cfg = root["notifications"];
-        // Voice-modem test calls need the top-level audio file map so a selected
-        // audio ID resolves exactly like a real alarm's audio_file setting.
-        if (root.contains("audio") && root["audio"].is_object() && !cfg.contains("audio"))
-        {
-            cfg["audio"] = root["audio"];
-        }
-        // SIP settings are configured at the root and consumed by notifications.
-        if (root.contains("sip") && root["sip"].is_object() && !cfg.contains("sip"))
-        {
-            cfg["sip"] = root["sip"];
-        }
-        return cfg;
-    }
-
-    const json audio = (root.contains("audio") && root["audio"].is_object()) ? root["audio"] : json::object();
-    const bool hasAudioFiles = audio.contains("files") && audio["files"].is_array() && !audio["files"].empty();
-    if (!hasAudioFiles) return json::object();
-
-    return {
-        {"enabled", true},
-        {"routes", json::array({
-            {
-                {"name", "default_audio"},
-                {"type", "audio_command"},
-                {"enabled", true},
-                {"min_severity", 0},
-                {"on", json::array({"active"})},
-                {"command", "/usr/bin/aplay"},
-                {"args", json::array({"{audio_path}"})},
-                // Default to no repeat; individual alarms can opt-in with repeat_ms.
-                {"repeat_ms", 0},
-                {"until", "acked_or_returned"}
-            }
-        })}
-    };
+    return notification_config_from_root_current(root);
 }
 
 static bool json_equalish(const json &a, const json &b)
@@ -3921,8 +3640,8 @@ static std::optional<double> coerce_number(const json &v)
 class NotificationManager
 {
 public:
-    struct Route
-    {
+	    struct Route
+	    {
         std::string name;
         std::string type;
         bool enabled = true;
@@ -3936,23 +3655,31 @@ public:
         int max_repeats = 0;
         std::string until = "acked_or_returned";
         std::string schedule_id = "always";
-    };
+	    };
 
-		    struct VoiceModemConfig
+		    // Shared TTS settings (not SIP- or modem-specific).
+		    struct TtsConfig
 		    {
-		        bool enabled = false;
-		        std::string device;
-		        int baud = 115200;
+		        // Applies to espeak/espeak-ng. Lower is slower. Typical default is ~175 WPM.
+		        int speed_wpm = 175;
+		        // Voice selector. For espeak/espeak-ng this maps to `-v <voice>`.
+		        // For flite this maps to `-voice <voice>` when provided.
+		        std::string voice;
+		    };
+
+			    struct VoiceModemConfig
+			    {
+			        bool enabled = false;
+			        std::string device;
+			        int baud = 115200;
 		        bool voice_init = false;
 		        int voice_line = 1;
 		        int dial_seconds = 30;
 		        int audio_delay_seconds = 8;
-		        int audio_gap_ms = 50;
-		        int command_timeout_ms = 3000;
-		        std::string tts_engine = "auto";
-		        // Applies to espeak/espeak-ng. Lower is slower. Typical default is ~175 WPM.
-		        int tts_speed_wpm = 175;
-		    };
+			        int audio_gap_ms = 50;
+			        int command_timeout_ms = 3000;
+			        std::string tts_engine = "auto";
+			    };
 
 			    struct SipConfig
 			    {
@@ -4174,7 +3901,6 @@ public:
     void configure(const json& cfg)
     {
         std::lock_guard<std::mutex> lock(mu_);
-        enabled_ = cfg.is_object() ? cfg.value("enabled", false) : false;
         routes_.clear();
         voice_modem_ = VoiceModemConfig{};
         contacts_.clear();
@@ -4287,20 +4013,34 @@ public:
             schedules_[always.id] = std::move(always);
         }
 
-	        if (cfg.contains("voice_modem") && cfg["voice_modem"].is_object())
-	        {
-	            const auto& vm = cfg["voice_modem"];
-	            voice_modem_.enabled = vm.value("enabled", false);
+		        if (cfg.contains("voice_modem") && cfg["voice_modem"].is_object())
+		        {
+		            const auto& vm = cfg["voice_modem"];
+		            voice_modem_.enabled = vm.value("enabled", false);
             voice_modem_.device = vm.value("device", "");
             voice_modem_.baud = vm.value("baud", 115200);
             voice_modem_.voice_init = vm.value("voice_init", false);
             voice_modem_.voice_line = vm.value("voice_line", 1);
             voice_modem_.dial_seconds = vm.value("dial_seconds", 30);
 		            voice_modem_.audio_delay_seconds = vm.value("audio_delay_seconds", 8);
-		            voice_modem_.audio_gap_ms = vm.value("audio_gap_ms", 50);
-		            voice_modem_.command_timeout_ms = vm.value("command_timeout_ms", 3000);
-		            voice_modem_.tts_engine = vm.value("tts_engine", "auto");
-		            voice_modem_.tts_speed_wpm = std::max(80, std::min(450, vm.value("tts_speed_wpm", 175)));
+			            voice_modem_.audio_gap_ms = vm.value("audio_gap_ms", 50);
+			            voice_modem_.command_timeout_ms = vm.value("command_timeout_ms", 3000);
+			            voice_modem_.tts_engine = vm.value("tts_engine", "auto");
+			        }
+
+		        // Shared TTS settings.
+		        // Back-compat: if tts.speed_wpm is missing, fall back to voice_modem.tts_speed_wpm when present.
+		        tts_.speed_wpm = 175;
+			        if (cfg.contains("tts") && cfg["tts"].is_object())
+			        {
+			            const auto& t = cfg["tts"];
+			            tts_.speed_wpm = std::max(80, std::min(450, t.value("speed_wpm", 175)));
+			            tts_.voice = t.value("voice", "");
+			        }
+		        else if (cfg.contains("voice_modem") && cfg["voice_modem"].is_object())
+		        {
+		            const auto& vm = cfg["voice_modem"];
+		            tts_.speed_wpm = std::max(80, std::min(450, vm.value("tts_speed_wpm", 175)));
 		        }
 
 	        sip_ = SipConfig{};
@@ -4579,7 +4319,7 @@ public:
             }
         }
 
-        if (!enabled_ || !cfg.contains("routes") || !cfg["routes"].is_array())
+        if (!cfg.contains("routes") || !cfg["routes"].is_array())
         {
             audio_cv_.notify_all();
             modem_cv_.notify_all();
@@ -4655,7 +4395,6 @@ public:
     void notify_event(const AlarmState& alarm, const std::string& event_type)
     {
         std::lock_guard<std::mutex> lock(mu_);
-        if (!enabled_) return;
         AlarmState alarmWithAudio = alarm;
         add_tts_audio_paths_locked(alarmWithAudio);
         enqueue_policy_jobs_locked(alarmWithAudio, event_type);
@@ -4761,7 +4500,6 @@ public:
             }
         }
         return {
-            {"enabled", enabled_},
             {"running", running_},
             {"queued", static_cast<int>(audio_jobs_.size() + modem_jobs_.size())},
             {"queued_audio", static_cast<int>(audio_jobs_.size())},
@@ -4895,8 +4633,10 @@ public:
 	    {
 	        Route route;
 	        AlarmState alarm;
+	        std::string ttsVoice;
 	        {
 	            std::lock_guard<std::mutex> lock(mu_);
+	            ttsVoice = tts_.voice;
 	            const Route* baseRoute = select_audio_route_for_policy_locked();
 	            if (!baseRoute)
 	            {
@@ -4942,15 +4682,18 @@ public:
 	            }
 	        }
 
-        Job job;
-	        job.route = std::move(route);
-	        job.alarm = std::move(alarm);
-	        apply_audio_default_arg(job);
+	        Job job;
+		        job.route = std::move(route);
+		        job.alarm = std::move(alarm);
+		        apply_audio_default_arg(job);
+		        const std::string cmdPreview = command_string(job);
 	        const int rc = run_audio_command_sequence(job);
 	        result = "exit_code=" + std::to_string(rc)
 	            + " files=" + std::to_string(job.alarm.audio_paths.size())
 	            + " first_file=" + job.alarm.audio_file
-	            + " first_path=" + job.alarm.audio_path;
+	            + " first_path=" + job.alarm.audio_path
+	            + " tts_voice=" + (ttsVoice.empty() ? std::string("(default)") : ttsVoice)
+	            + " cmd=" + cmdPreview;
 	        return rc == 0;
 	    }
 
@@ -5185,9 +4928,9 @@ private:
         return true;
     }
 
-    bool generate_tts_wav_locked(const std::string& rawText, std::string& path, std::string& err) const
-    {
-        const std::string text = trim_tts_text(rawText);
+	    bool generate_tts_wav_locked(const std::string& rawText, std::string& path, std::string& err) const
+	    {
+	        const std::string text = trim_tts_text(rawText);
         if (text.empty())
         {
             err = "TTS text is empty.";
@@ -5221,37 +4964,78 @@ private:
             return false;
         }
 
-        const std::filesystem::path wav = dir / ("tts_" + random_hex(8) + ".wav");
-        std::string cmd;
-        if (engine.find("flite") != std::string::npos)
-        {
-            cmd = shell_quote(engine) + " -t " + shell_quote(text) + " -o " + shell_quote(wav.string());
-        }
-	        else
+	        const std::filesystem::path wav = dir / ("tts_" + random_hex(8) + ".wav");
+	        auto trim_ws = [](const std::string& in) -> std::string {
+	            size_t i = 0;
+	            while (i < in.size() && std::isspace(static_cast<unsigned char>(in[i]))) ++i;
+	            size_t j = in.size();
+	            while (j > i && std::isspace(static_cast<unsigned char>(in[j - 1]))) --j;
+	            return in.substr(i, j - i);
+	        };
+	        std::string cmd;
+	        // Support cascaded voices: `tts.voice` may be a comma-separated list.
+	        std::vector<std::string> voiceCandidates;
 	        {
-	            // Slow down / speed up speech when using espeak/espeak-ng. Default is ~175 WPM.
-	            std::string speedArg;
-	            if (engine == "espeak" || engine == "espeak-ng" ||
-	                engine.find("/espeak") != std::string::npos || engine.find("/espeak-ng") != std::string::npos)
+	            const std::string voiceRaw = trim_ws(tts_.voice);
+	            if (!voiceRaw.empty())
 	            {
-	                const int wpm = std::max(80, std::min(450, voice_modem_.tts_speed_wpm));
-	                speedArg = " -s " + std::to_string(wpm);
+	                size_t start = 0;
+	                while (start < voiceRaw.size())
+	                {
+	                    const size_t comma = voiceRaw.find(',', start);
+	                    const std::string part = trim_ws(voiceRaw.substr(start, (comma == std::string::npos) ? std::string::npos : (comma - start)));
+	                    if (!part.empty()) voiceCandidates.push_back(part);
+	                    if (comma == std::string::npos) break;
+	                    start = comma + 1;
+	                }
 	            }
-	            cmd = shell_quote(engine) + speedArg + " -w " + shell_quote(wav.string()) + " " + shell_quote(text);
 	        }
+	        if (voiceCandidates.empty()) voiceCandidates.push_back("");
 
-        const int rc = std::system(cmd.c_str());
-        if (rc != 0)
-        {
-            const int exitCode = (rc == -1) ? -1 : (WIFEXITED(rc) ? WEXITSTATUS(rc) : rc);
-            err = "TTS command failed with exit code " + std::to_string(exitCode) + ": " + cmd;
-            return false;
-        }
-        if (!std::filesystem::exists(wav, ec) || std::filesystem::file_size(wav, ec) == 0)
-        {
-            err = "TTS command did not create a WAV file.";
-            return false;
-        }
+	        int lastExitCode = 0;
+	        std::string lastCmd;
+	        for (const auto& voice : voiceCandidates)
+	        {
+	            if (engine.find("flite") != std::string::npos)
+	            {
+	                std::string voiceArg;
+	                if (!voice.empty()) voiceArg = " -voice " + shell_quote(voice);
+	                cmd = shell_quote(engine) + voiceArg + " -t " + shell_quote(text) + " -o " + shell_quote(wav.string());
+	            }
+	            else
+	            {
+	                // Slow down / speed up speech when using espeak/espeak-ng. Default is ~175 WPM.
+	                std::string speedArg;
+	                std::string voiceArg;
+	                if (engine == "espeak" || engine == "espeak-ng" ||
+	                    engine.find("/espeak") != std::string::npos || engine.find("/espeak-ng") != std::string::npos)
+	                {
+	                    const int wpm = std::max(80, std::min(450, tts_.speed_wpm));
+	                    speedArg = " -s " + std::to_string(wpm);
+	                    if (!voice.empty()) voiceArg = " -v " + shell_quote(voice);
+	                }
+	                cmd = shell_quote(engine) + speedArg + voiceArg + " -w " + shell_quote(wav.string()) + " " + shell_quote(text);
+	            }
+
+	            lastCmd = cmd;
+	            const int rc = std::system(cmd.c_str());
+	            if (rc == 0)
+	            {
+	                lastExitCode = 0;
+	                break;
+	            }
+	            lastExitCode = (rc == -1) ? -1 : (WIFEXITED(rc) ? WEXITSTATUS(rc) : rc);
+	        }
+	        if (lastExitCode != 0)
+	        {
+	            err = "TTS command failed with exit code " + std::to_string(lastExitCode) + ": " + lastCmd;
+	            return false;
+	        }
+	        if (!std::filesystem::exists(wav, ec) || std::filesystem::file_size(wav, ec) == 0)
+	        {
+	            err = "TTS command did not create a WAV file.";
+	            return false;
+	        }
 
         path = wav.string();
         return true;
@@ -5562,8 +5346,20 @@ private:
 
     bool schedule_is_active_locked(const std::string& schedule_id) const
     {
+        // Option A: "always" is a virtual/implicit schedule id and must always be active,
+        // regardless of whether a user-defined schedule row with id="always" exists.
+        // (This prevents misconfiguration where an "always" schedule is actually custom/weekday-only.)
+        auto trim_ws = [](const std::string& in) -> std::string {
+            size_t b = 0;
+            while (b < in.size() && std::isspace(static_cast<unsigned char>(in[b]))) b++;
+            size_t e = in.size();
+            while (e > b && std::isspace(static_cast<unsigned char>(in[e - 1]))) e--;
+            return in.substr(b, e - b);
+        };
+        const std::string sid = trim_ws(schedule_id);
+        if (sid.empty() || sid == "always") return true;
         std::unordered_set<std::string> visiting;
-        return schedule_is_active_recursive_locked(schedule_id.empty() ? "always" : schedule_id, visiting);
+        return schedule_is_active_recursive_locked(sid, visiting);
     }
 
     bool schedule_is_active_recursive_locked(const std::string& schedule_id, std::unordered_set<std::string>& visiting) const
@@ -7251,18 +7047,18 @@ private:
         }
     }
 
-    mutable std::mutex mu_;
-    std::condition_variable audio_cv_;
-    std::condition_variable modem_cv_;
-    bool enabled_ = false;
-    bool running_ = false;
-    bool stop_ = false;
-    std::vector<Route> routes_;
-	    std::deque<Job> audio_jobs_;
-	    std::deque<Job> modem_jobs_;
-	    std::deque<EscalationLogEntry> escalation_log_;
-	    VoiceModemConfig voice_modem_;
-	    SipConfig sip_;
+	    mutable std::mutex mu_;
+	    std::condition_variable audio_cv_;
+	    std::condition_variable modem_cv_;
+	    bool running_ = false;
+	    bool stop_ = false;
+	    std::vector<Route> routes_;
+	    TtsConfig tts_;
+		    std::deque<Job> audio_jobs_;
+		    std::deque<Job> modem_jobs_;
+		    std::deque<EscalationLogEntry> escalation_log_;
+		    VoiceModemConfig voice_modem_;
+		    SipConfig sip_;
 	    std::unordered_map<std::string, Contact> contacts_;
     std::unordered_map<std::string, ContactGroup> contact_groups_;
     std::unordered_map<std::string, Policy> policies_;
@@ -7385,6 +7181,10 @@ struct AlarmEngine
 
     std::atomic<int64_t> last_tag_update_ms{0};
     std::atomic<int64_t> last_alarm_change_ms{0};
+    // When opcbridge (re)connects, the first burst of tag updates may reflect
+    // already-active conditions. We treat that burst as baseline and suppress
+    // notifications/event logging until this time has passed.
+    std::atomic<int64_t> suppress_events_until_ms{0};
     std::atomic<bool> opcbridge_ws_connected{false};
     std::atomic<int64_t> opcbridge_ws_last_open_ms{0};
     std::atomic<int64_t> opcbridge_ws_last_close_ms{0};
@@ -7410,6 +7210,11 @@ struct AlarmEngine
     void set_ws(AlarmWs* ptr) { ws = ptr; }
     void set_ua(AlarmUa* ptr) { ua = ptr; }
     void set_notifications(NotificationManager* ptr) { notifications = ptr; }
+
+    bool should_record_events_now() const
+    {
+        return now_ms() >= suppress_events_until_ms.load();
+    }
     void set_config_meta(std::string mode, bool downgraded, std::vector<std::string> notes)
     {
         std::lock_guard<std::mutex> lock(config_meta_mu);
@@ -7571,11 +7376,10 @@ struct AlarmEngine
         {
             throw std::runtime_error("Invalid alarms.json; expected a JSON object.");
         }
-        const bool strict = is_v2_config_root(root);
-        const json schema2 = strict ? root : coerce_root_to_schema2_best_effort(root);
+        const json schema2 = root;
 
         std::string validationErr;
-        if (!validate_supported_v2_config(schema2, validationErr, strict))
+        if (!validate_supported_config(schema2, validationErr))
         {
             throw std::runtime_error("Unsupported alarms config: " + validationErr);
         }
@@ -7649,13 +7453,7 @@ struct AlarmEngine
 
         if (notifications)
         {
-            V2TransformMeta meta;
-            notifications->configure(notification_config_from_v2(schema2, &meta));
-            set_config_meta("current", meta.downgraded, meta.notes);
-        }
-        else
-        {
-            set_config_meta("current", false, {});
+            notifications->configure(notification_config_from_root(schema2));
         }
 
         for (const auto &it : rulesArr)
@@ -8598,11 +8396,9 @@ static void ws_client_loop(std::atomic<bool> &stop,
             const std::string k = conn + ":" + name;
             if (want.find(k) == want.end()) continue;
             if (!t.contains("value")) continue;
-            // Seed current values from HTTP so alarms that are already active at boot can
-            // immediately generate an ACTIVE event and be visible in history/panels.
-            // This will not duplicate events after restarts because restore_state_from_db()
-            // is run before WS connect, so already-active alarms will be active here too.
-            engine.apply_tag_update(conn, name, t["value"], true);
+            // Seed current values from HTTP as baseline (no event log/notifications).
+            // This prevents callouts on reconnect for conditions that were already active.
+            engine.apply_tag_update(conn, name, t["value"], false);
         }
     };
 
@@ -8615,7 +8411,10 @@ static void ws_client_loop(std::atomic<bool> &stop,
             engine.opcbridge_ws_connected.store(true);
             engine.opcbridge_ws_last_open_ms.store(now_ms());
             engine.opcbridge_ws_open_count.fetch_add(1);
+            // Suppress events briefly while we (re)subscribe + seed current values.
+            engine.suppress_events_until_ms.store(now_ms() + 2000);
             std::cout << "[alarms] opcbridge WS connected\n";
+            std::cout << "[alarms] opcbridge baseline: suppress events for 2000ms\n";
             lastSentGeneration = subscriptionGeneration.load();
             send_subscribe();
             seed_subscriptions_from_http();
@@ -8656,7 +8455,12 @@ static void ws_client_loop(std::atomic<bool> &stop,
         const std::string conn = payload.value("connection_id", "");
         const std::string tag = payload.value("name", "");
         if (conn.empty() || tag.empty()) return;
-        engine.apply_tag_update(conn, tag, payload.contains("value") ? payload["value"] : json());
+        engine.apply_tag_update(
+            conn,
+            tag,
+            payload.contains("value") ? payload["value"] : json(),
+            engine.should_record_events_now()
+        );
     });
 
     ws.start();
@@ -8669,6 +8473,8 @@ static void ws_client_loop(std::atomic<bool> &stop,
         if (gen != lastSentGeneration)
         {
             lastSentGeneration = gen;
+            engine.suppress_events_until_ms.store(now_ms() + 2000);
+            std::cout << "[alarms] opcbridge baseline: suppress events for 2000ms (resubscribe)\n";
             send_subscribe();
             seed_subscriptions_from_http();
         }
@@ -8750,8 +8556,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
     {
         engine.notifications->set_config_dir(configDir);
     }
-    const bool strict = is_v2_config_root(rulesRoot);
-    const json schema2 = strict ? rulesRoot : coerce_root_to_schema2_best_effort(rulesRoot);
+    const json schema2 = rulesRoot;
 
     // Some opcbridge deployments may report a frequently-changing mtime even when the
     // config content is unchanged. Avoid thrashing reloads by also comparing content.
@@ -8764,20 +8569,14 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
         }
     }
 
-    if (!validate_supported_v2_config(schema2, err, strict))
+    if (!validate_supported_config(schema2, err))
     {
         err = "Unsupported alarms config: " + err;
         return false;
     }
     if (engine.notifications)
     {
-        V2TransformMeta meta;
-        engine.notifications->configure(notification_config_from_v2(schema2, &meta));
-        engine.set_config_meta("current", meta.downgraded, meta.notes);
-    }
-    else
-    {
-        engine.set_config_meta("current", false, {});
+        engine.notifications->configure(notification_config_from_root(schema2));
     }
     const json runtimeRoot = schema2;
 
@@ -9217,7 +9016,6 @@ int main(int argc, char **argv)
             {"opcbridge_alarms_mtime_ms", engine.last_config_mtime_ms.load()},
             {"subscription_key_count", static_cast<int>(keys.size())}
         };
-        j["config"]["schema"] = engine.config_meta_json();
         {
             json sample = json::array();
             for (size_t i = 0; i < keys.size() && i < 10; i++) sample.push_back(keys[i]);

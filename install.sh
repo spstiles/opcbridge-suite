@@ -775,7 +775,7 @@ install_opcbridge() {
 
 install_alarms() {
   echo "Installing opcbridge-alarms..."
-  local src="$ROOT_DIR/opcbridge-alarms/opcbridge-alarms"
+  local src="$ROOT_DIR/opcbridge-alarms/build/opcbridge-alarms"
   [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
 
   install -m 0755 "$src" "$PREFIX/bin/opcbridge-alarms"

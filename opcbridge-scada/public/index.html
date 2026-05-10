@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>opcbridge SCADA</title>
-  <link rel="icon" href="data:," />
+  <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css?v=20260505_time_sliced_polling" />
 </head>
 <body>
@@ -296,27 +296,51 @@
 	              <label>Test Speech Text</label>
 	              <textarea id="voiceModemTestTtsText" rows="3" placeholder="Optional text to speak if no test audio file is selected. Use [pause:500] for a 500 ms pause."></textarea>
 	            </div>
-	            <div class="form-row">
-	              <label>TTS Speed (WPM)</label>
-	              <input id="voiceModemTtsSpeedWpm" type="number" min="80" max="450" step="5" />
-	            </div>
-	            <div class="form-row">
-	              <label></label>
-	              <div class="row-actions">
-                <button class="btn" id="voiceModemReloadBtn" type="button">Reload Devices</button>
+		            <div class="form-row">
+		              <label></label>
+		              <div class="row-actions">
+	                <button class="btn" id="voiceModemReloadBtn" type="button">Reload Devices</button>
                 <button class="btn primary" id="voiceModemSaveBtn" type="button">Save Voice Modem</button>
                 <button class="btn" id="voiceModemTestBtn" type="button">Test Call</button>
               </div>
             </div>
             <div class="hint mono" id="voiceModemStatus"></div>
-          </div>
-        </div>
-	      </div>
+	          </div>
+	        </div>
+		      </div>
 
-	      <div class="card" style="margin-top: 14px;">
-	        <div class="card-title">SIP Settings</div>
-	        <div class="hint">Account and server settings for SIP-based callout (VPN-friendly). Used by SIP notification policies and SIP test.</div>
-	        <div class="card-body">
+			      <div class="card" style="margin-top: 14px;">
+			        <div class="card-title">Text-to-Speech</div>
+			        <div class="hint">Applies to all text-to-speech (SIP and voice modem). Voice selection is supported by espeak/espeak-ng and flite.</div>
+			        <div class="card-body">
+				          <div class="form" style="max-width: 720px;">
+				            <div class="form-row">
+				              <label>TTS Speed (WPM)</label>
+				              <input id="ttsSpeedWpm" type="number" min="80" max="450" step="5" />
+				            </div>
+				            <div class="form-row">
+				              <label>TTS Voice</label>
+			              <div style="display:grid; gap:6px;">
+			                <select id="ttsVoiceSelect"></select>
+			                <input id="ttsVoice" type="text" placeholder="Custom voice (e.g. en-us, en-us+m3, slt)" />
+			                <div class="hint mono" id="ttsVoiceHint"></div>
+			              </div>
+				            </div>
+			            <div class="form-row">
+			              <label></label>
+			              <div class="row-actions">
+			                <button class="btn primary" id="ttsSaveBtn" type="button">Save TTS</button>
+			              </div>
+			            </div>
+			            <div class="hint mono" id="ttsStatus"></div>
+			          </div>
+			        </div>
+			      </div>
+
+		      <div class="card" style="margin-top: 14px;">
+		        <div class="card-title">SIP Settings</div>
+		        <div class="hint">Account and server settings for SIP-based callout (VPN-friendly). Used by SIP notification policies and SIP test.</div>
+		        <div class="card-body">
 	          <div class="form" style="max-width: 720px;">
 	            <div class="form-row">
 	              <label>Enabled</label>
@@ -600,7 +624,6 @@
         <button class="btn" id="alarmsEventsRuntimeRestartBtn" type="button">Restart Alarm Runtime</button>
       </div>
       <div class="row-actions" style="margin:8px 0 10px 0;">
-        <button class="btn" id="alarmsUpgradeV2Btn" type="button">Reset Alarms Config</button>
       </div>
 
       <details class="card ae-notifications-card">
