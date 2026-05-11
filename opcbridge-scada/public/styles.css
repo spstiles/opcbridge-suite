@@ -32,7 +32,8 @@ code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
   z-index: 10;
 }
 
-.brand { font-weight: 700; letter-spacing: .04em; }
+.brand { font-weight: 700; letter-spacing: .04em; display: inline-flex; align-items: center; gap: 10px; }
+.brand-icon { width: 18px; height: 18px; display: inline-block; }
 .status { margin-top: 6px; font-size: 12px; color: var(--muted); }
 
 .tabs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }

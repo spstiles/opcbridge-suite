@@ -6953,6 +6953,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 <head>
 <meta charset="UTF-8">
 <title>OPC Bridge Dashboard</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
     body {
         font-family: sans-serif;
@@ -6978,6 +6979,16 @@ static bool apply_config_bundle_json(const std::string &configDir,
     header h1 {
         margin: 0;
         font-size: 20px;
+    }
+    header .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+    }
+    header .brand img {
+        width: 18px;
+        height: 18px;
+        display: inline-block;
     }
     main {
         padding: 15px 20px 40px 20px;
@@ -7730,7 +7741,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	</head>
 	<body>
 	<header>
-	    <h1>OPC Bridge Dashboard</h1>
+	    <h1 class="brand"><img src="/favicon.svg" alt="" aria-hidden="true"><span>OPC Bridge Dashboard</span></h1>
 		<div id="admin-chip" class="admin-chip" style="display:none;">
 			👑 ADMIN
 		</div>
@@ -12836,6 +12847,27 @@ window.addEventListener("load", startAutoRefresh);
 </html>
 )HTML";
 
+            const std::string favicon_svg = R"SVG(<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1324"/>
+      <stop offset="1" stop-color="#0e2a47"/>
+    </linearGradient>
+    <linearGradient id="fg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22c1ff"/>
+      <stop offset="1" stop-color="#38d39f"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)"/>
+  <path d="M14 40c6-10 12-14 18-14s12 4 18 14" fill="none" stroke="url(#fg)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M20 42c4-6 8-9 12-9s8 3 12 9" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="14" cy="40" r="5" fill="url(#fg)"/>
+  <circle cx="32" cy="26" r="5" fill="url(#fg)"/>
+  <circle cx="50" cy="40" r="5" fill="url(#fg)"/>
+  <rect x="4.5" y="4.5" width="55" height="55" rx="12" fill="none" stroke="rgba(255,255,255,0.10)"/>
+</svg>)SVG";
+
 			// Replace placeholder with the actual writeToken
 			{
 				const std::string placeholder = "WRITE_TOKEN_PLACEHOLDER";
@@ -12858,6 +12890,15 @@ window.addEventListener("load", startAutoRefresh);
 	            svr.Get("/workspace", [dashboard_html](const httplib::Request &, httplib::Response &res) {
 	                res.set_content(dashboard_html, "text/html");
 	            });
+
+                svr.Get("/favicon.svg", [favicon_svg](const httplib::Request &, httplib::Response &res) {
+                    res.set_content(favicon_svg, "image/svg+xml");
+                });
+
+                svr.Get("/favicon.ico", [](const httplib::Request &, httplib::Response &res) {
+                    res.status = 302;
+                    res.set_header("Location", "/favicon.svg");
+                });
 
 				// /info
 				svr.Get("/info", [&](const httplib::Request &, httplib::Response &res) {
