@@ -13860,6 +13860,15 @@ if (isPanelActive('tab-alarms_events') && !isAlarmsEventsPropertiesEditorOpen())
 // - Always fetch a small baseline for the top status line.
 // - Only fetch "heavy" data sets for the currently visible tab(s).
 async function refreshVisible() {
+  // Prevent overlapping refreshes. When the visible tab is "heavy" (e.g. Alarms & Events
+  // with large alarm sets), a refresh can take longer than the configured interval.
+  // Without this guard, setInterval() will stack concurrent requests and the UI will
+  // appear to "skyrocket" its refresh rate and then time out.
+  if (state.refreshVisibleInFlight) {
+    state.refreshVisiblePending = true;
+    return;
+  }
+  state.refreshVisibleInFlight = true;
   const started = Date.now();
   try {
     const [health, alarmsStatus, reloadStatus] = await Promise.all([
@@ -13921,6 +13930,13 @@ async function refreshVisible() {
     }
   } catch (err) {
     if (els.statusLine) els.statusLine.textContent = `Refresh failed: ${err.message}`;
+  } finally {
+    state.refreshVisibleInFlight = false;
+    if (state.refreshVisiblePending) {
+      state.refreshVisiblePending = false;
+      // Run one catch-up refresh soon (still single-flight).
+      window.setTimeout(() => { refreshVisible().catch(() => {}); }, 0);
+    }
   }
 }
 
