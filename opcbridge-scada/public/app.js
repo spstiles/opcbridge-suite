@@ -11825,6 +11825,18 @@ function renderAlarmsEventsProperties(item, parentNode) {
     callBackendSel.value = ['auto', 'sip', 'voice_modem'].includes(String(cur?.call_backend || 'auto')) ? String(cur?.call_backend || 'auto') : 'auto';
     addRow('Call Backend', callBackendSel);
 
+    const ackEnabledBox = document.createElement('input');
+    ackEnabledBox.type = 'checkbox';
+    ackEnabledBox.checked = cur?.ack_enabled !== false;
+    ackEnabledBox.disabled = !canEditConfig() || !isPhonePolicyNow();
+    const ackEnabledWrap = document.createElement('label');
+    ackEnabledWrap.style.display = 'flex';
+    ackEnabledWrap.style.alignItems = 'center';
+    ackEnabledWrap.style.gap = '8px';
+    ackEnabledWrap.appendChild(ackEnabledBox);
+    ackEnabledWrap.appendChild(document.createTextNode('Allow phone acknowledgement'));
+    addRow('Phone Acknowledgement', ackEnabledWrap);
+
     const ackDtmfBox = document.createElement('input');
     ackDtmfBox.type = 'text';
     ackDtmfBox.value = Array.isArray(cur?.ack_dtmf) && cur.ack_dtmf.length
@@ -11864,6 +11876,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
       }
       ackDtmfBox.disabled = !canEditConfig() || !phone;
       ackWaitBox.disabled = !canEditConfig() || !phone;
+      ackEnabledBox.disabled = !canEditConfig() || !phone;
       ringTimeoutBox.disabled = !canEditConfig() || !phone;
       callBackendSel.disabled = !canEditConfig() || !phone;
       if (targetHint) targetHint.style.display = phone ? '' : 'none';
@@ -11916,11 +11929,12 @@ function renderAlarmsEventsProperties(item, parentNode) {
           // max_rings removed; use Ring Timeout (sec) only.
 	        const selectedOutputType = getPolicyOutputType(policies[idx] || cur);
 	        const isPhonePolicyNow = selectedOutputType === 'phone';
+	        const phoneAckEnabled = Boolean(ackEnabledBox.checked);
 	        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
-	        if (isPhonePolicyNow && !ackDtmf.length) ackDtmf.push('1');
+	        if (isPhonePolicyNow && phoneAckEnabled && !ackDtmf.length) ackDtmf.push('1');
 	        // Guardrail: if repeat is enabled and stop condition includes ACK, ensure ACK is actually enabled.
 	        if (isPhonePolicyNow && repeatEnabledNow && ['acked', 'acked_or_returned'].includes(repeatStopOn)) {
-	          const ackEnabled = Number.isFinite(ackWaitSec) && ackWaitSec > 0 && ackDtmf.length > 0;
+	          const ackEnabled = phoneAckEnabled && Number.isFinite(ackWaitSec) && ackWaitSec > 0 && ackDtmf.length > 0;
 	          if (!ackEnabled) {
 	            const fix = window.confirm(
 	              'This policy is set to repeat and stop on ACK, but ACK is disabled.\n\n' +
@@ -11931,8 +11945,9 @@ function renderAlarmsEventsProperties(item, parentNode) {
 	            );
 	            if (!fix) throw new Error('Repeat Stop On requires ACK to be enabled.');
 	            // Apply fix to UI inputs so the user sees the effective values.
-	            if (ackWaitBox) ackWaitBox.value = '8';
-	            if (ackDtmfBox) ackDtmfBox.value = '1';
+            if (ackWaitBox) ackWaitBox.value = '8';
+            if (ackDtmfBox) ackDtmfBox.value = '1';
+            if (ackEnabledBox) ackEnabledBox.checked = true;
 	          }
 	        }
 	        const normalizedTargets = [];
@@ -11994,11 +12009,18 @@ function renderAlarmsEventsProperties(item, parentNode) {
         else policies[idx].audio_gap_ms = policyAudioGap;
           if (isPhonePolicyNow) {
             policies[idx].call_backend = String(callBackendSel.value || 'auto').trim() || 'auto';
-            policies[idx].ack_dtmf = ackDtmf;
-            policies[idx].ack_wait_sec = ackWaitSec;
+            policies[idx].ack_enabled = Boolean(ackEnabledBox.checked);
+            if (policies[idx].ack_enabled) {
+              policies[idx].ack_dtmf = ackDtmf;
+              policies[idx].ack_wait_sec = ackWaitSec;
+            } else {
+              policies[idx].ack_dtmf = [];
+              policies[idx].ack_wait_sec = 0;
+            }
             policies[idx].ring_timeout_sec = ringTimeoutSec;
           } else {
             delete policies[idx].call_backend;
+            delete policies[idx].ack_enabled;
             delete policies[idx].ack_dtmf;
             delete policies[idx].ack_wait_sec;
             delete policies[idx].ring_timeout_sec;

@@ -3778,10 +3778,11 @@ public:
         std::string until = "acked_or_returned";
         int audio_delay_seconds = -1;
         int audio_gap_ms = -1;
-	        std::string schedule_id = "always";
-	        std::vector<std::string> ack_dtmf{"1"};
-	        int ack_wait_sec = 8;
-			        int ring_timeout_sec = 15;
+        std::string schedule_id = "always";
+        bool ack_enabled = true;
+        std::vector<std::string> ack_dtmf{"1"};
+        int ack_wait_sec = 8;
+        int ring_timeout_sec = 15;
 			    };
     struct Assignment
     {
@@ -4199,6 +4200,10 @@ public:
                         if ((t.type == "contact" || t.type == "group") && !t.id.empty()) p.targets.push_back(std::move(t));
                     }
                 }
+                if (item.contains("ack_enabled") && item["ack_enabled"].is_boolean())
+                {
+                    p.ack_enabled = item["ack_enabled"].get<bool>();
+                }
                 if (item.contains("ack_dtmf") && item["ack_dtmf"].is_array())
                 {
                     p.ack_dtmf.clear();
@@ -4254,6 +4259,11 @@ public:
                 if (item.contains("ack_wait_sec") && item["ack_wait_sec"].is_number_integer())
                 {
                     p.ack_wait_sec = std::max(0, std::min(120, item["ack_wait_sec"].get<int>()));
+                }
+                if (!p.ack_enabled)
+                {
+                    p.ack_dtmf.clear();
+                    p.ack_wait_sec = 0;
                 }
                 if (item.contains("ring_timeout_sec") && item["ring_timeout_sec"].is_number_integer())
                 {
@@ -5141,8 +5151,8 @@ private:
         else job.repeats_left = std::max(0, policy.max_repeats - 1);
         job.audio_delay_seconds = policy.audio_delay_seconds;
         job.audio_gap_ms = (alarm.audio_gap_ms >= 0) ? alarm.audio_gap_ms : policy.audio_gap_ms;
-        job.ack_dtmf = policy.ack_dtmf;
-        job.ack_wait_sec = policy.ack_wait_sec;
+        job.ack_dtmf = policy.ack_enabled ? policy.ack_dtmf : std::vector<std::string>{};
+        job.ack_wait_sec = policy.ack_enabled ? policy.ack_wait_sec : 0;
         modem_jobs_.push_back(std::move(job));
     }
 
@@ -5292,8 +5302,8 @@ private:
 	        job.route.until = policy.until;
 	        job.route.schedule_id = effectiveScheduleId;
 	        job.alarm = alarm;
-	        job.ack_dtmf = policy.ack_dtmf;
-	        job.ack_wait_sec = policy.ack_wait_sec;
+	        job.ack_dtmf = policy.ack_enabled ? policy.ack_dtmf : std::vector<std::string>{};
+	        job.ack_wait_sec = policy.ack_enabled ? policy.ack_wait_sec : 0;
 	        job.ring_timeout_sec = policy.ring_timeout_sec;
 	        // max_rings removed
 	        if (policy.max_repeats <= 0) job.repeats_left = -1;
