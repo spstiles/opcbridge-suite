@@ -3916,6 +3916,7 @@ public:
         contacts_.clear();
         contact_groups_.clear();
         policies_.clear();
+        policy_name_to_id_.clear();
         assignments_.clear();
         alarm_route_bindings_.clear();
         schedules_.clear();
@@ -4284,7 +4285,16 @@ public:
                     for (const auto& cid : p.contacts) p.targets.push_back({"contact", cid});
                     for (const auto& gid : p.contact_groups) p.targets.push_back({"group", gid});
                 }
-                if (!p.id.empty()) policies_[p.id] = std::move(p);
+                if (!p.id.empty())
+                {
+                    const std::string id = p.id;
+                    const std::string name = p.name;
+                    policies_[id] = std::move(p);
+                    if (!name.empty() && name != id)
+                    {
+                        policy_name_to_id_[name] = id;
+                    }
+                }
             }
         }
         if (cfg.contains("assignments") && cfg["assignments"].is_array())
@@ -4303,7 +4313,12 @@ public:
                 if (scope.contains("site") && scope["site"].is_string()) a.site = scope["site"].get<std::string>();
                 if (scope.contains("severity_min") && scope["severity_min"].is_number_integer()) a.severity_min = scope["severity_min"].get<int>();
                 if (scope.contains("severity_max") && scope["severity_max"].is_number_integer()) a.severity_max = scope["severity_max"].get<int>();
-                if (!a.plan_id.empty()) assignments_.push_back(std::move(a));
+                if (!a.plan_id.empty())
+                {
+                    auto aliasIt = policy_name_to_id_.find(a.plan_id);
+                    if (aliasIt != policy_name_to_id_.end()) a.plan_id = aliasIt->second;
+                    assignments_.push_back(std::move(a));
+                }
             }
         }
         if (cfg.contains("alarm_groups") && cfg["alarm_groups"].is_array())
@@ -5348,9 +5363,9 @@ private:
             matchedAlarmRoute = true;
             for (const auto& policyId : route.policy_ids)
             {
-                auto pit = policies_.find(policyId);
-                if (pit == policies_.end()) continue;
-                enqueue_policy_output_locked(pit->second, route.schedule_id, alarm, event_type, route.name.empty() ? route.id : route.name);
+                const Policy* policy = find_policy_locked(policyId);
+                if (!policy) continue;
+                enqueue_policy_output_locked(*policy, route.schedule_id, alarm, event_type, route.name.empty() ? route.id : route.name);
             }
         }
         if (matchedAlarmRoute) return;
@@ -5358,9 +5373,20 @@ private:
         std::string selectedPolicyId = resolve_policy_for_alarm_locked(alarm);
         if (selectedPolicyId.empty()) selectedPolicyId = alarm.notification_policy;
         if (selectedPolicyId.empty()) return;
-        auto pit = policies_.find(selectedPolicyId);
-        if (pit == policies_.end()) return;
-        enqueue_policy_output_locked(pit->second, pit->second.schedule_id, alarm, event_type, pit->second.id);
+        const Policy* policy = find_policy_locked(selectedPolicyId);
+        if (!policy) return;
+        enqueue_policy_output_locked(*policy, policy->schedule_id, alarm, event_type, policy->id);
+    }
+
+    const Policy* find_policy_locked(const std::string& id_or_name) const
+    {
+        auto pit = policies_.find(id_or_name);
+        if (pit != policies_.end()) return &pit->second;
+        auto aliasIt = policy_name_to_id_.find(id_or_name);
+        if (aliasIt == policy_name_to_id_.end()) return nullptr;
+        pit = policies_.find(aliasIt->second);
+        if (pit == policies_.end()) return nullptr;
+        return &pit->second;
     }
 
     bool schedule_is_active_locked(const std::string& schedule_id) const
@@ -5501,7 +5527,7 @@ private:
         for (const auto& a : assignments_)
         {
             if (!matches(a)) continue;
-            if (policies_.find(a.plan_id) == policies_.end()) continue;
+            if (!find_policy_locked(a.plan_id)) continue;
             const int klass = assignment_class(a);
             if (klass < bestClass ||
                 (klass == bestClass && (a.priority < bestPriority || (a.priority == bestPriority && a.id < bestAssignmentId))))
@@ -7078,9 +7104,10 @@ private:
 		    std::deque<EscalationLogEntry> escalation_log_;
 		    VoiceModemConfig voice_modem_;
 		    SipConfig sip_;
-	    std::unordered_map<std::string, Contact> contacts_;
+    std::unordered_map<std::string, Contact> contacts_;
     std::unordered_map<std::string, ContactGroup> contact_groups_;
     std::unordered_map<std::string, Policy> policies_;
+    std::unordered_map<std::string, std::string> policy_name_to_id_;
     std::vector<Assignment> assignments_;
     std::vector<AlarmRouteBinding> alarm_route_bindings_;
     std::unordered_map<std::string, Schedule> schedules_;
