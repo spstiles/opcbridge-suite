@@ -8745,6 +8745,8 @@ async function deleteAlarmSiteInteractive(groupName, siteName) {
     ));
   }
 
+  // Intentional destructive edit (removes alarms/rules). Bypass stale-save guardrails.
+  cfg.__allow_alarm_drop = true;
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = `alarm_group:${alarmTreeSafeKey(group)}`;
@@ -8785,6 +8787,8 @@ async function deleteAlarmGroupsBulk(groupNames) {
   const msg = `Delete ${removedGroups || names.length} alarm group${(removedGroups || names.length) === 1 ? '' : 's'} and delete ${assigned.length} alarm${assigned.length === 1 ? '' : 's'} in those groups/sites?`;
   if (!window.confirm(msg)) return false;
 
+  // Intentional destructive edit (removes alarms/rules). Bypass stale-save guardrails.
+  cfg.__allow_alarm_drop = true;
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = 'folder:alarms';
@@ -8832,6 +8836,8 @@ async function deleteAlarmSitesBulk(groupName, siteNames) {
   const msg = `Delete ${removedSites || sites.length} site${(removedSites || sites.length) === 1 ? '' : 's'} under group '${group}' and delete ${assigned.length} alarm${assigned.length === 1 ? '' : 's'} in those sites?`;
   if (!window.confirm(msg)) return false;
 
+  // Intentional destructive edit (removes alarms/rules). Bypass stale-save guardrails.
+  cfg.__allow_alarm_drop = true;
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = `alarm_group:${alarmTreeSafeKey(group)}`;

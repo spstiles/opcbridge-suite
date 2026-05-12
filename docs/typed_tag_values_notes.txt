@@ -1,0 +1,41 @@
+Typed Tag Values (internal representation) — notes
+
+Problem
+- Storing every tag’s value as JSON (e.g., nlohmann::json) is convenient, but expensive at scale:
+  - lots of dynamic type handling
+  - lots of heap allocations / copies (especially strings/objects)
+  - harder to do cheap “did it change?” comparisons
+  - CPU + memory cost tends to scale with total tag count, not change rate
+
+Idea: typed internal struct/variant
+- Keep tag values in a small native C++ type that can only represent the value kinds we actually expect.
+- Convert to JSON only at the boundaries (HTTP/WS responses, config/debug, etc.).
+
+Conceptual types
+- TagValue: a discriminated union (variant) of the common value types:
+  - null/invalid
+  - bool
+  - int64_t
+  - double
+  - string (only when the source is actually a string)
+  - optional: bytes (vector<uint8_t>) if needed
+
+- TagSample: the value + metadata you nearly always need alongside it:
+  - TagValue value
+  - int64_t ts_ms (update time)
+  - optional: quality (good/bad/uncertain), source timestamp, etc.
+
+Why it helps
+- Much less allocation in the hot loop (poll → store → compare → fanout), especially for numeric tags.
+- Cheap equality checks for change detection, so downstream work scales with change rate.
+- JSON still exists for:
+  - config files / config APIs
+  - REST/WS payloads
+  - ad-hoc debugging
+
+Key pattern
+1) Drivers update TagSample (typed) in-memory
+2) Compare with previous value; if unchanged, do nothing
+3) Only if changed: notify alarms/historian/ws
+4) Only at API boundary: convert TagSample → JSON
+
