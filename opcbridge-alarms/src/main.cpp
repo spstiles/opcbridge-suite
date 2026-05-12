@@ -1089,8 +1089,6 @@ static std::string pjsua_run_call_with_file(
         args.push_back("--play-file=" + wav_path);
     }
 
-    args.push_back(dest);
-
     // Spawn pjsua under a PTY so interactive commands work.
     int master_fd = -1;
     pid_t pid = forkpty(&master_fd, nullptr, nullptr, nullptr);
@@ -1138,9 +1136,10 @@ static std::string pjsua_run_call_with_file(
     // Hard deadline for the pjsua helper process. We use a small pad to allow
     // SIP BYE + cleanup, but avoid keeping calls open long after the desired end.
     const int64_t hard_deadline = t0 + static_cast<int64_t>(duration_sec + ack_wait_sec + 15) * 1000;
-    const int64_t ring_deadline = t0 + static_cast<int64_t>(ring_timeout_sec) * 1000;
     std::string log;
     log.reserve(256 * 1024);
+    bool sent_make_call = false;
+    int64_t call_started_at = -1;
     bool answered = false;
     int64_t answered_at = -1;
     bool connected = false;
@@ -1228,6 +1227,27 @@ static std::string pjsua_run_call_with_file(
 
         const int64_t now = steady_ms();
 
+        if (!sent_make_call)
+        {
+            const bool registered =
+                log.find("registration success") != std::string::npos ||
+                log.find("200/REGISTER") != std::string::npos ||
+                log.find("200/OK (expires=") != std::string::npos;
+            const bool register_failed =
+                log.find("403/REGISTER") != std::string::npos ||
+                log.find("404/REGISTER") != std::string::npos ||
+                log.find("503/REGISTER") != std::string::npos;
+            // Prefer waiting for registration. If a PBX does not require registration
+            // or pjsua's wording changes, place the call after a short startup grace.
+            if (registered || register_failed || now >= (t0 + 3000))
+            {
+                write_str("m\n");
+                write_str(dest + "\n");
+                sent_make_call = true;
+                call_started_at = now;
+            }
+        }
+
         auto request_hangup_and_quit = [&]() {
             // Try multiple forms; pjsua console/CLI variants differ across builds.
             // Newer CLI mode uses shortcuts such as "g" for hangup (see pjsua CLI docs).
@@ -1265,7 +1285,8 @@ static std::string pjsua_run_call_with_file(
             write_str("cd " + std::to_string(filePort) + " " + std::to_string(targetCallPort) + "\n");
         };
 
-        if (!answered && now >= ring_deadline)
+        const int64_t ring_deadline = (call_started_at > 0 ? call_started_at : t0) + static_cast<int64_t>(ring_timeout_sec) * 1000;
+        if (sent_make_call && !answered && now >= ring_deadline)
         {
             // Ring timeout: hang up and quit so the next target can proceed.
             request_hangup_and_quit();
@@ -5356,6 +5377,7 @@ private:
     void enqueue_policy_jobs_locked(const AlarmState& alarm, const std::string& event_type)
     {
         bool matchedAlarmRoute = false;
+        std::unordered_set<std::string> enqueuedRoutePolicies;
         for (const auto& route : alarm_route_bindings_)
         {
             if (!route.enabled) continue;
@@ -5365,6 +5387,8 @@ private:
             {
                 const Policy* policy = find_policy_locked(policyId);
                 if (!policy) continue;
+                const std::string dedupeKey = policy->id + "\n" + route.schedule_id;
+                if (!enqueuedRoutePolicies.insert(dedupeKey).second) continue;
                 enqueue_policy_output_locked(*policy, route.schedule_id, alarm, event_type, route.name.empty() ? route.id : route.name);
             }
         }
