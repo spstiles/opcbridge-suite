@@ -8700,6 +8700,8 @@ async function deleteAlarmGroupInteractive(groupName) {
     cfg.alarms = (Array.isArray(cfg.alarms) ? cfg.alarms : []).filter((a) => String(a?.group || '').trim().toLowerCase() !== want);
   }
 
+  // Intentional destructive edit (removes alarms/rules). Bypass stale-save guardrails.
+  cfg.__allow_alarm_drop = true;
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = 'folder:alarms';
