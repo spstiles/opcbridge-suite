@@ -602,6 +602,7 @@ const state = {
   userAuthTimer: null,
 
   refreshTimer: null,
+  uiRefreshReady: false,
 
   liveTagsLast: null,
   liveTagFilter: { type: 'all', label: 'All' },
@@ -631,6 +632,7 @@ const state = {
 
   // workspace rendering
   workspaceRenderSeq: 0,
+  workspaceTabLoadInFlight: false,
   selectedConnPath: '',
   selectedConnObj: null,
   selectedConnRawDirty: false,
@@ -1957,6 +1959,14 @@ function setTab(id) {
     renderAlarmsSchemaStatus(state.alarmsStatusLast);
     renderAlarmsEventsTree();
   }
+  if (id === 'workspace') {
+    refreshWorkspaceTab().catch((err) => {
+      if (els.statusLine) els.statusLine.textContent = `Workspace refresh failed: ${err.message}`;
+    });
+  }
+  if (state.uiRefreshReady && (id === 'overview' || id === 'workspace' || id === 'alarms_events')) {
+    refreshVisible().catch(() => {});
+  }
 }
 
 els.tabs?.addEventListener('click', (e) => {
@@ -2179,7 +2189,7 @@ function wireOverviewRuntimeUi() {
   refreshBtns.forEach((btn) => {
     if (btn.dataset.wired === '1') return;
     btn.dataset.wired = '1';
-    btn.addEventListener('click', () => { refreshAll().catch(() => {}); });
+    btn.addEventListener('click', () => { refreshAlarmsRuntimeViews().catch(() => {}); });
   });
   const restartBtns = [els.alarmRuntimeRestartBtn, els.alarmsEventsRuntimeRestartBtn].filter(Boolean);
   restartBtns.forEach((btn) => {
@@ -2889,8 +2899,8 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   renderWorkspaceSaveBar();
   await opcbridgeReload();
   await loadTagsConfig();
-  await refreshAll().catch(() => {});
   renderWorkspaceTree();
+  await refreshVisible().catch(() => {});
 
   const skipped = Number(result?.skipped || 0);
   const wrong = Number(result?.skipped_wrong_connection_id || 0);
@@ -8316,7 +8326,7 @@ async function saveEditedAlarmFromModal() {
 async function saveEditedAlarmFromModalReload() {
   await saveEditedAlarmFromModal();
   try { await opcbridgeReload(); } catch { /* ignore */ }
-  try { await refreshAll(); } catch { /* ignore */ }
+  try { await refreshAlarmsRuntimeViews(); } catch { /* ignore */ }
 }
 
 async function saveEditedDeviceFromModal() {
@@ -8708,7 +8718,7 @@ async function deleteAlarmGroupInteractive(groupName) {
   state.alarmsEventsSelectedChildId = '';
   renderAlarmsEventsTree();
   await opcbridgeReload().catch(() => {});
-  await refreshAll().catch(() => {});
+  await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) {
     els.alarmsEventsPropsStatus.textContent = assigned.length
       ? `Deleted group '${group}' and deleted ${assigned.length} alarm${assigned.length === 1 ? '' : 's'}.`
@@ -8755,7 +8765,7 @@ async function deleteAlarmSiteInteractive(groupName, siteName) {
   state.alarmsEventsSelectedChildId = '';
   renderAlarmsEventsTree();
   await opcbridgeReload().catch(() => {});
-  await refreshAll().catch(() => {});
+  await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) {
     els.alarmsEventsPropsStatus.textContent = assigned.length
       ? `Deleted site '${site}' and deleted ${assigned.length} alarm${assigned.length === 1 ? '' : 's'}.`
@@ -8798,7 +8808,7 @@ async function deleteAlarmGroupsBulk(groupNames) {
   state.alarmsEventsSelectedChildIds = [];
   renderAlarmsEventsTree();
   await opcbridgeReload().catch(() => {});
-  await refreshAll().catch(() => {});
+  await refreshAlarmsRuntimeViews().catch(() => {});
   return true;
 }
 
@@ -8847,7 +8857,7 @@ async function deleteAlarmSitesBulk(groupName, siteNames) {
   state.alarmsEventsSelectedChildIds = [];
   renderAlarmsEventsTree();
   await opcbridgeReload().catch(() => {});
-  await refreshAll().catch(() => {});
+  await refreshAlarmsRuntimeViews().catch(() => {});
   return true;
 }
 
@@ -8889,7 +8899,7 @@ async function deleteAlarmById(alarmId) {
     await opcbridgeReload().catch((err) => {
       setDeleteStatus(`Deleted alarm '${id}', but reload failed: ${err.message}`);
     });
-    await refreshAll().catch(() => {});
+    await refreshAlarmsRuntimeViews().catch(() => {});
     setDeleteStatus(`Deleted alarm '${id}'.`);
   } catch (err) {
     setDeleteStatus(`Delete failed: ${err.message}`);
@@ -9356,7 +9366,7 @@ async function duplicateAlarmById(alarmId) {
   selectAlarmEventsAlarm(newId, next.group, next.site);
   renderAlarmsEventsTree();
   await opcbridgeReload().catch(() => {});
-  await refreshAll().catch(() => {});
+  await refreshAlarmsRuntimeViews().catch(() => {});
   return true;
 }
 
@@ -9377,7 +9387,7 @@ async function setSiteAlarmProcessing(groupName, siteName, enabled) {
   state.alarmsEventsSelectedNodeId = alarmEventsSiteNodeId(group, site);
   renderAlarmsEventsTree();
   await opcbridgeReload().catch(() => {});
-  await refreshAll().catch(() => {});
+  await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `Site alarm processing ${enabled ? 'enabled' : 'disabled'}.`;
   return true;
 }
@@ -9403,7 +9413,7 @@ async function setAllAlarmsInSiteEnabled(groupName, siteName, enabled) {
   state.alarmsEventsSelectedNodeId = alarmEventsSiteNodeId(group, site);
   renderAlarmsEventsTree();
   await opcbridgeReload().catch(() => {});
-  await refreshAll().catch(() => {});
+  await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `${doneWord} ${count} individual alarm${count === 1 ? '' : 's'} in '${site}'.`;
   return true;
 }
@@ -9439,7 +9449,7 @@ async function setAudioFileForAlarmScope(scope, groupName, siteName = '') {
   else state.alarmsEventsSelectedNodeId = alarmEventsSiteNodeId(group, site);
   renderAlarmsEventsTree();
   await opcbridgeReload().catch(() => {});
-  await refreshAll().catch(() => {});
+  await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `${audioFileId ? 'Updated' : 'Cleared'} alarm audio file for ${alarms.length} alarm${alarms.length === 1 ? '' : 's'}.`;
   return true;
 }
@@ -9918,7 +9928,12 @@ function renderAlarmsEventsTreeNode(node, container) {
       items.push('sep');
     }
 
-    items.push({ label: 'Refresh', onClick: async () => { await loadTagsConfig().catch(() => {}); await refreshAll().catch(() => {}); renderAlarmsEventsTree(); } });
+    items.push({ label: 'Refresh', onClick: async () => {
+      await loadTagsConfig().catch(() => {});
+      await loadOpcbridgeAlarmsConfig().catch(() => null);
+      await refreshAlarmsRuntimeViews({ renderTree: false }).catch(() => {});
+      renderAlarmsEventsTree();
+    } });
 
     if (!items.length) return;
     showContextMenu(e.clientX, e.clientY, items);
@@ -12362,7 +12377,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
 
     const doReload = async () => {
       await loadOpcbridgeAlarmsConfig().catch(() => null);
-      await refreshAll().catch(() => {});
+      await refreshAlarmsRuntimeViews({ renderTree: false }).catch(() => {});
       renderAlarmsEventsTree();
     };
 
@@ -12635,7 +12650,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
 
     const doReload = async () => {
       await loadOpcbridgeAlarmsConfig().catch(() => null);
-      await refreshAll().catch(() => {});
+      await refreshAlarmsRuntimeViews({ renderTree: false }).catch(() => {});
       renderAlarmsEventsTree();
     };
 
@@ -13037,7 +13052,7 @@ function renderTreeNode(node, container) {
       items.push('sep');
     }
 
-    items.push({ label: 'Refresh', onClick: async () => { await loadConnectionsList(); await loadTagsConfig(); await refreshAll(); renderWorkspaceTree(); } });
+    items.push({ label: 'Refresh', onClick: async () => { await refreshWorkspaceConfigViews(); } });
 
     if (!items.length) return;
     showContextMenu(e.clientX, e.clientY, items);
@@ -13486,6 +13501,33 @@ function selectWorkspaceNodeById(id) {
   renderWorkspaceDetails(node);
 }
 
+async function refreshWorkspaceTab() {
+  if (!isPanelActive('tab-workspace')) return;
+  if (state.workspaceTabLoadInFlight) return;
+  state.workspaceTabLoadInFlight = true;
+  try {
+    await Promise.all([
+      loadConnectionsList(),
+      loadTagsConfig()
+    ]);
+    renderWorkspaceTree();
+    if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
+  } finally {
+    state.workspaceTabLoadInFlight = false;
+  }
+}
+
+async function refreshWorkspaceConfigViews() {
+  await Promise.all([
+    loadConnectionsList(),
+    loadTagsConfig()
+  ]);
+  renderWorkspaceTree();
+  if (isPanelActive('tab-workspace')) {
+    await refreshVisible().catch(() => {});
+  }
+}
+
 async function saveWorkspaceAll({ reload }) {
   if (!workspaceIsDirty()) {
     if (!reload) return;
@@ -13716,11 +13758,15 @@ function renderLiveTagsInto(tbody, tags) {
 function renderLiveTags(tagsResp) {
   state.liveTagsLast = tagsResp;
   const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
-  renderLiveTagsInto(els.tagsTableBody, tags);
+  if (isPanelActive('tab-tags')) {
+    renderLiveTagsInto(els.tagsTableBody, tags);
+  }
 
   updateWorkspaceLiveTagFilterLabel();
-  const filtered = filterLiveTagsForWorkspace(tags);
-  renderLiveTagsInto(els.workspaceLiveTagsTbody, filtered);
+  if (isPanelActive('tab-workspace')) {
+    const filtered = filterLiveTagsForWorkspace(tags);
+    renderLiveTagsInto(els.workspaceLiveTagsTbody, filtered);
+  }
 }
 
 
@@ -13809,9 +13855,34 @@ async function restartAlarmRuntimeService() {
   try {
     const res = await apiPostJson('/api/alarms/systemd/restart', {});
     if (!res?.ok) throw new Error(res?.error || 'Restart failed.');
-    await refreshAll();
+    await refreshAlarmsRuntimeViews();
   } catch (err) {
     setAlarmRuntimeWarningUi(`Restart failed: ${err.message}`);
+  }
+}
+
+async function refreshAlarmsRuntimeViews({ renderTree = true } = {}) {
+  const [alarmsStatus, active, history, all] = await Promise.all([
+    apiGet('/api/alarms/alarm/api/status').catch(() => state.alarmsStatusLast || { ok: false }),
+    apiGet('/api/alarms/alarm/api/alarms/active').catch(() => ({ ok: false, alarms: [] })),
+    apiGet('/api/alarms/alarm/api/alarms/history?limit=200').catch(() => ({ ok: false, events: [] })),
+    apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] }))
+  ]);
+
+  state.alarmsStatusLast = alarmsStatus;
+  state.alarmsAllLast = all;
+  state.alarmsAll = Array.isArray(all?.alarms) ? all.alarms : [];
+  renderJson(els.alarmsStatusJson, alarmsStatus);
+  renderAlarmsSchemaStatus(alarmsStatus);
+  renderActiveAlarms(active);
+  renderAlarmEvents(history);
+  setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
+
+  if (renderTree && isPanelActive('tab-alarms_events')) {
+    renderAlarmsEventsTree();
+  } else if (isPanelActive('tab-alarms_events') && !isAlarmsEventsPropertiesEditorOpen()) {
+    if (els.alarmsEventsChildrenTbody?.children?.length) updateAlarmsEventsLiveCells();
+    else renderAlarmsEventsTree();
   }
 }
 
@@ -13908,8 +13979,9 @@ async function refreshVisible() {
     renderRuntimeRebuildStatus(reloadStatus);
     renderAlarmsSchemaStatus(alarmsStatus);
     renderOverviewHealth(health);
+    setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
-    const wantLiveTags = isPanelActive('tab-overview') || isPanelActive('tab-workspace');
+    const wantLiveTags = isPanelActive('tab-workspace');
     if (wantLiveTags) {
       const tags = await apiGet('/api/opcbridge/tags');
       renderLiveTags(tags);
@@ -13940,12 +14012,8 @@ async function refreshVisible() {
       }
     }
 
-    // Workspace is mostly local state; avoid network chatter during edits.
-    if (isPanelActive('tab-workspace') &&
-        !els.workspaceItemModal?.contains?.(document.activeElement) &&
-        !els.newTagModal?.contains?.(document.activeElement)) {
-      renderWorkspaceTree();
-    }
+    // Workspace config/tree rendering is driven by edits, imports, and manual refresh.
+    // The timer only refreshes the live tag table to avoid rebuilding large trees every tick.
 
     const overall = String(health?.status || 'unknown');
     const elapsed = Date.now() - started;
@@ -14733,6 +14801,7 @@ async function main() {
   // Always render at least the skeleton tree/table so the Workspace UI isn't blank.
   renderWorkspaceTree();
 
+  state.uiRefreshReady = true;
   try {
     await refreshVisible();
   } catch {

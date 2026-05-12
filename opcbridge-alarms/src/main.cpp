@@ -1146,6 +1146,7 @@ static std::string pjsua_run_call_with_file(
     bool connected = false;
     int filePort = -1;
     int callPort = -1;
+    int connectedCallPort = -1;
     bool sent_connect = false;
     int64_t last_cl_ms = 0;
     bool audio_disconnected = false;
@@ -1244,6 +1245,26 @@ static std::string pjsua_run_call_with_file(
             exit_deadline_ms = steady_ms() + 3000;
         };
 
+        auto connect_file_to_call = [&]() {
+            if (filePort <= 0 || callPort <= 0) return;
+            // Use exactly one conference-connect form. Sending both the one-line
+            // and interactive forms can create duplicate WAV->call links on pjsua
+            // builds that accept both.
+            write_str("cc " + std::to_string(filePort) + " " + std::to_string(callPort) + "\n");
+            connected = true;
+            connectedCallPort = callPort;
+            sent_connect = true;
+            audio_disconnected = false;
+            outRes.file_port = filePort;
+            outRes.call_port = callPort;
+            outRes.file_connected_to_call = true;
+        };
+
+        auto disconnect_file_from_call = [&](int targetCallPort) {
+            if (filePort <= 0 || targetCallPort <= 0) return;
+            write_str("cd " + std::to_string(filePort) + " " + std::to_string(targetCallPort) + "\n");
+        };
+
         if (!answered && now >= ring_deadline)
         {
             // Ring timeout: hang up and quit so the next target can proceed.
@@ -1339,17 +1360,7 @@ static std::string pjsua_run_call_with_file(
                 if (filePort > 0 && callPort > 0 && !sent_connect)
                 {
                     // Connect file -> call (source to destination).
-                    // Prefer one-line form first (works on some pjsua builds):
-                    write_str("cc " + std::to_string(filePort) + " " + std::to_string(callPort) + "\n");
-                    // Also send interactive form (harmless if the one-line worked):
-                    write_str("cc\n");
-                    write_str(std::to_string(filePort) + "\n");
-                    write_str(std::to_string(callPort) + "\n");
-                    connected = true;
-                    sent_connect = true;
-                    outRes.file_port = filePort;
-                    outRes.call_port = callPort;
-                    outRes.file_connected_to_call = true;
+                    connect_file_to_call();
                 }
             }
             // If we don't have a call port yet, keep requesting `cl` until it shows up
@@ -1361,26 +1372,19 @@ static std::string pjsua_run_call_with_file(
             }
         }
 
-        // If pjsua re-negotiates media (e.g., sends UPDATE), the SIP media port can be removed
-        // and re-added with a new port number (e.g., 4 -> 5). If we've already connected the
-        // wav to the call once, keep it connected to the latest SIP media port.
-        if (answered && !wav_path.empty())
+        // Some PBXs send UPDATE/re-INVITE shortly after answer, which can make pjsua report
+        // a new SIP media conference port. Reconnecting the same WAV source at that point can
+        // leave more than one transmit path active on some pjsua builds, which makes the
+        // called phone hear the message twice. Keep the playback path single-shot for now, and
+        // keep callPort pointing at the port we actually connected so cleanup disconnects it.
+        if (answered && !connected && !wav_path.empty())
         {
             if (filePort < 0) filePort = pjsua_find_port_for_wav(log, wav_path);
             const int latestCallPort = pjsua_find_call_port(log);
-            if (latestCallPort > 0 && filePort > 0 && latestCallPort != callPort)
+            if (latestCallPort > 0 && latestCallPort != callPort)
             {
                 callPort = latestCallPort;
-                // (Re)connect file -> call.
-                write_str("cc " + std::to_string(filePort) + " " + std::to_string(callPort) + "\n");
-                write_str("cc\n");
-                write_str(std::to_string(filePort) + "\n");
-                write_str(std::to_string(callPort) + "\n");
-                connected = true;
-                sent_connect = true;
-                outRes.file_port = filePort;
                 outRes.call_port = callPort;
-                outRes.file_connected_to_call = true;
             }
         }
 
@@ -1417,11 +1421,7 @@ static std::string pjsua_run_call_with_file(
             if (answered_at > 0 && now >= (answered_at + audio_ms + 250))
             {
                 // Disconnect file -> call.
-                write_str("cd " + std::to_string(filePort) + " " + std::to_string(callPort) + "\n");
-                // Also try interactive form (harmless if one-line worked):
-                write_str("cd\n");
-                write_str(std::to_string(filePort) + "\n");
-                write_str(std::to_string(callPort) + "\n");
+                disconnect_file_from_call(connectedCallPort > 0 ? connectedCallPort : callPort);
                 audio_disconnected = true;
             }
         }
@@ -1553,9 +1553,16 @@ public:
                 // transmit connection stays valid.
                 audio_media_ = getAudioMedia(static_cast<int>(i));
                 pj::AudioMedia& am = *audio_media_;
-                // Safe to call repeatedly; pjmedia will de-dup connections.
-                if (keepalive_player_) keepalive_player_->startTransmit(am);
-                if (player_) player_->startTransmit(am);
+                if (keepalive_player_ && !keepalive_started_)
+                {
+                    keepalive_player_->startTransmit(am);
+                    keepalive_started_ = true;
+                }
+                if (player_ && !player_started_)
+                {
+                    player_->startTransmit(am);
+                    player_started_ = true;
+                }
                 break;
             }
         }
@@ -1595,6 +1602,8 @@ private:
     int64_t start_ms_ = 0;
     pj::AudioMediaPlayer* player_ = nullptr;
     pj::AudioMediaPlayer* keepalive_player_ = nullptr;
+    bool player_started_ = false;
+    bool keepalive_started_ = false;
     std::optional<pj::AudioMedia> audio_media_;
 };
 

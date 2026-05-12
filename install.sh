@@ -26,6 +26,10 @@ ODBC_DRIVER=""
 WITH_PJSIP=0
 WITH_PJSIP_EXPLICIT=0
 
+LIBPLCTAG_VERSION="${OPCBRIDGE_LIBPLCTAG_VERSION:-v2.6.12}"
+IXWEBSOCKET_VERSION="${OPCBRIDGE_IXWEBSOCKET_VERSION:-v11.4.6}"
+FORCE_SOURCE_DEPS="${OPCBRIDGE_FORCE_SOURCE_DEPS:-0}"
+
 PROFILE=""
 COMPONENTS=()
 INIT_HISTORIAN_DB=0
@@ -68,7 +72,9 @@ Options:
 Notes:
 - This script targets Debian 13 derivatives (systemd).
 - It never writes secrets into the repo; tokens live in ${ENV_FILE}.
-- --deps uses apt and needs package repo access.
+- --deps uses apt plus source builds for libplctag/IXWebSocket and needs network access.
+- Source dependency versions can be overridden with OPCBRIDGE_LIBPLCTAG_VERSION and
+  OPCBRIDGE_IXWEBSOCKET_VERSION; set OPCBRIDGE_FORCE_SOURCE_DEPS=1 to rebuild them.
 USAGE
 }
 
@@ -204,6 +210,113 @@ install_pjproject() {
   rm -rf "$workdir" || true
 }
 
+ensure_local_ldconfig_path() {
+  local ldconf="/etc/ld.so.conf.d/opcbridge-local.conf"
+  mkdir -p "$(dirname "$ldconf")"
+  if [[ ! -f "$ldconf" ]] || ! grep -Fxq "/usr/local/lib" "$ldconf" 2>/dev/null; then
+    printf '%s\n' "/usr/local/lib" >"$ldconf"
+  fi
+  if have_cmd ldconfig; then
+    ldconfig >/dev/null 2>&1 || true
+  fi
+}
+
+clone_source_dep() {
+  local repo="$1"
+  local ref="$2"
+  local dst="$3"
+  if [[ -n "$ref" ]]; then
+    if git clone --depth 1 --branch "$ref" "$repo" "$dst"; then
+      return 0
+    fi
+    echo "Warning: failed to clone ${repo} at ${ref}; falling back to default branch." >&2
+  fi
+  git clone --depth 1 "$repo" "$dst"
+}
+
+install_libplctag_source() {
+  local have_libplctag=0
+  if [[ -f /usr/local/include/libplctag.h ]] &&
+     { [[ -e /usr/local/lib/libplctag.so ]] || [[ -e /usr/local/lib/libplctag_static.a ]]; }; then
+    have_libplctag=1
+  fi
+  if [[ "$FORCE_SOURCE_DEPS" != "1" && "$have_libplctag" -eq 1 ]]; then
+    echo "libplctag already installed under /usr/local"
+    ensure_local_ldconfig_path
+    return 0
+  fi
+
+  echo "Installing libplctag ${LIBPLCTAG_VERSION} from source..."
+  local workdir
+  workdir="$(mktemp -d -t opcbridge-libplctag.XXXXXX)"
+  clone_source_dep "https://github.com/libplctag/libplctag.git" "$LIBPLCTAG_VERSION" "${workdir}/src"
+
+  cmake -S "${workdir}/src" -B "${workdir}/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_TESTS=OFF \
+    -DUSE_SANITIZERS=OFF
+  cmake --build "${workdir}/build" --target install -j"$(nproc)"
+
+  ensure_local_ldconfig_path
+  rm -rf "$workdir" || true
+  echo "libplctag installed."
+}
+
+install_ixwebsocket_source() {
+  local have_ixwebsocket=0
+  if [[ -f /usr/local/include/ixwebsocket/IXWebSocketServer.h ]] &&
+     { [[ -e /usr/local/lib/libixwebsocket.a ]] || [[ -e /usr/local/lib/libixwebsocket.so ]]; }; then
+    have_ixwebsocket=1
+  fi
+  if [[ "$FORCE_SOURCE_DEPS" != "1" && "$have_ixwebsocket" -eq 1 ]]; then
+    echo "IXWebSocket already installed under /usr/local"
+    ensure_local_ldconfig_path
+    return 0
+  fi
+
+  echo "Installing IXWebSocket ${IXWEBSOCKET_VERSION} from source..."
+  local workdir
+  workdir="$(mktemp -d -t opcbridge-ixwebsocket.XXXXXX)"
+  clone_source_dep "https://github.com/machinezone/IXWebSocket.git" "$IXWEBSOCKET_VERSION" "${workdir}/src"
+
+  cmake -S "${workdir}/src" -B "${workdir}/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DUSE_TLS=ON \
+    -DUSE_OPEN_SSL=ON \
+    -DUSE_ZLIB=ON \
+    -DIXWEBSOCKET_INSTALL=ON \
+    -DBUILD_DEMO=OFF
+  cmake --build "${workdir}/build" --target install -j"$(nproc)"
+
+  ensure_local_ldconfig_path
+  rm -rf "$workdir" || true
+  echo "IXWebSocket installed."
+}
+
+install_source_deps() {
+  local needs_plctag=0
+  local needs_ixwebsocket=0
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
+    needs_plctag=1
+    needs_ixwebsocket=1
+  fi
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(alarms|historian)'; then
+    needs_ixwebsocket=1
+  fi
+
+  if [[ "$needs_plctag" -eq 1 ]]; then
+    install_libplctag_source
+  fi
+  if [[ "$needs_ixwebsocket" -eq 1 ]]; then
+    install_ixwebsocket_source
+  fi
+}
+
 install_licenses() {
   # Keep the installed suite self-contained for license compliance.
   local dst="${PREFIX}/${LICENSES_ROOT_REL}"
@@ -298,7 +411,7 @@ install_deps() {
   # Note: even when using --no-build, we still install the dev packages because:
   # - They pull in the correct runtime libs on Debian derivatives (including t64 transitions).
   # - It avoids "missing *.so" surprises for users.
-  pkgs+=(build-essential pkg-config)
+  pkgs+=(build-essential pkg-config git cmake)
   pkgs+=(libssl-dev zlib1g-dev libsqlite3-dev)
   # JSON header-only library used across components (e.g., opcbridge-alarms).
   pkgs+=(nlohmann-json3-dev)
@@ -396,16 +509,18 @@ install_deps() {
     fi
   fi
 
-  # Libraries we cannot reliably install from apt (often built from source into /usr/local).
+  # Libraries we build from source below because Debian packages are not reliable/available
+  # across the target systems for the versions and headers opcbridge expects.
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
     echo ""
-    echo "Note: opcbridge build expects these libs (often installed to /usr/local):"
-    echo "  - libplctag (libplctag.so)"
-    echo "  - libixwebsocket (libixwebsocket.so)"
+    echo "Source dependencies will be checked/installed under /usr/local:"
+    echo "  - libplctag (${LIBPLCTAG_VERSION})"
+    echo "  - IXWebSocket (${IXWEBSOCKET_VERSION})"
   fi
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
     echo ""
-    echo "Note: opcbridge-alarms build expects libixwebsocket (often installed to /usr/local)."
+    echo "Source dependency will be checked/installed under /usr/local:"
+    echo "  - IXWebSocket (${IXWEBSOCKET_VERSION})"
   fi
 }
 
@@ -1361,6 +1476,7 @@ main() {
 
   if [[ "$INSTALL_DEPS" -eq 1 ]]; then
     install_deps
+    install_source_deps
     echo ""
     echo "Dependencies installed."
     echo ""
