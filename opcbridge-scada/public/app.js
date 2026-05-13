@@ -262,6 +262,11 @@
   // Alarms
   activeAlarmsTableBody: document.querySelector('#activeAlarmsTable tbody'),
   alarmEventsTableBody: document.querySelector('#alarmEventsTable tbody'),
+  alarmEventsStatus: document.getElementById('alarmEventsStatus'),
+  alarmEventsDownloadCsvBtn: document.getElementById('alarmEventsDownloadCsvBtn'),
+  alarmActivityTableBody: document.querySelector('#alarmActivityTable tbody'),
+  alarmActivityStatus: document.getElementById('alarmActivityStatus'),
+  alarmActivityRefreshBtn: document.getElementById('alarmActivityRefreshBtn'),
 
   // Logs
   logsSource: document.getElementById('logsSource'),
@@ -621,6 +626,7 @@ const state = {
   alarmsAll: [],
   alarmsStatusLast: null,
   alarmHistoryLast: null,
+  alarmActivityLast: null,
   // alarms config (from opcbridge alarms.json via /config/alarms)
   alarmsConfigLast: null,
   alarmsConfig: null,
@@ -2237,6 +2243,18 @@ function wireOverviewRuntimeUi() {
     btn.dataset.wired = '1';
     btn.addEventListener('click', restartAlarmRuntimeService);
   });
+  if (els.alarmActivityRefreshBtn && els.alarmActivityRefreshBtn.dataset.wired !== '1') {
+    els.alarmActivityRefreshBtn.dataset.wired = '1';
+    els.alarmActivityRefreshBtn.addEventListener('click', () => { refreshAlarmsRuntimeViews().catch(() => {}); });
+  }
+  if (els.alarmEventsDownloadCsvBtn && els.alarmEventsDownloadCsvBtn.dataset.wired !== '1') {
+    els.alarmEventsDownloadCsvBtn.dataset.wired = '1';
+    els.alarmEventsDownloadCsvBtn.addEventListener('click', () => {
+      downloadAlarmEventsHistoryCsv().catch((err) => {
+        if (els.alarmEventsStatus) els.alarmEventsStatus.textContent = `CSV download failed: ${err.message}`;
+      });
+    });
+  }
 }
 
 async function waitForOpcbridgeReloadDone({ gen, maxWaitMs = 180000, intervalMs = 750 } = {}) {
@@ -3261,6 +3279,14 @@ function fmtTime(tsMs) {
   const t = Number(tsMs);
   if (!Number.isFinite(t) || t <= 0) return '';
   try { return new Date(t).toLocaleString(); } catch { return new Date(t).toISOString(); }
+}
+
+function fmtLogTime(tsMs) {
+  const t = Number(tsMs);
+  if (!Number.isFinite(t) || t <= 0) return '';
+  const d = new Date(t);
+  const two = (v) => String(v).padStart(2, '0');
+  return `${two(d.getMonth() + 1)}/${two(d.getDate())}/${two(d.getFullYear() % 100)} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
 }
 
 function renderJson(el, obj) {
@@ -13969,6 +13995,38 @@ function renderActiveAlarms(activeResp) {
   });
 }
 
+function alarmEventLabel(type) {
+  const raw = String(type || '').toLowerCase();
+  if (raw === 'active') return 'Trigger';
+  if (raw === 'return') return 'Clear';
+  return String(type || '');
+}
+
+function alarmSourceLabel(src) {
+  const conn = String(src?.connection_id || '');
+  const tag = String(src?.tag || '');
+  if (conn && tag) return `${conn}:${tag}`;
+  return conn || tag;
+}
+
+function alarmValueText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+function appendTextCell(row, text, { code = false } = {}) {
+  const td = document.createElement('td');
+  if (code) {
+    const c = document.createElement('code');
+    c.textContent = text == null ? '' : String(text);
+    td.appendChild(c);
+  } else {
+    td.textContent = text == null ? '' : String(text);
+  }
+  row.appendChild(td);
+}
+
 function renderAlarmEvents(histResp) {
   state.alarmHistoryLast = histResp;
   if (!els.alarmEventsTableBody) return;
@@ -13977,16 +14035,94 @@ function renderAlarmEvents(histResp) {
   events.forEach((ev) => {
     const src = ev?.source || {};
     const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td><code>${fmtTime(ev?.ts_ms)}</code></td>
-      <td><code>${String(ev?.type || '')}</code></td>
-      <td><code>${String(ev?.alarm_id || '')}</code></td>
-      <td><code>${String(ev?.severity ?? '')}</code></td>
-      <td><code>${String(src?.connection_id || '')}:${String(src?.tag || '')}</code></td>
-      <td><code>${ev?.value == null ? '' : (typeof ev.value === 'string' ? ev.value : JSON.stringify(ev.value))}</code></td>
-      <td>${ev?.message == null ? '' : String(ev.message)}</td>
-    `;
+    appendTextCell(tr, fmtLogTime(ev?.ts_ms), { code: true });
+    appendTextCell(tr, alarmEventLabel(ev?.type), { code: true });
+    appendTextCell(tr, ev?.alarm_id || '', { code: true });
+    appendTextCell(tr, ev?.severity ?? '', { code: true });
+    appendTextCell(tr, alarmSourceLabel(src), { code: true });
+    appendTextCell(tr, alarmValueText(ev?.value), { code: true });
+    appendTextCell(tr, ev?.message == null ? '' : ev.message);
     els.alarmEventsTableBody.appendChild(tr);
+  });
+  if (els.alarmEventsStatus) {
+    const shown = events.length;
+    els.alarmEventsStatus.textContent = shown ? `${shown} recent trigger/clear event(s)` : 'No trigger/clear events found.';
+  }
+}
+
+function alarmActivityRows(historyResp, notificationResp) {
+  const rows = [];
+  const events = Array.isArray(historyResp?.events) ? historyResp.events : [];
+  events.forEach((ev) => {
+    rows.push({
+      ts_ms: Number(ev?.ts_ms || 0),
+      type: alarmEventLabel(ev?.type),
+      alarm_id: String(ev?.alarm_id || ''),
+      route: alarmSourceLabel(ev?.source || {}),
+      detail: ev?.message ? String(ev.message) : `value=${alarmValueText(ev?.value)}`
+    });
+  });
+  const logs = Array.isArray(notificationResp?.log) ? notificationResp.log : [];
+  logs.forEach((entry) => {
+    const routeBits = [entry?.route_type, entry?.contact_name || entry?.contact_id || '', entry?.phone || '']
+      .map((v) => String(v || '').trim())
+      .filter(Boolean);
+    rows.push({
+      ts_ms: Number(entry?.ts_ms || 0),
+      type: String(entry?.action || 'notification'),
+      alarm_id: String(entry?.alarm_id || ''),
+      route: routeBits.join(' / '),
+      detail: String(entry?.detail || '')
+    });
+  });
+  rows.sort((a, b) => Number(b.ts_ms || 0) - Number(a.ts_ms || 0));
+  return rows.slice(0, 200);
+}
+
+function renderAlarmActivity(historyResp, notificationResp) {
+  state.alarmActivityLast = notificationResp;
+  if (!els.alarmActivityTableBody) return;
+  els.alarmActivityTableBody.textContent = '';
+  const rows = alarmActivityRows(historyResp, notificationResp);
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    appendTextCell(tr, fmtLogTime(row.ts_ms), { code: true });
+    appendTextCell(tr, row.type, { code: true });
+    appendTextCell(tr, row.alarm_id, { code: true });
+    appendTextCell(tr, row.route, { code: true });
+    appendTextCell(tr, row.detail);
+    els.alarmActivityTableBody.appendChild(tr);
+  });
+  if (els.alarmActivityStatus) {
+    els.alarmActivityStatus.textContent = rows.length ? `${rows.length} recent activity item(s)` : 'No recent alarm runtime activity found.';
+  }
+}
+
+async function downloadAlarmEventsHistoryCsv() {
+  const resp = await apiGet('/api/alarms/alarm/api/alarms/history?limit=5000&types=active,return');
+  const events = Array.isArray(resp?.events) ? resp.events : [];
+  const rows = events.map((ev) => {
+    const src = ev?.source || {};
+    return {
+      timestamp: fmtLogTime(ev?.ts_ms),
+      event: alarmEventLabel(ev?.type),
+      alarm_id: ev?.alarm_id || '',
+      severity: ev?.severity ?? '',
+      group: ev?.group || '',
+      site: ev?.site || '',
+      connection_id: src?.connection_id || '',
+      tag: src?.tag || '',
+      value: alarmValueText(ev?.value),
+      message: ev?.message == null ? '' : ev.message,
+      actor: ev?.actor == null ? '' : ev.actor,
+      note: ev?.note == null ? '' : ev.note,
+      event_id: ev?.event_id || ''
+    };
+  });
+  downloadTextFile({
+    filename: 'opcbridge-alarm-trigger-clear-history.csv',
+    mime: 'text/csv',
+    text: toCsv(rows, ['timestamp', 'event', 'alarm_id', 'severity', 'group', 'site', 'connection_id', 'tag', 'value', 'message', 'actor', 'note', 'event_id'])
   });
 }
 
@@ -14041,11 +14177,12 @@ async function restartAlarmRuntimeService() {
 }
 
 async function refreshAlarmsRuntimeViews({ renderTree = true } = {}) {
-  const [alarmsStatus, active, history, all] = await Promise.all([
+  const [alarmsStatus, active, history, all, notificationLog] = await Promise.all([
     apiGet('/api/alarms/alarm/api/status').catch(() => state.alarmsStatusLast || { ok: false }),
     apiGet('/api/alarms/alarm/api/alarms/active').catch(() => ({ ok: false, alarms: [] })),
-    apiGet('/api/alarms/alarm/api/alarms/history?limit=200').catch(() => ({ ok: false, events: [] })),
-    apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] }))
+    apiGet('/api/alarms/alarm/api/alarms/history?limit=200&types=active,return').catch(() => ({ ok: false, events: [] })),
+    apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] })),
+    apiGet('/api/alarms/alarm/api/notifications/log?limit=200').catch(() => ({ ok: false, log: [] }))
   ]);
 
   state.alarmsStatusLast = alarmsStatus;
@@ -14055,6 +14192,7 @@ async function refreshAlarmsRuntimeViews({ renderTree = true } = {}) {
   renderAlarmsSchemaStatus(alarmsStatus);
   renderActiveAlarms(active);
   renderAlarmEvents(history);
+  renderAlarmActivity(history, notificationLog);
   setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
   if (renderTree && isPanelActive('tab-alarms_events')) {
@@ -14084,13 +14222,15 @@ async function refreshAll() {
     const tags = await loadVisibleLiveTags();
     renderLiveTags(tags);
 
-const [active, history, all] = await Promise.all([
+const [active, history, all, notificationLog] = await Promise.all([
   apiGet('/api/alarms/alarm/api/alarms/active').catch(() => ({ ok: false, alarms: [] })),
-  apiGet('/api/alarms/alarm/api/alarms/history?limit=200').catch(() => ({ ok: false, events: [] })),
-  apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] }))
+  apiGet('/api/alarms/alarm/api/alarms/history?limit=200&types=active,return').catch(() => ({ ok: false, events: [] })),
+  apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] })),
+  apiGet('/api/alarms/alarm/api/notifications/log?limit=200').catch(() => ({ ok: false, log: [] }))
 ]);
 renderActiveAlarms(active);
 renderAlarmEvents(history);
+renderAlarmActivity(history, notificationLog);
 
 state.alarmsAllLast = all;
 state.alarmsAll = Array.isArray(all?.alarms) ? all.alarms : [];

@@ -91,6 +91,25 @@ code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
   margin-bottom: 0;
 }
 
+.ae-runtime-panels {
+  margin-top: 12px;
+  align-items: start;
+}
+
+.ae-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ae-card-title-row .btn {
+  margin-left: auto;
+}
+
+.ae-runtime-table {
+  max-height: 260px;
+}
+
 pre.mono { margin: 0; padding: 12px; overflow: auto; }
 
 .hint { color: var(--muted); font-size: 12px; margin-bottom: 8px; }

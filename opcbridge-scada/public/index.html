@@ -719,6 +719,58 @@
 	          </div>
 	        </div>
 	      </section>
+
+      <section class="grid ae-runtime-panels">
+        <section class="card">
+          <div class="card-title ae-card-title-row">
+            <span>Alarm Trigger/Clear History</span>
+            <button class="btn" id="alarmEventsDownloadCsvBtn" type="button">Download CSV</button>
+          </div>
+          <div class="card-body">
+            <div class="table-wrap ae-runtime-table">
+              <table class="table" id="alarmEventsTable">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Event</th>
+                    <th>Alarm</th>
+                    <th>Severity</th>
+                    <th>Source</th>
+                    <th>Value</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="hint mono" id="alarmEventsStatus"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-title ae-card-title-row">
+            <span>Alarm Runtime Activity</span>
+            <button class="btn" id="alarmActivityRefreshBtn" type="button">Refresh</button>
+          </div>
+          <div class="card-body">
+            <div class="table-wrap ae-runtime-table">
+              <table class="table" id="alarmActivityTable">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Type</th>
+                    <th>Alarm</th>
+                    <th>Route</th>
+                    <th>Detail</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="hint mono" id="alarmActivityStatus"></div>
+          </div>
+        </section>
+      </section>
 	    </section>
 	    <section id="tab-workspace" class="panel">
 	      <h2>Workspace</h2>
