@@ -51,6 +51,7 @@
 #include <limits.h>
 #include <libgen.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 
 #include <filesystem>
 
@@ -627,6 +628,94 @@ static inline void atomic_update_max(std::atomic<uint64_t> &a, uint64_t v)
     while (cur < v && !a.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {
         // loop
     }
+}
+
+struct SystemTagDef {
+    std::string name;
+    std::string datatype;
+    json value;
+};
+
+static uint64_t read_uint64_file(const fs::path &path, uint64_t fallback = 0) {
+    std::ifstream ifs(path);
+    uint64_t v = fallback;
+    ifs >> v;
+    return v;
+}
+
+static std::vector<SystemTagDef> collect_host_system_tags() {
+    std::vector<SystemTagDef> rows;
+
+    rows.push_back({"System/Host/CpuCount", "int32", static_cast<int>(std::max(1L, sysconf(_SC_NPROCESSORS_ONLN)))});
+
+    double loads[3] = {0.0, 0.0, 0.0};
+    if (getloadavg(loads, 3) == 3) {
+        rows.push_back({"System/Host/LoadAverage1Min", "float64", loads[0]});
+        rows.push_back({"System/Host/LoadAverage5Min", "float64", loads[1]});
+        rows.push_back({"System/Host/LoadAverage15Min", "float64", loads[2]});
+    } else {
+        rows.push_back({"System/Host/LoadAverage1Min", "float64", 0.0});
+        rows.push_back({"System/Host/LoadAverage5Min", "float64", 0.0});
+        rows.push_back({"System/Host/LoadAverage15Min", "float64", 0.0});
+    }
+
+    {
+        std::ifstream mem("/proc/meminfo");
+        std::string key;
+        uint64_t valueKb = 0;
+        std::string unit;
+        uint64_t totalKb = 0;
+        uint64_t availKb = 0;
+        while (mem >> key >> valueKb >> unit) {
+            if (key == "MemTotal:") totalKb = valueKb;
+            else if (key == "MemAvailable:") availKb = valueKb;
+        }
+        const uint64_t totalBytes = totalKb * 1024ULL;
+        const uint64_t availBytes = availKb * 1024ULL;
+        const double usedPct = totalBytes > 0
+            ? 100.0 * static_cast<double>(totalBytes - availBytes) / static_cast<double>(totalBytes)
+            : 0.0;
+        rows.push_back({"System/Host/MemoryTotalBytes", "uint64", totalBytes});
+        rows.push_back({"System/Host/MemoryAvailableBytes", "uint64", availBytes});
+        rows.push_back({"System/Host/MemoryUsedPercent", "float64", usedPct});
+    }
+
+    {
+        struct statvfs st {};
+        double usedPct = 0.0;
+        if (statvfs("/", &st) == 0 && st.f_blocks > 0) {
+            const uint64_t total = static_cast<uint64_t>(st.f_blocks) * static_cast<uint64_t>(st.f_frsize);
+            const uint64_t avail = static_cast<uint64_t>(st.f_bavail) * static_cast<uint64_t>(st.f_frsize);
+            usedPct = total > 0
+                ? 100.0 * static_cast<double>(total - avail) / static_cast<double>(total)
+                : 0.0;
+        }
+        rows.push_back({"System/Host/DiskRootUsedPercent", "float64", usedPct});
+    }
+
+    {
+        double uptime = 0.0;
+        std::ifstream up("/proc/uptime");
+        up >> uptime;
+        rows.push_back({"System/Host/UptimeSeconds", "uint64", static_cast<uint64_t>(std::max(0.0, uptime))});
+    }
+
+    std::error_code ec;
+    std::vector<std::string> interfaces;
+    for (const auto &entry : fs::directory_iterator("/sys/class/net", ec)) {
+        if (ec) break;
+        const std::string iface = entry.path().filename().string();
+        if (iface.empty() || iface == "lo") continue;
+        interfaces.push_back(iface);
+    }
+    std::sort(interfaces.begin(), interfaces.end());
+    for (const auto &iface : interfaces) {
+        const fs::path stats = fs::path("/sys/class/net") / iface / "statistics";
+        rows.push_back({"System/Host/Network/" + iface + "/RxBytes", "uint64", read_uint64_file(stats / "rx_bytes")});
+        rows.push_back({"System/Host/Network/" + iface + "/TxBytes", "uint64", read_uint64_file(stats / "tx_bytes")});
+    }
+
+    return rows;
 }
 
 // -----------------------------
@@ -5853,6 +5942,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         );
         if (!UA_NodeId_isNull(&systemId)) {
             UA_NodeId bridgeSysId = ua_add_folder(server, systemId, "Bridge");
+            UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
             UA_NodeId connectionsSysId = ua_add_folder(server, systemId, "Connections");
 
             if (!UA_NodeId_isNull(&bridgeSysId)) {
@@ -5860,6 +5950,30 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION));
                 ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/ReloadActive", "bool", false);
                 ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/ReloadGeneration", "uint64", 0);
+            }
+
+            if (!UA_NodeId_isNull(&hostSysId)) {
+                UA_NodeId networkSysId = ua_add_folder(server, hostSysId, "Network");
+                std::unordered_map<std::string, UA_NodeId> networkIfaceNodes;
+                for (const auto &hostRow : collect_host_system_tags()) {
+                    const std::string prefix = "System/Host/Network/";
+                    if (hostRow.name.rfind(prefix, 0) == 0 && !UA_NodeId_isNull(&networkSysId)) {
+                        std::string rest = hostRow.name.substr(prefix.size());
+                        size_t slash = rest.find('/');
+                        if (slash == std::string::npos) continue;
+                        std::string iface = rest.substr(0, slash);
+                        auto it = networkIfaceNodes.find(iface);
+                        if (it == networkIfaceNodes.end()) {
+                            UA_NodeId ifaceNode = ua_add_folder(server, networkSysId, iface);
+                            it = networkIfaceNodes.emplace(iface, ifaceNode).first;
+                        }
+                        if (!UA_NodeId_isNull(&it->second)) {
+                            ua_add_system_variable(server, it->second, systemBindings, hostRow.name, hostRow.datatype, hostRow.value);
+                        }
+                    } else {
+                        ua_add_system_variable(server, hostSysId, systemBindings, hostRow.name, hostRow.datatype, hostRow.value);
+                    }
+                }
             }
 
             if (!UA_NodeId_isNull(&connectionsSysId)) {
@@ -6280,6 +6394,10 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     ua_write_system_value("System/Bridge/Version", std::string(OPCBRIDGE_VERSION));
     ua_write_system_value("System/Bridge/ReloadActive", reloadCopy.in_progress || reloadCopy.requested);
     ua_write_system_value("System/Bridge/ReloadGeneration", reloadCopy.gen);
+
+    for (const auto &hostRow : collect_host_system_tags()) {
+        ua_write_system_value(hostRow.name, hostRow.value);
+    }
 
     for (auto &driver : drivers) {
         const std::string prefix = "System/Connections/" + driver.conn.id + "/";
@@ -13529,8 +13647,9 @@ window.addEventListener("load", startAutoRefresh);
 		                }
 		                    root["total"] = rootTotal;
 		                    {
+		                        const auto hostRows = collect_host_system_tags();
 		                        json sys;
-		                        sys["total"] = 4 + static_cast<int>(drivers.size()) * 15;
+		                        sys["total"] = 4 + static_cast<int>(hostRows.size()) + static_cast<int>(drivers.size()) * 15;
 		                        sys["with_snapshot"] = sys["total"];
 		                        sys["good"] = sys["total"];
 		                        sys["bad"] = 0;
@@ -13658,6 +13777,10 @@ window.addEventListener("load", startAutoRefresh);
 									addSystemRow("System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION));
 									addSystemRow("System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested);
 									addSystemRow("System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen);
+
+									for (const auto &hostRow : collect_host_system_tags()) {
+										addSystemRow(hostRow.name, hostRow.datatype, hostRow.value);
+									}
 
 									for (auto &driver : drivers) {
 										const std::string prefix = "System/Connections/" + driver.conn.id + "/";
