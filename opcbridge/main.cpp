@@ -643,6 +643,12 @@ static uint64_t read_uint64_file(const fs::path &path, uint64_t fallback = 0) {
     return v;
 }
 
+static int64_t system_wall_now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+}
+
 static std::vector<SystemTagDef> collect_host_system_tags() {
     std::vector<SystemTagDef> rows;
 
@@ -716,6 +722,84 @@ static std::vector<SystemTagDef> collect_host_system_tags() {
     }
 
     return rows;
+}
+
+static int64_t json_i64_at(const json &root,
+                           std::initializer_list<const char*> path,
+                           int64_t fallback = 0) {
+    const json *cur = &root;
+    for (const char *part : path) {
+        if (!cur->is_object() || !cur->contains(part)) return fallback;
+        cur = &cur->at(part);
+    }
+    if (cur->is_number_integer()) return cur->get<int64_t>();
+    if (cur->is_number_unsigned()) return static_cast<int64_t>(cur->get<uint64_t>());
+    if (cur->is_number_float()) return static_cast<int64_t>(cur->get<double>());
+    return fallback;
+}
+
+static std::vector<SystemTagDef> alarm_default_system_tags(bool connected = false) {
+    return {
+        {"System/Alarms/RuntimeConnected", "bool", connected},
+        {"System/Alarms/ActiveCount", "int32", 0},
+        {"System/Alarms/UnackedCount", "int32", 0},
+        {"System/Alarms/ShelvedCount", "int32", 0},
+        {"System/Alarms/DisabledCount", "int32", 0},
+        {"System/Alarms/LastAlarmChangeAgeMs", "int64", -1},
+        {"System/Alarms/NotificationAttempts", "uint64", 0},
+        {"System/Alarms/NotificationSuccesses", "uint64", 0},
+        {"System/Alarms/NotificationFailures", "uint64", 0},
+        {"System/Alarms/LastNotificationAgeMs", "int64", -1}
+    };
+}
+
+static std::vector<SystemTagDef> collect_alarm_system_tags() {
+    static std::mutex cacheMutex;
+    static std::chrono::steady_clock::time_point lastPoll;
+    static std::vector<SystemTagDef> cached = alarm_default_system_tags(false);
+
+    const auto nowSteady = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        if (lastPoll.time_since_epoch().count() != 0 &&
+            nowSteady - lastPoll < std::chrono::seconds(2)) {
+            return cached;
+        }
+        lastPoll = nowSteady;
+    }
+
+    std::vector<SystemTagDef> next = alarm_default_system_tags(false);
+    try {
+        httplib::Client cli("127.0.0.1", 8085);
+        cli.set_connection_timeout(0, 200000);
+        cli.set_read_timeout(0, 200000);
+        cli.set_write_timeout(0, 200000);
+        auto res = cli.Get("/alarm/api/status");
+        if (res && res->status == 200) {
+            json j = json::parse(res->body);
+            const int64_t nowMs = system_wall_now_ms();
+            const int64_t lastAlarmChange = json_i64_at(j, {"last_alarm_change_ms"}, 0);
+            const int64_t lastAttempt = json_i64_at(j, {"notifications", "last_attempt_ms"}, 0);
+            next = {
+                {"System/Alarms/RuntimeConnected", "bool", j.value("ok", false)},
+                {"System/Alarms/ActiveCount", "int32", static_cast<int>(json_i64_at(j, {"counts", "active"}, 0))},
+                {"System/Alarms/UnackedCount", "int32", static_cast<int>(json_i64_at(j, {"counts", "unacked"}, 0))},
+                {"System/Alarms/ShelvedCount", "int32", static_cast<int>(json_i64_at(j, {"counts", "shelved"}, 0))},
+                {"System/Alarms/DisabledCount", "int32", static_cast<int>(json_i64_at(j, {"counts", "disabled"}, 0))},
+                {"System/Alarms/LastAlarmChangeAgeMs", "int64", lastAlarmChange > 0 ? (nowMs - lastAlarmChange) : -1},
+                {"System/Alarms/NotificationAttempts", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(j, {"notifications", "attempts"}, 0)))},
+                {"System/Alarms/NotificationSuccesses", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(j, {"notifications", "successes"}, 0)))},
+                {"System/Alarms/NotificationFailures", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(j, {"notifications", "failures"}, 0)))},
+                {"System/Alarms/LastNotificationAgeMs", "int64", lastAttempt > 0 ? (nowMs - lastAttempt) : -1}
+            };
+        }
+    } catch (...) {
+        next = alarm_default_system_tags(false);
+    }
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cached = next;
+    return cached;
 }
 
 // -----------------------------
@@ -5943,6 +6027,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         if (!UA_NodeId_isNull(&systemId)) {
             UA_NodeId bridgeSysId = ua_add_folder(server, systemId, "Bridge");
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
+            UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
             UA_NodeId connectionsSysId = ua_add_folder(server, systemId, "Connections");
 
             if (!UA_NodeId_isNull(&bridgeSysId)) {
@@ -5973,6 +6058,12 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                     } else {
                         ua_add_system_variable(server, hostSysId, systemBindings, hostRow.name, hostRow.datatype, hostRow.value);
                     }
+                }
+            }
+
+            if (!UA_NodeId_isNull(&alarmsSysId)) {
+                for (const auto &alarmRow : collect_alarm_system_tags()) {
+                    ua_add_system_variable(server, alarmsSysId, systemBindings, alarmRow.name, alarmRow.datatype, alarmRow.value);
                 }
             }
 
@@ -6397,6 +6488,9 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
 
     for (const auto &hostRow : collect_host_system_tags()) {
         ua_write_system_value(hostRow.name, hostRow.value);
+    }
+    for (const auto &alarmRow : collect_alarm_system_tags()) {
+        ua_write_system_value(alarmRow.name, alarmRow.value);
     }
 
     for (auto &driver : drivers) {
@@ -13648,8 +13742,9 @@ window.addEventListener("load", startAutoRefresh);
 		                    root["total"] = rootTotal;
 		                    {
 		                        const auto hostRows = collect_host_system_tags();
+		                        const auto alarmRows = collect_alarm_system_tags();
 		                        json sys;
-		                        sys["total"] = 4 + static_cast<int>(hostRows.size()) + static_cast<int>(drivers.size()) * 15;
+		                        sys["total"] = 4 + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(drivers.size()) * 15;
 		                        sys["with_snapshot"] = sys["total"];
 		                        sys["good"] = sys["total"];
 		                        sys["bad"] = 0;
@@ -13780,6 +13875,9 @@ window.addEventListener("load", startAutoRefresh);
 
 									for (const auto &hostRow : collect_host_system_tags()) {
 										addSystemRow(hostRow.name, hostRow.datatype, hostRow.value);
+									}
+									for (const auto &alarmRow : collect_alarm_system_tags()) {
+										addSystemRow(alarmRow.name, alarmRow.datatype, alarmRow.value);
 									}
 
 									for (auto &driver : drivers) {

@@ -13063,6 +13063,13 @@ function buildTree() {
         label: 'Host',
         meta: { connection_id: '_system', system: true, tag_prefix: 'System/Host/' },
         children: []
+      },
+      {
+        id: 'system:alarms',
+        type: 'system_group',
+        label: 'Alarms',
+        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Alarms/' },
+        children: []
       }
     ]
   };
