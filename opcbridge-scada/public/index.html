@@ -726,7 +726,8 @@
 
       <div class="row-actions" style="margin: 10px 0;">
         <button class="btn primary" id="workspaceSaveBtn" type="button" disabled>Save</button>
-        <button class="btn" id="workspaceSaveReloadBtn" type="button" disabled>Save + Reload</button>
+        <button class="btn" id="workspaceApplyPollingBtn" type="button" disabled>Apply Polling Changes</button>
+        <button class="btn" id="workspaceRebuildOpcuaBtn" type="button">Rebuild OPC UA Namespace</button>
         <button class="btn" id="workspaceDiscardBtn" type="button" disabled>Discard</button>
         <div class="hint mono" id="workspaceSaveStatus" style="margin-left: auto;"></div>
       </div>
@@ -917,6 +918,7 @@
             <div class="form-row"><label>Batch Size</label><input id="editDevPollBatchSize" type="number" step="1" min="0" placeholder="Auto" /></div>
             <div class="form-row"><label>Time Budget (ms)</label><input id="editDevPollTimeBudgetMs" type="number" step="1" min="0" placeholder="Auto" /></div>
             <div class="form-row"><label>Max Reads / sec</label><input id="editDevPollMaxReadsPerSec" type="number" step="1" min="0" placeholder="Unlimited" /></div>
+            <div class="form-row"><label>Poll Lanes</label><input id="editDevPollLanes" type="number" step="1" min="1" max="8" placeholder="1" /></div>
             <div class="form-row"><label></label>
               <div class="row-actions">
                 <button class="btn" id="editDevCancelBtn" type="button">Cancel</button>

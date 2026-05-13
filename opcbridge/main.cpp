@@ -158,6 +158,7 @@ struct ConnectionConfig {
     int poll_batch_size = 0; // 0 = auto
     int poll_time_budget_ms = 0; // 0 = auto
     int poll_max_reads_per_sec = 0; // 0 = unlimited
+    int poll_lanes = 1; // number of internal poll workers for this connection
     int slot = 0;
     int default_timeout_ms = 1000;
     int default_read_ms    = 1000;
@@ -2600,6 +2601,7 @@ ConnectionConfig load_connection_config(const std::string &path) {
     c.poll_batch_size = std::max(0, json_get_int_loose(j, "poll_batch_size", 0));
     c.poll_time_budget_ms = std::max(0, json_get_int_loose(j, "poll_time_budget_ms", 0));
     c.poll_max_reads_per_sec = std::max(0, json_get_int_loose(j, "poll_max_reads_per_sec", 0));
+    c.poll_lanes = std::max(1, std::min(8, json_get_int_loose(j, "poll_lanes", 1)));
     c.default_timeout_ms = j.value("default_timeout_ms", 1000);
     c.default_read_ms    = j.value("default_read_ms", 1000);
     c.default_write_ms   = j.value("default_write_ms", 1000);
@@ -13030,6 +13032,7 @@ window.addEventListener("load", startAutoRefresh);
                     jc["poll_batch_size"]    = c.poll_batch_size;
                     jc["poll_time_budget_ms"] = c.poll_time_budget_ms;
                     jc["poll_max_reads_per_sec"] = c.poll_max_reads_per_sec;
+                    jc["poll_lanes"]         = c.poll_lanes;
                     jc["default_timeout_ms"] = c.default_timeout_ms;
                     jc["default_read_ms"]    = c.default_read_ms;
                     jc["default_write_ms"]   = c.default_write_ms;
@@ -13098,6 +13101,9 @@ window.addEventListener("load", startAutoRefresh);
 		                    uint64_t batch_reads_last = m->batch_reads_last.load(std::memory_order_relaxed);
 		                    uint64_t tag_count = m->poll_tag_count.load(std::memory_order_relaxed);
 		                    uint64_t cursor = m->poll_cursor.load(std::memory_order_relaxed);
+		                    if (tag_count > 0 && total > 0) {
+		                        cursor = total % tag_count;
+		                    }
 		                    j["batches_total"] = m->batches_total.load(std::memory_order_relaxed);
 		                    j["batch_ms_last"] = static_cast<double>(batch_us_last) / 1000.0;
 		                    j["batch_ms_max"] = static_cast<double>(batch_us_max) / 1000.0;
@@ -13255,11 +13261,7 @@ window.addEventListener("load", startAutoRefresh);
 							for (auto &driver : drivers) {
 								if (!filterConn.empty() && driver.conn.id != filterConn) continue;
 			                    for (auto &t : driver.tags) {
-										if (!filterTag.empty() && t.cfg.logical_name != filterTag) continue;
-										if (!search.empty()) {
-											std::string hay = to_lower_copy(driver.conn.id + " " + t.cfg.logical_name + " " + t.cfg.plc_tag_name + " " + t.cfg.datatype);
-											if (hay.find(search) == std::string::npos) continue;
-										}
+								if (!filterTag.empty() && t.cfg.logical_name != filterTag) continue;
 										std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
 										auto it = tagTable.find(key);
 										TagRow row;
@@ -13271,8 +13273,30 @@ window.addEventListener("load", startAutoRefresh);
 											row.has_snapshot  = (it != tagTable.end());
 											row.is_array_root = (t.handle >= 0) && (t.cfg.elem_count > 1);
 											row.handle_ok     = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || row.has_snapshot;
-										if (row.has_snapshot) {
-											row.snap = it->second;
+											if (row.has_snapshot) {
+												row.snap = it->second;
+											}
+										if (!search.empty()) {
+											std::string statusText = "missing";
+											if (!row.handle_ok) {
+												statusText = "bad_handle";
+											} else if (!row.has_snapshot && row.is_array_root) {
+												statusText = "array";
+											} else if (!row.has_snapshot) {
+												statusText = "missing";
+											} else if (row.snap.quality == 1) {
+												statusText = "good";
+											} else {
+												statusText = "bad";
+											}
+											std::string hay = to_lower_copy(
+												driver.conn.id + " " +
+												t.cfg.logical_name + " " +
+												t.cfg.plc_tag_name + " " +
+												t.cfg.datatype + " " +
+												statusText
+											);
+											if (hay.find(search) == std::string::npos) continue;
 										}
 										rows.push_back(std::move(row));
 									}
@@ -13701,6 +13725,7 @@ window.addEventListener("load", startAutoRefresh);
 								int64_t newest_age_ms = -1;
 								int64_t freshness_budget_ms = 15000;
 								int64_t expected_sweep_ms = -1;
+								bool large_time_sliced = false;
 								uint64_t poll_tag_count = 0;
 								double measured_read_ms_avg = 0.0;
 								uint64_t metric_reads_total = 0;
@@ -13723,7 +13748,8 @@ window.addEventListener("load", startAutoRefresh);
 									}
 								}
 
-								if (driver.conn.polling_mode == "time_sliced" || driver.tags.size() >= 500) {
+								large_time_sliced = (driver.conn.polling_mode == "time_sliced" || driver.tags.size() >= 500);
+								if (large_time_sliced) {
 									double reads_per_sec = 0.0;
 									if (driver.conn.poll_max_reads_per_sec > 0) {
 										reads_per_sec = static_cast<double>(driver.conn.poll_max_reads_per_sec);
@@ -13811,6 +13837,10 @@ window.addEventListener("load", startAutoRefresh);
 									} else if (stale_ratio <= 0.05) {
 										dstatus["status"] = "ok";
 										++ok_count;
+									} else if (large_time_sliced && newest_age_ms >= 0 && newest_age_ms <= 10000 && stale_ratio <= 0.25) {
+										dstatus["status"] = "ok";
+										dstatus["reason"] = "large time-sliced poll in progress";
+										++ok_count;
 									} else if (stale_ratio <= 0.25) {
 										dstatus["status"] = "degraded";
 										dstatus["reason"] = "some tags stale/bad";
@@ -13840,6 +13870,7 @@ window.addEventListener("load", startAutoRefresh);
 								if (driver.conn.poll_max_reads_per_sec > 0) {
 									dstatus["poll_max_reads_per_sec"] = driver.conn.poll_max_reads_per_sec;
 								}
+								dstatus["poll_lanes"] = driver.conn.poll_lanes;
 								if (newest_age_ms >= 0) dstatus["newest_age_ms"] = newest_age_ms;
 
 								conn_obj[driver.conn.id] = dstatus;
@@ -17191,6 +17222,7 @@ window.addEventListener("load", startAutoRefresh);
 	            std::unordered_map<std::string, std::vector<TagConfig>> derived_bits_by_source; // source logical_name -> derived tags
 	            std::unordered_map<std::string, std::vector<DerivedAliasItem>> derived_alias_by_source; // source logical_name -> derived alias tags
 	            std::shared_ptr<ConnPollMetrics> metrics;
+	            uint64_t total_tag_count = 0;
 	        };
 
 	        auto schedule_next_periodic_local = [](const TagConfig &cfg,
@@ -17219,27 +17251,27 @@ window.addEventListener("load", startAutoRefresh);
 	            {
 	                std::lock_guard<std::mutex> lock(driverMutex);
 		                for (const auto &d : drivers) {
-		                    PollerSpec spec;
-		                    spec.gen = gen;
-		                    spec.conn = d.conn;
+		                    PollerSpec baseSpec;
+		                    baseSpec.gen = gen;
+		                    baseSpec.conn = d.conn;
 
 		                    {
 		                        std::lock_guard<std::mutex> mlock(g_metricsMutex);
-		                        auto &ptr = g_connPollMetrics[spec.conn.id];
+		                        auto &ptr = g_connPollMetrics[baseSpec.conn.id];
 		                        if (!ptr) {
 		                            ptr = std::make_shared<ConnPollMetrics>();
 		                        }
-		                        spec.metrics = ptr;
+		                        baseSpec.metrics = ptr;
 		                    }
 
 			                    // Actually build tag list; skip invalid handles (they'll show as bad_handle)
-			                    spec.tags.clear();
-			                    spec.derived_bits_by_source.clear();
-			                    spec.derived_alias_by_source.clear();
+			                    baseSpec.tags.clear();
+			                    baseSpec.derived_bits_by_source.clear();
+			                    baseSpec.derived_alias_by_source.clear();
 		                    for (const auto &t : d.tags) {
 		                        if (t.cfg.enabled && !t.cfg.source_tag.empty()) {
 		                            if (t.cfg.bit >= 0) {
-		                                spec.derived_bits_by_source[t.cfg.source_tag].push_back(t.cfg);
+		                                baseSpec.derived_bits_by_source[t.cfg.source_tag].push_back(t.cfg);
 		                            } else {
 		                                DerivedAliasItem a;
 		                                a.cfg = t.cfg;
@@ -17247,7 +17279,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                a.scale_slope = t.scale_slope;
 		                                a.scale_offset = t.scale_offset;
 		                                a.out_datatype = t.out_datatype;
-		                                spec.derived_alias_by_source[t.cfg.source_tag].push_back(std::move(a));
+		                                baseSpec.derived_alias_by_source[t.cfg.source_tag].push_back(std::move(a));
 		                            }
 		                        }
 		                        if (t.handle < 0) continue;
@@ -17263,14 +17295,35 @@ window.addEventListener("load", startAutoRefresh);
 	                        if (scan_ms <= 0) scan_ms = 1000;
 
 	                        auto now = std::chrono::steady_clock::now();
-	                        size_t h = std::hash<std::string>{}(spec.conn.id + ":" + it.cfg.logical_name);
+	                        size_t h = std::hash<std::string>{}(baseSpec.conn.id + ":" + it.cfg.logical_name);
 	                        int jitter_ms = static_cast<int>(h % static_cast<size_t>(scan_ms));
 	                        it.next_poll = now + std::chrono::milliseconds(jitter_ms);
 
-	                        spec.tags.push_back(std::move(it));
+	                        baseSpec.tags.push_back(std::move(it));
 	                    }
 
-	                    specs.push_back(std::move(spec));
+	                    const size_t totalTags = baseSpec.tags.size();
+	                    const int laneCount = std::max(1, std::min<int>(baseSpec.conn.poll_lanes, static_cast<int>(std::max<size_t>(totalTags, 1))));
+	                    if (baseSpec.metrics) {
+	                        baseSpec.metrics->poll_tag_count.store(static_cast<uint64_t>(totalTags), std::memory_order_relaxed);
+	                    }
+	                    for (int lane = 0; lane < laneCount; ++lane) {
+	                        PollerSpec laneSpec;
+	                        laneSpec.gen = baseSpec.gen;
+	                        laneSpec.conn = baseSpec.conn;
+	                        laneSpec.conn.poll_lanes = laneCount;
+	                        if (laneSpec.conn.poll_max_reads_per_sec > 0) {
+	                            laneSpec.conn.poll_max_reads_per_sec = std::max(1, (laneSpec.conn.poll_max_reads_per_sec + laneCount - 1) / laneCount);
+	                        }
+	                        laneSpec.derived_bits_by_source = baseSpec.derived_bits_by_source;
+	                        laneSpec.derived_alias_by_source = baseSpec.derived_alias_by_source;
+	                        laneSpec.metrics = baseSpec.metrics;
+	                        laneSpec.total_tag_count = static_cast<uint64_t>(totalTags);
+	                        for (size_t idx = static_cast<size_t>(lane); idx < totalTags; idx += static_cast<size_t>(laneCount)) {
+	                            laneSpec.tags.push_back(baseSpec.tags[idx]);
+	                        }
+	                        specs.push_back(std::move(laneSpec));
+	                    }
 	                }
 	            }
 
@@ -17318,7 +17371,7 @@ window.addEventListener("load", startAutoRefresh);
 							size_t batchReads = 0;
 							auto batchStarted = std::chrono::steady_clock::now();
 							if (spec.metrics) {
-								spec.metrics->poll_tag_count.store(static_cast<uint64_t>(spec.tags.size()), std::memory_order_relaxed);
+								spec.metrics->poll_tag_count.store(spec.total_tag_count > 0 ? spec.total_tag_count : static_cast<uint64_t>(spec.tags.size()), std::memory_order_relaxed);
 							}
 
 		                    while (g_configGeneration.load(std::memory_order_relaxed) == spec.gen) {

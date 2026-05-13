@@ -279,7 +279,8 @@
   workspaceChildrenTbody: document.getElementById('workspaceChildrenTbody'),
 
   workspaceSaveBtn: document.getElementById('workspaceSaveBtn'),
-  workspaceSaveReloadBtn: document.getElementById('workspaceSaveReloadBtn'),
+  workspaceApplyPollingBtn: document.getElementById('workspaceApplyPollingBtn'),
+  workspaceRebuildOpcuaBtn: document.getElementById('workspaceRebuildOpcuaBtn'),
   workspaceDiscardBtn: document.getElementById('workspaceDiscardBtn'),
   workspaceSaveStatus: document.getElementById('workspaceSaveStatus'),
 
@@ -342,6 +343,7 @@
   editDevPollBatchSize: document.getElementById('editDevPollBatchSize'),
   editDevPollTimeBudgetMs: document.getElementById('editDevPollTimeBudgetMs'),
   editDevPollMaxReadsPerSec: document.getElementById('editDevPollMaxReadsPerSec'),
+  editDevPollLanes: document.getElementById('editDevPollLanes'),
   editDevCancelBtn: document.getElementById('editDevCancelBtn'),
   editDevSaveBtn: document.getElementById('editDevSaveBtn'),
   editDevStatus: document.getElementById('editDevStatus'),
@@ -2159,6 +2161,27 @@ async function opcbridgeReload() {
     const gen = (typeof r.gen === 'number') ? r.gen : null;
     await waitForOpcbridgeReloadDone({ gen });
   }
+}
+
+async function opcbridgeReloadConnection(connectionId) {
+  const cid = String(connectionId || '').trim();
+  if (!cid) return false;
+  const r = await apiPostJson('/api/opcbridge/reload/connection', { connection_id: cid });
+  if (r && r.pending) {
+    const gen = (typeof r.gen === 'number') ? r.gen : null;
+    await waitForOpcbridgeReloadDone({ gen });
+  }
+  return true;
+}
+
+async function opcbridgeReloadConnections(connectionIds) {
+  const ids = Array.from(new Set((Array.isArray(connectionIds) ? connectionIds : [])
+    .map((v) => String(v || '').trim())
+    .filter(Boolean))).sort();
+  for (const cid of ids) {
+    await opcbridgeReloadConnection(cid);
+  }
+  return ids;
 }
 
 function renderRuntimeRebuildStatus(status) {
@@ -6552,19 +6575,22 @@ function readOptionalPositiveInt(el) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs, maxReadsPerSec }) {
+function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs, maxReadsPerSec, pollLanes }) {
   const out = obj || {};
   out.polling_mode = normalizePollingMode(mode);
   out.polling_pacing = normalizePollingPacing(pacing);
   const batch = Math.trunc(Number(batchSize || 0));
   const budget = Math.trunc(Number(timeBudgetMs || 0));
   const maxReads = Math.trunc(Number(maxReadsPerSec || 0));
+  const lanes = Math.trunc(Number(pollLanes || 0));
   if (Number.isFinite(batch) && batch > 0) out.poll_batch_size = batch;
   else delete out.poll_batch_size;
   if (Number.isFinite(budget) && budget > 0) out.poll_time_budget_ms = budget;
   else delete out.poll_time_budget_ms;
   if (Number.isFinite(maxReads) && maxReads > 0) out.poll_max_reads_per_sec = maxReads;
   else delete out.poll_max_reads_per_sec;
+  if (Number.isFinite(lanes) && lanes > 1) out.poll_lanes = Math.min(8, Math.max(1, lanes));
+  else delete out.poll_lanes;
   return out;
 }
 
@@ -6873,8 +6899,8 @@ function setWorkspaceSaveStatus(msg) {
 function renderWorkspaceSaveBar() {
   const dirty = workspaceIsDirty();
   if (els.workspaceSaveBtn) els.workspaceSaveBtn.disabled = !dirty;
-  // Allow manual reload even when there are no staged changes.
-  if (els.workspaceSaveReloadBtn) els.workspaceSaveReloadBtn.disabled = false;
+  if (els.workspaceApplyPollingBtn) els.workspaceApplyPollingBtn.disabled = !dirty;
+  if (els.workspaceRebuildOpcuaBtn) els.workspaceRebuildOpcuaBtn.disabled = !canEditConfig();
   if (els.workspaceDiscardBtn) els.workspaceDiscardBtn.disabled = !dirty;
 }
 
@@ -7702,6 +7728,7 @@ function openWorkspaceItemModal(node) {
         if (els.editDevPollBatchSize) els.editDevPollBatchSize.value = obj?.poll_batch_size == null ? '' : String(obj.poll_batch_size);
         if (els.editDevPollTimeBudgetMs) els.editDevPollTimeBudgetMs.value = obj?.poll_time_budget_ms == null ? '' : String(obj.poll_time_budget_ms);
         if (els.editDevPollMaxReadsPerSec) els.editDevPollMaxReadsPerSec.value = obj?.poll_max_reads_per_sec == null ? '' : String(obj.poll_max_reads_per_sec);
+        if (els.editDevPollLanes) els.editDevPollLanes.value = obj?.poll_lanes == null ? '1' : String(obj.poll_lanes);
         setEditDevStatus('');
       }).catch((err) => {
         setEditDevStatus(`Load failed: ${err.message}`);
@@ -8380,7 +8407,8 @@ async function saveEditedDeviceFromModal() {
       pacing: els.editDevPollingPacing?.value,
       batchSize: readOptionalPositiveInt(els.editDevPollBatchSize),
       timeBudgetMs: readOptionalPositiveInt(els.editDevPollTimeBudgetMs),
-      maxReadsPerSec: readOptionalPositiveInt(els.editDevPollMaxReadsPerSec)
+      maxReadsPerSec: readOptionalPositiveInt(els.editDevPollMaxReadsPerSec),
+      pollLanes: readOptionalPositiveInt(els.editDevPollLanes)
     }
   );
 
@@ -8628,8 +8656,9 @@ function wireNewDeviceFormUi() {
 }
 
 function wireWorkspaceSaveBarUi() {
-  els.workspaceSaveBtn?.addEventListener('click', () => saveWorkspaceAll({ reload: false }));
-  els.workspaceSaveReloadBtn?.addEventListener('click', () => saveWorkspaceAll({ reload: true }));
+  els.workspaceSaveBtn?.addEventListener('click', () => saveWorkspaceAll());
+  els.workspaceApplyPollingBtn?.addEventListener('click', () => saveWorkspaceAll({ applyPolling: true }));
+  els.workspaceRebuildOpcuaBtn?.addEventListener('click', () => saveWorkspaceAll({ rebuildOpcua: true }));
   els.workspaceDiscardBtn?.addEventListener('click', discardWorkspaceChanges);
   renderWorkspaceSaveBar();
 }
@@ -13554,19 +13583,20 @@ async function refreshWorkspaceConfigViews() {
   }
 }
 
-async function saveWorkspaceAll({ reload }) {
+async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } = {}) {
   if (!workspaceIsDirty()) {
-    if (!reload) return;
-    setWorkspaceSaveStatus('Reloading…');
+    if (!rebuildOpcua) return;
+    if (!window.confirm('Rebuild the full opcbridge runtime and OPC UA namespace now?')) return;
+    setWorkspaceSaveStatus('Rebuilding OPC UA namespace…');
     renderWorkspaceSaveBar();
     try {
       await opcbridgeReload();
       setWorkspaceSaveStatus('Reloaded. Refreshing…');
       await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
       renderWorkspaceTree();
-      setWorkspaceSaveStatus('Reloaded.');
+      setWorkspaceSaveStatus('OPC UA namespace rebuilt.');
     } catch (err) {
-      setWorkspaceSaveStatus(`Reload failed: ${err.message}`);
+      setWorkspaceSaveStatus(`OPC UA rebuild failed: ${err.message}`);
     } finally {
       renderWorkspaceSaveBar();
     }
@@ -13575,9 +13605,13 @@ async function saveWorkspaceAll({ reload }) {
   setWorkspaceSaveStatus('Saving…');
   renderWorkspaceSaveBar();
   try {
+    const changedConnectionIds = new Set();
     // 0) Apply staged deletes
     if (state.workspaceDeletePaths && state.workspaceDeletePaths.size) {
       for (const relPath of Array.from(state.workspaceDeletePaths.values())) {
+        const oldObj = state.connObjCache?.get?.(relPath);
+        const oldId = String(oldObj?.id || connectionIdForConnFilePath(relPath) || '').trim();
+        if (oldId) changedConnectionIds.add(oldId);
         try {
           await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
         } catch (err) {
@@ -13596,6 +13630,11 @@ async function saveWorkspaceAll({ reload }) {
       for (const [pathRel, obj] of state.workspaceConnDirty.entries()) {
         if (!obj || typeof obj !== 'object') throw new Error(`Invalid connection object for ${pathRel}`);
         if (!String(obj.id || '').trim()) throw new Error(`Connection config must contain string field 'id' (${pathRel})`);
+        const oldObj = state.connObjCache?.get?.(pathRel);
+        const oldId = String(oldObj?.id || connectionIdForConnFilePath(pathRel) || '').trim();
+        const newId = String(obj.id || '').trim();
+        if (oldId) changedConnectionIds.add(oldId);
+        if (newId) changedConnectionIds.add(newId);
         await apiPostJson('/api/opcbridge/config/file', { path: pathRel, content: prettyJson(obj) });
         if (state.connObjCache) state.connObjCache.set(String(pathRel), obj);
       }
@@ -13605,7 +13644,8 @@ async function saveWorkspaceAll({ reload }) {
     if (state.tagConfigDirty) {
       const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
       const effective = getEffectiveTagsAll();
-      await saveTagsForChangedConnections(baseTags, effective);
+      const tagChanged = await saveTagsForChangedConnections(baseTags, effective);
+      tagChanged.forEach((cid) => { if (cid) changedConnectionIds.add(cid); });
     }
 
     // 3) Save alarms config (only if we staged updates, e.g., renaming a device)
@@ -13615,10 +13655,17 @@ async function saveWorkspaceAll({ reload }) {
       state.alarmsConfigDirty = false;
     }
 
-	    if (reload) {
-	      setWorkspaceSaveStatus('Saved. Rebuilding full runtime…');
+	    if (rebuildOpcua) {
+	      setWorkspaceSaveStatus('Saved. Rebuilding OPC UA namespace…');
 	      renderWorkspaceSaveBar();
 	      await opcbridgeReload();
+	    } else if (applyPolling) {
+	      const ids = Array.from(changedConnectionIds).filter(Boolean);
+	      if (ids.length) {
+	        setWorkspaceSaveStatus(`Saved. Applying polling changes to ${ids.join(', ')}…`);
+	        renderWorkspaceSaveBar();
+	        await opcbridgeReloadConnections(ids);
+	      }
 	    }
 
     // Clear dirty state and refresh
@@ -13629,7 +13676,9 @@ async function saveWorkspaceAll({ reload }) {
 
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
     renderWorkspaceTree();
-	    setWorkspaceSaveStatus(reload ? 'Saved + Reloaded.' : 'Saved.');
+	    setWorkspaceSaveStatus(rebuildOpcua
+	      ? 'Saved. OPC UA namespace rebuilt.'
+	      : (applyPolling ? 'Saved. Polling changes applied.' : 'Saved. OPC UA namespace rebuild may be required for structural changes.'));
   } catch (err) {
     const msg = String(err?.message || err || '');
     const lowerMsg = msg.toLowerCase();
@@ -13640,7 +13689,9 @@ async function saveWorkspaceAll({ reload }) {
         try {
           await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
           renderWorkspaceTree();
-          setWorkspaceSaveStatus(reload ? 'Saved + Reloaded.' : 'Saved.');
+          setWorkspaceSaveStatus(rebuildOpcua
+            ? 'Saved. OPC UA namespace rebuilt.'
+            : (applyPolling ? 'Saved. Polling changes applied.' : 'Saved.'));
           renderWorkspaceSaveBar();
         } catch {
           // keep the prior status
