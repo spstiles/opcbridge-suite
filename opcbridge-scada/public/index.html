@@ -761,12 +761,20 @@
             <div class="hint mono" id="workspaceLiveTagsFilter"></div>
             <div class="hint">Read-only from opcbridge <code>/tags</code>.</div>
           </div>
+          <div class="row-actions" style="margin: 0 0 8px 0; flex-wrap: wrap;">
+            <input id="workspaceLiveTagsSearch" type="search" placeholder="Narrow selected live tags" style="max-width: 260px;" />
+            <button class="btn" id="workspaceLiveTagsRefreshBtn" type="button">Refresh</button>
+            <div class="hint mono" id="workspaceLiveTagsMeta" style="margin-left: auto;"></div>
+          </div>
           <div class="editor-body">
-            <div class="table-wrap">
-              <table class="table" id="workspaceLiveTagsTable">
-                <thead><tr><th>Connection</th><th>Tag</th><th>Datatype</th><th>Status</th><th>Value</th><th>Writable</th><th>Timestamp</th></tr></thead>
-                <tbody id="workspaceLiveTagsTbody"></tbody>
-              </table>
+            <div class="live-tags-virtual" id="workspaceLiveTagsWrap">
+              <div class="live-tags-spacer" id="workspaceLiveTagsSpacer"></div>
+              <div class="live-tags-table-window" id="workspaceLiveTagsWindow">
+                <table class="table" id="workspaceLiveTagsTable">
+                  <thead><tr><th>Connection</th><th>Tag</th><th>Datatype</th><th>Status</th><th>Value</th><th>Writable</th><th>Timestamp</th></tr></thead>
+                  <tbody id="workspaceLiveTagsTbody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
         </section>
@@ -908,6 +916,7 @@
             </select></div>
             <div class="form-row"><label>Batch Size</label><input id="editDevPollBatchSize" type="number" step="1" min="0" placeholder="Auto" /></div>
             <div class="form-row"><label>Time Budget (ms)</label><input id="editDevPollTimeBudgetMs" type="number" step="1" min="0" placeholder="Auto" /></div>
+            <div class="form-row"><label>Max Reads / sec</label><input id="editDevPollMaxReadsPerSec" type="number" step="1" min="0" placeholder="Unlimited" /></div>
             <div class="form-row"><label></label>
               <div class="row-actions">
                 <button class="btn" id="editDevCancelBtn" type="button">Cancel</button>
@@ -1512,6 +1521,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260512_scada_refresh_phase2"></script>
+  <script src="app.js?v=20260512_live_tag_virtual"></script>
 </body>
 </html>

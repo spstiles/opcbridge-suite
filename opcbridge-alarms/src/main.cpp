@@ -731,6 +731,8 @@ struct PjsuaRunResult
 static std::string ipv4_for_interface_name(const std::string& ifname)
 {
     if (ifname.empty()) return "";
+    struct in_addr literal_addr;
+    if (inet_pton(AF_INET, ifname.c_str(), &literal_addr) == 1) return ifname;
     struct ifaddrs* ifaddr = nullptr;
     if (getifaddrs(&ifaddr) != 0) return "";
     std::string ip;
@@ -1393,19 +1395,24 @@ static std::string pjsua_run_call_with_file(
             }
         }
 
-        // Some PBXs send UPDATE/re-INVITE shortly after answer, which can make pjsua report
-        // a new SIP media conference port. Reconnecting the same WAV source at that point can
-        // leave more than one transmit path active on some pjsua builds, which makes the
-        // called phone hear the message twice. Keep the playback path single-shot for now, and
-        // keep callPort pointing at the port we actually connected so cleanup disconnects it.
-        if (answered && !connected && !wav_path.empty())
+        // Some PBXs send UPDATE/re-INVITE shortly after answer, which can make pjsua destroy
+        // the original SIP media conference port and add a replacement. If we keep the WAV
+        // connected only to the old port, the caller hears silence after the media update.
+        if (answered && connected && !wav_path.empty())
         {
             if (filePort < 0) filePort = pjsua_find_port_for_wav(log, wav_path);
             const int latestCallPort = pjsua_find_call_port(log);
-            if (latestCallPort > 0 && latestCallPort != callPort)
+            if (latestCallPort > 0 && latestCallPort != connectedCallPort)
             {
                 callPort = latestCallPort;
+                connectedCallPort = latestCallPort;
                 outRes.call_port = callPort;
+                if (filePort > 0)
+                {
+                    write_str("cc " + std::to_string(filePort) + " " + std::to_string(callPort) + "\n");
+                    audio_disconnected = false;
+                    outRes.file_connected_to_call = true;
+                }
             }
         }
 
@@ -1488,6 +1495,7 @@ struct SipPjsua2Shared
     bool invite_ringing = false;
     bool invite_answered = false;
     bool disconnected = false;
+    bool file_connected_to_call = false;
     int64_t answered_offset_ms = -1;
     std::string last_dtmf;
     std::string stop_reason;
@@ -1544,6 +1552,7 @@ public:
                     shared_.invite_answered = true;
                     shared_.answered_offset_ms = std::max<int64_t>(0, now - start_ms_);
                 }
+                start_players_if_ready(ci);
             }
             if (ci.state == PJSIP_INV_STATE_DISCONNECTED)
             {
@@ -1556,36 +1565,11 @@ public:
 
     void onCallMediaState(pj::OnCallMediaStateParam&) override
     {
-        // When audio media becomes active, start transmitting the wav (if any) into the call.
         if (!player_ && !keepalive_player_) return;
         try
         {
             const pj::CallInfo ci = getInfo();
-            for (unsigned i = 0; i < ci.media.size(); ++i)
-            {
-                if (ci.media[i].type != PJMEDIA_TYPE_AUDIO) continue;
-                if (ci.media[i].status != PJSUA_CALL_MEDIA_ACTIVE &&
-                    ci.media[i].status != PJSUA_CALL_MEDIA_REMOTE_HOLD)
-                {
-                    continue;
-                }
-
-                // getAudioMedia() returns a wrapper object; keep it alive as a member so the
-                // transmit connection stays valid.
-                audio_media_ = getAudioMedia(static_cast<int>(i));
-                pj::AudioMedia& am = *audio_media_;
-                if (keepalive_player_ && !keepalive_started_)
-                {
-                    keepalive_player_->startTransmit(am);
-                    keepalive_started_ = true;
-                }
-                if (player_ && !player_started_)
-                {
-                    player_->startTransmit(am);
-                    player_started_ = true;
-                }
-                break;
-            }
+            start_players_if_ready(ci);
         }
         catch (...)
         {
@@ -1612,6 +1596,47 @@ public:
     }
 
 private:
+    void start_players_if_ready(const pj::CallInfo& ci)
+    {
+        // Some PBXs offer early media before the callee answers. Starting the message
+        // player then can consume the whole WAV during ringback, leaving silence after
+        // answer. Only attach players once the INVITE is confirmed.
+        if (ci.state != PJSIP_INV_STATE_CONFIRMED) return;
+        if (!player_ && !keepalive_player_) return;
+
+        for (unsigned i = 0; i < ci.media.size(); ++i)
+        {
+            if (ci.media[i].type != PJMEDIA_TYPE_AUDIO) continue;
+            if (ci.media[i].status != PJSUA_CALL_MEDIA_ACTIVE &&
+                ci.media[i].status != PJSUA_CALL_MEDIA_REMOTE_HOLD)
+            {
+                continue;
+            }
+
+            // getAudioMedia() returns a wrapper object; keep it alive as a member so the
+            // transmit connection stays valid.
+            audio_media_ = getAudioMedia(static_cast<int>(i));
+            pj::AudioMedia& am = *audio_media_;
+            if (keepalive_player_ && !keepalive_started_)
+            {
+                keepalive_player_->startTransmit(am);
+                keepalive_started_ = true;
+            }
+            if (player_ && !player_started_)
+            {
+                player_->startTransmit(am);
+                player_started_ = true;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(shared_.mu);
+                shared_.file_connected_to_call = player_started_;
+            }
+            shared_.cv.notify_all();
+            break;
+        }
+    }
+
     static int64_t steady_ms()
     {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1834,6 +1859,7 @@ static std::string pjsua2_run_call_with_file(
             outRes.invite_answered = shared.invite_answered;
             outRes.invite_ringing = shared.invite_ringing;
             outRes.answered_offset_ms = shared.answered_offset_ms;
+            outRes.file_connected_to_call = shared.file_connected_to_call;
         }
 
         // If the call was ACKed via DTMF and we have a confirmation wav, play it once before hangup.
@@ -6207,9 +6233,9 @@ private:
 #endif
 
 	        const std::string pjsuaPath = "/opt/opcbridge-suite/bin/pjsua";
-	        if ((!used_pjsua2 || rr.exit_code != 0) && command_exists(pjsuaPath))
+	        if ((!used_pjsua2 || rr.exit_code != 0 || (!wav_path.empty() && !rr.file_connected_to_call)) && command_exists(pjsuaPath))
 	        {
-	            if (used_pjsua2 && rr.exit_code != 0)
+	            if (used_pjsua2 && (rr.exit_code != 0 || (!wav_path.empty() && !rr.file_connected_to_call)))
 	            {
 	                std::cout << "[alarms][sip] PJSUA2 call attempt failed; falling back to pjsua CLI\n";
 	            }
@@ -9483,9 +9509,9 @@ int main(int argc, char **argv)
 #endif
 
         const std::string pjsuaPath = "/opt/opcbridge-suite/bin/pjsua";
-        if ((!used_pjsua2 || rr.exit_code != 0) && command_exists(pjsuaPath))
+        if ((!used_pjsua2 || rr.exit_code != 0 || (!wav_path.empty() && !rr.file_connected_to_call)) && command_exists(pjsuaPath))
         {
-            if (used_pjsua2 && rr.exit_code != 0)
+            if (used_pjsua2 && (rr.exit_code != 0 || (!wav_path.empty() && !rr.file_connected_to_call)))
             {
                 std::cout << "[alarms][sip] PJSUA2 test call failed; falling back to pjsua CLI\n";
             }
@@ -9593,6 +9619,15 @@ int main(int argc, char **argv)
             const size_t keep = std::min<size_t>(20000, rr.log.size());
             j["log_tail"] = rr.log.empty() ? "" : rr.log.substr(rr.log.size() - keep);
         }
+        if (!rr.log.empty())
+        {
+            try
+            {
+                std::ofstream dbg(tmpdir / "sip-debug.log", std::ios::binary | std::ios::trunc);
+                dbg << rr.log;
+            }
+            catch (...) {}
+        }
 
         // For test calls, treat "answered but didn't stay up for expected time" as failure.
         if (inviteAnswered && holdMs >= 0 && holdMs < (expectedHoldMs - 500))
@@ -9607,13 +9642,8 @@ int main(int argc, char **argv)
         }
         res.set_content(j.dump(2), "application/json");
 
-        // Keep tmpdir when the call ended early to aid debugging.
-        const bool endedEarly = inviteAnswered && holdMs >= 0 && holdMs < (static_cast<int64_t>(duration) * 1000 - 500);
-        j["kept_tmpdir"] = endedEarly;
-        if (!endedEarly)
-        {
-            std::filesystem::remove_all(tmpdir, ec);
-        }
+        // Keep tmpdir for SIP test calls to aid audio/media debugging.
+        j["kept_tmpdir"] = true;
     });
 
     svr.Post(R"(/alarm/api/alarms/([A-Za-z0-9_.:-]+)/ack)", [&](const httplib::Request &req, httplib::Response &res) {

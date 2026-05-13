@@ -252,6 +252,12 @@
   tagsTableBody: document.querySelector('#tagsTable tbody'),
   workspaceLiveTagsTbody: document.getElementById('workspaceLiveTagsTbody'),
   workspaceLiveTagsFilter: document.getElementById('workspaceLiveTagsFilter'),
+  workspaceLiveTagsWrap: document.getElementById('workspaceLiveTagsWrap'),
+  workspaceLiveTagsSpacer: document.getElementById('workspaceLiveTagsSpacer'),
+  workspaceLiveTagsWindow: document.getElementById('workspaceLiveTagsWindow'),
+  workspaceLiveTagsSearch: document.getElementById('workspaceLiveTagsSearch'),
+  workspaceLiveTagsRefreshBtn: document.getElementById('workspaceLiveTagsRefreshBtn'),
+  workspaceLiveTagsMeta: document.getElementById('workspaceLiveTagsMeta'),
 
   // Alarms
   activeAlarmsTableBody: document.querySelector('#activeAlarmsTable tbody'),
@@ -335,6 +341,7 @@
   editDevPollingPacing: document.getElementById('editDevPollingPacing'),
   editDevPollBatchSize: document.getElementById('editDevPollBatchSize'),
   editDevPollTimeBudgetMs: document.getElementById('editDevPollTimeBudgetMs'),
+  editDevPollMaxReadsPerSec: document.getElementById('editDevPollMaxReadsPerSec'),
   editDevCancelBtn: document.getElementById('editDevCancelBtn'),
   editDevSaveBtn: document.getElementById('editDevSaveBtn'),
   editDevStatus: document.getElementById('editDevStatus'),
@@ -641,6 +648,9 @@ const state = {
   tagConfigAll: [],
   tagConfigEdited: new Map(),
   tagConfigDirty: false,
+  liveTagsPaging: { offset: 0, limit: 250, total: 0, search: '', scopeKey: '', rowHeight: 34 },
+  liveTagsSearchTimer: null,
+  liveTagsScrollTimer: null,
 
   workspaceConnDirty: new Map(), // pathRel -> connection object
   workspaceDeletePaths: new Set(), // connection config paths to delete on Save/Save+Reload
@@ -2056,7 +2066,14 @@ async function apiGet(url, { timeoutMs = 30000 } = {}) {
         setWorkspaceSaveStatus('Login required. Press Login.');
       }
     }
-    throw new Error(`HTTP ${res.status}`);
+    let detail = '';
+    try {
+      const body = await res.json();
+      detail = body?.error ? `: ${body.error}` : '';
+    } catch {
+      // ignore
+    }
+    throw new Error(res.status === 502 ? `opcbridge is starting or reconnecting${detail}` : `HTTP ${res.status}${detail}`);
   }
   return res.json();
 }
@@ -6535,16 +6552,19 @@ function readOptionalPositiveInt(el) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs }) {
+function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs, maxReadsPerSec }) {
   const out = obj || {};
   out.polling_mode = normalizePollingMode(mode);
   out.polling_pacing = normalizePollingPacing(pacing);
   const batch = Math.trunc(Number(batchSize || 0));
   const budget = Math.trunc(Number(timeBudgetMs || 0));
+  const maxReads = Math.trunc(Number(maxReadsPerSec || 0));
   if (Number.isFinite(batch) && batch > 0) out.poll_batch_size = batch;
   else delete out.poll_batch_size;
   if (Number.isFinite(budget) && budget > 0) out.poll_time_budget_ms = budget;
   else delete out.poll_time_budget_ms;
+  if (Number.isFinite(maxReads) && maxReads > 0) out.poll_max_reads_per_sec = maxReads;
+  else delete out.poll_max_reads_per_sec;
   return out;
 }
 
@@ -7681,6 +7701,7 @@ function openWorkspaceItemModal(node) {
         if (els.editDevPollingPacing) els.editDevPollingPacing.value = normalizePollingPacing(obj?.polling_pacing);
         if (els.editDevPollBatchSize) els.editDevPollBatchSize.value = obj?.poll_batch_size == null ? '' : String(obj.poll_batch_size);
         if (els.editDevPollTimeBudgetMs) els.editDevPollTimeBudgetMs.value = obj?.poll_time_budget_ms == null ? '' : String(obj.poll_time_budget_ms);
+        if (els.editDevPollMaxReadsPerSec) els.editDevPollMaxReadsPerSec.value = obj?.poll_max_reads_per_sec == null ? '' : String(obj.poll_max_reads_per_sec);
         setEditDevStatus('');
       }).catch((err) => {
         setEditDevStatus(`Load failed: ${err.message}`);
@@ -8358,7 +8379,8 @@ async function saveEditedDeviceFromModal() {
       mode: els.editDevPollingMode?.value,
       pacing: els.editDevPollingPacing?.value,
       batchSize: readOptionalPositiveInt(els.editDevPollBatchSize),
-      timeBudgetMs: readOptionalPositiveInt(els.editDevPollTimeBudgetMs)
+      timeBudgetMs: readOptionalPositiveInt(els.editDevPollTimeBudgetMs),
+      maxReadsPerSec: readOptionalPositiveInt(els.editDevPollMaxReadsPerSec)
     }
   );
 
@@ -13010,8 +13032,10 @@ function renderTreeNode(node, container) {
   btn.addEventListener('click', () => {
     state.selectedNodeId = node.id;
     updateWorkspaceLiveTagFilterFromNode(node);
+    resetLiveTagsViewport();
     renderWorkspaceTree();
     renderWorkspaceDetails(node);
+    refreshVisible().catch(() => {});
   });
 
   btn.addEventListener('contextmenu', (e) => {
@@ -13020,6 +13044,8 @@ function renderTreeNode(node, container) {
 
     // Right-click also selects the node and updates the right pane.
     state.selectedNodeId = node.id;
+    updateWorkspaceLiveTagFilterFromNode(node);
+    resetLiveTagsViewport();
     renderWorkspaceTree();
 
     if (node.type === 'project') return;
@@ -13653,14 +13679,24 @@ async function discardWorkspaceChanges() {
 function updateWorkspaceLiveTagFilterLabel() {
   if (!els.workspaceLiveTagsFilter) return;
   const lbl = String(state.liveTagFilter?.label || 'All');
-  els.workspaceLiveTagsFilter.textContent = `Filter: ${lbl}`;
+  const total = Number(state.liveTagsPaging?.total || 0);
+  const count = total ? ` · ${total} selected` : '';
+  els.workspaceLiveTagsFilter.textContent = `Tree scope: ${lbl}${count}`;
 }
 
 function updateWorkspaceLiveTagFilterFromNode(node) {
   if (!node) return;
   const type = String(node.type || '');
 
-  if (type === 'device' || type === 'tag') {
+  if (type === 'tag') {
+    const connection_id = String(node.meta?.connection_id || '').trim();
+    const name = String(node.meta?.name || node.label || '').trim();
+    if (connection_id && name) {
+      state.liveTagFilter = { type: 'tag', connection_id, name, label: `${connection_id}:${name}` };
+    } else {
+      state.liveTagFilter = { type: 'all', label: 'All' };
+    }
+  } else if (type === 'device') {
     const connection_id = String(node.meta?.connection_id || '').trim();
     if (connection_id) {
       state.liveTagFilter = { type: 'device', connection_id, label: connection_id };
@@ -13682,6 +13718,12 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
 function filterLiveTagsForWorkspace(tags) {
   const f = state.liveTagFilter || { type: 'all' };
   if (!tags || !Array.isArray(tags)) return [];
+
+  if (f.type === 'tag') {
+    const cid = String(f.connection_id || '').trim();
+    const name = String(f.name || '').trim();
+    return tags.filter((t) => String(t?.connection_id || '') === cid && String(t?.name || t?.tag || '') === name);
+  }
 
   if (f.type === 'device') {
     const cid = String(f.connection_id || '').trim();
@@ -13758,6 +13800,14 @@ function renderLiveTagsInto(tbody, tags) {
 function renderLiveTags(tagsResp) {
   state.liveTagsLast = tagsResp;
   const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
+  const total = Number(tagsResp?.total ?? tags.length) || tags.length;
+  const shown = tags.length;
+  const offset = Number(tagsResp?.offset ?? state.liveTagsPaging.offset) || 0;
+  const limit = Number(tagsResp?.limit ?? state.liveTagsPaging.limit) || state.liveTagsPaging.limit;
+  state.liveTagsPaging.total = total;
+  state.liveTagsPaging.offset = offset;
+  state.liveTagsPaging.limit = limit;
+  const rowHeight = Number(state.liveTagsPaging.rowHeight || 34);
   if (isPanelActive('tab-tags')) {
     renderLiveTagsInto(els.tagsTableBody, tags);
   }
@@ -13767,6 +13817,84 @@ function renderLiveTags(tagsResp) {
     const filtered = filterLiveTagsForWorkspace(tags);
     renderLiveTagsInto(els.workspaceLiveTagsTbody, filtered);
   }
+  if (els.workspaceLiveTagsMeta) els.workspaceLiveTagsMeta.textContent = '';
+  if (els.workspaceLiveTagsSpacer) els.workspaceLiveTagsSpacer.style.height = `${Math.max(1, total * rowHeight)}px`;
+  if (els.workspaceLiveTagsWindow) els.workspaceLiveTagsWindow.style.transform = `translateY(${Math.max(0, offset * rowHeight)}px)`;
+  updateWorkspaceLiveTagFilterLabel();
+}
+
+function resetLiveTagsViewport() {
+  state.liveTagsPaging.offset = 0;
+  if (els.workspaceLiveTagsWrap && els.workspaceLiveTagsWrap.scrollTop !== 0) {
+    els.workspaceLiveTagsWrap.scrollTop = 0;
+  }
+  if (els.workspaceLiveTagsWindow) {
+    els.workspaceLiveTagsWindow.style.transform = 'translateY(0px)';
+  }
+}
+
+async function loadVisibleLiveTags() {
+  const params = new URLSearchParams();
+  const page = state.liveTagsPaging || { offset: 0, limit: 250, search: '', scopeKey: '' };
+  const limit = 250;
+  let scopeKey = 'all';
+  if (isPanelActive('tab-workspace')) {
+    const f = state.liveTagFilter || { type: 'all' };
+    if ((f?.type === 'device' || f?.type === 'tag') && f.connection_id) {
+      params.set('connection_id', String(f.connection_id));
+      scopeKey = `${String(f.type)}:${String(f.connection_id)}`;
+      if (f.type === 'tag' && f.name) {
+        params.set('tag', String(f.name));
+        scopeKey += `:${String(f.name)}`;
+      }
+    }
+  }
+  const search = String(els.workspaceLiveTagsSearch?.value ?? page.search ?? '').trim();
+  if (scopeKey !== page.scopeKey || search !== page.search || limit !== page.limit) {
+    page.scopeKey = scopeKey;
+    page.search = search;
+    page.limit = limit;
+    resetLiveTagsViewport();
+  }
+  params.set('limit', String(limit));
+  params.set('offset', String(Math.max(0, Math.trunc(Number(page.offset || 0)))));
+  if (search) params.set('search', search);
+  return apiGet(`/api/opcbridge/tags?${params.toString()}`, { timeoutMs: 15000 });
+}
+
+function setLiveTagsPageOffset(offset) {
+  const total = Math.max(0, Math.trunc(Number(state.liveTagsPaging.total || 0)));
+  const limit = Math.max(1, Math.trunc(Number(state.liveTagsPaging.limit || 250)));
+  const maxOffset = Math.max(0, total - limit);
+  state.liveTagsPaging.offset = Math.min(maxOffset, Math.max(0, Math.trunc(Number(offset || 0))));
+  refreshVisible().catch(() => {});
+}
+
+function wireLiveTagsPagingUi() {
+  els.workspaceLiveTagsSearch?.addEventListener('input', () => {
+    if (state.liveTagsSearchTimer) window.clearTimeout(state.liveTagsSearchTimer);
+    state.liveTagsSearchTimer = window.setTimeout(() => {
+      state.liveTagsSearchTimer = null;
+      resetLiveTagsViewport();
+      refreshVisible().catch(() => {});
+    }, 300);
+  });
+  els.workspaceLiveTagsRefreshBtn?.addEventListener('click', () => {
+    refreshVisible().catch(() => {});
+  });
+  els.workspaceLiveTagsWrap?.addEventListener('scroll', () => {
+    const wrap = els.workspaceLiveTagsWrap;
+    if (!wrap) return;
+    if (state.liveTagsScrollTimer) window.clearTimeout(state.liveTagsScrollTimer);
+    state.liveTagsScrollTimer = window.setTimeout(() => {
+      state.liveTagsScrollTimer = null;
+      const rowHeight = Number(state.liveTagsPaging.rowHeight || 34);
+      const offset = Math.max(0, Math.floor(wrap.scrollTop / rowHeight));
+      if (offset !== Number(state.liveTagsPaging.offset || 0)) {
+        setLiveTagsPageOffset(offset);
+      }
+    }, 120);
+  });
 }
 
 
@@ -13902,7 +14030,7 @@ async function refreshAll() {
     state.alarmsStatusLast = alarmsStatus;
     renderAlarmsSchemaStatus(alarmsStatus);
 
-    const tags = await apiGet('/api/opcbridge/tags');
+    const tags = await loadVisibleLiveTags();
     renderLiveTags(tags);
 
 const [active, history, all] = await Promise.all([
@@ -13947,7 +14075,7 @@ if (isPanelActive('tab-alarms_events') && !isAlarmsEventsPropertiesEditorOpen())
       els.statusLine.innerHTML = `opcbridge: ${badge(overall)} · alarms: <span class="badge ok">${alarmsStatus?.ok ? 'ok' : 'bad'}</span> · refresh ${elapsed}ms`;
     }
   } catch (err) {
-    if (els.statusLine) els.statusLine.textContent = `Refresh failed: ${err.message}`;
+    if (els.statusLine) els.statusLine.textContent = `Refresh pending: ${err.message}`;
   }
 }
 
@@ -13981,9 +14109,9 @@ async function refreshVisible() {
     renderOverviewHealth(health);
     setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
-    const wantLiveTags = isPanelActive('tab-workspace');
+    const wantLiveTags = isPanelActive('tab-workspace') || isPanelActive('tab-tags');
     if (wantLiveTags) {
-      const tags = await apiGet('/api/opcbridge/tags');
+      const tags = await loadVisibleLiveTags();
       renderLiveTags(tags);
     }
 
@@ -14021,7 +14149,7 @@ async function refreshVisible() {
       els.statusLine.innerHTML = `opcbridge: ${badge(overall)} · alarms: <span class="badge ok">${alarmsStatus?.ok ? 'ok' : 'bad'}</span> · refresh ${elapsed}ms`;
     }
   } catch (err) {
-    if (els.statusLine) els.statusLine.textContent = `Refresh failed: ${err.message}`;
+    if (els.statusLine) els.statusLine.textContent = `Refresh pending: ${err.message}`;
   } finally {
     state.refreshVisibleInFlight = false;
     if (state.refreshVisiblePending) {
@@ -14749,6 +14877,7 @@ async function main() {
   wireWorkspaceSaveBarUi();
   wireWorkspaceItemModalUi();
   wireNewTagModalUi();
+  wireLiveTagsPagingUi();
 
   try {
     await loadBootstrapConfig();
@@ -14792,13 +14921,8 @@ async function main() {
     // ignore
   }
 
-  try {
-    await loadTagsConfig();
-  } catch {
-    // ignore
-  }
-
   // Always render at least the skeleton tree/table so the Workspace UI isn't blank.
+  // The full tag config can be large, so load it after the first visible refresh.
   renderWorkspaceTree();
 
   state.uiRefreshReady = true;
@@ -14809,6 +14933,12 @@ async function main() {
   }
 
   restartRefreshLoop();
+
+  window.setTimeout(() => {
+    loadTagsConfig()
+      .then(() => renderWorkspaceTree())
+      .catch(() => {});
+  }, 0);
 }
 
 main();

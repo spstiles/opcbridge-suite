@@ -157,6 +157,7 @@ struct ConnectionConfig {
     std::string polling_pacing = "balanced"; // "gentle", "balanced", "fast"
     int poll_batch_size = 0; // 0 = auto
     int poll_time_budget_ms = 0; // 0 = auto
+    int poll_max_reads_per_sec = 0; // 0 = unlimited
     int slot = 0;
     int default_timeout_ms = 1000;
     int default_read_ms    = 1000;
@@ -2598,6 +2599,7 @@ ConnectionConfig load_connection_config(const std::string &path) {
     if (c.polling_pacing != "gentle" && c.polling_pacing != "fast") c.polling_pacing = "balanced";
     c.poll_batch_size = std::max(0, json_get_int_loose(j, "poll_batch_size", 0));
     c.poll_time_budget_ms = std::max(0, json_get_int_loose(j, "poll_time_budget_ms", 0));
+    c.poll_max_reads_per_sec = std::max(0, json_get_int_loose(j, "poll_max_reads_per_sec", 0));
     c.default_timeout_ms = j.value("default_timeout_ms", 1000);
     c.default_read_ms    = j.value("default_read_ms", 1000);
     c.default_write_ms   = j.value("default_write_ms", 1000);
@@ -13027,6 +13029,7 @@ window.addEventListener("load", startAutoRefresh);
                     jc["polling_pacing"]     = c.polling_pacing;
                     jc["poll_batch_size"]    = c.poll_batch_size;
                     jc["poll_time_budget_ms"] = c.poll_time_budget_ms;
+                    jc["poll_max_reads_per_sec"] = c.poll_max_reads_per_sec;
                     jc["default_timeout_ms"] = c.default_timeout_ms;
                     jc["default_read_ms"]    = c.default_read_ms;
                     jc["default_write_ms"]   = c.default_write_ms;
@@ -13117,8 +13120,114 @@ window.addEventListener("load", startAutoRefresh);
 		                res.set_content(root.dump(2), "application/json");
 		            });
 
+		            auto tag_row_to_json = [](const auto &r) {
+		                json jt;
+		                jt["connection_id"] = r.connection_id;
+		                jt["name"]          = r.name;
+		                jt["datatype"]      = r.datatype;
+		                jt["enabled"]       = r.enabled;
+		                jt["writable"]      = r.writable;
+		                jt["handle_ok"]     = r.handle_ok;
+		                jt["has_snapshot"]  = r.has_snapshot;
+		                jt["is_array_root"] = r.is_array_root;
+
+		                if (!r.enabled) {
+		                    jt["reason"] = "disabled";
+		                } else if (!r.handle_ok) {
+		                    jt["reason"] = "bad_handle";
+		                } else if (!r.has_snapshot) {
+		                    jt["reason"] = "no_snapshot_yet";
+		                }
+
+		                if (r.has_snapshot) {
+		                    const TagSnapshot &snap = r.snap;
+		                    jt["quality"] = snap.quality;
+
+		                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                        snap.timestamp.time_since_epoch()
+		                    ).count();
+		                    jt["timestamp_ms"] = ms;
+
+		                    if (snap.quality == 1) {
+		                        std::visit([&jt](auto &&arg) {
+		                            using V = std::decay_t<decltype(arg)>;
+		                            if constexpr (std::is_same_v<V, float> || std::is_same_v<V, double>) {
+		                                if (std::isfinite(arg)) {
+		                                    jt["value"] = arg;
+		                                } else {
+		                                    jt["value"] = nullptr;
+		                                }
+		                            } else {
+		                                jt["value"] = arg;
+		                            }
+		                        }, snap.value);
+		                    } else {
+		                        jt["value"] = nullptr;
+		                    }
+		                } else {
+		                    jt["quality"] = nullptr;
+		                    jt["timestamp_ms"] = nullptr;
+		                    jt["value"] = nullptr;
+		                }
+		                return jt;
+		            };
+
+		            // /tags/summary
+		            svr.Get("/tags/summary", [&](const httplib::Request &, httplib::Response &res) {
+		                json root;
+		                root["ok"] = true;
+		                root["connections"] = json::object();
+		                int rootTotal = 0;
+
+		                auto now = std::chrono::system_clock::now();
+		                std::lock_guard<std::mutex> lock(driverMutex);
+		                for (auto &driver : drivers) {
+		                    json jc;
+		                    int total = 0;
+		                    int with_snapshot = 0;
+		                    int good = 0;
+		                    int bad = 0;
+		                    int missing = 0;
+		                    int bad_handle = 0;
+		                    int64_t newest_age_ms = -1;
+
+		                    for (auto &t : driver.tags) {
+		                        if (!t.cfg.enabled) continue;
+		                        ++total;
+		                        std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
+		                        auto it = tagTable.find(key);
+		                        const bool handle_ok = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+		                        if (!handle_ok) ++bad_handle;
+		                        if (it == tagTable.end()) {
+		                            ++missing;
+		                            continue;
+		                        }
+		                        ++with_snapshot;
+		                        const TagSnapshot &snap = it->second;
+		                        if (snap.quality == 1) ++good;
+		                        else ++bad;
+		                        auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                            now - snap.timestamp
+		                        ).count();
+		                        if (newest_age_ms < 0 || age_ms < newest_age_ms) newest_age_ms = age_ms;
+		                    }
+
+		                    jc["total"] = total;
+		                    jc["with_snapshot"] = with_snapshot;
+		                    jc["good"] = good;
+		                    jc["bad"] = bad;
+		                    jc["missing"] = missing;
+		                    jc["bad_handle"] = bad_handle;
+		                    if (newest_age_ms >= 0) jc["newest_age_ms"] = newest_age_ms;
+		                    rootTotal += total;
+		                    root["connections"][driver.conn.id] = jc;
+		                }
+		                root["total"] = rootTotal;
+		                res.set_content(root.dump(), "application/json");
+		            });
+
 		            // /tags
-		            svr.Get("/tags", [&](const httplib::Request &, httplib::Response &res) {
+		            svr.Get("/tags", [&](const httplib::Request &req, httplib::Response &res) {
 							struct TagRow {
 								std::string connection_id;
 								std::string name;
@@ -13132,11 +13241,25 @@ window.addEventListener("load", startAutoRefresh);
 							};
 
 						std::vector<TagRow> rows;
+						const std::string filterConn = req.has_param("connection_id") ? req.get_param_value("connection_id") : "";
+						const std::string filterTag = req.has_param("tag") ? req.get_param_value("tag") : "";
+						const std::string searchRaw = req.has_param("search") ? req.get_param_value("search") : "";
+						const std::string search = to_lower_copy(searchRaw);
+						const int offset = req.has_param("offset") ? std::max(0, parse_int_loose(req.get_param_value("offset"), 0)) : 0;
+						int limit = req.has_param("limit") ? parse_int_loose(req.get_param_value("limit"), 0) : 0;
+						if (limit < 0) limit = 0;
+						if (limit > 1000) limit = 1000;
 
 		                {
 							std::lock_guard<std::mutex> lock(driverMutex);
 							for (auto &driver : drivers) {
+								if (!filterConn.empty() && driver.conn.id != filterConn) continue;
 			                    for (auto &t : driver.tags) {
+										if (!filterTag.empty() && t.cfg.logical_name != filterTag) continue;
+										if (!search.empty()) {
+											std::string hay = to_lower_copy(driver.conn.id + " " + t.cfg.logical_name + " " + t.cfg.plc_tag_name + " " + t.cfg.datatype);
+											if (hay.find(search) == std::string::npos) continue;
+										}
 										std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
 										auto it = tagTable.find(key);
 										TagRow row;
@@ -13158,59 +13281,19 @@ window.addEventListener("load", startAutoRefresh);
 
 		                json root;
 		                root["tags"] = json::array();
+		                root["total"] = rows.size();
+		                root["offset"] = offset;
+		                root["limit"] = limit;
+		                if (!filterConn.empty()) root["connection_id"] = filterConn;
+		                if (!filterTag.empty()) root["tag"] = filterTag;
+		                if (!searchRaw.empty()) root["search"] = searchRaw;
 
-						for (const auto &r : rows) {
-							json jt;
-							jt["connection_id"] = r.connection_id;
-							jt["name"]          = r.name;
-							jt["datatype"]      = r.datatype;
-								jt["enabled"]       = r.enabled;
-								jt["writable"]      = r.writable;
-								jt["handle_ok"]     = r.handle_ok;
-								jt["has_snapshot"]  = r.has_snapshot;
-								jt["is_array_root"] = r.is_array_root;
-
-								if (!r.enabled) {
-									jt["reason"] = "disabled";
-								} else if (!r.handle_ok) {
-									jt["reason"] = "bad_handle";
-								} else if (!r.has_snapshot) {
-									jt["reason"] = "no_snapshot_yet";
-								}
-
-								if (r.has_snapshot) {
-									const TagSnapshot &snap = r.snap;
-									jt["quality"] = snap.quality;
-
-								auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-									snap.timestamp.time_since_epoch()
-								).count();
-								jt["timestamp_ms"] = ms;
-
-									if (snap.quality == 1) {
-										std::visit([&jt](auto &&arg) {
-											using V = std::decay_t<decltype(arg)>;
-											if constexpr (std::is_same_v<V, float> || std::is_same_v<V, double>) {
-												// JSON cannot represent NaN/Inf; avoid throwing and breaking /tags.
-												if (std::isfinite(arg)) {
-													jt["value"] = arg;
-												} else {
-													jt["value"] = nullptr;
-												}
-											} else {
-												jt["value"] = arg;
-											}
-										}, snap.value);
-									} else {
-										jt["value"] = nullptr;
-									}
-								} else {
-									jt["quality"] = nullptr;
-									jt["timestamp_ms"] = nullptr;
-									jt["value"] = nullptr;
-								}
-
-							root["tags"].push_back(std::move(jt));
+						const size_t begin = static_cast<size_t>(std::min<int>(offset, static_cast<int>(rows.size())));
+						const size_t end = (limit > 0)
+							? std::min(rows.size(), begin + static_cast<size_t>(limit))
+							: rows.size();
+						for (size_t i = begin; i < end; ++i) {
+							root["tags"].push_back(tag_row_to_json(rows[i]));
 						}
 
 		                res.set_content(root.dump(), "application/json");
@@ -13616,6 +13699,49 @@ window.addEventListener("load", startAutoRefresh);
 								int good_recent = 0;
 								int stale_or_bad = 0;
 								int64_t newest_age_ms = -1;
+								int64_t freshness_budget_ms = 15000;
+								int64_t expected_sweep_ms = -1;
+								uint64_t poll_tag_count = 0;
+								double measured_read_ms_avg = 0.0;
+								uint64_t metric_reads_total = 0;
+								uint64_t poll_cursor = 0;
+
+								{
+									std::lock_guard<std::mutex> mlock(g_metricsMutex);
+									auto mit = g_connPollMetrics.find(driver.conn.id);
+									if (mit != g_connPollMetrics.end() && mit->second) {
+										auto &m = mit->second;
+										metric_reads_total = m->reads_total.load(std::memory_order_relaxed);
+										uint64_t us_total = m->read_us_total.load(std::memory_order_relaxed);
+										poll_tag_count = m->poll_tag_count.load(std::memory_order_relaxed);
+										poll_cursor = m->poll_cursor.load(std::memory_order_relaxed);
+										if (metric_reads_total > 0) {
+											measured_read_ms_avg =
+												(static_cast<double>(us_total) / 1000.0) /
+												static_cast<double>(metric_reads_total);
+										}
+									}
+								}
+
+								if (driver.conn.polling_mode == "time_sliced" || driver.tags.size() >= 500) {
+									double reads_per_sec = 0.0;
+									if (driver.conn.poll_max_reads_per_sec > 0) {
+										reads_per_sec = static_cast<double>(driver.conn.poll_max_reads_per_sec);
+									} else if (measured_read_ms_avg > 0.0) {
+										reads_per_sec = 1000.0 / measured_read_ms_avg;
+									}
+									const uint64_t effective_tag_count = poll_tag_count > 0
+										? poll_tag_count
+										: static_cast<uint64_t>(driver.tags.size());
+									if (reads_per_sec > 0.0 && effective_tag_count > 0) {
+										expected_sweep_ms = static_cast<int64_t>(
+											std::ceil((static_cast<double>(effective_tag_count) / reads_per_sec) * 1000.0)
+										);
+										// In large time-sliced configs, a tag being older than its requested scan_ms
+										// is expected. Judge health against the achievable sweep time instead.
+										freshness_budget_ms = std::max<int64_t>(freshness_budget_ms, expected_sweep_ms + 30000);
+									}
+								}
 
 							for (auto &t : driver.tags) {
 								if (!t.cfg.enabled) continue;
@@ -13643,7 +13769,10 @@ window.addEventListener("load", startAutoRefresh);
 
 										// Health budgets are intentionally generous: /health should not flap
 										// just because the poll loop is busy (e.g., thousands of tags).
-										int64_t budget_ms = std::max<int64_t>(static_cast<int64_t>(scan_ms) * 6, 15000);
+										int64_t budget_ms = std::max<int64_t>(
+											std::max<int64_t>(static_cast<int64_t>(scan_ms) * 6, 15000),
+											freshness_budget_ms
+										);
 										bool recent = (age_ms >= 0 && age_ms <= budget_ms);
 
 									if (recent && snap.quality == 1) {
@@ -13703,6 +13832,14 @@ window.addEventListener("load", startAutoRefresh);
 								dstatus["good_recent"] = good_recent;
 								dstatus["stale_or_bad"] = stale_or_bad;
 								dstatus["stale_ratio"] = stale_ratio;
+								dstatus["freshness_budget_ms"] = freshness_budget_ms;
+								if (expected_sweep_ms >= 0) dstatus["expected_sweep_ms"] = expected_sweep_ms;
+								if (poll_tag_count > 0) dstatus["poll_tag_count"] = poll_tag_count;
+								if (poll_cursor > 0) dstatus["poll_cursor"] = poll_cursor;
+								if (measured_read_ms_avg > 0.0) dstatus["read_ms_avg"] = measured_read_ms_avg;
+								if (driver.conn.poll_max_reads_per_sec > 0) {
+									dstatus["poll_max_reads_per_sec"] = driver.conn.poll_max_reads_per_sec;
+								}
 								if (newest_age_ms >= 0) dstatus["newest_age_ms"] = newest_age_ms;
 
 								conn_obj[driver.conn.id] = dstatus;
@@ -17173,6 +17310,11 @@ window.addEventListener("load", startAutoRefresh);
 							const int batchSize = std::max(1, spec.conn.poll_batch_size > 0 ? spec.conn.poll_batch_size : autoBatchSize);
 							const int budgetMs = std::max(1, spec.conn.poll_time_budget_ms > 0 ? spec.conn.poll_time_budget_ms : autoBudgetMs);
 							const int yieldMs = (spec.conn.polling_pacing == "gentle") ? 5 : ((spec.conn.polling_pacing == "fast") ? 1 : 2);
+							const int maxReadsPerSec = std::max(0, spec.conn.poll_max_reads_per_sec);
+							const auto minReadInterval = (maxReadsPerSec > 0)
+								? std::chrono::microseconds(std::max<int64_t>(1, 1000000LL / maxReadsPerSec))
+								: std::chrono::microseconds(0);
+							auto lastReadFinished = std::chrono::steady_clock::now() - minReadInterval;
 							size_t batchReads = 0;
 							auto batchStarted = std::chrono::steady_clock::now();
 							if (spec.metrics) {
@@ -17914,6 +18056,14 @@ window.addEventListener("load", startAutoRefresh);
 		                                mqttQueue.push_back(std::move(j));
 		                                }
 	                            }
+								if (maxReadsPerSec > 0) {
+									const auto afterRead = std::chrono::steady_clock::now();
+									const auto nextAllowed = lastReadFinished + minReadInterval;
+									if (afterRead < nextAllowed) {
+										std::this_thread::sleep_until(nextAllowed);
+									}
+									lastReadFinished = std::chrono::steady_clock::now();
+								}
 								if (timeSliced) {
 									batchReads++;
 									const auto afterRead = std::chrono::steady_clock::now();

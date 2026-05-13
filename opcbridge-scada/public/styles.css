@@ -110,6 +110,26 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 }
 .table th.sortable { cursor: pointer; user-select: none; }
 .table th.sortable:hover { text-decoration: underline; }
+.live-tags-virtual {
+  position: relative;
+  height: 340px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(15,19,29,.65);
+}
+.live-tags-spacer { width: 1px; opacity: 0; }
+.live-tags-table-window {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+.live-tags-table-window .table-wrap,
+.live-tags-table-window .table {
+  border: 0;
+}
 #alarmsEventsChildrenTable th.sortable { color: var(--text); }
 
 /* Checkbox-only table cells (align left instead of visually centered). */
@@ -356,6 +376,17 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   grid-column: 1 / -1;
   grid-row: 2;
   min-height: 0;
+}
+.workspace-bottom .editor-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.workspace-bottom .live-tags-virtual {
+  flex: 1;
+  min-height: 0;
+  height: auto;
 }
 
 .users-workspace {
