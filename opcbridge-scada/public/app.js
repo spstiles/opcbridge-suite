@@ -13037,11 +13037,35 @@ function buildTree() {
     connectivity.children.push(deviceNode);
   });
 
+  const systemNode = {
+    id: 'folder:system',
+    type: 'system_folder',
+    label: 'System',
+    meta: { connection_id: '_system', system: true },
+    children: [
+      {
+        id: 'system:bridge',
+        type: 'system_group',
+        label: 'Bridge',
+        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Bridge/' },
+        children: []
+      },
+      {
+        id: 'system:connections',
+        type: 'system_group',
+        label: 'Connections',
+        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Connections/' },
+        children: []
+      }
+    ]
+  };
+  root.children.push(systemNode);
+
   return root;
 }
 
 function renderTreeNode(node, container) {
-  const canExpand = ['project', 'folder', 'device'].includes(String(node.type || ''));
+  const canExpand = ['project', 'folder', 'device', 'system_folder'].includes(String(node.type || ''));
   const expanded = state.expanded.has(node.id);
 
   const btn = document.createElement('button');
@@ -13072,6 +13096,8 @@ function renderTreeNode(node, container) {
   if (node.type === 'device') {
     const n = tagCountForConn(node.meta?.connection_id);
     meta.textContent = n ? `${n} tag(s)` : '';
+  } else if (node.type === 'system_folder') {
+    meta.textContent = 'read-only';
   } else if (node.type === 'event_connection') {
     const n = Array.isArray(node.children) ? node.children.length : 0;
     meta.textContent = n ? `${n} event(s)` : '';
@@ -13106,6 +13132,12 @@ function renderTreeNode(node, container) {
     if (node.type === 'project') return;
 
     const items = [];
+
+    if (node.type === 'system_folder' || node.type === 'system_group') {
+      items.push({ label: 'Refresh', onClick: async () => { await refreshVisible().catch(() => {}); } });
+      showContextMenu(e.clientX, e.clientY, items);
+      return;
+    }
 
     if (node.type === 'folder' && node.id === 'folder:connectivity') {
       items.push({ label: 'Add Device…', onClick: () => createNewConnectionInteractive() });
@@ -13160,6 +13192,7 @@ function renderWorkspaceDetails(node) {
   const isConnectivity = node.id === 'folder:connectivity';
   const isDevice = String(node.type || '') === 'device';
   const isTag = String(node.type || '') === 'tag';
+  const isSystem = String(node.type || '') === 'system_folder' || String(node.type || '') === 'system_group';
 
   // ---------- Connectivity / tags ----------
 
@@ -13167,7 +13200,7 @@ function renderWorkspaceDetails(node) {
   const showDeviceCols = isConnectivity;
 
   // When a device is selected, list its tags. Clicking a tag in the tree should not change the right pane.
-  const showTagCols = isDevice || isTag;
+  const showTagCols = isDevice || isTag || isSystem;
 
   const columns = [];
   const addCol = (key, label, sortable = false) => columns.push({ key, label, sortable });
@@ -13196,7 +13229,22 @@ function renderWorkspaceDetails(node) {
   const connectionId = String(node.meta?.connection_id || '').trim();
 
   let tagRows = [];
-  if (showTagCols && connectionId) {
+  if (isSystem) {
+    const prefix = String(node.meta?.tag_prefix || '').trim();
+    tagRows = (Array.isArray(state.liveTagsLast?.tags) ? state.liveTagsLast.tags : [])
+      .filter((tt) => String(tt?.connection_id || '') === '_system')
+      .filter((tt) => !prefix || String(tt?.name || '').startsWith(prefix))
+      .map((tt) => ({
+        connection_id: '_system',
+        name: String(tt?.name || ''),
+        plc_tag_name: '',
+        datatype: String(tt?.datatype || ''),
+        scan_ms: '',
+        enabled: true,
+        writable: false,
+        system: true
+      }));
+  } else if (showTagCols && connectionId) {
     tagRows = getEffectiveTagsAll()
       .filter((tt) => String(tt?.connection_id || '') === connectionId)
       .slice();
@@ -13364,6 +13412,7 @@ function renderWorkspaceDetails(node) {
   };
 
   const stageDeleteSelectedTags = () => {
+    if (isSystem) return;
     const keys = Array.from(state.workspaceChildrenSel || []);
     const tagKeys = keys.filter((k) => k.includes('::'));
     if (!tagKeys.length) return;
@@ -13380,6 +13429,7 @@ function renderWorkspaceDetails(node) {
   };
 
   const stageDuplicateSelectedTags = () => {
+    if (isSystem) return;
     const keys = Array.from(state.workspaceChildrenSel || []);
     const tagKeys = keys.filter((k) => k.includes('::'));
     if (!tagKeys.length) return;
@@ -13510,7 +13560,7 @@ function renderWorkspaceDetails(node) {
         state.workspaceChildrenLastIndex = idx;
         applySelectionClass();
       }
-      if (showTagCols && (state.workspaceChildrenSel?.size || 0) > 0) {
+      if (showTagCols && !isSystem && (state.workspaceChildrenSel?.size || 0) > 0) {
         const selectedCount = state.workspaceChildrenSel.size;
         showContextMenu(e.clientX, e.clientY, [
           { label: selectedCount === 1 ? 'Duplicate Tag' : `Duplicate selected tag(s) (${selectedCount})`, onClick: stageDuplicateSelectedTags },
@@ -13522,6 +13572,7 @@ function renderWorkspaceDetails(node) {
     tr.addEventListener('dblclick', () => {
       // double-click opens properties
       if (showTagCols) {
+        if (isSystem) return;
         const pseudo = {
           id: `tag:${String(c?.connection_id || connectionId)}::${String(c?.name || '')}`,
           type: 'tag',
@@ -13765,7 +13816,14 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
   if (!node) return;
   const type = String(node.type || '');
 
-  if (type === 'tag') {
+  if (type === 'system_folder' || type === 'system_group') {
+    state.liveTagFilter = {
+      type: 'system',
+      connection_id: '_system',
+      prefix: String(node.meta?.tag_prefix || ''),
+      label: String(node.type || '') === 'system_group' ? `System / ${String(node.label || '')}` : 'System'
+    };
+  } else if (type === 'tag') {
     const connection_id = String(node.meta?.connection_id || '').trim();
     const name = String(node.meta?.name || node.label || '').trim();
     if (connection_id && name) {
@@ -13806,6 +13864,13 @@ function filterLiveTagsForWorkspace(tags) {
     const cid = String(f.connection_id || '').trim();
     if (!cid) return tags;
     return tags.filter((t) => String(t?.connection_id || '') === cid);
+  }
+
+  if (f.type === 'system') {
+    const prefix = String(f.prefix || '').trim();
+    return tags
+      .filter((t) => String(t?.connection_id || '') === '_system')
+      .filter((t) => !prefix || String(t?.name || t?.tag || '').startsWith(prefix));
   }
 
   return tags;
@@ -13893,6 +13958,11 @@ function renderLiveTags(tagsResp) {
   if (isPanelActive('tab-workspace')) {
     const filtered = filterLiveTagsForWorkspace(tags);
     renderLiveTagsInto(els.workspaceLiveTagsTbody, filtered);
+    const selected = state.selectedNodeId ? findWorkspaceNodeById(state.workspaceTreeRoot, state.selectedNodeId) : null;
+    const selectedType = String(selected?.type || '');
+    if (selected && (selectedType === 'system_folder' || selectedType === 'system_group')) {
+      renderWorkspaceDetails(selected);
+    }
   }
   if (els.workspaceLiveTagsMeta) els.workspaceLiveTagsMeta.textContent = '';
   if (els.workspaceLiveTagsSpacer) els.workspaceLiveTagsSpacer.style.height = `${Math.max(1, total * rowHeight)}px`;
@@ -13917,7 +13987,7 @@ async function loadVisibleLiveTags() {
   let scopeKey = 'all';
   if (isPanelActive('tab-workspace')) {
     const f = state.liveTagFilter || { type: 'all' };
-    if ((f?.type === 'device' || f?.type === 'tag') && f.connection_id) {
+    if ((f?.type === 'device' || f?.type === 'tag' || f?.type === 'system') && f.connection_id) {
       params.set('connection_id', String(f.connection_id));
       scopeKey = `${String(f.type)}:${String(f.connection_id)}`;
       if (f.type === 'tag' && f.name) {
@@ -13926,10 +13996,13 @@ async function loadVisibleLiveTags() {
       }
     }
   }
+  const prefix = String((state.liveTagFilter?.type === 'system' ? state.liveTagFilter?.prefix : '') || '').trim();
+  if (prefix) params.set('search', prefix);
   const search = String(els.workspaceLiveTagsSearch?.value ?? page.search ?? '').trim();
-  if (scopeKey !== page.scopeKey || search !== page.search || limit !== page.limit) {
+  const effectiveSearch = prefix && !search ? prefix : search;
+  if (scopeKey !== page.scopeKey || effectiveSearch !== page.search || limit !== page.limit) {
     page.scopeKey = scopeKey;
-    page.search = search;
+    page.search = effectiveSearch;
     page.limit = limit;
     resetLiveTagsViewport();
   }

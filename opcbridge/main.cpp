@@ -400,12 +400,20 @@ struct UaTagBinding {
     bool writable;    // NEW: whether UA writes should go to PLC
 };
 
+struct UaSystemBinding {
+    std::string name;
+    std::string datatype;
+    UA_NodeId nodeId;
+};
+
 //extern struct UaTagBinding; // if needed, or keep where it is
 
 // OPC UA global state
 static UA_Server *g_uaServer = nullptr;
 static std::vector<UaTagBinding> g_uaBindings;
+static std::vector<UaSystemBinding> g_uaSystemBindings;
 static std::unordered_map<std::string, size_t> g_uaBindingIndex;
+static std::unordered_map<std::string, size_t> g_uaSystemBindingIndex;
 
 // helper to key bindings by connection + logical tag name
 static std::string ua_key(const std::string &connId,
@@ -5758,6 +5766,22 @@ UA_UInt16 uaTypeIndexForDatatype(const std::string &dt) {
     return 0;
 }
 
+static UA_NodeId ua_add_folder(UA_Server *server,
+                               UA_NodeId parent,
+                               const std::string &name);
+
+static bool ua_add_system_variable(UA_Server *server,
+                                   UA_NodeId parent,
+                                   std::vector<UaSystemBinding> &bindings,
+                                   const std::string &path,
+                                   const std::string &datatype,
+                                   const json &initialValue);
+
+static bool ua_set_variant_for_system_value(UA_Variant &variant,
+                                            const std::string &datatype,
+                                            const json &value,
+                                            bool copyValue);
+
 bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
     if (g_uaServer) {
         std::cerr << "OPC UA: server already initialized.\n";
@@ -5817,6 +5841,49 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         if (st != UA_STATUSCODE_GOOD) {
             std::cerr << "OPC UA: Failed to add OPCBridge object: "
                       << UA_StatusCode_name(st) << "\n";
+        }
+    }
+
+    std::vector<UaSystemBinding> systemBindings;
+    {
+        UA_NodeId systemId = ua_add_folder(
+            server,
+            UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
+            "System"
+        );
+        if (!UA_NodeId_isNull(&systemId)) {
+            UA_NodeId bridgeSysId = ua_add_folder(server, systemId, "Bridge");
+            UA_NodeId connectionsSysId = ua_add_folder(server, systemId, "Connections");
+
+            if (!UA_NodeId_isNull(&bridgeSysId)) {
+                ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/UptimeSeconds", "int64", 0);
+                ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION));
+                ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/ReloadActive", "bool", false);
+                ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/ReloadGeneration", "uint64", 0);
+            }
+
+            if (!UA_NodeId_isNull(&connectionsSysId)) {
+                for (auto &driver : drivers) {
+                    UA_NodeId connSysId = ua_add_folder(server, connectionsSysId, driver.conn.id);
+                    if (UA_NodeId_isNull(&connSysId)) continue;
+                    const std::string prefix = "System/Connections/" + driver.conn.id + "/";
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "Enabled", "bool", true);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "TagCount", "int32", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "WithSnapshotCount", "int32", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "GoodCount", "int32", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "BadCount", "int32", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "MissingCount", "int32", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "BadHandleCount", "int32", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "StalePercent", "float64", 0.0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "NewestAgeMs", "int64", -1);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "PollLanes", "int32", driver.conn.poll_lanes);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "ReadsTotal", "uint64", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "ReadsOk", "uint64", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "ReadsError", "uint64", 0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "ReadMsLast", "float64", 0.0);
+                    ua_add_system_variable(server, connSysId, systemBindings, prefix + "ReadMsAvg", "float64", 0.0);
+                }
+            }
         }
     }
 
@@ -6019,10 +6086,15 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
     // Move into globals and build index
     g_uaServer = server;
     g_uaBindings = std::move(bindings);
+    g_uaSystemBindings = std::move(systemBindings);
     g_uaBindingIndex.clear();
     for (size_t i = 0; i < g_uaBindings.size(); ++i) {
         const auto &b = g_uaBindings[i];
         g_uaBindingIndex[ua_key(b.conn->id, b.logical_name)] = i;
+    }
+    g_uaSystemBindingIndex.clear();
+    for (size_t i = 0; i < g_uaSystemBindings.size(); ++i) {
+        g_uaSystemBindingIndex[g_uaSystemBindings[i].name] = i;
     }
 
     return true;
@@ -6034,7 +6106,9 @@ void shutdown_opcua_server() {
         UA_Server_delete(g_uaServer);
         g_uaServer = nullptr;
         g_uaBindings.clear();
+        g_uaSystemBindings.clear();
         g_uaBindingIndex.clear();
+        g_uaSystemBindingIndex.clear();
     }
 }
 
@@ -6048,6 +6122,222 @@ bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b) {
     if (a.value.index() != b.value.index())
         return false;
     return a.value == b.value; // std::variant supports operator==
+}
+
+static std::string leaf_name_from_path(const std::string &path) {
+    const size_t pos = path.find_last_of('/');
+    return (pos == std::string::npos) ? path : path.substr(pos + 1);
+}
+
+static bool ua_set_variant_for_system_value(UA_Variant &variant,
+                                            const std::string &datatype,
+                                            const json &value,
+                                            bool copyValue) {
+    if (datatype == "bool") {
+        UA_Boolean v = value.get<bool>() ? UA_TRUE : UA_FALSE;
+        if (copyValue) UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
+        else UA_Variant_setScalar(&variant, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
+        return true;
+    }
+    if (datatype == "int32") {
+        UA_Int32 v = static_cast<UA_Int32>(value.get<int>());
+        if (copyValue) UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_INT32]);
+        else UA_Variant_setScalar(&variant, &v, &UA_TYPES[UA_TYPES_INT32]);
+        return true;
+    }
+    if (datatype == "uint64") {
+        UA_UInt64 v = static_cast<UA_UInt64>(value.get<uint64_t>());
+        if (copyValue) UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_UINT64]);
+        else UA_Variant_setScalar(&variant, &v, &UA_TYPES[UA_TYPES_UINT64]);
+        return true;
+    }
+    if (datatype == "int64") {
+        UA_Int64 v = static_cast<UA_Int64>(value.get<int64_t>());
+        if (copyValue) UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_INT64]);
+        else UA_Variant_setScalar(&variant, &v, &UA_TYPES[UA_TYPES_INT64]);
+        return true;
+    }
+    if (datatype == "float64") {
+        UA_Double v = static_cast<UA_Double>(value.get<double>());
+        if (copyValue) UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+        else UA_Variant_setScalar(&variant, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+        return true;
+    }
+    if (datatype == "string") {
+        std::string s = value.get<std::string>();
+        UA_String v = UA_STRING_ALLOC(s.c_str());
+        UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_STRING]);
+        UA_String_clear(&v);
+        return true;
+    }
+    return false;
+}
+
+static UA_NodeId ua_add_folder(UA_Server *server,
+                               UA_NodeId parent,
+                               const std::string &name) {
+    UA_NodeId nodeId;
+    UA_ObjectAttributes attr = UA_ObjectAttributes_default;
+    attr.displayName = UA_LOCALIZEDTEXT_ALLOC(
+        const_cast<char*>("en-US"),
+        const_cast<char*>(name.c_str())
+    );
+    UA_StatusCode st = UA_Server_addObjectNode(
+        server,
+        UA_NODEID_NULL,
+        parent,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+        UA_QUALIFIEDNAME(1, const_cast<char*>(name.c_str())),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
+        attr, nullptr, &nodeId
+    );
+    UA_ObjectAttributes_clear(&attr);
+    if (st != UA_STATUSCODE_GOOD) {
+        std::cerr << "OPC UA: failed to add folder '" << name
+                  << "': " << UA_StatusCode_name(st) << "\n";
+        return UA_NODEID_NULL;
+    }
+    return nodeId;
+}
+
+static bool ua_add_system_variable(UA_Server *server,
+                                   UA_NodeId parent,
+                                   std::vector<UaSystemBinding> &bindings,
+                                   const std::string &path,
+                                   const std::string &datatype,
+                                   const json &initialValue) {
+    const std::string leaf = leaf_name_from_path(path);
+    UA_VariableAttributes attr = UA_VariableAttributes_default;
+    attr.displayName = UA_LOCALIZEDTEXT_ALLOC(
+        const_cast<char*>("en-US"),
+        const_cast<char*>(leaf.c_str())
+    );
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+
+    if (!ua_set_variant_for_system_value(attr.value, datatype, initialValue, true)) {
+        UA_VariableAttributes_clear(&attr);
+        std::cerr << "OPC UA: unsupported system datatype '" << datatype
+                  << "' for " << path << "\n";
+        return false;
+    }
+
+    UA_NodeId varId;
+    UA_StatusCode st = UA_Server_addVariableNode(
+        server,
+        UA_NODEID_NULL,
+        parent,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(1, const_cast<char*>(leaf.c_str())),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+        attr, nullptr, &varId
+    );
+    UA_VariableAttributes_clear(&attr);
+    if (st != UA_STATUSCODE_GOOD) {
+        std::cerr << "OPC UA: failed to add system variable '" << path
+                  << "': " << UA_StatusCode_name(st) << "\n";
+        return false;
+    }
+
+    bindings.push_back(UaSystemBinding{path, datatype, varId});
+    return true;
+}
+
+static void ua_write_system_value(const std::string &name, const json &value) {
+    if (!g_uaServer) return;
+    auto it = g_uaSystemBindingIndex.find(name);
+    if (it == g_uaSystemBindingIndex.end()) return;
+    const UaSystemBinding &binding = g_uaSystemBindings[it->second];
+
+    UA_Variant variant;
+    UA_Variant_init(&variant);
+    if (!ua_set_variant_for_system_value(variant, binding.datatype, value, true)) return;
+
+    UA_StatusCode st = UA_Server_writeValue(g_uaServer, binding.nodeId, variant);
+    UA_Variant_clear(&variant);
+    if (st != UA_STATUSCODE_GOOD) {
+        std::cerr << "OPC UA system: writeValue failed for "
+                  << name << ": " << UA_StatusCode_name(st) << "\n";
+    }
+}
+
+static void update_system_opcua_values(std::vector<DriverContext> &drivers,
+                                       TagTable &tagTable,
+                                       const std::chrono::system_clock::time_point &processStartTime) {
+    if (!g_uaServer || g_uaSystemBindings.empty()) return;
+
+    const auto now = std::chrono::system_clock::now();
+    const int64_t uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
+        now - processStartTime
+    ).count();
+
+    ReloadState reloadCopy;
+    {
+        std::lock_guard<std::mutex> rlock(g_reloadMutex);
+        reloadCopy = g_reloadState;
+    }
+
+    ua_write_system_value("System/Bridge/UptimeSeconds", uptime_sec);
+    ua_write_system_value("System/Bridge/Version", std::string(OPCBRIDGE_VERSION));
+    ua_write_system_value("System/Bridge/ReloadActive", reloadCopy.in_progress || reloadCopy.requested);
+    ua_write_system_value("System/Bridge/ReloadGeneration", reloadCopy.gen);
+
+    for (auto &driver : drivers) {
+        const std::string prefix = "System/Connections/" + driver.conn.id + "/";
+        int total = 0;
+        int with_snapshot = 0;
+        int good = 0;
+        int bad = 0;
+        int missing = 0;
+        int bad_handle = 0;
+        int64_t newest_age_ms = -1;
+
+        for (auto &t : driver.tags) {
+            if (!t.cfg.enabled) continue;
+            ++total;
+            const std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
+            auto it = tagTable.find(key);
+            const bool handle_ok = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+            if (!handle_ok) ++bad_handle;
+            if (it == tagTable.end()) {
+                ++missing;
+                continue;
+            }
+            ++with_snapshot;
+            const TagSnapshot &snap = it->second;
+            if (snap.quality == 1) ++good;
+            else ++bad;
+            const auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - snap.timestamp
+            ).count();
+            if (newest_age_ms < 0 || age_ms < newest_age_ms) newest_age_ms = age_ms;
+        }
+
+        std::shared_ptr<ConnPollMetrics> metrics;
+        {
+            std::lock_guard<std::mutex> mlock(g_metricsMutex);
+            auto mit = g_connPollMetrics.find(driver.conn.id);
+            if (mit != g_connPollMetrics.end()) metrics = mit->second;
+        }
+        const uint64_t readsTotal = metrics ? metrics->reads_total.load(std::memory_order_relaxed) : 0;
+
+        ua_write_system_value(prefix + "Enabled", true);
+        ua_write_system_value(prefix + "TagCount", total);
+        ua_write_system_value(prefix + "WithSnapshotCount", with_snapshot);
+        ua_write_system_value(prefix + "GoodCount", good);
+        ua_write_system_value(prefix + "BadCount", bad);
+        ua_write_system_value(prefix + "MissingCount", missing);
+        ua_write_system_value(prefix + "BadHandleCount", bad_handle);
+        ua_write_system_value(prefix + "StalePercent", total > 0 ? (100.0 * static_cast<double>(bad + missing + bad_handle) / static_cast<double>(total)) : 0.0);
+        ua_write_system_value(prefix + "NewestAgeMs", newest_age_ms);
+        ua_write_system_value(prefix + "PollLanes", driver.conn.poll_lanes);
+        ua_write_system_value(prefix + "ReadsTotal", readsTotal);
+        ua_write_system_value(prefix + "ReadsOk", metrics ? metrics->reads_ok.load(std::memory_order_relaxed) : 0);
+        ua_write_system_value(prefix + "ReadsError", metrics ? metrics->reads_err.load(std::memory_order_relaxed) : 0);
+        ua_write_system_value(prefix + "ReadMsLast", metrics ? (static_cast<double>(metrics->read_us_last.load(std::memory_order_relaxed)) / 1000.0) : 0.0);
+        ua_write_system_value(prefix + "ReadMsAvg", (metrics && readsTotal > 0)
+            ? (static_cast<double>(metrics->read_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(readsTotal)
+            : 0.0);
+    }
 }
 
 // Schedule the next periodic log time in wall-clock time based on tag config.
@@ -13136,6 +13426,15 @@ window.addEventListener("load", startAutoRefresh);
 		                jt["handle_ok"]     = r.handle_ok;
 		                jt["has_snapshot"]  = r.has_snapshot;
 		                jt["is_array_root"] = r.is_array_root;
+		                jt["system"]        = r.system;
+		                jt["read_only"]     = r.system || !r.writable;
+
+		                if (r.system) {
+		                    jt["quality"] = 1;
+		                    jt["timestamp_ms"] = r.timestamp_ms;
+		                    jt["value"] = r.system_value;
+		                    return jt;
+		                }
 
 		                if (!r.enabled) {
 		                    jt["reason"] = "disabled";
@@ -13228,9 +13527,22 @@ window.addEventListener("load", startAutoRefresh);
 		                    rootTotal += total;
 		                    root["connections"][driver.conn.id] = jc;
 		                }
-		                root["total"] = rootTotal;
-		                res.set_content(root.dump(), "application/json");
-		            });
+		                    root["total"] = rootTotal;
+		                    {
+		                        json sys;
+		                        sys["total"] = 4 + static_cast<int>(drivers.size()) * 15;
+		                        sys["with_snapshot"] = sys["total"];
+		                        sys["good"] = sys["total"];
+		                        sys["bad"] = 0;
+		                        sys["missing"] = 0;
+		                        sys["bad_handle"] = 0;
+		                        sys["newest_age_ms"] = 0;
+		                        root["connections"]["_system"] = sys;
+		                        rootTotal += sys["total"].get<int>();
+		                        root["total"] = rootTotal;
+		                    }
+		                    res.set_content(root.dump(), "application/json");
+		                });
 
 		            // /tags
 		            svr.Get("/tags", [&](const httplib::Request &req, httplib::Response &res) {
@@ -13244,6 +13556,9 @@ window.addEventListener("load", startAutoRefresh);
 								bool handle_ok;
 								bool has_snapshot;
 								bool is_array_root;
+								bool system;
+								json system_value;
+								int64_t timestamp_ms;
 							};
 
 						std::vector<TagRow> rows;
@@ -13268,11 +13583,13 @@ window.addEventListener("load", startAutoRefresh);
 										row.connection_id = driver.conn.id;
 										row.name          = t.cfg.logical_name;
 											row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
-											row.enabled       = t.cfg.enabled;
+										row.enabled       = t.cfg.enabled;
 											row.writable      = t.cfg.writable;
 											row.has_snapshot  = (it != tagTable.end());
 											row.is_array_root = (t.handle >= 0) && (t.cfg.elem_count > 1);
 											row.handle_ok     = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || row.has_snapshot;
+											row.system        = false;
+											row.timestamp_ms  = 0;
 											if (row.has_snapshot) {
 												row.snap = it->second;
 											}
@@ -13299,6 +13616,105 @@ window.addEventListener("load", startAutoRefresh);
 											if (hay.find(search) == std::string::npos) continue;
 										}
 										rows.push_back(std::move(row));
+									}
+								}
+
+								if (filterConn.empty() || filterConn == "_system") {
+									const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+										std::chrono::system_clock::now().time_since_epoch()
+									).count();
+									const int64_t uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
+										std::chrono::system_clock::now() - processStartTime
+									).count();
+
+									ReloadState reloadCopy;
+									{
+										std::lock_guard<std::mutex> rlock(g_reloadMutex);
+										reloadCopy = g_reloadState;
+									}
+
+									auto addSystemRow = [&](const std::string &name, const std::string &datatype, json value) {
+										if (!filterTag.empty() && name != filterTag) return;
+										if (!search.empty()) {
+											std::string hay = to_lower_copy(std::string("_system ") + name + " " + datatype + " good system");
+											if (hay.find(search) == std::string::npos) return;
+										}
+										TagRow row;
+										row.connection_id = "_system";
+										row.name = name;
+										row.datatype = datatype;
+										row.enabled = true;
+										row.writable = false;
+										row.handle_ok = true;
+										row.has_snapshot = true;
+										row.is_array_root = false;
+										row.system = true;
+										row.system_value = std::move(value);
+										row.timestamp_ms = ts_ms;
+										rows.push_back(std::move(row));
+									};
+
+									addSystemRow("System/Bridge/UptimeSeconds", "int64", uptime_sec);
+									addSystemRow("System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION));
+									addSystemRow("System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested);
+									addSystemRow("System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen);
+
+									for (auto &driver : drivers) {
+										const std::string prefix = "System/Connections/" + driver.conn.id + "/";
+										int total = 0;
+										int with_snapshot = 0;
+										int good = 0;
+										int bad = 0;
+										int missing = 0;
+										int bad_handle = 0;
+										int64_t newest_age_ms = -1;
+
+										for (auto &t : driver.tags) {
+											if (!t.cfg.enabled) continue;
+											++total;
+											std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
+											auto it = tagTable.find(key);
+											const bool handle_ok = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+											if (!handle_ok) ++bad_handle;
+											if (it == tagTable.end()) {
+												++missing;
+												continue;
+											}
+											++with_snapshot;
+											const TagSnapshot &snap = it->second;
+											if (snap.quality == 1) ++good;
+											else ++bad;
+											auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+												std::chrono::system_clock::now() - snap.timestamp
+											).count();
+											if (newest_age_ms < 0 || age_ms < newest_age_ms) newest_age_ms = age_ms;
+										}
+
+										std::shared_ptr<ConnPollMetrics> metrics;
+										{
+											std::lock_guard<std::mutex> mlock(g_metricsMutex);
+											auto mit = g_connPollMetrics.find(driver.conn.id);
+											if (mit != g_connPollMetrics.end()) metrics = mit->second;
+										}
+
+										addSystemRow(prefix + "Enabled", "bool", true);
+										addSystemRow(prefix + "TagCount", "int32", total);
+										addSystemRow(prefix + "WithSnapshotCount", "int32", with_snapshot);
+										addSystemRow(prefix + "GoodCount", "int32", good);
+										addSystemRow(prefix + "BadCount", "int32", bad);
+										addSystemRow(prefix + "MissingCount", "int32", missing);
+										addSystemRow(prefix + "BadHandleCount", "int32", bad_handle);
+										addSystemRow(prefix + "StalePercent", "float64", total > 0 ? (100.0 * static_cast<double>(bad + missing + bad_handle) / static_cast<double>(total)) : 0.0);
+										addSystemRow(prefix + "NewestAgeMs", "int64", newest_age_ms);
+										addSystemRow(prefix + "PollLanes", "int32", driver.conn.poll_lanes);
+										const uint64_t readsTotal = metrics ? metrics->reads_total.load(std::memory_order_relaxed) : 0;
+										addSystemRow(prefix + "ReadsTotal", "uint64", readsTotal);
+										addSystemRow(prefix + "ReadsOk", "uint64", metrics ? metrics->reads_ok.load(std::memory_order_relaxed) : 0);
+										addSystemRow(prefix + "ReadsError", "uint64", metrics ? metrics->reads_err.load(std::memory_order_relaxed) : 0);
+										addSystemRow(prefix + "ReadMsLast", "float64", metrics ? (static_cast<double>(metrics->read_us_last.load(std::memory_order_relaxed)) / 1000.0) : 0.0);
+										addSystemRow(prefix + "ReadMsAvg", "float64", (metrics && readsTotal > 0)
+											? (static_cast<double>(metrics->read_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(readsTotal)
+											: 0.0);
 									}
 								}
 							}
@@ -17185,6 +17601,7 @@ window.addEventListener("load", startAutoRefresh);
 
 	        std::mutex uaQueueMutex;
 	        std::deque<UaUpdate> uaQueue;
+	        auto lastSystemUaUpdate = std::chrono::steady_clock::time_point{};
 
 	        std::mutex mqttQueueMutex;
 	        std::deque<MqttPublishJob> mqttQueue;
@@ -18344,6 +18761,14 @@ window.addEventListener("load", startAutoRefresh);
 	                                      << ": " << UA_StatusCode_name(wst) << "\n";
 	                        }
 	                    }
+	                }
+
+	                auto uaNow = std::chrono::steady_clock::now();
+	                if (lastSystemUaUpdate.time_since_epoch().count() == 0 ||
+	                    uaNow - lastSystemUaUpdate >= std::chrono::seconds(1)) {
+	                    std::lock_guard<std::mutex> lock(driverMutex);
+	                    update_system_opcua_values(drivers, tagTable, processStartTime);
+	                    lastSystemUaUpdate = uaNow;
 	                }
 	            }
 
