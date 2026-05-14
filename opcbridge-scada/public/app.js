@@ -627,6 +627,7 @@ const state = {
   alarmsStatusLast: null,
   alarmHistoryLast: null,
   alarmActivityLast: null,
+  systemTagsForSelection: [],
   // alarms config (from opcbridge alarms.json via /config/alarms)
   alarmsConfigLast: null,
   alarmsConfig: null,
@@ -4259,17 +4260,81 @@ function syncNewAlarmDefaults() {
 
 function fillAlarmConnectionSelect(want = '') {
   if (!els.editAlarmConn) return;
-  const conns = state.connFiles.slice().map((f) => connectionIdForConnFilePath(String(f?.path || ''))).filter(Boolean);
+  const conns = getAlarmConnectionIds();
   conns.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
   els.editAlarmConn.textContent = '';
   conns.forEach((cid) => {
     const opt = document.createElement('option');
     opt.value = cid;
-    opt.textContent = cid;
+    opt.textContent = cid === '_system' ? 'System (_system)' : cid;
     els.editAlarmConn.appendChild(opt);
   });
   if (want) els.editAlarmConn.value = want;
   else if (els.editAlarmConn.options.length) els.editAlarmConn.value = String(els.editAlarmConn.options[0].value || '');
+}
+
+function getAlarmConnectionIds() {
+  const seen = new Set();
+  const out = [];
+  const add = (value) => {
+    const cid = String(value || '').trim();
+    if (!cid || seen.has(cid)) return;
+    seen.add(cid);
+    out.push(cid);
+  };
+  (state.connFiles || []).forEach((f) => add(connectionIdForConnFilePath(String(f?.path || ''))));
+  getEffectiveTagsAll().forEach((t) => add(t?.connection_id));
+  add('_system');
+  return out;
+}
+
+function maybeRefreshAlarmSourceLists(wantConnectionId = '') {
+  const normalCount = getAlarmConnectionIds().filter((cid) => cid !== '_system').length;
+  if (normalCount > 0 || state.alarmSourceListsLoading) return;
+  state.alarmSourceListsLoading = true;
+  Promise.all([
+    loadConnectionsList().catch(() => null),
+    loadTagsConfig().catch(() => null)
+  ]).then(() => {
+    fillAlarmConnectionSelect(wantConnectionId);
+    refreshAlarmTagSelect();
+  }).finally(() => {
+    state.alarmSourceListsLoading = false;
+  });
+}
+
+async function loadSystemTagsForSelection() {
+  try {
+    const resp = await apiGet('/api/opcbridge/tags?connection_id=_system&limit=1000', { timeoutMs: 10000 });
+    state.systemTagsForSelection = Array.isArray(resp?.tags) ? resp.tags : [];
+  } catch {
+    state.systemTagsForSelection = Array.isArray(state.systemTagsForSelection) ? state.systemTagsForSelection : [];
+  }
+  return state.systemTagsForSelection;
+}
+
+function getAlarmCandidateTagsForConnection(connectionId) {
+  const cid = String(connectionId || '').trim();
+  if (cid === '_system') {
+    const fromCache = Array.isArray(state.systemTagsForSelection) ? state.systemTagsForSelection : [];
+    const fromLive = Array.isArray(state.liveTagsLast?.tags)
+      ? state.liveTagsLast.tags.filter((t) => String(t?.connection_id || '') === '_system')
+      : [];
+    const byName = new Map();
+    fromCache.concat(fromLive).forEach((t) => {
+      const name = String(t?.name || '').trim();
+      if (name) byName.set(name, { ...t, connection_id: '_system', name, system: true, writable: false });
+    });
+    return Array.from(byName.values());
+  }
+  return getEffectiveTagsAll().filter((t) => String(t?.connection_id || '') === cid);
+}
+
+function alarmSourceTagExists(connectionId, tagName) {
+  const cid = String(connectionId || '').trim();
+  const name = String(tagName || '').trim();
+  if (!cid || !name) return false;
+  return getAlarmCandidateTagsForConnection(cid).some((t) => String(t?.connection_id || '') === cid && String(t?.name || '') === name);
 }
 
 function alarmGroupsSorted(cfgObj = state.alarmsConfig) {
@@ -4347,10 +4412,12 @@ function fillAlarmSiteSelect(groupName, wantSite = '') {
 function refreshAlarmTagSelect(want = '') {
   const cid = String(els.editAlarmConn?.value || '').trim();
   if (!els.editAlarmTag) return;
+  if (cid === '_system' && !(state.systemTagsForSelection || []).length) {
+    loadSystemTagsForSelection().then(() => refreshAlarmTagSelect(want)).catch(() => {});
+  }
   const filter = String(els.editAlarmTagFilter?.value || '').trim().toLowerCase();
   els.editAlarmTag.textContent = '';
-  const tags = getEffectiveTagsAll()
-    .filter((t) => String(t?.connection_id || '') === cid)
+  const tags = getAlarmCandidateTagsForConnection(cid)
     .filter((t) => {
       if (!filter) return true;
       return String(t?.name || '').toLowerCase().includes(filter) || String(t?.plc_tag_name || '').toLowerCase().includes(filter);
@@ -4363,7 +4430,7 @@ function refreshAlarmTagSelect(want = '') {
     const plc = String(t?.plc_tag_name || '').trim();
     const opt = document.createElement('option');
     opt.value = name;
-    opt.textContent = plc && plc !== name ? `${name}  (${plc})` : name;
+    opt.textContent = cid === '_system' ? `${name}  (system)` : (plc && plc !== name ? `${name}  (${plc})` : name);
     frag.appendChild(opt);
   });
   els.editAlarmTag.appendChild(frag);
@@ -8088,6 +8155,7 @@ function openNewAlarmModal({ group, site } = {}) {
   if (els.editAlarmTagFilter) els.editAlarmTagFilter.value = '';
   fillAlarmConnectionSelect();
   refreshAlarmTagSelect();
+  maybeRefreshAlarmSourceLists();
 
   if (els.editAlarmType) els.editAlarmType.value = 'high';
   if (els.editAlarmEnabled) els.editAlarmEnabled.checked = true;
@@ -8282,7 +8350,7 @@ async function saveEditedAlarmFromModal() {
   if (!tag_name) { setEditAlarmStatus('Tag is required.'); return; }
   if (!['high', 'low', 'equals', 'not_equals'].includes(type)) { setEditAlarmStatus('Type is invalid.'); return; }
   if (!Number.isFinite(severity) || severity < 0 || severity > 1000) { setEditAlarmStatus('Severity must be a number from 0 to 1000.'); return; }
-  const selectedTagExists = getEffectiveTagsAll().some((t) => String(t?.connection_id || '') === connection_id && String(t?.name || '') === tag_name);
+  const selectedTagExists = alarmSourceTagExists(connection_id, tag_name);
   if (!selectedTagExists) { setEditAlarmStatus(`Tag '${connection_id}:${tag_name}' was not found in the tag config.`); return; }
   if (audio_files.some((id) => !getAlarmAudioFiles(cfg).some((f) => f.id === id))) {
     setEditAlarmStatus('One or more audio files are not in the audio files list.');
@@ -12187,9 +12255,9 @@ function renderAlarmsEventsProperties(item, parentNode) {
 
     const connSel = document.createElement('select');
     const connWant = String(cur?.connection_id || item?.meta?.source?.connection_id || '').trim();
-    const conns = state.connFiles.slice().map((f) => connectionIdForConnFilePath(String(f?.path || ''))).filter(Boolean)
+    const conns = getAlarmConnectionIds()
       .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
-    connSel.innerHTML = conns.map((cid) => `<option value="${escapeHtml(cid)}">${escapeHtml(cid)}</option>`).join('');
+    connSel.innerHTML = conns.map((cid) => `<option value="${escapeHtml(cid)}">${escapeHtml(cid === '_system' ? 'System (_system)' : cid)}</option>`).join('');
     if (connWant && !conns.includes(connWant)) {
       const opt = document.createElement('option');
       opt.value = connWant;
@@ -12198,6 +12266,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     }
     connSel.value = connWant;
     addRow('Connection', connSel);
+    maybeRefreshAlarmSourceLists(connWant);
 
     const tagFilter = document.createElement('input');
     tagFilter.type = 'search';
@@ -12210,10 +12279,12 @@ function renderAlarmsEventsProperties(item, parentNode) {
     const tagWant = String(cur?.tag_name || item?.meta?.source?.tag || '').trim();
     const refreshTagSelectLocal = (wantTag = '') => {
       const cid = String(connSel.value || '').trim();
+      if (cid === '_system' && !(state.systemTagsForSelection || []).length) {
+        loadSystemTagsForSelection().then(() => refreshTagSelectLocal(wantTag)).catch(() => {});
+      }
       const filter = String(tagFilter.value || '').trim().toLowerCase();
       tagSel.textContent = '';
-      const tags = getEffectiveTagsAll()
-        .filter((t) => String(t?.connection_id || '') === cid)
+      const tags = getAlarmCandidateTagsForConnection(cid)
         .filter((t) => {
           if (!filter) return true;
           return String(t?.name || '').toLowerCase().includes(filter) || String(t?.plc_tag_name || '').toLowerCase().includes(filter);
@@ -12224,7 +12295,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
         const plc = String(t?.plc_tag_name || '').trim();
         const opt = document.createElement('option');
         opt.value = name;
-        opt.textContent = plc && plc !== name ? `${name}  (${plc})` : name;
+        opt.textContent = cid === '_system' ? `${name}  (system)` : (plc && plc !== name ? `${name}  (${plc})` : name);
         tagSel.appendChild(opt);
       });
       if (wantTag) tagSel.value = wantTag;
@@ -12486,7 +12557,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
         if (!next.connection_id) throw new Error('Connection is required.');
         if (!next.tag_name) throw new Error('Tag is required.');
         if (!['high', 'low', 'equals', 'not_equals'].includes(next.type)) throw new Error('Type is invalid.');
-        if (!getEffectiveTagsAll().some((t) => String(t?.connection_id || '') === next.connection_id && String(t?.name || '') === next.tag_name)) {
+        if (!alarmSourceTagExists(next.connection_id, next.tag_name)) {
           throw new Error(`Tag '${next.connection_id}:${next.tag_name}' was not found in the tag config.`);
         }
         const thresholdRaw = String(thresholdBox.value ?? '').trim();
