@@ -1040,7 +1040,7 @@ static std::string pjsua_run_call_with_file(
 )
 {
     outRes = PjsuaRunResult{};
-    duration_sec = std::max(5, std::min(300, duration_sec));
+    duration_sec = std::max(5, std::min(600, duration_sec));
     ring_timeout_sec = std::max(5, std::min(600, ring_timeout_sec));
     ack_wait_sec = std::max(0, std::min(600, ack_wait_sec));
     if (pjsua_path.empty() || host.empty() || ext.empty() || pass.empty() || dest.empty()) return "";
@@ -1673,7 +1673,7 @@ static std::string pjsua2_run_call_with_file(
 )
 {
     outRes = PjsuaRunResult{};
-    duration_sec = std::max(5, std::min(300, duration_sec));
+    duration_sec = std::max(5, std::min(600, duration_sec));
     ring_timeout_sec = std::max(5, std::min(600, ring_timeout_sec));
     ack_wait_sec = std::max(0, std::min(600, ack_wait_sec));
     ack_confirm_max_ms = std::max(0, std::min(30000, ack_confirm_max_ms));
@@ -6091,7 +6091,7 @@ private:
 
 		        // Stage a single wav to play.
 		        std::vector<std::string> playSeq;
-		        playSeq.reserve(job.alarm.audio_paths.size() + 2);
+		        playSeq.reserve(job.alarm.audio_paths.size() + 3);
 		        if (!job.alarm.audio_paths.empty())
 		        {
 		            playSeq.insert(playSeq.end(), job.alarm.audio_paths.begin(), job.alarm.audio_paths.end());
@@ -6140,6 +6140,20 @@ private:
 		                    }
 		                }
 		            }
+		        }
+
+		        const int sipAudioDelaySeconds = std::max(0, std::min(120, job.audio_delay_seconds));
+		        if (!playSeq.empty() && sipAudioDelaySeconds > 0)
+		        {
+		            std::string err;
+		            const std::string silencePath = (tmpdir / "sip-playback-delay.wav").string();
+		            if (!write_silence_wav_48k_mono16(silencePath, sipAudioDelaySeconds * 1000, err))
+		            {
+		                result = "sip playback delay stage failed: " + (err.empty() ? "unknown error" : err);
+		                std::filesystem::remove_all(tmpdir, ec);
+		                return false;
+		            }
+		            playSeq.insert(playSeq.begin(), silencePath);
 		        }
 
 		        std::string wav_path;
@@ -6223,7 +6237,7 @@ private:
 		                ack_confirm_wav_path,
 		                keepalive_silence_wav_path,
 		                ack_confirm_max_ms,
-		                duration,
+		                std::min(600, duration + sipAudioDelaySeconds),
 		                ringTimeoutSec,
 		                job.ack_wait_sec,
 		                job.ack_dtmf,
@@ -6250,7 +6264,7 @@ private:
 	                netIf,
 	                dest,
 	                wav_path,
-	                duration,
+	                std::min(600, duration + sipAudioDelaySeconds),
 	                ringTimeoutSec,
 	                job.ack_wait_sec,
 	                job.ack_dtmf,
