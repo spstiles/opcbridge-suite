@@ -6344,6 +6344,9 @@ void shutdown_opcua_server() {
         UA_Server_delete(g_uaServer);
         g_uaServer = nullptr;
         g_uaBindings.clear();
+        for (auto &b : g_uaSystemBindings) {
+            UA_NodeId_clear(&b.nodeId);
+        }
         g_uaSystemBindings.clear();
         g_uaBindingIndex.clear();
         g_uaSystemBindingIndex.clear();
@@ -6411,6 +6414,16 @@ static bool ua_set_variant_for_system_value(UA_Variant &variant,
     return false;
 }
 
+static const UA_DataType* ua_system_datatype_for_name(const std::string &datatype) {
+    if (datatype == "bool") return &UA_TYPES[UA_TYPES_BOOLEAN];
+    if (datatype == "int32") return &UA_TYPES[UA_TYPES_INT32];
+    if (datatype == "uint64") return &UA_TYPES[UA_TYPES_UINT64];
+    if (datatype == "int64") return &UA_TYPES[UA_TYPES_INT64];
+    if (datatype == "float64") return &UA_TYPES[UA_TYPES_DOUBLE];
+    if (datatype == "string") return &UA_TYPES[UA_TYPES_STRING];
+    return nullptr;
+}
+
 static UA_NodeId ua_add_folder(UA_Server *server,
                                UA_NodeId parent,
                                const std::string &name) {
@@ -6451,6 +6464,15 @@ static bool ua_add_system_variable(UA_Server *server,
         const_cast<char*>(leaf.c_str())
     );
     attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+    const UA_DataType *uaType = ua_system_datatype_for_name(datatype);
+    if (!uaType) {
+        UA_VariableAttributes_clear(&attr);
+        std::cerr << "OPC UA: unsupported system datatype '" << datatype
+                  << "' for " << path << "\n";
+        return false;
+    }
+    attr.dataType = uaType->typeId;
+    attr.valueRank = UA_VALUERANK_SCALAR;
 
     if (!ua_set_variant_for_system_value(attr.value, datatype, initialValue, true)) {
         UA_VariableAttributes_clear(&attr);
@@ -6459,10 +6481,11 @@ static bool ua_add_system_variable(UA_Server *server,
         return false;
     }
 
+    UA_NodeId requestedId = UA_NODEID_STRING(1, const_cast<char*>(path.c_str()));
     UA_NodeId varId;
     UA_StatusCode st = UA_Server_addVariableNode(
         server,
-        UA_NODEID_NULL,
+        requestedId,
         parent,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
         UA_QUALIFIEDNAME(1, const_cast<char*>(leaf.c_str())),

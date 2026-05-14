@@ -5457,6 +5457,7 @@ function getNotificationContacts(cfg) {
         name: String(t.name || id).trim() || id,
         phone: String(t.value || '').trim(),
         enabled: t.enabled !== false,
+        audio_delay_seconds: t.audio_delay_seconds == null ? null : Math.max(0, Math.min(120, Math.trunc(Number(t.audio_delay_seconds) || 0))),
         notes: String(t.notes || '').trim()
       } : null;
     })
@@ -9419,6 +9420,10 @@ function alarmEventsSortValue(row, column, parentNode) {
   }
   if (col === 'Audio Sequence') return String(row?.label || '').toLowerCase();
   if (col === 'Phone') return String(meta?.phone || '').toLowerCase();
+  if (col === 'Delay') {
+    const delay = meta?.audio_delay_seconds == null ? -1 : Number(meta.audio_delay_seconds);
+    return Number.isFinite(delay) ? delay : -1;
+  }
   if (col === 'Contacts') return Array.isArray(meta?.contacts) ? meta.contacts.length : 0;
   if (col === 'Targets') return getPolicyTargets(meta).length;
   if (col === 'Policies') return Array.isArray(meta?.policy_ids) ? meta.policy_ids.length : 0;
@@ -10126,7 +10131,7 @@ function renderAlarmsEventsDetails(node) {
     : (isAudioFilesRoot || isAudioFolder || isAudioFile)
     ? ['Name', 'ID', 'Path']
     : (isNotificationContactsRoot || isNotificationContact)
-    ? ['Name', 'Phone', 'Enabled', 'ID']
+    ? ['Name', 'Phone', 'Delay', 'Enabled', 'ID']
     : (isNotificationContactGroupsRoot || isNotificationContactGroup)
     ? ['Name', 'Contacts', 'Enabled', 'ID']
     : (isNotificationPoliciesRoot)
@@ -10276,8 +10281,10 @@ function renderAlarmsEventsDetails(node) {
       addCell(tr, String(meta?.path || '').trim(), !String(meta?.path || '').trim());
     } else if ((isNotificationContactsRoot || isNotificationContact) && type === 'notification_contact') {
       const meta = c?.meta || {};
+      const delay = meta?.audio_delay_seconds == null ? 'default' : `${Math.max(0, Math.trunc(Number(meta.audio_delay_seconds) || 0))}s`;
       addCell(tr, String(meta?.name || c?.label || ''), false);
       addCell(tr, String(meta?.phone || '').trim(), !String(meta?.phone || '').trim());
+      addCell(tr, delay, delay === 'default');
       addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
       addCell(tr, String(meta?.id || '').trim(), false);
     } else if ((isNotificationContactGroupsRoot || isNotificationContactGroup) && type === 'notification_contact_group') {
@@ -10962,6 +10969,16 @@ function renderAlarmsEventsProperties(item, parentNode) {
     phoneBox.disabled = !canEditConfig();
     addRow('Phone', phoneBox);
 
+    const playbackDelayBox = document.createElement('input');
+    playbackDelayBox.type = 'number';
+    playbackDelayBox.min = '0';
+    playbackDelayBox.max = '120';
+    playbackDelayBox.step = '1';
+    playbackDelayBox.placeholder = 'Policy default';
+    playbackDelayBox.value = cur?.audio_delay_seconds == null ? '' : String(Math.max(0, Math.trunc(Number(cur.audio_delay_seconds) || 0)));
+    playbackDelayBox.disabled = !canEditConfig();
+    addRow('Playback Delay Seconds', playbackDelayBox);
+
     const { checkbox: enabledBox, wrap: enabledWrap } = makeLabeledCheckbox('Enabled', cur?.enabled !== false, !canEditConfig());
     addRow('Enabled', enabledWrap);
 
@@ -11002,6 +11019,9 @@ function renderAlarmsEventsProperties(item, parentNode) {
 	        }
 	        const phone = String(phoneBox.value || '').trim();
 	        if (!phone) throw new Error('Phone is required.');
+	        const delayRaw = String(playbackDelayBox.value ?? '').trim();
+	        const playbackDelay = delayRaw === '' ? null : Math.trunc(Number(delayRaw));
+	        if (playbackDelay != null && (!Number.isFinite(playbackDelay) || playbackDelay < 0 || playbackDelay > 120)) throw new Error('Playback Delay Seconds must be blank or 0-120.');
 	        nextCfg.targets[idx] = {
 	          ...(nextCfg.targets[idx] || {}),
 	          id: nextId,
@@ -11011,6 +11031,8 @@ function renderAlarmsEventsProperties(item, parentNode) {
 	          enabled: Boolean(enabledBox.checked),
 	          notes: String(notesBox.value || '').trim()
 	        };
+	        if (playbackDelay == null) delete nextCfg.targets[idx].audio_delay_seconds;
+	        else nextCfg.targets[idx].audio_delay_seconds = playbackDelay;
 	        if (nextId !== contactId) {
 	          nextCfg.targets.forEach((t) => {
 	            if (!t || typeof t !== 'object' || Array.isArray(t)) return;
@@ -11895,7 +11917,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     policyAudioDelayBox.placeholder = `Default (${Number(vmDefaults.audio_delay_seconds ?? 8) || 8})`;
     policyAudioDelayBox.value = cur?.audio_delay_seconds == null ? '' : String(Math.max(0, Math.trunc(Number(cur.audio_delay_seconds) || 0)));
     policyAudioDelayBox.disabled = !canEditConfig();
-    addRow('Playback Delay Seconds', policyAudioDelayBox);
+    addRow('Default Playback Delay Seconds', policyAudioDelayBox);
 
     const policyAudioGapBox = document.createElement('input');
     policyAudioGapBox.type = 'number';
@@ -12082,7 +12104,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
 	        const ackWaitSec = ackWaitRaw === '' ? 8 : Math.trunc(Number(ackWaitRaw));
           const ringTimeoutSec = ringTimeoutRaw === '' ? 15 : Math.trunc(Number(ringTimeoutRaw));
           const maxRings = 0;
-        if (policyAudioDelay != null && (!Number.isFinite(policyAudioDelay) || policyAudioDelay < 0 || policyAudioDelay > 120)) throw new Error('Playback Delay Seconds must be blank or 0-120.');
+        if (policyAudioDelay != null && (!Number.isFinite(policyAudioDelay) || policyAudioDelay < 0 || policyAudioDelay > 120)) throw new Error('Default Playback Delay Seconds must be blank or 0-120.');
         if (policyAudioGap != null && (!Number.isFinite(policyAudioGap) || policyAudioGap < 0 || policyAudioGap > 5000)) throw new Error('Playback Gap Milliseconds must be blank or 0-5000.');
         if (!Number.isFinite(ackWaitSec) || ackWaitSec < 0 || ackWaitSec > 120) throw new Error('Acknowledge Wait (sec) must be 0-120.');
           if (!Number.isFinite(ringTimeoutSec) || ringTimeoutSec < 5 || ringTimeoutSec > 600) throw new Error('Ring Timeout (sec) must be 5-600.');
@@ -14473,13 +14495,15 @@ async function refreshVisible() {
 
     const wantAlarmsEvents = isPanelActive('tab-alarms_events');
     if (wantAlarmsEvents) {
-      const [active, history, all] = await Promise.all([
+      const [active, history, all, notificationLog] = await Promise.all([
         apiGet('/api/alarms/alarm/api/alarms/active').catch(() => ({ ok: false, alarms: [] })),
-        apiGet('/api/alarms/alarm/api/alarms/history?limit=200').catch(() => ({ ok: false, events: [] })),
-        apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] }))
+        apiGet('/api/alarms/alarm/api/alarms/history?limit=200&types=active,return').catch(() => ({ ok: false, events: [] })),
+        apiGet('/api/alarms/alarm/api/alarms/all').catch(() => ({ ok: false, alarms: [] })),
+        apiGet('/api/alarms/alarm/api/notifications/log?limit=200').catch(() => ({ ok: false, log: [] }))
       ]);
       renderActiveAlarms(active);
       renderAlarmEvents(history);
+      renderAlarmActivity(history, notificationLog);
 
       state.alarmsAllLast = all;
       state.alarmsAll = Array.isArray(all?.alarms) ? all.alarms : [];

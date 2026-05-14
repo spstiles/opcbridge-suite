@@ -3351,12 +3351,17 @@ static json notification_config_from_root_current(const json& v2Root)
 
             if (type == "phone" && t.value("enabled", true))
             {
-                cfg["contacts"].push_back({
+                json contact = {
                     {"id", id},
                     {"name", t.value("name", id)},
                     {"phone", t.value("value", "")},
                     {"enabled", t.value("enabled", true)}
-                });
+                };
+                if (t.contains("audio_delay_seconds") && t["audio_delay_seconds"].is_number_integer())
+                {
+                    contact["audio_delay_seconds"] = t["audio_delay_seconds"];
+                }
+                cfg["contacts"].push_back(std::move(contact));
             }
             else if (type == "group")
             {
@@ -3786,6 +3791,7 @@ public:
         std::string name;
         std::string phone;
         bool enabled = true;
+        int audio_delay_seconds = -1;
     };
 
     struct TestCallRequest
@@ -3900,6 +3906,7 @@ public:
 	            std::string contact_name;
 	            std::string phone;
 	            int64_t after_ms = 0;
+	            int audio_delay_seconds = -1;
 	        };
 	        std::vector<CallLeg> call_legs;
 	    };
@@ -4145,6 +4152,10 @@ public:
                 c.name = item.value("name", c.id);
                 c.phone = item.value("phone", "");
                 c.enabled = item.value("enabled", true);
+                if (item.contains("audio_delay_seconds") && item["audio_delay_seconds"].is_number_integer())
+                {
+                    c.audio_delay_seconds = std::max(0, std::min(120, item["audio_delay_seconds"].get<int>()));
+                }
                 if (!c.id.empty()) contacts_[c.id] = std::move(c);
             }
         }
@@ -5220,7 +5231,7 @@ private:
         job.policy_id = policy.id;
         if (policy.max_repeats <= 0) job.repeats_left = -1;
         else job.repeats_left = std::max(0, policy.max_repeats - 1);
-        job.audio_delay_seconds = policy.audio_delay_seconds;
+        job.audio_delay_seconds = contact.audio_delay_seconds >= 0 ? contact.audio_delay_seconds : policy.audio_delay_seconds;
         job.audio_gap_ms = (alarm.audio_gap_ms >= 0) ? alarm.audio_gap_ms : policy.audio_gap_ms;
         job.ack_dtmf = policy.ack_enabled ? policy.ack_dtmf : std::vector<std::string>{};
         job.ack_wait_sec = policy.ack_enabled ? policy.ack_wait_sec : 0;
@@ -5332,6 +5343,7 @@ private:
 	            leg.contact_name = c.name;
 	            leg.phone = dial;
 	            leg.after_ms = std::max<int64_t>(0, after_ms);
+	            leg.audio_delay_seconds = c.audio_delay_seconds;
 	            legs.push_back(std::move(leg));
 	        };
 
@@ -6488,6 +6500,7 @@ private:
 	            legJob.phone = leg.phone;
 	            legJob.contact_id = leg.contact_id;
 	            legJob.contact_name = leg.contact_name;
+	            legJob.audio_delay_seconds = leg.audio_delay_seconds >= 0 ? leg.audio_delay_seconds : job.audio_delay_seconds;
 	            legJob.call_legs.clear();
 
 	            // Track ack state before this call.
