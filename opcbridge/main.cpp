@@ -20,6 +20,7 @@
 #include <map>
 #include <variant>
 #include <chrono>
+#include <ctime>
 #include <thread>
 #include <stdexcept>
 #include <cctype>
@@ -722,6 +723,31 @@ static std::vector<SystemTagDef> collect_host_system_tags() {
     }
 
     return rows;
+}
+
+static std::vector<SystemTagDef> collect_clock_system_tags() {
+    const int64_t nowMs = system_wall_now_ms();
+    const int64_t nowSec = nowMs / 1000;
+    std::time_t nowTime = static_cast<std::time_t>(nowSec);
+    std::tm local {};
+    localtime_r(&nowTime, &local);
+
+    return {
+        {"System/Clock/UnixTimeMs", "int64", nowMs},
+        {"System/Clock/UnixTimeSeconds", "int64", nowSec},
+        {"System/Clock/Year", "int32", local.tm_year + 1900},
+        {"System/Clock/Month", "int32", local.tm_mon + 1},
+        {"System/Clock/Day", "int32", local.tm_mday},
+        {"System/Clock/Hour", "int32", local.tm_hour},
+        {"System/Clock/Minute", "int32", local.tm_min},
+        {"System/Clock/Second", "int32", local.tm_sec},
+        {"System/Clock/DayOfWeek", "int32", local.tm_wday},
+        {"System/Clock/DayOfYear", "int32", local.tm_yday + 1},
+        {"System/Clock/FastBlink", "bool", ((nowMs / 500) % 2) == 0},
+        {"System/Clock/SlowBlink", "bool", ((nowMs / 1000) % 2) == 0},
+        {"System/Clock/OneSecondPulse", "bool", (nowMs % 1000) < 100},
+        {"System/Clock/MinutePulse", "bool", (nowMs % 60000) < 1000}
+    };
 }
 
 static int64_t json_i64_at(const json &root,
@@ -6026,6 +6052,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         );
         if (!UA_NodeId_isNull(&systemId)) {
             UA_NodeId bridgeSysId = ua_add_folder(server, systemId, "Bridge");
+            UA_NodeId clockSysId = ua_add_folder(server, systemId, "Clock");
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
             UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
             UA_NodeId connectionsSysId = ua_add_folder(server, systemId, "Connections");
@@ -6035,6 +6062,12 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION));
                 ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/ReloadActive", "bool", false);
                 ua_add_system_variable(server, bridgeSysId, systemBindings, "System/Bridge/ReloadGeneration", "uint64", 0);
+            }
+
+            if (!UA_NodeId_isNull(&clockSysId)) {
+                for (const auto &clockRow : collect_clock_system_tags()) {
+                    ua_add_system_variable(server, clockSysId, systemBindings, clockRow.name, clockRow.datatype, clockRow.value);
+                }
             }
 
             if (!UA_NodeId_isNull(&hostSysId)) {
@@ -6486,6 +6519,9 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     ua_write_system_value("System/Bridge/ReloadActive", reloadCopy.in_progress || reloadCopy.requested);
     ua_write_system_value("System/Bridge/ReloadGeneration", reloadCopy.gen);
 
+    for (const auto &clockRow : collect_clock_system_tags()) {
+        ua_write_system_value(clockRow.name, clockRow.value);
+    }
     for (const auto &hostRow : collect_host_system_tags()) {
         ua_write_system_value(hostRow.name, hostRow.value);
     }
@@ -13741,10 +13777,11 @@ window.addEventListener("load", startAutoRefresh);
 		                }
 		                    root["total"] = rootTotal;
 		                    {
+		                        const auto clockRows = collect_clock_system_tags();
 		                        const auto hostRows = collect_host_system_tags();
 		                        const auto alarmRows = collect_alarm_system_tags();
 		                        json sys;
-		                        sys["total"] = 4 + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(drivers.size()) * 15;
+		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(drivers.size()) * 15;
 		                        sys["with_snapshot"] = sys["total"];
 		                        sys["good"] = sys["total"];
 		                        sys["bad"] = 0;
@@ -13873,6 +13910,9 @@ window.addEventListener("load", startAutoRefresh);
 									addSystemRow("System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested);
 									addSystemRow("System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen);
 
+									for (const auto &clockRow : collect_clock_system_tags()) {
+										addSystemRow(clockRow.name, clockRow.datatype, clockRow.value);
+									}
 									for (const auto &hostRow : collect_host_system_tags()) {
 										addSystemRow(hostRow.name, hostRow.datatype, hostRow.value);
 									}
@@ -18986,7 +19026,7 @@ window.addEventListener("load", startAutoRefresh);
 
 	                auto uaNow = std::chrono::steady_clock::now();
 	                if (lastSystemUaUpdate.time_since_epoch().count() == 0 ||
-	                    uaNow - lastSystemUaUpdate >= std::chrono::seconds(1)) {
+	                    uaNow - lastSystemUaUpdate >= std::chrono::milliseconds(250)) {
 	                    std::lock_guard<std::mutex> lock(driverMutex);
 	                    update_system_opcua_values(drivers, tagTable, processStartTime);
 	                    lastSystemUaUpdate = uaNow;

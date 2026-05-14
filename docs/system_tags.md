@@ -22,6 +22,28 @@ System tags cannot be edited, deleted, imported, or exported as normal PLC tags.
 | `System/Bridge/ReloadActive` | `bool` | `true` while a runtime reload is requested or active. |
 | `System/Bridge/ReloadGeneration` | `uint64` | Runtime reload/config generation counter. |
 
+## Clock Tags
+
+Clock tags are useful for expressions, animation, and diagnostics. They are
+generated from the bridge host clock.
+
+| Tag | Type | Meaning |
+| --- | --- | --- |
+| `System/Clock/UnixTimeMs` | `int64` | Current Unix epoch time in milliseconds. |
+| `System/Clock/UnixTimeSeconds` | `int64` | Current Unix epoch time in seconds. |
+| `System/Clock/Year` | `int32` | Local year, such as `2026`. |
+| `System/Clock/Month` | `int32` | Local month, `1` through `12`. |
+| `System/Clock/Day` | `int32` | Local day of month, `1` through `31`. |
+| `System/Clock/Hour` | `int32` | Local hour, `0` through `23`. |
+| `System/Clock/Minute` | `int32` | Local minute, `0` through `59`. |
+| `System/Clock/Second` | `int32` | Local second, `0` through `59`. |
+| `System/Clock/DayOfWeek` | `int32` | Local day of week, `0` Sunday through `6` Saturday. |
+| `System/Clock/DayOfYear` | `int32` | Local day of year, `1` through `366`. |
+| `System/Clock/FastBlink` | `bool` | Alternates every 500 ms. |
+| `System/Clock/SlowBlink` | `bool` | Alternates every 1 second. |
+| `System/Clock/OneSecondPulse` | `bool` | `true` for the first 100 ms of each second. |
+| `System/Clock/MinutePulse` | `bool` | `true` for the first second of each minute. |
+
 ## Connection Tags
 
 Each configured connection has diagnostics under:

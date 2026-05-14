@@ -13129,6 +13129,13 @@ function buildTree() {
         children: []
       },
       {
+        id: 'system:clock',
+        type: 'system_group',
+        label: 'Clock',
+        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Clock/' },
+        children: []
+      },
+      {
         id: 'system:host',
         type: 'system_group',
         label: 'Host',
