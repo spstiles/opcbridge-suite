@@ -148,6 +148,7 @@ static std::mutex g_userStoreMutex;
 // Incremented when configuration (drivers/tags) is replaced so the poll loop can
 // safely skip stale work-in-flight.
 static std::atomic<uint64_t> g_configGeneration{1};
+static std::atomic<uint64_t> g_reloadRequestGeneration{1};
 
 struct ConnectionConfig {
     std::string id;
@@ -395,11 +396,12 @@ struct UaTagBinding {
     int32_t handle;   // libplctag handle
     std::string datatype;
     UA_NodeId nodeId; // UA node id for this variable
-    ConnectionConfig *conn; // pointer into drivers (lifetime = whole run_opcua_server)
+    std::string conn_id;
     std::string logical_name;
 //    int scan_ms;
 //    std::chrono::steady_clock::time_point next_poll;
     bool writable;    // NEW: whether UA writes should go to PLC
+    bool retired = false;
 };
 
 struct UaSystemBinding {
@@ -412,7 +414,8 @@ struct UaSystemBinding {
 
 // OPC UA global state
 static UA_Server *g_uaServer = nullptr;
-static std::vector<UaTagBinding> g_uaBindings;
+static UA_NodeId g_uaBridgeNodeId = UA_NODEID_NULL;
+static std::deque<UaTagBinding> g_uaBindings;
 static std::vector<UaSystemBinding> g_uaSystemBindings;
 static std::unordered_map<std::string, size_t> g_uaBindingIndex;
 static std::unordered_map<std::string, size_t> g_uaSystemBindingIndex;
@@ -421,6 +424,33 @@ static std::unordered_map<std::string, size_t> g_uaSystemBindingIndex;
 static std::string ua_key(const std::string &connId,
                           const std::string &logicalName) {
     return connId + "::" + logicalName;
+}
+
+static std::string ua_nodeid_escape_segment(const std::string &s) {
+    std::ostringstream out;
+    out << std::uppercase << std::hex << std::setfill('0');
+    for (unsigned char c : s) {
+        const bool safe =
+            (c >= 'A' && c <= 'Z') ||
+            (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') ||
+            c == '_' || c == '-' || c == '.';
+        if (safe) {
+            out << static_cast<char>(c);
+        } else {
+            out << '%' << std::setw(2) << static_cast<int>(c);
+        }
+    }
+    return out.str();
+}
+
+static std::string ua_tag_nodeid_string(const std::string &connId,
+                                        const std::string &logicalName) {
+    return "Tags/" + ua_nodeid_escape_segment(connId) + "/" + ua_nodeid_escape_segment(logicalName);
+}
+
+static std::string ua_connection_nodeid_string(const std::string &connId) {
+    return "Connections/" + ua_nodeid_escape_segment(connId);
 }
 
 static sqlite3 *g_alarmDb = nullptr;
@@ -590,6 +620,32 @@ static std::unordered_map<std::string, std::shared_ptr<ConnPollMetrics>> g_connP
 // while pollers are still running.
 static std::atomic<uint64_t> g_pollers_running_gen{0};
 
+struct OpcUaSyncResult {
+    bool attempted = false;
+    bool ok = true;
+    int added = 0;
+    int updated = 0;
+    int retired = 0;
+    int datatype_conflicts = 0;
+    int add_failures = 0;
+    bool full_rebuild_required = false;
+    std::string message;
+};
+
+static json opcua_sync_result_json(const OpcUaSyncResult &r) {
+    return json{
+        {"attempted", r.attempted},
+        {"ok", r.ok},
+        {"added", r.added},
+        {"updated", r.updated},
+        {"retired", r.retired},
+        {"datatype_conflicts", r.datatype_conflicts},
+        {"add_failures", r.add_failures},
+        {"full_rebuild_required", r.full_rebuild_required},
+        {"message", r.message}
+    };
+}
+
 struct ReloadState {
     bool requested = false;
     bool in_progress = false;
@@ -598,6 +654,7 @@ struct ReloadState {
     uint64_t gen = 0;
     std::string target_connection_id;
     std::string error;
+    OpcUaSyncResult opcua_sync;
 };
 
 static std::mutex g_reloadMutex;
@@ -650,10 +707,62 @@ static int64_t system_wall_now_ms() {
     ).count();
 }
 
+static int detect_physical_cpu_core_count(int logicalCount) {
+    std::ifstream cpuinfo("/proc/cpuinfo");
+    if (!cpuinfo) return logicalCount;
+
+    auto trimLocal = [](std::string s) {
+        const auto first = s.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return std::string{};
+        const auto last = s.find_last_not_of(" \t\r\n");
+        return s.substr(first, last - first + 1);
+    };
+
+    std::set<std::pair<int, int>> physicalCores;
+    std::string line;
+    int physicalId = -1;
+    int coreId = -1;
+    auto flush = [&]() {
+        if (physicalId >= 0 && coreId >= 0) {
+            physicalCores.insert({physicalId, coreId});
+        }
+        physicalId = -1;
+        coreId = -1;
+    };
+
+    while (std::getline(cpuinfo, line)) {
+        if (line.empty()) {
+            flush();
+            continue;
+        }
+        const auto pos = line.find(':');
+        if (pos == std::string::npos) continue;
+        const std::string key = trimLocal(line.substr(0, pos));
+        const std::string value = trimLocal(line.substr(pos + 1));
+        try {
+            if (key == "physical id") {
+                physicalId = std::stoi(value);
+            } else if (key == "core id") {
+                coreId = std::stoi(value);
+            }
+        } catch (...) {
+            // Ignore malformed cpuinfo fields and fall back below.
+        }
+    }
+    flush();
+
+    if (!physicalCores.empty()) return static_cast<int>(physicalCores.size());
+    return logicalCount;
+}
+
 static std::vector<SystemTagDef> collect_host_system_tags() {
     std::vector<SystemTagDef> rows;
 
-    rows.push_back({"System/Host/CpuCount", "int32", static_cast<int>(std::max(1L, sysconf(_SC_NPROCESSORS_ONLN)))});
+    const int logicalCpuCount = static_cast<int>(std::max(1L, sysconf(_SC_NPROCESSORS_ONLN)));
+    const int physicalCoreCount = std::max(1, detect_physical_cpu_core_count(logicalCpuCount));
+    rows.push_back({"System/Host/CpuCount", "int32", logicalCpuCount});
+    rows.push_back({"System/Host/LogicalCpuCount", "int32", logicalCpuCount});
+    rows.push_back({"System/Host/PhysicalCoreCount", "int32", physicalCoreCount});
 
     double loads[3] = {0.0, 0.0, 0.0};
     if (getloadavg(loads, 3) == 3) {
@@ -747,6 +856,22 @@ static std::vector<SystemTagDef> collect_clock_system_tags() {
         {"System/Clock/SlowBlink", "bool", ((nowMs / 1000) % 2) == 0},
         {"System/Clock/OneSecondPulse", "bool", (nowMs % 1000) < 100},
         {"System/Clock/MinutePulse", "bool", (nowMs % 60000) < 1000}
+    };
+}
+
+static std::vector<SystemTagDef> collect_opcua_sync_system_tags(const ReloadState &reload,
+                                                                bool fullRebuildRequired) {
+    const auto &sync = reload.opcua_sync;
+    return {
+        {"System/OpcUa/Sync/LastAttempted", "bool", sync.attempted},
+        {"System/OpcUa/Sync/LastOk", "bool", sync.ok},
+        {"System/OpcUa/Sync/LastAdded", "int32", sync.added},
+        {"System/OpcUa/Sync/LastUpdated", "int32", sync.updated},
+        {"System/OpcUa/Sync/LastRetired", "int32", sync.retired},
+        {"System/OpcUa/Sync/LastDatatypeConflicts", "int32", sync.datatype_conflicts},
+        {"System/OpcUa/Sync/LastAddFailures", "int32", sync.add_failures},
+        {"System/OpcUa/Sync/FullRebuildRequired", "bool", fullRebuildRequired},
+        {"System/OpcUa/Sync/LastMessage", "string", sync.message}
     };
 }
 
@@ -3195,7 +3320,7 @@ static void opcua_onWrite(UA_Server *server,
         return;
     }
     if (!binding->writable) {
-        std::cerr << "OPC UA write: tag [" << binding->conn->id << "]."
+        std::cerr << "OPC UA write: tag [" << binding->conn_id << "]."
                   << binding->logical_name << " is not writable, ignoring\n";
         return;
     }
@@ -3235,13 +3360,13 @@ static void opcua_onWrite(UA_Server *server,
         valueStr = oss.str();
     } else {
         std::cerr << "OPC UA write: unsupported UA variant type for ["
-                  << binding->conn->id << "]." << binding->logical_name << "\n";
+                  << binding->conn_id << "]." << binding->logical_name << "\n";
         return;
     }
 
     const bool ok = write_tag_by_name(
         *g_mqttDrivers,
-        binding->conn->id,
+        binding->conn_id,
         binding->logical_name,
         valueStr,
         *g_mqttTagTable,
@@ -3250,7 +3375,7 @@ static void opcua_onWrite(UA_Server *server,
 
     if (!ok) {
         std::cerr << "OPC UA write: write_tag_by_name failed for ["
-                  << binding->conn->id << "]." << binding->logical_name << "\n";
+                  << binding->conn_id << "]." << binding->logical_name << "\n";
         return;
     }
 }
@@ -5981,6 +6106,316 @@ static bool ua_set_variant_for_system_value(UA_Variant &variant,
                                             const json &value,
                                             bool copyValue);
 
+static bool ua_set_variable_attr_from_snapshot(UA_VariableAttributes &attr,
+                                               const TagSnapshot &seed);
+
+static UA_NodeId ua_ensure_connection_object(UA_Server *server,
+                                             UA_NodeId bridgeId,
+                                             const std::string &connId);
+
+static bool ua_add_tag_variable_node(UA_Server *server,
+                                     UA_NodeId parent,
+                                     std::deque<UaTagBinding> &bindings,
+                                     const ConnectionConfig &conn,
+                                     const TagRuntime &tag,
+                                     std::string &err);
+
+static void ua_retire_tag_binding(UaTagBinding &binding);
+
+static bool sync_opcua_connection_nodes(DriverContext &driver,
+                                        OpcUaSyncResult &sync,
+                                        std::string &err);
+
+static bool ua_set_variable_attr_from_snapshot(UA_VariableAttributes &attr,
+                                               const TagSnapshot &seed) {
+    attr.valueRank = UA_VALUERANK_SCALAR;
+    const std::string &dt = seed.datatype;
+    if (dt == "bool") {
+        UA_Boolean v = std::get<bool>(seed.value) ? (UA_Boolean)true : (UA_Boolean)false;
+        attr.dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
+        UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
+        return true;
+    }
+    if (dt == "int16") {
+        UA_Int16 v = (UA_Int16)std::get<int16_t>(seed.value);
+        attr.dataType = UA_TYPES[UA_TYPES_INT16].typeId;
+        UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_INT16]);
+        return true;
+    }
+    if (dt == "uint16") {
+        UA_UInt16 v = (UA_UInt16)std::get<uint16_t>(seed.value);
+        attr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
+        UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_UINT16]);
+        return true;
+    }
+    if (dt == "int32") {
+        UA_Int32 v = (UA_Int32)std::get<int32_t>(seed.value);
+        attr.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
+        UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_INT32]);
+        return true;
+    }
+    if (dt == "uint32") {
+        UA_UInt32 v = (UA_UInt32)std::get<uint32_t>(seed.value);
+        attr.dataType = UA_TYPES[UA_TYPES_UINT32].typeId;
+        UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_UINT32]);
+        return true;
+    }
+    if (dt == "float32") {
+        UA_Float v = (UA_Float)std::get<float>(seed.value);
+        attr.dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
+        UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_FLOAT]);
+        return true;
+    }
+    if (dt == "float64") {
+        UA_Double v = (UA_Double)std::get<double>(seed.value);
+        attr.dataType = UA_TYPES[UA_TYPES_DOUBLE].typeId;
+        UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+        return true;
+    }
+    return false;
+}
+
+static UA_NodeId ua_ensure_connection_object(UA_Server *server,
+                                             UA_NodeId bridgeId,
+                                             const std::string &connId) {
+    const std::string stableConnNodeId = ua_connection_nodeid_string(connId);
+    UA_NodeId requestedConnId = UA_NODEID_STRING(1, const_cast<char*>(stableConnNodeId.c_str()));
+
+    UA_ObjectAttributes cAttr = UA_ObjectAttributes_default;
+    cAttr.displayName = UA_LOCALIZEDTEXT_ALLOC(
+        const_cast<char*>("en-US"),
+        const_cast<char*>(connId.c_str())
+    );
+    UA_NodeId connNodeId;
+    UA_StatusCode st = UA_Server_addObjectNode(
+        server,
+        requestedConnId,
+        bridgeId,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(1, const_cast<char*>(connId.c_str())),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
+        cAttr, nullptr, &connNodeId
+    );
+    UA_ObjectAttributes_clear(&cAttr);
+    if (st == UA_STATUSCODE_GOOD) return connNodeId;
+    if (st == UA_STATUSCODE_BADNODEIDEXISTS) {
+        return UA_NODEID_STRING_ALLOC(1, stableConnNodeId.c_str());
+    }
+    std::cerr << "OPC UA: Failed to ensure connection object '"
+              << connId << "': " << UA_StatusCode_name(st) << "\n";
+    return UA_NODEID_NULL;
+}
+
+static bool ua_add_tag_variable_node(UA_Server *server,
+                                     UA_NodeId parent,
+                                     std::deque<UaTagBinding> &bindings,
+                                     const ConnectionConfig &conn,
+                                     const TagRuntime &tag,
+                                     std::string &err) {
+    const TagConfig &cfg = tag.cfg;
+    err.clear();
+    if (tag.handle < 0) {
+        err = "invalid handle";
+        return false;
+    }
+
+    int32_t rs = plc_tag_read(tag.handle, conn.default_read_ms);
+    if (rs != PLCTAG_STATUS_OK) {
+        std::cerr << "OPC UA: read error for [" << conn.id << "]."
+                  << cfg.logical_name << ": " << plc_tag_decode_error(rs) << "\n";
+    }
+
+    TagSnapshot seed;
+    update_snapshot_from_plc(seed, conn, tag);
+
+    UA_VariableAttributes vAttr = UA_VariableAttributes_default;
+    vAttr.displayName = UA_LOCALIZEDTEXT_ALLOC(
+        const_cast<char*>("en-US"),
+        const_cast<char*>(cfg.logical_name.c_str())
+    );
+    vAttr.accessLevel = UA_ACCESSLEVELMASK_READ;
+    if (cfg.writable) vAttr.accessLevel |= UA_ACCESSLEVELMASK_WRITE;
+
+    if (!ua_set_variable_attr_from_snapshot(vAttr, seed)) {
+        UA_VariableAttributes_clear(&vAttr);
+        err = "unsupported datatype '" + seed.datatype + "'";
+        return false;
+    }
+
+    const std::string stableNodeId = ua_tag_nodeid_string(conn.id, cfg.logical_name);
+    UA_NodeId requestedId = UA_NODEID_STRING(1, const_cast<char*>(stableNodeId.c_str()));
+    UA_NodeId varId;
+    UA_StatusCode st = UA_Server_addVariableNode(
+        server,
+        requestedId,
+        parent,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(1, const_cast<char*>(cfg.logical_name.c_str())),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+        vAttr, nullptr, &varId
+    );
+    UA_VariableAttributes_clear(&vAttr);
+    if (st != UA_STATUSCODE_GOOD) {
+        err = std::string("addVariableNode failed: ") + UA_StatusCode_name(st);
+        return false;
+    }
+
+    UaTagBinding b;
+    b.handle = tag.handle;
+    b.datatype = seed.datatype;
+    b.nodeId = varId;
+    b.conn_id = conn.id;
+    b.logical_name = cfg.logical_name;
+    b.writable = cfg.writable;
+    bindings.push_back(std::move(b));
+    UaTagBinding *bindingPtr = &bindings.back();
+    if (bindingPtr->writable) {
+        UA_Server_setNodeContext(server, varId, bindingPtr);
+        UA_ValueCallback cb;
+        cb.onRead = nullptr;
+        cb.onWrite = opcua_onWrite;
+        UA_Server_setVariableNode_valueCallback(server, varId, cb);
+    }
+    return true;
+}
+
+static void ua_retire_tag_binding(UaTagBinding &binding) {
+    if (!g_uaServer || binding.retired) return;
+    binding.retired = true;
+    binding.writable = false;
+    binding.handle = -1;
+
+    UA_Server_writeAccessLevel(g_uaServer, binding.nodeId, UA_ACCESSLEVELMASK_READ);
+    UA_Server_setNodeContext(g_uaServer, binding.nodeId, nullptr);
+    UA_ValueCallback cb;
+    cb.onRead = nullptr;
+    cb.onWrite = nullptr;
+    UA_Server_setVariableNode_valueCallback(g_uaServer, binding.nodeId, cb);
+
+    UA_DataValue dv;
+    UA_DataValue_init(&dv);
+    dv.hasStatus = true;
+    dv.status = UA_STATUSCODE_BADDATAUNAVAILABLE;
+    dv.hasValue = false;
+    dv.hasSourceTimestamp = true;
+    dv.sourceTimestamp = UA_DateTime_now();
+    dv.hasServerTimestamp = true;
+    dv.serverTimestamp = dv.sourceTimestamp;
+    UA_StatusCode st = UA_Server_writeDataValue(g_uaServer, binding.nodeId, dv);
+    if (st != UA_STATUSCODE_GOOD) {
+        std::cerr << "OPC UA sync: failed to retire ["
+                  << binding.conn_id << "]." << binding.logical_name
+                  << ": " << UA_StatusCode_name(st) << "\n";
+    }
+}
+
+static bool sync_opcua_connection_nodes(DriverContext &driver,
+                                        OpcUaSyncResult &sync,
+                                        std::string &err) {
+    err.clear();
+    sync = OpcUaSyncResult{};
+    if (!g_uaServer) {
+        sync.message = "OPC UA server not active.";
+        return true;
+    }
+    sync.attempted = true;
+    if (UA_NodeId_isNull(&g_uaBridgeNodeId)) {
+        err = "OPC UA bridge node is unavailable";
+        sync.ok = false;
+        sync.full_rebuild_required = true;
+        return false;
+    }
+
+    UA_NodeId connNodeId = ua_ensure_connection_object(g_uaServer, g_uaBridgeNodeId, driver.conn.id);
+    if (UA_NodeId_isNull(&connNodeId)) {
+        err = "failed to ensure OPC UA connection object";
+        sync.ok = false;
+        sync.full_rebuild_required = true;
+        return false;
+    }
+
+    std::unordered_set<std::string> liveKeys;
+    for (auto &tag : driver.tags) {
+        const std::string key = ua_key(driver.conn.id, tag.cfg.logical_name);
+        if (tag.handle < 0) continue;
+
+        TagSnapshot seed;
+        update_snapshot_from_plc(seed, driver.conn, tag);
+        UA_VariableAttributes tmpAttr = UA_VariableAttributes_default;
+        const bool supported = ua_set_variable_attr_from_snapshot(tmpAttr, seed);
+        UA_VariableAttributes_clear(&tmpAttr);
+        if (!supported) continue;
+
+        liveKeys.insert(key);
+        auto it = g_uaBindingIndex.find(key);
+        if (it != g_uaBindingIndex.end()) {
+            UaTagBinding &binding = g_uaBindings[it->second];
+            if (binding.datatype != seed.datatype) {
+                sync.datatype_conflicts++;
+                sync.full_rebuild_required = true;
+                std::cerr << "OPC UA sync: datatype changed for ["
+                          << driver.conn.id << "]." << tag.cfg.logical_name
+                          << " from '" << binding.datatype << "' to '"
+                          << seed.datatype << "'; full rebuild required.\n";
+                continue;
+            }
+
+            binding.handle = tag.handle;
+            binding.conn_id = driver.conn.id;
+            binding.logical_name = tag.cfg.logical_name;
+            binding.writable = tag.cfg.writable;
+            binding.retired = false;
+            const UA_Byte access = tag.cfg.writable
+                ? (UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE)
+                : UA_ACCESSLEVELMASK_READ;
+            UA_Server_writeAccessLevel(g_uaServer, binding.nodeId, access);
+            UA_Server_setNodeContext(g_uaServer, binding.nodeId, binding.writable ? &binding : nullptr);
+            UA_ValueCallback cb;
+            cb.onRead = nullptr;
+            cb.onWrite = binding.writable ? opcua_onWrite : nullptr;
+            UA_Server_setVariableNode_valueCallback(g_uaServer, binding.nodeId, cb);
+            sync.updated++;
+            continue;
+        }
+
+        std::string addErr;
+        if (!ua_add_tag_variable_node(g_uaServer, connNodeId, g_uaBindings, driver.conn, tag, addErr)) {
+            sync.add_failures++;
+            sync.full_rebuild_required = true;
+            std::cerr << "OPC UA sync: failed to add ["
+                      << driver.conn.id << "]." << tag.cfg.logical_name
+                      << ": " << addErr << "\n";
+            continue;
+        }
+        g_uaBindingIndex[key] = g_uaBindings.size() - 1;
+        sync.added++;
+        std::cout << "OPC UA sync: added node for ["
+                  << driver.conn.id << "]." << tag.cfg.logical_name << "\n";
+    }
+
+    for (auto &binding : g_uaBindings) {
+        if (binding.conn_id != driver.conn.id) continue;
+        const std::string key = ua_key(binding.conn_id, binding.logical_name);
+        if (!liveKeys.count(key)) {
+            ua_retire_tag_binding(binding);
+            sync.retired++;
+            sync.full_rebuild_required = true;
+        }
+    }
+
+    sync.ok = sync.add_failures == 0;
+    if (sync.full_rebuild_required) {
+        sync.message = "OPC UA synced with cleanup/rebuild recommended.";
+    } else if (sync.added || sync.updated) {
+        sync.message = "OPC UA synced.";
+    } else {
+        sync.message = "OPC UA already current.";
+    }
+
+    UA_NodeId_clear(&connNodeId);
+    return true;
+}
+
 bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
     if (g_uaServer) {
         std::cerr << "OPC UA: server already initialized.\n";
@@ -6027,9 +6462,10 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             const_cast<char*>("OPCBridge")
         );
 
+        UA_NodeId requestedBridgeId = UA_NODEID_STRING(1, const_cast<char*>("OPCBridge"));
         UA_StatusCode st = UA_Server_addObjectNode(
             server,
-            UA_NODEID_NULL,
+            requestedBridgeId,
             UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
             UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
             UA_QUALIFIEDNAME(1, const_cast<char*>("OPCBridge")),
@@ -6055,6 +6491,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             UA_NodeId clockSysId = ua_add_folder(server, systemId, "Clock");
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
             UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
+            UA_NodeId opcuaSysId = ua_add_folder(server, systemId, "OpcUa");
             UA_NodeId connectionsSysId = ua_add_folder(server, systemId, "Connections");
 
             if (!UA_NodeId_isNull(&bridgeSysId)) {
@@ -6100,6 +6537,17 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 }
             }
 
+            if (!UA_NodeId_isNull(&opcuaSysId)) {
+                UA_NodeId syncSysId = ua_add_folder(server, opcuaSysId, "Sync");
+                if (!UA_NodeId_isNull(&syncSysId)) {
+                    const ReloadState initialReload;
+                    const bool fullRebuildRequired = g_full_rebuild_required.load(std::memory_order_relaxed);
+                    for (const auto &syncRow : collect_opcua_sync_system_tags(initialReload, fullRebuildRequired)) {
+                        ua_add_system_variable(server, syncSysId, systemBindings, syncRow.name, syncRow.datatype, syncRow.value);
+                    }
+                }
+            }
+
             if (!UA_NodeId_isNull(&connectionsSysId)) {
                 for (auto &driver : drivers) {
                     UA_NodeId connSysId = ua_add_folder(server, connectionsSysId, driver.conn.id);
@@ -6126,32 +6574,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
     }
 
     // Build bindings and namespace
-    std::vector<UaTagBinding> bindings;
-    // IMPORTANT: We store UaTagBinding* as nodeContext for writable nodes.
-    // Those pointers must remain valid for the lifetime of the UA server.
-    // If this vector reallocates while we are still pushing, earlier pointers become dangling
-    // and can crash the server later (often appearing as "it crashes after N tags").
-    size_t expectedBindings = 0;
-    for (auto &driver : drivers) {
-        ConnectionConfig &conn = driver.conn;
-        for (auto &tag : driver.tags) {
-            const TagConfig &cfg = tag.cfg;
-            if (tag.handle < 0) continue;
-            const std::string &dt = cfg.datatype;
-            if (dt == "bool" || dt == "BOOL" || dt == "Bool") expectedBindings++;
-            else if (dt == "int16" || dt == "INT" || dt == "Int16") expectedBindings++;
-            else if (dt == "uint16" || dt == "WORD" || dt == "Word") expectedBindings++;
-            else if (dt == "int32" || dt == "DINT" || dt == "Int32") expectedBindings++;
-            else if (dt == "uint32" || dt == "DWORD" || dt == "DWord") expectedBindings++;
-            else if (dt == "float32" || dt == "REAL" || dt == "Real") expectedBindings++;
-            else if (dt == "float64" || dt == "LREAL" || dt == "LReal") expectedBindings++;
-            else {
-                // unsupported: skipped later
-                (void)conn;
-            }
-        }
-    }
-    bindings.reserve(expectedBindings);
+    std::deque<UaTagBinding> bindings;
 
     for (auto &driver : drivers) {
         ConnectionConfig &conn = driver.conn;
@@ -6164,9 +6587,11 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 const_cast<char*>(conn.id.c_str())
             );
 
+            const std::string stableConnNodeId = ua_connection_nodeid_string(conn.id);
+            UA_NodeId requestedConnId = UA_NODEID_STRING(1, const_cast<char*>(stableConnNodeId.c_str()));
             UA_StatusCode st = UA_Server_addObjectNode(
                 server,
-                UA_NODEID_NULL,
+                requestedConnId,
                 bridgeId,
                 UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
                 UA_QUALIFIEDNAME(1, const_cast<char*>(conn.id.c_str())),
@@ -6266,10 +6691,12 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 continue;
             }
 
+            const std::string stableNodeId = ua_tag_nodeid_string(conn.id, cfg.logical_name);
+            UA_NodeId requestedId = UA_NODEID_STRING(1, const_cast<char*>(stableNodeId.c_str()));
             UA_NodeId varId;
             UA_StatusCode st = UA_Server_addVariableNode(
                 server,
-                UA_NODEID_NULL,
+                requestedId,
                 connNodeId,
                 UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
                 UA_QUALIFIEDNAME(1, const_cast<char*>(cfg.logical_name.c_str())),
@@ -6288,7 +6715,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             b.handle       = tag.handle;
             b.datatype     = dt;
             b.nodeId       = varId;
-            b.conn         = &conn;
+            b.conn_id      = conn.id;
             b.logical_name = cfg.logical_name;
             b.writable     = cfg.writable;
 
@@ -6323,12 +6750,20 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
 
     // Move into globals and build index
     g_uaServer = server;
+    g_uaBridgeNodeId = bridgeId;
     g_uaBindings = std::move(bindings);
     g_uaSystemBindings = std::move(systemBindings);
     g_uaBindingIndex.clear();
     for (size_t i = 0; i < g_uaBindings.size(); ++i) {
-        const auto &b = g_uaBindings[i];
-        g_uaBindingIndex[ua_key(b.conn->id, b.logical_name)] = i;
+        auto &b = g_uaBindings[i];
+        g_uaBindingIndex[ua_key(b.conn_id, b.logical_name)] = i;
+        if (b.writable) {
+            UA_Server_setNodeContext(server, b.nodeId, &b);
+            UA_ValueCallback cb;
+            cb.onRead = nullptr;
+            cb.onWrite = opcua_onWrite;
+            UA_Server_setVariableNode_valueCallback(server, b.nodeId, cb);
+        }
     }
     g_uaSystemBindingIndex.clear();
     for (size_t i = 0; i < g_uaSystemBindings.size(); ++i) {
@@ -6343,6 +6778,8 @@ void shutdown_opcua_server() {
         UA_Server_run_shutdown(g_uaServer);
         UA_Server_delete(g_uaServer);
         g_uaServer = nullptr;
+        UA_NodeId_clear(&g_uaBridgeNodeId);
+        g_uaBridgeNodeId = UA_NODEID_NULL;
         g_uaBindings.clear();
         for (auto &b : g_uaSystemBindings) {
             UA_NodeId_clear(&b.nodeId);
@@ -6550,6 +6987,10 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     }
     for (const auto &alarmRow : collect_alarm_system_tags()) {
         ua_write_system_value(alarmRow.name, alarmRow.value);
+    }
+    const bool fullRebuildRequired = g_full_rebuild_required.load(std::memory_order_relaxed);
+    for (const auto &syncRow : collect_opcua_sync_system_tags(reloadCopy, fullRebuildRequired)) {
+        ua_write_system_value(syncRow.name, syncRow.value);
     }
 
     for (auto &driver : drivers) {
@@ -13803,8 +14244,17 @@ window.addEventListener("load", startAutoRefresh);
 		                        const auto clockRows = collect_clock_system_tags();
 		                        const auto hostRows = collect_host_system_tags();
 		                        const auto alarmRows = collect_alarm_system_tags();
+		                        ReloadState reloadCopy;
+		                        {
+		                            std::lock_guard<std::mutex> rlock(g_reloadMutex);
+		                            reloadCopy = g_reloadState;
+		                        }
+		                        const auto opcuaSyncRows = collect_opcua_sync_system_tags(
+		                            reloadCopy,
+		                            g_full_rebuild_required.load(std::memory_order_relaxed)
+		                        );
 		                        json sys;
-		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(drivers.size()) * 15;
+		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(opcuaSyncRows.size()) + static_cast<int>(drivers.size()) * 15;
 		                        sys["with_snapshot"] = sys["total"];
 		                        sys["good"] = sys["total"];
 		                        sys["bad"] = 0;
@@ -13840,6 +14290,8 @@ window.addEventListener("load", startAutoRefresh);
 						const std::string filterTag = req.has_param("tag") ? req.get_param_value("tag") : "";
 						const std::string searchRaw = req.has_param("search") ? req.get_param_value("search") : "";
 						const std::string search = to_lower_copy(searchRaw);
+						const bool excludeSystem = req.has_param("exclude_system") &&
+							parse_bool_loose(req.get_param_value("exclude_system"), false);
 						const int offset = req.has_param("offset") ? std::max(0, parse_int_loose(req.get_param_value("offset"), 0)) : 0;
 						int limit = req.has_param("limit") ? parse_int_loose(req.get_param_value("limit"), 0) : 0;
 						if (limit < 0) limit = 0;
@@ -13893,7 +14345,7 @@ window.addEventListener("load", startAutoRefresh);
 									}
 								}
 
-								if (filterConn.empty() || filterConn == "_system") {
+								if (!excludeSystem && (filterConn.empty() || filterConn == "_system")) {
 									const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 										std::chrono::system_clock::now().time_since_epoch()
 									).count();
@@ -13941,6 +14393,12 @@ window.addEventListener("load", startAutoRefresh);
 									}
 									for (const auto &alarmRow : collect_alarm_system_tags()) {
 										addSystemRow(alarmRow.name, alarmRow.datatype, alarmRow.value);
+									}
+									for (const auto &syncRow : collect_opcua_sync_system_tags(
+										reloadCopy,
+										g_full_rebuild_required.load(std::memory_order_relaxed)
+									)) {
+										addSystemRow(syncRow.name, syncRow.datatype, syncRow.value);
 									}
 
 									for (auto &driver : drivers) {
@@ -14234,6 +14692,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        g_reloadState.gen = newGen;
 		                        g_reloadState.target_connection_id.clear();
 		                        g_reloadState.error.clear();
+		                        g_reloadState.opcua_sync = OpcUaSyncResult{};
 	                        g_reloadCv.notify_all();
 
 	                        // Wait for completion (up to 30s)
@@ -14267,6 +14726,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    resp["pending"] = false;
 		                    resp["gen"] = newGen;
 		                    resp["full_rebuild_required"] = g_full_rebuild_required.load(std::memory_order_relaxed);
+		                    resp["opcua_sync"] = opcua_sync_result_json(g_reloadState.opcua_sync);
 		                    resp["message"] = "Config reload successful.";
 	                    res.status = 200;
 	                } catch (const std::exception &ex) {
@@ -14302,7 +14762,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        return;
 		                    }
 
-		                    uint64_t newGen = g_configGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+		                    uint64_t newGen = g_reloadRequestGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
 		                    {
 		                        std::unique_lock<std::mutex> lk(g_reloadMutex);
 		                        if (g_reloadState.requested || g_reloadState.in_progress) {
@@ -14319,6 +14779,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        g_reloadState.gen = newGen;
 		                        g_reloadState.target_connection_id = targetConn;
 		                        g_reloadState.error.clear();
+		                        g_reloadState.opcua_sync = OpcUaSyncResult{};
 		                        g_reloadCv.notify_all();
 
 		                        bool finished = g_reloadCv.wait_for(lk, std::chrono::seconds(30), [&]() {
@@ -14351,6 +14812,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    resp["gen"] = newGen;
 		                    resp["connection_id"] = targetConn;
 		                    resp["full_rebuild_required"] = g_full_rebuild_required.load(std::memory_order_relaxed);
+		                    resp["opcua_sync"] = opcua_sync_result_json(g_reloadState.opcua_sync);
 		                    resp["message"] = "Connection reload successful.";
 		                    res.status = 200;
 		                } catch (const std::exception &ex) {
@@ -14374,6 +14836,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    resp["gen"] = g_reloadState.gen;
 		                    resp["target_connection_id"] = g_reloadState.target_connection_id;
 		                    resp["error"] = g_reloadState.error;
+		                    resp["opcua_sync"] = opcua_sync_result_json(g_reloadState.opcua_sync);
 		                }
 		                resp["full_rebuild_required"] = g_full_rebuild_required.load(std::memory_order_relaxed);
 		                resp["ok_status"] = true;
@@ -17916,8 +18379,9 @@ window.addEventListener("load", startAutoRefresh);
 	            std::string out_datatype;
 	        };
 
-	        struct PollerSpec {
+	            struct PollerSpec {
 	            uint64_t gen = 0;
+	            std::shared_ptr<std::atomic<bool>> stop_requested;
 	            ConnectionConfig conn;
 	            std::vector<PollTagItem> tags;
 	            std::unordered_map<std::string, std::vector<TagConfig>> derived_bits_by_source; // source logical_name -> derived tags
@@ -17943,17 +18407,34 @@ window.addEventListener("load", startAutoRefresh);
 	            }
 	        };
 
-	        std::vector<std::thread> pollThreads;
+	        struct PollerGroup {
+	            std::shared_ptr<std::atomic<bool>> stop_requested;
+	            std::vector<std::thread> threads;
+	        };
+
+	        std::unordered_map<std::string, PollerGroup> pollerGroups;
 	        uint64_t activeGen = g_configGeneration.load(std::memory_order_relaxed);
 
-	        auto startPollers = [&](uint64_t gen) {
+	        auto startPollers = [&](uint64_t gen, const std::string &onlyConnId = std::string{}) {
 	            std::vector<PollerSpec> specs;
+	            std::shared_ptr<std::atomic<bool>> targetStop;
+
+	            if (!onlyConnId.empty()) {
+	                targetStop = std::make_shared<std::atomic<bool>>(false);
+	                PollerGroup group;
+	                group.stop_requested = targetStop;
+	                pollerGroups[onlyConnId] = std::move(group);
+	            }
 
 	            {
 	                std::lock_guard<std::mutex> lock(driverMutex);
 		                for (const auto &d : drivers) {
+		                    if (!onlyConnId.empty() && d.conn.id != onlyConnId) continue;
 		                    PollerSpec baseSpec;
 		                    baseSpec.gen = gen;
+		                    baseSpec.stop_requested = onlyConnId.empty()
+		                        ? std::make_shared<std::atomic<bool>>(false)
+		                        : targetStop;
 		                    baseSpec.conn = d.conn;
 
 		                    {
@@ -18008,9 +18489,10 @@ window.addEventListener("load", startAutoRefresh);
 	                    if (baseSpec.metrics) {
 	                        baseSpec.metrics->poll_tag_count.store(static_cast<uint64_t>(totalTags), std::memory_order_relaxed);
 	                    }
-	                    for (int lane = 0; lane < laneCount; ++lane) {
+		                    for (int lane = 0; lane < laneCount; ++lane) {
 	                        PollerSpec laneSpec;
 	                        laneSpec.gen = baseSpec.gen;
+	                        laneSpec.stop_requested = baseSpec.stop_requested;
 	                        laneSpec.conn = baseSpec.conn;
 	                        laneSpec.conn.poll_lanes = laneCount;
 	                        if (laneSpec.conn.poll_max_reads_per_sec > 0) {
@@ -18028,8 +18510,14 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            }
 
-	            pollThreads.clear();
-	            pollThreads.reserve(specs.size());
+	            if (onlyConnId.empty()) {
+	                for (const auto &spec : specs) {
+	                    if (spec.conn.id.empty() || pollerGroups.count(spec.conn.id)) continue;
+	                    PollerGroup group;
+	                    group.stop_requested = spec.stop_requested;
+	                    pollerGroups.emplace(spec.conn.id, std::move(group));
+	                }
+	            }
 
 	            const bool doConsolePrint = (!httpMode && !opcuaMode && !mqttMode);
 
@@ -18037,7 +18525,10 @@ window.addEventListener("load", startAutoRefresh);
 		                if (spec.tags.empty()) {
 		                    continue;
 		                }
-		                pollThreads.emplace_back([&, spec = std::move(spec), doConsolePrint]() mutable {
+		                const std::string groupConnId = spec.conn.id;
+		                auto groupIt = pollerGroups.find(groupConnId);
+		                if (groupIt == pollerGroups.end()) continue;
+		                groupIt->second.threads.emplace_back([&, spec = std::move(spec), doConsolePrint]() mutable {
 							struct HeapItem {
 								std::chrono::steady_clock::time_point next_poll;
 								size_t idx;
@@ -18075,8 +18566,10 @@ window.addEventListener("load", startAutoRefresh);
 								spec.metrics->poll_tag_count.store(spec.total_tag_count > 0 ? spec.total_tag_count : static_cast<uint64_t>(spec.tags.size()), std::memory_order_relaxed);
 							}
 
-		                    while (g_configGeneration.load(std::memory_order_relaxed) == spec.gen) {
-								if (g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
+		                    while (!spec.stop_requested->load(std::memory_order_relaxed) &&
+		                           g_configGeneration.load(std::memory_order_relaxed) == spec.gen) {
+								if (spec.stop_requested->load(std::memory_order_relaxed) ||
+								    g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
 									return;
 								}
 								if (heap.empty()) {
@@ -18191,7 +18684,8 @@ window.addEventListener("load", startAutoRefresh);
 
 		                            {
 		                                std::lock_guard<std::mutex> lock(driverMutex);
-		                                if (g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
+		                                if (spec.stop_requested->load(std::memory_order_relaxed) ||
+		                                    g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
 		                                    continue;
 	                                }
 
@@ -18844,11 +19338,30 @@ window.addEventListener("load", startAutoRefresh);
 		            }
 		        };
 
-	        auto stopPollers = [&]() {
-	            for (auto &t : pollThreads) {
+	        auto stopConnectionPollers = [&](const std::string &connId) {
+	            auto it = pollerGroups.find(connId);
+	            if (it == pollerGroups.end()) return;
+	            if (it->second.stop_requested) {
+	                it->second.stop_requested->store(true, std::memory_order_relaxed);
+	            }
+	            for (auto &t : it->second.threads) {
 	                if (t.joinable()) t.join();
 	            }
-	            pollThreads.clear();
+	            pollerGroups.erase(it);
+	        };
+
+	        auto stopPollers = [&]() {
+	            for (auto &kv : pollerGroups) {
+	                if (kv.second.stop_requested) {
+	                    kv.second.stop_requested->store(true, std::memory_order_relaxed);
+	                }
+	            }
+	            for (auto &kv : pollerGroups) {
+	                for (auto &t : kv.second.threads) {
+	                    if (t.joinable()) t.join();
+	                }
+	            }
+	            pollerGroups.clear();
 	            g_pollers_running_gen.store(0, std::memory_order_relaxed);
 	        };
 
@@ -18881,13 +19394,21 @@ window.addEventListener("load", startAutoRefresh);
 		                          << (targetedReload ? ("connection reload for '" + requestedTargetConn + "'") : std::string("full reload"))
 		                          << " (gen=" << requestedGen << ")...\n";
 
-		                stopPollers();
+		                if (targetedReload) {
+		                    stopConnectionPollers(requestedTargetConn);
+		                } else {
+		                    stopPollers();
+		                }
 
 		                bool ok = false;
 		                std::string err;
+		                OpcUaSyncResult opcuaSync;
 
 			                try {
-			                    std::unique_lock<std::shared_mutex> plcLock(plcMutex);
+			                    std::unique_lock<std::shared_mutex> plcLock(plcMutex, std::defer_lock);
+			                    if (!targetedReload) {
+			                        plcLock.lock();
+			                    }
 			                    if (targetedReload) {
 			                        DriverContext newDriver;
 			                        bool hasDriver = false;
@@ -18915,15 +19436,47 @@ window.addEventListener("load", startAutoRefresh);
 			                                    if (tt->first.rfind(prefix, 0) == 0) tt = tagTable.erase(tt);
 			                                    else ++tt;
 			                                }
+
+			                                if (g_uaServer) {
+			                                    if (hasDriver) {
+			                                        auto syncIt = std::find_if(drivers.begin(), drivers.end(), [&](const DriverContext &d) {
+			                                            return d.conn.id == requestedTargetConn;
+			                                        });
+			                                        if (syncIt != drivers.end()) {
+			                                            std::string syncErr;
+			                                            if (!sync_opcua_connection_nodes(*syncIt, opcuaSync, syncErr)) {
+			                                                opcuaSync.ok = false;
+			                                                opcuaSync.full_rebuild_required = true;
+			                                                opcuaSync.message = syncErr.empty() ? "OPC UA sync failed." : syncErr;
+			                                                std::cerr << "[reload] OPC UA targeted sync failed for '"
+			                                                          << requestedTargetConn << "': "
+			                                                          << (syncErr.empty() ? "unknown error" : syncErr) << "\n";
+			                                            }
+			                                        } else {
+			                                            opcuaSync.attempted = true;
+			                                            opcuaSync.ok = false;
+			                                            opcuaSync.full_rebuild_required = true;
+			                                            opcuaSync.message = "Reloaded connection not found after reload.";
+			                                        }
+			                                    } else {
+			                                        opcuaSync.attempted = true;
+			                                        opcuaSync.ok = true;
+			                                        opcuaSync.retired = 1;
+			                                        opcuaSync.full_rebuild_required = true;
+			                                        opcuaSync.message = "Connection removed; full rebuild required to remove OPC UA folder.";
+			                                    }
+			                                }
 			                            }
 			                            {
 			                                std::lock_guard<std::mutex> mlock(g_metricsMutex);
 			                                g_connPollMetrics.erase(requestedTargetConn);
 			                            }
-			                            // Targeted reload does not rebuild OPC UA nodes. Existing nodes keep updating,
-			                            // but added/removed tags need a later full rebuild to sync the OPC UA namespace.
 			                            if (g_uaServer) {
-			                                g_full_rebuild_required.store(true, std::memory_order_relaxed);
+			                                const bool rebuildRequired =
+			                                    g_full_rebuild_required.load(std::memory_order_relaxed) ||
+			                                    opcuaSync.full_rebuild_required;
+			                                g_full_rebuild_required.store(rebuildRequired, std::memory_order_relaxed);
+			                                opcuaSync.full_rebuild_required = rebuildRequired;
 			                            }
 			                            ok = true;
 			                        }
@@ -18966,15 +19519,21 @@ window.addEventListener("load", startAutoRefresh);
 		                    g_connPollMetrics.clear();
 		                }
 
-	                // Resume pollers on the new config generation.
-	                activeGen = g_configGeneration.load(std::memory_order_relaxed);
-	                startPollers(activeGen);
-	                g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
+		                if (targetedReload) {
+		                    startPollers(activeGen, requestedTargetConn);
+		                    g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
+		                } else {
+		                    // Resume pollers on the new config generation.
+		                    activeGen = g_configGeneration.load(std::memory_order_relaxed);
+		                    startPollers(activeGen);
+		                    g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
+		                }
 
 	                {
 	                    std::lock_guard<std::mutex> lk(g_reloadMutex);
 		                    g_reloadState.ok = ok;
 		                    g_reloadState.error = err;
+		                    g_reloadState.opcua_sync = targetedReload ? opcuaSync : OpcUaSyncResult{};
 		                    g_reloadState.done = true;
 		                    g_reloadState.requested = false;
 		                    g_reloadState.in_progress = false;
@@ -19005,6 +19564,7 @@ window.addEventListener("load", startAutoRefresh);
 	                    auto itb = g_uaBindingIndex.find(ua_key(u.conn_id, u.logical_name));
 	                    if (itb == g_uaBindingIndex.end()) continue;
 	                    UaTagBinding &b = g_uaBindings[itb->second];
+	                    if (b.retired) continue;
 
 	                    UA_Variant value;
 	                    UA_Variant_init(&value);
@@ -19041,7 +19601,7 @@ window.addEventListener("load", startAutoRefresh);
 	                        g_suppressOpcUaWriteCallback = false;
 	                        if (wst != UA_STATUSCODE_GOOD) {
 	                            std::cerr << "OPC UA live: writeValue failed for ["
-	                                      << b.conn->id << "]." << b.logical_name
+	                                      << b.conn_id << "]." << b.logical_name
 	                                      << ": " << UA_StatusCode_name(wst) << "\n";
 	                        }
 	                    }

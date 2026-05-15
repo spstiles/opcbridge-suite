@@ -2172,23 +2172,55 @@ async function opcbridgeReload() {
 
 async function opcbridgeReloadConnection(connectionId) {
   const cid = String(connectionId || '').trim();
-  if (!cid) return false;
+  if (!cid) return null;
   const r = await apiPostJson('/api/opcbridge/reload/connection', { connection_id: cid });
   if (r && r.pending) {
     const gen = (typeof r.gen === 'number') ? r.gen : null;
-    await waitForOpcbridgeReloadDone({ gen });
+    const done = await waitForOpcbridgeReloadDone({ gen });
+    return done && typeof done === 'object' ? done : r;
   }
-  return true;
+  return r;
 }
 
 async function opcbridgeReloadConnections(connectionIds) {
   const ids = Array.from(new Set((Array.isArray(connectionIds) ? connectionIds : [])
     .map((v) => String(v || '').trim())
     .filter(Boolean))).sort();
+  const results = [];
   for (const cid of ids) {
-    await opcbridgeReloadConnection(cid);
+    const result = await opcbridgeReloadConnection(cid);
+    if (result) results.push(result);
   }
-  return ids;
+  return { ids, results };
+}
+
+function summarizeOpcuaSyncResults(results) {
+  const rows = Array.isArray(results) ? results : [];
+  const total = { added: 0, updated: 0, retired: 0, datatype_conflicts: 0, add_failures: 0 };
+  let attempted = false;
+  let fullRebuild = false;
+  let failed = false;
+  rows.forEach((r) => {
+    const sync = r?.opcua_sync || {};
+    attempted = attempted || Boolean(sync.attempted);
+    fullRebuild = fullRebuild || Boolean(sync.full_rebuild_required || r?.full_rebuild_required);
+    failed = failed || sync.ok === false;
+    total.added += Math.max(0, Math.trunc(Number(sync.added) || 0));
+    total.updated += Math.max(0, Math.trunc(Number(sync.updated) || 0));
+    total.retired += Math.max(0, Math.trunc(Number(sync.retired) || 0));
+    total.datatype_conflicts += Math.max(0, Math.trunc(Number(sync.datatype_conflicts) || 0));
+    total.add_failures += Math.max(0, Math.trunc(Number(sync.add_failures) || 0));
+  });
+  const bits = [];
+  if (total.added) bits.push(`${total.added} OPC UA node${total.added === 1 ? '' : 's'} added`);
+  if (total.updated) bits.push(`${total.updated} updated`);
+  if (total.retired) bits.push(`${total.retired} retired`);
+  if (total.datatype_conflicts) bits.push(`${total.datatype_conflicts} datatype conflict${total.datatype_conflicts === 1 ? '' : 's'}`);
+  if (total.add_failures) bits.push(`${total.add_failures} add failure${total.add_failures === 1 ? '' : 's'}`);
+  if (!attempted) return fullRebuild ? 'Saved. Polling applied; OPC UA rebuild required.' : 'Saved. Polling changes applied.';
+  if (failed) return `Saved. Polling applied; OPC UA sync had errors${bits.length ? ` (${bits.join(', ')})` : ''}.`;
+  if (fullRebuild) return `Saved. OPC UA synced; full rebuild recommended${bits.length ? ` (${bits.join(', ')})` : ''}.`;
+  return `Saved. Polling and OPC UA synced${bits.length ? ` (${bits.join(', ')})` : ''}.`;
 }
 
 function renderRuntimeRebuildStatus(status) {
@@ -2267,7 +2299,7 @@ async function waitForOpcbridgeReloadDone({ gen, maxWaitMs = 180000, intervalMs 
       if (typeof gen === 'number' && sGen < gen) {
         // Still reporting an older reload; keep polling.
       } else if (s && s.done) {
-        if (s.ok) return true;
+        if (s.ok) return s;
         throw new Error(String(s.error || 'Reload failed'));
       }
     } catch (err) {
@@ -6992,10 +7024,17 @@ function setWorkspaceSaveStatus(msg) {
 
 function renderWorkspaceSaveBar() {
   const dirty = workspaceIsDirty();
+  const applyBlocked = Date.now() < Number(state.workspaceApplyPollingBlockUntil || 0);
   if (els.workspaceSaveBtn) els.workspaceSaveBtn.disabled = !dirty;
-  if (els.workspaceApplyPollingBtn) els.workspaceApplyPollingBtn.disabled = !dirty;
+  if (els.workspaceApplyPollingBtn) els.workspaceApplyPollingBtn.disabled = !dirty || applyBlocked;
   if (els.workspaceRebuildOpcuaBtn) els.workspaceRebuildOpcuaBtn.disabled = !canEditConfig();
   if (els.workspaceDiscardBtn) els.workspaceDiscardBtn.disabled = !dirty;
+}
+
+function blockWorkspaceApplyPollingBriefly() {
+  state.workspaceApplyPollingBlockUntil = Date.now() + 750;
+  renderWorkspaceSaveBar();
+  window.setTimeout(renderWorkspaceSaveBar, 800);
 }
 
 const OPCBRIDGE_SCADA_DRAFT_KEY = 'opcbridge_scada_workspace_draft_v1';
@@ -7447,30 +7486,27 @@ function closeNewTagModal() {
 }
 
 
-async function deleteTagById(connectionId, tagName) {
+function stageDeleteTagById(connectionId, tagName) {
   const cid = String(connectionId || '').trim();
   const name = String(tagName || '').trim();
   if (!cid || !name) return;
 
-  if (!window.confirm(`Delete tag '${cid}:${name}'?`)) return;
+  if (!window.confirm(`Delete tag '${cid}:${name}'? (Applied on Save / Apply Polling Changes.)`)) return;
 
-  try {
-    const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
-    const remaining = state.tagConfigAll.filter((t) => !(String(t?.connection_id || '') === cid && String(t?.name || '') === name));
-    const tagsOut = remaining.map(sanitizeTagForPost);
-    const emptied = computeEmptiedTagConnectionIds(baseTags, remaining);
-    if (tagsOut.length > 0) {
-      await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
-    }
-    if (emptied.length > 0) {
-      await writeEmptyCanonicalTagFilesForConnections(emptied);
-    }
-    await loadTagsConfig();
-
-    renderWorkspaceTree();
-  } catch (err) {
-    window.alert(`Failed to delete tag: ${err.message}`);
+  const key = `${cid}::${name}`;
+  const before = Array.isArray(state.tagConfigAll) ? state.tagConfigAll.length : 0;
+  state.tagConfigAll = (state.tagConfigAll || []).filter((t) => makeTagKey(t) !== key);
+  if (state.tagConfigEdited && state.tagConfigEdited.size) {
+    state.tagConfigEdited.delete(key);
   }
+  if ((state.tagConfigAll || []).length === before) return;
+
+  markTagsDirty(true);
+  blockWorkspaceApplyPollingBriefly();
+  if (state.workspaceChildrenSel) state.workspaceChildrenSel.delete(key);
+  renderWorkspaceTree();
+  setWorkspaceSaveStatus(`Deleted tag '${cid}:${name}' locally. Apply polling changes to update runtime.`);
+  renderWorkspaceSaveBar();
 }
 
 function setTagEventLogging(connectionId, tagName, enabled) {
@@ -13158,6 +13194,13 @@ function buildTree() {
         children: []
       },
       {
+        id: 'system:opcua',
+        type: 'system_group',
+        label: 'OPC UA',
+        meta: { connection_id: '_system', system: true, tag_prefix: 'System/OpcUa/' },
+        children: []
+      },
+      {
         id: 'system:host',
         type: 'system_group',
         label: 'Host',
@@ -13275,7 +13318,7 @@ function renderTreeNode(node, container) {
       const cid = String(node.meta?.connection_id || '').trim();
       const name = String(node.meta?.name || node.label || '').trim();
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
-      items.push({ label: 'Delete Tag…', onClick: () => deleteTagById(cid, name) });
+      items.push({ label: 'Delete Tag…', onClick: () => stageDeleteTagById(cid, name) });
       items.push('sep');
     }
 
@@ -13345,7 +13388,9 @@ function renderWorkspaceDetails(node) {
   let tagRows = [];
   if (isSystem) {
     const prefix = String(node.meta?.tag_prefix || '').trim();
-    tagRows = (Array.isArray(state.liveTagsLast?.tags) ? state.liveTagsLast.tags : [])
+    const cacheKey = `system:${prefix}`;
+    const cached = state.workspaceSystemChildrenCache?.get?.(cacheKey);
+    tagRows = (Array.isArray(cached) ? cached : [])
       .filter((tt) => String(tt?.connection_id || '') === '_system')
       .filter((tt) => !prefix || String(tt?.name || '').startsWith(prefix))
       .map((tt) => ({
@@ -13358,6 +13403,25 @@ function renderWorkspaceDetails(node) {
         writable: false,
         system: true
       }));
+
+    if (!Array.isArray(cached) && state.workspaceSystemChildrenInflight !== cacheKey) {
+      state.workspaceSystemChildrenInflight = cacheKey;
+      const params = new URLSearchParams();
+      params.set('connection_id', '_system');
+      params.set('limit', '1000');
+      if (prefix) params.set('search', prefix);
+      apiGet(`/api/opcbridge/tags?${params.toString()}`).then((resp) => {
+        if (!state.workspaceSystemChildrenCache) state.workspaceSystemChildrenCache = new Map();
+        state.workspaceSystemChildrenCache.set(cacheKey, Array.isArray(resp?.tags) ? resp.tags : []);
+        if (state.workspaceSystemChildrenInflight === cacheKey) state.workspaceSystemChildrenInflight = '';
+        const selected = state.selectedNodeId ? findWorkspaceNodeById(state.workspaceTreeRoot, state.selectedNodeId) : null;
+        if (selected && String(selected.id || '') === String(node.id || '')) {
+          renderWorkspaceDetails(selected);
+        }
+      }).catch(() => {
+        if (state.workspaceSystemChildrenInflight === cacheKey) state.workspaceSystemChildrenInflight = '';
+      });
+    }
   } else if (showTagCols && connectionId) {
     tagRows = getEffectiveTagsAll()
       .filter((tt) => String(tt?.connection_id || '') === connectionId)
@@ -13538,6 +13602,7 @@ function renderWorkspaceDetails(node) {
       for (const k of delSet.values()) state.tagConfigEdited.delete(k);
     }
     markTagsDirty(true);
+    blockWorkspaceApplyPollingBriefly();
     clearSelection();
     renderWorkspaceTree();
   };
@@ -13775,6 +13840,11 @@ async function refreshWorkspaceConfigViews() {
 }
 
 async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } = {}) {
+  if (applyPolling && Date.now() < Number(state.workspaceApplyPollingBlockUntil || 0)) {
+    setWorkspaceSaveStatus('Tag delete staged. Click Apply Polling Changes when ready.');
+    renderWorkspaceSaveBar();
+    return;
+  }
   if (!workspaceIsDirty()) {
     if (!rebuildOpcua) return;
     if (!window.confirm('Rebuild the full opcbridge runtime and OPC UA namespace now?')) return;
@@ -13795,6 +13865,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
   }
   setWorkspaceSaveStatus('Saving…');
   renderWorkspaceSaveBar();
+  let pollingReloadResult = null;
   try {
     const changedConnectionIds = new Set();
     // 0) Apply staged deletes
@@ -13855,7 +13926,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
 	      if (ids.length) {
 	        setWorkspaceSaveStatus(`Saved. Applying polling changes to ${ids.join(', ')}…`);
 	        renderWorkspaceSaveBar();
-	        await opcbridgeReloadConnections(ids);
+	        pollingReloadResult = await opcbridgeReloadConnections(ids);
 	      }
 	    }
 
@@ -13869,7 +13940,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
     renderWorkspaceTree();
 	    setWorkspaceSaveStatus(rebuildOpcua
 	      ? 'Saved. OPC UA namespace rebuilt.'
-	      : (applyPolling ? 'Saved. Polling changes applied.' : 'Saved. OPC UA namespace rebuild may be required for structural changes.'));
+	      : (applyPolling ? summarizeOpcuaSyncResults(pollingReloadResult?.results || []) : 'Saved. OPC UA namespace rebuild may be required for structural changes.'));
   } catch (err) {
     const msg = String(err?.message || err || '');
     const lowerMsg = msg.toLowerCase();
@@ -13882,7 +13953,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
           renderWorkspaceTree();
           setWorkspaceSaveStatus(rebuildOpcua
             ? 'Saved. OPC UA namespace rebuilt.'
-            : (applyPolling ? 'Saved. Polling changes applied.' : 'Saved.'));
+            : (applyPolling ? summarizeOpcuaSyncResults(pollingReloadResult?.results || []) : 'Saved.'));
           renderWorkspaceSaveBar();
         } catch {
           // keep the prior status
@@ -13930,7 +14001,13 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
   if (!node) return;
   const type = String(node.type || '');
 
-  if (type === 'system_folder' || type === 'system_group') {
+  if (type === 'folder' && node.id === 'folder:connectivity') {
+    state.liveTagFilter = {
+      type: 'connectivity',
+      exclude_system: true,
+      label: 'Connectivity'
+    };
+  } else if (type === 'system_folder' || type === 'system_group') {
     state.liveTagFilter = {
       type: 'system',
       connection_id: '_system',
@@ -13985,6 +14062,10 @@ function filterLiveTagsForWorkspace(tags) {
     return tags
       .filter((t) => String(t?.connection_id || '') === '_system')
       .filter((t) => !prefix || String(t?.name || t?.tag || '').startsWith(prefix));
+  }
+
+  if (f.type === 'connectivity') {
+    return tags.filter((t) => String(t?.connection_id || '') !== '_system');
   }
 
   return tags;
@@ -14108,6 +14189,9 @@ async function loadVisibleLiveTags() {
         params.set('tag', String(f.name));
         scopeKey += `:${String(f.name)}`;
       }
+    } else if (f?.type === 'connectivity') {
+      params.set('exclude_system', '1');
+      scopeKey = 'connectivity';
     }
   }
   const prefix = String((state.liveTagFilter?.type === 'system' ? state.liveTagFilter?.prefix : '') || '').trim();

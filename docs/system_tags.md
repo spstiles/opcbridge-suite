@@ -70,11 +70,30 @@ System/Connections/<connection_id>/
 | `ReadMsLast` | `float64` | Last read duration in milliseconds. |
 | `ReadMsAvg` | `float64` | Average read duration in milliseconds. |
 
+## OPC UA Sync Tags
+
+These tags show the result of the last targeted runtime reload that attempted to
+sync the live OPC UA namespace without a full OPC UA rebuild.
+
+| Tag | Type | Meaning |
+| --- | --- | --- |
+| `System/OpcUa/Sync/LastAttempted` | `bool` | Last targeted reload attempted an OPC UA namespace sync. |
+| `System/OpcUa/Sync/LastOk` | `bool` | Last targeted OPC UA sync completed without add failures. |
+| `System/OpcUa/Sync/LastAdded` | `int32` | OPC UA nodes added during the last targeted sync. |
+| `System/OpcUa/Sync/LastUpdated` | `int32` | Existing OPC UA bindings refreshed during the last targeted sync. |
+| `System/OpcUa/Sync/LastRetired` | `int32` | Nodes marked unavailable because their tags were removed. |
+| `System/OpcUa/Sync/LastDatatypeConflicts` | `int32` | Tags that need a full rebuild because their OPC UA datatype changed. |
+| `System/OpcUa/Sync/LastAddFailures` | `int32` | Nodes that failed to add during the last targeted sync. |
+| `System/OpcUa/Sync/FullRebuildRequired` | `bool` | `true` when a full OPC UA rebuild is still recommended. |
+| `System/OpcUa/Sync/LastMessage` | `string` | Human-readable result from the last targeted sync. |
+
 ## Host Tags
 
 | Tag | Type | Meaning |
 | --- | --- | --- |
-| `System/Host/CpuCount` | `int32` | Online CPU/core count. |
+| `System/Host/CpuCount` | `int32` | Online logical CPU count. Kept for compatibility. |
+| `System/Host/LogicalCpuCount` | `int32` | Online logical CPU/hardware-thread count. |
+| `System/Host/PhysicalCoreCount` | `int32` | Physical CPU core count detected from `/proc/cpuinfo`, or logical count if unavailable. |
 | `System/Host/LoadAverage1Min` | `float64` | Linux load average over 1 minute. |
 | `System/Host/LoadAverage5Min` | `float64` | Linux load average over 5 minutes. |
 | `System/Host/LoadAverage15Min` | `float64` | Linux load average over 15 minutes. |
@@ -87,7 +106,8 @@ System/Connections/<connection_id>/
 | `System/Host/Network/<interface>/TxBytes` | `uint64` | Transmitted byte counter for the interface. |
 
 Load average is not CPU percent. As a rough guide, compare load average to
-`CpuCount`; a load near the CPU count means the host is roughly fully busy.
+`LogicalCpuCount`; a load near the logical CPU count means the host scheduler is
+roughly fully busy.
 
 ## Alarm Runtime Tags
 
