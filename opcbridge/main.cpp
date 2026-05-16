@@ -245,7 +245,7 @@ struct DriverContext {
 };
 
 // Tag table structures
-using TagValue = std::variant<bool, int16_t, int32_t, uint16_t, uint32_t, float, double>;
+using TagValue = std::variant<bool, int16_t, int32_t, uint16_t, uint32_t, float, double, std::string>;
 
 struct TagSnapshot {
     std::string connection_id;
@@ -3190,6 +3190,7 @@ size_t datatype_size_bytes(const std::string &dt) {
     if (dt == "int32" || dt == "uint32")   return 4;
     if (dt == "float32")                   return 4;
     if (dt == "float64")                   return 8;
+    if (dt == "string")                    return 88;
     throw std::runtime_error("Unsupported datatype: " + dt);
 }
 
@@ -3199,7 +3200,8 @@ static bool is_supported_datatype(const std::string &dt) {
         dt == "int16" || dt == "uint16" ||
         dt == "int32" || dt == "uint32" ||
         dt == "float32" ||
-        dt == "float64"
+        dt == "float64" ||
+        dt == "string"
     );
 }
 
@@ -3224,6 +3226,8 @@ static bool tagvalue_to_double(const TagValue &v, double &out) {
     std::visit([&](auto &&arg) {
         using T = std::decay_t<decltype(arg)>;
         if constexpr (std::is_same_v<T, bool>) {
+            ok = false;
+        } else if constexpr (std::is_same_v<T, std::string>) {
             ok = false;
         } else {
             out = static_cast<double>(arg);
@@ -3363,7 +3367,9 @@ std::string build_tag_conn_str(const ConnectionConfig &c,
 {
     std::string s = build_base_conn_str(c);
     s += "&name=" + t.plc_tag_name;
-    s += "&elem_size=" + std::to_string(datatype_size_bytes(t.datatype));
+    if (t.datatype != "string") {
+        s += "&elem_size=" + std::to_string(datatype_size_bytes(t.datatype));
+    }
     s += "&elem_count=" + std::to_string(std::max(1, t.elem_count));
     return s;
 }
@@ -3520,6 +3526,17 @@ void update_snapshot_from_plc(TagSnapshot &snap,
         bool b = (v != 0);
         if (tag.cfg.invert) b = !b;
         raw = b;
+    } else if (dt == "string") {
+        int capacity = plc_tag_get_string_capacity(handle, 0);
+        if (capacity <= 0) capacity = 82;
+        std::vector<char> buffer(static_cast<size_t>(capacity) + 1u, '\0');
+        int status = plc_tag_get_string(handle, 0, buffer.data(), static_cast<int>(buffer.size()));
+        if (status != PLCTAG_STATUS_OK) {
+            snap.quality = 0;
+            snap.value = std::string{};
+            return;
+        }
+        raw = std::string(buffer.data());
     } else {
         snap.quality = 0;
         return;
@@ -3625,6 +3642,9 @@ bool parse_string_to_tagvalue(const std::string &s,
             double v = std::stod(s);
             out = v;
             return true;
+        } else if (dt == "string") {
+            out = s;
+            return true;
         }
     } catch (...) {
         return false;
@@ -3698,6 +3718,17 @@ static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
         bool b = (v != 0);
         if (tag.cfg.invert) b = !b;
         raw = b;
+    } else if (dt == "string") {
+        int capacity = plc_tag_get_string_capacity(handle, byteOffset);
+        if (capacity <= 0) capacity = 82;
+        std::vector<char> buffer(static_cast<size_t>(capacity) + 1u, '\0');
+        int status = plc_tag_get_string(handle, byteOffset, buffer.data(), static_cast<int>(buffer.size()));
+        if (status != PLCTAG_STATUS_OK) {
+            snap.quality = 0;
+            snap.value = std::string{};
+            return false;
+        }
+        raw = std::string(buffer.data());
     } else {
         snap.quality = 0;
         return false;
@@ -3812,7 +3843,7 @@ void ws_notify_alarm_event(const AlarmRuntime &alarm,
         j["threshold"]  = alarm.cfg.threshold;
         j["hysteresis"] = alarm.cfg.hysteresis;
     }
-    if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals") {
+    if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals" || alarm.cfg.type == "contains" || alarm.cfg.type == "not_contains") {
         j["equals_value"] = alarm.cfg.equals_value;
         j["tolerance"] = alarm.cfg.equals_tolerance;
     }
@@ -3897,6 +3928,9 @@ static bool plc_set_value_from_string(const std::string &datatype,
             int8_t raw = bv ? 1 : 0;
             status = plc_tag_set_int8(handle, 0, raw);
             outValue = bv;
+        } else if (datatype == "string") {
+            status = plc_tag_set_string(handle, 0, value_str.c_str());
+            outValue = value_str;
         } else {
             outError = "Unsupported datatype '" + datatype + "'";
             return false;
@@ -3951,6 +3985,10 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
         if (!pv) { outError = "Type mismatch: expected bool"; return false; }
         int8_t raw = (*pv) ? 1 : 0;
         status = plc_tag_set_int8(handle, 0, raw);
+    } else if (datatype == "string") {
+        const std::string *pv = std::get_if<std::string>(&v);
+        if (!pv) { outError = "Type mismatch: expected string"; return false; }
+        status = plc_tag_set_string(handle, 0, pv->c_str());
     } else {
         outError = "Unsupported datatype '" + datatype + "'";
         return false;
@@ -5321,7 +5359,11 @@ bool load_alarms(const std::string &configDir,
 	                cfg.type != "low" &&
 	                cfg.type != "change" &&
 	                cfg.type != "equals" &&
-	                cfg.type != "not_equals")
+	                cfg.type != "not_equals" &&
+	                cfg.type != "contains" &&
+	                cfg.type != "not_contains" &&
+	                cfg.type != "empty" &&
+	                cfg.type != "not_empty")
 	            {
 	                std::cerr << "[alarms] Alarm '" << cfg.id
 	                          << "' has unsupported type '" << cfg.type
@@ -5329,7 +5371,7 @@ bool load_alarms(const std::string &configDir,
 	                continue;
 	            }
 
-		            if ((cfg.type == "equals" || cfg.type == "not_equals") && cfg.equals_value.is_null()) {
+		            if ((cfg.type == "equals" || cfg.type == "not_equals" || cfg.type == "contains" || cfg.type == "not_contains") && cfg.equals_value.is_null()) {
 		                std::cerr << "[alarms] Alarm '" << cfg.id << "' type=" << cfg.type << " requires field 'value' (or 'threshold'). Skipping.\n";
 		                continue;
 		            }
@@ -5917,6 +5959,10 @@ double snapshot_value_as_double(const TagSnapshot &snap, bool &ok) {
     return v;
 }
 
+std::string snapshot_value_as_text(const TagSnapshot &snap) {
+    return tag_value_to_string(snap.value);
+}
+
 void publish_alarm_event(const AlarmRuntime &alarm,
                          const TagSnapshot &snap,
                          const std::string &state)
@@ -5966,7 +6012,7 @@ void publish_alarm_event(const AlarmRuntime &alarm,
             }, snap.value);
         }
 
-        if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals") {
+        if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals" || alarm.cfg.type == "contains" || alarm.cfg.type == "not_contains") {
             j["equals_value"] = alarm.cfg.equals_value;
             j["tolerance"] = alarm.cfg.equals_tolerance;
         }
@@ -6022,7 +6068,7 @@ void publish_alarm_event(const AlarmRuntime &alarm,
         j["message"]       = message.empty() ? nullptr : json(message);
         j["timestamp_ms"]  = now_ms;
 
-        if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals") {
+        if (alarm.cfg.type == "equals" || alarm.cfg.type == "not_equals" || alarm.cfg.type == "contains" || alarm.cfg.type == "not_contains") {
             j["equals_value"] = alarm.cfg.equals_value;
             j["tolerance"] = alarm.cfg.equals_tolerance;
         }
@@ -6097,6 +6143,12 @@ void evaluate_tag_alarms(const std::string &conn_id,
                 }, snap.value);
                 if (curOk) { matchKnown = true; match = (cur == target); }
             }
+            else if (std::holds_alternative<std::string>(snap.value)) {
+                const std::string cur = std::get<std::string>(snap.value);
+                const std::string target = a.cfg.equals_value.is_string() ? a.cfg.equals_value.get<std::string>() : a.cfg.equals_value.dump();
+                matchKnown = true;
+                match = (cur == target);
+            }
             // Numeric targets (support analog + integer tags)
             else if (a.cfg.equals_value.is_number() || a.cfg.equals_value.is_string()) {
                 bool targetOk = false;
@@ -6117,6 +6169,39 @@ void evaluate_tag_alarms(const std::string &conn_id,
             }
 
             const bool shouldBeActive = matchKnown && (type == "equals" ? match : !match);
+
+            if (shouldBeActive && !a.active) {
+                a.active = true;
+                publish_alarm_event(a, snap, "active");
+            } else if (!shouldBeActive && a.active) {
+                a.active = false;
+                publish_alarm_event(a, snap, "cleared");
+            }
+
+            a.lastValue = snap.value;
+            a.hasLastValue = true;
+        }
+        else if (type == "contains" || type == "not_contains") {
+            const std::string cur = snapshot_value_as_text(snap);
+            const std::string target = a.cfg.equals_value.is_string() ? a.cfg.equals_value.get<std::string>() : a.cfg.equals_value.dump();
+            const bool match = cur.find(target) != std::string::npos;
+            const bool shouldBeActive = (type == "contains") ? match : !match;
+
+            if (shouldBeActive && !a.active) {
+                a.active = true;
+                publish_alarm_event(a, snap, "active");
+            } else if (!shouldBeActive && a.active) {
+                a.active = false;
+                publish_alarm_event(a, snap, "cleared");
+            }
+
+            a.lastValue = snap.value;
+            a.hasLastValue = true;
+        }
+        else if (type == "empty" || type == "not_empty") {
+            const std::string cur = snapshot_value_as_text(snap);
+            const bool match = cur.empty();
+            const bool shouldBeActive = (type == "empty") ? match : !match;
 
             if (shouldBeActive && !a.active) {
                 a.active = true;
@@ -6273,6 +6358,14 @@ static bool ua_set_variable_attr_from_snapshot(UA_VariableAttributes &attr,
         UA_Double v = (UA_Double)std::get<double>(seed.value);
         attr.dataType = UA_TYPES[UA_TYPES_DOUBLE].typeId;
         UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+        return true;
+    }
+    if (dt == "string") {
+        std::string s = std::get<std::string>(seed.value);
+        UA_String v = UA_STRING_ALLOC(s.c_str());
+        attr.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+        UA_Variant_setScalarCopy(&attr.value, &v, &UA_TYPES[UA_TYPES_STRING]);
+        UA_String_clear(&v);
         return true;
     }
     return false;
@@ -6825,6 +6918,13 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 vAttr.dataType  = UA_TYPES[UA_TYPES_DOUBLE].typeId;
                 vAttr.valueRank = UA_VALUERANK_SCALAR;
                 UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+            } else if (dt == "string") {
+                std::string s = std::get<std::string>(seed.value);
+                UA_String v = UA_STRING_ALLOC(s.c_str());
+                vAttr.dataType  = UA_TYPES[UA_TYPES_STRING].typeId;
+                vAttr.valueRank = UA_VALUERANK_SCALAR;
+                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_STRING]);
+                UA_String_clear(&v);
             } else {
                 std::cerr << "OPC UA: unsupported datatype '" << dt
                           << "' for tag '" << cfg.logical_name << "'. Skipping.\n";
@@ -9673,7 +9773,7 @@ const WS_PLC_TYPE_LABELS = {
     "omron-njnx": "OMRON NJ/NX"
 };
 
-const WS_TAG_DATATYPES = ["bool", "int16", "uint16", "int32", "uint32", "float32", "float64"];
+const WS_TAG_DATATYPES = ["bool", "int16", "uint16", "int32", "uint32", "float32", "float64", "string"];
 const WS_SCALED_DATATYPES = ["float64", "float32", "int32", "uint32", "int16", "uint16"];
 
 const wsLabelForDriver = (code) => {
@@ -10212,7 +10312,34 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 			let wsAlarmEditingId = "";
 			let wsReturnSelectId = "";
 	
-			const WS_ALARM_TYPES = ["high", "low", "change", "equals", "not_equals"];
+			const wsAlarmTypeOptionsForDatatype = (datatype) => {
+			    const dt = String(datatype || "").trim().toLowerCase();
+			    const labels = {
+			        high: "High",
+			        low: "Low",
+			        change: "Changed",
+			        equals: "Equals",
+			        not_equals: "Not equals",
+			        contains: "Contains",
+			        not_contains: "Not contains",
+			        empty: "Empty",
+			        not_empty: "Not empty"
+			    };
+			    const keys = dt === "string"
+			        ? ["equals", "not_equals", "contains", "not_contains", "empty", "not_empty", "change"]
+			        : (dt === "bool" || dt === "boolean")
+			            ? ["equals", "not_equals", "change"]
+			            : ["high", "low", "equals", "not_equals", "change"];
+			    return keys.map((value) => ({ value, label: labels[value] || value }));
+			};
+
+			const wsAlarmSourceDatatype = (connId, tagName) => {
+			    const cid = String(connId || "").trim();
+			    const name = String(tagName || "").trim();
+			    const tag = (Array.isArray(wsDraft.tags) ? wsDraft.tags : [])
+			        .find((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name);
+			    return String(tag?.datatype || "");
+			};
 
 	const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	    const el = wsEls();
@@ -10383,8 +10510,6 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 	    const connIds = conns.map((c) => String(c?.id || "")).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
 	    wsFillSelect(el.alarmConn, connIds.map((id) => ({ value: id, label: id })), connIds[0] || "");
 
-	    wsFillSelect(el.alarmType, WS_ALARM_TYPES.map((t) => ({ value: t, label: t })), "high");
-
 	    const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms : [];
 	    const existing = wsAlarmModalMode === "edit"
 	        ? alarms.find((a) => String(a?.id || "") === wsAlarmEditingId)
@@ -10400,7 +10525,6 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 	    if (el.alarmName) el.alarmName.value = existing ? String(existing?.name || "") : "";
 	    if (el.alarmGroup) el.alarmGroup.value = existing ? String(existing?.group || "") : String(group || "");
 	    if (el.alarmSite) el.alarmSite.value = existing ? String(existing?.site || "") : String(site || "");
-	    if (el.alarmType) el.alarmType.value = existing ? String(existing?.type || "high") : "high";
 	    if (el.alarmConn) el.alarmConn.value = existing ? String(existing?.connection_id || "") : (connIds[0] || "");
 	    if (el.alarmTag) el.alarmTag.value = existing ? String(existing?.tag_name || "") : "";
 	    if (el.alarmEnabled) el.alarmEnabled.checked = existing ? (existing?.enabled !== false) : true;
@@ -10416,9 +10540,18 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 	        tags.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" }));
 	        wsFillSelect(el.alarmTag, tags.map((t) => ({ value: String(t?.name || ""), label: String(t?.name || "") })), String(existing?.tag_name || ""));
 	        if (!existing && el.alarmTag && tags.length && !el.alarmTag.value) el.alarmTag.value = String(tags[0]?.name || "");
+	        refreshTypeOptions();
+	    };
+	    const refreshTypeOptions = (preferred = "") => {
+	        const dt = wsAlarmSourceDatatype(el.alarmConn?.value, el.alarmTag?.value);
+	        const opts = wsAlarmTypeOptionsForDatatype(dt);
+	        const cur = String(preferred || el.alarmType?.value || "").trim();
+	        wsFillSelect(el.alarmType, opts, opts.some((o) => o.value === cur) ? cur : String(opts[0]?.value || "high"));
 	    };
 	    if (el.alarmConn) el.alarmConn.onchange = refreshTagOptions;
+	    if (el.alarmTag) el.alarmTag.onchange = () => refreshTypeOptions();
 	    refreshTagOptions();
+	    refreshTypeOptions(existing ? String(existing?.type || "high") : "high");
 
 	    el.alarmModal.style.display = "flex";
 	    el.alarmId?.focus?.();
@@ -11240,10 +11373,11 @@ const wsDeleteDevice = (connection_id) => {
 	    next.severity = Math.max(0, Math.min(1000, Math.floor(Number(el.alarmSeverity?.value) || 0)));
 	    const thRaw = String(el.alarmThreshold?.value || "").trim();
 	    const hyRaw = String(el.alarmHysteresis?.value || "").trim();
-		    if ((next.type === "equals" || next.type === "not_equals") && thRaw === "") {
-		        if (el.alarmStatus) el.alarmStatus.textContent = "Threshold is required for type=equals/not_equals (use 0/1 for boolean tags).";
-		        return;
-		    }
+	    const allowedTypes = wsAlarmTypeOptionsForDatatype(wsAlarmSourceDatatype(next.connection_id, next.tag_name)).map((o) => o.value);
+	    if (!allowedTypes.includes(next.type)) {
+	        if (el.alarmStatus) el.alarmStatus.textContent = "Type is invalid for the selected tag datatype.";
+	        return;
+	    }
 	    if (thRaw !== "") next.threshold = Number(thRaw) || 0;
 	    else delete next.threshold;
 	    if (hyRaw !== "") next.hysteresis = Number(hyRaw) || 0;
@@ -15286,7 +15420,7 @@ window.addEventListener("load", startAutoRefresh);
                         ja["threshold"]  = a.cfg.threshold;
                         ja["hysteresis"] = a.cfg.hysteresis;
                     }
-	                    if (a.cfg.type == "equals" || a.cfg.type == "not_equals") {
+	                    if (a.cfg.type == "equals" || a.cfg.type == "not_equals" || a.cfg.type == "contains" || a.cfg.type == "not_contains") {
 	                        ja["equals_value"] = a.cfg.equals_value;
 	                        ja["tolerance"] = a.cfg.equals_tolerance;
 	                    }
@@ -18992,6 +19126,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                                std::visit([&](auto &&arg) {
 		                                                    using T = std::decay_t<decltype(arg)>;
 		                                                    if constexpr (std::is_same_v<T, bool>) b = arg;
+		                                                    else if constexpr (std::is_same_v<T, std::string>) b = false;
 		                                                    else b = (static_cast<double>(arg) != 0.0);
 		                                                }, snap.value);
 		                                                if (acfg.cfg.invert) b = !b;
@@ -19242,6 +19377,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                                    std::visit([&](auto &&arg) {
 	                                                        using T = std::decay_t<decltype(arg)>;
 	                                                        if constexpr (std::is_same_v<T, bool>) b = arg;
+	                                                        else if constexpr (std::is_same_v<T, std::string>) b = false;
 	                                                        else b = (static_cast<double>(arg) != 0.0);
 	                                                    }, a.snap.value);
 	                                                    if (acfg.cfg.invert) b = !b;
@@ -19750,6 +19886,10 @@ window.addEventListener("load", startAutoRefresh);
 	                        } else if constexpr (std::is_same_v<T, double>) {
 	                            UA_Double v = arg;
 	                            UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+	                        } else if constexpr (std::is_same_v<T, std::string>) {
+	                            UA_String v = UA_STRING_ALLOC(arg.c_str());
+	                            UA_Variant_setScalarCopy(&value, &v, &UA_TYPES[UA_TYPES_STRING]);
+	                            UA_String_clear(&v);
 	                        }
 	                    }, u.value);
 

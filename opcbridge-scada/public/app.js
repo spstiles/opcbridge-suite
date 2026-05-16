@@ -2287,6 +2287,7 @@ async function saveReporterDataCheck() {
     const resp = await apiPostJson('/api/reporter/data-checks', { data_check: check });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     await refreshReporterAll();
+    await refreshReporterSystemTagsForScada();
     state.loggerSelectedNodeId = `logger:data_check:${check.id}`;
     renderLoggerTree();
     renderLoggerDetails();
@@ -2306,6 +2307,7 @@ async function deleteReporterDataCheck(id) {
     const resp = await apiPostJson('/api/reporter/data-checks/delete', { id: cid });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     await refreshReporterAll();
+    await refreshReporterSystemTagsForScada();
     state.loggerSelectedNodeId = 'logger:data_checks';
     renderLoggerTree();
     renderLoggerDetails();
@@ -3840,7 +3842,7 @@ async function importAlarmsCsv() {
     if (type === 'not_equal' || type === 'notequals' || type === 'ne' || type === 'neq' || type === '!=')
       type = 'not_equals';
     if (type === 'equal' || type === 'eq' || type === '==') type = 'equals';
-    if (!['equals', 'not_equals', 'high', 'low'].includes(type)) {
+    if (!['equals', 'not_equals', 'contains', 'not_contains', 'empty', 'not_empty', 'change', 'high', 'low'].includes(type)) {
       skipped += 1;
       skippedInvalid += 1;
       if (!sampleInvalid) sampleInvalid = { id, reason: `invalid type '${typeRaw || '(blank)'}'` };
@@ -3931,8 +3933,13 @@ async function importAlarmsCsv() {
       const hysteresis = parseFloatLoose(csvGet(r, 'hysteresis'), null);
       if (hysteresis == null) delete alarm.hysteresis;
       else alarm.hysteresis = hysteresis;
-    } else {
+    } else if (['equals', 'not_equals', 'contains', 'not_contains'].includes(type)) {
       alarm.value = parseAlarmCompareValueCsv(csvGet(r, 'value'));
+      delete alarm.threshold;
+      delete alarm.hysteresis;
+      delete alarm.equals_value;
+    } else {
+      delete alarm.value;
       delete alarm.threshold;
       delete alarm.hysteresis;
       delete alarm.equals_value;
@@ -3951,7 +3958,6 @@ async function importAlarmsCsv() {
   try {
     await saveOpcbridgeAlarmsConfig(cfg);
     await loadOpcbridgeAlarmsConfig();
-    await opcbridgeReload().catch(() => {});
     renderWorkspaceTree();
     renderAlarmsEventsTree();
   } catch (err) {
@@ -4950,7 +4956,7 @@ function ensureGroupSiteInConfig(cfg, groupName, siteName) {
 
 function parseAlarmCompareValue(raw) {
   const text = String(raw ?? '').trim();
-  if (text === '') return { ok: false, error: 'Compare value is required for equals/not_equals alarms.' };
+  if (text === '') return { ok: false, error: 'Compare value is required for this alarm type.' };
   if (/^(true|false)$/i.test(text)) return { ok: true, value: text.toLowerCase() === 'true' };
   if (/^null$/i.test(text)) return { ok: true, value: null };
   if (/^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(text)) return { ok: true, value: Number(text) };
@@ -4978,7 +4984,7 @@ function alarmCompareValueToText(alarm) {
 
 function applyAlarmTypeUi() {
   const type = String(els.editAlarmType?.value || '').trim();
-  const isEquals = type === 'equals' || type === 'not_equals';
+  const isEquals = type === 'equals' || type === 'not_equals' || type === 'contains' || type === 'not_contains';
   const isLimit = type === 'high' || type === 'low';
   if (els.editAlarmValueRow) els.editAlarmValueRow.style.display = isEquals ? '' : 'none';
   if (els.editAlarmThresholdRow) els.editAlarmThresholdRow.style.display = isLimit ? '' : 'none';
@@ -5027,6 +5033,10 @@ function updateAlarmPreview() {
   else if (type === 'low') condition = `is less than or equal to ${threshold || '<threshold>'}`;
   else if (type === 'equals') condition = `equals ${compareValue || '<value>'}`;
   else if (type === 'not_equals') condition = `does not equal ${compareValue || '<value>'}`;
+  else if (type === 'contains') condition = `contains ${compareValue || '<text>'}`;
+  else if (type === 'not_contains') condition = `does not contain ${compareValue || '<text>'}`;
+  else if (type === 'empty') condition = 'is empty';
+  else if (type === 'not_empty') condition = 'is not empty';
   else if (type === 'change') condition = 'changes value';
   else condition = `matches ${type}`;
 
@@ -5111,6 +5121,25 @@ async function loadSystemTagsForSelection() {
   return state.systemTagsForSelection;
 }
 
+async function refreshReporterSystemTagsForScada() {
+  state.systemTagsForSelection = [];
+  if (state.workspaceSystemChildrenCache instanceof Map) {
+    state.workspaceSystemChildrenCache.clear();
+  }
+  try {
+    await loadSystemTagsForSelection();
+  } catch {
+    // Non-fatal; the reporter save/delete already completed.
+  }
+  if (isPanelActive('tab-workspace')) {
+    await refreshVisible().catch(() => {});
+    renderWorkspaceTree();
+  }
+  if (String(els.editAlarmConn?.value || '').trim() === '_system') {
+    refreshAlarmTagSelect(String(els.editAlarmTag?.value || ''));
+  }
+}
+
 function getAlarmCandidateTagsForConnection(connectionId) {
   const cid = String(connectionId || '').trim();
   if (cid === '_system') {
@@ -5133,6 +5162,62 @@ function alarmSourceTagExists(connectionId, tagName) {
   const name = String(tagName || '').trim();
   if (!cid || !name) return false;
   return getAlarmCandidateTagsForConnection(cid).some((t) => String(t?.connection_id || '') === cid && String(t?.name || '') === name);
+}
+
+function getAlarmSourceTag(connectionId, tagName) {
+  const cid = String(connectionId || '').trim();
+  const name = String(tagName || '').trim();
+  if (!cid || !name) return null;
+  return getAlarmCandidateTagsForConnection(cid).find((t) => String(t?.connection_id || '') === cid && String(t?.name || '') === name) || null;
+}
+
+function alarmDatatypeClass(datatype) {
+  const dt = String(datatype || '').trim().toLowerCase();
+  if (dt === 'string') return 'string';
+  if (dt === 'bool' || dt === 'boolean') return 'bool';
+  if (['int16', 'uint16', 'int32', 'uint32', 'float32', 'float64', 'int64', 'uint64'].includes(dt)) return 'numeric';
+  return 'unknown';
+}
+
+function alarmTypeOptionsForDatatype(datatype) {
+  const labels = {
+    high: 'High',
+    low: 'Low',
+    equals: 'Equals',
+    not_equals: 'Not equals',
+    contains: 'Contains',
+    not_contains: 'Not contains',
+    empty: 'Empty',
+    not_empty: 'Not empty',
+    change: 'Changed'
+  };
+  const cls = alarmDatatypeClass(datatype);
+  const keys = cls === 'string'
+    ? ['equals', 'not_equals', 'contains', 'not_contains', 'empty', 'not_empty', 'change']
+    : cls === 'bool'
+      ? ['equals', 'not_equals', 'change']
+      : ['high', 'low', 'equals', 'not_equals', 'change'];
+  return keys.map((value) => ({ value, label: labels[value] || value }));
+}
+
+function selectedAlarmSourceDatatype() {
+  const tag = getAlarmSourceTag(els.editAlarmConn?.value, els.editAlarmTag?.value);
+  return String(tag?.datatype || '').trim();
+}
+
+function refreshAlarmTypeOptions(preferred = '') {
+  if (!els.editAlarmType) return;
+  const current = String(preferred || els.editAlarmType.value || '').trim();
+  const opts = alarmTypeOptionsForDatatype(selectedAlarmSourceDatatype());
+  els.editAlarmType.textContent = '';
+  opts.forEach((row) => {
+    const opt = document.createElement('option');
+    opt.value = row.value;
+    opt.textContent = row.label;
+    els.editAlarmType.appendChild(opt);
+  });
+  els.editAlarmType.value = opts.some((row) => row.value === current) ? current : String(opts[0]?.value || 'high');
+  applyAlarmTypeUi();
 }
 
 function alarmGroupsSorted(cfgObj = state.alarmsConfig) {
@@ -5234,6 +5319,7 @@ function refreshAlarmTagSelect(want = '') {
   els.editAlarmTag.appendChild(frag);
   if (want) els.editAlarmTag.value = want;
   else if (els.editAlarmTag.options.length) els.editAlarmTag.value = String(els.editAlarmTag.options[0].value || '');
+  refreshAlarmTypeOptions();
   if (filter && !els.editAlarmTag.options.length) setEditAlarmStatus('No matching tags found.');
   else if (filter) setEditAlarmStatus(`Showing ${tags.length} matching tag(s).`);
   else setEditAlarmStatus('');
@@ -5914,6 +6000,7 @@ function wireAlarmPreviewInputs() {
       opt.selected = true;
       // prevent accidental text selection/drag causing selection rollback
       e.preventDefault();
+      refreshAlarmTypeOptions();
       updateAlarmPreview();
     }, true);
   }
@@ -5936,8 +6023,10 @@ function wireAlarmPreviewInputs() {
       if (el === els.editAlarmSeverity) syncSeverityPresetFromValue();
       if (el === els.editAlarmConn) {
         refreshAlarmTagSelect();
+        refreshAlarmTypeOptions();
         syncNewAlarmDefaults();
       }
+      if (el === els.editAlarmTag) refreshAlarmTypeOptions();
       if ([els.editAlarmTag, els.editAlarmType].includes(el)) syncNewAlarmDefaults();
       if (el === els.editAlarmGroup) {
         const g = String(els.editAlarmGroup?.value || '').trim();
@@ -8780,7 +8869,7 @@ function openWorkspaceItemModal(node) {
     fillAlarmConnectionSelect(want);
     refreshAlarmTagSelect(wantTag);
 
-    if (els.editAlarmType) els.editAlarmType.value = existing ? String(existing.type || 'high') : 'high';
+    refreshAlarmTypeOptions(existing ? String(existing.type || 'high') : 'high');
     if (els.editAlarmEnabled) els.editAlarmEnabled.checked = existing ? (existing.enabled !== false) : true;
     if (els.editAlarmSeverity) els.editAlarmSeverity.value = existing && existing.severity != null ? String(existing.severity) : '500';
     syncSeverityPresetFromValue();
@@ -8960,7 +9049,7 @@ function openNewAlarmModal({ group, site } = {}) {
   refreshAlarmTagSelect();
   maybeRefreshAlarmSourceLists();
 
-  if (els.editAlarmType) els.editAlarmType.value = 'high';
+  refreshAlarmTypeOptions('high');
   if (els.editAlarmEnabled) els.editAlarmEnabled.checked = true;
   if (els.editAlarmSeverity) els.editAlarmSeverity.value = '';
   syncSeverityPresetFromValue();
@@ -9151,7 +9240,8 @@ async function saveEditedAlarmFromModal() {
   if (!/^[A-Za-z0-9_.:-]+$/.test(id)) { setEditAlarmStatus('Alarm ID may only contain letters, numbers, underscore, dash, period, or colon.'); return; }
   if (!connection_id) { setEditAlarmStatus('Connection is required.'); return; }
   if (!tag_name) { setEditAlarmStatus('Tag is required.'); return; }
-  if (!['high', 'low', 'equals', 'not_equals'].includes(type)) { setEditAlarmStatus('Type is invalid.'); return; }
+  const allowedTypes = alarmTypeOptionsForDatatype(String(getAlarmSourceTag(connection_id, tag_name)?.datatype || '')).map((row) => row.value);
+  if (!allowedTypes.includes(type)) { setEditAlarmStatus('Type is invalid for the selected tag datatype.'); return; }
   if (!Number.isFinite(severity) || severity < 0 || severity > 1000) { setEditAlarmStatus('Severity must be a number from 0 to 1000.'); return; }
   const selectedTagExists = alarmSourceTagExists(connection_id, tag_name);
   if (!selectedTagExists) { setEditAlarmStatus(`Tag '${connection_id}:${tag_name}' was not found in the tag config.`); return; }
@@ -9170,7 +9260,8 @@ async function saveEditedAlarmFromModal() {
     setEditAlarmStatus('Threshold is required for high/low alarms.');
     return;
   }
-  const compareValue = (type === 'equals' || type === 'not_equals') ? parseAlarmCompareValue(compareValueRaw) : null;
+  const compareNeedsValue = ['equals', 'not_equals', 'contains', 'not_contains'].includes(type);
+  const compareValue = compareNeedsValue ? parseAlarmCompareValue(compareValueRaw) : null;
   if (compareValue && !compareValue.ok) {
     setEditAlarmStatus(compareValue.error);
     return;
@@ -9210,7 +9301,7 @@ async function saveEditedAlarmFromModal() {
     }
     delete next.value;
     delete next.equals_value;
-  } else if (type === 'equals' || type === 'not_equals') {
+  } else if (compareNeedsValue) {
     next.value = compareValue.value;
     delete next.threshold;
     delete next.hysteresis;
@@ -9270,7 +9361,6 @@ async function saveEditedAlarmFromModal() {
 
 async function saveEditedAlarmFromModalReload() {
   await saveEditedAlarmFromModal();
-  try { await opcbridgeReload(); } catch { /* ignore */ }
   try { await refreshAlarmsRuntimeViews(); } catch { /* ignore */ }
 }
 
@@ -9607,32 +9697,53 @@ async function deleteDeviceById(connectionId, pathRel) {
 }
 
 async function addAlarmGroupInteractive() {
+  if (!canEditConfig()) { window.alert('Login required to edit alarms.'); return false; }
   const name = normalizeAlarmGroupName(window.prompt('New alarm group name:', '') || '');
-  if (!name) return;
+  if (!name) return false;
   try {
     const cfg = await loadOpcbridgeAlarmsConfig();
     upsertAlarmGroup(cfg, name);
     await saveOpcbridgeAlarmsConfig(cfg);
     await loadOpcbridgeAlarmsConfig();
+    state.alarmsEventsSelectedNodeId = `alarm_group:${alarmTreeSafeKey(name)}`;
+    state.alarmsEventsSelectedChildId = '';
+    state.alarmsEventsSelectedChildIds = [];
+    state.alarmsEventsExpanded.add('folder:alarms');
+    state.alarmsEventsExpanded.add('folder:alarm_groups');
+    state.alarmsEventsExpanded.add(`alarm_group:${alarmTreeSafeKey(name)}`);
+    renderAlarmsEventsTree();
     renderWorkspaceTree();
+    return true;
   } catch (err) {
     window.alert(`Failed to create alarm group: ${err.message}`);
+    return false;
   }
 }
 
 async function addAlarmSiteInteractive(groupName) {
+  if (!canEditConfig()) { window.alert('Login required to edit alarms.'); return false; }
   const g = normalizeAlarmGroupName(groupName);
-  if (!g) return;
+  if (!g) return false;
   const site = normalizeAlarmSiteName(window.prompt(`New site name for group '${g}':`, '') || '');
-  if (!site) return;
+  if (!site) return false;
   try {
     const cfg = await loadOpcbridgeAlarmsConfig();
     ensureGroupSiteInConfig(cfg, g, site);
     await saveOpcbridgeAlarmsConfig(cfg);
     await loadOpcbridgeAlarmsConfig();
+    state.alarmsEventsSelectedNodeId = alarmEventsSiteNodeId(g, site);
+    state.alarmsEventsSelectedChildId = '';
+    state.alarmsEventsSelectedChildIds = [];
+    state.alarmsEventsExpanded.add('folder:alarms');
+    state.alarmsEventsExpanded.add('folder:alarm_groups');
+    state.alarmsEventsExpanded.add(`alarm_group:${alarmTreeSafeKey(g)}`);
+    state.alarmsEventsExpanded.add(alarmEventsSiteNodeId(g, site));
+    renderAlarmsEventsTree();
     renderWorkspaceTree();
+    return true;
   } catch (err) {
     window.alert(`Failed to create site: ${err.message}`);
+    return false;
   }
 }
 
@@ -9665,7 +9776,6 @@ async function deleteAlarmGroupInteractive(groupName) {
   state.alarmsEventsSelectedNodeId = 'folder:alarms';
   state.alarmsEventsSelectedChildId = '';
   renderAlarmsEventsTree();
-  await opcbridgeReload().catch(() => {});
   await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) {
     els.alarmsEventsPropsStatus.textContent = assigned.length
@@ -9712,7 +9822,6 @@ async function deleteAlarmSiteInteractive(groupName, siteName) {
   state.alarmsEventsSelectedNodeId = `alarm_group:${alarmTreeSafeKey(group)}`;
   state.alarmsEventsSelectedChildId = '';
   renderAlarmsEventsTree();
-  await opcbridgeReload().catch(() => {});
   await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) {
     els.alarmsEventsPropsStatus.textContent = assigned.length
@@ -9755,7 +9864,6 @@ async function deleteAlarmGroupsBulk(groupNames) {
   state.alarmsEventsSelectedChildId = '';
   state.alarmsEventsSelectedChildIds = [];
   renderAlarmsEventsTree();
-  await opcbridgeReload().catch(() => {});
   await refreshAlarmsRuntimeViews().catch(() => {});
   return true;
 }
@@ -9804,7 +9912,6 @@ async function deleteAlarmSitesBulk(groupName, siteNames) {
   state.alarmsEventsSelectedChildId = '';
   state.alarmsEventsSelectedChildIds = [];
   renderAlarmsEventsTree();
-  await opcbridgeReload().catch(() => {});
   await refreshAlarmsRuntimeViews().catch(() => {});
   return true;
 }
@@ -9843,10 +9950,7 @@ async function deleteAlarmById(alarmId) {
     selectAlarmEventsAlarm('', oldGroup, oldSite);
     renderAlarmsEventsTree();
     renderWorkspaceTree();
-    setDeleteStatus(`Deleted alarm '${id}'. Reloading alarm runtime…`);
-    await opcbridgeReload().catch((err) => {
-      setDeleteStatus(`Deleted alarm '${id}', but reload failed: ${err.message}`);
-    });
+    setDeleteStatus(`Deleted alarm '${id}'. Refreshing alarm runtime views…`);
     await refreshAlarmsRuntimeViews().catch(() => {});
     setDeleteStatus(`Deleted alarm '${id}'.`);
   } catch (err) {
@@ -9894,6 +9998,34 @@ function buildAlarmsEventsTree() {
   };
 
   const groups = new Map();
+
+  // Include configured empty groups/sites so users can create structure before
+  // assigning alarms to it.
+  const configuredGroups = Array.isArray(cfg?.groups) ? cfg.groups : [];
+  configuredGroups.forEach((g) => {
+    const groupRaw = String(g?.name || g?.label || g?.id || '').trim();
+    if (!groupRaw) return;
+    const groupId = `alarm_group:${safeKey(groupRaw)}`;
+    let groupNode = groups.get(groupId);
+    if (!groupNode) {
+      groupNode = { id: groupId, type: 'alarm_group', label: groupRaw, meta: { group: groupRaw }, children: [] };
+      groups.set(groupId, groupNode);
+    }
+    const sites = Array.isArray(g?.sites) ? g.sites : [];
+    sites.forEach((s) => {
+      const siteRaw = String(s?.name || s?.label || s?.id || '').trim();
+      if (!siteRaw) return;
+      const siteId = `${groupId}:site:${safeKey(siteRaw)}`;
+      if ((groupNode.children || []).some((n) => String(n?.id || '') === siteId)) return;
+      groupNode.children.push({
+        id: siteId,
+        type: 'alarm_site',
+        label: siteRaw,
+        meta: { group: groupRaw, site: siteRaw, alarms_enabled: isAlarmSiteProcessingEnabled(cfg, groupRaw, siteRaw) },
+        children: []
+      });
+    });
+  });
 
   // Place alarms into folders.
   cfgAlarms.forEach((a) => {
@@ -10317,7 +10449,6 @@ async function duplicateAlarmById(alarmId) {
   await loadOpcbridgeAlarmsConfig();
   selectAlarmEventsAlarm(newId, next.group, next.site);
   renderAlarmsEventsTree();
-  await opcbridgeReload().catch(() => {});
   await refreshAlarmsRuntimeViews().catch(() => {});
   return true;
 }
@@ -10338,7 +10469,6 @@ async function setSiteAlarmProcessing(groupName, siteName, enabled) {
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = alarmEventsSiteNodeId(group, site);
   renderAlarmsEventsTree();
-  await opcbridgeReload().catch(() => {});
   await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `Site alarm processing ${enabled ? 'enabled' : 'disabled'}.`;
   return true;
@@ -10364,7 +10494,6 @@ async function setAllAlarmsInSiteEnabled(groupName, siteName, enabled) {
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = alarmEventsSiteNodeId(group, site);
   renderAlarmsEventsTree();
-  await opcbridgeReload().catch(() => {});
   await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `${doneWord} ${count} individual alarm${count === 1 ? '' : 's'} in '${site}'.`;
   return true;
@@ -10400,7 +10529,6 @@ async function setAudioFileForAlarmScope(scope, groupName, siteName = '') {
   if (scope === 'group') state.alarmsEventsSelectedNodeId = `alarm_group:${alarmTreeSafeKey(group)}`;
   else state.alarmsEventsSelectedNodeId = alarmEventsSiteNodeId(group, site);
   renderAlarmsEventsTree();
-  await opcbridgeReload().catch(() => {});
   await refreshAlarmsRuntimeViews().catch(() => {});
   if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `${audioFileId ? 'Updated' : 'Cleared'} alarm audio file for ${alarms.length} alarm${alarms.length === 1 ? '' : 's'}.`;
   return true;
@@ -13129,13 +13257,15 @@ function renderAlarmsEventsProperties(item, parentNode) {
     addRow('Tag', tagSel);
 
     const typeSel = document.createElement('select');
-    [
-      { v: 'high', l: 'High' },
-      { v: 'low', l: 'Low' },
-      { v: 'equals', l: 'Equals' },
-      { v: 'not_equals', l: 'Not-equals' }
-    ].forEach((o) => typeSel.appendChild(new Option(o.l, o.v)));
-    typeSel.value = String(cur?.type || 'high').trim();
+    const refreshTypeSelectLocal = (preferred = '') => {
+      const curType = String(preferred || typeSel.value || '').trim();
+      const dt = String(getAlarmSourceTag(connSel.value, tagSel.value)?.datatype || '').trim();
+      const opts = alarmTypeOptionsForDatatype(dt);
+      typeSel.textContent = '';
+      opts.forEach((o) => typeSel.appendChild(new Option(o.label, o.value)));
+      typeSel.value = opts.some((o) => o.value === curType) ? curType : String(opts[0]?.value || 'high');
+    };
+    refreshTypeSelectLocal(String(cur?.type || 'high').trim());
     addRow('Type', typeSel);
 
     const thresholdBox = document.createElement('input');
@@ -13160,7 +13290,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
 
     const syncTypeUiLocal = () => {
       const type = String(typeSel.value || '').trim();
-      const isEquals = type === 'equals' || type === 'not_equals';
+      const isEquals = type === 'equals' || type === 'not_equals' || type === 'contains' || type === 'not_contains';
       const isLimit = type === 'high' || type === 'low';
       if (compareRow) compareRow.style.display = isEquals ? '' : 'none';
       if (thresholdRow) thresholdRow.style.display = isLimit ? '' : 'none';
@@ -13321,7 +13451,8 @@ function renderAlarmsEventsProperties(item, parentNode) {
       el.addEventListener('input', markPropsDirty);
       el.addEventListener('change', markPropsDirty);
     });
-    connSel.addEventListener('change', () => refreshTagSelectLocal(''));
+    connSel.addEventListener('change', () => { refreshTagSelectLocal(''); refreshTypeSelectLocal(); syncTypeUiLocal(); });
+    tagSel.addEventListener('change', () => { refreshTypeSelectLocal(); syncTypeUiLocal(); });
     tagFilter.addEventListener('input', () => refreshTagSelectLocal(String(tagSel.value || '').trim()));
     typeSel.addEventListener('change', syncTypeUiLocal);
 
@@ -13380,10 +13511,11 @@ function renderAlarmsEventsProperties(item, parentNode) {
         delete next.audible_enabled;
         if (!next.connection_id) throw new Error('Connection is required.');
         if (!next.tag_name) throw new Error('Tag is required.');
-        if (!['high', 'low', 'equals', 'not_equals'].includes(next.type)) throw new Error('Type is invalid.');
         if (!alarmSourceTagExists(next.connection_id, next.tag_name)) {
           throw new Error(`Tag '${next.connection_id}:${next.tag_name}' was not found in the tag config.`);
         }
+        const allowedTypes = alarmTypeOptionsForDatatype(String(getAlarmSourceTag(next.connection_id, next.tag_name)?.datatype || '')).map((row) => row.value);
+        if (!allowedTypes.includes(next.type)) throw new Error('Type is invalid for the selected tag datatype.');
         const thresholdRaw = String(thresholdBox.value ?? '').trim();
         const hysteresisRaw = String(hysteresisBox.value ?? '').trim();
         const compareRaw = String(compareBox.value ?? '').trim();
@@ -13400,12 +13532,17 @@ function renderAlarmsEventsProperties(item, parentNode) {
           }
           delete next.value;
           delete next.equals_value;
-        } else {
+        } else if (['equals', 'not_equals', 'contains', 'not_contains'].includes(next.type)) {
           delete next.threshold;
           delete next.hysteresis;
           const cmp = parseAlarmCompareValue(compareRaw);
           if (!cmp.ok) throw new Error(cmp.error);
           next.value = cmp.value;
+          delete next.equals_value;
+        } else {
+          delete next.threshold;
+          delete next.hysteresis;
+          delete next.value;
           delete next.equals_value;
         }
 
@@ -13688,7 +13825,6 @@ function renderAlarmsEventsProperties(item, parentNode) {
         }
 
         await saveOpcbridgeAlarmsConfig(nextCfg);
-        await opcbridgeReload().catch(() => {});
         await doReload();
         setStatus('Saved.');
       } catch (err) {

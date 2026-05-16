@@ -820,10 +820,15 @@
             <div class="hint mono" id="workspaceLiveTagsMeta" style="margin-left: auto;"></div>
           </div>
           <div class="editor-body">
+            <div class="live-tags-header">
+              <table class="table live-tags-table" id="workspaceLiveTagsHeaderTable">
+                <thead><tr><th>Connection</th><th>Tag</th><th>Datatype</th><th>Status</th><th>Value</th><th>Writable</th><th>Timestamp</th></tr></thead>
+              </table>
+            </div>
             <div class="live-tags-virtual" id="workspaceLiveTagsWrap">
               <div class="live-tags-spacer" id="workspaceLiveTagsSpacer"></div>
               <div class="live-tags-table-window" id="workspaceLiveTagsWindow">
-                <table class="table" id="workspaceLiveTagsTable">
+                <table class="table live-tags-table" id="workspaceLiveTagsTable">
                   <thead><tr><th>Connection</th><th>Tag</th><th>Datatype</th><th>Status</th><th>Value</th><th>Writable</th><th>Timestamp</th></tr></thead>
                   <tbody id="workspaceLiveTagsTbody"></tbody>
                 </table>

@@ -240,6 +240,10 @@ int32 / uint32
 
 float32 / float64
 
+string
+
+String tags are scalar text values read and written through libplctag's string API. Standard Allen-Bradley Logix `STRING` tags and PCCC string files such as MicroLogix/SLC `ST9:0` use libplctag's default string layout settings. Keep `elem_count` at `1` for string tags.
+
 3.2.1 Array sizing guidance (Logix)
 
 When using `elem_count`, prefer multiple smaller blocks over one huge block:
@@ -311,8 +315,14 @@ Alarm types:
 
 "equals" (active when the tag equals the configured value; supports bool + numbers)
 
-For "equals":
-- value: required (e.g. true, 5, 12.34)
+"not_equals" (active when the tag does not equal the configured value)
+
+"contains" / "not_contains" (string tags only)
+
+"empty" / "not_empty" (string tags only)
+
+For "equals", "not_equals", "contains", and "not_contains":
+- value: required (e.g. true, 5, 12.34, "Running")
 - tolerance: optional for numeric compares (e.g. 0.1)
 
 3.4 MQTT — config/mqtt.json

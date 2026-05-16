@@ -3698,6 +3698,13 @@ static std::optional<double> coerce_number(const json &v)
     return std::nullopt;
 }
 
+static std::string json_text_value(const json &v)
+{
+    if (v.is_string()) return v.get<std::string>();
+    if (v.is_null()) return "";
+    return v.dump();
+}
+
 class NotificationManager
 {
 public:
@@ -7549,7 +7556,7 @@ struct AlarmEngine
                     {"tag", a.value("tag_name", a.value("tag", ""))}
                 };
                 r["condition"] = {{"type", type}};
-                if (type == "equals" || type == "not_equals")
+                if (type == "equals" || type == "not_equals" || type == "contains" || type == "not_contains")
                 {
                     if (a.contains("value")) r["condition"]["value"] = a["value"];
                     else if (a.contains("equals_value")) r["condition"]["value"] = a["equals_value"];
@@ -7598,7 +7605,7 @@ struct AlarmEngine
             if (it.contains("condition") && it["condition"].is_object())
             {
                 r.condition_type = it["condition"].value("type", "equals");
-                if (r.condition_type == "equals" || r.condition_type == "not_equals")
+                if (r.condition_type == "equals" || r.condition_type == "not_equals" || r.condition_type == "contains" || r.condition_type == "not_contains")
                 {
                     r.condition_value = it["condition"].contains("value") ? it["condition"]["value"] : json();
                 }
@@ -7758,6 +7765,21 @@ struct AlarmEngine
                             const bool match = json_equalish(value, r.condition_value);
                             should_be_active = (r.condition_type == "equals") ? match : !match;
                         }
+                    }
+                    else if (r.condition_type == "contains" || r.condition_type == "not_contains")
+                    {
+                        if (!r.condition_value.is_null())
+                        {
+                            const std::string cur = json_text_value(value);
+                            const std::string target = json_text_value(r.condition_value);
+                            const bool match = cur.find(target) != std::string::npos;
+                            should_be_active = (r.condition_type == "contains") ? match : !match;
+                        }
+                    }
+                    else if (r.condition_type == "empty" || r.condition_type == "not_empty")
+                    {
+                        const bool match = json_text_value(value).empty();
+                        should_be_active = (r.condition_type == "empty") ? match : !match;
                     }
                     else if (r.condition_type == "high" || r.condition_type == "low")
                     {
@@ -8761,7 +8783,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                     {"tag", a.value("tag_name", a.value("tag", ""))}
                 };
                 r["condition"] = {{"type", type}};
-                if (type == "equals" || type == "not_equals")
+                if (type == "equals" || type == "not_equals" || type == "contains" || type == "not_contains")
                 {
                     if (a.contains("value")) r["condition"]["value"] = a["value"];
                     else if (a.contains("equals_value")) r["condition"]["value"] = a["equals_value"];
@@ -8801,7 +8823,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             if (it.contains("condition") && it["condition"].is_object())
             {
                 r.condition_type = it["condition"].value("type", "equals");
-                if (r.condition_type == "equals" || r.condition_type == "not_equals")
+                if (r.condition_type == "equals" || r.condition_type == "not_equals" || r.condition_type == "contains" || r.condition_type == "not_contains")
                 {
                     r.condition_value = it["condition"].contains("value") ? it["condition"]["value"] : json();
                 }
