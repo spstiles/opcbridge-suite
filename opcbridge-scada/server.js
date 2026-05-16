@@ -126,6 +126,11 @@ const REPORTER_REPORTS_PATH = String(
   '/etc/opcbridge/reporter/reports.json'
 ).trim();
 
+const REPORTER_DATA_CHECKS_PATH = String(
+  process.env.OPCBRIDGE_REPORTER_DATA_CHECKS ||
+  '/etc/opcbridge/reporter/data_checks.json'
+).trim();
+
 const REPORTER_REPORTS_DIR = String(
   process.env.OPCBRIDGE_REPORTER_REPORTS_DIR ||
   '/etc/opcbridge/reporter/reports'
@@ -467,6 +472,12 @@ function readReporterReportsRaw() {
   const root = readJsonFileOrNull(REPORTER_REPORTS_PATH) || { reports: [] };
   const raw = Array.isArray(root?.reports) ? root.reports : [];
   return raw.filter((r) => r && typeof r === 'object' && !Array.isArray(r));
+}
+
+function readReporterDataChecksRaw() {
+  const root = readJsonFileOrNull(REPORTER_DATA_CHECKS_PATH) || { data_checks: [] };
+  const raw = Array.isArray(root?.data_checks) ? root.data_checks : [];
+  return raw.filter((c) => c && typeof c === 'object' && !Array.isArray(c));
 }
 
 function parseCmdTokens(cmdline) {
@@ -2042,6 +2053,10 @@ const server = http.createServer(async (req, res) => {
         next.type = type;
         if (next.mysql_port != null) next.mysql_port = Math.trunc(Number(next.mysql_port) || 0) || 0;
         if (next.odbc_port != null) next.odbc_port = Math.trunc(Number(next.odbc_port) || 0) || 0;
+        next.monitor_enabled = Boolean(next.monitor_enabled);
+        next.monitor_interval_sec = Math.max(5, Math.trunc(Number(next.monitor_interval_sec || 60) || 60));
+        next.monitor_timeout_sec = Math.max(1, Math.trunc(Number(next.monitor_timeout_sec || 10) || 10));
+        next.monitor_query = String(next.monitor_query || 'SELECT 1').trim() || 'SELECT 1';
 
         if (idx >= 0) nextList[idx] = next;
         else nextList.push(next);
@@ -2060,7 +2075,8 @@ const server = http.createServer(async (req, res) => {
         }
         safe.password_set = Boolean(pw);
         safe.mysql_password_set = safe.password_set; // backwards-compatible UI field
-        sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, database: safe });
+        const reload = await reporterApiRequest('POST', '/reload');
+        sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, database: safe, reporter_reload: reload });
       } catch (err) {
         sendJson(res, 400, { ok: false, error: String(err.message || err) });
       }
@@ -2095,7 +2111,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       writeJsonFile(REPORTER_DATABASES_PATH, { databases: afterList });
-      sendJson(res, 200, { ok: true, deleted: true, id });
+      const reload = await reporterApiRequest('POST', '/reload');
+      sendJson(res, 200, { ok: true, deleted: true, id, reporter_reload: reload });
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
@@ -2191,6 +2208,119 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       writeJsonFile(REPORTER_REPORTS_PATH, { reports: afterList });
+      const reload = await reporterApiRequest('POST', '/reload');
+      sendJson(res, 200, { ok: true, deleted: true, id, reporter_reload: reload });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  // Read/write data check definitions for opcbridge-reporter.
+  // Permissions: suite.manage_server
+  if (url.pathname === '/api/reporter/data-checks') {
+    if (!await requireManageServerPerm()) return;
+
+    if (req.method === 'GET') {
+      const checks = readReporterDataChecksRaw().map((c) => ({ ...c }));
+      sendJson(res, 200, { ok: true, path: REPORTER_DATA_CHECKS_PATH, data_checks: checks });
+      return;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const bodyBuf = await readBody(req);
+        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+        const incoming = parsed?.data_check || parsed?.check || parsed;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {data_check:{...}}.' });
+          return;
+        }
+
+        const id = sanitizeId(incoming.id);
+        if (!id) {
+          sendJson(res, 400, { ok: false, error: 'Data check "id" is required.' });
+          return;
+        }
+
+        const root = readJsonFileOrNull(REPORTER_DATA_CHECKS_PATH) || { data_checks: [] };
+        const rawList = Array.isArray(root?.data_checks) ? root.data_checks : [];
+        const nextList = rawList
+          .filter((c) => c && typeof c === 'object' && !Array.isArray(c))
+          .map((c) => ({ ...c }));
+
+        const idx = nextList.findIndex((c) => sanitizeId(c.id) === id);
+        const prev = idx >= 0 ? nextList[idx] : {};
+        const next = { ...prev, ...incoming, id };
+        next.name = String(next.name || next.id || '').trim();
+        next.database_id = sanitizeId(next.database_id);
+        next.enabled = Boolean(next.enabled);
+        next.query = String(next.query || '').trim();
+        next.timeout_sec = Math.max(1, Math.trunc(Number(next.timeout_sec || 30) || 30));
+        next.schedule = (next.schedule && typeof next.schedule === 'object' && !Array.isArray(next.schedule)) ? next.schedule : {};
+        next.schedule.on_calendar = normalizeOnCalendar(next.schedule.on_calendar || '');
+
+        const normalizeOptionalNumber = (v) => {
+          if (v === '' || v == null) return undefined;
+          const n = Number(v);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const low = normalizeOptionalNumber(next.low_threshold);
+        const high = normalizeOptionalNumber(next.high_threshold);
+        if (low == null) delete next.low_threshold;
+        else next.low_threshold = low;
+        if (high == null) delete next.high_threshold;
+        else next.high_threshold = high;
+
+        if (!next.database_id) {
+          sendJson(res, 400, { ok: false, error: 'database_id is required.' });
+          return;
+        }
+        if (!next.query) {
+          sendJson(res, 400, { ok: false, error: 'query is required.' });
+          return;
+        }
+
+        if (idx >= 0) nextList[idx] = next;
+        else nextList.push(next);
+
+        writeJsonFile(REPORTER_DATA_CHECKS_PATH, { data_checks: nextList });
+        const reload = await reporterApiRequest('POST', '/reload');
+        sendJson(res, 200, { ok: true, path: REPORTER_DATA_CHECKS_PATH, data_check: next, reporter_reload: reload });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/data-checks/delete') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+
+      const root = readJsonFileOrNull(REPORTER_DATA_CHECKS_PATH) || { data_checks: [] };
+      const raw = Array.isArray(root?.data_checks) ? root.data_checks : [];
+      const before = raw.length;
+      const afterList = raw.filter((c) => sanitizeId(c?.id) !== id);
+      if (afterList.length === before) {
+        sendJson(res, 200, { ok: true, deleted: false, id });
+        return;
+      }
+      writeJsonFile(REPORTER_DATA_CHECKS_PATH, { data_checks: afterList });
       const reload = await reporterApiRequest('POST', '/reload');
       sendJson(res, 200, { ok: true, deleted: true, id, reporter_reload: reload });
     } catch (err) {
@@ -2313,7 +2443,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === '/api/reporter/databases/test') {
+  if (url.pathname === '/api/reporter/data-checks/run') {
     if (!await requireManageServerPerm()) return;
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
@@ -2325,6 +2455,61 @@ const server = http.createServer(async (req, res) => {
       const id = sanitizeId(parsed?.id);
       if (!id) {
         sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+      const run = await reporterApiRequest('POST', `/data-checks/${encodeURIComponent(id)}/run`, null, 60000);
+      sendJson(res, run.ok ? 202 : 502, {
+        ok: run.ok,
+        id,
+        reporter_run: run,
+        error: run.error || run.json?.error || null
+      });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/databases/test') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const incoming = parsed?.database || parsed?.db || null;
+      if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
+        const db = { ...incoming };
+        const id = sanitizeId(db.id);
+        db.id = id;
+        const type = String(db.type || 'mysql').trim() || 'mysql';
+        db.type = type;
+
+        // When editing an existing saved database, an empty password field means
+        // "use the saved password" for this one-off test.
+        if (id) {
+          const saved = readReporterDatabasesRaw().find((d) => sanitizeId(d?.id) === id) || {};
+          const pwField = (type === 'odbc') ? 'odbc_password' : 'mysql_password';
+          if (!db[pwField] && typeof saved[pwField] === 'string' && saved[pwField]) {
+            db[pwField] = saved[pwField];
+          }
+        }
+
+        const test = await reporterApiRequest('POST', '/databases/test-config', { database: db }, 15000);
+        sendJson(res, test.ok ? 200 : 502, {
+          ok: test.ok,
+          id,
+          reporter_test: test,
+          error: test.error || test.json?.error || null
+        });
+        return;
+      }
+
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id or database is required.' });
         return;
       }
       const test = await reporterApiRequest('POST', `/databases/${encodeURIComponent(id)}/test`, null, 15000);

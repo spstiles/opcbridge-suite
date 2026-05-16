@@ -1085,7 +1085,9 @@ install_reporter() {
   [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
   install -m 0755 "$src" "$PREFIX/bin/opcbridge-reporter"
 
-  mkdir -p "$CONFIG_ROOT/reporter"
+  mkdir -p "$CONFIG_ROOT/reporter" "$DATA_ROOT/reporter"
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/reporter" 2>/dev/null || true
+  chmod 750 "$DATA_ROOT/reporter" 2>/dev/null || true
   install -m 0644 "$ROOT_DIR/opcbridge-reporter/config.json.example" "$CONFIG_ROOT/reporter/config.json.example" 2>/dev/null || true
   if [[ ! -f "$CONFIG_ROOT/reporter/config.json" ]]; then
     umask 027
@@ -1118,6 +1120,16 @@ JSON
 JSON
     chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/reports.json" 2>/dev/null || true
     chmod 660 "$CONFIG_ROOT/reporter/reports.json" 2>/dev/null || true
+  fi
+  if [[ ! -f "$CONFIG_ROOT/reporter/data_checks.json" ]]; then
+    umask 027
+    cat >"$CONFIG_ROOT/reporter/data_checks.json" <<'JSON'
+{
+  "data_checks": []
+}
+JSON
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/data_checks.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/reporter/data_checks.json" 2>/dev/null || true
   fi
 }
 
@@ -1380,7 +1392,7 @@ Wants=opcbridge.service
 Type=simple
 EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${PREFIX}
-ExecStart=${PREFIX}/bin/opcbridge-reporter --service --config ${CONFIG_ROOT}/reporter/config.json --databases ${CONFIG_ROOT}/reporter/databases.json --reports ${CONFIG_ROOT}/reporter/reports.json
+ExecStart=${PREFIX}/bin/opcbridge-reporter --service --config ${CONFIG_ROOT}/reporter/config.json --databases ${CONFIG_ROOT}/reporter/databases.json --reports ${CONFIG_ROOT}/reporter/reports.json --data-checks ${CONFIG_ROOT}/reporter/data_checks.json --state ${DATA_ROOT}/reporter/runtime_state.json
 User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 Restart=always

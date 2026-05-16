@@ -953,6 +953,109 @@ static std::vector<SystemTagDef> collect_alarm_system_tags() {
     return cached;
 }
 
+static std::string system_tag_path_segment(std::string value) {
+    if (value.empty()) return "_";
+    for (char &ch : value) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (ch == '/' || c < 32 || c == 127) ch = '_';
+    }
+    return value;
+}
+
+static std::vector<SystemTagDef> reporter_default_system_tags(bool connected = false) {
+    return {
+        {"System/Reporter/RuntimeConnected", "bool", connected},
+        {"System/Reporter/DatabaseCount", "int32", 0},
+        {"System/Reporter/DataCheckCount", "int32", 0}
+    };
+}
+
+static std::vector<SystemTagDef> collect_reporter_system_tags() {
+    static std::mutex cacheMutex;
+    static std::chrono::steady_clock::time_point lastPoll;
+    static std::vector<SystemTagDef> cached = reporter_default_system_tags(false);
+
+    const auto nowSteady = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        if (lastPoll.time_since_epoch().count() != 0 &&
+            nowSteady - lastPoll < std::chrono::seconds(2)) {
+            return cached;
+        }
+        lastPoll = nowSteady;
+    }
+
+    std::vector<SystemTagDef> next = reporter_default_system_tags(false);
+    try {
+        httplib::Client cli("127.0.0.1", 8095);
+        cli.set_connection_timeout(0, 200000);
+        cli.set_read_timeout(0, 200000);
+        cli.set_write_timeout(0, 200000);
+        auto res = cli.Get("/health");
+        if (res && res->status == 200) {
+            json j = json::parse(res->body);
+            const int64_t nowMs = system_wall_now_ms();
+            const json statuses = j.value("database_statuses", json::array());
+            const json checkStatuses = j.value("data_check_statuses", json::array());
+            next = {
+                {"System/Reporter/RuntimeConnected", "bool", j.value("ok", false)},
+                {"System/Reporter/DatabaseCount", "int32", statuses.is_array() ? static_cast<int>(statuses.size()) : 0},
+                {"System/Reporter/DataCheckCount", "int32", checkStatuses.is_array() ? static_cast<int>(checkStatuses.size()) : 0}
+            };
+
+            if (statuses.is_array()) {
+                for (const auto &status : statuses) {
+                    if (!status.is_object()) continue;
+                    const std::string id = status.value("id", std::string{});
+                    if (id.empty()) continue;
+                    const std::string prefix = "System/Reporter/Databases/" + system_tag_path_segment(id) + "/";
+                    const int64_t lastCheckMs = json_i64_at(status, {"last_check_ms"}, 0);
+                    next.push_back({prefix + "Id", "string", id});
+                    next.push_back({prefix + "Enabled", "bool", status.value("enabled", false)});
+                    next.push_back({prefix + "Ok", "bool", status.value("ok", false)});
+                    next.push_back({prefix + "Running", "bool", status.value("running", false)});
+                    next.push_back({prefix + "LatencyMs", "int64", json_i64_at(status, {"latency_ms"}, 0)});
+                    next.push_back({prefix + "ChecksTotal", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(status, {"checks_total"}, 0)))});
+                    next.push_back({prefix + "FailuresTotal", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(status, {"failures_total"}, 0)))});
+                    next.push_back({prefix + "ConsecutiveFailures", "int64", json_i64_at(status, {"consecutive_failures"}, 0)});
+                    next.push_back({prefix + "LastCheckAgeMs", "int64", lastCheckMs > 0 ? (nowMs - lastCheckMs) : -1});
+                    next.push_back({prefix + "LastError", "string", status.value("last_error", std::string{})});
+                }
+            }
+
+            if (checkStatuses.is_array()) {
+                for (const auto &status : checkStatuses) {
+                    if (!status.is_object()) continue;
+                    const std::string id = status.value("id", std::string{});
+                    if (id.empty()) continue;
+                    const std::string prefix = "System/Reporter/DataChecks/" + system_tag_path_segment(id) + "/";
+                    const int64_t lastRunMs = json_i64_at(status, {"last_run_ms"}, 0);
+                    next.push_back({prefix + "Id", "string", id});
+                    next.push_back({prefix + "Enabled", "bool", status.value("enabled", false)});
+                    next.push_back({prefix + "Ok", "bool", status.value("ok", false)});
+                    next.push_back({prefix + "Running", "bool", status.value("running", false)});
+                    next.push_back({prefix + "BelowLow", "bool", status.value("below_low", false)});
+                    next.push_back({prefix + "AboveHigh", "bool", status.value("above_high", false)});
+                    next.push_back({prefix + "Value", "string", status.value("value", std::string{})});
+                    next.push_back({prefix + "NumericValue", "float64", status.value("numeric_value", 0.0)});
+                    next.push_back({prefix + "HasNumericValue", "bool", status.value("has_numeric_value", false)});
+                    next.push_back({prefix + "LatencyMs", "int64", json_i64_at(status, {"latency_ms"}, 0)});
+                    next.push_back({prefix + "RunsTotal", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(status, {"runs_total"}, 0)))});
+                    next.push_back({prefix + "FailuresTotal", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(status, {"failures_total"}, 0)))});
+                    next.push_back({prefix + "LastRunAgeMs", "int64", lastRunMs > 0 ? (nowMs - lastRunMs) : -1});
+                    next.push_back({prefix + "LastError", "string", status.value("last_error", std::string{})});
+                }
+            }
+        }
+    } catch (...) {
+        next = reporter_default_system_tags(false);
+    }
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cached = next;
+    return cached;
+}
+
 // -----------------------------
 // Forward declarations (MQTT telemetry helpers)
 // -----------------------------
@@ -6491,6 +6594,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             UA_NodeId clockSysId = ua_add_folder(server, systemId, "Clock");
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
             UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
+            UA_NodeId reporterSysId = ua_add_folder(server, systemId, "Reporter");
             UA_NodeId opcuaSysId = ua_add_folder(server, systemId, "OpcUa");
             UA_NodeId connectionsSysId = ua_add_folder(server, systemId, "Connections");
 
@@ -6534,6 +6638,46 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             if (!UA_NodeId_isNull(&alarmsSysId)) {
                 for (const auto &alarmRow : collect_alarm_system_tags()) {
                     ua_add_system_variable(server, alarmsSysId, systemBindings, alarmRow.name, alarmRow.datatype, alarmRow.value);
+                }
+            }
+
+            if (!UA_NodeId_isNull(&reporterSysId)) {
+                UA_NodeId databasesSysId = ua_add_folder(server, reporterSysId, "Databases");
+                UA_NodeId dataChecksSysId = ua_add_folder(server, reporterSysId, "DataChecks");
+                std::unordered_map<std::string, UA_NodeId> databaseNodes;
+                std::unordered_map<std::string, UA_NodeId> dataCheckNodes;
+                for (const auto &reporterRow : collect_reporter_system_tags()) {
+                    const std::string dbPrefix = "System/Reporter/Databases/";
+                    const std::string checkPrefix = "System/Reporter/DataChecks/";
+                    if (reporterRow.name.rfind(dbPrefix, 0) == 0 && !UA_NodeId_isNull(&databasesSysId)) {
+                        std::string rest = reporterRow.name.substr(dbPrefix.size());
+                        size_t slash = rest.find('/');
+                        if (slash == std::string::npos) continue;
+                        std::string dbId = rest.substr(0, slash);
+                        auto it = databaseNodes.find(dbId);
+                        if (it == databaseNodes.end()) {
+                            UA_NodeId dbNode = ua_add_folder(server, databasesSysId, dbId);
+                            it = databaseNodes.emplace(dbId, dbNode).first;
+                        }
+                        if (!UA_NodeId_isNull(&it->second)) {
+                            ua_add_system_variable(server, it->second, systemBindings, reporterRow.name, reporterRow.datatype, reporterRow.value);
+                        }
+                    } else if (reporterRow.name.rfind(checkPrefix, 0) == 0 && !UA_NodeId_isNull(&dataChecksSysId)) {
+                        std::string rest = reporterRow.name.substr(checkPrefix.size());
+                        size_t slash = rest.find('/');
+                        if (slash == std::string::npos) continue;
+                        std::string checkId = rest.substr(0, slash);
+                        auto it = dataCheckNodes.find(checkId);
+                        if (it == dataCheckNodes.end()) {
+                            UA_NodeId checkNode = ua_add_folder(server, dataChecksSysId, checkId);
+                            it = dataCheckNodes.emplace(checkId, checkNode).first;
+                        }
+                        if (!UA_NodeId_isNull(&it->second)) {
+                            ua_add_system_variable(server, it->second, systemBindings, reporterRow.name, reporterRow.datatype, reporterRow.value);
+                        }
+                    } else {
+                        ua_add_system_variable(server, reporterSysId, systemBindings, reporterRow.name, reporterRow.datatype, reporterRow.value);
+                    }
                 }
             }
 
@@ -6987,6 +7131,9 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     }
     for (const auto &alarmRow : collect_alarm_system_tags()) {
         ua_write_system_value(alarmRow.name, alarmRow.value);
+    }
+    for (const auto &reporterRow : collect_reporter_system_tags()) {
+        ua_write_system_value(reporterRow.name, reporterRow.value);
     }
     const bool fullRebuildRequired = g_full_rebuild_required.load(std::memory_order_relaxed);
     for (const auto &syncRow : collect_opcua_sync_system_tags(reloadCopy, fullRebuildRequired)) {
@@ -14393,6 +14540,9 @@ window.addEventListener("load", startAutoRefresh);
 									}
 									for (const auto &alarmRow : collect_alarm_system_tags()) {
 										addSystemRow(alarmRow.name, alarmRow.datatype, alarmRow.value);
+									}
+									for (const auto &reporterRow : collect_reporter_system_tags()) {
+										addSystemRow(reporterRow.name, reporterRow.datatype, reporterRow.value);
 									}
 									for (const auto &syncRow : collect_opcua_sync_system_tags(
 										reloadCopy,

@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <ctime>
 #include <fstream>
 #include <iostream>
@@ -13,6 +14,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include <sys/stat.h>
 
 #include <curl/curl.h>
 #include <mysql/mysql.h>
@@ -46,6 +49,10 @@ struct DbConfig {
     std::string mysql_user;
     std::string mysql_password;
     std::string mysql_database;
+    bool monitor_enabled = false;
+    int monitor_interval_sec = 60;
+    int monitor_timeout_sec = 10;
+    std::string monitor_query = "SELECT 1";
 };
 
 struct Job {
@@ -72,9 +79,73 @@ struct JobStatus {
     std::string last_error;
 };
 
+struct DataCheck {
+    std::string id;
+    std::string name;
+    std::string database_id;
+    bool enabled = false;
+    std::string on_calendar;
+    std::string query;
+    int timeout_sec = 30;
+    bool has_low_threshold = false;
+    bool has_high_threshold = false;
+    double low_threshold = 0.0;
+    double high_threshold = 0.0;
+};
+
+struct DataCheckStatus {
+    std::string id;
+    bool enabled = false;
+    bool running = false;
+    bool supported_schedule = false;
+    bool ok = false;
+    bool below_low = false;
+    bool above_high = false;
+    long long last_run_ms = 0;
+    long long next_run_ms = 0;
+    long long runs_total = 0;
+    long long failures_total = 0;
+    int latency_ms = 0;
+    std::string value;
+    double numeric_value = 0.0;
+    bool has_numeric_value = false;
+    std::string last_error;
+};
+
 struct RunResult {
     bool ok = false;
     int inserted = 0;
+    std::string error;
+};
+
+struct DbMonitorStatus {
+    std::string id;
+    bool enabled = false;
+    bool running = false;
+    bool ok = false;
+    long long last_check_ms = 0;
+    long long next_check_ms = 0;
+    long long checks_total = 0;
+    long long failures_total = 0;
+    long long consecutive_failures = 0;
+    int latency_ms = 0;
+    std::string last_error;
+};
+
+struct DbTestResult {
+    bool ok = false;
+    int latency_ms = 0;
+    std::string error;
+};
+
+struct DataCheckResult {
+    bool ok = false;
+    bool below_low = false;
+    bool above_high = false;
+    int latency_ms = 0;
+    std::string value;
+    double numeric_value = 0.0;
+    bool has_numeric_value = false;
     std::string error;
 };
 
@@ -237,6 +308,22 @@ static json object_array_or_empty(const json& root, const std::string& key) {
 static json object_value_or_empty(const json& root, const std::string& key) {
     if (!root.is_object() || !root.contains(key) || !root[key].is_object()) return json::object();
     return root[key];
+}
+
+static void ensure_parent_dir(const std::string& file_path) {
+    size_t pos = file_path.find_last_of('/');
+    if (pos == std::string::npos || pos == 0) return;
+    std::string dir = file_path.substr(0, pos);
+    std::string cur;
+    if (!dir.empty() && dir[0] == '/') cur = "/";
+    std::stringstream ss(dir);
+    std::string part;
+    while (std::getline(ss, part, '/')) {
+        if (part.empty()) continue;
+        if (!cur.empty() && cur.back() != '/') cur += "/";
+        cur += part;
+        mkdir(cur.c_str(), 0750);
+    }
 }
 
 static size_t curl_write_cb(void* contents, size_t size, size_t nmemb, void* userp) {
@@ -514,8 +601,41 @@ static long long next_from_calendar(const std::string& cal, long long after_ms, 
 
 class ReporterService {
 public:
-    ReporterService(std::string config_path, std::string databases_path, std::string reports_path)
-        : config_path_(std::move(config_path)), databases_path_(std::move(databases_path)), reports_path_(std::move(reports_path)) {}
+    ReporterService(std::string config_path,
+                    std::string databases_path,
+                    std::string reports_path,
+                    std::string data_checks_path,
+                    std::string state_path)
+        : config_path_(std::move(config_path)),
+          databases_path_(std::move(databases_path)),
+          reports_path_(std::move(reports_path)),
+          data_checks_path_(std::move(data_checks_path)),
+          state_path_(std::move(state_path)) {}
+
+    void load_runtime_state() {
+        if (state_path_.empty()) return;
+        json root = read_json_or_object(state_path_);
+        std::map<std::string, JobStatus> loaded;
+        for (const auto& s : object_array_or_empty(root, "statuses")) {
+            if (!s.is_object()) continue;
+            JobStatus st;
+            st.id = s.value("id", "");
+            if (st.id.empty()) continue;
+            st.enabled = s.value("enabled", false);
+            st.running = false;
+            st.supported_schedule = s.value("supported_schedule", false);
+            st.last_run_ms = s.value("last_run_ms", 0LL);
+            st.next_run_ms = 0;
+            st.runs_total = s.value("runs_total", 0LL);
+            st.failures_total = s.value("failures_total", 0LL);
+            st.last_inserted = s.value("last_inserted", 0);
+            st.last_error = s.value("last_error", "");
+            loaded[st.id] = st;
+        }
+        std::lock_guard<std::mutex> lock(mu_);
+        statuses_ = std::move(loaded);
+        last_state_load_ms_ = now_ms();
+    }
 
     bool reload(std::string& error) {
         ServiceConfig next_svc;
@@ -537,6 +657,11 @@ public:
             db.mysql_user = d.value("mysql_user", "");
             db.mysql_password = d.value("mysql_password", "");
             db.mysql_database = d.value("mysql_database", "");
+            db.monitor_enabled = d.value("monitor_enabled", false);
+            db.monitor_interval_sec = std::max(5, d.value("monitor_interval_sec", 60));
+            db.monitor_timeout_sec = std::max(1, d.value("monitor_timeout_sec", 10));
+            db.monitor_query = d.value("monitor_query", "SELECT 1");
+            if (db.monitor_query.empty()) db.monitor_query = "SELECT 1";
             if (!db.id.empty()) next_dbs[db.id] = db;
         }
 
@@ -572,14 +697,59 @@ public:
             next_status[job.name] = st;
         }
 
+        std::map<std::string, DataCheck> next_checks;
+        std::map<std::string, DataCheckStatus> next_check_status;
+        json check_root = read_json_or_object(data_checks_path_);
+        for (const auto& c : object_array_or_empty(check_root, "data_checks")) {
+            if (!c.is_object()) continue;
+            DataCheck check;
+            check.id = c.value("id", "");
+            check.name = c.value("name", "");
+            check.database_id = c.value("database_id", "");
+            check.enabled = c.value("enabled", false);
+            check.on_calendar = object_value_or_empty(c, "schedule").value("on_calendar", "");
+            check.query = c.value("query", "");
+            check.timeout_sec = std::max(1, c.value("timeout_sec", 30));
+            if (c.contains("low_threshold") && c["low_threshold"].is_number()) {
+                check.has_low_threshold = true;
+                check.low_threshold = c["low_threshold"].get<double>();
+            }
+            if (c.contains("high_threshold") && c["high_threshold"].is_number()) {
+                check.has_high_threshold = true;
+                check.high_threshold = c["high_threshold"].get<double>();
+            }
+            if (check.id.empty() || check.database_id.empty() || check.query.empty()) continue;
+
+            bool supported = false;
+            long long next_run = next_from_calendar(check.on_calendar, now_ms(), supported);
+            next_checks[check.id] = check;
+
+            DataCheckStatus st;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                auto old = data_check_statuses_.find(check.id);
+                if (old != data_check_statuses_.end()) st = old->second;
+            }
+            st.id = check.id;
+            st.enabled = check.enabled;
+            st.supported_schedule = supported;
+            st.next_run_ms = (check.enabled && supported) ? next_run : 0;
+            if (check.enabled && !supported) st.last_error = "Unsupported schedule: " + check.on_calendar;
+            next_check_status[check.id] = st;
+        }
+
         {
             std::lock_guard<std::mutex> lock(mu_);
             svc_ = next_svc;
             dbs_ = std::move(next_dbs);
             jobs_ = std::move(next_jobs);
             statuses_ = std::move(next_status);
+            data_checks_ = std::move(next_checks);
+            data_check_statuses_ = std::move(next_check_status);
+            reconcile_monitor_statuses_locked();
             last_reload_ms_ = now_ms();
         }
+        save_runtime_state();
         cv_.notify_all();
         error.clear();
         return true;
@@ -597,9 +767,14 @@ public:
             {"version", OPCBRIDGE_REPORTER_VERSION},
             {"suite_version", OPCBRIDGE_SUITE_VERSION},
             {"last_reload_ms", last_reload_ms_},
+            {"last_state_load_ms", last_state_load_ms_},
+            {"state_path", state_path_},
             {"databases", dbs_.size()},
             {"jobs", jobs_.size()},
-            {"statuses", statuses_json_locked()}
+            {"data_checks", data_checks_.size()},
+            {"statuses", statuses_json_locked()},
+            {"database_statuses", database_statuses_json_locked()},
+            {"data_check_statuses", data_check_statuses_json_locked()}
         };
     }
 
@@ -646,7 +821,7 @@ public:
 
         std::thread([this, job, db, svc]() {
             RunResult result = run_job(job, db, svc);
-            finish_job(job.name, result);
+            finish_job_with_save(job.name, result);
         }).detach();
         return true;
     }
@@ -662,44 +837,170 @@ public:
             db = it->second;
         }
 
+        DbTestResult result = test_database_config(db);
+        return {
+            {"ok", result.ok},
+            {"id", id},
+            {"type", db.type},
+            {"latency_ms", result.latency_ms},
+            {"error", result.error}
+        };
+    }
+
+    json test_database_config_json(const json& d) {
+        if (!d.is_object()) {
+            return {{"ok", false}, {"error", "Invalid JSON body; expected database object"}};
+        }
+        DbConfig db;
+        db.id = d.value("id", "");
+        db.type = d.value("type", "mysql");
+        db.opcbridge_base_url = d.value("opcbridge_base_url", "");
+        db.mysql_host = d.value("mysql_host", "localhost");
+        db.mysql_port = d.value("mysql_port", 3306u);
+        db.mysql_user = d.value("mysql_user", "");
+        db.mysql_password = d.value("mysql_password", "");
+        db.mysql_database = d.value("mysql_database", "");
+        db.monitor_enabled = d.value("monitor_enabled", false);
+        db.monitor_interval_sec = std::max(5, d.value("monitor_interval_sec", 60));
+        db.monitor_timeout_sec = std::max(1, d.value("monitor_timeout_sec", 10));
+        db.monitor_query = d.value("monitor_query", "SELECT 1");
+        if (db.monitor_query.empty()) db.monitor_query = "SELECT 1";
+
+        DbTestResult result = test_database_config(db);
+        return {
+            {"ok", result.ok},
+            {"id", db.id},
+            {"type", db.type},
+            {"latency_ms", result.latency_ms},
+            {"error", result.error}
+        };
+    }
+
+    bool run_data_check_async(const std::string& id, std::string& error) {
+        DataCheck check;
+        DbConfig db;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto cit = data_checks_.find(id);
+            if (cit == data_checks_.end()) {
+                error = "Data check not found: " + id;
+                return false;
+            }
+            auto dit = dbs_.find(cit->second.database_id);
+            if (dit == dbs_.end()) {
+                error = "Database not found: " + cit->second.database_id;
+                return false;
+            }
+            auto& st = data_check_statuses_[id];
+            if (st.running) {
+                error = "Data check is already running: " + id;
+                return false;
+            }
+            st.running = true;
+            st.last_error.clear();
+            check = cit->second;
+            db = dit->second;
+        }
+
+        std::thread([this, check, db]() {
+            DataCheckResult result = run_data_check(check, db);
+            finish_data_check(check.id, result);
+        }).detach();
+        return true;
+    }
+
+private:
+    void reconcile_monitor_statuses_locked() {
+        std::map<std::string, DbMonitorStatus> next;
+        const long long n = now_ms();
+        for (const auto& kv : dbs_) {
+            const DbConfig& db = kv.second;
+            DbMonitorStatus st;
+            auto old = db_statuses_.find(db.id);
+            if (old != db_statuses_.end()) st = old->second;
+            st.id = db.id;
+            st.enabled = db.monitor_enabled;
+            if (!db.monitor_enabled) {
+                st.running = false;
+                st.next_check_ms = 0;
+            } else if (st.next_check_ms <= 0) {
+                st.next_check_ms = n + 1000;
+            }
+            next[db.id] = st;
+        }
+        db_statuses_ = std::move(next);
+    }
+
+    DbTestResult test_database_config(const DbConfig& db) const {
+        DbTestResult result;
         const long long started = now_ms();
         if (db.type != "mysql") {
-            return {
-                {"ok", false},
-                {"id", id},
-                {"type", db.type},
-                {"latency_ms", now_ms() - started},
-                {"error", "Database type not supported by reporter service yet: " + db.type}
-            };
+            result.error = "Database type not supported by reporter service yet: " + db.type;
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
         }
 
         MYSQL* conn = mysql_init(nullptr);
         if (!conn) {
-            return {{"ok", false}, {"id", id}, {"type", db.type}, {"error", "mysql_init failed"}};
+            result.error = "mysql_init failed";
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
         }
 
-        bool ok = true;
-        std::string error;
+        unsigned int timeout = static_cast<unsigned int>(std::max(1, db.monitor_timeout_sec));
+        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
+
         if (!mysql_real_connect(conn, db.mysql_host.c_str(), db.mysql_user.c_str(), db.mysql_password.c_str(),
                                 db.mysql_database.c_str(), db.mysql_port, nullptr, 0)) {
-            ok = false;
-            error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
-        } else if (mysql_query(conn, "SELECT 1") != 0) {
-            ok = false;
-            error = std::string("SELECT 1 failed: ") + mysql_error(conn);
+            result.error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
+        } else if (mysql_query(conn, db.monitor_query.c_str()) != 0) {
+            result.error = std::string("monitor query failed: ") + mysql_error(conn);
+        } else {
+            result.ok = true;
         }
         mysql_close(conn);
-
-        return {
-            {"ok", ok},
-            {"id", id},
-            {"type", db.type},
-            {"latency_ms", now_ms() - started},
-            {"error", error}
-        };
+        result.latency_ms = static_cast<int>(now_ms() - started);
+        return result;
     }
 
-private:
+    void save_runtime_state() {
+        if (state_path_.empty()) return;
+        json root;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            json statuses = json::array();
+            for (const auto& kv : statuses_) {
+                JobStatus st = kv.second;
+                st.running = false;
+                statuses.push_back({
+                    {"id", st.id},
+                    {"enabled", st.enabled},
+                    {"supported_schedule", st.supported_schedule},
+                    {"last_run_ms", st.last_run_ms},
+                    {"runs_total", st.runs_total},
+                    {"failures_total", st.failures_total},
+                    {"last_inserted", st.last_inserted},
+                    {"last_error", st.last_error}
+                });
+            }
+            root = {
+                {"version", 1},
+                {"updated_ms", now_ms()},
+                {"statuses", statuses}
+            };
+        }
+
+        try {
+            ensure_parent_dir(state_path_);
+            std::ofstream f(state_path_, std::ios::trunc);
+            if (f) f << root.dump(2) << "\n";
+        } catch (const std::exception& ex) {
+            std::cerr << "Reporter: failed to save runtime state: " << ex.what() << "\n";
+        }
+    }
+
     json statuses_json_locked() const {
         json arr = json::array();
         for (const auto& kv : statuses_) {
@@ -714,6 +1015,53 @@ private:
                 {"runs_total", st.runs_total},
                 {"failures_total", st.failures_total},
                 {"last_inserted", st.last_inserted},
+                {"last_error", st.last_error}
+            });
+        }
+        return arr;
+    }
+
+    json database_statuses_json_locked() const {
+        json arr = json::array();
+        for (const auto& kv : db_statuses_) {
+            const auto& st = kv.second;
+            arr.push_back({
+                {"id", st.id},
+                {"enabled", st.enabled},
+                {"running", st.running},
+                {"ok", st.ok},
+                {"last_check_ms", st.last_check_ms},
+                {"next_check_ms", st.next_check_ms},
+                {"checks_total", st.checks_total},
+                {"failures_total", st.failures_total},
+                {"consecutive_failures", st.consecutive_failures},
+                {"latency_ms", st.latency_ms},
+                {"last_error", st.last_error}
+            });
+        }
+        return arr;
+    }
+
+    json data_check_statuses_json_locked() const {
+        json arr = json::array();
+        for (const auto& kv : data_check_statuses_) {
+            const auto& st = kv.second;
+            arr.push_back({
+                {"id", st.id},
+                {"enabled", st.enabled},
+                {"running", st.running},
+                {"supported_schedule", st.supported_schedule},
+                {"ok", st.ok},
+                {"below_low", st.below_low},
+                {"above_high", st.above_high},
+                {"last_run_ms", st.last_run_ms},
+                {"next_run_ms", st.next_run_ms},
+                {"runs_total", st.runs_total},
+                {"failures_total", st.failures_total},
+                {"latency_ms", st.latency_ms},
+                {"value", st.value},
+                {"numeric_value", st.numeric_value},
+                {"has_numeric_value", st.has_numeric_value},
                 {"last_error", st.last_error}
             });
         }
@@ -768,6 +1116,89 @@ private:
         return result;
     }
 
+    DataCheckResult run_data_check(const DataCheck& check, const DbConfig& db) {
+        DataCheckResult result;
+        const long long started = now_ms();
+        if (db.type != "mysql") {
+            result.error = "Database type not supported by reporter service yet: " + db.type;
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
+        }
+
+        MYSQL* conn = mysql_init(nullptr);
+        if (!conn) {
+            result.error = "mysql_init failed";
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
+        }
+
+        unsigned int timeout = static_cast<unsigned int>(std::max(1, check.timeout_sec));
+        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
+
+        if (!mysql_real_connect(conn, db.mysql_host.c_str(), db.mysql_user.c_str(), db.mysql_password.c_str(),
+                                db.mysql_database.c_str(), db.mysql_port, nullptr, 0)) {
+            result.error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
+        }
+
+        if (mysql_query(conn, check.query.c_str()) != 0) {
+            result.error = std::string("data check query failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
+        }
+
+        MYSQL_RES* res = mysql_store_result(conn);
+        if (!res) {
+            if (mysql_field_count(conn) == 0) {
+                result.error = "data check query did not return a result set";
+            } else {
+                result.error = std::string("mysql_store_result failed: ") + mysql_error(conn);
+            }
+            mysql_close(conn);
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
+        }
+
+        MYSQL_ROW row = mysql_fetch_row(res);
+        if (!row || mysql_num_fields(res) < 1) {
+            result.error = "data check query returned no rows";
+            mysql_free_result(res);
+            mysql_close(conn);
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
+        }
+
+        unsigned long* lengths = mysql_fetch_lengths(res);
+        if (row[0]) {
+            result.value.assign(row[0], lengths ? lengths[0] : std::strlen(row[0]));
+        } else {
+            result.value.clear();
+        }
+        try {
+            size_t idx = 0;
+            double numeric = std::stod(result.value, &idx);
+            if (idx == result.value.size()) {
+                result.numeric_value = numeric;
+                result.has_numeric_value = true;
+                if (check.has_low_threshold && numeric < check.low_threshold) result.below_low = true;
+                if (check.has_high_threshold && numeric > check.high_threshold) result.above_high = true;
+            }
+        } catch (...) {
+            result.has_numeric_value = false;
+        }
+
+        mysql_free_result(res);
+        mysql_close(conn);
+        result.ok = true;
+        result.latency_ms = static_cast<int>(now_ms() - started);
+        return result;
+    }
+
     void finish_job(const std::string& id, const RunResult& result) {
         std::lock_guard<std::mutex> lock(mu_);
         auto& st = statuses_[id];
@@ -792,9 +1223,99 @@ private:
         }
     }
 
+    void finish_job_with_save(const std::string& id, const RunResult& result) {
+        finish_job(id, result);
+        save_runtime_state();
+    }
+
+    void finish_data_check(const std::string& id, const DataCheckResult& result) {
+        std::lock_guard<std::mutex> lock(mu_);
+        auto& st = data_check_statuses_[id];
+        st.id = id;
+        st.running = false;
+        st.last_run_ms = now_ms();
+        st.runs_total++;
+        st.ok = result.ok && !result.below_low && !result.above_high;
+        st.below_low = result.below_low;
+        st.above_high = result.above_high;
+        st.latency_ms = result.latency_ms;
+        st.value = result.value;
+        st.numeric_value = result.numeric_value;
+        st.has_numeric_value = result.has_numeric_value;
+        if (!result.ok) {
+            st.failures_total++;
+            st.last_error = result.error;
+        } else if (result.below_low) {
+            st.failures_total++;
+            st.last_error = "Value is below low threshold";
+        } else if (result.above_high) {
+            st.failures_total++;
+            st.last_error = "Value is above high threshold";
+        } else {
+            st.last_error.clear();
+        }
+
+        auto cit = data_checks_.find(id);
+        if (cit != data_checks_.end()) {
+            bool supported = false;
+            long long next = next_from_calendar(cit->second.on_calendar, st.last_run_ms, supported);
+            st.enabled = cit->second.enabled;
+            st.supported_schedule = supported;
+            st.next_run_ms = (cit->second.enabled && supported) ? next : 0;
+        }
+    }
+
+    void finish_database_monitor(const std::string& id, const DbTestResult& result) {
+        std::lock_guard<std::mutex> lock(mu_);
+        auto dbIt = dbs_.find(id);
+        auto& st = db_statuses_[id];
+        st.id = id;
+        st.enabled = (dbIt != dbs_.end()) ? dbIt->second.monitor_enabled : false;
+        st.running = false;
+        st.ok = result.ok;
+        st.last_check_ms = now_ms();
+        st.checks_total++;
+        st.latency_ms = result.latency_ms;
+        if (result.ok) {
+            st.consecutive_failures = 0;
+            st.last_error.clear();
+        } else {
+            st.failures_total++;
+            st.consecutive_failures++;
+            st.last_error = result.error;
+        }
+        if (dbIt != dbs_.end() && dbIt->second.monitor_enabled) {
+            st.next_check_ms = st.last_check_ms + static_cast<long long>(std::max(5, dbIt->second.monitor_interval_sec)) * 1000LL;
+        } else {
+            st.next_check_ms = 0;
+        }
+    }
+
+    bool run_database_monitor_async(const std::string& id) {
+        DbConfig db;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto it = dbs_.find(id);
+            if (it == dbs_.end() || !it->second.monitor_enabled) return false;
+            auto& st = db_statuses_[id];
+            if (st.running) return false;
+            st.id = id;
+            st.enabled = true;
+            st.running = true;
+            db = it->second;
+        }
+        std::thread([this, id, db]() {
+            DbTestResult result = test_database_config(db);
+            finish_database_monitor(id, result);
+        }).detach();
+        return true;
+    }
+
     void scheduler_loop() {
         while (!stop_) {
             std::vector<std::string> due;
+            std::vector<std::string> monitor_due;
+            std::vector<std::string> data_check_due;
             long long n = now_ms();
             {
                 std::lock_guard<std::mutex> lock(mu_);
@@ -810,11 +1331,39 @@ private:
                     }
                     if (st.supported_schedule && st.next_run_ms > 0 && st.next_run_ms <= n) due.push_back(kv.first);
                 }
+                for (auto& kv : dbs_) {
+                    const DbConfig& db = kv.second;
+                    auto& st = db_statuses_[db.id];
+                    st.id = db.id;
+                    st.enabled = db.monitor_enabled;
+                    if (!db.monitor_enabled || st.running) continue;
+                    if (st.next_check_ms <= 0) st.next_check_ms = n + 1000;
+                    if (st.next_check_ms <= n) monitor_due.push_back(db.id);
+                }
+                for (auto& kv : data_checks_) {
+                    auto& st = data_check_statuses_[kv.first];
+                    st.id = kv.first;
+                    st.enabled = kv.second.enabled;
+                    if (!kv.second.enabled || st.running) continue;
+                    if (st.next_run_ms <= 0) {
+                        bool supported = false;
+                        st.next_run_ms = next_from_calendar(kv.second.on_calendar, n, supported);
+                        st.supported_schedule = supported;
+                    }
+                    if (st.supported_schedule && st.next_run_ms > 0 && st.next_run_ms <= n) data_check_due.push_back(kv.first);
+                }
             }
 
             for (const auto& id : due) {
                 std::string ignored;
                 run_job_async(id, ignored);
+            }
+            for (const auto& id : monitor_due) {
+                run_database_monitor_async(id);
+            }
+            for (const auto& id : data_check_due) {
+                std::string ignored;
+                run_data_check_async(id, ignored);
             }
 
             std::unique_lock<std::mutex> lock(wait_mu_);
@@ -825,13 +1374,19 @@ private:
     std::string config_path_;
     std::string databases_path_;
     std::string reports_path_;
+    std::string data_checks_path_;
+    std::string state_path_;
 
     mutable std::mutex mu_;
     ServiceConfig svc_;
     std::map<std::string, DbConfig> dbs_;
     std::map<std::string, Job> jobs_;
     std::map<std::string, JobStatus> statuses_;
+    std::map<std::string, DataCheck> data_checks_;
+    std::map<std::string, DataCheckStatus> data_check_statuses_;
+    std::map<std::string, DbMonitorStatus> db_statuses_;
     long long last_reload_ms_ = 0;
+    long long last_state_load_ms_ = 0;
 
     std::atomic<bool> stop_{false};
     std::condition_variable cv_;
@@ -840,13 +1395,15 @@ private:
 };
 
 static void print_usage(const char* argv0) {
-    std::cout << "Usage: " << argv0 << " [--service] [--config path] [--databases path] [--reports path] [--version]\n";
+    std::cout << "Usage: " << argv0 << " [--service] [--config path] [--databases path] [--reports path] [--data-checks path] [--state path] [--version]\n";
 }
 
 int main(int argc, char* argv[]) {
     std::string config_path = "/etc/opcbridge/reporter/config.json";
     std::string databases_path = "/etc/opcbridge/reporter/databases.json";
     std::string reports_path = "/etc/opcbridge/reporter/reports.json";
+    std::string data_checks_path = "/etc/opcbridge/reporter/data_checks.json";
+    std::string state_path = "/var/lib/opcbridge/reporter/runtime_state.json";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -859,6 +1416,8 @@ int main(int argc, char* argv[]) {
         if (arg == "--config" && i + 1 < argc) config_path = argv[++i];
         else if (arg == "--databases" && i + 1 < argc) databases_path = argv[++i];
         else if (arg == "--reports" && i + 1 < argc) reports_path = argv[++i];
+        else if (arg == "--data-checks" && i + 1 < argc) data_checks_path = argv[++i];
+        else if (arg == "--state" && i + 1 < argc) state_path = argv[++i];
         else if (arg == "--service") {}
         else if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
@@ -872,8 +1431,9 @@ int main(int argc, char* argv[]) {
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    ReporterService service(config_path, databases_path, reports_path);
+    ReporterService service(config_path, databases_path, reports_path, data_checks_path, state_path);
     std::string error;
+    service.load_runtime_state();
     service.reload(error);
     ServiceConfig svc = service.service_config();
 
@@ -884,6 +1444,14 @@ int main(int argc, char* argv[]) {
     server.Get("/jobs", [&service](const httplib::Request&, httplib::Response& res) {
         json h = service.health_json();
         res.set_content(json{{"ok", true}, {"jobs", h["statuses"]}}.dump(2), "application/json");
+    });
+    server.Get("/databases/status", [&service](const httplib::Request&, httplib::Response& res) {
+        json h = service.health_json();
+        res.set_content(json{{"ok", true}, {"databases", h["database_statuses"]}}.dump(2), "application/json");
+    });
+    server.Get("/data-checks/status", [&service](const httplib::Request&, httplib::Response& res) {
+        json h = service.health_json();
+        res.set_content(json{{"ok", true}, {"data_checks", h["data_check_statuses"]}}.dump(2), "application/json");
     });
     server.Post("/reload", [&service](const httplib::Request&, httplib::Response& res) {
         std::string reload_error;
@@ -903,6 +1471,27 @@ int main(int argc, char* argv[]) {
         json result = service.test_database(id);
         res.status = result.value("ok", false) ? 200 : 400;
         res.set_content(result.dump(2), "application/json");
+    });
+    server.Post("/databases/test-config", [&service](const httplib::Request& req, httplib::Response& res) {
+        json body = json::object();
+        try {
+            body = json::parse(req.body.empty() ? "{}" : req.body);
+        } catch (const std::exception& ex) {
+            res.status = 400;
+            res.set_content(json{{"ok", false}, {"error", std::string("Invalid JSON: ") + ex.what()}}.dump(2), "application/json");
+            return;
+        }
+        json incoming = body.contains("database") ? body["database"] : body;
+        json result = service.test_database_config_json(incoming);
+        res.status = result.value("ok", false) ? 200 : 400;
+        res.set_content(result.dump(2), "application/json");
+    });
+    server.Post(R"(/data-checks/([^/]+)/run)", [&service](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        std::string run_error;
+        bool ok = service.run_data_check_async(id, run_error);
+        res.status = ok ? 202 : 400;
+        res.set_content(json{{"ok", ok}, {"id", id}, {"error", run_error}}.dump(2), "application/json");
     });
 
     service.start_scheduler();

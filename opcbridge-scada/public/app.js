@@ -151,6 +151,8 @@
   loggerDbTable: document.getElementById('loggerDbTable'),
   loggerReportsTable: document.getElementById('loggerReportsTable'),
   loggerReportsTbody: document.getElementById('loggerReportsTbody'),
+  loggerDataChecksTable: document.getElementById('loggerDataChecksTable'),
+  loggerDataChecksTbody: document.getElementById('loggerDataChecksTbody'),
   loggerReportDetails: document.getElementById('loggerReportDetails'),
   loggerRefreshBtn: document.getElementById('loggerRefreshBtn'),
   loggerStatus: document.getElementById('loggerStatus'),
@@ -163,6 +165,10 @@
   loggerDbModalName: document.getElementById('loggerDbModalName'),
   loggerDbModalType: document.getElementById('loggerDbModalType'),
   loggerDbModalOpcbridgeBaseUrl: document.getElementById('loggerDbModalOpcbridgeBaseUrl'),
+  loggerDbModalMonitorEnabled: document.getElementById('loggerDbModalMonitorEnabled'),
+  loggerDbModalMonitorIntervalSec: document.getElementById('loggerDbModalMonitorIntervalSec'),
+  loggerDbModalMonitorTimeoutSec: document.getElementById('loggerDbModalMonitorTimeoutSec'),
+  loggerDbModalMonitorQuery: document.getElementById('loggerDbModalMonitorQuery'),
   loggerDbModalMysqlHost: document.getElementById('loggerDbModalMysqlHost'),
   loggerDbModalMysqlPort: document.getElementById('loggerDbModalMysqlPort'),
   loggerDbModalMysqlUser: document.getElementById('loggerDbModalMysqlUser'),
@@ -212,6 +218,21 @@
   loggerReportTags: document.getElementById('loggerReportTags'),
   loggerReportSelectTagsBtn: document.getElementById('loggerReportSelectTagsBtn'),
   loggerReportStatus: document.getElementById('loggerReportStatus'),
+
+  loggerDataCheckModal: document.getElementById('loggerDataCheckModal'),
+  loggerDataCheckCloseBtn: document.getElementById('loggerDataCheckCloseBtn'),
+  loggerDataCheckCancelBtn: document.getElementById('loggerDataCheckCancelBtn'),
+  loggerDataCheckSaveBtn: document.getElementById('loggerDataCheckSaveBtn'),
+  loggerDataCheckId: document.getElementById('loggerDataCheckId'),
+  loggerDataCheckName: document.getElementById('loggerDataCheckName'),
+  loggerDataCheckDatabase: document.getElementById('loggerDataCheckDatabase'),
+  loggerDataCheckEnabled: document.getElementById('loggerDataCheckEnabled'),
+  loggerDataCheckOnCalendar: document.getElementById('loggerDataCheckOnCalendar'),
+  loggerDataCheckTimeoutSec: document.getElementById('loggerDataCheckTimeoutSec'),
+  loggerDataCheckQuery: document.getElementById('loggerDataCheckQuery'),
+  loggerDataCheckLowThreshold: document.getElementById('loggerDataCheckLowThreshold'),
+  loggerDataCheckHighThreshold: document.getElementById('loggerDataCheckHighThreshold'),
+  loggerDataCheckStatus: document.getElementById('loggerDataCheckStatus'),
 
   loggerTagPickerModal: document.getElementById('loggerTagPickerModal'),
   loggerTagPickerCloseBtn: document.getElementById('loggerTagPickerCloseBtn'),
@@ -700,14 +721,20 @@ const state = {
   // reporter (data logger)
   reporterDatabases: [],
   reporterReports: [],
+  reporterDataChecks: [],
   reporterCapabilities: null,
   reporterRuntime: null,
+  reporterDatabaseStatusById: new Map(),
+  reporterDataCheckStatusById: new Map(),
   loggerRunWatchIds: new Set(),
+  reporterValidationById: new Map(),
   loggerSelectedNodeId: 'logger:databases',
   loggerEditingId: '',
   loggerEditingMode: '', // '' | 'new' | 'edit'
   loggerReportEditingId: '',
   loggerReportEditingMode: '', // '' | 'new' | 'edit'
+  loggerDataCheckEditingId: '',
+  loggerDataCheckEditingMode: '', // '' | 'new' | 'edit'
 
   loggerTagPickerAll: [],
   loggerTagPickerSelected: new Set(),
@@ -919,6 +946,7 @@ function loggerModalSetStatus(msg) {
 function buildLoggerTreeRoots() {
   const dbs = Array.isArray(state.reporterDatabases) ? state.reporterDatabases : [];
   const reports = Array.isArray(state.reporterReports) ? state.reporterReports : [];
+  const checks = Array.isArray(state.reporterDataChecks) ? state.reporterDataChecks : [];
 
   const dbRoot = {
     id: 'logger:databases',
@@ -950,11 +978,26 @@ function buildLoggerTreeRoots() {
       }))
   };
 
-  return [dbRoot, reportsRoot];
+  const checksRoot = {
+    id: 'logger:data_checks',
+    type: 'logger_root_data_checks',
+    label: 'Data Checks',
+    children: checks
+      .slice()
+      .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { sensitivity: 'base' }))
+      .map((c) => ({
+        id: `logger:data_check:${String(c?.id || '').trim()}`,
+        type: 'logger_data_check',
+        label: String(c?.name || c?.id || '').trim() || '(unnamed)',
+        meta: { id: String(c?.id || '').trim() }
+      }))
+  };
+
+  return [dbRoot, reportsRoot, checksRoot];
 }
 
 function renderLoggerTreeNode(node, container) {
-  const canExpand = node.type === 'logger_root_db' || node.type === 'logger_root_reports';
+  const canExpand = node.type === 'logger_root_db' || node.type === 'logger_root_reports' || node.type === 'logger_root_data_checks';
   const expanded = Boolean(state._loggerExpanded) ? state._loggerExpanded.has(node.id) : true;
 
   const btn = document.createElement('button');
@@ -985,6 +1028,7 @@ function renderLoggerTreeNode(node, container) {
   meta.className = 'meta';
   if (node.type === 'logger_root_db') meta.textContent = `${(node.children || []).length} db(s)`;
   if (node.type === 'logger_root_reports') meta.textContent = `${(node.children || []).length} report(s)`;
+  if (node.type === 'logger_root_data_checks') meta.textContent = `${(node.children || []).length} check(s)`;
 
   btn.appendChild(twisty);
   btn.appendChild(label);
@@ -1013,6 +1057,10 @@ function renderLoggerTreeNode(node, container) {
       items.push({ label: 'Add Report…', onClick: () => startNewReport() });
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
     }
+    if (node.type === 'logger_root_data_checks') {
+      items.push({ label: 'Add Data Check…', onClick: () => startNewDataCheck() });
+      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
+    }
 	    if (node.type === 'logger_db') {
 	      const id = String(node.meta?.id || '').trim();
 	      items.push({ label: 'Test Connection', onClick: () => testReporterDatabase(id) });
@@ -1022,9 +1070,17 @@ function renderLoggerTreeNode(node, container) {
 	    }
     if (node.type === 'logger_report') {
       const id = String(node.meta?.id || '').trim();
+      items.push({ label: 'Validate', onClick: () => validateReporterReport(id) });
       items.push({ label: 'Run Now', onClick: () => runReporterReportNow(id) });
       items.push({ label: 'Properties…', onClick: () => openLoggerReportModal({ mode: 'edit', id }) });
       items.push({ label: 'Delete Report…', onClick: () => deleteReporterReport(id) });
+      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
+    }
+    if (node.type === 'logger_data_check') {
+      const id = String(node.meta?.id || '').trim();
+      items.push({ label: 'Run Now', onClick: () => runReporterDataCheckNow(id) });
+      items.push({ label: 'Properties…', onClick: () => openLoggerDataCheckModal({ mode: 'edit', id }) });
+      items.push({ label: 'Delete Data Check…', onClick: () => deleteReporterDataCheck(id) });
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
     }
     if (items.length) showContextMenu(e.clientX, e.clientY, items);
@@ -1047,12 +1103,13 @@ function renderLoggerTree() {
   if (!els.loggerTreeView) return;
   els.loggerTreeView.textContent = '';
   const roots = buildLoggerTreeRoots();
-  if (!state._loggerExpanded) state._loggerExpanded = new Set(['logger:databases', 'logger:reports']);
+  if (!state._loggerExpanded) state._loggerExpanded = new Set(['logger:databases', 'logger:reports', 'logger:data_checks']);
   roots.forEach((r) => renderLoggerTreeNode(r, els.loggerTreeView));
   if (els.loggerTreeNote) {
     const dbCount = Array.isArray(roots[0]?.children) ? roots[0].children.length : 0;
     const reportCount = Array.isArray(roots[1]?.children) ? roots[1].children.length : 0;
-    els.loggerTreeNote.textContent = `Databases: ${dbCount} · Reports: ${reportCount}`;
+    const checkCount = Array.isArray(roots[2]?.children) ? roots[2].children.length : 0;
+    els.loggerTreeNote.textContent = `Databases: ${dbCount} · Reports: ${reportCount} · Data checks: ${checkCount}`;
   }
   if (!state.loggerSelectedNodeId) state.loggerSelectedNodeId = 'logger:databases';
 }
@@ -1069,6 +1126,12 @@ function getSelectedReportId() {
   return '';
 }
 
+function getSelectedDataCheckId() {
+  const sid = String(state.loggerSelectedNodeId || '').trim();
+  if (sid.startsWith('logger:data_check:')) return sid.slice('logger:data_check:'.length);
+  return '';
+}
+
 function findDatabaseById(id) {
   const dbs = Array.isArray(state.reporterDatabases) ? state.reporterDatabases : [];
   return dbs.find((d) => String(d?.id || '').trim() === String(id || '').trim()) || null;
@@ -1077,6 +1140,11 @@ function findDatabaseById(id) {
 function findReportById(id) {
   const reports = Array.isArray(state.reporterReports) ? state.reporterReports : [];
   return reports.find((r) => String(r?.id || '').trim() === String(id || '').trim()) || null;
+}
+
+function findDataCheckById(id) {
+  const checks = Array.isArray(state.reporterDataChecks) ? state.reporterDataChecks : [];
+  return checks.find((c) => String(c?.id || '').trim() === String(id || '').trim()) || null;
 }
 
 function setLoggerModalPasswordHint(passwordSet) {
@@ -1123,7 +1191,7 @@ function renderLoggerTable() {
   if (!dbs.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 10;
+    td.colSpan = 12;
     td.className = 'small';
     td.textContent = 'No databases configured. Right-click “Databases” to add one.';
     tr.appendChild(td);
@@ -1140,6 +1208,7 @@ function renderLoggerTable() {
 
   dbs.forEach((d) => {
     const id = String(d?.id || '').trim();
+    const mon = state.reporterDatabaseStatusById?.get?.(id) || null;
     const tr = document.createElement('tr');
     tr.classList.toggle('is-selected', id && id === selectedId);
     tr.appendChild(mk(id, true));
@@ -1151,6 +1220,8 @@ function renderLoggerTable() {
     tr.appendChild(mk(String(d?.mysql_database || ''), true));
     tr.appendChild(mk(String(d?.opcbridge_base_url || ''), true));
     tr.appendChild(mk((d?.password_set || d?.mysql_password_set) ? 'set' : '', false));
+    tr.appendChild(mk(d?.monitor_enabled ? `${d?.monitor_interval_sec || 60}s` : '', true));
+    tr.appendChild(mk(mon ? (mon.running ? 'running' : (mon.ok ? `ok ${mon.latency_ms || 0}ms` : `failed ${mon.consecutive_failures || 0}`)) : '', false));
 
     const actions = document.createElement('td');
     const testBtn = document.createElement('button');
@@ -1179,6 +1250,26 @@ function renderLoggerTable() {
 
     els.loggerDbTbody.appendChild(tr);
   });
+}
+
+function updateReporterDatabaseStatusMap(runtime) {
+  const rows = Array.isArray(runtime?.reporter?.database_statuses) ? runtime.reporter.database_statuses : [];
+  const map = new Map();
+  rows.forEach((s) => {
+    const id = String(s?.id || '').trim();
+    if (id) map.set(id, s);
+  });
+  state.reporterDatabaseStatusById = map;
+}
+
+function updateReporterDataCheckStatusMap(runtime) {
+  const rows = Array.isArray(runtime?.reporter?.data_check_statuses) ? runtime.reporter.data_check_statuses : [];
+  const map = new Map();
+  rows.forEach((s) => {
+    const id = String(s?.id || '').trim();
+    if (id) map.set(id, s);
+  });
+  state.reporterDataCheckStatusById = map;
 }
 
 function reporterDatabaseLabel(databaseId) {
@@ -1211,6 +1302,62 @@ function reporterJobStatusLabel(report, status) {
   return 'idle';
 }
 
+function reporterScheduleSupported(onCalendar) {
+  const s = String(onCalendar || '').trim();
+  if (!s) return false;
+  return /^\*-\*-\* \*:0\/([1-9][0-9]{0,3}):00$/.test(s) ||
+    /^\*-\*-\* \*:[0-5]?[0-9]:[0-5]?[0-9]$/.test(s) ||
+    /^\*-\*-\* ([01]?[0-9]|2[0-3]):[0-5]?[0-9]:[0-5]?[0-9]$/.test(s);
+}
+
+function reporterGlobMatch(pattern, text) {
+  const p = String(pattern || '');
+  const t = String(text || '');
+  let pi = 0;
+  let ti = 0;
+  let star = -1;
+  let match = 0;
+  while (ti < t.length) {
+    if (pi < p.length && (p[pi] === '?' || p[pi] === t[ti])) {
+      pi++;
+      ti++;
+    } else if (pi < p.length && p[pi] === '*') {
+      star = pi++;
+      match = ti;
+    } else if (star >= 0) {
+      pi = star + 1;
+      ti = ++match;
+    } else {
+      return false;
+    }
+  }
+  while (pi < p.length && p[pi] === '*') pi++;
+  return pi === p.length;
+}
+
+function normalizeReporterTagSelection(tags) {
+  if (typeof tags === 'string') {
+    return tags.toLowerCase() === 'all' ? { all: true, entries: [] } : { all: false, entries: [] };
+  }
+  const entries = [];
+  (Array.isArray(tags) ? tags : []).forEach((t) => {
+    let connectionId = '';
+    let name = '';
+    if (typeof t === 'string') {
+      const pos = t.indexOf(':');
+      if (pos > 0) {
+        connectionId = t.slice(0, pos).trim();
+        name = t.slice(pos + 1).trim();
+      }
+    } else if (t && typeof t === 'object') {
+      connectionId = String(t.connection_id || '').trim();
+      name = String(t.name || '').trim();
+    }
+    if (connectionId && name) entries.push({ connection_id: connectionId, name });
+  });
+  return { all: false, entries };
+}
+
 function renderLoggerReportDetails() {
   if (!els.loggerReportDetails) return;
   const id = getSelectedReportId();
@@ -1222,6 +1369,8 @@ function renderLoggerReportDetails() {
   }
 
   const runtime = reporterRuntimeStatusById().get(id) || null;
+  const reporterHealth = state.reporterRuntime?.reporter || {};
+  const validation = state.reporterValidationById?.get?.(id) || null;
   const rows = [
     ['ID', id],
     ['Name', report?.name || ''],
@@ -1237,38 +1386,16 @@ function renderLoggerReportDetails() {
     ['Runs total', runtime?.runs_total ?? ''],
     ['Failures total', runtime?.failures_total ?? ''],
     ['Last inserted', runtime?.last_inserted ?? ''],
-    ['Last error', runtime?.last_error || '']
+    ['Last error', runtime?.last_error || ''],
+    ['Runtime state file', reporterHealth?.state_path || ''],
+    ['State loaded', fmtLogTime(reporterHealth?.last_state_load_ms)],
+    ['Validation', validation ? (validation.ok ? 'ok' : 'failed') : ''],
+    ['Matched tags', validation?.matched_count ?? ''],
+    ['Validation message', validation?.message || '']
   ];
 
   els.loggerReportDetails.style.display = '';
   els.loggerReportDetails.textContent = '';
-
-  const header = document.createElement('div');
-  header.className = 'row-actions';
-  header.style.marginBottom = '8px';
-
-  const title = document.createElement('div');
-  title.className = 'small';
-  title.textContent = 'Report Details';
-  header.appendChild(title);
-
-  const spacer = document.createElement('div');
-  spacer.style.flex = '1';
-  header.appendChild(spacer);
-
-  const runBtn = document.createElement('button');
-  runBtn.className = 'btn';
-  runBtn.type = 'button';
-  runBtn.textContent = 'Run Now';
-  runBtn.addEventListener('click', () => runReporterReportNow(id).catch(() => {}));
-  header.appendChild(runBtn);
-
-  const editBtn = document.createElement('button');
-  editBtn.className = 'btn';
-  editBtn.type = 'button';
-  editBtn.textContent = 'Properties';
-  editBtn.addEventListener('click', () => openLoggerReportModal({ mode: 'edit', id }));
-  header.appendChild(editBtn);
 
   const grid = document.createElement('div');
   grid.style.display = 'grid';
@@ -1289,7 +1416,6 @@ function renderLoggerReportDetails() {
     grid.appendChild(cell);
   });
 
-  els.loggerReportDetails.appendChild(header);
   els.loggerReportDetails.appendChild(grid);
 }
 
@@ -1341,6 +1467,18 @@ function renderLoggerReportsTable() {
     tr.appendChild(mk(String(runtime?.last_error || ''), false));
 
     const actions = document.createElement('td');
+    const validateBtn = document.createElement('button');
+    validateBtn.className = 'btn';
+    validateBtn.type = 'button';
+    validateBtn.textContent = 'Validate';
+    validateBtn.disabled = !id;
+    validateBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      validateReporterReport(id).catch(() => {});
+    });
+    actions.appendChild(validateBtn);
+
     const runBtn = document.createElement('button');
     runBtn.className = 'btn';
     runBtn.type = 'button';
@@ -1352,6 +1490,19 @@ function renderLoggerReportsTable() {
       runReporterReportNow(id).catch(() => {});
     });
     actions.appendChild(runBtn);
+
+    const propsBtn = document.createElement('button');
+    propsBtn.className = 'btn';
+    propsBtn.type = 'button';
+    propsBtn.textContent = 'Properties';
+    propsBtn.disabled = !id;
+    propsBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openLoggerReportModal({ mode: 'edit', id });
+    });
+    actions.appendChild(propsBtn);
+
     tr.appendChild(actions);
 
     tr.addEventListener('click', () => {
@@ -1370,16 +1521,112 @@ function renderLoggerReportsTable() {
   });
 }
 
+function dataCheckStatusLabel(check, status) {
+  if (status?.running) return 'running';
+  if (!check?.enabled) return 'disabled';
+  if (status && status.supported_schedule === false) return 'unsupported schedule';
+  if (status?.last_error) return 'alarm';
+  if (status?.ok) return 'ok';
+  if (status?.next_run_ms) return 'scheduled';
+  return 'idle';
+}
+
+function renderLoggerDataChecksTable() {
+  if (!els.loggerDataChecksTbody) return;
+  const checks = Array.isArray(state.reporterDataChecks) ? state.reporterDataChecks : [];
+  const selectedId = getSelectedDataCheckId();
+  els.loggerDataChecksTbody.textContent = '';
+
+  if (!checks.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 12;
+    td.className = 'small';
+    td.textContent = 'No data checks configured. Right-click “Data Checks” to add one.';
+    tr.appendChild(td);
+    els.loggerDataChecksTbody.appendChild(tr);
+    return;
+  }
+
+  const mk = (text, mono = false) => {
+    const td = document.createElement('td');
+    if (mono) td.classList.add('mono');
+    td.textContent = String(text ?? '');
+    return td;
+  };
+
+  checks.forEach((c) => {
+    const id = String(c?.id || '').trim();
+    const st = state.reporterDataCheckStatusById?.get?.(id) || null;
+    const tr = document.createElement('tr');
+    tr.classList.toggle('is-selected', id && id === selectedId);
+    tr.appendChild(mk(id, true));
+    tr.appendChild(mk(String(c?.name || ''), false));
+    tr.appendChild(mk(reporterDatabaseLabel(c?.database_id), false));
+    tr.appendChild(mk(String(c?.schedule?.on_calendar || ''), true));
+    tr.appendChild(mk(c?.enabled ? 'yes' : 'no', false));
+    tr.appendChild(mk(dataCheckStatusLabel(c, st), false));
+    tr.appendChild(mk(st?.value ?? '', true));
+    tr.appendChild(mk(st?.has_numeric_value ? st.numeric_value : '', true));
+    tr.appendChild(mk(st?.below_low ? 'yes' : '', false));
+    tr.appendChild(mk(st?.above_high ? 'yes' : '', false));
+    tr.appendChild(mk(String(st?.last_error || ''), false));
+
+    const actions = document.createElement('td');
+    const runBtn = document.createElement('button');
+    runBtn.className = 'btn';
+    runBtn.type = 'button';
+    runBtn.textContent = 'Run Now';
+    runBtn.disabled = !id;
+    runBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      runReporterDataCheckNow(id).catch(() => {});
+    });
+    actions.appendChild(runBtn);
+
+    const propsBtn = document.createElement('button');
+    propsBtn.className = 'btn';
+    propsBtn.type = 'button';
+    propsBtn.textContent = 'Properties';
+    propsBtn.disabled = !id;
+    propsBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openLoggerDataCheckModal({ mode: 'edit', id });
+    });
+    actions.appendChild(propsBtn);
+    tr.appendChild(actions);
+
+    tr.addEventListener('click', () => {
+      if (!id) return;
+      state.loggerSelectedNodeId = `logger:data_check:${id}`;
+      renderLoggerTree();
+      renderLoggerDataChecksTable();
+    });
+    tr.addEventListener('dblclick', () => {
+      if (!id) return;
+      openLoggerDataCheckModal({ mode: 'edit', id });
+    });
+    els.loggerDataChecksTbody.appendChild(tr);
+  });
+}
+
 function renderLoggerDetails() {
   const sid = String(state.loggerSelectedNodeId || '').trim();
   const showReports = sid === 'logger:reports' || sid.startsWith('logger:report:');
+  const showDataChecks = sid === 'logger:data_checks' || sid.startsWith('logger:data_check:');
 
-  if (els.loggerDbTable) els.loggerDbTable.style.display = showReports ? 'none' : '';
+  if (els.loggerDbTable) els.loggerDbTable.style.display = (showReports || showDataChecks) ? 'none' : '';
   if (els.loggerReportsTable) els.loggerReportsTable.style.display = showReports ? '' : 'none';
+  if (els.loggerDataChecksTable) els.loggerDataChecksTable.style.display = showDataChecks ? '' : 'none';
 
   if (showReports) {
     renderLoggerReportsTable();
     renderLoggerReportDetails();
+  } else if (showDataChecks) {
+    if (els.loggerReportDetails) els.loggerReportDetails.style.display = 'none';
+    renderLoggerDataChecksTable();
   } else {
     if (els.loggerReportDetails) els.loggerReportDetails.style.display = 'none';
     renderLoggerTable();
@@ -1407,6 +1654,10 @@ function openLoggerDbModal(opts = {}) {
   if (els.loggerDbModalName) els.loggerDbModalName.value = String(db?.name || '');
   if (els.loggerDbModalType) els.loggerDbModalType.value = String(db?.type || 'mysql');
   if (els.loggerDbModalOpcbridgeBaseUrl) els.loggerDbModalOpcbridgeBaseUrl.value = String(db?.opcbridge_base_url || '');
+  if (els.loggerDbModalMonitorEnabled) els.loggerDbModalMonitorEnabled.checked = Boolean(db?.monitor_enabled);
+  if (els.loggerDbModalMonitorIntervalSec) els.loggerDbModalMonitorIntervalSec.value = String(db?.monitor_interval_sec ?? 60);
+  if (els.loggerDbModalMonitorTimeoutSec) els.loggerDbModalMonitorTimeoutSec.value = String(db?.monitor_timeout_sec ?? 10);
+  if (els.loggerDbModalMonitorQuery) els.loggerDbModalMonitorQuery.value = String(db?.monitor_query || 'SELECT 1');
   const t = String(db?.type || 'mysql').trim() || 'mysql';
   renderLoggerDbModalFieldsForType(t);
 
@@ -1483,6 +1734,41 @@ async function testReporterDatabase(id) {
   }
 }
 
+async function testReporterDatabaseFromModal() {
+  loggerModalSetStatus('Testing database settings…');
+  try {
+    const db = getDatabaseFromModalUi();
+    if (!db.id) throw new Error('ID is required.');
+    if (db.type === 'odbc') {
+      if (!canUseOdbcInUi()) throw new Error('ODBC support is not installed on this server.');
+      if (!db.odbc_driver) throw new Error('ODBC Driver is required.');
+      if (!db.odbc_host) throw new Error('SQL Server Host is required.');
+      if (!db.odbc_port || db.odbc_port < 1 || db.odbc_port > 65535) throw new Error('SQL Server Port is required.');
+      if (!db.odbc_database) throw new Error('Database is required.');
+      if (!db.odbc_user) throw new Error('User is required.');
+    } else {
+      if (!db.mysql_host) throw new Error('MySQL Host is required.');
+      if (!db.mysql_port || db.mysql_port < 1 || db.mysql_port > 65535) throw new Error('MySQL Port is required.');
+      if (!db.mysql_user) throw new Error('MySQL User is required.');
+      if (!db.mysql_database) throw new Error('MySQL Database is required.');
+    }
+    if (db.monitor_timeout_sec < 1) throw new Error('Monitor Timeout must be at least 1 second.');
+    if (!db.monitor_query) throw new Error('Monitor Query is required.');
+
+    const resp = await apiPostJson('/api/reporter/databases/test', { database: db });
+    const result = resp?.reporter_test?.json || {};
+    if (!resp?.ok) throw new Error(String(resp?.error || result?.error || 'Failed'));
+    const latency = Number(result?.latency_ms || 0);
+    const msg = `Database settings OK${latency > 0 ? ` (${latency} ms)` : ''}.`;
+    loggerSetStatus(msg);
+    loggerModalSetStatus(msg);
+  } catch (err) {
+    const msg = `Test failed: ${err.message || err}`;
+    loggerSetStatus(msg);
+    loggerModalSetStatus(msg);
+  }
+}
+
 function getDatabaseFromModalUi() {
   const id = String(els.loggerDbModalId?.value || '').trim();
   const type = String(els.loggerDbModalType?.value || 'mysql').trim() || 'mysql';
@@ -1491,6 +1777,10 @@ function getDatabaseFromModalUi() {
     name: String(els.loggerDbModalName?.value || '').trim(),
     type,
     opcbridge_base_url: String(els.loggerDbModalOpcbridgeBaseUrl?.value || '').trim(),
+    monitor_enabled: Boolean(els.loggerDbModalMonitorEnabled?.checked),
+    monitor_interval_sec: Math.trunc(Number(els.loggerDbModalMonitorIntervalSec?.value ?? 60) || 60),
+    monitor_timeout_sec: Math.trunc(Number(els.loggerDbModalMonitorTimeoutSec?.value ?? 10) || 10),
+    monitor_query: String(els.loggerDbModalMonitorQuery?.value || 'SELECT 1').trim() || 'SELECT 1',
   };
 
   if (type === 'odbc') {
@@ -1540,6 +1830,9 @@ async function saveReporterDatabase() {
       if (!db.mysql_user) throw new Error('MySQL User is required.');
       if (!db.mysql_database) throw new Error('MySQL Database is required.');
     }
+    if (db.monitor_interval_sec < 5) throw new Error('Monitor Interval must be at least 5 seconds.');
+    if (db.monitor_timeout_sec < 1) throw new Error('Monitor Timeout must be at least 1 second.');
+    if (!db.monitor_query) throw new Error('Monitor Query is required.');
 
     const resp = await apiPostJson('/api/reporter/databases', { database: db });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
@@ -1913,6 +2206,224 @@ async function deleteReporterReport(id) {
   }
 }
 
+function closeLoggerDataCheckModal() {
+  if (els.loggerDataCheckModal) els.loggerDataCheckModal.style.display = 'none';
+  state.loggerDataCheckEditingMode = '';
+  state.loggerDataCheckEditingId = '';
+  if (els.loggerDataCheckStatus) els.loggerDataCheckStatus.textContent = '';
+}
+
+function openLoggerDataCheckModal(opts = {}) {
+  const mode = String(opts.mode || 'edit').trim() || 'edit';
+  const id = String(opts.id || '').trim();
+  const isNew = mode === 'new';
+  const check = (!isNew && id) ? findDataCheckById(id) : null;
+
+  state.loggerDataCheckEditingMode = isNew ? 'new' : 'edit';
+  state.loggerDataCheckEditingId = isNew ? '' : id;
+
+  if (els.loggerDataCheckModal) els.loggerDataCheckModal.style.display = 'block';
+  if (els.loggerDataCheckStatus) els.loggerDataCheckStatus.textContent = '';
+  if (els.loggerDataCheckId) {
+    els.loggerDataCheckId.disabled = !isNew;
+    els.loggerDataCheckId.value = isNew ? '' : String(check?.id || id);
+  }
+  if (els.loggerDataCheckName) els.loggerDataCheckName.value = String(check?.name || '');
+  if (els.loggerDataCheckEnabled) els.loggerDataCheckEnabled.checked = Boolean(check?.enabled);
+  if (els.loggerDataCheckOnCalendar) els.loggerDataCheckOnCalendar.value = String(check?.schedule?.on_calendar || '*-*-* 23:55:00');
+  if (els.loggerDataCheckTimeoutSec) els.loggerDataCheckTimeoutSec.value = String(check?.timeout_sec ?? 30);
+  if (els.loggerDataCheckQuery) els.loggerDataCheckQuery.value = String(check?.query || '');
+  if (els.loggerDataCheckLowThreshold) els.loggerDataCheckLowThreshold.value = (check?.low_threshold == null) ? '' : String(check.low_threshold);
+  if (els.loggerDataCheckHighThreshold) els.loggerDataCheckHighThreshold.value = (check?.high_threshold == null) ? '' : String(check.high_threshold);
+
+  if (els.loggerDataCheckDatabase) {
+    const dbs = Array.isArray(state.reporterDatabases) ? state.reporterDatabases : [];
+    els.loggerDataCheckDatabase.innerHTML = ['<option value=""></option>'].concat(
+      dbs
+        .slice()
+        .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { sensitivity: 'base' }))
+        .map((d) => {
+          const did = String(d?.id || '').trim();
+          const label = String(d?.name || d?.id || '').trim() || did;
+          return `<option value="${escapeHtml(did)}">${escapeHtml(label)}</option>`;
+        })
+    ).join('');
+    els.loggerDataCheckDatabase.value = String(check?.database_id || '');
+  }
+}
+
+function startNewDataCheck() {
+  openLoggerDataCheckModal({ mode: 'new' });
+}
+
+function getDataCheckFromModalUi() {
+  const lowText = String(els.loggerDataCheckLowThreshold?.value || '').trim();
+  const highText = String(els.loggerDataCheckHighThreshold?.value || '').trim();
+  const out = {
+    id: String(els.loggerDataCheckId?.value || '').trim(),
+    name: String(els.loggerDataCheckName?.value || '').trim(),
+    database_id: String(els.loggerDataCheckDatabase?.value || '').trim(),
+    enabled: Boolean(els.loggerDataCheckEnabled?.checked),
+    schedule: { on_calendar: String(els.loggerDataCheckOnCalendar?.value || '').trim() },
+    timeout_sec: Math.trunc(Number(els.loggerDataCheckTimeoutSec?.value ?? 30) || 30),
+    query: String(els.loggerDataCheckQuery?.value || '').trim()
+  };
+  if (lowText) out.low_threshold = Number(lowText);
+  if (highText) out.high_threshold = Number(highText);
+  return out;
+}
+
+async function saveReporterDataCheck() {
+  if (els.loggerDataCheckStatus) els.loggerDataCheckStatus.textContent = 'Saving…';
+  try {
+    const check = getDataCheckFromModalUi();
+    if (!check.id) throw new Error('ID is required.');
+    if (!check.database_id) throw new Error('Database is required.');
+    if (!check.schedule.on_calendar) throw new Error('Schedule is required.');
+    if (!check.query) throw new Error('Query is required.');
+    if (check.low_threshold != null && !Number.isFinite(check.low_threshold)) throw new Error('Low threshold must be numeric.');
+    if (check.high_threshold != null && !Number.isFinite(check.high_threshold)) throw new Error('High threshold must be numeric.');
+
+    const resp = await apiPostJson('/api/reporter/data-checks', { data_check: check });
+    if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+    await refreshReporterAll();
+    state.loggerSelectedNodeId = `logger:data_check:${check.id}`;
+    renderLoggerTree();
+    renderLoggerDetails();
+    closeLoggerDataCheckModal();
+    loggerSetStatus('Data check saved.');
+  } catch (err) {
+    if (els.loggerDataCheckStatus) els.loggerDataCheckStatus.textContent = `Failed: ${err.message || err}`;
+  }
+}
+
+async function deleteReporterDataCheck(id) {
+  const cid = String(id || '').trim();
+  if (!cid) return;
+  if (!window.confirm(`Delete data check '${cid}'?`)) return;
+  loggerSetStatus('Deleting…');
+  try {
+    const resp = await apiPostJson('/api/reporter/data-checks/delete', { id: cid });
+    if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+    await refreshReporterAll();
+    state.loggerSelectedNodeId = 'logger:data_checks';
+    renderLoggerTree();
+    renderLoggerDetails();
+    loggerSetStatus('Deleted.');
+  } catch (err) {
+    loggerSetStatus(`Failed: ${err.message || err}`);
+  }
+}
+
+async function runReporterDataCheckNow(id) {
+  const cid = String(id || '').trim();
+  if (!cid) return;
+  loggerSetStatus(`Starting data check '${cid}'…`);
+  try {
+    const resp = await apiPostJson('/api/reporter/data-checks/run', { id: cid });
+    if (!resp?.ok) throw new Error(String(resp?.error || resp?.reporter_run?.json?.error || 'Failed'));
+    loggerSetStatus(`Data check '${cid}' started.`);
+    window.setTimeout(() => refreshReporterRuntimeStatus().catch(() => {}), 1000);
+  } catch (err) {
+    loggerSetStatus(`Run failed: ${err.message || err}`);
+  }
+}
+
+async function validateReporterReport(id) {
+  const rid = String(id || '').trim();
+  if (!rid) return;
+  loggerSetStatus(`Validating report '${rid}'…`);
+  const result = {
+    ok: false,
+    id: rid,
+    checked_at_ms: Date.now(),
+    matched_count: 0,
+    missing: [],
+    errors: [],
+    warnings: []
+  };
+
+  try {
+    const report = findReportById(rid);
+    if (!report) throw new Error(`Report not found: ${rid}`);
+
+    const dbId = String(report.database_id || '').trim();
+    const db = findDatabaseById(dbId);
+    if (!dbId) result.errors.push('Database is not selected.');
+    else if (!db) result.errors.push(`Database not found: ${dbId}`);
+
+    const table = String(report.table || '').trim();
+    if (!table) result.errors.push('Table is required.');
+    else if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) result.errors.push('Table name should contain only letters, numbers, and underscores, and must not start with a number.');
+
+    const mode = String(report.mode || 'scheduled').trim() || 'scheduled';
+    if (mode !== 'scheduled') result.errors.push(`Unsupported report mode: ${mode}`);
+    const onCalendar = String(report?.schedule?.on_calendar || '').trim();
+    if (!onCalendar) result.errors.push('Schedule is required.');
+    else if (!reporterScheduleSupported(onCalendar)) result.errors.push(`Unsupported schedule: ${onCalendar}`);
+
+    const selection = normalizeReporterTagSelection(report.tags);
+    if (!selection.all && selection.entries.length < 1) result.errors.push('Tag selection is empty.');
+
+    if (dbId && db) {
+      try {
+        const dbTest = await apiPostJson('/api/reporter/databases/test', { id: dbId });
+        result.database_test = dbTest?.reporter_test?.json || dbTest;
+        if (!dbTest?.ok) result.errors.push(`Database test failed: ${dbTest?.error || result.database_test?.error || 'unknown error'}`);
+      } catch (err) {
+        result.errors.push(`Database test failed: ${err.message || err}`);
+      }
+    }
+
+    if (selection.all) {
+      const tagsResp = await apiGet('/api/opcbridge/tags', { timeoutMs: 30000 });
+      const liveTags = Array.isArray(tagsResp?.tags) ? tagsResp.tags.filter((t) => !t.system) : [];
+      result.matched_count = liveTags.length;
+      if (result.matched_count < 1) result.errors.push('No live user tags matched ALL.');
+    } else if (selection.entries.length) {
+      const tagsResp = await apiGet('/api/opcbridge/tags', { timeoutMs: 30000 });
+      const liveTags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
+      const exact = new Set(liveTags.map((t) => `${String(t.connection_id || '')}\u001f${String(t.name || '')}`));
+      const matched = new Set();
+      selection.entries.forEach((entry) => {
+        const name = String(entry.name || '');
+        const hasGlob = name.includes('*') || name.includes('?');
+        if (hasGlob) {
+          let count = 0;
+          liveTags.forEach((t) => {
+            if (String(t.connection_id || '') === entry.connection_id && reporterGlobMatch(name, String(t.name || ''))) {
+              matched.add(`${String(t.connection_id || '')}\u001f${String(t.name || '')}`);
+              count++;
+            }
+          });
+          if (count < 1) result.missing.push(`${entry.connection_id}:${name}`);
+        } else {
+          const key = `${entry.connection_id}\u001f${name}`;
+          if (exact.has(key)) matched.add(key);
+          else result.missing.push(`${entry.connection_id}:${name}`);
+        }
+      });
+      result.matched_count = matched.size;
+      if (result.matched_count < 1) result.errors.push('No selected tags matched live opcbridge tags.');
+      if (result.missing.length) result.warnings.push(`${result.missing.length} selected tag(s) did not match live tags.`);
+    }
+
+    result.ok = result.errors.length === 0;
+    result.message = result.ok
+      ? `OK. Matched ${result.matched_count} tag(s).`
+      : result.errors.join(' ');
+    state.reporterValidationById.set(rid, result);
+    renderLoggerReportDetails();
+    loggerSetStatus(`Validation ${result.ok ? 'OK' : 'failed'}: ${result.message}`);
+  } catch (err) {
+    result.errors.push(String(err.message || err));
+    result.message = result.errors.join(' ');
+    state.reporterValidationById.set(rid, result);
+    renderLoggerReportDetails();
+    loggerSetStatus(`Validation failed: ${err.message || err}`);
+  }
+}
+
 async function runReporterReportNow(id) {
   const rid = String(id || '').trim();
   if (!rid) return;
@@ -1933,9 +2444,15 @@ async function runReporterReportNow(id) {
 async function refreshReporterRuntimeStatus() {
   const runtime = await apiGet('/api/reporter/runtime/status');
   state.reporterRuntime = runtime?.ok ? runtime : null;
+  updateReporterDatabaseStatusMap(runtime);
+  updateReporterDataCheckStatusMap(runtime);
   if (state.loggerSelectedNodeId === 'logger:reports' || String(state.loggerSelectedNodeId || '').startsWith('logger:report:')) {
     renderLoggerReportsTable();
     renderLoggerReportDetails();
+  } else if (state.loggerSelectedNodeId === 'logger:data_checks' || String(state.loggerSelectedNodeId || '').startsWith('logger:data_check:')) {
+    renderLoggerDataChecksTable();
+  } else if (state.loggerSelectedNodeId === 'logger:databases' || String(state.loggerSelectedNodeId || '').startsWith('logger:db:')) {
+    renderLoggerTable();
   }
   return runtime;
 }
@@ -2004,6 +2521,17 @@ async function refreshReporterAll() {
   }
 
   try {
+    const checks = await apiGet('/api/reporter/data-checks');
+    if (!checks?.ok) throw new Error(String(checks?.error || 'Failed'));
+    state.reporterDataChecks = Array.isArray(checks?.data_checks) ? checks.data_checks : [];
+    out.data_checks = checks;
+  } catch (err) {
+    out.ok = false;
+    out.data_checks = { ok: false, error: String(err.message || err) };
+    state.reporterDataChecks = [];
+  }
+
+  try {
     const runtime = await refreshReporterRuntimeStatus();
     out.runtime = runtime;
   } catch (err) {
@@ -2027,13 +2555,15 @@ function wireLoggerUi() {
   if (els.loggerDbCloseBtn) els.loggerDbCloseBtn.addEventListener('click', closeLoggerDbModal);
   if (els.loggerDbCancelBtn) els.loggerDbCancelBtn.addEventListener('click', closeLoggerDbModal);
   if (els.loggerDbTestBtn) els.loggerDbTestBtn.addEventListener('click', () => {
-    const id = String(els.loggerDbModalId?.value || state.loggerEditingId || '').trim();
-    testReporterDatabase(id).catch(() => {});
+    testReporterDatabaseFromModal().catch(() => {});
   });
   if (els.loggerDbSaveBtn) els.loggerDbSaveBtn.addEventListener('click', () => saveReporterDatabase());
   if (els.loggerReportCloseBtn) els.loggerReportCloseBtn.addEventListener('click', closeLoggerReportModal);
   if (els.loggerReportCancelBtn) els.loggerReportCancelBtn.addEventListener('click', closeLoggerReportModal);
   if (els.loggerReportSaveBtn) els.loggerReportSaveBtn.addEventListener('click', saveAndApplyReporterReport);
+  if (els.loggerDataCheckCloseBtn) els.loggerDataCheckCloseBtn.addEventListener('click', closeLoggerDataCheckModal);
+  if (els.loggerDataCheckCancelBtn) els.loggerDataCheckCancelBtn.addEventListener('click', closeLoggerDataCheckModal);
+  if (els.loggerDataCheckSaveBtn) els.loggerDataCheckSaveBtn.addEventListener('click', saveReporterDataCheck);
   if (els.loggerReportScheduleKind) els.loggerReportScheduleKind.addEventListener('change', renderLoggerReportScheduleUi);
   if (els.loggerReportEveryMinutes) els.loggerReportEveryMinutes.addEventListener('input', renderLoggerReportScheduleUi);
   if (els.loggerReportHourlyMinute) els.loggerReportHourlyMinute.addEventListener('input', renderLoggerReportScheduleUi);
@@ -13354,6 +13884,44 @@ function connectionIdForConnFilePath(pathRel) {
   return inferConnectionIdFromPath(rel);
 }
 
+function systemTagNamesFromCaches() {
+  const byName = new Set();
+  const addRows = (rows) => {
+    (Array.isArray(rows) ? rows : []).forEach((t) => {
+      if (String(t?.connection_id || '') !== '_system') return;
+      const name = String(t?.name || t?.tag || '').trim();
+      if (name) byName.add(name);
+    });
+  };
+  if (Array.isArray(state.liveTagsLast?.tags)) addRows(state.liveTagsLast.tags);
+  if (state.workspaceSystemChildrenCache instanceof Map) {
+    for (const rows of state.workspaceSystemChildrenCache.values()) addRows(rows);
+  }
+  return Array.from(byName);
+}
+
+function systemPathChildren(prefix) {
+  const p = String(prefix || '').trim();
+  const out = new Set();
+  systemTagNamesFromCaches().forEach((name) => {
+    if (!name.startsWith(p)) return;
+    const rest = name.slice(p.length);
+    const slash = rest.indexOf('/');
+    if (slash > 0) out.add(rest.slice(0, slash));
+  });
+  return Array.from(out).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function makeSystemGroup(id, label, prefix, children = []) {
+  return {
+    id,
+    type: 'system_group',
+    label,
+    meta: { connection_id: '_system', system: true, tag_prefix: prefix },
+    children
+  };
+}
+
 
 function buildTree() {
   const root = {
@@ -13402,54 +13970,50 @@ function buildTree() {
     connectivity.children.push(deviceNode);
   });
 
+  const connectionSystemChildren = connItems
+    .map((f) => connectionIdForConnFilePath(String(f?.path || '')))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    .map((id) => makeSystemGroup(`system:connections:${id}`, id, `System/Connections/${id}/`));
+
+  const networkIfaceChildren = systemPathChildren('System/Host/Network/')
+    .map((iface) => makeSystemGroup(`system:host:network:${iface}`, iface, `System/Host/Network/${iface}/`));
+
+  const reporterDatabaseIds = new Set([
+    ...systemPathChildren('System/Reporter/Databases/'),
+    ...(Array.isArray(state.reporterDatabases) ? state.reporterDatabases.map((d) => String(d?.id || '').trim()) : [])
+  ].filter(Boolean));
+  const reporterCheckIds = new Set([
+    ...systemPathChildren('System/Reporter/DataChecks/'),
+    ...(Array.isArray(state.reporterDataChecks) ? state.reporterDataChecks.map((c) => String(c?.id || '').trim()) : [])
+  ].filter(Boolean));
+  const reporterDatabaseChildren = Array.from(reporterDatabaseIds)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    .map((id) => makeSystemGroup(`system:reporter:database:${id}`, id, `System/Reporter/Databases/${id}/`));
+  const reporterCheckChildren = Array.from(reporterCheckIds)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    .map((id) => makeSystemGroup(`system:reporter:data_check:${id}`, id, `System/Reporter/DataChecks/${id}/`));
+
   const systemNode = {
     id: 'folder:system',
     type: 'system_folder',
     label: 'System',
     meta: { connection_id: '_system', system: true },
     children: [
-      {
-        id: 'system:bridge',
-        type: 'system_group',
-        label: 'Bridge',
-        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Bridge/' },
-        children: []
-      },
-      {
-        id: 'system:connections',
-        type: 'system_group',
-        label: 'Connections',
-        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Connections/' },
-        children: []
-      },
-      {
-        id: 'system:clock',
-        type: 'system_group',
-        label: 'Clock',
-        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Clock/' },
-        children: []
-      },
-      {
-        id: 'system:opcua',
-        type: 'system_group',
-        label: 'OPC UA',
-        meta: { connection_id: '_system', system: true, tag_prefix: 'System/OpcUa/' },
-        children: []
-      },
-      {
-        id: 'system:host',
-        type: 'system_group',
-        label: 'Host',
-        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Host/' },
-        children: []
-      },
-      {
-        id: 'system:alarms',
-        type: 'system_group',
-        label: 'Alarms',
-        meta: { connection_id: '_system', system: true, tag_prefix: 'System/Alarms/' },
-        children: []
-      }
+      makeSystemGroup('system:bridge', 'Bridge', 'System/Bridge/'),
+      makeSystemGroup('system:connections', 'Connections', 'System/Connections/', connectionSystemChildren),
+      makeSystemGroup('system:clock', 'Clock', 'System/Clock/'),
+      makeSystemGroup('system:opcua', 'OPC UA', 'System/OpcUa/', [
+        makeSystemGroup('system:opcua:sync', 'Sync', 'System/OpcUa/Sync/')
+      ]),
+      makeSystemGroup('system:host', 'Host', 'System/Host/', [
+        makeSystemGroup('system:host:network', 'Network', 'System/Host/Network/', networkIfaceChildren)
+      ]),
+      makeSystemGroup('system:alarms', 'Alarms', 'System/Alarms/'),
+      makeSystemGroup('system:reporter', 'Reporter', 'System/Reporter/', [
+        makeSystemGroup('system:reporter:databases', 'Databases', 'System/Reporter/Databases/', reporterDatabaseChildren),
+        makeSystemGroup('system:reporter:data_checks', 'Data Checks', 'System/Reporter/DataChecks/', reporterCheckChildren)
+      ])
     ]
   };
   root.children.push(systemNode);
@@ -13458,7 +14022,7 @@ function buildTree() {
 }
 
 function renderTreeNode(node, container) {
-  const canExpand = ['project', 'folder', 'device', 'system_folder'].includes(String(node.type || ''));
+  const canExpand = ['project', 'folder', 'device', 'system_folder', 'system_group'].includes(String(node.type || ''));
   const expanded = state.expanded.has(node.id);
 
   const btn = document.createElement('button');
@@ -13491,6 +14055,9 @@ function renderTreeNode(node, container) {
     meta.textContent = n ? `${n} tag(s)` : '';
   } else if (node.type === 'system_folder') {
     meta.textContent = 'read-only';
+  } else if (node.type === 'system_group') {
+    const n = Array.isArray(node.children) ? node.children.length : 0;
+    meta.textContent = n ? `${n}` : '';
   } else if (node.type === 'event_connection') {
     const n = Array.isArray(node.children) ? node.children.length : 0;
     meta.textContent = n ? `${n} event(s)` : '';
@@ -13650,6 +14217,7 @@ function renderWorkspaceDetails(node) {
         if (!state.workspaceSystemChildrenCache) state.workspaceSystemChildrenCache = new Map();
         state.workspaceSystemChildrenCache.set(cacheKey, Array.isArray(resp?.tags) ? resp.tags : []);
         if (state.workspaceSystemChildrenInflight === cacheKey) state.workspaceSystemChildrenInflight = '';
+        renderWorkspaceTree();
         const selected = state.selectedNodeId ? findWorkspaceNodeById(state.workspaceTreeRoot, state.selectedNodeId) : null;
         if (selected && String(selected.id || '') === String(node.id || '')) {
           renderWorkspaceDetails(selected);
