@@ -24,7 +24,7 @@ It is purposefully modular, file-configured, deterministic, and designed for mis
 
 opcbridge builds on most Linux distributions. Recommended:
 
-Debian 12/13 or Ubuntu 20+
+Debian 12+ or Ubuntu 20+
 
 g++ with C++17 support
 

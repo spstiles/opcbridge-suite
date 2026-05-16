@@ -1459,11 +1459,11 @@
   <div class="modal-overlay" id="loggerReportModal" style="display:none;">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loggerReportModalTitle">
       <div class="modal-titlebar">
-        <div class="modal-title" id="loggerReportModalTitle">Report</div>
+        <div class="modal-title" id="loggerReportModalTitle">Log Job</div>
         <button class="btn" id="loggerReportCloseBtn" type="button">Close</button>
       </div>
       <div class="modal-body">
-        <div class="hint" id="loggerReportHint">Configure a report schedule and tag selection.</div>
+        <div class="hint" id="loggerReportHint">Configure a logging schedule and tag selection.</div>
         <div class="form" style="max-width: 720px;">
           <div class="form-row"><label>ID</label><input id="loggerReportId" type="text" placeholder="e.g. hist_5m" /></div>
           <div class="form-row"><label>Name</label><input id="loggerReportName" type="text" placeholder="e.g. 5-minute Historian" /></div>
@@ -1620,7 +1620,7 @@
         <button class="btn" id="loggerTagPickerCloseBtn" type="button">Close</button>
       </div>
       <div class="modal-body">
-        <div class="hint">Choose tags to add to the report. Uses live tag list from opcbridge.</div>
+        <div class="hint">Choose tags to add to the log job. Uses live tag list from opcbridge.</div>
         <div class="form" style="max-width: 960px;">
           <div class="form-row">
             <label>Search</label>
@@ -1657,6 +1657,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260515_data_checks"></script>
+  <script src="app.js?v=20260515_logger_jobs_label"></script>
 </body>
 </html>

@@ -75,7 +75,7 @@ Options:
   -h, --help              Show help
 
 Notes:
-- This script targets Debian 13 derivatives (systemd).
+- This script targets Debian 12+ and Debian-like derivatives using systemd.
 - It never writes secrets into the repo; tokens live in ${ENV_FILE}.
 - --deps uses apt plus source builds for libplctag/IXWebSocket and needs network access.
 - Source dependency versions can be overridden with OPCBRIDGE_LIBPLCTAG_VERSION and

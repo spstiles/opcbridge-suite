@@ -966,7 +966,7 @@ function buildLoggerTreeRoots() {
   const reportsRoot = {
     id: 'logger:reports',
     type: 'logger_root_reports',
-    label: 'Reports',
+    label: 'Logger',
     children: reports
       .slice()
       .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { sensitivity: 'base' }))
@@ -1027,7 +1027,7 @@ function renderLoggerTreeNode(node, container) {
   const meta = document.createElement('span');
   meta.className = 'meta';
   if (node.type === 'logger_root_db') meta.textContent = `${(node.children || []).length} db(s)`;
-  if (node.type === 'logger_root_reports') meta.textContent = `${(node.children || []).length} report(s)`;
+  if (node.type === 'logger_root_reports') meta.textContent = `${(node.children || []).length} job(s)`;
   if (node.type === 'logger_root_data_checks') meta.textContent = `${(node.children || []).length} check(s)`;
 
   btn.appendChild(twisty);
@@ -1054,7 +1054,7 @@ function renderLoggerTreeNode(node, container) {
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
     }
     if (node.type === 'logger_root_reports') {
-      items.push({ label: 'Add Report…', onClick: () => startNewReport() });
+      items.push({ label: 'Add Log Job…', onClick: () => startNewReport() });
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
     }
     if (node.type === 'logger_root_data_checks') {
@@ -1073,7 +1073,7 @@ function renderLoggerTreeNode(node, container) {
       items.push({ label: 'Validate', onClick: () => validateReporterReport(id) });
       items.push({ label: 'Run Now', onClick: () => runReporterReportNow(id) });
       items.push({ label: 'Properties…', onClick: () => openLoggerReportModal({ mode: 'edit', id }) });
-      items.push({ label: 'Delete Report…', onClick: () => deleteReporterReport(id) });
+      items.push({ label: 'Delete Log Job…', onClick: () => deleteReporterReport(id) });
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
     }
     if (node.type === 'logger_data_check') {
@@ -1109,7 +1109,7 @@ function renderLoggerTree() {
     const dbCount = Array.isArray(roots[0]?.children) ? roots[0].children.length : 0;
     const reportCount = Array.isArray(roots[1]?.children) ? roots[1].children.length : 0;
     const checkCount = Array.isArray(roots[2]?.children) ? roots[2].children.length : 0;
-    els.loggerTreeNote.textContent = `Databases: ${dbCount} · Reports: ${reportCount} · Data checks: ${checkCount}`;
+    els.loggerTreeNote.textContent = `Databases: ${dbCount} · Logger jobs: ${reportCount} · Data checks: ${checkCount}`;
   }
   if (!state.loggerSelectedNodeId) state.loggerSelectedNodeId = 'logger:databases';
 }
@@ -1431,7 +1431,7 @@ function renderLoggerReportsTable() {
     const td = document.createElement('td');
     td.colSpan = 12;
     td.className = 'small';
-    td.textContent = 'No reports configured. Right-click “Reports” to add one.';
+    td.textContent = 'No log jobs configured. Right-click “Logger” to add one.';
     tr.appendChild(td);
     els.loggerReportsTbody.appendChild(tr);
     return;
@@ -2168,7 +2168,7 @@ async function saveAndApplyReporterReport() {
     const report = getReportFromModalUi();
     if (!report.id) throw new Error('ID is required.');
     if (!report.database_id) throw new Error('Database is required.');
-    if (report.mode === 'scheduled' && !report.schedule.on_calendar) throw new Error('OnCalendar is required for scheduled reports.');
+    if (report.mode === 'scheduled' && !report.schedule.on_calendar) throw new Error('OnCalendar is required for scheduled log jobs.');
 
     const save = await apiPostJson('/api/reporter/reports', { report });
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
@@ -2191,7 +2191,7 @@ async function saveAndApplyReporterReport() {
 async function deleteReporterReport(id) {
   const rid = String(id || '').trim();
   if (!rid) return;
-  if (!window.confirm(`Delete report '${rid}'?`)) return;
+  if (!window.confirm(`Delete log job '${rid}'?`)) return;
   loggerSetStatus('Deleting…');
   try {
     const resp = await apiPostJson('/api/reporter/reports/delete', { id: rid });
@@ -2332,7 +2332,7 @@ async function runReporterDataCheckNow(id) {
 async function validateReporterReport(id) {
   const rid = String(id || '').trim();
   if (!rid) return;
-  loggerSetStatus(`Validating report '${rid}'…`);
+  loggerSetStatus(`Validating log job '${rid}'…`);
   const result = {
     ok: false,
     id: rid,
@@ -2345,7 +2345,7 @@ async function validateReporterReport(id) {
 
   try {
     const report = findReportById(rid);
-    if (!report) throw new Error(`Report not found: ${rid}`);
+    if (!report) throw new Error(`Log job not found: ${rid}`);
 
     const dbId = String(report.database_id || '').trim();
     const db = findDatabaseById(dbId);
@@ -2357,7 +2357,7 @@ async function validateReporterReport(id) {
     else if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) result.errors.push('Table name should contain only letters, numbers, and underscores, and must not start with a number.');
 
     const mode = String(report.mode || 'scheduled').trim() || 'scheduled';
-    if (mode !== 'scheduled') result.errors.push(`Unsupported report mode: ${mode}`);
+    if (mode !== 'scheduled') result.errors.push(`Unsupported log job mode: ${mode}`);
     const onCalendar = String(report?.schedule?.on_calendar || '').trim();
     if (!onCalendar) result.errors.push('Schedule is required.');
     else if (!reporterScheduleSupported(onCalendar)) result.errors.push(`Unsupported schedule: ${onCalendar}`);
@@ -2429,11 +2429,11 @@ async function runReporterReportNow(id) {
   if (!rid) return;
   const before = reporterRuntimeStatusById().get(rid) || null;
   const beforeRuns = Number(before?.runs_total || 0);
-  loggerSetStatus(`Starting report '${rid}'…`);
+  loggerSetStatus(`Starting log job '${rid}'…`);
   try {
     const resp = await apiPostJson('/api/reporter/reports/run', { id: rid });
     if (!resp?.ok) throw new Error(String(resp?.error || resp?.reporter_run?.json?.error || 'Failed'));
-    loggerSetStatus(`Report '${rid}' started.`);
+    loggerSetStatus(`Log job '${rid}' started.`);
     await refreshReporterRuntimeStatus();
     watchReporterReportRun(rid, beforeRuns).catch(() => {});
   } catch (err) {
@@ -2470,15 +2470,15 @@ async function watchReporterReportRun(id, beforeRuns) {
       const st = statuses.find((s) => String(s?.id || '').trim() === rid) || null;
       const runs = Number(st?.runs_total || 0);
       if (st?.running) {
-        loggerSetStatus(`Report '${rid}' running…`);
+        loggerSetStatus(`Log job '${rid}' running…`);
       } else if (runs > beforeRuns) {
-        if (st?.last_error) loggerSetStatus(`Report '${rid}' finished with error.`);
-        else loggerSetStatus(`Report '${rid}' finished. Inserted ${Number(st?.last_inserted || 0)} row(s).`);
+        if (st?.last_error) loggerSetStatus(`Log job '${rid}' finished with error.`);
+        else loggerSetStatus(`Log job '${rid}' finished. Inserted ${Number(st?.last_inserted || 0)} row(s).`);
         return;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
     }
-    loggerSetStatus(`Report '${rid}' still pending. Refresh for latest status.`);
+    loggerSetStatus(`Log job '${rid}' still pending. Refresh for latest status.`);
   } finally {
     state.loggerRunWatchIds.delete(rid);
   }

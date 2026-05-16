@@ -50,6 +50,41 @@ Use the **Configure** tab to set:
 
 If you change the SCADA listen host/port, restart `opcbridge-scada`.
 
+## Data Logger
+
+The **Data Logger** tab configures `opcbridge-reporter`.
+
+Tree sections:
+
+- **Databases**: database connection profiles. The database modal can test the entered settings before saving. Saved databases can also run a periodic health monitor query.
+- **Logger**: scheduled tag logging jobs. A log job selects opcbridge tags and writes their current values into a configured database table on a schedule.
+- **Data Checks**: scheduled SQL checks. A data check runs a query, uses the first column of the first row as the check value, compares it against optional low/high thresholds, and exposes status through system tags.
+
+Example data-check query for records from the previous calendar day:
+
+```sql
+SELECT COUNT(*) AS value
+FROM your_table_name
+WHERE your_timestamp_column >= CURDATE() - INTERVAL 1 DAY
+  AND your_timestamp_column < CURDATE();
+```
+
+Useful data-check system tags:
+
+- `System/Reporter/DataChecks/<check_id>/Ok`
+- `System/Reporter/DataChecks/<check_id>/BelowLow`
+- `System/Reporter/DataChecks/<check_id>/AboveHigh`
+- `System/Reporter/DataChecks/<check_id>/Value`
+- `System/Reporter/DataChecks/<check_id>/NumericValue`
+- `System/Reporter/DataChecks/<check_id>/LastError`
+
+Useful database monitor system tags:
+
+- `System/Reporter/Databases/<database_id>/Ok`
+- `System/Reporter/Databases/<database_id>/ConsecutiveFailures`
+- `System/Reporter/Databases/<database_id>/LatencyMs`
+- `System/Reporter/Databases/<database_id>/LastError`
+
 ## Configuration file
 
 Edit `config.json` manually if needed:

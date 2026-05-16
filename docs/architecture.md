@@ -83,7 +83,7 @@ Target feature buckets:
 - Alarms & Events (rule editing, workflow, history)
 - HMI configuration (screen deployment, defaults, operator settings)
 - Services & system configuration (systemd, ports, updates, backups)
-- Reporter configuration and scheduling (future)
+- Data Logger / reporter configuration (databases, scheduled log jobs, data checks)
 
 ## Design Rules (to prevent overlap)
 
@@ -137,7 +137,7 @@ This is intentionally pragmatic: focus on cohesion, stability, and the “single
 
 **Installer**
 - `install.sh`:
-  - `--deps` installs required packages on Debian 13 derivatives
+  - `--deps` installs required packages on Debian 12+ systems
   - Interactive/flag-based selection: `opcbridge` only vs full suite
 - Systemd unit templates and a “status” helper command for quick diagnostics.
 
@@ -153,5 +153,5 @@ This is intentionally pragmatic: focus on cohesion, stability, and the “single
 - Alarm filtering/grouping for large deployments.
 
 **opcbridge-scada**
-- Reporter scheduling UI (cron integration or internal scheduler service).
+- Data Logger enhancements: richer validation, history views, and eventual report-generation workflows separate from log jobs.
 - Project export/import (bundle) with anonymization support.

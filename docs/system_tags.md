@@ -128,6 +128,67 @@ becomes `false` and counts fall back to safe defaults.
 | `System/Alarms/NotificationFailures` | `uint64` | Failed notification attempt count. |
 | `System/Alarms/LastNotificationAgeMs` | `int64` | Age of last notification attempt, or `-1` if none. |
 
+## Reporter Tags
+
+OPCBridge reads reporter runtime status from `opcbridge-reporter` with a short
+timeout and caches the result. If the reporter service is unavailable,
+`System/Reporter/RuntimeConnected` becomes `false` and counts fall back to safe
+defaults.
+
+Top-level reporter tags:
+
+| Tag | Type | Meaning |
+| --- | --- | --- |
+| `System/Reporter/RuntimeConnected` | `bool` | Reporter health API is reachable and healthy. |
+| `System/Reporter/DatabaseCount` | `int32` | Number of database monitor status rows reported by the reporter service. |
+| `System/Reporter/DataCheckCount` | `int32` | Number of data-check status rows reported by the reporter service. |
+
+Database monitor tags are published under:
+
+```text
+System/Reporter/Databases/<database_id>/
+```
+
+| Tag | Type | Meaning |
+| --- | --- | --- |
+| `Id` | `string` | Database ID. |
+| `Enabled` | `bool` | Database monitor is enabled. |
+| `Ok` | `bool` | Last monitor query succeeded. |
+| `Running` | `bool` | Monitor query is currently running. |
+| `LatencyMs` | `int64` | Last monitor query duration in milliseconds. |
+| `ChecksTotal` | `uint64` | Total monitor checks run. |
+| `FailuresTotal` | `uint64` | Total failed monitor checks. |
+| `ConsecutiveFailures` | `int64` | Consecutive failed monitor checks. |
+| `LastCheckAgeMs` | `int64` | Age of last monitor check, or `-1` if none. |
+| `LastError` | `string` | Last monitor error text. |
+
+Data-check tags are published under:
+
+```text
+System/Reporter/DataChecks/<check_id>/
+```
+
+A data check runs a configured SQL query on a schedule. The first column of the
+first row is used as the check value. Optional low/high thresholds set
+`BelowLow`, `AboveHigh`, and `Ok`.
+
+| Tag | Type | Meaning |
+| --- | --- | --- |
+| `Id` | `string` | Data-check ID. |
+| `Enabled` | `bool` | Data check is enabled. |
+| `Ok` | `bool` | Last run succeeded and was inside any configured thresholds. |
+| `Running` | `bool` | Data check is currently running. |
+| `BelowLow` | `bool` | Numeric value is below the configured low threshold. |
+| `AboveHigh` | `bool` | Numeric value is above the configured high threshold. |
+| `Value` | `string` | Raw first-column value from the query. |
+| `NumericValue` | `float64` | Numeric version of `Value`, when it can be parsed. |
+| `HasNumericValue` | `bool` | `true` when `Value` was parsed as a number. |
+| `LatencyMs` | `int64` | Last query duration in milliseconds. |
+| `RunsTotal` | `uint64` | Total data-check runs. |
+| `FailuresTotal` | `uint64` | Runs that failed or violated thresholds. |
+| `LastRunAgeMs` | `int64` | Age of last run, or `-1` if none. |
+| `LastError` | `string` | Last error or threshold violation text. |
+
 ## Alarm Examples
 
 Alarm when a PLC connection has too many stale/bad tags:
@@ -155,4 +216,22 @@ connection_id: _system
 tag_name: System/Host/MemoryUsedPercent
 type: high
 threshold: 90
+```
+
+Alarm when a database monitor fails:
+
+```text
+connection_id: _system
+tag_name: System/Reporter/Databases/main/Ok
+type: equals
+value: false
+```
+
+Alarm when a daily record-count data check is below its threshold:
+
+```text
+connection_id: _system
+tag_name: System/Reporter/DataChecks/daily_record_count/BelowLow
+type: equals
+value: true
 ```
