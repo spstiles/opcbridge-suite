@@ -413,6 +413,23 @@ function sanitizeId(value) {
     .replace(/[^A-Za-z0-9_.-]/g, '_');
 }
 
+function uniqueCopyId(sourceId, usedIds) {
+  const src = sanitizeId(sourceId) || 'item';
+  const root = `${src}_copy`;
+  let id = root;
+  let n = 2;
+  while (usedIds.has(id)) {
+    id = `${root}_${n}`;
+    n += 1;
+  }
+  return id;
+}
+
+function copyName(value) {
+  const name = String(value || '').trim();
+  return name ? `${name} Copy` : 'Copy';
+}
+
 function normalizeOnCalendar(value) {
   const s = String(value || '').trim();
   return s;
@@ -2119,6 +2136,54 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/reporter/databases/duplicate') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = String(parsed?.id || '').trim();
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+
+      const root = readJsonFileOrNull(REPORTER_DATABASES_PATH) || { databases: [] };
+      const raw = Array.isArray(root?.databases) ? root.databases : [];
+      const nextList = raw
+        .filter((d) => d && typeof d === 'object' && !Array.isArray(d))
+        .map((d) => ({ ...d }));
+      const source = nextList.find((d) => String(d?.id || '').trim() === id);
+      if (!source) {
+        sendJson(res, 404, { ok: false, error: `Database '${id}' not found.` });
+        return;
+      }
+
+      const used = new Set(nextList.map((d) => String(d?.id || '').trim()).filter(Boolean));
+      const newId = uniqueCopyId(id, used);
+      const next = JSON.parse(JSON.stringify(source));
+      next.id = newId;
+      next.name = copyName(next.name || source.name || id);
+      nextList.push(next);
+      writeJsonFile(REPORTER_DATABASES_PATH, { databases: nextList });
+      const reload = await reporterApiRequest('POST', '/reload');
+      const safe = { ...next };
+      const type = String(safe.type || 'mysql').trim() || 'mysql';
+      const pwField = (type === 'odbc') ? 'odbc_password' : 'mysql_password';
+      const pw = (typeof safe[pwField] === 'string') ? safe[pwField] : '';
+      delete safe[pwField];
+      safe.password_set = Boolean(pw);
+      safe.mysql_password_set = safe.password_set;
+      sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, source_id: id, id: newId, database: safe, reporter_reload: reload });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
   // Read/write report definitions (metadata) for opcbridge-reporter.
   // Permissions: suite.manage_server
   if (url.pathname === '/api/reporter/reports') {
@@ -2210,6 +2275,48 @@ const server = http.createServer(async (req, res) => {
       writeJsonFile(REPORTER_REPORTS_PATH, { reports: afterList });
       const reload = await reporterApiRequest('POST', '/reload');
       sendJson(res, 200, { ok: true, deleted: true, id, reporter_reload: reload });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/reports/duplicate') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+
+      const root = readJsonFileOrNull(REPORTER_REPORTS_PATH) || { reports: [] };
+      const raw = Array.isArray(root?.reports) ? root.reports : [];
+      const nextList = raw
+        .filter((r) => r && typeof r === 'object' && !Array.isArray(r))
+        .map((r) => ({ ...r }));
+      const source = nextList.find((r) => sanitizeId(r?.id) === id);
+      if (!source) {
+        sendJson(res, 404, { ok: false, error: `Log job '${id}' not found.` });
+        return;
+      }
+
+      const used = new Set(nextList.map((r) => sanitizeId(r?.id)).filter(Boolean));
+      const newId = uniqueCopyId(id, used);
+      const next = JSON.parse(JSON.stringify(source));
+      next.id = newId;
+      next.name = copyName(next.name || source.name || id);
+      next.enabled = false;
+      nextList.push(next);
+      writeJsonFile(REPORTER_REPORTS_PATH, { reports: nextList });
+      const reload = await reporterApiRequest('POST', '/reload');
+      sendJson(res, 200, { ok: true, path: REPORTER_REPORTS_PATH, source_id: id, id: newId, report: next, reporter_reload: reload });
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
@@ -2323,6 +2430,48 @@ const server = http.createServer(async (req, res) => {
       writeJsonFile(REPORTER_DATA_CHECKS_PATH, { data_checks: afterList });
       const reload = await reporterApiRequest('POST', '/reload');
       sendJson(res, 200, { ok: true, deleted: true, id, reporter_reload: reload });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/data-checks/duplicate') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+
+      const root = readJsonFileOrNull(REPORTER_DATA_CHECKS_PATH) || { data_checks: [] };
+      const raw = Array.isArray(root?.data_checks) ? root.data_checks : [];
+      const nextList = raw
+        .filter((c) => c && typeof c === 'object' && !Array.isArray(c))
+        .map((c) => ({ ...c }));
+      const source = nextList.find((c) => sanitizeId(c?.id) === id);
+      if (!source) {
+        sendJson(res, 404, { ok: false, error: `Data check '${id}' not found.` });
+        return;
+      }
+
+      const used = new Set(nextList.map((c) => sanitizeId(c?.id)).filter(Boolean));
+      const newId = uniqueCopyId(id, used);
+      const next = JSON.parse(JSON.stringify(source));
+      next.id = newId;
+      next.name = copyName(next.name || source.name || id);
+      next.enabled = false;
+      nextList.push(next);
+      writeJsonFile(REPORTER_DATA_CHECKS_PATH, { data_checks: nextList });
+      const reload = await reporterApiRequest('POST', '/reload');
+      sendJson(res, 200, { ok: true, path: REPORTER_DATA_CHECKS_PATH, source_id: id, id: newId, data_check: next, reporter_reload: reload });
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }

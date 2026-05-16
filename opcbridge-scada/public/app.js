@@ -1065,6 +1065,7 @@ function renderLoggerTreeNode(node, container) {
 	      const id = String(node.meta?.id || '').trim();
 	      items.push({ label: 'Test Connection', onClick: () => testReporterDatabase(id) });
 	      items.push({ label: 'Properties…', onClick: () => openLoggerDbModal({ mode: 'edit', id }) });
+	      items.push({ label: 'Duplicate…', onClick: () => duplicateReporterDatabase(id) });
 	      items.push({ label: 'Delete Database…', onClick: () => deleteReporterDatabase(id) });
 	      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
 	    }
@@ -1073,6 +1074,7 @@ function renderLoggerTreeNode(node, container) {
       items.push({ label: 'Validate', onClick: () => validateReporterReport(id) });
       items.push({ label: 'Run Now', onClick: () => runReporterReportNow(id) });
       items.push({ label: 'Properties…', onClick: () => openLoggerReportModal({ mode: 'edit', id }) });
+      items.push({ label: 'Duplicate…', onClick: () => duplicateReporterReport(id) });
       items.push({ label: 'Delete Log Job…', onClick: () => deleteReporterReport(id) });
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
     }
@@ -1080,6 +1082,7 @@ function renderLoggerTreeNode(node, container) {
       const id = String(node.meta?.id || '').trim();
       items.push({ label: 'Run Now', onClick: () => runReporterDataCheckNow(id) });
       items.push({ label: 'Properties…', onClick: () => openLoggerDataCheckModal({ mode: 'edit', id }) });
+      items.push({ label: 'Duplicate…', onClick: () => duplicateReporterDataCheck(id) });
       items.push({ label: 'Delete Data Check…', onClick: () => deleteReporterDataCheck(id) });
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
     }
@@ -1694,6 +1697,24 @@ function startNewDatabase() {
   openLoggerDbModal({ mode: 'new' });
 }
 
+async function duplicateReporterDatabase(id) {
+  const dbId = String(id || '').trim();
+  if (!dbId) return;
+  loggerSetStatus(`Duplicating database '${dbId}'…`);
+  try {
+    const resp = await apiPostJson('/api/reporter/databases/duplicate', { id: dbId });
+    if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+    const newId = String(resp?.id || resp?.database?.id || '').trim();
+    await refreshReporterAll();
+    if (newId) state.loggerSelectedNodeId = `logger:db:${newId}`;
+    renderLoggerTree();
+    renderLoggerDetails();
+    loggerSetStatus(newId ? `Duplicated database '${dbId}' as '${newId}'.` : 'Duplicated database.');
+  } catch (err) {
+    loggerSetStatus(`Duplicate failed: ${err.message || err}`);
+  }
+}
+
 async function deleteReporterDatabase(id) {
   const dbId = String(id || '').trim();
   if (!dbId) return;
@@ -2136,6 +2157,25 @@ function startNewReport() {
   openLoggerReportModal({ mode: 'new' });
 }
 
+async function duplicateReporterReport(id) {
+  const rid = String(id || '').trim();
+  if (!rid) return;
+  loggerSetStatus(`Duplicating log job '${rid}'…`);
+  try {
+    const resp = await apiPostJson('/api/reporter/reports/duplicate', { id: rid });
+    if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+    const newId = String(resp?.id || resp?.report?.id || '').trim();
+    await refreshReporterAll();
+    await refreshReporterSystemTagsForScada();
+    if (newId) state.loggerSelectedNodeId = `logger:report:${newId}`;
+    renderLoggerTree();
+    renderLoggerDetails();
+    loggerSetStatus(newId ? `Duplicated log job '${rid}' as '${newId}'. The copy is disabled.` : 'Duplicated log job. The copy is disabled.');
+  } catch (err) {
+    loggerSetStatus(`Duplicate failed: ${err.message || err}`);
+  }
+}
+
 function getReportFromModalUi() {
   const id = String(els.loggerReportId?.value || '').trim();
   const mode = String(els.loggerReportMode?.value || 'scheduled').trim() || 'scheduled';
@@ -2254,6 +2294,25 @@ function openLoggerDataCheckModal(opts = {}) {
 
 function startNewDataCheck() {
   openLoggerDataCheckModal({ mode: 'new' });
+}
+
+async function duplicateReporterDataCheck(id) {
+  const cid = String(id || '').trim();
+  if (!cid) return;
+  loggerSetStatus(`Duplicating data check '${cid}'…`);
+  try {
+    const resp = await apiPostJson('/api/reporter/data-checks/duplicate', { id: cid });
+    if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+    const newId = String(resp?.id || resp?.data_check?.id || '').trim();
+    await refreshReporterAll();
+    await refreshReporterSystemTagsForScada();
+    if (newId) state.loggerSelectedNodeId = `logger:data_check:${newId}`;
+    renderLoggerTree();
+    renderLoggerDetails();
+    loggerSetStatus(newId ? `Duplicated data check '${cid}' as '${newId}'. The copy is disabled.` : 'Duplicated data check. The copy is disabled.');
+  } catch (err) {
+    loggerSetStatus(`Duplicate failed: ${err.message || err}`);
+  }
 }
 
 function getDataCheckFromModalUi() {
