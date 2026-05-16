@@ -136,6 +136,9 @@ const REPORTER_BIN = String(
   '/opt/opcbridge-suite/bin/opcbridge-reporter'
 ).trim();
 
+const REPORTER_API_HOST = String(process.env.OPCBRIDGE_REPORTER_API_HOST || '127.0.0.1').trim();
+const REPORTER_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_REPORTER_API_PORT || 8095) || 8095);
+
 const SYSTEMD_UNITS_DIR = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNITS_DIR || '/etc/systemd/system').trim();
 
 const SUITE_PREFIX = String(process.env.OPCBRIDGE_SUITE_PREFIX || '/opt/opcbridge-suite').trim();
@@ -410,46 +413,48 @@ function normalizeOnCalendar(value) {
   return s;
 }
 
-function buildReporterServiceUnit(reportId, cfgPath) {
-  // Skip overlapping runs via flock. systemd creates RuntimeDirectory owned by User.
-  const safeId = sanitizeId(reportId);
-  const lockPath = `/run/opcbridge-reporter/${safeId}.lock`;
-  const jobName = safeId;
+function reporterApiRequest(method, apiPath, bodyObj = null, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const body = bodyObj ? JSON.stringify(bodyObj) : '';
+    const opts = {
+      hostname: REPORTER_API_HOST,
+      port: REPORTER_API_PORT,
+      path: apiPath,
+      method,
+      timeout: timeoutMs,
+      headers: {
+        Accept: 'application/json'
+      }
+    };
+    if (body) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.headers['Content-Length'] = Buffer.byteLength(body);
+    }
 
-  return (
-`# Managed by opcbridge-scada
-[Unit]
-Description=opcbridge-reporter job ${safeId}
-After=network.target
-
-[Service]
-Type=oneshot
-User=${SUITE_SERVICE_USER}
-Group=${SUITE_SERVICE_GROUP}
-WorkingDirectory=${SUITE_PREFIX}
-RuntimeDirectory=opcbridge-reporter
-ExecStart=/usr/bin/flock -n ${lockPath} ${REPORTER_BIN} --job ${jobName} --config ${cfgPath}
-`
-  );
-}
-
-function buildReporterTimerUnit(reportId, onCalendar, persistent = true) {
-  const safeId = sanitizeId(reportId);
-  const cal = normalizeOnCalendar(onCalendar);
-  return (
-`# Managed by opcbridge-scada
-[Unit]
-Description=opcbridge-reporter schedule ${safeId}
-
-[Timer]
-OnCalendar=${cal}
-Persistent=${persistent ? 'true' : 'false'}
-Unit=opcbridge-reporter-${safeId}.service
-
-[Install]
-WantedBy=timers.target
-`
-  );
+    const up = http.request(opts, (upRes) => {
+      const chunks = [];
+      upRes.on('data', (c) => chunks.push(c));
+      upRes.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let parsed = null;
+        try { parsed = JSON.parse(text || '{}'); } catch {}
+        resolve({
+          ok: upRes.statusCode >= 200 && upRes.statusCode < 300 && parsed?.ok !== false,
+          status: upRes.statusCode,
+          json: parsed,
+          text
+        });
+      });
+    });
+    up.on('timeout', () => {
+      up.destroy(new Error('Reporter API timeout'));
+    });
+    up.on('error', (err) => {
+      resolve({ ok: false, status: 0, error: String(err.message || err) });
+    });
+    if (body) up.write(body);
+    up.end();
+  });
 }
 
 function readReporterDatabasesRaw() {
@@ -2186,30 +2191,21 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       writeJsonFile(REPORTER_REPORTS_PATH, { reports: afterList });
-      let systemctl = null;
-      if (SYSTEMD_ENABLED) {
-        const timerName = `opcbridge-reporter-${id}.timer`;
-        systemctl = runSystemctl(['disable', '--now', timerName]);
-      }
-      sendJson(res, 200, { ok: true, deleted: true, id, systemctl });
+      const reload = await reporterApiRequest('POST', '/reload');
+      sendJson(res, 200, { ok: true, deleted: true, id, reporter_reload: reload });
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
     return;
   }
 
-  // Apply a report schedule: write per-report reporter config + install/enable systemd timer.
+  // Apply a report schedule by asking the long-running reporter service to reload.
   if (url.pathname === '/api/reporter/reports/apply') {
     if (!await requireManageServerPerm()) return;
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    if (!SYSTEMD_ENABLED) {
-      sendJson(res, 200, { ok: false, error: 'Systemd management disabled in opcbridge-scada.' });
-      return;
-    }
-
     try {
       const bodyBuf = await readBody(req);
       const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
@@ -2251,62 +2247,92 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // 1) Write per-report reporter config (includes mysql_password).
-      fs.mkdirSync(REPORTER_REPORTS_DIR, { recursive: true });
-      const cfgPath = path.join(REPORTER_REPORTS_DIR, `${id}.json`);
-      const jobName = id;
-      const cfg = {
-        opcbridge_base_url: String(db.opcbridge_base_url || report.opcbridge_base_url || 'http://127.0.0.1:8080'),
-        mysql_host: String(db.mysql_host || ''),
-        mysql_port: Math.trunc(Number(db.mysql_port || 0) || 0),
-        mysql_user: String(db.mysql_user || ''),
-        mysql_password: (typeof db.mysql_password === 'string') ? db.mysql_password : '',
-        mysql_database: String(db.mysql_database || ''),
-        jobs: {
-          [jobName]: {
-            table: String(report.table || 'tag_log'),
-            tags: Array.isArray(report.tags) ? report.tags : []
-          }
-        }
-      };
-      fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-
-      // 2) Install systemd unit + timer.
-      const serviceName = `opcbridge-reporter-${id}.service`;
-      const timerName = `opcbridge-reporter-${id}.timer`;
-      const servicePath = path.join(SYSTEMD_UNITS_DIR, serviceName);
-      const timerPath = path.join(SYSTEMD_UNITS_DIR, timerName);
-
-      const serviceUnit = buildReporterServiceUnit(id, cfgPath);
-      const timerUnit = buildReporterTimerUnit(id, onCalendar, report?.schedule?.persistent !== false);
-
-      const svcWrite = installSystemdUnitFile(serviceUnit, servicePath);
-      if (!svcWrite.ok) throw new Error(`Failed to install ${serviceName}: ${svcWrite.stderr || svcWrite.error || 'unknown error'}`);
-      const tmrWrite = installSystemdUnitFile(timerUnit, timerPath);
-      if (!tmrWrite.ok) throw new Error(`Failed to install ${timerName}: ${tmrWrite.stderr || tmrWrite.error || 'unknown error'}`);
-
-      const daemonReload = runSystemctl(['daemon-reload']);
-      if (!daemonReload.ok) {
-        sendJson(res, 500, { ok: false, error: 'systemctl daemon-reload failed', daemonReload, svcWrite, tmrWrite });
+      const reload = await reporterApiRequest('POST', '/reload');
+      if (!reload.ok) {
+        sendJson(res, 502, {
+          ok: false,
+          id,
+          error: reload.error || reload.json?.error || `Reporter service reload failed with status ${reload.status}`,
+          reporter_reload: reload
+        });
         return;
       }
 
-      const enabled = Boolean(report.enabled);
-      const ctl = enabled
-        ? runSystemctl(['enable', '--now', timerName])
-        : runSystemctl(['disable', '--now', timerName]);
-
       sendJson(res, 200, {
-        ok: ctl.ok,
+        ok: true,
         id,
-        enabled,
-        config_path: cfgPath,
-        service: { name: serviceName, path: servicePath },
-        timer: { name: timerName, path: timerPath, on_calendar: onCalendar },
-        svcWrite,
-        tmrWrite,
-        daemonReload,
-        systemctl: ctl
+        enabled: Boolean(report.enabled),
+        reporter_reload: reload
+      });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/runtime/status') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const health = await reporterApiRequest('GET', '/health');
+    sendJson(res, health.ok ? 200 : 502, {
+      ok: health.ok,
+      reporter: health.json || null,
+      error: health.error || health.json?.error || null,
+      api: { host: REPORTER_API_HOST, port: REPORTER_API_PORT, status: health.status }
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/reports/run') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+      const run = await reporterApiRequest('POST', `/jobs/${encodeURIComponent(id)}/run`);
+      sendJson(res, run.ok ? 202 : 502, {
+        ok: run.ok,
+        id,
+        reporter_run: run,
+        error: run.error || run.json?.error || null
+      });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/databases/test') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+      const test = await reporterApiRequest('POST', `/databases/${encodeURIComponent(id)}/test`, null, 15000);
+      sendJson(res, test.ok ? 200 : 502, {
+        ok: test.ok,
+        id,
+        reporter_test: test,
+        error: test.error || test.json?.error || null
       });
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });

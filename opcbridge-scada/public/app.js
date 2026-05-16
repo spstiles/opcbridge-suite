@@ -151,6 +151,7 @@
   loggerDbTable: document.getElementById('loggerDbTable'),
   loggerReportsTable: document.getElementById('loggerReportsTable'),
   loggerReportsTbody: document.getElementById('loggerReportsTbody'),
+  loggerReportDetails: document.getElementById('loggerReportDetails'),
   loggerRefreshBtn: document.getElementById('loggerRefreshBtn'),
   loggerStatus: document.getElementById('loggerStatus'),
   loggerJson: document.getElementById('loggerJson'),
@@ -180,6 +181,7 @@
   loggerDbModalOdbcEncrypt: document.getElementById('loggerDbModalOdbcEncrypt'),
   loggerDbModalOdbcTrustCert: document.getElementById('loggerDbModalOdbcTrustCert'),
   loggerDbCancelBtn: document.getElementById('loggerDbCancelBtn'),
+  loggerDbTestBtn: document.getElementById('loggerDbTestBtn'),
   loggerDbSaveBtn: document.getElementById('loggerDbSaveBtn'),
   loggerDbModalStatus: document.getElementById('loggerDbModalStatus'),
 
@@ -699,6 +701,8 @@ const state = {
   reporterDatabases: [],
   reporterReports: [],
   reporterCapabilities: null,
+  reporterRuntime: null,
+  loggerRunWatchIds: new Set(),
   loggerSelectedNodeId: 'logger:databases',
   loggerEditingId: '',
   loggerEditingMode: '', // '' | 'new' | 'edit'
@@ -1011,12 +1015,14 @@ function renderLoggerTreeNode(node, container) {
     }
 	    if (node.type === 'logger_db') {
 	      const id = String(node.meta?.id || '').trim();
+	      items.push({ label: 'Test Connection', onClick: () => testReporterDatabase(id) });
 	      items.push({ label: 'Properties…', onClick: () => openLoggerDbModal({ mode: 'edit', id }) });
 	      items.push({ label: 'Delete Database…', onClick: () => deleteReporterDatabase(id) });
 	      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
 	    }
     if (node.type === 'logger_report') {
       const id = String(node.meta?.id || '').trim();
+      items.push({ label: 'Run Now', onClick: () => runReporterReportNow(id) });
       items.push({ label: 'Properties…', onClick: () => openLoggerReportModal({ mode: 'edit', id }) });
       items.push({ label: 'Delete Report…', onClick: () => deleteReporterReport(id) });
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
@@ -1117,7 +1123,7 @@ function renderLoggerTable() {
   if (!dbs.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 9;
+    td.colSpan = 10;
     td.className = 'small';
     td.textContent = 'No databases configured. Right-click “Databases” to add one.';
     tr.appendChild(td);
@@ -1146,6 +1152,20 @@ function renderLoggerTable() {
     tr.appendChild(mk(String(d?.opcbridge_base_url || ''), true));
     tr.appendChild(mk((d?.password_set || d?.mysql_password_set) ? 'set' : '', false));
 
+    const actions = document.createElement('td');
+    const testBtn = document.createElement('button');
+    testBtn.className = 'btn';
+    testBtn.type = 'button';
+    testBtn.textContent = 'Test';
+    testBtn.disabled = !id;
+    testBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      testReporterDatabase(id).catch(() => {});
+    });
+    actions.appendChild(testBtn);
+    tr.appendChild(actions);
+
     tr.addEventListener('click', () => {
       if (!id) return;
       state.loggerSelectedNodeId = `logger:db:${id}`;
@@ -1170,16 +1190,120 @@ function reporterDatabaseLabel(databaseId) {
   return name ? `${name} (${id})` : id;
 }
 
+function reporterRuntimeStatusById() {
+  const statuses = Array.isArray(state.reporterRuntime?.reporter?.statuses)
+    ? state.reporterRuntime.reporter.statuses
+    : [];
+  const out = new Map();
+  statuses.forEach((s) => {
+    const id = String(s?.id || '').trim();
+    if (id) out.set(id, s);
+  });
+  return out;
+}
+
+function reporterJobStatusLabel(report, status) {
+  if (status?.running) return 'running';
+  if (status?.last_error) return 'error';
+  if (!report?.enabled) return 'disabled';
+  if (status && status.supported_schedule === false) return 'unsupported schedule';
+  if (status?.next_run_ms) return 'scheduled';
+  return 'idle';
+}
+
+function renderLoggerReportDetails() {
+  if (!els.loggerReportDetails) return;
+  const id = getSelectedReportId();
+  const report = id ? findReportById(id) : null;
+  if (!report) {
+    els.loggerReportDetails.style.display = 'none';
+    els.loggerReportDetails.textContent = '';
+    return;
+  }
+
+  const runtime = reporterRuntimeStatusById().get(id) || null;
+  const rows = [
+    ['ID', id],
+    ['Name', report?.name || ''],
+    ['Database', reporterDatabaseLabel(report?.database_id)],
+    ['Table', report?.table || 'tag_log'],
+    ['Enabled', report?.enabled ? 'yes' : 'no'],
+    ['Mode', report?.mode || 'scheduled'],
+    ['Schedule', report?.schedule?.on_calendar || ''],
+    ['Status', reporterJobStatusLabel(report, runtime)],
+    ['Running', runtime?.running ? 'yes' : 'no'],
+    ['Last run', fmtLogTime(runtime?.last_run_ms)],
+    ['Next run', fmtLogTime(runtime?.next_run_ms)],
+    ['Runs total', runtime?.runs_total ?? ''],
+    ['Failures total', runtime?.failures_total ?? ''],
+    ['Last inserted', runtime?.last_inserted ?? ''],
+    ['Last error', runtime?.last_error || '']
+  ];
+
+  els.loggerReportDetails.style.display = '';
+  els.loggerReportDetails.textContent = '';
+
+  const header = document.createElement('div');
+  header.className = 'row-actions';
+  header.style.marginBottom = '8px';
+
+  const title = document.createElement('div');
+  title.className = 'small';
+  title.textContent = 'Report Details';
+  header.appendChild(title);
+
+  const spacer = document.createElement('div');
+  spacer.style.flex = '1';
+  header.appendChild(spacer);
+
+  const runBtn = document.createElement('button');
+  runBtn.className = 'btn';
+  runBtn.type = 'button';
+  runBtn.textContent = 'Run Now';
+  runBtn.addEventListener('click', () => runReporterReportNow(id).catch(() => {}));
+  header.appendChild(runBtn);
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'btn';
+  editBtn.type = 'button';
+  editBtn.textContent = 'Properties';
+  editBtn.addEventListener('click', () => openLoggerReportModal({ mode: 'edit', id }));
+  header.appendChild(editBtn);
+
+  const grid = document.createElement('div');
+  grid.style.display = 'grid';
+  grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(190px, 1fr))';
+  grid.style.gap = '8px 14px';
+
+  rows.forEach(([label, value]) => {
+    const cell = document.createElement('div');
+    const k = document.createElement('div');
+    k.className = 'small';
+    k.textContent = label;
+    const v = document.createElement('div');
+    v.className = 'mono';
+    v.style.overflowWrap = 'anywhere';
+    v.textContent = String(value ?? '');
+    cell.appendChild(k);
+    cell.appendChild(v);
+    grid.appendChild(cell);
+  });
+
+  els.loggerReportDetails.appendChild(header);
+  els.loggerReportDetails.appendChild(grid);
+}
+
 function renderLoggerReportsTable() {
   if (!els.loggerReportsTbody) return;
   const reports = Array.isArray(state.reporterReports) ? state.reporterReports : [];
+  const runtimeById = reporterRuntimeStatusById();
   const selectedId = getSelectedReportId();
   els.loggerReportsTbody.textContent = '';
 
   if (!reports.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 6;
+    td.colSpan = 12;
     td.className = 'small';
     td.textContent = 'No reports configured. Right-click “Reports” to add one.';
     tr.appendChild(td);
@@ -1202,6 +1326,7 @@ function renderLoggerReportsTable() {
     const mode = String(r?.mode || 'scheduled').trim() || 'scheduled';
     const enabled = Boolean(r?.enabled);
     const cal = String(r?.schedule?.on_calendar || '').trim();
+    const runtime = runtimeById.get(id) || null;
 
     tr.appendChild(mk(id, true));
     tr.appendChild(mk(String(r?.name || ''), false));
@@ -1209,12 +1334,32 @@ function renderLoggerReportsTable() {
     tr.appendChild(mk(mode, true));
     tr.appendChild(mk(cal, true));
     tr.appendChild(mk(enabled ? 'yes' : 'no', false));
+    tr.appendChild(mk(reporterJobStatusLabel(r, runtime), false));
+    tr.appendChild(mk(fmtLogTime(runtime?.last_run_ms), true));
+    tr.appendChild(mk(fmtLogTime(runtime?.next_run_ms), true));
+    tr.appendChild(mk(runtime?.last_inserted ?? '', true));
+    tr.appendChild(mk(String(runtime?.last_error || ''), false));
+
+    const actions = document.createElement('td');
+    const runBtn = document.createElement('button');
+    runBtn.className = 'btn';
+    runBtn.type = 'button';
+    runBtn.textContent = 'Run Now';
+    runBtn.disabled = !id;
+    runBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      runReporterReportNow(id).catch(() => {});
+    });
+    actions.appendChild(runBtn);
+    tr.appendChild(actions);
 
     tr.addEventListener('click', () => {
       if (!id) return;
       state.loggerSelectedNodeId = `logger:report:${id}`;
       renderLoggerTree();
       renderLoggerReportsTable();
+      renderLoggerReportDetails();
     });
     tr.addEventListener('dblclick', () => {
       if (!id) return;
@@ -1232,8 +1377,13 @@ function renderLoggerDetails() {
   if (els.loggerDbTable) els.loggerDbTable.style.display = showReports ? 'none' : '';
   if (els.loggerReportsTable) els.loggerReportsTable.style.display = showReports ? '' : 'none';
 
-  if (showReports) renderLoggerReportsTable();
-  else renderLoggerTable();
+  if (showReports) {
+    renderLoggerReportsTable();
+    renderLoggerReportDetails();
+  } else {
+    if (els.loggerReportDetails) els.loggerReportDetails.style.display = 'none';
+    renderLoggerTable();
+  }
 }
 
 function openLoggerDbModal(opts = {}) {
@@ -1310,6 +1460,26 @@ async function deleteReporterDatabase(id) {
     loggerSetStatus('Deleted.');
   } catch (err) {
     loggerSetStatus(`Failed: ${err.message || err}`);
+  }
+}
+
+async function testReporterDatabase(id) {
+  const dbId = String(id || '').trim();
+  if (!dbId) return;
+  loggerSetStatus(`Testing database '${dbId}'…`);
+  loggerModalSetStatus(`Testing database '${dbId}'…`);
+  try {
+    const resp = await apiPostJson('/api/reporter/databases/test', { id: dbId });
+    const result = resp?.reporter_test?.json || {};
+    if (!resp?.ok) throw new Error(String(resp?.error || result?.error || 'Failed'));
+    const latency = Number(result?.latency_ms || 0);
+    const msg = `Database '${dbId}' OK${latency > 0 ? ` (${latency} ms)` : ''}.`;
+    loggerSetStatus(msg);
+    loggerModalSetStatus(msg);
+  } catch (err) {
+    const msg = `Test failed: ${err.message || err}`;
+    loggerSetStatus(msg);
+    loggerModalSetStatus(msg);
   }
 }
 
@@ -1710,7 +1880,7 @@ async function saveAndApplyReporterReport() {
     const save = await apiPostJson('/api/reporter/reports', { report });
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
-    loggerReportModalSetStatus('Applying schedule…');
+    loggerReportModalSetStatus('Reloading reporter service…');
     const apply = await apiPostJson('/api/reporter/reports/apply', { id: report.id });
     if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
@@ -1719,7 +1889,7 @@ async function saveAndApplyReporterReport() {
     renderLoggerTree();
     renderLoggerDetails();
     closeLoggerReportModal();
-    loggerSetStatus('Applied.');
+    loggerSetStatus('Reporter reloaded.');
   } catch (err) {
     loggerReportModalSetStatus(`Failed: ${err.message || err}`);
   }
@@ -1740,6 +1910,60 @@ async function deleteReporterReport(id) {
     loggerSetStatus('Deleted.');
   } catch (err) {
     loggerSetStatus(`Failed: ${err.message || err}`);
+  }
+}
+
+async function runReporterReportNow(id) {
+  const rid = String(id || '').trim();
+  if (!rid) return;
+  const before = reporterRuntimeStatusById().get(rid) || null;
+  const beforeRuns = Number(before?.runs_total || 0);
+  loggerSetStatus(`Starting report '${rid}'…`);
+  try {
+    const resp = await apiPostJson('/api/reporter/reports/run', { id: rid });
+    if (!resp?.ok) throw new Error(String(resp?.error || resp?.reporter_run?.json?.error || 'Failed'));
+    loggerSetStatus(`Report '${rid}' started.`);
+    await refreshReporterRuntimeStatus();
+    watchReporterReportRun(rid, beforeRuns).catch(() => {});
+  } catch (err) {
+    loggerSetStatus(`Run failed: ${err.message || err}`);
+  }
+}
+
+async function refreshReporterRuntimeStatus() {
+  const runtime = await apiGet('/api/reporter/runtime/status');
+  state.reporterRuntime = runtime?.ok ? runtime : null;
+  if (state.loggerSelectedNodeId === 'logger:reports' || String(state.loggerSelectedNodeId || '').startsWith('logger:report:')) {
+    renderLoggerReportsTable();
+    renderLoggerReportDetails();
+  }
+  return runtime;
+}
+
+async function watchReporterReportRun(id, beforeRuns) {
+  const rid = String(id || '').trim();
+  if (!rid) return;
+  if (state.loggerRunWatchIds.has(rid)) return;
+  state.loggerRunWatchIds.add(rid);
+  const started = Date.now();
+  try {
+    while (Date.now() - started < 120000) {
+      const runtime = await refreshReporterRuntimeStatus();
+      const statuses = Array.isArray(runtime?.reporter?.statuses) ? runtime.reporter.statuses : [];
+      const st = statuses.find((s) => String(s?.id || '').trim() === rid) || null;
+      const runs = Number(st?.runs_total || 0);
+      if (st?.running) {
+        loggerSetStatus(`Report '${rid}' running…`);
+      } else if (runs > beforeRuns) {
+        if (st?.last_error) loggerSetStatus(`Report '${rid}' finished with error.`);
+        else loggerSetStatus(`Report '${rid}' finished. Inserted ${Number(st?.last_inserted || 0)} row(s).`);
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    loggerSetStatus(`Report '${rid}' still pending. Refresh for latest status.`);
+  } finally {
+    state.loggerRunWatchIds.delete(rid);
   }
 }
 
@@ -1779,6 +2003,14 @@ async function refreshReporterAll() {
     state.reporterReports = [];
   }
 
+  try {
+    const runtime = await refreshReporterRuntimeStatus();
+    out.runtime = runtime;
+  } catch (err) {
+    state.reporterRuntime = null;
+    out.runtime = { ok: false, error: String(err.message || err) };
+  }
+
   if (els.loggerJson) els.loggerJson.textContent = JSON.stringify(out, null, 2);
   if (!state.loggerSelectedNodeId) state.loggerSelectedNodeId = 'logger:databases';
   renderLoggerTree();
@@ -1794,6 +2026,10 @@ function wireLoggerUi() {
   });
   if (els.loggerDbCloseBtn) els.loggerDbCloseBtn.addEventListener('click', closeLoggerDbModal);
   if (els.loggerDbCancelBtn) els.loggerDbCancelBtn.addEventListener('click', closeLoggerDbModal);
+  if (els.loggerDbTestBtn) els.loggerDbTestBtn.addEventListener('click', () => {
+    const id = String(els.loggerDbModalId?.value || state.loggerEditingId || '').trim();
+    testReporterDatabase(id).catch(() => {});
+  });
   if (els.loggerDbSaveBtn) els.loggerDbSaveBtn.addEventListener('click', () => saveReporterDatabase());
   if (els.loggerReportCloseBtn) els.loggerReportCloseBtn.addEventListener('click', closeLoggerReportModal);
   if (els.loggerReportCancelBtn) els.loggerReportCancelBtn.addEventListener('click', closeLoggerReportModal);
@@ -14606,6 +14842,9 @@ async function refreshVisible() {
 
     // Workspace config/tree rendering is driven by edits, imports, and manual refresh.
     // The timer only refreshes the live tag table to avoid rebuilding large trees every tick.
+    if (isPanelActive('tab-logger')) {
+      try { await refreshReporterRuntimeStatus(); } catch { /* ignore */ }
+    }
 
     const overall = String(health?.status || 'unknown');
     const elapsed = Date.now() - started;

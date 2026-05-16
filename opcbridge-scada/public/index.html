@@ -865,6 +865,7 @@
 		                    <th>Database</th>
 		                    <th>opcbridge</th>
 		                    <th>Password</th>
+		                    <th>Actions</th>
 		                  </tr>
 		                </thead>
 		                <tbody id="loggerDbTbody"></tbody>
@@ -878,11 +879,19 @@
 		                    <th>Mode</th>
 		                    <th>Schedule</th>
 		                    <th>Enabled</th>
+		                    <th>Status</th>
+		                    <th>Last Run</th>
+		                    <th>Next Run</th>
+		                    <th>Inserted</th>
+		                    <th>Last Error</th>
+		                    <th>Actions</th>
 		                  </tr>
 		                </thead>
 		                <tbody id="loggerReportsTbody"></tbody>
 		              </table>
 		            </div>
+
+		            <section class="details" id="loggerReportDetails" style="display:none; margin-top: 10px;"></section>
 
 		            <details class="details" style="margin-top: 10px;">
 		              <summary class="small">Raw JSON</summary>
@@ -1403,6 +1412,7 @@
 
           <div class="form-row"><label></label>
             <div class="row-actions">
+              <button class="btn" id="loggerDbTestBtn" type="button">Test Connection</button>
               <button class="btn" id="loggerDbCancelBtn" type="button">Cancel</button>
               <button class="btn primary" id="loggerDbSaveBtn" type="button">Save</button>
             </div>
@@ -1575,6 +1585,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260512_live_tag_virtual"></script>
+  <script src="app.js?v=20260515_datalogger_db_test"></script>
 </body>
 </html>

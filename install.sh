@@ -957,12 +957,6 @@ install_scada_systemd_sudoers() {
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl daemon-reload
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl restart opcbridge.service
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/install -D -m 0644 /tmp/opcbridge-scada-dropin-*.conf /etc/systemd/system/opcbridge.service.d/20-opcbridge-scada.conf
-
-# opcbridge-reporter scheduled jobs (created by opcbridge-scada Data Logger).
-${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/install -D -m 0644 /tmp/opcbridge-scada-unit-*.service /etc/systemd/system/opcbridge-reporter-*.service
-${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/install -D -m 0644 /tmp/opcbridge-scada-unit-*.timer /etc/systemd/system/opcbridge-reporter-*.timer
-${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl enable --now opcbridge-reporter-*.timer
-${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl disable --now opcbridge-reporter-*.timer
 EOF
 
   chmod 440 "$sudoers_path"
@@ -1093,6 +1087,38 @@ install_reporter() {
 
   mkdir -p "$CONFIG_ROOT/reporter"
   install -m 0644 "$ROOT_DIR/opcbridge-reporter/config.json.example" "$CONFIG_ROOT/reporter/config.json.example" 2>/dev/null || true
+  if [[ ! -f "$CONFIG_ROOT/reporter/config.json" ]]; then
+    umask 027
+    cat >"$CONFIG_ROOT/reporter/config.json" <<'JSON'
+{
+  "listen_host": "127.0.0.1",
+  "listen_port": 8095,
+  "opcbridge_base_url": "http://127.0.0.1:8080"
+}
+JSON
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/config.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/reporter/config.json" 2>/dev/null || true
+  fi
+  if [[ ! -f "$CONFIG_ROOT/reporter/databases.json" ]]; then
+    umask 027
+    cat >"$CONFIG_ROOT/reporter/databases.json" <<'JSON'
+{
+  "databases": []
+}
+JSON
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/databases.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/reporter/databases.json" 2>/dev/null || true
+  fi
+  if [[ ! -f "$CONFIG_ROOT/reporter/reports.json" ]]; then
+    umask 027
+    cat >"$CONFIG_ROOT/reporter/reports.json" <<'JSON'
+{
+  "reports": []
+}
+JSON
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/reports.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/reporter/reports.json" 2>/dev/null || true
+  fi
 }
 
 install_historian() {
@@ -1344,10 +1370,38 @@ WantedBy=multi-user.target
 "
   fi
 
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
+      write_unit "opcbridge-reporter.service" "[Unit]
+Description=opcbridge reporter
+After=network.target opcbridge.service
+Wants=opcbridge.service
+
+[Service]
+Type=simple
+EnvironmentFile=${ENV_FILE}
+WorkingDirectory=${PREFIX}
+ExecStart=${PREFIX}/bin/opcbridge-reporter --service --config ${CONFIG_ROOT}/reporter/config.json --databases ${CONFIG_ROOT}/reporter/databases.json --reports ${CONFIG_ROOT}/reporter/reports.json
+User=${SERVICE_USER}
+Group=${SERVICE_GROUP}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+"
+
+    # The reporter is now a single long-running service. Disable legacy per-report
+    # timers that older SCADA builds created so schedules do not run twice.
+    while read -r unit _rest; do
+      [[ -n "${unit:-}" ]] || continue
+      systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    done < <(systemctl list-unit-files 'opcbridge-reporter-*.timer' --no-legend 2>/dev/null || true)
+  fi
+
   systemctl daemon-reload
 
   if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
-    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi opcbridge-historian; do
+    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi opcbridge-reporter opcbridge-historian; do
       if systemctl cat "$svc" >/dev/null 2>&1; then
         if [[ "$svc" == "opcbridge-hmi" ]]; then
           if ! node_deps_installed "$PREFIX/hmi"; then

@@ -14914,10 +14914,18 @@ window.addEventListener("load", startAutoRefresh);
 								large_time_sliced = (driver.conn.polling_mode == "time_sliced" || driver.tags.size() >= 500);
 								if (large_time_sliced) {
 									double reads_per_sec = 0.0;
-									if (driver.conn.poll_max_reads_per_sec > 0) {
-										reads_per_sec = static_cast<double>(driver.conn.poll_max_reads_per_sec);
-									} else if (measured_read_ms_avg > 0.0) {
-										reads_per_sec = 1000.0 / measured_read_ms_avg;
+									const double configured_reads_per_sec = (driver.conn.poll_max_reads_per_sec > 0)
+										? static_cast<double>(driver.conn.poll_max_reads_per_sec)
+										: 0.0;
+									const double measured_reads_per_sec = (measured_read_ms_avg > 0.0)
+										? (1000.0 / measured_read_ms_avg) * static_cast<double>(std::max(1, driver.conn.poll_lanes))
+										: 0.0;
+									if (configured_reads_per_sec > 0.0 && measured_reads_per_sec > 0.0) {
+										reads_per_sec = std::min(configured_reads_per_sec, measured_reads_per_sec);
+									} else if (configured_reads_per_sec > 0.0) {
+										reads_per_sec = configured_reads_per_sec;
+									} else if (measured_reads_per_sec > 0.0) {
+										reads_per_sec = measured_reads_per_sec;
 									}
 									const uint64_t effective_tag_count = poll_tag_count > 0
 										? poll_tag_count

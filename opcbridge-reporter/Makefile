@@ -1,6 +1,6 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O2
-LDFLAGS = -lcurl -lmysqlclient
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -pthread -I../opcbridge
+LDFLAGS = -lcurl -lmysqlclient -pthread
 
 TARGET = opcbridge-reporter
 SRCS = opcbridge_reporter.cpp
