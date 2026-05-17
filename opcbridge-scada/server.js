@@ -1481,6 +1481,7 @@ function isAllowedOpcbridgePath(upstreamPathname) {
   if (upstreamPathname === '/health' || upstreamPathname === '/tags' || upstreamPathname === '/events') return true;
   if (upstreamPathname === '/alarms' || upstreamPathname === '/alarm-history') return true;
   if (upstreamPathname === '/info' || upstreamPathname === '/metadata' || upstreamPathname === '/metrics') return true;
+  if (upstreamPathname === '/runtime/logs') return true;
   if (upstreamPathname === '/reload/status') return true;
   if (upstreamPathname.startsWith('/auth/')) return true;
   if (upstreamPathname.startsWith('/config/')) return true;
@@ -1624,28 +1625,46 @@ async function proxy(req, res, target, prefixName) {
     timeout: upstreamTimeoutMs(prefixName, upstreamPathname, req.method)
   };
 
-  const upstream = client.request(opts, (up) => {
-    const outHeaders = {
-      'Content-Type': up.headers['content-type'] || 'application/octet-stream',
-      'Cache-Control': 'no-store',
-      'Permissions-Policy': 'geolocation=(), microphone=(), camera=()'
-    };
-    // Allow opcbridge to set cookies (SSO).
-    if (up.headers['set-cookie']) outHeaders['Set-Cookie'] = up.headers['set-cookie'];
-    res.writeHead(up.statusCode || 502, outHeaders);
-    up.pipe(res);
-  });
+  const canRetry = prefixName === 'opcbridge' && (req.method === 'GET' || req.method === 'HEAD');
+  const maxAttempts = canRetry ? 4 : 1;
+  const retryDelayMs = 200;
 
-  upstream.on('timeout', () => {
-    upstream.destroy(new Error('upstream timeout'));
-  });
+  const sendAttempt = (attempt) => {
+    const upstream = client.request(opts, (up) => {
+      const outHeaders = {
+        'Content-Type': up.headers['content-type'] || 'application/octet-stream',
+        'Cache-Control': 'no-store',
+        'Permissions-Policy': 'geolocation=(), microphone=(), camera=()'
+      };
+      // Allow opcbridge to set cookies (SSO).
+      if (up.headers['set-cookie']) outHeaders['Set-Cookie'] = up.headers['set-cookie'];
+      res.writeHead(up.statusCode || 502, outHeaders);
+      up.pipe(res);
+    });
 
-  upstream.on('error', (err) => {
-    sendJson(res, 502, { ok: false, error: String(err.message || err) });
-  });
+    upstream.on('timeout', () => {
+      upstream.destroy(new Error('upstream timeout'));
+    });
 
-  if (bodyBuf) upstream.end(bodyBuf);
-  else upstream.end();
+    upstream.on('error', (err) => {
+      const code = String(err?.code || '').toUpperCase();
+      const retryable = canRetry && (code === 'ECONNREFUSED' || code === 'ECONNRESET' || String(err?.message || '').includes('upstream timeout'));
+      if (retryable && attempt < maxAttempts && !res.headersSent) {
+        setTimeout(() => sendAttempt(attempt + 1), retryDelayMs);
+        return;
+      }
+      if (!res.headersSent) {
+        sendJson(res, 502, { ok: false, error: String(err.message || err), attempts: attempt });
+      } else {
+        res.destroy(err);
+      }
+    });
+
+    if (bodyBuf) upstream.end(bodyBuf);
+    else upstream.end();
+  };
+
+  sendAttempt(1);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1774,6 +1793,26 @@ const server = http.createServer(async (req, res) => {
     const n = Math.max(10, Math.min(5000, Math.trunc(Number(nRaw) || 400)));
 
     try {
+      if (source === 'opcbridge_runtime') {
+        const path = `/runtime/logs?limit=${encodeURIComponent(String(n))}`;
+        const up = await fetchUpstreamJson(req, cfg.opcbridge, path, { timeoutMs: 8000 });
+        if (up.status < 200 || up.status >= 300) {
+          sendJson(res, 200, { ok: false, error: `opcbridge HTTP ${up.status}`, source, details: up.json });
+          return;
+        }
+        const entries = Array.isArray(up.json?.entries) ? up.json.entries : [];
+        const text = entries.map((entry) => {
+          const ts = Number(entry?.timestamp_ms || 0);
+          const iso = ts > 0 ? new Date(ts).toLocaleString() : '';
+          const level = String(entry?.level || 'info').toUpperCase();
+          const component = String(entry?.component || 'opcbridge');
+          const message = String(entry?.message || '');
+          return `${iso} ${level} [${component}] ${message}`.trim();
+        }).join('\n');
+        sendJson(res, 200, { ok: true, source, lines: n, format: 'text', text });
+        return;
+      }
+
       if (source === 'opcbridge_events') {
         const path = `/alarms/events?limit=${encodeURIComponent(String(n))}`;
         const up = await fetchUpstreamJson(req, cfg.opcbridge, path, { timeoutMs: 8000 });
@@ -1807,7 +1846,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      sendJson(res, 400, { ok: false, error: 'Unsupported source.', source, allowed: ['opcbridge_events', 'alarm_server_history', 'hmi_audit'] });
+      sendJson(res, 400, { ok: false, error: 'Unsupported source.', source, allowed: ['opcbridge_runtime', 'opcbridge_events', 'alarm_server_history', 'hmi_audit'] });
     } catch (err) {
       sendJson(res, 200, { ok: false, error: String(err.message || err), source });
     }

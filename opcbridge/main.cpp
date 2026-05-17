@@ -58,6 +58,9 @@
 
 #include <libplctag.h>      // IMPORTANT: libplctag header
 #include <nlohmann/json.hpp>
+#ifndef CPPHTTPLIB_LISTEN_BACKLOG
+#define CPPHTTPLIB_LISTEN_BACKLOG 128
+#endif
 #include "httplib.h"
 #include <unordered_map>
 #include <unordered_set>
@@ -166,6 +169,7 @@ struct ConnectionConfig {
     int default_timeout_ms = 1000;
     int default_read_ms    = 1000;
     int default_write_ms   = 1000;
+    int startup_handle_wait_ms = 0; // 0 = do not block startup waiting for async handles
     int debug              = 0;
 };
 
@@ -218,6 +222,7 @@ struct ConnectionConfig {
 struct TagRuntime {
     TagConfig cfg;
     int32_t handle = PLCTAG_ERR_NOT_FOUND;
+    bool handle_deferred = false;
     std::chrono::steady_clock::time_point next_poll;
 
     // Scaling runtime (precomputed)
@@ -611,10 +616,44 @@ struct ConnPollMetrics {
     std::atomic<uint64_t> yield_count{0};
     std::atomic<uint64_t> poll_cursor{0};
     std::atomic<uint64_t> poll_tag_count{0};
+    std::atomic<uint64_t> deferred_handle_count{0};
+    std::atomic<uint64_t> deferred_handles_opened{0};
+    std::atomic<uint64_t> deferred_handle_open_failures{0};
+    std::atomic<uint64_t> deferred_handle_open_us_total{0};
+    std::atomic<uint64_t> deferred_handle_open_us_last{0};
+    std::atomic<uint64_t> deferred_handle_open_us_max{0};
 };
 
 static std::mutex g_metricsMutex;
 static std::unordered_map<std::string, std::shared_ptr<ConnPollMetrics>> g_connPollMetrics;
+
+struct RuntimeLogEntry {
+    int64_t ts_ms = 0;
+    std::string level;
+    std::string component;
+    std::string message;
+};
+
+static std::mutex g_runtimeLogMutex;
+static std::deque<RuntimeLogEntry> g_runtimeLog;
+static constexpr size_t kRuntimeLogMax = 2000;
+
+static void runtime_log(const std::string &level,
+                        const std::string &component,
+                        const std::string &message) {
+    const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    {
+        std::lock_guard<std::mutex> lock(g_runtimeLogMutex);
+        g_runtimeLog.push_back(RuntimeLogEntry{ts_ms, level, component, message});
+        while (g_runtimeLog.size() > kRuntimeLogMax) {
+            g_runtimeLog.pop_front();
+        }
+    }
+    std::ostream &os = (level == "error" || level == "warn") ? std::cerr : std::cout;
+    os << "[" << component << "] " << message << "\n";
+}
 
 // Used to coordinate /reload with the poller threads so we don't destroy handles
 // while pollers are still running.
@@ -704,6 +743,12 @@ static uint64_t read_uint64_file(const fs::path &path, uint64_t fallback = 0) {
 static int64_t system_wall_now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+}
+
+static int64_t steady_elapsed_ms(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start
     ).count();
 }
 
@@ -3040,6 +3085,7 @@ ConnectionConfig load_connection_config(const std::string &path) {
     c.default_timeout_ms = j.value("default_timeout_ms", 1000);
     c.default_read_ms    = j.value("default_read_ms", 1000);
     c.default_write_ms   = j.value("default_write_ms", 1000);
+    c.startup_handle_wait_ms = std::max(0, json_get_int_loose(j, "startup_handle_wait_ms", 0));
     c.debug              = j.value("debug", 0);
 
     if (c.driver == "ab_eip") {
@@ -3397,6 +3443,46 @@ static bool wait_for_tag_ready(int32_t handle, int timeout_ms, std::string &outE
             return false;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+static bool accept_startup_handle(int32_t handle,
+                                  int wait_ms,
+                                  bool &pending,
+                                  std::string &outErr) {
+    pending = false;
+    outErr.clear();
+    if (handle < 0) {
+        outErr = std::string("plc_tag_create failed: ") + plc_tag_decode_error(handle);
+        return false;
+    }
+
+    int32_t status = plc_tag_status(handle);
+    if (status == PLCTAG_STATUS_OK) return true;
+    if (status != PLCTAG_STATUS_PENDING) {
+        pending = true;
+        outErr = std::string("initial tag status: ") + plc_tag_decode_error(status);
+        return true;
+    }
+    if (wait_ms <= 0) {
+        pending = true;
+        return true;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms);
+    while (true) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            pending = true;
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        status = plc_tag_status(handle);
+        if (status == PLCTAG_STATUS_OK) return true;
+        if (status != PLCTAG_STATUS_PENDING) {
+            pending = true;
+            outErr = std::string("initial tag status: ") + plc_tag_decode_error(status);
+            return true;
+        }
     }
 }
 
@@ -4391,10 +4477,28 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         return true;
     }
 
+    bool destroyWriteHandle = false;
     if (handle < 0) {
-        std::cerr << "Tag '" << logical_name
-                  << "' has invalid handle; cannot write.\n";
-        return false;
+        std::string tagStr;
+        try {
+            tagStr = build_tag_conn_str(conn, cfg);
+        } catch (const std::exception &ex) {
+            std::cerr << "Write failed building tag string for ["
+                      << conn_id << "]." << logical_name << ": "
+                      << ex.what() << "\n";
+            return false;
+        }
+
+        handle = plc_tag_create(tagStr.c_str(), conn.default_timeout_ms);
+        std::string readyErr;
+        if (!wait_for_tag_ready(handle, conn.default_timeout_ms, readyErr)) {
+            std::cerr << "Write failed creating temporary handle for ["
+                      << conn_id << "]." << logical_name << ": "
+                      << readyErr << "\n";
+            if (handle >= 0) plc_tag_destroy(handle);
+            return false;
+        }
+        destroyWriteHandle = true;
     }
 
     TagValue rawValue{};
@@ -4406,6 +4510,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             std::cerr << "Tag '" << logical_name
                       << "' has scaling enabled but non-numeric datatype '" << cfg.datatype
                       << "'.\n";
+            if (destroyWriteHandle) plc_tag_destroy(handle);
             return false;
         }
 
@@ -4414,12 +4519,14 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             std::string s = trim_copy(value_str);
             if (s.empty()) {
                 std::cerr << "Write value is empty.\n";
+                if (destroyWriteHandle) plc_tag_destroy(handle);
                 return false;
             }
             scaledNum = std::stod(s);
         } catch (const std::exception &ex) {
             std::cerr << "Write parse failed for scaled value '"
                       << value_str << "': " << ex.what() << "\n";
+            if (destroyWriteHandle) plc_tag_destroy(handle);
             return false;
         }
 
@@ -4432,6 +4539,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         if (!cast_double_to_tagvalue(rawNum, cfg.datatype, rawValue, castErr)) {
             std::cerr << "Write scaling cast failed for raw datatype '" << cfg.datatype
                       << "': " << castErr << "\n";
+            if (destroyWriteHandle) plc_tag_destroy(handle);
             return false;
         }
 
@@ -4444,6 +4552,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             std::cerr << "Write set failed for ["
                       << conn_id << "]." << logical_name
                       << ": " << parseErr << "\n";
+            if (destroyWriteHandle) plc_tag_destroy(handle);
             return false;
         }
     } else {
@@ -4451,6 +4560,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             std::cerr << "Write parse/set failed for ["
                       << conn_id << "]." << logical_name
                       << ": " << parseErr << "\n";
+            if (destroyWriteHandle) plc_tag_destroy(handle);
             return false;
         }
         scaledValue = rawValue;
@@ -4461,6 +4571,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         std::cerr << "plc_tag_write failed for ["
                   << conn_id << "]." << logical_name
                   << ": " << plc_tag_decode_error(status) << "\n";
+        if (destroyWriteHandle) plc_tag_destroy(handle);
         return false;
     }
 
@@ -4479,6 +4590,11 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
     std::cout << "Write OK: [" << conn.id << "] "
               << logical_name << " := " << value_str << "\n";
+
+    if (destroyWriteHandle) {
+        plc_tag_destroy(handle);
+        handle = PLCTAG_ERR_NOT_FOUND;
+    }
 
     if (cfg.log_event_on_change) {
         bool valueChanged = !hadPrev || !snapshot_values_equal(snap, prevSnap);
@@ -4671,11 +4787,27 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
                                                 DriverContext &out,
                                                 std::string &err)
 {
+    const auto connBuildStarted = std::chrono::steady_clock::now();
     DriverContext ctx;
     ctx.conn = conn_cfg;
     std::unordered_set<std::string> seen_logical_names;
+    size_t processedTags = 0;
+    size_t createdHandles = 0;
+    size_t deferredHandles = 0;
+    size_t pendingHandles = 0;
+    size_t failedHandles = 0;
+    auto lastProgress = std::chrono::steady_clock::now();
+
+    {
+        std::ostringstream msg;
+        msg << "Building connection '" << conn_cfg.id << "' with "
+            << tag_cfgs.size() << " configured tag(s)"
+            << " (startup_handle_wait_ms=" << conn_cfg.startup_handle_wait_ms << ").";
+        runtime_log("info", "load", msg.str());
+    }
 
     for (const auto &tc : tag_cfgs) {
+        processedTags++;
         const std::string logical = tc.logical_name;
         if (!logical.empty() && !seen_logical_names.insert(logical).second) {
             std::cerr << "[load] Warning: duplicate tag logical_name '" << logical
@@ -4721,16 +4853,49 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
             continue;
         }
 
-        std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
+        const bool deferStartupHandle = true;
+        if (deferStartupHandle) {
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+            rt.handle_deferred = true;
+            rt.next_poll = std::chrono::steady_clock::now();
+            schedule_next_periodic(rt);
+            deferredHandles++;
+            ctx.tags.push_back(rt);
+
+            if (tc.elem_count > 1) {
+                for (int i = 0; i < tc.elem_count; i++) {
+                    TagRuntime e;
+                    e.cfg = tc;
+                    e.cfg.elem_count = 1;
+                    e.cfg.source_tag.clear();
+                    e.cfg.bit = -1;
+                    e.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
+                    e.cfg.plc_tag_name = tc.plc_tag_name + "[" + std::to_string(i) + "]";
+                    e.handle = PLCTAG_ERR_NOT_FOUND;
+                    e.handle_deferred = false;
+                    const std::string elName = e.cfg.logical_name;
+                    if (!elName.empty() && !seen_logical_names.insert(elName).second) {
+                        continue;
+                    }
+                    ctx.tags.push_back(std::move(e));
+                }
+            }
+            continue;
+        }
+
         const int32_t handle = plc_tag_create(tag_str.c_str(), conn_cfg.default_timeout_ms);
         std::string readyErr;
-        if (!wait_for_tag_ready(handle, conn_cfg.default_timeout_ms, readyErr)) {
+        bool pending = false;
+        if (!accept_startup_handle(handle, conn_cfg.startup_handle_wait_ms, pending, readyErr)) {
             std::cerr << "[load] Error creating tag '" << tc.logical_name
                       << "' on connection '" << conn_cfg.id << "': " << readyErr
-                      << " (timeout_ms=" << conn_cfg.default_timeout_ms << ")\n";
+                      << " (startup_handle_wait_ms=" << conn_cfg.startup_handle_wait_ms << ")\n";
             if (handle >= 0) plc_tag_destroy(handle);
             rt.handle = PLCTAG_ERR_NOT_FOUND;
+            failedHandles++;
         } else {
+            createdHandles++;
+            if (pending) pendingHandles++;
             rt.handle = handle;
             rt.next_poll = std::chrono::steady_clock::now();
             schedule_next_periodic(rt);
@@ -4754,8 +4919,39 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
                 ctx.tags.push_back(std::move(e));
             }
         }
+
+        const auto nowProgress = std::chrono::steady_clock::now();
+        if ((processedTags % 500) == 0 ||
+            std::chrono::duration_cast<std::chrono::seconds>(nowProgress - lastProgress).count() >= 30) {
+            std::ostringstream msg;
+            msg << "Connection '" << conn_cfg.id << "' progress: "
+                << processedTags << "/" << tag_cfgs.size()
+                << " configured tags processed, handles=" << createdHandles
+                << ", deferred=" << deferredHandles
+                << ", pending=" << pendingHandles
+                << ", failed=" << failedHandles
+                << ", elapsed_ms=" << steady_elapsed_ms(connBuildStarted) << ".";
+            runtime_log("info", "load", msg.str());
+            lastProgress = nowProgress;
+        }
     }
 
+    size_t validHandles = 0;
+    size_t deferredRuntimeHandles = 0;
+    for (const auto &rt : ctx.tags) {
+        if (rt.handle >= 0) validHandles++;
+        if (rt.handle_deferred) deferredRuntimeHandles++;
+    }
+    {
+        std::ostringstream msg;
+        msg << "Built connection '" << conn_cfg.id << "' in "
+            << steady_elapsed_ms(connBuildStarted) << " ms (runtime tags="
+            << ctx.tags.size() << ", handles=" << validHandles
+            << ", deferred_handles=" << deferredRuntimeHandles
+            << ", pending_at_start=" << pendingHandles
+            << ", failed_handles=" << failedHandles << ").";
+        runtime_log(failedHandles > 0 ? "warn" : "info", "load", msg.str());
+    }
     out = std::move(ctx);
     err.clear();
     return true;
@@ -5163,115 +5359,72 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
         }
     }
 
-    std::vector<DriverContext> driversLocal;
+    struct DriverBuildJob {
+        std::string conn_id;
+        ConnectionConfig conn_cfg;
+        std::vector<TagConfig> tags;
+    };
+    struct DriverBuildResult {
+        bool ok = false;
+        std::string conn_id;
+        std::string err;
+        DriverContext ctx;
+    };
 
+    std::vector<DriverBuildJob> jobs;
     for (const auto &kv : connection_map) {
         const std::string &conn_id = kv.first;
         const ConnectionConfig &conn_cfg = kv.second;
-
         auto tags_it = tags_by_conn.find(conn_id);
         if (tags_it == tags_by_conn.end()) {
             std::cerr << "[load] Info: no tags defined for connection '"
                       << conn_id << "'. Skipping.\n";
             continue;
         }
+        jobs.push_back(DriverBuildJob{conn_id, conn_cfg, tags_it->second});
+    }
 
-	        DriverContext ctx;
-	        ctx.conn = conn_cfg;
-
-	        // Guard against duplicated tag definitions (e.g., multiple tag files or accidental repeats).
-	        // Duplicates waste poll time and can make the UI appear "slower" because the same tag is read multiple times.
-	        std::unordered_set<std::string> seen_logical_names;
-
-		                for (const auto &tc : tags_it->second) {
-		                    const std::string logical = tc.logical_name;
-		                    if (!logical.empty()) {
-		                        if (!seen_logical_names.insert(logical).second) {
-		                            std::cerr << "[load] Warning: duplicate tag logical_name '" << logical
-		                                      << "' for connection '" << conn_id << "'. Skipping duplicate.\n";
-		                            continue;
-		                        }
-		                    }
-
-			                    TagRuntime rt;
-			                    rt.cfg = tc;
-			                    init_tag_scaling(rt);
-
-			                    // Disabled tags stay visible in /tags, but we don't create handles or poll them.
-			                    if (!tc.enabled) {
-				                    rt.handle = PLCTAG_ERR_NOT_FOUND;
-				                    ctx.tags.push_back(std::move(rt));
-				                    continue;
-			                    }
-
-			                    // Derived tags do not create PLC handles; they are computed from a source tag.
-			                    if (!tc.source_tag.empty()) {
-			                        rt.handle = PLCTAG_ERR_NOT_FOUND;
-			                        rt.next_poll = std::chrono::steady_clock::time_point{};
-			                        ctx.tags.push_back(std::move(rt));
-			                        continue;
-			                    }
-
-	                            if (!is_supported_datatype(tc.datatype)) {
-	                                std::cerr << "[load] Warning: skipping tag '" << tc.logical_name
-	                                          << "' on connection '" << conn_id
-	                                          << "' due to unsupported datatype '" << tc.datatype << "'.\n";
-                                rt.handle = PLCTAG_ERR_NOT_FOUND;
-                                ctx.tags.push_back(std::move(rt));
-                                continue;
-                            }
-
-                            std::string tag_str;
-                            try {
-                                tag_str = build_tag_conn_str(conn_cfg, tc);
-                            } catch (const std::exception &ex) {
-                                std::cerr << "[load] Warning: skipping tag '" << tc.logical_name
-                                          << "' on connection '" << conn_id
-                                          << "' due to error building connection string: " << ex.what() << "\n";
-                                rt.handle = PLCTAG_ERR_NOT_FOUND;
-                                ctx.tags.push_back(std::move(rt));
-                                continue;
-                            }
-            std::cout << "[load] Creating tag handle: " << tag_str << std::endl;
-
-            const int32_t handle = plc_tag_create(tag_str.c_str(), conn_cfg.default_timeout_ms);
-            std::string readyErr;
-            if (!wait_for_tag_ready(handle, conn_cfg.default_timeout_ms, readyErr)) {
-                std::cerr << "[load] Error creating tag '" << tc.logical_name
-                          << "' on connection '" << conn_id << "': " << readyErr
-                          << " (timeout_ms=" << conn_cfg.default_timeout_ms << ")\n";
-                if (handle >= 0) plc_tag_destroy(handle);
-                rt.handle = PLCTAG_ERR_NOT_FOUND;
-            } else {
-                rt.handle = handle;
-                rt.next_poll = std::chrono::steady_clock::now();
-                schedule_next_periodic(rt);
-            }
-            ctx.tags.push_back(rt);
-
-            // If this is an array tag (elem_count > 1), create lightweight element stubs so
-            // derived tags can reference TagName[0] style sources. These stubs are not polled
-            // (no handle); poller fan-out populates snapshots for them.
-            if (tc.elem_count > 1) {
-                for (int i = 0; i < tc.elem_count; i++) {
-                    TagRuntime e;
-                    e.cfg = tc;
-                    e.cfg.elem_count = 1;
-                    e.cfg.source_tag.clear();
-                    e.cfg.bit = -1;
-                    e.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
-                    e.cfg.plc_tag_name = tc.plc_tag_name + "[" + std::to_string(i) + "]";
-                    e.handle = PLCTAG_ERR_NOT_FOUND;
-                    const std::string elName = e.cfg.logical_name;
-                    if (!elName.empty() && !seen_logical_names.insert(elName).second) {
-                        continue;
-                    }
-                    ctx.tags.push_back(std::move(e));
-                }
-            }
+    std::vector<DriverContext> driversLocal;
+    std::vector<DriverBuildResult> results(jobs.size());
+    if (!jobs.empty()) {
+        unsigned int hw = std::thread::hardware_concurrency();
+        size_t workerCount = std::min<size_t>(jobs.size(), std::max<size_t>(1, std::min<size_t>(4, hw == 0 ? 2 : hw)));
+        {
+            std::ostringstream msg;
+            msg << "Building " << jobs.size()
+                << " connection(s) with " << workerCount
+                << " parallel startup worker(s).";
+            runtime_log("info", "load", msg.str());
         }
 
-        driversLocal.push_back(std::move(ctx));
+        std::atomic<size_t> nextJob{0};
+        std::vector<std::thread> workers;
+        workers.reserve(workerCount);
+        for (size_t w = 0; w < workerCount; ++w) {
+            workers.emplace_back([&]() {
+                while (true) {
+                    const size_t idx = nextJob.fetch_add(1, std::memory_order_relaxed);
+                    if (idx >= jobs.size()) return;
+                    const auto &job = jobs[idx];
+                    DriverBuildResult result;
+                    result.conn_id = job.conn_id;
+                    result.ok = build_driver_context_for_connection(job.conn_cfg, job.tags, result.ctx, result.err);
+                    results[idx] = std::move(result);
+                }
+            });
+        }
+        for (auto &worker : workers) {
+            if (worker.joinable()) worker.join();
+        }
+
+        for (auto &result : results) {
+            if (!result.ok) {
+                runtime_log("error", "load", "Error building connection '" + result.conn_id
+                    + "': " + (result.err.empty() ? std::string("unknown error") : result.err));
+                continue;
+            }
+            driversLocal.push_back(std::move(result.ctx));
+        }
     }
 
     if (driversLocal.empty()) {
@@ -6297,6 +6450,9 @@ static bool ua_set_variant_for_system_value(UA_Variant &variant,
 static bool ua_set_variable_attr_from_snapshot(UA_VariableAttributes &attr,
                                                const TagSnapshot &seed);
 
+static TagSnapshot make_initial_snapshot_for_opcua(const ConnectionConfig &conn,
+                                                   const TagRuntime &tag);
+
 static UA_NodeId ua_ensure_connection_object(UA_Server *server,
                                              UA_NodeId bridgeId,
                                              const std::string &connId);
@@ -6371,6 +6527,32 @@ static bool ua_set_variable_attr_from_snapshot(UA_VariableAttributes &attr,
     return false;
 }
 
+static TagSnapshot make_initial_snapshot_for_opcua(const ConnectionConfig &conn,
+                                                   const TagRuntime &tag) {
+    TagSnapshot seed;
+    seed.connection_id = conn.id;
+    seed.logical_name = tag.cfg.logical_name;
+    seed.timestamp = std::chrono::system_clock::now();
+    seed.quality = 0;
+
+    std::string dt = tag.cfg.datatype;
+    if (tag.scaling_linear) {
+        std::string outDt = normalize_scaled_datatype(tag.out_datatype);
+        dt = outDt.empty() ? std::string("float64") : outDt;
+    }
+    seed.datatype = dt;
+
+    if (dt == "bool") seed.value = false;
+    else if (dt == "int16") seed.value = static_cast<int16_t>(0);
+    else if (dt == "uint16") seed.value = static_cast<uint16_t>(0);
+    else if (dt == "int32") seed.value = static_cast<int32_t>(0);
+    else if (dt == "uint32") seed.value = static_cast<uint32_t>(0);
+    else if (dt == "float32") seed.value = static_cast<float>(0.0f);
+    else if (dt == "float64") seed.value = static_cast<double>(0.0);
+    else if (dt == "string") seed.value = std::string{};
+    return seed;
+}
+
 static UA_NodeId ua_ensure_connection_object(UA_Server *server,
                                              UA_NodeId bridgeId,
                                              const std::string &connId) {
@@ -6410,19 +6592,12 @@ static bool ua_add_tag_variable_node(UA_Server *server,
                                      std::string &err) {
     const TagConfig &cfg = tag.cfg;
     err.clear();
-    if (tag.handle < 0) {
+    if (tag.handle < 0 && !tag.handle_deferred) {
         err = "invalid handle";
         return false;
     }
 
-    int32_t rs = plc_tag_read(tag.handle, conn.default_read_ms);
-    if (rs != PLCTAG_STATUS_OK) {
-        std::cerr << "OPC UA: read error for [" << conn.id << "]."
-                  << cfg.logical_name << ": " << plc_tag_decode_error(rs) << "\n";
-    }
-
-    TagSnapshot seed;
-    update_snapshot_from_plc(seed, conn, tag);
+    TagSnapshot seed = make_initial_snapshot_for_opcua(conn, tag);
 
     UA_VariableAttributes vAttr = UA_VariableAttributes_default;
     vAttr.displayName = UA_LOCALIZEDTEXT_ALLOC(
@@ -6533,10 +6708,9 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
     std::unordered_set<std::string> liveKeys;
     for (auto &tag : driver.tags) {
         const std::string key = ua_key(driver.conn.id, tag.cfg.logical_name);
-        if (tag.handle < 0) continue;
+        if (tag.handle < 0 && !tag.handle_deferred) continue;
 
-        TagSnapshot seed;
-        update_snapshot_from_plc(seed, driver.conn, tag);
+        TagSnapshot seed = make_initial_snapshot_for_opcua(driver.conn, tag);
         UA_VariableAttributes tmpAttr = UA_VariableAttributes_default;
         const bool supported = ua_set_variable_attr_from_snapshot(tmpAttr, seed);
         UA_VariableAttributes_clear(&tmpAttr);
@@ -6846,25 +7020,12 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         for (auto &tag : driver.tags) {
             const TagConfig &cfg = tag.cfg;
 
-            if (tag.handle < 0) {
+            if (tag.handle < 0 && !tag.handle_deferred) {
                 std::cerr << "OPC UA: skipping tag '" << cfg.logical_name
                           << "' on connection '" << conn.id
                           << "' (invalid handle)\n";
                 continue;
             }
-
-            // We can try one read to seed initial value
-            int32_t rs = plc_tag_read(tag.handle, conn.default_read_ms);
-            if (rs != PLCTAG_STATUS_OK) {
-                std::cerr << "OPC UA: read error for [" << conn.id << "]."
-                          << cfg.logical_name << ": "
-                          << plc_tag_decode_error(rs) << "\n";
-                // still create node with a default value
-            }
-
-            std::cout << "OPC UA: building node for [" << conn.id << "]."
-                      << cfg.logical_name << " (datatype='"
-                      << (tag.out_datatype.empty() ? cfg.datatype : tag.out_datatype) << "')\n";
 
             UA_VariableAttributes vAttr = UA_VariableAttributes_default;
             vAttr.displayName = UA_LOCALIZEDTEXT_ALLOC(
@@ -6876,8 +7037,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 vAttr.accessLevel |= UA_ACCESSLEVELMASK_WRITE;
             }
 
-            TagSnapshot seed;
-            update_snapshot_from_plc(seed, conn, tag);
+            TagSnapshot seed = make_initial_snapshot_for_opcua(conn, tag);
 
             bool supported = true;
             const std::string &dt = seed.datatype;
@@ -7255,7 +7415,7 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
             ++total;
             const std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
             auto it = tagTable.find(key);
-            const bool handle_ok = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+            const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
             if (!handle_ok) ++bad_handle;
             if (it == tagTable.end()) {
                 ++missing;
@@ -7278,6 +7438,7 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
             if (mit != g_connPollMetrics.end()) metrics = mit->second;
         }
         const uint64_t readsTotal = metrics ? metrics->reads_total.load(std::memory_order_relaxed) : 0;
+        const uint64_t deferredOpenTotal = metrics ? metrics->deferred_handles_opened.load(std::memory_order_relaxed) : 0;
 
         ua_write_system_value(prefix + "Enabled", true);
         ua_write_system_value(prefix + "TagCount", total);
@@ -7295,6 +7456,13 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
         ua_write_system_value(prefix + "ReadMsLast", metrics ? (static_cast<double>(metrics->read_us_last.load(std::memory_order_relaxed)) / 1000.0) : 0.0);
         ua_write_system_value(prefix + "ReadMsAvg", (metrics && readsTotal > 0)
             ? (static_cast<double>(metrics->read_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(readsTotal)
+            : 0.0);
+        ua_write_system_value(prefix + "DeferredHandleCount", metrics ? metrics->deferred_handle_count.load(std::memory_order_relaxed) : 0);
+        ua_write_system_value(prefix + "DeferredHandlesOpened", deferredOpenTotal);
+        ua_write_system_value(prefix + "DeferredHandleOpenFailures", metrics ? metrics->deferred_handle_open_failures.load(std::memory_order_relaxed) : 0);
+        ua_write_system_value(prefix + "DeferredHandleOpenMsLast", metrics ? (static_cast<double>(metrics->deferred_handle_open_us_last.load(std::memory_order_relaxed)) / 1000.0) : 0.0);
+        ua_write_system_value(prefix + "DeferredHandleOpenMsAvg", (metrics && deferredOpenTotal > 0)
+            ? (static_cast<double>(metrics->deferred_handle_open_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(deferredOpenTotal)
             : 0.0);
     }
 }
@@ -8096,11 +8264,18 @@ static bool apply_config_bundle_json(const std::string &configDir,
 				std::cerr << "[sqlite] Alarm DB init failed; continuing without DB.\n";
 			}
 
-        std::vector<DriverContext> drivers;
-        if (!load_all_drivers(drivers, configDir)) {
-            std::cerr << "Initial config load failed. Exiting.\n";
-            return 1;
-        }
+	        std::vector<DriverContext> drivers;
+	        const auto initialLoadStarted = std::chrono::steady_clock::now();
+	        if (!load_all_drivers(drivers, configDir)) {
+	            std::cerr << "Initial config load failed. Exiting.\n";
+	            return 1;
+	        }
+	        {
+	            std::ostringstream msg;
+	            msg << "Driver/config load completed in "
+	                << steady_elapsed_ms(initialLoadStarted) << " ms.";
+	            runtime_log("info", "startup", msg.str());
+	        }
 
         std::cout << "Driver summary:\n";
         for (const auto &d : drivers) {
@@ -8123,6 +8298,11 @@ static bool apply_config_bundle_json(const std::string &configDir,
 		        std::shared_mutex plcMutex;
 		        std::mutex driverMutex;
 		        httplib::Server svr;
+		        svr.new_task_queue = [] {
+		            return new httplib::ThreadPool(32, 1024);
+		        };
+		        svr.set_keep_alive_timeout(2);
+		        svr.set_keep_alive_max_count(20);
         
 	        // Make these available to MQTT callbacks
 	        g_mqttDrivers     = &drivers;
@@ -8146,15 +8326,25 @@ static bool apply_config_bundle_json(const std::string &configDir,
             }
         }
 
-        if (opcuaMode) {
-            std::cout << "OPC UA: initializing server on port " << opcuaPort << "...\n";
-            if (!init_opcua_server(opcuaPort, drivers)) {
-                std::cerr << "Failed to initialize OPC UA server.\n";
-                destroy_all_handles(drivers);
-                return 1;
-            }
-            std::cout << "OPC UA: server initialized.\n";
-        }
+	        if (opcuaMode) {
+	            {
+	                std::ostringstream msg;
+	                msg << "OPC UA initializing server on port " << opcuaPort << ".";
+	                runtime_log("info", "startup", msg.str());
+	            }
+	            const auto opcuaInitStarted = std::chrono::steady_clock::now();
+	            if (!init_opcua_server(opcuaPort, drivers)) {
+	                std::cerr << "Failed to initialize OPC UA server.\n";
+	                destroy_all_handles(drivers);
+	                return 1;
+	            }
+	            {
+	                std::ostringstream msg;
+	                msg << "OPC UA server initialized in "
+	                    << steady_elapsed_ms(opcuaInitStarted) << " ms.";
+	                runtime_log("info", "startup", msg.str());
+	            }
+	        }
 
         // ====================================================
         // MODE DISPATCH
@@ -14398,6 +14588,22 @@ window.addEventListener("load", startAutoRefresh);
 		                        ? (100.0 * static_cast<double>(std::min(cursor, tag_count)) / static_cast<double>(tag_count))
 		                        : 0.0;
 
+		                    const uint64_t deferredCount = m->deferred_handle_count.load(std::memory_order_relaxed);
+		                    const uint64_t deferredOpened = m->deferred_handles_opened.load(std::memory_order_relaxed);
+		                    const uint64_t deferredFailures = m->deferred_handle_open_failures.load(std::memory_order_relaxed);
+		                    const uint64_t deferredOpenUsTotal = m->deferred_handle_open_us_total.load(std::memory_order_relaxed);
+		                    const uint64_t deferredOpenUsLast = m->deferred_handle_open_us_last.load(std::memory_order_relaxed);
+		                    const uint64_t deferredOpenUsMax = m->deferred_handle_open_us_max.load(std::memory_order_relaxed);
+		                    j["deferred_handle_count"] = deferredCount;
+		                    j["deferred_handles_opened"] = deferredOpened;
+		                    j["deferred_handles_pending"] = deferredCount > deferredOpened ? (deferredCount - deferredOpened) : 0;
+		                    j["deferred_handle_open_failures"] = deferredFailures;
+		                    j["deferred_handle_open_ms_last"] = static_cast<double>(deferredOpenUsLast) / 1000.0;
+		                    j["deferred_handle_open_ms_max"] = static_cast<double>(deferredOpenUsMax) / 1000.0;
+		                    j["deferred_handle_open_ms_avg"] = deferredOpened > 0
+		                        ? (static_cast<double>(deferredOpenUsTotal) / 1000.0) / static_cast<double>(deferredOpened)
+		                        : 0.0;
+
 		                    j["last_ok_ts_ms"]  = (last_ok >= 0) ? json(last_ok) : json(nullptr);
 		                    j["last_err_ts_ms"] = (last_err >= 0) ? json(last_err) : json(nullptr);
 		                    j["last_ok_age_ms"]  = (last_ok >= 0) ? json(now_ms - last_ok) : json(nullptr);
@@ -14494,7 +14700,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        ++total;
 		                        std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
 		                        auto it = tagTable.find(key);
-		                        const bool handle_ok = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+		                        const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
 		                        if (!handle_ok) ++bad_handle;
 		                        if (it == tagTable.end()) {
 		                            ++missing;
@@ -14535,7 +14741,7 @@ window.addEventListener("load", startAutoRefresh);
 		                            g_full_rebuild_required.load(std::memory_order_relaxed)
 		                        );
 		                        json sys;
-		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(opcuaSyncRows.size()) + static_cast<int>(drivers.size()) * 15;
+		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(opcuaSyncRows.size()) + static_cast<int>(drivers.size()) * 20;
 		                        sys["with_snapshot"] = sys["total"];
 		                        sys["good"] = sys["total"];
 		                        sys["bad"] = 0;
@@ -14593,8 +14799,8 @@ window.addEventListener("load", startAutoRefresh);
 										row.enabled       = t.cfg.enabled;
 											row.writable      = t.cfg.writable;
 											row.has_snapshot  = (it != tagTable.end());
-											row.is_array_root = (t.handle >= 0) && (t.cfg.elem_count > 1);
-											row.handle_ok     = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || row.has_snapshot;
+											row.is_array_root = ((t.handle >= 0) || t.handle_deferred) && (t.cfg.elem_count > 1);
+											row.handle_ok     = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || row.has_snapshot;
 											row.system        = false;
 											row.timestamp_ms  = 0;
 											if (row.has_snapshot) {
@@ -14700,7 +14906,7 @@ window.addEventListener("load", startAutoRefresh);
 											++total;
 											std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
 											auto it = tagTable.find(key);
-											const bool handle_ok = (t.handle >= 0) || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+											const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
 											if (!handle_ok) ++bad_handle;
 											if (it == tagTable.end()) {
 												++missing;
@@ -14740,6 +14946,14 @@ window.addEventListener("load", startAutoRefresh);
 										addSystemRow(prefix + "ReadMsLast", "float64", metrics ? (static_cast<double>(metrics->read_us_last.load(std::memory_order_relaxed)) / 1000.0) : 0.0);
 										addSystemRow(prefix + "ReadMsAvg", "float64", (metrics && readsTotal > 0)
 											? (static_cast<double>(metrics->read_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(readsTotal)
+											: 0.0);
+										const uint64_t deferredOpenTotal = metrics ? metrics->deferred_handles_opened.load(std::memory_order_relaxed) : 0;
+										addSystemRow(prefix + "DeferredHandleCount", "uint64", metrics ? metrics->deferred_handle_count.load(std::memory_order_relaxed) : 0);
+										addSystemRow(prefix + "DeferredHandlesOpened", "uint64", deferredOpenTotal);
+										addSystemRow(prefix + "DeferredHandleOpenFailures", "uint64", metrics ? metrics->deferred_handle_open_failures.load(std::memory_order_relaxed) : 0);
+										addSystemRow(prefix + "DeferredHandleOpenMsLast", "float64", metrics ? (static_cast<double>(metrics->deferred_handle_open_us_last.load(std::memory_order_relaxed)) / 1000.0) : 0.0);
+										addSystemRow(prefix + "DeferredHandleOpenMsAvg", "float64", (metrics && deferredOpenTotal > 0)
+											? (static_cast<double>(metrics->deferred_handle_open_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(deferredOpenTotal)
 											: 0.0);
 									}
 								}
@@ -15109,8 +15323,8 @@ window.addEventListener("load", startAutoRefresh);
 
 		            // GET /reload/status
 	            // Public (read-only) status so UIs can show progress without incorrectly reporting failure.
-	            svr.Get("/reload/status", [&](const httplib::Request &, httplib::Response &res) {
-	                json resp;
+		            svr.Get("/reload/status", [&](const httplib::Request &, httplib::Response &res) {
+		                json resp;
 	                {
 	                    std::lock_guard<std::mutex> lk(g_reloadMutex);
 	                    resp["requested"] = g_reloadState.requested;
@@ -15125,10 +15339,49 @@ window.addEventListener("load", startAutoRefresh);
 		                resp["full_rebuild_required"] = g_full_rebuild_required.load(std::memory_order_relaxed);
 		                resp["ok_status"] = true;
 	                res.status = 200;
-	                res.set_content(resp.dump(2), "application/json");
-	            });
+		                res.set_content(resp.dump(2), "application/json");
+		            });
 
-	            // /health
+		            // /runtime/logs - concise in-process diagnostics for SCADA/log UI.
+		            svr.Get("/runtime/logs", [&](const httplib::Request &req, httplib::Response &res) {
+		                int limit = 400;
+		                if (req.has_param("limit")) {
+		                    try {
+		                        limit = std::stoi(req.get_param_value("limit"));
+		                    } catch (...) {
+		                        limit = 400;
+		                    }
+		                }
+		                limit = std::max(10, std::min(2000, limit));
+
+		                json entries = json::array();
+		                {
+		                    std::lock_guard<std::mutex> lock(g_runtimeLogMutex);
+		                    const size_t total = g_runtimeLog.size();
+		                    const size_t start = total > static_cast<size_t>(limit)
+		                        ? total - static_cast<size_t>(limit)
+		                        : 0;
+		                    for (size_t i = start; i < total; ++i) {
+		                        const auto &e = g_runtimeLog[i];
+		                        entries.push_back({
+		                            {"timestamp_ms", e.ts_ms},
+		                            {"level", e.level},
+		                            {"component", e.component},
+		                            {"message", e.message}
+		                        });
+		                    }
+		                }
+
+		                json resp;
+		                resp["ok"] = true;
+		                resp["source"] = "opcbridge_runtime";
+		                resp["limit"] = limit;
+		                resp["entries"] = std::move(entries);
+		                res.status = 200;
+		                res.set_content(resp.dump(2), "application/json");
+		            });
+
+		            // /health
 	            svr.Get("/health", [&](const httplib::Request &, httplib::Response &res) {
 	                json resp;
 
@@ -15177,6 +15430,11 @@ window.addEventListener("load", startAutoRefresh);
 								double measured_read_ms_avg = 0.0;
 								uint64_t metric_reads_total = 0;
 								uint64_t poll_cursor = 0;
+								uint64_t deferred_handle_count = 0;
+								uint64_t deferred_handles_opened = 0;
+								uint64_t deferred_handle_open_failures = 0;
+								double deferred_handle_open_ms_avg = 0.0;
+								double deferred_handle_open_ms_last = 0.0;
 
 								{
 									std::lock_guard<std::mutex> mlock(g_metricsMutex);
@@ -15187,6 +15445,16 @@ window.addEventListener("load", startAutoRefresh);
 										uint64_t us_total = m->read_us_total.load(std::memory_order_relaxed);
 										poll_tag_count = m->poll_tag_count.load(std::memory_order_relaxed);
 										poll_cursor = m->poll_cursor.load(std::memory_order_relaxed);
+										deferred_handle_count = m->deferred_handle_count.load(std::memory_order_relaxed);
+										deferred_handles_opened = m->deferred_handles_opened.load(std::memory_order_relaxed);
+										deferred_handle_open_failures = m->deferred_handle_open_failures.load(std::memory_order_relaxed);
+										const uint64_t deferred_open_us_total = m->deferred_handle_open_us_total.load(std::memory_order_relaxed);
+										deferred_handle_open_ms_last = static_cast<double>(m->deferred_handle_open_us_last.load(std::memory_order_relaxed)) / 1000.0;
+										if (deferred_handles_opened > 0) {
+											deferred_handle_open_ms_avg =
+												(static_cast<double>(deferred_open_us_total) / 1000.0) /
+												static_cast<double>(deferred_handles_opened);
+										}
 										if (metric_reads_total > 0) {
 											measured_read_ms_avg =
 												(static_cast<double>(us_total) / 1000.0) /
@@ -15226,7 +15494,7 @@ window.addEventListener("load", startAutoRefresh);
 
 							for (auto &t : driver.tags) {
 								if (!t.cfg.enabled) continue;
-								if (t.handle < 0) continue;
+								if (t.handle < 0 && !t.handle_deferred) continue;
 								has_valid_tag = true;
 
 								std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
@@ -15292,7 +15560,7 @@ window.addEventListener("load", startAutoRefresh);
 									} else if (stale_ratio <= 0.05) {
 										dstatus["status"] = "ok";
 										++ok_count;
-									} else if (large_time_sliced && newest_age_ms >= 0 && newest_age_ms <= 10000 && stale_ratio <= 0.25) {
+									} else if (large_time_sliced && newest_age_ms >= 0 && newest_age_ms <= 10000) {
 										dstatus["status"] = "ok";
 										dstatus["reason"] = "large time-sliced poll in progress";
 										++ok_count;
@@ -15322,6 +15590,16 @@ window.addEventListener("load", startAutoRefresh);
 								if (poll_tag_count > 0) dstatus["poll_tag_count"] = poll_tag_count;
 								if (poll_cursor > 0) dstatus["poll_cursor"] = poll_cursor;
 								if (measured_read_ms_avg > 0.0) dstatus["read_ms_avg"] = measured_read_ms_avg;
+								if (deferred_handle_count > 0) {
+									dstatus["deferred_handle_count"] = deferred_handle_count;
+									dstatus["deferred_handles_opened"] = deferred_handles_opened;
+									dstatus["deferred_handles_pending"] = deferred_handle_count > deferred_handles_opened
+										? (deferred_handle_count - deferred_handles_opened)
+										: 0;
+									dstatus["deferred_handle_open_failures"] = deferred_handle_open_failures;
+									if (deferred_handle_open_ms_avg > 0.0) dstatus["deferred_handle_open_ms_avg"] = deferred_handle_open_ms_avg;
+									if (deferred_handle_open_ms_last > 0.0) dstatus["deferred_handle_open_ms_last"] = deferred_handle_open_ms_last;
+								}
 								if (driver.conn.poll_max_reads_per_sec > 0) {
 									dstatus["poll_max_reads_per_sec"] = driver.conn.poll_max_reads_per_sec;
 								}
@@ -18648,6 +18926,8 @@ window.addEventListener("load", startAutoRefresh);
 	        struct PollTagItem {
 	            TagConfig cfg;
 	            int32_t handle = PLCTAG_ERR_NOT_FOUND;
+	            bool handle_deferred = false;
+	            bool poller_owns_handle = false;
 	            std::chrono::steady_clock::time_point next_poll;
 
 	            // Scaling runtime (copied from TagRuntime so pollers can publish scaled values)
@@ -18738,7 +19018,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        baseSpec.metrics = ptr;
 		                    }
 
-			                    // Actually build tag list; skip invalid handles (they'll show as bad_handle)
+			                    // Actually build tag list; lazy read-only handles are opened by pollers.
 			                    baseSpec.tags.clear();
 			                    baseSpec.derived_bits_by_source.clear();
 			                    baseSpec.derived_alias_by_source.clear();
@@ -18756,10 +19036,11 @@ window.addEventListener("load", startAutoRefresh);
 		                                baseSpec.derived_alias_by_source[t.cfg.source_tag].push_back(std::move(a));
 		                            }
 		                        }
-		                        if (t.handle < 0) continue;
+		                        if (t.handle < 0 && !t.handle_deferred) continue;
 		                        PollTagItem it;
 		                        it.cfg = t.cfg;
 	                        it.handle = t.handle;
+	                        it.handle_deferred = t.handle_deferred;
 	                        it.scaling_linear = t.scaling_linear;
 	                        it.scale_slope = t.scale_slope;
 	                        it.scale_offset = t.scale_offset;
@@ -18780,6 +19061,16 @@ window.addEventListener("load", startAutoRefresh);
 	                    const int laneCount = std::max(1, std::min<int>(baseSpec.conn.poll_lanes, static_cast<int>(std::max<size_t>(totalTags, 1))));
 	                    if (baseSpec.metrics) {
 	                        baseSpec.metrics->poll_tag_count.store(static_cast<uint64_t>(totalTags), std::memory_order_relaxed);
+	                        size_t deferredTagCount = 0;
+	                        for (const auto &it : baseSpec.tags) {
+	                            if (it.handle_deferred) deferredTagCount++;
+	                        }
+	                        baseSpec.metrics->deferred_handle_count.store(static_cast<uint64_t>(deferredTagCount), std::memory_order_relaxed);
+	                        baseSpec.metrics->deferred_handles_opened.store(0, std::memory_order_relaxed);
+	                        baseSpec.metrics->deferred_handle_open_failures.store(0, std::memory_order_relaxed);
+	                        baseSpec.metrics->deferred_handle_open_us_total.store(0, std::memory_order_relaxed);
+	                        baseSpec.metrics->deferred_handle_open_us_last.store(0, std::memory_order_relaxed);
+	                        baseSpec.metrics->deferred_handle_open_us_max.store(0, std::memory_order_relaxed);
 	                    }
 		                    for (int lane = 0; lane < laneCount; ++lane) {
 	                        PollerSpec laneSpec;
@@ -18836,6 +19127,18 @@ window.addEventListener("load", startAutoRefresh);
 							for (size_t i = 0; i < spec.tags.size(); ++i) {
 								heap.push(HeapItem{spec.tags[i].next_poll, i});
 							}
+							struct PollerHandleCleanup {
+								std::vector<PollTagItem> *tags = nullptr;
+								~PollerHandleCleanup() {
+									if (!tags) return;
+									for (auto &tag : *tags) {
+										if (tag.poller_owns_handle && tag.handle >= 0) {
+											plc_tag_destroy(tag.handle);
+											tag.handle = PLCTAG_ERR_NOT_FOUND;
+										}
+									}
+								}
+							} pollerHandleCleanup{&spec.tags};
 
 							const bool timeSliced = (spec.conn.polling_mode == "time_sliced");
 							const int autoBatchSize = (spec.conn.polling_pacing == "gentle")
@@ -18888,24 +19191,82 @@ window.addEventListener("load", startAutoRefresh);
 								t.next_poll = nowSteady + std::chrono::milliseconds(scan_ms);
 								heap.push(HeapItem{t.next_poll, top.idx});
 
-								const std::string key = make_tag_key(spec.conn.id, t.cfg.logical_name);
+									const std::string key = make_tag_key(spec.conn.id, t.cfg.logical_name);
 
-		                            int32_t status = PLCTAG_STATUS_OK;
-		                            TagSnapshot snap;
-		                            const bool isArray = (t.cfg.elem_count > 1);
-		                            std::vector<TagSnapshot> elemSnaps;
+			                            int32_t status = PLCTAG_STATUS_OK;
+			                            TagSnapshot snap;
+			                            const bool isArray = (t.cfg.elem_count > 1);
+			                            std::vector<TagSnapshot> elemSnaps;
 
-		                            {
-	                                std::shared_lock<std::shared_mutex> plcLock;
-	                                if (g_plcMutex) {
-	                                    plcLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
-	                                }
+			                            {
+		                                std::shared_lock<std::shared_mutex> plcLock;
+		                                if (g_plcMutex) {
+		                                    plcLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+		                                }
 
-	                                auto t0 = std::chrono::steady_clock::now();
-	                                status = plc_tag_read(t.handle, spec.conn.default_read_ms);
-	                                auto t1 = std::chrono::steady_clock::now();
+		                                    if (t.handle < 0 && t.handle_deferred) {
+		                                        std::string tagStr;
+		                                        try {
+		                                            tagStr = build_tag_conn_str(spec.conn, t.cfg);
+		                                        } catch (const std::exception &ex) {
+		                                            status = PLCTAG_ERR_NOT_FOUND;
+		                                            std::cerr << "Deferred handle error for ["
+		                                                      << spec.conn.id << "]."
+		                                                      << t.cfg.logical_name << ": "
+		                                                      << ex.what() << std::endl;
+		                                        }
 
-	                                if (spec.metrics) {
+		                                        if (!tagStr.empty()) {
+		                                            const auto openStarted = std::chrono::steady_clock::now();
+		                                            const int32_t newHandle = plc_tag_create(tagStr.c_str(), spec.conn.default_timeout_ms);
+		                                            bool pending = false;
+		                                            std::string readyErr;
+		                                            if (!accept_startup_handle(newHandle, spec.conn.startup_handle_wait_ms, pending, readyErr)) {
+		                                                if (spec.metrics) {
+		                                                    spec.metrics->deferred_handle_open_failures.fetch_add(1, std::memory_order_relaxed);
+		                                                }
+		                                                status = newHandle < 0 ? newHandle : PLCTAG_ERR_NOT_FOUND;
+		                                                if (newHandle >= 0) plc_tag_destroy(newHandle);
+		                                                std::cerr << "Deferred handle create failed for ["
+		                                                          << spec.conn.id << "]."
+		                                                          << t.cfg.logical_name << ": "
+		                                                          << readyErr << std::endl;
+		                                            } else {
+		                                                if (spec.metrics) {
+		                                                    const uint64_t openUs = static_cast<uint64_t>(
+		                                                        std::chrono::duration_cast<std::chrono::microseconds>(
+		                                                            std::chrono::steady_clock::now() - openStarted
+		                                                        ).count()
+		                                                    );
+		                                                    spec.metrics->deferred_handles_opened.fetch_add(1, std::memory_order_relaxed);
+		                                                    spec.metrics->deferred_handle_open_us_total.fetch_add(openUs, std::memory_order_relaxed);
+		                                                    spec.metrics->deferred_handle_open_us_last.store(openUs, std::memory_order_relaxed);
+		                                                    atomic_update_max(spec.metrics->deferred_handle_open_us_max, openUs);
+		                                                }
+		                                                t.handle = newHandle;
+		                                                t.poller_owns_handle = true;
+		                                                if (pending) {
+		                                                    continue;
+		                                                }
+		                                            }
+		                                        }
+		                                    }
+
+		                                    if (t.handle < 0) {
+		                                        status = PLCTAG_ERR_NOT_FOUND;
+		                                    } else {
+			                                const int32_t handleStatus = plc_tag_status(t.handle);
+			                                if (handleStatus == PLCTAG_STATUS_PENDING) {
+			                                    continue;
+			                                }
+		                                if (handleStatus != PLCTAG_STATUS_OK) {
+		                                    status = handleStatus;
+		                                } else {
+		                                auto t0 = std::chrono::steady_clock::now();
+		                                status = plc_tag_read(t.handle, spec.conn.default_read_ms);
+		                                auto t1 = std::chrono::steady_clock::now();
+
+		                                if (spec.metrics) {
 	                                    uint64_t us = static_cast<uint64_t>(
 	                                        std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
 	                                    );
@@ -18923,11 +19284,11 @@ window.addEventListener("load", startAutoRefresh);
 	                                    } else {
 	                                        spec.metrics->reads_err.fetch_add(1, std::memory_order_relaxed);
 	                                        spec.metrics->last_err_ts_ms.store(ts_ms, std::memory_order_relaxed);
-	                                    }
-	                                }
+		                                    }
+		                                }
 
-	                                if (status == PLCTAG_STATUS_OK) {
-	                                    TagRuntime tmp;
+		                                if (status == PLCTAG_STATUS_OK) {
+		                                    TagRuntime tmp;
 	                                    tmp.cfg = t.cfg;
 	                                    tmp.handle = t.handle;
 	                                    tmp.scaling_linear = t.scaling_linear;
@@ -18948,10 +19309,12 @@ window.addEventListener("load", startAutoRefresh);
 	                                            update_snapshot_from_plc_at_offset(es, spec.conn, etmp, i * elemSize);
 	                                            es.timestamp = ts;
 	                                            elemSnaps.push_back(std::move(es));
-	                                        }
-	                                    }
-	                                }
-	                            }
+		                                        }
+		                                    }
+		                                }
+		                                }
+		                                }
+		                            }
 
 		                            TagSnapshot prevSnap;
 		                            bool hadPrev = false;
@@ -19682,11 +20045,16 @@ window.addEventListener("load", startAutoRefresh);
 		                }
 		            }
 
-		            if (doReload) {
-		                const bool targetedReload = !requestedTargetConn.empty();
-		                std::cout << "[reload] Starting "
-		                          << (targetedReload ? ("connection reload for '" + requestedTargetConn + "'") : std::string("full reload"))
-		                          << " (gen=" << requestedGen << ")...\n";
+			            if (doReload) {
+			                const bool targetedReload = !requestedTargetConn.empty();
+			                const auto reloadStarted = std::chrono::steady_clock::now();
+			                {
+			                    std::ostringstream msg;
+			                    msg << "Starting "
+			                        << (targetedReload ? ("connection reload for '" + requestedTargetConn + "'") : std::string("full reload"))
+			                        << " (gen=" << requestedGen << ").";
+			                    runtime_log("info", "reload", msg.str());
+			                }
 
 		                if (targetedReload) {
 		                    stopConnectionPollers(requestedTargetConn);
@@ -19777,9 +20145,16 @@ window.addEventListener("load", startAutoRefresh);
 			                    } else {
 			                        std::vector<DriverContext> newDrivers;
 
+			                        const auto fullLoadStarted = std::chrono::steady_clock::now();
 			                        if (!load_all_drivers(newDrivers, configDir)) {
 			                            err = "Reload failed (see server log for details).";
 			                        } else {
+			                            {
+			                                std::ostringstream msg;
+			                                msg << "Full driver/config load completed in "
+			                                    << steady_elapsed_ms(fullLoadStarted) << " ms.";
+			                                runtime_log("info", "reload", msg.str());
+			                            }
 			                            {
 			                                std::lock_guard<std::mutex> lock(driverMutex);
 			                                destroy_all_handles(drivers, true /*plcAlreadyLocked*/);
@@ -19790,9 +20165,16 @@ window.addEventListener("load", startAutoRefresh);
 			                            // Rebuild OPC UA server to refresh node contexts / handles.
 			                            if (g_uaServer) {
 			                                std::cout << "[reload] Rebuilding OPC UA server...\n";
+			                                const auto opcuaRebuildStarted = std::chrono::steady_clock::now();
 			                                shutdown_opcua_server();
 			                                if (!init_opcua_server(opcuaPort, drivers)) {
 			                                    err = "OPC UA reinit failed after reload (see server log).";
+			                                }
+			                                {
+			                                    std::ostringstream msg;
+			                                    msg << "OPC UA rebuild completed in "
+			                                        << steady_elapsed_ms(opcuaRebuildStarted) << " ms.";
+			                                    runtime_log("info", "reload", msg.str());
 			                                }
 			                            }
 
@@ -19834,7 +20216,13 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	                g_reloadCv.notify_all();
 
-	                std::cout << "[reload] Reload " << (ok ? "OK" : "FAILED") << "\n";
+	                {
+	                    std::ostringstream msg;
+	                    msg << "Reload " << (ok ? "OK" : "FAILED")
+	                        << " in " << steady_elapsed_ms(reloadStarted) << " ms.";
+	                    if (!ok && !err.empty()) msg << " " << err;
+	                    runtime_log(ok ? "info" : "error", "reload", msg.str());
+	                }
 	                continue;
 	            }
 

@@ -12,6 +12,7 @@
   overviewHealthConnections: document.getElementById('overviewHealthConnections'),
   overviewRebuildStatus: document.getElementById('overviewRebuildStatus'),
   overviewRebuildHint: document.getElementById('overviewRebuildHint'),
+  overviewRebuildDetails: document.getElementById('overviewRebuildDetails'),
   overviewRebuildBtn: document.getElementById('overviewRebuildBtn'),
   healthJson: document.getElementById('healthJson'),
   alarmsStatusJson: document.getElementById('alarmsStatusJson'),
@@ -643,6 +644,9 @@ const state = {
 
   liveTagsLast: null,
   liveTagFilter: { type: 'all', label: 'All' },
+  healthLast: null,
+  healthLastOkAtMs: 0,
+  healthLastFetchError: '',
 
   // alarms/events (from opcbridge-alarms)
   alarmsAllLast: null,
@@ -2714,11 +2718,12 @@ function wireLogsUi() {
   if (els.logsRefreshBtn.dataset.wired === '1') return;
   els.logsRefreshBtn.dataset.wired = '1';
 
-  if (els.logsSource) {
-    els.logsSource.innerHTML = [
-      { value: 'systemd', label: 'System journal (journalctl)' },
-      { value: 'opcbridge_events', label: 'opcbridge alarms/events log' },
-      { value: 'alarm_server_history', label: 'alarm server history' },
+	  if (els.logsSource) {
+	    els.logsSource.innerHTML = [
+	      { value: 'opcbridge_runtime', label: 'opcbridge runtime diagnostics' },
+	      { value: 'systemd', label: 'System journal (journalctl)' },
+	      { value: 'opcbridge_events', label: 'opcbridge alarms/events log' },
+	      { value: 'alarm_server_history', label: 'alarm server history' },
       { value: 'hmi_audit', label: 'HMI audit log' }
     ].map((s) => `<option value="${escapeHtml(s.value)}">${escapeHtml(s.label)}</option>`).join('');
   }
@@ -2833,8 +2838,9 @@ function renderOverviewHealth(health) {
   if (!health) return;
 
   const overall = String(health?.status || 'error');
+  const cached = Boolean(health?.ui_cached);
   if (els.overviewHealthOverall) {
-    els.overviewHealthOverall.textContent = `Status: ${overall.toUpperCase()}`;
+    els.overviewHealthOverall.textContent = `Status: ${overall.toUpperCase()}${cached ? ' (cached)' : ''}`;
     els.overviewHealthOverall.className = classForStatus(overall);
   }
 
@@ -2847,7 +2853,10 @@ function renderOverviewHealth(health) {
   const connCount = Object.keys(conns).length;
 
   if (els.overviewHealthMeta) {
-    els.overviewHealthMeta.textContent = `Connections: ${connCount} | OK: ${ok} | Degraded: ${degraded} | Error: ${err}`;
+    const cacheText = cached
+      ? ` | cached ${Math.round(Number(health.ui_cache_age_ms || 0) / 1000)}s after ${health.ui_fetch_error || 'health fetch failed'}`
+      : '';
+    els.overviewHealthMeta.textContent = `Connections: ${connCount} | OK: ${ok} | Degraded: ${degraded} | Error: ${err}${cacheText}`;
   }
 
   if (els.overviewHealthConnections) {
@@ -2912,6 +2921,27 @@ async function apiGet(url, { timeoutMs = 30000 } = {}) {
     throw new Error(res.status === 502 ? `opcbridge is starting or reconnecting${detail}` : `HTTP ${res.status}${detail}`);
   }
   return res.json();
+}
+
+async function loadOpcbridgeHealth({ allowCached = true } = {}) {
+  try {
+    const health = await apiGet('/api/opcbridge/health');
+    state.healthLast = health;
+    state.healthLastOkAtMs = Date.now();
+    state.healthLastFetchError = '';
+    return health;
+  } catch (err) {
+    state.healthLastFetchError = String(err?.message || err || '');
+    const ageMs = Date.now() - Number(state.healthLastOkAtMs || 0);
+    if (allowCached && state.healthLast && ageMs >= 0 && ageMs <= 30000) {
+      const cached = { ...state.healthLast };
+      cached.ui_cached = true;
+      cached.ui_cache_age_ms = ageMs;
+      cached.ui_fetch_error = state.healthLastFetchError;
+      return cached;
+    }
+    throw err;
+  }
 }
 
 async function apiGetText(url, { timeoutMs = 30000 } = {}) {
@@ -3051,18 +3081,69 @@ function summarizeOpcuaSyncResults(results) {
 }
 
 function renderRuntimeRebuildStatus(status) {
+  const st = status && typeof status === 'object' ? status : {};
   const required = Boolean(status?.full_rebuild_required);
+  const requested = Boolean(st.requested);
+  const inProgress = Boolean(st.in_progress);
+  const done = Boolean(st.done);
+  const ok = Boolean(st.ok);
+  const target = String(st.target_connection_id || '').trim();
+  const gen = Number.isFinite(Number(st.gen)) ? Number(st.gen) : 0;
+  const sync = st.opcua_sync && typeof st.opcua_sync === 'object' ? st.opcua_sync : {};
+  const syncAttempted = Boolean(sync.attempted);
+  const syncOk = syncAttempted ? sync.ok !== false : true;
+
+  let label = required ? 'Full rebuild required.' : 'Full runtime is current.';
+  let cls = required ? 'status-degraded' : 'status-ok';
+  if (requested && !inProgress) {
+    label = target ? `Connection reload queued: ${target}` : 'Full runtime rebuild queued.';
+    cls = 'status-degraded';
+  } else if (inProgress) {
+    label = target ? `Connection reload running: ${target}` : 'Full runtime rebuild running.';
+    cls = 'status-degraded';
+  } else if (done && !ok) {
+    label = 'Last rebuild/reload failed.';
+    cls = 'status-error';
+  } else if (required) {
+    cls = 'status-degraded';
+  }
+
   if (els.overviewRebuildStatus) {
-    els.overviewRebuildStatus.textContent = required ? 'Full rebuild required.' : 'Full runtime is current.';
-    els.overviewRebuildStatus.className = required ? 'status warn' : 'status ok';
+    els.overviewRebuildStatus.textContent = label;
+    els.overviewRebuildStatus.className = cls;
   }
   if (els.overviewRebuildHint) {
-    els.overviewRebuildHint.textContent = required
-      ? 'Press Rebuild Full Runtime to refresh OPC UA nodes and rebuild all runtime bindings.'
-      : 'Save + Reload performs a full runtime rebuild so all clients see the same runtime state.';
+    if (inProgress || requested) {
+      els.overviewRebuildHint.textContent = 'SCADA will keep polling this status while opcbridge applies the runtime change.';
+    } else if (required) {
+      els.overviewRebuildHint.textContent = 'Press Rebuild Full Runtime to refresh OPC UA nodes and rebuild all runtime bindings.';
+    } else {
+      els.overviewRebuildHint.textContent = 'Connection-level polling changes can apply without a full OPC UA rebuild unless structural OPC UA cleanup is required.';
+    }
+  }
+  if (els.overviewRebuildDetails) {
+    const rows = [];
+    rows.push(`Generation: ${gen || '-'}`);
+    rows.push(`Scope: ${target ? `connection ${target}` : 'full runtime'}`);
+    rows.push(`Requested: ${requested ? 'yes' : 'no'} | Running: ${inProgress ? 'yes' : 'no'} | Done: ${done ? 'yes' : 'no'} | OK: ${done ? (ok ? 'yes' : 'no') : '-'}`);
+    if (syncAttempted) {
+      const bits = [];
+      bits.push(`OPC UA sync: ${syncOk ? 'ok' : 'error'}`);
+      bits.push(`added ${Number(sync.added || 0)}`);
+      bits.push(`updated ${Number(sync.updated || 0)}`);
+      bits.push(`retired ${Number(sync.retired || 0)}`);
+      if (Number(sync.datatype_conflicts || 0)) bits.push(`datatype conflicts ${Number(sync.datatype_conflicts || 0)}`);
+      if (Number(sync.add_failures || 0)) bits.push(`add failures ${Number(sync.add_failures || 0)}`);
+      rows.push(bits.join(' | '));
+    } else {
+      rows.push('OPC UA sync: not attempted');
+    }
+    if (st.error) rows.push(`Error: ${String(st.error)}`);
+    if (sync.message) rows.push(`Message: ${String(sync.message)}`);
+    els.overviewRebuildDetails.innerHTML = rows.map((r) => `<div>${escapeHtml(r)}</div>`).join('');
   }
   if (els.overviewRebuildBtn) {
-    els.overviewRebuildBtn.disabled = !canEditConfig() || Boolean(status?.in_progress);
+    els.overviewRebuildBtn.disabled = !canEditConfig() || requested || inProgress;
   }
 }
 
@@ -3079,14 +3160,14 @@ function wireOverviewRuntimeUi() {
         els.overviewRebuildBtn.disabled = true;
         if (els.overviewRebuildStatus) {
           els.overviewRebuildStatus.textContent = 'Rebuilding full runtime…';
-          els.overviewRebuildStatus.className = 'status warn';
+          els.overviewRebuildStatus.className = 'status-degraded';
         }
         await opcbridgeReload();
         await refreshAll();
       } catch (err) {
         if (els.overviewRebuildStatus) {
           els.overviewRebuildStatus.textContent = `Rebuild failed: ${err.message}`;
-          els.overviewRebuildStatus.className = 'status bad';
+          els.overviewRebuildStatus.className = 'status-error';
         }
       }
     });
@@ -3122,6 +3203,7 @@ async function waitForOpcbridgeReloadDone({ gen, maxWaitMs = 180000, intervalMs 
   while ((Date.now() - start) < maxWaitMs) {
     try {
       const s = await apiGet('/api/opcbridge/reload/status');
+      renderRuntimeRebuildStatus(s);
       const sGen = (typeof s?.gen === 'number') ? s.gen : 0;
       if (typeof gen === 'number' && sGen < gen) {
         // Still reporting an older reload; keep polling.
@@ -15477,7 +15559,7 @@ async function refreshAll() {
   const started = Date.now();
   try {
     const [health, alarmsStatus, reloadStatus] = await Promise.all([
-      apiGet('/api/opcbridge/health'),
+      loadOpcbridgeHealth(),
       apiGet('/api/alarms/alarm/api/status'),
       apiGet('/api/opcbridge/reload/status').catch(() => null)
     ]);
@@ -15556,7 +15638,7 @@ async function refreshVisible() {
   const started = Date.now();
   try {
     const [health, alarmsStatus, reloadStatus] = await Promise.all([
-      apiGet('/api/opcbridge/health'),
+      loadOpcbridgeHealth(),
       apiGet('/api/alarms/alarm/api/status'),
       apiGet('/api/opcbridge/reload/status').catch(() => null)
     ]);
