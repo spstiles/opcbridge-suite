@@ -2134,7 +2134,7 @@ function openLoggerReportModal(opts = {}) {
   loggerReportModalSetStatus('');
 
   if (els.loggerReportId) {
-    els.loggerReportId.disabled = !isNew;
+    els.loggerReportId.disabled = false;
     els.loggerReportId.value = isNew ? '' : String(report?.id || id);
   }
   if (els.loggerReportName) els.loggerReportName.value = String(report?.name || '');
@@ -2235,15 +2235,18 @@ async function saveAndApplyReporterReport() {
     if (!report.database_id) throw new Error('Database is required.');
     if (report.mode === 'scheduled' && !report.schedule.on_calendar) throw new Error('OnCalendar is required for scheduled log jobs.');
 
-    const save = await apiPostJson('/api/reporter/reports', { report });
+    const body = { report };
+    if (state.loggerReportEditingMode === 'edit' && state.loggerReportEditingId) body.original_id = state.loggerReportEditingId;
+    const save = await apiPostJson('/api/reporter/reports', body);
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
+    const savedId = String(save?.report?.id || report.id).trim();
 
     loggerReportModalSetStatus('Reloading reporter service…');
-    const apply = await apiPostJson('/api/reporter/reports/apply', { id: report.id });
+    const apply = await apiPostJson('/api/reporter/reports/apply', { id: savedId });
     if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
     await refreshReporterAll();
-    state.loggerSelectedNodeId = `logger:report:${report.id}`;
+    state.loggerSelectedNodeId = `logger:report:${savedId}`;
     renderLoggerTree();
     renderLoggerDetails();
     closeLoggerReportModal();
@@ -2290,7 +2293,7 @@ function openLoggerDataCheckModal(opts = {}) {
   if (els.loggerDataCheckModal) els.loggerDataCheckModal.style.display = 'block';
   if (els.loggerDataCheckStatus) els.loggerDataCheckStatus.textContent = '';
   if (els.loggerDataCheckId) {
-    els.loggerDataCheckId.disabled = !isNew;
+    els.loggerDataCheckId.disabled = false;
     els.loggerDataCheckId.value = isNew ? '' : String(check?.id || id);
   }
   if (els.loggerDataCheckName) els.loggerDataCheckName.value = String(check?.name || '');
@@ -2368,11 +2371,14 @@ async function saveReporterDataCheck() {
     if (check.low_threshold != null && !Number.isFinite(check.low_threshold)) throw new Error('Low threshold must be numeric.');
     if (check.high_threshold != null && !Number.isFinite(check.high_threshold)) throw new Error('High threshold must be numeric.');
 
-    const resp = await apiPostJson('/api/reporter/data-checks', { data_check: check });
+    const body = { data_check: check };
+    if (state.loggerDataCheckEditingMode === 'edit' && state.loggerDataCheckEditingId) body.original_id = state.loggerDataCheckEditingId;
+    const resp = await apiPostJson('/api/reporter/data-checks', body);
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
+    const savedId = String(resp?.data_check?.id || check.id).trim();
     await refreshReporterAll();
     await refreshReporterSystemTagsForScada();
-    state.loggerSelectedNodeId = `logger:data_check:${check.id}`;
+    state.loggerSelectedNodeId = `logger:data_check:${savedId}`;
     renderLoggerTree();
     renderLoggerDetails();
     closeLoggerDataCheckModal();

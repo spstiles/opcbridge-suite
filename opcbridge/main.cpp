@@ -15386,6 +15386,9 @@ window.addEventListener("load", startAutoRefresh);
 	                json resp;
 
 					auto now = std::chrono::system_clock::now();
+					const int64_t now_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+						now.time_since_epoch()
+					).count();
 
 						int ok_count = 0;
 						int degraded_count = 0;
@@ -15429,6 +15432,8 @@ window.addEventListener("load", startAutoRefresh);
 								uint64_t poll_tag_count = 0;
 								double measured_read_ms_avg = 0.0;
 								uint64_t metric_reads_total = 0;
+								int64_t metric_last_ok_ts_ms = -1;
+								int64_t metric_last_err_ts_ms = -1;
 								uint64_t poll_cursor = 0;
 								uint64_t deferred_handle_count = 0;
 								uint64_t deferred_handles_opened = 0;
@@ -15442,6 +15447,8 @@ window.addEventListener("load", startAutoRefresh);
 									if (mit != g_connPollMetrics.end() && mit->second) {
 										auto &m = mit->second;
 										metric_reads_total = m->reads_total.load(std::memory_order_relaxed);
+										metric_last_ok_ts_ms = m->last_ok_ts_ms.load(std::memory_order_relaxed);
+										metric_last_err_ts_ms = m->last_err_ts_ms.load(std::memory_order_relaxed);
 										uint64_t us_total = m->read_us_total.load(std::memory_order_relaxed);
 										poll_tag_count = m->poll_tag_count.load(std::memory_order_relaxed);
 										poll_cursor = m->poll_cursor.load(std::memory_order_relaxed);
@@ -15535,6 +15542,18 @@ window.addEventListener("load", startAutoRefresh);
 								if (total_seen > 0) {
 									stale_ratio = static_cast<double>(stale_or_bad) / static_cast<double>(total_seen);
 								}
+								const int64_t last_ok_age_ms = (metric_last_ok_ts_ms >= 0)
+									? (now_epoch_ms - metric_last_ok_ts_ms)
+									: -1;
+								const int64_t last_err_age_ms = (metric_last_err_ts_ms >= 0)
+									? (now_epoch_ms - metric_last_err_ts_ms)
+									: -1;
+								const bool transient_full_bad_snapshot =
+									(good_recent == 0 &&
+									 total_seen > 0 &&
+									 stale_or_bad == total_seen &&
+									 last_ok_age_ms >= 0 &&
+									 last_ok_age_ms <= std::max<int64_t>(freshness_budget_ms, 15000));
 
 									if (!has_valid_tag) {
 										dstatus["status"] = "error";
@@ -15544,6 +15563,10 @@ window.addEventListener("load", startAutoRefresh);
 										dstatus["status"] = "error";
 										dstatus["reason"] = "no tag snapshots yet";
 										++error_count;
+									} else if (transient_full_bad_snapshot) {
+										dstatus["status"] = "ok";
+										dstatus["reason"] = "recovering after transient read timeout";
+										++ok_count;
 									} else if (good_recent == 0) {
 										// Poll loop may be behind briefly; avoid flapping ERROR unless we've
 										// had no good snapshots for an extended period.
@@ -15590,6 +15613,8 @@ window.addEventListener("load", startAutoRefresh);
 								if (poll_tag_count > 0) dstatus["poll_tag_count"] = poll_tag_count;
 								if (poll_cursor > 0) dstatus["poll_cursor"] = poll_cursor;
 								if (measured_read_ms_avg > 0.0) dstatus["read_ms_avg"] = measured_read_ms_avg;
+								if (last_ok_age_ms >= 0) dstatus["last_ok_age_ms"] = last_ok_age_ms;
+								if (last_err_age_ms >= 0) dstatus["last_err_age_ms"] = last_err_age_ms;
 								if (deferred_handle_count > 0) {
 									dstatus["deferred_handle_count"] = deferred_handle_count;
 									dstatus["deferred_handles_opened"] = deferred_handles_opened;

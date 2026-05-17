@@ -2278,6 +2278,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const id = sanitizeId(incoming.id);
+        const originalId = sanitizeId(parsed?.original_id || incoming.original_id || '');
         if (!id) {
           sendJson(res, 400, { ok: false, error: 'Report "id" is required.' });
           return;
@@ -2289,10 +2290,19 @@ const server = http.createServer(async (req, res) => {
           .filter((r) => r && typeof r === 'object' && !Array.isArray(r))
           .map((r) => ({ ...r }));
 
-        const idx = nextList.findIndex((r) => sanitizeId(r.id) === id);
+        const lookupId = originalId || id;
+        const idx = nextList.findIndex((r) => sanitizeId(r.id) === lookupId);
+        if (originalId && originalId !== id) {
+          const conflict = nextList.some((r, i) => i !== idx && sanitizeId(r.id) === id);
+          if (conflict) {
+            sendJson(res, 409, { ok: false, error: `Log job id '${id}' already exists.` });
+            return;
+          }
+        }
         const prev = idx >= 0 ? nextList[idx] : {};
 
         const next = { ...prev, ...incoming, id };
+        delete next.original_id;
         next.name = String(next.name || next.id || '').trim();
         next.mode = String(next.mode || 'scheduled').trim() || 'scheduled';
         next.database_id = sanitizeId(next.database_id);
@@ -2309,7 +2319,7 @@ const server = http.createServer(async (req, res) => {
         else nextList.push(next);
 
         writeJsonFile(REPORTER_REPORTS_PATH, { reports: nextList });
-        sendJson(res, 200, { ok: true, path: REPORTER_REPORTS_PATH, report: next });
+        sendJson(res, 200, { ok: true, path: REPORTER_REPORTS_PATH, report: next, renamed_from: originalId && originalId !== id ? originalId : '' });
       } catch (err) {
         sendJson(res, 400, { ok: false, error: String(err.message || err) });
       }
@@ -2416,6 +2426,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const id = sanitizeId(incoming.id);
+        const originalId = sanitizeId(parsed?.original_id || incoming.original_id || '');
         if (!id) {
           sendJson(res, 400, { ok: false, error: 'Data check "id" is required.' });
           return;
@@ -2427,9 +2438,18 @@ const server = http.createServer(async (req, res) => {
           .filter((c) => c && typeof c === 'object' && !Array.isArray(c))
           .map((c) => ({ ...c }));
 
-        const idx = nextList.findIndex((c) => sanitizeId(c.id) === id);
+        const lookupId = originalId || id;
+        const idx = nextList.findIndex((c) => sanitizeId(c.id) === lookupId);
+        if (originalId && originalId !== id) {
+          const conflict = nextList.some((c, i) => i !== idx && sanitizeId(c.id) === id);
+          if (conflict) {
+            sendJson(res, 409, { ok: false, error: `Data check id '${id}' already exists.` });
+            return;
+          }
+        }
         const prev = idx >= 0 ? nextList[idx] : {};
         const next = { ...prev, ...incoming, id };
+        delete next.original_id;
         next.name = String(next.name || next.id || '').trim();
         next.database_id = sanitizeId(next.database_id);
         next.enabled = Boolean(next.enabled);
@@ -2464,7 +2484,7 @@ const server = http.createServer(async (req, res) => {
 
         writeJsonFile(REPORTER_DATA_CHECKS_PATH, { data_checks: nextList });
         const reload = await reporterApiRequest('POST', '/reload');
-        sendJson(res, 200, { ok: true, path: REPORTER_DATA_CHECKS_PATH, data_check: next, reporter_reload: reload });
+        sendJson(res, 200, { ok: true, path: REPORTER_DATA_CHECKS_PATH, data_check: next, renamed_from: originalId && originalId !== id ? originalId : '', reporter_reload: reload });
       } catch (err) {
         sendJson(res, 400, { ok: false, error: String(err.message || err) });
       }
