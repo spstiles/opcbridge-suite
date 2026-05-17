@@ -726,6 +726,7 @@ const state = {
   reporterDatabases: [],
   reporterReports: [],
   reporterDataChecks: [],
+  reporterConfig: null,
   reporterCapabilities: null,
   reporterRuntime: null,
   reporterDatabaseStatusById: new Map(),
@@ -1173,6 +1174,16 @@ function canUseOdbcInUi() {
   return Boolean(avail);
 }
 
+function getReporterDefaultOpcbridgeBaseUrl() {
+  const fromReporter = String(state.reporterConfig?.opcbridge_base_url || '').trim();
+  if (fromReporter) return fromReporter;
+  const o = state.cfg?.opcbridge || {};
+  const scheme = String(o.scheme || 'http').trim() || 'http';
+  const host = String(o.host || '127.0.0.1').trim() || '127.0.0.1';
+  const port = Number(o.port || 8080) || 8080;
+  return `${scheme}://${host}:${port}`;
+}
+
 function renderLoggerDbModalTypeUi() {
   if (!els.loggerDbModalType) return;
   const canOdbc = canUseOdbcInUi();
@@ -1225,7 +1236,7 @@ function renderLoggerTable() {
     tr.appendChild(mk(String(d?.mysql_port ?? ''), true));
     tr.appendChild(mk(String(d?.mysql_user || ''), true));
     tr.appendChild(mk(String(d?.mysql_database || ''), true));
-    tr.appendChild(mk(String(d?.opcbridge_base_url || ''), true));
+    tr.appendChild(mk(String(d?.opcbridge_base_url || '').trim() || '(default)', true));
     tr.appendChild(mk((d?.password_set || d?.mysql_password_set) ? 'set' : '', false));
     tr.appendChild(mk(d?.monitor_enabled ? `${d?.monitor_interval_sec || 60}s` : '', true));
     tr.appendChild(mk(mon ? (mon.running ? 'running' : (mon.ok ? `ok ${mon.latency_ms || 0}ms` : `failed ${mon.consecutive_failures || 0}`)) : '', false));
@@ -1655,12 +1666,15 @@ function openLoggerDbModal(opts = {}) {
   renderLoggerDbModalTypeUi();
 
   if (els.loggerDbModalId) {
-    els.loggerDbModalId.disabled = !isNew;
+    els.loggerDbModalId.disabled = false;
     els.loggerDbModalId.value = isNew ? '' : String(db?.id || id);
   }
   if (els.loggerDbModalName) els.loggerDbModalName.value = String(db?.name || '');
   if (els.loggerDbModalType) els.loggerDbModalType.value = String(db?.type || 'mysql');
-  if (els.loggerDbModalOpcbridgeBaseUrl) els.loggerDbModalOpcbridgeBaseUrl.value = String(db?.opcbridge_base_url || '');
+  if (els.loggerDbModalOpcbridgeBaseUrl) {
+    els.loggerDbModalOpcbridgeBaseUrl.value = String(db?.opcbridge_base_url || '');
+    els.loggerDbModalOpcbridgeBaseUrl.placeholder = getReporterDefaultOpcbridgeBaseUrl();
+  }
   if (els.loggerDbModalMonitorEnabled) els.loggerDbModalMonitorEnabled.checked = Boolean(db?.monitor_enabled);
   if (els.loggerDbModalMonitorIntervalSec) els.loggerDbModalMonitorIntervalSec.value = String(db?.monitor_interval_sec ?? 60);
   if (els.loggerDbModalMonitorTimeoutSec) els.loggerDbModalMonitorTimeoutSec.value = String(db?.monitor_timeout_sec ?? 10);
@@ -1686,7 +1700,10 @@ function openLoggerDbModal(opts = {}) {
   if (els.loggerDbModalOdbcTrustCert) els.loggerDbModalOdbcTrustCert.checked = Boolean(db?.odbc_trust_cert);
 
   if (els.loggerDbHint) {
-    els.loggerDbHint.textContent = isNew ? 'New database connection.' : `Edit database '${id}'.`;
+    const defaultUrl = getReporterDefaultOpcbridgeBaseUrl();
+    els.loggerDbHint.textContent = isNew
+      ? `New database connection. Leave opcbridge Base URL blank to use ${defaultUrl}.`
+      : `Edit database '${id}'. Leave opcbridge Base URL blank to use ${defaultUrl}.`;
   }
 }
 
@@ -1780,7 +1797,9 @@ async function testReporterDatabaseFromModal() {
     if (db.monitor_timeout_sec < 1) throw new Error('Monitor Timeout must be at least 1 second.');
     if (!db.monitor_query) throw new Error('Monitor Query is required.');
 
-    const resp = await apiPostJson('/api/reporter/databases/test', { database: db });
+    const body = { database: db };
+    if (state.loggerEditingMode === 'edit' && state.loggerEditingId) body.original_id = state.loggerEditingId;
+    const resp = await apiPostJson('/api/reporter/databases/test', body);
     const result = resp?.reporter_test?.json || {};
     if (!resp?.ok) throw new Error(String(resp?.error || result?.error || 'Failed'));
     const latency = Number(result?.latency_ms || 0);
@@ -1841,7 +1860,6 @@ async function saveReporterDatabase() {
   try {
     const db = getDatabaseFromModalUi();
     if (!db.id) throw new Error('ID is required.');
-    if (!db.opcbridge_base_url) throw new Error('opcbridge Base URL is required.');
     if (db.type === 'odbc') {
       if (!canUseOdbcInUi()) throw new Error('ODBC support is not installed on this server.');
       if (!db.odbc_driver) throw new Error('ODBC Driver is required.');
@@ -1859,13 +1877,16 @@ async function saveReporterDatabase() {
     if (db.monitor_timeout_sec < 1) throw new Error('Monitor Timeout must be at least 1 second.');
     if (!db.monitor_query) throw new Error('Monitor Query is required.');
 
-    const resp = await apiPostJson('/api/reporter/databases', { database: db });
+    const body = { database: db };
+    if (state.loggerEditingMode === 'edit' && state.loggerEditingId) body.original_id = state.loggerEditingId;
+    const resp = await apiPostJson('/api/reporter/databases', body);
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
 
+    const savedId = String(resp?.database?.id || db.id).trim();
     state.loggerEditingMode = '';
     state.loggerEditingId = '';
     await refreshReporterAll();
-    state.loggerSelectedNodeId = `logger:db:${db.id}`;
+    state.loggerSelectedNodeId = `logger:db:${savedId}`;
     renderLoggerTree();
     renderLoggerDetails();
     closeLoggerDbModal();
@@ -2552,6 +2573,16 @@ async function watchReporterReportRun(id, beforeRuns) {
 async function refreshReporterAll() {
   loggerSetStatus('Loading…');
   const out = { ok: true };
+
+  try {
+    const cfg = await apiGet('/api/reporter/config');
+    if (cfg?.ok) state.reporterConfig = cfg.config || null;
+    out.config = cfg;
+  } catch (err) {
+    out.ok = false;
+    out.config = { ok: false, error: String(err.message || err) };
+    state.reporterConfig = null;
+  }
 
   try {
     const caps = await apiGet('/api/reporter/capabilities');

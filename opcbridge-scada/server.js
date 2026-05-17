@@ -2072,6 +2072,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const id = String(incoming.id || '').trim();
+        const originalId = String(parsed?.original_id || incoming.original_id || '').trim();
         if (!id) {
           sendJson(res, 400, { ok: false, error: 'Database "id" is required.' });
           return;
@@ -2083,9 +2084,18 @@ const server = http.createServer(async (req, res) => {
           .filter((d) => d && typeof d === 'object' && !Array.isArray(d))
           .map((d) => ({ ...d }));
 
-        const idx = nextList.findIndex((d) => String(d.id || '').trim() === id);
+        const lookupId = originalId || id;
+        const idx = nextList.findIndex((d) => String(d.id || '').trim() === lookupId);
+        if (originalId && originalId !== id) {
+          const conflict = nextList.some((d, i) => i !== idx && String(d.id || '').trim() === id);
+          if (conflict) {
+            sendJson(res, 409, { ok: false, error: `Database id '${id}' already exists.` });
+            return;
+          }
+        }
         const prev = idx >= 0 ? nextList[idx] : {};
         const next = { ...prev, ...incoming, id };
+        delete next.original_id;
 
         // Password behavior:
         // - If password is provided and non-empty -> set it (type-specific field).
@@ -2119,6 +2129,28 @@ const server = http.createServer(async (req, res) => {
 
         writeJsonFile(REPORTER_DATABASES_PATH, { databases: nextList });
 
+        let reports_updated = 0;
+        let data_checks_updated = 0;
+        if (originalId && originalId !== id && idx >= 0) {
+          const reports = readReporterReportsRaw().map((r) => ({ ...r }));
+          for (const r of reports) {
+            if (String(r.database_id || '').trim() === originalId) {
+              r.database_id = id;
+              reports_updated += 1;
+            }
+          }
+          if (reports_updated > 0) writeJsonFile(REPORTER_REPORTS_PATH, { reports });
+
+          const checks = readReporterDataChecksRaw().map((c) => ({ ...c }));
+          for (const c of checks) {
+            if (String(c.database_id || '').trim() === originalId) {
+              c.database_id = id;
+              data_checks_updated += 1;
+            }
+          }
+          if (data_checks_updated > 0) writeJsonFile(REPORTER_DATA_CHECKS_PATH, { data_checks: checks });
+        }
+
         const safe = { ...next };
         const safeType = String(safe.type || 'mysql').trim() || 'mysql';
         let pw = '';
@@ -2132,7 +2164,7 @@ const server = http.createServer(async (req, res) => {
         safe.password_set = Boolean(pw);
         safe.mysql_password_set = safe.password_set; // backwards-compatible UI field
         const reload = await reporterApiRequest('POST', '/reload');
-        sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, database: safe, reporter_reload: reload });
+        sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, database: safe, renamed_from: originalId && originalId !== id ? originalId : '', reports_updated, data_checks_updated, reporter_reload: reload });
       } catch (err) {
         sendJson(res, 400, { ok: false, error: String(err.message || err) });
       }
@@ -2671,14 +2703,16 @@ const server = http.createServer(async (req, res) => {
       if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
         const db = { ...incoming };
         const id = sanitizeId(db.id);
+        const originalId = sanitizeId(parsed?.original_id || db.original_id || id);
         db.id = id;
+        delete db.original_id;
         const type = String(db.type || 'mysql').trim() || 'mysql';
         db.type = type;
 
         // When editing an existing saved database, an empty password field means
         // "use the saved password" for this one-off test.
-        if (id) {
-          const saved = readReporterDatabasesRaw().find((d) => sanitizeId(d?.id) === id) || {};
+        if (id || originalId) {
+          const saved = readReporterDatabasesRaw().find((d) => sanitizeId(d?.id) === (originalId || id)) || {};
           const pwField = (type === 'odbc') ? 'odbc_password' : 'mysql_password';
           if (!db[pwField] && typeof saved[pwField] === 'string' && saved[pwField]) {
             db[pwField] = saved[pwField];

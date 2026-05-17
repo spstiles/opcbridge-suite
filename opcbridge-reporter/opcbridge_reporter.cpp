@@ -642,7 +642,10 @@ public:
         json svc_json = read_json_or_object(config_path_);
         next_svc.listen_host = svc_json.value("listen_host", next_svc.listen_host);
         next_svc.listen_port = svc_json.value("listen_port", next_svc.listen_port);
-        next_svc.opcbridge_base_url = svc_json.value("opcbridge_base_url", next_svc.opcbridge_base_url);
+        std::string svc_opcbridge_base_url = trim(svc_json.value("opcbridge_base_url", next_svc.opcbridge_base_url));
+        if (!svc_opcbridge_base_url.empty()) {
+            next_svc.opcbridge_base_url = svc_opcbridge_base_url;
+        }
 
         std::map<std::string, DbConfig> next_dbs;
         json db_root = read_json_or_object(databases_path_);
@@ -651,7 +654,7 @@ public:
             DbConfig db;
             db.id = d.value("id", "");
             db.type = d.value("type", "mysql");
-            db.opcbridge_base_url = d.value("opcbridge_base_url", "");
+            db.opcbridge_base_url = trim(d.value("opcbridge_base_url", ""));
             db.mysql_host = d.value("mysql_host", "localhost");
             db.mysql_port = d.value("mysql_port", 3306u);
             db.mysql_user = d.value("mysql_user", "");
@@ -854,7 +857,7 @@ public:
         DbConfig db;
         db.id = d.value("id", "");
         db.type = d.value("type", "mysql");
-        db.opcbridge_base_url = d.value("opcbridge_base_url", "");
+        db.opcbridge_base_url = trim(d.value("opcbridge_base_url", ""));
         db.mysql_host = d.value("mysql_host", "localhost");
         db.mysql_port = d.value("mysql_port", 3306u);
         db.mysql_user = d.value("mysql_user", "");
