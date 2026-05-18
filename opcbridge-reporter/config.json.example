@@ -10,7 +10,7 @@
     "example_5m": {
       "table": "tag_log",
       "tags": [
-        { "connection_id": "field_ops", "name": "Pump*.Running" },
+        { "connection_id": "field_ops", "name": "Pump*.Running", "description": "Pump running status tags" },
         "field_ops:PLC_Second"
       ]
     }

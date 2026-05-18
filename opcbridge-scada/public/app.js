@@ -80,6 +80,18 @@
   sipSaveBtn: document.getElementById('sipSaveBtn'),
   sipTestBtn: document.getElementById('sipTestBtn'),
   sipStatus: document.getElementById('sipStatus'),
+  smtpEnabled: document.getElementById('smtpEnabled'),
+  smtpHost: document.getElementById('smtpHost'),
+  smtpPort: document.getElementById('smtpPort'),
+  smtpSecurity: document.getElementById('smtpSecurity'),
+  smtpUsername: document.getElementById('smtpUsername'),
+  smtpPassword: document.getElementById('smtpPassword'),
+  smtpFromAddress: document.getElementById('smtpFromAddress'),
+  smtpFromName: document.getElementById('smtpFromName'),
+  smtpTestTo: document.getElementById('smtpTestTo'),
+  smtpSaveBtn: document.getElementById('smtpSaveBtn'),
+  smtpTestBtn: document.getElementById('smtpTestBtn'),
+  smtpStatus: document.getElementById('smtpStatus'),
   ttsSaveBtn: document.getElementById('ttsSaveBtn'),
   ttsStatus: document.getElementById('ttsStatus'),
   voiceModemEnabled: document.getElementById('voiceModemEnabled'),
@@ -218,6 +230,9 @@
   loggerReportSchedulePreview: document.getElementById('loggerReportSchedulePreview'),
   loggerReportTags: document.getElementById('loggerReportTags'),
   loggerReportSelectTagsBtn: document.getElementById('loggerReportSelectTagsBtn'),
+  loggerReportDownloadTagsBtn: document.getElementById('loggerReportDownloadTagsBtn'),
+  loggerReportUploadTagsBtn: document.getElementById('loggerReportUploadTagsBtn'),
+  loggerReportTagDescriptionRows: document.getElementById('loggerReportTagDescriptionRows'),
   loggerReportStatus: document.getElementById('loggerReportStatus'),
 
   loggerDataCheckModal: document.getElementById('loggerDataCheckModal'),
@@ -740,10 +755,14 @@ const state = {
   loggerReportEditingMode: '', // '' | 'new' | 'edit'
   loggerDataCheckEditingId: '',
   loggerDataCheckEditingMode: '', // '' | 'new' | 'edit'
+  loggerReportPanelTab: 'details',
+  loggerReportTagDraftById: new Map(),
 
   loggerTagPickerAll: [],
   loggerTagPickerSelected: new Set(),
   loggerTagPickerFilter: '',
+  loggerTagPickerMode: 'bulk',
+  loggerTagPickerRowIndex: -1,
 };
 
 const DRIVER_LABELS = {
@@ -1078,6 +1097,7 @@ function renderLoggerTreeNode(node, container) {
       const id = String(node.meta?.id || '').trim();
       items.push({ label: 'Validate', onClick: () => validateReporterReport(id) });
       items.push({ label: 'Run Now', onClick: () => runReporterReportNow(id) });
+      items.push({ label: 'Download Tag CSV', onClick: () => downloadLoggerTagCsvForReport(findReportById(id)) });
       items.push({ label: 'Properties…', onClick: () => openLoggerReportModal({ mode: 'edit', id }) });
       items.push({ label: 'Duplicate…', onClick: () => duplicateReporterReport(id) });
       items.push({ label: 'Delete Log Job…', onClick: () => deleteReporterReport(id) });
@@ -1369,11 +1389,53 @@ function normalizeReporterTagSelection(tags) {
       }
     } else if (t && typeof t === 'object') {
       connectionId = String(t.connection_id || '').trim();
-      name = String(t.name || '').trim();
+      name = String(t.name || t.tag_name || '').trim();
     }
     if (connectionId && name) entries.push({ connection_id: connectionId, name });
   });
   return { all: false, entries };
+}
+
+function normalizeReportTagEntries(tags) {
+  const out = [];
+  const arr = Array.isArray(tags) ? tags : [];
+  for (const t of arr) {
+    if (typeof t === 'string') {
+      const spec = String(t || '').trim();
+      const parts = loggerTagSpecParts(spec);
+      if (parts.connection_id && parts.tag_name) {
+        out.push({
+          connection_id: parts.connection_id,
+          name: parts.tag_name,
+          description: ''
+        });
+      }
+      continue;
+    }
+    if (t && typeof t === 'object' && !Array.isArray(t)) {
+      const cid = String(t.connection_id || '').trim();
+      const name = String(t.name || t.tag_name || '').trim();
+      if (!cid || !name) continue;
+      out.push({
+        connection_id: cid,
+        name,
+        description: String(t.description || t.desc || '').trim()
+      });
+    }
+  }
+  return out;
+}
+
+function loggerTagEntrySpec(entry) {
+  const cid = String(entry?.connection_id || '').trim();
+  const name = String(entry?.name || entry?.tag_name || '').trim();
+  return cid && name ? `${cid}:${name}` : '';
+}
+
+function loggerTagEntryLine(entry) {
+  const spec = loggerTagEntrySpec(entry);
+  const desc = String(entry?.description || '').trim();
+  return desc ? `${spec}\t${desc}` : spec;
 }
 
 function renderLoggerReportDetails() {
@@ -1415,6 +1477,36 @@ function renderLoggerReportDetails() {
   els.loggerReportDetails.style.display = '';
   els.loggerReportDetails.textContent = '';
 
+  const tabs = document.createElement('div');
+  tabs.className = 'row-actions';
+  tabs.style.marginBottom = '10px';
+  const detailsTab = document.createElement('button');
+  detailsTab.className = 'btn';
+  detailsTab.classList.toggle('primary', state.loggerReportPanelTab !== 'tags');
+  detailsTab.type = 'button';
+  detailsTab.textContent = 'Details';
+  detailsTab.addEventListener('click', () => {
+    state.loggerReportPanelTab = 'details';
+    renderLoggerReportDetails();
+  });
+  const tagsTab = document.createElement('button');
+  tagsTab.className = 'btn';
+  tagsTab.classList.toggle('primary', state.loggerReportPanelTab === 'tags');
+  tagsTab.type = 'button';
+  tagsTab.textContent = 'Tags';
+  tagsTab.addEventListener('click', () => {
+    state.loggerReportPanelTab = 'tags';
+    renderLoggerReportDetails();
+  });
+  tabs.appendChild(detailsTab);
+  tabs.appendChild(tagsTab);
+  els.loggerReportDetails.appendChild(tabs);
+
+  if (state.loggerReportPanelTab === 'tags') {
+    renderLoggerReportTagsPanel(report);
+    return;
+  }
+
   const grid = document.createElement('div');
   grid.style.display = 'grid';
   grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(190px, 1fr))';
@@ -1434,7 +1526,164 @@ function renderLoggerReportDetails() {
     grid.appendChild(cell);
   });
 
+  const actions = document.createElement('div');
+  actions.className = 'row-actions';
+  actions.style.marginBottom = '10px';
+
+  const downloadBtn = document.createElement('button');
+  downloadBtn.className = 'btn';
+  downloadBtn.type = 'button';
+  downloadBtn.textContent = 'Download Tag CSV';
+  downloadBtn.addEventListener('click', () => downloadLoggerTagCsvForReport(report));
+  actions.appendChild(downloadBtn);
+
+  const uploadBtn = document.createElement('button');
+  uploadBtn.className = 'btn';
+  uploadBtn.type = 'button';
+  uploadBtn.textContent = 'Upload Tag CSV';
+  uploadBtn.addEventListener('click', () => uploadLoggerTagCsvToReport(report).catch(() => {}));
+  actions.appendChild(uploadBtn);
+
+  els.loggerReportDetails.appendChild(actions);
   els.loggerReportDetails.appendChild(grid);
+}
+
+function renderSelectedLoggerTagPanel(entries) {
+  const rid = getSelectedReportId();
+  const report = rid ? findReportById(rid) : null;
+  if (!report) return;
+  state.loggerReportTagDraftById.set(rid, Array.isArray(entries) ? entries : []);
+  renderLoggerReportTagsPanel(report, entries);
+}
+
+function renderLoggerReportTagsPanel(report, entriesOverride = null) {
+  if (!els.loggerReportDetails) return;
+  const active = document.activeElement;
+  if (!Array.isArray(entriesOverride) && active && els.loggerReportDetails.contains(active) && active.matches('[data-logger-tag-input="1"], [data-logger-desc-input="1"]')) {
+    return;
+  }
+  const rid = String(report?.id || '').trim();
+  const draft = rid ? state.loggerReportTagDraftById.get(rid) : null;
+  const entries = Array.isArray(entriesOverride)
+    ? entriesOverride
+    : (Array.isArray(draft) ? draft : normalizeReportTagEntries(report?.tags));
+  const rows = entries.concat([{ connection_id: '', name: '', description: '' }]);
+
+  const actions = document.createElement('div');
+  actions.className = 'row-actions';
+  actions.style.marginBottom = '10px';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn primary';
+  saveBtn.type = 'button';
+  saveBtn.textContent = 'Save + Apply Tags';
+  saveBtn.addEventListener('click', () => saveLoggerReportTagsFromPanel(report).catch(() => {}));
+  actions.appendChild(saveBtn);
+
+  const selectBtn = document.createElement('button');
+  selectBtn.className = 'btn';
+  selectBtn.type = 'button';
+  selectBtn.textContent = 'Select Tags…';
+  selectBtn.addEventListener('click', () => openLoggerTagPickerModal({ mode: 'panel_bulk' }));
+  actions.appendChild(selectBtn);
+
+  const downloadBtn = document.createElement('button');
+  downloadBtn.className = 'btn';
+  downloadBtn.type = 'button';
+  downloadBtn.textContent = 'Download CSV';
+  downloadBtn.addEventListener('click', () => {
+    const next = { ...report, tags: collectLoggerReportTagPanelEntries() };
+    downloadLoggerTagCsvForReport(next);
+  });
+  actions.appendChild(downloadBtn);
+
+  const uploadBtn = document.createElement('button');
+  uploadBtn.className = 'btn';
+  uploadBtn.type = 'button';
+  uploadBtn.textContent = 'Upload CSV';
+  uploadBtn.addEventListener('click', () => uploadLoggerTagCsvToPanel().catch(() => {}));
+  actions.appendChild(uploadBtn);
+  els.loggerReportDetails.appendChild(actions);
+
+  const table = document.createElement('div');
+  table.style.display = 'flex';
+  table.style.flexDirection = 'column';
+  table.style.gap = '8px';
+  table.style.width = '100%';
+
+  const header = document.createElement('div');
+  header.style.display = 'grid';
+  header.style.gridTemplateColumns = 'minmax(280px, 1.2fr) minmax(280px, 1fr) minmax(190px, auto)';
+  header.style.gap = '8px 10px';
+  ['Tag', 'Description', 'Actions'].forEach((label) => {
+    const h = document.createElement('div');
+    h.className = 'small';
+    h.textContent = label;
+    header.appendChild(h);
+  });
+  table.appendChild(header);
+
+  rows.forEach((entry, idx) => {
+    const row = document.createElement('div');
+    row.dataset.loggerTagRow = '1';
+    row.dataset.loggerRowIndex = String(idx);
+    row.style.display = 'grid';
+    row.style.gridTemplateColumns = 'minmax(280px, 1.2fr) minmax(280px, 1fr) minmax(190px, auto)';
+    row.style.gap = '8px 10px';
+    row.style.alignItems = 'center';
+    row.style.width = '100%';
+
+    const tagInput = document.createElement('input');
+    tagInput.className = 'mono';
+    tagInput.dataset.loggerTagInput = '1';
+    tagInput.placeholder = 'connection_id:tag_name or wildcard';
+    tagInput.value = loggerTagEntrySpec(entry);
+    tagInput.addEventListener('input', () => {
+      state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
+    });
+    tagInput.addEventListener('change', () => {
+      const current = collectLoggerReportTagPanelEntries();
+      state.loggerReportTagDraftById.set(rid, current);
+      renderLoggerReportTagsPanel(report, current);
+    });
+
+    const descInput = document.createElement('input');
+    descInput.dataset.loggerDescInput = '1';
+    descInput.placeholder = 'Optional tag description';
+    descInput.value = String(entry?.description || '');
+    descInput.addEventListener('input', () => {
+      state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
+    });
+
+    const rowActions = document.createElement('div');
+    rowActions.className = 'row-actions';
+    const chooseBtn = document.createElement('button');
+    chooseBtn.className = 'btn';
+    chooseBtn.type = 'button';
+    chooseBtn.textContent = 'Select Tag';
+    chooseBtn.addEventListener('click', () => openLoggerTagPickerModal({ mode: 'panel_row', rowIndex: idx }));
+    rowActions.appendChild(chooseBtn);
+    if (idx < rows.length - 1) {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn danger';
+      removeBtn.type = 'button';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        const current = collectLoggerReportTagPanelEntries();
+        current.splice(idx, 1);
+        state.loggerReportTagDraftById.set(rid, current);
+        renderLoggerReportTagsPanel(report, current);
+      });
+      rowActions.appendChild(removeBtn);
+    }
+
+    row.appendChild(tagInput);
+    row.appendChild(descInput);
+    row.appendChild(rowActions);
+    table.appendChild(row);
+  });
+
+  els.loggerReportDetails.appendChild(table);
 }
 
 function renderLoggerReportsTable() {
@@ -1968,6 +2217,8 @@ function closeLoggerReportModal() {
 function closeLoggerTagPickerModal() {
   if (els.loggerTagPickerModal) els.loggerTagPickerModal.style.display = 'none';
   if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = '';
+  state.loggerTagPickerMode = 'bulk';
+  state.loggerTagPickerRowIndex = -1;
 }
 
 function tagKeyFromLiveTag(t) {
@@ -1978,16 +2229,46 @@ function tagKeyFromLiveTag(t) {
 }
 
 function parseReportTagsTextToSet() {
-  const text = String(els.loggerReportTags?.value || '');
   const set = new Set();
-  text.split(/\r?\n/g).forEach((line) => {
-    const s = String(line || '').trim();
-    if (!s) return;
-    if (s.startsWith('#')) return;
+  reportTagEntriesFromText(String(els.loggerReportTags?.value || '')).forEach((entry) => {
+    const s = loggerTagEntrySpec(entry);
     // Only preselect concrete tags (no wildcards).
     if (s.includes('*') || s.includes('?')) return;
-    if (!s.includes(':')) return;
     set.add(s);
+  });
+  return set;
+}
+
+function collectLoggerReportTagPanelEntries() {
+  const root = els.loggerReportDetails;
+  if (!root) return [];
+  const rows = Array.from(root.querySelectorAll('[data-logger-tag-row="1"]'));
+  const out = [];
+  const seen = new Set();
+  rows.forEach((row) => {
+    const tagInput = row.querySelector('[data-logger-tag-input="1"]');
+    const descInput = row.querySelector('[data-logger-desc-input="1"]');
+    const spec = String(tagInput?.value || '').trim();
+    if (!spec) return;
+    const parts = loggerTagSpecParts(spec);
+    if (!parts.connection_id || !parts.tag_name) return;
+    if (seen.has(parts.tag_spec)) return;
+    seen.add(parts.tag_spec);
+    out.push({
+      connection_id: parts.connection_id,
+      name: parts.tag_name,
+      description: String(descInput?.value || '').trim()
+    });
+  });
+  return out;
+}
+
+function parseReportTagsPanelToSet() {
+  const set = new Set();
+  collectLoggerReportTagPanelEntries().forEach((entry) => {
+    const spec = loggerTagEntrySpec(entry);
+    if (!spec || spec.includes('*') || spec.includes('?')) return;
+    set.add(spec);
   });
   return set;
 }
@@ -2021,13 +2302,17 @@ function renderLoggerTagPickerTable() {
     td0.className = 'cell-check';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
+    if (state.loggerTagPickerMode === 'panel_row') cb.type = 'radio';
     cb.checked = state.loggerTagPickerSelected.has(key);
     cb.addEventListener('change', () => {
-      if (cb.checked) state.loggerTagPickerSelected.add(key);
+      if (state.loggerTagPickerMode === 'panel_row') {
+        state.loggerTagPickerSelected = cb.checked ? new Set([key]) : new Set();
+      } else if (cb.checked) state.loggerTagPickerSelected.add(key);
       else state.loggerTagPickerSelected.delete(key);
       if (els.loggerTagPickerStatus) {
-        els.loggerTagPickerStatus.textContent = `${state.loggerTagPickerSelected.size} selected`;
+        els.loggerTagPickerStatus.textContent = state.loggerTagPickerMode === 'panel_row' ? '1 selected' : `${state.loggerTagPickerSelected.size} selected`;
       }
+      if (state.loggerTagPickerMode === 'panel_row' && cb.checked) applyLoggerTagPickerSelectionToTextarea();
     });
     td0.appendChild(cb);
 
@@ -2046,15 +2331,18 @@ function renderLoggerTagPickerTable() {
   });
 
   if (els.loggerTagPickerStatus) {
-    els.loggerTagPickerStatus.textContent = `${state.loggerTagPickerSelected.size} selected · ${filtered.length} shown`;
+    const prefix = state.loggerTagPickerMode === 'panel_row' ? 'Choose one tag' : `${state.loggerTagPickerSelected.size} selected`;
+    els.loggerTagPickerStatus.textContent = `${prefix} · ${filtered.length} shown`;
   }
 }
 
-async function openLoggerTagPickerModal() {
+async function openLoggerTagPickerModal(opts = {}) {
   if (!els.loggerTagPickerModal) return;
-  if (!els.loggerReportTags) return;
-
-  state.loggerTagPickerSelected = parseReportTagsTextToSet();
+  const mode = String(opts.mode || 'bulk').trim() || 'bulk';
+  state.loggerTagPickerMode = mode;
+  state.loggerTagPickerRowIndex = Math.trunc(Number(opts.rowIndex ?? -1) || -1);
+  state.loggerTagPickerSelected = mode === 'panel_row' ? new Set() : parseReportTagsTextToSet();
+  if (mode === 'panel_bulk') state.loggerTagPickerSelected = parseReportTagsPanelToSet();
   state.loggerTagPickerFilter = '';
   if (els.loggerTagPickerSearch) els.loggerTagPickerSearch.value = '';
   if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = 'Loading tags…';
@@ -2084,41 +2372,331 @@ async function openLoggerTagPickerModal() {
 }
 
 function applyLoggerTagPickerSelectionToTextarea() {
-  const existing = String(els.loggerReportTags?.value || '').split(/\r?\n/g).map((s) => String(s || '').trim());
+  if (state.loggerTagPickerMode === 'panel_row') {
+    const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+    const row = els.loggerReportDetails?.querySelector(`[data-logger-row-index="${state.loggerTagPickerRowIndex}"]`);
+    const input = row?.querySelector('[data-logger-tag-input="1"]');
+    if (input && selected) {
+      input.value = selected;
+      input.dispatchEvent(new Event('change'));
+    }
+    closeLoggerTagPickerModal();
+    return;
+  }
+  if (state.loggerTagPickerMode === 'panel_bulk') {
+    const existing = collectLoggerReportTagPanelEntries();
+    const descriptionBySpec = new Map(existing.map((entry) => [loggerTagEntrySpec(entry), String(entry.description || '')]));
+    const preserved = existing.filter((entry) => {
+      const spec = loggerTagEntrySpec(entry);
+      return spec.includes('*') || spec.includes('?');
+    });
+    const selected = Array.from(state.loggerTagPickerSelected || [])
+      .map((s) => String(s || '').trim())
+      .filter(Boolean)
+      .map((spec) => {
+        const parts = loggerTagSpecParts(spec);
+        return {
+          connection_id: parts.connection_id,
+          name: parts.tag_name,
+          description: descriptionBySpec.get(spec) || ''
+        };
+      })
+      .filter((entry) => entry.connection_id && entry.name)
+      .sort((a, b) => loggerTagEntrySpec(a).localeCompare(loggerTagEntrySpec(b), undefined, { sensitivity: 'base' }));
+    renderSelectedLoggerTagPanel(preserved.concat(selected));
+    closeLoggerTagPickerModal();
+    return;
+  }
+
+  const existing = reportTagEntriesFromText(String(els.loggerReportTags?.value || ''));
   const preserved = [];
-  for (const line of existing) {
-    if (!line) continue;
-    if (line.startsWith('#')) { preserved.push(line); continue; }
-    if (line.includes('*') || line.includes('?')) { preserved.push(line); continue; }
-    if (!line.includes(':')) { preserved.push(line); continue; }
+  const descriptionBySpec = new Map();
+  for (const entry of existing) {
+    const spec = loggerTagEntrySpec(entry);
+    if (!spec) continue;
+    if (entry.description) descriptionBySpec.set(spec, entry.description);
+    if (spec.includes('*') || spec.includes('?')) { preserved.push(entry); continue; }
     // concrete tags will be rebuilt from selection
   }
 
-  const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean);
-  selected.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const selected = Array.from(state.loggerTagPickerSelected || '')
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .map((spec) => {
+      const parts = loggerTagSpecParts(spec);
+      return {
+        connection_id: parts.connection_id,
+        name: parts.tag_name,
+        description: descriptionBySpec.get(spec) || ''
+      };
+    })
+    .filter((entry) => entry.connection_id && entry.name);
+  selected.sort((a, b) => loggerTagEntrySpec(a).localeCompare(loggerTagEntrySpec(b), undefined, { sensitivity: 'base' }));
 
   const next = preserved.concat(selected);
-  if (els.loggerReportTags) els.loggerReportTags.value = next.join('\n');
+  setLoggerReportTagEntries(next);
   closeLoggerTagPickerModal();
 }
 
 function normalizeReportTagsArray(tags) {
+  return normalizeReportTagEntries(tags).map(loggerTagEntrySpec).filter(Boolean);
+}
+
+const LOGGER_TAG_CSV_HEADERS = ['connection_id', 'tag_name', 'description'];
+
+function loggerTagSpecParts(spec) {
+  const s = String(spec || '').trim();
+  const pos = s.indexOf(':');
+  if (pos <= 0) return { connection_id: '', tag_name: '', tag_spec: s };
+  return {
+    connection_id: s.slice(0, pos).trim(),
+    tag_name: s.slice(pos + 1).trim(),
+    tag_spec: s
+  };
+}
+
+function loggerTagRowsFromList(tags) {
+  return normalizeReportTagEntries(tags).map((entry) => ({
+    connection_id: String(entry.connection_id || '').trim(),
+    tag_name: String(entry.name || '').trim(),
+    description: String(entry.description || '').trim()
+  }));
+}
+
+function parseLoggerTagCsvText(text) {
+  const parsed = parseCsv(text);
+  const records = Array.isArray(parsed?.records) ? parsed.records : [];
   const out = [];
-  const arr = Array.isArray(tags) ? tags : [];
-  for (const t of arr) {
-    if (typeof t === 'string') {
-      const s = String(t || '').trim();
-      if (s) out.push(s);
-      continue;
+  const seen = new Set();
+  let skippedMissing = 0;
+  let skippedDuplicate = 0;
+  let sampleMissing = '';
+  let sampleDuplicate = '';
+
+  records.forEach((row, idx) => {
+    const connectionId = String(csvGet(row, 'connection_id') || csvGet(row, 'connection') || '').trim();
+    const tagName = String(csvGet(row, 'tag_name') || csvGet(row, 'name') || '').trim();
+    const description = String(csvGet(row, 'description') || csvGet(row, 'desc') || '').trim();
+    const spec = connectionId && tagName ? `${connectionId}:${tagName}` : '';
+    if (!spec || spec.startsWith('#')) {
+      skippedMissing += 1;
+      if (!sampleMissing) sampleMissing = `row ${idx + 2}`;
+      return;
     }
-    if (t && typeof t === 'object' && !Array.isArray(t)) {
-      const cid = String(t.connection_id || '').trim();
-      const name = String(t.name || '').trim();
-      if (cid && name) out.push(`${cid}:${name}`);
-      continue;
+    if (seen.has(spec)) {
+      skippedDuplicate += 1;
+      if (!sampleDuplicate) sampleDuplicate = spec;
+      return;
     }
-  }
+    seen.add(spec);
+    out.push({ connection_id: connectionId, name: tagName, description });
+  });
+
+  return {
+    tags: out,
+    total: records.length,
+    skipped_missing: skippedMissing,
+    skipped_duplicate: skippedDuplicate,
+    sample_missing: sampleMissing,
+    sample_duplicate: sampleDuplicate,
+    headers: Array.isArray(parsed?.headers) ? parsed.headers : []
+  };
+}
+
+function loggerTagEntriesFromCsvText(text) {
+  return parseLoggerTagCsvText(text).tags;
+}
+
+function loggerTagImportSummary(result) {
+  const r = result || {};
+  const parts = [`Loaded ${Array.isArray(r.tags) ? r.tags.length : 0} of ${Number(r.total || 0)} row(s).`];
+  if (r.skipped_missing) parts.push(`Skipped ${r.skipped_missing} missing connection_id/tag_name${r.sample_missing ? ` (${r.sample_missing})` : ''}.`);
+  if (r.skipped_duplicate) parts.push(`Skipped ${r.skipped_duplicate} duplicate${r.sample_duplicate ? ` (${r.sample_duplicate})` : ''}.`);
+  return parts.join(' ');
+}
+
+function reportTagEntriesFromText(text) {
+  const out = [];
+  const seen = new Set();
+  String(text || '').split(/\r?\n/g).forEach((line) => {
+    const raw = String(line || '').trim();
+    if (!raw || raw.startsWith('#')) return;
+    const tab = raw.indexOf('\t');
+    const spec = (tab >= 0 ? raw.slice(0, tab) : raw).trim();
+    const description = (tab >= 0 ? raw.slice(tab + 1) : '').trim();
+    const parts = loggerTagSpecParts(spec);
+    if (!parts.connection_id || !parts.tag_name) return;
+    if (seen.has(parts.tag_spec)) return;
+    seen.add(parts.tag_spec);
+    out.push({
+      connection_id: parts.connection_id,
+      name: parts.tag_name,
+      description
+    });
+  });
   return out;
+}
+
+function setLoggerReportTagEntries(entries) {
+  if (els.loggerReportTags) els.loggerReportTags.value = (Array.isArray(entries) ? entries : []).map(loggerTagEntryLine).join('\n');
+  renderLoggerReportTagDescriptionRows();
+}
+
+function renderLoggerReportTagDescriptionRows() {
+  if (!els.loggerReportTagDescriptionRows) return;
+  const entries = reportTagEntriesFromText(String(els.loggerReportTags?.value || ''));
+  els.loggerReportTagDescriptionRows.textContent = '';
+  if (!entries.length) {
+    const note = document.createElement('div');
+    note.className = 'small';
+    note.textContent = 'No tags selected.';
+    els.loggerReportTagDescriptionRows.appendChild(note);
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.style.display = 'grid';
+  grid.style.gridTemplateColumns = 'minmax(0, 1fr) minmax(0, 1fr)';
+  grid.style.gap = '6px 10px';
+  grid.style.alignItems = 'center';
+  grid.style.width = '100%';
+
+  const tagHeader = document.createElement('div');
+  tagHeader.className = 'small';
+  tagHeader.textContent = 'Tag';
+  const descHeader = document.createElement('div');
+  descHeader.className = 'small';
+  descHeader.textContent = 'Description';
+  grid.appendChild(tagHeader);
+  grid.appendChild(descHeader);
+
+  entries.forEach((entry, idx) => {
+    const tagCell = document.createElement('div');
+    tagCell.className = 'mono';
+    tagCell.style.overflowWrap = 'anywhere';
+    tagCell.textContent = loggerTagEntrySpec(entry);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.style.width = '100%';
+    input.style.boxSizing = 'border-box';
+    input.value = String(entry.description || '');
+    input.placeholder = 'Optional tag description';
+    input.addEventListener('input', () => {
+      entries[idx].description = String(input.value || '').trim();
+      if (els.loggerReportTags) els.loggerReportTags.value = entries.map(loggerTagEntryLine).join('\n');
+    });
+    grid.appendChild(tagCell);
+    grid.appendChild(input);
+  });
+
+  els.loggerReportTagDescriptionRows.appendChild(grid);
+}
+
+function downloadLoggerTagCsvForReport(report) {
+  const rid = String(report?.id || '').trim() || 'logger';
+  const rows = loggerTagRowsFromList(report?.tags);
+  downloadTextFile({
+    filename: `opcbridge-logger-tags-${rid.replace(/[^a-z0-9._-]+/gi, '_')}.csv`,
+    mime: 'text/csv',
+    text: toCsv(rows, LOGGER_TAG_CSV_HEADERS)
+  });
+  loggerSetStatus(`Downloaded ${rows.length} tag(s) for '${rid}'.`);
+}
+
+function downloadLoggerTagCsvFromModal() {
+  const id = String(els.loggerReportId?.value || state.loggerReportEditingId || 'logger').trim() || 'logger';
+  const tags = String(els.loggerReportTags?.value || '')
+    ? reportTagEntriesFromText(String(els.loggerReportTags?.value || ''))
+    : [];
+  const rows = loggerTagRowsFromList(tags);
+  downloadTextFile({
+    filename: `opcbridge-logger-tags-${id.replace(/[^a-z0-9._-]+/gi, '_')}.csv`,
+    mime: 'text/csv',
+    text: toCsv(rows, LOGGER_TAG_CSV_HEADERS)
+  });
+  loggerReportModalSetStatus(`Downloaded ${rows.length} tag(s).`);
+}
+
+async function uploadLoggerTagCsvToModal() {
+  try {
+    const text = await pickCsvText();
+    if (!String(text || '').trim()) return;
+    const parsed = parseLoggerTagCsvText(text);
+    const tags = parsed.tags;
+    if (!tags.length) throw new Error('CSV has no logger tags.');
+    setLoggerReportTagEntries(tags);
+    loggerReportModalSetStatus(`${loggerTagImportSummary(parsed)} Save to apply.`);
+  } catch (err) {
+    loggerReportModalSetStatus(`Upload failed: ${err.message || err}`);
+  }
+}
+
+async function uploadLoggerTagCsvToReport(report) {
+  const rid = String(report?.id || '').trim();
+  if (!rid) return;
+  try {
+    const text = await pickCsvText();
+    if (!String(text || '').trim()) return;
+    const parsed = parseLoggerTagCsvText(text);
+    const tags = parsed.tags;
+    if (!tags.length) throw new Error('CSV has no logger tags.');
+    const next = { ...report, tags };
+
+    loggerSetStatus(`Saving ${tags.length} tag(s) for '${rid}'...`);
+    const save = await apiPostJson('/api/reporter/reports', { report: next });
+    if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
+
+    loggerSetStatus('Reloading reporter service...');
+    const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
+    if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
+
+    await refreshReporterAll();
+    await refreshReporterSystemTagsForScada();
+    state.loggerSelectedNodeId = `logger:report:${rid}`;
+    renderLoggerTree();
+    renderLoggerDetails();
+    loggerSetStatus(`Updated '${rid}'. ${loggerTagImportSummary(parsed)}`);
+  } catch (err) {
+    loggerSetStatus(`Upload failed: ${err.message || err}`);
+  }
+}
+
+async function uploadLoggerTagCsvToPanel() {
+  try {
+    const text = await pickCsvText();
+    if (!String(text || '').trim()) return;
+    const parsed = parseLoggerTagCsvText(text);
+    const tags = parsed.tags;
+    if (!tags.length) throw new Error('CSV has no logger tags.');
+    renderSelectedLoggerTagPanel(tags);
+    loggerSetStatus(`${loggerTagImportSummary(parsed)} Save + Apply Tags to write changes.`);
+  } catch (err) {
+    loggerSetStatus(`Upload failed: ${err.message || err}`);
+  }
+}
+
+async function saveLoggerReportTagsFromPanel(report) {
+  const rid = String(report?.id || '').trim();
+  if (!rid) return;
+  const tags = collectLoggerReportTagPanelEntries();
+  const next = { ...report, tags };
+  loggerSetStatus(`Saving ${tags.length} tag(s) for '${rid}'...`);
+  const save = await apiPostJson('/api/reporter/reports', { report: next });
+  if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
+
+  loggerSetStatus('Reloading reporter service...');
+  const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
+  if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
+
+  await refreshReporterAll();
+  await refreshReporterSystemTagsForScada();
+  state.loggerReportTagDraftById.delete(rid);
+  state.loggerSelectedNodeId = `logger:report:${rid}`;
+  state.loggerReportPanelTab = 'tags';
+  renderLoggerTree();
+  renderLoggerDetails();
+  loggerSetStatus(`Updated '${rid}' with ${tags.length} tag(s).`);
 }
 
 function openLoggerReportModal(opts = {}) {
@@ -2173,8 +2751,8 @@ function openLoggerReportModal(opts = {}) {
   renderLoggerReportScheduleUi();
 
   if (els.loggerReportTags) {
-    const tags = normalizeReportTagsArray(report?.tags);
-    els.loggerReportTags.value = tags.join('\n');
+    const tags = normalizeReportTagEntries(report?.tags);
+    setLoggerReportTagEntries(tags);
   }
 }
 
@@ -2209,11 +2787,10 @@ function getReportFromModalUi() {
   const kind = String(els.loggerReportScheduleKind?.value || 'every_n_minutes').trim() || 'every_n_minutes';
   const onCalendar = buildOnCalendarForScheduleKind(kind);
 
-  const tagsText = String(els.loggerReportTags?.value || '');
-  const tags = tagsText
-    .split(/\r?\n/g)
-    .map((s) => String(s || '').trim())
-    .filter((s) => s && !s.startsWith('#'));
+  const existingReport = state.loggerReportEditingMode === 'edit' && state.loggerReportEditingId
+    ? findReportById(state.loggerReportEditingId)
+    : null;
+  const tags = normalizeReportTagEntries(existingReport?.tags);
 
   return {
     id,
@@ -2540,7 +3117,7 @@ async function refreshReporterRuntimeStatus() {
   updateReporterDataCheckStatusMap(runtime);
   if (state.loggerSelectedNodeId === 'logger:reports' || String(state.loggerSelectedNodeId || '').startsWith('logger:report:')) {
     renderLoggerReportsTable();
-    renderLoggerReportDetails();
+    if (state.loggerReportPanelTab !== 'tags') renderLoggerReportDetails();
   } else if (state.loggerSelectedNodeId === 'logger:data_checks' || String(state.loggerSelectedNodeId || '').startsWith('logger:data_check:')) {
     renderLoggerDataChecksTable();
   } else if (state.loggerSelectedNodeId === 'logger:databases' || String(state.loggerSelectedNodeId || '').startsWith('logger:db:')) {
@@ -2663,6 +3240,9 @@ function wireLoggerUi() {
   if (els.loggerReportCloseBtn) els.loggerReportCloseBtn.addEventListener('click', closeLoggerReportModal);
   if (els.loggerReportCancelBtn) els.loggerReportCancelBtn.addEventListener('click', closeLoggerReportModal);
   if (els.loggerReportSaveBtn) els.loggerReportSaveBtn.addEventListener('click', saveAndApplyReporterReport);
+  if (els.loggerReportDownloadTagsBtn) els.loggerReportDownloadTagsBtn.addEventListener('click', downloadLoggerTagCsvFromModal);
+  if (els.loggerReportUploadTagsBtn) els.loggerReportUploadTagsBtn.addEventListener('click', () => uploadLoggerTagCsvToModal().catch(() => {}));
+  if (els.loggerReportTags) els.loggerReportTags.addEventListener('input', renderLoggerReportTagDescriptionRows);
   if (els.loggerDataCheckCloseBtn) els.loggerDataCheckCloseBtn.addEventListener('click', closeLoggerDataCheckModal);
   if (els.loggerDataCheckCancelBtn) els.loggerDataCheckCancelBtn.addEventListener('click', closeLoggerDataCheckModal);
   if (els.loggerDataCheckSaveBtn) els.loggerDataCheckSaveBtn.addEventListener('click', saveReporterDataCheck);
@@ -2840,6 +3420,7 @@ function setTab(id) {
   if (id === 'configure') {
     ensureAuthAdminPanelLoaded();
     loadSoundSettings().catch(() => {});
+    loadSmtpSettings().catch(() => {});
     loadVoiceModemSettings().catch(() => {});
   }
   if (id === 'alarms_events') {
@@ -6245,6 +6826,10 @@ function setSipStatus(msg) {
   if (els.sipStatus) els.sipStatus.textContent = String(msg || '');
 }
 
+function setSmtpStatus(msg) {
+  if (els.smtpStatus) els.smtpStatus.textContent = String(msg || '');
+}
+
 function setVoiceModemStatus(msg) {
   if (els.voiceModemStatus) els.voiceModemStatus.textContent = String(msg || '');
 }
@@ -6520,7 +7105,11 @@ function getNotificationContacts(cfg) {
       return id ? {
         id,
         name: String(t.name || id).trim() || id,
-        phone: String(t.value || '').trim(),
+        phone: String(t.value || t.phone_cell || t.phone_work || t.phone_home || '').trim(),
+        phone_home: String(t.phone_home || t.home || '').trim(),
+        phone_work: String(t.phone_work || t.work || '').trim(),
+        phone_cell: String(t.phone_cell || t.cell || t.value || '').trim(),
+        email: String(t.email || '').trim(),
         enabled: t.enabled !== false,
         audio_delay_seconds: t.audio_delay_seconds == null ? null : Math.max(0, Math.min(120, Math.trunc(Number(t.audio_delay_seconds) || 0))),
         notes: String(t.notes || '').trim()
@@ -6722,16 +7311,17 @@ function makeLabeledCheckbox(text, checked, disabled = false) {
 	function getPolicyTargets(policy) {
 	  const targets = [];
 	  const seen = new Set();
-	  const add = (type, id) => {
+	  const add = (type, id, method = '') => {
     const cleanType = String(type || '').trim();
     const cleanId = String(id || '').trim();
-    const key = `${cleanType}:${cleanId}`;
+    const cleanMethod = String(method || '').trim();
+    const key = `${cleanType}:${cleanId}:${cleanMethod}`;
     if (!cleanId || (cleanType !== 'contact' && cleanType !== 'group') || seen.has(key)) return;
     seen.add(key);
-    targets.push({ type: cleanType, id: cleanId });
+    targets.push({ type: cleanType, id: cleanId, method: cleanMethod });
   };
 	  if (Array.isArray(policy?.targets)) {
-	    policy.targets.forEach((target) => add(target?.type, target?.id));
+	    policy.targets.forEach((target) => add(target?.type, target?.id, target?.method));
 	  }
 	  return targets;
 	}
@@ -7301,6 +7891,68 @@ async function testSipCall() {
   }
 }
 
+async function loadSmtpSettings() {
+  setSmtpStatus('Loading...');
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const smtp = (cfg && typeof cfg === 'object' && cfg.smtp && typeof cfg.smtp === 'object') ? cfg.smtp : {};
+    if (els.smtpEnabled) els.smtpEnabled.checked = Boolean(smtp.enabled);
+    if (els.smtpHost) els.smtpHost.value = String(smtp.host || '').trim();
+    if (els.smtpPort) els.smtpPort.value = String(Number(smtp.port ?? 587) || 587);
+    if (els.smtpSecurity) els.smtpSecurity.value = ['starttls', 'tls', 'none'].includes(String(smtp.security || 'starttls')) ? String(smtp.security || 'starttls') : 'starttls';
+    if (els.smtpUsername) els.smtpUsername.value = String(smtp.username || '').trim();
+    if (els.smtpPassword) els.smtpPassword.value = String(smtp.password || '');
+    if (els.smtpFromAddress) els.smtpFromAddress.value = String(smtp.from_address || '').trim();
+    if (els.smtpFromName) els.smtpFromName.value = String(smtp.from_name || '').trim();
+    if (els.smtpTestTo) els.smtpTestTo.value = String(smtp.test_to || '').trim();
+    setSmtpStatus('Ready.');
+  } catch (err) {
+    setSmtpStatus(`Load failed: ${err.message}`);
+  }
+}
+
+async function saveSmtpSettings() {
+  if (els.smtpSaveBtn) els.smtpSaveBtn.disabled = true;
+  setSmtpStatus('Saving...');
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    cfg.smtp = cfg.smtp && typeof cfg.smtp === 'object' ? cfg.smtp : {};
+    cfg.smtp.enabled = Boolean(els.smtpEnabled?.checked);
+    cfg.smtp.host = String(els.smtpHost?.value || '').trim();
+    cfg.smtp.port = Math.max(1, Math.min(65535, Math.trunc(Number(els.smtpPort?.value ?? 587) || 587)));
+    cfg.smtp.security = ['starttls', 'tls', 'none'].includes(String(els.smtpSecurity?.value || 'starttls')) ? String(els.smtpSecurity?.value || 'starttls') : 'starttls';
+    cfg.smtp.username = String(els.smtpUsername?.value || '').trim();
+    cfg.smtp.password = String(els.smtpPassword?.value || '');
+    cfg.smtp.from_address = String(els.smtpFromAddress?.value || '').trim();
+    cfg.smtp.from_name = String(els.smtpFromName?.value || '').trim();
+    cfg.smtp.test_to = String(els.smtpTestTo?.value || '').trim();
+    cfg.smtp.timeout_sec = Math.max(5, Math.min(120, Math.trunc(Number(cfg.smtp.timeout_sec ?? 20) || 20)));
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    setSmtpStatus('Saved. Alarm server will reload the setting automatically.');
+  } catch (err) {
+    setSmtpStatus(`Save failed: ${err.message}`);
+  } finally {
+    if (els.smtpSaveBtn) els.smtpSaveBtn.disabled = false;
+  }
+}
+
+async function testSmtpEmail() {
+  if (els.smtpTestBtn) els.smtpTestBtn.disabled = true;
+  setSmtpStatus('Sending test email...');
+  try {
+    await saveSmtpSettings();
+    const to = String(els.smtpTestTo?.value || '').trim();
+    const resp = await apiPostJson('/api/alarms/alarm/api/email/test', { to });
+    if (!resp?.ok) throw new Error(resp?.error || 'Email test failed.');
+    setSmtpStatus(resp.result || 'Test email sent.');
+  } catch (err) {
+    setSmtpStatus(`Test failed: ${err.message}`);
+  } finally {
+    if (els.smtpTestBtn) els.smtpTestBtn.disabled = false;
+  }
+}
+
 async function loadVoiceModemSettings() {
   setVoiceModemStatus('Loading modem devices...');
   try {
@@ -7580,6 +8232,8 @@ function wireScadaSettingsUi() {
   els.soundSaveBtn?.addEventListener('click', saveSoundSettings);
   els.sipSaveBtn?.addEventListener('click', saveSipSettings);
   els.sipTestBtn?.addEventListener('click', testSipCall);
+  els.smtpSaveBtn?.addEventListener('click', saveSmtpSettings);
+  els.smtpTestBtn?.addEventListener('click', testSmtpEmail);
   els.ttsSaveBtn?.addEventListener('click', saveTtsSettings);
   els.voiceModemReloadBtn?.addEventListener('click', loadVoiceModemSettings);
   els.voiceModemSaveBtn?.addEventListener('click', saveVoiceModemSettings);
@@ -10531,7 +11185,10 @@ function alarmEventsSortValue(row, column, parentNode) {
     return isAlarmSiteProcessingEnabled(cfg, group, site) ? 1 : 0;
   }
   if (col === 'Audio Sequence') return String(row?.label || '').toLowerCase();
-  if (col === 'Phone') return String(meta?.phone || '').toLowerCase();
+  if (col === 'Cell') return String(meta?.phone_cell || meta?.phone || '').toLowerCase();
+  if (col === 'Work') return String(meta?.phone_work || '').toLowerCase();
+  if (col === 'Home') return String(meta?.phone_home || '').toLowerCase();
+  if (col === 'Email') return String(meta?.email || '').toLowerCase();
   if (col === 'Delay') {
     const delay = meta?.audio_delay_seconds == null ? -1 : Number(meta.audio_delay_seconds);
     return Number.isFinite(delay) ? delay : -1;
@@ -10763,13 +11420,11 @@ async function createNotificationContactInteractive() {
   if (!canEditConfig()) { window.alert('Login required to edit notification contacts.'); return; }
   const name = String(window.prompt('Contact name:', '') || '').trim();
   if (!name) return;
-  const phone = String(window.prompt('Phone number:', '') || '').trim();
-  if (!phone) return;
   const cfg = await loadOpcbridgeAlarmsConfig();
   if (!Array.isArray(cfg.targets)) cfg.targets = [];
   const used = new Set((Array.isArray(cfg.targets) ? cfg.targets : []).map((t) => String(t?.id || '').trim()).filter(Boolean));
   const id = uniqueNotificationId(name, used);
-  cfg.targets.push({ id, name, type: 'phone', value: phone, enabled: true });
+  cfg.targets.push({ id, name, type: 'phone', value: '', phone_home: '', phone_work: '', phone_cell: '', email: '', enabled: true });
   await saveOpcbridgeAlarmsConfig(cfg);
   await loadOpcbridgeAlarmsConfig();
   state.alarmsEventsSelectedNodeId = 'folder:notification_contacts';
@@ -11239,7 +11894,7 @@ function renderAlarmsEventsDetails(node) {
     : (isAudioFilesRoot || isAudioFolder || isAudioFile)
     ? ['Name', 'ID', 'Path']
     : (isNotificationContactsRoot || isNotificationContact)
-    ? ['Name', 'Phone', 'Delay', 'Enabled', 'ID']
+    ? ['Name', 'Cell', 'Work', 'Home', 'Email', 'Delay', 'Enabled', 'ID']
     : (isNotificationContactGroupsRoot || isNotificationContactGroup)
     ? ['Name', 'Contacts', 'Enabled', 'ID']
     : (isNotificationPoliciesRoot)
@@ -11391,7 +12046,10 @@ function renderAlarmsEventsDetails(node) {
       const meta = c?.meta || {};
       const delay = meta?.audio_delay_seconds == null ? 'default' : `${Math.max(0, Math.trunc(Number(meta.audio_delay_seconds) || 0))}s`;
       addCell(tr, String(meta?.name || c?.label || ''), false);
-      addCell(tr, String(meta?.phone || '').trim(), !String(meta?.phone || '').trim());
+      addCell(tr, String(meta?.phone_cell || meta?.phone || '').trim(), !String(meta?.phone_cell || meta?.phone || '').trim());
+      addCell(tr, String(meta?.phone_work || '').trim(), !String(meta?.phone_work || '').trim());
+      addCell(tr, String(meta?.phone_home || '').trim(), !String(meta?.phone_home || '').trim());
+      addCell(tr, String(meta?.email || '').trim(), !String(meta?.email || '').trim());
       addCell(tr, delay, delay === 'default');
       addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
       addCell(tr, String(meta?.id || '').trim(), false);
@@ -12070,12 +12728,33 @@ function renderAlarmsEventsProperties(item, parentNode) {
     nameBox.disabled = !canEditConfig();
     addRow('Name', nameBox);
 
-    const phoneBox = document.createElement('input');
-    phoneBox.type = 'text';
-    phoneBox.value = String(cur?.phone || '');
-    phoneBox.placeholder = '+15551234567';
-    phoneBox.disabled = !canEditConfig();
-    addRow('Phone', phoneBox);
+    const phoneHomeBox = document.createElement('input');
+    phoneHomeBox.type = 'text';
+    phoneHomeBox.value = String(cur?.phone_home || '');
+    phoneHomeBox.placeholder = '+15551234567';
+    phoneHomeBox.disabled = !canEditConfig();
+    addRow('Home Phone', phoneHomeBox);
+
+    const phoneWorkBox = document.createElement('input');
+    phoneWorkBox.type = 'text';
+    phoneWorkBox.value = String(cur?.phone_work || '');
+    phoneWorkBox.placeholder = '+15551234567';
+    phoneWorkBox.disabled = !canEditConfig();
+    addRow('Work Phone', phoneWorkBox);
+
+    const phoneCellBox = document.createElement('input');
+    phoneCellBox.type = 'text';
+    phoneCellBox.value = String(cur?.phone_cell || cur?.phone || '');
+    phoneCellBox.placeholder = '+15551234567';
+    phoneCellBox.disabled = !canEditConfig();
+    addRow('Cell Phone', phoneCellBox);
+
+    const emailBox = document.createElement('input');
+    emailBox.type = 'email';
+    emailBox.value = String(cur?.email || '');
+    emailBox.placeholder = 'person@example.com';
+    emailBox.disabled = !canEditConfig();
+    addRow('Email', emailBox);
 
     const playbackDelayBox = document.createElement('input');
     playbackDelayBox.type = 'number';
@@ -12125,8 +12804,11 @@ function renderAlarmsEventsProperties(item, parentNode) {
 	        if (nextId !== contactId && nextCfg.targets.some((t) => t && typeof t === 'object' && !Array.isArray(t) && String(t.type || '') === 'phone' && String(t.id || '').trim() === nextId)) {
 	          throw new Error(`Contact ID '${nextId}' already exists.`);
 	        }
-	        const phone = String(phoneBox.value || '').trim();
-	        if (!phone) throw new Error('Phone is required.');
+	        const phoneHome = String(phoneHomeBox.value || '').trim();
+	        const phoneWork = String(phoneWorkBox.value || '').trim();
+	        const phoneCell = String(phoneCellBox.value || '').trim();
+	        const email = String(emailBox.value || '').trim();
+	        if (!phoneHome && !phoneWork && !phoneCell && !email) throw new Error('At least one phone number or email is required.');
 	        const delayRaw = String(playbackDelayBox.value ?? '').trim();
 	        const playbackDelay = delayRaw === '' ? null : Math.trunc(Number(delayRaw));
 	        if (playbackDelay != null && (!Number.isFinite(playbackDelay) || playbackDelay < 0 || playbackDelay > 120)) throw new Error('Playback Delay Seconds must be blank or 0-120.');
@@ -12135,7 +12817,11 @@ function renderAlarmsEventsProperties(item, parentNode) {
 	          id: nextId,
 	          type: 'phone',
 	          name: String(nameBox.value || '').trim() || nextId,
-	          value: phone,
+	          value: phoneCell || phoneWork || phoneHome,
+	          phone_home: phoneHome,
+	          phone_work: phoneWork,
+	          phone_cell: phoneCell,
+	          email,
 	          enabled: Boolean(enabledBox.checked),
 	          notes: String(notesBox.value || '').trim()
 	        };
@@ -12905,6 +13591,8 @@ function renderAlarmsEventsProperties(item, parentNode) {
     const policyId = String(item?.meta?.id || '').trim();
     const isV2 = isV2AlarmsConfig(cfg);
     const cur = getNotificationPolicies(cfg).find((p) => String(p?.id || '').trim() === policyId) || item?.meta || {};
+    const policyOutputType = String(getPolicyOutputType(cur) || 'phone').trim().toLowerCase();
+    const isEmailPolicy = policyOutputType === 'email';
     showEditor();
     const host = els.alarmsEventsPropsEditor;
     if (!host) return;
@@ -12959,7 +13647,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
       .filter(Boolean);
     const firstEvent = currentEvents.find((ev) => eventOptions.includes(ev)) || 'active';
     eventSelect.value = firstEvent;
-    addRow('Event', eventSelect);
+    const eventRow = addRow('Event', eventSelect).closest('.form-row');
     const eventHint = document.createElement('div');
     eventHint.className = 'hint';
     eventHint.textContent = 'Use normal lifecycle events only. Shelve/unshelve are operator actions and are intentionally hidden.';
@@ -12979,7 +13667,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     const repeatStop = String(isV2 ? (curRepeat?.stop_on || 'acked_or_returned') : (cur?.until || 'acked_or_returned')).trim() || 'acked_or_returned';
 
     const { checkbox: repeatEnabledBox, wrap: repeatEnabledWrap } = makeLabeledCheckbox('Enabled', repeatEnabled, !canEditConfig());
-    addRow('Repeat', repeatEnabledWrap);
+    const repeatEnabledRow = addRow('Repeat', repeatEnabledWrap).closest('.form-row');
 
     const repeatInitialBox = document.createElement('input');
     repeatInitialBox.type = 'number';
@@ -12987,7 +13675,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     repeatInitialBox.step = '1';
     repeatInitialBox.value = String(repeatInitial);
     repeatInitialBox.disabled = !canEditConfig();
-    addRow('Initial Delay (ms)', repeatInitialBox);
+    const repeatInitialRow = addRow('Initial Delay (ms)', repeatInitialBox).closest('.form-row');
 
     const repeatIntervalBox = document.createElement('input');
     repeatIntervalBox.type = 'number';
@@ -12995,7 +13683,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     repeatIntervalBox.step = '1';
     repeatIntervalBox.value = String(repeatInterval);
     repeatIntervalBox.disabled = !canEditConfig();
-    addRow('Repeat Interval (ms)', repeatIntervalBox);
+    const repeatIntervalRow = addRow('Repeat Interval (ms)', repeatIntervalBox).closest('.form-row');
 
     const repeatMaxBox = document.createElement('input');
     repeatMaxBox.type = 'number';
@@ -13003,7 +13691,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     repeatMaxBox.step = '1';
     repeatMaxBox.value = String(repeatMax);
     repeatMaxBox.disabled = !canEditConfig();
-    addRow('Max Repeats', repeatMaxBox);
+    const repeatMaxRow = addRow('Max Repeats', repeatMaxBox).closest('.form-row');
 
     const repeatStopSel = document.createElement('select');
     repeatStopSel.disabled = !canEditConfig();
@@ -13014,7 +13702,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
       repeatStopSel.appendChild(opt);
     });
     repeatStopSel.value = ['acked_or_returned', 'acked', 'returned', 'manual'].includes(repeatStop) ? repeatStop : 'acked_or_returned';
-    addRow('Repeat Stop On', repeatStopSel);
+    const repeatStopRow = addRow('Repeat Stop On', repeatStopSel).closest('.form-row');
 
     const vmDefaults = getVoiceModemConfig(cfg);
     const policyAudioDelayBox = document.createElement('input');
@@ -13025,7 +13713,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     policyAudioDelayBox.placeholder = `Default (${Number(vmDefaults.audio_delay_seconds ?? 8) || 8})`;
     policyAudioDelayBox.value = cur?.audio_delay_seconds == null ? '' : String(Math.max(0, Math.trunc(Number(cur.audio_delay_seconds) || 0)));
     policyAudioDelayBox.disabled = !canEditConfig();
-    addRow('Default Playback Delay Seconds', policyAudioDelayBox);
+    const policyAudioDelayRow = addRow('Default Playback Delay Seconds', policyAudioDelayBox).closest('.form-row');
 
     const policyAudioGapBox = document.createElement('input');
     policyAudioGapBox.type = 'number';
@@ -13035,9 +13723,8 @@ function renderAlarmsEventsProperties(item, parentNode) {
     policyAudioGapBox.placeholder = `Default (${Number(vmDefaults.audio_gap_ms ?? 50) || 0})`;
     policyAudioGapBox.value = cur?.audio_gap_ms == null ? '' : String(Math.max(0, Math.trunc(Number(cur.audio_gap_ms) || 0)));
     policyAudioGapBox.disabled = !canEditConfig();
-    addRow('Playback Gap Milliseconds', policyAudioGapBox);
+    const policyAudioGapRow = addRow('Playback Gap Milliseconds', policyAudioGapBox).closest('.form-row');
 
-    const policyOutputType = String(getPolicyOutputType(cur) || 'phone').trim().toLowerCase();
     const outputTypeHint = document.createElement('div');
     outputTypeHint.className = 'hint';
     outputTypeHint.textContent = `Output Type: ${String(policyOutputType || 'phone').toUpperCase()}`;
@@ -13046,7 +13733,9 @@ function renderAlarmsEventsProperties(item, parentNode) {
     let targetList = null;
     const targetHint = document.createElement('div');
     targetHint.className = 'hint';
-    targetHint.textContent = 'Select contacts and/or contact groups in call order. Calls stop when acknowledged.';
+    targetHint.textContent = policyOutputType === 'email'
+      ? 'Select contacts and/or contact groups to email.'
+      : 'Select contacts and/or contact groups in call order. Calls stop when acknowledged.';
 
     const insertRowBefore = (labelText, inputEl, beforeEl) => {
       const row = document.createElement('div');
@@ -13073,29 +13762,65 @@ function renderAlarmsEventsProperties(item, parentNode) {
       const groups = getNotificationContactGroups(cfg)
         .slice()
         .sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+      const contactMethodItems = [];
+      contacts.forEach((contact) => {
+        const id = String(contact?.id || '').trim();
+        if (!id) return;
+        if (policyOutputType === 'email') {
+          if (!String(contact?.email || '').trim()) return;
+          contactMethodItems.push({
+            key: `contact:${id}:email`,
+            label: `${String(contact?.name || id)} - Email`,
+            meta: `${String(contact?.email || '')} · ${id}${contact?.enabled === false ? ' · disabled' : ''}`
+          });
+          return;
+        }
+        [
+          ['cell', contact?.phone_cell || contact?.phone],
+          ['work', contact?.phone_work],
+          ['home', contact?.phone_home]
+        ].forEach(([method, value]) => {
+          if (!String(value || '').trim()) return;
+          contactMethodItems.push({
+            key: `contact:${id}:${method}`,
+            label: `${String(contact?.name || id)} - ${method}`,
+            meta: `${String(value || '')} · ${id}${contact?.enabled === false ? ' · disabled' : ''}`
+          });
+        });
+      });
+      const groupMethodItems = [];
+      const contactById = new Map(contacts.map((contact) => [String(contact?.id || '').trim(), contact]));
+      const groupHasMethod = (group, method) => {
+        const members = Array.isArray(group?.contacts) ? group.contacts : [];
+        return members.some((memberId) => {
+          const contact = contactById.get(String(memberId || '').trim());
+          if (!contact || contact.enabled === false) return false;
+          if (method === 'email') return String(contact?.email || '').trim() !== '';
+          if (method === 'cell') return String(contact?.phone_cell || contact?.phone || '').trim() !== '';
+          if (method === 'work') return String(contact?.phone_work || '').trim() !== '';
+          if (method === 'home') return String(contact?.phone_home || '').trim() !== '';
+          return false;
+        });
+      };
+      groups.forEach((group) => {
+        const id = String(group?.id || '').trim();
+        const members = Array.isArray(group?.contacts) ? group.contacts.length : 0;
+        if (!id) return;
+        const methods = policyOutputType === 'email' ? ['email'] : ['cell', 'work', 'home'];
+        methods.forEach((method) => {
+          if (!groupHasMethod(group, method)) return;
+          groupMethodItems.push({
+            key: `group:${id}:${method}`,
+            label: `${String(group?.name || id)} - ${method} (Group)`,
+            meta: `${members} contact(s) · ${id}${group?.enabled === false ? ' · disabled' : ''}`
+          });
+        });
+      });
       targetList = makeOrderedSelectionEditor({
-        emptyText: 'No callout targets selected.',
+        emptyText: policyOutputType === 'email' ? 'No email targets selected.' : 'No callout targets selected.',
         addLabel: 'Add Target',
-        availableItems: [
-          ...contacts.map((contact) => {
-            const id = String(contact?.id || '').trim();
-            return {
-              key: `contact:${id}`,
-              label: `${String(contact?.name || id)} (Contact)`,
-              meta: `${String(contact?.phone || 'no phone')} · ${id}${contact?.enabled === false ? ' · disabled' : ''}`
-            };
-          }),
-          ...groups.map((group) => {
-            const id = String(group?.id || '').trim();
-            const members = Array.isArray(group?.contacts) ? group.contacts.length : 0;
-            return {
-              key: `group:${id}`,
-              label: `${String(group?.name || id)} (Group)`,
-              meta: `${members} contact(s) · ${id}${group?.enabled === false ? ' · disabled' : ''}`
-            };
-          })
-        ],
-        selectedItems: currentTargets.map((target) => ({ key: `${String(target?.type || '')}:${String(target?.id || '')}` }))
+        availableItems: contactMethodItems.concat(groupMethodItems),
+        selectedItems: currentTargets.map((target) => ({ key: `${String(target?.type || '')}:${String(target?.id || '')}:${String(target?.method || (policyOutputType === 'email' ? 'email' : 'cell'))}` }))
       });
       // Insert the row/hint above the acknowledge fields.
       insertRowBefore('Callout Targets', targetList, beforeAckMarker);
@@ -13103,6 +13828,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     };
 
     const isPhonePolicyNow = () => policyOutputType === 'phone';
+    const isTargetPolicyNow = () => policyOutputType === 'phone' || policyOutputType === 'email';
 
     // For phone policies only: choose which call backend to use.
     const callBackendSel = document.createElement('select');
@@ -13113,7 +13839,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
       { v: 'voice_modem', l: 'Voice Modem' }
     ].forEach((o) => callBackendSel.appendChild(new Option(o.l, o.v)));
     callBackendSel.value = ['auto', 'sip', 'voice_modem'].includes(String(cur?.call_backend || 'auto')) ? String(cur?.call_backend || 'auto') : 'auto';
-    addRow('Call Backend', callBackendSel);
+    const callBackendRow = addRow('Call Backend', callBackendSel).closest('.form-row');
 
     const ackEnabledBox = document.createElement('input');
     ackEnabledBox.type = 'checkbox';
@@ -13125,7 +13851,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     ackEnabledWrap.style.gap = '8px';
     ackEnabledWrap.appendChild(ackEnabledBox);
     ackEnabledWrap.appendChild(document.createTextNode('Allow phone acknowledgement'));
-    addRow('Phone Acknowledgement', ackEnabledWrap);
+    const ackEnabledRow = addRow('Phone Acknowledgement', ackEnabledWrap).closest('.form-row');
 
     const ackDtmfBox = document.createElement('input');
     ackDtmfBox.type = 'text';
@@ -13134,7 +13860,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
       : '1';
     ackDtmfBox.placeholder = '1';
     ackDtmfBox.disabled = !canEditConfig() || !isPhonePolicyNow();
-    addRow('Acknowledge Keys', ackDtmfBox);
+    const ackDtmfRow = addRow('Acknowledge Keys', ackDtmfBox).closest('.form-row');
 
     const ackWaitBox = document.createElement('input');
     ackWaitBox.type = 'number';
@@ -13143,7 +13869,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     ackWaitBox.step = '1';
     ackWaitBox.value = String(Math.max(0, Math.trunc(Number(cur?.ack_wait_sec ?? 8) || 8)));
     ackWaitBox.disabled = !canEditConfig() || !isPhonePolicyNow();
-    addRow('Acknowledge Wait (sec)', ackWaitBox);
+    const ackWaitRow = addRow('Acknowledge Wait (sec)', ackWaitBox).closest('.form-row');
 
     const ringTimeoutBox = document.createElement('input');
     ringTimeoutBox.type = 'number';
@@ -13153,11 +13879,66 @@ function renderAlarmsEventsProperties(item, parentNode) {
     ringTimeoutBox.value = String(Math.max(5, Math.trunc(Number(cur?.ring_timeout_sec ?? 15) || 15)));
     ringTimeoutBox.placeholder = '15';
     ringTimeoutBox.disabled = !canEditConfig() || !isPhonePolicyNow();
-    addRow('Ring Timeout (sec)', ringTimeoutBox);
+    const ringTimeoutRow = addRow('Ring Timeout (sec)', ringTimeoutBox).closest('.form-row');
+
+    const emailSection = document.createElement('div');
+    emailSection.style.display = isEmailPolicy ? 'grid' : 'none';
+    emailSection.style.gap = '10px';
+    emailSection.style.marginTop = '10px';
+    const emailTitle = document.createElement('div');
+    emailTitle.className = 'hint';
+    emailTitle.textContent = 'Email policy settings';
+    emailSection.appendChild(emailTitle);
+    const addEmailRow = (labelText, inputEl) => {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      const lab = document.createElement('label');
+      lab.textContent = labelText;
+      row.appendChild(lab);
+      row.appendChild(inputEl);
+      emailSection.appendChild(row);
+      return inputEl;
+    };
+    const sendActive = cur?.send_on_active !== false;
+    const sendClear = Boolean(cur?.send_on_clear || (Array.isArray(cur?.triggers) && cur.triggers.includes('return')) || (Array.isArray(cur?.on) && cur.on.includes('return')));
+    const sendGrid = document.createElement('div');
+    sendGrid.className = 'row-actions';
+    const { checkbox: emailSendActiveBox, wrap: emailSendActiveWrap } = makeLabeledCheckbox('Send on Active', sendActive, !canEditConfig());
+    const { checkbox: emailSendClearBox, wrap: emailSendClearWrap } = makeLabeledCheckbox('Send on Clear', sendClear, !canEditConfig());
+    sendGrid.appendChild(emailSendActiveWrap);
+    sendGrid.appendChild(emailSendClearWrap);
+    addEmailRow('Send Events', sendGrid);
+
+    const emailSubjectBox = document.createElement('input');
+    emailSubjectBox.type = 'text';
+    emailSubjectBox.value = String(cur?.email_subject_template || '');
+    emailSubjectBox.placeholder = 'OPC Bridge alarm {event}: {alarm_name}';
+    emailSubjectBox.disabled = !canEditConfig();
+    addEmailRow('Subject Template', emailSubjectBox);
+
+    const emailActiveBodyBox = document.createElement('textarea');
+    emailActiveBodyBox.rows = 7;
+    emailActiveBodyBox.value = String(cur?.email_active_body_template || '');
+    emailActiveBodyBox.placeholder = 'Leave blank for default active alarm email body.';
+    emailActiveBodyBox.disabled = !canEditConfig();
+    addEmailRow('Active Body', emailActiveBodyBox);
+
+    const emailClearBodyBox = document.createElement('textarea');
+    emailClearBodyBox.rows = 7;
+    emailClearBodyBox.value = String(cur?.email_clear_body_template || '');
+    emailClearBodyBox.placeholder = 'Leave blank for default clear email body.';
+    emailClearBodyBox.disabled = !canEditConfig();
+    addEmailRow('Clear Body', emailClearBodyBox);
+
+    const emailTemplateHint = document.createElement('div');
+    emailTemplateHint.className = 'hint mono';
+    emailTemplateHint.textContent = 'Tokens: {event}, {alarm_name}, {alarm_id}, {severity}, {group}, {site}, {connection_id}, {tag}, {message}';
+    emailSection.appendChild(emailTemplateHint);
+    form.appendChild(emailSection);
 
     const syncPolicyTypeUiLocal = () => {
       const phone = isPhonePolicyNow();
-      if (phone) {
+      if (isTargetPolicyNow()) {
         ensureTargetEditor();
       } else {
         // Hide targets hint if present; the selection editor row will remain but
@@ -13169,7 +13950,26 @@ function renderAlarmsEventsProperties(item, parentNode) {
       ackEnabledBox.disabled = !canEditConfig() || !phone;
       ringTimeoutBox.disabled = !canEditConfig() || !phone;
       callBackendSel.disabled = !canEditConfig() || !phone;
-      if (targetHint) targetHint.style.display = phone ? '' : 'none';
+      if (targetHint) targetHint.style.display = isTargetPolicyNow() ? '' : 'none';
+      [
+        eventRow,
+        eventHint,
+        repeatEnabledRow,
+        repeatInitialRow,
+        repeatIntervalRow,
+        repeatMaxRow,
+        repeatStopRow,
+        policyAudioDelayRow,
+        policyAudioGapRow,
+        callBackendRow,
+        ackEnabledRow,
+        ackDtmfRow,
+        ackWaitRow,
+        ringTimeoutRow
+      ].forEach((el) => {
+        if (el) el.style.display = phone ? '' : 'none';
+      });
+      if (emailSection) emailSection.style.display = isEmailPolicy ? 'grid' : 'none';
     };
     syncPolicyTypeUiLocal();
 
@@ -13219,6 +14019,11 @@ function renderAlarmsEventsProperties(item, parentNode) {
           // max_rings removed; use Ring Timeout (sec) only.
 	        const selectedOutputType = getPolicyOutputType(policies[idx] || cur);
 	        const isPhonePolicyNow = selectedOutputType === 'phone';
+          const isEmailPolicyNow = selectedOutputType === 'email';
+          const emailEvents = [];
+          if (isEmailPolicyNow && emailSendActiveBox.checked) emailEvents.push('active');
+          if (isEmailPolicyNow && emailSendClearBox.checked) emailEvents.push('return');
+          if (isEmailPolicyNow && !emailEvents.length) throw new Error('Email policy must send on Active, Clear, or both.');
 	        const phoneAckEnabled = Boolean(ackEnabledBox.checked);
 	        const ackDtmf = dedupeStringsInOrder(ackRaw.split(',').map((v) => String(v || '').trim()).filter(Boolean)).map((k) => k.slice(0, 1));
 	        if (isPhonePolicyNow && phoneAckEnabled && !ackDtmf.length) ackDtmf.push('1');
@@ -13243,24 +14048,25 @@ function renderAlarmsEventsProperties(item, parentNode) {
 	        const normalizedTargets = [];
 	        const contactsSelected = [];
 	        const groupsSelected = [];
-        if (isPhonePolicyNow && targetList) {
+        if ((isPhonePolicyNow || selectedOutputType === 'email') && targetList) {
           const selectedTargets = targetList.getSelectedKeys();
           const validContactIds = new Set(getNotificationContacts(nextCfg).map((c) => String(c?.id || '').trim()).filter(Boolean));
           const validGroupIds = new Set(getNotificationContactGroups(nextCfg).map((g) => String(g?.id || '').trim()).filter(Boolean));
           selectedTargets.forEach((key) => {
             const parts = String(key || '').split(':');
             const t = String(parts[0] || '').trim();
-            const id = String(parts.slice(1).join(':') || '').trim();
+            const id = String(parts[1] || '').trim();
+            const method = String(parts[2] || (selectedOutputType === 'email' ? 'email' : 'cell')).trim();
             if (!id) return;
             if (t === 'contact') {
               if (!validContactIds.has(id)) throw new Error(`Unknown contact target '${id}'.`);
-              normalizedTargets.push({ type: 'contact', id });
+              normalizedTargets.push({ type: 'contact', id, method });
               contactsSelected.push(id);
               return;
             }
             if (t === 'group') {
               if (!validGroupIds.has(id)) throw new Error(`Unknown contact group target '${id}'.`);
-              normalizedTargets.push({ type: 'group', id });
+              normalizedTargets.push({ type: 'group', id, method });
               groupsSelected.push(id);
             }
           });
@@ -13272,31 +14078,36 @@ function renderAlarmsEventsProperties(item, parentNode) {
 	          output_type: selectedOutputType,
 	          enabled: Boolean(enabledBox.checked),
 	          min_severity: Math.trunc(Number(sevBox.value ?? 0) || 0),
-	          targets: isPhonePolicyNow ? normalizedTargets : (Array.isArray((policies[idx] || {}).targets) ? (policies[idx] || {}).targets : [])
+	          targets: (isPhonePolicyNow || selectedOutputType === 'email') ? normalizedTargets : (Array.isArray((policies[idx] || {}).targets) ? (policies[idx] || {}).targets : [])
 	        };
 	        // v2-only: legacy per-policy contact arrays are not supported.
 	        delete basePolicy.contacts;
 	        delete basePolicy.contact_groups;
         if (isV2) {
           basePolicy.schedule_id = 'always';
-          basePolicy.triggers = [selectedEvent];
+          basePolicy.triggers = isEmailPolicyNow ? emailEvents : [selectedEvent];
           basePolicy.repeat = {
-            enabled: repeatEnabledNow,
+            enabled: isPhonePolicyNow ? repeatEnabledNow : false,
             initial_delay_ms: repeatInitialMs,
             interval_ms: repeatIntervalMs,
             max_repeats: repeatMaxRepeats,
             stop_on: repeatStopOn
           };
         } else {
-          basePolicy.on = [selectedEvent];
-          basePolicy.repeat_ms = (repeatEnabledNow && repeatMaxRepeats > 0) ? repeatIntervalMs : 0;
+          basePolicy.on = isEmailPolicyNow ? emailEvents : [selectedEvent];
+          basePolicy.repeat_ms = (isPhonePolicyNow && repeatEnabledNow && repeatMaxRepeats > 0) ? repeatIntervalMs : 0;
           basePolicy.until = repeatStopOn;
         }
         policies[idx] = basePolicy;
-        if (policyAudioDelay == null) delete policies[idx].audio_delay_seconds;
-        else policies[idx].audio_delay_seconds = policyAudioDelay;
-        if (policyAudioGap == null) delete policies[idx].audio_gap_ms;
-        else policies[idx].audio_gap_ms = policyAudioGap;
+        if (isPhonePolicyNow) {
+          if (policyAudioDelay == null) delete policies[idx].audio_delay_seconds;
+          else policies[idx].audio_delay_seconds = policyAudioDelay;
+          if (policyAudioGap == null) delete policies[idx].audio_gap_ms;
+          else policies[idx].audio_gap_ms = policyAudioGap;
+        } else {
+          delete policies[idx].audio_delay_seconds;
+          delete policies[idx].audio_gap_ms;
+        }
           if (isPhonePolicyNow) {
             policies[idx].call_backend = String(callBackendSel.value || 'auto').trim() || 'auto';
             policies[idx].ack_enabled = Boolean(ackEnabledBox.checked);
@@ -13314,6 +14125,25 @@ function renderAlarmsEventsProperties(item, parentNode) {
             delete policies[idx].ack_dtmf;
             delete policies[idx].ack_wait_sec;
             delete policies[idx].ring_timeout_sec;
+          }
+          if (isEmailPolicyNow) {
+            policies[idx].send_on_active = emailSendActiveBox.checked;
+            policies[idx].send_on_clear = emailSendClearBox.checked;
+            const subject = String(emailSubjectBox.value || '').trim();
+            const activeBody = String(emailActiveBodyBox.value || '').trim();
+            const clearBody = String(emailClearBodyBox.value || '').trim();
+            if (subject) policies[idx].email_subject_template = subject;
+            else delete policies[idx].email_subject_template;
+            if (activeBody) policies[idx].email_active_body_template = activeBody;
+            else delete policies[idx].email_active_body_template;
+            if (clearBody) policies[idx].email_clear_body_template = clearBody;
+            else delete policies[idx].email_clear_body_template;
+          } else {
+            delete policies[idx].send_on_active;
+            delete policies[idx].send_on_clear;
+            delete policies[idx].email_subject_template;
+            delete policies[idx].email_active_body_template;
+            delete policies[idx].email_clear_body_template;
           }
         if (nextId !== policyId) {
           (Array.isArray(nextCfg.alarms) ? nextCfg.alarms : []).forEach((alarm) => {
@@ -15801,11 +16631,11 @@ async function refreshUserAuthLine() {
     }
     if (loggedIn) {
       const who = username ? ` as ${escapeHtml(username)}${role ? ` (${escapeHtml(role)})` : ''}` : '';
-      els.authLine.innerHTML = `<span class="badge ok">auth</span> logged in${who} <button class="btn" id="authLogoutBtn" type="button">Logout</button>`;
+      els.authLine.innerHTML = `<button class="btn" id="authLogoutBtn" type="button">Logout</button> <span class="badge ok">auth</span> logged in${who}`;
       document.getElementById('authLogoutBtn')?.addEventListener('click', logoutUser);
       return;
     }
-    els.authLine.innerHTML = `<span class="badge warn">auth</span> not logged in <button class="btn primary" id="authLoginBtn" type="button">Login</button>`;
+    els.authLine.innerHTML = `<button class="btn primary" id="authLoginBtn" type="button">Login</button> <span class="badge warn">auth</span> not logged in`;
     document.getElementById('authLoginBtn')?.addEventListener('click', loginUser);
   } catch {
     updateAuthAdminPanelVisibility();
@@ -16488,6 +17318,7 @@ async function main() {
     await loadSoundSettings();
     await loadTtsSettings();
     await loadSipSettings();
+    await loadSmtpSettings();
     await loadVoiceModemSettings();
     await loadSvcSettings();
   } catch {

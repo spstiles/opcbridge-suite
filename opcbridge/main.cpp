@@ -15571,7 +15571,11 @@ window.addEventListener("load", startAutoRefresh);
 										// Poll loop may be behind briefly; avoid flapping ERROR unless we've
 										// had no good snapshots for an extended period.
 										const int64_t hard_grace_ms = 120000; // 2 minutes
-										if (newest_age_ms >= 0 && newest_age_ms <= hard_grace_ms) {
+										if (last_ok_age_ms >= 0 && last_ok_age_ms <= hard_grace_ms) {
+											dstatus["status"] = "ok";
+											dstatus["reason"] = "recovering after recent read timeouts";
+											++ok_count;
+										} else if (newest_age_ms >= 0 && newest_age_ms <= hard_grace_ms) {
 											dstatus["status"] = "degraded";
 											dstatus["reason"] = "polling behind (no recent good tag snapshots)";
 											++degraded_count;

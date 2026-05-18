@@ -13,6 +13,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <sys/stat.h>
@@ -64,6 +65,8 @@ struct Job {
     std::string on_calendar;
     std::unordered_set<std::string> tag_keys;
     std::unordered_map<std::string, std::vector<std::string>> tag_name_globs_by_conn;
+    std::unordered_map<std::string, std::string> tag_descriptions_by_key;
+    std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> tag_description_globs_by_conn;
 };
 
 struct JobStatus {
@@ -204,6 +207,18 @@ static bool job_includes_tag(const Job& job, const std::string& connection_id, c
         if (glob_match(pat, tag_name)) return true;
     }
     return false;
+}
+
+static std::string job_tag_description(const Job& job, const std::string& connection_id, const std::string& tag_name) {
+    auto exact = job.tag_descriptions_by_key.find(make_tag_key(connection_id, tag_name));
+    if (exact != job.tag_descriptions_by_key.end()) return exact->second;
+
+    auto it = job.tag_description_globs_by_conn.find(connection_id);
+    if (it == job.tag_description_globs_by_conn.end()) return "";
+    for (const auto& pat : it->second) {
+        if (glob_match(pat.first, tag_name)) return pat.second;
+    }
+    return "";
 }
 
 static std::string trim(std::string s) {
@@ -376,6 +391,7 @@ static std::string default_table_sql(const std::string& table) {
            "timestamp_dt DATETIME NOT NULL,"
            "connection_id VARCHAR(64) NOT NULL,"
            "tag_name VARCHAR(128) NOT NULL,"
+           "tag_description VARCHAR(255) NULL,"
            "datatype VARCHAR(32) DEFAULT NULL,"
            "value_numeric DOUBLE NULL,"
            "value_string VARCHAR(255) NULL,"
@@ -388,6 +404,8 @@ static std::string default_table_sql(const std::string& table) {
            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 }
 
+static std::string sql_string_literal(MYSQL* conn, const std::string& val);
+
 static bool ensure_table_exists(MYSQL* conn, const std::string& table, const TableSqlMap& map, std::string& error) {
     std::string create_sql = default_table_sql(table);
     auto it = map.find(table);
@@ -395,6 +413,30 @@ static bool ensure_table_exists(MYSQL* conn, const std::string& table, const Tab
 
     if (mysql_query(conn, create_sql.c_str()) != 0) {
         error = std::string("Failed to create/ensure table '") + table + "': " + mysql_error(conn);
+        return false;
+    }
+    return true;
+}
+
+static bool ensure_table_column_exists(MYSQL* conn, const std::string& table, const std::string& column, const std::string& definition, std::string& error) {
+    std::string query = "SHOW COLUMNS FROM `" + table + "` LIKE " + sql_string_literal(conn, column);
+    if (mysql_query(conn, query.c_str()) != 0) {
+        error = std::string("Failed to inspect table '") + table + "': " + mysql_error(conn);
+        return false;
+    }
+
+    MYSQL_RES* res = mysql_store_result(conn);
+    if (!res) {
+        error = std::string("Failed to read column inspection for table '") + table + "': " + mysql_error(conn);
+        return false;
+    }
+    const bool exists = mysql_num_rows(res) > 0;
+    mysql_free_result(res);
+    if (exists) return true;
+
+    std::string alter = "ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition;
+    if (mysql_query(conn, alter.c_str()) != 0) {
+        error = std::string("Failed to add column '") + column + "' to table '" + table + "': " + mysql_error(conn);
         return false;
     }
     return true;
@@ -422,6 +464,7 @@ static int insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job, st
             std::string connection_id = t["connection_id"].get<std::string>();
             std::string tag_name = t["name"].get<std::string>();
             if (!job_includes_tag(job, connection_id, tag_name)) continue;
+            std::string tag_description = job_tag_description(job, connection_id, tag_name);
 
             long long timestamp_ms = t["timestamp_ms"].get<long long>();
             std::string timestamp_dt = epoch_ms_to_datetime(timestamp_ms);
@@ -472,13 +515,14 @@ static int insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job, st
             }
 
             std::string sql = "INSERT INTO `" + job.table + "` "
-                              "(job_name, timestamp_ms, timestamp_dt, connection_id, tag_name, datatype, "
+                              "(job_name, timestamp_ms, timestamp_dt, connection_id, tag_name, tag_description, datatype, "
                               "value_numeric, value_string, quality, created_at) VALUES (";
             sql += sql_string_literal(conn, job.name) + ", ";
             sql += std::to_string(timestamp_ms) + ", ";
             sql += sql_string_literal(conn, timestamp_dt) + ", ";
             sql += sql_string_literal(conn, connection_id) + ", ";
             sql += sql_string_literal(conn, tag_name) + ", ";
+            sql += tag_description.empty() ? "NULL, " : sql_string_literal(conn, tag_description) + ", ";
             sql += datatype.empty() ? "NULL, " : sql_string_literal(conn, datatype) + ", ";
             sql += has_numeric ? std::to_string(value_numeric) + ", " : "NULL, ";
             sql += has_string ? sql_string_literal(conn, value_string) + ", " : "NULL, ";
@@ -501,6 +545,8 @@ static bool parse_job_tags(const json& tags, Job& job, std::string& error) {
     job.log_all = false;
     job.tag_keys.clear();
     job.tag_name_globs_by_conn.clear();
+    job.tag_descriptions_by_key.clear();
+    job.tag_description_globs_by_conn.clear();
 
     if (tags.is_null()) {
         job.log_all = true;
@@ -523,6 +569,7 @@ static bool parse_job_tags(const json& tags, Job& job, std::string& error) {
     for (const auto& t : tags) {
         std::string conn;
         std::string name;
+        std::string description;
         if (t.is_string()) {
             std::string s = t.get<std::string>();
             size_t pos = s.find(':');
@@ -532,10 +579,17 @@ static bool parse_job_tags(const json& tags, Job& job, std::string& error) {
         } else if (t.is_object()) {
             conn = t.value("connection_id", "");
             name = t.value("name", "");
+            description = t.value("description", "");
         }
         if (conn.empty() || name.empty()) continue;
-        if (has_glob_chars(name)) job.tag_name_globs_by_conn[conn].push_back(name);
-        else job.tag_keys.insert(make_tag_key(conn, name));
+        if (has_glob_chars(name)) {
+            job.tag_name_globs_by_conn[conn].push_back(name);
+            if (!description.empty()) job.tag_description_globs_by_conn[conn].push_back({ name, description });
+        } else {
+            const std::string key = make_tag_key(conn, name);
+            job.tag_keys.insert(key);
+            if (!description.empty()) job.tag_descriptions_by_key[key] = description;
+        }
     }
     return true;
 }
@@ -1093,6 +1147,10 @@ private:
 
         TableSqlMap table_sql_map;
         if (!ensure_table_exists(conn, job.table, table_sql_map, result.error)) {
+            mysql_close(conn);
+            return result;
+        }
+        if (!ensure_table_column_exists(conn, job.table, "tag_description", "VARCHAR(255) NULL AFTER `tag_name`", result.error)) {
             mysql_close(conn);
             return result;
         }

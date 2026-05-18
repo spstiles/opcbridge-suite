@@ -25,6 +25,7 @@
 #include <random>
 #include <string>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <sstream>
@@ -3337,6 +3338,10 @@ static json notification_config_from_root_current(const json& v2Root)
     {
         cfg["sip"] = v2Root["sip"];
     }
+    if (v2Root.contains("smtp") && v2Root["smtp"].is_object())
+    {
+        cfg["smtp"] = v2Root["smtp"];
+    }
 
     std::unordered_map<std::string, json> targetById;
     if (v2Root.contains("targets") && v2Root["targets"].is_array())
@@ -3355,8 +3360,22 @@ static json notification_config_from_root_current(const json& v2Root)
                     {"id", id},
                     {"name", t.value("name", id)},
                     {"phone", t.value("value", "")},
+                    {"phone_home", t.value("phone_home", "")},
+                    {"phone_work", t.value("phone_work", "")},
+                    {"phone_cell", t.value("phone_cell", "")},
+                    {"email", t.value("email", "")},
                     {"enabled", t.value("enabled", true)}
                 };
+                if (contact["phone_cell"].get<std::string>().empty()) contact["phone_cell"] = t.value("cell", "");
+                if (contact["phone_home"].get<std::string>().empty()) contact["phone_home"] = t.value("home", "");
+                if (contact["phone_work"].get<std::string>().empty()) contact["phone_work"] = t.value("work", "");
+                if (contact["phone"].get<std::string>().empty())
+                {
+                    const std::string cell = contact["phone_cell"].get<std::string>();
+                    const std::string work = contact["phone_work"].get<std::string>();
+                    const std::string home = contact["phone_home"].get<std::string>();
+                    contact["phone"] = !cell.empty() ? cell : (!work.empty() ? work : home);
+                }
                 if (t.contains("audio_delay_seconds") && t["audio_delay_seconds"].is_number_integer())
                 {
                     contact["audio_delay_seconds"] = t["audio_delay_seconds"];
@@ -3539,6 +3558,9 @@ static json notification_config_from_root_current(const json& v2Root)
                 if (p.contains("ring_timeout_sec") && p["ring_timeout_sec"].is_number_integer()) normalized["ring_timeout_sec"] = p["ring_timeout_sec"];
                 if (p.contains("audio_delay_seconds") && p["audio_delay_seconds"].is_number_integer()) normalized["audio_delay_seconds"] = p["audio_delay_seconds"];
                 if (p.contains("audio_gap_ms") && p["audio_gap_ms"].is_number_integer()) normalized["audio_gap_ms"] = p["audio_gap_ms"];
+                if (p.contains("email_subject_template") && p["email_subject_template"].is_string()) normalized["email_subject_template"] = p["email_subject_template"];
+                if (p.contains("email_active_body_template") && p["email_active_body_template"].is_string()) normalized["email_active_body_template"] = p["email_active_body_template"];
+                if (p.contains("email_clear_body_template") && p["email_clear_body_template"].is_string()) normalized["email_clear_body_template"] = p["email_clear_body_template"];
                 if (repeatMs > 0) normalized["repeat_ms"] = repeatMs;
                 if (initialDelayMs > 0) normalized["repeat_initial_delay_ms"] = initialDelayMs;
                 if (maxRepeats > 0) normalized["max_repeats"] = maxRepeats;
@@ -3797,8 +3819,26 @@ public:
         std::string id;
         std::string name;
         std::string phone;
+        std::string phone_home;
+        std::string phone_work;
+        std::string phone_cell;
+        std::string email;
         bool enabled = true;
         int audio_delay_seconds = -1;
+    };
+
+    struct SmtpConfig
+    {
+        bool enabled = false;
+        std::string host;
+        int port = 587;
+        std::string security = "starttls";
+        std::string username;
+        std::string password;
+        std::string from_address;
+        std::string from_name;
+        std::string test_to;
+        int timeout_sec = 20;
     };
 
     struct TestCallRequest
@@ -3822,6 +3862,7 @@ public:
     {
         std::string type;
         std::string id;
+        std::string method;
         int64_t after_ms = 0;
     };
 
@@ -3852,6 +3893,9 @@ public:
         std::vector<std::string> ack_dtmf{"1"};
         int ack_wait_sec = 8;
         int ring_timeout_sec = 15;
+        std::string email_subject_template;
+        std::string email_active_body_template;
+        std::string email_clear_body_template;
 			    };
     struct Assignment
     {
@@ -3895,6 +3939,9 @@ public:
 	        std::string event_type;
 	        int64_t due_ms = 0;
 	        std::string phone;
+	        std::string email;
+	        std::string email_subject;
+	        std::string email_body;
 	        std::string contact_id;
 	        std::string contact_name;
 	        std::string policy_id;
@@ -4116,9 +4163,9 @@ public:
 		        }
 
 	        sip_ = SipConfig{};
-	        if (cfg.contains("sip") && cfg["sip"].is_object())
-	        {
-	            const auto& s = cfg["sip"];
+        if (cfg.contains("sip") && cfg["sip"].is_object())
+        {
+            const auto& s = cfg["sip"];
 	            sip_.enabled = s.value("enabled", false);
 	            sip_.server = s.value("server", "");
 	            sip_.ext = s.value("ext", "");
@@ -4149,6 +4196,23 @@ public:
             }
         }
 
+        smtp_ = SmtpConfig{};
+        if (cfg.contains("smtp") && cfg["smtp"].is_object())
+        {
+            const auto& s = cfg["smtp"];
+            smtp_.enabled = s.value("enabled", false);
+            smtp_.host = s.value("host", "");
+            smtp_.port = std::max(1, std::min(65535, s.value("port", 587)));
+            smtp_.security = s.value("security", "starttls");
+            if (smtp_.security != "starttls" && smtp_.security != "tls" && smtp_.security != "none") smtp_.security = "starttls";
+            smtp_.username = s.value("username", "");
+            smtp_.password = s.value("password", "");
+            smtp_.from_address = s.value("from_address", "");
+            smtp_.from_name = s.value("from_name", "");
+            smtp_.test_to = s.value("test_to", "");
+            smtp_.timeout_sec = std::max(5, std::min(120, s.value("timeout_sec", 20)));
+        }
+
         if (cfg.contains("contacts") && cfg["contacts"].is_array())
         {
             for (const auto& item : cfg["contacts"])
@@ -4158,6 +4222,14 @@ public:
                 c.id = item.value("id", "");
                 c.name = item.value("name", c.id);
                 c.phone = item.value("phone", "");
+                c.phone_home = item.value("phone_home", "");
+                c.phone_work = item.value("phone_work", "");
+                c.phone_cell = item.value("phone_cell", "");
+                c.email = item.value("email", "");
+                if (c.phone_cell.empty()) c.phone_cell = item.value("cell", "");
+                if (c.phone_home.empty()) c.phone_home = item.value("home", "");
+                if (c.phone_work.empty()) c.phone_work = item.value("work", "");
+                if (c.phone.empty()) c.phone = !c.phone_cell.empty() ? c.phone_cell : (!c.phone_work.empty() ? c.phone_work : c.phone_home);
                 c.enabled = item.value("enabled", true);
                 if (item.contains("audio_delay_seconds") && item["audio_delay_seconds"].is_number_integer())
                 {
@@ -4271,6 +4343,7 @@ public:
                         PolicyTarget t;
                         t.type = target.value("type", "");
                         t.id = target.value("id", "");
+                        t.method = target.value("method", "");
                         t.after_ms = std::max<int64_t>(0, target.value("after_ms", 0LL));
                         if ((t.type == "contact" || t.type == "group") && !t.id.empty()) p.targets.push_back(std::move(t));
                     }
@@ -4344,11 +4417,14 @@ public:
                 {
                     p.ring_timeout_sec = std::max(5, std::min(600, item["ring_timeout_sec"].get<int>()));
                 }
+                p.email_subject_template = item.value("email_subject_template", std::string(""));
+                p.email_active_body_template = item.value("email_active_body_template", std::string(""));
+                p.email_clear_body_template = item.value("email_clear_body_template", std::string(""));
                 // max_rings removed; use ring_timeout_sec only.
                 if (p.targets.empty())
                 {
-                    for (const auto& cid : p.contacts) p.targets.push_back({"contact", cid});
-                    for (const auto& gid : p.contact_groups) p.targets.push_back({"group", gid});
+                    for (const auto& cid : p.contacts) p.targets.push_back({"contact", cid, "cell", 0});
+                    for (const auto& gid : p.contact_groups) p.targets.push_back({"group", gid, "cell", 0});
                 }
                 if (!p.id.empty())
                 {
@@ -4802,6 +4878,16 @@ public:
         return resolve_policy_for_alarm_locked(alarm);
     }
 
+    bool test_email(const std::string& to, std::string& result)
+    {
+        AlarmState alarm;
+        alarm.alarm_id = "email_test";
+        alarm.name = "Email Test";
+        alarm.message = "This is a test email from OPC Bridge.";
+        alarm.severity = 0;
+        return send_email_via_smtp(to, "OPC Bridge test email", email_body_for_alarm(alarm, "test"), result);
+    }
+
 private:
     static bool vector_contains(const std::vector<std::string>& values, const std::string& needle)
     {
@@ -5245,6 +5331,133 @@ private:
         modem_jobs_.push_back(std::move(job));
     }
 
+    static std::string contact_phone_for_method(const Contact& c, const std::string& method)
+    {
+        const std::string m = method.empty() ? "cell" : method;
+        if (m == "home") return c.phone_home.empty() ? c.phone : c.phone_home;
+        if (m == "work") return c.phone_work.empty() ? c.phone : c.phone_work;
+        if (m == "cell") return c.phone_cell.empty() ? c.phone : c.phone_cell;
+        return c.phone.empty() ? (!c.phone_cell.empty() ? c.phone_cell : (!c.phone_work.empty() ? c.phone_work : c.phone_home)) : c.phone;
+    }
+
+    static std::string email_subject_for_alarm(const AlarmState& alarm, const std::string& event_type)
+    {
+        return "OPC Bridge alarm " + event_type + ": " + (alarm.name.empty() ? alarm.alarm_id : alarm.name);
+    }
+
+    static std::string email_body_for_alarm(const AlarmState& alarm, const std::string& event_type)
+    {
+        std::ostringstream ss;
+        ss << "Alarm event: " << event_type << "\n";
+        ss << "Alarm: " << (alarm.name.empty() ? alarm.alarm_id : alarm.name) << "\n";
+        ss << "Alarm ID: " << alarm.alarm_id << "\n";
+        ss << "Severity: " << alarm.severity << "\n";
+        if (!alarm.group.empty()) ss << "Group: " << alarm.group << "\n";
+        if (!alarm.site.empty()) ss << "Site: " << alarm.site << "\n";
+        if (!alarm.connection_id.empty()) ss << "Connection: " << alarm.connection_id << "\n";
+        if (!alarm.tag.empty()) ss << "Tag: " << alarm.tag << "\n";
+        ss << "Message: " << alarm.message << "\n";
+        ss << "\nGenerated by opcbridge-alarms.\n";
+        return ss.str();
+    }
+
+    static void replace_all_inplace(std::string& s, const std::string& from, const std::string& to)
+    {
+        if (from.empty()) return;
+        size_t pos = 0;
+        while ((pos = s.find(from, pos)) != std::string::npos)
+        {
+            s.replace(pos, from.size(), to);
+            pos += to.size();
+        }
+    }
+
+    static std::string render_email_template(std::string templ, const AlarmState& alarm, const std::string& event_type)
+    {
+        replace_all_inplace(templ, "{event}", event_type);
+        replace_all_inplace(templ, "{alarm_name}", alarm.name.empty() ? alarm.alarm_id : alarm.name);
+        replace_all_inplace(templ, "{alarm_id}", alarm.alarm_id);
+        replace_all_inplace(templ, "{severity}", std::to_string(alarm.severity));
+        replace_all_inplace(templ, "{group}", alarm.group);
+        replace_all_inplace(templ, "{site}", alarm.site);
+        replace_all_inplace(templ, "{connection_id}", alarm.connection_id);
+        replace_all_inplace(templ, "{tag}", alarm.tag);
+        replace_all_inplace(templ, "{message}", alarm.message);
+        return templ;
+    }
+
+    bool send_email_via_smtp(const std::string& to, const std::string& subject, const std::string& body, std::string& result)
+    {
+        SmtpConfig smtp;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            smtp = smtp_;
+        }
+        if (!smtp.enabled) { result = "SMTP is disabled"; return false; }
+        if (smtp.host.empty()) { result = "SMTP host is not configured"; return false; }
+        if (smtp.from_address.empty()) { result = "SMTP from address is not configured"; return false; }
+        if (to.empty()) { result = "recipient email is empty"; return false; }
+        if (!command_exists("curl")) { result = "curl is required for SMTP email"; return false; }
+
+        const std::filesystem::path tmpdir = std::filesystem::path("/tmp") / ("opcbridge-email-" + random_hex(8));
+        std::error_code ec;
+        std::filesystem::create_directories(tmpdir, ec);
+        if (ec) { result = "failed to create temp dir: " + ec.message(); return false; }
+
+        const std::filesystem::path msgPath = tmpdir / "message.eml";
+        const std::filesystem::path cfgPath = tmpdir / "curl.conf";
+        auto curl_escape = [](const std::string& s) {
+            std::string out;
+            out.reserve(s.size());
+            for (char ch : s)
+            {
+                if (ch == '\\' || ch == '"') out.push_back('\\');
+                out.push_back(ch);
+            }
+            return out;
+        };
+        {
+            std::ofstream msg(msgPath, std::ios::binary | std::ios::trunc);
+            msg << "From: " << (smtp.from_name.empty() ? smtp.from_address : (smtp.from_name + " <" + smtp.from_address + ">")) << "\r\n";
+            msg << "To: " << to << "\r\n";
+            msg << "Subject: " << subject << "\r\n";
+            msg << "Content-Type: text/plain; charset=utf-8\r\n";
+            msg << "\r\n";
+            msg << body << "\r\n";
+        }
+        {
+            std::ofstream cfg(cfgPath, std::ios::binary | std::ios::trunc);
+            cfg << "url = \"" << (smtp.security == "tls" ? "smtps://" : "smtp://") << curl_escape(smtp.host) << ":" << smtp.port << "\"\n";
+            cfg << "mail-from = \"" << curl_escape(smtp.from_address) << "\"\n";
+            cfg << "mail-rcpt = \"" << curl_escape(to) << "\"\n";
+            cfg << "upload-file = \"" << curl_escape(msgPath.string()) << "\"\n";
+            cfg << "max-time = " << smtp.timeout_sec << "\n";
+            cfg << "silent\nshow-error\n";
+            if (smtp.security == "starttls") cfg << "ssl-reqd\n";
+            if (!smtp.username.empty()) cfg << "user = \"" << curl_escape(smtp.username + ":" + smtp.password) << "\"\n";
+        }
+        ::chmod(cfgPath.c_str(), 0600);
+
+        int rc = -1;
+        const std::string cmd = "curl --config " + shell_quote(cfgPath.string()) + " 2>&1";
+        const std::string out = exec_capture(cmd, rc, 64 * 1024);
+        std::filesystem::remove_all(tmpdir, ec);
+        if (rc == 0)
+        {
+            result = "email sent to " + to;
+            return true;
+        }
+        result = "email failed rc=" + std::to_string(rc) + (out.empty() ? "" : (" " + out));
+        return false;
+    }
+
+    bool run_email_job(const Job& job, std::string& result)
+    {
+        const std::string subject = job.email_subject.empty() ? email_subject_for_alarm(job.alarm, job.event_type) : job.email_subject;
+        const std::string body = job.email_body.empty() ? email_body_for_alarm(job.alarm, job.event_type) : job.email_body;
+        return send_email_via_smtp(job.email, subject, body, result);
+    }
+
     const Route* select_audio_route_for_policy_locked() const
     {
         const Route* firstEnabledAudio = nullptr;
@@ -5316,6 +5529,76 @@ private:
 	        {
 	            return enqueue_audio_policy_job_locked(policy, alarm, event_type, effectiveScheduleId, scope_name);
 	        }
+	        if (policy.output_type == "email")
+	        {
+	            if (!smtp_.enabled || smtp_.host.empty())
+	            {
+	                record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "SMTP is not configured");
+	                return false;
+	            }
+	            std::unordered_set<std::string> seen_email;
+	            int enqueued = 0;
+	            auto push_email = [&](const Contact& c, int64_t after_ms) {
+	                if (!c.enabled || c.email.empty()) return;
+	                if (!seen_email.insert(c.email).second) return;
+	                Job job;
+	                job.route.name = policy.name.empty() ? ("email_policy:" + policy.id) : ("email_policy:" + policy.name);
+	                job.route.type = "email";
+	                job.route.enabled = true;
+	                job.route.min_severity = policy.min_severity;
+	                job.route.on = policy.on;
+	                job.route.repeat_ms = policy.repeat_ms;
+	                job.route.until = policy.until;
+	                job.route.repeat_initial_delay_ms = policy.repeat_initial_delay_ms;
+	                job.route.max_repeats = policy.max_repeats;
+	                job.route.schedule_id = effectiveScheduleId;
+	                job.alarm = alarm;
+	                job.event_type = event_type;
+	                job.due_ms = now_ms() + std::max<int64_t>(0, after_ms);
+	                job.email = c.email;
+	                job.email_subject = policy.email_subject_template.empty()
+	                    ? std::string()
+	                    : render_email_template(policy.email_subject_template, alarm, event_type);
+	                const std::string bodyTemplate = (event_type == "return")
+	                    ? policy.email_clear_body_template
+	                    : policy.email_active_body_template;
+	                job.email_body = bodyTemplate.empty()
+	                    ? std::string()
+	                    : render_email_template(bodyTemplate, alarm, event_type);
+	                job.contact_id = c.id;
+	                job.contact_name = c.name;
+	                job.policy_id = policy.id;
+	                if (policy.max_repeats <= 0) job.repeats_left = -1;
+	                else job.repeats_left = std::max(0, policy.max_repeats - 1);
+	                modem_jobs_.push_back(std::move(job));
+	                ++enqueued;
+	            };
+	            for (const auto& target : policy.targets)
+	            {
+	                if (target.type == "contact")
+	                {
+	                    auto it = contacts_.find(target.id);
+	                    if (it != contacts_.end()) push_email(it->second, target.after_ms);
+	                }
+	                else if (target.type == "group")
+	                {
+	                    auto git = contact_groups_.find(target.id);
+	                    if (git == contact_groups_.end() || !git->second.enabled) continue;
+	                    for (const auto& cid : git->second.contacts)
+	                    {
+	                        auto it = contacts_.find(cid);
+	                        if (it != contacts_.end()) push_email(it->second, target.after_ms);
+	                    }
+	                }
+	            }
+	            if (enqueued == 0)
+	            {
+	                record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "policy produced no email targets");
+	                return false;
+	            }
+	            modem_cv_.notify_all();
+	            return true;
+	        }
 		        const bool isPhone = (policy.output_type == "phone");
 		        if (!isPhone)
 		        {
@@ -5340,9 +5623,9 @@ private:
 	        std::vector<Job::CallLeg> legs;
 	        legs.reserve(policy.targets.size());
 
-	        auto push_leg = [&](const Contact& c, int64_t after_ms) {
+	        auto push_leg = [&](const Contact& c, const std::string& method, int64_t after_ms) {
 	            if (!c.enabled) return;
-	            const std::string dial = c.phone;
+	            const std::string dial = contact_phone_for_method(c, method);
 	            if (dial.empty()) return;
 	            if (!seen_dial.insert(dial).second) return;
 	            Job::CallLeg leg;
@@ -5359,7 +5642,7 @@ private:
 	            if (target.type == "contact")
 	            {
 	                auto it = contacts_.find(target.id);
-	                if (it != contacts_.end()) push_leg(it->second, target.after_ms);
+	                if (it != contacts_.end()) push_leg(it->second, target.method, target.after_ms);
 	            }
 	            else if (target.type == "group")
 	            {
@@ -5368,7 +5651,7 @@ private:
 	                for (const auto& cid : git->second.contacts)
 	                {
 	                    auto it = contacts_.find(cid);
-	                    if (it != contacts_.end()) push_leg(it->second, target.after_ms);
+	                    if (it != contacts_.end()) push_leg(it->second, target.method, target.after_ms);
 	                }
 	            }
 	        }
@@ -5717,6 +6000,10 @@ private:
         if (job.route.type == "voice_modem")
         {
             return "voice_modem contact=" + job.contact_id + " phone=" + job.phone + " policy=" + job.policy_id + " audio=" + audio_sequence_summary(job.alarm);
+        }
+        if (job.route.type == "email")
+        {
+            return "email contact=" + job.contact_id + " to=" + job.email + " policy=" + job.policy_id;
         }
         std::string out = job.route.command;
         for (const auto& arg : job.route.args)
@@ -7132,6 +7419,11 @@ private:
 	                // Legacy route type (kept for backward compatibility with existing configs).
 	                ok = run_sip_call(job, result);
 	            }
+	            else if (job.route.type == "email")
+	            {
+	                log_escalation("send_email", job, "to=" + job.email, job.contact_id, job.contact_name, job.email);
+	                ok = run_email_job(job, result);
+	            }
 	            else if (job.route.type == "call_sequence")
 	            {
 	                ok = run_call_sequence(job, result);
@@ -7183,6 +7475,7 @@ private:
 	    bool stop_ = false;
 	    std::vector<Route> routes_;
 	    TtsConfig tts_;
+	    SmtpConfig smtp_;
 		    std::deque<Job> audio_jobs_;
 		    std::deque<Job> modem_jobs_;
 		    std::deque<EscalationLogEntry> escalation_log_;
@@ -9351,6 +9644,28 @@ int main(int argc, char **argv)
         j["ok"] = ok;
         j["result"] = result;
         if (!ok) j["error"] = result.empty() ? "Audio test failed." : result;
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    svr.Post("/alarm/api/email/test", [&](const httplib::Request &req, httplib::Response &res) {
+        json body;
+        try { body = json::parse(req.body); } catch (...) { body = json::object(); }
+        std::string to = body.value("to", "");
+        json j;
+        if (to.empty())
+        {
+            res.status = 400;
+            j["ok"] = false;
+            j["error"] = "Test recipient is required.";
+            res.set_content(j.dump(2), "application/json");
+            return;
+        }
+        std::string result;
+        const bool ok = notifications.test_email(to, result);
+        res.status = ok ? 200 : 500;
+        j["ok"] = ok;
+        j["result"] = result;
+        if (!ok) j["error"] = result.empty() ? "Email test failed." : result;
         res.set_content(j.dump(2), "application/json");
     });
 

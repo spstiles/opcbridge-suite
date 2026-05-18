@@ -9,13 +9,17 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <img class="brand-icon" src="favicon.svg?v=20260510" alt="" aria-hidden="true" />
-      <span>opcbridge SCADA</span>
+    <div class="topbar-main">
+      <div class="brand">
+        <img class="brand-icon" src="favicon.svg?v=20260510" alt="" aria-hidden="true" />
+        <span>opcbridge SCADA</span>
+      </div>
+      <div class="status topbar-auth" id="authLine"></div>
     </div>
-    <div class="status" id="statusLine">Loading…</div>
-    <div class="status" id="buildLine"></div>
-    <div class="status" id="authLine"></div>
+    <div class="topbar-status">
+      <div class="status" id="statusLine">Loading…</div>
+      <div class="status" id="buildLine"></div>
+    </div>
 
 	    <nav class="tabs" id="tabs">
 		      <button data-tab="overview" class="tab is-active">Overview</button>
@@ -420,11 +424,50 @@
 	              </div>
 	            </div>
 	            <div class="hint mono" id="sipStatus"></div>
-	          </div>
-	        </div>
-	      </div>
+		          </div>
+		        </div>
+		      </div>
 
-	      <div class="card" style="margin-top: 14px;">
+		      <div class="card" style="margin-top: 14px;">
+		        <div class="card-title">SMTP Email Settings</div>
+		        <div class="hint">External SMTP account used by email notification policies.</div>
+		        <div class="card-body">
+		          <div class="form" style="max-width: 720px;">
+		            <div class="form-row">
+		              <label>Enabled</label>
+		              <label style="display:flex; align-items:center; gap:8px;">
+		                <input id="smtpEnabled" type="checkbox" />
+		                Enable email notifications
+		              </label>
+		            </div>
+		            <div class="form-row"><label>Host</label><input id="smtpHost" type="text" placeholder="smtp.gmail.com" /></div>
+		            <div class="form-row"><label>Port</label><input id="smtpPort" type="number" min="1" max="65535" placeholder="587" /></div>
+		            <div class="form-row">
+		              <label>Security</label>
+		              <select id="smtpSecurity">
+		                <option value="starttls">STARTTLS</option>
+		                <option value="tls">TLS</option>
+		                <option value="none">None</option>
+		              </select>
+		            </div>
+		            <div class="form-row"><label>Username</label><input id="smtpUsername" type="text" autocomplete="off" /></div>
+		            <div class="form-row"><label>Password</label><input id="smtpPassword" type="password" autocomplete="new-password" placeholder="App password or SMTP password" /></div>
+		            <div class="form-row"><label>From Address</label><input id="smtpFromAddress" type="email" placeholder="alarms@example.com" /></div>
+		            <div class="form-row"><label>From Name</label><input id="smtpFromName" type="text" placeholder="OPC Bridge Alarms" /></div>
+		            <div class="form-row"><label>Test Recipient</label><input id="smtpTestTo" type="email" placeholder="you@example.com" /></div>
+		            <div class="form-row">
+		              <label></label>
+		              <div class="row-actions">
+		                <button class="btn primary" id="smtpSaveBtn" type="button">Save SMTP</button>
+		                <button class="btn" id="smtpTestBtn" type="button">Send Test Email</button>
+		              </div>
+		            </div>
+		            <div class="hint mono" id="smtpStatus"></div>
+		          </div>
+		        </div>
+		      </div>
+
+      <div class="card" style="margin-top: 14px;">
 	        <div class="card-title">Sound Settings</div>
 	        <div class="hint">Alarm annunciation output for local speakers, amplifiers, or PA systems.</div>
 	        <div class="card-body">
@@ -844,7 +887,7 @@
 		      <h2>Data Logger</h2>
 		      <div class="hint">Configure opcbridge-reporter connections. Settings are stored on the SCADA server.</div>
 
-		      <div class="workspace" style="min-height: 560px;">
+		      <div class="workspace" style="height: calc(100vh - 230px); min-height: 600px; grid-template-rows: minmax(0, 1fr);">
 		        <aside class="sidebar tree">
 		          <div class="sidebar-title">Data Logger</div>
 		          <div class="tree-body" id="loggerTreeView"></div>
@@ -1556,17 +1599,6 @@
           </details>
 
           <div class="small mono" id="loggerReportSchedulePreview" style="margin-top: 6px;"></div>
-
-          <div class="divider"></div>
-
-          <div class="form-row">
-            <label>Tags</label>
-            <textarea id="loggerReportTags" rows="8" class="mono" placeholder='One per line:\nfield_ops:PLC_Second\nfield_ops:Pump*.Running'></textarea>
-            <div class="row-actions" style="margin-top: 8px;">
-              <button class="btn" id="loggerReportSelectTagsBtn" type="button">Select Tags…</button>
-            </div>
-            <div class="small">Case-sensitive. Wildcards supported in tag name (<code>*</code>, <code>?</code>). Format: <code>connection_id:tag_name</code>.</div>
-          </div>
 
           <div class="form-row"><label></label>
             <div class="row-actions">

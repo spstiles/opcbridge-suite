@@ -1529,6 +1529,7 @@ function upstreamTimeoutMs(prefixName, upstreamPathname, method) {
     if (p === '/alarm/api/voice-modem/test') return 180000;
     if (p === '/alarm/api/audio/test') return 60000;
     if (p === '/alarm/api/sip/test') return 180000;
+    if (p === '/alarm/api/email/test') return 60000;
   }
 
   return 8000;
