@@ -62,6 +62,8 @@ From the repo root:
 - Full suite: `sudo ./install.sh --full`
 - Full suite with OS dependencies and Node dependencies:
   `sudo ./install.sh --full --deps --with-node-deps -y`
+- Full suite with dependencies, Node dependencies, and SIP `pjsua` callout support:
+  `sudo ./install.sh --full --deps --with-node-deps --with-pjsip -y`
 
 ### Install Flags
 
@@ -112,7 +114,7 @@ Notes:
 - Data defaults to `/var/lib/opcbridge` (SQLite/state).
 - Alarms and notifications:
   - `--full` installs `opcbridge-alarms`.
-  - SIP callouts require `pjsua`; install it with `--with-pjsip` or as part of `--deps`, unless `--no-pjsip` is passed.
+  - SIP callouts require pjproject `pjsua`. Use `--with-pjsip` explicitly when you want SIP callout support. A full dependency install with `--deps` also builds `pjsua` unless `--no-pjsip` is passed.
   - Alarm configuration lives under `/etc/opcbridge/alarms` and runtime data under `/var/lib/opcbridge/alarms`.
 - Data Logger / reporter:
   - `--full` installs `opcbridge-reporter`.
