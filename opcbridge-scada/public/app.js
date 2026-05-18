@@ -238,6 +238,7 @@
   loggerDataCheckModal: document.getElementById('loggerDataCheckModal'),
   loggerDataCheckCloseBtn: document.getElementById('loggerDataCheckCloseBtn'),
   loggerDataCheckCancelBtn: document.getElementById('loggerDataCheckCancelBtn'),
+  loggerDataCheckTestBtn: document.getElementById('loggerDataCheckTestBtn'),
   loggerDataCheckSaveBtn: document.getElementById('loggerDataCheckSaveBtn'),
   loggerDataCheckId: document.getElementById('loggerDataCheckId'),
   loggerDataCheckName: document.getElementById('loggerDataCheckName'),
@@ -1105,7 +1106,8 @@ function renderLoggerTreeNode(node, container) {
     }
     if (node.type === 'logger_data_check') {
       const id = String(node.meta?.id || '').trim();
-      items.push({ label: 'Run Now', onClick: () => runReporterDataCheckNow(id) });
+      items.push({ label: 'Test Query', onClick: () => testReporterDataCheck(id) });
+      items.push({ label: 'Run Live Check', onClick: () => runReporterDataCheckNow(id) });
       items.push({ label: 'Properties…', onClick: () => openLoggerDataCheckModal({ mode: 'edit', id }) });
       items.push({ label: 'Duplicate…', onClick: () => duplicateReporterDataCheck(id) });
       items.push({ label: 'Delete Data Check…', onClick: () => deleteReporterDataCheck(id) });
@@ -1840,17 +1842,17 @@ function renderLoggerDataChecksTable() {
     tr.appendChild(mk(String(st?.last_error || ''), false));
 
     const actions = document.createElement('td');
-    const runBtn = document.createElement('button');
-    runBtn.className = 'btn';
-    runBtn.type = 'button';
-    runBtn.textContent = 'Run Now';
-    runBtn.disabled = !id;
-    runBtn.addEventListener('click', (e) => {
+    const testBtn = document.createElement('button');
+    testBtn.className = 'btn';
+    testBtn.type = 'button';
+    testBtn.textContent = 'Test';
+    testBtn.disabled = !id;
+    testBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      runReporterDataCheckNow(id).catch(() => {});
+      testReporterDataCheck(id).catch(() => {});
     });
-    actions.appendChild(runBtn);
+    actions.appendChild(testBtn);
 
     const propsBtn = document.createElement('button');
     propsBtn.className = 'btn';
@@ -2873,6 +2875,7 @@ function openLoggerDataCheckModal(opts = {}) {
     els.loggerDataCheckId.disabled = false;
     els.loggerDataCheckId.value = isNew ? '' : String(check?.id || id);
   }
+  if (els.loggerDataCheckTestBtn) els.loggerDataCheckTestBtn.disabled = isNew;
   if (els.loggerDataCheckName) els.loggerDataCheckName.value = String(check?.name || '');
   if (els.loggerDataCheckEnabled) els.loggerDataCheckEnabled.checked = Boolean(check?.enabled);
   if (els.loggerDataCheckOnCalendar) els.loggerDataCheckOnCalendar.value = String(check?.schedule?.on_calendar || '*-*-* 23:55:00');
@@ -2987,14 +2990,45 @@ async function deleteReporterDataCheck(id) {
 async function runReporterDataCheckNow(id) {
   const cid = String(id || '').trim();
   if (!cid) return;
-  loggerSetStatus(`Starting data check '${cid}'…`);
+  loggerSetStatus(`Starting live data check '${cid}'…`);
   try {
     const resp = await apiPostJson('/api/reporter/data-checks/run', { id: cid });
     if (!resp?.ok) throw new Error(String(resp?.error || resp?.reporter_run?.json?.error || 'Failed'));
-    loggerSetStatus(`Data check '${cid}' started.`);
+    loggerSetStatus(`Live data check '${cid}' started. Live system tags may change.`);
     window.setTimeout(() => refreshReporterRuntimeStatus().catch(() => {}), 1000);
   } catch (err) {
     loggerSetStatus(`Run failed: ${err.message || err}`);
+  }
+}
+
+async function testReporterDataCheck(id) {
+  const cid = String(id || '').trim();
+  if (!cid) return;
+  loggerSetStatus(`Testing data check '${cid}'…`);
+  if (els.loggerDataCheckModal?.style?.display !== 'none' && els.loggerDataCheckStatus) {
+    els.loggerDataCheckStatus.textContent = `Testing '${cid}'…`;
+  }
+  try {
+    const resp = await apiPostJson('/api/reporter/data-checks/test', { id: cid });
+    const result = resp?.reporter_test?.json || resp;
+    if (!resp?.ok) throw new Error(String(resp?.error || result?.error || 'Failed'));
+    const value = String(result?.value ?? '');
+    const latency = Number(result?.latency_ms || 0);
+    const alarm = Boolean(result?.alarm);
+    const detail = alarm
+      ? `would alarm${result?.error ? `: ${result.error}` : ''}`
+      : 'would be OK';
+    const msg = `Test '${cid}' complete: value=${value || '(blank)'} ${detail} (${latency}ms). Live alarm state was not changed.`;
+    loggerSetStatus(msg);
+    if (els.loggerDataCheckModal?.style?.display !== 'none' && els.loggerDataCheckStatus) {
+      els.loggerDataCheckStatus.textContent = msg;
+    }
+  } catch (err) {
+    const msg = `Test failed: ${err.message || err}`;
+    loggerSetStatus(msg);
+    if (els.loggerDataCheckModal?.style?.display !== 'none' && els.loggerDataCheckStatus) {
+      els.loggerDataCheckStatus.textContent = msg;
+    }
   }
 }
 
@@ -3245,6 +3279,10 @@ function wireLoggerUi() {
   if (els.loggerReportTags) els.loggerReportTags.addEventListener('input', renderLoggerReportTagDescriptionRows);
   if (els.loggerDataCheckCloseBtn) els.loggerDataCheckCloseBtn.addEventListener('click', closeLoggerDataCheckModal);
   if (els.loggerDataCheckCancelBtn) els.loggerDataCheckCancelBtn.addEventListener('click', closeLoggerDataCheckModal);
+  if (els.loggerDataCheckTestBtn) els.loggerDataCheckTestBtn.addEventListener('click', () => {
+    const id = String(els.loggerDataCheckId?.value || state.loggerDataCheckEditingId || '').trim();
+    testReporterDataCheck(id).catch(() => {});
+  });
   if (els.loggerDataCheckSaveBtn) els.loggerDataCheckSaveBtn.addEventListener('click', saveReporterDataCheck);
   if (els.loggerReportScheduleKind) els.loggerReportScheduleKind.addEventListener('change', renderLoggerReportScheduleUi);
   if (els.loggerReportEveryMinutes) els.loggerReportEveryMinutes.addEventListener('input', renderLoggerReportScheduleUi);

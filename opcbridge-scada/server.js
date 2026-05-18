@@ -2711,6 +2711,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/reporter/data-checks/test') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) {
+        sendJson(res, 400, { ok: false, error: 'id is required.' });
+        return;
+      }
+      const test = await reporterApiRequest('POST', `/data-checks/${encodeURIComponent(id)}/test`, null, 60000);
+      sendJson(res, test.ok ? 200 : 502, {
+        ok: test.ok,
+        id,
+        reporter_test: test,
+        error: test.error || test.json?.error || null
+      });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
   if (url.pathname === '/api/reporter/databases/test') {
     if (!await requireManageServerPerm()) return;
     if (req.method !== 'POST') {

@@ -966,6 +966,27 @@ public:
         return true;
     }
 
+    json test_data_check(const std::string& id) {
+        DataCheck check;
+        DbConfig db;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto cit = data_checks_.find(id);
+            if (cit == data_checks_.end()) {
+                return {{"ok", false}, {"id", id}, {"error", "Data check not found: " + id}};
+            }
+            auto dit = dbs_.find(cit->second.database_id);
+            if (dit == dbs_.end()) {
+                return {{"ok", false}, {"id", id}, {"error", "Database not found: " + cit->second.database_id}};
+            }
+            check = cit->second;
+            db = dit->second;
+        }
+
+        DataCheckResult result = run_data_check(check, db);
+        return data_check_result_json(id, result);
+    }
+
 private:
     void reconcile_monitor_statuses_locked() {
         std::map<std::string, DbMonitorStatus> next;
@@ -1123,6 +1144,27 @@ private:
             });
         }
         return arr;
+    }
+
+    json data_check_result_json(const std::string& id, const DataCheckResult& result) const {
+        const bool alarm = !result.ok || result.below_low || result.above_high;
+        std::string error = result.error;
+        if (error.empty() && result.below_low) error = "Value is below low threshold";
+        if (error.empty() && result.above_high) error = "Value is above high threshold";
+        return {
+            {"ok", result.ok},
+            {"query_ok", result.ok},
+            {"alarm", alarm},
+            {"within_threshold", result.ok && !alarm},
+            {"id", id},
+            {"below_low", result.below_low},
+            {"above_high", result.above_high},
+            {"latency_ms", result.latency_ms},
+            {"value", result.value},
+            {"numeric_value", result.numeric_value},
+            {"has_numeric_value", result.has_numeric_value},
+            {"error", error}
+        };
     }
 
     RunResult run_job(const Job& job, const DbConfig& db, const ServiceConfig& svc) {
@@ -1300,9 +1342,13 @@ private:
         st.below_low = result.below_low;
         st.above_high = result.above_high;
         st.latency_ms = result.latency_ms;
-        st.value = result.value;
-        st.numeric_value = result.numeric_value;
-        st.has_numeric_value = result.has_numeric_value;
+        if (result.ok) {
+            st.value = result.value;
+            st.has_numeric_value = result.has_numeric_value;
+            if (result.has_numeric_value) {
+                st.numeric_value = result.numeric_value;
+            }
+        }
         if (!result.ok) {
             st.failures_total++;
             st.last_error = result.error;
@@ -1553,6 +1599,12 @@ int main(int argc, char* argv[]) {
         bool ok = service.run_data_check_async(id, run_error);
         res.status = ok ? 202 : 400;
         res.set_content(json{{"ok", ok}, {"id", id}, {"error", run_error}}.dump(2), "application/json");
+    });
+    server.Post(R"(/data-checks/([^/]+)/test)", [&service](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        json result = service.test_data_check(id);
+        res.status = result.value("query_ok", false) ? 200 : 400;
+        res.set_content(result.dump(2), "application/json");
     });
 
     service.start_scheduler();
