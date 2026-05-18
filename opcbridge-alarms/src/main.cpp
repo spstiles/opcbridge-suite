@@ -2983,6 +2983,7 @@ struct AlarmState
     bool active = false;
     bool acked = false;
     bool initialized = false;
+    bool return_notification_armed = false;
     std::optional<int64_t> shelved_until_ms;
 
     int64_t active_since_ms = 0;
@@ -3026,6 +3027,7 @@ static json alarm_state_to_json(const AlarmState &s)
     j["site_enabled"] = s.site_enabled;
     j["active"] = s.active;
     j["acked"] = s.acked;
+    j["return_notification_armed"] = s.return_notification_armed;
     if (s.shelved_until_ms.has_value())
         j["shelved_until_ms"] = s.shelved_until_ms.value();
     else
@@ -7942,6 +7944,7 @@ struct AlarmEngine
             s.active = false;
             s.acked = false;
             s.initialized = false;
+            s.return_notification_armed = false;
             s.active_since_ms = 0;
             s.last_change_ms = 0;
             s.last_value = nullptr;
@@ -8031,6 +8034,7 @@ struct AlarmEngine
                     if (s.active)
                     {
                         s.active = false;
+                        s.return_notification_armed = false;
                         s.last_change_ms = t;
                         s.message = "";
                         last_alarm_change_ms.store(t);
@@ -8104,6 +8108,7 @@ struct AlarmEngine
                         s.initialized = true;
                         s.active = true;
                         s.acked = false;
+                        s.return_notification_armed = false;
                         s.active_since_ms = t;
                         s.last_change_ms = t;
                         s.message = r.message_on_active.empty() ? s.name : r.message_on_active;
@@ -8121,6 +8126,7 @@ struct AlarmEngine
 
                     s.active = true;
                     s.acked = false;
+                    s.return_notification_armed = recordEvent;
                     s.active_since_ms = t;
                     s.last_change_ms = t;
                     s.message = r.message_on_active.empty() ? s.name : r.message_on_active;
@@ -8145,11 +8151,13 @@ struct AlarmEngine
                 }
                 else if (!should_be_active && s.active)
                 {
+                    const bool notify_return = recordEvent && s.return_notification_armed;
                     s.active = false;
+                    s.return_notification_armed = false;
                     s.last_change_ms = t;
                     s.message = r.message_on_return.empty() ? "" : r.message_on_return;
                     last_alarm_change_ms.store(t);
-                    if (recordEvent)
+                    if (notify_return)
                     {
                         std::cout << "[alarms] RETURN " << s.alarm_id
                                   << " (" << s.connection_id << ":" << s.tag << ")"
@@ -9199,6 +9207,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.active = prev.active;
             s.acked = prev.acked;
             s.initialized = prev.initialized;
+            s.return_notification_armed = prev.return_notification_armed;
             s.active_since_ms = prev.active_since_ms;
             s.last_change_ms = prev.last_change_ms;
             s.last_value = prev.last_value;
