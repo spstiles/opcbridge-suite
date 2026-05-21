@@ -328,6 +328,7 @@
   historianStatus: document.getElementById('historianStatus'),
   historianHealthKv: document.getElementById('historianHealthKv'),
   historianTagsTbody: document.getElementById('historianTagsTbody'),
+  historianQueryConfigured: document.getElementById('historianQueryConfigured'),
   historianQueryConnection: document.getElementById('historianQueryConnection'),
   historianQueryTag: document.getElementById('historianQueryTag'),
   historianQueryRange: document.getElementById('historianQueryRange'),
@@ -1283,6 +1284,8 @@ function renderHistorianHealth() {
   }
   const rows = [
     ['OK', h.ok],
+    ['Version', h.version || ''],
+    ['Suite', h.suite_version || ''],
     ['DB connected', h.db_connected],
     ['Enabled tags', h.enabled_tags],
     ['Queue depth', h.queue_depth],
@@ -1297,12 +1300,45 @@ function renderHistorianHealth() {
   els.historianHealthKv.innerHTML = rows.map(([k, v]) => `<div><b>${escapeHtml(k)}</b><span>${escapeHtml(String(v ?? ''))}</span></div>`).join('');
 }
 
+function historianConfiguredTags() {
+  const tags = Array.isArray(state.historianConfig?.historian_tags)
+    ? state.historianConfig.historian_tags
+    : (Array.isArray(state.historianTags) ? state.historianTags : []);
+  return tags
+    .filter((t) => String(t?.connection_id || '').trim() && String(t?.tag_name || '').trim())
+    .slice()
+    .sort((a, b) => `${a.connection_id}:${a.tag_name}`.localeCompare(`${b.connection_id}:${b.tag_name}`, undefined, { sensitivity: 'base', numeric: true }));
+}
+
+function renderHistorianQueryTagSelect() {
+  if (!els.historianQueryConfigured) return;
+  const current = String(els.historianQueryConfigured.value || '');
+  const tags = historianConfiguredTags();
+  els.historianQueryConfigured.textContent = '';
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = 'Select configured tag...';
+  els.historianQueryConfigured.appendChild(empty);
+  tags.forEach((t) => {
+    const cid = String(t.connection_id || '').trim();
+    const tag = String(t.tag_name || '').trim();
+    const opt = document.createElement('option');
+    opt.value = `${cid}:${tag}`;
+    opt.textContent = `${displayConnectionName(cid)}:${tag}`;
+    els.historianQueryConfigured.appendChild(opt);
+  });
+  if (current && Array.from(els.historianQueryConfigured.options).some((o) => o.value === current)) {
+    els.historianQueryConfigured.value = current;
+  }
+}
+
 function renderHistorianTags() {
   if (!els.historianTagsTbody) return;
   els.historianTagsTbody.textContent = '';
   const tags = Array.isArray(state.historianConfig?.historian_tags)
     ? state.historianConfig.historian_tags
     : (Array.isArray(state.historianTags) ? state.historianTags : []);
+  renderHistorianQueryTagSelect();
   tags.forEach((t, idx) => {
     const tr = document.createElement('tr');
     const mk = (text, mono = false) => {
@@ -1432,6 +1468,34 @@ function renderHistorianSummary() {
   els.historianSummaryKv.innerHTML = rows.map(([k, v]) => `<div><b>${escapeHtml(k)}</b><span>${escapeHtml(String(v ?? ''))}</span></div>`).join('');
 }
 
+function historianRangeQueryParams(rangeValue) {
+  const range = String(rangeValue || '1h').trim() || '1h';
+  const params = {};
+  const now = new Date();
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+  if (range === 'current_day') {
+    params.from_ms = String(startOfDay(now).getTime());
+    params.to_ms = String(now.getTime());
+  } else if (range === 'previous_day') {
+    const today = startOfDay(now);
+    const prev = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    params.from_ms = String(prev.getTime());
+    params.to_ms = String(today.getTime());
+  } else if (range === 'current_month') {
+    params.from_ms = String(startOfMonth(now).getTime());
+    params.to_ms = String(now.getTime());
+  } else if (range === 'previous_month') {
+    const thisMonth = startOfMonth(now);
+    const prevMonth = new Date(thisMonth.getFullYear(), thisMonth.getMonth() - 1, 1, 0, 0, 0, 0);
+    params.from_ms = String(prevMonth.getTime());
+    params.to_ms = String(thisMonth.getTime());
+  } else {
+    params.range = range;
+  }
+  return params;
+}
+
 function renderHistorianPoints() {
   if (!els.historianPointsTbody) return;
   els.historianPointsTbody.textContent = '';
@@ -1446,6 +1510,16 @@ function renderHistorianPoints() {
   const rows = bucketMode
     ? (Array.isArray(state.historianBuckets) ? state.historianBuckets : [])
     : (Array.isArray(state.historianPoints) ? state.historianPoints : []);
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = bucketMode ? 5 : 3;
+    td.className = 'small';
+    td.textContent = state.historianSummary ? 'No points for this query.' : 'Run a query to view points.';
+    tr.appendChild(td);
+    els.historianPointsTbody.appendChild(tr);
+    return;
+  }
   rows.forEach((p) => {
     const tr = document.createElement('tr');
     const mk = (text, mono = false) => {
@@ -1533,7 +1607,9 @@ async function runHistorianQuery() {
   const limit = Math.max(1, Math.min(100000, Math.trunc(Number(els.historianQueryLimit?.value || 1000) || 1000)));
   if (!cid || !tag) throw new Error('Connection and tag are required.');
   historianSetStatus('Querying...');
-  const qs = new URLSearchParams({ connection_id: cid, tag_name: tag, range, limit: String(limit) });
+  const qs = new URLSearchParams({ connection_id: cid, tag_name: tag, limit: String(limit) });
+  const rangeParams = historianRangeQueryParams(range);
+  Object.entries(rangeParams).forEach(([k, v]) => qs.set(k, String(v)));
   if (bucket) qs.set('bucket', bucket);
   const [summary, query] = await Promise.all([
     apiGet(`/api/historian/summary?${qs.toString()}`),
@@ -1555,6 +1631,13 @@ function wireHistorianUi() {
   els.historianSaveConfigBtn?.addEventListener('click', () => saveHistorianConfig().catch((err) => historianSetStatus(`Save failed: ${err.message || err}`)));
   els.historianRestartBtn?.addEventListener('click', () => restartHistorianService().catch((err) => historianSetStatus(`Restart failed: ${err.message || err}`)));
   els.historianRunQueryBtn?.addEventListener('click', () => runHistorianQuery().catch((err) => historianSetStatus(`Query failed: ${err.message || err}`)));
+  els.historianQueryConfigured?.addEventListener('change', () => {
+    const parts = loggerTagSpecParts(String(els.historianQueryConfigured?.value || ''));
+    if (parts.connection_id && parts.tag_name) {
+      if (els.historianQueryConnection) els.historianQueryConnection.value = parts.connection_id;
+      if (els.historianQueryTag) els.historianQueryTag.value = parts.tag_name;
+    }
+  });
   els.historianQueryBucket?.addEventListener('change', () => {
     state.historianQueryBucket = String(els.historianQueryBucket?.value || 'auto') || 'auto';
     renderHistorianPoints();
@@ -2001,34 +2084,47 @@ function normalizeReporterTagSelection(tags) {
 function normalizeReportTagEntries(tags) {
   const out = [];
   const arr = Array.isArray(tags) ? tags : [];
+  let skipped = 0;
   for (const t of arr) {
     if (typeof t === 'string') {
-      const spec = String(t || '').trim();
+      const fields = String(t || '').split('\t');
+      const spec = String(fields[0] || '').trim();
+      const fieldName = String(fields[1] || '').trim();
+      const description = String(fields.slice(2).join('\t') || '').trim();
       const parts = loggerTagSpecParts(spec);
-      if (parts.connection_id && parts.tag_name) {
+      if (isValidLoggerTagIdentity(parts.connection_id, parts.tag_name)) {
         out.push({
           connection_id: parts.connection_id,
           name: parts.tag_name,
-          field_name: '',
-          description: ''
+          field_name: fieldName,
+          description
         });
+      } else if (spec) {
+        skipped += 1;
       }
       continue;
     }
     if (t && typeof t === 'object' && !Array.isArray(t)) {
       const cid = String(t.connection_id || '').trim();
       const name = String(t.name || t.tag_name || '').trim();
-      if (!cid || !name) continue;
+      if (!isValidLoggerTagIdentity(cid, name)) {
+        skipped += 1;
+        continue;
+      }
       out.push({
         connection_id: cid,
         name,
         field_name: String(t.field_name || t.output_field || t.output_name || '').trim(),
         description: String(t.description || t.desc || '').trim()
       });
+      continue;
     }
+    if (t != null) skipped += 1;
   }
+  normalizeReportTagEntries.lastSkipped = skipped;
   return out;
 }
+normalizeReportTagEntries.lastSkipped = 0;
 
 function loggerTagEntrySpec(entry) {
   const cid = String(entry?.connection_id || '').trim();
@@ -2059,7 +2155,7 @@ function normalizeHistorianFieldEntries(fields) {
       tag_name: tagName,
       range,
       statistic: ['last', 'min', 'max', 'avg', 'twa', 'count'].includes(statistic) ? statistic : 'avg',
-      field_name: String(f.field_name || '').trim(),
+      field_name: String(f.field_name || f.output_field || f.output_name || '').trim(),
       description: String(f.description || '').trim()
     });
   }
@@ -2418,6 +2514,23 @@ function renderLoggerReportHistorianPanel(report, entriesOverride = null) {
   saveBtn.textContent = 'Save + Apply Historian Fields';
   saveBtn.addEventListener('click', () => saveLoggerReportHistorianFieldsFromPanel(report).catch(() => {}));
   actions.appendChild(saveBtn);
+
+  const downloadBtn = document.createElement('button');
+  downloadBtn.className = 'btn';
+  downloadBtn.type = 'button';
+  downloadBtn.textContent = 'Download CSV';
+  downloadBtn.addEventListener('click', () => {
+    const next = { ...report, historian_fields: collectLoggerReportHistorianPanelEntries() };
+    downloadLoggerHistorianFieldCsvForReport(next);
+  });
+  actions.appendChild(downloadBtn);
+
+  const uploadBtn = document.createElement('button');
+  uploadBtn.className = 'btn';
+  uploadBtn.type = 'button';
+  uploadBtn.textContent = 'Upload CSV';
+  uploadBtn.addEventListener('click', () => uploadLoggerHistorianFieldCsvToPanel().catch(() => {}));
+  actions.appendChild(uploadBtn);
 
   els.loggerReportDetails.appendChild(actions);
 
@@ -4477,6 +4590,20 @@ function wireLogicTabUi() {
 }
 
 const LOGGER_TAG_CSV_HEADERS = ['connection_id', 'tag_name', 'output_field', 'description'];
+const LOGGER_HISTORIAN_FIELD_CSV_HEADERS = ['connection_id', 'tag_name', 'range', 'statistic', 'output_field', 'description'];
+
+function loggerCsvCell(value) {
+  return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+function isValidLoggerTagIdentity(connectionId, tagName) {
+  const cid = String(connectionId || '').trim();
+  const name = String(tagName || '').trim();
+  if (!cid || !name) return false;
+  // Tag identity fields should never contain CSV syntax. If they do, a bad
+  // import likely swallowed many CSV rows into one saved logger tag entry.
+  return !/[,"\r\n\t]/.test(cid) && !/[,"\r\n\t]/.test(name);
+}
 
 function loggerTagSpecParts(spec) {
   const s = String(spec || '').trim();
@@ -4490,13 +4617,31 @@ function loggerTagSpecParts(spec) {
 }
 
 function loggerTagRowsFromList(tags) {
-  return normalizeReportTagEntries(tags).map((entry) => ({
-    connection_id: String(entry.connection_id || '').trim(),
-    tag_name: String(entry.name || '').trim(),
-    output_field: String(entry.field_name || entry.output_field || '').trim(),
-    description: String(entry.description || '').trim()
-  }));
+  const seen = new Set();
+  let duplicate = 0;
+  const rows = [];
+  normalizeReportTagEntries(tags).forEach((entry) => {
+    const row = {
+      connection_id: loggerCsvCell(entry.connection_id),
+      tag_name: loggerCsvCell(entry.name),
+      output_field: loggerCsvCell(entry.field_name || entry.output_field),
+      description: loggerCsvCell(entry.description)
+    };
+    if (!row.connection_id || !row.tag_name) return;
+    const key = `${row.connection_id}\u001f${row.tag_name}`;
+    if (seen.has(key)) {
+      duplicate += 1;
+      return;
+    }
+    seen.add(key);
+    rows.push(row);
+  });
+  loggerTagRowsFromList.lastSkipped = Number(normalizeReportTagEntries.lastSkipped || 0);
+  loggerTagRowsFromList.lastDuplicate = duplicate;
+  return rows;
 }
+loggerTagRowsFromList.lastSkipped = 0;
+loggerTagRowsFromList.lastDuplicate = 0;
 
 function parseLoggerTagCsvText(text) {
   const parsed = parseCsv(text);
@@ -4546,6 +4691,76 @@ function loggerTagEntriesFromCsvText(text) {
 function loggerTagImportSummary(result) {
   const r = result || {};
   const parts = [`Loaded ${Array.isArray(r.tags) ? r.tags.length : 0} of ${Number(r.total || 0)} row(s).`];
+  if (r.skipped_missing) parts.push(`Skipped ${r.skipped_missing} missing connection_id/tag_name${r.sample_missing ? ` (${r.sample_missing})` : ''}.`);
+  if (r.skipped_duplicate) parts.push(`Skipped ${r.skipped_duplicate} duplicate${r.sample_duplicate ? ` (${r.sample_duplicate})` : ''}.`);
+  return parts.join(' ');
+}
+
+function historianFieldRowsFromList(fields) {
+  return normalizeHistorianFieldEntries(fields).map((entry) => ({
+    connection_id: loggerCsvCell(entry.connection_id),
+    tag_name: loggerCsvCell(entry.tag_name),
+    range: loggerCsvCell(entry.range || '1h') || '1h',
+    statistic: loggerCsvCell(entry.statistic || 'avg') || 'avg',
+    output_field: loggerCsvCell(entry.field_name || entry.output_field),
+    description: loggerCsvCell(entry.description)
+  }));
+}
+
+function parseLoggerHistorianFieldCsvText(text) {
+  const parsed = parseCsv(text);
+  const records = Array.isArray(parsed?.records) ? parsed.records : [];
+  const out = [];
+  const seen = new Set();
+  let skippedMissing = 0;
+  let skippedDuplicate = 0;
+  let sampleMissing = '';
+  let sampleDuplicate = '';
+
+  records.forEach((row, idx) => {
+    const connectionId = String(csvGet(row, 'connection_id') || csvGet(row, 'connection') || '').trim();
+    const tagName = String(csvGet(row, 'tag_name') || csvGet(row, 'name') || '').trim();
+    const range = String(csvGet(row, 'range') || '1h').trim() || '1h';
+    const rawStatistic = String(csvGet(row, 'statistic') || csvGet(row, 'stat') || 'avg').trim().toLowerCase() || 'avg';
+    const statistic = ['last', 'min', 'max', 'avg', 'twa', 'count'].includes(rawStatistic) ? rawStatistic : 'avg';
+    const fieldName = String(csvGet(row, 'output_field') || csvGet(row, 'field_name') || csvGet(row, 'output_name') || '').trim();
+    const description = String(csvGet(row, 'description') || csvGet(row, 'desc') || '').trim();
+    if (!connectionId || !tagName) {
+      skippedMissing += 1;
+      if (!sampleMissing) sampleMissing = `row ${idx + 2}`;
+      return;
+    }
+    const key = `${connectionId}\u001f${tagName}\u001f${range}\u001f${statistic}\u001f${fieldName}`;
+    if (seen.has(key)) {
+      skippedDuplicate += 1;
+      if (!sampleDuplicate) sampleDuplicate = `${connectionId}:${tagName} ${range} ${statistic}`;
+      return;
+    }
+    seen.add(key);
+    out.push({
+      connection_id: connectionId,
+      tag_name: tagName,
+      range,
+      statistic,
+      field_name: fieldName,
+      description
+    });
+  });
+
+  return {
+    fields: out,
+    total: records.length,
+    skipped_missing: skippedMissing,
+    skipped_duplicate: skippedDuplicate,
+    sample_missing: sampleMissing,
+    sample_duplicate: sampleDuplicate,
+    headers: Array.isArray(parsed?.headers) ? parsed.headers : []
+  };
+}
+
+function historianFieldImportSummary(result) {
+  const r = result || {};
+  const parts = [`Loaded ${Array.isArray(r.fields) ? r.fields.length : 0} of ${Number(r.total || 0)} row(s).`];
   if (r.skipped_missing) parts.push(`Skipped ${r.skipped_missing} missing connection_id/tag_name${r.sample_missing ? ` (${r.sample_missing})` : ''}.`);
   if (r.skipped_duplicate) parts.push(`Skipped ${r.skipped_duplicate} duplicate${r.sample_duplicate ? ` (${r.sample_duplicate})` : ''}.`);
   return parts.join(' ');
@@ -4635,12 +4850,14 @@ function renderLoggerReportTagDescriptionRows() {
 function downloadLoggerTagCsvForReport(report) {
   const rid = String(report?.id || '').trim() || 'logger';
   const rows = loggerTagRowsFromList(report?.tags);
+  const skipped = Number(loggerTagRowsFromList.lastSkipped || 0);
+  const duplicate = Number(loggerTagRowsFromList.lastDuplicate || 0);
   downloadTextFile({
     filename: `opcbridge-logger-tags-${rid.replace(/[^a-z0-9._-]+/gi, '_')}.csv`,
     mime: 'text/csv',
     text: toCsv(rows, LOGGER_TAG_CSV_HEADERS)
   });
-  loggerSetStatus(`Downloaded ${rows.length} tag(s) for '${rid}'.`);
+  loggerSetStatus(`Downloaded ${rows.length} tag(s) for '${rid}'.${skipped ? ` Skipped ${skipped} malformed hidden entr${skipped === 1 ? 'y' : 'ies'}.` : ''}${duplicate ? ` Skipped ${duplicate} duplicate entr${duplicate === 1 ? 'y' : 'ies'}.` : ''}${(skipped || duplicate) ? ' Save the visible tag list to clean the config.' : ''}`);
 }
 
 function downloadLoggerTagCsvFromModal() {
@@ -4649,12 +4866,25 @@ function downloadLoggerTagCsvFromModal() {
     ? reportTagEntriesFromText(String(els.loggerReportTags?.value || ''))
     : [];
   const rows = loggerTagRowsFromList(tags);
+  const skipped = Number(loggerTagRowsFromList.lastSkipped || 0);
+  const duplicate = Number(loggerTagRowsFromList.lastDuplicate || 0);
   downloadTextFile({
     filename: `opcbridge-logger-tags-${id.replace(/[^a-z0-9._-]+/gi, '_')}.csv`,
     mime: 'text/csv',
     text: toCsv(rows, LOGGER_TAG_CSV_HEADERS)
   });
-  loggerReportModalSetStatus(`Downloaded ${rows.length} tag(s).`);
+  loggerReportModalSetStatus(`Downloaded ${rows.length} tag(s).${skipped ? ` Skipped ${skipped} malformed hidden entr${skipped === 1 ? 'y' : 'ies'}.` : ''}${duplicate ? ` Skipped ${duplicate} duplicate entr${duplicate === 1 ? 'y' : 'ies'}.` : ''}`);
+}
+
+function downloadLoggerHistorianFieldCsvForReport(report) {
+  const rid = String(report?.id || '').trim() || 'logger';
+  const rows = historianFieldRowsFromList(report?.historian_fields);
+  downloadTextFile({
+    filename: `opcbridge-logger-historian-fields-${rid.replace(/[^a-z0-9._-]+/gi, '_')}.csv`,
+    mime: 'text/csv',
+    text: toCsv(rows, LOGGER_HISTORIAN_FIELD_CSV_HEADERS)
+  });
+  loggerSetStatus(`Downloaded ${rows.length} historian field(s) for '${rid}'.`);
 }
 
 async function uploadLoggerTagCsvToModal() {
@@ -4710,6 +4940,23 @@ async function uploadLoggerTagCsvToPanel() {
     if (!tags.length) throw new Error('CSV has no logger tags.');
     renderSelectedLoggerTagPanel(tags);
     loggerSetStatus(`${loggerTagImportSummary(parsed)} Save + Apply Tags to write changes.`);
+  } catch (err) {
+    loggerSetStatus(`Upload failed: ${err.message || err}`);
+  }
+}
+
+async function uploadLoggerHistorianFieldCsvToPanel() {
+  try {
+    const text = await pickCsvText();
+    if (!String(text || '').trim()) return;
+    const parsed = parseLoggerHistorianFieldCsvText(text);
+    const fields = parsed.fields;
+    if (!fields.length) throw new Error('CSV has no historian fields.');
+    const rid = getSelectedReportId();
+    if (rid) state.loggerReportHistorianDraftById.set(rid, fields);
+    const report = findReportById(rid);
+    if (report) renderLoggerReportHistorianPanel(report, fields);
+    loggerSetStatus(`${historianFieldImportSummary(parsed)} Save + Apply Historian Fields to write changes.`);
   } catch (err) {
     loggerSetStatus(`Upload failed: ${err.message || err}`);
   }

@@ -775,7 +775,7 @@ static bool parse_historian_fields(const json& fields, Job& job, std::string& er
         field.tag_name = f.value("tag_name", f.value("name", ""));
         field.range = f.value("range", field.range);
         field.statistic = normalize_historian_statistic(f.value("statistic", field.statistic));
-        field.field_name = f.value("field_name", "");
+        field.field_name = f.value("field_name", f.value("output_field", f.value("output_name", "")));
         field.description = f.value("description", "");
         if (field.field_name.empty()) {
             field.field_name = field.tag_name + "_" + field.statistic + "_" + field.range;

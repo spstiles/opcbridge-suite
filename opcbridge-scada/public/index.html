@@ -1133,6 +1133,12 @@
 		          <div class="card-body">
 		            <div class="form">
 		              <div class="form-row">
+		                <label>Configured Tag</label>
+		                <select id="historianQueryConfigured">
+		                  <option value="">Select configured tag...</option>
+		                </select>
+		              </div>
+		              <div class="form-row">
 		                <label>Connection</label>
 		                <input id="historianQueryConnection" type="text" placeholder="PLC1" />
 		              </div>
@@ -1143,10 +1149,16 @@
 		              <div class="form-row">
 		                <label>Range</label>
 		                <select id="historianQueryRange">
+		                  <option value="15m">Last 15 minutes</option>
 		                  <option value="1h">Last hour</option>
+		                  <option value="8h">Last 8 hours</option>
 		                  <option value="1d">Last day</option>
 		                  <option value="7d">Last 7 days</option>
 		                  <option value="30d">Last 30 days</option>
+		                  <option value="current_day">Current day</option>
+		                  <option value="previous_day">Previous day</option>
+		                  <option value="current_month">Current month</option>
+		                  <option value="previous_month">Previous month</option>
 		                </select>
 		              </div>
 		              <div class="form-row">
