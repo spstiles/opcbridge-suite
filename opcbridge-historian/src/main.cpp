@@ -24,6 +24,14 @@
 
 #include "../opcbridge/httplib.h"
 
+#ifndef OPCBRIDGE_SUITE_VERSION
+#define OPCBRIDGE_SUITE_VERSION "dev"
+#endif
+
+#ifndef OPCBRIDGE_HISTORIAN_VERSION
+#define OPCBRIDGE_HISTORIAN_VERSION "dev"
+#endif
+
 using json = nlohmann::json;
 
 namespace
@@ -1250,6 +1258,12 @@ int main(int argc, char* argv[])
         else if (arg == "--opcbridge-http-port" && i + 1 < argc) opcbridge_http_port_override = static_cast<uint16_t>(std::stoi(argv[++i]));
         else if (arg == "--opcbridge-ws-port" && i + 1 < argc) opcbridge_ws_port_override = static_cast<uint16_t>(std::stoi(argv[++i]));
         else if (arg == "--opcbridge-ws-path" && i + 1 < argc) opcbridge_ws_path_override = std::string(argv[++i]);
+        else if (arg == "--version" || arg == "-V")
+        {
+            std::cout << "opcbridge-historian version " << OPCBRIDGE_HISTORIAN_VERSION
+                      << " (suite " << OPCBRIDGE_SUITE_VERSION << ")\n";
+            return 0;
+        }
         else if (arg == "--help" || arg == "-h")
         {
             std::cout << "Usage: " << argv[0]
@@ -1260,6 +1274,7 @@ int main(int argc, char* argv[])
                       << " [--opcbridge-http-port port]"
                       << " [--opcbridge-ws-port port]"
                       << " [--opcbridge-ws-path path]"
+                      << " [--version]"
                       << "\n";
             return 0;
         }
@@ -1336,6 +1351,8 @@ int main(int argc, char* argv[])
         }
         json j;
         j["ok"] = cfgCopy.enabled && health.db_connected.load() && health.get_error().empty();
+        j["version"] = OPCBRIDGE_HISTORIAN_VERSION;
+        j["suite_version"] = OPCBRIDGE_SUITE_VERSION;
         j["enabled"] = cfgCopy.enabled;
         j["db_connected"] = health.db_connected.load();
         j["enabled_tags"] = std::count_if(cfgCopy.historian_tags.begin(), cfgCopy.historian_tags.end(), [](const auto& r) { return r.enabled; });

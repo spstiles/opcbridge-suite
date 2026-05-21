@@ -4,6 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 CXX="${CXX:-g++}"
+SUITE_VERSION="$(tr -d '\r\n' < ../VERSION 2>/dev/null || echo dev)"
+COMPONENT_VERSION="$(tr -d '\r\n' < VERSION 2>/dev/null || echo dev)"
 
 # We reuse the vendored cpp-httplib header from opcbridge.
 INCLUDES=(
@@ -34,6 +36,8 @@ CXXFLAGS=(
   -Wall
   -Wextra
   -Wpedantic
+  -DOPCBRIDGE_SUITE_VERSION="\"${SUITE_VERSION}\""
+  -DOPCBRIDGE_HISTORIAN_VERSION="\"${COMPONENT_VERSION}\""
   "${INCLUDES[@]}"
   "${EXTRA_CFLAGS[@]}"
 )
