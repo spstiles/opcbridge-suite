@@ -144,7 +144,6 @@ Each file defines a set of tags belonging to one connection:
       "datatype": "int32",
       "scan_ms": 1000,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": true,
       "log_periodic": true,
       "log_periodic_mode": "interval",
@@ -184,11 +183,7 @@ Direct PLC tag fields:
 
 - plc_tag_name: PLC tag/address to read/write via libplctag.
 - elem_count: Optional (default 1). If > 1, reads an array/block in one request and publishes element snapshots as `TagName[i]`.
-- writable: If true, the tag can be written via REST (/write), MQTT commands (if enabled), and OPC UA (if enabled).
-
-MQTT controls:
-
-- mqtt_command_allowed: If true, this tag accepts MQTT command writes (still also requires writable=true and MQTT enabled).
+- writable: If true, the tag can be written via REST (/write), MQTT command/mapping policies (if enabled), and OPC UA (if enabled).
 
 Derived tag fields:
 
@@ -389,6 +384,174 @@ Remote RTUs send values to MQTT and opcbridge writes them into PLC tags.
     }
   ]
 }
+
+3.6 Logic Scripts — config/logic.json
+
+Logic scripts are configured from the SCADA Logic tab and stored in
+config/logic.json. The logic runtime is intended for small industrial
+transformations: read tags, scale values, parse MQTT payloads, build derived
+memory values, and prepare data for future MQTT publication.
+
+Each script has an ID, display name, enabled flag, interval, and source text:
+
+{
+  "scripts": [
+    {
+      "id": "scale_flow",
+      "name": "Scale Flow",
+      "enabled": true,
+      "interval_ms": 1000,
+      "engine": "javascript",
+      "source": "const raw = tag(\"PLC1\", \"RawFlow\");\nconst flow = round(map(raw, 0, 4095, 0, 100), 1);\nsetTag(\"_memory\", \"FlowScaled\", flow);"
+    }
+  ]
+}
+
+The engine name is currently `javascript`, but this is a small controlled
+expression language, not a full browser or Node.js JavaScript runtime.
+
+Supported statement forms:
+
+- `const name = expression;`
+- `setTag(connection, tagName, expression);`
+- one-level `if (expression) { ... }`
+- optional one-level `else { ... }`
+
+Semicolons are required for `const` statements. Nested `if` blocks and loops are
+not supported yet.
+
+Tag reads:
+
+- `tag(connection, tagName)` returns the current value.
+- `quality(connection, tagName)` returns the tag quality as a number.
+- `hasTag(connection, tagName)` returns true when the tag exists.
+
+Examples:
+
+```javascript
+const second = tag("_system", "System/Clock/Second");
+setTag("_memory", "CurrentSecond", second);
+```
+
+```javascript
+if (quality("PLC1", "PumpRunning") == 1 && tag("PLC1", "PumpRunning")) {
+  setTag("_memory", "PumpValid", true);
+} else {
+  setTag("_memory", "PumpValid", false);
+}
+```
+
+Writes:
+
+`setTag(...)` is the script write helper. At this stage it only writes existing,
+writable memory tags. PLC writes, MQTT publication writes, and system tag writes
+are intentionally blocked until explicit guarded support is added.
+
+```javascript
+setTag("_memory", "SomeTag", tag("PLC1", "SomeOtherTag"));
+```
+
+Numeric helpers:
+
+- `map(value, inMin, inMax, outMin, outMax)`
+- `clamp(value, min, max)`
+- `round(value)`
+- `round(value, decimalPlaces)`
+- `min(a, b, ...)`
+- `max(a, b, ...)`
+- `bit(value, bitNumber)`
+- `bits(value, mask)`
+
+Example:
+
+```javascript
+const raw = tag("PLC1", "RawFlow");
+const flow = round(clamp(map(raw, 0, 4095, 0, 100), 0, 100), 1);
+setTag("_memory", "FlowScaled", flow);
+```
+
+Bit helpers are useful for PLC status words and packed MQTT register values.
+`bit(...)` returns a boolean. `bits(...)` returns the masked numeric value.
+Hex masks such as `0x00FF` are supported.
+
+```javascript
+setTag("_memory", "PumpFault", bit(tag("PLC1", "StatusWord"), 3));
+setTag("_memory", "AnyLowByteAlarm", bits(tag("PLC1", "AlarmWord"), 0x00FF) != 0);
+```
+
+String and conversion helpers:
+
+- `str(value)`
+- `num(value)`
+- `num(value, defaultValue)`
+- `bool(value)`
+- `bool(value, defaultValue)`
+- `concat(a, b, ...)`
+- `lower(value)`
+- `upper(value)`
+- `trim(value)`
+- `contains(value, needle)`
+- `startsWith(value, needle)`
+- `endsWith(value, needle)`
+
+Example:
+
+```javascript
+const status = lower(trim(tag("Broker1", "PumpStatus")));
+setTag("_memory", "PumpFailed", status == "failed");
+```
+
+JSON input helpers:
+
+- `json(payload, path)`
+- `json(payload, path, defaultValue)`
+
+The `path` argument is dot-separated. Numeric path parts are treated as array
+indexes only when the current JSON value is an array. Numeric object keys still
+work as normal object keys.
+
+Example MQTT payload:
+
+```json
+{"flow":{"raw":2034},"pump":{"status":"Running"}}
+```
+
+Script:
+
+```javascript
+const payload = tag("Broker1", "InboundTopic");
+const raw = json(payload, "flow.raw", 0);
+const status = lower(json(payload, "pump.status", ""));
+
+setTag("_memory", "FlowScaled", round(map(raw, 0, 4095, 0, 100), 1));
+setTag("_memory", "PumpRunningText", status);
+```
+
+JSON output helpers:
+
+- `jsonObj("key1", value1, "key2", value2, ...)`
+- `jsonArray(value1, value2, ...)`
+
+The output is a JSON string. Numbers remain numbers, booleans remain booleans,
+and strings remain strings.
+
+```javascript
+const flow = round(map(tag("PLC1", "RawFlow"), 0, 4095, 0, 100), 1);
+const payload = jsonObj(
+  "flow", flow,
+  "running", tag("PLC1", "PumpRunning"),
+  "quality", quality("PLC1", "RawFlow")
+);
+
+setTag("_memory", "OutboundPayload", payload);
+```
+
+Future logic helpers planned:
+
+- counters
+- on-delay timers
+- off-delay timers
+- one-shots/pulses
 
 4. Runtime Modes & CLI
 ./opcbridge [options]

@@ -1,4 +1,7 @@
 {
+  "enabled": true,
+  "http_port": 8096,
+
   // opcbridge endpoints
   "opcbridge_host": "127.0.0.1",
   "opcbridge_http_port": 8080,
@@ -13,6 +16,16 @@
   "tags": [
     "field_ops:PLC_Second",
     "field_ops:Pump01.Running"
+  ],
+  "historian_tags": [
+    {
+      "connection_id": "field_ops",
+      "tag_name": "Flow",
+      "enabled": true,
+      "interval_ms": 60000,
+      "mode": "periodic",
+      "include_bad_quality": false
+    }
   ],
   "patterns": [
     { "connection_id": "field_ops", "name": "Pump*.Running" }
@@ -37,6 +50,7 @@
     "conninfo": "host=127.0.0.1 port=5432 dbname=opcbridge user=opcbridge password=CHANGE_ME",
     "table": "tag_samples",
     "batch_size": 500,
-    "flush_interval_ms": 250
+    "flush_interval_ms": 250,
+    "queue_limit": 50000
   }
 }

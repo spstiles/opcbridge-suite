@@ -3,16 +3,24 @@
   "host": "mqtt.example.com",
   "port": 8883,
 
-  "client_id": "opcbridge-core",
+  // Leave blank to generate a unique client id at startup.
+  "client_id": "",
   "base_topic": "opcbridge",
   "command_topic": "opcbridge/cmd",
   "ack_topic_prefix": "opcbridge/ack",
   "subscribe_enabled": true,
 
   "patterns": {
-    "per_field": true,
-    "tag_json": true,
-    "connection_json": false
+    "per_field": false,
+    "tag_json": false,
+    "connection_json": false,
+    "memory_tags": false,
+    "system_tags": false
+  },
+  "publish": {
+    "mode": "change",
+    "interval_ms": 30000,
+    "min_update_ms": 0
   },
 
   // For MQTT commands (writes), strongly recommended to require a write token.

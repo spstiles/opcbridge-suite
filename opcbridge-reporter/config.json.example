@@ -1,5 +1,6 @@
 {
   "opcbridge_base_url": "http://127.0.0.1:8080",
+  "historian_base_url": "http://127.0.0.1:8096",
   "mysql_host": "192.0.2.31",
   "mysql_port": 3306,
   "mysql_user": "opcbridge",
@@ -10,8 +11,26 @@
     "example_5m": {
       "table": "tag_log",
       "tags": [
-        { "connection_id": "field_ops", "name": "Pump*.Running", "description": "Pump running status tags" },
+        { "connection_id": "field_ops", "name": "Pump*.Running", "field_name": "", "description": "Pump running status tags" },
         "field_ops:PLC_Second"
+      ],
+      "historian_fields": [
+        {
+          "connection_id": "field_ops",
+          "tag_name": "Plant_Flow",
+          "range": "1h",
+          "statistic": "avg",
+          "field_name": "plant_flow_1h_avg",
+          "description": "Plant flow hourly average"
+        },
+        {
+          "connection_id": "field_ops",
+          "tag_name": "Plant_Flow",
+          "range": "1d",
+          "statistic": "max",
+          "field_name": "plant_flow_1d_max",
+          "description": "Plant flow daily maximum"
+        }
       ]
     }
   }

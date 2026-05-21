@@ -6,32 +6,28 @@
       "plc_tag_name": "PLC_Tag0005",
       "datatype": "bool",
       "scan_ms": 500,
-      "writable": true,
-      "mqtt_command_allowed": true
+      "writable": true
     },
     {
       "name": "Tag0001",
       "plc_tag_name": "PLC_Tag0006",
       "datatype": "float32",
       "scan_ms": 1000,
-      "writable": false,
-      "mqtt_command_allowed": true
+      "writable": false
     },
     {
       "name": "Tag0002",
       "plc_tag_name": "PLC_Tag0007",
       "datatype": "bool",
       "scan_ms": 500,
-      "writable": false,
-      "mqtt_command_allowed": true
+      "writable": false
     },
     {
       "name": "Tag0003",
       "plc_tag_name": "PLC_Tag0008",
       "datatype": "int16",
       "scan_ms": 1000,
-      "writable": false,
-      "mqtt_command_allowed": true
+      "writable": false
     }
   ]
 }

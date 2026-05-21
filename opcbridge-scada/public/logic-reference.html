@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>opcbridge Logic Reference</title>
+  <link rel="stylesheet" href="styles.css?v=20260519_theme_mode_cm" />
+</head>
+<body>
+  <main class="main">
+    <h2>Logic Reference</h2>
+    <div class="hint">Function examples and operator support for Logic Blocks and Scripts.</div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">Operators</div>
+      <div class="card-body mono">
+        <div>Arithmetic: <code>+</code> <code>-</code> <code>*</code> <code>/</code> <code>%</code></div>
+        <div>Comparison: <code>==</code> <code>!=</code> <code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code></div>
+        <div>Boolean: <code>&amp;&amp;</code> <code>||</code> <code>!</code></div>
+        <div>Grouping: <code>( ... )</code></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">Tag Functions</div>
+      <div class="card-body mono">
+        <div><code>tag("PLC1", "RawFlow")</code> — Reads current tag value (number/string/bool).</div>
+        <div><code>quality("PLC1", "RawFlow")</code> — Reads numeric quality code (good usually 1).</div>
+        <div><code>hasTag("PLC1", "RawFlow")</code> — True if tag exists in runtime.</div>
+        <div><code>setTag("_memory", "FlowScaled", 12.3)</code> — Writes evaluated value to writable destination tag.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">JSON</div>
+      <div class="card-body mono">
+        <div><code>json(payload, "flow.raw", 0)</code> — Reads JSON path value. If path/parse fails and default is provided, returns default.</div>
+        <div><code>hasJson(payload, "flow.raw")</code> — True if payload parses and path exists.</div>
+        <div><code>jsonSet(base, "key", value)</code> — Returns JSON object string with key updated. Empty/invalid base starts as <code>{}</code>.</div>
+        <div><code>jsonObj("seconds", 15, "ok", true)</code> — Builds JSON object string from key/value pairs.</div>
+        <div><code>jsonArray(1, 2, "x", true)</code> — Builds JSON array string from arguments.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">Math</div>
+      <div class="card-body mono">
+        <div><code>map(raw, 0, 4095, 0, 100)</code> — Linear scale from one range to another.</div>
+        <div><code>clamp(value, 0, 100)</code> — Limits value to min/max bounds.</div>
+        <div><code>round(value, 1)</code> — Rounds to decimal places.</div>
+        <div><code>min(a, b, c)</code> / <code>max(a, b, c)</code> — Smallest/largest numeric argument.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">Bits</div>
+      <div class="card-body mono">
+        <div><code>bit(statusWord, 3)</code> — True if bit N is set.</div>
+        <div><code>bits(statusWord, 0x00FF)</code> — Bitwise AND with mask; useful for packed status checks.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">Strings / Conversion</div>
+      <div class="card-body mono">
+        <div><code>str(value)</code> — Converts value to string.</div>
+        <div><code>num("123.4", 0)</code> or <code>number("123.4", 0)</code> — Converts to number; uses default on failure.</div>
+        <div><code>bool("true", false)</code> — Converts to bool; uses default on failure.</div>
+        <div><code>concat("A", "-", "B")</code> — Concatenates values as strings.</div>
+        <div><code>lower(text)</code> <code>upper(text)</code> <code>trim(text)</code> — String normalization helpers.</div>
+        <div><code>contains(text, "x")</code> <code>startsWith(text, "x")</code> <code>endsWith(text, "x")</code> — String match checks.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">Notes</div>
+      <div class="card-body mono">
+        <div><code>json()</code> without default throws a validation/runtime error when path is missing or payload is invalid JSON.</div>
+        <div><code>hasJson()</code> is the safe guard before reading optional JSON fields.</div>
+        <div><code>setTag()</code> writes only to writable tags; system tags are read-only.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">Control Flow</div>
+      <div class="card-body mono">
+<pre>if (quality("PLC1", "Run") == 1) {
+	setTag("_memory", "RunOk", true);
+} else {
+	setTag("_memory", "RunOk", false);
+}</pre>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

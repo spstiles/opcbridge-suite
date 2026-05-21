@@ -85,6 +85,25 @@ Useful database monitor system tags:
 - `System/Reporter/Databases/<database_id>/LatencyMs`
 - `System/Reporter/Databases/<database_id>/LastError`
 
+## Logic
+
+The **Logic** tab edits `logic.json`, which is loaded by `opcbridge`.
+
+Logic scripts can read current tag values, create local variables, use simple
+`if`/`else` blocks, scale values, parse JSON payloads, build JSON strings, and
+write results to writable memory tags with `setTag(...)`.
+
+Common helpers include:
+
+- `tag(...)`, `quality(...)`, `hasTag(...)`
+- `map(...)`, `clamp(...)`, `round(...)`, `min(...)`, `max(...)`
+- `bit(...)`, `bits(...)`
+- `json(...)`, `jsonObj(...)`, `jsonArray(...)`
+- `str(...)`, `num(...)`, `bool(...)`, `concat(...)`, `lower(...)`, `upper(...)`, `trim(...)`
+
+For examples and the full helper reference, see `../opcbridge/docs/manual.md`
+section `3.6 Logic Scripts`.
+
 ## Configuration file
 
 Edit `config.json` manually if needed:

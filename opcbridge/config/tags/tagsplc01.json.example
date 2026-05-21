@@ -7,7 +7,6 @@
       "datatype": "int32",
       "scan_ms": 1000,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_periodic": true,
       "log_periodic_mode": "interval",
       "log_periodic_interval": 300
@@ -18,7 +17,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": true
     },
     {
@@ -27,7 +25,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -36,7 +33,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -45,7 +41,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -54,7 +49,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -63,7 +57,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -72,7 +65,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -81,7 +73,6 @@
       "datatype": "float32",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -90,7 +81,6 @@
       "datatype": "int32",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -99,7 +89,6 @@
       "datatype": "int32",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -108,7 +97,6 @@
       "datatype": "int32",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -117,7 +105,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -126,7 +113,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -135,7 +121,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -144,7 +129,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -153,7 +137,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -162,7 +145,6 @@
       "datatype": "bool",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -171,7 +153,6 @@
       "datatype": "float32",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -180,7 +161,6 @@
       "datatype": "int32",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -189,7 +169,6 @@
       "datatype": "int32",
       "scan_ms": 500,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": false
     },
     {
@@ -198,7 +177,6 @@
       "datatype": "int32",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -207,7 +185,6 @@
       "datatype": "float32",
       "scan_ms": 500,
       "writable": false,
-      "mqtt_command_allowed": false,
       "log_event_on_change": false
     },
     {
@@ -216,7 +193,6 @@
       "datatype": "float32",
       "scan_ms": 1000,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_periodic": false,
       "log_periodic_mode": "interval",
       "log_periodic_interval": 300
@@ -227,7 +203,6 @@
       "datatype": "float32",
       "scan_ms": 1000,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_periodic": false,
       "log_periodic_mode": "interval",
       "log_periodic_interval": 300
@@ -238,7 +213,6 @@
       "datatype": "float32",
       "scan_ms": 1000,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_periodic": false,
       "log_periodic_mode": "interval",
       "log_periodic_interval": 300

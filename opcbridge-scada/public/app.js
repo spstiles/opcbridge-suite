@@ -157,6 +157,75 @@
   mqttCaCurrentStatus: document.getElementById('mqttCaCurrentStatus'),
   mqttCaStatus: document.getElementById('mqttCaStatus'),
 
+  // MQTT tab
+  mqttTreeView: document.getElementById('mqttTreeView'),
+  mqttTreeNote: document.getElementById('mqttTreeNote'),
+  mqttTabRefreshBtn: document.getElementById('mqttTabRefreshBtn'),
+  mqttTabSaveBtn: document.getElementById('mqttTabSaveBtn'),
+  mqttBrokerTestBtn: document.getElementById('mqttBrokerTestBtn'),
+  mqttMessageNewBtn: document.getElementById('mqttMessageNewBtn'),
+  mqttMessageDeleteBtn: document.getElementById('mqttMessageDeleteBtn'),
+  mqttTabStatus: document.getElementById('mqttTabStatus'),
+  mqttTabEnabled: document.getElementById('mqttTabEnabled'),
+  mqttTabSubscribeEnabled: document.getElementById('mqttTabSubscribeEnabled'),
+  mqttTabHost: document.getElementById('mqttTabHost'),
+  mqttTabPort: document.getElementById('mqttTabPort'),
+  mqttTabClientId: document.getElementById('mqttTabClientId'),
+  mqttTabUsername: document.getElementById('mqttTabUsername'),
+  mqttTabPassword: document.getElementById('mqttTabPassword'),
+  mqttTabUseTls: document.getElementById('mqttTabUseTls'),
+  mqttTabTlsInsecure: document.getElementById('mqttTabTlsInsecure'),
+  mqttMessageId: document.getElementById('mqttMessageId'),
+  mqttMessageTopic: document.getElementById('mqttMessageTopic'),
+  mqttMessageFormat: document.getElementById('mqttMessageFormat'),
+  mqttMessageWriteToPlc: document.getElementById('mqttMessageWriteToPlc'),
+  mqttMappingKey: document.getElementById('mqttMappingKey'),
+  mqttMappingConnection: document.getElementById('mqttMappingConnection'),
+  mqttMappingTag: document.getElementById('mqttMappingTag'),
+  mqttMappingDatatype: document.getElementById('mqttMappingDatatype'),
+  mqttMappingAddBtn: document.getElementById('mqttMappingAddBtn'),
+  mqttMessageMappingsJson: document.getElementById('mqttMessageMappingsJson'),
+
+  // Logic
+  logicTreeView: document.getElementById('logicTreeView'),
+  logicTreeNote: document.getElementById('logicTreeNote'),
+  logicRefreshBtn: document.getElementById('logicRefreshBtn'),
+  logicNewBtn: document.getElementById('logicNewBtn'),
+  logicSaveBtn: document.getElementById('logicSaveBtn'),
+  logicDeleteBtn: document.getElementById('logicDeleteBtn'),
+  logicStatus: document.getElementById('logicStatus'),
+  logicScriptId: document.getElementById('logicScriptId'),
+  logicScriptName: document.getElementById('logicScriptName'),
+  logicScriptEnabled: document.getElementById('logicScriptEnabled'),
+  logicScriptIntervalMs: document.getElementById('logicScriptIntervalMs'),
+  logicMainEditorLabel: document.getElementById('logicMainEditorLabel'),
+  logicSetupRow: document.getElementById('logicSetupRow'),
+  logicSetupEditor: document.getElementById('logicSetupEditor'),
+  logicGroupPane: document.getElementById('logicGroupPane'),
+  logicItemPane: document.getElementById('logicItemPane'),
+  logicEditorPane: document.getElementById('logicEditorPane'),
+  logicChildrenListTbody: document.getElementById('logicChildrenListTbody'),
+  logicEditorActions: document.getElementById('logicEditorActions'),
+  logicEditorHelp: document.getElementById('logicEditorHelp'),
+  logicValidationLastRun: document.getElementById('logicValidationLastRun'),
+  logicValidationRuns: document.getElementById('logicValidationRuns'),
+  logicValidationRefs: document.getElementById('logicValidationRefs'),
+  logicValidationMissing: document.getElementById('logicValidationMissing'),
+  logicValidationReads: document.getElementById('logicValidationReads'),
+  logicValidationVars: document.getElementById('logicValidationVars'),
+  logicValidationWrites: document.getElementById('logicValidationWrites'),
+  logicValidationPreview: document.getElementById('logicValidationPreview'),
+  logicValidationVarPreview: document.getElementById('logicValidationVarPreview'),
+  logicValidationWritePreview: document.getElementById('logicValidationWritePreview'),
+  logicValidationError: document.getElementById('logicValidationError'),
+  logicInsertTagBtn: document.getElementById('logicInsertTagBtn'),
+  logicQuickTagBtn: document.getElementById('logicQuickTagBtn'),
+  logicQuickJsonBtn: document.getElementById('logicQuickJsonBtn'),
+  logicQuickSetTagBtn: document.getElementById('logicQuickSetTagBtn'),
+  logicQuickIfElseBtn: document.getElementById('logicQuickIfElseBtn'),
+  logicQuickJsonObjBtn: document.getElementById('logicQuickJsonObjBtn'),
+  logicScriptEditor: document.getElementById('logicScriptEditor'),
+
   // Data Logger (opcbridge-reporter)
   loggerTreeView: document.getElementById('loggerTreeView'),
   loggerTreeNote: document.getElementById('loggerTreeNote'),
@@ -251,14 +320,36 @@
   loggerDataCheckHighThreshold: document.getElementById('loggerDataCheckHighThreshold'),
   loggerDataCheckStatus: document.getElementById('loggerDataCheckStatus'),
 
+  historianRefreshBtn: document.getElementById('historianRefreshBtn'),
+  historianAddTagBtn: document.getElementById('historianAddTagBtn'),
+  historianSaveConfigBtn: document.getElementById('historianSaveConfigBtn'),
+  historianRestartBtn: document.getElementById('historianRestartBtn'),
+  historianRunQueryBtn: document.getElementById('historianRunQueryBtn'),
+  historianStatus: document.getElementById('historianStatus'),
+  historianHealthKv: document.getElementById('historianHealthKv'),
+  historianTagsTbody: document.getElementById('historianTagsTbody'),
+  historianQueryConnection: document.getElementById('historianQueryConnection'),
+  historianQueryTag: document.getElementById('historianQueryTag'),
+  historianQueryRange: document.getElementById('historianQueryRange'),
+  historianQueryBucket: document.getElementById('historianQueryBucket'),
+  historianQueryLimit: document.getElementById('historianQueryLimit'),
+  historianSummaryKv: document.getElementById('historianSummaryKv'),
+  historianPointsTitle: document.getElementById('historianPointsTitle'),
+  historianPointsHeadRow: document.getElementById('historianPointsHeadRow'),
+  historianPointsTbody: document.getElementById('historianPointsTbody'),
+
   loggerTagPickerModal: document.getElementById('loggerTagPickerModal'),
   loggerTagPickerCloseBtn: document.getElementById('loggerTagPickerCloseBtn'),
   loggerTagPickerSearch: document.getElementById('loggerTagPickerSearch'),
   loggerTagPickerSelectAllBtn: document.getElementById('loggerTagPickerSelectAllBtn'),
   loggerTagPickerClearBtn: document.getElementById('loggerTagPickerClearBtn'),
+  loggerTagPickerFullTagBtn: document.getElementById('loggerTagPickerFullTagBtn'),
   loggerTagPickerApplyBtn: document.getElementById('loggerTagPickerApplyBtn'),
   loggerTagPickerStatus: document.getElementById('loggerTagPickerStatus'),
   loggerTagPickerTbody: document.getElementById('loggerTagPickerTbody'),
+  loggerTagPickerTreeWrap: document.getElementById('loggerTagPickerTreeWrap'),
+  loggerTagPickerTree: document.getElementById('loggerTagPickerTree'),
+  loggerTagPickerTableWrap: document.getElementById('loggerTagPickerTableWrap'),
 
   // Connections
   connRefreshBtn: document.getElementById('connRefreshBtn'),
@@ -347,6 +438,8 @@
   newTagName: document.getElementById('newTagName'),
   newTagSourceKind: document.getElementById('newTagSourceKind'),
   newTagPlc: document.getElementById('newTagPlc'),
+  newTagInitialRow: document.getElementById('newTagInitialRow'),
+  newTagInitialValue: document.getElementById('newTagInitialValue'),
   newTagDerivedRow: document.getElementById('newTagDerivedRow'),
   newTagSourceTag: document.getElementById('newTagSourceTag'),
   newTagBitBox: document.getElementById('newTagBitBox'),
@@ -357,7 +450,6 @@
   newTagEnabled: document.getElementById('newTagEnabled'),
   newTagWritable: document.getElementById('newTagWritable'),
   newTagInvert: document.getElementById('newTagInvert'),
-  newTagMqttAllowed: document.getElementById('newTagMqttAllowed'),
   newTagLogEvent: document.getElementById('newTagLogEvent'),
   newTagScaling: document.getElementById('newTagScaling'),
   newTagScalingLinearRow: document.getElementById('newTagScalingLinearRow'),
@@ -379,16 +471,59 @@
   workspaceItemGeneric: document.getElementById('workspaceItemGeneric'),
   editDevId: document.getElementById('editDevId'),
   editDevDriver: document.getElementById('editDevDriver'),
+  editDevGatewayRow: document.getElementById('editDevGatewayRow'),
   editDevGateway: document.getElementById('editDevGateway'),
+  editDevPathRow: document.getElementById('editDevPathRow'),
   editDevPath: document.getElementById('editDevPath'),
+  editDevSlotRow: document.getElementById('editDevSlotRow'),
   editDevSlot: document.getElementById('editDevSlot'),
+  editDevPlcTypeRow: document.getElementById('editDevPlcTypeRow'),
   editDevPlcType: document.getElementById('editDevPlcType'),
+  editDevPollingModeRow: document.getElementById('editDevPollingModeRow'),
   editDevPollingMode: document.getElementById('editDevPollingMode'),
+  editDevPollingPacingRow: document.getElementById('editDevPollingPacingRow'),
   editDevPollingPacing: document.getElementById('editDevPollingPacing'),
+  editDevPollBatchSizeRow: document.getElementById('editDevPollBatchSizeRow'),
   editDevPollBatchSize: document.getElementById('editDevPollBatchSize'),
+  editDevPollTimeBudgetMsRow: document.getElementById('editDevPollTimeBudgetMsRow'),
   editDevPollTimeBudgetMs: document.getElementById('editDevPollTimeBudgetMs'),
+  editDevPollMaxReadsPerSecRow: document.getElementById('editDevPollMaxReadsPerSecRow'),
   editDevPollMaxReadsPerSec: document.getElementById('editDevPollMaxReadsPerSec'),
+  editDevPollLanesRow: document.getElementById('editDevPollLanesRow'),
   editDevPollLanes: document.getElementById('editDevPollLanes'),
+  editDevMqttHostRow: document.getElementById('editDevMqttHostRow'),
+  editDevMqttHost: document.getElementById('editDevMqttHost'),
+  editDevMqttPortRow: document.getElementById('editDevMqttPortRow'),
+  editDevMqttPort: document.getElementById('editDevMqttPort'),
+  editDevMqttClientIdRow: document.getElementById('editDevMqttClientIdRow'),
+  editDevMqttClientId: document.getElementById('editDevMqttClientId'),
+  editDevMqttUsernameRow: document.getElementById('editDevMqttUsernameRow'),
+  editDevMqttUsername: document.getElementById('editDevMqttUsername'),
+  editDevMqttPasswordRow: document.getElementById('editDevMqttPasswordRow'),
+  editDevMqttPassword: document.getElementById('editDevMqttPassword'),
+  editDevMqttTlsRow: document.getElementById('editDevMqttTlsRow'),
+  editDevMqttUseTls: document.getElementById('editDevMqttUseTls'),
+  editDevMqttTlsInsecureRow: document.getElementById('editDevMqttTlsInsecureRow'),
+  editDevMqttTlsInsecure: document.getElementById('editDevMqttTlsInsecure'),
+  editDevMqttCaFileRow: document.getElementById('editDevMqttCaFileRow'),
+  editDevMqttCaFile: document.getElementById('editDevMqttCaFile'),
+  editDevMqttCertFileRow: document.getElementById('editDevMqttCertFileRow'),
+  editDevMqttCertFile: document.getElementById('editDevMqttCertFile'),
+  editDevMqttKeyFileRow: document.getElementById('editDevMqttKeyFileRow'),
+  editDevMqttKeyFile: document.getElementById('editDevMqttKeyFile'),
+  editDevMqttPublishPatternsRow: document.getElementById('editDevMqttPublishPatternsRow'),
+  editDevMqttPublishPerField: document.getElementById('editDevMqttPublishPerField'),
+  editDevMqttPublishTagJson: document.getElementById('editDevMqttPublishTagJson'),
+  editDevMqttPublishMemoryTags: document.getElementById('editDevMqttPublishMemoryTags'),
+  editDevMqttPublishSystemTags: document.getElementById('editDevMqttPublishSystemTags'),
+  editDevMqttPublishModeRow: document.getElementById('editDevMqttPublishModeRow'),
+  editDevMqttPublishMode: document.getElementById('editDevMqttPublishMode'),
+  editDevMqttPublishIntervalRow: document.getElementById('editDevMqttPublishIntervalRow'),
+  editDevMqttPublishIntervalMs: document.getElementById('editDevMqttPublishIntervalMs'),
+  editDevMqttPublishMinRow: document.getElementById('editDevMqttPublishMinRow'),
+  editDevMqttPublishMinMs: document.getElementById('editDevMqttPublishMinMs'),
+  editDevMqttTestRow: document.getElementById('editDevMqttTestRow'),
+  editDevMqttTestBtn: document.getElementById('editDevMqttTestBtn'),
   editDevCancelBtn: document.getElementById('editDevCancelBtn'),
   editDevSaveBtn: document.getElementById('editDevSaveBtn'),
   editDevStatus: document.getElementById('editDevStatus'),
@@ -397,6 +532,8 @@
   editTagName: document.getElementById('editTagName'),
   editTagSourceKind: document.getElementById('editTagSourceKind'),
   editTagPlc: document.getElementById('editTagPlc'),
+  editTagInitialRow: document.getElementById('editTagInitialRow'),
+  editTagInitialValue: document.getElementById('editTagInitialValue'),
   editTagDerivedRow: document.getElementById('editTagDerivedRow'),
   editTagSourceTag: document.getElementById('editTagSourceTag'),
   editTagBitBox: document.getElementById('editTagBitBox'),
@@ -407,7 +544,6 @@
   editTagEnabled: document.getElementById('editTagEnabled'),
   editTagWritable: document.getElementById('editTagWritable'),
   editTagInvert: document.getElementById('editTagInvert'),
-  editTagMqttAllowed: document.getElementById('editTagMqttAllowed'),
   editTagLogEvent: document.getElementById('editTagLogEvent'),
   editTagScaling: document.getElementById('editTagScaling'),
   editTagScalingLinearRow: document.getElementById('editTagScalingLinearRow'),
@@ -469,18 +605,79 @@
   editAudioScopeCancelBtn: document.getElementById('editAudioScopeCancelBtn'),
   editAudioScopeSaveBtn: document.getElementById('editAudioScopeSaveBtn'),
   editAudioScopeStatus: document.getElementById('editAudioScopeStatus'),
+  workspaceItemMqttTopicEdit: document.getElementById('workspaceItemMqttTopicEdit'),
+  editMqttTopicBroker: document.getElementById('editMqttTopicBroker'),
+  editMqttTopicDirection: document.getElementById('editMqttTopicDirection'),
+  editMqttTopicId: document.getElementById('editMqttTopicId'),
+  editMqttTopicPath: document.getElementById('editMqttTopicPath'),
+  editMqttTopicRawRow: document.getElementById('editMqttTopicRawRow'),
+  editMqttTopicTimeoutEnabledRow: document.getElementById('editMqttTopicTimeoutEnabledRow'),
+  editMqttTopicTimeoutEnabled: document.getElementById('editMqttTopicTimeoutEnabled'),
+  editMqttTopicTimeoutMsRow: document.getElementById('editMqttTopicTimeoutMsRow'),
+  editMqttTopicTimeoutMs: document.getElementById('editMqttTopicTimeoutMs'),
+  editMqttTopicPublishModeRow: document.getElementById('editMqttTopicPublishModeRow'),
+  editMqttTopicPublishMode: document.getElementById('editMqttTopicPublishMode'),
+  editMqttTopicPublishIntervalRow: document.getElementById('editMqttTopicPublishIntervalRow'),
+  editMqttTopicPublishIntervalMs: document.getElementById('editMqttTopicPublishIntervalMs'),
+  editMqttTopicPublishMinRow: document.getElementById('editMqttTopicPublishMinRow'),
+  editMqttTopicPublishMinMs: document.getElementById('editMqttTopicPublishMinMs'),
+  editMqttTopicPublishHintRow: document.getElementById('editMqttTopicPublishHintRow'),
+  editMqttTopicCancelBtn: document.getElementById('editMqttTopicCancelBtn'),
+  editMqttTopicSaveBtn: document.getElementById('editMqttTopicSaveBtn'),
+  editMqttTopicStatus: document.getElementById('editMqttTopicStatus'),
 
   newDeviceHint: document.getElementById('newDeviceHint'),
   newDevId: document.getElementById('newDevId'),
   newDevDriver: document.getElementById('newDevDriver'),
+  newDevGatewayRow: document.getElementById('newDevGatewayRow'),
   newDevGateway: document.getElementById('newDevGateway'),
+  newDevPathRow: document.getElementById('newDevPathRow'),
   newDevPath: document.getElementById('newDevPath'),
+  newDevSlotRow: document.getElementById('newDevSlotRow'),
   newDevSlot: document.getElementById('newDevSlot'),
+  newDevPlcTypeRow: document.getElementById('newDevPlcTypeRow'),
   newDevPlcType: document.getElementById('newDevPlcType'),
+  newDevPollingModeRow: document.getElementById('newDevPollingModeRow'),
   newDevPollingMode: document.getElementById('newDevPollingMode'),
+  newDevPollingPacingRow: document.getElementById('newDevPollingPacingRow'),
   newDevPollingPacing: document.getElementById('newDevPollingPacing'),
+  newDevPollBatchSizeRow: document.getElementById('newDevPollBatchSizeRow'),
   newDevPollBatchSize: document.getElementById('newDevPollBatchSize'),
+  newDevPollTimeBudgetMsRow: document.getElementById('newDevPollTimeBudgetMsRow'),
   newDevPollTimeBudgetMs: document.getElementById('newDevPollTimeBudgetMs'),
+  newDevMqttHostRow: document.getElementById('newDevMqttHostRow'),
+  newDevMqttHost: document.getElementById('newDevMqttHost'),
+  newDevMqttPortRow: document.getElementById('newDevMqttPortRow'),
+  newDevMqttPort: document.getElementById('newDevMqttPort'),
+  newDevMqttClientIdRow: document.getElementById('newDevMqttClientIdRow'),
+  newDevMqttClientId: document.getElementById('newDevMqttClientId'),
+  newDevMqttUsernameRow: document.getElementById('newDevMqttUsernameRow'),
+  newDevMqttUsername: document.getElementById('newDevMqttUsername'),
+  newDevMqttPasswordRow: document.getElementById('newDevMqttPasswordRow'),
+  newDevMqttPassword: document.getElementById('newDevMqttPassword'),
+  newDevMqttTlsRow: document.getElementById('newDevMqttTlsRow'),
+  newDevMqttUseTls: document.getElementById('newDevMqttUseTls'),
+  newDevMqttTlsInsecureRow: document.getElementById('newDevMqttTlsInsecureRow'),
+  newDevMqttTlsInsecure: document.getElementById('newDevMqttTlsInsecure'),
+  newDevMqttCaFileRow: document.getElementById('newDevMqttCaFileRow'),
+  newDevMqttCaFile: document.getElementById('newDevMqttCaFile'),
+  newDevMqttCertFileRow: document.getElementById('newDevMqttCertFileRow'),
+  newDevMqttCertFile: document.getElementById('newDevMqttCertFile'),
+  newDevMqttKeyFileRow: document.getElementById('newDevMqttKeyFileRow'),
+  newDevMqttKeyFile: document.getElementById('newDevMqttKeyFile'),
+  newDevMqttPublishPatternsRow: document.getElementById('newDevMqttPublishPatternsRow'),
+  newDevMqttPublishPerField: document.getElementById('newDevMqttPublishPerField'),
+  newDevMqttPublishTagJson: document.getElementById('newDevMqttPublishTagJson'),
+  newDevMqttPublishMemoryTags: document.getElementById('newDevMqttPublishMemoryTags'),
+  newDevMqttPublishSystemTags: document.getElementById('newDevMqttPublishSystemTags'),
+  newDevMqttPublishModeRow: document.getElementById('newDevMqttPublishModeRow'),
+  newDevMqttPublishMode: document.getElementById('newDevMqttPublishMode'),
+  newDevMqttPublishIntervalRow: document.getElementById('newDevMqttPublishIntervalRow'),
+  newDevMqttPublishIntervalMs: document.getElementById('newDevMqttPublishIntervalMs'),
+  newDevMqttPublishMinRow: document.getElementById('newDevMqttPublishMinRow'),
+  newDevMqttPublishMinMs: document.getElementById('newDevMqttPublishMinMs'),
+  newDevMqttTestRow: document.getElementById('newDevMqttTestRow'),
+  newDevMqttTestBtn: document.getElementById('newDevMqttTestBtn'),
   newDevCancelBtn: document.getElementById('newDevCancelBtn'),
   newDevCreateBtn: document.getElementById('newDevCreateBtn'),
   newDevModalCloseBtn: document.getElementById('newDevModalCloseBtn'),
@@ -747,6 +944,15 @@ const state = {
   reporterRuntime: null,
   reporterDatabaseStatusById: new Map(),
   reporterDataCheckStatusById: new Map(),
+  historianRuntime: null,
+  historianConfig: null,
+  historianConfigDirty: false,
+  historianTags: [],
+  historianSummary: null,
+  historianPoints: [],
+  historianBuckets: [],
+  historianQueryBucket: 'auto',
+  historianHealthInFlight: false,
   loggerRunWatchIds: new Set(),
   reporterValidationById: new Map(),
   loggerSelectedNodeId: 'logger:databases',
@@ -758,17 +964,44 @@ const state = {
   loggerDataCheckEditingMode: '', // '' | 'new' | 'edit'
   loggerReportPanelTab: 'details',
   loggerReportTagDraftById: new Map(),
+  loggerReportHistorianDraftById: new Map(),
 
   loggerTagPickerAll: [],
   loggerTagPickerSelected: new Set(),
   loggerTagPickerFilter: '',
   loggerTagPickerMode: 'bulk',
+  loggerTagPickerSource: 'live',
   loggerTagPickerRowIndex: -1,
+  loggerTagPickerTreeExpanded: new Set(),
+  loggerTagPickerLoadedAtMs: 0,
+  loggerTagPickerLoadingPromise: null,
+
+  // MQTT tab
+  mqttConfigPayload: null,
+  mqttInputsJson: { messages: [], inputs: [] },
+  mqttSelectedNodeId: 'mqtt:broker:default',
+
+  // Logic tab
+  logicConfig: { scripts: [] },
+  logicSelectedId: '',
+  logicSelectedGroup: '',
+  logicCursorStart: 0,
+  logicCursorEnd: 0,
+  logicValidationTimer: null,
+  themeMode: 'auto',
 };
 
 const DRIVER_LABELS = {
-  ab_eip: 'Allen-Bradley Ethernet/IP'
+  ab_eip: 'Allen-Bradley Ethernet/IP',
+  mqtt: 'MQTT Broker'
 };
+
+const MEMORY_CONNECTION_ID = '_memory';
+
+function isMemoryTagConfig(tag) {
+  const source = String(tag?.source || tag?.source_type || tag?.source_kind || '').trim().toLowerCase();
+  return source === 'memory';
+}
 
 const ROLE_PERMISSION_DEFS = [
   { id: 'hmi.edit_screens', label: 'Edit screens (HMI editor)' },
@@ -788,6 +1021,39 @@ function hasPerm(permId) {
   const want = String(permId || '').trim();
   if (!want) return false;
   return getUserPermissions().includes(want);
+}
+
+function normalizeThemeMode(mode) {
+  const m = String(mode || '').trim().toLowerCase();
+  return (m === 'dark' || m === 'light' || m === 'auto') ? m : 'auto';
+}
+
+function resolveThemeMode(mode) {
+  const m = normalizeThemeMode(mode);
+  if (m !== 'auto') return m;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyThemeMode(mode) {
+  state.themeMode = normalizeThemeMode(mode);
+  const resolved = resolveThemeMode(state.themeMode);
+  document.documentElement.setAttribute('data-theme', resolved);
+  applyLogicEditorThemeFromMode(state.themeMode);
+}
+
+function wireThemeUi() {
+  applyThemeMode('auto');
+  if (window.matchMedia) {
+    const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = () => {
+      applyThemeMode('auto');
+    };
+    if (typeof darkQuery.addEventListener === 'function') {
+      darkQuery.addEventListener('change', handler);
+    } else if (typeof darkQuery.addListener === 'function') {
+      darkQuery.addListener(handler);
+    }
+  }
 }
 
 const PLC_TYPE_LABELS = {
@@ -847,7 +1113,19 @@ function canAccessAlarmsEventsTab() {
   return hasPerm('opcbridge.edit_config') && hasPerm('suite.manage_server');
 }
 
+function canAccessMqttTab() {
+  return hasPerm('suite.manage_server');
+}
+
+function canAccessLogicTab() {
+  return hasPerm('opcbridge.edit_config');
+}
+
 function canAccessLoggerTab() {
+  return hasPerm('suite.manage_server');
+}
+
+function canAccessHistorianTab() {
   return hasPerm('suite.manage_server');
 }
 
@@ -932,6 +1210,20 @@ function updateAlarmsEventsTabVisibility() {
   }
 }
 
+function updateLogicTabVisibility() {
+  const logicBtn = document.querySelector('.tabs .tab[data-tab="logic"]');
+  if (!logicBtn) return;
+  const canSee = canAccessLogicTab();
+  logicBtn.style.display = canSee ? '' : 'none';
+
+  if (!canSee) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel && activePanel.id === 'tab-logic') {
+      setTab('overview');
+    }
+  }
+}
+
 function updateLogsTabVisibility() {
   const logsBtn = document.querySelector('.tabs .tab[data-tab="logs"]');
   if (!logsBtn) return;
@@ -960,8 +1252,316 @@ function updateLoggerTabVisibility() {
   }
 }
 
+function updateHistorianTabVisibility() {
+  const historianBtn = document.querySelector('.tabs .tab[data-tab="historian"]');
+  if (!historianBtn) return;
+  const canSee = canAccessHistorianTab();
+  historianBtn.style.display = canSee ? '' : 'none';
+
+  if (!canSee) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel && activePanel.id === 'tab-historian') {
+      setTab('overview');
+    }
+  }
+}
+
 function loggerSetStatus(msg) {
   if (els.loggerStatus) els.loggerStatus.textContent = String(msg || '');
+}
+
+function historianSetStatus(msg) {
+  if (els.historianStatus) els.historianStatus.textContent = String(msg || '');
+}
+
+function renderHistorianHealth() {
+  if (!els.historianHealthKv) return;
+  const h = state.historianRuntime?.historian || null;
+  if (!h) {
+    els.historianHealthKv.innerHTML = '<div><b>Status</b><span>Not loaded</span></div>';
+    return;
+  }
+  const rows = [
+    ['OK', h.ok],
+    ['DB connected', h.db_connected],
+    ['Enabled tags', h.enabled_tags],
+    ['Queue depth', h.queue_depth],
+    ['Queue limit', h.queue_limit],
+    ['Dropped samples', h.dropped_samples],
+    ['Inserted samples', h.inserted_samples],
+    ['Last sample', fmtTime(h.last_sample_ms)],
+    ['Last snapshot', fmtTime(h.last_snapshot_ms)],
+    ['Last insert', fmtTime(h.last_insert_ms)],
+    ['Last error', h.last_error || '']
+  ];
+  els.historianHealthKv.innerHTML = rows.map(([k, v]) => `<div><b>${escapeHtml(k)}</b><span>${escapeHtml(String(v ?? ''))}</span></div>`).join('');
+}
+
+function renderHistorianTags() {
+  if (!els.historianTagsTbody) return;
+  els.historianTagsTbody.textContent = '';
+  const tags = Array.isArray(state.historianConfig?.historian_tags)
+    ? state.historianConfig.historian_tags
+    : (Array.isArray(state.historianTags) ? state.historianTags : []);
+  tags.forEach((t, idx) => {
+    const tr = document.createElement('tr');
+    const mk = (text, mono = false) => {
+      const td = document.createElement('td');
+      if (mono) td.classList.add('mono');
+      td.textContent = String(text ?? '');
+      return td;
+    };
+    tr.appendChild(mk(t.connection_id || '', true));
+    tr.appendChild(mk(t.tag_name || '', true));
+    const enabledTd = document.createElement('td');
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.checked = Boolean(t.enabled ?? true);
+    enabled.addEventListener('change', () => {
+      t.enabled = enabled.checked;
+      state.historianConfigDirty = true;
+      historianSetStatus('Config changed.');
+    });
+    enabledTd.appendChild(enabled);
+    tr.appendChild(enabledTd);
+
+    const intervalTd = document.createElement('td');
+    const interval = document.createElement('input');
+    interval.type = 'number';
+    interval.min = '1000';
+    interval.step = '1000';
+    interval.value = String(t.interval_ms || 60000);
+    interval.style.maxWidth = '120px';
+    interval.addEventListener('change', () => {
+      t.interval_ms = Math.max(1000, Math.trunc(Number(interval.value || 60000) || 60000));
+      interval.value = String(t.interval_ms);
+      state.historianConfigDirty = true;
+      historianSetStatus('Config changed.');
+    });
+    intervalTd.appendChild(interval);
+    tr.appendChild(intervalTd);
+
+    tr.appendChild(mk(t.mode || 'periodic'));
+    const actions = document.createElement('td');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      if (!state.historianConfig || !Array.isArray(state.historianConfig.historian_tags)) return;
+      state.historianConfig.historian_tags.splice(idx, 1);
+      state.historianConfigDirty = true;
+      renderHistorianTags();
+      historianSetStatus('Config changed.');
+    });
+    actions.appendChild(remove);
+    tr.appendChild(actions);
+    tr.addEventListener('dblclick', () => {
+      if (els.historianQueryConnection) els.historianQueryConnection.value = String(t.connection_id || '');
+      if (els.historianQueryTag) els.historianQueryTag.value = String(t.tag_name || '');
+      runHistorianQuery().catch((err) => historianSetStatus(`Query failed: ${err.message || err}`));
+    });
+    els.historianTagsTbody.appendChild(tr);
+  });
+}
+
+function normalizeHistorianConfig(cfg) {
+  const root = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? { ...cfg } : {};
+  const tags = Array.isArray(root.historian_tags) ? root.historian_tags : [];
+  const seen = new Set();
+  root.historian_tags = tags.map((t) => ({
+    connection_id: String(t?.connection_id || '').trim(),
+    tag_name: String(t?.tag_name || t?.name || '').trim(),
+    enabled: Boolean(t?.enabled ?? true),
+    interval_ms: Math.max(1000, Math.trunc(Number(t?.interval_ms || 60000) || 60000)),
+    mode: String(t?.mode || 'periodic').trim() || 'periodic',
+    include_bad_quality: Boolean(t?.include_bad_quality ?? false)
+  })).filter((t) => {
+    if (!t.connection_id || !t.tag_name) return false;
+    const key = `${t.connection_id}:${t.tag_name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (!root.postgres || typeof root.postgres !== 'object' || Array.isArray(root.postgres)) root.postgres = {};
+  return root;
+}
+
+function addHistorianTagFromSpec(spec) {
+  const parts = loggerTagSpecParts(spec);
+  if (!parts.connection_id || !parts.tag_name) return;
+  if (!state.historianConfig) state.historianConfig = normalizeHistorianConfig({});
+  if (!Array.isArray(state.historianConfig.historian_tags)) state.historianConfig.historian_tags = [];
+  const exists = state.historianConfig.historian_tags.some((t) => String(t.connection_id || '') === parts.connection_id && String(t.tag_name || '') === parts.tag_name);
+  if (exists) {
+    historianSetStatus('Tag is already configured.');
+    return;
+  }
+  state.historianConfig.historian_tags.push({
+    connection_id: parts.connection_id,
+    tag_name: parts.tag_name,
+    enabled: true,
+    interval_ms: 60000,
+    mode: 'periodic',
+    include_bad_quality: false
+  });
+  state.historianConfigDirty = true;
+  renderHistorianTags();
+  historianSetStatus('Config changed.');
+}
+
+function renderHistorianSummary() {
+  if (!els.historianSummaryKv) return;
+  const s = state.historianSummary || null;
+  if (!s) {
+    els.historianSummaryKv.innerHTML = '<div><b>Summary</b><span>No query yet</span></div>';
+    return;
+  }
+  const count = Number(s.count || 0);
+  const valueOrEmpty = (v) => (v == null ? '' : v);
+  const rows = [
+    ['Tag', `${s.connection_id || ''}:${s.tag_name || ''}`],
+    ['Range', `${fmtTime(s.from_ms)} - ${fmtTime(s.to_ms)}`],
+    ['Samples', count > 0 ? count : 'No samples yet'],
+    ['Last', valueOrEmpty(s.last)],
+    ['Min', valueOrEmpty(s.min)],
+    ['Max', valueOrEmpty(s.max)],
+    ['Avg', valueOrEmpty(s.avg)],
+    ['TWA', valueOrEmpty(s.twa)]
+  ];
+  els.historianSummaryKv.innerHTML = rows.map(([k, v]) => `<div><b>${escapeHtml(k)}</b><span>${escapeHtml(String(v ?? ''))}</span></div>`).join('');
+}
+
+function renderHistorianPoints() {
+  if (!els.historianPointsTbody) return;
+  els.historianPointsTbody.textContent = '';
+  const bucketMode = String(state.historianQueryBucket || 'auto') !== 'raw';
+  if (els.historianPointsTitle) els.historianPointsTitle.textContent = bucketMode ? 'Bucketed Points' : 'Raw Points';
+  if (els.historianPointsHeadRow) {
+    const headers = bucketMode
+      ? ['Bucket', 'Count', 'Min', 'Max', 'Avg']
+      : ['Timestamp', 'Value', 'Quality'];
+    els.historianPointsHeadRow.innerHTML = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+  }
+  const rows = bucketMode
+    ? (Array.isArray(state.historianBuckets) ? state.historianBuckets : [])
+    : (Array.isArray(state.historianPoints) ? state.historianPoints : []);
+  rows.forEach((p) => {
+    const tr = document.createElement('tr');
+    const mk = (text, mono = false) => {
+      const td = document.createElement('td');
+      if (mono) td.classList.add('mono');
+      td.textContent = String(text ?? '');
+      return td;
+    };
+    if (bucketMode) {
+      tr.appendChild(mk(`${fmtTime(p.bucket_start_ms)} - ${fmtTime(p.bucket_end_ms)}`, true));
+      tr.appendChild(mk(p.count ?? '', true));
+      tr.appendChild(mk(p.min ?? '', true));
+      tr.appendChild(mk(p.max ?? '', true));
+      tr.appendChild(mk(p.avg ?? '', true));
+    } else {
+      tr.appendChild(mk(fmtTime(p.ts_ms), true));
+      tr.appendChild(mk(p.value, true));
+      tr.appendChild(mk(p.quality ?? ''));
+    }
+    els.historianPointsTbody.appendChild(tr);
+  });
+}
+
+async function refreshHistorianTab() {
+  historianSetStatus('Loading...');
+  const [health, tags, config] = await Promise.all([
+    apiGet('/api/historian/runtime/status').catch((err) => ({ ok: false, error: String(err.message || err) })),
+    apiGet('/api/historian/tags').catch((err) => ({ ok: false, error: String(err.message || err), tags: [] })),
+    apiGet('/api/historian/config').catch((err) => ({ ok: false, error: String(err.message || err), config: null }))
+  ]);
+  state.historianRuntime = health?.ok ? health : { historian: null, error: health?.error || 'Historian unavailable' };
+  state.historianTags = Array.isArray(tags?.tags) ? tags.tags : [];
+  if (config?.ok) {
+    state.historianConfig = normalizeHistorianConfig(config.config || {});
+    state.historianConfigDirty = false;
+  }
+  renderHistorianHealth();
+  renderHistorianTags();
+  historianSetStatus(health?.ok ? 'Loaded' : `Unavailable: ${health?.error || 'failed'}`);
+}
+
+async function refreshHistorianRuntimeStatus() {
+  if (state.historianHealthInFlight) return state.historianRuntime;
+  state.historianHealthInFlight = true;
+  try {
+    const health = await apiGet('/api/historian/runtime/status');
+    state.historianRuntime = health?.ok ? health : { historian: null, error: health?.error || 'Historian unavailable' };
+    renderHistorianHealth();
+    return health;
+  } catch (err) {
+    state.historianRuntime = { historian: null, error: String(err.message || err || 'Historian unavailable') };
+    renderHistorianHealth();
+    return state.historianRuntime;
+  } finally {
+    state.historianHealthInFlight = false;
+  }
+}
+
+async function saveHistorianConfig() {
+  if (!state.historianConfig) state.historianConfig = normalizeHistorianConfig({});
+  historianSetStatus('Saving config...');
+  const cfg = normalizeHistorianConfig(state.historianConfig);
+  const resp = await apiPostJson('/api/historian/config', { config: cfg });
+  if (!resp?.ok) throw new Error(String(resp?.error || 'Save failed'));
+  state.historianConfig = normalizeHistorianConfig(resp.config || cfg);
+  state.historianConfigDirty = false;
+  renderHistorianTags();
+  historianSetStatus('Saved. Restart historian to apply changes.');
+}
+
+async function restartHistorianService() {
+  historianSetStatus('Applying historian config...');
+  const resp = await apiPostJson('/api/historian/reload', {});
+  if (!resp?.ok) throw new Error(String(resp?.error || 'Apply failed'));
+  const warning = resp?.warning ? ` ${resp.warning}` : '';
+  historianSetStatus(`Applied.${warning}`);
+  window.setTimeout(() => refreshHistorianTab().catch((err) => historianSetStatus(`Refresh failed: ${err.message || err}`)), 500);
+}
+
+async function runHistorianQuery() {
+  const cid = String(els.historianQueryConnection?.value || '').trim();
+  const tag = String(els.historianQueryTag?.value || '').trim();
+  const range = String(els.historianQueryRange?.value || '1h').trim() || '1h';
+  const bucket = String(els.historianQueryBucket?.value || 'auto').trim() || 'auto';
+  const limit = Math.max(1, Math.min(100000, Math.trunc(Number(els.historianQueryLimit?.value || 1000) || 1000)));
+  if (!cid || !tag) throw new Error('Connection and tag are required.');
+  historianSetStatus('Querying...');
+  const qs = new URLSearchParams({ connection_id: cid, tag_name: tag, range, limit: String(limit) });
+  if (bucket) qs.set('bucket', bucket);
+  const [summary, query] = await Promise.all([
+    apiGet(`/api/historian/summary?${qs.toString()}`),
+    apiGet(`/api/historian/query?${qs.toString()}`)
+  ]);
+  state.historianSummary = summary?.ok ? summary : null;
+  state.historianQueryBucket = bucket;
+  state.historianPoints = Array.isArray(query?.points) ? query.points : [];
+  state.historianBuckets = Array.isArray(query?.buckets) ? query.buckets : [];
+  renderHistorianSummary();
+  renderHistorianPoints();
+  const rowCount = bucket === 'raw' ? state.historianPoints.length : state.historianBuckets.length;
+  historianSetStatus(`Query complete: ${rowCount} ${bucket === 'raw' ? 'point' : 'bucket'}(s)`);
+}
+
+function wireHistorianUi() {
+  els.historianRefreshBtn?.addEventListener('click', () => refreshHistorianTab().catch((err) => historianSetStatus(`Refresh failed: ${err.message || err}`)));
+  els.historianAddTagBtn?.addEventListener('click', () => openLoggerTagPickerModal({ mode: 'historian_add' }));
+  els.historianSaveConfigBtn?.addEventListener('click', () => saveHistorianConfig().catch((err) => historianSetStatus(`Save failed: ${err.message || err}`)));
+  els.historianRestartBtn?.addEventListener('click', () => restartHistorianService().catch((err) => historianSetStatus(`Restart failed: ${err.message || err}`)));
+  els.historianRunQueryBtn?.addEventListener('click', () => runHistorianQuery().catch((err) => historianSetStatus(`Query failed: ${err.message || err}`)));
+  els.historianQueryBucket?.addEventListener('change', () => {
+    state.historianQueryBucket = String(els.historianQueryBucket?.value || 'auto') || 'auto';
+    renderHistorianPoints();
+  });
+  renderHistorianHealth();
+  renderHistorianSummary();
+  renderHistorianPoints();
 }
 
 function loggerModalSetStatus(msg) {
@@ -1409,6 +2009,7 @@ function normalizeReportTagEntries(tags) {
         out.push({
           connection_id: parts.connection_id,
           name: parts.tag_name,
+          field_name: '',
           description: ''
         });
       }
@@ -1421,6 +2022,7 @@ function normalizeReportTagEntries(tags) {
       out.push({
         connection_id: cid,
         name,
+        field_name: String(t.field_name || t.output_field || t.output_name || '').trim(),
         description: String(t.description || t.desc || '').trim()
       });
     }
@@ -1436,8 +2038,32 @@ function loggerTagEntrySpec(entry) {
 
 function loggerTagEntryLine(entry) {
   const spec = loggerTagEntrySpec(entry);
+  const output = String(entry?.field_name || entry?.output_field || '').trim();
   const desc = String(entry?.description || '').trim();
-  return desc ? `${spec}\t${desc}` : spec;
+  if (output || desc) return `${spec}\t${output}\t${desc}`;
+  return spec;
+}
+
+function normalizeHistorianFieldEntries(fields) {
+  const out = [];
+  const arr = Array.isArray(fields) ? fields : [];
+  for (const f of arr) {
+    if (!f || typeof f !== 'object' || Array.isArray(f)) continue;
+    const connectionId = String(f.connection_id || '').trim();
+    const tagName = String(f.tag_name || f.name || '').trim();
+    const range = String(f.range || '1h').trim() || '1h';
+    const statistic = String(f.statistic || 'avg').trim().toLowerCase() || 'avg';
+    if (!connectionId || !tagName) continue;
+    out.push({
+      connection_id: connectionId,
+      tag_name: tagName,
+      range,
+      statistic: ['last', 'min', 'max', 'avg', 'twa', 'count'].includes(statistic) ? statistic : 'avg',
+      field_name: String(f.field_name || '').trim(),
+      description: String(f.description || '').trim()
+    });
+  }
+  return out;
 }
 
 function renderLoggerReportDetails() {
@@ -1484,7 +2110,7 @@ function renderLoggerReportDetails() {
   tabs.style.marginBottom = '10px';
   const detailsTab = document.createElement('button');
   detailsTab.className = 'btn';
-  detailsTab.classList.toggle('primary', state.loggerReportPanelTab !== 'tags');
+  detailsTab.classList.toggle('primary', state.loggerReportPanelTab === 'details');
   detailsTab.type = 'button';
   detailsTab.textContent = 'Details';
   detailsTab.addEventListener('click', () => {
@@ -1500,12 +2126,26 @@ function renderLoggerReportDetails() {
     state.loggerReportPanelTab = 'tags';
     renderLoggerReportDetails();
   });
+  const historianTab = document.createElement('button');
+  historianTab.className = 'btn';
+  historianTab.classList.toggle('primary', state.loggerReportPanelTab === 'historian');
+  historianTab.type = 'button';
+  historianTab.textContent = 'Historian Fields';
+  historianTab.addEventListener('click', () => {
+    state.loggerReportPanelTab = 'historian';
+    renderLoggerReportDetails();
+  });
   tabs.appendChild(detailsTab);
   tabs.appendChild(tagsTab);
+  tabs.appendChild(historianTab);
   els.loggerReportDetails.appendChild(tabs);
 
   if (state.loggerReportPanelTab === 'tags') {
     renderLoggerReportTagsPanel(report);
+    return;
+  }
+  if (state.loggerReportPanelTab === 'historian') {
+    renderLoggerReportHistorianPanel(report);
     return;
   }
 
@@ -1560,8 +2200,9 @@ function renderSelectedLoggerTagPanel(entries) {
 
 function renderLoggerReportTagsPanel(report, entriesOverride = null) {
   if (!els.loggerReportDetails) return;
+  els.loggerReportDetails.querySelectorAll('[data-logger-tags-panel="1"]').forEach((el) => el.remove());
   const active = document.activeElement;
-  if (!Array.isArray(entriesOverride) && active && els.loggerReportDetails.contains(active) && active.matches('[data-logger-tag-input="1"], [data-logger-desc-input="1"]')) {
+  if (!Array.isArray(entriesOverride) && active && els.loggerReportDetails.contains(active) && active.matches('[data-logger-tag-connection="1"], [data-logger-tag-input="1"], [data-logger-output-input="1"], [data-logger-desc-input="1"]')) {
     return;
   }
   const rid = String(report?.id || '').trim();
@@ -1573,6 +2214,7 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
 
   const actions = document.createElement('div');
   actions.className = 'row-actions';
+  actions.dataset.loggerTagsPanel = '1';
   actions.style.marginBottom = '10px';
 
   const saveBtn = document.createElement('button');
@@ -1581,13 +2223,6 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
   saveBtn.textContent = 'Save + Apply Tags';
   saveBtn.addEventListener('click', () => saveLoggerReportTagsFromPanel(report).catch(() => {}));
   actions.appendChild(saveBtn);
-
-  const selectBtn = document.createElement('button');
-  selectBtn.className = 'btn';
-  selectBtn.type = 'button';
-  selectBtn.textContent = 'Select Tags…';
-  selectBtn.addEventListener('click', () => openLoggerTagPickerModal({ mode: 'panel_bulk' }));
-  actions.appendChild(selectBtn);
 
   const downloadBtn = document.createElement('button');
   downloadBtn.className = 'btn';
@@ -1608,6 +2243,7 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
   els.loggerReportDetails.appendChild(actions);
 
   const table = document.createElement('div');
+  table.dataset.loggerTagsPanel = '1';
   table.style.display = 'flex';
   table.style.flexDirection = 'column';
   table.style.gap = '8px';
@@ -1615,9 +2251,9 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
 
   const header = document.createElement('div');
   header.style.display = 'grid';
-  header.style.gridTemplateColumns = 'minmax(280px, 1.2fr) minmax(280px, 1fr) minmax(190px, auto)';
+  header.style.gridTemplateColumns = 'minmax(150px, .8fr) minmax(240px, 1.1fr) minmax(190px, .9fr) minmax(260px, 1.1fr) minmax(190px, auto)';
   header.style.gap = '8px 10px';
-  ['Tag', 'Description', 'Actions'].forEach((label) => {
+  ['Connection', 'Tag', 'Output Field', 'Description', 'Actions'].forEach((label) => {
     const h = document.createElement('div');
     h.className = 'small';
     h.textContent = label;
@@ -1630,16 +2266,30 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
     row.dataset.loggerTagRow = '1';
     row.dataset.loggerRowIndex = String(idx);
     row.style.display = 'grid';
-    row.style.gridTemplateColumns = 'minmax(280px, 1.2fr) minmax(280px, 1fr) minmax(190px, auto)';
+    row.style.gridTemplateColumns = header.style.gridTemplateColumns;
     row.style.gap = '8px 10px';
     row.style.alignItems = 'center';
     row.style.width = '100%';
 
+    const connInput = document.createElement('input');
+    connInput.className = 'mono';
+    connInput.dataset.loggerTagConnection = '1';
+    connInput.placeholder = 'PLC1';
+    connInput.value = String(entry?.connection_id || '').trim();
+    connInput.addEventListener('input', () => {
+      state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
+    });
+    connInput.addEventListener('change', () => {
+      const current = collectLoggerReportTagPanelEntries();
+      state.loggerReportTagDraftById.set(rid, current);
+      renderLoggerReportTagsPanel(report, current);
+    });
+
     const tagInput = document.createElement('input');
     tagInput.className = 'mono';
     tagInput.dataset.loggerTagInput = '1';
-    tagInput.placeholder = 'connection_id:tag_name or wildcard';
-    tagInput.value = loggerTagEntrySpec(entry);
+    tagInput.placeholder = 'tag_name or wildcard';
+    tagInput.value = String(entry?.name || entry?.tag_name || '').trim();
     tagInput.addEventListener('input', () => {
       state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
     });
@@ -1655,6 +2305,20 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
     descInput.value = String(entry?.description || '');
     descInput.addEventListener('input', () => {
       state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
+    });
+
+    const outputInput = document.createElement('input');
+    outputInput.className = 'mono';
+    outputInput.dataset.loggerOutputInput = '1';
+    outputInput.placeholder = 'Defaults to tag name';
+    outputInput.value = String(entry?.field_name || entry?.output_field || '').trim();
+    outputInput.addEventListener('input', () => {
+      state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
+    });
+    outputInput.addEventListener('change', () => {
+      const current = collectLoggerReportTagPanelEntries();
+      state.loggerReportTagDraftById.set(rid, current);
+      renderLoggerReportTagsPanel(report, current);
     });
 
     const rowActions = document.createElement('div');
@@ -1679,13 +2343,212 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
       rowActions.appendChild(removeBtn);
     }
 
+    row.appendChild(connInput);
     row.appendChild(tagInput);
+    row.appendChild(outputInput);
     row.appendChild(descInput);
     row.appendChild(rowActions);
     table.appendChild(row);
   });
 
   els.loggerReportDetails.appendChild(table);
+}
+
+function collectLoggerReportHistorianPanelEntries() {
+  const root = els.loggerReportDetails;
+  if (!root) return [];
+  const rows = Array.from(root.querySelectorAll('[data-logger-historian-row="1"]'));
+  const out = [];
+  const seen = new Set();
+  rows.forEach((row) => {
+    const connectionId = String(row.querySelector('[data-logger-historian-connection="1"]')?.value || '').trim();
+    const tagName = String(row.querySelector('[data-logger-historian-tag="1"]')?.value || '').trim();
+    const range = String(row.querySelector('[data-logger-historian-range="1"]')?.value || '1h').trim() || '1h';
+    const statistic = String(row.querySelector('[data-logger-historian-statistic="1"]')?.value || 'avg').trim().toLowerCase() || 'avg';
+    const fieldName = String(row.querySelector('[data-logger-historian-field="1"]')?.value || '').trim();
+    const description = String(row.querySelector('[data-logger-historian-desc="1"]')?.value || '').trim();
+    if (!connectionId || !tagName) return;
+    const key = `${connectionId}\u001f${tagName}\u001f${range}\u001f${statistic}\u001f${fieldName}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({
+      connection_id: connectionId,
+      tag_name: tagName,
+      range,
+      statistic: ['last', 'min', 'max', 'avg', 'twa', 'count'].includes(statistic) ? statistic : 'avg',
+      field_name: fieldName,
+      description
+    });
+  });
+  return out;
+}
+
+function parseHistorianFieldsPanelToSet() {
+  const set = new Set();
+  collectLoggerReportHistorianPanelEntries().forEach((entry) => {
+    const cid = String(entry?.connection_id || '').trim();
+    const tag = String(entry?.tag_name || '').trim();
+    if (cid && tag) set.add(`${cid}:${tag}`);
+  });
+  return set;
+}
+
+function renderLoggerReportHistorianPanel(report, entriesOverride = null) {
+  if (!els.loggerReportDetails) return;
+  els.loggerReportDetails.querySelectorAll('[data-logger-historian-panel="1"]').forEach((el) => el.remove());
+  const active = document.activeElement;
+  if (!Array.isArray(entriesOverride) && active && els.loggerReportDetails.contains(active) && active.matches('[data-logger-historian-connection="1"], [data-logger-historian-tag="1"], [data-logger-historian-range="1"], [data-logger-historian-field="1"], [data-logger-historian-desc="1"]')) {
+    return;
+  }
+  const rid = String(report?.id || '').trim();
+  const draft = rid ? state.loggerReportHistorianDraftById.get(rid) : null;
+  const entries = Array.isArray(entriesOverride)
+    ? entriesOverride
+    : (Array.isArray(draft) ? draft : normalizeHistorianFieldEntries(report?.historian_fields));
+  const rows = entries.concat([{ connection_id: '', tag_name: '', range: '1h', statistic: 'avg', field_name: '', description: '' }]);
+
+  const actions = document.createElement('div');
+  actions.className = 'row-actions';
+  actions.dataset.loggerHistorianPanel = '1';
+  actions.style.marginBottom = '10px';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn primary';
+  saveBtn.type = 'button';
+  saveBtn.textContent = 'Save + Apply Historian Fields';
+  saveBtn.addEventListener('click', () => saveLoggerReportHistorianFieldsFromPanel(report).catch(() => {}));
+  actions.appendChild(saveBtn);
+
+  els.loggerReportDetails.appendChild(actions);
+
+  const table = document.createElement('div');
+  table.dataset.loggerHistorianPanel = '1';
+  table.style.display = 'flex';
+  table.style.flexDirection = 'column';
+  table.style.gap = '8px';
+  table.style.width = '100%';
+
+  const header = document.createElement('div');
+  header.style.display = 'grid';
+  header.style.gridTemplateColumns = 'minmax(150px, .8fr) minmax(220px, 1.1fr) minmax(110px, .5fr) minmax(110px, .5fr) minmax(190px, .9fr) minmax(240px, 1.2fr) minmax(190px, auto)';
+  header.style.gap = '8px 10px';
+  ['Connection', 'Tag', 'Range', 'Statistic', 'Output Field', 'Description', 'Actions'].forEach((label) => {
+    const h = document.createElement('div');
+    h.className = 'small';
+    h.textContent = label;
+    header.appendChild(h);
+  });
+  table.appendChild(header);
+
+  rows.forEach((entry, idx) => {
+    const row = document.createElement('div');
+    row.dataset.loggerHistorianRow = '1';
+    row.dataset.loggerHistorianRowIndex = String(idx);
+    row.style.display = 'grid';
+    row.style.gridTemplateColumns = header.style.gridTemplateColumns;
+    row.style.gap = '8px 10px';
+    row.style.alignItems = 'center';
+    row.style.width = '100%';
+
+    const mkInput = (attr, value, placeholder = '') => {
+      const input = document.createElement('input');
+      input.className = 'mono';
+      input.dataset[attr] = '1';
+      input.placeholder = placeholder;
+      input.value = String(value || '');
+      input.addEventListener('input', () => {
+        state.loggerReportHistorianDraftById.set(rid, collectLoggerReportHistorianPanelEntries());
+      });
+      input.addEventListener('change', () => {
+        const current = collectLoggerReportHistorianPanelEntries();
+        state.loggerReportHistorianDraftById.set(rid, current);
+        renderLoggerReportHistorianPanel(report, current);
+      });
+      return input;
+    };
+
+    const connInput = mkInput('loggerHistorianConnection', entry.connection_id, 'PLC1');
+    connInput.dataset.loggerHistorianConnection = '1';
+    const tagInput = mkInput('loggerHistorianTag', entry.tag_name, 'Flow');
+    tagInput.dataset.loggerHistorianTag = '1';
+    const rangeInput = mkInput('loggerHistorianRange', entry.range || '1h', '1h');
+    rangeInput.dataset.loggerHistorianRange = '1';
+    const fieldInput = mkInput('loggerHistorianField', entry.field_name, 'flow_1h_avg');
+    fieldInput.dataset.loggerHistorianField = '1';
+    const descInput = mkInput('loggerHistorianDesc', entry.description, 'Optional description');
+    descInput.dataset.loggerHistorianDesc = '1';
+    descInput.classList.remove('mono');
+
+    const statSelect = document.createElement('select');
+    statSelect.dataset.loggerHistorianStatistic = '1';
+    ['last', 'min', 'max', 'avg', 'twa', 'count'].forEach((s) => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      statSelect.appendChild(opt);
+    });
+    statSelect.value = String(entry.statistic || 'avg').toLowerCase();
+    statSelect.addEventListener('change', () => {
+      const current = collectLoggerReportHistorianPanelEntries();
+      state.loggerReportHistorianDraftById.set(rid, current);
+      renderLoggerReportHistorianPanel(report, current);
+    });
+
+    const rowActions = document.createElement('div');
+    rowActions.className = 'row-actions';
+    const chooseBtn = document.createElement('button');
+    chooseBtn.className = 'btn';
+    chooseBtn.type = 'button';
+    chooseBtn.textContent = 'Select Tag';
+    chooseBtn.addEventListener('click', () => openLoggerTagPickerModal({ mode: 'historian_field_row', rowIndex: idx }));
+    rowActions.appendChild(chooseBtn);
+    if (idx < rows.length - 1) {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn danger';
+      removeBtn.type = 'button';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        const current = collectLoggerReportHistorianPanelEntries();
+        current.splice(idx, 1);
+        state.loggerReportHistorianDraftById.set(rid, current);
+        renderLoggerReportHistorianPanel(report, current);
+      });
+      rowActions.appendChild(removeBtn);
+    }
+
+    row.appendChild(connInput);
+    row.appendChild(tagInput);
+    row.appendChild(rangeInput);
+    row.appendChild(statSelect);
+    row.appendChild(fieldInput);
+    row.appendChild(descInput);
+    row.appendChild(rowActions);
+    table.appendChild(row);
+  });
+
+  els.loggerReportDetails.appendChild(table);
+}
+
+async function saveLoggerReportHistorianFieldsFromPanel(report) {
+  const rid = String(report?.id || '').trim();
+  if (!rid) return;
+  const historianFields = collectLoggerReportHistorianPanelEntries();
+  const next = { ...report, historian_fields: historianFields };
+  loggerSetStatus(`Saving ${historianFields.length} historian field(s) for '${rid}'...`);
+  const save = await apiPostJson('/api/reporter/reports', { report: next });
+  if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
+
+  loggerSetStatus('Reloading reporter service...');
+  const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
+  if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
+
+  await refreshReporterAll();
+  state.loggerReportHistorianDraftById.delete(rid);
+  state.loggerSelectedNodeId = `logger:report:${rid}`;
+  state.loggerReportPanelTab = 'historian';
+  renderLoggerTree();
+  renderLoggerDetails();
+  loggerSetStatus(`Updated '${rid}' with ${historianFields.length} historian field(s).`);
 }
 
 function renderLoggerReportsTable() {
@@ -2219,8 +3082,21 @@ function closeLoggerReportModal() {
 function closeLoggerTagPickerModal() {
   if (els.loggerTagPickerModal) els.loggerTagPickerModal.style.display = 'none';
   if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = '';
+  const title = document.getElementById('loggerTagPickerTitle');
+  if (title) title.textContent = 'Select Tags';
+  if (els.loggerTagPickerApplyBtn) els.loggerTagPickerApplyBtn.textContent = 'Apply Selection';
+  if (els.loggerTagPickerSelectAllBtn) els.loggerTagPickerSelectAllBtn.style.display = '';
+  if (els.loggerTagPickerClearBtn) els.loggerTagPickerClearBtn.style.display = '';
   state.loggerTagPickerMode = 'bulk';
   state.loggerTagPickerRowIndex = -1;
+}
+
+function isLoggerTagPickerSingleMode(mode = state.loggerTagPickerMode) {
+  return ['panel_row', 'panel_add', 'logic_insert', 'historian_add', 'historian_field_row', 'historian_field_add'].includes(String(mode || ''));
+}
+
+function isLoggerTagPickerTreeMode(mode = state.loggerTagPickerMode) {
+  return ['panel_row', 'panel_add', 'logic_insert', 'historian_add', 'historian_field_row', 'historian_field_add'].includes(String(mode || ''));
 }
 
 function tagKeyFromLiveTag(t) {
@@ -2228,6 +3104,13 @@ function tagKeyFromLiveTag(t) {
   const name = String(t?.name || '').trim();
   if (!cid || !name) return '';
   return `${cid}:${name}`;
+}
+
+function displayConnectionName(connectionId) {
+  const cid = String(connectionId || '').trim();
+  if (cid === MEMORY_CONNECTION_ID) return 'Memory';
+  if (cid === '_system') return 'System';
+  return cid;
 }
 
 function parseReportTagsTextToSet() {
@@ -2248,17 +3131,23 @@ function collectLoggerReportTagPanelEntries() {
   const out = [];
   const seen = new Set();
   rows.forEach((row) => {
+    const connInput = row.querySelector('[data-logger-tag-connection="1"]');
     const tagInput = row.querySelector('[data-logger-tag-input="1"]');
+    const outputInput = row.querySelector('[data-logger-output-input="1"]');
     const descInput = row.querySelector('[data-logger-desc-input="1"]');
-    const spec = String(tagInput?.value || '').trim();
-    if (!spec) return;
-    const parts = loggerTagSpecParts(spec);
+    const connText = String(connInput?.value || '').trim();
+    const tagText = String(tagInput?.value || '').trim();
+    if (!connText && !tagText) return;
+    const parts = connText
+      ? { connection_id: connText, tag_name: tagText, tag_spec: `${connText}:${tagText}` }
+      : loggerTagSpecParts(tagText);
     if (!parts.connection_id || !parts.tag_name) return;
     if (seen.has(parts.tag_spec)) return;
     seen.add(parts.tag_spec);
     out.push({
       connection_id: parts.connection_id,
       name: parts.tag_name,
+      field_name: String(outputInput?.value || '').trim(),
       description: String(descInput?.value || '').trim()
     });
   });
@@ -2277,6 +3166,13 @@ function parseReportTagsPanelToSet() {
 
 function renderLoggerTagPickerTable() {
   if (!els.loggerTagPickerTbody) return;
+  const treeMode = isLoggerTagPickerTreeMode();
+  if (els.loggerTagPickerTreeWrap) els.loggerTagPickerTreeWrap.style.display = treeMode ? '' : 'none';
+  if (els.loggerTagPickerTableWrap) els.loggerTagPickerTableWrap.style.display = treeMode ? 'none' : '';
+  if (treeMode) {
+    renderLoggerTagPickerTree();
+    return;
+  }
   const all = Array.isArray(state.loggerTagPickerAll) ? state.loggerTagPickerAll : [];
   const q = String(state.loggerTagPickerFilter || '').toLowerCase();
   els.loggerTagPickerTbody.textContent = '';
@@ -2304,22 +3200,22 @@ function renderLoggerTagPickerTable() {
     td0.className = 'cell-check';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    if (state.loggerTagPickerMode === 'panel_row') cb.type = 'radio';
+    if (isLoggerTagPickerSingleMode()) cb.type = 'radio';
     cb.checked = state.loggerTagPickerSelected.has(key);
     cb.addEventListener('change', () => {
-      if (state.loggerTagPickerMode === 'panel_row') {
+      if (isLoggerTagPickerSingleMode()) {
         state.loggerTagPickerSelected = cb.checked ? new Set([key]) : new Set();
       } else if (cb.checked) state.loggerTagPickerSelected.add(key);
       else state.loggerTagPickerSelected.delete(key);
       if (els.loggerTagPickerStatus) {
-        els.loggerTagPickerStatus.textContent = state.loggerTagPickerMode === 'panel_row' ? '1 selected' : `${state.loggerTagPickerSelected.size} selected`;
+        els.loggerTagPickerStatus.textContent = isLoggerTagPickerSingleMode() ? '1 selected' : `${state.loggerTagPickerSelected.size} selected`;
       }
-      if (state.loggerTagPickerMode === 'panel_row' && cb.checked) applyLoggerTagPickerSelectionToTextarea();
+      if (isLoggerTagPickerSingleMode() && cb.checked) applyLoggerTagPickerSelectionToTextarea();
     });
     td0.appendChild(cb);
 
     tr.appendChild(td0);
-    tr.appendChild(mk(String(t?.connection_id || ''), true));
+    tr.appendChild(mk(displayConnectionName(t?.connection_id), true));
     tr.appendChild(mk(String(t?.name || ''), true));
     tr.appendChild(mk(String(t?.datatype || ''), true));
     tr.appendChild(mk(t?.writable ? 'yes' : 'no', false));
@@ -2333,61 +3229,485 @@ function renderLoggerTagPickerTable() {
   });
 
   if (els.loggerTagPickerStatus) {
-    const prefix = state.loggerTagPickerMode === 'panel_row' ? 'Choose one tag' : `${state.loggerTagPickerSelected.size} selected`;
+    const prefix = isLoggerTagPickerSingleMode() ? 'Choose one tag' : `${state.loggerTagPickerSelected.size} selected`;
     els.loggerTagPickerStatus.textContent = `${prefix} · ${filtered.length} shown`;
+  }
+}
+
+function normalizeLoggerTagPickerTags(rawTags) {
+  const raw = Array.isArray(rawTags) ? rawTags : [];
+  const seen = new Set();
+  const out = [];
+  raw.forEach((t) => {
+    const key = tagKeyFromLiveTag(t);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(t);
+  });
+  out.sort((a, b) => tagKeyFromLiveTag(a).localeCompare(tagKeyFromLiveTag(b), undefined, { sensitivity: 'base', numeric: true }));
+  return out;
+}
+
+function invalidateLoggerTagPickerCache() {
+  state.loggerTagPickerAll = [];
+  state.loggerTagPickerLoadedAtMs = 0;
+  state.loggerTagPickerLoadingPromise = null;
+  state.loggerTagPickerSource = 'live';
+}
+
+function loggerTagPickerSourceForMode(mode) {
+  return ['historian_field_row', 'historian_field_add'].includes(String(mode || '')) ? 'historian' : 'live';
+}
+
+async function ensureLoggerTagPickerCache({ force = false, source = 'live' } = {}) {
+  const wantedSource = String(source || 'live');
+  if (state.loggerTagPickerSource !== wantedSource) {
+    state.loggerTagPickerAll = [];
+    state.loggerTagPickerLoadedAtMs = 0;
+    state.loggerTagPickerLoadingPromise = null;
+    state.loggerTagPickerSource = wantedSource;
+  }
+  if (!force && Array.isArray(state.loggerTagPickerAll) && state.loggerTagPickerAll.length > 0) {
+    return state.loggerTagPickerAll;
+  }
+  if (!force && state.loggerTagPickerLoadingPromise) return state.loggerTagPickerLoadingPromise;
+
+  const url = wantedSource === 'historian' ? '/api/historian/tags' : '/api/opcbridge/tags';
+  state.loggerTagPickerLoadingPromise = apiGet(url, { timeoutMs: 30000 })
+    .then((resp) => {
+      const raw = wantedSource === 'historian'
+        ? (Array.isArray(resp?.tags) ? resp.tags.map((t) => ({
+          connection_id: t?.connection_id,
+          name: t?.tag_name || t?.name,
+          datatype: 'historian',
+          writable: false
+        })) : [])
+        : resp?.tags;
+      const out = normalizeLoggerTagPickerTags(raw);
+      state.loggerTagPickerAll = out;
+      state.loggerTagPickerLoadedAtMs = Date.now();
+      return out;
+    })
+    .finally(() => {
+      state.loggerTagPickerLoadingPromise = null;
+    });
+  return state.loggerTagPickerLoadingPromise;
+}
+
+function preloadLoggerTagPickerCache() {
+  if (state.loggerTagPickerLoadingPromise || (Array.isArray(state.loggerTagPickerAll) && state.loggerTagPickerAll.length > 0)) return;
+  ensureLoggerTagPickerCache().catch(() => {});
+}
+
+function insertLogicSelectedTagName() {
+  const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+  if (!selected) return false;
+  const parts = loggerTagSpecParts(selected);
+  if (!parts.tag_name) return false;
+  insertLogicText(JSON.stringify(parts.tag_name));
+  setLogicStatus(`Inserted ${parts.tag_name}`);
+  closeLoggerTagPickerModal();
+  return true;
+}
+
+function insertLogicSelectedFullTagCall() {
+  const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+  if (!selected) return false;
+  insertLogicTagReference(selected);
+  closeLoggerTagPickerModal();
+  return true;
+}
+
+function loggerTagPickerFilteredTags() {
+  const all = Array.isArray(state.loggerTagPickerAll) ? state.loggerTagPickerAll : [];
+  const q = String(state.loggerTagPickerFilter || '').toLowerCase();
+  return all.filter((t) => {
+    if (!q) return true;
+    const cid = String(t?.connection_id || '').toLowerCase();
+    const displayCid = displayConnectionName(t?.connection_id).toLowerCase();
+    const name = String(t?.name || '').toLowerCase();
+    const datatype = String(t?.datatype || '').toLowerCase();
+    return cid.includes(q) || displayCid.includes(q) || name.includes(q) || datatype.includes(q);
+  });
+}
+
+function loggerTagPickerPathParts(name) {
+  const text = String(name || '').trim();
+  if (!text) return [];
+  return text.split('/').map((p) => p.trim()).filter(Boolean);
+}
+
+function makeLoggerTagPickerNode(id, label, type, meta = {}) {
+  return { id, label, type, meta, children: [], childMap: new Map() };
+}
+
+function addLoggerTagPickerChild(parent, id, label, type, meta = {}) {
+  let child = parent.childMap.get(label);
+  if (!child) {
+    child = makeLoggerTagPickerNode(id, label, type, meta);
+    parent.childMap.set(label, child);
+    parent.children.push(child);
+  }
+  if (meta && Object.keys(meta).length) child.meta = { ...(child.meta || {}), ...meta };
+  return child;
+}
+
+function buildLoggerTagPickerTree() {
+  const root = makeLoggerTagPickerNode('tagpicker:root', 'Tags', 'root');
+  const connById = new Map();
+  const filtered = loggerTagPickerFilteredTags();
+  filtered.forEach((t) => {
+    const key = tagKeyFromLiveTag(t);
+    if (!key) return;
+    const cid = String(t.connection_id || '').trim();
+    if (!cid) return;
+    let conn = connById.get(cid);
+    if (!conn) {
+      const connLabel = displayConnectionName(cid);
+      const connId = `tagpicker:conn:${cid}`;
+      conn = addLoggerTagPickerChild(root, connId, connLabel, 'connection', { connection_id: cid });
+      connById.set(cid, conn);
+    }
+
+    const parts = loggerTagPickerPathParts(t.name);
+    if (!parts.length) return;
+    let parent = conn;
+    let path = '';
+    parts.forEach((part, idx) => {
+      path = path ? `${path}/${part}` : part;
+      const isLeaf = idx === parts.length - 1;
+      const nodeId = `tagpicker:${cid}:${path}`;
+      parent = addLoggerTagPickerChild(parent, nodeId, part, isLeaf ? 'tag' : 'folder', isLeaf ? {
+        tag_key: key,
+        connection_id: cid,
+        tag_name: String(t.name || ''),
+        datatype: String(t.datatype || ''),
+        writable: Boolean(t.writable)
+      } : { connection_id: cid, path });
+      if (isLeaf) parent.type = 'tag';
+    });
+  });
+
+  const sortNode = (node) => {
+    node.children.sort((a, b) => {
+      if (a.type === 'connection' && b.type === 'connection') {
+        const ca = String(a.meta?.connection_id || '');
+        const cb = String(b.meta?.connection_id || '');
+        if (ca === '_system') return 1;
+        if (cb === '_system') return -1;
+        if (ca === MEMORY_CONNECTION_ID) return 1;
+        if (cb === MEMORY_CONNECTION_ID) return -1;
+      }
+      return String(a.label || '').localeCompare(String(b.label || ''), undefined, { sensitivity: 'base', numeric: true });
+    });
+    node.children.forEach(sortNode);
+  };
+  sortNode(root);
+  return { root, filteredCount: filtered.length };
+}
+
+function renderLoggerTagPickerTreeNode(node, container, depth = 0) {
+  const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+  const selected = node.type === 'tag' && state.loggerTagPickerSelected.has(String(node.meta?.tag_key || ''));
+  const q = String(state.loggerTagPickerFilter || '').trim();
+  const expanded = q ? true : state.loggerTagPickerTreeExpanded.has(node.id);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tree-item';
+  btn.classList.toggle('is-active', selected);
+  btn.style.paddingLeft = `${8 + Math.max(0, depth) * 16}px`;
+
+  const twisty = document.createElement('span');
+  twisty.className = 'twisty';
+  twisty.classList.toggle('is-empty', !hasChildren);
+  twisty.textContent = hasChildren ? (expanded ? '-' : '+') : '';
+  if (hasChildren) {
+    twisty.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (state.loggerTagPickerTreeExpanded.has(node.id)) state.loggerTagPickerTreeExpanded.delete(node.id);
+      else state.loggerTagPickerTreeExpanded.add(node.id);
+      renderLoggerTagPickerTree();
+    });
+  }
+
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.textContent = String(node.label || '');
+
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  if (node.type === 'connection' || node.type === 'folder') {
+    const n = Array.isArray(node.children) ? node.children.length : 0;
+    meta.textContent = n ? `${n}` : '';
+  } else if (node.type === 'tag') {
+    const dt = String(node.meta?.datatype || '').trim();
+    meta.textContent = dt;
+  }
+
+  btn.appendChild(twisty);
+  btn.appendChild(label);
+  btn.appendChild(meta);
+  btn.addEventListener('click', () => {
+    if (node.type === 'tag') {
+      const key = String(node.meta?.tag_key || '');
+      state.loggerTagPickerSelected = key ? new Set([key]) : new Set();
+      if (['panel_row', 'panel_add', 'historian_add', 'historian_field_row', 'historian_field_add'].includes(String(state.loggerTagPickerMode || ''))) {
+        applyLoggerTagPickerSelectionToTextarea();
+        return;
+      }
+      if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = key ? `Selected ${key}` : 'Choose one tag';
+      renderLoggerTagPickerTree();
+      return;
+    }
+    if (hasChildren) {
+      if (state.loggerTagPickerTreeExpanded.has(node.id)) state.loggerTagPickerTreeExpanded.delete(node.id);
+      else state.loggerTagPickerTreeExpanded.add(node.id);
+      renderLoggerTagPickerTree();
+    }
+  });
+  btn.addEventListener('dblclick', () => {
+    if (state.loggerTagPickerMode === 'historian_add') {
+      if (node.type === 'tag') {
+        const key = String(node.meta?.tag_key || '');
+        if (key) addHistorianTagFromSpec(key);
+        closeLoggerTagPickerModal();
+      }
+      return;
+    }
+    if (state.loggerTagPickerMode === 'historian_field_row') {
+      if (node.type === 'tag') {
+        const key = String(node.meta?.tag_key || '');
+        if (key) {
+          state.loggerTagPickerSelected = new Set([key]);
+          applyLoggerTagPickerSelectionToTextarea();
+        }
+      }
+      return;
+    }
+    if (node.type === 'connection') {
+      const cid = String(node.meta?.connection_id || '').trim();
+      if (cid) {
+        insertLogicText(JSON.stringify(cid));
+        closeLoggerTagPickerModal();
+      }
+      return;
+    }
+    if (node.type === 'tag') {
+      const key = String(node.meta?.tag_key || '');
+      state.loggerTagPickerSelected = key ? new Set([key]) : new Set();
+      insertLogicSelectedTagName();
+    }
+  });
+
+  container.appendChild(btn);
+  if (hasChildren && expanded) {
+    node.children.forEach((child) => renderLoggerTagPickerTreeNode(child, container, depth + 1));
+  }
+}
+
+function renderLoggerTagPickerTree() {
+  if (!els.loggerTagPickerTree) return;
+  els.loggerTagPickerTree.textContent = '';
+  const { root, filteredCount } = buildLoggerTagPickerTree();
+  root.children.forEach((child) => renderLoggerTagPickerTreeNode(child, els.loggerTagPickerTree, 0));
+  if (els.loggerTagPickerStatus) {
+    const selectedList = Array.from(state.loggerTagPickerSelected || []);
+    const suffix = selectedList[0] ? ` · selected ${selectedList[0]}` : '';
+    const sourceLabel = state.loggerTagPickerSource === 'historian' ? 'historian tags' : 'live tags';
+    els.loggerTagPickerStatus.textContent = `Choose one tag · ${filteredCount} ${sourceLabel} available${suffix}`;
   }
 }
 
 async function openLoggerTagPickerModal(opts = {}) {
   if (!els.loggerTagPickerModal) return;
   const mode = String(opts.mode || 'bulk').trim() || 'bulk';
+  const pickerSource = loggerTagPickerSourceForMode(mode);
+  const title = document.getElementById('loggerTagPickerTitle');
+  const singleTreeMode = isLoggerTagPickerTreeMode(mode);
+  if (title) title.textContent = mode === 'logic_insert' ? 'Insert Tag' : ((mode === 'historian_add' || mode === 'historian_field_row' || mode === 'historian_field_add') ? 'Select Historian Tag' : 'Select Tag');
+  if (els.loggerTagPickerApplyBtn) els.loggerTagPickerApplyBtn.textContent = mode === 'logic_insert' ? 'Insert Name' : ((mode === 'historian_add' || mode === 'historian_field_row' || mode === 'historian_field_add' || mode === 'panel_row' || mode === 'panel_add') ? 'Use Tag' : 'Apply Selection');
+  if (els.loggerTagPickerSelectAllBtn) els.loggerTagPickerSelectAllBtn.style.display = singleTreeMode ? 'none' : '';
+  if (els.loggerTagPickerClearBtn) els.loggerTagPickerClearBtn.style.display = singleTreeMode ? 'none' : '';
+  if (els.loggerTagPickerFullTagBtn) els.loggerTagPickerFullTagBtn.style.display = mode === 'logic_insert' ? '' : 'none';
   state.loggerTagPickerMode = mode;
-  state.loggerTagPickerRowIndex = Math.trunc(Number(opts.rowIndex ?? -1) || -1);
-  state.loggerTagPickerSelected = mode === 'panel_row' ? new Set() : parseReportTagsTextToSet();
-  if (mode === 'panel_bulk') state.loggerTagPickerSelected = parseReportTagsPanelToSet();
+  {
+    const rowIndex = Number(opts.rowIndex ?? -1);
+    state.loggerTagPickerRowIndex = Number.isFinite(rowIndex) ? Math.trunc(rowIndex) : -1;
+  }
+  state.loggerTagPickerSelected = isLoggerTagPickerSingleMode(mode) ? new Set() : parseReportTagsTextToSet();
   state.loggerTagPickerFilter = '';
+  if (singleTreeMode) state.loggerTagPickerTreeExpanded = new Set();
   if (els.loggerTagPickerSearch) els.loggerTagPickerSearch.value = '';
-  if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = 'Loading tags…';
+  if (state.loggerTagPickerSource !== pickerSource) {
+    state.loggerTagPickerAll = [];
+    state.loggerTagPickerLoadedAtMs = 0;
+    state.loggerTagPickerLoadingPromise = null;
+    state.loggerTagPickerSource = pickerSource;
+  }
+  const forceLoad = pickerSource === 'historian';
+  if (forceLoad) {
+    state.loggerTagPickerAll = [];
+    state.loggerTagPickerLoadedAtMs = 0;
+    state.loggerTagPickerLoadingPromise = null;
+  }
+  const hadCache = Array.isArray(state.loggerTagPickerAll) && state.loggerTagPickerAll.length > 0;
+  if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = hadCache ? 'Using cached tags…' : 'Loading tags…';
   els.loggerTagPickerModal.style.display = 'block';
+  if (hadCache) renderLoggerTagPickerTable();
 
   try {
-    const resp = await apiGet('/api/opcbridge/tags');
-    const raw = Array.isArray(resp?.tags) ? resp.tags : [];
-    // Deduplicate by connection_id:name
-    const seen = new Set();
-    const out = [];
-    raw.forEach((t) => {
-      const key = tagKeyFromLiveTag(t);
-      if (!key) return;
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push(t);
-    });
-    out.sort((a, b) => tagKeyFromLiveTag(a).localeCompare(tagKeyFromLiveTag(b), undefined, { sensitivity: 'base' }));
-    state.loggerTagPickerAll = out;
+    await ensureLoggerTagPickerCache({ source: pickerSource, force: forceLoad });
     renderLoggerTagPickerTable();
   } catch (err) {
-    state.loggerTagPickerAll = [];
+    if (!hadCache) state.loggerTagPickerAll = [];
     if (els.loggerTagPickerStatus) els.loggerTagPickerStatus.textContent = `Failed: ${err.message || err}`;
     renderLoggerTagPickerTable();
   }
 }
 
 function applyLoggerTagPickerSelectionToTextarea() {
+  if (state.loggerTagPickerMode === 'logic_insert') {
+    insertLogicSelectedTagName();
+    return;
+  }
+  if (state.loggerTagPickerMode === 'historian_add') {
+    const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+    if (selected) addHistorianTagFromSpec(selected);
+    closeLoggerTagPickerModal();
+    return;
+  }
+  if (state.loggerTagPickerMode === 'historian_field_row') {
+    const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+    const row = els.loggerReportDetails?.querySelector(`[data-logger-historian-row-index="${state.loggerTagPickerRowIndex}"]`);
+    const connInput = row?.querySelector('[data-logger-historian-connection="1"]');
+    const tagInput = row?.querySelector('[data-logger-historian-tag="1"]');
+    const parts = loggerTagSpecParts(selected);
+    if (connInput && tagInput && parts.connection_id && parts.tag_name) {
+      connInput.value = parts.connection_id;
+      tagInput.value = parts.tag_name;
+      const next = collectLoggerReportHistorianPanelEntries();
+      const rid = getSelectedReportId();
+      state.loggerReportHistorianDraftById.set(rid, next);
+      const report = findReportById(rid);
+      if (report) renderLoggerReportHistorianPanel(report, next);
+    }
+    closeLoggerTagPickerModal();
+    return;
+  }
+  if (state.loggerTagPickerMode === 'historian_field_add') {
+    const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+    const parts = loggerTagSpecParts(selected);
+    if (!parts.connection_id || !parts.tag_name) {
+      closeLoggerTagPickerModal();
+      return;
+    }
+    const rows = Array.from(els.loggerReportDetails?.querySelectorAll('[data-logger-historian-row="1"]') || []);
+    const readRow = (row) => ({
+      connection_id: String(row.querySelector('[data-logger-historian-connection="1"]')?.value || '').trim(),
+      tag_name: String(row.querySelector('[data-logger-historian-tag="1"]')?.value || '').trim(),
+      range: String(row.querySelector('[data-logger-historian-range="1"]')?.value || '1h').trim() || '1h',
+      statistic: String(row.querySelector('[data-logger-historian-statistic="1"]')?.value || 'avg').trim().toLowerCase() || 'avg',
+      field_name: String(row.querySelector('[data-logger-historian-field="1"]')?.value || '').trim(),
+      description: String(row.querySelector('[data-logger-historian-desc="1"]')?.value || '').trim()
+    });
+    const selectedKey = `${parts.connection_id}:${parts.tag_name}`;
+    const next = [];
+    let inserted = false;
+    rows.forEach((row) => {
+      const entry = readRow(row);
+      if (entry.connection_id && entry.tag_name) {
+        const key = `${entry.connection_id}:${entry.tag_name}`;
+        if (!next.some((e) => `${e.connection_id}:${e.tag_name}` === key)) next.push(entry);
+        return;
+      }
+      if (inserted || next.some((e) => `${e.connection_id}:${e.tag_name}` === selectedKey)) return;
+      next.push({
+        connection_id: parts.connection_id,
+        tag_name: parts.tag_name,
+        range: entry.range || '1h',
+        statistic: ['last', 'min', 'max', 'avg', 'twa', 'count'].includes(entry.statistic) ? entry.statistic : 'avg',
+        field_name: entry.field_name,
+        description: entry.description
+      });
+      inserted = true;
+    });
+    if (!inserted && !next.some((e) => `${e.connection_id}:${e.tag_name}` === selectedKey)) {
+      next.push({
+          connection_id: parts.connection_id,
+          tag_name: parts.tag_name,
+          range: '1h',
+          statistic: 'avg',
+          field_name: '',
+          description: ''
+      });
+    }
+    state.loggerReportHistorianDraftById.set(getSelectedReportId(), next);
+    const report = findReportById(getSelectedReportId());
+    if (report) renderLoggerReportHistorianPanel(report, next);
+    closeLoggerTagPickerModal();
+    return;
+  }
   if (state.loggerTagPickerMode === 'panel_row') {
     const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
     const row = els.loggerReportDetails?.querySelector(`[data-logger-row-index="${state.loggerTagPickerRowIndex}"]`);
+    const connInput = row?.querySelector('[data-logger-tag-connection="1"]');
     const input = row?.querySelector('[data-logger-tag-input="1"]');
-    if (input && selected) {
-      input.value = selected;
-      input.dispatchEvent(new Event('change'));
+    const parts = loggerTagSpecParts(selected);
+    if (input && parts.connection_id && parts.tag_name) {
+      if (connInput) connInput.value = parts.connection_id;
+      input.value = parts.tag_name;
+      const next = collectLoggerReportTagPanelEntries();
+      const rid = getSelectedReportId();
+      state.loggerReportTagDraftById.set(rid, next);
+      const report = findReportById(rid);
+      if (report) renderLoggerReportTagsPanel(report, next);
     }
+    closeLoggerTagPickerModal();
+    return;
+  }
+  if (state.loggerTagPickerMode === 'panel_add') {
+    const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+    const parts = loggerTagSpecParts(selected);
+    if (!parts.connection_id || !parts.tag_name) {
+      closeLoggerTagPickerModal();
+      return;
+    }
+    const rows = Array.from(els.loggerReportDetails?.querySelectorAll('[data-logger-tag-row="1"]') || []);
+    const readRow = (row) => {
+      const conn = String(row.querySelector('[data-logger-tag-connection="1"]')?.value || '').trim();
+      const tag = String(row.querySelector('[data-logger-tag-input="1"]')?.value || '').trim();
+      const output = String(row.querySelector('[data-logger-output-input="1"]')?.value || '').trim();
+      const desc = String(row.querySelector('[data-logger-desc-input="1"]')?.value || '').trim();
+      const p = conn ? { connection_id: conn, tag_name: tag } : loggerTagSpecParts(tag);
+      return { connection_id: p.connection_id, name: p.tag_name, field_name: output, description: desc };
+    };
+    const selectedSpec = `${parts.connection_id}:${parts.tag_name}`;
+    const next = [];
+    let inserted = false;
+    rows.forEach((row) => {
+      const entry = readRow(row);
+      if (entry.connection_id && entry.name) {
+        const spec = loggerTagEntrySpec(entry);
+        if (!next.some((e) => loggerTagEntrySpec(e) === spec)) next.push(entry);
+        return;
+      }
+      if (inserted || next.some((e) => loggerTagEntrySpec(e) === selectedSpec)) return;
+      next.push({ connection_id: parts.connection_id, name: parts.tag_name, field_name: entry.field_name || '', description: entry.description || '' });
+      inserted = true;
+    });
+    if (!inserted && !next.some((e) => loggerTagEntrySpec(e) === selectedSpec)) {
+      next.push({ connection_id: parts.connection_id, name: parts.tag_name, field_name: '', description: '' });
+    }
+    renderSelectedLoggerTagPanel(next);
     closeLoggerTagPickerModal();
     return;
   }
   if (state.loggerTagPickerMode === 'panel_bulk') {
     const existing = collectLoggerReportTagPanelEntries();
     const descriptionBySpec = new Map(existing.map((entry) => [loggerTagEntrySpec(entry), String(entry.description || '')]));
+    const outputBySpec = new Map(existing.map((entry) => [loggerTagEntrySpec(entry), String(entry.field_name || entry.output_field || '')]));
     const preserved = existing.filter((entry) => {
       const spec = loggerTagEntrySpec(entry);
       return spec.includes('*') || spec.includes('?');
@@ -2400,6 +3720,7 @@ function applyLoggerTagPickerSelectionToTextarea() {
         return {
           connection_id: parts.connection_id,
           name: parts.tag_name,
+          field_name: outputBySpec.get(spec) || '',
           description: descriptionBySpec.get(spec) || ''
         };
       })
@@ -2413,10 +3734,12 @@ function applyLoggerTagPickerSelectionToTextarea() {
   const existing = reportTagEntriesFromText(String(els.loggerReportTags?.value || ''));
   const preserved = [];
   const descriptionBySpec = new Map();
+  const outputBySpec = new Map();
   for (const entry of existing) {
     const spec = loggerTagEntrySpec(entry);
     if (!spec) continue;
     if (entry.description) descriptionBySpec.set(spec, entry.description);
+    if (entry.field_name || entry.output_field) outputBySpec.set(spec, String(entry.field_name || entry.output_field || ''));
     if (spec.includes('*') || spec.includes('?')) { preserved.push(entry); continue; }
     // concrete tags will be rebuilt from selection
   }
@@ -2429,6 +3752,7 @@ function applyLoggerTagPickerSelectionToTextarea() {
       return {
         connection_id: parts.connection_id,
         name: parts.tag_name,
+        field_name: outputBySpec.get(spec) || '',
         description: descriptionBySpec.get(spec) || ''
       };
     })
@@ -2444,7 +3768,715 @@ function normalizeReportTagsArray(tags) {
   return normalizeReportTagEntries(tags).map(loggerTagEntrySpec).filter(Boolean);
 }
 
-const LOGGER_TAG_CSV_HEADERS = ['connection_id', 'tag_name', 'description'];
+const LOGIC_CONFIG_PATH = 'logic.json';
+let logicEditorCm = null;
+let logicSetupCm = null;
+let logicUiSyncing = false;
+
+function logicCodeMirrorThemeForResolvedMode(resolvedMode) {
+  return String(resolvedMode || '').toLowerCase() === 'dark' ? 'material-darker' : 'neo';
+}
+
+function applyLogicEditorThemeFromMode(mode) {
+  const resolved = resolveThemeMode(mode);
+  const theme = logicCodeMirrorThemeForResolvedMode(resolved);
+  if (logicEditorCm) logicEditorCm.setOption('theme', theme);
+  if (logicSetupCm) logicSetupCm.setOption('theme', theme);
+}
+
+function initLogicCodeEditor() {
+  const textarea = els.logicScriptEditor;
+  if (!textarea) return;
+  if (!window.CodeMirror || typeof window.CodeMirror.fromTextArea !== 'function') return;
+  if (logicEditorCm) return;
+  logicEditorCm = window.CodeMirror.fromTextArea(textarea, {
+    mode: 'javascript',
+    lineNumbers: true,
+    matchBrackets: true,
+    smartIndent: true,
+    electricChars: true,
+    indentUnit: 2,
+    tabSize: 2,
+    indentWithTabs: true,
+    lineWrapping: false,
+    autofocus: false,
+    theme: logicCodeMirrorThemeForResolvedMode(resolveThemeMode(state.themeMode))
+  });
+  logicEditorCm.on('cursorActivity', updateLogicEditorCursor);
+  logicEditorCm.on('changes', () => {
+    if (logicUiSyncing) return;
+    updateLogicEditorCursor();
+    applyLogicFormToState();
+  });
+
+  const setupTextarea = els.logicSetupEditor;
+  if (setupTextarea) {
+    logicSetupCm = window.CodeMirror.fromTextArea(setupTextarea, {
+      mode: 'javascript',
+      lineNumbers: true,
+      matchBrackets: true,
+      smartIndent: true,
+      electricChars: true,
+      indentUnit: 2,
+      tabSize: 2,
+      indentWithTabs: true,
+      lineWrapping: false,
+      autofocus: false,
+      theme: logicCodeMirrorThemeForResolvedMode(resolveThemeMode(state.themeMode))
+    });
+    logicSetupCm.on('changes', () => {
+      if (logicUiSyncing) return;
+      applyLogicFormToState();
+    });
+  }
+}
+
+function logicEditorGetValue() {
+  if (logicEditorCm) return String(logicEditorCm.getValue() || '');
+  return String(els.logicScriptEditor?.value || '');
+}
+
+function logicEditorSetValue(value) {
+  const next = String(value || '');
+  if (logicEditorCm) {
+    const cur = logicEditorCm.getValue();
+    if (cur !== next) logicEditorCm.setValue(next);
+    return;
+  }
+  if (els.logicScriptEditor) els.logicScriptEditor.value = next;
+}
+
+function logicEditorSetDisabled(disabled) {
+  if (logicEditorCm) {
+    logicEditorCm.setOption('readOnly', disabled ? 'nocursor' : false);
+  }
+  if (logicSetupCm) {
+    logicSetupCm.setOption('readOnly', disabled ? 'nocursor' : false);
+  }
+  if (els.logicScriptEditor) els.logicScriptEditor.disabled = disabled;
+  if (els.logicSetupEditor) els.logicSetupEditor.disabled = disabled;
+}
+
+function logicSetupGetValue() {
+  if (logicSetupCm) return String(logicSetupCm.getValue() || '');
+  return String(els.logicSetupEditor?.value || '');
+}
+
+function logicSetupSetValue(value) {
+  const next = String(value || '');
+  if (logicSetupCm) {
+    const cur = logicSetupCm.getValue();
+    if (cur !== next) logicSetupCm.setValue(next);
+    return;
+  }
+  if (els.logicSetupEditor) els.logicSetupEditor.value = next;
+}
+
+function logicEditorFocusAndSelect(start, end) {
+  if (logicEditorCm) {
+    const text = logicEditorCm.getValue();
+    const max = text.length;
+    const s = Math.max(0, Math.min(max, start));
+    const e = Math.max(s, Math.min(max, end));
+    const from = logicEditorCm.posFromIndex(s);
+    const to = logicEditorCm.posFromIndex(e);
+    logicEditorCm.focus();
+    logicEditorCm.setSelection(from, to);
+    return;
+  }
+  if (els.logicScriptEditor) {
+    els.logicScriptEditor.focus();
+    els.logicScriptEditor.setSelectionRange(start, end);
+  }
+}
+
+function setLogicStatus(msg) {
+  if (els.logicStatus) els.logicStatus.textContent = String(msg || '');
+}
+
+function normalizeLogicScript(script = {}) {
+  const id = String(script.id || '').trim();
+  return {
+    type: 'script',
+    id,
+    name: String(script.name || id || '').trim(),
+    enabled: Boolean(script.enabled),
+    interval_ms: Math.max(0, Math.trunc(Number(script.interval_ms ?? 0) || 0)),
+    engine: String(script.engine || 'javascript').trim() || 'javascript',
+    source: String(script.source || '')
+  };
+}
+
+function normalizeLogicBlock(block = {}) {
+  const id = String(block.id || '').trim();
+  return {
+    type: 'block',
+    id,
+    name: String(block.name || id || '').trim(),
+    enabled: Boolean(block.enabled),
+    interval_ms: Math.max(0, Math.trunc(Number(block.interval_ms ?? 0) || 0)),
+    engine: String(block.engine || 'javascript').trim() || 'javascript',
+    setup_source: String(block.setup_source || ''),
+    loop_source: String(block.loop_source || '')
+  };
+}
+
+function normalizeLogicConfig(cfg = {}) {
+  const scripts = (Array.isArray(cfg.scripts) ? cfg.scripts : [])
+    .map(normalizeLogicScript)
+    .filter((s) => s.id);
+  const blocks = (Array.isArray(cfg.blocks) ? cfg.blocks : [])
+    .map(normalizeLogicBlock)
+    .filter((b) => b.id);
+  return { version: 2, scripts, blocks };
+}
+
+function currentLogicScript() {
+  const id = String(state.logicSelectedId || '').trim();
+  const scripts = Array.isArray(state.logicConfig?.scripts) ? state.logicConfig.scripts : [];
+  const blocks = Array.isArray(state.logicConfig?.blocks) ? state.logicConfig.blocks : [];
+  return scripts.find((s) => String(s?.id || '') === id)
+    || blocks.find((b) => String(b?.id || '') === id)
+    || null;
+}
+
+function applyLogicFormToState() {
+  const selected = currentLogicScript();
+  if (!selected) return;
+  const oldId = String(selected.id || '').trim();
+  const nextId = String(els.logicScriptId?.value || '').trim();
+  const candidateId = nextId || oldId;
+  if (candidateId !== oldId) {
+    const all = (state.logicConfig?.scripts || []).concat(state.logicConfig?.blocks || []);
+    const exists = all.some((item) => String(item?.id || '') === candidateId);
+    if (exists) {
+      if (els.logicScriptId) els.logicScriptId.value = oldId;
+      setLogicStatus(`ID already exists: ${candidateId}`);
+    } else {
+      selected.id = candidateId;
+    }
+  } else {
+    selected.id = candidateId;
+  }
+  selected.name = String(els.logicScriptName?.value || '').trim() || selected.id;
+  selected.enabled = Boolean(els.logicScriptEnabled?.checked);
+  selected.interval_ms = Math.max(0, Math.trunc(Number(els.logicScriptIntervalMs?.value || 0) || 0));
+  selected.engine = 'javascript';
+  // Type is fixed after creation to avoid accidental in-place conversions.
+  selected.type = selected.type === 'block' ? 'block' : 'script';
+  if (selected.type === 'block') {
+    selected.setup_source = logicSetupGetValue();
+    selected.loop_source = logicEditorGetValue();
+    delete selected.source;
+  } else {
+    selected.source = logicEditorGetValue();
+    delete selected.setup_source;
+    delete selected.loop_source;
+  }
+  if (selected.id !== oldId) state.logicSelectedId = selected.id;
+}
+
+function renderLogicTree() {
+  if (!els.logicTreeView) return;
+  const scripts = Array.isArray(state.logicConfig?.scripts) ? state.logicConfig.scripts : [];
+  const blocks = Array.isArray(state.logicConfig?.blocks) ? state.logicConfig.blocks : [];
+  if (!state.logicTreeExpanded || typeof state.logicTreeExpanded !== 'object') {
+    state.logicTreeExpanded = { blocks: false, scripts: false };
+  }
+  els.logicTreeView.textContent = '';
+  const makeFolderBtn = (label, childCount, expanded, onToggle) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tree-item';
+    const twisty = document.createElement('span');
+    twisty.className = 'twisty';
+    twisty.textContent = expanded ? '−' : '+';
+    if (typeof onToggle === 'function') {
+      twisty.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onToggle();
+      });
+    }
+    const text = document.createElement('span');
+    text.className = 'label';
+    text.textContent = label;
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = childCount ? String(childCount) : '';
+    btn.appendChild(twisty);
+    btn.appendChild(text);
+    btn.appendChild(meta);
+    return btn;
+  };
+
+  const addGroup = (container, label, items, groupType) => {
+    const key = groupType === 'block' ? 'blocks' : 'scripts';
+    const expanded = state.logicTreeExpanded[key] !== false;
+    const groupBtn = makeFolderBtn(label, items.length, expanded, () => {
+      state.logicTreeExpanded[key] = !expanded;
+      renderLogicTree();
+    });
+    groupBtn.classList.toggle('is-active', state.logicSelectedGroup === key);
+    groupBtn.addEventListener('click', () => {
+      state.logicSelectedGroup = key;
+      state.logicSelectedId = '';
+      renderLogicTree();
+      renderLogicEditor();
+    });
+    groupBtn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [
+        {
+          label: groupType === 'block' ? 'New Logic Block' : 'New Script',
+          onClick: () => newLogicItem(groupType)
+        }
+      ]);
+    });
+    container.appendChild(groupBtn);
+
+    if (expanded) {
+      const childrenWrap = document.createElement('div');
+      childrenWrap.className = 'tree-children';
+      items.forEach((script) => {
+      const rowBtn = document.createElement('button');
+      rowBtn.type = 'button';
+      rowBtn.className = 'tree-item';
+      rowBtn.classList.toggle('is-active', String(script.id) === String(state.logicSelectedId));
+      rowBtn.dataset.logicId = script.id;
+      rowBtn.title = script.id;
+
+      const twisty = document.createElement('span');
+      twisty.className = 'twisty is-empty';
+      twisty.textContent = '';
+      const text = document.createElement('span');
+      text.className = 'label';
+      text.textContent = script.name || script.id;
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = script.enabled ? 'enabled' : '';
+      rowBtn.appendChild(twisty);
+      rowBtn.appendChild(text);
+      rowBtn.appendChild(meta);
+
+      rowBtn.addEventListener('click', () => {
+        applyLogicFormToState();
+        state.logicSelectedGroup = '';
+        state.logicSelectedId = script.id;
+        renderLogicTree();
+        renderLogicEditor();
+      });
+      childrenWrap.appendChild(rowBtn);
+      });
+      container.appendChild(childrenWrap);
+    }
+  };
+
+  addGroup(els.logicTreeView, 'Blocks', blocks, 'block');
+  addGroup(els.logicTreeView, 'Scripts', scripts, 'script');
+
+  if (els.logicTreeNote) {
+    const total = scripts.length + blocks.length;
+    els.logicTreeNote.textContent = total ? `${blocks.length} block(s), ${scripts.length} script(s)` : 'No logic blocks or scripts yet.';
+  }
+}
+
+function renderLogicChildrenList(groupKey) {
+  const tbody = els.logicChildrenListTbody;
+  if (!tbody) return;
+  tbody.textContent = '';
+  const items = groupKey === 'blocks'
+    ? (Array.isArray(state.logicConfig?.blocks) ? state.logicConfig.blocks : [])
+    : (Array.isArray(state.logicConfig?.scripts) ? state.logicConfig.scripts : []);
+  items.forEach((item) => {
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.innerHTML = `<td>${escapeHtml(item.name || item.id || '')}</td><td>${escapeHtml(item.id || '')}</td><td>${item.enabled ? 'Yes' : 'No'}</td><td>${Number(item.interval_ms || 0)}</td>`;
+    tr.addEventListener('click', () => {
+      state.logicSelectedId = String(item.id || '');
+    });
+    tr.addEventListener('dblclick', () => {
+      state.logicSelectedGroup = '';
+      if (!state.logicTreeExpanded || typeof state.logicTreeExpanded !== 'object') {
+        state.logicTreeExpanded = { blocks: false, scripts: false };
+      }
+      state.logicTreeExpanded[groupKey] = true;
+      state.logicSelectedId = String(item.id || '');
+      renderLogicTree();
+      renderLogicEditor();
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function renderLogicEditor() {
+  const groupSelected = state.logicSelectedGroup === 'blocks' || state.logicSelectedGroup === 'scripts';
+  const script = currentLogicScript();
+  const disabled = groupSelected || !script;
+  if (els.logicGroupPane) els.logicGroupPane.style.display = groupSelected ? '' : 'none';
+  if (els.logicItemPane) els.logicItemPane.style.display = groupSelected ? 'none' : '';
+  if (els.logicEditorPane) els.logicEditorPane.style.display = groupSelected ? 'none' : '';
+  if (groupSelected) {
+    renderLogicChildrenList(state.logicSelectedGroup);
+  }
+  logicUiSyncing = true;
+  try {
+    if (els.logicScriptId) {
+      els.logicScriptId.disabled = disabled;
+      els.logicScriptId.value = groupSelected ? '' : (script?.id || '');
+    }
+    if (els.logicScriptName) {
+      els.logicScriptName.disabled = disabled;
+      els.logicScriptName.value = groupSelected ? '' : (script?.name || '');
+    }
+    if (els.logicScriptEnabled) {
+      els.logicScriptEnabled.disabled = disabled;
+      els.logicScriptEnabled.checked = groupSelected ? false : Boolean(script?.enabled);
+    }
+    if (els.logicScriptIntervalMs) {
+      els.logicScriptIntervalMs.disabled = disabled;
+      els.logicScriptIntervalMs.value = (groupSelected || !script) ? '' : String(script.interval_ms || 0);
+    }
+    const isBlock = Boolean(!groupSelected && script && script.type === 'block');
+    if (els.logicSetupRow) els.logicSetupRow.style.display = (groupSelected ? 'none' : (isBlock ? '' : 'none'));
+    if (els.logicMainEditorLabel) els.logicMainEditorLabel.textContent = isBlock ? 'Loop' : 'Script';
+    if (els.logicSetupEditor) {
+      els.logicSetupEditor.disabled = disabled || !isBlock;
+      logicSetupSetValue(isBlock ? String(script?.setup_source || '') : '');
+      if (logicSetupCm) logicSetupCm.refresh();
+    }
+    logicEditorSetDisabled(disabled);
+    logicEditorSetValue(groupSelected ? '' : (isBlock ? String(script?.loop_source || '') : String(script?.source || '')));
+    if (logicEditorCm) logicEditorCm.refresh();
+    state.logicCursorStart = logicEditorGetValue().length;
+    state.logicCursorEnd = logicEditorGetValue().length;
+  } finally {
+    logicUiSyncing = false;
+  }
+  if (els.logicDeleteBtn) els.logicDeleteBtn.disabled = disabled;
+  if (els.logicInsertTagBtn) els.logicInsertTagBtn.disabled = disabled;
+  if (els.logicQuickTagBtn) els.logicQuickTagBtn.disabled = disabled;
+  if (els.logicQuickJsonBtn) els.logicQuickJsonBtn.disabled = disabled;
+  if (els.logicQuickSetTagBtn) els.logicQuickSetTagBtn.disabled = disabled;
+  if (els.logicQuickIfElseBtn) els.logicQuickIfElseBtn.disabled = disabled;
+  if (els.logicQuickJsonObjBtn) els.logicQuickJsonObjBtn.disabled = disabled;
+  renderLogicValidationStatus(null);
+  if (!groupSelected && script?.id) refreshLogicValidationStatus(String(script.id)).catch(() => {});
+  else refreshLogicValidationStatus().catch(() => {});
+}
+
+function logicSystemScriptPrefix(scriptId) {
+  const id = String(scriptId || '').trim();
+  return id ? `System/Logic/Scripts/${id}/` : '';
+}
+
+function logicValidationField(rows, field) {
+  const suffix = String(field || '').trim();
+  const hit = (Array.isArray(rows) ? rows : []).find((t) => String(t?.name || '').endsWith(`/${suffix}`));
+  if (!hit) return '';
+  return hit.value ?? hit.system_value ?? '';
+}
+
+function formatLogicAgeMs(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return '-';
+  if (n < 1000) return `${Math.trunc(n)} ms ago`;
+  if (n < 60000) return `${Math.round(n / 1000)} sec ago`;
+  return `${Math.round(n / 60000)} min ago`;
+}
+
+function formatLogicVariablePreviewMultiline(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw
+    .split(/\s*;\s*/)
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function renderLogicValidationStatus(rows, boundScriptId = '') {
+  const hasRows = Array.isArray(rows) && rows.length > 0;
+  const ok = logicValidationField(rows, 'LastRunOk');
+  const lastRunAge = logicValidationField(rows, 'LastRunAgeMs');
+  const runs = logicValidationField(rows, 'RunsTotal');
+  const refs = logicValidationField(rows, 'ReferencedTags');
+  const missing = logicValidationField(rows, 'MissingTags');
+  const reads = logicValidationField(rows, 'EvaluatedReads');
+  const vars = logicValidationField(rows, 'Variables');
+  const writes = logicValidationField(rows, 'MemoryWrites');
+  const preview = String(logicValidationField(rows, 'ReadPreview') || '');
+  const varPreview = String(logicValidationField(rows, 'VariablePreview') || '');
+  const writePreview = String(logicValidationField(rows, 'WritePreview') || '');
+  const err = String(logicValidationField(rows, 'LastError') || '');
+
+  if (els.logicValidationLastRun) {
+    els.logicValidationLastRun.textContent = hasRows ? `${ok ? 'OK' : 'Fail'} · ${formatLogicAgeMs(lastRunAge)}` : '-';
+    els.logicValidationLastRun.className = hasRows ? (ok ? 'status-ok' : 'status-error') : '';
+  }
+  if (els.logicValidationRuns) els.logicValidationRuns.textContent = hasRows ? String(runs || 0) : '-';
+  if (els.logicValidationRefs) els.logicValidationRefs.textContent = hasRows ? String(refs || 0) : '-';
+  if (els.logicValidationMissing) {
+    els.logicValidationMissing.textContent = hasRows ? String(missing || 0) : '-';
+    els.logicValidationMissing.className = Number(missing || 0) > 0 ? 'status-error' : '';
+  }
+  if (els.logicValidationReads) els.logicValidationReads.textContent = hasRows ? String(reads || 0) : '-';
+  if (els.logicValidationVars) els.logicValidationVars.textContent = hasRows ? String(vars || 0) : '-';
+  if (els.logicValidationWrites) els.logicValidationWrites.textContent = hasRows ? String(writes || 0) : '-';
+  if (els.logicValidationPreview) els.logicValidationPreview.textContent = hasRows && preview ? `Read preview: ${preview}` : '';
+  if (els.logicValidationVarPreview) {
+    if (hasRows && varPreview) {
+      const lines = formatLogicVariablePreviewMultiline(varPreview);
+      els.logicValidationVarPreview.textContent = lines ? `Variable preview:\n${lines}` : '';
+    } else {
+      els.logicValidationVarPreview.textContent = '';
+    }
+  }
+  if (els.logicValidationWritePreview) els.logicValidationWritePreview.textContent = hasRows && writePreview ? `Write preview: ${writePreview}` : '';
+  if (els.logicValidationError) els.logicValidationError.textContent = hasRows ? err : '';
+}
+
+async function refreshLogicValidationStatus(forceScriptId = '') {
+  const scriptId = String(forceScriptId || state.logicSelectedId || '').trim();
+  const logicActive = document.getElementById('tab-logic')?.classList.contains('is-active');
+  if (!scriptId || (!forceScriptId && !logicActive)) {
+    renderLogicValidationStatus(null, scriptId);
+    return;
+  }
+  const prefix = logicSystemScriptPrefix(scriptId);
+  const params = new URLSearchParams();
+  params.set('connection_id', '_system');
+  params.set('search', prefix);
+  params.set('limit', '100');
+  const resp = await apiGet(`/api/opcbridge/tags?${params.toString()}`, { timeoutMs: 10000 });
+  const rows = (Array.isArray(resp?.tags) ? resp.tags : []).filter((t) => String(t?.name || '').startsWith(prefix));
+  renderLogicValidationStatus(rows, scriptId);
+}
+
+async function refreshLogicTab() {
+  setLogicStatus('Loading...');
+  try {
+    const raw = await apiGetText(`/api/opcbridge/config/file?path=${encodeURIComponent(LOGIC_CONFIG_PATH)}`);
+    const parsed = JSON.parse(raw || '{}');
+    state.logicConfig = normalizeLogicConfig(parsed);
+  } catch (err) {
+    state.logicConfig = normalizeLogicConfig({ scripts: [], blocks: [] });
+    const msg = String(err?.message || err || '');
+    if (msg && !msg.includes('404') && !msg.includes('Invalid or unsupported config path')) {
+      setLogicStatus(`Load failed: ${msg}`);
+    }
+  }
+  const scripts = Array.isArray(state.logicConfig?.scripts) ? state.logicConfig.scripts : [];
+  const blocks = Array.isArray(state.logicConfig?.blocks) ? state.logicConfig.blocks : [];
+  const all = blocks.concat(scripts);
+  if (!all.some((s) => String(s.id) === String(state.logicSelectedId))) {
+    state.logicSelectedId = all[0]?.id || '';
+  }
+  if (!state.logicSelectedGroup) {
+    state.logicSelectedGroup = 'blocks';
+    state.logicSelectedId = '';
+  }
+  renderLogicTree();
+  renderLogicEditor();
+  setLogicStatus(all.length ? 'Loaded' : 'No logic blocks or scripts configured');
+}
+
+function makeUniqueLogicId(base = 'script') {
+  const root = String(base || 'script').trim().replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'script';
+  const scripts = Array.isArray(state.logicConfig?.scripts) ? state.logicConfig.scripts : [];
+  const blocks = Array.isArray(state.logicConfig?.blocks) ? state.logicConfig.blocks : [];
+  const used = new Set(scripts.concat(blocks).map((s) => String(s?.id || '')));
+  if (!used.has(root)) return root;
+  for (let i = 2; i < 10000; i += 1) {
+    const id = `${root}_${i}`;
+    if (!used.has(id)) return id;
+  }
+  return `${root}_${Date.now()}`;
+}
+
+function newLogicItem(preferredType = 'script') {
+  const kind = String(preferredType || 'script') === 'block' ? 'block' : 'script';
+  const id = makeUniqueLogicId(kind);
+  const script = kind === 'script' ? normalizeLogicScript({
+    id,
+    name: 'New Script',
+    enabled: false,
+    interval_ms: 0,
+    source: '// Runtime execution is not active yet.\n'
+  }) : normalizeLogicBlock({
+    id,
+    name: 'New Block',
+    enabled: false,
+    interval_ms: 0,
+    setup_source: '// Runs once after load.\n',
+    loop_source: '// Runs every interval while enabled.\n'
+  });
+  state.logicConfig = normalizeLogicConfig({
+    ...(state.logicConfig || {}),
+    scripts: kind === 'script' ? (state.logicConfig?.scripts || []).concat([script]) : (state.logicConfig?.scripts || []),
+    blocks: kind === 'block' ? (state.logicConfig?.blocks || []).concat([script]) : (state.logicConfig?.blocks || [])
+  });
+  state.logicSelectedId = id;
+  renderLogicTree();
+  renderLogicEditor();
+  setLogicStatus(kind === 'block' ? 'New block added' : 'New script added');
+}
+
+function newLogicScript() {
+  newLogicItem('script');
+}
+
+function deleteLogicScript() {
+  const id = String(state.logicSelectedId || '').trim();
+  if (!id) return;
+  if (!window.confirm(`Delete logic item '${id}'?`)) return;
+  const scripts = (state.logicConfig?.scripts || []).filter((s) => String(s?.id || '') !== id);
+  const blocks = (state.logicConfig?.blocks || []).filter((s) => String(s?.id || '') !== id);
+  state.logicConfig = normalizeLogicConfig({ ...(state.logicConfig || {}), scripts, blocks });
+  state.logicSelectedId = blocks[0]?.id || scripts[0]?.id || '';
+  renderLogicTree();
+  renderLogicEditor();
+  setLogicStatus('Script deleted');
+}
+
+async function saveLogicTab() {
+  applyLogicFormToState();
+  state.logicConfig = normalizeLogicConfig(state.logicConfig || {});
+  const ids = new Set();
+  for (const script of (state.logicConfig.scripts || []).concat(state.logicConfig.blocks || [])) {
+    if (!script.id) throw new Error('Every script needs an ID.');
+    if (ids.has(script.id)) throw new Error(`Duplicate logic item ID: ${script.id}`);
+    ids.add(script.id);
+  }
+  setLogicStatus('Saving...');
+  await apiPostJson('/api/opcbridge/config/file', {
+    path: LOGIC_CONFIG_PATH,
+    content: prettyJson(state.logicConfig)
+  });
+  renderLogicTree();
+  renderLogicEditor();
+  setLogicStatus('Saved');
+}
+
+function updateLogicEditorCursor() {
+  if (logicEditorCm) {
+    const ranges = logicEditorCm.listSelections();
+    const anchor = ranges?.[0]?.anchor;
+    const head = ranges?.[0]?.head;
+    const a = anchor ? logicEditorCm.indexFromPos(anchor) : 0;
+    const h = head ? logicEditorCm.indexFromPos(head) : a;
+    state.logicCursorStart = Math.max(0, Math.min(a, h));
+    state.logicCursorEnd = Math.max(state.logicCursorStart, Math.max(a, h));
+    return;
+  }
+  const editor = els.logicScriptEditor;
+  if (!editor) return;
+  state.logicCursorStart = Math.max(0, Math.trunc(Number(editor.selectionStart ?? editor.value.length) || 0));
+  state.logicCursorEnd = Math.max(0, Math.trunc(Number(editor.selectionEnd ?? state.logicCursorStart) || 0));
+}
+
+function insertLogicText(text) {
+  const value = logicEditorGetValue();
+  const start = Math.min(value.length, Math.max(0, Number(state.logicCursorStart ?? value.length) || 0));
+  const end = Math.min(value.length, Math.max(start, Number(state.logicCursorEnd ?? start) || start));
+  const insert = String(text || '');
+  logicEditorSetValue(`${value.slice(0, start)}${insert}${value.slice(end)}`);
+  const pos = start + insert.length;
+  logicEditorFocusAndSelect(pos, pos);
+  updateLogicEditorCursor();
+  applyLogicFormToState();
+}
+
+function insertLogicTextWithSelection(text, selectStartRel, selectEndRel) {
+  const value = logicEditorGetValue();
+  const start = Math.min(value.length, Math.max(0, Number(state.logicCursorStart ?? value.length) || 0));
+  const end = Math.min(value.length, Math.max(start, Number(state.logicCursorEnd ?? start) || start));
+  const insert = String(text || '');
+  logicEditorSetValue(`${value.slice(0, start)}${insert}${value.slice(end)}`);
+  const selStart = start + Math.max(0, Math.trunc(Number(selectStartRel) || 0));
+  const selEnd = start + Math.max(selStart - start, Math.trunc(Number(selectEndRel) || 0));
+  logicEditorFocusAndSelect(selStart, selEnd);
+  updateLogicEditorCursor();
+  applyLogicFormToState();
+}
+
+function logicQuickInsert(kind) {
+  updateLogicEditorCursor();
+  const k = String(kind || '').trim();
+  if (k === 'tag') {
+    const txt = 'tag(\"\", \"\")';
+    insertLogicTextWithSelection(txt, 5, 5);
+    return;
+  }
+  if (k === 'json') {
+    const txt = 'json(payload, \"\", 0)';
+    insertLogicTextWithSelection(txt, 5, 12);
+    return;
+  }
+  if (k === 'setTag') {
+    const txt = 'setTag(\"_memory\", \"\", 0);';
+    insertLogicTextWithSelection(txt, 18, 18);
+    return;
+  }
+  if (k === 'ifElse') {
+    const txt = 'if (condition) {\n  \n} else {\n  \n}\n';
+    insertLogicTextWithSelection(txt, 4, 13);
+    return;
+  }
+  if (k === 'jsonObj') {
+    const txt = 'jsonObj(\"key\", value)';
+    insertLogicTextWithSelection(txt, 8, 11);
+    return;
+  }
+}
+
+function insertLogicTagReference(spec) {
+  const parts = loggerTagSpecParts(spec);
+  if (!parts.connection_id || !parts.tag_name) return;
+  insertLogicText(`tag(${JSON.stringify(parts.connection_id)}, ${JSON.stringify(parts.tag_name)})`);
+  setLogicStatus(`Inserted ${parts.tag_spec}`);
+}
+
+function openLogicTagPicker() {
+  updateLogicEditorCursor();
+  openLoggerTagPickerModal({ mode: 'logic_insert' });
+}
+
+function wireLogicTabUi() {
+  initLogicCodeEditor();
+  els.logicRefreshBtn?.addEventListener('click', () => refreshLogicTab().catch((err) => setLogicStatus(`Refresh failed: ${err.message || err}`)));
+  els.logicNewBtn?.addEventListener('click', newLogicScript);
+  els.logicDeleteBtn?.addEventListener('click', deleteLogicScript);
+  els.logicSaveBtn?.addEventListener('click', () => saveLogicTab().catch((err) => setLogicStatus(`Save failed: ${err.message || err}`)));
+  els.logicInsertTagBtn?.addEventListener('click', openLogicTagPicker);
+  els.logicQuickTagBtn?.addEventListener('click', () => logicQuickInsert('tag'));
+  els.logicQuickJsonBtn?.addEventListener('click', () => logicQuickInsert('json'));
+  els.logicQuickSetTagBtn?.addEventListener('click', () => logicQuickInsert('setTag'));
+  els.logicQuickIfElseBtn?.addEventListener('click', () => logicQuickInsert('ifElse'));
+  els.logicQuickJsonObjBtn?.addEventListener('click', () => logicQuickInsert('jsonObj'));
+  if (!logicEditorCm) {
+    ['keyup', 'click', 'select', 'mouseup', 'input'].forEach((eventName) => {
+      els.logicScriptEditor?.addEventListener(eventName, updateLogicEditorCursor);
+    });
+  }
+  ['input', 'change'].forEach((eventName) => {
+    els.logicScriptId?.addEventListener(eventName, () => { applyLogicFormToState(); renderLogicTree(); });
+    els.logicScriptName?.addEventListener(eventName, () => { applyLogicFormToState(); renderLogicTree(); });
+    els.logicScriptEnabled?.addEventListener(eventName, applyLogicFormToState);
+    els.logicScriptIntervalMs?.addEventListener(eventName, applyLogicFormToState);
+    els.logicSetupEditor?.addEventListener(eventName, applyLogicFormToState);
+    if (!logicEditorCm) els.logicScriptEditor?.addEventListener(eventName, applyLogicFormToState);
+  });
+  if (!state.logicValidationTimer) {
+    state.logicValidationTimer = window.setInterval(() => {
+      if (document.getElementById('tab-logic')?.classList.contains('is-active')) {
+        refreshLogicValidationStatus().catch(() => {});
+      }
+    }, 2500);
+  }
+}
+
+const LOGGER_TAG_CSV_HEADERS = ['connection_id', 'tag_name', 'output_field', 'description'];
 
 function loggerTagSpecParts(spec) {
   const s = String(spec || '').trim();
@@ -2461,6 +4493,7 @@ function loggerTagRowsFromList(tags) {
   return normalizeReportTagEntries(tags).map((entry) => ({
     connection_id: String(entry.connection_id || '').trim(),
     tag_name: String(entry.name || '').trim(),
+    output_field: String(entry.field_name || entry.output_field || '').trim(),
     description: String(entry.description || '').trim()
   }));
 }
@@ -2478,6 +4511,7 @@ function parseLoggerTagCsvText(text) {
   records.forEach((row, idx) => {
     const connectionId = String(csvGet(row, 'connection_id') || csvGet(row, 'connection') || '').trim();
     const tagName = String(csvGet(row, 'tag_name') || csvGet(row, 'name') || '').trim();
+    const fieldName = String(csvGet(row, 'output_field') || csvGet(row, 'field_name') || csvGet(row, 'output_name') || '').trim();
     const description = String(csvGet(row, 'description') || csvGet(row, 'desc') || '').trim();
     const spec = connectionId && tagName ? `${connectionId}:${tagName}` : '';
     if (!spec || spec.startsWith('#')) {
@@ -2491,7 +4525,7 @@ function parseLoggerTagCsvText(text) {
       return;
     }
     seen.add(spec);
-    out.push({ connection_id: connectionId, name: tagName, description });
+    out.push({ connection_id: connectionId, name: tagName, field_name: fieldName, description });
   });
 
   return {
@@ -2524,8 +4558,10 @@ function reportTagEntriesFromText(text) {
     const raw = String(line || '').trim();
     if (!raw || raw.startsWith('#')) return;
     const tab = raw.indexOf('\t');
-    const spec = (tab >= 0 ? raw.slice(0, tab) : raw).trim();
-    const description = (tab >= 0 ? raw.slice(tab + 1) : '').trim();
+    const fields = raw.split('\t');
+    const spec = String(fields[0] || '').trim();
+    const fieldName = String(fields[1] || '').trim();
+    const description = String(fields.slice(2).join('\t') || '').trim();
     const parts = loggerTagSpecParts(spec);
     if (!parts.connection_id || !parts.tag_name) return;
     if (seen.has(parts.tag_spec)) return;
@@ -2533,6 +4569,7 @@ function reportTagEntriesFromText(text) {
     out.push({
       connection_id: parts.connection_id,
       name: parts.tag_name,
+      field_name: fieldName,
       description
     });
   });
@@ -2793,6 +4830,7 @@ function getReportFromModalUi() {
     ? findReportById(state.loggerReportEditingId)
     : null;
   const tags = normalizeReportTagEntries(existingReport?.tags);
+  const historianFields = normalizeHistorianFieldEntries(existingReport?.historian_fields);
 
   return {
     id,
@@ -2802,7 +4840,8 @@ function getReportFromModalUi() {
     mode,
     enabled,
     schedule: { on_calendar: onCalendar, persistent },
-    tags
+    tags,
+    historian_fields: historianFields
   };
 }
 
@@ -3151,7 +5190,7 @@ async function refreshReporterRuntimeStatus() {
   updateReporterDataCheckStatusMap(runtime);
   if (state.loggerSelectedNodeId === 'logger:reports' || String(state.loggerSelectedNodeId || '').startsWith('logger:report:')) {
     renderLoggerReportsTable();
-    if (state.loggerReportPanelTab !== 'tags') renderLoggerReportDetails();
+    if (state.loggerReportPanelTab === 'details') renderLoggerReportDetails();
   } else if (state.loggerSelectedNodeId === 'logger:data_checks' || String(state.loggerSelectedNodeId || '').startsWith('logger:data_check:')) {
     renderLoggerDataChecksTable();
   } else if (state.loggerSelectedNodeId === 'logger:databases' || String(state.loggerSelectedNodeId || '').startsWith('logger:db:')) {
@@ -3298,6 +5337,7 @@ function wireLoggerUi() {
   if (els.loggerReportSelectTagsBtn) els.loggerReportSelectTagsBtn.addEventListener('click', openLoggerTagPickerModal);
   if (els.loggerTagPickerCloseBtn) els.loggerTagPickerCloseBtn.addEventListener('click', closeLoggerTagPickerModal);
   if (els.loggerTagPickerApplyBtn) els.loggerTagPickerApplyBtn.addEventListener('click', applyLoggerTagPickerSelectionToTextarea);
+  if (els.loggerTagPickerFullTagBtn) els.loggerTagPickerFullTagBtn.addEventListener('click', insertLogicSelectedFullTagCall);
   if (els.loggerTagPickerClearBtn) els.loggerTagPickerClearBtn.addEventListener('click', () => {
     state.loggerTagPickerSelected = new Set();
     renderLoggerTagPickerTable();
@@ -3435,6 +5475,12 @@ function setTab(id) {
   if (next === 'logger' && !canAccessLoggerTab()) {
     id = 'overview';
   }
+  if (next === 'historian' && !canAccessHistorianTab()) {
+    id = 'overview';
+  }
+  if (next === 'logic' && !canAccessLogicTab()) {
+    id = 'overview';
+  }
   if (next === 'logs' && !canAccessLogsTab()) {
     id = 'overview';
   }
@@ -3455,6 +5501,12 @@ function setTab(id) {
   if (id === 'logger') {
     refreshReporterAll().catch(() => {});
   }
+  if (id === 'historian') {
+    refreshHistorianTab().catch(() => {});
+  }
+  if (id === 'logic') {
+    refreshLogicTab().catch(() => {});
+  }
   if (id === 'configure') {
     ensureAuthAdminPanelLoaded();
     loadSoundSettings().catch(() => {});
@@ -3473,6 +5525,9 @@ function setTab(id) {
   }
   if (state.uiRefreshReady && (id === 'overview' || id === 'workspace' || id === 'alarms_events')) {
     refreshVisible().catch(() => {});
+  }
+  if (id !== 'logic') {
+    renderLogicValidationStatus(null);
   }
 }
 
@@ -3558,6 +5613,15 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
   }
 }
 
+function serviceUnavailableMessage(url, detail = '') {
+  const path = String(url || '');
+  if (path.startsWith('/api/historian/')) return `historian service is unavailable${detail}`;
+  if (path.startsWith('/api/reporter/')) return `reporter service is unavailable${detail}`;
+  if (path.startsWith('/api/alarms/')) return `alarm service is unavailable${detail}`;
+  if (path.startsWith('/api/opcbridge/')) return `opcbridge is starting or reconnecting${detail}`;
+  return `service is unavailable${detail}`;
+}
+
 async function apiGet(url, { timeoutMs = 30000 } = {}) {
   const res = await fetchWithTimeout(url, { cache: 'no-store', headers: { Accept: 'application/json' } }, timeoutMs);
   if (!res.ok) {
@@ -3574,7 +5638,7 @@ async function apiGet(url, { timeoutMs = 30000 } = {}) {
     } catch {
       // ignore
     }
-    throw new Error(res.status === 502 ? `opcbridge is starting or reconnecting${detail}` : `HTTP ${res.status}${detail}`);
+    throw new Error(res.status === 502 ? serviceUnavailableMessage(url, detail) : `HTTP ${res.status}${detail}`);
   }
   return res.json();
 }
@@ -4003,16 +6067,17 @@ function downloadDeviceTagsCsv(connectionId) {
 	  const headers = [
 	    'connection_id',
 	    'name',
+	    'source',
 	    'plc_tag_name',
 	    'source_tag',
 	    'bit',
+	    'initial_value',
 	    'invert',
 	    'datatype',
 	    'elem_count',
 	    'scan_ms',
 	    'enabled',
 	    'writable',
-	    'mqtt_command_allowed',
 	    'scaling',
 	    'raw_low',
 	    'raw_high',
@@ -4032,16 +6097,17 @@ function downloadDeviceTagsCsv(connectionId) {
 	    // Direct tags: plc_tag_name and no source_tag/bit
 	    connection_id: cid,
 	    name: String(t?.name || '').trim(),
+	    source: String(t?.source || t?.source_type || '').trim(),
 	    plc_tag_name: (String(t?.source_tag || '').trim() !== '') ? '' : String(t?.plc_tag_name || '').trim(),
 	    source_tag: String(t?.source_tag || '').trim(),
 	    bit: (t?.bit == null || String(t?.source_tag || '').trim() === '') ? '' : String(t.bit),
+	    initial_value: String(t?.initial_value ?? ''),
 	    invert: (t?.invert === true) ? 'true' : 'false',
 	    datatype: String(t?.datatype || '').trim(),
 	    elem_count: (t?.elem_count == null) ? '' : String(t.elem_count),
 	    scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
 	    enabled: (t?.enabled !== false) ? 'true' : 'false',
 	    writable: (t?.writable === true) ? 'true' : 'false',
-	    mqtt_command_allowed: (t?.mqtt_command_allowed === true) ? 'true' : 'false',
 	    scaling: String(t?.scaling || '').trim(),
 	    raw_low: (t?.raw_low == null) ? '' : String(t.raw_low),
 	    raw_high: (t?.raw_high == null) ? '' : String(t.raw_high),
@@ -4344,15 +6410,18 @@ function getDerivedAliasSourceOptions(connectionId, excludeTagName) {
   return names;
 }
 
-function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitBoxEl, bitEl, datatypeEl, elemCountEl, writableEl, mqttAllowedEl, scalingEl, scalingLinearRowEl }, { connId, excludeTagName }) {
+function applyTagSourceKindUi({ kindEl, plcEl, initialRowEl, initialEl, derivedRowEl, sourceEl, bitBoxEl, bitEl, datatypeEl, elemCountEl, writableEl, scalingEl, scalingLinearRowEl }, { connId, excludeTagName }) {
   const kind = String(kindEl?.value || 'plc').trim().toLowerCase();
+  const isMemory = (kind === 'memory');
   const isDerivedBit = (kind === 'derived_bit');
   const isDerivedAlias = (kind === 'derived_alias');
   const isDerived = (isDerivedBit || isDerivedAlias);
 
   if (derivedRowEl) derivedRowEl.style.display = isDerived ? '' : 'none';
+  if (initialRowEl) initialRowEl.style.display = isMemory ? '' : 'none';
   if (bitBoxEl) bitBoxEl.style.display = isDerivedBit ? '' : 'none';
-  if (plcEl) plcEl.disabled = isDerived || !canEditConfig();
+  if (plcEl) plcEl.disabled = isDerived || isMemory || !canEditConfig();
+  if (initialEl) initialEl.disabled = !isMemory || !canEditConfig();
   if (sourceEl) sourceEl.disabled = !canEditConfig();
   if (bitEl) bitEl.disabled = isDerivedAlias || !canEditConfig();
 
@@ -4365,18 +6434,13 @@ function applyTagSourceKindUi({ kindEl, plcEl, derivedRowEl, sourceEl, bitBoxEl,
     }
   }
 
-  if (elemCountEl) elemCountEl.disabled = isDerived || !canEditConfig();
+  if (elemCountEl) elemCountEl.disabled = isDerived || isMemory || !canEditConfig();
   if (writableEl) {
     if (isDerivedAlias) writableEl.checked = false;
     writableEl.disabled = isDerivedAlias || !canEditConfig();
   }
-  if (mqttAllowedEl) {
-    if (isDerivedAlias) mqttAllowedEl.checked = false;
-    mqttAllowedEl.disabled = isDerivedAlias || !canEditConfig();
-  }
-
   if (scalingEl) {
-    if (isDerivedBit) {
+    if (isDerivedBit || isMemory) {
       scalingEl.value = 'none';
       scalingEl.disabled = true;
       if (scalingLinearRowEl) scalingLinearRowEl.style.display = 'none';
@@ -4551,6 +6615,7 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   renderWorkspaceSaveBar();
 
   const result = await apiPostJson('/api/opcbridge/config/tags/import_csv', { connection_id: cid, csv: csvText });
+  invalidateLoggerTagPickerCache();
   setWorkspaceSaveStatus('Imported CSV. Rebuilding full runtime…');
   renderWorkspaceSaveBar();
   await opcbridgeReload();
@@ -6880,6 +8945,10 @@ function setSvcStatus(msg) {
   if (els.svcStatus) els.svcStatus.textContent = String(msg || '');
 }
 
+function setMqttTabStatus(msg) {
+  if (els.mqttTabStatus) els.mqttTabStatus.textContent = String(msg || '');
+}
+
 function setMqttCaStatus(msg) {
   if (els.mqttCaStatus) els.mqttCaStatus.textContent = String(msg || '');
 }
@@ -8364,6 +10433,389 @@ function wireSvcUi() {
   els.svcApplyBtn?.addEventListener('click', applySvcSettings);
 }
 
+function fillMqttTabBrokerForm(payload) {
+  const cfg = payload?.config || {};
+  if (els.mqttTabEnabled) els.mqttTabEnabled.checked = cfg.enabled !== false;
+  if (els.mqttTabSubscribeEnabled) els.mqttTabSubscribeEnabled.checked = cfg.subscribe_enabled !== false;
+  if (els.mqttTabHost) els.mqttTabHost.value = String(cfg.host || '');
+  if (els.mqttTabPort) els.mqttTabPort.value = String(cfg.port ?? (cfg.use_tls ? 8883 : 1883));
+  if (els.mqttTabClientId) els.mqttTabClientId.value = String(cfg.client_id || '');
+  if (els.mqttTabUsername) els.mqttTabUsername.value = String(cfg.username || '');
+  if (els.mqttTabPassword) {
+    els.mqttTabPassword.value = '';
+    els.mqttTabPassword.placeholder = payload?.password_set ? 'Configured; leave blank to keep current' : 'Optional';
+  }
+  if (els.mqttTabUseTls) els.mqttTabUseTls.checked = Boolean(cfg.use_tls);
+  if (els.mqttTabTlsInsecure) els.mqttTabTlsInsecure.checked = Boolean(cfg.tls_insecure);
+}
+
+function readMqttTabBrokerForm() {
+  const prev = state.mqttConfigPayload?.config || {};
+  const cfg = {
+    ...prev,
+    enabled: Boolean(els.mqttTabEnabled?.checked),
+    subscribe_enabled: Boolean(els.mqttTabSubscribeEnabled?.checked),
+    host: String(els.mqttTabHost?.value || '').trim(),
+    port: Number(els.mqttTabPort?.value ?? 1883) || 1883,
+    client_id: String(els.mqttTabClientId?.value || '').trim(),
+    username: String(els.mqttTabUsername?.value || '').trim(),
+    use_tls: Boolean(els.mqttTabUseTls?.checked),
+    tls_insecure: Boolean(els.mqttTabTlsInsecure?.checked)
+  };
+  const password = String(els.mqttTabPassword?.value || '');
+  if (password.length > 0) cfg.password = password;
+  return cfg;
+}
+
+function getMqttConnectionEntries() {
+  return (Array.isArray(state.connFiles) ? state.connFiles : [])
+    .map((f) => {
+      const pathRel = String(f?.path || '').trim();
+      const obj = pathRel ? state.connObjCache?.get?.(pathRel) : null;
+      if (!isMqttConnectionObj(obj)) return null;
+      const id = String(obj?.id || obj?.connection_id || connectionIdForConnFilePath(pathRel)).trim();
+      if (!id) return null;
+      return { id, path: pathRel, obj };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function mqttBrokerIdFromNodeId(nodeId) {
+  const sid = String(nodeId || state.mqttSelectedNodeId || '');
+  const parts = sid.split(':');
+  if (parts[0] !== 'mqtt') return '';
+  if (parts[1] === 'broker') return String(parts[2] || '');
+  if (parts[1] === 'inputs' || parts[1] === 'outputs' || parts[1] === 'message') return String(parts[2] || '');
+  return '';
+}
+
+function getSelectedMqttConnectionEntry() {
+  const entries = getMqttConnectionEntries();
+  if (!entries.length) return null;
+  const selectedId = mqttBrokerIdFromNodeId();
+  return entries.find((e) => e.id === selectedId) || entries[0];
+}
+
+function getMqttMessagesForConnectionObj(obj) {
+  if (!obj || typeof obj !== 'object') return [];
+  if (!obj.settings || typeof obj.settings !== 'object' || Array.isArray(obj.settings)) obj.settings = {};
+  const settings = obj.settings;
+  if (!Array.isArray(settings.messages)) settings.messages = [];
+  if (!Array.isArray(settings.publications)) settings.publications = [];
+  return settings.messages;
+}
+
+function getMqttMessages() {
+  const entry = getSelectedMqttConnectionEntry();
+  return entry ? getMqttMessagesForConnectionObj(entry.obj) : [];
+}
+
+function getMqttSelectedMessageIndex() {
+  const sid = String(state.mqttSelectedNodeId || '');
+  if (!sid.startsWith('mqtt:message:')) return -1;
+  const parts = sid.split(':');
+  const idx = Number(parts[3]);
+  return Number.isFinite(idx) ? Math.trunc(idx) : -1;
+}
+
+function populateMqttConnectionSelect() {
+  if (!els.mqttMappingConnection) return;
+  const prev = String(els.mqttMappingConnection.value || '').trim();
+  els.mqttMappingConnection.textContent = '';
+  const ids = new Set();
+  state.connFiles.forEach((f) => {
+    const rel = String(f?.path || '').trim();
+    const obj = state.connObjCache?.get(rel);
+    const id = String(obj?.connection_id || rel.replace(/^connections\//, '').replace(/\.json$/i, '')).trim();
+    if (id) ids.add(id);
+  });
+  Array.from(ids).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).forEach((id) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id;
+    els.mqttMappingConnection.appendChild(opt);
+  });
+  if (prev && Array.from(els.mqttMappingConnection.options || []).some((opt) => opt.value === prev)) {
+    els.mqttMappingConnection.value = prev;
+  }
+}
+
+function renderMqttTree() {
+  if (!els.mqttTreeView) return;
+  const brokers = getMqttConnectionEntries();
+  els.mqttTreeView.textContent = '';
+  const nodes = [{
+    id: 'mqtt:brokers',
+    label: 'Brokers',
+    meta: `${brokers.length} broker(s)`,
+    children: brokers.map((broker) => {
+      const messages = getMqttMessagesForConnectionObj(broker.obj);
+      return {
+        id: `mqtt:broker:${broker.id}`,
+        label: broker.id,
+        meta: mqttSettingsFromConnection(broker.obj).host || 'MQTT',
+        children: [
+        {
+          id: `mqtt:inputs:${broker.id}`,
+          label: 'Input Blocks',
+          meta: `${messages.length} block(s)`,
+          children: messages.map((m, idx) => ({
+            id: `mqtt:message:${broker.id}:${idx}`,
+            label: String(m?.id || m?.topic || `Input Block ${idx + 1}`),
+            meta: `${Array.isArray(m?.mappings) ? m.mappings.length : 0} map(s)`
+          }))
+        },
+        {
+          id: `mqtt:outputs:${broker.id}`,
+          label: 'Output Blocks',
+          meta: 'future',
+          children: []
+        }
+      ]
+      };
+    })
+  }];
+
+  const renderNode = (node, container) => {
+    const children = Array.isArray(node.children) ? node.children : [];
+    const canExpand = children.length > 0 || String(node.id || '').includes(':outputs:');
+    if (!state._mqttExpanded) state._mqttExpanded = new Set(['mqtt:brokers']);
+    brokers.forEach((broker) => {
+      state._mqttExpanded.add(`mqtt:broker:${broker.id}`);
+      state._mqttExpanded.add(`mqtt:inputs:${broker.id}`);
+      state._mqttExpanded.add(`mqtt:outputs:${broker.id}`);
+    });
+    const expanded = state._mqttExpanded.has(node.id);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tree-item';
+    btn.classList.toggle('is-active', state.mqttSelectedNodeId === node.id);
+    btn.innerHTML = `<span class="twisty ${canExpand ? '' : 'is-empty'}">${canExpand ? (expanded ? '−' : '+') : ''}</span><span class="label"></span><span class="meta"></span>`;
+    btn.querySelector('.label').textContent = node.label;
+    btn.querySelector('.meta').textContent = node.meta;
+    btn.querySelector('.twisty').addEventListener('click', (e) => {
+      if (!canExpand) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (state._mqttExpanded.has(node.id)) state._mqttExpanded.delete(node.id);
+      else state._mqttExpanded.add(node.id);
+      renderMqttTree();
+    });
+    btn.addEventListener('click', () => {
+      state.mqttSelectedNodeId = node.id;
+      renderMqttTree();
+      renderMqttSelectedMessage();
+    });
+    container.appendChild(btn);
+    if (canExpand && expanded) {
+      const div = document.createElement('div');
+      div.className = 'tree-children';
+      children.forEach((child) => renderNode(child, div));
+      container.appendChild(div);
+    }
+  };
+
+  nodes.forEach((node) => renderNode(node, els.mqttTreeView));
+  const totalMessages = brokers.reduce((sum, b) => sum + getMqttMessagesForConnectionObj(b.obj).length, 0);
+  if (els.mqttTreeNote) els.mqttTreeNote.textContent = `Brokers: ${brokers.length} · Input blocks: ${totalMessages} · Output blocks: future`;
+}
+
+function renderMqttSelectedMessage() {
+  const messages = getMqttMessages();
+  const idx = getMqttSelectedMessageIndex();
+  const m = idx >= 0 ? messages[idx] : null;
+  const hasMessage = Boolean(m);
+  if (els.mqttMessageDeleteBtn) els.mqttMessageDeleteBtn.disabled = !hasMessage;
+  if (els.mqttMessageId) els.mqttMessageId.value = hasMessage ? String(m.id || '') : '';
+  if (els.mqttMessageTopic) els.mqttMessageTopic.value = hasMessage ? String(m.topic || '') : '';
+  if (els.mqttMessageFormat) els.mqttMessageFormat.value = hasMessage ? String(m.payload_format || 'json_key') : 'json_key';
+  if (els.mqttMessageWriteToPlc) els.mqttMessageWriteToPlc.checked = hasMessage ? m.write_to_plc !== false : true;
+  if (els.mqttMessageMappingsJson) {
+    els.mqttMessageMappingsJson.value = hasMessage ? JSON.stringify(Array.isArray(m.mappings) ? m.mappings : [], null, 2) : '[]';
+  }
+}
+
+function applyMqttMessageEditorToState() {
+  const idx = getMqttSelectedMessageIndex();
+  if (idx < 0) return;
+  const messages = getMqttMessages();
+  if (!messages[idx]) return;
+  let mappings = [];
+  try {
+    mappings = JSON.parse(String(els.mqttMessageMappingsJson?.value || '[]'));
+  } catch (err) {
+    throw new Error(`Mappings JSON is invalid: ${err.message}`);
+  }
+  if (!Array.isArray(mappings)) throw new Error('Mappings JSON must be an array.');
+  messages[idx] = {
+    ...messages[idx],
+    id: String(els.mqttMessageId?.value || '').trim(),
+    topic: String(els.mqttMessageTopic?.value || '').trim(),
+    payload_format: String(els.mqttMessageFormat?.value || 'json_key').trim(),
+    write_to_plc: Boolean(els.mqttMessageWriteToPlc?.checked),
+    mappings
+  };
+}
+
+function addMqttInputMessage() {
+  try { applyMqttMessageEditorToState(); } catch (err) { setMqttTabStatus(err.message); return; }
+  const broker = getSelectedMqttConnectionEntry();
+  if (!broker) {
+    setMqttTabStatus('Add an MQTT broker connection in Workspace first.');
+    return;
+  }
+  const messages = getMqttMessages();
+  messages.push({
+    id: `InputTopic${messages.length + 1}`,
+    topic: '',
+    payload_format: 'json_key',
+    write_to_plc: true,
+    mappings: []
+  });
+  state.mqttSelectedNodeId = `mqtt:message:${broker.id}:${messages.length - 1}`;
+  renderMqttTree();
+  renderMqttSelectedMessage();
+}
+
+function deleteMqttInputMessage() {
+  const idx = getMqttSelectedMessageIndex();
+  if (idx < 0) return;
+  const messages = getMqttMessages();
+  const label = String(messages[idx]?.id || messages[idx]?.topic || `Input Topic ${idx + 1}`);
+  if (!window.confirm(`Delete MQTT input topic '${label}'?`)) return;
+  messages.splice(idx, 1);
+  const broker = getSelectedMqttConnectionEntry();
+  state.mqttSelectedNodeId = `mqtt:inputs:${broker?.id || ''}`;
+  renderMqttTree();
+  renderMqttSelectedMessage();
+}
+
+function appendMqttMappingRow() {
+  const idx = getMqttSelectedMessageIndex();
+  if (idx < 0) {
+    setMqttTabStatus('Select or add an input topic first.');
+    return;
+  }
+  let mappings = [];
+  try {
+    mappings = JSON.parse(String(els.mqttMessageMappingsJson?.value || '[]'));
+  } catch (err) {
+    setMqttTabStatus(`Mappings JSON is invalid: ${err.message}`);
+    return;
+  }
+  if (!Array.isArray(mappings)) mappings = [];
+  const format = String(els.mqttMessageFormat?.value || 'json_key');
+  const key = String(els.mqttMappingKey?.value || '').trim();
+  const row = {
+    connection_id: String(els.mqttMappingConnection?.value || '').trim(),
+    tag_name: String(els.mqttMappingTag?.value || '').trim(),
+    datatype: String(els.mqttMappingDatatype?.value || 'float32').trim()
+  };
+  if (format === 'json_path') row.path = key;
+  else if (format !== 'raw') row.key = key;
+  if (!row.connection_id || !row.tag_name) {
+    setMqttTabStatus('Mapping requires a connection and target tag.');
+    return;
+  }
+  if (format !== 'raw' && !key) {
+    setMqttTabStatus('Mapping requires a key/path for JSON payloads.');
+    return;
+  }
+  mappings.push(row);
+  if (els.mqttMessageMappingsJson) els.mqttMessageMappingsJson.value = JSON.stringify(mappings, null, 2);
+  if (els.mqttMappingKey) els.mqttMappingKey.value = '';
+  if (els.mqttMappingTag) els.mqttMappingTag.value = '';
+  setMqttTabStatus('Mapping row added.');
+}
+
+async function refreshMqttTab() {
+  setMqttTabStatus('Loading MQTT...');
+  try {
+    const legacyInputs = await apiGet('/api/opcbridge/mqtt/inputs').catch(() => null);
+    if (legacyInputs?.json) state.mqttInputsJson = legacyInputs.json;
+    await loadConnectionsList().catch(() => null);
+    await loadWorkspaceConnectionObjects();
+    const brokers = getMqttConnectionEntries();
+    const legacyMessages = Array.isArray(state.mqttInputsJson?.messages) ? state.mqttInputsJson.messages : [];
+    let migratedLegacyMessages = false;
+    if (brokers.length === 1 && getMqttMessagesForConnectionObj(brokers[0].obj).length === 0 && legacyMessages.length > 0) {
+      brokers[0].obj.settings.messages = JSON.parse(JSON.stringify(legacyMessages));
+      migratedLegacyMessages = true;
+    }
+    if (!brokers.some((b) => state.mqttSelectedNodeId.includes(`:${b.id}`))) {
+      state.mqttSelectedNodeId = brokers.length ? `mqtt:broker:${brokers[0].id}` : 'mqtt:brokers';
+    }
+    populateMqttConnectionSelect();
+    renderMqttTree();
+    renderMqttSelectedMessage();
+    setMqttTabStatus(brokers.length
+      ? (migratedLegacyMessages ? 'Ready. Legacy global topics are shown under the selected broker until saved.' : 'Ready.')
+      : 'No MQTT broker connections found. Add one in Workspace.');
+  } catch (err) {
+    setMqttTabStatus(`Load failed: ${err.message}`);
+  }
+}
+
+async function refreshMqttWorkspaceConfig() {
+  try {
+    const [cfg, inputs] = await Promise.all([
+      apiGet('/api/opcbridge/mqtt/config').catch(() => null),
+      apiGet('/api/opcbridge/mqtt/inputs').catch(() => null)
+    ]);
+    if (cfg) state.mqttConfigPayload = cfg;
+    if (inputs?.json) state.mqttInputsJson = inputs.json;
+  } catch {
+    // Workspace can still render PLC/memory/system items if MQTT config is unavailable.
+  }
+}
+
+async function testMqttBroker() {
+  const entry = getSelectedMqttConnectionEntry();
+  setMqttTabStatus('Testing broker connection...');
+  if (els.mqttBrokerTestBtn) els.mqttBrokerTestBtn.disabled = true;
+  try {
+    if (!entry) throw new Error('Select an MQTT broker connection first.');
+    const brokerConfig = { ...(entry.obj?.settings || {}) };
+    if (!brokerConfig.host) throw new Error('Broker host is required.');
+    const result = await apiPostJson('/api/opcbridge/mqtt/test', { config: brokerConfig }, { timeoutMs: 20000 });
+    const tlsText = result?.tls ? 'TLS' : 'TCP';
+    setMqttTabStatus(`Broker test OK (${tlsText} ${result?.host || brokerConfig.host}:${result?.port || brokerConfig.port}, ${Number(result?.elapsed_ms || 0)} ms).`);
+  } catch (err) {
+    setMqttTabStatus(`Broker test failed: ${err.message}`);
+  } finally {
+    if (els.mqttBrokerTestBtn) els.mqttBrokerTestBtn.disabled = false;
+  }
+}
+
+async function saveMqttTab() {
+  setMqttTabStatus('Saving MQTT...');
+  if (els.mqttTabSaveBtn) els.mqttTabSaveBtn.disabled = true;
+  try {
+    applyMqttMessageEditorToState();
+    const entry = getSelectedMqttConnectionEntry();
+    if (!entry) throw new Error('Select an MQTT broker connection first.');
+    await apiPostJson('/api/opcbridge/config/file', { path: entry.path, content: prettyJson(entry.obj) });
+    if (state.connObjCache) state.connObjCache.set(String(entry.path), entry.obj);
+    renderMqttTree();
+    renderMqttSelectedMessage();
+    setMqttTabStatus(`Saved ${entry.id}. Restart/apply opcbridge for runtime MQTT changes.`);
+  } catch (err) {
+    setMqttTabStatus(`Save failed: ${err.message}`);
+  } finally {
+    if (els.mqttTabSaveBtn) els.mqttTabSaveBtn.disabled = false;
+  }
+}
+
+function wireMqttTabUi() {
+  els.mqttTabRefreshBtn?.addEventListener('click', refreshMqttTab);
+  els.mqttTabSaveBtn?.addEventListener('click', saveMqttTab);
+  els.mqttBrokerTestBtn?.addEventListener('click', testMqttBroker);
+  els.mqttMessageNewBtn?.addEventListener('click', addMqttInputMessage);
+  els.mqttMessageDeleteBtn?.addEventListener('click', deleteMqttInputMessage);
+  els.mqttMappingAddBtn?.addEventListener('click', appendMqttMappingRow);
+}
+
 async function uploadMqttCaCert() {
   setMqttCaStatus('Uploading…');
   try {
@@ -8443,6 +10895,92 @@ function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudg
   if (Number.isFinite(lanes) && lanes > 1) out.poll_lanes = Math.min(8, Math.max(1, lanes));
   else delete out.poll_lanes;
   return out;
+}
+
+function isMqttConnectionObj(obj) {
+  return String(obj?.driver || '').trim() === 'mqtt';
+}
+
+function setRowVisible(row, visible) {
+  if (row) row.style.display = visible ? '' : 'none';
+}
+
+function mqttSettingsFromConnection(obj) {
+  const settings = (obj?.settings && typeof obj.settings === 'object') ? obj.settings : {};
+  const host = String(settings.host ?? obj?.host ?? obj?.gateway ?? '').trim();
+  const portRaw = settings.port ?? obj?.port ?? '';
+  const port = Number(portRaw);
+  const tlsRaw = settings.use_tls ?? settings.tls ?? obj?.use_tls ?? obj?.tls ?? false;
+  const insecureRaw = settings.tls_insecure ?? obj?.tls_insecure ?? false;
+  return {
+    host,
+    port: Number.isFinite(port) && port > 0 ? Math.trunc(port) : '',
+    use_tls: tlsRaw === true || String(tlsRaw).toLowerCase() === 'true',
+    tls_insecure: insecureRaw === true || String(insecureRaw).toLowerCase() === 'true',
+    client_id: String(settings.client_id ?? obj?.client_id ?? '').trim(),
+    username: String(settings.username ?? obj?.username ?? '').trim(),
+    password_set: String(settings.password ?? obj?.password ?? '').length > 0,
+    cafile: String(settings.cafile ?? obj?.cafile ?? 'ca.crt').trim() || 'ca.crt',
+    certfile: String(settings.certfile ?? obj?.certfile ?? '').trim(),
+    keyfile: String(settings.keyfile ?? obj?.keyfile ?? '').trim(),
+    publish_per_field: Boolean(settings.publish_per_field ?? settings.publish?.per_field ?? false),
+    publish_tag_json: Boolean(settings.publish_tag_json ?? settings.publish?.tag_json ?? false),
+    publish_memory_tags: Boolean(settings.publish_memory_tags ?? settings.publish?.memory_tags ?? false),
+    publish_system_tags: Boolean(settings.publish_system_tags ?? settings.publish?.system_tags ?? false),
+    publish_mode: normalizeMqttPublishMode(settings.publish_mode ?? settings.publish?.mode ?? 'change'),
+    publish_interval_ms: Math.max(100, Number(settings.publish_interval_ms ?? settings.publish?.interval_ms ?? 30000) || 30000),
+    publish_min_update_ms: Math.max(0, Number(settings.publish_min_update_ms ?? settings.publish?.min_update_ms ?? 0) || 0)
+  };
+}
+
+function buildMqttConnectionConfig({ id, description = '', existing = {}, host, port, useTls, tlsInsecure, clientId, username, password, cafile, certfile, keyfile, publishPerField = false, publishTagJson = false, publishMemoryTags = false, publishSystemTags = false, publishMode = 'change', publishIntervalMs = 30000, publishMinUpdateMs = 0 }) {
+  const trimmedHost = String(host || '').trim();
+  if (!trimmedHost) throw new Error('MQTT host is required.');
+  const portNum = Math.trunc(Number(port || 0));
+  const passwordRaw = String(password ?? '');
+  const settings = {
+    ...((existing?.settings && typeof existing.settings === 'object') ? existing.settings : {}),
+    host: trimmedHost,
+    port: Number.isFinite(portNum) && portNum > 0 ? portNum : (useTls ? 8883 : 1883),
+    use_tls: useTls === true,
+    tls_insecure: tlsInsecure === true,
+    client_id: String(clientId || '').trim(),
+    username: String(username || '').trim(),
+    cafile: String(cafile || 'ca.crt').trim() || 'ca.crt',
+    certfile: String(certfile || '').trim(),
+    keyfile: String(keyfile || '').trim(),
+    publish_per_field: Boolean(publishPerField),
+    publish_tag_json: Boolean(publishTagJson),
+    publish_memory_tags: Boolean(publishMemoryTags),
+    publish_system_tags: Boolean(publishSystemTags),
+    publish_mode: normalizeMqttPublishMode(publishMode),
+    publish_interval_ms: Math.max(100, Math.trunc(Number(publishIntervalMs || 30000)) || 30000),
+    publish_min_update_ms: Math.max(0, Math.trunc(Number(publishMinUpdateMs || 0)) || 0)
+  };
+  if (passwordRaw.length > 0) settings.password = passwordRaw;
+  else if (existing?.settings && typeof existing.settings === 'object' && typeof existing.settings.password === 'string' && existing.settings.password.length > 0) settings.password = existing.settings.password;
+  else delete settings.password;
+  return {
+    id,
+    description: String(description || ''),
+    driver: 'mqtt',
+    settings
+  };
+}
+
+function applyDeviceDriverUi(prefix) {
+  const isEdit = prefix === 'edit';
+  const driverEl = isEdit ? els.editDevDriver : els.newDevDriver;
+  const isMqtt = String(driverEl?.value || '').trim() === 'mqtt';
+  const plcRows = isEdit
+    ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
+    : [els.newDevGatewayRow, els.newDevPathRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
+  const mqttRows = isEdit
+    ? [els.editDevMqttHostRow, els.editDevMqttPortRow, els.editDevMqttClientIdRow, els.editDevMqttUsernameRow, els.editDevMqttPasswordRow, els.editDevMqttTlsRow, els.editDevMqttTlsInsecureRow, els.editDevMqttCaFileRow, els.editDevMqttCertFileRow, els.editDevMqttKeyFileRow, els.editDevMqttPublishPatternsRow, els.editDevMqttPublishModeRow, els.editDevMqttPublishIntervalRow, els.editDevMqttPublishMinRow, els.editDevMqttTestRow]
+    : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttCertFileRow, els.newDevMqttKeyFileRow, els.newDevMqttPublishPatternsRow, els.newDevMqttPublishModeRow, els.newDevMqttPublishIntervalRow, els.newDevMqttPublishMinRow, els.newDevMqttTestRow];
+
+  plcRows.forEach((row) => setRowVisible(row, !isMqtt));
+  mqttRows.forEach((row) => setRowVisible(row, isMqtt));
 }
 
 function fillConnForm(obj) {
@@ -8558,6 +11096,15 @@ async function getConnObjForPath(pathRel) {
   const obj = parseJsonc(raw);
   if (state.connObjCache) state.connObjCache.set(key, obj);
   return obj;
+}
+
+async function loadWorkspaceConnectionObjects() {
+  const files = Array.isArray(state.connFiles) ? state.connFiles : [];
+  await Promise.allSettled(files.map(async (f) => {
+    const rel = String(f?.path || '').trim();
+    if (!rel) return;
+    await getConnObjForPath(rel);
+  }));
 }
 
 async function selectConnectionFile(pathRel) {
@@ -8711,6 +11258,9 @@ async function saveTagsForChangedConnections(baseTags, nextTags) {
   }
   if (emptied.length > 0) {
     await writeEmptyCanonicalTagFilesForConnections(emptied);
+  }
+  if (tagsToWrite.length > 0 || emptied.length > 0) {
+    invalidateLoggerTagPickerCache();
   }
   return changed;
 }
@@ -9115,6 +11665,24 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevPollingPacing) els.newDevPollingPacing.value = 'balanced';
   if (els.newDevPollBatchSize) els.newDevPollBatchSize.value = '';
   if (els.newDevPollTimeBudgetMs) els.newDevPollTimeBudgetMs.value = '';
+  if (els.newDevMqttHost) els.newDevMqttHost.value = '';
+  if (els.newDevMqttPort) els.newDevMqttPort.value = '1883';
+  if (els.newDevMqttClientId) els.newDevMqttClientId.value = '';
+  if (els.newDevMqttUsername) els.newDevMqttUsername.value = '';
+  if (els.newDevMqttPassword) els.newDevMqttPassword.value = '';
+  if (els.newDevMqttUseTls) els.newDevMqttUseTls.checked = false;
+  if (els.newDevMqttTlsInsecure) els.newDevMqttTlsInsecure.checked = false;
+  if (els.newDevMqttCaFile) els.newDevMqttCaFile.value = 'ca.crt';
+  if (els.newDevMqttCertFile) els.newDevMqttCertFile.value = '';
+  if (els.newDevMqttKeyFile) els.newDevMqttKeyFile.value = '';
+  if (els.newDevMqttPublishPerField) els.newDevMqttPublishPerField.checked = false;
+  if (els.newDevMqttPublishTagJson) els.newDevMqttPublishTagJson.checked = false;
+  if (els.newDevMqttPublishMemoryTags) els.newDevMqttPublishMemoryTags.checked = false;
+  if (els.newDevMqttPublishSystemTags) els.newDevMqttPublishSystemTags.checked = false;
+  if (els.newDevMqttPublishMode) els.newDevMqttPublishMode.value = 'change';
+  if (els.newDevMqttPublishIntervalMs) els.newDevMqttPublishIntervalMs.value = '30000';
+  if (els.newDevMqttPublishMinMs) els.newDevMqttPublishMinMs.value = '0';
+  applyDeviceDriverUi('new');
 
   setNewDevStatus('');
   els.newDevId?.focus?.();
@@ -9134,13 +11702,15 @@ function setNewTagStatus(msg) {
 function showNewTagModal(connectionId) {
   const cid = String(connectionId || '').trim();
   if (!cid) return;
+  const memoryMode = cid === MEMORY_CONNECTION_ID;
 
   state.pendingNewTag = { connection_id: cid };
 
-  if (els.newTagHint) els.newTagHint.textContent = `Creating a new tag under device '${cid}'.`;
+  if (els.newTagHint) els.newTagHint.textContent = memoryMode ? 'Creating a new memory tag.' : `Creating a new tag under device '${cid}'.`;
   if (els.newTagName) els.newTagName.value = '';
-  if (els.newTagSourceKind) els.newTagSourceKind.value = 'plc';
+  if (els.newTagSourceKind) els.newTagSourceKind.value = memoryMode ? 'memory' : 'plc';
   if (els.newTagPlc) els.newTagPlc.value = '';
+  if (els.newTagInitialValue) els.newTagInitialValue.value = '';
   if (els.newTagBit) els.newTagBit.value = '';
   fillTagDatatypeSelect(els.newTagDatatype, 'bool');
   if (els.newTagScan) els.newTagScan.value = '';
@@ -9148,7 +11718,6 @@ function showNewTagModal(connectionId) {
   if (els.newTagEnabled) els.newTagEnabled.checked = true;
   if (els.newTagWritable) els.newTagWritable.checked = false;
   if (els.newTagInvert) els.newTagInvert.checked = false;
-  if (els.newTagMqttAllowed) els.newTagMqttAllowed.checked = false;
   if (els.newTagLogEvent) els.newTagLogEvent.checked = false;
   if (els.newTagScaling) {
     els.newTagScaling.value = 'none';
@@ -9171,6 +11740,8 @@ function showNewTagModal(connectionId) {
     els.newTagSourceKind.onchange = () => applyTagSourceKindUi({
       kindEl: els.newTagSourceKind,
       plcEl: els.newTagPlc,
+      initialRowEl: els.newTagInitialRow,
+      initialEl: els.newTagInitialValue,
       derivedRowEl: els.newTagDerivedRow,
       sourceEl: els.newTagSourceTag,
       bitBoxEl: els.newTagBitBox,
@@ -9178,13 +11749,14 @@ function showNewTagModal(connectionId) {
       datatypeEl: els.newTagDatatype,
       elemCountEl: els.newTagElemCount,
       writableEl: els.newTagWritable,
-      mqttAllowedEl: els.newTagMqttAllowed,
       scalingEl: els.newTagScaling,
       scalingLinearRowEl: els.newTagScalingLinearRow
     }, { connId: cid, excludeTagName: '' });
     applyTagSourceKindUi({
       kindEl: els.newTagSourceKind,
       plcEl: els.newTagPlc,
+      initialRowEl: els.newTagInitialRow,
+      initialEl: els.newTagInitialValue,
       derivedRowEl: els.newTagDerivedRow,
       sourceEl: els.newTagSourceTag,
       bitBoxEl: els.newTagBitBox,
@@ -9192,11 +11764,10 @@ function showNewTagModal(connectionId) {
       datatypeEl: els.newTagDatatype,
       elemCountEl: els.newTagElemCount,
       writableEl: els.newTagWritable,
-      mqttAllowedEl: els.newTagMqttAllowed,
       scalingEl: els.newTagScaling,
       scalingLinearRowEl: els.newTagScalingLinearRow
     }, { connId: cid, excludeTagName: '' });
-    els.newTagSourceKind.disabled = !canEditConfig();
+    els.newTagSourceKind.disabled = memoryMode || !canEditConfig();
   }
 
   setNewTagStatus('');
@@ -9261,17 +11832,21 @@ async function createNewTagFromModal() {
   const name = String(els.newTagName?.value || '').trim();
   if (!name) { setNewTagStatus('Tag Name is required.'); return; }
 
-  const sourceKind = String(els.newTagSourceKind?.value || 'plc').trim().toLowerCase();
+  const sourceKind = (cid === MEMORY_CONNECTION_ID)
+    ? 'memory'
+    : String(els.newTagSourceKind?.value || 'plc').trim().toLowerCase();
+  const isMemory = (sourceKind === 'memory');
   const isDerivedBit = (sourceKind === 'derived_bit');
   const isDerivedAlias = (sourceKind === 'derived_alias');
   const isDerived = (isDerivedBit || isDerivedAlias);
 
   const plc_tag_name = String(els.newTagPlc?.value || '').trim();
+  const initialValue = String(els.newTagInitialValue?.value || '').trim();
   const source_tag = String(els.newTagSourceTag?.value || '').trim();
   const bitRaw = String(els.newTagBit?.value || '').trim();
   const bit = bitRaw === '' ? null : Math.trunc(Number(bitRaw));
 
-  if (!isDerived && !plc_tag_name) { setNewTagStatus('PLC Tag is required.'); return; }
+  if (!isDerived && !isMemory && !plc_tag_name) { setNewTagStatus('PLC Tag is required.'); return; }
   if (isDerivedBit) {
     if (!source_tag) { setNewTagStatus('Source Tag is required for a Derived Bit.'); return; }
     if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) { setNewTagStatus('Bit must be between 0 and 63.'); return; }
@@ -9287,7 +11862,6 @@ async function createNewTagFromModal() {
   const enabled = Boolean(els.newTagEnabled?.checked);
   const writable = Boolean(els.newTagWritable?.checked);
   const invert = Boolean(els.newTagInvert?.checked);
-  const mqtt_command_allowed = Boolean(els.newTagMqttAllowed?.checked);
   const log_event_on_change = Boolean(els.newTagLogEvent?.checked);
   const tag = {
     connection_id: cid,
@@ -9295,10 +11869,13 @@ async function createNewTagFromModal() {
     datatype,
     enabled,
     writable: isDerivedAlias ? false : writable,
-    mqtt_command_allowed: isDerivedAlias ? false : mqtt_command_allowed,
     log_event_on_change
   };
-  if (!isDerived) {
+  if (isMemory) {
+    tag.connection_id = cid || MEMORY_CONNECTION_ID;
+    tag.source = 'memory';
+    if (initialValue !== '') tag.initial_value = initialValue;
+  } else if (!isDerived) {
     tag.plc_tag_name = plc_tag_name;
     if (elemCount !== 1) tag.elem_count = elemCount;
     const scalingRes = readLinearScalingFromUi({
@@ -9331,7 +11908,7 @@ async function createNewTagFromModal() {
     if (!scalingRes.ok) { setNewTagStatus(String(scalingRes.error || 'Invalid scaling settings.')); return; }
     if (scalingRes.scaling === 'linear') Object.assign(tag, scalingRes.fields || {});
   }
-  if (scan_ms != null) tag.scan_ms = scan_ms;
+  if (!isMemory && scan_ms != null) tag.scan_ms = scan_ms;
   if (invert) tag.invert = true;
 
   const key = makeTagKey(tag);
@@ -9395,11 +11972,13 @@ function closeWorkspaceItemModal() {
   setEditTagStatus('');
   setEditAlarmStatus('');
   setEditAudioScopeStatus('');
+  setEditMqttTopicStatus('');
   if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
   if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
   if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
   if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
   if (els.workspaceItemAudioScopeEdit) els.workspaceItemAudioScopeEdit.style.display = 'none';
+  if (els.workspaceItemMqttTopicEdit) els.workspaceItemMqttTopicEdit.style.display = 'none';
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
   if (els.workspaceItemModal) els.workspaceItemModal.style.display = 'none';
 }
@@ -9418,6 +11997,10 @@ function setEditAlarmStatus(msg) {
 
 function setEditAudioScopeStatus(msg) {
   if (els.editAudioScopeStatus) els.editAudioScopeStatus.textContent = String(msg || '');
+}
+
+function setEditMqttTopicStatus(msg) {
+  if (els.editMqttTopicStatus) els.editMqttTopicStatus.textContent = String(msg || '');
 }
 
 function setNewEventStatus(msg) {
@@ -9475,6 +12058,7 @@ function openNewEventModal(preferredConnectionId = '') {
   if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
   if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
   if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
+  if (els.workspaceItemMqttTopicEdit) els.workspaceItemMqttTopicEdit.style.display = 'none';
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
   if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'block';
 
@@ -9534,6 +12118,7 @@ function openWorkspaceItemModal(node) {
   if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
   if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
   if (els.workspaceItemAudioScopeEdit) els.workspaceItemAudioScopeEdit.style.display = 'none';
+  if (els.workspaceItemMqttTopicEdit) els.workspaceItemMqttTopicEdit.style.display = 'none';
   if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
 
   const type = String(node.type || '');
@@ -9557,6 +12142,11 @@ function openWorkspaceItemModal(node) {
     els.workspaceItemTbody.appendChild(tr);
   };
 
+  if (type === 'mqtt_topic') {
+    openMqttTopicModal({ mode: 'edit', direction: node.meta?.direction, brokerId: node.meta?.connection_id, pathRel: node.meta?.path, nodeId: node.id });
+    return;
+  }
+
   if (type === 'device') {
     if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'block';
 
@@ -9573,7 +12163,8 @@ function openWorkspaceItemModal(node) {
     } else {
       setEditDevStatus('Loading…');
       getConnObjForPath(relPath).then((obj) => {
-        if (els.editDevDriver) els.editDevDriver.value = String(obj?.driver || 'ab_eip') || 'ab_eip';
+        const driver = String(obj?.driver || 'ab_eip') || 'ab_eip';
+        if (els.editDevDriver) els.editDevDriver.value = driver;
         if (els.editDevGateway) els.editDevGateway.value = String(obj?.gateway || '');
         if (els.editDevPath) els.editDevPath.value = String(obj?.path || '1,0') || '1,0';
         if (els.editDevSlot) els.editDevSlot.value = (obj?.slot == null) ? '' : String(obj.slot);
@@ -9584,6 +12175,28 @@ function openWorkspaceItemModal(node) {
         if (els.editDevPollTimeBudgetMs) els.editDevPollTimeBudgetMs.value = obj?.poll_time_budget_ms == null ? '' : String(obj.poll_time_budget_ms);
         if (els.editDevPollMaxReadsPerSec) els.editDevPollMaxReadsPerSec.value = obj?.poll_max_reads_per_sec == null ? '' : String(obj.poll_max_reads_per_sec);
         if (els.editDevPollLanes) els.editDevPollLanes.value = obj?.poll_lanes == null ? '1' : String(obj.poll_lanes);
+        const mqtt = mqttSettingsFromConnection(obj);
+        if (els.editDevMqttHost) els.editDevMqttHost.value = mqtt.host;
+        if (els.editDevMqttPort) els.editDevMqttPort.value = mqtt.port ? String(mqtt.port) : (mqtt.use_tls ? '8883' : '1883');
+        if (els.editDevMqttClientId) els.editDevMqttClientId.value = mqtt.client_id;
+        if (els.editDevMqttUsername) els.editDevMqttUsername.value = mqtt.username;
+        if (els.editDevMqttPassword) {
+          els.editDevMqttPassword.value = '';
+          els.editDevMqttPassword.placeholder = mqtt.password_set ? 'Configured; leave blank to keep current' : 'Optional';
+        }
+        if (els.editDevMqttUseTls) els.editDevMqttUseTls.checked = mqtt.use_tls;
+        if (els.editDevMqttTlsInsecure) els.editDevMqttTlsInsecure.checked = mqtt.tls_insecure;
+        if (els.editDevMqttCaFile) els.editDevMqttCaFile.value = mqtt.cafile;
+        if (els.editDevMqttCertFile) els.editDevMqttCertFile.value = mqtt.certfile;
+        if (els.editDevMqttKeyFile) els.editDevMqttKeyFile.value = mqtt.keyfile;
+        if (els.editDevMqttPublishPerField) els.editDevMqttPublishPerField.checked = mqtt.publish_per_field;
+        if (els.editDevMqttPublishTagJson) els.editDevMqttPublishTagJson.checked = mqtt.publish_tag_json;
+        if (els.editDevMqttPublishMemoryTags) els.editDevMqttPublishMemoryTags.checked = mqtt.publish_memory_tags;
+        if (els.editDevMqttPublishSystemTags) els.editDevMqttPublishSystemTags.checked = mqtt.publish_system_tags;
+        if (els.editDevMqttPublishMode) els.editDevMqttPublishMode.value = mqtt.publish_mode;
+        if (els.editDevMqttPublishIntervalMs) els.editDevMqttPublishIntervalMs.value = String(mqtt.publish_interval_ms);
+        if (els.editDevMqttPublishMinMs) els.editDevMqttPublishMinMs.value = String(mqtt.publish_min_update_ms);
+        applyDeviceDriverUi('edit');
         setEditDevStatus('');
       }).catch((err) => {
         setEditDevStatus(`Load failed: ${err.message}`);
@@ -9616,6 +12229,7 @@ function openWorkspaceItemModal(node) {
     if (!row) {
       if (els.editTagSourceKind) els.editTagSourceKind.value = 'plc';
       if (els.editTagPlc) els.editTagPlc.value = '';
+      if (els.editTagInitialValue) els.editTagInitialValue.value = '';
       if (els.editTagSourceTag) els.editTagSourceTag.textContent = '';
       if (els.editTagBit) els.editTagBit.value = '0';
       fillTagDatatypeSelect(els.editTagDatatype, 'bool');
@@ -9623,7 +12237,6 @@ function openWorkspaceItemModal(node) {
       if (els.editTagEnabled) els.editTagEnabled.checked = true;
       if (els.editTagWritable) els.editTagWritable.checked = false;
       if (els.editTagInvert) els.editTagInvert.checked = false;
-      if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = false;
       if (els.editTagLogEvent) els.editTagLogEvent.checked = false;
       if (els.editTagScaling) els.editTagScaling.value = 'none';
       fillScaledDatatypeSelect(els.editTagScaledDatatype, '');
@@ -9636,14 +12249,19 @@ function openWorkspaceItemModal(node) {
       if (els.editTagSaveBtn) els.editTagSaveBtn.disabled = true;
       setEditTagStatus('Tag not found in config. Refresh tag config.');
     } else {
+      const sourceRaw = String(row?.source || row?.source_type || row?.source_kind || '').trim().toLowerCase();
+      const isMemory = (sourceRaw === 'memory');
       const hasSource = (String(row?.source_tag || '').trim() !== '');
       const bitNum = (row?.bit == null) ? -1 : Number(row.bit);
       if (els.editTagSourceKind) {
-        els.editTagSourceKind.value = hasSource
+        els.editTagSourceKind.value = isMemory
+          ? 'memory'
+          : hasSource
           ? ((Number.isFinite(bitNum) && bitNum >= 0) ? 'derived_bit' : 'derived_alias')
           : 'plc';
       }
       if (els.editTagPlc) els.editTagPlc.value = String(row?.plc_tag_name || '');
+      if (els.editTagInitialValue) els.editTagInitialValue.value = String(row?.initial_value ?? '');
       if (els.editTagSourceTag) els.editTagSourceTag.value = String(row?.source_tag || '');
       if (els.editTagBit) els.editTagBit.value = (row?.bit == null) ? '0' : String(row.bit);
       fillTagDatatypeSelect(els.editTagDatatype, String(row?.datatype || 'bool'));
@@ -9652,7 +12270,6 @@ function openWorkspaceItemModal(node) {
       if (els.editTagEnabled) els.editTagEnabled.checked = (row?.enabled !== false);
       if (els.editTagWritable) els.editTagWritable.checked = (row?.writable === true);
       if (els.editTagInvert) els.editTagInvert.checked = (row?.invert === true);
-      if (els.editTagMqttAllowed) els.editTagMqttAllowed.checked = (row?.mqtt_command_allowed === true);
       if (els.editTagLogEvent) els.editTagLogEvent.checked = (row?.log_event_on_change === true);
       if (els.editTagScaling) els.editTagScaling.value = String(row?.scaling || 'none').trim().toLowerCase() || 'none';
       fillScaledDatatypeSelect(els.editTagScaledDatatype, row?.scaled_datatype ?? '');
@@ -9670,6 +12287,8 @@ function openWorkspaceItemModal(node) {
       els.editTagSourceKind.onchange = () => applyTagSourceKindUi({
         kindEl: els.editTagSourceKind,
         plcEl: els.editTagPlc,
+        initialRowEl: els.editTagInitialRow,
+        initialEl: els.editTagInitialValue,
         derivedRowEl: els.editTagDerivedRow,
         sourceEl: els.editTagSourceTag,
         bitBoxEl: els.editTagBitBox,
@@ -9677,13 +12296,14 @@ function openWorkspaceItemModal(node) {
         datatypeEl: els.editTagDatatype,
         elemCountEl: els.editTagElemCount,
         writableEl: els.editTagWritable,
-        mqttAllowedEl: els.editTagMqttAllowed,
         scalingEl: els.editTagScaling,
         scalingLinearRowEl: els.editTagScalingLinearRow
       }, { connId: conn, excludeTagName: name });
       applyTagSourceKindUi({
         kindEl: els.editTagSourceKind,
         plcEl: els.editTagPlc,
+        initialRowEl: els.editTagInitialRow,
+        initialEl: els.editTagInitialValue,
         derivedRowEl: els.editTagDerivedRow,
         sourceEl: els.editTagSourceTag,
         bitBoxEl: els.editTagBitBox,
@@ -9691,17 +12311,16 @@ function openWorkspaceItemModal(node) {
         datatypeEl: els.editTagDatatype,
         elemCountEl: els.editTagElemCount,
         writableEl: els.editTagWritable,
-        mqttAllowedEl: els.editTagMqttAllowed,
         scalingEl: els.editTagScaling,
         scalingLinearRowEl: els.editTagScalingLinearRow
       }, { connId: conn, excludeTagName: name });
-      els.editTagSourceKind.disabled = !canEditConfig();
+      els.editTagSourceKind.disabled = (conn === MEMORY_CONNECTION_ID) || !canEditConfig();
     }
 
     if (els.editTagScaling) {
       els.editTagScaling.onchange = () => applyScalingModeUi(els.editTagScaling, els.editTagScalingLinearRow);
       applyScalingModeUi(els.editTagScaling, els.editTagScalingLinearRow);
-      els.editTagScaling.disabled = !canEditConfig();
+      els.editTagScaling.disabled = (conn === MEMORY_CONNECTION_ID) || !canEditConfig();
     }
     [els.editTagLogEvent, els.editTagRawLow, els.editTagRawHigh, els.editTagScaledLow, els.editTagScaledHigh, els.editTagScaledDatatype, els.editTagClampLow, els.editTagClampHigh]
       .filter(Boolean)
@@ -9959,12 +12578,16 @@ async function saveEditedTagFromModal() {
   if (!newName) { setEditTagStatus('Tag name is required.'); return; }
   if (!canEditConfig() && newName !== name) { setEditTagStatus('Login required to rename tags.'); return; }
 
-  const sourceKind = String(els.editTagSourceKind?.value || 'plc').trim().toLowerCase();
+  const sourceKind = (conn === MEMORY_CONNECTION_ID)
+    ? 'memory'
+    : String(els.editTagSourceKind?.value || 'plc').trim().toLowerCase();
+  const isMemory = (sourceKind === 'memory');
   const isDerivedBit = (sourceKind === 'derived_bit');
   const isDerivedAlias = (sourceKind === 'derived_alias');
   const isDerived = (isDerivedBit || isDerivedAlias);
 
   const plc_tag_name = String(els.editTagPlc?.value || '').trim();
+  const initialValue = String(els.editTagInitialValue?.value || '').trim();
   const source_tag = String(els.editTagSourceTag?.value || '').trim();
   const elemCount = Math.max(1, Math.trunc(Number(String(els.editTagElemCount?.value || '').trim() || '1') || 1));
   const bitRaw = String(els.editTagBit?.value || '').trim();
@@ -9975,12 +12598,11 @@ async function saveEditedTagFromModal() {
   const enabled = Boolean(els.editTagEnabled?.checked);
   const writable = Boolean(els.editTagWritable?.checked);
   const invert = Boolean(els.editTagInvert?.checked);
-  const mqtt_command_allowed = Boolean(els.editTagMqttAllowed?.checked);
   const log_event_on_change = Boolean(els.editTagLogEvent?.checked);
 
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
 
-  if (!isDerived && !plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
+  if (!isDerived && !isMemory && !plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
   if (isDerivedBit) {
     if (!source_tag) { setEditTagStatus('Source Tag is required for a Derived Bit.'); return; }
     if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) { setEditTagStatus('Bit must be between 0 and 63.'); return; }
@@ -9989,7 +12611,7 @@ async function saveEditedTagFromModal() {
     if (!source_tag) { setEditTagStatus('Source Tag is required for a Derived Alias.'); return; }
   }
 
-  const scalingRes = isDerivedBit
+  const scalingRes = (isDerivedBit || isMemory)
     ? { ok: true, scaling: 'none', fields: {} }
     : readLinearScalingFromUi({
       scalingEl: els.editTagScaling,
@@ -10024,18 +12646,35 @@ async function saveEditedTagFromModal() {
   }
 
   const next = { ...(state.tagConfigAll[idx] || {}) };
-  if (!isDerived) {
+  if (isMemory) {
+    delete next.plc_tag_name;
+    delete next.source_tag;
+    delete next.bit;
+    delete next.elem_count;
+    next.source = 'memory';
+    if (initialValue !== '') next.initial_value = initialValue;
+    else delete next.initial_value;
+  } else if (!isDerived) {
+    delete next.source;
+    delete next.source_type;
+    delete next.initial_value;
     next.plc_tag_name = plc_tag_name;
     if (elemCount === 1) delete next.elem_count;
     else next.elem_count = elemCount;
     delete next.source_tag;
     delete next.bit;
   } else if (isDerivedBit) {
+    delete next.source;
+    delete next.source_type;
+    delete next.initial_value;
     delete next.plc_tag_name;
     delete next.elem_count;
     next.source_tag = source_tag;
     next.bit = bit;
   } else {
+    delete next.source;
+    delete next.source_type;
+    delete next.initial_value;
     delete next.plc_tag_name;
     delete next.elem_count;
     next.source_tag = source_tag;
@@ -10044,11 +12683,11 @@ async function saveEditedTagFromModal() {
   next.datatype = datatype;
   next.enabled = enabled;
   next.writable = isDerivedAlias ? false : writable;
-  next.mqtt_command_allowed = isDerivedAlias ? false : mqtt_command_allowed;
   next.log_event_on_change = log_event_on_change;
   if (invert) next.invert = true;
   else delete next.invert;
-  if (scanRaw === '') delete next.scan_ms;
+  if (isMemory) delete next.scan_ms;
+  else if (scanRaw === '') delete next.scan_ms;
   else next.scan_ms = Math.max(0, Math.trunc(Number(scanRaw) || 0));
 
   delete next.scaling;
@@ -10257,17 +12896,46 @@ async function saveEditedDeviceFromModal() {
 
   const existing = state.connObjCache?.get?.(relPath) || {};
   const description = String(existing?.description || '').trim();
-  const obj = applyPollingConfigToConnection(
-    { id: newId, description, driver, gateway, path: pathVal, slot, plc_type },
-    {
-      mode: els.editDevPollingMode?.value,
-      pacing: els.editDevPollingPacing?.value,
-      batchSize: readOptionalPositiveInt(els.editDevPollBatchSize),
-      timeBudgetMs: readOptionalPositiveInt(els.editDevPollTimeBudgetMs),
-      maxReadsPerSec: readOptionalPositiveInt(els.editDevPollMaxReadsPerSec),
-      pollLanes: readOptionalPositiveInt(els.editDevPollLanes)
-    }
-  );
+  let obj;
+  try {
+    obj = driver === 'mqtt'
+      ? buildMqttConnectionConfig({
+        id: newId,
+        description,
+        existing,
+        host: els.editDevMqttHost?.value,
+        port: els.editDevMqttPort?.value,
+        useTls: !!els.editDevMqttUseTls?.checked,
+        tlsInsecure: !!els.editDevMqttTlsInsecure?.checked,
+        clientId: els.editDevMqttClientId?.value,
+        username: els.editDevMqttUsername?.value,
+        password: els.editDevMqttPassword?.value,
+        cafile: els.editDevMqttCaFile?.value,
+        certfile: els.editDevMqttCertFile?.value,
+        keyfile: els.editDevMqttKeyFile?.value,
+        publishPerField: !!els.editDevMqttPublishPerField?.checked,
+        publishTagJson: !!els.editDevMqttPublishTagJson?.checked,
+        publishMemoryTags: !!els.editDevMqttPublishMemoryTags?.checked,
+        publishSystemTags: !!els.editDevMqttPublishSystemTags?.checked,
+        publishMode: els.editDevMqttPublishMode?.value,
+        publishIntervalMs: els.editDevMqttPublishIntervalMs?.value,
+        publishMinUpdateMs: els.editDevMqttPublishMinMs?.value
+      })
+      : applyPollingConfigToConnection(
+        { id: newId, description, driver, gateway, path: pathVal, slot, plc_type },
+        {
+          mode: els.editDevPollingMode?.value,
+          pacing: els.editDevPollingPacing?.value,
+          batchSize: readOptionalPositiveInt(els.editDevPollBatchSize),
+          timeBudgetMs: readOptionalPositiveInt(els.editDevPollTimeBudgetMs),
+          maxReadsPerSec: readOptionalPositiveInt(els.editDevPollMaxReadsPerSec),
+          pollLanes: readOptionalPositiveInt(els.editDevPollLanes)
+        }
+      );
+  } catch (err) {
+    setEditDevStatus(err.message || String(err));
+    return;
+  }
 
   let targetRelPath = relPath;
   if (oldId && newId !== oldId) {
@@ -10348,6 +13016,222 @@ async function saveEditedDeviceFromModalReload() {
   }
 }
 
+function readMqttDeviceTestConfig(prefix) {
+  const isEdit = prefix === 'edit';
+  const cfg = {
+    host: String((isEdit ? els.editDevMqttHost : els.newDevMqttHost)?.value || '').trim(),
+    port: Number((isEdit ? els.editDevMqttPort : els.newDevMqttPort)?.value || 0) || undefined,
+    client_id: String((isEdit ? els.editDevMqttClientId : els.newDevMqttClientId)?.value || '').trim(),
+    username: String((isEdit ? els.editDevMqttUsername : els.newDevMqttUsername)?.value || '').trim(),
+    password: String((isEdit ? els.editDevMqttPassword : els.newDevMqttPassword)?.value || ''),
+    use_tls: Boolean((isEdit ? els.editDevMqttUseTls : els.newDevMqttUseTls)?.checked),
+    tls_insecure: Boolean((isEdit ? els.editDevMqttTlsInsecure : els.newDevMqttTlsInsecure)?.checked),
+    cafile: String((isEdit ? els.editDevMqttCaFile : els.newDevMqttCaFile)?.value || 'ca.crt').trim() || 'ca.crt',
+    certfile: String((isEdit ? els.editDevMqttCertFile : els.newDevMqttCertFile)?.value || '').trim(),
+    keyfile: String((isEdit ? els.editDevMqttKeyFile : els.newDevMqttKeyFile)?.value || '').trim()
+  };
+  if (isEdit && !cfg.password) {
+    const relPath = String(state.pendingWorkspaceItem?.path || '').trim();
+    const existing = relPath ? state.connObjCache?.get?.(relPath) : null;
+    const settings = (existing?.settings && typeof existing.settings === 'object') ? existing.settings : {};
+    if (typeof settings.password === 'string' && settings.password.length > 0) cfg.password = settings.password;
+  }
+  return cfg;
+}
+
+async function testMqttDeviceConnection(prefix) {
+  const isEdit = prefix === 'edit';
+  const setStatus = isEdit ? setEditDevStatus : setNewDevStatus;
+  const btn = isEdit ? els.editDevMqttTestBtn : els.newDevMqttTestBtn;
+  setStatus('Testing MQTT broker...');
+  if (btn) btn.disabled = true;
+  try {
+    const cfg = readMqttDeviceTestConfig(prefix);
+    if (!cfg.host) throw new Error('MQTT host is required.');
+    const result = await apiPostJson('/api/opcbridge/mqtt/test', { config: cfg }, { timeoutMs: 20000 });
+    const tlsText = result?.tls ? 'TLS' : 'TCP';
+    setStatus(`MQTT test OK (${tlsText} ${result?.host || cfg.host}:${result?.port || cfg.port || (cfg.use_tls ? 8883 : 1883)}, ${Number(result?.elapsed_ms || 0)} ms).`);
+  } catch (err) {
+    setStatus(`MQTT test failed: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function parseMqttTopicIndex(nodeId) {
+  const s = String(nodeId || '').trim();
+  let m = /^mqtt:([^:]+):subscription:(\d+)$/.exec(s);
+  if (m) return { brokerId: m[1], direction: 'subscribe', index: Number(m[2]) };
+  m = /^mqtt:([^:]+):publication:(\d+)$/.exec(s);
+  if (m) return { brokerId: m[1], direction: 'publish', index: Number(m[2]) };
+  return null;
+}
+
+function getMqttTopicArray(connObj, direction) {
+  if (!connObj || typeof connObj !== 'object') return [];
+  if (!connObj.settings || typeof connObj.settings !== 'object' || Array.isArray(connObj.settings)) connObj.settings = {};
+  const key = direction === 'publish' ? 'publications' : 'messages';
+  if (!Array.isArray(connObj.settings[key])) connObj.settings[key] = [];
+  return connObj.settings[key];
+}
+
+function normalizeMqttPublishMode(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (v === 'interval' || v === 'change_or_interval') return v;
+  return 'change';
+}
+
+function readPositiveIntegerInput(el, fallback = 0) {
+  const n = Math.trunc(Number(el?.value ?? fallback));
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function refreshMqttPublicationScheduleUi() {
+  const isPublish = els.workspaceItemMqttTopicEdit?.style.display === 'block' &&
+    String(els.editMqttTopicDirection?.value || '').toLowerCase().includes('publication');
+  const mode = normalizeMqttPublishMode(els.editMqttTopicPublishMode?.value);
+  setRowVisible(els.editMqttTopicPublishIntervalRow, isPublish && mode === 'interval');
+}
+
+function refreshMqttSubscriptionTimeoutUi() {
+  const isSubscribe = els.workspaceItemMqttTopicEdit?.style.display === 'block' &&
+    String(els.editMqttTopicDirection?.value || '').toLowerCase().includes('subscription');
+  const enabled = Boolean(els.editMqttTopicTimeoutEnabled?.checked);
+  setRowVisible(els.editMqttTopicTimeoutMsRow, isSubscribe && enabled);
+}
+
+function openMqttTopicModal({ mode = 'new', direction = 'subscribe', brokerId = '', pathRel = '', nodeId = '' } = {}) {
+  if (!els.workspaceItemModal) return;
+  const dir = String(direction || 'subscribe') === 'publish' ? 'publish' : 'subscribe';
+  const relPath = String(pathRel || '').trim();
+  const connObj = relPath ? state.connObjCache?.get?.(relPath) : null;
+  if (!relPath || !isMqttConnectionObj(connObj)) {
+    window.alert('Select an MQTT broker connection first.');
+    return;
+  }
+
+  const parsed = mode === 'edit' ? parseMqttTopicIndex(nodeId) : null;
+  const arr = getMqttTopicArray(connObj, dir);
+  const idx = parsed ? parsed.index : -1;
+  const row = idx >= 0 ? (arr[idx] || {}) : {};
+  const bid = String(brokerId || connObj.id || '').trim();
+
+  state.pendingWorkspaceItem = {
+    id: nodeId || `mqtt:${bid}:${dir}:new`,
+    type: 'mqtt_topic',
+    mode,
+    direction: dir,
+    broker_id: bid,
+    path: relPath,
+    index: idx
+  };
+
+  const titleEl = document.getElementById('workspaceItemModalTitle');
+  if (titleEl) titleEl.textContent = `${mode === 'edit' ? 'Edit' : 'New'} MQTT ${dir === 'publish' ? 'Publication' : 'Subscription'}`;
+  if (els.workspaceItemHint) els.workspaceItemHint.textContent = `Broker: ${bid}`;
+  if (els.workspaceItemTbody) els.workspaceItemTbody.textContent = '';
+  if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'none';
+  if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'none';
+  if (els.workspaceItemAlarmEdit) els.workspaceItemAlarmEdit.style.display = 'none';
+  if (els.workspaceItemEventEdit) els.workspaceItemEventEdit.style.display = 'none';
+  if (els.workspaceItemAudioScopeEdit) els.workspaceItemAudioScopeEdit.style.display = 'none';
+  if (els.workspaceItemMqttTopicEdit) els.workspaceItemMqttTopicEdit.style.display = 'block';
+  if (els.workspaceItemGeneric) els.workspaceItemGeneric.style.display = 'none';
+  setWorkspaceItemStatus('');
+  setEditMqttTopicStatus('');
+
+  if (els.editMqttTopicBroker) els.editMqttTopicBroker.value = bid;
+  if (els.editMqttTopicDirection) els.editMqttTopicDirection.value = dir === 'publish' ? 'Publication' : 'Subscription';
+  if (els.editMqttTopicId) els.editMqttTopicId.value = String(row?.id || '');
+  if (els.editMqttTopicPath) els.editMqttTopicPath.value = String(row?.topic || '');
+  setRowVisible(els.editMqttTopicRawRow, dir === 'subscribe');
+  setRowVisible(els.editMqttTopicTimeoutEnabledRow, dir === 'subscribe');
+  if (els.editMqttTopicTimeoutEnabled) els.editMqttTopicTimeoutEnabled.checked = Boolean(row?.timeout_enabled);
+  if (els.editMqttTopicTimeoutMs) els.editMqttTopicTimeoutMs.value = String(Math.max(1000, Number(row?.timeout_ms ?? 60000) || 60000));
+  setRowVisible(els.editMqttTopicPublishModeRow, dir === 'publish');
+  setRowVisible(els.editMqttTopicPublishIntervalRow, dir === 'publish');
+  setRowVisible(els.editMqttTopicPublishMinRow, dir === 'publish');
+  setRowVisible(els.editMqttTopicPublishHintRow, dir === 'publish');
+  if (els.editMqttTopicPublishMode) {
+    els.editMqttTopicPublishMode.value = normalizeMqttPublishMode(row?.update_mode || row?.publish_mode);
+  }
+  if (els.editMqttTopicPublishIntervalMs) {
+    els.editMqttTopicPublishIntervalMs.value = String(Math.max(100, Number(row?.interval_ms ?? row?.publish_interval_ms ?? 1000) || 1000));
+  }
+  if (els.editMqttTopicPublishMinMs) {
+    els.editMqttTopicPublishMinMs.value = String(Math.max(0, Number(row?.min_update_ms ?? row?.rate_limit_ms ?? 0) || 0));
+  }
+  refreshMqttPublicationScheduleUi();
+  refreshMqttSubscriptionTimeoutUi();
+  if (els.editMqttTopicSaveBtn) els.editMqttTopicSaveBtn.disabled = !canEditConfig();
+
+  els.workspaceItemModal.style.display = 'flex';
+  els.editMqttTopicId?.focus?.();
+}
+
+function saveMqttTopicFromModal() {
+  if (!canEditConfig()) { setEditMqttTopicStatus('Login required to edit MQTT topics.'); return; }
+  const pending = state.pendingWorkspaceItem || {};
+  if (String(pending.type || '') !== 'mqtt_topic') return;
+  const relPath = String(pending.path || '').trim();
+  const dir = String(pending.direction || 'subscribe') === 'publish' ? 'publish' : 'subscribe';
+  const connObj = relPath ? state.connObjCache?.get?.(relPath) : null;
+  if (!relPath || !isMqttConnectionObj(connObj)) { setEditMqttTopicStatus('Missing MQTT broker connection.'); return; }
+  const topic = String(els.editMqttTopicPath?.value || '').trim();
+  if (!topic) { setEditMqttTopicStatus('MQTT topic is required.'); return; }
+  const row = {
+    id: String(els.editMqttTopicId?.value || '').trim(),
+    topic
+  };
+  if (dir === 'subscribe') {
+    row.payload_format = 'raw';
+    row.raw_payload = true;
+    row.mappings = [];
+    row.timeout_enabled = Boolean(els.editMqttTopicTimeoutEnabled?.checked);
+    row.timeout_ms = row.timeout_enabled
+      ? Math.max(1000, readPositiveIntegerInput(els.editMqttTopicTimeoutMs, 60000))
+      : 0;
+  } else {
+    row.update_mode = normalizeMqttPublishMode(els.editMqttTopicPublishMode?.value);
+    row.interval_ms = Math.max(100, readPositiveIntegerInput(els.editMqttTopicPublishIntervalMs, 1000));
+    row.min_update_ms = readPositiveIntegerInput(els.editMqttTopicPublishMinMs, 0);
+  }
+
+  const arr = getMqttTopicArray(connObj, dir);
+  const idx = Number(pending.index);
+  if (Number.isFinite(idx) && idx >= 0 && idx < arr.length) arr[idx] = { ...(arr[idx] || {}), ...row };
+  else arr.push(row);
+
+  if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
+  state.workspaceConnDirty.set(relPath, connObj);
+  if (state.connObjCache) state.connObjCache.set(relPath, connObj);
+  setEditMqttTopicStatus('Staged.');
+  renderWorkspaceSaveBar();
+  saveWorkspaceDraft();
+  renderWorkspaceTree();
+  closeWorkspaceItemModal();
+}
+
+async function deleteMqttTopicFromWorkspace(node) {
+  if (!canEditConfig()) { window.alert('Login required to edit MQTT topics.'); return; }
+  const parsed = parseMqttTopicIndex(node?.id);
+  if (!parsed) return;
+  const relPath = String(node?.meta?.path || '').trim();
+  const connObj = relPath ? state.connObjCache?.get?.(relPath) : null;
+  if (!relPath || !isMqttConnectionObj(connObj)) throw new Error('Missing MQTT broker connection.');
+  const arr = getMqttTopicArray(connObj, parsed.direction);
+  if (parsed.index < 0 || parsed.index >= arr.length) return;
+  const label = String(arr[parsed.index]?.topic || arr[parsed.index]?.id || node?.label || 'topic');
+  if (!window.confirm(`Delete MQTT ${parsed.direction === 'publish' ? 'publication' : 'subscription'} '${label}'?`)) return;
+  arr.splice(parsed.index, 1);
+  if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
+  state.workspaceConnDirty.set(relPath, connObj);
+  if (state.connObjCache) state.connObjCache.set(relPath, connObj);
+  renderWorkspaceSaveBar();
+  saveWorkspaceDraft();
+  renderWorkspaceTree();
+}
+
 function wireWorkspaceItemModalUi() {
   const close = () => closeWorkspaceItemModal();
 
@@ -10355,6 +13239,8 @@ function wireWorkspaceItemModalUi() {
 
   els.editDevCancelBtn?.addEventListener('click', close);
   els.editDevSaveBtn?.addEventListener('click', saveEditedDeviceFromModal);
+  els.editDevDriver?.addEventListener('change', () => applyDeviceDriverUi('edit'));
+  els.editDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('edit'));
 
   els.editTagCancelBtn?.addEventListener('click', close);
   els.editTagSaveBtn?.addEventListener('click', saveEditedTagFromModal);
@@ -10369,6 +13255,10 @@ function wireWorkspaceItemModalUi() {
   els.editAudioScopeAudibleMode?.addEventListener('change', refreshAudioScopeUi);
   els.editAudioScopeAudioFile?.addEventListener('change', refreshAudioScopeUi);
   els.editAudioScopeSpeechText?.addEventListener('input', refreshAudioScopeUi);
+  els.editMqttTopicCancelBtn?.addEventListener('click', close);
+  els.editMqttTopicSaveBtn?.addEventListener('click', saveMqttTopicFromModal);
+  els.editMqttTopicPublishMode?.addEventListener('change', refreshMqttPublicationScheduleUi);
+  els.editMqttTopicTimeoutEnabled?.addEventListener('change', refreshMqttSubscriptionTimeoutUi);
 
   els.newEventCancelBtn?.addEventListener('click', close);
   els.newEventSaveBtn?.addEventListener('click', saveNewEventFromModal);
@@ -10404,7 +13294,7 @@ function wireWorkspaceItemModalUi() {
   }
 
   // Intentionally do not close modals on overlay click or Escape. Close via explicit UI buttons.
-  [els.editDevGateway, els.editDevPath, els.editDevSlot, els.editDevPlcType, els.editDevDriver]
+  [els.editDevGateway, els.editDevPath, els.editDevSlot, els.editDevPlcType, els.editDevDriver, els.editDevMqttHost, els.editDevMqttPort, els.editDevMqttClientId, els.editDevMqttUsername, els.editDevMqttPassword, els.editDevMqttCaFile, els.editDevMqttCertFile, els.editDevMqttKeyFile]
     .filter(Boolean)
     .forEach((el) => el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && els.workspaceItemModal?.style.display === 'flex') {
@@ -10431,11 +13321,24 @@ function wireWorkspaceItemModalUi() {
       }
     }));
 
+  [els.editMqttTopicId, els.editMqttTopicPath, els.editMqttTopicTimeoutMs, els.editMqttTopicPublishIntervalMs, els.editMqttTopicPublishMinMs]
+    .filter(Boolean)
+    .forEach((el) => el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && els.workspaceItemModal?.style.display === 'flex' && els.workspaceItemMqttTopicEdit?.style.display === 'block') {
+        e.preventDefault();
+        saveMqttTopicFromModal();
+      }
+    }));
+
 }
 
 async function createNewDeviceFromWorkspace() {
   const connection_id = String(els.newDevId?.value || '').trim();
   if (!connection_id) { setNewDevStatus('Device ID is required.'); return; }
+  if (!/^[A-Za-z0-9._-]+$/.test(connection_id)) {
+    setNewDevStatus('Device ID may only contain letters, digits, ".", "_", and "-".');
+    return;
+  }
 
   const driver = String(els.newDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.newDevGateway?.value || '').trim();
@@ -10444,15 +13347,43 @@ async function createNewDeviceFromWorkspace() {
   const plc_type = String(els.newDevPlcType?.value || '').trim() || 'lgx';
 
   // opcbridge connection config requires `id` (not `connection_id`).
-  const obj = applyPollingConfigToConnection(
-    { id: connection_id, description: '', driver, gateway, path: pathVal, slot, plc_type },
-    {
-      mode: els.newDevPollingMode?.value,
-      pacing: els.newDevPollingPacing?.value,
-      batchSize: readOptionalPositiveInt(els.newDevPollBatchSize),
-      timeBudgetMs: readOptionalPositiveInt(els.newDevPollTimeBudgetMs)
-    }
-  );
+  let obj;
+  try {
+    obj = driver === 'mqtt'
+      ? buildMqttConnectionConfig({
+        id: connection_id,
+        description: '',
+        host: els.newDevMqttHost?.value,
+        port: els.newDevMqttPort?.value,
+        useTls: !!els.newDevMqttUseTls?.checked,
+        tlsInsecure: !!els.newDevMqttTlsInsecure?.checked,
+        clientId: els.newDevMqttClientId?.value,
+        username: els.newDevMqttUsername?.value,
+        password: els.newDevMqttPassword?.value,
+        cafile: els.newDevMqttCaFile?.value,
+        certfile: els.newDevMqttCertFile?.value,
+        keyfile: els.newDevMqttKeyFile?.value,
+        publishPerField: !!els.newDevMqttPublishPerField?.checked,
+        publishTagJson: !!els.newDevMqttPublishTagJson?.checked,
+        publishMemoryTags: !!els.newDevMqttPublishMemoryTags?.checked,
+        publishSystemTags: !!els.newDevMqttPublishSystemTags?.checked,
+        publishMode: els.newDevMqttPublishMode?.value,
+        publishIntervalMs: els.newDevMqttPublishIntervalMs?.value,
+        publishMinUpdateMs: els.newDevMqttPublishMinMs?.value
+      })
+      : applyPollingConfigToConnection(
+        { id: connection_id, description: '', driver, gateway, path: pathVal, slot, plc_type },
+        {
+          mode: els.newDevPollingMode?.value,
+          pacing: els.newDevPollingPacing?.value,
+          batchSize: readOptionalPositiveInt(els.newDevPollBatchSize),
+          timeBudgetMs: readOptionalPositiveInt(els.newDevPollTimeBudgetMs)
+        }
+      );
+  } catch (err) {
+    setNewDevStatus(err.message || String(err));
+    return;
+  }
   const relPath = `connections/${connection_id}.json`;
 
   const exists = state.connFiles.some((f) => String(f?.path || '') === relPath);
@@ -10486,6 +13417,8 @@ function wireNewDeviceFormUi() {
   els.newDevCancelBtn?.addEventListener('click', closeWorkspaceNewDeviceForm);
   els.newDevModalCloseBtn?.addEventListener('click', closeWorkspaceNewDeviceForm);
   els.newDevCreateBtn?.addEventListener('click', createNewDeviceFromWorkspace);
+  els.newDevDriver?.addEventListener('change', () => applyDeviceDriverUi('new'));
+  els.newDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('new'));
 
   // Keep modal open unless explicitly closed via buttons.
   if (els.workspaceNewDevicePanel && els.workspaceNewDevicePanel.dataset.noOverlayClose !== '1') {
@@ -10502,7 +13435,7 @@ function wireNewDeviceFormUi() {
   }
 
   // Enter to create when focused in an input
-  [els.newDevId, els.newDevDriver, els.newDevGateway, els.newDevPath, els.newDevSlot, els.newDevPlcType]
+  [els.newDevId, els.newDevDriver, els.newDevGateway, els.newDevPath, els.newDevSlot, els.newDevPlcType, els.newDevMqttHost, els.newDevMqttPort, els.newDevMqttClientId, els.newDevMqttUsername, els.newDevMqttPassword, els.newDevMqttCaFile, els.newDevMqttCertFile, els.newDevMqttKeyFile]
     .filter(Boolean)
     .forEach((el) => el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -15046,7 +17979,113 @@ function renderAlarmsEventsTree() {
 
 function tagCountForConn(connectionId) {
   if (!connectionId) return 0;
-  return getEffectiveTagsAll().filter((t) => String(t.connection_id || '') === connectionId).length;
+  return getEffectiveTagsAll()
+    .filter((t) => String(t.connection_id || '') === connectionId)
+    .filter((t) => String(connectionId) === MEMORY_CONNECTION_ID || !isMemoryTagConfig(t))
+    .length;
+}
+
+function getMemoryTagsAll() {
+  return getEffectiveTagsAll()
+    .filter((t) => isMemoryTagConfig(t) || String(t?.connection_id || '') === MEMORY_CONNECTION_ID)
+    .map((t) => ({ ...(t || {}), connection_id: String(t?.connection_id || '') || MEMORY_CONNECTION_ID }));
+}
+
+function getMqttWorkspaceMessages(connObj = null) {
+  if (connObj && isMqttConnectionObj(connObj)) {
+    return getMqttMessagesForConnectionObj(connObj).slice();
+  }
+  const root = state.mqttInputsJson && typeof state.mqttInputsJson === 'object' ? state.mqttInputsJson : {};
+  const messages = Array.isArray(root.messages) ? root.messages.slice() : [];
+  if (Array.isArray(root.inputs)) {
+    root.inputs.forEach((input, idx) => {
+      const topic = String(input?.topic || '').trim();
+      if (!topic) return;
+      messages.push({
+        id: String(input?.id || `LegacyInput${idx + 1}`),
+        topic,
+        payload_format: String(input?.payload_format || 'raw'),
+        mappings: [{
+          key: String(input?.json_field || input?.key || input?.json_path || input?.path || '').trim(),
+          connection_id: String(input?.connection_id || '').trim(),
+          tag_name: String(input?.tag_name || '').trim(),
+          datatype: String(input?.datatype || '').trim()
+        }]
+      });
+    });
+  }
+  return messages;
+}
+
+function buildMqttWorkspaceChildren(connectionId, connObj = {}, pathRel = '') {
+  const messages = getMqttWorkspaceMessages(connObj);
+  const settings = mqttSettingsFromConnection(connObj);
+  const host = settings.host;
+  const brokerId = String(connectionId || connObj?.id || connObj?.connection_id || 'mqtt').trim() || 'mqtt';
+  const connPath = String(pathRel || '').trim();
+  const brokerMeta = {
+    broker_id: brokerId,
+    connection_id: brokerId,
+    path: connPath,
+    host,
+    enabled: connObj?.enabled !== false
+  };
+
+  const subscriptions = {
+    id: `mqtt:${brokerId}:subscriptions`,
+    type: 'mqtt_subscriptions_root',
+    label: 'Subscriptions',
+    meta: { ...brokerMeta },
+    children: []
+  };
+
+  messages.forEach((message, idx) => {
+    const topic = String(message?.topic || '').trim();
+    const topicLabel = topic || String(message?.id || `Subscription ${idx + 1}`);
+    const children = [{
+      id: `mqtt:${brokerId}:subscription:${idx}:raw`,
+      type: 'mqtt_field',
+      label: 'RawPayload',
+      meta: { ...brokerMeta, direction: 'subscribe', topic, field: 'RawPayload' },
+      children: []
+    }];
+    subscriptions.children.push({
+      id: `mqtt:${brokerId}:subscription:${idx}`,
+      type: 'mqtt_topic',
+      label: topicLabel,
+      meta: { ...brokerMeta, direction: 'subscribe', topic, mappings: 0 },
+      children
+    });
+  });
+
+  const publications = {
+    id: `mqtt:${brokerId}:publications`,
+    type: 'mqtt_publications_root',
+    label: 'Publications',
+    meta: { ...brokerMeta },
+    children: []
+  };
+  const pubRows = Array.isArray(connObj?.settings?.publications) ? connObj.settings.publications : [];
+  pubRows.forEach((pub, idx) => {
+    const topic = String(pub?.topic || '').trim();
+    publications.children.push({
+      id: `mqtt:${brokerId}:publication:${idx}`,
+      type: 'mqtt_topic',
+      label: topic || String(pub?.id || `Publication ${idx + 1}`),
+      meta: {
+        ...brokerMeta,
+        direction: 'publish',
+        topic,
+        update_mode: normalizeMqttPublishMode(pub?.update_mode || pub?.publish_mode),
+        interval_ms: Number(pub?.interval_ms ?? pub?.publish_interval_ms ?? 1000) || 1000,
+        min_update_ms: Number(pub?.min_update_ms ?? pub?.rate_limit_ms ?? 0) || 0,
+        mappings: 0
+      },
+      children: []
+    });
+  });
+
+  return [subscriptions, publications];
 }
 
 function inferConnectionIdFromPath(pathRel) {
@@ -15115,42 +18154,69 @@ function buildTree() {
 
   const connectivity = { id: 'folder:connectivity', type: 'folder', label: 'Connectivity', children: [] };
   root.children.push(connectivity);
+  const memoryRoot = { id: 'folder:memory', type: 'memory_folder', label: 'Memory', meta: { connection_id: MEMORY_CONNECTION_ID }, children: [] };
+  root.children.push(memoryRoot);
 
   const connItems = state.connFiles.slice().sort((a, b) => String(a?.path || '').localeCompare(String(b?.path || '')));
   connItems.forEach((f) => {
     const pathRel = String(f?.path || '');
     if (!pathRel) return;
     const connectionId = connectionIdForConnFilePath(pathRel);
+    const connObj = state.connObjCache?.get?.(pathRel) || null;
+    const isMqtt = isMqttConnectionObj(connObj);
 
     const deviceId = `device:${pathRel}`;
 
     const tagChildren = [];
     if (state.expanded.has(deviceId)) {
-      const tags = getEffectiveTagsAll()
-        .filter((tt) => String(tt.connection_id || '') == connectionId)
-        .slice()
-        .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
+      if (isMqtt) {
+        tagChildren.push(...buildMqttWorkspaceChildren(connectionId, connObj, pathRel));
+      } else {
+        const tags = getEffectiveTagsAll()
+          .filter((tt) => String(tt.connection_id || '') == connectionId)
+          .filter((tt) => !isMemoryTagConfig(tt))
+          .slice()
+          .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
 
-      tags.forEach((tt) => {
-        tagChildren.push({
-          id: `tag:${connectionId}::${String(tt.name || '')}`,
-          type: 'tag',
-          label: String(tt.name || ''),
-          meta: { connection_id: connectionId, name: String(tt.name || '') },
-          children: []
+        tags.forEach((tt) => {
+          tagChildren.push({
+            id: `tag:${connectionId}::${String(tt.name || '')}`,
+            type: 'tag',
+            label: String(tt.name || ''),
+            meta: { connection_id: connectionId, name: String(tt.name || '') },
+            children: []
+          });
         });
-      });
+      }
     }
 
     const deviceNode = {
       id: deviceId,
       type: 'device',
       label: connectionId,
-      meta: { path: pathRel, connection_id: connectionId },
+      meta: { path: pathRel, connection_id: connectionId, driver: String(connObj?.driver || '') },
       children: tagChildren
     };
     connectivity.children.push(deviceNode);
   });
+
+  if (state.expanded.has(memoryRoot.id)) {
+    getMemoryTagsAll()
+      .slice()
+      .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }))
+      .forEach((tt) => {
+        const name = String(tt?.name || '').trim();
+        if (!name) return;
+        const cid = String(tt?.connection_id || MEMORY_CONNECTION_ID).trim() || MEMORY_CONNECTION_ID;
+        memoryRoot.children.push({
+          id: `tag:${cid}::${name}`,
+          type: 'tag',
+          label: name,
+          meta: { connection_id: cid, name },
+          children: []
+        });
+      });
+  }
 
   const connectionSystemChildren = connItems
     .map((f) => connectionIdForConnFilePath(String(f?.path || '')))
@@ -15175,6 +18241,14 @@ function buildTree() {
   const reporterCheckChildren = Array.from(reporterCheckIds)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
     .map((id) => makeSystemGroup(`system:reporter:data_check:${id}`, id, `System/Reporter/DataChecks/${id}/`));
+  const mqttBrokerChildren = systemPathChildren('System/MQTT/Subscriptions/')
+    .map((id) => {
+      const subChildren = systemPathChildren(`System/MQTT/Subscriptions/${id}/`)
+        .map((subId) => makeSystemGroup(`system:mqtt:subscription:${id}:${subId}`, subId, `System/MQTT/Subscriptions/${id}/${subId}/`));
+      return makeSystemGroup(`system:mqtt:broker:${id}`, id, `System/MQTT/Subscriptions/${id}/`, subChildren);
+    });
+  const logicScriptChildren = systemPathChildren('System/Logic/Scripts/')
+    .map((id) => makeSystemGroup(`system:logic:script:${id}`, id, `System/Logic/Scripts/${id}/`));
 
   const systemNode = {
     id: 'folder:system',
@@ -15192,6 +18266,12 @@ function buildTree() {
         makeSystemGroup('system:host:network', 'Network', 'System/Host/Network/', networkIfaceChildren)
       ]),
       makeSystemGroup('system:alarms', 'Alarms', 'System/Alarms/'),
+      makeSystemGroup('system:logic', 'Logic', 'System/Logic/', [
+        makeSystemGroup('system:logic:scripts', 'Scripts', 'System/Logic/Scripts/', logicScriptChildren)
+      ]),
+      makeSystemGroup('system:mqtt', 'MQTT', 'System/MQTT/', [
+        makeSystemGroup('system:mqtt:subscriptions', 'Subscriptions', 'System/MQTT/Subscriptions/', mqttBrokerChildren)
+      ]),
       makeSystemGroup('system:reporter', 'Reporter', 'System/Reporter/', [
         makeSystemGroup('system:reporter:databases', 'Databases', 'System/Reporter/Databases/', reporterDatabaseChildren),
         makeSystemGroup('system:reporter:data_checks', 'Data Checks', 'System/Reporter/DataChecks/', reporterCheckChildren)
@@ -15204,7 +18284,18 @@ function buildTree() {
 }
 
 function renderTreeNode(node, container) {
-  const canExpand = ['project', 'folder', 'device', 'system_folder', 'system_group'].includes(String(node.type || ''));
+  const canExpand = [
+    'project',
+    'folder',
+    'mqtt_broker',
+    'mqtt_subscriptions_root',
+    'mqtt_publications_root',
+    'mqtt_topic',
+    'device',
+    'memory_folder',
+    'system_folder',
+    'system_group'
+  ].includes(String(node.type || ''));
   const expanded = state.expanded.has(node.id);
 
   const btn = document.createElement('button');
@@ -15233,7 +18324,28 @@ function renderTreeNode(node, container) {
   const meta = document.createElement('span');
   meta.className = 'meta';
   if (node.type === 'device') {
-    const n = tagCountForConn(node.meta?.connection_id);
+    if (String(node.meta?.driver || '') === 'mqtt') {
+      const obj = state.connObjCache?.get?.(String(node.meta?.path || '')) || null;
+      const host = mqttSettingsFromConnection(obj).host;
+      meta.textContent = host ? `MQTT · ${host}` : 'MQTT';
+    } else {
+      const n = tagCountForConn(node.meta?.connection_id);
+      meta.textContent = n ? `${n} tag(s)` : '';
+    }
+  } else if (node.type === 'mqtt_broker') {
+    const host = String(node.meta?.host || '').trim();
+    meta.textContent = host || '';
+  } else if (node.type === 'mqtt_subscriptions_root' || node.type === 'mqtt_publications_root') {
+    const n = Array.isArray(node.children) ? node.children.length : 0;
+    meta.textContent = n ? `${n}` : '';
+  } else if (node.type === 'mqtt_topic') {
+    const n = Number(node.meta?.mappings || 0);
+    meta.textContent = n ? `${n} field(s)` : '';
+  } else if (node.type === 'mqtt_field') {
+    const datatype = String(node.meta?.datatype || '').trim();
+    meta.textContent = datatype;
+  } else if (node.type === 'memory_folder') {
+    const n = getMemoryTagsAll().length;
     meta.textContent = n ? `${n} tag(s)` : '';
   } else if (node.type === 'system_folder') {
     meta.textContent = 'read-only';
@@ -15281,6 +18393,13 @@ function renderTreeNode(node, container) {
       return;
     }
 
+    if (node.type === 'memory_folder') {
+      items.push({ label: 'Add Memory Tag…', onClick: () => showNewTagModal(MEMORY_CONNECTION_ID) });
+      items.push({ label: 'Download CSV', onClick: () => downloadDeviceTagsCsv(MEMORY_CONNECTION_ID) });
+      items.push({ label: 'Upload CSV…', onClick: () => importTagsCsvIntoWorkspace(MEMORY_CONNECTION_ID).catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
+      items.push('sep');
+    }
+
     if (node.type === 'folder' && node.id === 'folder:connectivity') {
       items.push({ label: 'Add Device…', onClick: () => createNewConnectionInteractive() });
       items.push({ label: 'Download CSV', onClick: () => downloadConnectivityCsv() });
@@ -15288,12 +18407,32 @@ function renderTreeNode(node, container) {
       items.push('sep');
     }
 
+    if (['mqtt_broker', 'mqtt_subscriptions_root', 'mqtt_publications_root', 'mqtt_topic', 'mqtt_field'].includes(String(node.type || ''))) {
+      if (node.type === 'mqtt_subscriptions_root') {
+        items.push({ label: 'Add Subscription…', onClick: () => openMqttTopicModal({ direction: 'subscribe', brokerId: node.meta?.connection_id, pathRel: node.meta?.path }) });
+      } else if (node.type === 'mqtt_publications_root') {
+        items.push({ label: 'Add Publication…', onClick: () => openMqttTopicModal({ direction: 'publish', brokerId: node.meta?.connection_id, pathRel: node.meta?.path }) });
+      }
+      if (node.type === 'mqtt_topic') {
+        items.push({ label: 'Properties…', onClick: () => openMqttTopicModal({ mode: 'edit', direction: node.meta?.direction, brokerId: node.meta?.connection_id, pathRel: node.meta?.path, nodeId: node.id }) });
+        items.push({ label: 'Delete Topic…', onClick: () => deleteMqttTopicFromWorkspace(node).catch((err) => window.alert(`MQTT topic delete failed: ${err.message}`)) });
+      }
+      items.push({ label: 'Refresh MQTT', onClick: async () => { await refreshMqttWorkspaceConfig().catch(() => {}); renderWorkspaceTree(); } });
+      items.push('sep');
+    }
+
     if (node.type === 'device') {
       const cid = String(node.meta?.connection_id || '').trim();
       const relPath = String(node.meta?.path || '').trim();
-      items.push({ label: 'Add Tag…', onClick: () => showNewTagModal(cid) });
-      items.push({ label: 'Download CSV', onClick: () => downloadDeviceTagsCsv(cid) });
-      items.push({ label: 'Upload CSV…', onClick: () => importTagsCsvIntoWorkspace(cid).catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
+      if (String(node.meta?.driver || '') === 'mqtt') {
+        items.push({ label: 'Add Subscription…', onClick: () => openMqttTopicModal({ direction: 'subscribe', brokerId: cid, pathRel: relPath }) });
+        items.push({ label: 'Add Publication…', onClick: () => openMqttTopicModal({ direction: 'publish', brokerId: cid, pathRel: relPath }) });
+        items.push({ label: 'Refresh MQTT', onClick: async () => { await refreshMqttWorkspaceConfig().catch(() => {}); renderWorkspaceTree(); } });
+      } else {
+        items.push({ label: 'Add Tag…', onClick: () => showNewTagModal(cid) });
+        items.push({ label: 'Download CSV', onClick: () => downloadDeviceTagsCsv(cid) });
+        items.push({ label: 'Upload CSV…', onClick: () => importTagsCsvIntoWorkspace(cid).catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
+      }
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Delete Device…', onClick: () => deleteDeviceById(cid, relPath) });
       items.push('sep');
@@ -15333,8 +18472,11 @@ function renderWorkspaceDetails(node) {
   const children = Array.isArray(node.children) ? node.children : [];
   const isConnectivity = node.id === 'folder:connectivity';
   const isDevice = String(node.type || '') === 'device';
+  const isMqttDevice = isDevice && String(node.meta?.driver || '') === 'mqtt';
+  const isMemoryFolder = String(node.type || '') === 'memory_folder';
   const isTag = String(node.type || '') === 'tag';
   const isSystem = String(node.type || '') === 'system_folder' || String(node.type || '') === 'system_group';
+  const isMqtt = isMqttDevice || String(node.type || '').startsWith('mqtt_');
 
   // ---------- Connectivity / tags ----------
 
@@ -15342,7 +18484,7 @@ function renderWorkspaceDetails(node) {
   const showDeviceCols = isConnectivity;
 
   // When a device is selected, list its tags. Clicking a tag in the tree should not change the right pane.
-  const showTagCols = isDevice || isTag || isSystem;
+  const showTagCols = (isDevice && !isMqttDevice) || isMemoryFolder || isTag || isSystem;
 
   const columns = [];
   const addCol = (key, label, sortable = false) => columns.push({ key, label, sortable });
@@ -15354,6 +18496,15 @@ function renderWorkspaceDetails(node) {
     addCol('path', 'Path', true);
     addCol('slot', 'Slot', true);
     addCol('plc_type', 'PLC Type', true);
+  }
+  if (isMqtt) {
+    addCol('type', 'Type', true);
+    addCol('topic', 'Topic', true);
+    addCol('update_mode', 'Update', true);
+    addCol('interval_ms', 'Interval (ms)', true);
+    addCol('min_update_ms', 'Rate Limit (ms)', true);
+    addCol('datatype', 'Datatype', true);
+    addCol('target', 'Target', true);
   }
   if (showTagCols) {
     addCol('plc_tag_name', 'PLC Tag', true);
@@ -15409,12 +18560,20 @@ function renderWorkspaceDetails(node) {
       });
     }
   } else if (showTagCols && connectionId) {
-    tagRows = getEffectiveTagsAll()
-      .filter((tt) => String(tt?.connection_id || '') === connectionId)
-      .slice();
+    const memoryTagSelected = isTag && connectionId === MEMORY_CONNECTION_ID;
+    tagRows = (isMemoryFolder || memoryTagSelected)
+      ? getMemoryTagsAll().slice()
+      : getEffectiveTagsAll()
+        .filter((tt) => String(tt?.connection_id || '') === connectionId)
+        .filter((tt) => !isMemoryTagConfig(tt))
+        .slice();
   }
 
-  const rowsToRender = showTagCols ? tagRows : children;
+  const rowsToRender = showTagCols
+    ? tagRows
+    : (isMqttDevice
+      ? buildMqttWorkspaceChildren(connectionId, state.connObjCache?.get?.(String(node.meta?.path || '')) || {}, String(node.meta?.path || ''))
+      : children);
   if (els.workspaceChildrenHint) {
     const label = String(node?.label || '').trim();
     const count = rowsToRender.length;
@@ -15434,6 +18593,17 @@ function renderWorkspaceDetails(node) {
   const getComparable = (row, key) => {
     if (!row) return '';
     const k = String(key || '');
+    if (isMqtt) {
+      if (k === 'name') return String(row?.label || row?.name || row?.id || '');
+      if (k === 'type') return String(row?.type || '');
+      if (k === 'topic') return String(row?.meta?.topic || '');
+      if (k === 'update_mode') return String(row?.meta?.update_mode || '');
+      if (k === 'interval_ms') return Number(row?.meta?.interval_ms || 0);
+      if (k === 'min_update_ms') return Number(row?.meta?.min_update_ms || 0);
+      if (k === 'datatype') return String(row?.meta?.datatype || '');
+      if (k === 'target') return String(row?.meta?.target || '');
+      return '';
+    }
     if (showTagCols) {
       if (k === 'name') return String(row?.name || '');
       if (k === 'plc_tag_name') return String(row?.plc_tag_name || '');
@@ -15452,6 +18622,13 @@ function renderWorkspaceDetails(node) {
     if (!obj) return '';
     if (k === 'description') return String(obj?.description || '');
     if (k === 'driver') return labelForDriver(obj?.driver);
+    if (isMqttConnectionObj(obj)) {
+      const mqtt = mqttSettingsFromConnection(obj);
+      if (k === 'gateway') return mqtt.host;
+      if (k === 'path') return '';
+      if (k === 'slot') return '';
+      if (k === 'plc_type') return 'MQTT';
+    }
     if (k === 'gateway') return String(obj?.gateway || '');
     if (k === 'path') return String(obj?.path || '');
     if (k === 'slot') return (obj?.slot == null) ? '' : String(obj.slot);
@@ -15641,6 +18818,22 @@ function renderWorkspaceDetails(node) {
 
     addCell(tr, name);
 
+    if (isMqtt) {
+      const topic = String(c?.meta?.topic || '');
+      const updateMode = String(c?.meta?.update_mode || '');
+      const intervalMs = c?.meta?.interval_ms == null ? '' : String(c.meta.interval_ms);
+      const minUpdateMs = c?.meta?.min_update_ms == null ? '' : String(c.meta.min_update_ms);
+      const datatype = String(c?.meta?.datatype || '');
+      const target = String(c?.meta?.target || '');
+      addCell(tr, type.replace(/^mqtt_/, '').replace(/_/g, ' '), !type);
+      addCell(tr, topic, !topic);
+      addCell(tr, updateMode, !updateMode);
+      addCell(tr, intervalMs, !intervalMs || updateMode !== 'interval');
+      addCell(tr, minUpdateMs, !minUpdateMs || minUpdateMs === '0');
+      addCell(tr, datatype, !datatype);
+      addCell(tr, target, !target);
+    }
+
     if (showTagCols) {
       const plcTag = String(c?.plc_tag_name || '');
       const datatype = String(c?.datatype || '');
@@ -15681,17 +18874,19 @@ function renderWorkspaceDetails(node) {
 
             const desc = String(obj?.description || '').trim();
             const driver = String(obj?.driver || '').trim();
-            const gateway = String(obj?.gateway || '').trim();
-            const pathVal = String(obj?.path || '').trim();
-            const slotVal = (obj?.slot == null) ? '' : String(obj.slot);
-            const plcType = String(obj?.plc_type || obj?.plcType || '').trim();
+            const mqtt = mqttSettingsFromConnection(obj);
+            const isMqttRow = isMqttConnectionObj(obj);
+            const gateway = isMqttRow ? mqtt.host : String(obj?.gateway || '').trim();
+            const pathVal = isMqttRow ? '' : String(obj?.path || '').trim();
+            const slotVal = isMqttRow ? '' : ((obj?.slot == null) ? '' : String(obj.slot));
+            const plcType = isMqttRow ? 'MQTT' : String(obj?.plc_type || obj?.plcType || '').trim();
 
             tDesc.textContent = desc;
             tDriver.textContent = labelForDriver(driver);
             tGateway.textContent = gateway;
             tPath.textContent = pathVal;
             tSlot.textContent = slotVal;
-            tPlc.textContent = labelForPlcType(plcType);
+            tPlc.textContent = isMqttRow ? plcType : labelForPlcType(plcType);
 
             [tDesc, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
               if (!td) return;
@@ -15706,6 +18901,17 @@ function renderWorkspaceDetails(node) {
             });
           });
         }
+      } else if (type === 'mqtt_broker') {
+        tDesc.textContent = 'MQTT broker';
+        tDriver.textContent = 'MQTT Broker';
+        tGateway.textContent = String(c?.meta?.host || '').trim();
+        tPath.textContent = '';
+        tSlot.textContent = '';
+        tPlc.textContent = '';
+        [tDesc, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+          if (!td) return;
+          td.classList.toggle('audit-cell-dim', !String(td.textContent || '').trim());
+        });
       }
     }
 
@@ -15736,6 +18942,12 @@ function renderWorkspaceDetails(node) {
 
     tr.addEventListener('dblclick', () => {
       // double-click opens properties
+      if (isMqtt) {
+        if (String(c?.type || '') === 'mqtt_topic') {
+          openMqttTopicModal({ mode: 'edit', direction: c?.meta?.direction, brokerId: c?.meta?.connection_id, pathRel: c?.meta?.path, nodeId: c?.id });
+        }
+        return;
+      }
       if (showTagCols) {
         if (isSystem) return;
         const pseudo = {
@@ -15805,8 +19017,10 @@ async function refreshWorkspaceTab() {
   try {
     await Promise.all([
       loadConnectionsList(),
-      loadTagsConfig()
+      loadTagsConfig(),
+      refreshMqttWorkspaceConfig()
     ]);
+    await loadWorkspaceConnectionObjects();
     renderWorkspaceTree();
     if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
   } finally {
@@ -15817,8 +19031,10 @@ async function refreshWorkspaceTab() {
 async function refreshWorkspaceConfigViews() {
   await Promise.all([
     loadConnectionsList(),
-    loadTagsConfig()
+    loadTagsConfig(),
+    refreshMqttWorkspaceConfig()
   ]);
+  await loadWorkspaceConnectionObjects();
   renderWorkspaceTree();
   if (isPanelActive('tab-workspace')) {
     await refreshVisible().catch(() => {});
@@ -15923,6 +19139,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
     clearWorkspaceDraft();
 
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
+    await loadWorkspaceConnectionObjects();
     renderWorkspaceTree();
 	    setWorkspaceSaveStatus(rebuildOpcua
 	      ? 'Saved. OPC UA namespace rebuilt.'
@@ -15936,6 +19153,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
       setTimeout(async () => {
         try {
           await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
+          await loadWorkspaceConnectionObjects();
           renderWorkspaceTree();
           setWorkspaceSaveStatus(rebuildOpcua
             ? 'Saved. OPC UA namespace rebuilt.'
@@ -15965,6 +19183,7 @@ async function discardWorkspaceChanges() {
     markTagsDirty(false);
     clearWorkspaceDraft();
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
+    await loadWorkspaceConnectionObjects();
     renderWorkspaceTree();
     setWorkspaceSaveStatus('');
   } catch (err) {
@@ -16000,6 +19219,31 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
       prefix: String(node.meta?.tag_prefix || ''),
       label: String(node.type || '') === 'system_group' ? `System / ${String(node.label || '')}` : 'System'
     };
+  } else if (type === 'memory_folder') {
+    state.liveTagFilter = {
+      type: 'memory',
+      connection_id: MEMORY_CONNECTION_ID,
+      label: 'Memory'
+    };
+  } else if (type === 'mqtt_topic' || type === 'mqtt_field') {
+    const brokerId = String(node.meta?.connection_id || node.meta?.broker_id || '').trim();
+    const direction = String(node.meta?.direction || '').trim();
+    const topic = String(node.meta?.topic || '').trim() || String(node.label || '').trim();
+    if (brokerId && direction === 'subscribe' && topic) {
+      const name = `${topic}/RawPayload`;
+      state.liveTagFilter = { type: 'tag', connection_id: brokerId, name, label: `${brokerId}:${name}` };
+    } else if (brokerId) {
+      state.liveTagFilter = { type: 'mqtt', connection_id: brokerId, label: `MQTT / ${String(node.label || 'Brokers')}` };
+    } else {
+      state.liveTagFilter = { type: 'all', label: 'All' };
+    }
+  } else if (type.startsWith('mqtt_')) {
+    const brokerId = String(node.meta?.connection_id || node.meta?.broker_id || '').trim();
+    state.liveTagFilter = {
+      type: 'mqtt',
+      connection_id: brokerId,
+      label: `MQTT / ${String(node.label || 'Brokers')}`
+    };
   } else if (type === 'tag') {
     const connection_id = String(node.meta?.connection_id || '').trim();
     const name = String(node.meta?.name || node.label || '').trim();
@@ -16029,7 +19273,7 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
 
 function filterLiveTagsForWorkspace(tags) {
   const f = state.liveTagFilter || { type: 'all' };
-  if (!tags || !Array.isArray(tags)) return [];
+  tags = mergeConfiguredMqttLiveTags(Array.isArray(tags) ? tags : []);
 
   if (f.type === 'tag') {
     const cid = String(f.connection_id || '').trim();
@@ -16043,6 +19287,18 @@ function filterLiveTagsForWorkspace(tags) {
     return tags.filter((t) => String(t?.connection_id || '') === cid);
   }
 
+  if (f.type === 'memory') {
+    return tags.filter((t) => String(t?.connection_id || '') === MEMORY_CONNECTION_ID);
+  }
+
+  if (f.type === 'mqtt') {
+    const cid = String(f.connection_id || '').trim();
+    return tags.filter((t) => {
+      const tagCid = String(t?.connection_id || '');
+      return cid ? tagCid === cid : tagCid.startsWith('_mqtt');
+    });
+  }
+
   if (f.type === 'system') {
     const prefix = String(f.prefix || '').trim();
     return tags
@@ -16051,10 +19307,75 @@ function filterLiveTagsForWorkspace(tags) {
   }
 
   if (f.type === 'connectivity') {
-    return tags.filter((t) => String(t?.connection_id || '') !== '_system');
+    return tags.filter((t) => {
+      const cid = String(t?.connection_id || '');
+      return cid !== '_system' && cid !== MEMORY_CONNECTION_ID;
+    });
   }
 
   return tags;
+}
+
+function configuredMqttLiveTagName(message, idx) {
+  const topic = String(message?.topic || '').trim();
+  const id = String(message?.id || '').trim();
+  return `${topic || id || `Subscription${idx + 1}`}/RawPayload`;
+}
+
+function getConfiguredMqttLiveTags() {
+  const rows = [];
+  (Array.isArray(state.connFiles) ? state.connFiles : []).forEach((f) => {
+    const rel = String(f?.path || '').trim();
+    const obj = rel ? state.connObjCache?.get?.(rel) : null;
+    if (!isMqttConnectionObj(obj)) return;
+    const cid = String(obj?.id || obj?.connection_id || connectionIdForConnFilePath(rel)).trim();
+    if (!cid) return;
+    const messages = getMqttMessagesForConnectionObj(obj);
+    messages.forEach((message, idx) => {
+      const name = configuredMqttLiveTagName(message, idx);
+      rows.push({
+        connection_id: cid,
+        name,
+        tag: name,
+        datatype: 'string',
+        enabled: true,
+        writable: false,
+        handle_ok: true,
+        has_snapshot: false,
+        is_array_root: false,
+        mqtt: true,
+        mqtt_direction: 'subscribe',
+        mqtt_topic: String(message?.topic || '').trim(),
+        quality: null,
+        timestamp_ms: null,
+        value: null
+      });
+    });
+  });
+  return rows;
+}
+
+function mergeConfiguredMqttLiveTags(tags) {
+  const out = (Array.isArray(tags) ? tags : []).slice();
+  const existing = new Set(out.map((t) => `${String(t?.connection_id || '')}\u001f${String(t?.name || t?.tag || '')}`));
+  const f = state.liveTagFilter || { type: 'all' };
+  const search = String(els.workspaceLiveTagsSearch?.value || '').trim().toLowerCase();
+  getConfiguredMqttLiveTags().forEach((row) => {
+    const key = `${row.connection_id}\u001f${row.name}`;
+    if (existing.has(key)) return;
+    const cid = String(row.connection_id || '');
+    if (f.type === 'device' && String(f.connection_id || '') !== cid) return;
+    if (f.type === 'tag' && (String(f.connection_id || '') !== cid || String(f.name || '') !== row.name)) return;
+    if (f.type === 'memory' || f.type === 'system') return;
+    if (f.type === 'mqtt' && f.connection_id && String(f.connection_id) !== cid) return;
+    if (search) {
+      const hay = `${cid} ${row.name} ${row.datatype} missing mqtt ${row.mqtt_topic || ''}`.toLowerCase();
+      if (!hay.includes(search)) return;
+    }
+    out.push(row);
+    existing.add(key);
+  });
+  return out;
 }
 
 // ---------------- Live + alarms ----------------
@@ -16063,12 +19384,16 @@ function computeTagStatus(t) {
   const hasSnap = (t?.has_snapshot !== false);
   const handleOk = (t?.handle_ok !== false);
   const isArrayRoot = (t?.is_array_root === true);
+  const reason = String(t?.reason || '').trim().toLowerCase();
 
   let status = 'BAD';
   let cls = 'status-error';
 
   if (!handleOk) {
     status = 'BAD_HANDLE';
+  } else if (!hasSnap && reason === 'mqtt_disabled') {
+    status = 'MQTT_DISABLED';
+    cls = 'status-warn';
   } else if (!hasSnap && isArrayRoot) {
     status = 'ARRAY';
     cls = 'status-ok';
@@ -16124,6 +19449,7 @@ function renderLiveTags(tagsResp) {
   state.liveTagsLast = tagsResp;
   const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
   const total = Number(tagsResp?.total ?? tags.length) || tags.length;
+  let displayTotal = total;
   const shown = tags.length;
   const offset = Number(tagsResp?.offset ?? state.liveTagsPaging.offset) || 0;
   const limit = Number(tagsResp?.limit ?? state.liveTagsPaging.limit) || state.liveTagsPaging.limit;
@@ -16138,6 +19464,10 @@ function renderLiveTags(tagsResp) {
   updateWorkspaceLiveTagFilterLabel();
   if (isPanelActive('tab-workspace')) {
     const filtered = filterLiveTagsForWorkspace(tags);
+    if (['device', 'mqtt', 'tag'].includes(String(state.liveTagFilter?.type || ''))) {
+      displayTotal = Math.max(filtered.length, Number(tagsResp?.total ?? 0) || 0);
+      state.liveTagsPaging.total = displayTotal;
+    }
     renderLiveTagsInto(els.workspaceLiveTagsTbody, filtered);
     const selected = state.selectedNodeId ? findWorkspaceNodeById(state.workspaceTreeRoot, state.selectedNodeId) : null;
     const selectedType = String(selected?.type || '');
@@ -16146,7 +19476,7 @@ function renderLiveTags(tagsResp) {
     }
   }
   if (els.workspaceLiveTagsMeta) els.workspaceLiveTagsMeta.textContent = '';
-  if (els.workspaceLiveTagsSpacer) els.workspaceLiveTagsSpacer.style.height = `${Math.max(1, total * rowHeight)}px`;
+  if (els.workspaceLiveTagsSpacer) els.workspaceLiveTagsSpacer.style.height = `${Math.max(1, displayTotal * rowHeight)}px`;
   if (els.workspaceLiveTagsWindow) els.workspaceLiveTagsWindow.style.transform = `translateY(${Math.max(0, offset * rowHeight)}px)`;
   updateWorkspaceLiveTagFilterLabel();
 }
@@ -16168,7 +19498,7 @@ async function loadVisibleLiveTags() {
   let scopeKey = 'all';
   if (isPanelActive('tab-workspace')) {
     const f = state.liveTagFilter || { type: 'all' };
-    if ((f?.type === 'device' || f?.type === 'tag' || f?.type === 'system') && f.connection_id) {
+    if ((f?.type === 'device' || f?.type === 'mqtt' || f?.type === 'tag' || f?.type === 'system') && f.connection_id) {
       params.set('connection_id', String(f.connection_id));
       scopeKey = `${String(f.type)}:${String(f.connection_id)}`;
       if (f.type === 'tag' && f.name) {
@@ -16596,6 +19926,10 @@ async function refreshVisible() {
       try { await refreshReporterRuntimeStatus(); } catch { /* ignore */ }
     }
 
+    if (isPanelActive('tab-historian')) {
+      try { await refreshHistorianRuntimeStatus(); } catch { /* ignore */ }
+    }
+
     const overall = String(health?.status || 'unknown');
     const elapsed = Date.now() - started;
     if (els.statusLine) {
@@ -16646,9 +19980,11 @@ async function refreshUserAuthLine() {
     updateAuthAdminPanelVisibility();
     updateWorkspaceTabVisibility();
     updateAlarmsEventsTabVisibility();
+    updateLogicTabVisibility();
     updateLogsTabVisibility();
     updateUsersTabVisibility();
     updateLoggerTabVisibility();
+    updateHistorianTabVisibility();
     ensureAuthAdminPanelLoaded();
     const configured = Boolean(s?.configured);
     const loggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
@@ -17304,12 +20640,15 @@ function restartRefreshLoop() {
 }
 
 async function main() {
+  wireThemeUi();
   setTab('overview');
   updateConfigureTabVisibility();
   updateAuthAdminPanelVisibility();
   updateWorkspaceTabVisibility();
   updateAlarmsEventsTabVisibility();
+  updateLogicTabVisibility();
   updateLoggerTabVisibility();
+  updateHistorianTabVisibility();
   updateLogsTabVisibility();
   updateUsersTabVisibility();
 
@@ -17318,8 +20657,11 @@ async function main() {
   wireScadaSettingsUi();
   wireAlarmNotificationUi();
   wireSvcUi();
+  wireMqttTabUi();
   wireMqttCaUi();
+  wireLogicTabUi();
   wireLoggerUi();
+  wireHistorianUi();
   wireOverviewRuntimeUi();
   wireConnectionsUi();
   wireTagsConfigUi();
@@ -17393,6 +20735,8 @@ async function main() {
       .then(() => renderWorkspaceTree())
       .catch(() => {});
   }, 0);
+
+  window.setTimeout(preloadLoggerTagPickerCache, 500);
 }
 
 main();

@@ -146,7 +146,6 @@ Each file defines a set of tags belonging to one connection:
       "datatype": "int32",
       "scan_ms": 1000,
       "writable": true,
-      "mqtt_command_allowed": true,
       "log_event_on_change": true,
       "log_periodic_mode": "interval",
       "log_periodic_interval_sec": 900

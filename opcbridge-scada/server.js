@@ -9,6 +9,8 @@ Goals:
 
 const http = require('http');
 const https = require('https');
+const net = require('net');
+const tls = require('tls');
 const crypto = require('crypto');
 const os = require('os');
 const fs = require('fs');
@@ -143,6 +145,14 @@ const REPORTER_BIN = String(
 
 const REPORTER_API_HOST = String(process.env.OPCBRIDGE_REPORTER_API_HOST || '127.0.0.1').trim();
 const REPORTER_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_REPORTER_API_PORT || 8095) || 8095);
+const HISTORIAN_API_HOST = String(process.env.OPCBRIDGE_HISTORIAN_API_HOST || '127.0.0.1').trim();
+const HISTORIAN_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_HISTORIAN_API_PORT || 8096) || 8096);
+const HISTORIAN_CONFIG_PATH = String(
+  process.env.OPCBRIDGE_HISTORIAN_CONFIG ||
+  '/etc/opcbridge/historian/config.json'
+).trim();
+const HISTORIAN_CONFIG_EXAMPLE_PATH = `${HISTORIAN_CONFIG_PATH}.example`;
+const HISTORIAN_SYSTEMD_UNIT = String(process.env.OPCBRIDGE_HISTORIAN_SYSTEMD_UNIT || 'opcbridge-historian.service').trim();
 
 const SYSTEMD_UNITS_DIR = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNITS_DIR || '/etc/systemd/system').trim();
 
@@ -152,6 +162,8 @@ const SUITE_SERVICE_GROUP = String(process.env.OPCBRIDGE_SERVICE_GROUP || SUITE_
 
 const DEFAULT_OPCBRIDGE_BIN = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_BIN || '/opt/opcbridge-suite/bin/opcbridge').trim();
 const DEFAULT_OPCBRIDGE_CONFIG_DIR = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_CONFIG_DIR || '/etc/opcbridge').trim();
+const MQTT_CONFIG_PATH = String(process.env.OPCBRIDGE_MQTT_CONFIG || path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'mqtt.json')).trim();
+const MQTT_CONFIG_EXAMPLE_PATH = String(process.env.OPCBRIDGE_MQTT_CONFIG_EXAMPLE || path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'mqtt.json.example')).trim();
 const HMI_ROOT = String(process.env.OPCBRIDGE_HMI_ROOT || path.join(SUITE_PREFIX, 'hmi')).trim();
 const PROJECT_BACKUP_MAX_FILE_BYTES = Number(process.env.OPCBRIDGE_PROJECT_BACKUP_MAX_FILE_BYTES || 80 * 1024 * 1024);
 const PROJECT_BACKUP_MAX_TOTAL_BYTES = Number(process.env.OPCBRIDGE_PROJECT_BACKUP_MAX_TOTAL_BYTES || 250 * 1024 * 1024);
@@ -397,6 +409,72 @@ function readJsonFileOrNull(filePath) {
   }
 }
 
+function stripJsonComments(text) {
+  const input = String(text || '');
+  let out = '';
+  let inString = false;
+  let escape = false;
+  let lineComment = false;
+  let blockComment = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    const next = input[i + 1] || '';
+    if (lineComment) {
+      if (ch === '\n' || ch === '\r') {
+        lineComment = false;
+        out += ch;
+      }
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') {
+        blockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (inString) {
+      out += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      lineComment = true;
+      i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      blockComment = true;
+      i += 1;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function readJsoncFileOrNull(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(stripJsonComments(raw));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function ensureDirForFile(filePath) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
@@ -428,6 +506,234 @@ function uniqueCopyId(sourceId, usedIds) {
 function copyName(value) {
   const name = String(value || '').trim();
   return name ? `${name} Copy` : 'Copy';
+}
+
+function normalizeBool(value, fallback = false) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const s = String(value ?? '').trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(s)) return true;
+  if (['false', '0', 'no', 'off'].includes(s)) return false;
+  return Boolean(fallback);
+}
+
+function normalizeIntRange(value, fallback, min, max) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function normalizeMqttConfig(incoming, prev = {}) {
+  const src = (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) ? incoming : {};
+  const old = (prev && typeof prev === 'object' && !Array.isArray(prev)) ? prev : {};
+  const patternsSrc = (src.patterns && typeof src.patterns === 'object' && !Array.isArray(src.patterns)) ? src.patterns : {};
+  const patternsPrev = (old.patterns && typeof old.patterns === 'object' && !Array.isArray(old.patterns)) ? old.patterns : {};
+  const tlsVersions = new Set(['', 'tlsv1.2', 'tlsv1.3']);
+  const tlsVersion = String(src.tls_version ?? old.tls_version ?? 'tlsv1.2').trim().toLowerCase();
+  const qos = normalizeIntRange(src.qos ?? old.qos ?? 0, 0, 0, 2);
+  const clientIdRaw = String(src.client_id ?? old.client_id ?? '').trim();
+  const clientIdLower = clientIdRaw.toLowerCase();
+  const clientId = ['', 'auto', 'opcbridge', 'opcbridge-core'].includes(clientIdLower) ? '' : clientIdRaw;
+  const next = {
+    ...old,
+    enabled: normalizeBool(src.enabled ?? old.enabled, true),
+    host: String(src.host ?? old.host ?? '').trim(),
+    port: normalizeIntRange(src.port ?? old.port ?? 1883, 1883, 1, 65535),
+    client_id: clientId,
+    base_topic: String(src.base_topic ?? old.base_topic ?? 'opcbridge').trim() || 'opcbridge',
+    command_topic: String(src.command_topic ?? old.command_topic ?? 'opcbridge/cmd').trim() || 'opcbridge/cmd',
+    ack_topic_prefix: String(src.ack_topic_prefix ?? old.ack_topic_prefix ?? 'opcbridge/ack').trim() || 'opcbridge/ack',
+    subscribe_enabled: normalizeBool(src.subscribe_enabled ?? old.subscribe_enabled, true),
+    patterns: {
+      ...patternsPrev,
+      per_field: normalizeBool(patternsSrc.per_field ?? patternsPrev.per_field, true),
+      tag_json: normalizeBool(patternsSrc.tag_json ?? patternsPrev.tag_json, true),
+      connection_json: normalizeBool(patternsSrc.connection_json ?? patternsPrev.connection_json, false)
+    },
+    require_write_token: normalizeBool(src.require_write_token ?? old.require_write_token, true),
+    username: String(src.username ?? old.username ?? '').trim(),
+    use_tls: normalizeBool(src.use_tls ?? old.use_tls, false),
+    cafile: String(src.cafile ?? old.cafile ?? 'ca.crt').trim() || 'ca.crt',
+    certfile: String(src.certfile ?? old.certfile ?? '').trim(),
+    keyfile: String(src.keyfile ?? old.keyfile ?? '').trim(),
+    tls_version: tlsVersions.has(tlsVersion) ? tlsVersion : 'tlsv1.2',
+    tls_insecure: normalizeBool(src.tls_insecure ?? old.tls_insecure, false),
+    qos,
+    retain: normalizeBool(src.retain ?? old.retain, false),
+    keepalive_sec: normalizeIntRange(src.keepalive_sec ?? old.keepalive_sec ?? 60, 60, 5, 3600),
+    heartbeat_sec: normalizeIntRange(src.heartbeat_sec ?? old.heartbeat_sec ?? 30, 30, 0, 86400),
+    publish_only_on_change: normalizeBool(src.publish_only_on_change ?? old.publish_only_on_change, false)
+  };
+
+  if (typeof src.password === 'string' && src.password.length > 0) {
+    next.password = src.password;
+  } else if (typeof old.password === 'string' && old.password.length > 0) {
+    next.password = old.password;
+  } else {
+    delete next.password;
+  }
+
+  if (typeof src.write_token === 'string' && src.write_token.length > 0) {
+    next.write_token = src.write_token;
+  } else if (typeof old.write_token === 'string' && old.write_token.length > 0) {
+    next.write_token = old.write_token;
+  } else {
+    next.write_token = '';
+  }
+
+  return next;
+}
+
+function safeMqttConfig(config) {
+  const safe = { ...(config || {}) };
+  const passwordSet = Boolean(String(safe.password || ''));
+  const writeTokenSet = Boolean(String(safe.write_token || ''));
+  delete safe.password;
+  delete safe.write_token;
+  return { config: safe, password_set: passwordSet, write_token_set: writeTokenSet };
+}
+
+function mqttResolveConfigPath(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  if (path.isAbsolute(s)) return s;
+  return path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, s);
+}
+
+function mqttEncodeString(value) {
+  const buf = Buffer.from(String(value || ''), 'utf8');
+  const len = Buffer.alloc(2);
+  len.writeUInt16BE(buf.length, 0);
+  return Buffer.concat([len, buf]);
+}
+
+function mqttEncodeRemainingLength(length) {
+  const bytes = [];
+  let x = Number(length) || 0;
+  do {
+    let encoded = x % 128;
+    x = Math.floor(x / 128);
+    if (x > 0) encoded |= 128;
+    bytes.push(encoded);
+  } while (x > 0);
+  return Buffer.from(bytes);
+}
+
+function mqttBuildConnectPacket(config) {
+  const clientId = String(config.client_id || '').trim() || `opcbridge-test-${process.pid}-${Date.now().toString(16)}`;
+  const username = String(config.username || '');
+  const password = String(config.password || '');
+  const keepalive = Math.max(5, Math.min(65535, Math.trunc(Number(config.keepalive_sec || config.keepalive || 60) || 60)));
+  const keepaliveBuf = Buffer.alloc(2);
+  keepaliveBuf.writeUInt16BE(keepalive, 0);
+  let flags = 0x02; // clean session
+  const payloadParts = [mqttEncodeString(clientId)];
+  if (username) flags |= 0x80;
+  if (password) flags |= 0x40;
+  if (username) payloadParts.push(mqttEncodeString(username));
+  if (password) payloadParts.push(mqttEncodeString(password));
+
+  const variableHeader = Buffer.concat([
+    mqttEncodeString('MQTT'),
+    Buffer.from([0x04, flags]),
+    keepaliveBuf
+  ]);
+  const payload = Buffer.concat(payloadParts);
+  const remaining = variableHeader.length + payload.length;
+  return Buffer.concat([Buffer.from([0x10]), mqttEncodeRemainingLength(remaining), variableHeader, payload]);
+}
+
+function mqttTestConnection(config, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const host = String(config.host || '').trim();
+    const port = normalizeIntRange(config.port, config.use_tls ? 8883 : 1883, 1, 65535);
+    if (!host) {
+      reject(new Error('MQTT broker host is required.'));
+      return;
+    }
+
+    const packet = mqttBuildConnectPacket(config);
+    let settled = false;
+    let socket = null;
+    const finish = (err, result) => {
+      if (settled) return;
+      settled = true;
+      try { socket?.destroy(); } catch { /* ignore */ }
+      if (err) reject(err);
+      else resolve(result);
+    };
+    const timer = setTimeout(() => finish(new Error('MQTT broker test timed out.')), timeoutMs);
+    const done = (err, result) => {
+      clearTimeout(timer);
+      finish(err, result);
+    };
+
+    const onConnect = () => {
+      try {
+        socket.write(packet);
+      } catch (err) {
+        done(err);
+      }
+    };
+
+    if (normalizeBool(config.use_tls, false)) {
+      const tlsOpts = {
+        host,
+        port,
+        servername: host,
+        rejectUnauthorized: !normalizeBool(config.tls_insecure, false),
+        timeout: timeoutMs
+      };
+      const caPath = mqttResolveConfigPath(config.cafile);
+      const certPath = mqttResolveConfigPath(config.certfile);
+      const keyPath = mqttResolveConfigPath(config.keyfile);
+      try {
+        if (caPath && fs.existsSync(caPath)) tlsOpts.ca = fs.readFileSync(caPath);
+        if (certPath && fs.existsSync(certPath)) tlsOpts.cert = fs.readFileSync(certPath);
+        if (keyPath && fs.existsSync(keyPath)) tlsOpts.key = fs.readFileSync(keyPath);
+      } catch (err) {
+        reject(new Error(`Failed to read MQTT TLS certificate file: ${err.message}`));
+        return;
+      }
+      socket = tls.connect(tlsOpts, onConnect);
+    } else {
+      socket = net.connect({ host, port, timeout: timeoutMs }, onConnect);
+    }
+
+    const chunks = [];
+    socket.on('data', (chunk) => {
+      chunks.push(chunk);
+      const buf = Buffer.concat(chunks);
+      if (buf.length < 4) return;
+      if (buf[0] !== 0x20) {
+        done(new Error(`Unexpected MQTT response packet type 0x${buf[0].toString(16)}.`));
+        return;
+      }
+      const rc = buf[3];
+      if (rc === 0) {
+        done(null, {
+          ok: true,
+          host,
+          port,
+          tls: normalizeBool(config.use_tls, false),
+          elapsed_ms: Date.now() - started,
+          message: 'MQTT broker accepted the connection.'
+        });
+      } else {
+        const meanings = {
+          1: 'unacceptable protocol version',
+          2: 'identifier rejected',
+          3: 'server unavailable',
+          4: 'bad username or password',
+          5: 'not authorized'
+        };
+        done(new Error(`MQTT broker rejected the connection: ${meanings[rc] || `CONNACK code ${rc}`}.`));
+      }
+    });
+    socket.on('timeout', () => done(new Error('MQTT broker socket timed out.')));
+    socket.on('error', (err) => done(err));
+  });
 }
 
 function normalizeOnCalendar(value) {
@@ -470,6 +776,50 @@ function reporterApiRequest(method, apiPath, bodyObj = null, timeoutMs = 5000) {
     });
     up.on('timeout', () => {
       up.destroy(new Error('Reporter API timeout'));
+    });
+    up.on('error', (err) => {
+      resolve({ ok: false, status: 0, error: String(err.message || err) });
+    });
+    if (body) up.write(body);
+    up.end();
+  });
+}
+
+function historianApiRequest(method, apiPath, bodyObj = null, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const body = bodyObj ? JSON.stringify(bodyObj) : '';
+    const opts = {
+      hostname: HISTORIAN_API_HOST,
+      port: HISTORIAN_API_PORT,
+      path: apiPath,
+      method,
+      timeout: timeoutMs,
+      headers: {
+        Accept: 'application/json'
+      }
+    };
+    if (body) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.headers['Content-Length'] = Buffer.byteLength(body);
+    }
+
+    const up = http.request(opts, (upRes) => {
+      const chunks = [];
+      upRes.on('data', (c) => chunks.push(c));
+      upRes.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let parsed = null;
+        try { parsed = JSON.parse(text || '{}'); } catch {}
+        resolve({
+          ok: upRes.statusCode >= 200 && upRes.statusCode < 300 && parsed?.ok !== false,
+          status: upRes.statusCode,
+          json: parsed,
+          text
+        });
+      });
+    });
+    up.on('timeout', () => {
+      up.destroy(new Error('Historian API timeout'));
     });
     up.on('error', (err) => {
       resolve({ ok: false, status: 0, error: String(err.message || err) });
@@ -1971,6 +2321,114 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Read/write opcbridge MQTT broker settings on the SCADA server.
+  // Secrets are preserved on save unless a non-empty replacement is provided.
+  if (url.pathname === '/api/opcbridge/mqtt/config') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method === 'GET') {
+      const onDisk = readJsoncFileOrNull(MQTT_CONFIG_PATH) || readJsoncFileOrNull(MQTT_CONFIG_EXAMPLE_PATH) || {};
+      const normalized = normalizeMqttConfig(onDisk, {});
+      const safe = safeMqttConfig(normalized);
+      sendJson(res, 200, {
+        ok: true,
+        config_path: MQTT_CONFIG_PATH,
+        exists: fs.existsSync(MQTT_CONFIG_PATH),
+        ...safe
+      });
+      return;
+    }
+    if (req.method === 'POST') {
+      try {
+        const bodyBuf = await readBody(req);
+        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+        const incoming = parsed?.config || parsed;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {config:{...}}.' });
+          return;
+        }
+        const prev = readJsoncFileOrNull(MQTT_CONFIG_PATH) || readJsoncFileOrNull(MQTT_CONFIG_EXAMPLE_PATH) || {};
+        const next = normalizeMqttConfig(incoming, prev);
+        writeJsonFile(MQTT_CONFIG_PATH, next);
+        const safe = safeMqttConfig(next);
+        sendJson(res, 200, {
+          ok: true,
+          config_path: MQTT_CONFIG_PATH,
+          exists: true,
+          ...safe
+        });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/opcbridge/mqtt/test') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const bodyBuf = await readBody(req);
+      const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+      const incoming = parsed?.config || parsed;
+      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+        sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {config:{...}}.' });
+        return;
+      }
+      const prev = readJsoncFileOrNull(MQTT_CONFIG_PATH) || readJsoncFileOrNull(MQTT_CONFIG_EXAMPLE_PATH) || {};
+      const cfg = normalizeMqttConfig(incoming, prev);
+      const result = await mqttTestConnection(cfg);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 502, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/opcbridge/mqtt/inputs') {
+    if (!await requireManageServerPerm()) return;
+    const inputsPath = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'mqtt_inputs.json');
+    if (req.method === 'GET') {
+      const root = readJsoncFileOrNull(inputsPath) || { messages: [], inputs: [] };
+      const messages = Array.isArray(root.messages) ? root.messages : [];
+      const inputs = Array.isArray(root.inputs) ? root.inputs : [];
+      sendJson(res, 200, {
+        ok: true,
+        config_path: inputsPath,
+        exists: fs.existsSync(inputsPath),
+        json: { ...root, messages, inputs }
+      });
+      return;
+    }
+    if (req.method === 'POST') {
+      try {
+        const bodyBuf = await readBody(req);
+        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+        const incoming = parsed?.json || parsed;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {json:{...}}.' });
+          return;
+        }
+        const next = {
+          ...incoming,
+          messages: Array.isArray(incoming.messages) ? incoming.messages : [],
+          inputs: Array.isArray(incoming.inputs) ? incoming.inputs : []
+        };
+        writeJsonFile(inputsPath, next);
+        sendJson(res, 200, { ok: true, config_path: inputsPath, exists: true, json: next });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
   // Read/write opcbridge-reporter config on the SCADA server.
   // NOTE: do not return mysql_password to the browser; indicate if it is set.
   if (url.pathname === '/api/reporter/config') {
@@ -2309,6 +2767,7 @@ const server = http.createServer(async (req, res) => {
         next.database_id = sanitizeId(next.database_id);
         next.table = String(next.table || 'tag_log').trim() || 'tag_log';
         next.tags = Array.isArray(next.tags) ? next.tags : [];
+        next.historian_fields = Array.isArray(next.historian_fields) ? next.historian_fields : [];
         next.enabled = Boolean(next.enabled);
         next.schedule = (next.schedule && typeof next.schedule === 'object' && !Array.isArray(next.schedule)) ? next.schedule : {};
         if (next.schedule) {
@@ -2657,6 +3116,122 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/historian/runtime/status') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const health = await historianApiRequest('GET', '/health');
+    sendJson(res, health.ok ? 200 : 502, {
+      ok: health.ok,
+      historian: health.json || null,
+      error: health.error || health.json?.error || null,
+      api: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT, status: health.status }
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/historian/tags') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const tags = await historianApiRequest('GET', '/tags');
+    sendJson(res, tags.ok ? 200 : 502, {
+      ok: tags.ok,
+      tags: Array.isArray(tags.json?.tags) ? tags.json.tags : [],
+      error: tags.error || tags.json?.error || null,
+      api: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT, status: tags.status }
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/historian/config') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method === 'GET') {
+      const onDisk = readJsoncFileOrNull(HISTORIAN_CONFIG_PATH) || readJsoncFileOrNull(HISTORIAN_CONFIG_EXAMPLE_PATH) || {
+        enabled: true,
+        http_port: HISTORIAN_API_PORT,
+        opcbridge_host: '127.0.0.1',
+        opcbridge_http_port: 8080,
+        postgres: { conninfo: '', table: 'tag_samples', batch_size: 500, flush_interval_ms: 250, queue_limit: 50000 },
+        historian_tags: []
+      };
+      const safe = { ...onDisk };
+      if (safe.postgres && typeof safe.postgres === 'object') {
+        safe.postgres = { ...safe.postgres };
+        if (typeof safe.postgres.conninfo === 'string') {
+          safe.postgres_conninfo_set = safe.postgres.conninfo.trim().length > 0;
+          delete safe.postgres.conninfo;
+        }
+      }
+      sendJson(res, 200, { ok: true, config_path: HISTORIAN_CONFIG_PATH, exists: fs.existsSync(HISTORIAN_CONFIG_PATH), config: safe });
+      return;
+    }
+    if (req.method === 'POST') {
+      try {
+        const bodyBuf = await readBody(req, 2 * 1024 * 1024);
+        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
+        const incoming = parsed?.config || parsed;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {config:{...}}.' });
+          return;
+        }
+        const prev = readJsoncFileOrNull(HISTORIAN_CONFIG_PATH) || readJsoncFileOrNull(HISTORIAN_CONFIG_EXAMPLE_PATH) || {};
+        const next = {
+          ...prev,
+          ...incoming,
+          postgres: {
+            ...((prev && typeof prev.postgres === 'object') ? prev.postgres : {}),
+            ...((incoming && typeof incoming.postgres === 'object') ? incoming.postgres : {})
+          },
+          historian_tags: Array.isArray(incoming.historian_tags) ? incoming.historian_tags : []
+        };
+        fs.mkdirSync(path.dirname(HISTORIAN_CONFIG_PATH), { recursive: true });
+        writeJsonFile(HISTORIAN_CONFIG_PATH, next);
+        const safe = { ...next };
+        if (safe.postgres && typeof safe.postgres === 'object') {
+          safe.postgres = { ...safe.postgres };
+          if (typeof safe.postgres.conninfo === 'string') {
+            safe.postgres_conninfo_set = safe.postgres.conninfo.trim().length > 0;
+            delete safe.postgres.conninfo;
+          }
+        }
+        sendJson(res, 200, { ok: true, config_path: HISTORIAN_CONFIG_PATH, exists: true, config: safe });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/historian/summary' || url.pathname === '/api/historian/query') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const upstreamPath = url.pathname.replace(/^\/api\/historian/, '') + url.search;
+    const result = await historianApiRequest('GET', upstreamPath, null, 30000);
+    sendJson(res, result.ok ? 200 : 502, result.json || { ok: false, error: result.error || 'Historian request failed' });
+    return;
+  }
+
+  if (url.pathname === '/api/historian/reload') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const result = await historianApiRequest('POST', '/reload', null, 15000);
+    sendJson(res, result.ok ? 200 : 502, result.json || { ok: false, error: result.error || 'Historian reload failed' });
+    return;
+  }
+
   if (url.pathname === '/api/reporter/reports/run') {
     if (!await requireManageServerPerm()) return;
     if (req.method !== 'POST') {
@@ -2921,6 +3496,25 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, { ok: true, unit: ALARMS_SYSTEMD_UNIT, restart });
+    return;
+  }
+
+  if (url.pathname === '/api/historian/systemd/restart') {
+    if (!SYSTEMD_ENABLED) {
+      sendJson(res, 200, { ok: false, error: 'Systemd management disabled in opcbridge-scada.' });
+      return;
+    }
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireManageServerPerm()) return;
+    const restart = runSystemctl(['restart', HISTORIAN_SYSTEMD_UNIT]);
+    if (!restart.ok) {
+      sendJson(res, 500, { ok: false, error: `systemctl restart ${HISTORIAN_SYSTEMD_UNIT} failed`, restart });
+      return;
+    }
+    sendJson(res, 200, { ok: true, unit: HISTORIAN_SYSTEMD_UNIT, restart });
     return;
   }
 

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>opcbridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=20260512_scada_refresh_phase2" />
+  <link rel="stylesheet" href="styles.css?v=20260519_theme_mode_cm" />
 </head>
 <body>
   <header class="topbar">
@@ -26,7 +26,9 @@
 		      <button data-tab="configure" class="tab">Configure Server</button>
 		      <button data-tab="alarms_events" class="tab">Alarms &amp; Events</button>
 		      <button data-tab="workspace" class="tab">Workspace</button>
+		      <button data-tab="logic" class="tab">Automation</button>
 		      <button data-tab="logger" class="tab">Data Logger</button>
+		      <button data-tab="historian" class="tab">Historian</button>
 		      <button data-tab="logs" class="tab">Logs</button>
 		      <button data-tab="users" class="tab">Users</button>
 		      <div class="tabs-right">
@@ -548,27 +550,6 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top: 14px;">
-        <div class="card-title">MQTT TLS CA Certificate</div>
-        <div class="hint">Uploads a <code>ca.crt</code> file to opcbridge (used for MQTT TLS).</div>
-        <div class="card-body">
-          <div class="form" style="max-width: 720px;">
-            <div class="hint mono" id="mqttCaCurrentStatus"></div>
-            <div class="form-row">
-              <label>CA File</label>
-              <input id="mqttCaFile" type="file" accept=".crt,.pem,.cer,application/x-pem-file" />
-            </div>
-            <div class="form-row">
-              <label></label>
-              <div class="row-actions">
-                <button class="btn" id="mqttCaDownloadBtn" type="button">Download current</button>
-                <button class="btn primary" id="mqttCaUploadBtn" type="button">Upload</button>
-              </div>
-            </div>
-            <div class="hint mono" id="mqttCaStatus"></div>
-          </div>
-        </div>
-      </div>
     </section>
 
     <section id="tab-users" class="panel">
@@ -883,6 +864,160 @@
 	      </div>
 		    </section>
 
+		    <section id="tab-logic" class="panel">
+		      <h2>Automation</h2>
+		      <div class="hint">Logic Blocks use setup + loop (retained local state). Scripts are single-body interval runs for simpler tasks.</div>
+
+		      <div class="workspace" style="height: calc(100vh - 230px); min-height: 600px; grid-template-rows: minmax(0, 1fr);">
+		        <aside class="sidebar tree">
+		          <div class="sidebar-title">Automation Items</div>
+		          <div class="tree-body" id="logicTreeView"></div>
+		          <div class="sidebar-note" id="logicTreeNote"></div>
+		        </aside>
+
+		        <section class="editor workspace-right">
+		          <div class="editor-body">
+		            <div id="logicGroupPane" style="display:none;">
+		              <div class="hint">Double-click an item to open its editor.</div>
+		              <div class="table-wrap" style="max-height: 70vh;">
+		                <table class="table">
+		                  <thead>
+		                    <tr><th>Name</th><th>ID</th><th>Enabled</th><th>Interval</th></tr>
+		                  </thead>
+		                  <tbody id="logicChildrenListTbody"></tbody>
+		                </table>
+		              </div>
+		            </div>
+
+		            <div id="logicItemPane">
+		            <div class="row-actions" style="margin: 0 0 10px 0;">
+		              <button class="btn" id="logicRefreshBtn" type="button">Refresh</button>
+		              <button class="btn" id="logicNewBtn" type="button">New Script</button>
+		              <button class="btn primary" id="logicSaveBtn" type="button">Save Logic</button>
+		              <button class="btn danger" id="logicDeleteBtn" type="button">Delete Script</button>
+		              <div class="hint mono" id="logicStatus" style="margin-left: auto;"></div>
+		            </div>
+
+		            <div class="form" style="max-width: 1200px;">
+		              <div class="form-row">
+		                <label>Script ID</label>
+		                <input id="logicScriptId" type="text" placeholder="parse_remote_payload" />
+		              </div>
+		              <div class="form-row">
+		                <label>Name</label>
+		                <input id="logicScriptName" type="text" placeholder="Parse remote payload" />
+		              </div>
+		              <div class="form-row">
+		                <label>Execution</label>
+		                <div class="row-actions" style="justify-content:flex-start; gap: 12px;">
+		                  <label style="display:flex; align-items:center; gap:6px;"><input id="logicScriptEnabled" type="checkbox" /> Enabled for validation</label>
+		                  <span class="hint">Scripts run in validation mode at the configured interval. Writes are allowed (guarded by tag writability).</span>
+		                </div>
+		              </div>
+		              <div class="form-row">
+		                <label>Interval (ms)</label>
+		                <input id="logicScriptIntervalMs" type="number" min="0" step="100" placeholder="0" />
+		              </div>
+		              <div class="form-row">
+		                <label>Validation</label>
+		                <div class="logic-validation">
+		                  <div class="logic-validation-grid">
+		                    <div><span class="hint">Last Run</span><strong id="logicValidationLastRun">-</strong></div>
+		                    <div><span class="hint">Runs</span><strong id="logicValidationRuns">-</strong></div>
+		                    <div><span class="hint">Referenced</span><strong id="logicValidationRefs">-</strong></div>
+		                    <div><span class="hint">Missing</span><strong id="logicValidationMissing">-</strong></div>
+		                    <div><span class="hint">Reads</span><strong id="logicValidationReads">-</strong></div>
+		                    <div><span class="hint">Vars</span><strong id="logicValidationVars">-</strong></div>
+		                    <div><span class="hint">Writes</span><strong id="logicValidationWrites">-</strong></div>
+		                  </div>
+		                  <div class="hint mono" id="logicValidationPreview"></div>
+		                  <div class="hint mono" id="logicValidationVarPreview"></div>
+		                  <div class="hint mono" id="logicValidationWritePreview"></div>
+		                  <div class="hint mono" id="logicValidationError"></div>
+		                </div>
+		              </div>
+		              <div id="logicEditorPane">
+		              <div class="form-row" id="logicSetupRow">
+		                <label>Setup</label>
+		                <textarea id="logicSetupEditor" class="mono" rows="8" spellcheck="false" placeholder='const gain = 1.0;'></textarea>
+		              </div>
+		              <div class="form-row">
+		                <label id="logicMainEditorLabel">Script</label>
+		                <div>
+		                  <div class="row-actions" id="logicEditorActions" style="margin-bottom: 8px;">
+		                    <button class="btn" id="logicInsertTagBtn" type="button">Insert Tag</button>
+		                    <div class="logic-quick-insert">
+		                      <span class="hint">Quick insert:</span>
+		                      <button class="btn" id="logicQuickTagBtn" type="button" title="Insert tag(&quot;conn&quot;, &quot;name&quot;)">tag()</button>
+		                      <button class="btn" id="logicQuickJsonBtn" type="button" title="Insert json(payload, &quot;path&quot;, default)">json()</button>
+		                      <button class="btn" id="logicQuickSetTagBtn" type="button" title="Insert setTag(&quot;_memory&quot;, &quot;TagName&quot;, value)">setTag()</button>
+		                      <button class="btn" id="logicQuickIfElseBtn" type="button" title="Insert if/else block">if/else</button>
+		                      <button class="btn" id="logicQuickJsonObjBtn" type="button" title="Insert jsonObj(&quot;key&quot;, value, ...)">jsonObj()</button>
+		                    </div>
+		                  </div>
+		                  <textarea id="logicScriptEditor" class="mono" rows="24" spellcheck="false" placeholder='const payload = tag("Broker1", "InboundTopic");&#10;const raw = json(payload, "flow.raw", 0);&#10;const scaled = round(clamp(map(raw, 0, 4095, 0, 100), 0, 100), 1);&#10;const out = jsonObj("flow", scaled, "ok", quality("PLC1", "RawFlow") == 1);&#10;setTag("_memory", "FlowScaled", scaled);'></textarea>
+		                  <div class="logic-help" id="logicEditorHelp">
+		                    <div class="logic-help-head">
+		                      <strong>Helper Reference</strong>
+		                      <span class="hint">Use semicolons on const lines. Writes currently support writable memory tags only.</span>
+		                      <a class="btn" href="logic-reference.html" target="_blank" rel="noopener noreferrer">Full Reference</a>
+		                    </div>
+		                    <div class="logic-help-grid">
+		                      <div>
+		                        <h4>Tags</h4>
+		                        <code>tag(conn, name)</code>
+		                        <code>quality(conn, name)</code>
+		                        <code>hasTag(conn, name)</code>
+		                        <code>setTag(conn, name, value)</code>
+		                      </div>
+		                      <div>
+		                        <h4>Math</h4>
+		                        <code>map(v, inMin, inMax, outMin, outMax)</code>
+		                        <code>clamp(v, min, max)</code>
+		                        <code>round(v, places)</code>
+		                        <code>min(a, b, ...)</code>
+		                        <code>max(a, b, ...)</code>
+		                      </div>
+		                      <div>
+		                        <h4>Bits</h4>
+		                        <code>bit(value, bitNumber)</code>
+		                        <code>bits(value, mask)</code>
+		                        <code>bits(word, 0x00FF) != 0</code>
+		                      </div>
+		                      <div>
+		                        <h4>JSON</h4>
+		                        <code>json(payload, "path", default)</code>
+		                        <code>hasJson(payload, "path")</code>
+		                        <code>jsonSet(base, "key", value)</code>
+		                        <code>jsonObj("key", value, ...)</code>
+		                        <code>jsonArray(value, ...)</code>
+		                      </div>
+		                      <div>
+		                        <h4>Strings</h4>
+		                        <code>str(value)</code>
+		                        <code>num(value, default)</code>
+		                        <code>bool(value, default)</code>
+		                        <code>concat(a, b, ...)</code>
+		                        <code>lower(v), upper(v), trim(v)</code>
+		                        <code>contains(v, needle)</code>
+		                      </div>
+		                    </div>
+		                    <div class="logic-help-examples">
+		                      <pre><code>setTag("_memory", "Flow", round(map(tag("PLC1", "RawFlow"), 0, 4095, 0, 100), 1));</code></pre>
+		                      <pre><code>setTag("_memory", "PumpFault", bit(tag("PLC1", "StatusWord"), 3));</code></pre>
+		                      <pre><code>setTag("_memory", "FlowRaw", json(tag("Broker1", "InboundTopic"), "flow.raw", 0));</code></pre>
+		                    </div>
+		                  </div>
+		                </div>
+		              </div>
+		              </div>
+		            </div>
+		            </div>
+		          </div>
+		        </section>
+		      </div>
+		    </section>
+
 		    <section id="tab-logger" class="panel">
 		      <h2>Data Logger</h2>
 		      <div class="hint">Configure opcbridge-reporter connections. Settings are stored on the SCADA server.</div>
@@ -972,6 +1107,111 @@
 		      </div>
 		    </section>
 
+		    <section id="tab-historian" class="panel">
+		      <h2>Historian</h2>
+		      <div class="hint">View historian health and query numeric tag history.</div>
+
+		      <div class="row-actions" style="margin: 0 0 10px 0;">
+		        <button class="btn" id="historianRefreshBtn" type="button">Refresh</button>
+		        <button class="btn" id="historianAddTagBtn" type="button">Add Tag</button>
+		        <button class="btn" id="historianSaveConfigBtn" type="button">Save Config</button>
+		        <button class="btn" id="historianRestartBtn" type="button">Apply Config</button>
+		        <button class="btn primary" id="historianRunQueryBtn" type="button">Run Query</button>
+		        <div class="hint mono" id="historianStatus" style="margin-left: auto;"></div>
+		      </div>
+
+		      <div class="grid two">
+		        <div class="card">
+		          <div class="card-title">Health</div>
+		          <div class="card-body">
+		            <div class="kv" id="historianHealthKv"></div>
+		          </div>
+		        </div>
+
+		        <div class="card">
+		          <div class="card-title">Query</div>
+		          <div class="card-body">
+		            <div class="form">
+		              <div class="form-row">
+		                <label>Connection</label>
+		                <input id="historianQueryConnection" type="text" placeholder="PLC1" />
+		              </div>
+		              <div class="form-row">
+		                <label>Tag</label>
+		                <input id="historianQueryTag" type="text" placeholder="Flow" />
+		              </div>
+		              <div class="form-row">
+		                <label>Range</label>
+		                <select id="historianQueryRange">
+		                  <option value="1h">Last hour</option>
+		                  <option value="1d">Last day</option>
+		                  <option value="7d">Last 7 days</option>
+		                  <option value="30d">Last 30 days</option>
+		                </select>
+		              </div>
+		              <div class="form-row">
+		                <label>Bucket</label>
+		                <select id="historianQueryBucket">
+		                  <option value="auto">Auto</option>
+		                  <option value="1m">1 minute</option>
+		                  <option value="5m">5 minutes</option>
+		                  <option value="15m">15 minutes</option>
+		                  <option value="1h">1 hour</option>
+		                  <option value="raw">Raw points</option>
+		                </select>
+		              </div>
+		              <div class="form-row">
+		                <label>Limit</label>
+		                <input id="historianQueryLimit" type="number" min="1" max="100000" step="100" value="1000" />
+		              </div>
+		            </div>
+		          </div>
+		        </div>
+		      </div>
+
+		      <div class="card" style="margin-top: 10px;">
+		        <div class="card-title">Configured Tags</div>
+		        <div class="card-body">
+		          <div class="table-wrap">
+		            <table class="table">
+		              <thead>
+		                <tr>
+		                  <th>Connection</th>
+		                  <th>Tag</th>
+		                  <th>Enabled</th>
+		                  <th>Interval</th>
+		                  <th>Mode</th>
+		                  <th>Actions</th>
+		                </tr>
+		              </thead>
+		              <tbody id="historianTagsTbody"></tbody>
+		            </table>
+		          </div>
+		        </div>
+		      </div>
+
+		      <div class="card" style="margin-top: 10px;">
+		        <div class="card-title">Summary</div>
+		        <div class="card-body">
+		          <div class="kv" id="historianSummaryKv"></div>
+		        </div>
+		      </div>
+
+		      <div class="card" style="margin-top: 10px;">
+		        <div class="card-title" id="historianPointsTitle">Bucketed Points</div>
+		        <div class="card-body">
+		          <div class="table-wrap" style="max-height: 420px;">
+		            <table class="table">
+		              <thead>
+		                <tr id="historianPointsHeadRow"></tr>
+		              </thead>
+		              <tbody id="historianPointsTbody"></tbody>
+		            </table>
+		          </div>
+		        </div>
+		      </div>
+		    </section>
+
 		    <section id="tab-logs" class="panel">
 		      <h2>Logs</h2>
 		      <div class="hint">Requires <code>suite.view_logs</code>.</div>
@@ -1024,11 +1264,12 @@
             <div class="form-row"><label>Device ID</label><input id="editDevId" type="text" /></div>
             <div class="form-row"><label>Driver</label><select id="editDevDriver">
               <option value="ab_eip">Allen-Bradley Ethernet/IP</option>
+              <option value="mqtt">MQTT Broker</option>
             </select></div>
-            <div class="form-row"><label>Gateway</label><input id="editDevGateway" type="text" placeholder="192.0.2.10" /></div>
-            <div class="form-row"><label>Path</label><input id="editDevPath" type="text" placeholder="1,0" /></div>
-            <div class="form-row"><label>Slot</label><input id="editDevSlot" type="number" step="1" min="0" placeholder="0" /></div>
-            <div class="form-row"><label>PLC Type</label><select id="editDevPlcType">
+            <div class="form-row" id="editDevGatewayRow"><label>Gateway</label><input id="editDevGateway" type="text" placeholder="192.0.2.10" /></div>
+            <div class="form-row" id="editDevPathRow"><label>Path</label><input id="editDevPath" type="text" placeholder="1,0" /></div>
+            <div class="form-row" id="editDevSlotRow"><label>Slot</label><input id="editDevSlot" type="number" step="1" min="0" placeholder="0" /></div>
+            <div class="form-row" id="editDevPlcTypeRow"><label>PLC Type</label><select id="editDevPlcType">
               <option value="lgx">Allen-Bradley Logix (ControlLogix / CompactLogix)</option>
               <option value="mlgx">Allen-Bradley MicroLogix</option>
               <option value="micro800">Allen-Bradley Micro800 (Micro8xx)</option>
@@ -1037,19 +1278,43 @@
               <option value="lgx-pccc">Logix (PCCC gateway mode)</option>
               <option value="omron-njnx">OMRON NJ/NX</option>
             </select></div>
-            <div class="form-row"><label>Polling Mode</label><select id="editDevPollingMode">
+            <div class="form-row" id="editDevMqttHostRow" style="display:none;"><label>Broker Host</label><input id="editDevMqttHost" type="text" placeholder="mqtt.example.com" /></div>
+            <div class="form-row" id="editDevMqttPortRow" style="display:none;"><label>Broker Port</label><input id="editDevMqttPort" type="number" min="1" max="65535" step="1" placeholder="1883" /></div>
+            <div class="form-row" id="editDevMqttClientIdRow" style="display:none;"><label>Client ID</label><input id="editDevMqttClientId" type="text" placeholder="Blank = random at startup" /></div>
+            <div class="form-row" id="editDevMqttUsernameRow" style="display:none;"><label>Username</label><input id="editDevMqttUsername" type="text" autocomplete="off" /></div>
+            <div class="form-row" id="editDevMqttPasswordRow" style="display:none;"><label>Password</label><input id="editDevMqttPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" /></div>
+            <div class="form-row" id="editDevMqttTlsRow" style="display:none;"><label>TLS</label><label style="display:flex; align-items:center; gap:8px;"><input id="editDevMqttUseTls" type="checkbox" /> Use TLS</label></div>
+            <div class="form-row" id="editDevMqttTlsInsecureRow" style="display:none;"><label>TLS Verify</label><label style="display:flex; align-items:center; gap:8px;"><input id="editDevMqttTlsInsecure" type="checkbox" /> Allow insecure TLS</label></div>
+            <div class="form-row" id="editDevMqttCaFileRow" style="display:none;"><label>CA File</label><input id="editDevMqttCaFile" type="text" placeholder="ca.crt" /></div>
+            <div class="form-row" id="editDevMqttCertFileRow" style="display:none;"><label>Client Cert</label><input id="editDevMqttCertFile" type="text" placeholder="Optional" /></div>
+            <div class="form-row" id="editDevMqttKeyFileRow" style="display:none;"><label>Client Key</label><input id="editDevMqttKeyFile" type="text" placeholder="Optional" /></div>
+            <div class="form-row" id="editDevMqttPublishPatternsRow" style="display:none;"><label>Auto Publish</label><div class="check-row">
+              <label class="check-pill"><input id="editDevMqttPublishPerField" type="checkbox" class="inline-check" /> Per-field topics</label>
+              <label class="check-pill"><input id="editDevMqttPublishTagJson" type="checkbox" class="inline-check" /> Tag JSON</label>
+              <label class="check-pill"><input id="editDevMqttPublishMemoryTags" type="checkbox" class="inline-check" /> Memory tags</label>
+              <label class="check-pill"><input id="editDevMqttPublishSystemTags" type="checkbox" class="inline-check" /> System tags</label>
+            </div></div>
+            <div class="form-row" id="editDevMqttPublishModeRow" style="display:none;"><label>Publish Mode</label><select id="editDevMqttPublishMode">
+              <option value="change">On change</option>
+              <option value="interval">On interval</option>
+              <option value="change_or_interval">On change or interval</option>
+            </select></div>
+            <div class="form-row" id="editDevMqttPublishIntervalRow" style="display:none;"><label>Interval (ms)</label><input id="editDevMqttPublishIntervalMs" type="number" min="100" step="100" placeholder="30000" /></div>
+            <div class="form-row" id="editDevMqttPublishMinRow" style="display:none;"><label>Rate Limit (ms)</label><input id="editDevMqttPublishMinMs" type="number" min="0" step="100" placeholder="0" /></div>
+            <div class="form-row" id="editDevMqttTestRow" style="display:none;"><label></label><button class="btn" id="editDevMqttTestBtn" type="button">Test Connect</button></div>
+            <div class="form-row" id="editDevPollingModeRow"><label>Polling Mode</label><select id="editDevPollingMode">
               <option value="standard">Standard</option>
               <option value="time_sliced">Time Sliced</option>
             </select></div>
-            <div class="form-row"><label>Pacing</label><select id="editDevPollingPacing">
+            <div class="form-row" id="editDevPollingPacingRow"><label>Pacing</label><select id="editDevPollingPacing">
               <option value="balanced">Balanced</option>
               <option value="gentle">Gentle</option>
               <option value="fast">Fast</option>
             </select></div>
-            <div class="form-row"><label>Batch Size</label><input id="editDevPollBatchSize" type="number" step="1" min="0" placeholder="Auto" /></div>
-            <div class="form-row"><label>Time Budget (ms)</label><input id="editDevPollTimeBudgetMs" type="number" step="1" min="0" placeholder="Auto" /></div>
-            <div class="form-row"><label>Max Reads / sec</label><input id="editDevPollMaxReadsPerSec" type="number" step="1" min="0" placeholder="Unlimited" /></div>
-            <div class="form-row"><label>Poll Lanes</label><input id="editDevPollLanes" type="number" step="1" min="1" max="8" placeholder="1" /></div>
+            <div class="form-row" id="editDevPollBatchSizeRow"><label>Batch Size</label><input id="editDevPollBatchSize" type="number" step="1" min="0" placeholder="Auto" /></div>
+            <div class="form-row" id="editDevPollTimeBudgetMsRow"><label>Time Budget (ms)</label><input id="editDevPollTimeBudgetMs" type="number" step="1" min="0" placeholder="Auto" /></div>
+            <div class="form-row" id="editDevPollMaxReadsPerSecRow"><label>Max Reads / sec</label><input id="editDevPollMaxReadsPerSec" type="number" step="1" min="0" placeholder="Unlimited" /></div>
+            <div class="form-row" id="editDevPollLanesRow"><label>Poll Lanes</label><input id="editDevPollLanes" type="number" step="1" min="1" max="8" placeholder="1" /></div>
             <div class="form-row"><label></label>
               <div class="row-actions">
                 <button class="btn" id="editDevCancelBtn" type="button">Cancel</button>
@@ -1068,11 +1333,13 @@
 	              <label>Source</label>
 	              <select id="editTagSourceKind">
 	                <option value="plc">PLC Tag</option>
+	                <option value="memory">Memory</option>
 	                <option value="derived_bit">Derived Bit</option>
 	                <option value="derived_alias">Derived Alias</option>
 	              </select>
 	            </div>
 	            <div class="form-row"><label>PLC Tag</label><input id="editTagPlc" type="text" placeholder="Pump1.Running" /></div>
+	            <div class="form-row" id="editTagInitialRow" style="display:none;"><label>Initial Value</label><input id="editTagInitialValue" type="text" placeholder="0" /></div>
 	            <div class="form-row" id="editTagDerivedRow" style="display:none;">
 	              <label>Derived</label>
 	              <div style="display:grid; grid-template-columns: 1fr 140px; gap: 10px;">
@@ -1095,7 +1362,6 @@
                 <label class="check-pill"><input id="editTagEnabled" type="checkbox" class="inline-check" /> Enabled</label>
                 <label class="check-pill"><input id="editTagWritable" type="checkbox" class="inline-check" /> Writable</label>
                 <label class="check-pill"><input id="editTagInvert" type="checkbox" class="inline-check" /> Invert</label>
-                <label class="check-pill"><input id="editTagMqttAllowed" type="checkbox" class="inline-check" /> MQTT command allowed</label>
                 <label class="check-pill"><input id="editTagLogEvent" type="checkbox" class="inline-check" /> Event on change</label>
               </div>
             </div>
@@ -1259,6 +1525,32 @@
           </div>
         </section>
 
+        <section id="workspaceItemMqttTopicEdit" style="display:none;">
+          <div class="form" style="max-width: 860px;">
+            <div class="form-row"><label>Broker</label><input id="editMqttTopicBroker" type="text" disabled /></div>
+            <div class="form-row"><label>Direction</label><input id="editMqttTopicDirection" type="text" disabled /></div>
+            <div class="form-row"><label>Topic ID</label><input id="editMqttTopicId" type="text" placeholder="RemoteRegisterBlock" /></div>
+            <div class="form-row"><label>MQTT Topic</label><input id="editMqttTopicPath" type="text" placeholder="site/plc/registers" /></div>
+            <div class="form-row" id="editMqttTopicRawRow"><label>Value</label><div class="hint">The subscription stores the raw MQTT payload. Parsing and mapping belong in the logic module.</div></div>
+            <div class="form-row" id="editMqttTopicTimeoutEnabledRow"><label>Timeout</label><label class="check"><input id="editMqttTopicTimeoutEnabled" type="checkbox" /> Enable subscription timeout</label></div>
+            <div class="form-row" id="editMqttTopicTimeoutMsRow"><label>Timeout (ms)</label><input id="editMqttTopicTimeoutMs" type="number" min="1000" step="1000" placeholder="60000" /></div>
+            <div class="form-row" id="editMqttTopicPublishModeRow"><label>Update Mode</label><select id="editMqttTopicPublishMode">
+              <option value="change">Update on change</option>
+              <option value="interval">Update on interval</option>
+            </select></div>
+            <div class="form-row" id="editMqttTopicPublishIntervalRow"><label>Interval (ms)</label><input id="editMqttTopicPublishIntervalMs" type="number" min="100" step="100" placeholder="1000" /></div>
+            <div class="form-row" id="editMqttTopicPublishMinRow"><label>Rate Limit (ms)</label><input id="editMqttTopicPublishMinMs" type="number" min="0" step="100" placeholder="0" /></div>
+            <div class="form-row" id="editMqttTopicPublishHintRow"><label></label><div class="hint">Rate limit is the minimum time between publishes for this topic. Use 0 for no per-topic limit.</div></div>
+            <div class="form-row"><label></label>
+              <div class="row-actions">
+                <button class="btn" id="editMqttTopicCancelBtn" type="button">Cancel</button>
+                <button class="btn primary" id="editMqttTopicSaveBtn" type="button">Save</button>
+              </div>
+            </div>
+            <div class="hint mono" id="editMqttTopicStatus"></div>
+          </div>
+        </section>
+
         <section id="workspaceItemGeneric" style="display:none;">
           <div class="table-wrap" style="margin-top: 10px;">
             <table class="table" id="workspaceItemTable">
@@ -1285,11 +1577,12 @@
           <div class="form-row"><label>Device ID</label><input id="newDevId" type="text" placeholder="test01" /></div>
           <div class="form-row"><label>Driver</label><select id="newDevDriver">
             <option value="ab_eip">Allen-Bradley Ethernet/IP</option>
+            <option value="mqtt">MQTT Broker</option>
           </select></div>
-          <div class="form-row"><label>Gateway</label><input id="newDevGateway" type="text" placeholder="192.0.2.10" /></div>
-          <div class="form-row"><label>Path</label><input id="newDevPath" type="text" placeholder="1,0" /></div>
-          <div class="form-row"><label>Slot</label><input id="newDevSlot" type="number" step="1" min="0" placeholder="0" /></div>
-          <div class="form-row"><label>PLC Type</label><select id="newDevPlcType">
+          <div class="form-row" id="newDevGatewayRow"><label>Gateway</label><input id="newDevGateway" type="text" placeholder="192.0.2.10" /></div>
+          <div class="form-row" id="newDevPathRow"><label>Path</label><input id="newDevPath" type="text" placeholder="1,0" /></div>
+          <div class="form-row" id="newDevSlotRow"><label>Slot</label><input id="newDevSlot" type="number" step="1" min="0" placeholder="0" /></div>
+          <div class="form-row" id="newDevPlcTypeRow"><label>PLC Type</label><select id="newDevPlcType">
             <option value="lgx">Allen-Bradley Logix (ControlLogix / CompactLogix)</option>
             <option value="mlgx">Allen-Bradley MicroLogix</option>
             <option value="micro800">Allen-Bradley Micro800 (Micro8xx)</option>
@@ -1298,17 +1591,41 @@
             <option value="lgx-pccc">Logix (PCCC gateway mode)</option>
             <option value="omron-njnx">OMRON NJ/NX</option>
           </select></div>
-          <div class="form-row"><label>Polling Mode</label><select id="newDevPollingMode">
+          <div class="form-row" id="newDevMqttHostRow" style="display:none;"><label>Broker Host</label><input id="newDevMqttHost" type="text" placeholder="mqtt.example.com" /></div>
+          <div class="form-row" id="newDevMqttPortRow" style="display:none;"><label>Broker Port</label><input id="newDevMqttPort" type="number" min="1" max="65535" step="1" placeholder="1883" /></div>
+          <div class="form-row" id="newDevMqttClientIdRow" style="display:none;"><label>Client ID</label><input id="newDevMqttClientId" type="text" placeholder="Blank = random at startup" /></div>
+          <div class="form-row" id="newDevMqttUsernameRow" style="display:none;"><label>Username</label><input id="newDevMqttUsername" type="text" autocomplete="off" /></div>
+          <div class="form-row" id="newDevMqttPasswordRow" style="display:none;"><label>Password</label><input id="newDevMqttPassword" type="password" autocomplete="new-password" /></div>
+          <div class="form-row" id="newDevMqttTlsRow" style="display:none;"><label>TLS</label><label style="display:flex; align-items:center; gap:8px;"><input id="newDevMqttUseTls" type="checkbox" /> Use TLS</label></div>
+          <div class="form-row" id="newDevMqttTlsInsecureRow" style="display:none;"><label>TLS Verify</label><label style="display:flex; align-items:center; gap:8px;"><input id="newDevMqttTlsInsecure" type="checkbox" /> Allow insecure TLS</label></div>
+          <div class="form-row" id="newDevMqttCaFileRow" style="display:none;"><label>CA File</label><input id="newDevMqttCaFile" type="text" placeholder="ca.crt" /></div>
+          <div class="form-row" id="newDevMqttCertFileRow" style="display:none;"><label>Client Cert</label><input id="newDevMqttCertFile" type="text" placeholder="Optional" /></div>
+          <div class="form-row" id="newDevMqttKeyFileRow" style="display:none;"><label>Client Key</label><input id="newDevMqttKeyFile" type="text" placeholder="Optional" /></div>
+          <div class="form-row" id="newDevMqttPublishPatternsRow" style="display:none;"><label>Auto Publish</label><div class="check-row">
+            <label class="check-pill"><input id="newDevMqttPublishPerField" type="checkbox" class="inline-check" /> Per-field topics</label>
+            <label class="check-pill"><input id="newDevMqttPublishTagJson" type="checkbox" class="inline-check" /> Tag JSON</label>
+            <label class="check-pill"><input id="newDevMqttPublishMemoryTags" type="checkbox" class="inline-check" /> Memory tags</label>
+            <label class="check-pill"><input id="newDevMqttPublishSystemTags" type="checkbox" class="inline-check" /> System tags</label>
+          </div></div>
+          <div class="form-row" id="newDevMqttPublishModeRow" style="display:none;"><label>Publish Mode</label><select id="newDevMqttPublishMode">
+            <option value="change">On change</option>
+            <option value="interval">On interval</option>
+            <option value="change_or_interval">On change or interval</option>
+          </select></div>
+          <div class="form-row" id="newDevMqttPublishIntervalRow" style="display:none;"><label>Interval (ms)</label><input id="newDevMqttPublishIntervalMs" type="number" min="100" step="100" placeholder="30000" /></div>
+          <div class="form-row" id="newDevMqttPublishMinRow" style="display:none;"><label>Rate Limit (ms)</label><input id="newDevMqttPublishMinMs" type="number" min="0" step="100" placeholder="0" /></div>
+          <div class="form-row" id="newDevMqttTestRow" style="display:none;"><label></label><button class="btn" id="newDevMqttTestBtn" type="button">Test Connect</button></div>
+          <div class="form-row" id="newDevPollingModeRow"><label>Polling Mode</label><select id="newDevPollingMode">
             <option value="standard">Standard</option>
             <option value="time_sliced">Time Sliced</option>
           </select></div>
-          <div class="form-row"><label>Pacing</label><select id="newDevPollingPacing">
+          <div class="form-row" id="newDevPollingPacingRow"><label>Pacing</label><select id="newDevPollingPacing">
             <option value="balanced">Balanced</option>
             <option value="gentle">Gentle</option>
             <option value="fast">Fast</option>
           </select></div>
-          <div class="form-row"><label>Batch Size</label><input id="newDevPollBatchSize" type="number" step="1" min="0" placeholder="Auto" /></div>
-          <div class="form-row"><label>Time Budget (ms)</label><input id="newDevPollTimeBudgetMs" type="number" step="1" min="0" placeholder="Auto" /></div>
+          <div class="form-row" id="newDevPollBatchSizeRow"><label>Batch Size</label><input id="newDevPollBatchSize" type="number" step="1" min="0" placeholder="Auto" /></div>
+          <div class="form-row" id="newDevPollTimeBudgetMsRow"><label>Time Budget (ms)</label><input id="newDevPollTimeBudgetMs" type="number" step="1" min="0" placeholder="Auto" /></div>
           <div class="form-row"><label></label>
             <div class="row-actions">
               <button class="btn" id="newDevCancelBtn" type="button">Cancel</button>
@@ -1336,11 +1653,13 @@
 	            <label>Source</label>
 	            <select id="newTagSourceKind">
 	              <option value="plc">PLC Tag</option>
+	              <option value="memory">Memory</option>
 	              <option value="derived_bit">Derived Bit</option>
 	              <option value="derived_alias">Derived Alias</option>
 	            </select>
 	          </div>
 	          <div class="form-row"><label>PLC Tag</label><input id="newTagPlc" type="text" placeholder="Pump1.Running" /></div>
+	          <div class="form-row" id="newTagInitialRow" style="display:none;"><label>Initial Value</label><input id="newTagInitialValue" type="text" placeholder="0" /></div>
 	          <div class="form-row" id="newTagDerivedRow" style="display:none;">
 	            <label>Derived</label>
 	            <div style="display:grid; grid-template-columns: 1fr 140px; gap: 10px;">
@@ -1363,7 +1682,6 @@
               <label class="check-pill"><input id="newTagEnabled" type="checkbox" class="inline-check" checked /> Enabled</label>
               <label class="check-pill"><input id="newTagWritable" type="checkbox" class="inline-check" /> Writable</label>
               <label class="check-pill"><input id="newTagInvert" type="checkbox" class="inline-check" /> Invert</label>
-              <label class="check-pill"><input id="newTagMqttAllowed" type="checkbox" class="inline-check" /> MQTT command allowed</label>
               <label class="check-pill"><input id="newTagLogEvent" type="checkbox" class="inline-check" /> Event on change</label>
             </div>
           </div>
@@ -1670,6 +1988,7 @@
             <div class="row-actions">
               <button class="btn" id="loggerTagPickerSelectAllBtn" type="button">Select All (filtered)</button>
               <button class="btn" id="loggerTagPickerClearBtn" type="button">Clear</button>
+              <button class="btn" id="loggerTagPickerFullTagBtn" type="button" style="display:none;">Insert tag()</button>
               <button class="btn primary" id="loggerTagPickerApplyBtn" type="button">Apply Selection</button>
             </div>
           </div>
@@ -1678,7 +1997,11 @@
 
         <div class="divider"></div>
 
-        <div class="table-wrap">
+        <div class="tree tag-picker-tree" id="loggerTagPickerTreeWrap" style="display:none;">
+          <div class="tree-body" id="loggerTagPickerTree"></div>
+        </div>
+
+        <div class="table-wrap" id="loggerTagPickerTableWrap">
           <table class="table" id="loggerTagPickerTable">
             <thead>
               <tr>
@@ -1696,6 +2019,12 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260516_logger_tree_duplicate"></script>
+  <link rel="stylesheet" href="vendor/codemirror/lib/codemirror.min.css" />
+  <link rel="stylesheet" href="vendor/codemirror/theme/material-darker.min.css" />
+  <link rel="stylesheet" href="vendor/codemirror/theme/neo.min.css" />
+  <script src="vendor/codemirror/lib/codemirror.min.js"></script>
+  <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
+  <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
+  <script src="app.js?v=20260520_historian_reload"></script>
 </body>
 </html>

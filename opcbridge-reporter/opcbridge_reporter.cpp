@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cctype>
 #include <cstring>
 #include <ctime>
 #include <fstream>
@@ -39,6 +40,7 @@ struct ServiceConfig {
     std::string listen_host = "127.0.0.1";
     int listen_port = 8095;
     std::string opcbridge_base_url = "http://127.0.0.1:8080";
+    std::string historian_base_url = "http://127.0.0.1:8096";
 };
 
 struct DbConfig {
@@ -56,6 +58,15 @@ struct DbConfig {
     std::string monitor_query = "SELECT 1";
 };
 
+struct HistorianField {
+    std::string connection_id;
+    std::string tag_name;
+    std::string range = "1h";
+    std::string statistic = "avg";
+    std::string field_name;
+    std::string description;
+};
+
 struct Job {
     std::string name;
     std::string database_id;
@@ -67,6 +78,9 @@ struct Job {
     std::unordered_map<std::string, std::vector<std::string>> tag_name_globs_by_conn;
     std::unordered_map<std::string, std::string> tag_descriptions_by_key;
     std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> tag_description_globs_by_conn;
+    std::unordered_map<std::string, std::string> tag_output_names_by_key;
+    std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> tag_output_globs_by_conn;
+    std::vector<HistorianField> historian_fields;
 };
 
 struct JobStatus {
@@ -219,6 +233,24 @@ static std::string job_tag_description(const Job& job, const std::string& connec
         if (glob_match(pat.first, tag_name)) return pat.second;
     }
     return "";
+}
+
+static std::string job_tag_output_name(const Job& job, const std::string& connection_id, const std::string& tag_name) {
+    auto exact = job.tag_output_names_by_key.find(make_tag_key(connection_id, tag_name));
+    if (exact != job.tag_output_names_by_key.end() && !exact->second.empty()) return exact->second;
+
+    auto it = job.tag_output_globs_by_conn.find(connection_id);
+    if (it == job.tag_output_globs_by_conn.end()) return tag_name;
+    for (const auto& pat : it->second) {
+        if (glob_match(pat.first, tag_name) && !pat.second.empty()) return pat.second;
+    }
+    return tag_name;
+}
+
+static bool job_has_live_tag_selection(const Job& job) {
+    return job.log_all ||
+           !job.tag_keys.empty() ||
+           !job.tag_name_globs_by_conn.empty();
 }
 
 static std::string trim(std::string s) {
@@ -383,6 +415,55 @@ static bool fetch_tags_json(const DbConfig& cfg, const ServiceConfig& svc, std::
     return true;
 }
 
+static std::string curl_escape(CURL* curl, const std::string& value) {
+    char* encoded = curl_easy_escape(curl, value.c_str(), static_cast<int>(value.size()));
+    if (!encoded) return "";
+    std::string out(encoded);
+    curl_free(encoded);
+    return out;
+}
+
+static bool fetch_historian_summary_json(const ServiceConfig& svc,
+                                         const HistorianField& field,
+                                         std::string& out_body,
+                                         std::string& error) {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        error = "curl_easy_init failed";
+        return false;
+    }
+
+    std::string url = svc.historian_base_url;
+    if (!url.empty() && url.back() == '/') url.pop_back();
+    url += "/summary";
+    url += "?connection_id=" + curl_escape(curl, field.connection_id);
+    url += "&tag_name=" + curl_escape(curl, field.tag_name);
+    url += "&range=" + curl_escape(curl, field.range.empty() ? "1h" : field.range);
+
+    out_body.clear();
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out_body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        error = std::string("historian summary request failed: ") + curl_easy_strerror(res);
+        curl_easy_cleanup(curl);
+        return false;
+    }
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_easy_cleanup(curl);
+
+    if (http_code != 200) {
+        error = "HTTP historian /summary returned status " + std::to_string(http_code);
+        return false;
+    }
+    return true;
+}
+
 static std::string default_table_sql(const std::string& table) {
     return "CREATE TABLE IF NOT EXISTS `" + table + "` ("
            "id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
@@ -450,6 +531,8 @@ static std::string sql_string_literal(MYSQL* conn, const std::string& val) {
     return "'" + buf + "'";
 }
 
+static std::string normalize_historian_statistic(std::string s);
+
 static int insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job, std::string& error) {
     if (!tags.is_array()) {
         error = "JSON 'tags' is not an array.";
@@ -465,6 +548,7 @@ static int insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job, st
             std::string tag_name = t["name"].get<std::string>();
             if (!job_includes_tag(job, connection_id, tag_name)) continue;
             std::string tag_description = job_tag_description(job, connection_id, tag_name);
+            std::string output_name = job_tag_output_name(job, connection_id, tag_name);
 
             long long timestamp_ms = t["timestamp_ms"].get<long long>();
             std::string timestamp_dt = epoch_ms_to_datetime(timestamp_ms);
@@ -521,7 +605,7 @@ static int insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job, st
             sql += std::to_string(timestamp_ms) + ", ";
             sql += sql_string_literal(conn, timestamp_dt) + ", ";
             sql += sql_string_literal(conn, connection_id) + ", ";
-            sql += sql_string_literal(conn, tag_name) + ", ";
+            sql += sql_string_literal(conn, output_name.empty() ? tag_name : output_name) + ", ";
             sql += tag_description.empty() ? "NULL, " : sql_string_literal(conn, tag_description) + ", ";
             sql += datatype.empty() ? "NULL, " : sql_string_literal(conn, datatype) + ", ";
             sql += has_numeric ? std::to_string(value_numeric) + ", " : "NULL, ";
@@ -541,12 +625,85 @@ static int insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job, st
     return inserted;
 }
 
+static int insert_historian_fields_for_job(MYSQL* conn, const ServiceConfig& svc, const Job& job, std::string& error) {
+    int inserted = 0;
+    const long long timestamp_ms = now_ms();
+    const std::string timestamp_dt = epoch_ms_to_datetime(timestamp_ms);
+
+    for (const auto& field : job.historian_fields) {
+        std::string body;
+        std::string fetch_error;
+        if (!fetch_historian_summary_json(svc, field, body, fetch_error)) {
+            error = fetch_error;
+            continue;
+        }
+
+        try {
+            json summary = json::parse(body);
+            if (!summary.value("ok", false)) {
+                error = summary.value("error", "Historian summary failed.");
+                continue;
+            }
+
+            bool has_numeric = false;
+            double value_numeric = 0.0;
+            std::string value_string;
+            bool has_string = false;
+
+            const std::string stat = normalize_historian_statistic(field.statistic);
+            if (summary.contains(stat) && !summary[stat].is_null()) {
+                if (summary[stat].is_number()) {
+                    value_numeric = summary[stat].get<double>();
+                    has_numeric = true;
+                } else {
+                    value_string = summary[stat].dump();
+                    has_string = true;
+                }
+            } else {
+                value_string = "No samples yet";
+                has_string = true;
+            }
+
+            std::string description = field.description;
+            if (description.empty()) {
+                description = field.connection_id + ":" + field.tag_name + " " + stat + " over " + field.range;
+            }
+
+            std::string sql = "INSERT INTO `" + job.table + "` "
+                              "(job_name, timestamp_ms, timestamp_dt, connection_id, tag_name, tag_description, datatype, "
+                              "value_numeric, value_string, quality, created_at) VALUES (";
+            sql += sql_string_literal(conn, job.name) + ", ";
+            sql += std::to_string(timestamp_ms) + ", ";
+            sql += sql_string_literal(conn, timestamp_dt) + ", ";
+            sql += sql_string_literal(conn, field.connection_id) + ", ";
+            sql += sql_string_literal(conn, field.field_name.empty() ? (field.tag_name + "_" + stat) : field.field_name) + ", ";
+            sql += sql_string_literal(conn, description) + ", ";
+            sql += sql_string_literal(conn, "historian_summary") + ", ";
+            sql += has_numeric ? std::to_string(value_numeric) + ", " : "NULL, ";
+            sql += has_string ? sql_string_literal(conn, value_string) + ", " : "NULL, ";
+            sql += "NULL, CURRENT_TIMESTAMP);";
+
+            if (mysql_query(conn, sql.c_str()) != 0) {
+                error = std::string("MySQL insert error: ") + mysql_error(conn);
+            } else {
+                ++inserted;
+            }
+        } catch (const std::exception& ex) {
+            error = std::string("Error processing historian summary JSON: ") + ex.what();
+        }
+    }
+
+    return inserted;
+}
+
 static bool parse_job_tags(const json& tags, Job& job, std::string& error) {
     job.log_all = false;
     job.tag_keys.clear();
     job.tag_name_globs_by_conn.clear();
     job.tag_descriptions_by_key.clear();
     job.tag_description_globs_by_conn.clear();
+    job.tag_output_names_by_key.clear();
+    job.tag_output_globs_by_conn.clear();
 
     if (tags.is_null()) {
         job.log_all = true;
@@ -570,6 +727,7 @@ static bool parse_job_tags(const json& tags, Job& job, std::string& error) {
         std::string conn;
         std::string name;
         std::string description;
+        std::string output_name;
         if (t.is_string()) {
             std::string s = t.get<std::string>();
             size_t pos = s.find(':');
@@ -580,16 +738,50 @@ static bool parse_job_tags(const json& tags, Job& job, std::string& error) {
             conn = t.value("connection_id", "");
             name = t.value("name", "");
             description = t.value("description", "");
+            output_name = t.value("field_name", t.value("output_field", t.value("output_name", "")));
         }
         if (conn.empty() || name.empty()) continue;
         if (has_glob_chars(name)) {
             job.tag_name_globs_by_conn[conn].push_back(name);
             if (!description.empty()) job.tag_description_globs_by_conn[conn].push_back({ name, description });
+            if (!output_name.empty()) job.tag_output_globs_by_conn[conn].push_back({ name, output_name });
         } else {
             const std::string key = make_tag_key(conn, name);
             job.tag_keys.insert(key);
             if (!description.empty()) job.tag_descriptions_by_key[key] = description;
+            if (!output_name.empty()) job.tag_output_names_by_key[key] = output_name;
         }
+    }
+    return true;
+}
+
+static std::string normalize_historian_statistic(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (s == "last" || s == "min" || s == "max" || s == "avg" || s == "twa" || s == "count") return s;
+    return "avg";
+}
+
+static bool parse_historian_fields(const json& fields, Job& job, std::string& error) {
+    job.historian_fields.clear();
+    if (fields.is_null()) return true;
+    if (!fields.is_array()) {
+        error = "historian_fields must be an array.";
+        return false;
+    }
+    for (const auto& f : fields) {
+        if (!f.is_object()) continue;
+        HistorianField field;
+        field.connection_id = f.value("connection_id", "");
+        field.tag_name = f.value("tag_name", f.value("name", ""));
+        field.range = f.value("range", field.range);
+        field.statistic = normalize_historian_statistic(f.value("statistic", field.statistic));
+        field.field_name = f.value("field_name", "");
+        field.description = f.value("description", "");
+        if (field.field_name.empty()) {
+            field.field_name = field.tag_name + "_" + field.statistic + "_" + field.range;
+        }
+        if (field.connection_id.empty() || field.tag_name.empty() || field.range.empty()) continue;
+        job.historian_fields.push_back(std::move(field));
     }
     return true;
 }
@@ -700,6 +892,10 @@ public:
         if (!svc_opcbridge_base_url.empty()) {
             next_svc.opcbridge_base_url = svc_opcbridge_base_url;
         }
+        std::string svc_historian_base_url = trim(svc_json.value("historian_base_url", next_svc.historian_base_url));
+        if (!svc_historian_base_url.empty()) {
+            next_svc.historian_base_url = svc_historian_base_url;
+        }
 
         std::map<std::string, DbConfig> next_dbs;
         json db_root = read_json_or_object(databases_path_);
@@ -734,7 +930,9 @@ public:
             job.enabled = r.value("enabled", false);
             job.on_calendar = object_value_or_empty(r, "schedule").value("on_calendar", "");
             std::string parse_error;
-            if (job.name.empty() || !parse_job_tags(r.value("tags", json::array()), job, parse_error)) continue;
+            if (job.name.empty() ||
+                !parse_job_tags(r.value("tags", json::array()), job, parse_error) ||
+                !parse_historian_fields(r.value("historian_fields", json::array()), job, parse_error)) continue;
 
             bool supported = false;
             long long next_run = next_from_calendar(job.on_calendar, now_ms(), supported);
@@ -1197,23 +1395,29 @@ private:
             return result;
         }
 
-        std::string body;
-        if (!fetch_tags_json(db, svc, body, result.error)) {
-            mysql_close(conn);
-            return result;
+        if (job_has_live_tag_selection(job)) {
+            std::string body;
+            if (!fetch_tags_json(db, svc, body, result.error)) {
+                mysql_close(conn);
+                return result;
+            }
+
+            try {
+                json resp = json::parse(body);
+                if (!resp.contains("tags") || !resp["tags"].is_array()) {
+                    result.error = "Response JSON has no 'tags' array.";
+                } else {
+                    result.inserted += insert_tags_for_job(conn, resp["tags"], job, result.error);
+                }
+            } catch (const std::exception& ex) {
+                result.error = std::string("Error parsing /tags JSON: ") + ex.what();
+            }
         }
 
-        try {
-            json resp = json::parse(body);
-            if (!resp.contains("tags") || !resp["tags"].is_array()) {
-                result.error = "Response JSON has no 'tags' array.";
-            } else {
-                result.inserted = insert_tags_for_job(conn, resp["tags"], job, result.error);
-                result.ok = result.error.empty();
-            }
-        } catch (const std::exception& ex) {
-            result.error = std::string("Error parsing /tags JSON: ") + ex.what();
+        if (result.error.empty() && !job.historian_fields.empty()) {
+            result.inserted += insert_historian_fields_for_job(conn, svc, job, result.error);
         }
+        result.ok = result.error.empty();
 
         mysql_close(conn);
         return result;

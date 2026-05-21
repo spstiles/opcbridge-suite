@@ -1,7 +1,49 @@
 {
+  "messages": [
+    {
+      "id": "RemoteRegisterBlock",
+      "topic": "example/plc/registers",
+      "payload_format": "json_key",
+      "write_to_plc": true,
+      "mappings": [
+        {
+          "key": "0",
+          "connection_id": "conn003",
+          "tag_name": "Flow",
+          "datatype": "float32"
+        },
+        {
+          "key": "1",
+          "connection_id": "conn003",
+          "tag_name": "Pressure",
+          "datatype": "int16"
+        },
+        {
+          "key": "running",
+          "connection_id": "conn003",
+          "tag_name": "Running",
+          "datatype": "bool"
+        }
+      ]
+    },
+    {
+      "id": "NestedPayload",
+      "topic": "example/plc/nested",
+      "payload_format": "json_path",
+      "mappings": [
+        {
+          "path": "data.values[0]",
+          "connection_id": "conn003",
+          "tag_name": "TankLevel",
+          "datatype": "float32",
+          "write_to_plc": false
+        }
+      ]
+    }
+  ],
   "inputs": [
     {
-      "id": "Input001",
+      "id": "LegacySingleTagInput",
       "topic": "example/conn003/Tag0003",
       "connection_id": "conn003",
       "tag_name": "Tag0003",

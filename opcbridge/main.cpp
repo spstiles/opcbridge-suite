@@ -39,6 +39,8 @@
 #include <atomic>
 #include <queue>
 #include <algorithm>
+#include <regex>
+#include <array>
 
 // Version info (wired in via build.sh)
 #ifndef OPCBRIDGE_VERSION
@@ -155,7 +157,7 @@ static std::atomic<uint64_t> g_reloadRequestGeneration{1};
 
 struct ConnectionConfig {
     std::string id;
-    std::string driver;      // "ab_eip" for now
+    std::string driver;      // "ab_eip", "mqtt"
     std::string gateway;     // IP/host of PLC or ENxT
     std::string path;        // CIP path ("1,0"), built from slot if empty
     std::string plc_type;    // "lgx", "mlgx", "plc5", "slc"
@@ -171,11 +173,15 @@ struct ConnectionConfig {
     int default_write_ms   = 1000;
     int startup_handle_wait_ms = 0; // 0 = do not block startup waiting for async handles
     int debug              = 0;
+    std::vector<std::string> mqtt_subscription_topics;
+    std::vector<std::string> mqtt_publication_topics;
 };
 
 	struct TagConfig {
 	    std::string logical_name;
 	    std::string plc_tag_name;
+	    std::string source_type = "plc"; // "plc", "memory", or empty/legacy
+	    std::string initial_value;
 	    std::string datatype;
 	    int elem_count = 1; // for Logix arrays: number of elements to read (default 1)
 	    int scan_ms = 1000;
@@ -183,7 +189,7 @@ struct ConnectionConfig {
 	    bool writable = false;
         bool invert = false; // bool only: publish logical NOT of the value
 
-	    // Derived (memory) tags (optional)
+	    // Derived tags (optional)
 	    // If source_tag is set, this tag is derived from another tag in the same connection.
 	    // Currently supported: bit extraction from an integer source tag.
 	    std::string source_tag; // logical name of the source tag
@@ -200,8 +206,7 @@ struct ConnectionConfig {
     bool clamp_high = false;
     std::string scaled_datatype = ""; // "", "float32", "float64", "int32", "uint32", "int16", "uint16"
 
-    // MQTT command and event logging
-    bool mqtt_command_allowed = false;
+    // Event logging
     bool log_event_on_change  = false;
 
     // Periodic logging options (all optional)
@@ -319,7 +324,8 @@ struct MqttConfig {
     bool enabled = false;
     std::string host = "127.0.0.1";
     int port = 1883;
-    std::string client_id = "opcbridge";
+    // Empty/"auto" means generate a unique client id at startup.
+    std::string client_id;
     std::string base_topic = "opcbridge/tags";
     int qos = 0;
     bool retain = false;
@@ -329,6 +335,9 @@ struct MqttConfig {
     std::string password;
     bool publish_only_on_change = true;
     std::string payload_format = "json";
+    std::string publish_mode = "change"; // "change", "interval", or "change_or_interval"
+    int publish_interval_ms = 30000;
+    int publish_min_update_ms = 0;
 
     // Subscribe → write
     bool subscribe_enabled = false;       // if true, we subscribe for commands
@@ -336,9 +345,11 @@ struct MqttConfig {
 
     // Existing publish patterns / heartbeat
     int  heartbeat_sec      = 30;
-    bool publish_per_field  = true;
-    bool publish_tag_json   = true;
+    bool publish_per_field  = false;
+    bool publish_tag_json   = false;
     bool publish_conn_json  = false;
+    bool publish_memory_tags = false;
+    bool publish_system_tags = false;
 
     // ACK topic
     std::string ack_topic_prefix = "opcbridge/ack";
@@ -368,8 +379,21 @@ struct MqttConnState {
     std::chrono::system_clock::time_point lastPublish{};
 };
 
+struct UaUpdate {
+    std::string conn_id;
+    std::string logical_name;
+    TagValue value;
+};
+
+struct MqttPublishJob {
+    TagSnapshot snap;
+    TagSnapshot prev;
+    bool hadPrev = false;
+};
+
 static MqttConfig g_mqttCfg;
 static mosquitto *g_mqtt = nullptr;
+static bool g_mqttLoopStarted = false;
 static std::unordered_map<std::string, MqttTagState> g_mqttTagState;
 static std::unordered_map<std::string, MqttConnState> g_mqttConnState;
 static std::mutex g_mqttMutex;
@@ -388,6 +412,9 @@ struct MqttInputMapping {
     bool write_to_plc = true;    // write into PLC tag via libplctag
     std::string payload_format;  // "raw" or "json_field"
     std::string json_field;      // if payload_format == "json_field"
+    std::string json_path;       // if payload_format == "json_path"
+    bool timeout_enabled = false;
+    int64_t timeout_ms = 0;
 };
 
 // All loaded mappings (owned here)
@@ -395,6 +422,94 @@ static std::vector<MqttInputMapping> g_mqttInputs;
 
 // Fast lookup: topic -> indices into g_mqttInputs
 static std::unordered_map<std::string, std::vector<size_t>> g_mqttInputsByTopic;
+static std::unordered_map<std::string, std::vector<std::string>> g_mqttPublicationTopicsByConn;
+static std::unordered_set<std::string> g_mqttKnownConnectionIds;
+
+struct MqttDirectPublishPolicy {
+    std::string mode = "change"; // change | interval | change_or_interval
+    int interval_ms = 1000;
+    int min_update_ms = 0;
+    bool has_last = false;
+    std::string last_payload;
+    std::chrono::system_clock::time_point last_publish{};
+};
+
+static std::unordered_map<std::string, MqttDirectPublishPolicy> g_mqttDirectPublishPolicyByKey;
+static std::mutex g_mqttDirectPublishPolicyMutex;
+
+struct MqttRuntimeStats {
+    std::atomic<bool> connected{false};
+    std::atomic<uint64_t> reconnect_count{0};
+    std::atomic<uint64_t> messages_received_total{0};
+    std::atomic<uint64_t> messages_published_total{0};
+    std::atomic<uint64_t> publish_failures_total{0};
+    std::atomic<int64_t> last_connect_ms{0};
+    std::atomic<int64_t> last_disconnect_ms{0};
+    std::mutex error_mutex;
+    std::string last_error;
+};
+
+struct MqttSubscriptionHealth {
+    uint64_t messages_received_total = 0;
+    int64_t last_message_ms = 0;
+    int64_t last_payload_size = 0;
+};
+
+static MqttRuntimeStats g_mqttRuntimeStats;
+static std::mutex g_mqttSubscriptionHealthMutex;
+static std::unordered_map<std::string, MqttSubscriptionHealth> g_mqttSubscriptionHealth;
+
+static std::string mqtt_subscription_health_key(const MqttInputMapping &m) {
+    return m.connection_id + "\x1f" + m.id;
+}
+
+// -----------------------------
+// Logic runtime scaffold
+// -----------------------------
+struct LogicScriptConfig {
+    std::string id;
+    std::string name;
+    std::string kind = "script"; // script | block
+    bool enabled = false;
+    int interval_ms = 0;
+    std::string engine = "javascript";
+    std::string source;
+    std::string setup_source;
+    std::string loop_source;
+    int64_t last_run_ms = 0;
+    int64_t last_run_duration_ms = 0;
+    bool last_run_ok = false;
+    uint64_t runs_total = 0;
+    uint64_t failures_total = 0;
+    int referenced_tags = 0;
+    int missing_tags = 0;
+    int evaluated_reads = 0;
+    int memory_writes = 0;
+    int variables = 0;
+    std::string read_preview;
+    std::string write_preview;
+    std::string variable_preview;
+    std::string last_error;
+    bool setup_initialized = false;
+    std::unordered_map<std::string, std::string> retained_vars;
+};
+
+struct LogicRuntimeState {
+    bool config_loaded = false;
+    bool last_load_ok = true;
+    bool validation_only = true;
+    int64_t last_load_ms = 0;
+    int64_t last_load_duration_ms = 0;
+    int64_t config_mtime_ms = -1;
+    int64_t last_run_ms = 0;
+    uint64_t runs_total = 0;
+    uint64_t failures_total = 0;
+    std::string last_error;
+    std::vector<LogicScriptConfig> scripts;
+};
+
+static std::mutex g_logicMutex;
+static LogicRuntimeState g_logicState;
 
 
 struct UaTagBinding {
@@ -456,6 +571,10 @@ static std::string ua_tag_nodeid_string(const std::string &connId,
 
 static std::string ua_connection_nodeid_string(const std::string &connId) {
     return "Connections/" + ua_nodeid_escape_segment(connId);
+}
+
+static std::string display_connection_name(const std::string &connId) {
+    return connId == "_memory" ? std::string("Memory") : connId;
 }
 
 static sqlite3 *g_alarmDb = nullptr;
@@ -579,6 +698,7 @@ static bool sqlite_alarms_config_put(const json &cfg, int64_t updatedMs, std::st
     return true;
 }
 bool sqlite_init(const std::string &configDir);
+static std::string trim_copy(const std::string &s);
 
 using TagTable = std::map<std::string, TagSnapshot>; // key "conn:tag"
 
@@ -589,12 +709,90 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &value_str,
                        TagTable &table,
                        std::mutex &driverMutex);
+void mqtt_publish_raw(const std::string &topic, const std::string &payload);
+bool mqtt_publish_snapshot(const TagSnapshot &snap, const TagSnapshot *prevSnap);
 
 // MQTT write-back context (used by callbacks)
 static std::vector<DriverContext> *g_mqttDrivers      = nullptr;
 static TagTable                   *g_mqttTagTable     = nullptr;
 static std::mutex                 *g_mqttDriverMutex  = nullptr;
 static std::shared_mutex          *g_plcMutex         = nullptr;
+
+static bool logic_lookup_live_snapshot(const std::string &key, TagSnapshot &out) {
+    if (!g_mqttTagTable || !g_mqttDriverMutex) return false;
+    std::lock_guard<std::mutex> lock(*g_mqttDriverMutex);
+    auto it = g_mqttTagTable->find(key);
+    if (it == g_mqttTagTable->end()) return false;
+    out = it->second;
+    return true;
+}
+
+static bool mqtt_is_subscription_tag_name(const std::string &name) {
+    static const std::string suffix = "/RawPayload";
+    if (name.size() < suffix.size()) return false;
+    return name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+static bool mqtt_name_matches_topic_scope(const std::string &name, const std::string &topic) {
+    if (name == topic) return true;
+    if (name.size() <= topic.size()) return false;
+    if (name.compare(0, topic.size(), topic) != 0) return false;
+    return name[topic.size()] == '/';
+}
+
+static bool mqtt_name_matches_any_topic_scope(const std::string &name,
+                                              const std::vector<std::string> &topics) {
+    for (const auto &topic : topics) {
+        if (topic.empty()) continue;
+        if (mqtt_name_matches_topic_scope(name, topic)) return true;
+    }
+    return false;
+}
+
+static bool mqtt_connection_known_from_inputs(const std::string &connId) {
+    for (const auto &m : g_mqttInputs) {
+        if (m.connection_id == connId) return true;
+    }
+    return false;
+}
+
+static bool mqtt_publish_topic_value(const std::string &conn_id,
+                                     const std::string &topic,
+                                     const std::string &payload) {
+    const std::string t = trim_copy(topic);
+    if (t.empty()) return false;
+    if (!g_mqtt || !g_mqttCfg.enabled) return false;
+    const std::string policyKey = conn_id + ":" + t;
+    {
+        std::lock_guard<std::mutex> lock(g_mqttDirectPublishPolicyMutex);
+        auto it = g_mqttDirectPublishPolicyByKey.find(policyKey);
+        if (it != g_mqttDirectPublishPolicyByKey.end()) {
+            auto &p = it->second;
+            const auto now = std::chrono::system_clock::now();
+            const bool changed = !p.has_last || p.last_payload != payload;
+            const int64_t elapsedMs = p.has_last
+                ? std::chrono::duration_cast<std::chrono::milliseconds>(now - p.last_publish).count()
+                : std::numeric_limits<int64_t>::max();
+            if (p.has_last && p.min_update_ms > 0 && elapsedMs < p.min_update_ms) {
+                return false;
+            }
+            bool shouldPublish = false;
+            if (p.mode == "interval") {
+                shouldPublish = !p.has_last || elapsedMs >= p.interval_ms;
+            } else if (p.mode == "change_or_interval") {
+                shouldPublish = changed || !p.has_last || elapsedMs >= p.interval_ms;
+            } else {
+                shouldPublish = changed;
+            }
+            if (!shouldPublish) return false;
+            p.has_last = true;
+            p.last_payload = payload;
+            p.last_publish = now;
+        }
+    }
+    mqtt_publish_raw(t, payload);
+    return true;
+}
 
 // Polling performance metrics (updated by poller threads; exposed via GET /metrics).
 struct ConnPollMetrics {
@@ -1007,6 +1205,121 @@ static std::string system_tag_path_segment(std::string value) {
     return value;
 }
 
+static std::vector<SystemTagDef> collect_logic_system_tags() {
+    LogicRuntimeState copy;
+    {
+        std::lock_guard<std::mutex> lock(g_logicMutex);
+        copy = g_logicState;
+    }
+
+    const int64_t nowMs = system_wall_now_ms();
+    int enabledCount = 0;
+    for (const auto &script : copy.scripts) {
+        if (script.enabled) ++enabledCount;
+    }
+
+    std::vector<SystemTagDef> rows = {
+        {"System/Logic/RuntimeEnabled", "bool", false},
+        {"System/Logic/ValidationOnly", "bool", copy.validation_only},
+        {"System/Logic/ConfigLoaded", "bool", copy.config_loaded},
+        {"System/Logic/LastLoadOk", "bool", copy.last_load_ok},
+        {"System/Logic/ScriptCount", "int32", static_cast<int>(copy.scripts.size())},
+        {"System/Logic/EnabledScriptCount", "int32", enabledCount},
+        {"System/Logic/LastLoadAgeMs", "int64", copy.last_load_ms > 0 ? (nowMs - copy.last_load_ms) : -1},
+        {"System/Logic/LastLoadDurationMs", "int64", copy.last_load_duration_ms},
+        {"System/Logic/LastRunAgeMs", "int64", copy.last_run_ms > 0 ? (nowMs - copy.last_run_ms) : -1},
+        {"System/Logic/RunsTotal", "uint64", copy.runs_total},
+        {"System/Logic/FailuresTotal", "uint64", copy.failures_total},
+        {"System/Logic/ConfigMtimeMs", "int64", copy.config_mtime_ms},
+        {"System/Logic/LastError", "string", copy.last_error}
+    };
+
+    for (const auto &script : copy.scripts) {
+        if (script.id.empty()) continue;
+        const std::string prefix = "System/Logic/Scripts/" + system_tag_path_segment(script.id) + "/";
+        rows.push_back({prefix + "Id", "string", script.id});
+        rows.push_back({prefix + "Name", "string", script.name});
+        rows.push_back({prefix + "Kind", "string", script.kind});
+        rows.push_back({prefix + "Enabled", "bool", script.enabled});
+        rows.push_back({prefix + "IntervalMs", "int32", script.interval_ms});
+        rows.push_back({prefix + "Engine", "string", script.engine});
+        const int srcLen = static_cast<int>(script.source.size() + script.setup_source.size() + script.loop_source.size());
+        rows.push_back({prefix + "SourceLength", "int32", srcLen});
+        rows.push_back({prefix + "LastRunAgeMs", "int64", script.last_run_ms > 0 ? (nowMs - script.last_run_ms) : -1});
+        rows.push_back({prefix + "LastRunDurationMs", "int64", script.last_run_duration_ms});
+        rows.push_back({prefix + "LastRunOk", "bool", script.last_run_ok});
+        rows.push_back({prefix + "RunsTotal", "uint64", script.runs_total});
+        rows.push_back({prefix + "FailuresTotal", "uint64", script.failures_total});
+        rows.push_back({prefix + "ReferencedTags", "int32", script.referenced_tags});
+        rows.push_back({prefix + "MissingTags", "int32", script.missing_tags});
+        rows.push_back({prefix + "EvaluatedReads", "int32", script.evaluated_reads});
+        rows.push_back({prefix + "MemoryWrites", "int32", script.memory_writes});
+        rows.push_back({prefix + "Variables", "int32", script.variables});
+        rows.push_back({prefix + "ReadPreview", "string", script.read_preview});
+        rows.push_back({prefix + "WritePreview", "string", script.write_preview});
+        rows.push_back({prefix + "VariablePreview", "string", script.variable_preview});
+        rows.push_back({prefix + "LastError", "string", script.last_error});
+    }
+
+    return rows;
+}
+
+static std::vector<SystemTagDef> collect_mqtt_system_tags(bool mqttMode) {
+    std::vector<SystemTagDef> rows;
+    const int64_t nowMs = system_wall_now_ms();
+    const int64_t lastConnect = g_mqttRuntimeStats.last_connect_ms.load(std::memory_order_relaxed);
+    const int64_t lastDisconnect = g_mqttRuntimeStats.last_disconnect_ms.load(std::memory_order_relaxed);
+    std::string lastError;
+    {
+        std::lock_guard<std::mutex> lock(g_mqttRuntimeStats.error_mutex);
+        lastError = g_mqttRuntimeStats.last_error;
+    }
+
+    rows.push_back({"System/MQTT/Enabled", "bool", mqttMode && g_mqttCfg.enabled});
+    rows.push_back({"System/MQTT/Connected", "bool", g_mqttRuntimeStats.connected.load(std::memory_order_relaxed)});
+    rows.push_back({"System/MQTT/BrokerHost", "string", g_mqttCfg.host});
+    rows.push_back({"System/MQTT/BrokerPort", "int32", g_mqttCfg.port});
+    rows.push_back({"System/MQTT/ClientId", "string", g_mqttCfg.client_id});
+    rows.push_back({"System/MQTT/SubscriptionsTotal", "int32", static_cast<int>(g_mqttInputs.size())});
+    rows.push_back({"System/MQTT/MessagesReceivedTotal", "uint64", g_mqttRuntimeStats.messages_received_total.load(std::memory_order_relaxed)});
+    rows.push_back({"System/MQTT/MessagesPublishedTotal", "uint64", g_mqttRuntimeStats.messages_published_total.load(std::memory_order_relaxed)});
+    rows.push_back({"System/MQTT/PublishFailuresTotal", "uint64", g_mqttRuntimeStats.publish_failures_total.load(std::memory_order_relaxed)});
+    rows.push_back({"System/MQTT/ReconnectCount", "uint64", g_mqttRuntimeStats.reconnect_count.load(std::memory_order_relaxed)});
+    rows.push_back({"System/MQTT/LastConnectAgeMs", "int64", lastConnect > 0 ? (nowMs - lastConnect) : -1});
+    rows.push_back({"System/MQTT/LastDisconnectAgeMs", "int64", lastDisconnect > 0 ? (nowMs - lastDisconnect) : -1});
+    rows.push_back({"System/MQTT/LastError", "string", lastError});
+
+    std::unordered_map<std::string, MqttSubscriptionHealth> healthCopy;
+    {
+        std::lock_guard<std::mutex> lock(g_mqttSubscriptionHealthMutex);
+        healthCopy = g_mqttSubscriptionHealth;
+    }
+
+    for (const auto &m : g_mqttInputs) {
+        if (m.write_to_plc) continue;
+        const std::string broker = system_tag_path_segment(m.connection_id);
+        const std::string subId = system_tag_path_segment(m.id.empty() ? m.topic : m.id);
+        const std::string prefix = "System/MQTT/Subscriptions/" + broker + "/" + subId + "/";
+        auto hit = healthCopy.find(mqtt_subscription_health_key(m));
+        const MqttSubscriptionHealth h = (hit != healthCopy.end()) ? hit->second : MqttSubscriptionHealth{};
+        const int64_t age = h.last_message_ms > 0 ? (nowMs - h.last_message_ms) : -1;
+        const bool timedOut = m.timeout_enabled && m.timeout_ms > 0 &&
+            ((h.last_message_ms <= 0 && lastConnect > 0 && (nowMs - lastConnect) > m.timeout_ms) ||
+             (h.last_message_ms > 0 && age > m.timeout_ms));
+
+        rows.push_back({prefix + "Topic", "string", m.topic});
+        rows.push_back({prefix + "TimeoutEnabled", "bool", m.timeout_enabled});
+        rows.push_back({prefix + "TimeoutMs", "int64", m.timeout_ms});
+        rows.push_back({prefix + "TimedOut", "bool", timedOut});
+        rows.push_back({prefix + "PayloadAgeMs", "int64", age});
+        rows.push_back({prefix + "LastMessageTimeMs", "int64", h.last_message_ms});
+        rows.push_back({prefix + "MessagesReceivedTotal", "uint64", h.messages_received_total});
+        rows.push_back({prefix + "LastPayloadSize", "int64", h.last_payload_size});
+    }
+
+    return rows;
+}
+
 static std::vector<SystemTagDef> reporter_default_system_tags(bool connected = false) {
     return {
         {"System/Reporter/RuntimeConnected", "bool", connected},
@@ -1116,6 +1429,10 @@ std::string make_tag_key(const std::string &conn_id,
 
 static std::string snapshot_value_to_string(const TagSnapshot &snap);
 
+void evaluate_tag_alarms(const std::string &conn_id,
+                         const std::string &logical_name,
+                         const TagSnapshot &snap);
+
 // Forward declarations for file helpers used by admin auth.
 // These must match the actual definitions later in the file.
 static std::string read_file_to_string(const std::string &path);
@@ -1128,6 +1445,15 @@ static void write_string_to_file_atomic(const std::string &path, const std::stri
 static void mqtt_on_connect(struct mosquitto *mosq, void *, int rc) {
     if (rc == 0) {
         std::cout << "[mqtt] Connected successfully.\n";
+        const bool wasConnected = g_mqttRuntimeStats.connected.exchange(true, std::memory_order_relaxed);
+        if (!wasConnected && g_mqttRuntimeStats.last_connect_ms.load(std::memory_order_relaxed) > 0) {
+            g_mqttRuntimeStats.reconnect_count.fetch_add(1, std::memory_order_relaxed);
+        }
+        g_mqttRuntimeStats.last_connect_ms.store(system_wall_now_ms(), std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(g_mqttRuntimeStats.error_mutex);
+            g_mqttRuntimeStats.last_error.clear();
+        }
 
         // Subscribe to command topic if enabled
         if (g_mqttCfg.subscribe_enabled && !g_mqttCfg.command_topic.empty()) {
@@ -1142,21 +1468,23 @@ static void mqtt_on_connect(struct mosquitto *mosq, void *, int rc) {
             }
         }
 
-        // Subscribe to telemetry topics from mqtt_inputs.json
-        if (!g_mqttInputs.empty()) {
-            std::cout << "[mqtt-inputs] Subscribing to " << g_mqttInputs.size()
-                      << " telemetry topic(s)...\n";
+        // Subscribe to telemetry topics from mqtt_inputs.json.
+        if (!g_mqttInputsByTopic.empty()) {
+            std::cout << "[mqtt-inputs] Subscribing to " << g_mqttInputsByTopic.size()
+                      << " telemetry topic(s) for " << g_mqttInputs.size()
+                      << " mapping(s)...\n";
 
-            for (const auto &m : g_mqttInputs) {
-                if (m.topic.empty()) continue;
+            for (const auto &kv : g_mqttInputsByTopic) {
+                const std::string &topic = kv.first;
+                if (topic.empty()) continue;
 
-                int sRC = mosquitto_subscribe(mosq, nullptr, m.topic.c_str(), g_mqttCfg.qos);
+                int sRC = mosquitto_subscribe(mosq, nullptr, topic.c_str(), g_mqttCfg.qos);
                 if (sRC == MOSQ_ERR_SUCCESS) {
                     std::cout << "[mqtt-inputs] Subscribed to telemetry topic: "
-                              << m.topic << " (id=" << m.id << ")\n";
+                              << topic << " (" << kv.second.size() << " mapping(s))\n";
                 } else {
                     std::cerr << "[mqtt-inputs] Failed to subscribe telemetry topic "
-                              << m.topic << " (id=" << m.id << "): "
+                              << topic << ": "
                               << mosquitto_strerror(sRC) << "\n";
                 }
             }
@@ -1165,6 +1493,11 @@ static void mqtt_on_connect(struct mosquitto *mosq, void *, int rc) {
         }
     } else {
         std::cerr << "[mqtt] Connect failed with code: " << rc << "\n";
+        g_mqttRuntimeStats.connected.store(false, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(g_mqttRuntimeStats.error_mutex);
+            g_mqttRuntimeStats.last_error = std::string("connect failed rc=") + std::to_string(rc);
+        }
     }
 }
 
@@ -1173,6 +1506,69 @@ static void mqtt_on_connect(struct mosquitto *mosq, void *, int rc) {
 // ================================================================
 static void mqtt_on_disconnect(struct mosquitto *, void *, int rc) {
     std::cerr << "[mqtt] Disconnected (rc=" << rc << ").\n";
+    g_mqttRuntimeStats.connected.store(false, std::memory_order_relaxed);
+    g_mqttRuntimeStats.last_disconnect_ms.store(system_wall_now_ms(), std::memory_order_relaxed);
+    if (rc != 0) {
+        std::lock_guard<std::mutex> lock(g_mqttRuntimeStats.error_mutex);
+        g_mqttRuntimeStats.last_error = std::string("disconnect rc=") + std::to_string(rc);
+    }
+}
+
+static std::string json_value_to_mqtt_string(const json &value) {
+    if (value.is_string()) return value.get<std::string>();
+    return value.dump();
+}
+
+static bool json_path_lookup(const json &root, const std::string &path, json &out) {
+    std::string p = trim_copy(path);
+    if (p.empty()) return false;
+    if (!p.empty() && p[0] == '$') {
+        p.erase(0, 1);
+        if (!p.empty() && p[0] == '.') p.erase(0, 1);
+    }
+
+    const json *cur = &root;
+    size_t i = 0;
+    while (i < p.size()) {
+        if (p[i] == '.') {
+            i += 1;
+            continue;
+        }
+
+        if (p[i] == '[') {
+            size_t close = p.find(']', i + 1);
+            if (close == std::string::npos) return false;
+            std::string token = trim_copy(p.substr(i + 1, close - i - 1));
+            if (!token.empty() && (token.front() == '"' || token.front() == '\'')) {
+                if (token.size() < 2 || token.back() != token.front()) return false;
+                token = token.substr(1, token.size() - 2);
+                if (!cur->is_object() || !cur->contains(token)) return false;
+                cur = &(*cur)[token];
+            } else {
+                if (!cur->is_array()) return false;
+                try {
+                    size_t pos = 0;
+                    int idx = std::stoi(token, &pos);
+                    if (pos != token.size() || idx < 0 || static_cast<size_t>(idx) >= cur->size()) return false;
+                    cur = &(*cur)[static_cast<size_t>(idx)];
+                } catch (...) {
+                    return false;
+                }
+            }
+            i = close + 1;
+            continue;
+        }
+
+        size_t start = i;
+        while (i < p.size() && p[i] != '.' && p[i] != '[') i += 1;
+        std::string key = p.substr(start, i - start);
+        if (key.empty()) return false;
+        if (!cur->is_object() || !cur->contains(key)) return false;
+        cur = &(*cur)[key];
+    }
+
+    out = *cur;
+    return true;
 }
 
 // ================================================================
@@ -1381,21 +1777,6 @@ static void mqtt_on_message(struct mosquitto *mosq,
             return;
         }
 
-        if (!tagRt->cfg.mqtt_command_allowed) {
-            std::cerr << "[mqtt] MQTT command not allowed for ["
-                      << conn_id << "]." << tag_name << "\n";
-            mqtt_publish_command_ack(
-                conn_id,
-                tag_name,
-                valueStr,
-                false,
-                "Tag does not allow MQTT commands",
-                "",          // topic_suffix → default "<conn>/<tag>"
-                ts_ms,
-                topic       // source_topic → the original MQTT command topic
-            );
-            return;
-        }
     }
 
     // Avoid holding the driver mutex while waiting on PLC I/O.
@@ -1463,6 +1844,14 @@ bool handle_mqtt_telemetry_message(const std::string &topic,
     for (size_t idx : it->second) {
         if (idx >= g_mqttInputs.size()) continue;
         const MqttInputMapping &m = g_mqttInputs[idx];
+        g_mqttRuntimeStats.messages_received_total.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(g_mqttSubscriptionHealthMutex);
+            MqttSubscriptionHealth &h = g_mqttSubscriptionHealth[mqtt_subscription_health_key(m)];
+            h.messages_received_total += 1;
+            h.last_message_ms = system_wall_now_ms();
+            h.last_payload_size = static_cast<int64_t>(payload.size());
+        }
 
         // Step 1: extract value string from payload according to payload_format
         std::string valueStr;
@@ -1478,12 +1867,24 @@ bool handle_mqtt_telemetry_message(const std::string &topic,
                               << "' for topic '" << topic << "'.\n";
                     continue;
                 }
-                const auto &jf = j[m.json_field];
-                if (jf.is_string()) {
-                    valueStr = jf.get<std::string>();
-                } else {
-                    valueStr = jf.dump();
+                valueStr = json_value_to_mqtt_string(j[m.json_field]);
+            } catch (const std::exception &ex) {
+                std::cerr << "[mqtt-inputs] Input '" << m.id
+                          << "': JSON parse error for topic '" << topic
+                          << "': " << ex.what() << "\n";
+                continue;
+            }
+        } else if (m.payload_format == "json_path") {
+            try {
+                auto j = json::parse(payload);
+                json found;
+                if (!json_path_lookup(j, m.json_path, found)) {
+                    std::cerr << "[mqtt-inputs] Input '" << m.id
+                              << "': JSON payload missing path '" << m.json_path
+                              << "' for topic '" << topic << "'.\n";
+                    continue;
                 }
+                valueStr = json_value_to_mqtt_string(found);
             } catch (const std::exception &ex) {
                 std::cerr << "[mqtt-inputs] Input '" << m.id
                           << "': JSON parse error for topic '" << topic
@@ -1647,6 +2048,7 @@ enum class ConfigFileKind {
     TAGS,
     MQTT,
     MQTT_INPUTS,
+    LOGIC,
     ALARMS,
     TLS_CERT,   // ca.crt for MQTT TLS
     UNKNOWN
@@ -1678,6 +2080,11 @@ ConfigFileKind classify_config_path(const std::string &relPath) {
     // mqtt_inputs.json (root)
     if (parent.empty() && name == "mqtt_inputs.json") {
         return ConfigFileKind::MQTT_INPUTS;
+    }
+
+    // logic.json (root)
+    if (parent.empty() && name == "logic.json") {
+        return ConfigFileKind::LOGIC;
     }
 
     // alarms.json (root)
@@ -1737,6 +2144,17 @@ bool validate_config_text(const std::string &text,
         case ConfigFileKind::MQTT_INPUTS:
             if (!j.is_object() || !j.contains("inputs") || !j["inputs"].is_array()) {
                 errorOut = "mqtt_inputs.json must have an 'inputs' array.";
+                return false;
+            }
+            return true;
+
+        case ConfigFileKind::LOGIC:
+            if (!j.is_object()) {
+                errorOut = "logic.json must be a JSON object.";
+                return false;
+            }
+            if (j.contains("scripts") && !j["scripts"].is_array()) {
+                errorOut = "logic.json 'scripts' must be an array.";
                 return false;
             }
             return true;
@@ -2532,13 +2950,38 @@ bool validate_mqtt_inputs_json(const std::string &content, std::string &errMsg) 
             errMsg = "mqtt_inputs.json must be a JSON object.";
             return false;
         }
-        if (!j.contains("inputs") || !j["inputs"].is_array()) {
-            errMsg = "mqtt_inputs.json must contain an 'inputs' array.";
+        if ((!j.contains("inputs") || !j["inputs"].is_array()) &&
+            (!j.contains("messages") || !j["messages"].is_array())) {
+            errMsg = "mqtt_inputs.json must contain an 'inputs' or 'messages' array.";
             return false;
         }
         return true;
     } catch (const std::exception &ex) {
         errMsg = std::string("Invalid JSON in mqtt_inputs.json: ") + ex.what();
+        return false;
+    }
+}
+
+bool validate_logic_json(const std::string &content, std::string &errMsg) {
+    try {
+        std::string stripped = strip_json_comments(content);
+        auto j = json::parse(stripped);
+
+        if (!j.is_object()) {
+            errMsg = "logic.json must be a JSON object.";
+            return false;
+        }
+        if (!j.contains("scripts") || !j["scripts"].is_array()) {
+            errMsg = "logic.json must contain a 'scripts' array.";
+            return false;
+        }
+        if (!j.contains("blocks") || !j["blocks"].is_array()) {
+            errMsg = "logic.json must contain a 'blocks' array.";
+            return false;
+        }
+        return true;
+    } catch (const std::exception &ex) {
+        errMsg = std::string("Invalid JSON in logic.json: ") + ex.what();
         return false;
     }
 }
@@ -2754,6 +3197,18 @@ json load_json_with_comments(const std::string &path) {
     std::string content = read_file_to_string(path);
     std::string stripped = strip_json_comments(content);
     return json::parse(stripped);
+}
+
+static int64_t file_mtime_ms(const std::string &path) {
+    std::error_code ec;
+    const auto ft = fs::last_write_time(path, ec);
+    if (ec) return -1;
+    const auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+        ft - fs::file_time_type::clock::now() + std::chrono::system_clock::now()
+    );
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        sctp.time_since_epoch()
+    ).count();
 }
 
 static std::string trim_copy(const std::string &s) {
@@ -3095,9 +3550,35 @@ ConnectionConfig load_connection_config(const std::string &path) {
             // For ControlLogix/CompactLogix; MicroLogix ignores path
             c.path = "1," + std::to_string(c.slot);
         }
+    } else if (c.driver == "mqtt") {
+        const json settings = (j.contains("settings") && j["settings"].is_object())
+            ? j["settings"]
+            : json::object();
+        c.mqtt_subscription_topics.clear();
+        c.mqtt_publication_topics.clear();
+        if (settings.contains("messages") && settings["messages"].is_array()) {
+            for (const auto &jm : settings["messages"]) {
+                const std::string topic = trim_copy(jm.value("topic", std::string{}));
+                if (!topic.empty()) c.mqtt_subscription_topics.push_back(topic);
+            }
+        }
+        if (settings.contains("publications") && settings["publications"].is_array()) {
+            for (const auto &jp : settings["publications"]) {
+                const std::string topic = trim_copy(jp.value("topic", std::string{}));
+                if (!topic.empty()) c.mqtt_publication_topics.push_back(topic);
+            }
+        }
+        c.path.clear();
+        c.plc_type = "mqtt";
+        c.polling_mode = "standard";
+        c.polling_pacing = "gentle";
+        c.poll_batch_size = 0;
+        c.poll_time_budget_ms = 0;
+        c.poll_max_reads_per_sec = 0;
+        c.poll_lanes = 1;
     } else {
         throw std::runtime_error("Unsupported driver: " + c.driver +
-                                 " (expected 'ab_eip' for now)");
+                                 " (expected 'ab_eip' or 'mqtt')");
     }
 
     return c;
@@ -3118,16 +3599,44 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	            t.logical_name = json_get_string_loose(jt, "name", std::string{});
 	            if (t.logical_name.empty()) continue;
 
-	            // Derived tags:
+	            // Source forms:
+	            // - PLC tag:       { name, plc_tag_name, datatype }
+	            // - Memory tag:    { name, source: "memory", datatype, initial_value? }
 	            // - Derived bit:   { name, source_tag, bit >= 0, datatype=bool }
 	            // - Derived alias: { name, source_tag, datatype=(any supported), bit omitted or < 0 }
-	            const std::string source_tag = json_get_string_loose(jt, "source_tag", json_get_string_loose(jt, "source", std::string{}));
+	            std::string sourceKind = to_lower_copy(trim_copy(json_get_string_loose(jt, "source_type", json_get_string_loose(jt, "source_kind", std::string{}))));
+	            const std::string sourceCompat = json_get_string_loose(jt, "source", std::string{});
+	            if (sourceKind.empty() && to_lower_copy(trim_copy(sourceCompat)) == "memory") {
+	                sourceKind = "memory";
+	            }
+	            const bool isMemory = (sourceKind == "memory");
+	            const std::string source_tag = json_get_string_loose(jt, "source_tag", isMemory ? std::string{} : sourceCompat);
 	            const int bit = json_get_int_loose(jt, "bit", -1);
 	            const bool hasSource = (!source_tag.empty());
 	            const bool isDerivedBit = (hasSource && bit >= 0);
 	            const bool isDerivedAlias = (hasSource && bit < 0);
 
-	            if (hasSource) {
+	            if (isMemory) {
+	                t.source_type = "memory";
+	                t.initial_value = json_get_string_loose(jt, "initial_value", std::string{});
+	                t.plc_tag_name.clear();
+	                t.source_tag.clear();
+	                t.bit = -1;
+	                t.elem_count = 1;
+	                t.scan_ms = 0;
+	                t.datatype = json_get_string_loose(jt, "datatype", std::string{});
+	                if (t.datatype.empty()) {
+	                    std::cerr << "[load] Warning: skipping memory tag '" << t.logical_name
+	                              << "' in " << path << " because datatype is missing.\n";
+	                    continue;
+	                }
+	                if (!is_supported_datatype(t.datatype)) {
+	                    std::cerr << "[load] Warning: skipping memory tag '" << t.logical_name
+	                              << "' in " << path << " due to unsupported datatype '" << t.datatype << "'.\n";
+	                    continue;
+	                }
+	            } else if (hasSource) {
+	                t.source_type = "derived";
 	                t.source_tag = source_tag;
 	                t.bit = bit;
 	                t.plc_tag_name.clear();
@@ -3157,6 +3666,7 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	                    }
 	                }
 	            } else {
+	                t.source_type = "plc";
 	                if (!jt.contains("plc_tag_name") || !jt.contains("datatype")) continue;
 	                t.plc_tag_name = json_get_string_loose(jt, "plc_tag_name", std::string{});
 	                t.datatype     = json_get_string_loose(jt, "datatype", std::string{});
@@ -3174,8 +3684,11 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	            t.enabled              = json_get_bool_loose(jt, "enabled", true);
 	            t.writable             = json_get_bool_loose(jt, "writable", false);
                 t.invert               = json_get_bool_loose(jt, "invert", false);
-	            if (hasSource) {
+	            if (hasSource || isMemory) {
 	                t.elem_count = 1;
+	            }
+	            if (isMemory) {
+	                t.scan_ms = 0;
 	            }
 	            if (isDerivedAlias) {
 	                // Derived-alias tags are currently read-only; strict writes are only supported for derived-bit tags.
@@ -3197,11 +3710,11 @@ ConnectionConfig load_connection_config(const std::string &path) {
             t.clamp_low       = json_get_bool_loose(jt, "clamp_low", false);
             t.clamp_high      = json_get_bool_loose(jt, "clamp_high", false);
             t.scaled_datatype = json_get_string_loose(jt, "scaled_datatype", std::string{});
-
-            t.mqtt_command_allowed = json_get_bool_loose(jt, "mqtt_command_allowed", false);
-            if (isDerivedAlias) {
-                t.mqtt_command_allowed = false;
+            if (isMemory) {
+                t.scaling = "none";
+                t.scaled_datatype.clear();
             }
+
             t.log_event_on_change  = json_get_bool_loose(jt, "log_event_on_change", false);
 
             // Periodic logging config (all optional)
@@ -3249,6 +3762,14 @@ static bool is_supported_datatype(const std::string &dt) {
         dt == "float64" ||
         dt == "string"
     );
+}
+
+static bool is_memory_tag(const TagConfig &cfg) {
+    return to_lower_copy(trim_copy(cfg.source_type)) == "memory";
+}
+
+static bool is_memory_connection_id(const std::string &connId) {
+    return trim_copy(connId) == "_memory";
 }
 
 	static bool is_numeric_datatype(const std::string &dt) {
@@ -3879,7 +4400,6 @@ void ws_notify_tag_update(const TagSnapshot &snap,
 
 	    j["enabled"]               = cfg.enabled;
 	    j["writable"]              = cfg.writable;
-	    j["mqtt_command_allowed"]  = cfg.mqtt_command_allowed;
 	    j["log_event_on_change"]   = cfg.log_event_on_change;
 	    j["log_periodic_mode"]     = cfg.log_periodic_mode;
 	    j["log_periodic_interval_sec"] = cfg.log_periodic_interval_sec;
@@ -4161,12 +4681,6 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        TagTable &table,
                        std::mutex &driverMutex)
 {
-    // Serialize libplctag access across poll loop / HTTP / MQTT / OPC UA.
-    std::unique_lock<std::shared_mutex> plcLock;
-    if (g_plcMutex) {
-        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
-    }
-
     ConnectionConfig conn;
     TagConfig cfg;
     int32_t handle = PLCTAG_ERR_NOT_FOUND;
@@ -4177,6 +4691,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     TagSnapshot prevSnap;
     bool hadPrev = false;
     bool found = false;
+    bool connectionFound = false;
 
     const std::string key = make_tag_key(conn_id, logical_name);
 
@@ -4185,6 +4700,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         for (auto &driver : drivers) {
             if (driver.conn.id != conn_id) continue;
+            connectionFound = true;
             conn = driver.conn;
             for (auto &t : driver.tags) {
                 if (t.cfg.logical_name == logical_name) {
@@ -4211,6 +4727,83 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     }
 
     if (!found) {
+        auto pubIt = g_mqttPublicationTopicsByConn.find(conn_id);
+        if (pubIt != g_mqttPublicationTopicsByConn.end() &&
+            mqtt_name_matches_any_topic_scope(logical_name, pubIt->second)) {
+            TagSnapshot snap;
+            snap.connection_id = conn_id;
+            snap.logical_name = logical_name;
+            snap.datatype = "string";
+            snap.timestamp = std::chrono::system_clock::now();
+            snap.quality = 1;
+            snap.value = value_str;
+
+            {
+                std::lock_guard<std::mutex> lock(driverMutex);
+                table[key] = snap;
+            }
+            mqtt_publish_topic_value(conn_id, logical_name, value_str);
+            std::cout << "Write OK (mqtt-publication): [" << conn_id << "] "
+                      << logical_name << " := " << value_str << "\n";
+            return true;
+        }
+        if (g_mqttKnownConnectionIds.count(conn_id) > 0 &&
+            !mqtt_is_subscription_tag_name(logical_name)) {
+            TagSnapshot snap;
+            snap.connection_id = conn_id;
+            snap.logical_name = logical_name;
+            snap.datatype = "string";
+            snap.timestamp = std::chrono::system_clock::now();
+            snap.quality = 1;
+            snap.value = value_str;
+
+            {
+                std::lock_guard<std::mutex> lock(driverMutex);
+                table[key] = snap;
+            }
+            mqtt_publish_topic_value(conn_id, logical_name, value_str);
+            std::cout << "Write OK (mqtt-dynamic-any-publication): [" << conn_id << "] "
+                      << logical_name << " := " << value_str << "\n";
+            return true;
+        }
+        if (mqtt_connection_known_from_inputs(conn_id) &&
+            !mqtt_is_subscription_tag_name(logical_name)) {
+            TagSnapshot snap;
+            snap.connection_id = conn_id;
+            snap.logical_name = logical_name;
+            snap.datatype = "string";
+            snap.timestamp = std::chrono::system_clock::now();
+            snap.quality = 1;
+            snap.value = value_str;
+
+            {
+                std::lock_guard<std::mutex> lock(driverMutex);
+                table[key] = snap;
+            }
+            mqtt_publish_topic_value(conn_id, logical_name, value_str);
+            std::cout << "Write OK (mqtt-dynamic-input-known): [" << conn_id << "] "
+                      << logical_name << " := " << value_str << "\n";
+            return true;
+        }
+        if (connectionFound && to_lower_copy(trim_copy(conn.driver)) == "mqtt" &&
+            mqtt_name_matches_any_topic_scope(logical_name, conn.mqtt_publication_topics)) {
+            TagSnapshot snap;
+            snap.connection_id = conn.id;
+            snap.logical_name = logical_name;
+            snap.datatype = "string";
+            snap.timestamp = std::chrono::system_clock::now();
+            snap.quality = 1;
+            snap.value = value_str;
+
+            {
+                std::lock_guard<std::mutex> lock(driverMutex);
+                table[key] = snap;
+            }
+            mqtt_publish_topic_value(conn.id, logical_name, value_str);
+            std::cout << "Write OK (mqtt-dynamic): [" << conn.id << "] "
+                      << logical_name << " := " << value_str << "\n";
+            return true;
+        }
         std::cerr << "Connection/tag not found for write: ["
                   << conn_id << "]." << logical_name << "\n";
         return false;
@@ -4219,6 +4812,89 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         std::cerr << "Tag '" << logical_name
                   << "' is not marked writable in config.\n";
         return false;
+    }
+
+    if (is_memory_tag(cfg)) {
+        TagValue value{};
+        if (!parse_string_to_tagvalue(value_str, cfg.datatype, value)) {
+            std::cerr << "Write parse failed for memory tag ["
+                      << conn_id << "]." << logical_name
+                      << " value '" << value_str << "' as " << cfg.datatype << "\n";
+            return false;
+        }
+
+        TagSnapshot snap;
+        snap.connection_id = conn.id;
+        snap.logical_name = logical_name;
+        snap.datatype = cfg.datatype;
+        snap.timestamp = std::chrono::system_clock::now();
+        snap.quality = 1;
+        snap.value = value;
+
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            table[key] = snap;
+        }
+
+        std::cout << "Write OK (memory): [" << conn.id << "] "
+                  << logical_name << " := " << value_str << "\n";
+
+        if (cfg.log_event_on_change) {
+            bool valueChanged = !hadPrev || !snapshot_values_equal(snap, prevSnap);
+            if (valueChanged) {
+                int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    snap.timestamp.time_since_epoch()
+                ).count();
+                sqlite_log_event(
+                    conn.id,
+                    logical_name,
+                    hadPrev ? snapshot_value_to_string(prevSnap) : std::string{},
+                    snapshot_value_to_string(snap),
+                    hadPrev ? prevSnap.quality : -1,
+                    snap.quality,
+                    ts_ms,
+                    R"({"source":"write_memory"})"
+                );
+            }
+        }
+
+        return true;
+    }
+
+    if (to_lower_copy(trim_copy(conn.driver)) == "mqtt") {
+        TagValue value{};
+        if (!parse_string_to_tagvalue(value_str, cfg.datatype, value)) {
+            std::cerr << "Write parse failed for mqtt tag ["
+                      << conn_id << "]." << logical_name
+                      << " value '" << value_str << "' as " << cfg.datatype << "\n";
+            return false;
+        }
+
+        TagSnapshot snap;
+        snap.connection_id = conn.id;
+        snap.logical_name = logical_name;
+        snap.datatype = cfg.datatype;
+        snap.timestamp = std::chrono::system_clock::now();
+        snap.quality = 1;
+        snap.value = value;
+
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            table[key] = snap;
+        }
+
+        mqtt_publish_topic_value(conn.id, logical_name, value_str);
+
+        std::cout << "Write OK (mqtt): [" << conn.id << "] "
+                  << logical_name << " := " << value_str << "\n";
+        return true;
+    }
+
+    // Serialize libplctag access across poll loop / HTTP / MQTT / OPC UA
+    // only for non-memory writes.
+    std::unique_lock<std::shared_mutex> plcLock;
+    if (g_plcMutex) {
+        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
     }
 
     const bool isDerivedBit = (!cfg.source_tag.empty() && cfg.bit >= 0);
@@ -4642,6 +5318,9 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     for (auto &driver : drivers) {
         for (auto &t : driver.tags) {
             if (t.handle < 0) {
+                if (is_memory_tag(t.cfg) || !t.cfg.source_tag.empty()) {
+                    continue;
+                }
                 std::cerr << "Skipping tag '" << t.cfg.logical_name
                           << "' on connection '" << driver.conn.id
                           << "' because handle is invalid.\n";
@@ -4821,6 +5500,13 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
 
         if (!tc.enabled) {
             rt.handle = PLCTAG_ERR_NOT_FOUND;
+            ctx.tags.push_back(std::move(rt));
+            continue;
+        }
+
+        if (is_memory_tag(tc)) {
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+            rt.next_poll = std::chrono::steady_clock::time_point{};
             ctx.tags.push_back(std::move(rt));
             continue;
         }
@@ -5043,8 +5729,84 @@ static bool load_single_driver_for_connection(DriverContext &out,
 }
 
 bool load_mqtt_config(const std::string &configDir) {
-    std::string path = joinPath(configDir, "mqtt.json");
     MqttConfig cfg; // starts with defaults
+    const std::string connDir = joinPath(configDir, "connections");
+
+    if (fs::exists(connDir)) {
+        std::vector<fs::path> connFiles;
+        for (const auto &entry : fs::directory_iterator(connDir)) {
+            if (!entry.is_regular_file()) continue;
+            if (entry.path().extension() != ".json") continue;
+            connFiles.push_back(entry.path());
+        }
+        std::sort(connFiles.begin(), connFiles.end());
+        for (const auto &connPath : connFiles) {
+            try {
+                json jc = load_json_with_comments(connPath.string());
+                if (jc.value("driver", std::string("ab_eip")) != "mqtt") continue;
+                const json settings = (jc.contains("settings") && jc["settings"].is_object()) ? jc["settings"] : json::object();
+                const std::string host = trim_copy(settings.value("host", jc.value("host", std::string{})));
+                if (host.empty()) continue;
+
+                cfg.enabled = settings.value("enabled", jc.value("enabled", true));
+                cfg.host = host;
+                cfg.use_tls = settings.value("use_tls", jc.value("use_tls", cfg.use_tls));
+                cfg.port = settings.value("port", jc.value("port", cfg.use_tls ? 8883 : cfg.port));
+                cfg.client_id = settings.value("client_id", jc.value("client_id", cfg.client_id));
+                cfg.username = settings.value("username", jc.value("username", cfg.username));
+                cfg.password = settings.value("password", jc.value("password", cfg.password));
+                cfg.tls_insecure = settings.value("tls_insecure", jc.value("tls_insecure", cfg.tls_insecure));
+                cfg.cafile = settings.value("cafile", jc.value("cafile", cfg.cafile));
+                cfg.capath = settings.value("capath", jc.value("capath", cfg.capath));
+                cfg.certfile = settings.value("certfile", jc.value("certfile", cfg.certfile));
+                cfg.keyfile = settings.value("keyfile", jc.value("keyfile", cfg.keyfile));
+                cfg.tls_version = settings.value("tls_version", jc.value("tls_version", cfg.tls_version));
+                cfg.qos = settings.value("qos", jc.value("qos", cfg.qos));
+                cfg.keepalive = settings.value("keepalive", jc.value("keepalive", cfg.keepalive));
+                cfg.publish_per_field = settings.value("publish_per_field", cfg.publish_per_field);
+                cfg.publish_tag_json = settings.value("publish_tag_json", cfg.publish_tag_json);
+                cfg.publish_conn_json = settings.value("publish_conn_json", cfg.publish_conn_json);
+                cfg.publish_memory_tags = settings.value("publish_memory_tags", cfg.publish_memory_tags);
+                cfg.publish_system_tags = settings.value("publish_system_tags", cfg.publish_system_tags);
+                cfg.publish_mode = to_lower_copy(trim_copy(settings.value("publish_mode", cfg.publish_mode)));
+                cfg.publish_interval_ms = settings.value("publish_interval_ms", cfg.publish_interval_ms);
+                cfg.publish_min_update_ms = settings.value("publish_min_update_ms", cfg.publish_min_update_ms);
+                if (settings.contains("publish") && settings["publish"].is_object()) {
+                    const auto &p = settings["publish"];
+                    cfg.publish_per_field = p.value("per_field", cfg.publish_per_field);
+                    cfg.publish_tag_json = p.value("tag_json", cfg.publish_tag_json);
+                    cfg.publish_conn_json = p.value("connection_json", cfg.publish_conn_json);
+                    cfg.publish_memory_tags = p.value("memory_tags", cfg.publish_memory_tags);
+                    cfg.publish_system_tags = p.value("system_tags", cfg.publish_system_tags);
+                    cfg.publish_mode = to_lower_copy(trim_copy(p.value("mode", cfg.publish_mode)));
+                    cfg.publish_interval_ms = p.value("interval_ms", cfg.publish_interval_ms);
+                    cfg.publish_min_update_ms = p.value("min_update_ms", cfg.publish_min_update_ms);
+                }
+                if (cfg.publish_mode != "change" &&
+                    cfg.publish_mode != "interval" &&
+                    cfg.publish_mode != "change_or_interval") {
+                    cfg.publish_mode = "change";
+                }
+                cfg.publish_interval_ms = std::max(100, cfg.publish_interval_ms);
+                cfg.publish_min_update_ms = std::max(0, cfg.publish_min_update_ms);
+                cfg.subscribe_enabled = true;
+                cfg.command_topic = settings.value("command_topic", jc.value("command_topic", cfg.command_topic));
+                cfg.ack_topic_prefix = settings.value("ack_topic_prefix", jc.value("ack_topic_prefix", cfg.ack_topic_prefix));
+                if (cfg.command_topic.empty()) cfg.command_topic = cfg.base_topic + "/cmd";
+                if (cfg.ack_topic_prefix.empty()) cfg.ack_topic_prefix = cfg.base_topic + "/ack";
+
+                g_mqttCfg = cfg;
+                std::cout << "[mqtt] Loaded active broker from MQTT connection file "
+                          << connPath.string() << " (" << cfg.host << ":" << cfg.port << ")\n";
+                return true;
+            } catch (const std::exception &ex) {
+                std::cerr << "[mqtt] Error reading MQTT connection file "
+                          << connPath.string() << ": " << ex.what() << "\n";
+            }
+        }
+    }
+
+    std::string path = joinPath(configDir, "mqtt.json");
 
     if (!fs::exists(path)) {
         std::cout << "[mqtt] mqtt.json not found, using defaults: "
@@ -5070,6 +5832,27 @@ bool load_mqtt_config(const std::string &configDir) {
         cfg.publish_only_on_change = j.value("publish_only_on_change",
                                              cfg.publish_only_on_change);
         cfg.payload_format = j.value("payload_format", cfg.payload_format);
+        cfg.publish_mode = to_lower_copy(trim_copy(j.value("publish_mode", cfg.publish_mode)));
+        cfg.publish_interval_ms = j.value("publish_interval_ms", cfg.publish_interval_ms);
+        cfg.publish_min_update_ms = j.value("publish_min_update_ms", cfg.publish_min_update_ms);
+        if (j.contains("publish") && j["publish"].is_object()) {
+            const auto &p = j["publish"];
+            cfg.publish_mode = to_lower_copy(trim_copy(p.value("mode", cfg.publish_mode)));
+            cfg.publish_interval_ms = p.value("interval_ms", cfg.publish_interval_ms);
+            cfg.publish_min_update_ms = p.value("min_update_ms", cfg.publish_min_update_ms);
+        }
+        if (cfg.publish_mode.empty()) {
+            cfg.publish_mode = cfg.publish_only_on_change ? "change" : "change_or_interval";
+        }
+        if (cfg.publish_mode != "change" &&
+            cfg.publish_mode != "interval" &&
+            cfg.publish_mode != "change_or_interval") {
+            std::cerr << "[mqtt] Invalid publish_mode '" << cfg.publish_mode
+                      << "', using 'change'.\n";
+            cfg.publish_mode = "change";
+        }
+        cfg.publish_interval_ms = std::max(100, cfg.publish_interval_ms);
+        cfg.publish_min_update_ms = std::max(0, cfg.publish_min_update_ms);
 
         cfg.subscribe_enabled = j.value("subscribe_enabled", false);
         cfg.command_topic     = j.value("command_topic", std::string{});
@@ -5092,6 +5875,8 @@ bool load_mqtt_config(const std::string &configDir) {
             cfg.publish_tag_json    = p.value("tag_json",    cfg.publish_tag_json);
             cfg.publish_conn_json   = p.value("connection_json",
                                               cfg.publish_conn_json);
+            cfg.publish_memory_tags = p.value("memory_tags", cfg.publish_memory_tags);
+            cfg.publish_system_tags = p.value("system_tags", cfg.publish_system_tags);
         }
 
         // NEW: token-based auth for MQTT writes
@@ -5132,36 +5917,45 @@ bool load_mqtt_config(const std::string &configDir) {
 bool load_mqtt_inputs(const std::string &configDir) {
     g_mqttInputs.clear();
     g_mqttInputsByTopic.clear();
-
-    std::string path = joinPath(configDir, "mqtt_inputs.json");
-    std::cout << "[mqtt-inputs] init: looking for " << path << "\n";
-    if (!fs::exists(path)) {
-        std::cout << "[mqtt-inputs] mqtt_inputs.json not found; no MQTT telemetry inputs configured.\n";
-        return true; // not an error, just none
+    g_mqttPublicationTopicsByConn.clear();
+    g_mqttKnownConnectionIds.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_mqttDirectPublishPolicyMutex);
+        g_mqttDirectPublishPolicyByKey.clear();
     }
+    {
+        std::lock_guard<std::mutex> lock(g_mqttSubscriptionHealthMutex);
+        g_mqttSubscriptionHealth.clear();
+    }
+    std::string path = joinPath(configDir, "mqtt_inputs.json");
 
     try {
-        json j = load_json_with_comments(path);
+        json j = json::object();
+        std::cout << "[mqtt-inputs] init: looking for " << path << "\n";
+        const bool hasLegacyInputs = fs::exists(path);
+        if (hasLegacyInputs) {
+            j = load_json_with_comments(path);
 
-        if (!j.contains("inputs") || !j["inputs"].is_array()) {
-            std::cerr << "[mqtt-inputs] '" << path
-                      << "' must contain an 'inputs' array.\n";
-            return false;
+            if ((!j.contains("inputs") || !j["inputs"].is_array()) &&
+                (!j.contains("messages") || !j["messages"].is_array())) {
+                std::cerr << "[mqtt-inputs] '" << path
+                          << "' must contain an 'inputs' or 'messages' array.\n";
+                return false;
+            }
+        } else {
+            std::cout << "[mqtt-inputs] mqtt_inputs.json not found; checking MQTT connection files.\n";
         }
 
         size_t idx = 0;
-        for (const auto &ji : j["inputs"]) {
-            MqttInputMapping m;
-
-            m.id            = ji.value("id", std::string{});
-            m.topic         = ji.value("topic", std::string{});
-            m.connection_id = ji.value("connection_id", std::string{});
-            m.tag_name      = ji.value("tag_name", std::string{});
-            m.datatype      = ji.value("datatype", std::string{});
-
-            m.write_to_plc   = ji.value("write_to_plc", true);
-            m.payload_format = ji.value("payload_format", std::string("raw"));
-            m.json_field     = ji.value("json_field", std::string{});
+        auto add_mapping = [&](MqttInputMapping m) {
+            m.id = trim_copy(m.id);
+            m.topic = trim_copy(m.topic);
+            m.connection_id = trim_copy(m.connection_id);
+            m.tag_name = trim_copy(m.tag_name);
+            m.datatype = trim_copy(m.datatype);
+            m.payload_format = trim_copy(to_lower_copy(m.payload_format));
+            m.json_field = trim_copy(m.json_field);
+            m.json_path = trim_copy(m.json_path);
 
             if (m.id.empty()) {
                 m.id = "input_" + std::to_string(idx);
@@ -5189,37 +5983,2429 @@ bool load_mqtt_inputs(const std::string &configDir) {
                 ok = false;
             }
 
-            if (m.payload_format != "raw" && m.payload_format != "json_field") {
+            if (m.payload_format == "json_key") {
+                m.payload_format = "json_field";
+            }
+
+            if (m.payload_format != "raw" &&
+                m.payload_format != "json_field" &&
+                m.payload_format != "json_path") {
                 std::cerr << "[mqtt-inputs] Input '" << m.id
                           << "' has invalid payload_format '" << m.payload_format
-                          << "'. Expected 'raw' or 'json_field'.\n";
+                          << "'. Expected 'raw', 'json_field', 'json_key', or 'json_path'.\n";
                 ok = false;
             }
 
             if (m.payload_format == "json_field" && m.json_field.empty()) {
                 std::cerr << "[mqtt-inputs] Input '" << m.id
-                          << "' has payload_format='json_field' but no 'json_field' name.\n";
+                          << "' has payload_format='json_field' but no 'json_field'/'key' name.\n";
+                ok = false;
+            }
+
+            if (m.payload_format == "json_path" && m.json_path.empty()) {
+                std::cerr << "[mqtt-inputs] Input '" << m.id
+                          << "' has payload_format='json_path' but no 'json_path'/'path'.\n";
                 ok = false;
             }
 
             if (!ok) {
-                continue;
+                return;
             }
 
             size_t newIdx = g_mqttInputs.size();
             g_mqttInputs.push_back(std::move(m));
             g_mqttInputsByTopic[g_mqttInputs.back().topic].push_back(newIdx);
+            {
+                std::lock_guard<std::mutex> lock(g_mqttSubscriptionHealthMutex);
+                g_mqttSubscriptionHealth.try_emplace(mqtt_subscription_health_key(g_mqttInputs.back()));
+            }
             ++idx;
+        };
+
+        if (j.contains("inputs") && j["inputs"].is_array()) {
+            for (const auto &ji : j["inputs"]) {
+                MqttInputMapping m;
+
+                m.id            = ji.value("id", std::string{});
+                m.topic         = ji.value("topic", std::string{});
+                m.connection_id = ji.value("connection_id", std::string{});
+                m.tag_name      = ji.value("tag_name", std::string{});
+                m.datatype      = ji.value("datatype", std::string{});
+
+                m.write_to_plc   = ji.value("write_to_plc", true);
+                m.payload_format = ji.value("payload_format", std::string("raw"));
+                m.json_field     = ji.value("json_field", ji.value("key", std::string{}));
+                m.json_path      = ji.value("json_path", ji.value("path", std::string{}));
+                m.timeout_enabled = ji.value("timeout_enabled", false);
+                m.timeout_ms = ji.value("timeout_ms", int64_t(0));
+
+                add_mapping(std::move(m));
+            }
+        }
+
+        if (j.contains("messages") && j["messages"].is_array()) {
+            for (const auto &jm : j["messages"]) {
+                std::string msgId = jm.value("id", std::string{});
+                std::string topic = jm.value("topic", std::string{});
+                std::string defaultFormat = jm.value("payload_format", std::string("json_field"));
+                bool defaultWriteToPlc = jm.value("write_to_plc", true);
+
+                if (!jm.contains("mappings") || !jm["mappings"].is_array()) {
+                    std::cerr << "[mqtt-inputs] Skipping message '" << msgId
+                              << "': missing 'mappings' array.\n";
+                    continue;
+                }
+
+                size_t fieldIdx = 0;
+                for (const auto &jf : jm["mappings"]) {
+                    MqttInputMapping m;
+                    std::string key = jf.value("key", jf.value("json_field", std::string{}));
+                    std::string pathValue = jf.value("path", jf.value("json_path", std::string{}));
+                    m.id = jf.value("id", std::string{});
+                    if (m.id.empty()) {
+                        m.id = (msgId.empty() ? topic : msgId) + "_" + std::to_string(fieldIdx);
+                    }
+                    m.topic = topic;
+                    m.connection_id = jf.value("connection_id", std::string{});
+                    m.tag_name = jf.value("tag_name", std::string{});
+                    m.datatype = jf.value("datatype", std::string{});
+                    m.write_to_plc = jf.value("write_to_plc", defaultWriteToPlc);
+                    m.payload_format = jf.value("payload_format", defaultFormat);
+                    m.json_field = key;
+                    m.json_path = pathValue;
+                    m.timeout_enabled = jm.value("timeout_enabled", false);
+                    m.timeout_ms = jm.value("timeout_ms", int64_t(0));
+                    add_mapping(std::move(m));
+                    ++fieldIdx;
+                }
+            }
+        }
+
+        const std::string connDir = joinPath(configDir, "connections");
+        if (fs::exists(connDir)) {
+            std::vector<fs::path> connFiles;
+            for (const auto &entry : fs::directory_iterator(connDir)) {
+                if (!entry.is_regular_file()) continue;
+                if (entry.path().extension() != ".json") continue;
+                connFiles.push_back(entry.path());
+            }
+            std::sort(connFiles.begin(), connFiles.end());
+            for (const auto &connPath : connFiles) {
+                try {
+                    json jc = load_json_with_comments(connPath.string());
+                    if (jc.value("driver", std::string("ab_eip")) != "mqtt") continue;
+                    const std::string connId = trim_copy(jc.value("id", std::string{}));
+                    if (connId.empty()) continue;
+                    g_mqttKnownConnectionIds.insert(connId);
+                    const json settings = (jc.contains("settings") && jc["settings"].is_object()) ? jc["settings"] : json::object();
+                    if (settings.contains("publications") && settings["publications"].is_array()) {
+                        auto &pubTopics = g_mqttPublicationTopicsByConn[connId];
+                        for (const auto &jp : settings["publications"]) {
+                            const std::string pubTopic = trim_copy(jp.value("topic", std::string{}));
+                            if (pubTopic.empty()) continue;
+                            pubTopics.push_back(pubTopic);
+                            MqttDirectPublishPolicy policy;
+                            policy.mode = to_lower_copy(trim_copy(jp.value(
+                                "update_mode",
+                                jp.value("publish_mode", std::string("change"))
+                            )));
+                            if (policy.mode != "change" &&
+                                policy.mode != "interval" &&
+                                policy.mode != "change_or_interval") {
+                                policy.mode = "change";
+                            }
+                            policy.interval_ms = std::max(100, jp.value(
+                                "interval_ms",
+                                jp.value("publish_interval_ms", 1000)
+                            ));
+                            policy.min_update_ms = std::max(0, jp.value(
+                                "min_update_ms",
+                                jp.value("rate_limit_ms", 0)
+                            ));
+                            {
+                                std::lock_guard<std::mutex> lock(g_mqttDirectPublishPolicyMutex);
+                                g_mqttDirectPublishPolicyByKey[make_tag_key(connId, pubTopic)] = policy;
+                            }
+                        }
+                    }
+                    if (!settings.contains("messages") || !settings["messages"].is_array()) continue;
+                    size_t msgIdx = 0;
+                    for (const auto &jm : settings["messages"]) {
+                        const std::string topic = trim_copy(jm.value("topic", std::string{}));
+                        if (topic.empty()) {
+                            ++msgIdx;
+                            continue;
+                        }
+                        MqttInputMapping m;
+                        m.id = jm.value("id", std::string{});
+                        if (m.id.empty()) m.id = "subscription_" + std::to_string(msgIdx);
+                        m.topic = topic;
+                        m.connection_id = connId;
+                        m.tag_name = topic + "/RawPayload";
+                        m.datatype = "string";
+                        m.write_to_plc = false;
+                        m.payload_format = "raw";
+                        m.timeout_enabled = jm.value("timeout_enabled", false);
+                        m.timeout_ms = jm.value("timeout_ms", int64_t(0));
+                        add_mapping(std::move(m));
+                        ++msgIdx;
+                    }
+                } catch (const std::exception &ex) {
+                    std::cerr << "[mqtt-inputs] Error reading MQTT connection file "
+                              << connPath.string() << ": " << ex.what() << "\n";
+                }
+            }
         }
 
         std::cout << "[mqtt-inputs] Loaded " << g_mqttInputs.size()
-                  << " MQTT telemetry input mapping(s) from " << path << "\n";
+                  << " MQTT telemetry input mapping(s).\n";
         return true;
     } catch (const std::exception &ex) {
         std::cerr << "[mqtt-inputs] Error loading '" << path << "': "
                   << ex.what() << "\n";
         return false;
     }
+}
+
+bool load_logic_config(const std::string &configDir, bool force = false) {
+    const auto started = std::chrono::steady_clock::now();
+    const int64_t nowMs = system_wall_now_ms();
+    const std::string path = joinPath(configDir, "logic.json");
+    const int64_t mtimeMs = fs::exists(path) ? file_mtime_ms(path) : -1;
+
+    {
+        std::lock_guard<std::mutex> lock(g_logicMutex);
+        if (!force && g_logicState.config_loaded && mtimeMs == g_logicState.config_mtime_ms) {
+            return true;
+        }
+    }
+
+    LogicRuntimeState next;
+    next.config_loaded = true;
+    next.last_load_ok = true;
+    next.validation_only = true;
+    next.last_load_ms = nowMs;
+    next.config_mtime_ms = mtimeMs;
+
+    try {
+        if (!fs::exists(path)) {
+            next.last_error.clear();
+            next.last_load_duration_ms = steady_elapsed_ms(started);
+            {
+                std::lock_guard<std::mutex> lock(g_logicMutex);
+                g_logicState = std::move(next);
+            }
+            std::cout << "[logic] logic.json not found; logic runtime scaffold loaded with 0 scripts.\n";
+            return true;
+        }
+
+        std::unordered_map<std::string, LogicScriptConfig> previousById;
+        {
+            std::lock_guard<std::mutex> lock(g_logicMutex);
+            for (const auto &script : g_logicState.scripts) {
+                if (!script.id.empty()) previousById[script.id] = script;
+            }
+            next.runs_total = g_logicState.runs_total;
+            next.failures_total = g_logicState.failures_total;
+            next.last_run_ms = g_logicState.last_run_ms;
+        }
+
+        json j = load_json_with_comments(path);
+        if (!j.is_object()) {
+            throw std::runtime_error("logic.json must be a JSON object.");
+        }
+        if (!j.contains("scripts") || !j["scripts"].is_array()) {
+            throw std::runtime_error("logic.json must contain a 'scripts' array.");
+        }
+        if (!j.contains("blocks") || !j["blocks"].is_array()) {
+            throw std::runtime_error("logic.json must contain a 'blocks' array.");
+        }
+        const json scripts = j["scripts"];
+        const json blocks = j["blocks"];
+
+        std::unordered_set<std::string> seenIds;
+        auto load_item = [&](const json &js, const std::string &kind) {
+            if (!js.is_object()) return;
+            LogicScriptConfig script;
+            script.kind = kind;
+            script.id = trim_copy(json_get_string_loose(js, "id", std::string{}));
+            if (script.id.empty()) {
+                std::cerr << "[logic] Skipping " << kind << " with missing id.\n";
+                return;
+            }
+            if (!seenIds.insert(script.id).second) {
+                std::cerr << "[logic] Skipping duplicate logic item id '" << script.id << "'.\n";
+                return;
+            }
+            script.name = trim_copy(json_get_string_loose(js, "name", script.id));
+            if (script.name.empty()) script.name = script.id;
+            script.enabled = json_get_bool_loose(js, "enabled", false);
+            script.interval_ms = std::max(0, json_get_int_loose(js, "interval_ms", 0));
+            script.engine = trim_copy(json_get_string_loose(js, "engine", std::string("javascript")));
+            if (script.engine.empty()) script.engine = "javascript";
+            if (kind == "block") {
+                if (!js.contains("setup_source") || !js["setup_source"].is_string()) {
+                    throw std::runtime_error("Block '" + script.id + "' requires string field 'setup_source'.");
+                }
+                if (!js.contains("loop_source") || !js["loop_source"].is_string()) {
+                    throw std::runtime_error("Block '" + script.id + "' requires string field 'loop_source'.");
+                }
+                script.setup_source = json_get_string_loose(js, "setup_source", std::string{});
+                script.loop_source = json_get_string_loose(js, "loop_source", std::string{});
+            } else {
+                if (!js.contains("source") || !js["source"].is_string()) {
+                    throw std::runtime_error("Script '" + script.id + "' requires string field 'source'.");
+                }
+                script.source = json_get_string_loose(js, "source", std::string{});
+            }
+            auto prevIt = previousById.find(script.id);
+            if (prevIt != previousById.end()) {
+                script.last_run_ms = prevIt->second.last_run_ms;
+                script.last_run_duration_ms = prevIt->second.last_run_duration_ms;
+                script.last_run_ok = prevIt->second.last_run_ok;
+                script.runs_total = prevIt->second.runs_total;
+                script.failures_total = prevIt->second.failures_total;
+                script.referenced_tags = prevIt->second.referenced_tags;
+                script.missing_tags = prevIt->second.missing_tags;
+                script.evaluated_reads = prevIt->second.evaluated_reads;
+                script.memory_writes = prevIt->second.memory_writes;
+                script.variables = prevIt->second.variables;
+                script.read_preview = prevIt->second.read_preview;
+                script.write_preview = prevIt->second.write_preview;
+                script.variable_preview = prevIt->second.variable_preview;
+                script.last_error = prevIt->second.last_error;
+                const bool same_body = (script.kind == "script")
+                    ? (script.source == prevIt->second.source)
+                    : (script.setup_source == prevIt->second.setup_source &&
+                       script.loop_source == prevIt->second.loop_source);
+                if (same_body) {
+                    script.setup_initialized = prevIt->second.setup_initialized;
+                    script.retained_vars = prevIt->second.retained_vars;
+                } else {
+                    script.setup_initialized = false;
+                    script.retained_vars.clear();
+                }
+            }
+            next.scripts.push_back(std::move(script));
+        };
+        for (const auto &js : scripts) load_item(js, "script");
+        for (const auto &js : blocks) load_item(js, "block");
+
+        next.last_load_duration_ms = steady_elapsed_ms(started);
+        const size_t scriptCount = next.scripts.size();
+        {
+            std::lock_guard<std::mutex> lock(g_logicMutex);
+            g_logicState = std::move(next);
+        }
+        std::cout << "[logic] Loaded " << scriptCount
+                  << " script definition(s) from " << path
+                  << " (validation mode).\n";
+        return true;
+    } catch (const std::exception &ex) {
+        next.config_loaded = false;
+        next.last_load_ok = false;
+        next.last_error = ex.what();
+        next.last_load_duration_ms = steady_elapsed_ms(started);
+        {
+            std::lock_guard<std::mutex> lock(g_logicMutex);
+            g_logicState = std::move(next);
+        }
+        std::cerr << "[logic] Error loading logic.json: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+static bool validate_logic_source_text(const std::string &source, std::string &errorOut) {
+    enum class State {
+        Normal,
+        SingleQuote,
+        DoubleQuote,
+        TemplateString,
+        Escape,
+        LineComment,
+        BlockComment
+    };
+
+    State state = State::Normal;
+    State returnState = State::Normal;
+    std::vector<char> stack;
+    int line = 1;
+    int col = 0;
+
+    auto fail = [&](const std::string &msg) {
+        std::ostringstream oss;
+        oss << msg << " at line " << line << ", column " << col << ".";
+        errorOut = oss.str();
+        return false;
+    };
+
+    for (size_t i = 0; i < source.size(); ++i) {
+        const char ch = source[i];
+        if (ch == '\n') {
+            ++line;
+            col = 0;
+        } else {
+            ++col;
+        }
+
+        switch (state) {
+            case State::Normal:
+                if (ch == '/' && i + 1 < source.size() && source[i + 1] == '/') {
+                    state = State::LineComment;
+                    ++i;
+                    ++col;
+                } else if (ch == '/' && i + 1 < source.size() && source[i + 1] == '*') {
+                    state = State::BlockComment;
+                    ++i;
+                    ++col;
+                } else if (ch == '\'') {
+                    state = State::SingleQuote;
+                } else if (ch == '"') {
+                    state = State::DoubleQuote;
+                } else if (ch == '`') {
+                    state = State::TemplateString;
+                } else if (ch == '(' || ch == '[' || ch == '{') {
+                    stack.push_back(ch);
+                } else if (ch == ')' || ch == ']' || ch == '}') {
+                    if (stack.empty()) return fail(std::string("Unexpected '") + ch + "'");
+                    const char open = stack.back();
+                    const bool ok =
+                        (open == '(' && ch == ')') ||
+                        (open == '[' && ch == ']') ||
+                        (open == '{' && ch == '}');
+                    if (!ok) return fail(std::string("Mismatched '") + ch + "'");
+                    stack.pop_back();
+                }
+                break;
+
+            case State::SingleQuote:
+                if (ch == '\\') {
+                    returnState = state;
+                    state = State::Escape;
+                } else if (ch == '\'') {
+                    state = State::Normal;
+                } else if (ch == '\n') {
+                    return fail("Unterminated single-quoted string");
+                }
+                break;
+
+            case State::DoubleQuote:
+                if (ch == '\\') {
+                    returnState = state;
+                    state = State::Escape;
+                } else if (ch == '"') {
+                    state = State::Normal;
+                } else if (ch == '\n') {
+                    return fail("Unterminated double-quoted string");
+                }
+                break;
+
+            case State::TemplateString:
+                if (ch == '\\') {
+                    returnState = state;
+                    state = State::Escape;
+                } else if (ch == '`') {
+                    state = State::Normal;
+                }
+                break;
+
+            case State::Escape:
+                state = returnState;
+                break;
+
+            case State::LineComment:
+                if (ch == '\n') {
+                    state = State::Normal;
+                }
+                break;
+
+            case State::BlockComment:
+                if (ch == '*' && i + 1 < source.size() && source[i + 1] == '/') {
+                    state = State::Normal;
+                    ++i;
+                    ++col;
+                }
+                break;
+        }
+    }
+
+    if (state == State::SingleQuote) {
+        errorOut = "Unterminated single-quoted string.";
+        return false;
+    }
+    if (state == State::DoubleQuote) {
+        errorOut = "Unterminated double-quoted string.";
+        return false;
+    }
+    if (state == State::TemplateString) {
+        errorOut = "Unterminated template string.";
+        return false;
+    }
+    if (state == State::BlockComment) {
+        errorOut = "Unterminated block comment.";
+        return false;
+    }
+    if (!stack.empty()) {
+        errorOut = std::string("Unclosed '") + stack.back() + "'.";
+        return false;
+    }
+    errorOut.clear();
+    return true;
+}
+
+static std::string strip_logic_comments(const std::string &source) {
+    enum class State {
+        Normal,
+        SingleQuote,
+        DoubleQuote,
+        TemplateString,
+        Escape,
+        LineComment,
+        BlockComment
+    };
+
+    std::string out = source;
+    State state = State::Normal;
+    State returnState = State::Normal;
+
+    for (size_t i = 0; i < out.size(); ++i) {
+        const char ch = out[i];
+        const char next = (i + 1 < out.size()) ? out[i + 1] : '\0';
+
+        switch (state) {
+            case State::Normal:
+                if (ch == '/' && next == '/') {
+                    out[i] = ' ';
+                    out[i + 1] = ' ';
+                    state = State::LineComment;
+                    ++i;
+                } else if (ch == '/' && next == '*') {
+                    out[i] = ' ';
+                    out[i + 1] = ' ';
+                    state = State::BlockComment;
+                    ++i;
+                } else if (ch == '\'') {
+                    state = State::SingleQuote;
+                } else if (ch == '"') {
+                    state = State::DoubleQuote;
+                } else if (ch == '`') {
+                    state = State::TemplateString;
+                }
+                break;
+
+            case State::SingleQuote:
+                if (ch == '\\') {
+                    returnState = state;
+                    state = State::Escape;
+                } else if (ch == '\'') {
+                    state = State::Normal;
+                }
+                break;
+
+            case State::DoubleQuote:
+                if (ch == '\\') {
+                    returnState = state;
+                    state = State::Escape;
+                } else if (ch == '"') {
+                    state = State::Normal;
+                }
+                break;
+
+            case State::TemplateString:
+                if (ch == '\\') {
+                    returnState = state;
+                    state = State::Escape;
+                } else if (ch == '`') {
+                    state = State::Normal;
+                }
+                break;
+
+            case State::Escape:
+                state = returnState;
+                break;
+
+            case State::LineComment:
+                if (ch == '\n') {
+                    state = State::Normal;
+                } else {
+                    out[i] = ' ';
+                }
+                break;
+
+            case State::BlockComment:
+                if (ch == '*' && next == '/') {
+                    out[i] = ' ';
+                    out[i + 1] = ' ';
+                    state = State::Normal;
+                    ++i;
+                } else if (ch != '\n') {
+                    out[i] = ' ';
+                }
+                break;
+        }
+    }
+
+    return out;
+}
+
+struct LogicReferenceValidation {
+    int referenced_tags = 0;
+    int missing_tags = 0;
+    int evaluated_reads = 0;
+    int memory_writes = 0;
+    int variables = 0;
+    std::string read_preview;
+    std::string write_preview;
+    std::string variable_preview;
+    std::string error;
+};
+
+static LogicReferenceValidation validate_logic_read_references(
+    const std::string &source,
+    const std::set<std::string> &tagKeys,
+    const std::set<std::string> &systemTagNames,
+    const std::unordered_map<std::string, TagSnapshot> &tagSnapshots,
+    const std::unordered_map<std::string, SystemTagDef> &systemSnapshots)
+{
+    LogicReferenceValidation out;
+    static const std::regex callRe(
+        R"(\b(tag|quality|hasTag)\s*\(\s*(['"])([^'"]+)\2\s*,\s*(['"])([^'"]+)\4\s*\))"
+    );
+    std::sregex_iterator it(source.begin(), source.end(), callRe);
+    std::sregex_iterator end;
+    std::vector<std::string> missing;
+    for (; it != end; ++it) {
+        const std::string conn = (*it)[3].str();
+        const std::string name = (*it)[5].str();
+        ++out.referenced_tags;
+        bool found = false;
+        if (conn == "_system") {
+            found = systemTagNames.count(name) > 0;
+        } else {
+            found = tagKeys.count(make_tag_key(conn, name)) > 0;
+        }
+        if (!found) {
+            ++out.missing_tags;
+            if (missing.size() < 5) missing.push_back(conn + ":" + name);
+            continue;
+        }
+
+        if (out.evaluated_reads < 10) {
+            const std::string func = (*it)[1].str();
+            std::string rendered;
+            if (func == "hasTag") {
+                rendered = "true";
+            } else if (conn == "_system") {
+                auto sit = systemSnapshots.find(name);
+                if (sit != systemSnapshots.end()) {
+                    if (func == "quality") rendered = "1";
+                    else rendered = sit->second.value.is_string() ? sit->second.value.get<std::string>() : sit->second.value.dump();
+                }
+            } else {
+                auto tit = tagSnapshots.find(make_tag_key(conn, name));
+                if (tit != tagSnapshots.end()) {
+                    if (func == "quality") rendered = std::to_string(tit->second.quality);
+                    else rendered = snapshot_value_to_string(tit->second);
+                }
+            }
+            if (!rendered.empty()) {
+                if (!out.read_preview.empty()) out.read_preview += "; ";
+                out.read_preview += func + "(" + conn + ":" + name + ")=" + rendered;
+                ++out.evaluated_reads;
+            }
+        }
+    }
+    if (!missing.empty()) {
+        std::ostringstream oss;
+        oss << "Missing tag reference";
+        if (missing.size() != 1 || out.missing_tags > 1) oss << "s";
+        oss << ": ";
+        for (size_t i = 0; i < missing.size(); ++i) {
+            if (i) oss << ", ";
+            oss << missing[i];
+        }
+        if (out.missing_tags > static_cast<int>(missing.size())) {
+            oss << ", +" << (out.missing_tags - static_cast<int>(missing.size())) << " more";
+        }
+        out.error = oss.str();
+    }
+    return out;
+}
+
+static bool logic_string_to_double(const std::string &s, double &out);
+
+static bool parse_logic_literal_value(std::string raw, std::string &valueOut, std::string &errorOut) {
+    raw = trim_copy(raw);
+    if (raw.empty()) {
+        errorOut = "setTag value is empty.";
+        return false;
+    }
+    if ((raw.front() == '"' && raw.back() == '"') ||
+        (raw.front() == '\'' && raw.back() == '\'')) {
+        valueOut.clear();
+        bool escaped = false;
+        for (size_t i = 1; i + 1 < raw.size(); ++i) {
+            char ch = raw[i];
+            if (escaped) {
+                switch (ch) {
+                    case 'n': valueOut.push_back('\n'); break;
+                    case 'r': valueOut.push_back('\r'); break;
+                    case 't': valueOut.push_back('\t'); break;
+                    default: valueOut.push_back(ch); break;
+                }
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else {
+                valueOut.push_back(ch);
+            }
+        }
+        if (escaped) valueOut.push_back('\\');
+        return true;
+    }
+    const std::string lower = to_lower_copy(raw);
+    if (lower == "true" || lower == "false" || lower == "on" || lower == "off" ||
+        lower == "yes" || lower == "no" || lower == "null") {
+        valueOut = lower == "null" ? std::string{} : lower;
+        return true;
+    }
+    double literalNumber = 0.0;
+    if (logic_string_to_double(raw, literalNumber)) {
+        valueOut = raw;
+        return true;
+    }
+    errorOut = "setTag value must be a simple literal for now.";
+    return false;
+}
+
+static bool is_logic_identifier(const std::string &s) {
+    if (s.empty()) return false;
+    const unsigned char first = static_cast<unsigned char>(s.front());
+    if (!(std::isalpha(first) || s.front() == '_')) return false;
+    for (char ch : s) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (!(std::isalnum(c) || ch == '_')) return false;
+    }
+    return true;
+}
+
+static bool evaluate_logic_helper_call(
+    const std::string &expr,
+    const std::set<std::string> &tagKeys,
+    const std::set<std::string> &systemTagNames,
+    const std::unordered_map<std::string, TagSnapshot> &tagSnapshots,
+    const std::unordered_map<std::string, SystemTagDef> &systemSnapshots,
+    std::string &valueOut,
+    std::string &errorOut)
+{
+    static const std::regex exactCallRe(
+        R"(^\s*(tag|quality|hasTag)\s*\(\s*(['"])([^'"]+)\2\s*,\s*(['"])([^'"]+)\4\s*\)\s*$)"
+    );
+    std::smatch m;
+    if (!std::regex_match(expr, m, exactCallRe)) return false;
+
+    const std::string func = m[1].str();
+    const std::string conn = m[3].str();
+    const std::string name = m[5].str();
+    const bool found = (conn == "_system")
+        ? (systemTagNames.count(name) > 0)
+        : (tagKeys.count(make_tag_key(conn, name)) > 0);
+
+    if (func == "hasTag") {
+        valueOut = found ? "true" : "false";
+        errorOut.clear();
+        return true;
+    }
+    if (!found) {
+        errorOut = "Missing tag reference: " + conn + ":" + name;
+        return true;
+    }
+    if (conn == "_system") {
+        auto sit = systemSnapshots.find(name);
+        if (sit == systemSnapshots.end()) {
+            errorOut = "System tag has no current value: " + name;
+            return true;
+        }
+        valueOut = (func == "quality")
+            ? std::string("1")
+            : (sit->second.value.is_string() ? sit->second.value.get<std::string>() : sit->second.value.dump());
+        errorOut.clear();
+        return true;
+    }
+    auto tit = tagSnapshots.find(make_tag_key(conn, name));
+    if (tit == tagSnapshots.end()) {
+        TagSnapshot live;
+        if (logic_lookup_live_snapshot(make_tag_key(conn, name), live)) {
+            valueOut = (func == "quality")
+                ? std::to_string(live.quality)
+                : snapshot_value_to_string(live);
+            errorOut.clear();
+            return true;
+        }
+        if (func == "quality") {
+            valueOut = "0";
+            errorOut.clear();
+            return true;
+        }
+        // Known tag but no snapshot yet: return empty string so callers can
+        // use defaults (for example json(payload, path, default)).
+        valueOut.clear();
+        errorOut.clear();
+        return true;
+    }
+    valueOut = (func == "quality")
+        ? std::to_string(tit->second.quality)
+        : snapshot_value_to_string(tit->second);
+    errorOut.clear();
+    return true;
+}
+
+struct LogicExprValue {
+    enum class Kind { Number, Bool, String };
+    Kind kind = Kind::Number;
+    double number = 0.0;
+    bool boolean = false;
+    std::string text;
+};
+
+static bool logic_string_to_double(const std::string &s, double &out) {
+    std::string v = trim_copy(s);
+    if (v.empty()) return false;
+    if (v.size() > 2 && v[0] == '0' && (v[1] == 'x' || v[1] == 'X')) {
+        char *hexEnd = nullptr;
+        errno = 0;
+        unsigned long long n = std::strtoull(v.c_str() + 2, &hexEnd, 16);
+        if (hexEnd && *hexEnd == '\0' && errno != ERANGE) {
+            out = static_cast<double>(n);
+            return true;
+        }
+    }
+    char *end = nullptr;
+    errno = 0;
+    double d = std::strtod(v.c_str(), &end);
+    if (!end || *end != '\0' || errno == ERANGE) return false;
+    out = d;
+    return true;
+}
+
+static bool logic_string_to_bool(const std::string &s, bool &out) {
+    const std::string v = to_lower_copy(trim_copy(s));
+    if (v == "true" || v == "1" || v == "on" || v == "yes") {
+        out = true;
+        return true;
+    }
+    if (v == "false" || v == "0" || v == "off" || v == "no") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+static std::string logic_format_number(double v) {
+    if (std::isfinite(v) && std::fabs(v - std::round(v)) < 1e-9) {
+        std::ostringstream oss;
+        oss << static_cast<int64_t>(std::llround(v));
+        return oss.str();
+    }
+    std::ostringstream oss;
+    oss << std::setprecision(12) << v;
+    return oss.str();
+}
+
+class LogicExpressionParser {
+public:
+    LogicExpressionParser(const std::string &expr,
+                          const std::unordered_map<std::string, std::string> &vars,
+                          const std::set<std::string> &keys,
+                          const std::set<std::string> &systemNames,
+                          const std::unordered_map<std::string, TagSnapshot> &snapshots,
+                          const std::unordered_map<std::string, SystemTagDef> &systemDefs)
+        : text(expr),
+          variables(vars),
+          tagKeys(keys),
+          systemTagNames(systemNames),
+          tagSnapshots(snapshots),
+          systemSnapshots(systemDefs) {}
+
+    bool parse(LogicExprValue &out, std::string &err) {
+        error.clear();
+        pos = 0;
+        out = parse_or();
+        skip_ws();
+        if (error.empty() && pos != text.size()) {
+            error = std::string("Unexpected token near '") + text.substr(pos, std::min<size_t>(16, text.size() - pos)) + "'";
+        }
+        err = error;
+        return error.empty();
+    }
+
+private:
+    const std::string &text;
+    const std::unordered_map<std::string, std::string> &variables;
+    const std::set<std::string> &tagKeys;
+    const std::set<std::string> &systemTagNames;
+    const std::unordered_map<std::string, TagSnapshot> &tagSnapshots;
+    const std::unordered_map<std::string, SystemTagDef> &systemSnapshots;
+    size_t pos = 0;
+    std::string error;
+
+    void skip_ws() {
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+    }
+
+    bool consume(const std::string &tok) {
+        skip_ws();
+        if (text.compare(pos, tok.size(), tok) == 0) {
+            pos += tok.size();
+            return true;
+        }
+        return false;
+    }
+
+    LogicExprValue make_num(double v) {
+        LogicExprValue out;
+        out.kind = LogicExprValue::Kind::Number;
+        out.number = v;
+        out.boolean = std::fabs(v) > 1e-12;
+        out.text = logic_format_number(v);
+        return out;
+    }
+
+    LogicExprValue make_bool(bool v) {
+        LogicExprValue out;
+        out.kind = LogicExprValue::Kind::Bool;
+        out.boolean = v;
+        out.number = v ? 1.0 : 0.0;
+        out.text = v ? "true" : "false";
+        return out;
+    }
+
+    LogicExprValue make_string(std::string v) {
+        LogicExprValue out;
+        out.kind = LogicExprValue::Kind::String;
+        out.text = std::move(v);
+        double d = 0.0;
+        bool b = false;
+        if (logic_string_to_double(out.text, d)) {
+            out.number = d;
+            out.boolean = std::fabs(d) > 1e-12;
+        } else if (logic_string_to_bool(out.text, b)) {
+            out.number = b ? 1.0 : 0.0;
+            out.boolean = b;
+        }
+        return out;
+    }
+
+    bool as_bool(const LogicExprValue &v) {
+        if (v.kind == LogicExprValue::Kind::String) {
+            bool b = false;
+            if (logic_string_to_bool(v.text, b)) return b;
+            double d = 0.0;
+            if (logic_string_to_double(v.text, d)) return std::fabs(d) > 1e-12;
+            return !v.text.empty();
+        }
+        return v.kind == LogicExprValue::Kind::Bool ? v.boolean : (std::fabs(v.number) > 1e-12);
+    }
+
+    bool as_number(const LogicExprValue &v, double &out) {
+        if (v.kind == LogicExprValue::Kind::String) {
+            if (logic_string_to_double(v.text, out)) return true;
+            error = "Expected numeric value.";
+            return false;
+        }
+        if (v.kind != LogicExprValue::Kind::Number) {
+            error = "Expected numeric value.";
+            return false;
+        }
+        out = v.number;
+        return true;
+    }
+
+    bool as_string_arg(const LogicExprValue &v, std::string &out) {
+        if (v.kind != LogicExprValue::Kind::String) {
+            error = "Expected string argument.";
+            return false;
+        }
+        out = v.text;
+        return true;
+    }
+
+    std::string as_text(const LogicExprValue &v) {
+        if (v.kind == LogicExprValue::Kind::String) return v.text;
+        if (v.kind == LogicExprValue::Kind::Bool) return v.boolean ? "true" : "false";
+        return logic_format_number(v.number);
+    }
+
+    LogicExprValue value_from_text(const std::string &value) {
+        double d = 0.0;
+        if (logic_string_to_double(value, d)) return make_num(d);
+        bool b = false;
+        if (logic_string_to_bool(value, b)) return make_bool(b);
+        return make_string(value);
+    }
+
+    LogicExprValue value_from_json(const json &value) {
+        if (value.is_boolean()) return make_bool(value.get<bool>());
+        if (value.is_number()) return make_num(value.get<double>());
+        if (value.is_string()) return value_from_text(value.get<std::string>());
+        if (value.is_null()) return make_string({});
+        return make_string(value.dump());
+    }
+
+    json value_to_json(const LogicExprValue &value) {
+        if (value.kind == LogicExprValue::Kind::Bool) return value.boolean;
+        if (value.kind == LogicExprValue::Kind::Number) return value.number;
+        return value.text;
+    }
+
+    bool json_path_lookup(const json &root, const std::string &path, json &valueOut) {
+        const json *cur = &root;
+        if (path.empty()) {
+            valueOut = *cur;
+            return true;
+        }
+        size_t start = 0;
+        while (start <= path.size()) {
+            const size_t dot = path.find('.', start);
+            const std::string part = path.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+            if (part.empty()) return false;
+            if (cur->is_object()) {
+                auto it = cur->find(part);
+                if (it == cur->end()) return false;
+                cur = &(*it);
+            } else if (cur->is_array()) {
+                char *end = nullptr;
+                errno = 0;
+                const unsigned long idx = std::strtoul(part.c_str(), &end, 10);
+                if (!end || *end != '\0' || errno == ERANGE || idx >= cur->size()) return false;
+                cur = &((*cur)[idx]);
+            } else {
+                return false;
+            }
+            if (dot == std::string::npos) break;
+            start = dot + 1;
+        }
+        valueOut = *cur;
+        return true;
+    }
+
+    bool collect_numbers(const std::string &func, const std::vector<LogicExprValue> &args, std::vector<double> &nums) {
+        nums.clear();
+        nums.reserve(args.size());
+        for (const auto &arg : args) {
+            double n = 0.0;
+            if (!as_number(arg, n)) {
+                error = func + " expects numeric arguments.";
+                return false;
+            }
+            nums.push_back(n);
+        }
+        return true;
+    }
+
+    bool as_uint64(const LogicExprValue &value, const std::string &func, uint64_t &out) {
+        double n = 0.0;
+        if (!as_number(value, n)) {
+            error = func + " expects numeric arguments.";
+            return false;
+        }
+        if (!std::isfinite(n) || n < 0.0 || n > static_cast<double>(std::numeric_limits<uint64_t>::max())) {
+            error = func + " value is outside the supported unsigned integer range.";
+            return false;
+        }
+        out = static_cast<uint64_t>(std::floor(n + 0.5));
+        return true;
+    }
+
+    bool as_bit_index(const LogicExprValue &value, const std::string &func, int &out) {
+        uint64_t n = 0;
+        if (!as_uint64(value, func, n)) return false;
+        if (n > 63) {
+            error = func + " bit number must be between 0 and 63.";
+            return false;
+        }
+        out = static_cast<int>(n);
+        return true;
+    }
+
+    LogicExprValue evaluate_function(const std::string &name, const std::vector<LogicExprValue> &args) {
+        const std::string func = to_lower_copy(name);
+        std::vector<double> nums;
+
+        if (func == "tag" || func == "quality" || func == "hastag") {
+            if (args.size() != 2) {
+                error = name + " expects 2 arguments.";
+                return make_num(0.0);
+            }
+            std::string conn;
+            std::string tagName;
+            if (!as_string_arg(args[0], conn) || !as_string_arg(args[1], tagName)) return make_num(0.0);
+            const bool found = (conn == "_system")
+                ? (systemTagNames.count(tagName) > 0)
+                : (tagKeys.count(make_tag_key(conn, tagName)) > 0);
+            if (func == "hastag") return make_bool(found);
+            if (!found) {
+                error = "Missing tag reference: " + conn + ":" + tagName;
+                return make_num(0.0);
+            }
+            if (conn == "_system") {
+                auto sit = systemSnapshots.find(tagName);
+                if (sit == systemSnapshots.end()) {
+                    error = "System tag has no current value: " + tagName;
+                    return make_num(0.0);
+                }
+                if (func == "quality") return make_num(1.0);
+                const std::string value = sit->second.value.is_string() ? sit->second.value.get<std::string>() : sit->second.value.dump();
+                return value_from_text(value);
+            }
+            auto tit = tagSnapshots.find(make_tag_key(conn, tagName));
+            if (tit == tagSnapshots.end()) {
+                TagSnapshot live;
+                if (logic_lookup_live_snapshot(make_tag_key(conn, tagName), live)) {
+                    if (func == "quality") return make_num(static_cast<double>(live.quality));
+                    return value_from_text(snapshot_value_to_string(live));
+                }
+                if (func == "quality") return make_num(0.0);
+                // Known tag but no snapshot yet: return empty string so
+                // expression helpers can apply defaults.
+                return make_string({});
+            }
+            if (func == "quality") return make_num(static_cast<double>(tit->second.quality));
+            return value_from_text(snapshot_value_to_string(tit->second));
+        }
+
+        if (func == "json") {
+            if (args.size() != 2 && args.size() != 3) {
+                error = "json expects 2 or 3 arguments.";
+                return make_num(0.0);
+            }
+            const std::string payload = as_text(args[0]);
+            std::string path;
+            if (!as_string_arg(args[1], path)) return make_num(0.0);
+            try {
+                const json parsed = json::parse(payload);
+                json found;
+                if (json_path_lookup(parsed, path, found)) return value_from_json(found);
+                if (args.size() == 3) return args[2];
+                error = "JSON path not found: " + path;
+                return make_num(0.0);
+            } catch (const std::exception &ex) {
+                if (args.size() == 3) return args[2];
+                error = std::string("Invalid JSON: ") + ex.what();
+                return make_num(0.0);
+            }
+        }
+
+        if (func == "hasjson") {
+            if (args.size() != 2) {
+                error = "hasJson expects 2 arguments.";
+                return make_num(0.0);
+            }
+            const std::string payload = as_text(args[0]);
+            std::string path;
+            if (!as_string_arg(args[1], path)) return make_num(0.0);
+            try {
+                const json parsed = json::parse(payload);
+                json found;
+                return make_bool(json_path_lookup(parsed, path, found));
+            } catch (...) {
+                return make_bool(false);
+            }
+        }
+
+        if (func == "jsonobj") {
+            if (args.empty() || (args.size() % 2) != 0) {
+                error = "jsonObj expects key/value argument pairs.";
+                return make_num(0.0);
+            }
+            json out = json::object();
+            for (size_t i = 0; i < args.size(); i += 2) {
+                std::string key;
+                if (!as_string_arg(args[i], key)) return make_num(0.0);
+                out[key] = value_to_json(args[i + 1]);
+            }
+            return make_string(out.dump());
+        }
+
+        if (func == "jsonset") {
+            if (args.size() != 3) {
+                error = "jsonSet expects 3 arguments: jsonSet(base, key, value).";
+                return make_num(0.0);
+            }
+            std::string key;
+            if (!as_string_arg(args[1], key)) return make_num(0.0);
+
+            json out = json::object();
+            const std::string base = trim_copy(as_text(args[0]));
+            if (!base.empty()) {
+                try {
+                    out = json::parse(base);
+                } catch (...) {
+                    // Treat invalid/partial base as empty object for
+                    // incremental script construction.
+                    out = json::object();
+                }
+            }
+            if (!out.is_object()) {
+                error = "jsonSet base must be a JSON object string.";
+                return make_num(0.0);
+            }
+            out[key] = value_to_json(args[2]);
+            return make_string(out.dump());
+        }
+
+        if (func == "jsonarray") {
+            json out = json::array();
+            for (const auto &arg : args) out.push_back(value_to_json(arg));
+            return make_string(out.dump());
+        }
+
+        if (func == "str") {
+            if (args.size() != 1) {
+                error = "str expects 1 argument.";
+                return make_num(0.0);
+            }
+            return make_string(as_text(args[0]));
+        }
+
+        if (func == "num" || func == "number") {
+            if (args.size() != 1 && args.size() != 2) {
+                error = name + " expects 1 or 2 arguments.";
+                return make_num(0.0);
+            }
+            double n = 0.0;
+            if (logic_string_to_double(as_text(args[0]), n)) return make_num(n);
+            if (args.size() == 2) {
+                if (as_number(args[1], n)) return make_num(n);
+                return make_num(0.0);
+            }
+            error = "Cannot convert value to number.";
+            return make_num(0.0);
+        }
+
+        if (func == "bool") {
+            if (args.size() != 1 && args.size() != 2) {
+                error = "bool expects 1 or 2 arguments.";
+                return make_num(0.0);
+            }
+            bool b = false;
+            if (logic_string_to_bool(as_text(args[0]), b)) return make_bool(b);
+            if (args.size() == 2) return make_bool(as_bool(args[1]));
+            error = "Cannot convert value to boolean.";
+            return make_num(0.0);
+        }
+
+        if (func == "concat") {
+            if (args.empty()) {
+                error = "concat expects at least 1 argument.";
+                return make_num(0.0);
+            }
+            std::string out;
+            for (const auto &arg : args) out += as_text(arg);
+            return make_string(out);
+        }
+
+        if (func == "lower" || func == "upper" || func == "trim") {
+            if (args.size() != 1) {
+                error = name + " expects 1 argument.";
+                return make_num(0.0);
+            }
+            std::string value = as_text(args[0]);
+            if (func == "lower") return make_string(to_lower_copy(value));
+            if (func == "upper") {
+                std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                return make_string(value);
+            }
+            return make_string(trim_copy(value));
+        }
+
+        if (func == "contains" || func == "startswith" || func == "endswith") {
+            if (args.size() != 2) {
+                error = name + " expects 2 arguments.";
+                return make_num(0.0);
+            }
+            const std::string value = as_text(args[0]);
+            const std::string needle = as_text(args[1]);
+            if (func == "contains") return make_bool(value.find(needle) != std::string::npos);
+            if (func == "startswith") return make_bool(value.rfind(needle, 0) == 0);
+            return make_bool(value.size() >= needle.size() && value.compare(value.size() - needle.size(), needle.size(), needle) == 0);
+        }
+
+        if (func == "bit") {
+            if (args.size() != 2) {
+                error = "bit expects 2 arguments.";
+                return make_num(0.0);
+            }
+            uint64_t value = 0;
+            int bitNumber = 0;
+            if (!as_uint64(args[0], func, value) || !as_bit_index(args[1], func, bitNumber)) return make_num(0.0);
+            return make_bool(((value >> bitNumber) & 1ULL) != 0ULL);
+        }
+
+        if (func == "bits") {
+            if (args.size() != 2) {
+                error = "bits expects 2 arguments.";
+                return make_num(0.0);
+            }
+            uint64_t value = 0;
+            uint64_t mask = 0;
+            if (!as_uint64(args[0], func, value) || !as_uint64(args[1], func, mask)) return make_num(0.0);
+            return make_num(static_cast<double>(value & mask));
+        }
+
+        if (func == "map") {
+            if (args.size() != 5) {
+                error = "map expects 5 arguments.";
+                return make_num(0.0);
+            }
+            if (!collect_numbers(func, args, nums)) return make_num(0.0);
+            const double inSpan = nums[2] - nums[1];
+            if (std::fabs(inSpan) < 1e-12) {
+                error = "map input range cannot be zero.";
+                return make_num(0.0);
+            }
+            return make_num(nums[3] + ((nums[0] - nums[1]) * (nums[4] - nums[3]) / inSpan));
+        }
+
+        if (func == "clamp") {
+            if (args.size() != 3) {
+                error = "clamp expects 3 arguments.";
+                return make_num(0.0);
+            }
+            if (!collect_numbers(func, args, nums)) return make_num(0.0);
+            const double lo = std::min(nums[1], nums[2]);
+            const double hi = std::max(nums[1], nums[2]);
+            return make_num(std::min(std::max(nums[0], lo), hi));
+        }
+
+        if (func == "round") {
+            if (args.size() != 1 && args.size() != 2) {
+                error = "round expects 1 or 2 arguments.";
+                return make_num(0.0);
+            }
+            if (!collect_numbers(func, args, nums)) return make_num(0.0);
+            if (args.size() == 1) return make_num(std::round(nums[0]));
+            const double places = std::round(nums[1]);
+            if (places < -12.0 || places > 12.0) {
+                error = "round decimal places must be between -12 and 12.";
+                return make_num(0.0);
+            }
+            const double scale = std::pow(10.0, places);
+            if (std::fabs(scale) < 1e-12) return make_num(std::round(nums[0]));
+            return make_num(std::round(nums[0] * scale) / scale);
+        }
+
+        if (func == "min" || func == "max") {
+            if (args.size() < 2) {
+                error = func + " expects at least 2 arguments.";
+                return make_num(0.0);
+            }
+            if (!collect_numbers(func, args, nums)) return make_num(0.0);
+            double result = nums.front();
+            for (size_t i = 1; i < nums.size(); ++i) {
+                result = (func == "min") ? std::min(result, nums[i]) : std::max(result, nums[i]);
+            }
+            return make_num(result);
+        }
+
+        error = "Unknown function '" + name + "'.";
+        return make_num(0.0);
+    }
+
+    LogicExprValue parse_or() {
+        LogicExprValue left = parse_and();
+        while (error.empty()) {
+            if (!consume("||")) break;
+            LogicExprValue right = parse_and();
+            left = make_bool(as_bool(left) || as_bool(right));
+        }
+        return left;
+    }
+
+    LogicExprValue parse_and() {
+        LogicExprValue left = parse_equality();
+        while (error.empty()) {
+            if (!consume("&&")) break;
+            LogicExprValue right = parse_equality();
+            left = make_bool(as_bool(left) && as_bool(right));
+        }
+        return left;
+    }
+
+    LogicExprValue parse_equality() {
+        LogicExprValue left = parse_relational();
+        while (error.empty()) {
+            if (consume("==")) {
+                LogicExprValue right = parse_relational();
+                left = make_bool(left.kind == LogicExprValue::Kind::String || right.kind == LogicExprValue::Kind::String
+                    ? left.text == right.text
+                    : left.kind == LogicExprValue::Kind::Bool || right.kind == LogicExprValue::Kind::Bool
+                    ? as_bool(left) == as_bool(right)
+                    : std::fabs(left.number - right.number) < 1e-9);
+            } else if (consume("!=")) {
+                LogicExprValue right = parse_relational();
+                left = make_bool(left.kind == LogicExprValue::Kind::String || right.kind == LogicExprValue::Kind::String
+                    ? left.text != right.text
+                    : left.kind == LogicExprValue::Kind::Bool || right.kind == LogicExprValue::Kind::Bool
+                    ? as_bool(left) != as_bool(right)
+                    : std::fabs(left.number - right.number) >= 1e-9);
+            } else {
+                break;
+            }
+        }
+        return left;
+    }
+
+    LogicExprValue parse_relational() {
+        LogicExprValue left = parse_add();
+        while (error.empty()) {
+            if (consume("<=")) {
+                LogicExprValue right = parse_add();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                left = make_bool(a <= b);
+            } else if (consume(">=")) {
+                LogicExprValue right = parse_add();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                left = make_bool(a >= b);
+            } else if (consume("<")) {
+                LogicExprValue right = parse_add();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                left = make_bool(a < b);
+            } else if (consume(">")) {
+                LogicExprValue right = parse_add();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                left = make_bool(a > b);
+            } else {
+                break;
+            }
+        }
+        return left;
+    }
+
+    LogicExprValue parse_add() {
+        LogicExprValue left = parse_mul();
+        while (error.empty()) {
+            if (consume("+")) {
+                LogicExprValue right = parse_mul();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                left = make_num(a + b);
+            } else if (consume("-")) {
+                LogicExprValue right = parse_mul();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                left = make_num(a - b);
+            } else {
+                break;
+            }
+        }
+        return left;
+    }
+
+    LogicExprValue parse_mul() {
+        LogicExprValue left = parse_unary();
+        while (error.empty()) {
+            if (consume("*")) {
+                LogicExprValue right = parse_unary();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                left = make_num(a * b);
+            } else if (consume("/")) {
+                LogicExprValue right = parse_unary();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                if (std::fabs(b) < 1e-12) {
+                    error = "Division by zero.";
+                    return left;
+                }
+                left = make_num(a / b);
+            } else if (consume("%")) {
+                LogicExprValue right = parse_unary();
+                double a = 0.0, b = 0.0;
+                if (!as_number(left, a) || !as_number(right, b)) return left;
+                if (std::fabs(b) < 1e-12) {
+                    error = "Modulo by zero.";
+                    return left;
+                }
+                left = make_num(std::fmod(a, b));
+            } else {
+                break;
+            }
+        }
+        return left;
+    }
+
+    LogicExprValue parse_unary() {
+        if (consume("!")) {
+            LogicExprValue v = parse_unary();
+            return make_bool(!as_bool(v));
+        }
+        if (consume("-")) {
+            LogicExprValue v = parse_unary();
+            double n = 0.0;
+            if (!as_number(v, n)) return v;
+            return make_num(-n);
+        }
+        return parse_primary();
+    }
+
+    LogicExprValue parse_primary() {
+        skip_ws();
+        if (pos >= text.size()) {
+            error = "Unexpected end of expression.";
+            return make_num(0.0);
+        }
+        if (consume("(")) {
+            LogicExprValue v = parse_or();
+            if (error.empty() && !consume(")")) error = "Expected ')'.";
+            return v;
+        }
+
+        const char ch = text[pos];
+        if (ch == '"' || ch == '\'') {
+            const char quote = ch;
+            ++pos;
+            std::string value;
+            bool escaped = false;
+            while (pos < text.size()) {
+                const char c = text[pos++];
+                if (escaped) {
+                    switch (c) {
+                        case 'n': value.push_back('\n'); break;
+                        case 'r': value.push_back('\r'); break;
+                        case 't': value.push_back('\t'); break;
+                        default: value.push_back(c); break;
+                    }
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == quote) {
+                    return make_string(value);
+                } else {
+                    value.push_back(c);
+                }
+            }
+            error = "Unterminated string literal.";
+            return make_string({});
+        }
+
+        if (std::isdigit(static_cast<unsigned char>(ch)) || ch == '.') {
+            if (ch == '0' && pos + 2 < text.size() && (text[pos + 1] == 'x' || text[pos + 1] == 'X')) {
+                char *hexEnd = nullptr;
+                errno = 0;
+                const char *start = text.c_str() + pos + 2;
+                unsigned long long n = std::strtoull(start, &hexEnd, 16);
+                if (!hexEnd || hexEnd == start || errno == ERANGE) {
+                    error = "Invalid hex number.";
+                    return make_num(0.0);
+                }
+                pos += 2 + static_cast<size_t>(hexEnd - start);
+                return make_num(static_cast<double>(n));
+            }
+            char *end = nullptr;
+            errno = 0;
+            const char *start = text.c_str() + pos;
+            double d = std::strtod(start, &end);
+            if (!end || end == start || errno == ERANGE) {
+                error = "Invalid number.";
+                return make_num(0.0);
+            }
+            pos += static_cast<size_t>(end - start);
+            return make_num(d);
+        }
+
+        if (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_') {
+            const size_t start = pos;
+            ++pos;
+            while (pos < text.size()) {
+                const unsigned char c = static_cast<unsigned char>(text[pos]);
+                if (!(std::isalnum(c) || text[pos] == '_')) break;
+                ++pos;
+            }
+            const std::string ident = text.substr(start, pos - start);
+            const std::string lower = to_lower_copy(ident);
+            skip_ws();
+            if (consume("(")) {
+                std::vector<LogicExprValue> args;
+                skip_ws();
+                if (!consume(")")) {
+                    while (error.empty()) {
+                        args.push_back(parse_or());
+                        if (!error.empty()) break;
+                        if (consume(")")) break;
+                        if (!consume(",")) {
+                            error = "Expected ',' or ')' in function call.";
+                            break;
+                        }
+                    }
+                }
+                if (!error.empty()) return make_num(0.0);
+                return evaluate_function(ident, args);
+            }
+            if (lower == "true") return make_bool(true);
+            if (lower == "false") return make_bool(false);
+            auto vit = variables.find(ident);
+            if (vit == variables.end()) {
+                error = "Unknown variable '" + ident + "'.";
+                return make_num(0.0);
+            }
+            double d = 0.0;
+            if (logic_string_to_double(vit->second, d)) return make_num(d);
+            bool b = false;
+            if (logic_string_to_bool(vit->second, b)) return make_bool(b);
+            return make_string(vit->second);
+        }
+
+        error = std::string("Unexpected token '") + ch + "'.";
+        return make_num(0.0);
+    }
+};
+
+static bool evaluate_logic_expression_value(
+    const std::string &expr,
+    const std::unordered_map<std::string, std::string> &variables,
+    const std::set<std::string> &tagKeys,
+    const std::set<std::string> &systemTagNames,
+    const std::unordered_map<std::string, TagSnapshot> &tagSnapshots,
+    const std::unordered_map<std::string, SystemTagDef> &systemSnapshots,
+    std::string &valueOut,
+    std::string &errorOut)
+{
+    LogicExpressionParser parser(expr, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots);
+    LogicExprValue v;
+    if (!parser.parse(v, errorOut)) return false;
+    if (v.kind == LogicExprValue::Kind::String) valueOut = v.text;
+    else if (v.kind == LogicExprValue::Kind::Bool) valueOut = v.boolean ? std::string("true") : std::string("false");
+    else valueOut = logic_format_number(v.number);
+    return true;
+}
+
+static bool logic_keyword_at(const std::string &source, size_t pos, const std::string &keyword);
+
+static LogicReferenceValidation evaluate_logic_variables(
+    const std::string &source,
+    const std::set<std::string> &tagKeys,
+    const std::set<std::string> &systemTagNames,
+    const std::unordered_map<std::string, TagSnapshot> &tagSnapshots,
+    const std::unordered_map<std::string, SystemTagDef> &systemSnapshots,
+    std::unordered_map<std::string, std::string> &variables)
+{
+    LogicReferenceValidation out;
+    static const std::regex assignRe(R"((?:\b(const|let)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]+)\s*;)");
+    std::sregex_iterator it(source.begin(), source.end(), assignRe);
+    std::sregex_iterator end;
+    std::vector<std::string> errors;
+
+    for (; it != end; ++it) {
+        const std::string declKw = trim_copy((*it)[1].str());
+        const std::string name = (*it)[2].str();
+        const std::string expr = trim_copy((*it)[3].str());
+        if (expr.empty()) continue;
+        if (!declKw.empty() && declKw != "const" && declKw != "let") continue;
+        if (!expr.empty() && expr.front() == '=') continue; // guard malformed "=="
+        std::string value;
+        std::string err;
+        if (evaluate_logic_helper_call(expr, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, value, err)) {
+            if (!err.empty()) {
+                if (errors.size() < 5) errors.push_back(name + ": " + err);
+                continue;
+            }
+        } else if (is_logic_identifier(expr)) {
+            auto vit = variables.find(expr);
+            if (vit == variables.end()) {
+                if (errors.size() < 5) errors.push_back(name + ": unknown variable '" + expr + "'");
+                continue;
+            }
+            value = vit->second;
+        } else if (!parse_logic_literal_value(expr, value, err)) {
+            if (!evaluate_logic_expression_value(expr, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, value, err)) {
+                if (errors.size() < 5) errors.push_back(name + ": " + err);
+                continue;
+            }
+        }
+        variables[name] = value;
+        if (out.variables < 10) {
+            if (!out.variable_preview.empty()) out.variable_preview += "; ";
+            out.variable_preview += name + "=" + value;
+        }
+        ++out.variables;
+    }
+
+    if (!errors.empty()) {
+        std::ostringstream oss;
+        oss << "Variable error";
+        if (errors.size() != 1) oss << "s";
+        oss << ": ";
+        for (size_t i = 0; i < errors.size(); ++i) {
+            if (i) oss << "; ";
+            oss << errors[i];
+        }
+        out.error = oss.str();
+    }
+    return out;
+}
+
+static bool logic_find_matching_paren(const std::string &text, size_t openPos, size_t &closePos, std::string &errorOut) {
+    int depth = 0;
+    bool inSingle = false;
+    bool inDouble = false;
+    bool escaped = false;
+    for (size_t i = openPos; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (inSingle || inDouble) {
+            if (escaped) {
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else if ((inSingle && ch == '\'') || (inDouble && ch == '"')) {
+                inSingle = false;
+                inDouble = false;
+            }
+            continue;
+        }
+        if (ch == '\'') {
+            inSingle = true;
+            continue;
+        }
+        if (ch == '"') {
+            inDouble = true;
+            continue;
+        }
+        if (ch == '(') {
+            ++depth;
+        } else if (ch == ')') {
+            --depth;
+            if (depth == 0) {
+                closePos = i;
+                return true;
+            }
+        }
+    }
+    errorOut = "Missing ')' in setTag call.";
+    return false;
+}
+
+static bool logic_split_args(const std::string &text, std::vector<std::string> &args, std::string &errorOut) {
+    args.clear();
+    size_t start = 0;
+    int depth = 0;
+    bool inSingle = false;
+    bool inDouble = false;
+    bool escaped = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (inSingle || inDouble) {
+            if (escaped) {
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else if ((inSingle && ch == '\'') || (inDouble && ch == '"')) {
+                inSingle = false;
+                inDouble = false;
+            }
+            continue;
+        }
+        if (ch == '\'') {
+            inSingle = true;
+            continue;
+        }
+        if (ch == '"') {
+            inDouble = true;
+            continue;
+        }
+        if (ch == '(') {
+            ++depth;
+        } else if (ch == ')') {
+            --depth;
+            if (depth < 0) {
+                errorOut = "Unexpected ')' in argument list.";
+                return false;
+            }
+        } else if (ch == ',' && depth == 0) {
+            args.push_back(trim_copy(text.substr(start, i - start)));
+            start = i + 1;
+        }
+    }
+    if (inSingle || inDouble) {
+        errorOut = "Unterminated string literal in argument list.";
+        return false;
+    }
+    if (depth != 0) {
+        errorOut = "Unbalanced parentheses in argument list.";
+        return false;
+    }
+    args.push_back(trim_copy(text.substr(start)));
+    return true;
+}
+
+static bool logic_collect_settag_calls(const std::string &source,
+                                       std::vector<std::array<std::string, 3>> &calls,
+                                       std::string &errorOut) {
+    calls.clear();
+    size_t pos = 0;
+    while (pos < source.size()) {
+        size_t hit = source.find("setTag", pos);
+        if (hit == std::string::npos) break;
+        if (!logic_keyword_at(source, hit, "setTag")) {
+            pos = hit + 6;
+            continue;
+        }
+        size_t p = hit + 6;
+        while (p < source.size() && std::isspace(static_cast<unsigned char>(source[p]))) ++p;
+        if (p >= source.size() || source[p] != '(') {
+            pos = hit + 6;
+            continue;
+        }
+        size_t close = 0;
+        if (!logic_find_matching_paren(source, p, close, errorOut)) return false;
+        std::vector<std::string> args;
+        if (!logic_split_args(source.substr(p + 1, close - p - 1), args, errorOut)) return false;
+        if (args.size() != 3) {
+            errorOut = "setTag expects 3 arguments.";
+            return false;
+        }
+        calls.push_back({args[0], args[1], args[2]});
+        pos = close + 1;
+    }
+    return true;
+}
+
+static LogicReferenceValidation apply_logic_memory_writes(
+    const std::string &source,
+    const std::unordered_map<std::string, std::string> &variables,
+    const std::set<std::string> &tagKeys,
+    const std::set<std::string> &systemTagNames,
+    const std::unordered_map<std::string, TagSnapshot> &tagSnapshots,
+    const std::unordered_map<std::string, SystemTagDef> &systemSnapshots,
+    std::vector<DriverContext> &drivers,
+    TagTable &tagTable,
+    std::mutex &driverMutex,
+    std::deque<UaUpdate> &uaQueue,
+    std::deque<MqttPublishJob> &mqttQueue)
+{
+    LogicReferenceValidation out;
+    std::vector<std::string> errors;
+    std::vector<std::array<std::string, 3>> calls;
+    std::string callError;
+    if (!logic_collect_settag_calls(source, calls, callError)) {
+        out.error = callError;
+        return out;
+    }
+
+    for (const auto &call : calls) {
+        std::string conn;
+        std::string name;
+        std::string argError;
+        if (!parse_logic_literal_value(call[0], conn, argError)) {
+            if (errors.size() < 5) errors.push_back("setTag connection must be a string literal.");
+            continue;
+        }
+        if (!parse_logic_literal_value(call[1], name, argError)) {
+            if (errors.size() < 5) errors.push_back("setTag tag name must be a string literal.");
+            continue;
+        }
+        const std::string rawValue = call[2];
+        if (conn == "_system") {
+            if (errors.size() < 5) errors.push_back("setTag cannot write _system tags: " + conn + ":" + name);
+            continue;
+        }
+        std::string valueText;
+        std::string literalError;
+        const std::string rawTrimmed = trim_copy(rawValue);
+        if (is_logic_identifier(rawTrimmed)) {
+            auto vit = variables.find(rawTrimmed);
+            if (vit == variables.end()) {
+                if (errors.size() < 5) errors.push_back(name + ": unknown variable '" + rawTrimmed + "'");
+                continue;
+            }
+            valueText = vit->second;
+        } else {
+            if (!parse_logic_literal_value(rawValue, valueText, literalError)) {
+                if (!evaluate_logic_expression_value(rawValue, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, valueText, literalError)) {
+                    if (errors.size() < 5) errors.push_back(name + ": " + literalError);
+                    continue;
+                }
+            }
+        }
+
+        TagConfig cfg;
+        bool found = false;
+        const std::string key = make_tag_key(conn, name);
+        TagSnapshot prev;
+        bool hadPrev = false;
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            for (const auto &driver : drivers) {
+                if (driver.conn.id != conn) continue;
+                for (const auto &tag : driver.tags) {
+                    if (tag.cfg.logical_name == name) {
+                        cfg = tag.cfg;
+                        found = true;
+                        break;
+                    }
+                }
+                break;
+            }
+            auto prevIt = tagTable.find(key);
+            if (prevIt != tagTable.end()) {
+                prev = prevIt->second;
+                hadPrev = true;
+            }
+        }
+        if (!found) {
+            const bool mqttDynamicAllowed =
+                ((g_mqttKnownConnectionIds.count(conn) > 0) || mqtt_connection_known_from_inputs(conn)) &&
+                !mqtt_is_subscription_tag_name(name);
+            if (!mqttDynamicAllowed) {
+                if (errors.size() < 5) errors.push_back("Tag not found: " + conn + ":" + name);
+                continue;
+            }
+
+            if (!write_tag_by_name(drivers, conn, name, valueText, tagTable, driverMutex)) {
+                if (errors.size() < 5) errors.push_back("Write failed: " + conn + ":" + name);
+                continue;
+            }
+
+            TagSnapshot snap;
+            {
+                std::lock_guard<std::mutex> lock(driverMutex);
+                auto it = tagTable.find(key);
+                if (it == tagTable.end()) {
+                    if (errors.size() < 5) errors.push_back("Write succeeded but tag snapshot missing: " + conn + ":" + name);
+                    continue;
+                }
+                snap = it->second;
+            }
+
+            out.memory_writes += 1;
+            if (out.memory_writes <= 10) {
+                if (!out.write_preview.empty()) out.write_preview += "; ";
+                out.write_preview += conn + ":" + name + "=" + valueText;
+            }
+            continue;
+        }
+        if (!cfg.writable) {
+            if (errors.size() < 5) errors.push_back("Tag is not writable: " + conn + ":" + name);
+            continue;
+        }
+
+        // Reuse the canonical write path (same behavior as POST /write).
+        if (!write_tag_by_name(drivers, conn, name, valueText, tagTable, driverMutex)) {
+            if (errors.size() < 5) errors.push_back("Write failed: " + conn + ":" + name);
+            continue;
+        }
+
+        TagSnapshot snap;
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            auto it = tagTable.find(key);
+            if (it == tagTable.end()) {
+                if (errors.size() < 5) errors.push_back("Write succeeded but tag snapshot missing: " + conn + ":" + name);
+                continue;
+            }
+            snap = it->second;
+        }
+
+        if (ws_is_enabled() && (!hadPrev || !snapshot_values_equal(snap, prev))) {
+            ws_notify_tag_update(snap, cfg);
+        }
+        evaluate_tag_alarms(conn, name, snap);
+        uaQueue.push_back(UaUpdate{conn, name, snap.value});
+        if (g_mqtt && g_mqttCfg.enabled && is_memory_tag(cfg) && g_mqttCfg.publish_memory_tags) {
+            MqttPublishJob j;
+            j.snap = snap;
+            j.hadPrev = hadPrev;
+            if (hadPrev) j.prev = prev;
+            mqttQueue.push_back(std::move(j));
+        }
+        if (out.memory_writes < 10) {
+            if (!out.write_preview.empty()) out.write_preview += "; ";
+            out.write_preview += conn + ":" + name + "=" + snapshot_value_to_string(snap);
+        }
+        ++out.memory_writes;
+    }
+
+    if (!errors.empty()) {
+        std::ostringstream oss;
+        oss << "Memory write error";
+        if (errors.size() != 1) oss << "s";
+        oss << ": ";
+        for (size_t i = 0; i < errors.size(); ++i) {
+            if (i) oss << "; ";
+            oss << errors[i];
+        }
+        out.error = oss.str();
+    }
+    return out;
+}
+
+struct LogicIfBlock {
+    std::string condition;
+    std::string body;
+    std::string else_body;
+    bool has_else = false;
+    size_t start = 0;
+    size_t end = 0;
+};
+
+static bool logic_keyword_at(const std::string &source, size_t pos, const std::string &keyword) {
+    if (pos + keyword.size() > source.size()) return false;
+    if (source.compare(pos, keyword.size(), keyword) != 0) return false;
+    const bool beforeOk = (pos == 0) || !(std::isalnum(static_cast<unsigned char>(source[pos - 1])) || source[pos - 1] == '_');
+    const size_t after = pos + keyword.size();
+    const bool afterOk = (after >= source.size()) || !(std::isalnum(static_cast<unsigned char>(source[after])) || source[after] == '_');
+    return beforeOk && afterOk;
+}
+
+static bool logic_contains_if_keyword(const std::string &source) {
+    size_t pos = 0;
+    while (pos < source.size()) {
+        size_t hit = source.find("if", pos);
+        if (hit == std::string::npos) return false;
+        if (logic_keyword_at(source, hit, "if")) return true;
+        pos = hit + 2;
+    }
+    return false;
+}
+
+static bool logic_find_matching_delim(const std::string &text,
+                                      size_t openPos,
+                                      char openCh,
+                                      char closeCh,
+                                      size_t &closePos,
+                                      std::string &errorOut) {
+    int depth = 0;
+    bool inSingle = false;
+    bool inDouble = false;
+    bool inTemplate = false;
+    bool escaped = false;
+    bool inLineComment = false;
+    bool inBlockComment = false;
+
+    for (size_t i = openPos; i < text.size(); ++i) {
+        const char ch = text[i];
+        const char next = (i + 1 < text.size()) ? text[i + 1] : '\0';
+
+        if (inLineComment) {
+            if (ch == '\n') inLineComment = false;
+            continue;
+        }
+        if (inBlockComment) {
+            if (ch == '*' && next == '/') {
+                inBlockComment = false;
+                ++i;
+            }
+            continue;
+        }
+        if (inSingle || inDouble || inTemplate) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (inSingle && ch == '\'') inSingle = false;
+            else if (inDouble && ch == '"') inDouble = false;
+            else if (inTemplate && ch == '`') inTemplate = false;
+            continue;
+        }
+
+        if (ch == '/' && next == '/') {
+            inLineComment = true;
+            ++i;
+            continue;
+        }
+        if (ch == '/' && next == '*') {
+            inBlockComment = true;
+            ++i;
+            continue;
+        }
+        if (ch == '\'') {
+            inSingle = true;
+            continue;
+        }
+        if (ch == '"') {
+            inDouble = true;
+            continue;
+        }
+        if (ch == '`') {
+            inTemplate = true;
+            continue;
+        }
+        if (ch == openCh) {
+            ++depth;
+        } else if (ch == closeCh) {
+            --depth;
+            if (depth == 0) {
+                closePos = i;
+                return true;
+            }
+        }
+    }
+
+    errorOut = std::string("Missing '") + closeCh + "' for if block.";
+    return false;
+}
+
+static bool logic_collect_if_blocks(const std::string &source,
+                                    std::vector<LogicIfBlock> &blocks,
+                                    std::string &errorOut) {
+    blocks.clear();
+    size_t pos = 0;
+    while (pos < source.size()) {
+        size_t hit = source.find("if", pos);
+        if (hit == std::string::npos) break;
+        if (!logic_keyword_at(source, hit, "if")) {
+            pos = hit + 2;
+            continue;
+        }
+
+        const size_t after = hit + 2;
+        size_t p = after;
+        while (p < source.size() && std::isspace(static_cast<unsigned char>(source[p]))) ++p;
+        if (p >= source.size() || source[p] != '(') {
+            pos = after;
+            continue;
+        }
+        size_t condEnd = 0;
+        if (!logic_find_matching_delim(source, p, '(', ')', condEnd, errorOut)) return false;
+        size_t b = condEnd + 1;
+        while (b < source.size() && std::isspace(static_cast<unsigned char>(source[b]))) ++b;
+        if (b >= source.size() || source[b] != '{') {
+            errorOut = "Expected '{' after if condition.";
+            return false;
+        }
+        size_t bodyEnd = 0;
+        if (!logic_find_matching_delim(source, b, '{', '}', bodyEnd, errorOut)) return false;
+
+        LogicIfBlock block;
+        block.start = hit;
+        block.end = bodyEnd + 1;
+        block.condition = trim_copy(source.substr(p + 1, condEnd - p - 1));
+        block.body = source.substr(b + 1, bodyEnd - b - 1);
+        if (logic_contains_if_keyword(block.body)) {
+            errorOut = "Nested if blocks are not supported.";
+            return false;
+        }
+
+        size_t next = bodyEnd + 1;
+        while (next < source.size() && std::isspace(static_cast<unsigned char>(source[next]))) ++next;
+        if (logic_keyword_at(source, next, "else")) {
+            size_t e = next + 4;
+            while (e < source.size() && std::isspace(static_cast<unsigned char>(source[e]))) ++e;
+            if (e >= source.size() || source[e] != '{') {
+                errorOut = "Expected '{' after else.";
+                return false;
+            }
+            size_t elseEnd = 0;
+            if (!logic_find_matching_delim(source, e, '{', '}', elseEnd, errorOut)) return false;
+            block.has_else = true;
+            block.else_body = source.substr(e + 1, elseEnd - e - 1);
+            if (logic_contains_if_keyword(block.else_body)) {
+                errorOut = "Nested if blocks are not supported.";
+                return false;
+            }
+            block.end = elseEnd + 1;
+            next = elseEnd + 1;
+        }
+        blocks.push_back(std::move(block));
+        pos = next;
+    }
+    return true;
+}
+
+static std::string logic_without_if_blocks(const std::string &source,
+                                           const std::vector<LogicIfBlock> &blocks) {
+    std::string out = source;
+    for (const auto &block : blocks) {
+        if (block.start >= out.size()) continue;
+        const size_t end = std::min(block.end, out.size());
+        for (size_t i = block.start; i < end; ++i) {
+            if (out[i] != '\n') out[i] = ' ';
+        }
+    }
+    return out;
+}
+
+static void logic_merge_result(LogicReferenceValidation &dst,
+                               const LogicReferenceValidation &src) {
+    dst.referenced_tags += src.referenced_tags;
+    dst.missing_tags += src.missing_tags;
+    dst.evaluated_reads += src.evaluated_reads;
+    dst.memory_writes += src.memory_writes;
+    dst.variables += src.variables;
+    auto appendPreview = [](std::string &target, const std::string &value) {
+        if (value.empty()) return;
+        if (!target.empty()) target += "; ";
+        target += value;
+    };
+    appendPreview(dst.read_preview, src.read_preview);
+    appendPreview(dst.write_preview, src.write_preview);
+    appendPreview(dst.variable_preview, src.variable_preview);
+    if (dst.error.empty() && !src.error.empty()) dst.error = src.error;
+}
+
+static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
+                                       const std::set<std::string> &systemTagNames,
+                                       const std::unordered_map<std::string, TagSnapshot> &tagSnapshots,
+                                       const std::unordered_map<std::string, SystemTagDef> &systemSnapshots,
+                                       std::vector<DriverContext> *drivers,
+                                       TagTable *tagTable,
+                                       std::mutex *driverMutex,
+                                       std::deque<UaUpdate> *uaQueue,
+                                       std::deque<MqttPublishJob> *mqttQueue) {
+    std::vector<size_t> due;
+    {
+        std::lock_guard<std::mutex> lock(g_logicMutex);
+        const int64_t nowMs = system_wall_now_ms();
+        for (size_t i = 0; i < g_logicState.scripts.size(); ++i) {
+            auto &script = g_logicState.scripts[i];
+            if (!script.enabled) continue;
+            const int interval = std::max(1000, script.interval_ms);
+            if (script.last_run_ms <= 0 || (nowMs - script.last_run_ms) >= interval) {
+                due.push_back(i);
+            }
+        }
+    }
+    if (due.empty()) return;
+
+    for (size_t idx : due) {
+        const auto started = std::chrono::steady_clock::now();
+        int64_t nowMs = system_wall_now_ms();
+        std::string engine;
+        std::string kind;
+        std::string source;
+        std::string setupSource;
+        std::string loopSource;
+        bool setupInitialized = false;
+        std::unordered_map<std::string, std::string> retainedVars;
+        {
+            std::lock_guard<std::mutex> lock(g_logicMutex);
+            if (idx >= g_logicState.scripts.size()) continue;
+            engine = to_lower_copy(trim_copy(g_logicState.scripts[idx].engine));
+            kind = trim_copy(g_logicState.scripts[idx].kind);
+            source = g_logicState.scripts[idx].source;
+            setupSource = g_logicState.scripts[idx].setup_source;
+            loopSource = g_logicState.scripts[idx].loop_source;
+            setupInitialized = g_logicState.scripts[idx].setup_initialized;
+            retainedVars = g_logicState.scripts[idx].retained_vars;
+        }
+
+        bool ok = true;
+        std::string err;
+        LogicReferenceValidation refs;
+        std::unordered_map<std::string, std::string> variables;
+        if (engine != "javascript") {
+            ok = false;
+            err = "Unsupported logic engine '" + engine + "'.";
+        } else {
+            std::string parsedSetup;
+            std::string parsedLoop;
+            if (kind == "block") {
+                if (!validate_logic_source_text(setupSource, err)) {
+                    ok = false;
+                } else if (!validate_logic_source_text(loopSource, err)) {
+                    ok = false;
+                }
+                parsedSetup = strip_logic_comments(setupSource);
+                parsedLoop = strip_logic_comments(loopSource);
+            } else {
+                if (!validate_logic_source_text(source, err)) {
+                    ok = false;
+                }
+                parsedLoop = strip_logic_comments(source);
+            }
+            if (!ok) {
+                // keep err from validation
+            } else {
+                const std::string &effectiveLoopSource = parsedLoop;
+                const std::string &effectiveSetupSource = parsedSetup;
+                std::unordered_map<std::string, std::string> setupVars = retainedVars;
+                if (ok && kind == "block" && !setupInitialized && !trim_copy(effectiveSetupSource).empty()) {
+                    LogicReferenceValidation setupEval = evaluate_logic_variables(effectiveSetupSource, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, setupVars);
+                    if (!setupEval.error.empty()) {
+                        ok = false;
+                        err = "setup: " + setupEval.error;
+                    } else {
+                        retainedVars = std::move(setupVars);
+                        setupInitialized = true;
+                    }
+                }
+                refs = validate_logic_read_references(effectiveLoopSource, tagKeys, systemTagNames, tagSnapshots, systemSnapshots);
+                if (refs.missing_tags > 0) {
+                    ok = false;
+                    err = refs.error;
+                } else {
+                    variables = retainedVars;
+
+                    std::vector<LogicIfBlock> ifBlocks;
+                    std::string ifError;
+                    if (ok && !logic_collect_if_blocks(effectiveLoopSource, ifBlocks, ifError)) {
+                        ok = false;
+                        err = ifError;
+                    }
+                    const std::string topLevelSource = ok ? logic_without_if_blocks(effectiveLoopSource, ifBlocks) : std::string{};
+                    LogicReferenceValidation vars;
+                    if (ok) {
+                        vars = evaluate_logic_variables(topLevelSource, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, variables);
+                    }
+                    refs.variables = vars.variables;
+                    refs.variable_preview = vars.variable_preview;
+                    if (!vars.error.empty()) {
+                        ok = false;
+                        err = vars.error;
+                    }
+                    if (ok && drivers && tagTable && driverMutex && uaQueue && mqttQueue) {
+                        LogicReferenceValidation writes = apply_logic_memory_writes(topLevelSource, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, *drivers, *tagTable, *driverMutex, *uaQueue, *mqttQueue);
+                        refs.memory_writes = writes.memory_writes;
+                        refs.write_preview = writes.write_preview;
+                        if (!writes.error.empty()) {
+                            ok = false;
+                            err = writes.error;
+                        }
+                    }
+                    if (ok) {
+                        for (const auto &block : ifBlocks) {
+                            std::string condValue;
+                            std::string condErr;
+                            if (!evaluate_logic_expression_value(block.condition, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, condValue, condErr)) {
+                                ok = false;
+                                err = "if condition: " + condErr;
+                                break;
+                            }
+                            bool cond = false;
+                            if (!logic_string_to_bool(condValue, cond)) {
+                                ok = false;
+                                err = "if condition did not evaluate to a boolean.";
+                                break;
+                            }
+                            const std::string *selectedBody = nullptr;
+                            if (cond) selectedBody = &block.body;
+                            else if (block.has_else) selectedBody = &block.else_body;
+                            if (!selectedBody) continue;
+
+                            LogicReferenceValidation blockVars = evaluate_logic_variables(*selectedBody, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, variables);
+                            logic_merge_result(refs, blockVars);
+                            if (!blockVars.error.empty()) {
+                                ok = false;
+                                err = blockVars.error;
+                                break;
+                            }
+                            if (drivers && tagTable && driverMutex && uaQueue && mqttQueue) {
+                                LogicReferenceValidation blockWrites = apply_logic_memory_writes(*selectedBody, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, *drivers, *tagTable, *driverMutex, *uaQueue, *mqttQueue);
+                                logic_merge_result(refs, blockWrites);
+                                if (!blockWrites.error.empty()) {
+                                    ok = false;
+                                    err = blockWrites.error;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ensure validation shows the current variable set, including retained
+        // locals carried from prior block cycles.
+        if (!variables.empty()) {
+            std::vector<std::string> names;
+            names.reserve(variables.size());
+            for (const auto &kv : variables) names.push_back(kv.first);
+            std::sort(names.begin(), names.end());
+            refs.variables = static_cast<int>(variables.size());
+            refs.variable_preview.clear();
+            int shown = 0;
+            for (const auto &name : names) {
+                auto it = variables.find(name);
+                if (it == variables.end()) continue;
+                if (!refs.variable_preview.empty()) refs.variable_preview += "; ";
+                refs.variable_preview += name + "=" + it->second;
+                ++shown;
+                if (shown >= 10) break;
+            }
+        }
+
+        const int64_t durationMs = steady_elapsed_ms(started);
+        if (ok && kind == "block") {
+            retainedVars = variables;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_logicMutex);
+            if (idx >= g_logicState.scripts.size()) continue;
+            auto &script = g_logicState.scripts[idx];
+            script.last_run_ms = nowMs;
+            script.last_run_duration_ms = durationMs;
+            script.last_run_ok = ok;
+            script.runs_total += 1;
+            if (!ok) script.failures_total += 1;
+            script.referenced_tags = refs.referenced_tags;
+            script.missing_tags = refs.missing_tags;
+            script.evaluated_reads = refs.evaluated_reads;
+            script.memory_writes = refs.memory_writes;
+            script.variables = refs.variables;
+            script.read_preview = refs.read_preview;
+            script.write_preview = refs.write_preview;
+            script.variable_preview = refs.variable_preview;
+            script.last_error = ok ? std::string{} : err;
+            script.setup_initialized = setupInitialized;
+            script.retained_vars = retainedVars;
+            g_logicState.last_run_ms = nowMs;
+            g_logicState.runs_total += 1;
+            if (!ok) {
+                g_logicState.failures_total += 1;
+                g_logicState.last_error = err;
+            } else if (g_logicState.last_load_ok) {
+                g_logicState.last_error.clear();
+            }
+        }
+    }
+}
+
+bool config_has_enabled_mqtt_connection(const std::string &configDir) {
+    const std::string mqttPath = joinPath(configDir, "mqtt.json");
+    if (fs::exists(mqttPath)) {
+        try {
+            json jm = load_json_with_comments(mqttPath);
+            if (!jm.value("enabled", false)) {
+                return false;
+            }
+        } catch (...) {
+            return false;
+        }
+    }
+
+    const std::string connDir = joinPath(configDir, "connections");
+    std::error_code ec;
+    if (!fs::exists(connDir, ec) || !fs::is_directory(connDir, ec)) {
+        return false;
+    }
+
+    for (const auto &entry : fs::directory_iterator(connDir, ec)) {
+        if (ec) break;
+        if (!entry.is_regular_file()) continue;
+        if (entry.path().extension() != ".json") continue;
+        try {
+            json jc = load_json_with_comments(entry.path().string());
+            if (jc.value("driver", std::string("ab_eip")) != "mqtt") continue;
+            const json settings = (jc.contains("settings") && jc["settings"].is_object())
+                ? jc["settings"]
+                : json::object();
+            if (!settings.value("enabled", jc.value("enabled", true))) continue;
+            const std::string host = trim_copy(settings.value("host", jc.value("host", std::string{})));
+            if (host.empty()) continue;
+            return true;
+        } catch (...) {
+            continue;
+        }
+    }
+    return false;
 }
 
 bool load_all_drivers(std::vector<DriverContext> &outDrivers,
@@ -5235,41 +8421,34 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
     std::map<std::string, ConnectionConfig> connection_map;
 
     if (!fs::exists(connDir)) {
-        std::cerr << "[load] ERROR: Connections directory does not exist: "
+        std::cerr << "[load] Warning: connections directory does not exist: "
                   << connDir << "\n";
-        return false;
-    }
+    } else {
+        // Load connections
+        for (const auto &entry : fs::directory_iterator(connDir)) {
+            if (!entry.is_regular_file()) continue;
+            if (entry.path().extension() != ".json") continue;
 
-    // Load connections
-    for (const auto &entry : fs::directory_iterator(connDir)) {
-        if (!entry.is_regular_file()) continue;
-        if (entry.path().extension() != ".json") continue;
-
-        std::string path = entry.path().string();
-        try {
-            ConnectionConfig c = load_connection_config(path);
-            std::cout << "[load] Loaded connection '" << c.id
-                      << "' (driver=" << c.driver
-                      << ", gateway=" << c.gateway
-                      << ", path=" << c.path
-                      << ", slot=" << c.slot
-                      << ", plc_type=" << c.plc_type
-                      << ") from " << path << "\n";
-            if (connection_map.count(c.id)) {
-                std::cerr << "[load] Warning: duplicate connection id '"
-                          << c.id << "'; overwriting previous.\n";
+            std::string path = entry.path().string();
+            try {
+                ConnectionConfig c = load_connection_config(path);
+                std::cout << "[load] Loaded connection '" << c.id
+                          << "' (driver=" << c.driver
+                          << ", gateway=" << c.gateway
+                          << ", path=" << c.path
+                          << ", slot=" << c.slot
+                          << ", plc_type=" << c.plc_type
+                          << ") from " << path << "\n";
+                if (connection_map.count(c.id)) {
+                    std::cerr << "[load] Warning: duplicate connection id '"
+                              << c.id << "'; overwriting previous.\n";
+                }
+                connection_map[c.id] = c;
+            } catch (const std::exception &ex) {
+                std::cerr << "[load] Error in connection file " << path
+                          << ": " << ex.what() << "\n";
             }
-            connection_map[c.id] = c;
-        } catch (const std::exception &ex) {
-            std::cerr << "[load] Error in connection file " << path
-                      << ": " << ex.what() << "\n";
         }
-    }
-
-    if (connection_map.empty()) {
-        std::cerr << "[load] No connection configs loaded; starting with empty configuration.\n";
-        outDrivers.clear();
-        return true;
     }
 
     // Load tag files
@@ -5354,8 +8533,13 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
     for (const auto &kv : tags_by_conn) {
         const auto &conn_id = kv.first;
         if (!connection_map.count(conn_id)) {
-            std::cerr << "[load] Warning: tags configured for connection_id '"
-                      << conn_id << "' but no such connection exists.\n";
+            const bool memoryOnly = std::all_of(kv.second.begin(), kv.second.end(), [](const TagConfig &tag) {
+                return is_memory_tag(tag);
+            });
+            if (!memoryOnly) {
+                std::cerr << "[load] Warning: tags configured for connection_id '"
+                          << conn_id << "' but no such connection exists.\n";
+            }
         }
     }
 
@@ -5381,7 +8565,37 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
                       << conn_id << "'. Skipping.\n";
             continue;
         }
-        jobs.push_back(DriverBuildJob{conn_id, conn_cfg, tags_it->second});
+        std::vector<TagConfig> normalizedTags = tags_it->second;
+        if (to_lower_copy(trim_copy(conn_cfg.driver)) == "mqtt") {
+            for (auto &tag : normalizedTags) {
+                const bool isSubscription =
+                    mqtt_name_matches_any_topic_scope(tag.logical_name, conn_cfg.mqtt_subscription_topics) ||
+                    mqtt_is_subscription_tag_name(tag.logical_name);
+                if (isSubscription) {
+                    tag.writable = false;
+                    continue;
+                }
+                if (mqtt_name_matches_any_topic_scope(tag.logical_name, conn_cfg.mqtt_publication_topics)) {
+                    tag.writable = true;
+                }
+            }
+        }
+        jobs.push_back(DriverBuildJob{conn_id, conn_cfg, std::move(normalizedTags)});
+    }
+    for (const auto &kv : tags_by_conn) {
+        const std::string &conn_id = kv.first;
+        if (connection_map.count(conn_id)) continue;
+        const bool memoryOnly = std::all_of(kv.second.begin(), kv.second.end(), [](const TagConfig &tag) {
+            return is_memory_tag(tag);
+        });
+        if (!memoryOnly) continue;
+        ConnectionConfig memoryConn;
+        memoryConn.id = conn_id;
+        memoryConn.driver = "memory";
+        memoryConn.plc_type = "memory";
+        memoryConn.polling_mode = "standard";
+        memoryConn.polling_pacing = "gentle";
+        jobs.push_back(DriverBuildJob{conn_id, memoryConn, kv.second});
     }
 
     std::vector<DriverContext> driversLocal;
@@ -5629,6 +8843,13 @@ void mqtt_publish_raw(const std::string &topic,
     if (rc != MOSQ_ERR_SUCCESS) {
         std::cerr << "[mqtt] publish to '" << topic << "' failed: "
                   << mosquitto_strerror(rc) << "\n";
+        g_mqttRuntimeStats.publish_failures_total.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(g_mqttRuntimeStats.error_mutex);
+            g_mqttRuntimeStats.last_error = std::string("publish failed: ") + mosquitto_strerror(rc);
+        }
+    } else {
+        g_mqttRuntimeStats.messages_published_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -5686,6 +8907,9 @@ bool mqtt_publish_snapshot(const TagSnapshot &snap,
     if (!g_mqtt || !g_mqttCfg.enabled) {
         return false;
     }
+    if (is_memory_connection_id(snap.connection_id) && !g_mqttCfg.publish_memory_tags) {
+        return false;
+    }
 
     const std::string key = make_tag_key(snap.connection_id, snap.logical_name);
 
@@ -5709,18 +8933,28 @@ bool mqtt_publish_snapshot(const TagSnapshot &snap,
         }
     }
 
-    bool heartbeatDue = false;
-    if (state.hasValue) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            now - state.lastPublish
-        ).count();
-        heartbeatDue = (elapsed >= g_mqttCfg.heartbeat_sec);
-    } else {
-        heartbeatDue = true; // first publish
+    if (!g_mqttCfg.publish_per_field && !g_mqttCfg.publish_tag_json) {
+        return false;
     }
 
-    if (!changed && !heartbeatDue) {
-        return false; // hybrid: nothing to send
+    const auto elapsedMs = state.hasValue
+        ? std::chrono::duration_cast<std::chrono::milliseconds>(now - state.lastPublish).count()
+        : std::numeric_limits<int64_t>::max();
+    if (state.hasValue && g_mqttCfg.publish_min_update_ms > 0 &&
+        elapsedMs < g_mqttCfg.publish_min_update_ms) {
+        return false;
+    }
+
+    bool shouldPublish = false;
+    if (g_mqttCfg.publish_mode == "interval") {
+        shouldPublish = !state.hasValue || elapsedMs >= g_mqttCfg.publish_interval_ms;
+    } else if (g_mqttCfg.publish_mode == "change_or_interval") {
+        shouldPublish = changed || !state.hasValue || elapsedMs >= g_mqttCfg.publish_interval_ms;
+    } else {
+        shouldPublish = changed;
+    }
+    if (!shouldPublish) {
+        return false;
     }
 
     // Update state
@@ -5783,6 +9017,74 @@ bool mqtt_publish_snapshot(const TagSnapshot &snap,
 
         std::string topic = base + "/" + connSafe + "/" + tagSafe;
         mqtt_publish_raw(topic, jt.dump());
+    }
+
+    return true;
+}
+
+bool mqtt_publish_system_tag(const SystemTagDef &def)
+{
+    if (!g_mqtt || !g_mqttCfg.enabled || !g_mqttCfg.publish_system_tags) {
+        return false;
+    }
+    if (!g_mqttCfg.publish_per_field && !g_mqttCfg.publish_tag_json) {
+        return false;
+    }
+
+    const std::string key = make_tag_key("_system", def.name);
+    const auto now = std::chrono::system_clock::now();
+    MqttTagState &state = g_mqttTagState[key];
+
+    const std::string valueStr = def.value.is_string() ? def.value.get<std::string>() : def.value.dump();
+    TagValue currentValue = valueStr;
+    const bool changed = !state.hasValue || state.lastValue != currentValue;
+    const auto elapsedMs = state.hasValue
+        ? std::chrono::duration_cast<std::chrono::milliseconds>(now - state.lastPublish).count()
+        : std::numeric_limits<int64_t>::max();
+
+    if (state.hasValue && g_mqttCfg.publish_min_update_ms > 0 &&
+        elapsedMs < g_mqttCfg.publish_min_update_ms) {
+        return false;
+    }
+
+    bool shouldPublish = false;
+    if (g_mqttCfg.publish_mode == "interval") {
+        shouldPublish = !state.hasValue || elapsedMs >= g_mqttCfg.publish_interval_ms;
+    } else if (g_mqttCfg.publish_mode == "change_or_interval") {
+        shouldPublish = changed || !state.hasValue || elapsedMs >= g_mqttCfg.publish_interval_ms;
+    } else {
+        shouldPublish = changed;
+    }
+    if (!shouldPublish) return false;
+
+    state.hasValue = true;
+    state.lastPublish = now;
+    state.lastValue = currentValue;
+
+    const std::string base = g_mqttCfg.base_topic.empty()
+                           ? std::string("opcbridge")
+                           : g_mqttCfg.base_topic;
+    const std::string connSafe = mqtt_sanitize("_system");
+    const std::string tagSafe = mqtt_sanitize(def.name);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()
+    ).count();
+
+    if (g_mqttCfg.publish_per_field) {
+        mqtt_publish_raw(base + "/" + connSafe + "/" + tagSafe + "/value", valueStr);
+        mqtt_publish_raw(base + "/" + connSafe + "/" + tagSafe + "/quality", "1");
+        mqtt_publish_raw(base + "/" + connSafe + "/" + tagSafe + "/timestamp", std::to_string(ms));
+    }
+
+    if (g_mqttCfg.publish_tag_json) {
+        json jt;
+        jt["connection_id"] = "_system";
+        jt["name"] = def.name;
+        jt["datatype"] = def.datatype;
+        jt["quality"] = 1;
+        jt["timestamp_ms"] = ms;
+        jt["value"] = def.value;
+        mqtt_publish_raw(base + "/" + connSafe + "/" + tagSafe, jt.dump());
     }
 
     return true;
@@ -5950,6 +9252,34 @@ bool mqtt_init(const std::string &configDir) {
         return false;
     }
 
+    auto make_auto_mqtt_client_id = []() -> std::string {
+        unsigned int rnd = 0;
+        std::random_device rd;
+        rnd = rd();
+        if (rnd == 0) {
+            rnd = static_cast<unsigned int>(
+                std::chrono::steady_clock::now().time_since_epoch().count()
+            );
+        }
+        std::ostringstream oss;
+        oss << "opcbridge-" << getpid() << "-"
+            << std::hex << std::setw(8) << std::setfill('0') << rnd;
+        return oss.str();
+    };
+
+    std::string configuredClientId = trim_copy(g_mqttCfg.client_id);
+    std::string configuredLower = to_lower_copy(configuredClientId);
+    if (configuredClientId.empty() ||
+        configuredLower == "auto" ||
+        configuredLower == "opcbridge" ||
+        configuredLower == "opcbridge-core") {
+        g_mqttCfg.client_id = make_auto_mqtt_client_id();
+        std::cout << "[mqtt] Auto-generated MQTT client_id: "
+                  << g_mqttCfg.client_id << "\n";
+    } else {
+        g_mqttCfg.client_id = configuredClientId;
+    }
+
     // Log a summary of the loaded configuration (for humans)
     mqtt_log_config_summary(configDir);
 
@@ -5960,9 +9290,7 @@ bool mqtt_init(const std::string &configDir) {
 
     mosquitto_lib_init();
 
-    std::string cid = g_mqttCfg.client_id.empty()
-                      ? std::string("opcbridge")
-                      : g_mqttCfg.client_id;
+    std::string cid = g_mqttCfg.client_id;
 
     g_mqtt = mosquitto_new(cid.c_str(), true, nullptr);
     if (!g_mqtt) {
@@ -6065,6 +9393,17 @@ bool mqtt_init(const std::string &configDir) {
         return false;
     }
 
+    rc = mosquitto_loop_start(g_mqtt);
+    if (rc != MOSQ_ERR_SUCCESS) {
+        std::cerr << "[mqtt] loop_start failed: "
+                  << mosquitto_strerror(rc) << "\n";
+        mosquitto_destroy(g_mqtt);
+        g_mqtt = nullptr;
+        mosquitto_lib_cleanup();
+        return false;
+    }
+    g_mqttLoopStarted = true;
+
     std::cout << "[mqtt] Started: " << g_mqttCfg.host << ":" << g_mqttCfg.port
               << " base_topic='" << g_mqttCfg.base_topic << "'";
     if (g_mqttCfg.subscribe_enabled) {
@@ -6080,6 +9419,10 @@ void mqtt_shutdown() {
     std::lock_guard<std::mutex> lock(g_mqttMutex);
 
     if (g_mqtt) {
+        if (g_mqttLoopStarted) {
+            mosquitto_loop_stop(g_mqtt, true);
+            g_mqttLoopStarted = false;
+        }
         mosquitto_disconnect(g_mqtt);
         mosquitto_destroy(g_mqtt);
         g_mqtt = nullptr;
@@ -6527,13 +9870,25 @@ static bool ua_set_variable_attr_from_snapshot(UA_VariableAttributes &attr,
     return false;
 }
 
-static TagSnapshot make_initial_snapshot_for_opcua(const ConnectionConfig &conn,
-                                                   const TagRuntime &tag) {
+static TagValue default_tag_value_for_datatype(const std::string &dt) {
+    if (dt == "bool") return false;
+    if (dt == "int16") return static_cast<int16_t>(0);
+    if (dt == "uint16") return static_cast<uint16_t>(0);
+    if (dt == "int32") return static_cast<int32_t>(0);
+    if (dt == "uint32") return static_cast<uint32_t>(0);
+    if (dt == "float32") return static_cast<float>(0.0f);
+    if (dt == "float64") return static_cast<double>(0.0);
+    return std::string{};
+}
+
+static TagSnapshot make_initial_snapshot_for_tag(const ConnectionConfig &conn,
+                                                 const TagRuntime &tag,
+                                                 int quality) {
     TagSnapshot seed;
     seed.connection_id = conn.id;
     seed.logical_name = tag.cfg.logical_name;
     seed.timestamp = std::chrono::system_clock::now();
-    seed.quality = 0;
+    seed.quality = quality;
 
     std::string dt = tag.cfg.datatype;
     if (tag.scaling_linear) {
@@ -6541,28 +9896,57 @@ static TagSnapshot make_initial_snapshot_for_opcua(const ConnectionConfig &conn,
         dt = outDt.empty() ? std::string("float64") : outDt;
     }
     seed.datatype = dt;
+    seed.value = default_tag_value_for_datatype(dt);
 
-    if (dt == "bool") seed.value = false;
-    else if (dt == "int16") seed.value = static_cast<int16_t>(0);
-    else if (dt == "uint16") seed.value = static_cast<uint16_t>(0);
-    else if (dt == "int32") seed.value = static_cast<int32_t>(0);
-    else if (dt == "uint32") seed.value = static_cast<uint32_t>(0);
-    else if (dt == "float32") seed.value = static_cast<float>(0.0f);
-    else if (dt == "float64") seed.value = static_cast<double>(0.0);
-    else if (dt == "string") seed.value = std::string{};
+    if (is_memory_tag(tag.cfg) && !tag.cfg.initial_value.empty()) {
+        TagValue initial{};
+        if (parse_string_to_tagvalue(tag.cfg.initial_value, tag.cfg.datatype, initial)) {
+            seed.value = initial;
+            seed.datatype = tag.cfg.datatype;
+        } else {
+            std::cerr << "[load] Warning: memory tag '" << tag.cfg.logical_name
+                      << "' initial_value '" << tag.cfg.initial_value
+                      << "' could not be parsed as " << tag.cfg.datatype << ". Using default.\n";
+        }
+    }
+
     return seed;
+}
+
+static TagSnapshot make_initial_snapshot_for_opcua(const ConnectionConfig &conn,
+                                                   const TagRuntime &tag) {
+    return make_initial_snapshot_for_tag(conn, tag, is_memory_tag(tag.cfg) ? 1 : 0);
+}
+
+static void seed_memory_tag_table(const std::vector<DriverContext> &drivers,
+                                  TagTable &tagTable) {
+    int seeded = 0;
+    for (const auto &driver : drivers) {
+        for (const auto &tag : driver.tags) {
+            if (!tag.cfg.enabled || !is_memory_tag(tag.cfg)) continue;
+            tagTable[make_tag_key(driver.conn.id, tag.cfg.logical_name)] =
+                make_initial_snapshot_for_tag(driver.conn, tag, 1);
+            ++seeded;
+        }
+    }
+    if (seeded > 0) {
+        std::ostringstream msg;
+        msg << "Seeded " << seeded << " memory tag(s).";
+        runtime_log("info", "startup", msg.str());
+    }
 }
 
 static UA_NodeId ua_ensure_connection_object(UA_Server *server,
                                              UA_NodeId bridgeId,
                                              const std::string &connId) {
     const std::string stableConnNodeId = ua_connection_nodeid_string(connId);
+    const std::string displayName = display_connection_name(connId);
     UA_NodeId requestedConnId = UA_NODEID_STRING(1, const_cast<char*>(stableConnNodeId.c_str()));
 
     UA_ObjectAttributes cAttr = UA_ObjectAttributes_default;
     cAttr.displayName = UA_LOCALIZEDTEXT_ALLOC(
         const_cast<char*>("en-US"),
-        const_cast<char*>(connId.c_str())
+        const_cast<char*>(displayName.c_str())
     );
     UA_NodeId connNodeId;
     UA_StatusCode st = UA_Server_addObjectNode(
@@ -6570,7 +9954,7 @@ static UA_NodeId ua_ensure_connection_object(UA_Server *server,
         requestedConnId,
         bridgeId,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-        UA_QUALIFIEDNAME(1, const_cast<char*>(connId.c_str())),
+        UA_QUALIFIEDNAME(1, const_cast<char*>(displayName.c_str())),
         UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
         cAttr, nullptr, &connNodeId
     );
@@ -6592,7 +9976,7 @@ static bool ua_add_tag_variable_node(UA_Server *server,
                                      std::string &err) {
     const TagConfig &cfg = tag.cfg;
     err.clear();
-    if (tag.handle < 0 && !tag.handle_deferred) {
+    if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg)) {
         err = "invalid handle";
         return false;
     }
@@ -6708,7 +10092,7 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
     std::unordered_set<std::string> liveKeys;
     for (auto &tag : driver.tags) {
         const std::string key = ua_key(driver.conn.id, tag.cfg.logical_name);
-        if (tag.handle < 0 && !tag.handle_deferred) continue;
+        if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg)) continue;
 
         TagSnapshot seed = make_initial_snapshot_for_opcua(driver.conn, tag);
         UA_VariableAttributes tmpAttr = UA_VariableAttributes_default;
@@ -6862,6 +10246,8 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
             UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
             UA_NodeId reporterSysId = ua_add_folder(server, systemId, "Reporter");
+            UA_NodeId logicSysId = ua_add_folder(server, systemId, "Logic");
+            UA_NodeId mqttSysId = ua_add_folder(server, systemId, "MQTT");
             UA_NodeId opcuaSysId = ua_add_folder(server, systemId, "OpcUa");
             UA_NodeId connectionsSysId = ua_add_folder(server, systemId, "Connections");
 
@@ -6948,6 +10334,66 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 }
             }
 
+            if (!UA_NodeId_isNull(&logicSysId)) {
+                UA_NodeId scriptsSysId = ua_add_folder(server, logicSysId, "Scripts");
+                std::unordered_map<std::string, UA_NodeId> scriptNodes;
+                for (const auto &logicRow : collect_logic_system_tags()) {
+                    const std::string scriptPrefix = "System/Logic/Scripts/";
+                    if (logicRow.name.rfind(scriptPrefix, 0) == 0 && !UA_NodeId_isNull(&scriptsSysId)) {
+                        std::string rest = logicRow.name.substr(scriptPrefix.size());
+                        size_t slash = rest.find('/');
+                        if (slash == std::string::npos) continue;
+                        std::string scriptId = rest.substr(0, slash);
+                        auto it = scriptNodes.find(scriptId);
+                        if (it == scriptNodes.end()) {
+                            UA_NodeId scriptNode = ua_add_folder(server, scriptsSysId, scriptId);
+                            it = scriptNodes.emplace(scriptId, scriptNode).first;
+                        }
+                        if (!UA_NodeId_isNull(&it->second)) {
+                            ua_add_system_variable(server, it->second, systemBindings, logicRow.name, logicRow.datatype, logicRow.value);
+                        }
+                    } else {
+                        ua_add_system_variable(server, logicSysId, systemBindings, logicRow.name, logicRow.datatype, logicRow.value);
+                    }
+                }
+            }
+
+            if (!UA_NodeId_isNull(&mqttSysId)) {
+                UA_NodeId subsSysId = ua_add_folder(server, mqttSysId, "Subscriptions");
+                std::unordered_map<std::string, UA_NodeId> brokerNodes;
+                std::unordered_map<std::string, UA_NodeId> subscriptionNodes;
+                for (const auto &mqttRow : collect_mqtt_system_tags(true)) {
+                    const std::string subPrefix = "System/MQTT/Subscriptions/";
+                    if (mqttRow.name.rfind(subPrefix, 0) == 0 && !UA_NodeId_isNull(&subsSysId)) {
+                        std::string rest = mqttRow.name.substr(subPrefix.size());
+                        size_t slash1 = rest.find('/');
+                        if (slash1 == std::string::npos) continue;
+                        std::string brokerId = rest.substr(0, slash1);
+                        std::string rest2 = rest.substr(slash1 + 1);
+                        size_t slash2 = rest2.find('/');
+                        if (slash2 == std::string::npos) continue;
+                        std::string subId = rest2.substr(0, slash2);
+                        auto bit = brokerNodes.find(brokerId);
+                        if (bit == brokerNodes.end()) {
+                            UA_NodeId brokerNode = ua_add_folder(server, subsSysId, brokerId);
+                            bit = brokerNodes.emplace(brokerId, brokerNode).first;
+                        }
+                        if (UA_NodeId_isNull(&bit->second)) continue;
+                        const std::string subKey = brokerId + "/" + subId;
+                        auto sit = subscriptionNodes.find(subKey);
+                        if (sit == subscriptionNodes.end()) {
+                            UA_NodeId subNode = ua_add_folder(server, bit->second, subId);
+                            sit = subscriptionNodes.emplace(subKey, subNode).first;
+                        }
+                        if (!UA_NodeId_isNull(&sit->second)) {
+                            ua_add_system_variable(server, sit->second, systemBindings, mqttRow.name, mqttRow.datatype, mqttRow.value);
+                        }
+                    } else {
+                        ua_add_system_variable(server, mqttSysId, systemBindings, mqttRow.name, mqttRow.datatype, mqttRow.value);
+                    }
+                }
+            }
+
             if (!UA_NodeId_isNull(&opcuaSysId)) {
                 UA_NodeId syncSysId = ua_add_folder(server, opcuaSysId, "Sync");
                 if (!UA_NodeId_isNull(&syncSysId)) {
@@ -6961,6 +10407,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
 
             if (!UA_NodeId_isNull(&connectionsSysId)) {
                 for (auto &driver : drivers) {
+                    if (is_memory_connection_id(driver.conn.id) || driver.conn.driver == "memory") continue;
                     UA_NodeId connSysId = ua_add_folder(server, connectionsSysId, driver.conn.id);
                     if (UA_NodeId_isNull(&connSysId)) continue;
                     const std::string prefix = "System/Connections/" + driver.conn.id + "/";
@@ -6992,10 +10439,11 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
 
         UA_NodeId connNodeId;
         {
+            const std::string displayName = display_connection_name(conn.id);
             UA_ObjectAttributes cAttr = UA_ObjectAttributes_default;
             cAttr.displayName = UA_LOCALIZEDTEXT_ALLOC(
                 const_cast<char*>("en-US"),
-                const_cast<char*>(conn.id.c_str())
+                const_cast<char*>(displayName.c_str())
             );
 
             const std::string stableConnNodeId = ua_connection_nodeid_string(conn.id);
@@ -7005,7 +10453,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 requestedConnId,
                 bridgeId,
                 UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-                UA_QUALIFIEDNAME(1, const_cast<char*>(conn.id.c_str())),
+                UA_QUALIFIEDNAME(1, const_cast<char*>(displayName.c_str())),
                 UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
                 cAttr, nullptr, &connNodeId
             );
@@ -7020,7 +10468,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         for (auto &tag : driver.tags) {
             const TagConfig &cfg = tag.cfg;
 
-            if (tag.handle < 0 && !tag.handle_deferred) {
+            if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg)) {
                 std::cerr << "OPC UA: skipping tag '" << cfg.logical_name
                           << "' on connection '" << conn.id
                           << "' (invalid handle)\n";
@@ -7364,7 +10812,8 @@ static void ua_write_system_value(const std::string &name, const json &value) {
 
 static void update_system_opcua_values(std::vector<DriverContext> &drivers,
                                        TagTable &tagTable,
-                                       const std::chrono::system_clock::time_point &processStartTime) {
+                                       const std::chrono::system_clock::time_point &processStartTime,
+                                       std::mutex *driverMutex = nullptr) {
     if (!g_uaServer || g_uaSystemBindings.empty()) return;
 
     const auto now = std::chrono::system_clock::now();
@@ -7395,9 +10844,20 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     for (const auto &reporterRow : collect_reporter_system_tags()) {
         ua_write_system_value(reporterRow.name, reporterRow.value);
     }
+    for (const auto &logicRow : collect_logic_system_tags()) {
+        ua_write_system_value(logicRow.name, logicRow.value);
+    }
+    for (const auto &mqttRow : collect_mqtt_system_tags(g_mqtt != nullptr)) {
+        ua_write_system_value(mqttRow.name, mqttRow.value);
+    }
     const bool fullRebuildRequired = g_full_rebuild_required.load(std::memory_order_relaxed);
     for (const auto &syncRow : collect_opcua_sync_system_tags(reloadCopy, fullRebuildRequired)) {
         ua_write_system_value(syncRow.name, syncRow.value);
+    }
+
+    std::unique_lock<std::mutex> lock;
+    if (driverMutex) {
+        lock = std::unique_lock<std::mutex>(*driverMutex);
     }
 
     for (auto &driver : drivers) {
@@ -7415,7 +10875,7 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
             ++total;
             const std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
             auto it = tagTable.find(key);
-            const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+            const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || is_memory_tag(t.cfg) || (it != tagTable.end());
             if (!handle_ok) ++bad_handle;
             if (it == tagTable.end()) {
                 ++missing;
@@ -8219,6 +11679,12 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	        std::string connDir = joinPath(configDir, "connections");
 	        std::string tagDir  = joinPath(configDir, "tags");
 
+	        if (!writeMode && !dumpMode && !dumpJsonMode && !selftestAlarmsConfigDb &&
+	            !mqttMode && config_has_enabled_mqtt_connection(configDir)) {
+	            mqttMode = true;
+	            std::cout << "[mqtt] Auto-enabled MQTT runtime because an MQTT connection is configured.\n";
+	        }
+
 	        std::string adminAuthPath = joinPath(configDir, "admin_auth.json");
 	        load_admin_auth(adminAuthPath);
 	        init_admin_service_token_from_env();
@@ -8284,6 +11750,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
         }
 
         TagTable tagTable;
+        seed_memory_tag_table(drivers, tagTable);
 
         // Load alarms
         if (!load_alarms(configDir, g_alarms)) {
@@ -8316,6 +11783,10 @@ static bool apply_config_bundle_json(const std::string &configDir,
         if (!load_mqtt_inputs(configDir)) {
             std::cerr << "[mqtt-inputs] Failed to load MQTT telemetry inputs; "
                          "continuing without them.\n";
+        }
+
+        if (!load_logic_config(configDir, true)) {
+            std::cerr << "[logic] Failed to load logic config; runtime scaffold will report the error.\n";
         }
 
         if (mqttMode) {
@@ -9497,7 +12968,6 @@ static bool apply_config_bundle_json(const std::string &configDir,
 										      <label class="ws-s-check-pill"><input id="ws-tag-enabled" type="checkbox" class="ws-inline-check" /> Enabled</label>
 										      <label class="ws-s-check-pill"><input id="ws-tag-writable" type="checkbox" class="ws-inline-check" /> Writable</label>
 										      <label class="ws-s-check-pill"><input id="ws-tag-invert" type="checkbox" class="ws-inline-check" /> Invert</label>
-										      <label class="ws-s-check-pill"><input id="ws-tag-mqtt-allowed" type="checkbox" class="ws-inline-check" /> MQTT command allowed</label>
 										    </div>
 										  </div>
 										  <div class="ws-s-form-row">
@@ -9950,7 +13420,8 @@ function withAdminHeaders(baseHeaders = {}) {
 // Workspace (SCADA-style, using opcbridge endpoints)
 // ---------------------------
 const WS_DRIVER_LABELS = {
-    ab_eip: "Allen-Bradley Ethernet/IP"
+    ab_eip: "Allen-Bradley Ethernet/IP",
+    mqtt: "MQTT Broker"
 };
 
 const WS_PLC_TYPE_LABELS = {
@@ -10081,7 +13552,6 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 	    tagEnabled: document.getElementById("ws-tag-enabled"),
 	    tagWritable: document.getElementById("ws-tag-writable"),
 	    tagInvert: document.getElementById("ws-tag-invert"),
-	    tagMqttAllowed: document.getElementById("ws-tag-mqtt-allowed"),
 	    tagScaling: document.getElementById("ws-tag-scaling"),
 	    tagScalingLinear: document.getElementById("ws-tag-scaling-linear"),
 	    tagRawLow: document.getElementById("ws-tag-raw-low"),
@@ -10454,11 +13924,6 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
         if (isDerivedAlias) el.tagWritable.checked = false;
         el.tagWritable.disabled = isDerivedAlias || !canEdit;
     }
-    if (el.tagMqttAllowed) {
-        if (isDerivedAlias) el.tagMqttAllowed.checked = false;
-        el.tagMqttAllowed.disabled = isDerivedAlias || !canEdit;
-    }
-
     if (el.tagDt) {
         if (isDerivedBit) {
             wsFillDatatypeSelect(el.tagDt, "bool");
@@ -10631,8 +14096,6 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 		    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
 		    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
 		    if (el.tagInvert) el.tagInvert.checked = existing ? (existing?.invert === true) : false;
-		    if (el.tagMqttAllowed) el.tagMqttAllowed.checked = existing ? (existing?.mqtt_command_allowed === true) : false;
-
 	    const applyScalingUi = () => {
 	        const mode = String(el.tagScaling?.value || "none").toLowerCase();
 	        if (el.tagScalingLinear) {
@@ -11324,7 +14787,6 @@ const wsRenderTree = () => {
 		    const bitRaw = String(el.tagBit?.value || "").trim();
 		    const bit = bitRaw === "" ? null : Math.trunc(Number(bitRaw));
 		    const writable = Boolean(el.tagWritable?.checked);
-		    const mqtt_command_allowed = Boolean(el.tagMqttAllowed?.checked);
 
 	    if (!cid) {
 	        if (el.tagStatus) el.tagStatus.textContent = "Device is required.";
@@ -11447,7 +14909,6 @@ const wsRenderTree = () => {
 		        next.writable = isDerivedAlias ? false : writable;
 		        if (invert) next.invert = true;
 		        else delete next.invert;
-		        next.mqtt_command_allowed = isDerivedAlias ? false : mqtt_command_allowed;
 		        tags.push(next);
 			    } else {
 				        const idx = tags.findIndex((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName);
@@ -11497,7 +14958,6 @@ const wsRenderTree = () => {
 			        next.writable = isDerivedAlias ? false : writable;
 			        if (invert) next.invert = true;
 			        else delete next.invert;
-			        next.mqtt_command_allowed = isDerivedAlias ? false : mqtt_command_allowed;
 			        tags[idx] = next;
 
 		        // If the user changed the Device, fully move the tag: remove any remaining copies
@@ -14520,6 +17980,13 @@ window.addEventListener("load", startAutoRefresh);
                         jt["connection_id"] = d.conn.id;
                         jt["name"]          = cfg.logical_name;
                         jt["plc_tag_name"]  = cfg.plc_tag_name;
+                        if (is_memory_tag(cfg)) {
+                            jt["source"] = "memory";
+                            if (!cfg.initial_value.empty()) jt["initial_value"] = cfg.initial_value;
+                        } else if (!cfg.source_tag.empty()) {
+                            jt["source_tag"] = cfg.source_tag;
+                            if (cfg.bit >= 0) jt["bit"] = cfg.bit;
+                        }
                         jt["datatype"]      = cfg.datatype;
                         jt["scan_ms"]       = cfg.scan_ms;
                         jt["writable"]      = cfg.writable;
@@ -14635,7 +18102,9 @@ window.addEventListener("load", startAutoRefresh);
 		                    return jt;
 		                }
 
-		                if (!r.enabled) {
+		                if (!r.reason.empty()) {
+		                    jt["reason"] = r.reason;
+		                } else if (!r.enabled) {
 		                    jt["reason"] = "disabled";
 		                } else if (!r.handle_ok) {
 		                    jt["reason"] = "bad_handle";
@@ -14682,6 +18151,20 @@ window.addEventListener("load", startAutoRefresh);
 		                root["ok"] = true;
 		                root["connections"] = json::object();
 		                int rootTotal = 0;
+                        const auto clockRows = collect_clock_system_tags();
+                        const auto hostRows = collect_host_system_tags();
+                        const auto alarmRows = collect_alarm_system_tags();
+                        const auto logicRows = collect_logic_system_tags();
+                        const auto mqttRows = collect_mqtt_system_tags(mqttMode);
+                        ReloadState reloadCopy;
+                        {
+                            std::lock_guard<std::mutex> rlock(g_reloadMutex);
+                            reloadCopy = g_reloadState;
+                        }
+                        const auto opcuaSyncRows = collect_opcua_sync_system_tags(
+                            reloadCopy,
+                            g_full_rebuild_required.load(std::memory_order_relaxed)
+                        );
 
 		                auto now = std::chrono::system_clock::now();
 		                std::lock_guard<std::mutex> lock(driverMutex);
@@ -14700,7 +18183,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        ++total;
 		                        std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
 		                        auto it = tagTable.find(key);
-		                        const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+		                        const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || is_memory_tag(t.cfg) || (it != tagTable.end());
 		                        if (!handle_ok) ++bad_handle;
 		                        if (it == tagTable.end()) {
 		                            ++missing;
@@ -14728,20 +18211,8 @@ window.addEventListener("load", startAutoRefresh);
 		                }
 		                    root["total"] = rootTotal;
 		                    {
-		                        const auto clockRows = collect_clock_system_tags();
-		                        const auto hostRows = collect_host_system_tags();
-		                        const auto alarmRows = collect_alarm_system_tags();
-		                        ReloadState reloadCopy;
-		                        {
-		                            std::lock_guard<std::mutex> rlock(g_reloadMutex);
-		                            reloadCopy = g_reloadState;
-		                        }
-		                        const auto opcuaSyncRows = collect_opcua_sync_system_tags(
-		                            reloadCopy,
-		                            g_full_rebuild_required.load(std::memory_order_relaxed)
-		                        );
 		                        json sys;
-		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(opcuaSyncRows.size()) + static_cast<int>(drivers.size()) * 20;
+		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(logicRows.size()) + static_cast<int>(mqttRows.size()) + static_cast<int>(opcuaSyncRows.size()) + static_cast<int>(drivers.size()) * 20;
 		                        sys["with_snapshot"] = sys["total"];
 		                        sys["good"] = sys["total"];
 		                        sys["bad"] = 0;
@@ -14769,6 +18240,7 @@ window.addEventListener("load", startAutoRefresh);
 								bool is_array_root;
 								bool system;
 								json system_value;
+								std::string reason;
 								int64_t timestamp_ms;
 							};
 
@@ -14783,6 +18255,21 @@ window.addEventListener("load", startAutoRefresh);
 						int limit = req.has_param("limit") ? parse_int_loose(req.get_param_value("limit"), 0) : 0;
 						if (limit < 0) limit = 0;
 						if (limit > 1000) limit = 1000;
+                        const auto clockRows = collect_clock_system_tags();
+                        const auto hostRows = collect_host_system_tags();
+                        const auto alarmRows = collect_alarm_system_tags();
+                        const auto reporterRows = collect_reporter_system_tags();
+                        const auto logicRows = collect_logic_system_tags();
+                        const auto mqttRows = collect_mqtt_system_tags(mqttMode);
+                        ReloadState reloadCopy;
+                        {
+                            std::lock_guard<std::mutex> rlock(g_reloadMutex);
+                            reloadCopy = g_reloadState;
+                        }
+                        const auto syncRows = collect_opcua_sync_system_tags(
+                            reloadCopy,
+                            g_full_rebuild_required.load(std::memory_order_relaxed)
+                        );
 
 		                {
 							std::lock_guard<std::mutex> lock(driverMutex);
@@ -14800,7 +18287,7 @@ window.addEventListener("load", startAutoRefresh);
 											row.writable      = t.cfg.writable;
 											row.has_snapshot  = (it != tagTable.end());
 											row.is_array_root = ((t.handle >= 0) || t.handle_deferred) && (t.cfg.elem_count > 1);
-											row.handle_ok     = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || row.has_snapshot;
+											row.handle_ok     = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || is_memory_tag(t.cfg) || row.has_snapshot;
 											row.system        = false;
 											row.timestamp_ms  = 0;
 											if (row.has_snapshot) {
@@ -14831,6 +18318,43 @@ window.addEventListener("load", startAutoRefresh);
 										rows.push_back(std::move(row));
 									}
 								}
+
+                                for (const auto &m : g_mqttInputs) {
+                                    if (m.write_to_plc) continue;
+                                    if (!filterConn.empty() && m.connection_id != filterConn) continue;
+                                    if (!filterTag.empty() && m.tag_name != filterTag) continue;
+                                    std::string key = make_tag_key(m.connection_id, m.tag_name);
+                                    auto it = tagTable.find(key);
+                                    TagRow row;
+                                    row.connection_id = m.connection_id;
+                                    row.name = m.tag_name;
+                                    row.datatype = m.datatype.empty() ? "string" : m.datatype;
+                                    row.enabled = true;
+                                    row.writable = false;
+                                    row.has_snapshot = (it != tagTable.end());
+                                    row.is_array_root = false;
+                                    row.handle_ok = true;
+                                    row.system = false;
+                                    row.timestamp_ms = 0;
+                                    if (row.has_snapshot) row.snap = it->second;
+                                    if (!mqttMode && !row.has_snapshot) {
+                                        row.reason = "mqtt_disabled";
+                                    }
+                                    if (!search.empty()) {
+                                        std::string statusText = row.has_snapshot && row.snap.quality == 1
+                                            ? "good"
+                                            : (row.reason.empty() ? "missing" : row.reason);
+                                        std::string hay = to_lower_copy(
+                                            m.connection_id + " " +
+                                            m.tag_name + " " +
+                                            m.topic + " " +
+                                            row.datatype + " mqtt raw payload " +
+                                            statusText
+                                        );
+                                        if (hay.find(search) == std::string::npos) continue;
+                                    }
+                                    rows.push_back(std::move(row));
+                                }
 
 								if (!excludeSystem && (filterConn.empty() || filterConn == "_system")) {
 									const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -14872,22 +18396,25 @@ window.addEventListener("load", startAutoRefresh);
 									addSystemRow("System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested);
 									addSystemRow("System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen);
 
-									for (const auto &clockRow : collect_clock_system_tags()) {
+									for (const auto &clockRow : clockRows) {
 										addSystemRow(clockRow.name, clockRow.datatype, clockRow.value);
 									}
-									for (const auto &hostRow : collect_host_system_tags()) {
+									for (const auto &hostRow : hostRows) {
 										addSystemRow(hostRow.name, hostRow.datatype, hostRow.value);
 									}
-									for (const auto &alarmRow : collect_alarm_system_tags()) {
+									for (const auto &alarmRow : alarmRows) {
 										addSystemRow(alarmRow.name, alarmRow.datatype, alarmRow.value);
 									}
-									for (const auto &reporterRow : collect_reporter_system_tags()) {
+									for (const auto &reporterRow : reporterRows) {
 										addSystemRow(reporterRow.name, reporterRow.datatype, reporterRow.value);
 									}
-									for (const auto &syncRow : collect_opcua_sync_system_tags(
-										reloadCopy,
-										g_full_rebuild_required.load(std::memory_order_relaxed)
-									)) {
+									for (const auto &logicRow : logicRows) {
+										addSystemRow(logicRow.name, logicRow.datatype, logicRow.value);
+									}
+									for (const auto &mqttRow : mqttRows) {
+										addSystemRow(mqttRow.name, mqttRow.datatype, mqttRow.value);
+									}
+									for (const auto &syncRow : syncRows) {
 										addSystemRow(syncRow.name, syncRow.datatype, syncRow.value);
 									}
 
@@ -14906,7 +18433,7 @@ window.addEventListener("load", startAutoRefresh);
 											++total;
 											std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
 											auto it = tagTable.find(key);
-											const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || (it != tagTable.end());
+											const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || is_memory_tag(t.cfg) || (it != tagTable.end());
 											if (!handle_ok) ++bad_handle;
 											if (it == tagTable.end()) {
 												++missing;
@@ -15411,6 +18938,9 @@ window.addEventListener("load", startAutoRefresh);
 							}
 
 							for (auto &driver : drivers) {
+								if (is_memory_connection_id(driver.conn.id) || driver.conn.driver == "memory") {
+									continue;
+								}
 								json dstatus;
 
 								if (driver.tags.empty()) {
@@ -15649,6 +19179,9 @@ window.addEventListener("load", startAutoRefresh);
 					}
 
 					resp["status"] = overall;
+					if (conn_obj.empty()) {
+						resp["reason"] = "no monitored PLC connections configured";
+					}
 					resp["connections"] = conn_obj;
 					resp["counts"] = {
 						{"ok", ok_count},
@@ -15835,9 +19368,12 @@ window.addEventListener("load", startAutoRefresh);
 									const std::vector<std::string> tagKeys = {
 										"connection_id",
 										"name",
+										"source",
+										"source_type",
 										"plc_tag_name",
 										"source_tag",
 										"bit",
+										"initial_value",
 										"invert",
 										"datatype",
 										"elem_count",
@@ -15852,7 +19388,6 @@ window.addEventListener("load", startAutoRefresh);
 									"clamp_low",
 									"clamp_high",
 									"scaled_datatype",
-									"mqtt_command_allowed",
 									"log_event_on_change",
 									"log_periodic",
 									"log_periodic_mode",
@@ -16257,6 +19792,7 @@ window.addEventListener("load", startAutoRefresh);
 					// Root-level JSON configs
 					add_file("mqtt.json",        "mqtt");
 					add_file("mqtt_inputs.json", "mqtt_inputs");
+					add_file("logic.json",       "logic");
 					add_file("alarms.json",      "alarms");
 					// alarms.json may be stored only in alarms_config.db (canonical store).
 					{
@@ -16495,6 +20031,16 @@ window.addEventListener("load", startAutoRefresh);
 							}
 							break;
 
+						case ConfigFileKind::LOGIC:
+							if (!validate_logic_json(newText, validateError)) {
+								resp["ok"] = false;
+								resp["error"] = validateError;
+								res.status = 400;
+								res.set_content(resp.dump(2), "application/json");
+								return;
+							}
+							break;
+
 						case ConfigFileKind::ALARMS:
 							if (!validate_alarms_json(newText, validateError)) {
 								resp["ok"] = false;
@@ -16585,6 +20131,9 @@ window.addEventListener("load", startAutoRefresh);
 
 						resp["ok"]   = true;
 						resp["path"] = relPath;
+						if (kind == ConfigFileKind::LOGIC) {
+							resp["logic_reloaded"] = load_logic_config(configDir, true);
+						}
 						res.status   = 200;
 						res.set_content(resp.dump(2), "application/json");
 
@@ -16637,6 +20186,7 @@ window.addEventListener("load", startAutoRefresh);
 						case ConfigFileKind::TAGS:
 						case ConfigFileKind::MQTT:
 						case ConfigFileKind::MQTT_INPUTS:
+						case ConfigFileKind::LOGIC:
 						case ConfigFileKind::ALARMS:
 						case ConfigFileKind::TLS_CERT:
 							break; // allowed
@@ -17299,10 +20849,12 @@ window.addEventListener("load", startAutoRefresh);
 							}
 							const bool hasPlc = t.contains("plc_tag_name") && t["plc_tag_name"].is_string() && !t["plc_tag_name"].get<std::string>().empty();
 							const bool hasDerived = (t.contains("source_tag") && t["source_tag"].is_string() && !t["source_tag"].get<std::string>().empty());
-							if (!hasPlc && !hasDerived) {
+							const std::string sourceKind = to_lower_copy(trim_copy(json_get_string_loose(t, "source_type", json_get_string_loose(t, "source", std::string{}))));
+							const bool hasMemory = (sourceKind == "memory");
+							if (!hasPlc && !hasDerived && !hasMemory) {
 								throw std::runtime_error("Tag '" +
 														 t.value("name", std::string{"<unnamed>"}) +
-														 "' must contain either 'plc_tag_name' or 'source_tag'.");
+														 "' must contain 'plc_tag_name', 'source_tag', or source='memory'.");
 							}
 
 						json tagCopy = t;
@@ -17509,8 +21061,10 @@ window.addEventListener("load", startAutoRefresh);
 							if (elemCount <= 1) base.erase("elem_count");
 							else base["elem_count"] = std::max(1, elemCount);
 
+							const std::string sourceRaw = trim_copy(csv_get(row, "source"));
+							const bool isMemory = (to_lower_copy(sourceRaw) == "memory");
 							const std::string sourceTag = trim_copy(!trim_copy(csv_get(row, "source_tag")).empty() ? csv_get(row, "source_tag") :
-								(!trim_copy(csv_get(row, "source")).empty() ? csv_get(row, "source") : std::string{}));
+								(isMemory ? std::string{} : sourceRaw));
 							const int bit = parse_int_loose(csv_get(row, "bit"), -1);
 							const bool isDerivedBit = !sourceTag.empty() && bit >= 0;
 							const bool isDerivedAlias = !sourceTag.empty() && !isDerivedBit;
@@ -17519,21 +21073,36 @@ window.addEventListener("load", startAutoRefresh);
 								(!trim_copy(csv_get(row, "plc_tag")).empty() ? csv_get(row, "plc_tag") : csv_get(row, "plc_tagname")));
 							const std::string datatype = trim_copy(csv_get(row, "datatype"));
 
-							if (isDerivedBit) {
+							if (isMemory) {
+								base.erase("plc_tag_name");
+								base.erase("source_tag");
+								base.erase("bit");
+								base.erase("elem_count");
+								base["source"] = "memory";
+								if (!datatype.empty()) base["datatype"] = datatype;
+								const std::string initialValue = trim_copy(csv_get(row, "initial_value"));
+								if (!initialValue.empty()) base["initial_value"] = initialValue;
+								else base.erase("initial_value");
+							} else if (isDerivedBit) {
+								base.erase("source");
+								base.erase("initial_value");
 								base.erase("plc_tag_name");
 								base.erase("elem_count");
 								base["source_tag"] = sourceTag;
 								base["bit"] = bit;
 								base["datatype"] = (to_lower_copy(datatype) == "bool") ? datatype : std::string("bool");
 							} else if (isDerivedAlias) {
+								base.erase("source");
+								base.erase("initial_value");
 								base.erase("plc_tag_name");
 								base.erase("elem_count");
 								base["source_tag"] = sourceTag;
 								base.erase("bit");
 								if (!datatype.empty()) base["datatype"] = datatype;
 								base["writable"] = false;
-								base["mqtt_command_allowed"] = false;
 							} else {
+								base.erase("source");
+								base.erase("initial_value");
 								base.erase("source_tag");
 								base.erase("bit");
 								if (!plcTagName.empty()) base["plc_tag_name"] = plcTagName;
@@ -17543,16 +21112,14 @@ window.addEventListener("load", startAutoRefresh);
 							const std::string scanRaw = !trim_copy(csv_get(row, "scan_ms")).empty() ? csv_get(row, "scan_ms") :
 								(!trim_copy(csv_get(row, "scan")).empty() ? csv_get(row, "scan") : csv_get(row, "scanms"));
 							const int scan = parse_int_loose(scanRaw, -1);
-							if (scan < 0) base.erase("scan_ms");
+							if (isMemory || scan < 0) base.erase("scan_ms");
 							else base["scan_ms"] = std::max(0, scan);
 
 							base["enabled"] = parse_bool_loose(csv_get(row, "enabled"), true);
 							base["writable"] = parse_bool_loose(csv_get(row, "writable"), false);
-							base["mqtt_command_allowed"] = parse_bool_loose(!trim_copy(csv_get(row, "mqtt_command_allowed")).empty() ? csv_get(row, "mqtt_command_allowed") :
-								(!trim_copy(csv_get(row, "mqtt_allowed")).empty() ? csv_get(row, "mqtt_allowed") : csv_get(row, "mqtt_command")), false);
-
 							const std::string scaling = to_lower_copy(trim_copy(csv_get(row, "scaling")));
-							if (scaling == "none" || scaling == "linear") base["scaling"] = scaling;
+							if (isMemory) base.erase("scaling");
+							else if (scaling == "none" || scaling == "linear") base["scaling"] = scaling;
 							else if (!scaling.empty()) base.erase("scaling");
 
 							bool okDouble = false;
@@ -18933,24 +22500,14 @@ window.addEventListener("load", startAutoRefresh);
 	        std::cout << "Configured " << drivers.size()
 	                  << " connection(s) with tags. Entering poll loop (Ctrl+C to exit)...\n";
 
-	        struct UaUpdate {
-	            std::string conn_id;
-	            std::string logical_name;
-	            TagValue value;
-	        };
-
-	        struct MqttPublishJob {
-	            TagSnapshot snap;
-	            TagSnapshot prev;
-	            bool hadPrev = false;
-	        };
-
 	        std::mutex uaQueueMutex;
 	        std::deque<UaUpdate> uaQueue;
 	        auto lastSystemUaUpdate = std::chrono::steady_clock::time_point{};
 
 	        std::mutex mqttQueueMutex;
 	        std::deque<MqttPublishJob> mqttQueue;
+	        auto lastSystemMqttPublish = std::chrono::steady_clock::time_point{};
+	        auto lastLogicConfigCheck = std::chrono::steady_clock::time_point{};
 
 	        struct PollTagItem {
 	            TagConfig cfg;
@@ -20060,6 +23617,85 @@ window.addEventListener("load", startAutoRefresh);
 	        g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
 
 	        while (true) {
+	            auto logicNow = std::chrono::steady_clock::now();
+	            if (lastLogicConfigCheck.time_since_epoch().count() == 0 ||
+	                logicNow - lastLogicConfigCheck >= std::chrono::seconds(2)) {
+	                load_logic_config(configDir, false);
+	                lastLogicConfigCheck = logicNow;
+	            }
+	            {
+	                std::set<std::string> tagKeys;
+	                std::unordered_map<std::string, TagSnapshot> logicTagSnapshots;
+	                {
+	                    std::unique_lock<std::mutex> logicDriverLock(driverMutex);
+	                    // Include all configured tags (even if they do not have a current snapshot yet).
+	                    for (const auto &driver : drivers) {
+	                        for (const auto &t : driver.tags) {
+	                            const std::string name = t.cfg.logical_name;
+	                            if (name.empty()) continue;
+	                            tagKeys.insert(make_tag_key(driver.conn.id, name));
+	                        }
+	                    }
+	                    // Include MQTT subscription payload tags (even if no message has been received yet).
+	                    for (const auto &m : g_mqttInputs) {
+	                        if (m.write_to_plc) continue;
+	                        if (m.connection_id.empty() || m.tag_name.empty()) continue;
+	                        tagKeys.insert(make_tag_key(m.connection_id, m.tag_name));
+	                    }
+	                    for (const auto &kv : tagTable) {
+	                        tagKeys.insert(kv.first);
+	                        logicTagSnapshots[kv.first] = kv.second;
+	                    }
+	                }
+	                const auto systemRows = [&]() {
+	                    std::vector<SystemTagDef> rows;
+	                    auto appendRows = [&](std::vector<SystemTagDef> next) {
+	                        rows.insert(rows.end(), next.begin(), next.end());
+	                    };
+	                    const int64_t uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
+	                        std::chrono::system_clock::now() - processStartTime
+	                    ).count();
+	                    ReloadState reloadCopy;
+	                    {
+	                        std::lock_guard<std::mutex> rlock(g_reloadMutex);
+	                        reloadCopy = g_reloadState;
+	                    }
+	                    rows.push_back({"System/Bridge/UptimeSeconds", "int64", uptime_sec});
+	                    rows.push_back({"System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION)});
+	                    rows.push_back({"System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested});
+	                    rows.push_back({"System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen});
+	                    appendRows(collect_clock_system_tags());
+	                    appendRows(collect_host_system_tags());
+	                    appendRows(collect_alarm_system_tags());
+	                    appendRows(collect_reporter_system_tags());
+	                    appendRows(collect_logic_system_tags());
+	                    appendRows(collect_mqtt_system_tags(mqttMode));
+	                    appendRows(collect_opcua_sync_system_tags(
+	                        reloadCopy,
+	                        g_full_rebuild_required.load(std::memory_order_relaxed)
+	                    ));
+	                    return rows;
+	                }();
+	                std::set<std::string> systemNames;
+	                std::unordered_map<std::string, SystemTagDef> systemSnapshots;
+	                for (const auto &row : systemRows) {
+	                    if (row.name.empty()) continue;
+	                    systemNames.insert(row.name);
+	                    systemSnapshots[row.name] = row;
+	                }
+	                logic_run_validation_cycle(
+	                    tagKeys,
+	                    systemNames,
+	                    logicTagSnapshots,
+	                    systemSnapshots,
+	                    &drivers,
+	                    &tagTable,
+	                    &driverMutex,
+	                    &uaQueue,
+	                    &mqttQueue
+	                );
+	            }
+
 	            // Handle /reload requests (triggered by the HTTP thread) in the main thread.
 		            bool doReload = false;
 		            uint64_t requestedGen = 0;
@@ -20325,8 +23961,7 @@ window.addEventListener("load", startAutoRefresh);
 	                auto uaNow = std::chrono::steady_clock::now();
 	                if (lastSystemUaUpdate.time_since_epoch().count() == 0 ||
 	                    uaNow - lastSystemUaUpdate >= std::chrono::milliseconds(250)) {
-	                    std::lock_guard<std::mutex> lock(driverMutex);
-	                    update_system_opcua_values(drivers, tagTable, processStartTime);
+	                    update_system_opcua_values(drivers, tagTable, processStartTime, &driverMutex);
 	                    lastSystemUaUpdate = uaNow;
 	                }
 	            }
@@ -20349,6 +23984,59 @@ window.addEventListener("load", startAutoRefresh);
 	                        connHadMqttPublish[j.snap.connection_id] = true;
 	                    }
 	                }
+
+	                auto mqttSysNow = std::chrono::steady_clock::now();
+	                if ((g_mqttCfg.publish_system_tags || g_mqttCfg.publish_memory_tags) &&
+	                    (lastSystemMqttPublish.time_since_epoch().count() == 0 ||
+	                     mqttSysNow - lastSystemMqttPublish >= std::chrono::milliseconds(250))) {
+	                    if (g_mqttCfg.publish_system_tags) {
+	                        const auto nowSys = std::chrono::system_clock::now();
+	                        const int64_t uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
+	                            nowSys - processStartTime
+	                        ).count();
+	                        ReloadState reloadCopy;
+	                        {
+	                            std::lock_guard<std::mutex> rlock(g_reloadMutex);
+	                            reloadCopy = g_reloadState;
+	                        }
+	                        std::vector<SystemTagDef> sysRows;
+	                        sysRows.push_back({"System/Bridge/UptimeSeconds", "int64", uptime_sec});
+	                        sysRows.push_back({"System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION)});
+	                        sysRows.push_back({"System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested});
+	                        sysRows.push_back({"System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen});
+	                        auto appendRows = [&](std::vector<SystemTagDef> rows) {
+	                            sysRows.insert(sysRows.end(), rows.begin(), rows.end());
+	                        };
+	                        appendRows(collect_clock_system_tags());
+	                        appendRows(collect_host_system_tags());
+	                        appendRows(collect_alarm_system_tags());
+	                        appendRows(collect_reporter_system_tags());
+	                        appendRows(collect_logic_system_tags());
+	                        appendRows(collect_mqtt_system_tags(mqttMode));
+	                        appendRows(collect_opcua_sync_system_tags(
+	                            reloadCopy,
+	                            g_full_rebuild_required.load(std::memory_order_relaxed)
+	                        ));
+	                        for (const auto &row : sysRows) {
+	                            mqtt_publish_system_tag(row);
+	                        }
+	                    }
+	                    if (g_mqttCfg.publish_memory_tags) {
+	                        std::vector<TagSnapshot> memorySnaps;
+	                        {
+	                            std::lock_guard<std::mutex> lock(driverMutex);
+	                            for (const auto &kv : tagTable) {
+	                                if (is_memory_connection_id(kv.second.connection_id)) {
+	                                    memorySnaps.push_back(kv.second);
+	                                }
+	                            }
+	                        }
+	                        for (const auto &snap : memorySnaps) {
+	                            mqtt_publish_snapshot(snap, nullptr);
+	                        }
+	                    }
+	                    lastSystemMqttPublish = mqttSysNow;
+	                }
 	            }
 
 	            if (mqttMode && g_mqttCfg.publish_conn_json && !connHadMqttPublish.empty()) {
@@ -20361,14 +24049,6 @@ window.addEventListener("load", startAutoRefresh);
 
 	            if (g_uaServer) {
 	                UA_Server_run_iterate(g_uaServer, false);
-	            }
-
-	            if (mqttMode && g_mqtt) {
-	                int rc = mosquitto_loop(g_mqtt, 0 /* timeout ms */, 1 /* max packets */);
-	                if (rc != MOSQ_ERR_SUCCESS && rc != MOSQ_ERR_NO_CONN) {
-	                    std::cerr << "[mqtt] mosquitto_loop error: "
-	                              << mosquitto_strerror(rc) << "\n";
-	                }
 	            }
 
 	            std::this_thread::sleep_for(std::chrono::milliseconds(50));
