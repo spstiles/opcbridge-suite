@@ -997,6 +997,7 @@ const state = {
 
 const DRIVER_LABELS = {
   ab_eip: 'Allen-Bradley Ethernet/IP',
+  modbus_tcp: 'Modbus TCP',
   mqtt: 'MQTT Broker'
 };
 
@@ -11368,8 +11369,18 @@ function isMqttConnectionObj(obj) {
   return String(obj?.driver || '').trim() === 'mqtt';
 }
 
+function isModbusDriver(driver) {
+  const d = String(driver || '').trim().toLowerCase();
+  return d === 'modbus_tcp' || d === 'modbus-tcp';
+}
+
 function setRowVisible(row, visible) {
   if (row) row.style.display = visible ? '' : 'none';
+}
+
+function setFormRowLabel(row, labelText) {
+  const label = row?.querySelector?.('label');
+  if (label) label.textContent = String(labelText || '');
 }
 
 function mqttSettingsFromConnection(obj) {
@@ -11438,7 +11449,9 @@ function buildMqttConnectionConfig({ id, description = '', existing = {}, host, 
 function applyDeviceDriverUi(prefix) {
   const isEdit = prefix === 'edit';
   const driverEl = isEdit ? els.editDevDriver : els.newDevDriver;
-  const isMqtt = String(driverEl?.value || '').trim() === 'mqtt';
+  const driver = String(driverEl?.value || '').trim();
+  const isMqtt = driver === 'mqtt';
+  const isModbus = isModbusDriver(driver);
   const plcRows = isEdit
     ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
     : [els.newDevGatewayRow, els.newDevPathRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
@@ -11447,6 +11460,14 @@ function applyDeviceDriverUi(prefix) {
     : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttCertFileRow, els.newDevMqttKeyFileRow, els.newDevMqttPublishPatternsRow, els.newDevMqttPublishModeRow, els.newDevMqttPublishIntervalRow, els.newDevMqttPublishMinRow, els.newDevMqttTestRow];
 
   plcRows.forEach((row) => setRowVisible(row, !isMqtt));
+  setRowVisible(isEdit ? els.editDevSlotRow : els.newDevSlotRow, !isMqtt && !isModbus);
+  setRowVisible(isEdit ? els.editDevPlcTypeRow : els.newDevPlcTypeRow, !isMqtt && !isModbus);
+  setFormRowLabel(isEdit ? els.editDevGatewayRow : els.newDevGatewayRow, isModbus ? 'Server' : 'Gateway');
+  setFormRowLabel(isEdit ? els.editDevPathRow : els.newDevPathRow, isModbus ? 'Unit ID' : 'Path');
+  const gatewayEl = isEdit ? els.editDevGateway : els.newDevGateway;
+  const pathEl = isEdit ? els.editDevPath : els.newDevPath;
+  if (gatewayEl) gatewayEl.placeholder = isModbus ? '192.0.2.50:502' : '192.0.2.10';
+  if (pathEl) pathEl.placeholder = isModbus ? '1' : '1,0';
   mqttRows.forEach((row) => setRowVisible(row, isMqtt));
 }
 
@@ -13383,9 +13404,9 @@ async function saveEditedDeviceFromModal() {
   }
   const driver = String(els.editDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.editDevGateway?.value || '').trim();
-  const pathVal = String(els.editDevPath?.value || '').trim() || '1,0';
+  const pathVal = String(els.editDevPath?.value || '').trim() || (isModbusDriver(driver) ? '1' : '1,0');
   const slot = Number(String(els.editDevSlot?.value || '0').trim() || '0') || 0;
-  const plc_type = String(els.editDevPlcType?.value || '').trim() || 'lgx';
+  const plc_type = isModbusDriver(driver) ? 'modbus_tcp' : (String(els.editDevPlcType?.value || '').trim() || 'lgx');
 
   const existing = state.connObjCache?.get?.(relPath) || {};
   const description = String(existing?.description || '').trim();
@@ -13835,9 +13856,9 @@ async function createNewDeviceFromWorkspace() {
 
   const driver = String(els.newDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.newDevGateway?.value || '').trim();
-  const pathVal = String(els.newDevPath?.value || '').trim() || '1,0';
+  const pathVal = String(els.newDevPath?.value || '').trim() || (isModbusDriver(driver) ? '1' : '1,0');
   const slot = Number(String(els.newDevSlot?.value || '0').trim() || '0') || 0;
-  const plc_type = String(els.newDevPlcType?.value || '').trim() || 'lgx';
+  const plc_type = isModbusDriver(driver) ? 'modbus_tcp' : (String(els.newDevPlcType?.value || '').trim() || 'lgx');
 
   // opcbridge connection config requires `id` (not `connection_id`).
   let obj;
