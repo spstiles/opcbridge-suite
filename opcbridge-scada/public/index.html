@@ -1109,12 +1109,10 @@
 
 		    <section id="tab-historian" class="panel">
 		      <h2>Historian</h2>
-		      <div class="hint">View historian health and query numeric tag history.</div>
+		      <div class="hint">View historian health and query numeric tag history. Historian tag setup is managed from Workspace tag properties.</div>
 
 		      <div class="row-actions" style="margin: 0 0 10px 0;">
 		        <button class="btn" id="historianRefreshBtn" type="button">Refresh</button>
-		        <button class="btn" id="historianAddTagBtn" type="button">Add Tag</button>
-		        <button class="btn" id="historianSaveConfigBtn" type="button">Save Config</button>
 		        <button class="btn" id="historianRestartBtn" type="button">Apply Config</button>
 		        <button class="btn primary" id="historianRunQueryBtn" type="button">Run Query</button>
 		        <div class="hint mono" id="historianStatus" style="margin-left: auto;"></div>
@@ -1182,8 +1180,9 @@
 		      </div>
 
 		      <div class="card" style="margin-top: 10px;">
-		        <div class="card-title">Configured Tags</div>
+		        <div class="card-title">Historized Tags</div>
 		        <div class="card-body">
+		          <div class="hint" style="margin-bottom: 8px;">Read-only list of tags with Historize enabled in Workspace.</div>
 		          <div class="table-wrap">
 		            <table class="table">
 		              <thead>
@@ -1193,7 +1192,6 @@
 		                  <th>Enabled</th>
 		                  <th>Interval</th>
 		                  <th>Mode</th>
-		                  <th>Actions</th>
 		                </tr>
 		              </thead>
 		              <tbody id="historianTagsTbody"></tbody>
@@ -1366,11 +1364,24 @@
 	              </div>
 	            </div>
 	            <div class="form-row"><label>Datatype</label><select id="editTagDatatype"></select></div>
-	            <div class="form-row"><label>Scan (ms)</label><input id="editTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
-	            <div class="form-row"><label>Elem Count</label><input id="editTagElemCount" type="number" min="1" step="1" placeholder="1" /></div>
+            <div class="form-row"><label>Scan (ms)</label><input id="editTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
+            <div class="form-row"><label>Elem Count</label><input id="editTagElemCount" type="number" min="1" step="1" placeholder="1" /></div>
             <div class="form-row">
-              <label>Options</label>
-              <div class="check-row">
+              <label>Historian</label>
+              <div style="display:grid; grid-template-columns: minmax(150px, .8fr) minmax(130px, .6fr) minmax(190px, .8fr); gap: 10px; justify-items: start; align-items: center;">
+                <label style="display:flex; align-items:center; gap: 8px; margin: 0;"><input id="editTagHistorianEnabled" type="checkbox" class="inline-check" /> Historize</label>
+                <select id="editTagHistorianMode">
+                  <option value="periodic">Periodic</option>
+                </select>
+                <label style="display:flex; align-items:center; gap: 8px; margin: 0;">
+                  <span class="small">Interval sec</span>
+                  <input id="editTagHistorianInterval" type="number" min="1" step="1" placeholder="60" style="width: 90px;" />
+                </label>
+              </div>
+            </div>
+	            <div class="form-row">
+	              <label>Options</label>
+	              <div class="check-row">
                 <label class="check-pill"><input id="editTagEnabled" type="checkbox" class="inline-check" /> Enabled</label>
                 <label class="check-pill"><input id="editTagWritable" type="checkbox" class="inline-check" /> Writable</label>
                 <label class="check-pill"><input id="editTagInvert" type="checkbox" class="inline-check" /> Invert</label>

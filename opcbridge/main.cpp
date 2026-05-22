@@ -1414,6 +1414,79 @@ static std::vector<SystemTagDef> collect_reporter_system_tags() {
     return cached;
 }
 
+static std::vector<SystemTagDef> historian_default_system_tags(bool connected = false) {
+    return {
+        {"System/Historian/RuntimeConnected", "bool", connected},
+        {"System/Historian/Ok", "bool", false},
+        {"System/Historian/DbConnected", "bool", false},
+        {"System/Historian/Version", "string", std::string{}},
+        {"System/Historian/SuiteVersion", "string", std::string{}},
+        {"System/Historian/EnabledTags", "int32", 0},
+        {"System/Historian/QueueDepth", "uint64", static_cast<uint64_t>(0)},
+        {"System/Historian/QueueLimit", "uint64", static_cast<uint64_t>(0)},
+        {"System/Historian/DroppedSamples", "uint64", static_cast<uint64_t>(0)},
+        {"System/Historian/InsertedSamples", "uint64", static_cast<uint64_t>(0)},
+        {"System/Historian/LastSampleAgeMs", "int64", -1},
+        {"System/Historian/LastSnapshotAgeMs", "int64", -1},
+        {"System/Historian/LastInsertAgeMs", "int64", -1},
+        {"System/Historian/LastError", "string", std::string{}}
+    };
+}
+
+static std::vector<SystemTagDef> collect_historian_system_tags() {
+    static std::mutex cacheMutex;
+    static std::chrono::steady_clock::time_point lastPoll;
+    static std::vector<SystemTagDef> cached = historian_default_system_tags(false);
+
+    const auto nowSteady = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        if (lastPoll.time_since_epoch().count() != 0 &&
+            nowSteady - lastPoll < std::chrono::seconds(2)) {
+            return cached;
+        }
+        lastPoll = nowSteady;
+    }
+
+    std::vector<SystemTagDef> next = historian_default_system_tags(false);
+    try {
+        httplib::Client cli("127.0.0.1", 8096);
+        cli.set_connection_timeout(0, 200000);
+        cli.set_read_timeout(0, 200000);
+        cli.set_write_timeout(0, 200000);
+        auto res = cli.Get("/health");
+        if (res && res->status == 200) {
+            json j = json::parse(res->body);
+            const int64_t nowMs = system_wall_now_ms();
+            const int64_t lastSampleMs = json_i64_at(j, {"last_sample_ms"}, 0);
+            const int64_t lastSnapshotMs = json_i64_at(j, {"last_snapshot_ms"}, 0);
+            const int64_t lastInsertMs = json_i64_at(j, {"last_insert_ms"}, 0);
+            next = {
+                {"System/Historian/RuntimeConnected", "bool", true},
+                {"System/Historian/Ok", "bool", j.value("ok", false)},
+                {"System/Historian/DbConnected", "bool", j.value("db_connected", false)},
+                {"System/Historian/Version", "string", j.value("version", std::string{})},
+                {"System/Historian/SuiteVersion", "string", j.value("suite_version", std::string{})},
+                {"System/Historian/EnabledTags", "int32", static_cast<int>(json_i64_at(j, {"enabled_tags"}, 0))},
+                {"System/Historian/QueueDepth", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(j, {"queue_depth"}, 0)))},
+                {"System/Historian/QueueLimit", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(j, {"queue_limit"}, 0)))},
+                {"System/Historian/DroppedSamples", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(j, {"dropped_samples"}, 0)))},
+                {"System/Historian/InsertedSamples", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(j, {"inserted_samples"}, 0)))},
+                {"System/Historian/LastSampleAgeMs", "int64", lastSampleMs > 0 ? (nowMs - lastSampleMs) : -1},
+                {"System/Historian/LastSnapshotAgeMs", "int64", lastSnapshotMs > 0 ? (nowMs - lastSnapshotMs) : -1},
+                {"System/Historian/LastInsertAgeMs", "int64", lastInsertMs > 0 ? (nowMs - lastInsertMs) : -1},
+                {"System/Historian/LastError", "string", j.value("last_error", std::string{})}
+            };
+        }
+    } catch (...) {
+        next = historian_default_system_tags(false);
+    }
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cached = next;
+    return cached;
+}
+
 // -----------------------------
 // Forward declarations (MQTT telemetry helpers)
 // -----------------------------
@@ -3450,6 +3523,14 @@ static std::string csv_get(const std::map<std::string, std::string> &row, const 
         if (csv_normalize_header_key(kv.first) == want) return kv.second;
     }
     return {};
+}
+
+static bool csv_has_header(const CsvTable &table, const std::string &key) {
+    const std::string want = csv_normalize_header_key(key);
+    for (const auto &h : table.headers) {
+        if (csv_normalize_header_key(h) == want) return true;
+    }
+    return false;
 }
 
 static bool parse_bool_loose(const std::string &value, bool def) {
@@ -10246,6 +10327,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
             UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
             UA_NodeId reporterSysId = ua_add_folder(server, systemId, "Reporter");
+            UA_NodeId historianSysId = ua_add_folder(server, systemId, "Historian");
             UA_NodeId logicSysId = ua_add_folder(server, systemId, "Logic");
             UA_NodeId mqttSysId = ua_add_folder(server, systemId, "MQTT");
             UA_NodeId opcuaSysId = ua_add_folder(server, systemId, "OpcUa");
@@ -10331,6 +10413,12 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                     } else {
                         ua_add_system_variable(server, reporterSysId, systemBindings, reporterRow.name, reporterRow.datatype, reporterRow.value);
                     }
+                }
+            }
+
+            if (!UA_NodeId_isNull(&historianSysId)) {
+                for (const auto &historianRow : collect_historian_system_tags()) {
+                    ua_add_system_variable(server, historianSysId, systemBindings, historianRow.name, historianRow.datatype, historianRow.value);
                 }
             }
 
@@ -10843,6 +10931,9 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     }
     for (const auto &reporterRow : collect_reporter_system_tags()) {
         ua_write_system_value(reporterRow.name, reporterRow.value);
+    }
+    for (const auto &historianRow : collect_historian_system_tags()) {
+        ua_write_system_value(historianRow.name, historianRow.value);
     }
     for (const auto &logicRow : collect_logic_system_tags()) {
         ua_write_system_value(logicRow.name, logicRow.value);
@@ -18082,7 +18173,23 @@ window.addEventListener("load", startAutoRefresh);
 		                res.set_content(root.dump(2), "application/json");
 		            });
 
-		            auto tag_row_to_json = [](const auto &r) {
+					struct TagRow {
+						std::string connection_id;
+						std::string name;
+						std::string datatype;
+						TagSnapshot snap;
+						bool enabled = true;
+						bool writable = false;
+						bool handle_ok = true;
+						bool has_snapshot = false;
+						bool is_array_root = false;
+						bool system = false;
+						json system_value;
+						std::string reason;
+						int64_t timestamp_ms = 0;
+					};
+
+		            auto tag_row_to_json = [](const TagRow &r) {
 		                json jt;
 		                jt["connection_id"] = r.connection_id;
 		                jt["name"]          = r.name;
@@ -18154,6 +18261,8 @@ window.addEventListener("load", startAutoRefresh);
                         const auto clockRows = collect_clock_system_tags();
                         const auto hostRows = collect_host_system_tags();
                         const auto alarmRows = collect_alarm_system_tags();
+                        const auto reporterRows = collect_reporter_system_tags();
+                        const auto historianRows = collect_historian_system_tags();
                         const auto logicRows = collect_logic_system_tags();
                         const auto mqttRows = collect_mqtt_system_tags(mqttMode);
                         ReloadState reloadCopy;
@@ -18212,7 +18321,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    root["total"] = rootTotal;
 		                    {
 		                        json sys;
-		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(logicRows.size()) + static_cast<int>(mqttRows.size()) + static_cast<int>(opcuaSyncRows.size()) + static_cast<int>(drivers.size()) * 20;
+		                        sys["total"] = 4 + static_cast<int>(clockRows.size()) + static_cast<int>(hostRows.size()) + static_cast<int>(alarmRows.size()) + static_cast<int>(reporterRows.size()) + static_cast<int>(historianRows.size()) + static_cast<int>(logicRows.size()) + static_cast<int>(mqttRows.size()) + static_cast<int>(opcuaSyncRows.size()) + static_cast<int>(drivers.size()) * 20;
 		                        sys["with_snapshot"] = sys["total"];
 		                        sys["good"] = sys["total"];
 		                        sys["bad"] = 0;
@@ -18228,22 +18337,6 @@ window.addEventListener("load", startAutoRefresh);
 
 		            // /tags
 		            svr.Get("/tags", [&](const httplib::Request &req, httplib::Response &res) {
-							struct TagRow {
-								std::string connection_id;
-								std::string name;
-								std::string datatype;
-								TagSnapshot snap;
-								bool enabled;
-								bool writable;
-								bool handle_ok;
-								bool has_snapshot;
-								bool is_array_root;
-								bool system;
-								json system_value;
-								std::string reason;
-								int64_t timestamp_ms;
-							};
-
 						std::vector<TagRow> rows;
 						const std::string filterConn = req.has_param("connection_id") ? req.get_param_value("connection_id") : "";
 						const std::string filterTag = req.has_param("tag") ? req.get_param_value("tag") : "";
@@ -18259,6 +18352,7 @@ window.addEventListener("load", startAutoRefresh);
                         const auto hostRows = collect_host_system_tags();
                         const auto alarmRows = collect_alarm_system_tags();
                         const auto reporterRows = collect_reporter_system_tags();
+                        const auto historianRows = collect_historian_system_tags();
                         const auto logicRows = collect_logic_system_tags();
                         const auto mqttRows = collect_mqtt_system_tags(mqttMode);
                         ReloadState reloadCopy;
@@ -18408,6 +18502,9 @@ window.addEventListener("load", startAutoRefresh);
 									for (const auto &reporterRow : reporterRows) {
 										addSystemRow(reporterRow.name, reporterRow.datatype, reporterRow.value);
 									}
+									for (const auto &historianRow : historianRows) {
+										addSystemRow(historianRow.name, historianRow.datatype, historianRow.value);
+									}
 									for (const auto &logicRow : logicRows) {
 										addSystemRow(logicRow.name, logicRow.datatype, logicRow.value);
 									}
@@ -18487,6 +18584,22 @@ window.addEventListener("load", startAutoRefresh);
 							}
 
 		                json root;
+						std::sort(rows.begin(), rows.end(), [](const TagRow &a, const TagRow &b) {
+							const bool aSystemLike = !a.connection_id.empty() && a.connection_id[0] == '_';
+							const bool bSystemLike = !b.connection_id.empty() && b.connection_id[0] == '_';
+							if (aSystemLike != bSystemLike) return !aSystemLike;
+							const std::string ac = to_lower_copy(a.connection_id);
+							const std::string bc = to_lower_copy(b.connection_id);
+							if (ac != bc) return ac < bc;
+							const std::string an = to_lower_copy(a.name);
+							const std::string bn = to_lower_copy(b.name);
+							if (an != bn) return an < bn;
+							const std::string ad = to_lower_copy(a.datatype);
+							const std::string bd = to_lower_copy(b.datatype);
+							if (ad != bd) return ad < bd;
+							if (a.connection_id != b.connection_id) return a.connection_id < b.connection_id;
+							return a.name < b.name;
+						});
 		                root["tags"] = json::array();
 		                root["total"] = rows.size();
 		                root["offset"] = offset;
@@ -18503,6 +18616,195 @@ window.addEventListener("load", startAutoRefresh);
 							root["tags"].push_back(tag_row_to_json(rows[i]));
 						}
 
+		                res.set_content(root.dump(), "application/json");
+		            });
+
+		            // /tags/query
+		            // Body: { "tags": [ { "connection_id": "...", "name": "..." }, ... ] }
+		            // Lightweight live refresh for the rows currently visible in SCADA.
+		            svr.Post("/tags/query", [&](const httplib::Request &req, httplib::Response &res) {
+		                json root;
+		                root["tags"] = json::array();
+		                try {
+		                    const json body = json::parse(req.body.empty() ? "{}" : req.body);
+		                    const json items = body.contains("tags") && body["tags"].is_array()
+		                        ? body["tags"]
+		                        : json::array();
+		                    std::unordered_set<std::string> wanted;
+		                    std::vector<std::pair<std::string, std::string>> requested;
+		                    requested.reserve(std::min<size_t>(items.size(), 500));
+		                    for (const auto &it : items) {
+		                        if (!it.is_object()) continue;
+		                        const std::string cid = trim_copy(json_get_string_loose(it, "connection_id", std::string{}));
+		                        const std::string name = trim_copy(json_get_string_loose(it, "name", json_get_string_loose(it, "tag", std::string{})));
+		                        if (cid.empty() || name.empty()) continue;
+		                        const std::string key = make_tag_key(cid, name);
+		                        if (wanted.insert(key).second) requested.push_back({cid, name});
+		                        if (requested.size() >= 500) break;
+		                    }
+
+		                    auto isWanted = [&](const std::string &cid, const std::string &name) {
+		                        return wanted.find(make_tag_key(cid, name)) != wanted.end();
+		                    };
+
+		                    auto pushSystemRow = [&](const std::string &name, const std::string &datatype, json value, int64_t ts_ms) {
+		                        if (!isWanted("_system", name)) return;
+		                        TagRow row;
+		                        row.connection_id = "_system";
+		                        row.name = name;
+		                        row.datatype = datatype;
+		                        row.enabled = true;
+		                        row.writable = false;
+		                        row.handle_ok = true;
+		                        row.has_snapshot = true;
+		                        row.is_array_root = false;
+		                        row.system = true;
+		                        row.system_value = std::move(value);
+		                        row.timestamp_ms = ts_ms;
+		                        root["tags"].push_back(tag_row_to_json(row));
+		                    };
+
+		                    const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                        std::chrono::system_clock::now().time_since_epoch()
+		                    ).count();
+		                    const int64_t uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
+		                        std::chrono::system_clock::now() - processStartTime
+		                    ).count();
+		                    ReloadState reloadCopy;
+		                    {
+		                        std::lock_guard<std::mutex> rlock(g_reloadMutex);
+		                        reloadCopy = g_reloadState;
+		                    }
+
+		                    pushSystemRow("System/Bridge/UptimeSeconds", "int64", uptime_sec, ts_ms);
+		                    pushSystemRow("System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION), ts_ms);
+		                    pushSystemRow("System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested, ts_ms);
+		                    pushSystemRow("System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen, ts_ms);
+		                    for (const auto &r : collect_clock_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
+		                    for (const auto &r : collect_host_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
+		                    for (const auto &r : collect_alarm_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
+		                    for (const auto &r : collect_reporter_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
+		                    for (const auto &r : collect_historian_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
+		                    for (const auto &r : collect_logic_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
+		                    for (const auto &r : collect_mqtt_system_tags(mqttMode)) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
+		                    for (const auto &r : collect_opcua_sync_system_tags(
+		                        reloadCopy,
+		                        g_full_rebuild_required.load(std::memory_order_relaxed)
+		                    )) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
+
+		                    {
+		                        std::lock_guard<std::mutex> lock(driverMutex);
+		                        for (auto &driver : drivers) {
+		                            const std::string prefix = "System/Connections/" + driver.conn.id + "/";
+		                            bool wantsConnSystem = false;
+		                            for (const auto &reqItem : requested) {
+		                                if (reqItem.first == "_system" && reqItem.second.rfind(prefix, 0) == 0) {
+		                                    wantsConnSystem = true;
+		                                    break;
+		                                }
+		                            }
+		                            if (wantsConnSystem) {
+		                                int total = 0;
+		                                int with_snapshot = 0;
+		                                int good = 0;
+		                                int bad = 0;
+		                                int missing = 0;
+		                                int bad_handle = 0;
+		                                int64_t newest_age_ms = -1;
+		                                for (auto &t : driver.tags) {
+		                                    if (!t.cfg.enabled) continue;
+		                                    ++total;
+		                                    auto it = tagTable.find(make_tag_key(driver.conn.id, t.cfg.logical_name));
+		                                    const bool handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || is_memory_tag(t.cfg) || (it != tagTable.end());
+		                                    if (!handle_ok) ++bad_handle;
+		                                    if (it == tagTable.end()) {
+		                                        ++missing;
+		                                        continue;
+		                                    }
+		                                    ++with_snapshot;
+		                                    const TagSnapshot &snap = it->second;
+		                                    if (snap.quality == 1) ++good;
+		                                    else ++bad;
+		                                    auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                                        std::chrono::system_clock::now() - snap.timestamp
+		                                    ).count();
+		                                    if (newest_age_ms < 0 || age_ms < newest_age_ms) newest_age_ms = age_ms;
+		                                }
+		                                std::shared_ptr<ConnPollMetrics> metrics;
+		                                {
+		                                    std::lock_guard<std::mutex> mlock(g_metricsMutex);
+		                                    auto mit = g_connPollMetrics.find(driver.conn.id);
+		                                    if (mit != g_connPollMetrics.end()) metrics = mit->second;
+		                                }
+		                                const uint64_t readsTotal = metrics ? metrics->reads_total.load(std::memory_order_relaxed) : 0;
+		                                const uint64_t deferredOpenTotal = metrics ? metrics->deferred_handles_opened.load(std::memory_order_relaxed) : 0;
+		                                pushSystemRow(prefix + "Enabled", "bool", true, ts_ms);
+		                                pushSystemRow(prefix + "TagCount", "int32", total, ts_ms);
+		                                pushSystemRow(prefix + "WithSnapshotCount", "int32", with_snapshot, ts_ms);
+		                                pushSystemRow(prefix + "GoodCount", "int32", good, ts_ms);
+		                                pushSystemRow(prefix + "BadCount", "int32", bad, ts_ms);
+		                                pushSystemRow(prefix + "MissingCount", "int32", missing, ts_ms);
+		                                pushSystemRow(prefix + "BadHandleCount", "int32", bad_handle, ts_ms);
+		                                pushSystemRow(prefix + "StalePercent", "float64", total > 0 ? (100.0 * static_cast<double>(bad + missing + bad_handle) / static_cast<double>(total)) : 0.0, ts_ms);
+		                                pushSystemRow(prefix + "NewestAgeMs", "int64", newest_age_ms, ts_ms);
+		                                pushSystemRow(prefix + "PollLanes", "int32", driver.conn.poll_lanes, ts_ms);
+		                                pushSystemRow(prefix + "ReadsTotal", "uint64", readsTotal, ts_ms);
+		                                pushSystemRow(prefix + "ReadsOk", "uint64", metrics ? metrics->reads_ok.load(std::memory_order_relaxed) : 0, ts_ms);
+		                                pushSystemRow(prefix + "ReadsError", "uint64", metrics ? metrics->reads_err.load(std::memory_order_relaxed) : 0, ts_ms);
+		                                pushSystemRow(prefix + "ReadMsLast", "float64", metrics ? (static_cast<double>(metrics->read_us_last.load(std::memory_order_relaxed)) / 1000.0) : 0.0, ts_ms);
+		                                pushSystemRow(prefix + "ReadMsAvg", "float64", (metrics && readsTotal > 0) ? (static_cast<double>(metrics->read_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(readsTotal) : 0.0, ts_ms);
+		                                pushSystemRow(prefix + "DeferredHandleCount", "uint64", metrics ? metrics->deferred_handle_count.load(std::memory_order_relaxed) : 0, ts_ms);
+		                                pushSystemRow(prefix + "DeferredHandlesOpened", "uint64", deferredOpenTotal, ts_ms);
+		                                pushSystemRow(prefix + "DeferredHandleOpenFailures", "uint64", metrics ? metrics->deferred_handle_open_failures.load(std::memory_order_relaxed) : 0, ts_ms);
+		                                pushSystemRow(prefix + "DeferredHandleOpenMsLast", "float64", metrics ? (static_cast<double>(metrics->deferred_handle_open_us_last.load(std::memory_order_relaxed)) / 1000.0) : 0.0, ts_ms);
+		                                pushSystemRow(prefix + "DeferredHandleOpenMsAvg", "float64", (metrics && deferredOpenTotal > 0) ? (static_cast<double>(metrics->deferred_handle_open_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(deferredOpenTotal) : 0.0, ts_ms);
+		                            }
+
+		                            for (auto &t : driver.tags) {
+		                                if (!isWanted(driver.conn.id, t.cfg.logical_name)) continue;
+		                                auto it = tagTable.find(make_tag_key(driver.conn.id, t.cfg.logical_name));
+		                                TagRow row;
+		                                row.connection_id = driver.conn.id;
+		                                row.name = t.cfg.logical_name;
+		                                row.datatype = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+		                                row.enabled = t.cfg.enabled;
+		                                row.writable = t.cfg.writable;
+		                                row.has_snapshot = (it != tagTable.end());
+		                                row.is_array_root = ((t.handle >= 0) || t.handle_deferred) && (t.cfg.elem_count > 1);
+		                                row.handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || is_memory_tag(t.cfg) || row.has_snapshot;
+		                                row.system = false;
+		                                if (row.has_snapshot) row.snap = it->second;
+		                                root["tags"].push_back(tag_row_to_json(row));
+		                            }
+		                        }
+
+		                        for (const auto &m : g_mqttInputs) {
+		                            if (m.write_to_plc) continue;
+		                            if (!isWanted(m.connection_id, m.tag_name)) continue;
+		                            auto it = tagTable.find(make_tag_key(m.connection_id, m.tag_name));
+		                            TagRow row;
+		                            row.connection_id = m.connection_id;
+		                            row.name = m.tag_name;
+		                            row.datatype = m.datatype.empty() ? "string" : m.datatype;
+		                            row.enabled = true;
+		                            row.writable = false;
+		                            row.has_snapshot = (it != tagTable.end());
+		                            row.is_array_root = false;
+		                            row.handle_ok = true;
+		                            row.system = false;
+		                            if (row.has_snapshot) row.snap = it->second;
+		                            if (!mqttMode && !row.has_snapshot) row.reason = "mqtt_disabled";
+		                            root["tags"].push_back(tag_row_to_json(row));
+		                        }
+		                    }
+
+		                    root["ok"] = true;
+		                    root["requested"] = requested.size();
+		                } catch (const std::exception &ex) {
+		                    root["ok"] = false;
+		                    root["error"] = std::string("Invalid tag query: ") + ex.what();
+		                    res.status = 400;
+		                }
 		                res.set_content(root.dump(), "application/json");
 		            });
 
@@ -19395,6 +19697,10 @@ window.addEventListener("load", startAutoRefresh);
 									"log_hourly_minute",
 									"log_daily_hour",
 									"log_daily_minute",
+									"historian",
+									"historian_enabled",
+									"historian_mode",
+									"historian_interval_ms",
 									"source_file"};
 
 							// connections/*.json
@@ -20982,6 +21288,12 @@ window.addEventListener("load", startAutoRefresh);
 							res.set_content(resp.dump(2), "application/json");
 							return;
 						}
+						const bool hasHistorianColumns =
+							csv_has_header(table, "historian_enabled") ||
+							csv_has_header(table, "historize") ||
+							csv_has_header(table, "historian_mode") ||
+							csv_has_header(table, "historian_interval_sec") ||
+							csv_has_header(table, "historian_interval_ms");
 
 						const std::string tagDir = joinPath(configDir, "tags");
 						std::error_code ec;
@@ -21151,6 +21463,32 @@ window.addEventListener("load", startAutoRefresh);
 							const int intervalSec = parse_int_loose(!trim_copy(csv_get(row, "log_periodic_interval_sec")).empty() ? csv_get(row, "log_periodic_interval_sec") : csv_get(row, "log_interval_sec"), -1);
 							if (intervalSec < 0) base.erase("log_periodic_interval_sec");
 							else base["log_periodic_interval_sec"] = std::max(0, intervalSec);
+
+							if (hasHistorianColumns) {
+								const std::string enabledRaw = !trim_copy(csv_get(row, "historian_enabled")).empty() ? csv_get(row, "historian_enabled") : csv_get(row, "historize");
+								const bool historianEnabled = parse_bool_loose(enabledRaw, false);
+								base.erase("historian_enabled");
+								base.erase("historian_mode");
+								base.erase("historian_interval_ms");
+								if (historianEnabled) {
+									const std::string modeRaw = to_lower_copy(trim_copy(csv_get(row, "historian_mode")));
+									const std::string mode = (modeRaw == "periodic" || modeRaw.empty()) ? std::string("periodic") : modeRaw;
+									const std::string intervalSecRaw = csv_get(row, "historian_interval_sec");
+									const std::string intervalMsRaw = csv_get(row, "historian_interval_ms");
+									int historianIntervalMs = 60000;
+									const int histSec = parse_int_loose(intervalSecRaw, -1);
+									const int histMs = parse_int_loose(intervalMsRaw, -1);
+									if (histSec > 0) historianIntervalMs = histSec * 1000;
+									else if (histMs > 0) historianIntervalMs = histMs;
+									json historian = json::object();
+									historian["enabled"] = true;
+									historian["mode"] = (mode == "periodic") ? std::string("periodic") : std::string("periodic");
+									historian["interval_ms"] = std::max(1000, historianIntervalMs);
+									base["historian"] = historian;
+								} else {
+									base.erase("historian");
+								}
+							}
 
 							if (idx < tags.size()) tags[idx] = base;
 							else tags.push_back(base);
@@ -23668,6 +24006,7 @@ window.addEventListener("load", startAutoRefresh);
 	                    appendRows(collect_host_system_tags());
 	                    appendRows(collect_alarm_system_tags());
 	                    appendRows(collect_reporter_system_tags());
+	                    appendRows(collect_historian_system_tags());
 	                    appendRows(collect_logic_system_tags());
 	                    appendRows(collect_mqtt_system_tags(mqttMode));
 	                    appendRows(collect_opcua_sync_system_tags(
@@ -24011,6 +24350,7 @@ window.addEventListener("load", startAutoRefresh);
 	                        appendRows(collect_host_system_tags());
 	                        appendRows(collect_alarm_system_tags());
 	                        appendRows(collect_reporter_system_tags());
+	                        appendRows(collect_historian_system_tags());
 	                        appendRows(collect_logic_system_tags());
 	                        appendRows(collect_mqtt_system_tags(mqttMode));
 	                        appendRows(collect_opcua_sync_system_tags(

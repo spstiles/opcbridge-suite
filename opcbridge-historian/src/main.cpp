@@ -110,6 +110,7 @@ struct SummaryResult
 {
     std::string connection_id;
     std::string tag_name;
+    std::optional<std::string> datatype;
     int64_t from_ms = 0;
     int64_t to_ms = 0;
     int64_t count = 0;
@@ -683,7 +684,7 @@ public:
         const std::string qualityClause = goodOnly ? " AND (quality IS NULL OR quality = 1)" : "";
         std::ostringstream sql;
         sql << "WITH filtered AS ("
-            << " SELECT ts_ms, value_double FROM " << sql_ident_quoted(cfg_.table)
+            << " SELECT ts_ms, datatype, value_double FROM " << sql_ident_quoted(cfg_.table)
             << " WHERE connection_id = " << connLit
             << " AND tag_name = " << tagLit
             << " AND ts_ms >= " << fromMs
@@ -691,9 +692,9 @@ public:
             << " AND value_double IS NOT NULL"
             << qualityClause
             << "), last_row AS ("
-            << " SELECT value_double AS last_value FROM filtered ORDER BY ts_ms DESC LIMIT 1"
+            << " SELECT value_double AS last_value, datatype AS last_datatype FROM filtered ORDER BY ts_ms DESC LIMIT 1"
             << ") SELECT count(*)::bigint, min(value_double), max(value_double), avg(value_double),"
-            << " (SELECT last_value FROM last_row) FROM filtered;";
+            << " (SELECT last_value FROM last_row), (SELECT last_datatype FROM last_row) FROM filtered;";
 
         free_if_needed(connLit);
         free_if_needed(tagLit);
@@ -734,6 +735,11 @@ public:
         out.max = getOptDouble(2);
         out.avg = getOptDouble(3);
         out.last = getOptDouble(4);
+        if (!PQgetisnull(res, 0, 5))
+        {
+            std::string dt = PQgetvalue(res, 0, 5);
+            if (!dt.empty()) out.datatype = dt;
+        }
         PQclear(res);
 
         std::string twaErr;
@@ -1501,6 +1507,7 @@ int main(int argc, char* argv[])
         j["ok"] = true;
         j["connection_id"] = summary.connection_id;
         j["tag_name"] = summary.tag_name;
+        if (summary.datatype.has_value()) j["datatype"] = summary.datatype.value();
         j["from_ms"] = summary.from_ms;
         j["to_ms"] = summary.to_ms;
         j["count"] = summary.count;

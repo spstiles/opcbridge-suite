@@ -1828,7 +1828,7 @@ function requireUiAuth(req, res) {
 
 function isAllowedOpcbridgePath(upstreamPathname) {
   if (upstreamPathname === '/' || upstreamPathname === '/dashboard' || upstreamPathname === '/editor') return true;
-  if (upstreamPathname === '/health' || upstreamPathname === '/tags' || upstreamPathname === '/events') return true;
+  if (upstreamPathname === '/health' || upstreamPathname === '/tags' || upstreamPathname === '/tags/query' || upstreamPathname === '/events') return true;
   if (upstreamPathname === '/alarms' || upstreamPathname === '/alarm-history') return true;
   if (upstreamPathname === '/info' || upstreamPathname === '/metadata' || upstreamPathname === '/metrics') return true;
   if (upstreamPathname === '/runtime/logs') return true;

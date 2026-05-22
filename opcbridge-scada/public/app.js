@@ -542,6 +542,9 @@
   editTagDatatype: document.getElementById('editTagDatatype'),
   editTagScan: document.getElementById('editTagScan'),
   editTagElemCount: document.getElementById('editTagElemCount'),
+  editTagHistorianEnabled: document.getElementById('editTagHistorianEnabled'),
+  editTagHistorianMode: document.getElementById('editTagHistorianMode'),
+  editTagHistorianInterval: document.getElementById('editTagHistorianInterval'),
   editTagEnabled: document.getElementById('editTagEnabled'),
   editTagWritable: document.getElementById('editTagWritable'),
   editTagInvert: document.getElementById('editTagInvert'),
@@ -898,7 +901,7 @@ const state = {
   tagConfigAll: [],
   tagConfigEdited: new Map(),
   tagConfigDirty: false,
-  liveTagsPaging: { offset: 0, limit: 250, total: 0, search: '', scopeKey: '', rowHeight: 34 },
+  liveTagsPaging: { offset: 0, limit: 250, total: 0, search: '', scopeKey: '', rowHeight: 34, index: [], valueByKey: new Map(), indexLoaded: false },
   liveTagsSearchTimer: null,
   liveTagsScrollTimer: null,
 
@@ -1335,11 +1338,19 @@ function renderHistorianQueryTagSelect() {
 function renderHistorianTags() {
   if (!els.historianTagsTbody) return;
   els.historianTagsTbody.textContent = '';
-  const tags = Array.isArray(state.historianConfig?.historian_tags)
-    ? state.historianConfig.historian_tags
-    : (Array.isArray(state.historianTags) ? state.historianTags : []);
+  const tags = historianConfiguredTags();
   renderHistorianQueryTagSelect();
-  tags.forEach((t, idx) => {
+  if (!tags.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'muted';
+    td.textContent = 'No historized tags. Enable Historize in Workspace tag properties.';
+    tr.appendChild(td);
+    els.historianTagsTbody.appendChild(tr);
+    return;
+  }
+  tags.forEach((t) => {
     const tr = document.createElement('tr');
     const mk = (text, mono = false) => {
       const td = document.createElement('td');
@@ -1347,54 +1358,18 @@ function renderHistorianTags() {
       td.textContent = String(text ?? '');
       return td;
     };
-    tr.appendChild(mk(t.connection_id || '', true));
+    const cid = String(t.connection_id || '').trim();
+    const tagName = String(t.tag_name || '').trim();
+    const intervalMs = Math.max(1000, Math.trunc(Number(t.interval_ms || 60000) || 60000));
+    const intervalSec = Math.round(intervalMs / 1000);
+    tr.appendChild(mk(displayConnectionName(cid), true));
     tr.appendChild(mk(t.tag_name || '', true));
-    const enabledTd = document.createElement('td');
-    const enabled = document.createElement('input');
-    enabled.type = 'checkbox';
-    enabled.checked = Boolean(t.enabled ?? true);
-    enabled.addEventListener('change', () => {
-      t.enabled = enabled.checked;
-      state.historianConfigDirty = true;
-      historianSetStatus('Config changed.');
-    });
-    enabledTd.appendChild(enabled);
-    tr.appendChild(enabledTd);
-
-    const intervalTd = document.createElement('td');
-    const interval = document.createElement('input');
-    interval.type = 'number';
-    interval.min = '1000';
-    interval.step = '1000';
-    interval.value = String(t.interval_ms || 60000);
-    interval.style.maxWidth = '120px';
-    interval.addEventListener('change', () => {
-      t.interval_ms = Math.max(1000, Math.trunc(Number(interval.value || 60000) || 60000));
-      interval.value = String(t.interval_ms);
-      state.historianConfigDirty = true;
-      historianSetStatus('Config changed.');
-    });
-    intervalTd.appendChild(interval);
-    tr.appendChild(intervalTd);
-
+    tr.appendChild(mk(Boolean(t.enabled ?? true) ? 'Yes' : 'No'));
+    tr.appendChild(mk(`${intervalSec} sec`));
     tr.appendChild(mk(t.mode || 'periodic'));
-    const actions = document.createElement('td');
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'btn';
-    remove.textContent = 'Remove';
-    remove.addEventListener('click', () => {
-      if (!state.historianConfig || !Array.isArray(state.historianConfig.historian_tags)) return;
-      state.historianConfig.historian_tags.splice(idx, 1);
-      state.historianConfigDirty = true;
-      renderHistorianTags();
-      historianSetStatus('Config changed.');
-    });
-    actions.appendChild(remove);
-    tr.appendChild(actions);
     tr.addEventListener('dblclick', () => {
-      if (els.historianQueryConnection) els.historianQueryConnection.value = String(t.connection_id || '');
-      if (els.historianQueryTag) els.historianQueryTag.value = String(t.tag_name || '');
+      if (els.historianQueryConnection) els.historianQueryConnection.value = cid;
+      if (els.historianQueryTag) els.historianQueryTag.value = tagName;
       runHistorianQuery().catch((err) => historianSetStatus(`Query failed: ${err.message || err}`));
     });
     els.historianTagsTbody.appendChild(tr);
@@ -1421,6 +1396,56 @@ function normalizeHistorianConfig(cfg) {
   });
   if (!root.postgres || typeof root.postgres !== 'object' || Array.isArray(root.postgres)) root.postgres = {};
   return root;
+}
+
+function normalizeTagHistorianSettings(tag) {
+  const raw = (tag?.historian && typeof tag.historian === 'object' && !Array.isArray(tag.historian))
+    ? tag.historian
+    : {};
+  const enabled = Boolean(raw.enabled ?? tag?.historian_enabled ?? false);
+  const mode = String(raw.mode || tag?.historian_mode || 'periodic').trim().toLowerCase() || 'periodic';
+  const intervalRaw = raw.interval_ms ?? tag?.historian_interval_ms ?? 60000;
+  const interval_ms = Math.max(1000, Math.trunc(Number(intervalRaw || 60000) || 60000));
+  return {
+    enabled,
+    mode: mode === 'periodic' ? 'periodic' : 'periodic',
+    interval_ms,
+    include_bad_quality: Boolean(raw.include_bad_quality ?? tag?.historian_include_bad_quality ?? false)
+  };
+}
+
+function historianTagRulesFromWorkspaceTags(tags) {
+  const seen = new Set();
+  return (Array.isArray(tags) ? tags : []).map((tag) => {
+    const cid = String(tag?.connection_id || '').trim();
+    const name = String(tag?.name || '').trim();
+    const h = normalizeTagHistorianSettings(tag);
+    if (!cid || !name || !h.enabled) return null;
+    const key = `${cid}:${name}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    return {
+      connection_id: cid,
+      tag_name: name,
+      enabled: true,
+      interval_ms: h.interval_ms,
+      mode: h.mode,
+      include_bad_quality: h.include_bad_quality
+    };
+  }).filter(Boolean);
+}
+
+async function saveHistorianConfigFromWorkspaceTags(tags) {
+  const rules = historianTagRulesFromWorkspaceTags(tags);
+  const current = state.historianConfig
+    ? normalizeHistorianConfig(state.historianConfig)
+    : normalizeHistorianConfig((await apiGet('/api/historian/config').catch(() => ({ config: {} })))?.config || {});
+  current.historian_tags = rules;
+  const resp = await apiPostJson('/api/historian/config', { config: current });
+  if (!resp?.ok) throw new Error(String(resp?.error || 'Historian config save failed'));
+  state.historianConfig = normalizeHistorianConfig(resp.config || current);
+  state.historianConfigDirty = false;
+  return rules.length;
 }
 
 function addHistorianTagFromSpec(spec) {
@@ -2222,26 +2247,13 @@ function renderLoggerReportDetails() {
     state.loggerReportPanelTab = 'tags';
     renderLoggerReportDetails();
   });
-  const historianTab = document.createElement('button');
-  historianTab.className = 'btn';
-  historianTab.classList.toggle('primary', state.loggerReportPanelTab === 'historian');
-  historianTab.type = 'button';
-  historianTab.textContent = 'Historian Fields';
-  historianTab.addEventListener('click', () => {
-    state.loggerReportPanelTab = 'historian';
-    renderLoggerReportDetails();
-  });
   tabs.appendChild(detailsTab);
   tabs.appendChild(tagsTab);
-  tabs.appendChild(historianTab);
   els.loggerReportDetails.appendChild(tabs);
 
-  if (state.loggerReportPanelTab === 'tags') {
+  if (state.loggerReportPanelTab === 'tags' || state.loggerReportPanelTab === 'historian') {
+    state.loggerReportPanelTab = 'tags';
     renderLoggerReportTagsPanel(report);
-    return;
-  }
-  if (state.loggerReportPanelTab === 'historian') {
-    renderLoggerReportHistorianPanel(report);
     return;
   }
 
@@ -2298,15 +2310,15 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
   if (!els.loggerReportDetails) return;
   els.loggerReportDetails.querySelectorAll('[data-logger-tags-panel="1"]').forEach((el) => el.remove());
   const active = document.activeElement;
-  if (!Array.isArray(entriesOverride) && active && els.loggerReportDetails.contains(active) && active.matches('[data-logger-tag-connection="1"], [data-logger-tag-input="1"], [data-logger-output-input="1"], [data-logger-desc-input="1"]')) {
+  if (!Array.isArray(entriesOverride) && active && els.loggerReportDetails.contains(active) && active.matches('[data-logger-tag-connection="1"], [data-logger-tag-input="1"], [data-logger-value-kind="1"], [data-logger-range-input="1"], [data-logger-output-input="1"], [data-logger-desc-input="1"]')) {
     return;
   }
   const rid = String(report?.id || '').trim();
   const draft = rid ? state.loggerReportTagDraftById.get(rid) : null;
   const entries = Array.isArray(entriesOverride)
     ? entriesOverride
-    : (Array.isArray(draft) ? draft : normalizeReportTagEntries(report?.tags));
-  const rows = entries.concat([{ connection_id: '', name: '', description: '' }]);
+    : (Array.isArray(draft) ? draft : loggerUnifiedEntriesFromReport(report));
+  const rows = entries.concat([{ connection_id: '', name: '', value_kind: 'last', range: '1h', description: '' }]);
 
   const actions = document.createElement('div');
   actions.className = 'row-actions';
@@ -2316,7 +2328,7 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
   const saveBtn = document.createElement('button');
   saveBtn.className = 'btn primary';
   saveBtn.type = 'button';
-  saveBtn.textContent = 'Save + Apply Tags';
+  saveBtn.textContent = 'Save + Apply Fields';
   saveBtn.addEventListener('click', () => saveLoggerReportTagsFromPanel(report).catch(() => {}));
   actions.appendChild(saveBtn);
 
@@ -2325,7 +2337,8 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
   downloadBtn.type = 'button';
   downloadBtn.textContent = 'Download CSV';
   downloadBtn.addEventListener('click', () => {
-    const next = { ...report, tags: collectLoggerReportTagPanelEntries() };
+    const split = splitLoggerUnifiedEntries(collectLoggerReportTagPanelEntries());
+    const next = { ...report, tags: split.tags, historian_fields: split.historian_fields };
     downloadLoggerTagCsvForReport(next);
   });
   actions.appendChild(downloadBtn);
@@ -2347,9 +2360,9 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
 
   const header = document.createElement('div');
   header.style.display = 'grid';
-  header.style.gridTemplateColumns = 'minmax(150px, .8fr) minmax(240px, 1.1fr) minmax(190px, .9fr) minmax(260px, 1.1fr) minmax(190px, auto)';
+  header.style.gridTemplateColumns = 'minmax(140px, .7fr) minmax(220px, 1fr) minmax(110px, .45fr) minmax(100px, .4fr) minmax(170px, .7fr) minmax(230px, 1fr) minmax(170px, auto)';
   header.style.gap = '8px 10px';
-  ['Connection', 'Tag', 'Output Field', 'Description', 'Actions'].forEach((label) => {
+  ['Connection', 'Tag', 'Value', 'Period', 'Tag Name Override', 'Description', 'Actions'].forEach((label) => {
     const h = document.createElement('div');
     h.className = 'small';
     h.textContent = label;
@@ -2406,12 +2419,36 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
     const outputInput = document.createElement('input');
     outputInput.className = 'mono';
     outputInput.dataset.loggerOutputInput = '1';
-    outputInput.placeholder = 'Defaults to tag name';
+    outputInput.placeholder = 'Optional database tag name';
     outputInput.value = String(entry?.field_name || entry?.output_field || '').trim();
     outputInput.addEventListener('input', () => {
       state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
     });
     outputInput.addEventListener('change', () => {
+      const current = collectLoggerReportTagPanelEntries();
+      state.loggerReportTagDraftById.set(rid, current);
+      renderLoggerReportTagsPanel(report, current);
+    });
+
+    const valueSelect = document.createElement('select');
+    valueSelect.dataset.loggerValueKind = '1';
+
+    const rangeInput = document.createElement('input');
+    rangeInput.className = 'mono';
+    rangeInput.dataset.loggerRangeInput = '1';
+    rangeInput.placeholder = '1h';
+    rangeInput.value = String(entry?.range || '1h');
+    rangeInput.addEventListener('input', () => {
+      state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
+    });
+    applyLoggerValueKindOptions(
+      valueSelect,
+      rangeInput,
+      String(entry?.connection_id || '').trim(),
+      String(entry?.name || entry?.tag_name || '').trim(),
+      entry?.value_kind || entry?.statistic || 'last'
+    );
+    valueSelect.addEventListener('change', () => {
       const current = collectLoggerReportTagPanelEntries();
       state.loggerReportTagDraftById.set(rid, current);
       renderLoggerReportTagsPanel(report, current);
@@ -2441,6 +2478,8 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
 
     row.appendChild(connInput);
     row.appendChild(tagInput);
+    row.appendChild(valueSelect);
+    row.appendChild(rangeInput);
     row.appendChild(outputInput);
     row.appendChild(descInput);
     row.appendChild(rowActions);
@@ -3242,10 +3281,11 @@ function collectLoggerReportTagPanelEntries() {
   if (!root) return [];
   const rows = Array.from(root.querySelectorAll('[data-logger-tag-row="1"]'));
   const out = [];
-  const seen = new Set();
   rows.forEach((row) => {
     const connInput = row.querySelector('[data-logger-tag-connection="1"]');
     const tagInput = row.querySelector('[data-logger-tag-input="1"]');
+    const valueKindInput = row.querySelector('[data-logger-value-kind="1"]');
+    const rangeInput = row.querySelector('[data-logger-range-input="1"]');
     const outputInput = row.querySelector('[data-logger-output-input="1"]');
     const descInput = row.querySelector('[data-logger-desc-input="1"]');
     const connText = String(connInput?.value || '').trim();
@@ -3255,17 +3295,87 @@ function collectLoggerReportTagPanelEntries() {
       ? { connection_id: connText, tag_name: tagText, tag_spec: `${connText}:${tagText}` }
       : loggerTagSpecParts(tagText);
     if (!parts.connection_id || !parts.tag_name) return;
-    if (seen.has(parts.tag_spec)) return;
-    seen.add(parts.tag_spec);
+    let valueKind = String(valueKindInput?.value || 'last').trim().toLowerCase() || 'last';
+    if (!allowedLoggerValueKinds(parts.connection_id, parts.tag_name).includes(valueKind)) valueKind = 'last';
+    const range = valueKind === 'last' ? '' : (String(rangeInput?.value || '1h').trim() || '1h');
+    const fieldName = String(outputInput?.value || '').trim();
     out.push({
       connection_id: parts.connection_id,
       name: parts.tag_name,
-      field_name: String(outputInput?.value || '').trim(),
+      value_kind: ['last', 'min', 'max', 'avg', 'twa', 'count'].includes(valueKind) ? valueKind : 'last',
+      range,
+      field_name: fieldName,
       description: String(descInput?.value || '').trim()
     });
   });
   return out;
 }
+
+function loggerUnifiedEntriesFromReport(report) {
+  const live = normalizeReportTagEntries(report?.tags).map((entry) => ({
+    ...entry,
+    value_kind: 'last',
+    range: ''
+  }));
+  const hist = normalizeHistorianFieldEntries(report?.historian_fields).map((entry) => ({
+    connection_id: entry.connection_id,
+    name: entry.tag_name,
+    value_kind: ['min', 'max', 'avg', 'twa', 'count', 'last'].includes(String(entry.statistic || '').toLowerCase()) ? String(entry.statistic).toLowerCase() : 'avg',
+    range: entry.range || '1h',
+    field_name: entry.field_name,
+    description: entry.description
+  }));
+  return live.concat(hist);
+}
+
+function splitLoggerUnifiedEntries(entries) {
+  const tags = [];
+  const historian_fields = [];
+  const seen = new Set();
+  let skippedInvalid = 0;
+  let skippedDuplicate = 0;
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const cid = String(entry?.connection_id || '').trim();
+    const name = String(entry?.name || entry?.tag_name || '').trim();
+    if (!cid || !name) return;
+    if (!isValidLoggerTagIdentity(cid, name)) {
+      skippedInvalid += 1;
+      return;
+    }
+    let kind = String(entry?.value_kind || 'last').trim().toLowerCase() || 'last';
+    if (!allowedLoggerValueKinds(cid, name).includes(kind)) kind = 'last';
+    const fieldName = String(entry?.field_name || '').trim();
+    const range = kind === 'last' ? '' : (String(entry?.range || '1h').trim() || '1h');
+    const key = `${cid}\u001f${name}\u001f${kind}\u001f${range}\u001f${fieldName}`;
+    if (seen.has(key)) {
+      skippedDuplicate += 1;
+      return;
+    }
+    seen.add(key);
+    if (kind === 'last') {
+      tags.push({
+        connection_id: cid,
+        name,
+        field_name: fieldName,
+        description: String(entry?.description || '').trim()
+      });
+      return;
+    }
+    historian_fields.push({
+      connection_id: cid,
+      tag_name: name,
+      range,
+      statistic: ['min', 'max', 'avg', 'twa', 'count'].includes(kind) ? kind : 'avg',
+      field_name: fieldName,
+      description: String(entry?.description || '').trim()
+    });
+  });
+  splitLoggerUnifiedEntries.lastSkippedInvalid = skippedInvalid;
+  splitLoggerUnifiedEntries.lastSkippedDuplicate = skippedDuplicate;
+  return { tags, historian_fields };
+}
+splitLoggerUnifiedEntries.lastSkippedInvalid = 0;
+splitLoggerUnifiedEntries.lastSkippedDuplicate = 0;
 
 function parseReportTagsPanelToSet() {
   const set = new Set();
@@ -3769,9 +3879,23 @@ function applyLoggerTagPickerSelectionToTextarea() {
     const input = row?.querySelector('[data-logger-tag-input="1"]');
     const parts = loggerTagSpecParts(selected);
     if (input && parts.connection_id && parts.tag_name) {
-      if (connInput) connInput.value = parts.connection_id;
-      input.value = parts.tag_name;
-      const next = collectLoggerReportTagPanelEntries();
+      const rowConn = String(connInput?.value || '').trim();
+      const rowTag = String(input?.value || '').trim();
+      let next = collectLoggerReportTagPanelEntries();
+      if (rowConn && rowTag) {
+        next.push({
+          connection_id: parts.connection_id,
+          name: parts.tag_name,
+          value_kind: 'last',
+          range: '',
+          field_name: '',
+          description: ''
+        });
+      } else {
+        if (connInput) connInput.value = parts.connection_id;
+        input.value = parts.tag_name;
+        next = collectLoggerReportTagPanelEntries();
+      }
       const rid = getSelectedReportId();
       state.loggerReportTagDraftById.set(rid, next);
       const report = findReportById(rid);
@@ -3791,27 +3915,31 @@ function applyLoggerTagPickerSelectionToTextarea() {
     const readRow = (row) => {
       const conn = String(row.querySelector('[data-logger-tag-connection="1"]')?.value || '').trim();
       const tag = String(row.querySelector('[data-logger-tag-input="1"]')?.value || '').trim();
+      const valueKind = normalizeLoggerValueKind(row.querySelector('[data-logger-value-kind="1"]')?.value || 'last');
+      const range = String(row.querySelector('[data-logger-range-input="1"]')?.value || '').trim();
       const output = String(row.querySelector('[data-logger-output-input="1"]')?.value || '').trim();
       const desc = String(row.querySelector('[data-logger-desc-input="1"]')?.value || '').trim();
       const p = conn ? { connection_id: conn, tag_name: tag } : loggerTagSpecParts(tag);
-      return { connection_id: p.connection_id, name: p.tag_name, field_name: output, description: desc };
+      return { connection_id: p.connection_id, name: p.tag_name, value_kind: valueKind, range, field_name: output, description: desc };
     };
-    const selectedSpec = `${parts.connection_id}:${parts.tag_name}`;
+    const entryKey = (entry) => `${String(entry?.connection_id || '')}\u001f${String(entry?.name || '')}\u001f${normalizeLoggerValueKind(entry?.value_kind || 'last')}\u001f${normalizeLoggerValueKind(entry?.value_kind || 'last') === 'last' ? '' : String(entry?.range || '1h')}\u001f${String(entry?.field_name || '')}`;
+    const selectedEntry = { connection_id: parts.connection_id, name: parts.tag_name, value_kind: 'last', range: '', field_name: '', description: '' };
+    const selectedKey = entryKey(selectedEntry);
     const next = [];
     let inserted = false;
     rows.forEach((row) => {
       const entry = readRow(row);
       if (entry.connection_id && entry.name) {
-        const spec = loggerTagEntrySpec(entry);
-        if (!next.some((e) => loggerTagEntrySpec(e) === spec)) next.push(entry);
+        const key = entryKey(entry);
+        if (!next.some((e) => entryKey(e) === key)) next.push(entry);
         return;
       }
-      if (inserted || next.some((e) => loggerTagEntrySpec(e) === selectedSpec)) return;
-      next.push({ connection_id: parts.connection_id, name: parts.tag_name, field_name: entry.field_name || '', description: entry.description || '' });
+      if (inserted || next.some((e) => entryKey(e) === selectedKey)) return;
+      next.push({ ...selectedEntry, field_name: entry.field_name || '', description: entry.description || '' });
       inserted = true;
     });
-    if (!inserted && !next.some((e) => loggerTagEntrySpec(e) === selectedSpec)) {
-      next.push({ connection_id: parts.connection_id, name: parts.tag_name, field_name: '', description: '' });
+    if (!inserted && !next.some((e) => entryKey(e) === selectedKey)) {
+      next.push(selectedEntry);
     }
     renderSelectedLoggerTagPanel(next);
     closeLoggerTagPickerModal();
@@ -4589,7 +4717,7 @@ function wireLogicTabUi() {
   }
 }
 
-const LOGGER_TAG_CSV_HEADERS = ['connection_id', 'tag_name', 'output_field', 'description'];
+const LOGGER_TAG_CSV_HEADERS = ['connection_id', 'tag_name', 'value', 'period', 'tag_name_override', 'description'];
 const LOGGER_HISTORIAN_FIELD_CSV_HEADERS = ['connection_id', 'tag_name', 'range', 'statistic', 'output_field', 'description'];
 
 function loggerCsvCell(value) {
@@ -4616,19 +4744,72 @@ function loggerTagSpecParts(spec) {
   };
 }
 
-function loggerTagRowsFromList(tags) {
+function normalizeLoggerValueKind(value) {
+  const raw = String(value || 'tag.last').trim().toLowerCase();
+  const bare = raw.startsWith('tag.') ? raw.slice(4) : raw;
+  return ['last', 'min', 'max', 'avg', 'twa', 'count'].includes(bare) ? bare : 'last';
+}
+
+function isTagHistorized(connectionId, tagName) {
+  const cid = String(connectionId || '').trim();
+  const name = String(tagName || '').trim();
+  if (!cid || !name) return false;
+  const tag = getEffectiveTagsAll().find((t) => String(t?.connection_id || '').trim() === cid && String(t?.name || '').trim() === name);
+  return normalizeTagHistorianSettings(tag || {}).enabled;
+}
+
+function allowedLoggerValueKinds(connectionId, tagName) {
+  return isTagHistorized(connectionId, tagName)
+    ? ['last', 'min', 'max', 'avg', 'twa', 'count']
+    : ['last'];
+}
+
+function applyLoggerValueKindOptions(valueSelect, rangeInput, connectionId, tagName, wantedValue) {
+  if (!valueSelect) return;
+  const allowed = allowedLoggerValueKinds(connectionId, tagName);
+  const labels = {
+    last: 'tag.last',
+    min: 'tag.min',
+    max: 'tag.max',
+    avg: 'tag.avg',
+    twa: 'tag.twa',
+    count: 'tag.count'
+  };
+  const selected = allowed.includes(normalizeLoggerValueKind(wantedValue)) ? normalizeLoggerValueKind(wantedValue) : 'last';
+  valueSelect.textContent = '';
+  allowed.forEach((kind) => {
+    const opt = document.createElement('option');
+    opt.value = kind;
+    opt.textContent = labels[kind] || `tag.${kind}`;
+    valueSelect.appendChild(opt);
+  });
+  valueSelect.value = selected;
+  valueSelect.disabled = allowed.length <= 1;
+  if (rangeInput) rangeInput.disabled = selected === 'last';
+}
+
+function loggerUnifiedRowsFromEntries(entries) {
   const seen = new Set();
   let duplicate = 0;
+  let skipped = 0;
   const rows = [];
-  normalizeReportTagEntries(tags).forEach((entry) => {
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const valueKind = normalizeLoggerValueKind(entry?.value_kind || entry?.statistic || 'last');
+    const connectionId = String(entry?.connection_id || '').trim();
+    const tagName = String(entry?.name || entry?.tag_name || '').trim();
+    if (!isValidLoggerTagIdentity(connectionId, tagName)) {
+      skipped += 1;
+      return;
+    }
     const row = {
-      connection_id: loggerCsvCell(entry.connection_id),
-      tag_name: loggerCsvCell(entry.name),
-      output_field: loggerCsvCell(entry.field_name || entry.output_field),
+      connection_id: loggerCsvCell(connectionId),
+      tag_name: loggerCsvCell(tagName),
+      value: `tag.${valueKind}`,
+      period: valueKind === 'last' ? '' : (loggerCsvCell(entry.range || entry.period || '1h') || '1h'),
+      tag_name_override: loggerCsvCell(entry.field_name || entry.output_field || entry.output_name),
       description: loggerCsvCell(entry.description)
     };
-    if (!row.connection_id || !row.tag_name) return;
-    const key = `${row.connection_id}\u001f${row.tag_name}`;
+    const key = `${row.connection_id}\u001f${row.tag_name}\u001f${row.value}\u001f${row.period}\u001f${row.tag_name_override}`;
     if (seen.has(key)) {
       duplicate += 1;
       return;
@@ -4636,12 +4817,12 @@ function loggerTagRowsFromList(tags) {
     seen.add(key);
     rows.push(row);
   });
-  loggerTagRowsFromList.lastSkipped = Number(normalizeReportTagEntries.lastSkipped || 0);
-  loggerTagRowsFromList.lastDuplicate = duplicate;
+  loggerUnifiedRowsFromEntries.lastSkipped = skipped + Number(normalizeReportTagEntries.lastSkipped || 0);
+  loggerUnifiedRowsFromEntries.lastDuplicate = duplicate;
   return rows;
 }
-loggerTagRowsFromList.lastSkipped = 0;
-loggerTagRowsFromList.lastDuplicate = 0;
+loggerUnifiedRowsFromEntries.lastSkipped = 0;
+loggerUnifiedRowsFromEntries.lastDuplicate = 0;
 
 function parseLoggerTagCsvText(text) {
   const parsed = parseCsv(text);
@@ -4649,14 +4830,18 @@ function parseLoggerTagCsvText(text) {
   const out = [];
   const seen = new Set();
   let skippedMissing = 0;
+  let skippedInvalid = 0;
   let skippedDuplicate = 0;
   let sampleMissing = '';
+  let sampleInvalid = '';
   let sampleDuplicate = '';
 
   records.forEach((row, idx) => {
     const connectionId = String(csvGet(row, 'connection_id') || csvGet(row, 'connection') || '').trim();
     const tagName = String(csvGet(row, 'tag_name') || csvGet(row, 'name') || '').trim();
-    const fieldName = String(csvGet(row, 'output_field') || csvGet(row, 'field_name') || csvGet(row, 'output_name') || '').trim();
+    const valueKind = normalizeLoggerValueKind(csvGet(row, 'value') || csvGet(row, 'statistic') || csvGet(row, 'stat') || 'tag.last');
+    const period = String(csvGet(row, 'period') || csvGet(row, 'range') || '').trim();
+    const fieldName = String(csvGet(row, 'tag_name_override') || csvGet(row, 'output_field') || csvGet(row, 'field_name') || csvGet(row, 'output_name') || '').trim();
     const description = String(csvGet(row, 'description') || csvGet(row, 'desc') || '').trim();
     const spec = connectionId && tagName ? `${connectionId}:${tagName}` : '';
     if (!spec || spec.startsWith('#')) {
@@ -4664,21 +4849,37 @@ function parseLoggerTagCsvText(text) {
       if (!sampleMissing) sampleMissing = `row ${idx + 2}`;
       return;
     }
-    if (seen.has(spec)) {
+    if (!isValidLoggerTagIdentity(connectionId, tagName)) {
+      skippedInvalid += 1;
+      if (!sampleInvalid) sampleInvalid = `row ${idx + 2}`;
+      return;
+    }
+    const key = `${spec}\u001f${valueKind}\u001f${valueKind === 'last' ? '' : (period || '1h')}\u001f${fieldName}`;
+    if (seen.has(key)) {
       skippedDuplicate += 1;
       if (!sampleDuplicate) sampleDuplicate = spec;
       return;
     }
-    seen.add(spec);
-    out.push({ connection_id: connectionId, name: tagName, field_name: fieldName, description });
+    seen.add(key);
+    out.push({
+      connection_id: connectionId,
+      name: tagName,
+      value_kind: valueKind,
+      range: valueKind === 'last' ? '' : (period || '1h'),
+      field_name: fieldName,
+      description
+    });
   });
 
   return {
     tags: out,
+    entries: out,
     total: records.length,
     skipped_missing: skippedMissing,
+    skipped_invalid: skippedInvalid,
     skipped_duplicate: skippedDuplicate,
     sample_missing: sampleMissing,
+    sample_invalid: sampleInvalid,
     sample_duplicate: sampleDuplicate,
     headers: Array.isArray(parsed?.headers) ? parsed.headers : []
   };
@@ -4690,9 +4891,19 @@ function loggerTagEntriesFromCsvText(text) {
 
 function loggerTagImportSummary(result) {
   const r = result || {};
-  const parts = [`Loaded ${Array.isArray(r.tags) ? r.tags.length : 0} of ${Number(r.total || 0)} row(s).`];
+  const parts = [`Loaded ${Array.isArray(r.entries) ? r.entries.length : (Array.isArray(r.tags) ? r.tags.length : 0)} of ${Number(r.total || 0)} row(s).`];
   if (r.skipped_missing) parts.push(`Skipped ${r.skipped_missing} missing connection_id/tag_name${r.sample_missing ? ` (${r.sample_missing})` : ''}.`);
+  if (r.skipped_invalid) parts.push(`Skipped ${r.skipped_invalid} malformed connection_id/tag_name${r.sample_invalid ? ` (${r.sample_invalid})` : ''}.`);
   if (r.skipped_duplicate) parts.push(`Skipped ${r.skipped_duplicate} duplicate${r.sample_duplicate ? ` (${r.sample_duplicate})` : ''}.`);
+  return parts.join(' ');
+}
+
+function loggerSplitSummary() {
+  const parts = [];
+  const invalid = Number(splitLoggerUnifiedEntries.lastSkippedInvalid || 0);
+  const duplicate = Number(splitLoggerUnifiedEntries.lastSkippedDuplicate || 0);
+  if (invalid) parts.push(`Skipped ${invalid} malformed entr${invalid === 1 ? 'y' : 'ies'}.`);
+  if (duplicate) parts.push(`Skipped ${duplicate} duplicate entr${duplicate === 1 ? 'y' : 'ies'}.`);
   return parts.join(' ');
 }
 
@@ -4849,15 +5060,15 @@ function renderLoggerReportTagDescriptionRows() {
 
 function downloadLoggerTagCsvForReport(report) {
   const rid = String(report?.id || '').trim() || 'logger';
-  const rows = loggerTagRowsFromList(report?.tags);
-  const skipped = Number(loggerTagRowsFromList.lastSkipped || 0);
-  const duplicate = Number(loggerTagRowsFromList.lastDuplicate || 0);
+  const rows = loggerUnifiedRowsFromEntries(loggerUnifiedEntriesFromReport(report));
+  const skipped = Number(loggerUnifiedRowsFromEntries.lastSkipped || 0);
+  const duplicate = Number(loggerUnifiedRowsFromEntries.lastDuplicate || 0);
   downloadTextFile({
     filename: `opcbridge-logger-tags-${rid.replace(/[^a-z0-9._-]+/gi, '_')}.csv`,
     mime: 'text/csv',
     text: toCsv(rows, LOGGER_TAG_CSV_HEADERS)
   });
-  loggerSetStatus(`Downloaded ${rows.length} tag(s) for '${rid}'.${skipped ? ` Skipped ${skipped} malformed hidden entr${skipped === 1 ? 'y' : 'ies'}.` : ''}${duplicate ? ` Skipped ${duplicate} duplicate entr${duplicate === 1 ? 'y' : 'ies'}.` : ''}${(skipped || duplicate) ? ' Save the visible tag list to clean the config.' : ''}`);
+  loggerSetStatus(`Downloaded ${rows.length} logger field(s) for '${rid}'.${skipped ? ` Skipped ${skipped} malformed hidden entr${skipped === 1 ? 'y' : 'ies'}.` : ''}${duplicate ? ` Skipped ${duplicate} duplicate entr${duplicate === 1 ? 'y' : 'ies'}.` : ''}${(skipped || duplicate) ? ' Save the visible list to clean the config.' : ''}`);
 }
 
 function downloadLoggerTagCsvFromModal() {
@@ -4865,15 +5076,15 @@ function downloadLoggerTagCsvFromModal() {
   const tags = String(els.loggerReportTags?.value || '')
     ? reportTagEntriesFromText(String(els.loggerReportTags?.value || ''))
     : [];
-  const rows = loggerTagRowsFromList(tags);
-  const skipped = Number(loggerTagRowsFromList.lastSkipped || 0);
-  const duplicate = Number(loggerTagRowsFromList.lastDuplicate || 0);
+  const rows = loggerUnifiedRowsFromEntries(tags.map((entry) => ({ ...entry, value_kind: 'last' })));
+  const skipped = Number(loggerUnifiedRowsFromEntries.lastSkipped || 0);
+  const duplicate = Number(loggerUnifiedRowsFromEntries.lastDuplicate || 0);
   downloadTextFile({
     filename: `opcbridge-logger-tags-${id.replace(/[^a-z0-9._-]+/gi, '_')}.csv`,
     mime: 'text/csv',
     text: toCsv(rows, LOGGER_TAG_CSV_HEADERS)
   });
-  loggerReportModalSetStatus(`Downloaded ${rows.length} tag(s).${skipped ? ` Skipped ${skipped} malformed hidden entr${skipped === 1 ? 'y' : 'ies'}.` : ''}${duplicate ? ` Skipped ${duplicate} duplicate entr${duplicate === 1 ? 'y' : 'ies'}.` : ''}`);
+  loggerReportModalSetStatus(`Downloaded ${rows.length} logger field(s).${skipped ? ` Skipped ${skipped} malformed hidden entr${skipped === 1 ? 'y' : 'ies'}.` : ''}${duplicate ? ` Skipped ${duplicate} duplicate entr${duplicate === 1 ? 'y' : 'ies'}.` : ''}`);
 }
 
 function downloadLoggerHistorianFieldCsvForReport(report) {
@@ -4892,9 +5103,9 @@ async function uploadLoggerTagCsvToModal() {
     const text = await pickCsvText();
     if (!String(text || '').trim()) return;
     const parsed = parseLoggerTagCsvText(text);
-    const tags = parsed.tags;
-    if (!tags.length) throw new Error('CSV has no logger tags.');
-    setLoggerReportTagEntries(tags);
+    const split = splitLoggerUnifiedEntries(parsed.entries || parsed.tags);
+    if (!(parsed.entries || parsed.tags || []).length) throw new Error('CSV has no logger fields.');
+    setLoggerReportTagEntries(split.tags);
     loggerReportModalSetStatus(`${loggerTagImportSummary(parsed)} Save to apply.`);
   } catch (err) {
     loggerReportModalSetStatus(`Upload failed: ${err.message || err}`);
@@ -4908,11 +5119,12 @@ async function uploadLoggerTagCsvToReport(report) {
     const text = await pickCsvText();
     if (!String(text || '').trim()) return;
     const parsed = parseLoggerTagCsvText(text);
-    const tags = parsed.tags;
-    if (!tags.length) throw new Error('CSV has no logger tags.');
-    const next = { ...report, tags };
+    const entries = parsed.entries || parsed.tags;
+    if (!entries.length) throw new Error('CSV has no logger fields.');
+    const split = splitLoggerUnifiedEntries(entries);
+    const next = { ...report, tags: split.tags, historian_fields: split.historian_fields };
 
-    loggerSetStatus(`Saving ${tags.length} tag(s) for '${rid}'...`);
+    loggerSetStatus(`Saving ${entries.length} logger field(s) for '${rid}'...`);
     const save = await apiPostJson('/api/reporter/reports', { report: next });
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
@@ -4936,10 +5148,10 @@ async function uploadLoggerTagCsvToPanel() {
     const text = await pickCsvText();
     if (!String(text || '').trim()) return;
     const parsed = parseLoggerTagCsvText(text);
-    const tags = parsed.tags;
-    if (!tags.length) throw new Error('CSV has no logger tags.');
-    renderSelectedLoggerTagPanel(tags);
-    loggerSetStatus(`${loggerTagImportSummary(parsed)} Save + Apply Tags to write changes.`);
+    const entries = parsed.entries || parsed.tags;
+    if (!entries.length) throw new Error('CSV has no logger fields.');
+    renderSelectedLoggerTagPanel(entries);
+    loggerSetStatus(`${loggerTagImportSummary(parsed)} Save + Apply Fields to write changes.`);
   } catch (err) {
     loggerSetStatus(`Upload failed: ${err.message || err}`);
   }
@@ -4965,9 +5177,11 @@ async function uploadLoggerHistorianFieldCsvToPanel() {
 async function saveLoggerReportTagsFromPanel(report) {
   const rid = String(report?.id || '').trim();
   if (!rid) return;
-  const tags = collectLoggerReportTagPanelEntries();
-  const next = { ...report, tags };
-  loggerSetStatus(`Saving ${tags.length} tag(s) for '${rid}'...`);
+  const entries = collectLoggerReportTagPanelEntries();
+  const split = splitLoggerUnifiedEntries(entries);
+  const next = { ...report, tags: split.tags, historian_fields: split.historian_fields };
+  const savedCount = split.tags.length + split.historian_fields.length;
+  loggerSetStatus(`Saving ${savedCount} field(s) for '${rid}'...`);
   const save = await apiPostJson('/api/reporter/reports', { report: next });
   if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
@@ -4978,11 +5192,13 @@ async function saveLoggerReportTagsFromPanel(report) {
   await refreshReporterAll();
   await refreshReporterSystemTagsForScada();
   state.loggerReportTagDraftById.delete(rid);
+  state.loggerReportHistorianDraftById.delete(rid);
   state.loggerSelectedNodeId = `logger:report:${rid}`;
   state.loggerReportPanelTab = 'tags';
   renderLoggerTree();
   renderLoggerDetails();
-  loggerSetStatus(`Updated '${rid}' with ${tags.length} tag(s).`);
+  const suffix = loggerSplitSummary();
+  loggerSetStatus(`Updated '${rid}' with ${savedCount} field(s).${suffix ? ` ${suffix}` : ''}`);
 }
 
 function openLoggerReportModal(opts = {}) {
@@ -6336,38 +6552,47 @@ function downloadDeviceTagsCsv(connectionId) {
 	    'log_event_on_change',
 	    'log_periodic_mode',
 	    'log_periodic_interval_sec',
+	    'historian_enabled',
+	    'historian_mode',
+	    'historian_interval_sec',
 	    'action'
 	  ];
 
-	  const rows = tags.map((t) => ({
-	    // Derived tags: source_tag is set (bit optional) and no plc_tag_name
-	    // Direct tags: plc_tag_name and no source_tag/bit
-	    connection_id: cid,
-	    name: String(t?.name || '').trim(),
-	    source: String(t?.source || t?.source_type || '').trim(),
-	    plc_tag_name: (String(t?.source_tag || '').trim() !== '') ? '' : String(t?.plc_tag_name || '').trim(),
-	    source_tag: String(t?.source_tag || '').trim(),
-	    bit: (t?.bit == null || String(t?.source_tag || '').trim() === '') ? '' : String(t.bit),
-	    initial_value: String(t?.initial_value ?? ''),
-	    invert: (t?.invert === true) ? 'true' : 'false',
-	    datatype: String(t?.datatype || '').trim(),
-	    elem_count: (t?.elem_count == null) ? '' : String(t.elem_count),
-	    scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
-	    enabled: (t?.enabled !== false) ? 'true' : 'false',
-	    writable: (t?.writable === true) ? 'true' : 'false',
-	    scaling: String(t?.scaling || '').trim(),
-	    raw_low: (t?.raw_low == null) ? '' : String(t.raw_low),
-	    raw_high: (t?.raw_high == null) ? '' : String(t.raw_high),
-	    scaled_low: (t?.scaled_low == null) ? '' : String(t.scaled_low),
-	    scaled_high: (t?.scaled_high == null) ? '' : String(t.scaled_high),
-	    clamp_low: (t?.clamp_low === true) ? 'true' : 'false',
-	    clamp_high: (t?.clamp_high === true) ? 'true' : 'false',
-	    scaled_datatype: String(t?.scaled_datatype || '').trim(),
-	    log_event_on_change: (t?.log_event_on_change === true) ? 'true' : 'false',
-	    log_periodic_mode: String(t?.log_periodic_mode || '').trim(),
-	    log_periodic_interval_sec: (t?.log_periodic_interval_sec == null) ? '' : String(t.log_periodic_interval_sec),
-	    action: ''
-	  }));
+	  const rows = tags.map((t) => {
+	    const historian = normalizeTagHistorianSettings(t);
+	    return {
+	      // Derived tags: source_tag is set (bit optional) and no plc_tag_name
+	      // Direct tags: plc_tag_name and no source_tag/bit
+	      connection_id: cid,
+	      name: String(t?.name || '').trim(),
+	      source: String(t?.source || t?.source_type || '').trim(),
+	      plc_tag_name: (String(t?.source_tag || '').trim() !== '') ? '' : String(t?.plc_tag_name || '').trim(),
+	      source_tag: String(t?.source_tag || '').trim(),
+	      bit: (t?.bit == null || String(t?.source_tag || '').trim() === '') ? '' : String(t.bit),
+	      initial_value: String(t?.initial_value ?? ''),
+	      invert: (t?.invert === true) ? 'true' : 'false',
+	      datatype: String(t?.datatype || '').trim(),
+	      elem_count: (t?.elem_count == null) ? '' : String(t.elem_count),
+	      scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
+	      enabled: (t?.enabled !== false) ? 'true' : 'false',
+	      writable: (t?.writable === true) ? 'true' : 'false',
+	      scaling: String(t?.scaling || '').trim(),
+	      raw_low: (t?.raw_low == null) ? '' : String(t.raw_low),
+	      raw_high: (t?.raw_high == null) ? '' : String(t.raw_high),
+	      scaled_low: (t?.scaled_low == null) ? '' : String(t.scaled_low),
+	      scaled_high: (t?.scaled_high == null) ? '' : String(t.scaled_high),
+	      clamp_low: (t?.clamp_low === true) ? 'true' : 'false',
+	      clamp_high: (t?.clamp_high === true) ? 'true' : 'false',
+	      scaled_datatype: String(t?.scaled_datatype || '').trim(),
+	      log_event_on_change: (t?.log_event_on_change === true) ? 'true' : 'false',
+	      log_periodic_mode: String(t?.log_periodic_mode || '').trim(),
+	      log_periodic_interval_sec: (t?.log_periodic_interval_sec == null) ? '' : String(t.log_periodic_interval_sec),
+	      historian_enabled: historian.enabled ? 'true' : 'false',
+	      historian_mode: historian.enabled ? historian.mode : '',
+	      historian_interval_sec: historian.enabled ? String(Math.max(1, Math.trunc(historian.interval_ms / 1000))) : '',
+	      action: ''
+	    };
+	  });
 
   const safe = cid.replace(/[^a-z0-9._-]+/gi, '_');
   downloadTextFile({
@@ -6867,6 +7092,13 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   renderWorkspaceSaveBar();
   await opcbridgeReload();
   await loadTagsConfig();
+  let historianSyncText = '';
+  try {
+    const count = await saveHistorianConfigFromWorkspaceTags(getEffectiveTagsAll());
+    historianSyncText = ` Historian config synced for ${count} tag(s).`;
+  } catch (err) {
+    historianSyncText = ` Historian config sync failed: ${String(err?.message || err)}.`;
+  }
   renderWorkspaceTree();
   await refreshVisible().catch(() => {});
 
@@ -6877,7 +7109,7 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   if (wrong) skipParts.push(`${wrong} wrong connection_id`);
   if (missing) skipParts.push(`${missing} missing required fields`);
   const skipText = skipped ? `, skipped ${skipped}${skipParts.length ? ` (${skipParts.join(', ')})` : ''}` : '';
-  setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${Number(result?.upserted || 0)}, deleted ${Number(result?.deleted || 0)}${skipText}. Rebuilt full runtime.`);
+  setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${Number(result?.upserted || 0)}, deleted ${Number(result?.deleted || 0)}${skipText}. Rebuilt full runtime.${historianSyncText}`);
 }
 
 async function importAlarmsCsv() {
@@ -11536,6 +11768,7 @@ function workspaceIsDirty() {
     (state.workspaceConnDirty && state.workspaceConnDirty.size > 0) ||
     (state.workspaceDeletePaths && state.workspaceDeletePaths.size > 0) ||
     Boolean(state.tagConfigDirty) ||
+    Boolean(state.historianConfigDirty) ||
     Boolean(state.alarmsConfigDirty)
   );
 }
@@ -11584,6 +11817,7 @@ function saveWorkspaceDraft() {
       tag_all: Array.isArray(state.tagConfigAll) ? state.tagConfigAll : [],
       tag_edits: tagEdits,
       tag_dirty: Boolean(state.tagConfigDirty),
+      historian_dirty: Boolean(state.historianConfigDirty),
       alarms_config: state.alarmsConfig || null,
       alarms_dirty: Boolean(state.alarmsConfigDirty)
     };
@@ -11644,6 +11878,7 @@ function restoreWorkspaceDraft() {
     }
 
     markTagsDirty(Boolean(parsed.tag_dirty));
+    state.historianConfigDirty = Boolean(parsed.historian_dirty);
 
     if (parsed.alarms_config && typeof parsed.alarms_config === 'object') {
       state.alarmsConfig = parsed.alarms_config;
@@ -12481,6 +12716,9 @@ function openWorkspaceItemModal(node) {
       if (els.editTagBit) els.editTagBit.value = '0';
       fillTagDatatypeSelect(els.editTagDatatype, 'bool');
       if (els.editTagScan) els.editTagScan.value = '';
+      if (els.editTagHistorianEnabled) els.editTagHistorianEnabled.checked = false;
+      if (els.editTagHistorianMode) els.editTagHistorianMode.value = 'periodic';
+      if (els.editTagHistorianInterval) els.editTagHistorianInterval.value = '60';
       if (els.editTagEnabled) els.editTagEnabled.checked = true;
       if (els.editTagWritable) els.editTagWritable.checked = false;
       if (els.editTagInvert) els.editTagInvert.checked = false;
@@ -12514,6 +12752,10 @@ function openWorkspaceItemModal(node) {
       fillTagDatatypeSelect(els.editTagDatatype, String(row?.datatype || 'bool'));
       if (els.editTagScan) els.editTagScan.value = (row?.scan_ms == null) ? '' : String(row.scan_ms);
       if (els.editTagElemCount) els.editTagElemCount.value = (row?.elem_count == null) ? '1' : String(row.elem_count);
+      const historian = normalizeTagHistorianSettings(row);
+      if (els.editTagHistorianEnabled) els.editTagHistorianEnabled.checked = historian.enabled;
+      if (els.editTagHistorianMode) els.editTagHistorianMode.value = historian.mode;
+      if (els.editTagHistorianInterval) els.editTagHistorianInterval.value = String(Math.max(1, Math.trunc(historian.interval_ms / 1000)));
       if (els.editTagEnabled) els.editTagEnabled.checked = (row?.enabled !== false);
       if (els.editTagWritable) els.editTagWritable.checked = (row?.writable === true);
       if (els.editTagInvert) els.editTagInvert.checked = (row?.invert === true);
@@ -12569,7 +12811,7 @@ function openWorkspaceItemModal(node) {
       applyScalingModeUi(els.editTagScaling, els.editTagScalingLinearRow);
       els.editTagScaling.disabled = (conn === MEMORY_CONNECTION_ID) || !canEditConfig();
     }
-    [els.editTagLogEvent, els.editTagRawLow, els.editTagRawHigh, els.editTagScaledLow, els.editTagScaledHigh, els.editTagScaledDatatype, els.editTagClampLow, els.editTagClampHigh]
+    [els.editTagHistorianEnabled, els.editTagHistorianMode, els.editTagHistorianInterval, els.editTagLogEvent, els.editTagRawLow, els.editTagRawHigh, els.editTagScaledLow, els.editTagScaledHigh, els.editTagScaledDatatype, els.editTagClampLow, els.editTagClampHigh]
       .filter(Boolean)
       .forEach((e) => { e.disabled = !canEditConfig(); });
 
@@ -12846,6 +13088,10 @@ async function saveEditedTagFromModal() {
   const writable = Boolean(els.editTagWritable?.checked);
   const invert = Boolean(els.editTagInvert?.checked);
   const log_event_on_change = Boolean(els.editTagLogEvent?.checked);
+  const historianEnabled = Boolean(els.editTagHistorianEnabled?.checked);
+  const historianMode = String(els.editTagHistorianMode?.value || 'periodic').trim().toLowerCase() || 'periodic';
+  const historianIntervalSecRaw = String(els.editTagHistorianInterval?.value || '').trim();
+  const historianIntervalSec = Math.max(1, Math.trunc(Number(historianIntervalSecRaw || '60') || 60));
 
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
 
@@ -12931,6 +13177,18 @@ async function saveEditedTagFromModal() {
   next.enabled = enabled;
   next.writable = isDerivedAlias ? false : writable;
   next.log_event_on_change = log_event_on_change;
+  if (historianEnabled) {
+    next.historian = {
+      enabled: true,
+      mode: historianMode === 'periodic' ? 'periodic' : 'periodic',
+      interval_ms: historianIntervalSec * 1000
+    };
+  } else {
+    delete next.historian;
+    delete next.historian_enabled;
+    delete next.historian_mode;
+    delete next.historian_interval_ms;
+  }
   if (invert) next.invert = true;
   else delete next.invert;
   if (isMemory) delete next.scan_ms;
@@ -18503,25 +18761,26 @@ function buildTree() {
     label: 'System',
     meta: { connection_id: '_system', system: true },
     children: [
+      makeSystemGroup('system:alarms', 'Alarms', 'System/Alarms/'),
       makeSystemGroup('system:bridge', 'Bridge', 'System/Bridge/'),
-      makeSystemGroup('system:connections', 'Connections', 'System/Connections/', connectionSystemChildren),
       makeSystemGroup('system:clock', 'Clock', 'System/Clock/'),
-      makeSystemGroup('system:opcua', 'OPC UA', 'System/OpcUa/', [
-        makeSystemGroup('system:opcua:sync', 'Sync', 'System/OpcUa/Sync/')
-      ]),
+      makeSystemGroup('system:connections', 'Connections', 'System/Connections/', connectionSystemChildren),
+      makeSystemGroup('system:historian', 'Historian', 'System/Historian/'),
       makeSystemGroup('system:host', 'Host', 'System/Host/', [
         makeSystemGroup('system:host:network', 'Network', 'System/Host/Network/', networkIfaceChildren)
       ]),
-      makeSystemGroup('system:alarms', 'Alarms', 'System/Alarms/'),
       makeSystemGroup('system:logic', 'Logic', 'System/Logic/', [
         makeSystemGroup('system:logic:scripts', 'Scripts', 'System/Logic/Scripts/', logicScriptChildren)
       ]),
       makeSystemGroup('system:mqtt', 'MQTT', 'System/MQTT/', [
         makeSystemGroup('system:mqtt:subscriptions', 'Subscriptions', 'System/MQTT/Subscriptions/', mqttBrokerChildren)
       ]),
+      makeSystemGroup('system:opcua', 'OPC UA', 'System/OpcUa/', [
+        makeSystemGroup('system:opcua:sync', 'Sync', 'System/OpcUa/Sync/')
+      ]),
       makeSystemGroup('system:reporter', 'Reporter', 'System/Reporter/', [
-        makeSystemGroup('system:reporter:databases', 'Databases', 'System/Reporter/Databases/', reporterDatabaseChildren),
-        makeSystemGroup('system:reporter:data_checks', 'Data Checks', 'System/Reporter/DataChecks/', reporterCheckChildren)
+        makeSystemGroup('system:reporter:data_checks', 'Data Checks', 'System/Reporter/DataChecks/', reporterCheckChildren),
+        makeSystemGroup('system:reporter:databases', 'Databases', 'System/Reporter/Databases/', reporterDatabaseChildren)
       ])
     ]
   };
@@ -19352,11 +19611,18 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
     }
 
     // 2) Save tags config (includes any edits staged in tags config page + workspace popups)
-    if (state.tagConfigDirty) {
-      const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
-      const effective = getEffectiveTagsAll();
-      const tagChanged = await saveTagsForChangedConnections(baseTags, effective);
+  if (state.tagConfigDirty) {
+    const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
+    const effective = getEffectiveTagsAll();
+    const tagChanged = await saveTagsForChangedConnections(baseTags, effective);
       tagChanged.forEach((cid) => { if (cid) changedConnectionIds.add(cid); });
+    }
+
+    const effectiveTagsForHistorian = getEffectiveTagsAll();
+    if (state.tagConfigDirty || state.historianConfigDirty || historianTagRulesFromWorkspaceTags(effectiveTagsForHistorian).length > 0) {
+      const count = await saveHistorianConfigFromWorkspaceTags(effectiveTagsForHistorian);
+      state.historianConfigDirty = false;
+      if (count > 0) setWorkspaceSaveStatus(`Saved historian config for ${count} tag(s).`);
     }
 
     // 3) Save alarms config (only if we staged updates, e.g., renaming a device)
@@ -19382,6 +19648,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
     // Clear dirty state and refresh
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
     state.tagConfigEdited = new Map();
+    state.historianConfigDirty = false;
     markTagsDirty(false);
     clearWorkspaceDraft();
 
@@ -19426,6 +19693,7 @@ async function discardWorkspaceChanges() {
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
     if (state.workspaceDeletePaths) state.workspaceDeletePaths.clear();
     state.alarmsConfigDirty = false;
+    state.historianConfigDirty = false;
     state.tagConfigEdited = new Map();
     markTagsDirty(false);
     clearWorkspaceDraft();
@@ -19697,7 +19965,6 @@ function renderLiveTags(tagsResp) {
   const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
   const total = Number(tagsResp?.total ?? tags.length) || tags.length;
   let displayTotal = total;
-  const shown = tags.length;
   const offset = Number(tagsResp?.offset ?? state.liveTagsPaging.offset) || 0;
   const limit = Number(tagsResp?.limit ?? state.liveTagsPaging.limit) || state.liveTagsPaging.limit;
   state.liveTagsPaging.total = total;
@@ -19710,12 +19977,7 @@ function renderLiveTags(tagsResp) {
 
   updateWorkspaceLiveTagFilterLabel();
   if (isPanelActive('tab-workspace')) {
-    const filtered = filterLiveTagsForWorkspace(tags);
-    if (['device', 'mqtt', 'tag'].includes(String(state.liveTagFilter?.type || ''))) {
-      displayTotal = Math.max(filtered.length, Number(tagsResp?.total ?? 0) || 0);
-      state.liveTagsPaging.total = displayTotal;
-    }
-    renderLiveTagsInto(els.workspaceLiveTagsTbody, filtered);
+    renderLiveTagsInto(els.workspaceLiveTagsTbody, tags);
     const selected = state.selectedNodeId ? findWorkspaceNodeById(state.workspaceTreeRoot, state.selectedNodeId) : null;
     const selectedType = String(selected?.type || '');
     if (selected && (selectedType === 'system_folder' || selectedType === 'system_group')) {
@@ -19730,6 +19992,9 @@ function renderLiveTags(tagsResp) {
 
 function resetLiveTagsViewport() {
   state.liveTagsPaging.offset = 0;
+  state.liveTagsPaging.index = [];
+  state.liveTagsPaging.valueByKey = new Map();
+  state.liveTagsPaging.indexLoaded = false;
   if (els.workspaceLiveTagsWrap && els.workspaceLiveTagsWrap.scrollTop !== 0) {
     els.workspaceLiveTagsWrap.scrollTop = 0;
   }
@@ -19738,10 +20003,62 @@ function resetLiveTagsViewport() {
   }
 }
 
-async function loadVisibleLiveTags() {
+function liveTagKey(row) {
+  return makeTagKey({ connection_id: row?.connection_id, name: row?.name || row?.tag });
+}
+
+function compareLiveTagIndexRows(a, b) {
+  const ac = String(a?.connection_id || '');
+  const bc = String(b?.connection_id || '');
+  const aSystemLike = ac.startsWith('_') ? 1 : 0;
+  const bSystemLike = bc.startsWith('_') ? 1 : 0;
+  if (aSystemLike !== bSystemLike) return aSystemLike - bSystemLike;
+  const connCmp = ac.localeCompare(bc, undefined, { numeric: true, sensitivity: 'base' });
+  if (connCmp !== 0) return connCmp;
+  const an = String(a?.name || a?.tag || '');
+  const bn = String(b?.name || b?.tag || '');
+  const nameCmp = an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+  if (nameCmp !== 0) return nameCmp;
+  return String(a?.datatype || '').localeCompare(String(b?.datatype || ''), undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function liveTagsVisibleRange() {
+  const page = state.liveTagsPaging || {};
+  const rowHeight = Math.max(1, Number(page.rowHeight || 34));
+  const wrap = els.workspaceLiveTagsWrap;
+  const scrollTop = Math.max(0, Number(wrap?.scrollTop || 0));
+  const viewportRows = wrap ? Math.ceil(Math.max(rowHeight, wrap.clientHeight || 0) / rowHeight) : 40;
+  const overscan = 12;
+  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const limit = Math.min(250, Math.max(40, viewportRows + (overscan * 2)));
+  return { start, limit, rowHeight };
+}
+
+function liveTagsBuildVisibleResponse() {
+  const page = state.liveTagsPaging || {};
+  const index = Array.isArray(page.index) ? page.index : [];
+  const { start, limit } = liveTagsVisibleRange();
+  const end = Math.min(index.length, start + limit);
+  const valueByKey = page.valueByKey instanceof Map ? page.valueByKey : new Map();
+  const rows = index.slice(start, end).map((row) => valueByKey.get(liveTagKey(row)) || row);
+  page.offset = start;
+  page.limit = limit;
+  page.total = index.length;
+  return {
+    ok: true,
+    tags: rows,
+    total: index.length,
+    offset: start,
+    limit,
+    virtual_index: true,
+    scopeKey: page.scopeKey || '',
+    search: page.search || ''
+  };
+}
+
+function liveTagsQueryParamsForCurrentScope() {
   const params = new URLSearchParams();
   const page = state.liveTagsPaging || { offset: 0, limit: 250, search: '', scopeKey: '' };
-  const limit = 250;
   let scopeKey = 'all';
   if (isPanelActive('tab-workspace')) {
     const f = state.liveTagFilter || { type: 'all' };
@@ -19761,24 +20078,48 @@ async function loadVisibleLiveTags() {
   if (prefix) params.set('search', prefix);
   const search = String(els.workspaceLiveTagsSearch?.value ?? page.search ?? '').trim();
   const effectiveSearch = prefix && !search ? prefix : search;
-  if (scopeKey !== page.scopeKey || effectiveSearch !== page.search || limit !== page.limit) {
+  if (scopeKey !== page.scopeKey || effectiveSearch !== page.search) {
     page.scopeKey = scopeKey;
     page.search = effectiveSearch;
-    page.limit = limit;
     resetLiveTagsViewport();
   }
-  params.set('limit', String(limit));
-  params.set('offset', String(Math.max(0, Math.trunc(Number(page.offset || 0)))));
   if (search) params.set('search', search);
-  return apiGet(`/api/opcbridge/tags?${params.toString()}`, { timeoutMs: 15000 });
+  return { params, scopeKey: page.scopeKey || scopeKey, search: page.search || effectiveSearch };
 }
 
-function setLiveTagsPageOffset(offset) {
-  const total = Math.max(0, Math.trunc(Number(state.liveTagsPaging.total || 0)));
-  const limit = Math.max(1, Math.trunc(Number(state.liveTagsPaging.limit || 250)));
-  const maxOffset = Math.max(0, total - limit);
-  state.liveTagsPaging.offset = Math.min(maxOffset, Math.max(0, Math.trunc(Number(offset || 0))));
-  refreshVisible().catch(() => {});
+async function loadVisibleLiveTags() {
+  const page = state.liveTagsPaging || { offset: 0, limit: 250, search: '', scopeKey: '', index: [], valueByKey: new Map() };
+  state.liveTagsPaging = page;
+  const { params } = liveTagsQueryParamsForCurrentScope();
+
+  if (!page.indexLoaded) {
+    params.set('limit', '0');
+    const indexResp = await apiGet(`/api/opcbridge/tags?${params.toString()}`, { timeoutMs: 30000 });
+    const index = (Array.isArray(indexResp?.tags) ? indexResp.tags : []).slice().sort(compareLiveTagIndexRows);
+    page.index = index;
+    page.total = Number(indexResp?.total ?? index.length) || index.length;
+    page.indexLoaded = true;
+    page.valueByKey = new Map();
+    index.forEach((row) => {
+      const key = liveTagKey(row);
+      if (key) page.valueByKey.set(key, row);
+    });
+  }
+
+  const visible = liveTagsBuildVisibleResponse();
+  const queryTags = visible.tags
+    .map((row) => ({ connection_id: String(row?.connection_id || ''), name: String(row?.name || row?.tag || '') }))
+    .filter((row) => row.connection_id && row.name);
+  if (queryTags.length) {
+    const liveResp = await apiPostJson('/api/opcbridge/tags/query', { tags: queryTags }, { timeoutMs: 15000 });
+    const valueByKey = page.valueByKey instanceof Map ? page.valueByKey : new Map();
+    (Array.isArray(liveResp?.tags) ? liveResp.tags : []).forEach((row) => {
+      const key = liveTagKey(row);
+      if (key) valueByKey.set(key, row);
+    });
+    page.valueByKey = valueByKey;
+  }
+  return liveTagsBuildVisibleResponse();
 }
 
 function wireLiveTagsPagingUi() {
@@ -19791,19 +20132,15 @@ function wireLiveTagsPagingUi() {
     }, 300);
   });
   els.workspaceLiveTagsRefreshBtn?.addEventListener('click', () => {
+    resetLiveTagsViewport();
     refreshVisible().catch(() => {});
   });
   els.workspaceLiveTagsWrap?.addEventListener('scroll', () => {
-    const wrap = els.workspaceLiveTagsWrap;
-    if (!wrap) return;
     if (state.liveTagsScrollTimer) window.clearTimeout(state.liveTagsScrollTimer);
+    renderLiveTags(liveTagsBuildVisibleResponse());
     state.liveTagsScrollTimer = window.setTimeout(() => {
       state.liveTagsScrollTimer = null;
-      const rowHeight = Number(state.liveTagsPaging.rowHeight || 34);
-      const offset = Math.max(0, Math.floor(wrap.scrollTop / rowHeight));
-      if (offset !== Number(state.liveTagsPaging.offset || 0)) {
-        setLiveTagsPageOffset(offset);
-      }
+      loadVisibleLiveTags().then(renderLiveTags).catch(() => {});
     }, 120);
   });
 }

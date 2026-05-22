@@ -644,6 +644,9 @@ static int insert_historian_fields_for_job(MYSQL* conn, const ServiceConfig& svc
                 error = summary.value("error", "Historian summary failed.");
                 continue;
             }
+            const std::string datatype = summary.contains("datatype") && summary["datatype"].is_string()
+                ? summary["datatype"].get<std::string>()
+                : std::string{};
 
             bool has_numeric = false;
             double value_numeric = 0.0;
@@ -678,10 +681,11 @@ static int insert_historian_fields_for_job(MYSQL* conn, const ServiceConfig& svc
             sql += sql_string_literal(conn, field.connection_id) + ", ";
             sql += sql_string_literal(conn, field.field_name.empty() ? (field.tag_name + "_" + stat) : field.field_name) + ", ";
             sql += sql_string_literal(conn, description) + ", ";
-            sql += sql_string_literal(conn, "historian_summary") + ", ";
+            sql += datatype.empty() ? "NULL, " : sql_string_literal(conn, datatype) + ", ";
             sql += has_numeric ? std::to_string(value_numeric) + ", " : "NULL, ";
             sql += has_string ? sql_string_literal(conn, value_string) + ", " : "NULL, ";
-            sql += "NULL, CURRENT_TIMESTAMP);";
+            sql += has_numeric ? "1, " : "0, ";
+            sql += "CURRENT_TIMESTAMP);";
 
             if (mysql_query(conn, sql.c_str()) != 0) {
                 error = std::string("MySQL insert error: ") + mysql_error(conn);
