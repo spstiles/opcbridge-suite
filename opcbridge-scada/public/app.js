@@ -1033,9 +1033,8 @@ function normalizeThemeMode(mode) {
 }
 
 function resolveThemeMode(mode) {
-  const m = normalizeThemeMode(mode);
-  if (m !== 'auto') return m;
-  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  void mode;
+  return 'dark';
 }
 
 function applyThemeMode(mode) {
@@ -1046,18 +1045,7 @@ function applyThemeMode(mode) {
 }
 
 function wireThemeUi() {
-  applyThemeMode('auto');
-  if (window.matchMedia) {
-    const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = () => {
-      applyThemeMode('auto');
-    };
-    if (typeof darkQuery.addEventListener === 'function') {
-      darkQuery.addEventListener('change', handler);
-    } else if (typeof darkQuery.addListener === 'function') {
-      darkQuery.addListener(handler);
-    }
-  }
+  applyThemeMode('dark');
 }
 
 const PLC_TYPE_LABELS = {

@@ -1,0 +1,37 @@
+{
+  "connection_id": "modbus01",
+  "tags": [
+    {
+      "name": "HoldingRegister0",
+      "register_type": "holding_register",
+      "address": 40001,
+      "datatype": "uint16",
+      "scan_ms": 1000,
+      "writable": true
+    },
+    {
+      "name": "Coil0",
+      "register_type": "coil",
+      "address": 1,
+      "datatype": "bool",
+      "scan_ms": 1000,
+      "writable": true
+    },
+    {
+      "name": "InputRegister0",
+      "register_type": "input_register",
+      "address": 30001,
+      "datatype": "uint16",
+      "scan_ms": 1000,
+      "writable": false
+    },
+    {
+      "name": "DiscreteInput0",
+      "register_type": "discrete_input",
+      "address": 10001,
+      "datatype": "bool",
+      "scan_ms": 1000,
+      "writable": false
+    }
+  ]
+}

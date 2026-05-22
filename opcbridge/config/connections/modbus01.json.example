@@ -1,0 +1,11 @@
+{
+  "id": "modbus01",
+  "driver": "modbus_tcp",
+  "description": "Example Modbus TCP connection",
+  "gateway": "192.0.2.50:502",
+  "path": "1",
+  "default_timeout_ms": 1000,
+  "default_read_ms": 1000,
+  "default_write_ms": 1000,
+  "debug": 0
+}

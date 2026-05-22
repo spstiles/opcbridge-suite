@@ -157,9 +157,9 @@ static std::atomic<uint64_t> g_reloadRequestGeneration{1};
 
 struct ConnectionConfig {
     std::string id;
-    std::string driver;      // "ab_eip", "mqtt"
-    std::string gateway;     // IP/host of PLC or ENxT
-    std::string path;        // CIP path ("1,0"), built from slot if empty
+    std::string driver;      // "ab_eip", "modbus_tcp", "mqtt"
+    std::string gateway;     // IP/host of PLC, ENxT, or Modbus TCP server
+    std::string path;        // CIP path ("1,0") or Modbus unit/server ID
     std::string plc_type;    // "lgx", "mlgx", "plc5", "slc"
     std::string polling_mode = "standard"; // "standard" or "time_sliced"
     std::string polling_pacing = "balanced"; // "gentle", "balanced", "fast"
@@ -3600,6 +3600,8 @@ static bool is_safe_connection_id_filename(const std::string &cid) {
 // -----------------------------
 
 static bool is_supported_datatype(const std::string &dt);
+static bool is_modbus_driver_name(const std::string &driver);
+static bool build_modbus_plc_tag_name(const json &jt, std::string &outName, std::string &outErr);
 
 ConnectionConfig load_connection_config(const std::string &path) {
     json j = load_json_with_comments(path);
@@ -3632,6 +3634,11 @@ ConnectionConfig load_connection_config(const std::string &path) {
             // For ControlLogix/CompactLogix; MicroLogix ignores path
             c.path = "1," + std::to_string(c.slot);
         }
+    } else if (is_modbus_driver_name(c.driver)) {
+        c.driver = "modbus_tcp";
+        c.path = trim_copy(raw_path.empty() ? json_get_string_loose(j, "unit_id", "1") : raw_path);
+        if (c.path.empty()) c.path = "1";
+        c.plc_type = "modbus_tcp";
     } else if (c.driver == "mqtt") {
         const json settings = (j.contains("settings") && j["settings"].is_object())
             ? j["settings"]
@@ -3660,10 +3667,103 @@ ConnectionConfig load_connection_config(const std::string &path) {
         c.poll_lanes = 1;
     } else {
         throw std::runtime_error("Unsupported driver: " + c.driver +
-                                 " (expected 'ab_eip' or 'mqtt')");
+                                 " (expected 'ab_eip', 'modbus_tcp', or 'mqtt')");
     }
 
     return c;
+}
+
+static std::string normalize_modbus_register_prefix(const std::string &raw) {
+    std::string s;
+    for (unsigned char ch : trim_copy(raw)) {
+        if (std::isalnum(ch)) s.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    if (s == "co" || s == "coil" || s == "coils" || s == "discreteoutput" || s == "discreteoutputs") return "co";
+    if (s == "di" || s == "discreteinput" || s == "discreteinputs" || s == "inputstatus") return "di";
+    if (s == "hr" || s == "holdingregister" || s == "holdingregisters" || s == "register" || s == "registers") return "hr";
+    if (s == "ir" || s == "inputregister" || s == "inputregisters") return "ir";
+    return {};
+}
+
+static bool json_has_nonempty_value(const json &obj, const char *key) {
+    if (!obj.is_object() || !obj.contains(key) || obj.at(key).is_null()) return false;
+    if (obj.at(key).is_string()) return !trim_copy(obj.at(key).get<std::string>()).empty();
+    return true;
+}
+
+static bool build_modbus_plc_tag_name(const json &jt, std::string &outName, std::string &outErr) {
+    outName.clear();
+    outErr.clear();
+
+    std::string typeRaw = json_get_string_loose(jt, "register_type",
+        json_get_string_loose(jt, "modbus_type",
+        json_get_string_loose(jt, "register", std::string{})));
+    std::string prefix = normalize_modbus_register_prefix(typeRaw);
+
+    int offset = -1;
+    if (json_has_nonempty_value(jt, "offset")) {
+        offset = json_get_int_loose(jt, "offset", -1);
+    } else if (json_has_nonempty_value(jt, "modbus_offset")) {
+        offset = json_get_int_loose(jt, "modbus_offset", -1);
+    }
+
+    if (offset < 0) {
+        const bool hasAddress = json_has_nonempty_value(jt, "address") || json_has_nonempty_value(jt, "modbus_address");
+        if (!hasAddress) {
+            outErr = "missing Modbus 'address' or 'offset'";
+            return false;
+        }
+
+        const int address = json_has_nonempty_value(jt, "address")
+            ? json_get_int_loose(jt, "address", -1)
+            : json_get_int_loose(jt, "modbus_address", -1);
+        if (address < 0) {
+            outErr = "invalid Modbus address";
+            return false;
+        }
+
+        if (prefix.empty()) {
+            if (address >= 40001 && address <= 49999) {
+                prefix = "hr";
+                offset = address - 40001;
+            } else if (address >= 30001 && address <= 39999) {
+                prefix = "ir";
+                offset = address - 30001;
+            } else if (address >= 10001 && address <= 19999) {
+                prefix = "di";
+                offset = address - 10001;
+            } else {
+                outErr = "register_type is required when address is not in 10001/30001/40001 form";
+                return false;
+            }
+        } else {
+            const bool zeroBased = json_get_bool_loose(jt, "zero_based", false) ||
+                                   json_get_bool_loose(jt, "zero_based_address", false);
+            if (zeroBased) {
+                offset = address;
+            } else if (prefix == "hr" && address >= 40001) {
+                offset = address - 40001;
+            } else if (prefix == "ir" && address >= 30001) {
+                offset = address - 30001;
+            } else if (prefix == "di" && address >= 10001) {
+                offset = address - 10001;
+            } else {
+                offset = address - 1;
+            }
+        }
+    }
+
+    if (prefix.empty()) {
+        outErr = "missing or unsupported Modbus register_type";
+        return false;
+    }
+    if (offset < 0) {
+        outErr = "Modbus address resolved to a negative offset";
+        return false;
+    }
+
+    outName = prefix + std::to_string(offset);
+    return true;
 }
 
 	TagFile load_tag_file(const std::string &path) {
@@ -3749,8 +3849,25 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	                }
 	            } else {
 	                t.source_type = "plc";
-	                if (!jt.contains("plc_tag_name") || !jt.contains("datatype")) continue;
+	                if (!jt.contains("datatype")) continue;
 	                t.plc_tag_name = json_get_string_loose(jt, "plc_tag_name", std::string{});
+	                if (t.plc_tag_name.empty()) {
+	                    std::string modbusName;
+	                    std::string modbusErr;
+	                    if (build_modbus_plc_tag_name(jt, modbusName, modbusErr)) {
+	                        t.plc_tag_name = modbusName;
+	                    } else if (json_has_nonempty_value(jt, "register_type") ||
+	                               json_has_nonempty_value(jt, "modbus_type") ||
+	                               json_has_nonempty_value(jt, "register") ||
+	                               json_has_nonempty_value(jt, "address") ||
+	                               json_has_nonempty_value(jt, "modbus_address") ||
+	                               json_has_nonempty_value(jt, "offset") ||
+	                               json_has_nonempty_value(jt, "modbus_offset")) {
+	                        std::cerr << "[load] Warning: skipping Modbus tag '" << t.logical_name
+	                                  << "' in " << path << ": " << modbusErr << ".\n";
+	                        continue;
+	                    }
+	                }
 	                t.path         = trim_copy(json_get_string_loose(jt, "path", std::string{}));
 	                t.datatype     = json_get_string_loose(jt, "datatype", std::string{});
 	                if (t.plc_tag_name.empty() || t.datatype.empty()) continue;
@@ -3849,6 +3966,15 @@ static bool is_supported_datatype(const std::string &dt) {
 
 static bool is_memory_tag(const TagConfig &cfg) {
     return to_lower_copy(trim_copy(cfg.source_type)) == "memory";
+}
+
+static bool is_modbus_driver_name(const std::string &driver) {
+    const std::string d = to_lower_copy(trim_copy(driver));
+    return d == "modbus_tcp" || d == "modbus-tcp";
+}
+
+static bool is_modbus_connection(const ConnectionConfig &conn) {
+    return is_modbus_driver_name(conn.driver);
 }
 
 static bool is_memory_connection_id(const std::string &connId) {
@@ -4002,11 +4128,13 @@ static void init_tag_scaling(TagRuntime &rt, const std::string &sourcePathForLog
 }
 
 std::string build_base_conn_str(const ConnectionConfig &c, const std::string &pathOverride = std::string{}) {
-    std::string s = "protocol=ab_eip";
+    std::string s = is_modbus_connection(c) ? "protocol=modbus_tcp" : "protocol=ab_eip";
     s += "&gateway=" + c.gateway;
     const std::string effectivePath = trim_copy(pathOverride).empty() ? c.path : trim_copy(pathOverride);
     s += "&path=" + effectivePath;
-    s += "&cpu=" + c.plc_type;
+    if (!is_modbus_connection(c)) {
+        s += "&cpu=" + c.plc_type;
+    }
     if (c.debug > 0) {
         s += "&debug=" + std::to_string(c.debug);
     }
@@ -4018,7 +4146,7 @@ std::string build_tag_conn_str(const ConnectionConfig &c,
 {
     std::string s = build_base_conn_str(c, t.path);
     s += "&name=" + t.plc_tag_name;
-    if (t.datatype != "string") {
+    if (!is_modbus_connection(c) && t.datatype != "string") {
         s += "&elem_size=" + std::to_string(datatype_size_bytes(t.datatype));
     }
     s += "&elem_count=" + std::to_string(std::max(1, t.elem_count));
@@ -4405,7 +4533,9 @@ static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
         uint16_t v = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset));
         raw = v;
     } else if (dt == "bool") {
-        int8_t v = plc_tag_get_int8(handle, byteOffset);
+        int8_t v = is_modbus_connection(conn)
+            ? static_cast<int8_t>(plc_tag_get_bit(handle, byteOffset))
+            : plc_tag_get_int8(handle, byteOffset);
         bool b = (v != 0);
         if (tag.cfg.invert) b = !b;
         raw = b;
@@ -4580,7 +4710,8 @@ static bool plc_set_value_from_string(const std::string &datatype,
                                       int32_t handle,
                                       const std::string &value_str,
                                       TagValue &outValue,
-                                      std::string &outError)
+                                      std::string &outError,
+                                      bool bitAccess = false)
 {
     try {
         int status = PLCTAG_STATUS_OK;
@@ -4615,8 +4746,12 @@ static bool plc_set_value_from_string(const std::string &datatype,
                 outError = "Cannot parse value as bool";
                 return false;
             }
-            int8_t raw = bv ? 1 : 0;
-            status = plc_tag_set_int8(handle, 0, raw);
+            if (bitAccess) {
+                status = plc_tag_set_bit(handle, 0, bv ? 1 : 0);
+            } else {
+                int8_t raw = bv ? 1 : 0;
+                status = plc_tag_set_int8(handle, 0, raw);
+            }
             outValue = bv;
         } else if (datatype == "string") {
             status = plc_tag_set_string(handle, 0, value_str.c_str());
@@ -4641,7 +4776,8 @@ static bool plc_set_value_from_string(const std::string &datatype,
 static bool plc_tag_set_from_tagvalue(const std::string &datatype,
                                       int32_t handle,
                                       const TagValue &v,
-                                      std::string &outError)
+                                      std::string &outError,
+                                      bool bitAccess = false)
 {
     outError.clear();
     int status = PLCTAG_STATUS_OK;
@@ -4673,8 +4809,12 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
     } else if (datatype == "bool") {
         const bool *pv = std::get_if<bool>(&v);
         if (!pv) { outError = "Type mismatch: expected bool"; return false; }
-        int8_t raw = (*pv) ? 1 : 0;
-        status = plc_tag_set_int8(handle, 0, raw);
+        if (bitAccess) {
+            status = plc_tag_set_bit(handle, 0, *pv ? 1 : 0);
+        } else {
+            int8_t raw = (*pv) ? 1 : 0;
+            status = plc_tag_set_int8(handle, 0, raw);
+        }
     } else if (datatype == "string") {
         const std::string *pv = std::get_if<std::string>(&v);
         if (!pv) { outError = "Type mismatch: expected string"; return false; }
@@ -5308,7 +5448,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             scaledValue = static_cast<double>(scaledNum);
         }
 
-        if (!plc_tag_set_from_tagvalue(cfg.datatype, handle, rawValue, parseErr)) {
+        if (!plc_tag_set_from_tagvalue(cfg.datatype, handle, rawValue, parseErr, is_modbus_connection(conn))) {
             std::cerr << "Write set failed for ["
                       << conn_id << "]." << logical_name
                       << ": " << parseErr << "\n";
@@ -5316,7 +5456,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             return false;
         }
     } else {
-        if (!plc_set_value_from_string(cfg.datatype, handle, value_str, rawValue, parseErr)) {
+        if (!plc_set_value_from_string(cfg.datatype, handle, value_str, rawValue, parseErr, is_modbus_connection(conn))) {
             std::cerr << "Write parse/set failed for ["
                       << conn_id << "]." << logical_name
                       << ": " << parseErr << "\n";
@@ -11960,9 +12100,17 @@ static bool apply_config_bundle_json(const std::string &configDir,
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="color-scheme" content="dark">
 <title>OPC Bridge Dashboard</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
+    :root {
+        color-scheme: dark;
+    }
+    html {
+        color-scheme: dark;
+        background: #111;
+    }
     body {
         font-family: sans-serif;
         background: #111;
@@ -13519,6 +13667,7 @@ function withAdminHeaders(baseHeaders = {}) {
 // ---------------------------
 const WS_DRIVER_LABELS = {
     ab_eip: "Allen-Bradley Ethernet/IP",
+    modbus_tcp: "Modbus TCP",
     mqtt: "MQTT Broker"
 };
 
@@ -19695,6 +19844,14 @@ window.addEventListener("load", startAutoRefresh);
 										"source",
 										"source_type",
 										"plc_tag_name",
+										"register_type",
+										"modbus_type",
+										"address",
+										"modbus_address",
+										"offset",
+										"modbus_offset",
+										"zero_based",
+										"zero_based_address",
 										"path",
 										"source_tag",
 										"bit",
@@ -21177,13 +21334,21 @@ window.addEventListener("load", startAutoRefresh);
 														 "' is missing 'datatype'.");
 							}
 							const bool hasPlc = t.contains("plc_tag_name") && t["plc_tag_name"].is_string() && !t["plc_tag_name"].get<std::string>().empty();
+							const bool hasModbusAddress =
+								json_has_nonempty_value(t, "register_type") ||
+								json_has_nonempty_value(t, "modbus_type") ||
+								json_has_nonempty_value(t, "register") ||
+								json_has_nonempty_value(t, "address") ||
+								json_has_nonempty_value(t, "modbus_address") ||
+								json_has_nonempty_value(t, "offset") ||
+								json_has_nonempty_value(t, "modbus_offset");
 							const bool hasDerived = (t.contains("source_tag") && t["source_tag"].is_string() && !t["source_tag"].get<std::string>().empty());
 							const std::string sourceKind = to_lower_copy(trim_copy(json_get_string_loose(t, "source_type", json_get_string_loose(t, "source", std::string{}))));
 							const bool hasMemory = (sourceKind == "memory");
-							if (!hasPlc && !hasDerived && !hasMemory) {
+							if (!hasPlc && !hasModbusAddress && !hasDerived && !hasMemory) {
 								throw std::runtime_error("Tag '" +
 														 t.value("name", std::string{"<unnamed>"}) +
-														 "' must contain 'plc_tag_name', 'source_tag', or source='memory'.");
+														 "' must contain 'plc_tag_name', Modbus address fields, 'source_tag', or source='memory'.");
 							}
 
 						json tagCopy = t;
@@ -21408,10 +21573,22 @@ window.addEventListener("load", startAutoRefresh);
 								(!trim_copy(csv_get(row, "plc_tag")).empty() ? csv_get(row, "plc_tag") : csv_get(row, "plc_tagname")));
 							const std::string tagPath = trim_copy(!trim_copy(csv_get(row, "path")).empty() ? csv_get(row, "path") :
 								(!trim_copy(csv_get(row, "cip_path")).empty() ? csv_get(row, "cip_path") : csv_get(row, "plc_path")));
+							const std::string registerType = trim_copy(!trim_copy(csv_get(row, "register_type")).empty() ? csv_get(row, "register_type") :
+								(!trim_copy(csv_get(row, "modbus_type")).empty() ? csv_get(row, "modbus_type") : csv_get(row, "register")));
+							const std::string addressRaw = trim_copy(!trim_copy(csv_get(row, "address")).empty() ? csv_get(row, "address") : csv_get(row, "modbus_address"));
+							const std::string offsetRaw = trim_copy(!trim_copy(csv_get(row, "offset")).empty() ? csv_get(row, "offset") : csv_get(row, "modbus_offset"));
 							const std::string datatype = trim_copy(csv_get(row, "datatype"));
 
 							if (isMemory) {
 								base.erase("plc_tag_name");
+								base.erase("register_type");
+								base.erase("modbus_type");
+								base.erase("address");
+								base.erase("modbus_address");
+								base.erase("offset");
+								base.erase("modbus_offset");
+								base.erase("zero_based");
+								base.erase("zero_based_address");
 								base.erase("path");
 								base.erase("source_tag");
 								base.erase("bit");
@@ -21425,6 +21602,14 @@ window.addEventListener("load", startAutoRefresh);
 								base.erase("source");
 								base.erase("initial_value");
 								base.erase("plc_tag_name");
+								base.erase("register_type");
+								base.erase("modbus_type");
+								base.erase("address");
+								base.erase("modbus_address");
+								base.erase("offset");
+								base.erase("modbus_offset");
+								base.erase("zero_based");
+								base.erase("zero_based_address");
 								base.erase("path");
 								base.erase("elem_count");
 								base["source_tag"] = sourceTag;
@@ -21434,6 +21619,14 @@ window.addEventListener("load", startAutoRefresh);
 								base.erase("source");
 								base.erase("initial_value");
 								base.erase("plc_tag_name");
+								base.erase("register_type");
+								base.erase("modbus_type");
+								base.erase("address");
+								base.erase("modbus_address");
+								base.erase("offset");
+								base.erase("modbus_offset");
+								base.erase("zero_based");
+								base.erase("zero_based_address");
 								base.erase("path");
 								base.erase("elem_count");
 								base["source_tag"] = sourceTag;
@@ -21446,6 +21639,23 @@ window.addEventListener("load", startAutoRefresh);
 								base.erase("source_tag");
 								base.erase("bit");
 								if (!plcTagName.empty()) base["plc_tag_name"] = plcTagName;
+								if (!registerType.empty() || !addressRaw.empty() || !offsetRaw.empty()) {
+									base.erase("plc_tag_name");
+								}
+								if (!registerType.empty()) {
+									base["register_type"] = registerType;
+								}
+								if (!addressRaw.empty()) {
+									const int address = parse_int_loose(addressRaw, -1);
+									if (address >= 0) base["address"] = address;
+								}
+								if (!offsetRaw.empty()) {
+									const int offset = parse_int_loose(offsetRaw, -1);
+									if (offset >= 0) {
+										base.erase("address");
+										base["offset"] = offset;
+									}
+								}
 								if (!tagPath.empty()) base["path"] = tagPath;
 								if (!datatype.empty()) base["datatype"] = datatype;
 							}

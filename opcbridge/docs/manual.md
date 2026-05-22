@@ -131,6 +131,20 @@ Each file defines a single PLC:
 Notes:
 - If tag creation or reads time out (common on slower links/VPNs or busy PLCs), raise `default_timeout_ms` and/or `default_read_ms` for that connection (e.g. 3000–10000ms).
 
+Modbus TCP connections use the same connection file shape with `driver` set to `modbus_tcp`:
+
+{
+  "id": "modbus01",
+  "driver": "modbus_tcp",
+  "gateway": "192.0.2.50:502",
+  "path": "1",
+  "default_timeout_ms": 1000,
+  "default_read_ms": 1000,
+  "default_write_ms": 1000
+}
+
+For Modbus TCP, `gateway` is the Modbus server IP/host with optional port, and `path` is the Modbus unit/server ID (`0`-`255`). If `path` is omitted, opcbridge defaults to unit ID `1`.
+
 3.2 Tags — config/tags/*.json
 
 Each file defines a set of tags belonging to one connection:
@@ -186,6 +200,27 @@ Direct PLC tag fields:
 - path: Optional CIP path override for this tag. If omitted or blank, the connection's `path` is used. Use this when tags on one gateway need different routes, for example `1,0`, `1,2`, or a longer ControlLogix bridge path.
 - elem_count: Optional (default 1). If > 1, reads an array/block in one request and publishes element snapshots as `TagName[i]`.
 - writable: If true, the tag can be written via REST (/write), MQTT command/mapping policies (if enabled), and OPC UA (if enabled).
+
+Modbus TCP direct tags can use friendly Modbus fields:
+
+{
+  "name": "TankLevel",
+  "register_type": "holding_register",
+  "address": 40001,
+  "datatype": "uint16",
+  "scan_ms": 1000
+}
+
+Supported `register_type` values include `coil`, `discrete_input`, `holding_register`, and `input_register`. `address` uses normal 1-based Modbus numbering, so holding register `40001` maps to libplctag `hr0`. If you already know the zero-based offset, use `offset` instead of `address`.
+
+Raw libplctag Modbus names still work in `plc_tag_name`:
+
+- `co0`: coil 0 (bool, read/write)
+- `di0`: discrete input 0 (bool, read-only)
+- `hr0`: holding register 0 (typically uint16/int16/uint32/int32/float32, read/write depending on device)
+- `ir0`: input register 0 (typically uint16/int16/uint32/int32/float32, read-only)
+
+The optional tag-level `path` field overrides the connection unit ID for that tag.
 
 Derived tag fields:
 
