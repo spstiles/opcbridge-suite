@@ -4,6 +4,7 @@
     {
       "name": "Tag0025",
       "plc_tag_name": "PLC_Tag0027",
+      "path": "1,0",
       "datatype": "int32",
       "scan_ms": 1000,
       "writable": true,

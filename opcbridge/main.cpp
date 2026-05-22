@@ -180,6 +180,7 @@ struct ConnectionConfig {
 	struct TagConfig {
 	    std::string logical_name;
 	    std::string plc_tag_name;
+	    std::string path; // optional per-tag CIP path override; defaults to connection path
 	    std::string source_type = "plc"; // "plc", "memory", or empty/legacy
 	    std::string initial_value;
 	    std::string datatype;
@@ -3750,6 +3751,7 @@ ConnectionConfig load_connection_config(const std::string &path) {
 	                t.source_type = "plc";
 	                if (!jt.contains("plc_tag_name") || !jt.contains("datatype")) continue;
 	                t.plc_tag_name = json_get_string_loose(jt, "plc_tag_name", std::string{});
+	                t.path         = trim_copy(json_get_string_loose(jt, "path", std::string{}));
 	                t.datatype     = json_get_string_loose(jt, "datatype", std::string{});
 	                if (t.plc_tag_name.empty() || t.datatype.empty()) continue;
 	                if (!is_supported_datatype(t.datatype)) {
@@ -3999,10 +4001,11 @@ static void init_tag_scaling(TagRuntime &rt, const std::string &sourcePathForLog
     rt.out_datatype = outDt.empty() ? std::string("float64") : outDt;
 }
 
-std::string build_base_conn_str(const ConnectionConfig &c) {
+std::string build_base_conn_str(const ConnectionConfig &c, const std::string &pathOverride = std::string{}) {
     std::string s = "protocol=ab_eip";
     s += "&gateway=" + c.gateway;
-    s += "&path=" + c.path;
+    const std::string effectivePath = trim_copy(pathOverride).empty() ? c.path : trim_copy(pathOverride);
+    s += "&path=" + effectivePath;
     s += "&cpu=" + c.plc_type;
     if (c.debug > 0) {
         s += "&debug=" + std::to_string(c.debug);
@@ -4013,7 +4016,7 @@ std::string build_base_conn_str(const ConnectionConfig &c) {
 std::string build_tag_conn_str(const ConnectionConfig &c,
                                const TagConfig &t)
 {
-    std::string s = build_base_conn_str(c);
+    std::string s = build_base_conn_str(c, t.path);
     s += "&name=" + t.plc_tag_name;
     if (t.datatype != "string") {
         s += "&elem_size=" + std::to_string(datatype_size_bytes(t.datatype));
@@ -13028,6 +13031,10 @@ static bool apply_config_bundle_json(const std::string &configDir,
 										    <label>PLC Tag</label>
 										    <input id="ws-tag-plc" type="text" placeholder="Pump1.Running" />
 										  </div>
+										  <div class="ws-s-form-row" id="ws-tag-path-row">
+										    <label>Path Override</label>
+										    <input id="ws-tag-path" type="text" placeholder="Use device path" />
+										  </div>
 										  <div class="ws-s-form-row" id="ws-tag-derived-row" style="display:none;">
 										    <label>Derived</label>
 										    <div class="ws-s-grid-derived">
@@ -13632,6 +13639,8 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 		    tagName: document.getElementById("ws-tag-name"),
 		    tagSourceKind: document.getElementById("ws-tag-source-kind"),
 		    tagPlc: document.getElementById("ws-tag-plc"),
+		    tagPathRow: document.getElementById("ws-tag-path-row"),
+		    tagPath: document.getElementById("ws-tag-path"),
 		    tagDerivedRow: document.getElementById("ws-tag-derived-row"),
 		    tagSourceTag: document.getElementById("ws-tag-source-tag"),
 		    tagBitBox: document.getElementById("ws-tag-bit-box"),
@@ -14008,6 +14017,8 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
     if (el.tagDerivedRow) el.tagDerivedRow.style.display = isDerived ? "grid" : "none";
     if (el.tagBitBox) el.tagBitBox.style.display = isDerivedBit ? "" : "none";
     if (el.tagPlc) el.tagPlc.disabled = isDerived || !canEdit;
+    if (el.tagPathRow) el.tagPathRow.style.display = isDerived ? "none" : "grid";
+    if (el.tagPath) el.tagPath.disabled = isDerived || !canEdit;
     if (el.tagSourceTag) el.tagSourceTag.disabled = !canEdit;
     if (el.tagBit) el.tagBit.disabled = isDerivedAlias || !canEdit;
 
@@ -14170,8 +14181,9 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 			    if (el.tagName) {
 			        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
 			        el.tagName.disabled = !wsIsEditable();
-			    }
+		    }
 		    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
+		    if (el.tagPath) el.tagPath.value = existing ? String(existing?.path || "") : "";
 		    if (el.tagSourceKind) {
 		        const hasSource = existing && String(existing?.source_tag || "").trim();
 		        const bitNum = existing && existing?.bit != null ? Number(existing.bit) : -1;
@@ -14619,9 +14631,10 @@ const wsRenderTree = () => {
 	            wsChildrenSort = { key: "name", dir: "asc" };
 	        }
 
-	        const cols = [
+	            const cols = [
 	            { key: "name", label: "Name", sortable: true },
 	            { key: "plc_tag_name", label: "PLC Tag", sortable: true },
+	            { key: "path", label: "Path", sortable: true },
 	            { key: "datatype", label: "Datatype", sortable: true },
 	            { key: "scan_ms", label: "Scan (ms)", sortable: true },
 	            { key: "enabled", label: "Enabled", sortable: true },
@@ -14633,6 +14646,7 @@ const wsRenderTree = () => {
 	        const getVal = (t, key) => {
 	            if (key === "name") return String(t?.name || "");
 	            if (key === "plc_tag_name") return String(t?.plc_tag_name || "");
+	            if (key === "path") return String(t?.path || "");
 	            if (key === "datatype") return String(t?.datatype || "");
 	            if (key === "scan_ms") return t?.scan_ms == null ? -1 : Number(t.scan_ms);
 	            if (key === "enabled") return t?.enabled === false ? 0 : 1;
@@ -14703,7 +14717,7 @@ const wsRenderTree = () => {
 	        el.tbody.textContent = "";
 	        if (!allTags.length) {
 	            const tr = document.createElement("tr");
-	            tr.innerHTML = `<td>(no tags)</td><td></td><td></td><td></td><td></td><td></td>`;
+	            tr.innerHTML = `<td>(no tags)</td><td></td><td></td><td></td><td></td><td></td><td></td>`;
 	            el.tbody.appendChild(tr);
 	            return;
 	        }
@@ -14716,6 +14730,7 @@ const wsRenderTree = () => {
 	            const cells = [
 	                name,
 	                String(t?.plc_tag_name || ""),
+	                String(t?.path || ""),
 	                String(t?.datatype || ""),
 	                t?.scan_ms == null ? "" : String(t.scan_ms),
 	                t?.enabled === false ? "no" : "yes",
@@ -14865,6 +14880,7 @@ const wsRenderTree = () => {
 		    const cid = String(el.tagConn?.value || "").trim();
 		    const name = String(el.tagName?.value || "").trim();
 	    const plc_tag_name = String(el.tagPlc?.value || "").trim();
+	    const path = String(el.tagPath?.value || "").trim();
 	    const datatype = String(el.tagDt?.value || "").trim();
 		    const scanRaw = String(el.tagScan?.value || "").trim();
 		    const elemCountRaw = String(el.tagElemCount?.value || "").trim();
@@ -14982,6 +14998,7 @@ const wsRenderTree = () => {
 		        const next = { connection_id: cid, name };
 		        if (!isDerived) {
 		            next.plc_tag_name = plc_tag_name;
+		            if (path) next.path = path;
 		            next.datatype = datatype;
 		            const ec = Math.max(1, Math.floor(Number(elemCountRaw) || 1));
 		            if (ec != 1) next.elem_count = ec;
@@ -15022,6 +15039,8 @@ const wsRenderTree = () => {
 			        next.name = name;
 			        if (!isDerived) {
 			            next.plc_tag_name = plc_tag_name;
+			            if (path) next.path = path;
+			            else delete next.path;
 			            delete next.source_tag;
 			            delete next.bit;
 			            next.datatype = datatype;
@@ -15031,12 +15050,14 @@ const wsRenderTree = () => {
 			            if (!applyScalingToTag(next)) return;
 			        } else if (isDerivedBit) {
 			            delete next.plc_tag_name;
+			            delete next.path;
 			            delete next.elem_count;
 			            next.source_tag = source_tag;
 			            next.bit = bit;
 			            next.datatype = "bool";
 			        } else {
 			            delete next.plc_tag_name;
+			            delete next.path;
 			            delete next.elem_count;
 			            next.source_tag = source_tag;
 			            delete next.bit;
@@ -18071,6 +18092,7 @@ window.addEventListener("load", startAutoRefresh);
                         jt["connection_id"] = d.conn.id;
                         jt["name"]          = cfg.logical_name;
                         jt["plc_tag_name"]  = cfg.plc_tag_name;
+                        if (!cfg.path.empty()) jt["path"] = cfg.path;
                         if (is_memory_tag(cfg)) {
                             jt["source"] = "memory";
                             if (!cfg.initial_value.empty()) jt["initial_value"] = cfg.initial_value;
@@ -19673,6 +19695,7 @@ window.addEventListener("load", startAutoRefresh);
 										"source",
 										"source_type",
 										"plc_tag_name",
+										"path",
 										"source_tag",
 										"bit",
 										"initial_value",
@@ -21383,10 +21406,13 @@ window.addEventListener("load", startAutoRefresh);
 
 							const std::string plcTagName = trim_copy(!trim_copy(csv_get(row, "plc_tag_name")).empty() ? csv_get(row, "plc_tag_name") :
 								(!trim_copy(csv_get(row, "plc_tag")).empty() ? csv_get(row, "plc_tag") : csv_get(row, "plc_tagname")));
+							const std::string tagPath = trim_copy(!trim_copy(csv_get(row, "path")).empty() ? csv_get(row, "path") :
+								(!trim_copy(csv_get(row, "cip_path")).empty() ? csv_get(row, "cip_path") : csv_get(row, "plc_path")));
 							const std::string datatype = trim_copy(csv_get(row, "datatype"));
 
 							if (isMemory) {
 								base.erase("plc_tag_name");
+								base.erase("path");
 								base.erase("source_tag");
 								base.erase("bit");
 								base.erase("elem_count");
@@ -21399,6 +21425,7 @@ window.addEventListener("load", startAutoRefresh);
 								base.erase("source");
 								base.erase("initial_value");
 								base.erase("plc_tag_name");
+								base.erase("path");
 								base.erase("elem_count");
 								base["source_tag"] = sourceTag;
 								base["bit"] = bit;
@@ -21407,6 +21434,7 @@ window.addEventListener("load", startAutoRefresh);
 								base.erase("source");
 								base.erase("initial_value");
 								base.erase("plc_tag_name");
+								base.erase("path");
 								base.erase("elem_count");
 								base["source_tag"] = sourceTag;
 								base.erase("bit");
@@ -21418,6 +21446,7 @@ window.addEventListener("load", startAutoRefresh);
 								base.erase("source_tag");
 								base.erase("bit");
 								if (!plcTagName.empty()) base["plc_tag_name"] = plcTagName;
+								if (!tagPath.empty()) base["path"] = tagPath;
 								if (!datatype.empty()) base["datatype"] = datatype;
 							}
 

@@ -141,6 +141,7 @@ Each file defines a set of tags belonging to one connection:
     {
       "name": "Test1.Dint",
       "plc_tag_name": "MyDINT",
+      "path": "1,0",
       "datatype": "int32",
       "scan_ms": 1000,
       "writable": true,
@@ -182,6 +183,7 @@ Common fields:
 Direct PLC tag fields:
 
 - plc_tag_name: PLC tag/address to read/write via libplctag.
+- path: Optional CIP path override for this tag. If omitted or blank, the connection's `path` is used. Use this when tags on one gateway need different routes, for example `1,0`, `1,2`, or a longer ControlLogix bridge path.
 - elem_count: Optional (default 1). If > 1, reads an array/block in one request and publishes element snapshots as `TagName[i]`.
 - writable: If true, the tag can be written via REST (/write), MQTT command/mapping policies (if enabled), and OPC UA (if enabled).
 
