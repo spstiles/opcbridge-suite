@@ -12331,7 +12331,7 @@ async function createNewTagFromModal() {
   const isDerivedAlias = (sourceKind === 'derived_alias');
   const isDerived = (isDerivedBit || isDerivedAlias);
 
-  const plc_tag_name = String(els.newTagPlc?.value || '').trim();
+  let plc_tag_name = String(els.newTagPlc?.value || '').trim();
   const initialValue = String(els.newTagInitialValue?.value || '').trim();
   const source_tag = String(els.newTagSourceTag?.value || '').trim();
   const bitRaw = String(els.newTagBit?.value || '').trim();
@@ -12367,7 +12367,18 @@ async function createNewTagFromModal() {
     tag.source = 'memory';
     if (initialValue !== '') tag.initial_value = initialValue;
   } else if (!isDerived) {
-    tag.plc_tag_name = plc_tag_name;
+    // Modbus convenience: allow "friendly" numeric addresses (e.g. 40001) entered in the PLC Tag field.
+    const connObj = getConnObjById(cid);
+    if (isModbusDriver(connObj?.driver || '')) {
+      const friendly = parseFriendlyModbusAddress(plc_tag_name);
+      if (friendly) {
+        delete tag.plc_tag_name;
+        tag.register_type = friendly.register_type;
+        tag.address = friendly.address;
+        plc_tag_name = '';
+      }
+    }
+    if (plc_tag_name) tag.plc_tag_name = plc_tag_name;
     if (elemCount !== 1) tag.elem_count = elemCount;
     const scalingRes = readLinearScalingFromUi({
       scalingEl: els.newTagScaling,
@@ -13160,7 +13171,26 @@ async function saveEditedTagFromModal() {
     delete next.source;
     delete next.source_type;
     delete next.initial_value;
-    next.plc_tag_name = plc_tag_name;
+    // Modbus convenience: allow "friendly" numeric addresses (e.g. 40001) entered in the PLC Tag field.
+    // Store as {register_type,address} so opcbridge can derive the proper Modbus handle.
+    const connObj = getConnObjById(conn);
+    if (isModbusDriver(connObj?.driver || '')) {
+      const friendly = parseFriendlyModbusAddress(plc_tag_name);
+      if (friendly) {
+        delete next.plc_tag_name;
+        next.register_type = friendly.register_type;
+        next.address = friendly.address;
+      } else {
+        // If user entered a non-numeric Modbus tag (e.g. hr0), keep it as plc_tag_name.
+        next.plc_tag_name = plc_tag_name;
+        delete next.register_type;
+        delete next.address;
+      }
+    } else {
+      next.plc_tag_name = plc_tag_name;
+      delete next.register_type;
+      delete next.address;
+    }
     if (elemCount === 1) delete next.elem_count;
     else next.elem_count = elemCount;
     delete next.source_tag;
@@ -18617,6 +18647,30 @@ function connectionIdForConnFilePath(pathRel) {
   if (fromObj) return fromObj;
 
   return inferConnectionIdFromPath(rel);
+}
+
+function getConnObjById(connectionId) {
+  const want = String(connectionId || '').trim();
+  if (!want) return null;
+  if (!(state.connObjCache instanceof Map)) return null;
+  for (const [rel, obj] of state.connObjCache.entries()) {
+    const id = String(obj?.id || obj?.connection_id || connectionIdForConnFilePath(rel) || '').trim();
+    if (id && id === want) return obj;
+  }
+  return null;
+}
+
+function parseFriendlyModbusAddress(raw) {
+  const s = String(raw || '').trim();
+  if (!/^\d+$/.test(s)) return null;
+  const address = Math.trunc(Number(s));
+  if (!Number.isFinite(address) || address <= 0) return null;
+  if (address >= 40001 && address <= 49999) return { register_type: 'holding_register', address };
+  if (address >= 30001 && address <= 39999) return { register_type: 'input_register', address };
+  if (address >= 10001 && address <= 19999) return { register_type: 'discrete_input', address };
+  // Coils are often represented as 1..9999 in "friendly" form.
+  if (address >= 1 && address <= 9999) return { register_type: 'coil', address };
+  return null;
 }
 
 function systemTagNamesFromCaches() {
