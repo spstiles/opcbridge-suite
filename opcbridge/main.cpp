@@ -184,6 +184,9 @@ struct ConnectionConfig {
 	    std::string source_type = "plc"; // "plc", "memory", or empty/legacy
 	    std::string initial_value;
 	    std::string datatype;
+        // Modbus 32-bit values are encoded as two 16-bit registers. Most devices use high-word then low-word,
+        // but some swap word order. Supported values: "hi_lo" (default) or "lo_hi".
+        std::string word_order = "hi_lo";
 	    int elem_count = 1; // for Logix arrays: number of elements to read (default 1)
 	    int scan_ms = 1000;
 	    bool enabled = true; // legacy configs default to enabled
@@ -3602,6 +3605,11 @@ static bool is_safe_connection_id_filename(const std::string &cid) {
 static bool is_supported_datatype(const std::string &dt);
 static bool is_modbus_driver_name(const std::string &driver);
 static bool build_modbus_plc_tag_name(const json &jt, std::string &outName, std::string &outErr);
+static std::string normalize_word_order(const std::string &raw);
+static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
+                                               const ConnectionConfig &conn,
+                                               const TagRuntime &tag,
+                                               int byteOffset);
 
 ConnectionConfig load_connection_config(const std::string &path) {
     json j = load_json_with_comments(path);
@@ -3766,6 +3774,21 @@ static bool build_modbus_plc_tag_name(const json &jt, std::string &outName, std:
     return true;
 }
 
+static std::string normalize_word_order(const std::string &raw) {
+    std::string s;
+    for (unsigned char ch : trim_copy(raw)) {
+        if (std::isalnum(ch)) s.push_back(static_cast<char>(std::tolower(ch)));
+        else if (ch == '_' || ch == '-') s.push_back('_');
+    }
+    if (s == "lo_hi" || s == "low_hi" || s == "low_high" || s == "lowhigh" || s == "swapped" || s == "swap") {
+        return "lo_hi";
+    }
+    if (s.empty() || s == "hi_lo" || s == "high_lo" || s == "high_low" || s == "highlow" || s == "normal") {
+        return "hi_lo";
+    }
+    return {};
+}
+
 	TagFile load_tag_file(const std::string &path) {
 	    json j = load_json_with_comments(path);
 
@@ -3884,6 +3907,12 @@ static bool build_modbus_plc_tag_name(const json &jt, std::string &outName, std:
 	            t.enabled              = json_get_bool_loose(jt, "enabled", true);
 	            t.writable             = json_get_bool_loose(jt, "writable", false);
                 t.invert               = json_get_bool_loose(jt, "invert", false);
+                {
+                    const std::string rawWordOrder = json_get_string_loose(jt, "word_order",
+                        json_get_string_loose(jt, "modbus_word_order", std::string{}));
+                    const std::string norm = normalize_word_order(rawWordOrder);
+                    if (!norm.empty()) t.word_order = norm;
+                }
 	            if (hasSource || isMemory) {
 	                t.elem_count = 1;
 	            }
@@ -4146,10 +4175,23 @@ std::string build_tag_conn_str(const ConnectionConfig &c,
 {
     std::string s = build_base_conn_str(c, t.path);
     s += "&name=" + t.plc_tag_name;
-    if (!is_modbus_connection(c) && t.datatype != "string") {
-        s += "&elem_size=" + std::to_string(datatype_size_bytes(t.datatype));
+    const bool isModbus = is_modbus_connection(c);
+    int elemCount = std::max(1, t.elem_count);
+    if (isModbus) {
+        // libplctag Modbus treats elements as 16-bit registers; for 32-bit values we must request 2 registers.
+        if (t.datatype == "int32" || t.datatype == "uint32" || t.datatype == "float32") {
+            elemCount = std::max(elemCount, 2);
+        } else if (t.datatype == "float64") {
+            elemCount = std::max(elemCount, 4);
+        }
+        // Do not set elem_size for Modbus: libplctag Modbus expects 16-bit registers and can return OOB
+        // when elem_size is set to 4 for float32/int32.
+    } else {
+        if (t.datatype != "string") {
+            s += "&elem_size=" + std::to_string(datatype_size_bytes(t.datatype));
+        }
     }
-    s += "&elem_count=" + std::to_string(std::max(1, t.elem_count));
+    s += "&elem_count=" + std::to_string(elemCount);
     return s;
 }
 
@@ -4312,86 +4354,8 @@ void update_snapshot_from_plc(TagSnapshot &snap,
                               const ConnectionConfig &conn,
                               const TagRuntime &tag)
 {
-    snap.connection_id = conn.id;
-    snap.logical_name  = tag.cfg.logical_name;
-    snap.datatype      = tag.cfg.datatype;
-    snap.timestamp     = std::chrono::system_clock::now();
-    snap.quality       = 1;
-
-    const std::string &dt = tag.cfg.datatype;
-    int32_t handle = tag.handle;
-
-    TagValue raw{};
-    if (dt == "float32") {
-        float v = plc_tag_get_float32(handle, 0);
-        raw = v;
-    } else if (dt == "float64") {
-        double v = plc_tag_get_float64(handle, 0);
-        raw = v;
-    } else if (dt == "int32") {
-        int32_t v = plc_tag_get_int32(handle, 0);
-        raw = v;
-    } else if (dt == "uint32") {
-        uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, 0));
-        raw = v;
-    } else if (dt == "int16") {
-        int16_t v = plc_tag_get_int16(handle, 0);
-        raw = v;
-    } else if (dt == "uint16") {
-        uint16_t v = static_cast<uint16_t>(plc_tag_get_uint16(handle, 0));
-        raw = v;
-    } else if (dt == "bool") {
-        int8_t v = plc_tag_get_int8(handle, 0);
-        bool b = (v != 0);
-        if (tag.cfg.invert) b = !b;
-        raw = b;
-    } else if (dt == "string") {
-        int capacity = plc_tag_get_string_capacity(handle, 0);
-        if (capacity <= 0) capacity = 82;
-        std::vector<char> buffer(static_cast<size_t>(capacity) + 1u, '\0');
-        int status = plc_tag_get_string(handle, 0, buffer.data(), static_cast<int>(buffer.size()));
-        if (status != PLCTAG_STATUS_OK) {
-            snap.quality = 0;
-            snap.value = std::string{};
-            return;
-        }
-        raw = std::string(buffer.data());
-    } else {
-        snap.quality = 0;
-        return;
-    }
-
-    if (!tag.scaling_linear) {
-        snap.value = raw;
-        snap.datatype = tag.cfg.datatype;
-        return;
-    }
-
-    double rawNum = 0.0;
-    if (!tagvalue_to_double(raw, rawNum)) {
-        // Should not happen because init_tag_scaling blocks non-numeric datatypes.
-        snap.value = raw;
-        snap.datatype = tag.cfg.datatype;
-        return;
-    }
-
-    double scaled = rawNum * tag.scale_slope + tag.scale_offset;
-    if (tag.cfg.clamp_low)  scaled = std::max(scaled, tag.cfg.scaled_low);
-    if (tag.cfg.clamp_high) scaled = std::min(scaled, tag.cfg.scaled_high);
-
-    TagValue out{};
-    std::string castErr;
-    if (!cast_double_to_tagvalue(scaled, tag.out_datatype.empty() ? std::string("float64") : tag.out_datatype, out, castErr)) {
-        std::cerr << "[scale] Warning: tag '" << tag.cfg.logical_name
-                  << "' cast failed (" << castErr << "); using float64.\n";
-        out = static_cast<double>(scaled);
-        snap.datatype = "float64";
-        snap.value = out;
-        return;
-    }
-
-    snap.value = out;
-    snap.datatype = tag.out_datatype.empty() ? std::string("float64") : tag.out_datatype;
+    // Delegate to the offset-based reader so Modbus 32-bit word-order decoding and scaling apply consistently.
+    (void)update_snapshot_from_plc_at_offset(snap, conn, tag, 0);
 }
 
 void print_snapshot(const TagSnapshot &snap) {
@@ -4478,6 +4442,11 @@ static std::string snapshot_value_to_string(const TagSnapshot &snap) {
     return oss.str();
 }
 
+static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
+                                               const ConnectionConfig &conn,
+                                               const TagRuntime &tag,
+                                               int byteOffset);
+
 static bool extract_bit_from_snapshot(const TagSnapshot &src, int bit, bool &outBit) {
     if (bit < 0) return false;
 
@@ -4502,6 +4471,11 @@ static bool extract_bit_from_snapshot(const TagSnapshot &src, int bit, bool &out
 static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
                                                const ConnectionConfig &conn,
                                                const TagRuntime &tag,
+                                               int byteOffset);
+
+static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
+                                               const ConnectionConfig &conn,
+                                               const TagRuntime &tag,
                                                int byteOffset)
 {
     snap.connection_id = conn.id;
@@ -4515,17 +4489,71 @@ static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
 
     TagValue raw{};
     if (dt == "float32") {
-        float v = plc_tag_get_float32(handle, byteOffset);
-        raw = v;
+        if (is_modbus_connection(conn)) {
+            // Modbus elements are 16-bit registers; float32 spans two registers.
+            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 0));
+            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 2));
+            const bool swapWords = (tag.cfg.word_order == "lo_hi");
+            const uint32_t hi = swapWords ? static_cast<uint32_t>(w1) : static_cast<uint32_t>(w0);
+            const uint32_t lo = swapWords ? static_cast<uint32_t>(w0) : static_cast<uint32_t>(w1);
+            const uint32_t bits = (hi << 16) | lo;
+            float v = 0.0f;
+            static_assert(sizeof(float) == sizeof(uint32_t), "float32 size mismatch");
+            std::memcpy(&v, &bits, sizeof(v));
+            raw = v;
+        } else {
+            float v = plc_tag_get_float32(handle, byteOffset);
+            raw = v;
+        }
     } else if (dt == "float64") {
-        double v = plc_tag_get_float64(handle, byteOffset);
-        raw = v;
+        if (is_modbus_connection(conn)) {
+            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 0));
+            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 2));
+            const uint16_t w2 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 4));
+            const uint16_t w3 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 6));
+            const bool swapWords = (tag.cfg.word_order == "lo_hi");
+            const uint16_t a = swapWords ? w3 : w0;
+            const uint16_t b = swapWords ? w2 : w1;
+            const uint16_t c = swapWords ? w1 : w2;
+            const uint16_t d = swapWords ? w0 : w3;
+            const uint64_t bits = (static_cast<uint64_t>(a) << 48) |
+                                  (static_cast<uint64_t>(b) << 32) |
+                                  (static_cast<uint64_t>(c) << 16) |
+                                   static_cast<uint64_t>(d);
+            double v = 0.0;
+            static_assert(sizeof(double) == sizeof(uint64_t), "float64 size mismatch");
+            std::memcpy(&v, &bits, sizeof(v));
+            raw = v;
+        } else {
+            double v = plc_tag_get_float64(handle, byteOffset);
+            raw = v;
+        }
     } else if (dt == "int32") {
-        int32_t v = plc_tag_get_int32(handle, byteOffset);
-        raw = v;
+        if (is_modbus_connection(conn)) {
+            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 0));
+            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 2));
+            const bool swapWords = (tag.cfg.word_order == "lo_hi");
+            const uint32_t hi = swapWords ? static_cast<uint32_t>(w1) : static_cast<uint32_t>(w0);
+            const uint32_t lo = swapWords ? static_cast<uint32_t>(w0) : static_cast<uint32_t>(w1);
+            const uint32_t u = (hi << 16) | lo;
+            raw = static_cast<int32_t>(u);
+        } else {
+            int32_t v = plc_tag_get_int32(handle, byteOffset);
+            raw = v;
+        }
     } else if (dt == "uint32") {
-        uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, byteOffset));
-        raw = v;
+        if (is_modbus_connection(conn)) {
+            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 0));
+            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 2));
+            const bool swapWords = (tag.cfg.word_order == "lo_hi");
+            const uint32_t hi = swapWords ? static_cast<uint32_t>(w1) : static_cast<uint32_t>(w0);
+            const uint32_t lo = swapWords ? static_cast<uint32_t>(w0) : static_cast<uint32_t>(w1);
+            const uint32_t u = (hi << 16) | lo;
+            raw = u;
+        } else {
+            uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, byteOffset));
+            raw = v;
+        }
     } else if (dt == "int16") {
         int16_t v = plc_tag_get_int16(handle, byteOffset);
         raw = v;
@@ -4711,27 +4739,62 @@ static bool plc_set_value_from_string(const std::string &datatype,
                                       const std::string &value_str,
                                       TagValue &outValue,
                                       std::string &outError,
-                                      bool bitAccess = false)
+                                      bool bitAccess = false,
+                                      const std::string &word_order = std::string("hi_lo"))
 {
     try {
         int status = PLCTAG_STATUS_OK;
 
         if (datatype == "float32") {
             float v = std::stof(value_str);
-            status = plc_tag_set_float32(handle, 0, v);
             outValue = v;
+            if (bitAccess) {
+                uint32_t bits = 0;
+                static_assert(sizeof(float) == sizeof(uint32_t), "float32 size mismatch");
+                std::memcpy(&bits, &v, sizeof(bits));
+                const uint16_t hi = static_cast<uint16_t>((bits >> 16) & 0xFFFFu);
+                const uint16_t lo = static_cast<uint16_t>(bits & 0xFFFFu);
+                const bool swapWords = (word_order == "lo_hi");
+                const uint16_t w0 = swapWords ? lo : hi;
+                const uint16_t w1 = swapWords ? hi : lo;
+                status = plc_tag_set_uint16(handle, 0, w0);
+                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+            } else {
+                status = plc_tag_set_float32(handle, 0, v);
+            }
         } else if (datatype == "float64") {
             double v = std::stod(value_str);
             status = plc_tag_set_float64(handle, 0, v);
             outValue = v;
         } else if (datatype == "int32") {
             int32_t v = static_cast<int32_t>(std::stol(value_str));
-            status = plc_tag_set_int32(handle, 0, v);
             outValue = v;
+            if (bitAccess) {
+                const uint32_t bits = static_cast<uint32_t>(v);
+                const uint16_t hi = static_cast<uint16_t>((bits >> 16) & 0xFFFFu);
+                const uint16_t lo = static_cast<uint16_t>(bits & 0xFFFFu);
+                const bool swapWords = (word_order == "lo_hi");
+                const uint16_t w0 = swapWords ? lo : hi;
+                const uint16_t w1 = swapWords ? hi : lo;
+                status = plc_tag_set_uint16(handle, 0, w0);
+                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+            } else {
+                status = plc_tag_set_int32(handle, 0, v);
+            }
         } else if (datatype == "uint32") {
             uint32_t v = static_cast<uint32_t>(std::stoul(value_str));
-            status = plc_tag_set_uint32(handle, 0, v);
             outValue = v;
+            if (bitAccess) {
+                const uint16_t hi = static_cast<uint16_t>((v >> 16) & 0xFFFFu);
+                const uint16_t lo = static_cast<uint16_t>(v & 0xFFFFu);
+                const bool swapWords = (word_order == "lo_hi");
+                const uint16_t w0 = swapWords ? lo : hi;
+                const uint16_t w1 = swapWords ? hi : lo;
+                status = plc_tag_set_uint16(handle, 0, w0);
+                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+            } else {
+                status = plc_tag_set_uint32(handle, 0, v);
+            }
         } else if (datatype == "int16") {
             int16_t v = static_cast<int16_t>(std::stoi(value_str));
             status = plc_tag_set_int16(handle, 0, v);
@@ -4777,7 +4840,8 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
                                       int32_t handle,
                                       const TagValue &v,
                                       std::string &outError,
-                                      bool bitAccess = false)
+                                      bool bitAccess = false,
+                                      const std::string &word_order = std::string("hi_lo"))
 {
     outError.clear();
     int status = PLCTAG_STATUS_OK;
@@ -4785,7 +4849,20 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
     if (datatype == "float32") {
         const float *pv = std::get_if<float>(&v);
         if (!pv) { outError = "Type mismatch: expected float32"; return false; }
-        status = plc_tag_set_float32(handle, 0, *pv);
+        if (bitAccess) {
+            uint32_t bits = 0;
+            static_assert(sizeof(float) == sizeof(uint32_t), "float32 size mismatch");
+            std::memcpy(&bits, pv, sizeof(bits));
+            const uint16_t hi = static_cast<uint16_t>((bits >> 16) & 0xFFFFu);
+            const uint16_t lo = static_cast<uint16_t>(bits & 0xFFFFu);
+            const bool swapWords = (word_order == "lo_hi");
+            const uint16_t w0 = swapWords ? lo : hi;
+            const uint16_t w1 = swapWords ? hi : lo;
+            status = plc_tag_set_uint16(handle, 0, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+        } else {
+            status = plc_tag_set_float32(handle, 0, *pv);
+        }
     } else if (datatype == "float64") {
         const double *pv = std::get_if<double>(&v);
         if (!pv) { outError = "Type mismatch: expected float64"; return false; }
@@ -4793,11 +4870,32 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
     } else if (datatype == "int32") {
         const int32_t *pv = std::get_if<int32_t>(&v);
         if (!pv) { outError = "Type mismatch: expected int32"; return false; }
-        status = plc_tag_set_int32(handle, 0, *pv);
+        if (bitAccess) {
+            const uint32_t bits = static_cast<uint32_t>(*pv);
+            const uint16_t hi = static_cast<uint16_t>((bits >> 16) & 0xFFFFu);
+            const uint16_t lo = static_cast<uint16_t>(bits & 0xFFFFu);
+            const bool swapWords = (word_order == "lo_hi");
+            const uint16_t w0 = swapWords ? lo : hi;
+            const uint16_t w1 = swapWords ? hi : lo;
+            status = plc_tag_set_uint16(handle, 0, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+        } else {
+            status = plc_tag_set_int32(handle, 0, *pv);
+        }
     } else if (datatype == "uint32") {
         const uint32_t *pv = std::get_if<uint32_t>(&v);
         if (!pv) { outError = "Type mismatch: expected uint32"; return false; }
-        status = plc_tag_set_uint32(handle, 0, *pv);
+        if (bitAccess) {
+            const uint16_t hi = static_cast<uint16_t>((*pv >> 16) & 0xFFFFu);
+            const uint16_t lo = static_cast<uint16_t>(*pv & 0xFFFFu);
+            const bool swapWords = (word_order == "lo_hi");
+            const uint16_t w0 = swapWords ? lo : hi;
+            const uint16_t w1 = swapWords ? hi : lo;
+            status = plc_tag_set_uint16(handle, 0, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+        } else {
+            status = plc_tag_set_uint32(handle, 0, *pv);
+        }
     } else if (datatype == "int16") {
         const int16_t *pv = std::get_if<int16_t>(&v);
         if (!pv) { outError = "Type mismatch: expected int16"; return false; }
@@ -4835,7 +4933,9 @@ static bool plc_tag_get_word_u64(const std::string &datatype,
                                  int32_t handle,
                                  uint64_t &outWord,
                                  int &outBits,
-                                 std::string &outError)
+                                 std::string &outError,
+                                 bool isModbus = false,
+                                 const std::string &word_order = std::string("hi_lo"))
 {
     outWord = 0;
     outBits = 0;
@@ -4854,14 +4954,32 @@ static bool plc_tag_get_word_u64(const std::string &datatype,
         return true;
     }
     if (datatype == "int32") {
-        int32_t v = plc_tag_get_int32(handle, 0);
-        outWord = static_cast<uint32_t>(v);
+        if (isModbus) {
+            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, 0));
+            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, 2));
+            const bool swapWords = (word_order == "lo_hi");
+            const uint32_t hi = swapWords ? static_cast<uint32_t>(w1) : static_cast<uint32_t>(w0);
+            const uint32_t lo = swapWords ? static_cast<uint32_t>(w0) : static_cast<uint32_t>(w1);
+            outWord = (hi << 16) | lo;
+        } else {
+            int32_t v = plc_tag_get_int32(handle, 0);
+            outWord = static_cast<uint32_t>(v);
+        }
         outBits = 32;
         return true;
     }
     if (datatype == "uint32") {
-        uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, 0));
-        outWord = v;
+        if (isModbus) {
+            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, 0));
+            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, 2));
+            const bool swapWords = (word_order == "lo_hi");
+            const uint32_t hi = swapWords ? static_cast<uint32_t>(w1) : static_cast<uint32_t>(w0);
+            const uint32_t lo = swapWords ? static_cast<uint32_t>(w0) : static_cast<uint32_t>(w1);
+            outWord = (hi << 16) | lo;
+        } else {
+            uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, 0));
+            outWord = v;
+        }
         outBits = 32;
         return true;
     }
@@ -4873,7 +4991,9 @@ static bool plc_tag_get_word_u64(const std::string &datatype,
 static bool plc_tag_set_word_u64(const std::string &datatype,
                                  int32_t handle,
                                  uint64_t word,
-                                 std::string &outError)
+                                 std::string &outError,
+                                 bool isModbus = false,
+                                 const std::string &word_order = std::string("hi_lo"))
 {
     outError.clear();
     int status = PLCTAG_STATUS_OK;
@@ -4883,9 +5003,31 @@ static bool plc_tag_set_word_u64(const std::string &datatype,
     } else if (datatype == "uint16") {
         status = plc_tag_set_uint16(handle, 0, static_cast<uint16_t>(word));
     } else if (datatype == "int32") {
-        status = plc_tag_set_int32(handle, 0, static_cast<int32_t>(static_cast<uint32_t>(word)));
+        const uint32_t u = static_cast<uint32_t>(word);
+        if (isModbus) {
+            const uint16_t hi = static_cast<uint16_t>((u >> 16) & 0xFFFFu);
+            const uint16_t lo = static_cast<uint16_t>(u & 0xFFFFu);
+            const bool swapWords = (word_order == "lo_hi");
+            const uint16_t w0 = swapWords ? lo : hi;
+            const uint16_t w1 = swapWords ? hi : lo;
+            status = plc_tag_set_uint16(handle, 0, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+        } else {
+            status = plc_tag_set_int32(handle, 0, static_cast<int32_t>(u));
+        }
     } else if (datatype == "uint32") {
-        status = plc_tag_set_uint32(handle, 0, static_cast<uint32_t>(word));
+        const uint32_t u = static_cast<uint32_t>(word);
+        if (isModbus) {
+            const uint16_t hi = static_cast<uint16_t>((u >> 16) & 0xFFFFu);
+            const uint16_t lo = static_cast<uint16_t>(u & 0xFFFFu);
+            const bool swapWords = (word_order == "lo_hi");
+            const uint16_t w0 = swapWords ? lo : hi;
+            const uint16_t w1 = swapWords ? hi : lo;
+            status = plc_tag_set_uint16(handle, 0, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+        } else {
+            status = plc_tag_set_uint32(handle, 0, u);
+        }
     } else {
         outError = "Unsupported source datatype for derived-bit write: '" + datatype + "'";
         return false;
@@ -5236,7 +5378,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         uint64_t curWord = 0;
         int wordBits = 0;
         std::string rwErr;
-        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, curWord, wordBits, rwErr)) {
+        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, curWord, wordBits, rwErr, is_modbus_connection(conn), srcCfg.word_order)) {
             std::cerr << "Derived write failed for ["
                       << conn_id << "]." << logical_name
                       << ": " << rwErr << "\n";
@@ -5255,7 +5397,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         const uint64_t mask = (1ULL << static_cast<uint64_t>(cfg.bit));
         uint64_t nextWord = desiredUnderlying ? (curWord | mask) : (curWord & ~mask);
 
-        if (!plc_tag_set_word_u64(srcCfg.datatype, srcHandle, nextWord, rwErr)) {
+        if (!plc_tag_set_word_u64(srcCfg.datatype, srcHandle, nextWord, rwErr, is_modbus_connection(conn), srcCfg.word_order)) {
             std::cerr << "Derived write set failed for source ["
                       << conn_id << "]." << srcName
                       << ": " << rwErr << "\n";
@@ -5284,7 +5426,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         uint64_t verifyWord = 0;
         int verifyBits = 0;
-        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, verifyWord, verifyBits, rwErr)) {
+        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, verifyWord, verifyBits, rwErr, is_modbus_connection(conn), srcCfg.word_order)) {
             std::cerr << "Derived write verify get failed for source ["
                       << conn_id << "]." << srcName
                       << ": " << rwErr << "\n";
@@ -5448,7 +5590,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             scaledValue = static_cast<double>(scaledNum);
         }
 
-        if (!plc_tag_set_from_tagvalue(cfg.datatype, handle, rawValue, parseErr, is_modbus_connection(conn))) {
+        if (!plc_tag_set_from_tagvalue(cfg.datatype, handle, rawValue, parseErr, is_modbus_connection(conn), cfg.word_order)) {
             std::cerr << "Write set failed for ["
                       << conn_id << "]." << logical_name
                       << ": " << parseErr << "\n";
@@ -5456,7 +5598,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             return false;
         }
     } else {
-        if (!plc_set_value_from_string(cfg.datatype, handle, value_str, rawValue, parseErr, is_modbus_connection(conn))) {
+        if (!plc_set_value_from_string(cfg.datatype, handle, value_str, rawValue, parseErr, is_modbus_connection(conn), cfg.word_order)) {
             std::cerr << "Write parse/set failed for ["
                       << conn_id << "]." << logical_name
                       << ": " << parseErr << "\n";

@@ -1366,6 +1366,13 @@
 	              </div>
 	            </div>
 	            <div class="form-row"><label>Datatype</label><select id="editTagDatatype"></select></div>
+              <div class="form-row" id="editTagWordOrderRow" style="display:none;">
+                <label>Word Order</label>
+                <select id="editTagWordOrder">
+                  <option value="hi_lo">High / Low (40001=high)</option>
+                  <option value="lo_hi">Low / High (40001=low)</option>
+                </select>
+              </div>
             <div class="form-row"><label>Scan (ms)</label><input id="editTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
             <div class="form-row"><label>Elem Count</label><input id="editTagElemCount" type="number" min="1" step="1" placeholder="1" /></div>
             <div class="form-row">
@@ -1700,6 +1707,13 @@
 	            </div>
 	          </div>
 	          <div class="form-row"><label>Datatype</label><select id="newTagDatatype"></select></div>
+            <div class="form-row" id="newTagWordOrderRow" style="display:none;">
+              <label>Word Order</label>
+              <select id="newTagWordOrder">
+                <option value="hi_lo">High / Low (40001=high)</option>
+                <option value="lo_hi">Low / High (40001=low)</option>
+              </select>
+            </div>
 	          <div class="form-row"><label>Scan (ms)</label><input id="newTagScan" type="number" min="0" step="1" placeholder="1000" /></div>
 	          <div class="form-row"><label>Elem Count</label><input id="newTagElemCount" type="number" min="1" step="1" placeholder="1" /></div>
           <div class="form-row">

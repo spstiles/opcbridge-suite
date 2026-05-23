@@ -446,6 +446,8 @@
   newTagBitBox: document.getElementById('newTagBitBox'),
   newTagBit: document.getElementById('newTagBit'),
   newTagDatatype: document.getElementById('newTagDatatype'),
+  newTagWordOrderRow: document.getElementById('newTagWordOrderRow'),
+  newTagWordOrder: document.getElementById('newTagWordOrder'),
   newTagScan: document.getElementById('newTagScan'),
   newTagElemCount: document.getElementById('newTagElemCount'),
   newTagEnabled: document.getElementById('newTagEnabled'),
@@ -540,6 +542,8 @@
   editTagBitBox: document.getElementById('editTagBitBox'),
   editTagBit: document.getElementById('editTagBit'),
   editTagDatatype: document.getElementById('editTagDatatype'),
+  editTagWordOrderRow: document.getElementById('editTagWordOrderRow'),
+  editTagWordOrder: document.getElementById('editTagWordOrder'),
   editTagScan: document.getElementById('editTagScan'),
   editTagElemCount: document.getElementById('editTagElemCount'),
   editTagHistorianEnabled: document.getElementById('editTagHistorianEnabled'),
@@ -11374,6 +11378,26 @@ function isModbusDriver(driver) {
   return d === 'modbus_tcp' || d === 'modbus-tcp';
 }
 
+function isModbus32Datatype(datatype) {
+  const dt = String(datatype || '').trim().toLowerCase();
+  return dt === 'int32' || dt === 'uint32' || dt === 'float32';
+}
+
+function normalizeWordOrder(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  return (s === 'lo_hi' || s === 'low_high' || s === 'swap' || s === 'swapped') ? 'lo_hi' : 'hi_lo';
+}
+
+function applyTagWordOrderUi({ rowEl, selectEl }, { connId, sourceKind, datatype, existingRow }) {
+  const connObj = getConnObjById(connId);
+  const show = (sourceKind === 'plc') && isModbusDriver(connObj?.driver || '') && isModbus32Datatype(datatype);
+  if (rowEl) rowEl.style.display = show ? '' : 'none';
+  if (selectEl) {
+    selectEl.value = normalizeWordOrder(existingRow?.word_order);
+    selectEl.disabled = !canEditConfig();
+  }
+}
+
 function setRowVisible(row, visible) {
   if (row) row.style.display = visible ? '' : 'none';
 }
@@ -12204,6 +12228,8 @@ function showNewTagModal(connectionId) {
   if (els.newTagInitialValue) els.newTagInitialValue.value = '';
   if (els.newTagBit) els.newTagBit.value = '';
   fillTagDatatypeSelect(els.newTagDatatype, 'bool');
+  if (els.newTagWordOrder) els.newTagWordOrder.value = 'hi_lo';
+  applyTagWordOrderUi({ rowEl: els.newTagWordOrderRow, selectEl: els.newTagWordOrder }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc'), datatype: String(els.newTagDatatype?.value || ''), existingRow: null });
   if (els.newTagScan) els.newTagScan.value = '';
   if (els.newTagElemCount) els.newTagElemCount.value = '';
   if (els.newTagEnabled) els.newTagEnabled.checked = true;
@@ -12228,21 +12254,24 @@ function showNewTagModal(connectionId) {
     .forEach((e) => { e.disabled = !canEditConfig(); });
 
   if (els.newTagSourceKind) {
-    els.newTagSourceKind.onchange = () => applyTagSourceKindUi({
-      kindEl: els.newTagSourceKind,
-      plcEl: els.newTagPlc,
-      initialRowEl: els.newTagInitialRow,
-      initialEl: els.newTagInitialValue,
-      derivedRowEl: els.newTagDerivedRow,
-      sourceEl: els.newTagSourceTag,
-      bitBoxEl: els.newTagBitBox,
-      bitEl: els.newTagBit,
-      datatypeEl: els.newTagDatatype,
-      elemCountEl: els.newTagElemCount,
-      writableEl: els.newTagWritable,
-      scalingEl: els.newTagScaling,
-      scalingLinearRowEl: els.newTagScalingLinearRow
-    }, { connId: cid, excludeTagName: '' });
+    els.newTagSourceKind.onchange = () => {
+      applyTagSourceKindUi({
+        kindEl: els.newTagSourceKind,
+        plcEl: els.newTagPlc,
+        initialRowEl: els.newTagInitialRow,
+        initialEl: els.newTagInitialValue,
+        derivedRowEl: els.newTagDerivedRow,
+        sourceEl: els.newTagSourceTag,
+        bitBoxEl: els.newTagBitBox,
+        bitEl: els.newTagBit,
+        datatypeEl: els.newTagDatatype,
+        elemCountEl: els.newTagElemCount,
+        writableEl: els.newTagWritable,
+        scalingEl: els.newTagScaling,
+        scalingLinearRowEl: els.newTagScalingLinearRow
+      }, { connId: cid, excludeTagName: '' });
+      applyTagWordOrderUi({ rowEl: els.newTagWordOrderRow, selectEl: els.newTagWordOrder }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc'), datatype: String(els.newTagDatatype?.value || ''), existingRow: null });
+    };
     applyTagSourceKindUi({
       kindEl: els.newTagSourceKind,
       plcEl: els.newTagPlc,
@@ -12259,6 +12288,12 @@ function showNewTagModal(connectionId) {
       scalingLinearRowEl: els.newTagScalingLinearRow
     }, { connId: cid, excludeTagName: '' });
     els.newTagSourceKind.disabled = memoryMode || !canEditConfig();
+  }
+
+  if (els.newTagDatatype) {
+    els.newTagDatatype.onchange = () => {
+      applyTagWordOrderUi({ rowEl: els.newTagWordOrderRow, selectEl: els.newTagWordOrder }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc'), datatype: String(els.newTagDatatype?.value || ''), existingRow: null });
+    };
   }
 
   setNewTagStatus('');
@@ -12376,6 +12411,9 @@ async function createNewTagFromModal() {
         tag.register_type = friendly.register_type;
         tag.address = friendly.address;
         plc_tag_name = '';
+      }
+      if (isModbus32Datatype(datatype)) {
+        tag.word_order = normalizeWordOrder(els.newTagWordOrder?.value);
       }
     }
     if (plc_tag_name) tag.plc_tag_name = plc_tag_name;
@@ -12735,6 +12773,7 @@ function openWorkspaceItemModal(node) {
       if (els.editTagSourceTag) els.editTagSourceTag.textContent = '';
       if (els.editTagBit) els.editTagBit.value = '0';
       fillTagDatatypeSelect(els.editTagDatatype, 'bool');
+      applyTagWordOrderUi({ rowEl: els.editTagWordOrderRow, selectEl: els.editTagWordOrder }, { connId: conn, sourceKind: 'plc', datatype: 'bool', existingRow: null });
       if (els.editTagScan) els.editTagScan.value = '';
       if (els.editTagHistorianEnabled) els.editTagHistorianEnabled.checked = false;
       if (els.editTagHistorianMode) els.editTagHistorianMode.value = 'periodic';
@@ -12765,11 +12804,29 @@ function openWorkspaceItemModal(node) {
           ? ((Number.isFinite(bitNum) && bitNum >= 0) ? 'derived_bit' : 'derived_alias')
           : 'plc';
       }
-      if (els.editTagPlc) els.editTagPlc.value = String(row?.plc_tag_name || '');
+      if (els.editTagPlc) {
+        const connObj = getConnObjById(conn);
+        const isModbus = isModbusDriver(connObj?.driver || '');
+        const plc = String(row?.plc_tag_name || '').trim();
+        if (plc) {
+          els.editTagPlc.value = plc;
+        } else if (isModbus && row?.address != null) {
+          // For Modbus tags, we may persist {register_type,address} instead of plc_tag_name.
+          // Show the friendly address back to the user.
+          els.editTagPlc.value = String(row.address);
+        } else {
+          els.editTagPlc.value = '';
+        }
+      }
       if (els.editTagInitialValue) els.editTagInitialValue.value = String(row?.initial_value ?? '');
       if (els.editTagSourceTag) els.editTagSourceTag.value = String(row?.source_tag || '');
       if (els.editTagBit) els.editTagBit.value = (row?.bit == null) ? '0' : String(row.bit);
-      fillTagDatatypeSelect(els.editTagDatatype, String(row?.datatype || 'bool'));
+      const dt = String(row?.datatype || 'bool');
+      fillTagDatatypeSelect(els.editTagDatatype, dt);
+      applyTagWordOrderUi(
+        { rowEl: els.editTagWordOrderRow, selectEl: els.editTagWordOrder },
+        { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc'), datatype: dt, existingRow: row }
+      );
       if (els.editTagScan) els.editTagScan.value = (row?.scan_ms == null) ? '' : String(row.scan_ms);
       if (els.editTagElemCount) els.editTagElemCount.value = (row?.elem_count == null) ? '1' : String(row.elem_count);
       const historian = normalizeTagHistorianSettings(row);
@@ -12793,21 +12850,27 @@ function openWorkspaceItemModal(node) {
     }
 
     if (els.editTagSourceKind) {
-      els.editTagSourceKind.onchange = () => applyTagSourceKindUi({
-        kindEl: els.editTagSourceKind,
-        plcEl: els.editTagPlc,
-        initialRowEl: els.editTagInitialRow,
-        initialEl: els.editTagInitialValue,
-        derivedRowEl: els.editTagDerivedRow,
-        sourceEl: els.editTagSourceTag,
-        bitBoxEl: els.editTagBitBox,
-        bitEl: els.editTagBit,
-        datatypeEl: els.editTagDatatype,
-        elemCountEl: els.editTagElemCount,
-        writableEl: els.editTagWritable,
-        scalingEl: els.editTagScaling,
-        scalingLinearRowEl: els.editTagScalingLinearRow
-      }, { connId: conn, excludeTagName: name });
+      els.editTagSourceKind.onchange = () => {
+        applyTagSourceKindUi({
+          kindEl: els.editTagSourceKind,
+          plcEl: els.editTagPlc,
+          initialRowEl: els.editTagInitialRow,
+          initialEl: els.editTagInitialValue,
+          derivedRowEl: els.editTagDerivedRow,
+          sourceEl: els.editTagSourceTag,
+          bitBoxEl: els.editTagBitBox,
+          bitEl: els.editTagBit,
+          datatypeEl: els.editTagDatatype,
+          elemCountEl: els.editTagElemCount,
+          writableEl: els.editTagWritable,
+          scalingEl: els.editTagScaling,
+          scalingLinearRowEl: els.editTagScalingLinearRow
+        }, { connId: conn, excludeTagName: name });
+        applyTagWordOrderUi(
+          { rowEl: els.editTagWordOrderRow, selectEl: els.editTagWordOrder },
+          { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc'), datatype: String(els.editTagDatatype?.value || ''), existingRow: row }
+        );
+      };
       applyTagSourceKindUi({
         kindEl: els.editTagSourceKind,
         plcEl: els.editTagPlc,
@@ -12824,6 +12887,15 @@ function openWorkspaceItemModal(node) {
         scalingLinearRowEl: els.editTagScalingLinearRow
       }, { connId: conn, excludeTagName: name });
       els.editTagSourceKind.disabled = (conn === MEMORY_CONNECTION_ID) || !canEditConfig();
+    }
+
+    if (els.editTagDatatype) {
+      els.editTagDatatype.onchange = () => {
+        applyTagWordOrderUi(
+          { rowEl: els.editTagWordOrderRow, selectEl: els.editTagWordOrder },
+          { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc'), datatype: String(els.editTagDatatype?.value || ''), existingRow: row }
+        );
+      };
     }
 
     if (els.editTagScaling) {
@@ -13161,6 +13233,9 @@ async function saveEditedTagFromModal() {
   const next = { ...(state.tagConfigAll[idx] || {}) };
   if (isMemory) {
     delete next.plc_tag_name;
+    delete next.register_type;
+    delete next.address;
+    delete next.word_order;
     delete next.source_tag;
     delete next.bit;
     delete next.elem_count;
@@ -13186,10 +13261,16 @@ async function saveEditedTagFromModal() {
         delete next.register_type;
         delete next.address;
       }
+      if (isModbus32Datatype(datatype)) {
+        next.word_order = normalizeWordOrder(els.editTagWordOrder?.value);
+      } else {
+        delete next.word_order;
+      }
     } else {
       next.plc_tag_name = plc_tag_name;
       delete next.register_type;
       delete next.address;
+      delete next.word_order;
     }
     if (elemCount === 1) delete next.elem_count;
     else next.elem_count = elemCount;
@@ -13200,6 +13281,9 @@ async function saveEditedTagFromModal() {
     delete next.source_type;
     delete next.initial_value;
     delete next.plc_tag_name;
+    delete next.register_type;
+    delete next.address;
+    delete next.word_order;
     delete next.elem_count;
     next.source_tag = source_tag;
     next.bit = bit;
@@ -13208,6 +13292,9 @@ async function saveEditedTagFromModal() {
     delete next.source_type;
     delete next.initial_value;
     delete next.plc_tag_name;
+    delete next.register_type;
+    delete next.address;
+    delete next.word_order;
     delete next.elem_count;
     next.source_tag = source_tag;
     delete next.bit;
