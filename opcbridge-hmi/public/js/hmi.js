@@ -1215,8 +1215,8 @@ const apiGetAlarmsHistory = async (limit) => {
     // Prefer the alarm server history (includes ack/shelve workflow events).
     return await tryFetchJson(`/api/alarms/history${query}`);
   } catch (error) {
-    // Fallback: opcbridge’s built-in alarm history DB.
-    // This keeps the alarm panel populated even without opcbridge-alarms.
+    // Fallback: OPCBridge's built-in alarm history DB.
+    // This keeps the alarm panel populated even without OPCBridge Alarms.
     return tryFetchJson(`/api/opcbridge/alarm-history${query}`);
   }
 };
@@ -1755,7 +1755,7 @@ const updateAuthUiVisibility = () => {
     }
   }
   if (authSetupTimeout) authSetupTimeout.value = !initialized ? "0" : authSetupTimeout.value;
-  // User management is centralized in opcbridge-scada (single admin console).
+  // User management is centralized in OPCBridge SCADA (single admin console).
   if (usersMenuBtn) usersMenuBtn.classList.add("is-hidden");
   if (auditMenuBtn) auditMenuBtn.classList.add("is-hidden");
   if (settingsMenuBtn) {
@@ -4622,7 +4622,7 @@ const loadClientConfig = async () => {
         ...parsed.opcbridge
       };
       if (editorStatus) {
-        editorStatus.textContent = `Loaded opcbridge config (${opcbridgeConfig.host}).`;
+        editorStatus.textContent = `Loaded OPCBridge config (${opcbridgeConfig.host}).`;
       }
     }
     if (parsed?.alarms) {

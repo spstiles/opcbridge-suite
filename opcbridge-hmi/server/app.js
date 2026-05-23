@@ -501,7 +501,7 @@ const createApp = () => {
       const port = Number(opcbridge.httpPort) || 8080;
       const response = await fetch(`http://${host}:${port}/tags`, { headers: { Accept: "application/json" } });
       if (!response.ok) {
-        return res.status(502).json({ error: `opcbridge HTTP ${response.status}` });
+        return res.status(502).json({ error: `OPCBridge HTTP ${response.status}` });
       }
       const data = await response.json();
       res.json(data);
@@ -562,7 +562,7 @@ const createApp = () => {
       });
       const text = await response.text();
       if (!response.ok) {
-        return res.status(502).json({ error: `opcbridge HTTP ${response.status}`, details: text });
+        return res.status(502).json({ error: `OPCBridge HTTP ${response.status}`, details: text });
       }
       await appendAudit(req, { event: "opc.write", connection_id, tag: name, value: valueString });
       try {
@@ -588,12 +588,12 @@ const createApp = () => {
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       const text = await response.text();
       if (!response.ok) {
-        return res.status(502).json({ error: `opcbridge-alarms HTTP ${response.status}`, details: text });
+        return res.status(502).json({ error: `OPCBridge Alarms HTTP ${response.status}`, details: text });
       }
       try {
         res.json(JSON.parse(text));
       } catch {
-        res.status(502).json({ error: "Invalid JSON from opcbridge-alarms.", details: text });
+        res.status(502).json({ error: "Invalid JSON from OPCBridge Alarms.", details: text });
       }
     } catch (error) {
       res.status(500).json({ error: String(error) });
@@ -612,12 +612,12 @@ const createApp = () => {
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       const text = await response.text();
       if (!response.ok) {
-        return res.status(502).json({ error: `opcbridge-alarms HTTP ${response.status}`, details: text });
+        return res.status(502).json({ error: `OPCBridge Alarms HTTP ${response.status}`, details: text });
       }
       try {
         res.json(JSON.parse(text));
       } catch {
-        res.status(502).json({ error: "Invalid JSON from opcbridge-alarms.", details: text });
+        res.status(502).json({ error: "Invalid JSON from OPCBridge Alarms.", details: text });
       }
     } catch (error) {
       res.status(500).json({ error: String(error) });
@@ -638,12 +638,12 @@ const createApp = () => {
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       const text = await response.text();
       if (!response.ok) {
-        return res.status(502).json({ error: `opcbridge HTTP ${response.status}`, details: text });
+        return res.status(502).json({ error: `OPCBridge HTTP ${response.status}`, details: text });
       }
       try {
         res.json(JSON.parse(text));
       } catch {
-        res.status(502).json({ error: "Invalid JSON from opcbridge.", details: text });
+        res.status(502).json({ error: "Invalid JSON from OPCBridge.", details: text });
       }
     } catch (error) {
       res.status(500).json({ error: String(error) });

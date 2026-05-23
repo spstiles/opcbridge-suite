@@ -83,6 +83,25 @@ Possible UI action:
 Apply Tuning
 ```
 
+### Advanced Connection Fields To Revisit
+
+Some connection config fields exist in the backend but are not currently shown consistently in the SCADA and OPCBridge workspace UIs.
+
+Fields to audit before exposing:
+
+- `description`
+- `default_timeout_ms`
+- `default_read_ms`
+- `default_write_ms`
+- `debug`
+
+Decision rule:
+
+- Preserve existing values when saving config from any UI.
+- Expose a field only if it is actively used by the runtime and has clear operator/admin meaning.
+- Put low-level diagnostics such as `debug` under an Advanced or Diagnostics section, not in the normal connection editor.
+- If timeout/read/write defaults are active driver settings, expose them consistently in SCADA and OPCBridge, preferably under Advanced.
+
 ### Connection-Scoped Apply
 
 These require Configure Mode, but should only reload affected connection pollers:

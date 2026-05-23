@@ -905,7 +905,7 @@ const state = {
   tagConfigAll: [],
   tagConfigEdited: new Map(),
   tagConfigDirty: false,
-  liveTagsPaging: { offset: 0, limit: 250, total: 0, search: '', scopeKey: '', rowHeight: 34, index: [], valueByKey: new Map(), indexLoaded: false },
+  liveTagsPaging: { offset: 0, limit: 250, total: 0, search: '', scopeKey: '', rowHeight: 28, index: [], valueByKey: new Map(), indexLoaded: false },
   liveTagsSearchTimer: null,
   liveTagsScrollTimer: null,
 
@@ -2961,8 +2961,8 @@ function openLoggerDbModal(opts = {}) {
   if (els.loggerDbHint) {
     const defaultUrl = getReporterDefaultOpcbridgeBaseUrl();
     els.loggerDbHint.textContent = isNew
-      ? `New database connection. Leave opcbridge Base URL blank to use ${defaultUrl}.`
-      : `Edit database '${id}'. Leave opcbridge Base URL blank to use ${defaultUrl}.`;
+      ? `New database connection. Leave OPCBridge Base URL blank to use ${defaultUrl}.`
+      : `Edit database '${id}'. Leave OPCBridge Base URL blank to use ${defaultUrl}.`;
   }
 }
 
@@ -5602,7 +5602,7 @@ async function validateReporterReport(id) {
         }
       });
       result.matched_count = matched.size;
-      if (result.matched_count < 1) result.errors.push('No selected tags matched live opcbridge tags.');
+      if (result.matched_count < 1) result.errors.push('No selected tags matched live OPCBridge tags.');
       if (result.missing.length) result.warnings.push(`${result.missing.length} selected tag(s) did not match live tags.`);
     }
 
@@ -5871,9 +5871,9 @@ function wireLogsUi() {
 
 	  if (els.logsSource) {
 	    els.logsSource.innerHTML = [
-	      { value: 'opcbridge_runtime', label: 'opcbridge runtime diagnostics' },
+	      { value: 'opcbridge_runtime', label: 'OPCBridge runtime diagnostics' },
 	      { value: 'systemd', label: 'System journal (journalctl)' },
-	      { value: 'opcbridge_events', label: 'opcbridge alarms/events log' },
+	      { value: 'opcbridge_events', label: 'OPCBridge alarms/events log' },
 	      { value: 'alarm_server_history', label: 'alarm server history' },
       { value: 'hmi_audit', label: 'HMI audit log' }
     ].map((s) => `<option value="${escapeHtml(s.value)}">${escapeHtml(s.label)}</option>`).join('');
@@ -6074,7 +6074,7 @@ function serviceUnavailableMessage(url, detail = '') {
   if (path.startsWith('/api/historian/')) return `historian service is unavailable${detail}`;
   if (path.startsWith('/api/reporter/')) return `reporter service is unavailable${detail}`;
   if (path.startsWith('/api/alarms/')) return `alarm service is unavailable${detail}`;
-  if (path.startsWith('/api/opcbridge/')) return `opcbridge is starting or reconnecting${detail}`;
+  if (path.startsWith('/api/opcbridge/')) return `OPCBridge is starting or reconnecting${detail}`;
   return `service is unavailable${detail}`;
 }
 
@@ -6290,7 +6290,7 @@ function renderRuntimeRebuildStatus(status) {
   }
   if (els.overviewRebuildHint) {
     if (inProgress || requested) {
-      els.overviewRebuildHint.textContent = 'SCADA will keep polling this status while opcbridge applies the runtime change.';
+      els.overviewRebuildHint.textContent = 'SCADA will keep polling this status while OPCBridge applies the runtime change.';
     } else if (required) {
       els.overviewRebuildHint.textContent = 'Press Rebuild Full Runtime to refresh OPC UA nodes and rebuild all runtime bindings.';
     } else {
@@ -6331,7 +6331,7 @@ function wireOverviewRuntimeUi() {
         openLoginModal();
         return;
       }
-      if (!window.confirm('Rebuild the full opcbridge runtime? This pauses all pollers and rebuilds OPC UA nodes.')) return;
+      if (!window.confirm('Rebuild the full OPCBridge runtime? This pauses all pollers and rebuilds OPC UA nodes.')) return;
       try {
         els.overviewRebuildBtn.disabled = true;
         if (els.overviewRebuildStatus) {
@@ -9566,7 +9566,7 @@ async function applyProjectRestore() {
       `Files written: ${written}`,
       `Pre-restore backup: ${result?.pre_restore_backup || '-'}`,
       '',
-      'Next step: restart/reload opcbridge, opcbridge-scada, opcbridge-alarms, and opcbridge-hmi.'
+      'Next step: restart/reload OPCBridge, SCADA, Alarms, and HMI services.'
     ].join('\n'));
   } catch (err) {
     setProjectBackupStatus(`Restore failed: ${err.message}`);
@@ -10628,7 +10628,7 @@ async function loadVoiceModemSettings() {
       }
     }
     if (els.voiceModemTestTtsText && !String(els.voiceModemTestTtsText.value || '').trim()) {
-      els.voiceModemTestTtsText.value = 'This is a test call from OPC Bridge.';
+    els.voiceModemTestTtsText.value = 'This is a test call from OPCBridge.';
     }
 
     const suffix = devicesResp?.ok === false ? ` (${devicesResp.error || 'device scan failed'})` : '';
@@ -10766,7 +10766,7 @@ async function saveScadaSettings() {
     refreshTopLinks();
 
     if (resp?.restart_required) {
-      setScadaSettingsStatus('Saved. Restart opcbridge-scada for listen host/port changes to take effect.');
+    setScadaSettingsStatus('Saved. Restart OPCBridge SCADA for listen host/port changes to take effect.');
     } else {
       setScadaSettingsStatus('Saved.');
     }
@@ -10876,7 +10876,7 @@ async function loadSvcSettings() {
   try {
     const data = await apiGet('/api/opcbridge/systemd');
     if (data?.enabled === false) {
-      setSvcStatus('Systemd management disabled in opcbridge-scada.');
+      setSvcStatus('Systemd management disabled in OPCBridge SCADA.');
       return;
     }
     fillSvcForm(data?.settings);
@@ -11271,7 +11271,7 @@ async function saveMqttTab() {
     if (state.connObjCache) state.connObjCache.set(String(entry.path), entry.obj);
     renderMqttTree();
     renderMqttSelectedMessage();
-    setMqttTabStatus(`Saved ${entry.id}. Restart/apply opcbridge for runtime MQTT changes.`);
+    setMqttTabStatus(`Saved ${entry.id}. Restart/apply OPCBridge for runtime MQTT changes.`);
   } catch (err) {
     setMqttTabStatus(`Save failed: ${err.message}`);
   } finally {
@@ -17514,7 +17514,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     const emailSubjectBox = document.createElement('input');
     emailSubjectBox.type = 'text';
     emailSubjectBox.value = String(cur?.email_subject_template || '');
-    emailSubjectBox.placeholder = 'OPC Bridge alarm {event}: {alarm_name}';
+    emailSubjectBox.placeholder = 'OPCBridge alarm {event}: {alarm_name}';
     emailSubjectBox.disabled = !canEditConfig();
     addEmailRow('Subject Template', emailSubjectBox);
 
@@ -18803,7 +18803,7 @@ function buildTree() {
   const root = {
     id: 'project:opcbridge',
     type: 'project',
-    label: 'opcbridge',
+    label: 'OPCBridge',
     children: []
   };
 
@@ -19705,7 +19705,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
   }
   if (!workspaceIsDirty()) {
     if (!rebuildOpcua) return;
-    if (!window.confirm('Rebuild the full opcbridge runtime and OPC UA namespace now?')) return;
+    if (!window.confirm('Rebuild the full OPCBridge runtime and OPC UA namespace now?')) return;
     setWorkspaceSaveStatus('Rebuilding OPC UA namespace…');
     renderWorkspaceSaveBar();
     try {
@@ -20584,7 +20584,7 @@ if (isPanelActive('tab-alarms_events') && !isAlarmsEventsPropertiesEditorOpen())
     const overall = String(health?.status || 'unknown');
     const elapsed = Date.now() - started;
     if (els.statusLine) {
-      els.statusLine.innerHTML = `opcbridge: ${badge(overall)} · alarms: <span class="badge ok">${alarmsStatus?.ok ? 'ok' : 'bad'}</span> · refresh ${elapsed}ms`;
+      els.statusLine.innerHTML = `OPCBridge: ${badge(overall)} · alarms: <span class="badge ok">${alarmsStatus?.ok ? 'ok' : 'bad'}</span> · refresh ${elapsed}ms`;
     }
   } catch (err) {
     if (els.statusLine) els.statusLine.textContent = `Refresh pending: ${err.message}`;
@@ -20667,7 +20667,7 @@ async function refreshVisible() {
     const overall = String(health?.status || 'unknown');
     const elapsed = Date.now() - started;
     if (els.statusLine) {
-      els.statusLine.innerHTML = `opcbridge: ${badge(overall)} · alarms: <span class="badge ok">${alarmsStatus?.ok ? 'ok' : 'bad'}</span> · refresh ${elapsed}ms`;
+      els.statusLine.innerHTML = `OPCBridge: ${badge(overall)} · alarms: <span class="badge ok">${alarmsStatus?.ok ? 'ok' : 'bad'}</span> · refresh ${elapsed}ms`;
     }
   } catch (err) {
     if (els.statusLine) els.statusLine.textContent = `Refresh pending: ${err.message}`;
@@ -20701,7 +20701,7 @@ async function loadBootstrapConfig() {
     const authStr = state.auth
       ? ` · admin_token=${state.auth.admin_token_configured ? 'yes' : 'no'} write_token=${state.auth.write_token_configured ? 'yes' : 'no'}`
       : '';
-    els.buildLine.textContent = `refresh=${r}ms · ${verStr}${verStr ? ' · ' : ''}opcbridge @ ${o.scheme}://${o.host}:${o.port} · alarms @ ${a.scheme}://${a.host}:${a.port} · hmi @ ${h.scheme}://${h.host}:${h.port}${authStr}`;
+    els.buildLine.textContent = `refresh=${r}ms · ${verStr}${verStr ? ' · ' : ''}OPCBridge @ ${o.scheme}://${o.host}:${o.port} · alarms @ ${a.scheme}://${a.host}:${a.port} · hmi @ ${h.scheme}://${h.host}:${h.port}${authStr}`;
   }
 }
 
@@ -21123,7 +21123,7 @@ async function refreshUsersPanel() {
     state.usersRoles = roles;
 
     const who = loggedIn ? `${username || '?'} (${role || 'viewer'})` : 'not logged in';
-    setUsersStatus(`opcbridge auth: configured=${configured ? 'yes' : 'no'} initialized=${initialized ? 'yes' : 'no'} · ${who}`);
+    setUsersStatus(`OPCBridge auth: configured=${configured ? 'yes' : 'no'} initialized=${initialized ? 'yes' : 'no'} · ${who}`);
 
     if (els.usersInitWrap) els.usersInitWrap.style.display = (!initialized) ? 'block' : 'none';
     if (els.usersManageWrap) els.usersManageWrap.style.display = (initialized) ? 'block' : 'none';

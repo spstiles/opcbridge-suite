@@ -335,11 +335,11 @@ async function fetchOpcbridgeAuthStatus(req, cfg) {
         try {
           resolve(JSON.parse(raw));
         } catch (err) {
-          reject(new Error(`opcbridge /auth/status parse failed: ${err.message}`));
+          reject(new Error(`OPCBridge /auth/status parse failed: ${err.message}`));
         }
       });
     });
-    up.on('timeout', () => up.destroy(new Error('opcbridge /auth/status timeout')));
+    up.on('timeout', () => up.destroy(new Error('OPCBridge /auth/status timeout')));
     up.on('error', reject);
     up.end();
   });
@@ -1478,7 +1478,7 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
     }
   };
 
-  progress('Collecting opcbridge configuration...', 10);
+  progress('Collecting OPCBridge configuration...', 10);
   const opcExts = ['.json', '.jsonc', '.crt', '.pem', '.cer', '.wav', '.mp3', '.ogg', '.flac'];
   projectBackupWalkFiles(DEFAULT_OPCBRIDGE_CONFIG_DIR, '.', {
     includeExts: opcExts,
@@ -2148,7 +2148,7 @@ const server = http.createServer(async (req, res) => {
         const path = `/runtime/logs?limit=${encodeURIComponent(String(n))}`;
         const up = await fetchUpstreamJson(req, cfg.opcbridge, path, { timeoutMs: 8000 });
         if (up.status < 200 || up.status >= 300) {
-          sendJson(res, 200, { ok: false, error: `opcbridge HTTP ${up.status}`, source, details: up.json });
+          sendJson(res, 200, { ok: false, error: `OPCBridge HTTP ${up.status}`, source, details: up.json });
           return;
         }
         const entries = Array.isArray(up.json?.entries) ? up.json.entries : [];
@@ -2156,7 +2156,7 @@ const server = http.createServer(async (req, res) => {
           const ts = Number(entry?.timestamp_ms || 0);
           const iso = ts > 0 ? new Date(ts).toLocaleString() : '';
           const level = String(entry?.level || 'info').toUpperCase();
-          const component = String(entry?.component || 'opcbridge');
+          const component = String(entry?.component || 'OPCBridge');
           const message = String(entry?.message || '');
           return `${iso} ${level} [${component}] ${message}`.trim();
         }).join('\n');
@@ -2168,7 +2168,7 @@ const server = http.createServer(async (req, res) => {
         const path = `/alarms/events?limit=${encodeURIComponent(String(n))}`;
         const up = await fetchUpstreamJson(req, cfg.opcbridge, path, { timeoutMs: 8000 });
         if (up.status < 200 || up.status >= 300) {
-          sendJson(res, 200, { ok: false, error: `opcbridge HTTP ${up.status}`, source, details: up.json });
+          sendJson(res, 200, { ok: false, error: `OPCBridge HTTP ${up.status}`, source, details: up.json });
           return;
         }
         sendJson(res, 200, { ok: true, source, lines: n, format: 'json', text: JSON.stringify(up.json || {}, null, 2) });
@@ -2207,7 +2207,7 @@ const server = http.createServer(async (req, res) => {
   // Check if an MQTT CA certificate exists on opcbridge (admin-gated).
   if (url.pathname === '/api/opcbridge/cert/status') {
     if (!ADMIN_TOKEN) {
-      sendJson(res, 400, { ok: false, error: 'opcbridge admin token not configured on scada server.' });
+      sendJson(res, 400, { ok: false, error: 'OPCBridge admin token not configured on SCADA server.' });
       return;
     }
     if (req.method !== 'GET') {

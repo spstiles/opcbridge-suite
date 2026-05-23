@@ -12243,99 +12243,233 @@ static bool apply_config_bundle_json(const std::string &configDir,
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="dark">
-<title>OPC Bridge Dashboard</title>
+<title>OPCBridge Dashboard</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
     :root {
         color-scheme: dark;
+        --bg: #0b0f14;
+        --panel: #121820;
+        --panel-2: #0f151d;
+        --panel-3: #151d27;
+        --line: #253142;
+        --line-soft: #1d2734;
+        --text: #eef4fb;
+        --muted: #9aa8b8;
+        --muted-2: #738195;
+        --blue: #4f8cff;
+        --blue-2: #2f6fe8;
+        --green: #36d399;
+        --amber: #f4b740;
+        --red: #ff6b6b;
+        --shadow: 0 14px 34px rgba(0,0,0,0.34);
     }
     html {
         color-scheme: dark;
-        background: #111;
+        background: var(--bg);
     }
     body {
-        font-family: sans-serif;
-        background: #111;
-        color: #eee;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+            radial-gradient(circle at top left, rgba(79,140,255,0.12), transparent 340px),
+            linear-gradient(180deg, #0d1219 0%, var(--bg) 340px);
+        color: var(--text);
         margin: 0;
         padding: 0;
     }
     header {
-        background: #222;
-        padding: 10px 20px;
-        border-bottom: 1px solid #444;
+        background: rgba(12, 17, 24, 0.88);
+        padding: 12px 22px;
+        border-bottom: 1px solid var(--line);
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 14px;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        backdrop-filter: blur(12px);
     }
     #admin-panel {
-        font-size: 11px;
+        font-size: 12px;
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
+        color: var(--muted);
     }
     header h1 {
         margin: 0;
-        font-size: 20px;
+        font-size: 18px;
+        letter-spacing: 0;
     }
     header .brand {
         display: inline-flex;
         align-items: center;
         gap: 10px;
+        min-width: 240px;
     }
     header .brand img {
-        width: 18px;
-        height: 18px;
+        width: 26px;
+        height: 26px;
         display: inline-block;
     }
+    .top-nav {
+        display: flex;
+        gap: 6px;
+        margin-left: 10px;
+        flex: 1 1 auto;
+    }
     main {
-        padding: 15px 20px 40px 20px;
-        font-size: 12px;        /* smaller overall UI (header/title row stays unchanged) */
-		flex-wrap: wrap;      /* Allows cards to flow onto next row */
-		gap: 20px;            /* Space between items */
+        padding: 18px 22px 44px 22px;
+        font-size: 12px;
+        max-width: 1680px;
+        margin: 0 auto;
     }
     .flex {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 15px;
-        margin-bottom: 15px;
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 14px;
     }
 	.card {
-		background: #1b1b1b;
-		border: 1px solid #333;
-		border-radius: 6px;
-		padding: 10px 12px;
-		min-width: 260px;
-		box-shadow: 0 2px 4px rgba(0,0,0,0.4);
-		margin-bottom: 15px; /* vertical spacing between stacked cards */
+		background: linear-gradient(180deg, rgba(21,29,39,0.96), rgba(15,21,29,0.96));
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		padding: 14px;
+		min-width: 0;
+		box-shadow: var(--shadow);
+		box-sizing: border-box;
+        grid-column: span 3;
 	}
     .card h2 {
-        margin: 0 0 8px 0;
-        font-size: 14px;
-        border-bottom: 1px solid #333;
-        padding-bottom: 4px;
+        margin: 0 0 10px 0;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        border-bottom: 1px solid var(--line-soft);
+        padding-bottom: 8px;
     }
 	.card-narrow {
-		max-width: 420px;      /* Prevents stretching */
-		flex: 0 0 auto;        /* Card size stays based on content */
-		margin-right: 20px;    /* Space between cards */
+		grid-column: span 4;
 	}
 	.card-full {
-		flex: 1 0 100%;
-		min-width: 100%;
-		max-width: 100%;
+		grid-column: 1 / -1;
+		min-width: 0;
+		max-width: none;
 		box-sizing: border-box;
 	}
+    .dashboard-primary {
+        grid-column: span 4;
+    }
+    .dashboard-secondary {
+        grid-column: span 4;
+    }
+    .hero-card {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: 1.1fr repeat(3, minmax(150px, .35fr));
+        gap: 12px;
+        align-items: stretch;
+        background: linear-gradient(135deg, rgba(18,28,43,.98), rgba(14,20,28,.98));
+    }
+    .hero-title {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        justify-content: center;
+    }
+    .hero-kicker {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+    .hero-main {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--text);
+    }
+    .hero-sub {
+        color: var(--muted);
+        font-size: 12px;
+    }
+    .metric-tile {
+        border: 1px solid var(--line-soft);
+        background: rgba(255,255,255,0.03);
+        border-radius: 8px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 58px;
+    }
+    .metric-label {
+        font-size: 10px;
+        color: var(--muted-2);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+    .metric-value {
+        margin-top: 4px;
+        font-size: 16px;
+        color: var(--text);
+        font-weight: 700;
+    }
+    @media (max-width: 1100px) {
+        header {
+            flex-wrap: wrap;
+        }
+        header .brand {
+            min-width: 0;
+        }
+        .top-nav {
+            order: 3;
+            width: 100%;
+            margin-left: 0;
+        }
+        .card,
+        .card-narrow,
+        .dashboard-primary,
+        .dashboard-secondary {
+            grid-column: span 6;
+        }
+        .hero-card {
+            grid-template-columns: 1fr 1fr;
+        }
+    }
+    @media (max-width: 720px) {
+        main {
+            padding: 12px;
+        }
+        .flex {
+            grid-template-columns: 1fr;
+        }
+        .card,
+        .card-narrow,
+        .dashboard-primary,
+        .dashboard-secondary,
+        .hero-card {
+            grid-column: 1 / -1;
+        }
+        .hero-card {
+            grid-template-columns: 1fr;
+        }
+        #admin-panel {
+            width: 100%;
+            justify-content: space-between;
+        }
+    }
     .status-ok {
-        color: #4caf50;
+        color: var(--green);
         font-weight: bold;
     }
     .status-degraded {
-        color: #ff9800;
+        color: var(--amber);
         font-weight: bold;
     }
     .status-error {
-        color: #f44336;
+        color: var(--red);
         font-weight: bold;
     }
     table {
@@ -12345,49 +12479,293 @@ static bool apply_config_bundle_json(const std::string &configDir,
         font-size: 12px;
     }
     th, td {
-        border-bottom: 1px solid #333;
-        padding: 4px 6px;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 6px 8px;
         text-align: left;
         white-space: nowrap;
     }
     th {
-        background: #222;
+        background: #111923;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
         position: sticky;
         top: 0;
         z-index: 1;
     }
     tbody tr:nth-child(even) {
-        background: #151515;
+        background: rgba(255,255,255,0.018);
     }
     tbody tr:nth-child(odd) {
-        background: #101010;
+        background: rgba(0,0,0,0.08);
+    }
+    tbody tr:hover {
+        background: rgba(79,140,255,0.08);
     }
     .small {
-        font-size: 10px;
-        color: #aaa;
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.45;
     }
     .tag-table-container {
         max-height: 60vh;
         overflow: auto;
-        border: 1px solid #333;
-        border-radius: 6px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(0,0,0,0.12);
     }
     .btn-write,
     .btn-reload {
-        padding: 2px 6px;
+        padding: 5px 9px;
         font-size: 11px;
-        border-radius: 4px;
-        border: 1px solid #555;
-        background: #333;
-        color: #eee;
+        border-radius: 6px;
+        border: 1px solid #35455b;
+        background: #172233;
+        color: var(--text);
         cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 24px;
+        box-sizing: border-box;
     }
     .btn-write:hover,
     .btn-reload:hover {
-        background: #444;
+        background: #20314a;
+        border-color: #4f8cff;
+    }
+    .btn-reload:disabled,
+    .btn-write:disabled {
+        opacity: .55;
+        cursor: not-allowed;
     }
     .btn-reload {
         margin-top: 6px;
+    }
+    .users-page {
+        display: grid;
+        grid-template-columns: minmax(280px, 0.9fr) minmax(420px, 1.4fr);
+        gap: 14px;
+    }
+    .users-page .card {
+        grid-column: auto;
+    }
+    .users-toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+    }
+    .users-form {
+        display: grid;
+        grid-template-columns: 140px minmax(0, 1fr);
+        gap: 8px 10px;
+        align-items: center;
+    }
+    .users-form input,
+    .users-form select,
+    .users-form textarea {
+        width: 100%;
+        box-sizing: border-box;
+        background: #0f1722;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+    .users-form textarea {
+        min-height: 54px;
+        resize: vertical;
+    }
+    .users-perms {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 6px;
+    }
+    .users-perm {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        border: 1px solid var(--line-soft);
+        background: rgba(255,255,255,0.025);
+        border-radius: 6px;
+        padding: 7px;
+    }
+    .users-perm input {
+        margin-top: 2px;
+    }
+    .users-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        margin-top: 10px;
+    }
+    .users-workspace {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 12px;
+        height: min(72vh, 900px);
+        min-height: 560px;
+    }
+    .users-sidebar,
+    .users-editor {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(18,24,32,.88);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        box-shadow: var(--shadow);
+        min-height: 0;
+    }
+    .users-sidebar-title,
+    .users-editor-toolbar {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255,255,255,.03);
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        font-weight: 700;
+    }
+    .users-editor-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+    }
+    .users-editor-body {
+        padding: 12px;
+        overflow: auto;
+        flex: 1;
+    }
+    .users-tree-body {
+        padding: 6px;
+        overflow: auto;
+        flex: 1;
+    }
+    .users-tree-note {
+        padding: 8px 10px;
+        border-top: 1px solid var(--line-soft);
+        color: var(--muted);
+        font-size: 11px;
+    }
+    .users-tree-item {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 400;
+        line-height: 1.2;
+        padding: 2px 4px;
+        border-radius: 4px;
+        cursor: pointer;
+        text-align: left;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0;
+        min-height: 20px;
+    }
+    .users-tree-item:hover {
+        background: rgba(255,255,255,.06);
+    }
+    .users-tree-item.is-active {
+        background: rgba(59,130,246,.20);
+        outline: 1px solid rgba(59,130,246,.55);
+    }
+    .users-twisty {
+        width: 14px;
+        height: 14px;
+        flex: 0 0 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #444;
+        background: #111;
+        color: var(--text);
+        font-size: 11px;
+        line-height: 1;
+        user-select: none;
+    }
+    .users-twisty.is-empty {
+        border-color: transparent;
+        background: transparent;
+        color: transparent;
+    }
+    .users-tree-children {
+        margin-left: 14px;
+        padding-left: 0;
+    }
+    .users-form-panel {
+        max-width: 720px;
+    }
+    .users-form-row {
+        display: grid;
+        grid-template-columns: 160px 1fr;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+    .users-form-row input,
+    .users-form-row select {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: rgba(8,12,20,.72);
+        color: var(--text);
+        font: inherit;
+        font-size: 12px;
+        padding: 4px 6px;
+        border-radius: 6px;
+        box-sizing: border-box;
+    }
+    .users-perm-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 16px;
+    }
+    .users-perm-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        color: rgba(232,238,252,.95);
+    }
+    .users-perm-item input {
+        width: 16px;
+        height: 16px;
+    }
+    .row-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    .divider {
+        height: 1px;
+        background: rgba(232,238,252,.10);
+        margin: 14px 0;
+        border-radius: 999px;
+    }
+    @media (max-width: 980px) {
+        .users-page {
+            grid-template-columns: 1fr;
+        }
+        .users-workspace {
+            grid-template-columns: 1fr;
+            height: auto;
+        }
+        .users-form-row {
+            grid-template-columns: 1fr;
+        }
     }
     #write-status {
         margin-top: 6px;
@@ -12574,15 +12952,15 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	}
 		.admin-chip {
 		  display: inline-block;
-		  background: linear-gradient(135deg, #eab308, #facc15);
-		  color: #000;
+		  background: rgba(244,183,64,0.12);
+		  color: var(--amber);
+          border: 1px solid rgba(244,183,64,0.35);
 	  font-weight: bold;
-	  padding: 3px 10px;
-	  border-radius: 12px;
-	  font-size: 0.75rem;
-	  margin-left: 10px;
+	  padding: 4px 9px;
+	  border-radius: 999px;
+	  font-size: 11px;
+	  margin-left: 0;
 	  vertical-align: middle;
-		  box-shadow: 0 0 6px rgba(0,0,0,0.4);
 		}
 
 		/* Tag editor (config/tags/*.json) */
@@ -12766,6 +13144,11 @@ static bool apply_config_bundle_json(const std::string &configDir,
 				  flex: 1 1 auto;
 				  min-height: 0;
 				}
+					.is-editor-page #live-tags-panel #tags-table td.status-ok,
+					.is-editor-page #live-tags-panel #tags-table td.status-degraded,
+					.is-editor-page #live-tags-panel #tags-table td.status-error {
+					  font-weight: 600;
+					}
 					.ws-workspace-bottom .tag-table-container {
 					  flex: 1 1 auto;
 					  min-height: 0;
@@ -12877,6 +13260,9 @@ static bool apply_config_bundle_json(const std::string &configDir,
 				.ws-modal-card {
 				  width: 100%;
 				  max-width: 720px;
+				  max-height: calc(100vh - 56px);
+				  overflow-y: auto;
+				  overscroll-behavior: contain;
 				  background: #1b1b1b;
 				  border: 1px solid #333;
 				  border-radius: 10px;
@@ -13039,13 +13425,14 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	</head>
 	<body>
 	<header>
-	    <h1 class="brand"><img src="/favicon.svg" alt="" aria-hidden="true"><span>OPC Bridge Dashboard</span></h1>
+	    <h1 class="brand"><img src="/favicon.svg" alt="" aria-hidden="true"><span>OPCBridge Dashboard</span></h1>
 		<div id="admin-chip" class="admin-chip" style="display:none;">
-			👑 ADMIN
+			ADMIN
 		</div>
-			<div style="display:flex; gap:6px; margin-left:10px;">
+			<div class="top-nav">
 				<a class="btn-reload" href="/dashboard">Dashboard</a>
 					<a class="btn-reload" href="/workspace">Workspace</a>
+					<a class="btn-reload" id="users-nav-link" href="/users" style="display:none;">Users</a>
 			</div>
 	    <div id="admin-panel">
 	        <span id="admin-status-text">Checking admin status...</span>
@@ -13055,12 +13442,31 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	</header>
 	<main>
 	    <div id="dashboard-section" class="flex">
-	        <div class="card">
+            <div class="card hero-card">
+                <div class="hero-title">
+                    <div class="hero-kicker">Runtime Overview</div>
+                    <div class="hero-main" id="hero-status">Loading...</div>
+                    <div class="hero-sub" id="hero-subtitle">Waiting for OPCBridge status.</div>
+                </div>
+                <div class="metric-tile">
+                    <div class="metric-label">Connections</div>
+                    <div class="metric-value" id="hero-connections">-</div>
+                </div>
+                <div class="metric-tile">
+                    <div class="metric-label">Tags</div>
+                    <div class="metric-value" id="hero-tags">-</div>
+                </div>
+                <div class="metric-tile">
+                    <div class="metric-label">Uptime</div>
+                    <div class="metric-value" id="hero-uptime">-</div>
+                </div>
+            </div>
+	        <div class="card dashboard-primary">
 	            <h2>Health</h2>
 	            <div id="health-overall">Loading...</div>
 	            <div id="health-connections" class="small"></div>
 	        </div>
-		<div class="card">
+		<div class="card dashboard-primary">
 			<h2>Info</h2>
 			<div id="info-name-version">Loading...</div>
 			<div id="info-build" class="small"></div>
@@ -13090,7 +13496,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 				<div id="reload-status" class="small"></div>
 				<div id="reload-last" class="small"></div>
 			</div>
-        <div class="card">
+        <div class="card dashboard-primary">
             <h2>Connections</h2>
             <div id="conn-summary-meta" class="small"></div>
             <div id="conn-summary-body" class="small"></div>
@@ -13277,16 +13683,24 @@ static bool apply_config_bundle_json(const std::string &configDir,
 							<div class="ws-modal-title" id="ws-device-title">Device</div>
 							<div class="ws-form">
 								<label>Device ID <input id="ws-device-id" type="text" /></label>
-								<label>Description <input id="ws-device-desc" type="text" /></label>
 								<label>Driver <select id="ws-device-driver"></select></label>
-								<label>PLC Type <select id="ws-device-plc-type"></select></label>
-								<label>Gateway <input id="ws-device-gateway" type="text" /></label>
-								<label>Path <input id="ws-device-path" type="text" placeholder="1,0" /></label>
-								<label>Slot <input id="ws-device-slot" type="number" min="0" step="1" /></label>
-								<label>Default timeout (ms) <input id="ws-device-timeout" type="number" min="0" step="1" /></label>
-								<label>Default read (ms) <input id="ws-device-read" type="number" min="0" step="1" /></label>
-								<label>Default write (ms) <input id="ws-device-write" type="number" min="0" step="1" /></label>
-								<label>Debug <input id="ws-device-debug" type="number" min="0" step="1" /></label>
+								<label id="ws-device-plc-type-row">PLC Type <select id="ws-device-plc-type"></select></label>
+								<label id="ws-device-gateway-row">Gateway <input id="ws-device-gateway" type="text" /></label>
+								<label id="ws-device-path-row">Path <input id="ws-device-path" type="text" placeholder="1,0" /></label>
+								<label id="ws-device-slot-row">Slot <input id="ws-device-slot" type="number" min="0" step="1" /></label>
+								<label id="ws-device-polling-mode-row">Polling Mode <select id="ws-device-polling-mode">
+									<option value="standard">Standard</option>
+									<option value="time_sliced">Time Sliced</option>
+								</select></label>
+								<label id="ws-device-polling-pacing-row">Pacing <select id="ws-device-polling-pacing">
+									<option value="balanced">Balanced</option>
+									<option value="gentle">Gentle</option>
+									<option value="fast">Fast</option>
+								</select></label>
+								<label id="ws-device-poll-batch-row">Batch Size <input id="ws-device-poll-batch" type="number" min="0" step="1" placeholder="Auto" /></label>
+								<label id="ws-device-poll-budget-row">Time Budget (ms) <input id="ws-device-poll-budget" type="number" min="0" step="1" placeholder="Auto" /></label>
+								<label id="ws-device-poll-max-row">Max Reads / sec <input id="ws-device-poll-max" type="number" min="0" step="1" placeholder="Unlimited" /></label>
+								<label id="ws-device-poll-lanes-row">Poll Lanes <input id="ws-device-poll-lanes" type="number" min="1" max="8" step="1" placeholder="1" /></label>
 							</div>
 							<div class="small" id="ws-device-status"></div>
 							<div class="ws-modal-actions">
@@ -13321,6 +13735,10 @@ static bool apply_config_bundle_json(const std::string &configDir,
 										    <label>PLC Tag</label>
 										    <input id="ws-tag-plc" type="text" placeholder="Pump1.Running" />
 										  </div>
+										  <div class="ws-s-form-row" id="ws-tag-initial-row" style="display:none;">
+										    <label>Initial Value</label>
+										    <input id="ws-tag-initial" type="text" placeholder="0" />
+										  </div>
 										  <div class="ws-s-form-row" id="ws-tag-path-row">
 										    <label>Path Override</label>
 										    <input id="ws-tag-path" type="text" placeholder="Use device path" />
@@ -13342,6 +13760,13 @@ static bool apply_config_bundle_json(const std::string &configDir,
 										    <label>Datatype</label>
 										    <select id="ws-tag-dt"></select>
 										  </div>
+										  <div class="ws-s-form-row" id="ws-tag-word-order-row" style="display:none;">
+										    <label>Word Order</label>
+										    <select id="ws-tag-word-order">
+										      <option value="hi_lo">High / Low (40001=high)</option>
+										      <option value="lo_hi">Low / High (40001=low)</option>
+										    </select>
+										  </div>
 										  <div class="ws-s-form-row">
 										    <label>Scan (ms)</label>
 										    <input id="ws-tag-scan" type="number" min="0" step="1" placeholder="1000" />
@@ -13356,6 +13781,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 										      <label class="ws-s-check-pill"><input id="ws-tag-enabled" type="checkbox" class="ws-inline-check" /> Enabled</label>
 										      <label class="ws-s-check-pill"><input id="ws-tag-writable" type="checkbox" class="ws-inline-check" /> Writable</label>
 										      <label class="ws-s-check-pill"><input id="ws-tag-invert" type="checkbox" class="ws-inline-check" /> Invert</label>
+										      <label class="ws-s-check-pill"><input id="ws-tag-log-event" type="checkbox" class="ws-inline-check" /> Event on change</label>
 										    </div>
 										  </div>
 										  <div class="ws-s-form-row">
@@ -13418,6 +13844,93 @@ static bool apply_config_bundle_json(const std::string &configDir,
 						</div>
 					</div>
 			<!-- Admin login / setup modal -->
+				<div id="users-section" style="display:none;">
+					<div class="workspace-page">
+						<h2>Users</h2>
+						<div class="small">Manage users and roles in OPCBridge. Requires <code>auth.manage_users</code> for changes.</div>
+						<div class="card card-full" style="margin-top:12px;">
+							<h2>Users & Roles</h2>
+							<div class="small" id="users-status">Loading…</div>
+
+							<div id="users-init-wrap" style="display:none; margin-top:10px;">
+								<div class="divider"></div>
+								<div class="small">First-time setup creates the initial admin user.</div>
+								<div class="users-form-panel">
+									<div class="users-form-row"><label>Username</label><input id="users-init-username" type="text" autocomplete="username" /></div>
+									<div class="users-form-row"><label>Admin Password</label><input id="users-init-password" type="password" autocomplete="new-password" /></div>
+									<div class="users-form-row"><label>Confirm Password</label><input id="users-init-confirm" type="password" autocomplete="new-password" /></div>
+									<div class="users-form-row"><label>Session Timeout (min)</label><input id="users-init-timeout" type="number" min="0" step="1" placeholder="0" /></div>
+									<div class="users-form-row"><label></label>
+										<div class="row-actions">
+											<button class="btn-reload" id="users-init-btn" type="button">Initialize</button>
+										</div>
+									</div>
+									<div class="small" id="users-init-status"></div>
+								</div>
+							</div>
+
+							<div id="users-manage-wrap" style="display:none; margin-top:10px;">
+								<div class="divider"></div>
+								<div class="users-form-panel">
+									<div class="users-form-row"><label>Session Timeout (min)</label><input id="users-timeout-minutes" type="number" min="0" step="1" placeholder="0" /></div>
+									<div class="users-form-row"><label></label>
+										<div class="row-actions">
+											<button class="btn-write" id="users-refresh-btn" type="button">Refresh</button>
+											<button class="btn-reload" id="users-timeout-save-btn" type="button">Save Timeout</button>
+										</div>
+									</div>
+									<div class="small" id="users-timeout-status"></div>
+								</div>
+
+								<div class="divider"></div>
+								<div class="users-workspace">
+									<div class="users-sidebar">
+										<div class="users-sidebar-title">Directory</div>
+										<div class="users-tree-body" id="users-tree-view"></div>
+										<div class="users-tree-note" id="users-tree-note"></div>
+									</div>
+
+									<section class="users-editor users-right">
+										<div class="users-editor-toolbar">
+											<div class="users-editor-title">Details</div>
+										</div>
+										<div class="users-editor-body">
+											<div class="small" id="users-details-status"></div>
+
+											<section id="users-details-table-panel">
+												<div class="tag-table-container">
+													<table id="users-details-table">
+														<thead id="users-details-thead"></thead>
+														<tbody id="users-details-tbody"></tbody>
+													</table>
+												</div>
+											</section>
+
+											<section id="users-details-form-panel" style="display:none;">
+												<div class="users-form-panel" style="max-width:720px;">
+													<div class="users-form-row"><label id="users-form-id-label">ID</label><input id="users-form-id" type="text" /></div>
+													<div class="users-form-row"><label>Name</label><input id="users-form-label" type="text" /></div>
+													<div class="users-form-row"><label>Description</label><input id="users-form-description" type="text" /></div>
+													<div class="users-form-row" id="users-form-perms-row"><label>Permissions</label><div id="users-form-perms" class="users-perm-grid"></div></div>
+													<div class="users-form-row" id="users-form-role-row" style="display:none;"><label>Role</label><select id="users-form-role"></select></div>
+													<div class="users-form-row" id="users-form-password-row" style="display:none;"><label>New Password</label><input id="users-form-password" type="password" autocomplete="new-password" /></div>
+													<div class="users-form-row" id="users-form-confirm-row" style="display:none;"><label>Confirm</label><input id="users-form-confirm" type="password" autocomplete="new-password" /></div>
+													<div class="users-form-row"><label></label>
+														<div class="row-actions">
+															<button class="btn-write" id="users-form-cancel-btn" type="button">Cancel</button>
+															<button class="btn-reload" id="users-form-save-btn" type="button">Save</button>
+														</div>
+													</div>
+													<div class="small" id="users-form-status"></div>
+												</div>
+											</section>
+										</div>
+									</section>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
 		<div id="admin-modal" class="admin-modal-backdrop" style="display:none;">
 		  <div class="admin-modal-card">
 		<div class="admin-modal-header">
@@ -13804,6 +14317,879 @@ function withAdminHeaders(baseHeaders = {}) {
     return h;
 }
 
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function escapeAttr(value) {
+    return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
+const USERS_PERMISSION_DEFS = [
+    { id: "hmi.edit_screens", label: "HMI screen editing" },
+    { id: "opcbridge.write_tags", label: "Write tags" },
+    { id: "opcbridge.edit_config", label: "Edit OPCBridge config" },
+    { id: "suite.manage_server", label: "Manage suite server" },
+    { id: "auth.manage_users", label: "Manage users and roles" },
+    { id: "suite.view_logs", label: "View suite logs" }
+];
+
+let USERS_STATE = {
+    initialized: false,
+    users: [],
+    roles: [],
+    timeoutMinutes: 0,
+    selectedUser: "",
+    selectedRole: ""
+};
+
+function usersCanManage() {
+    return USER_LOGGED_IN && userHasPerm("auth.manage_users");
+}
+
+function usersSetStatus(message, cls = "") {
+    const el = document.getElementById("users-status");
+    if (!el) return;
+    el.textContent = message || "";
+    el.className = "small" + (cls ? " " + cls : "");
+}
+
+function usersFindRole(id) {
+    const roleId = String(id || "").trim();
+    return USERS_STATE.roles.find((r) => String(r.id || "") === roleId) || null;
+}
+
+function usersFindUser(username) {
+    const userId = String(username || "").trim();
+    return USERS_STATE.users.find((u) => String(u.username || "") === userId) || null;
+}
+
+function usersRoleOptions(selected) {
+    return USERS_STATE.roles.map((role) => {
+        const id = String(role.id || "");
+        const label = String(role.label || id);
+        const sel = id === selected ? " selected" : "";
+        return `<option value="${escapeHtml(id)}"${sel}>${escapeHtml(label)} (${escapeHtml(id)})</option>`;
+    }).join("");
+}
+
+async function usersApi(path, opts = {}) {
+    const headers = withAdminHeaders(Object.assign({ "Content-Type": "application/json" }, opts.headers || {}));
+    const resp = await fetch(path, Object.assign({}, opts, { headers }));
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data.ok === false) {
+        throw new Error(data.error || ("HTTP " + resp.status));
+    }
+    return data;
+}
+
+async function usersLoad() {
+    const section = document.getElementById("users-section");
+    if (!section) return;
+    if (!usersCanManage()) {
+        usersSetStatus(USER_LOGGED_IN ? "Manage-users permission required." : "Login required.", "status-degraded");
+        usersRender();
+        return;
+    }
+    usersSetStatus("Loading users…");
+    try {
+        const data = await usersApi("/auth/status", { method: "GET", headers: {} });
+        USERS_STATE.initialized = !!(data.initialized ?? data.configured);
+        USERS_STATE.users = Array.isArray(data.users) ? data.users : [];
+        USERS_STATE.roles = Array.isArray(data.roles) ? data.roles : [];
+        USERS_STATE.timeoutMinutes = Number(data.timeoutMinutes || 0);
+        const timeoutEl = document.getElementById("users-timeout");
+        if (timeoutEl) timeoutEl.value = String(USERS_STATE.timeoutMinutes);
+        usersRender();
+        usersSetStatus(USERS_STATE.initialized ? "Loaded." : "Users are not initialized.", USERS_STATE.initialized ? "status-ok" : "status-degraded");
+    } catch (e) {
+        usersSetStatus("Load failed: " + e.toString(), "status-error");
+    }
+}
+
+function usersRender() {
+    const usersBody = document.getElementById("users-tbody");
+    const rolesBody = document.getElementById("users-roles-tbody");
+    const roleSelect = document.getElementById("users-user-role");
+    const permsEl = document.getElementById("users-role-perms");
+
+    if (usersBody) {
+        usersBody.innerHTML = USERS_STATE.users.map((user) => {
+            const username = String(user.username || "");
+            return `<tr>
+                <td>${escapeHtml(username)}</td>
+                <td>${escapeHtml(String(user.name || ""))}</td>
+                <td>${escapeHtml(String(user.role || ""))}</td>
+                <td>
+                    <button class="btn-write" onclick="usersEditUser('${escapeAttr(username)}')">Edit</button>
+                    <button class="btn-write" onclick="usersDeleteUser('${escapeAttr(username)}')">Delete</button>
+                </td>
+            </tr>`;
+        }).join("") || `<tr><td colspan="4" class="small">No users.</td></tr>`;
+    }
+
+    if (rolesBody) {
+        rolesBody.innerHTML = USERS_STATE.roles.map((role) => {
+            const id = String(role.id || "");
+            const isAdmin = id === "admin";
+            return `<tr>
+                <td>${escapeHtml(id)}</td>
+                <td>${escapeHtml(String(role.label || ""))}</td>
+                <td>
+                    <button class="btn-write" onclick="usersEditRole('${escapeAttr(id)}')">Edit</button>
+                    <button class="btn-write" onclick="usersDeleteRole('${escapeAttr(id)}')" ${isAdmin ? "disabled" : ""}>Delete</button>
+                </td>
+            </tr>`;
+        }).join("") || `<tr><td colspan="3" class="small">No roles.</td></tr>`;
+    }
+
+    if (roleSelect) {
+        roleSelect.innerHTML = usersRoleOptions(roleSelect.value);
+    }
+
+    if (permsEl) {
+        const selected = new Set((usersFindRole(USERS_STATE.selectedRole)?.permissions || []).map(String));
+        const isAdmin = USERS_STATE.selectedRole === "admin";
+        permsEl.innerHTML = USERS_PERMISSION_DEFS.map((perm) => {
+            const checked = selected.has(perm.id) || isAdmin ? " checked" : "";
+            const disabled = isAdmin ? " disabled" : "";
+            return `<label class="users-perm">
+                <input type="checkbox" value="${escapeAttr(perm.id)}"${checked}${disabled} />
+                <span><strong>${escapeHtml(perm.label)}</strong><br><span class="small">${escapeHtml(perm.id)}</span></span>
+            </label>`;
+        }).join("");
+    }
+}
+
+function usersNewUser() {
+    USERS_STATE.selectedUser = "";
+    usersClearUserForm();
+}
+
+function usersEditUser(username) {
+    const user = usersFindUser(username);
+    if (!user) return;
+    USERS_STATE.selectedUser = String(user.username || "");
+    const usernameEl = document.getElementById("users-user-username");
+    const nameEl = document.getElementById("users-user-name");
+    const roleEl = document.getElementById("users-user-role");
+    const descEl = document.getElementById("users-user-description");
+    const passEl = document.getElementById("users-user-password");
+    const confirmEl = document.getElementById("users-user-confirm");
+    if (usernameEl) {
+        usernameEl.value = USERS_STATE.selectedUser;
+        usernameEl.disabled = true;
+    }
+    if (nameEl) nameEl.value = String(user.name || "");
+    if (roleEl) roleEl.innerHTML = usersRoleOptions(String(user.role || "admin"));
+    if (descEl) descEl.value = String(user.description || "");
+    if (passEl) passEl.value = "";
+    if (confirmEl) confirmEl.value = "";
+    usersSetStatus("Editing user " + USERS_STATE.selectedUser + ".");
+}
+
+function usersClearUserForm() {
+    const usernameEl = document.getElementById("users-user-username");
+    const nameEl = document.getElementById("users-user-name");
+    const roleEl = document.getElementById("users-user-role");
+    const descEl = document.getElementById("users-user-description");
+    const passEl = document.getElementById("users-user-password");
+    const confirmEl = document.getElementById("users-user-confirm");
+    if (usernameEl) {
+        usernameEl.value = "";
+        usernameEl.disabled = false;
+    }
+    if (nameEl) nameEl.value = "";
+    if (roleEl) roleEl.innerHTML = usersRoleOptions("admin");
+    if (descEl) descEl.value = "";
+    if (passEl) passEl.value = "";
+    if (confirmEl) confirmEl.value = "";
+    USERS_STATE.selectedUser = "";
+}
+
+async function usersSaveUser() {
+    const username = String(document.getElementById("users-user-username")?.value || "").trim();
+    const name = String(document.getElementById("users-user-name")?.value || "").trim();
+    const role = String(document.getElementById("users-user-role")?.value || "admin").trim();
+    const description = String(document.getElementById("users-user-description")?.value || "").trim();
+    const password = String(document.getElementById("users-user-password")?.value || "");
+    const confirm = String(document.getElementById("users-user-confirm")?.value || "");
+    if (!username) {
+        usersSetStatus("Username is required.", "status-error");
+        return;
+    }
+    try {
+        if (USERS_STATE.selectedUser) {
+            const body = { name, role, description };
+            if (password || confirm) {
+                body.password = password;
+                body.confirm = confirm;
+            }
+            await usersApi("/auth/users/" + encodeURIComponent(USERS_STATE.selectedUser), {
+                method: "PUT",
+                body: JSON.stringify(body)
+            });
+        } else {
+            await usersApi("/auth/users", {
+                method: "POST",
+                body: JSON.stringify({ username, name, role, description, password, confirm })
+            });
+            USERS_STATE.selectedUser = username;
+        }
+        usersSetStatus("User saved.", "status-ok");
+        await refreshAdminStatus();
+        await usersLoad();
+    } catch (e) {
+        usersSetStatus("Save user failed: " + e.toString(), "status-error");
+    }
+}
+
+async function usersDeleteUser(username) {
+    if (!confirm("Delete user '" + username + "'?")) return;
+    try {
+        await usersApi("/auth/users/" + encodeURIComponent(username), { method: "DELETE" });
+        usersSetStatus("User deleted.", "status-ok");
+        if (USERS_STATE.selectedUser === username) usersClearUserForm();
+        await usersLoad();
+    } catch (e) {
+        usersSetStatus("Delete user failed: " + e.toString(), "status-error");
+    }
+}
+
+function usersNewRole() {
+    USERS_STATE.selectedRole = "";
+    usersClearRoleForm();
+}
+
+function usersEditRole(id) {
+    const role = usersFindRole(id);
+    if (!role) return;
+    USERS_STATE.selectedRole = String(role.id || "");
+    const idEl = document.getElementById("users-role-id");
+    const labelEl = document.getElementById("users-role-label");
+    const descEl = document.getElementById("users-role-description");
+    if (idEl) {
+        idEl.value = USERS_STATE.selectedRole;
+        idEl.disabled = true;
+    }
+    if (labelEl) labelEl.value = String(role.label || "");
+    if (descEl) descEl.value = String(role.description || "");
+    usersRender();
+    usersSetStatus("Editing role " + USERS_STATE.selectedRole + ".");
+}
+
+function usersClearRoleForm() {
+    USERS_STATE.selectedRole = "";
+    const idEl = document.getElementById("users-role-id");
+    const labelEl = document.getElementById("users-role-label");
+    const descEl = document.getElementById("users-role-description");
+    if (idEl) {
+        idEl.value = "";
+        idEl.disabled = false;
+    }
+    if (labelEl) labelEl.value = "";
+    if (descEl) descEl.value = "";
+    usersRender();
+}
+
+function usersSelectedPermissions() {
+    return Array.from(document.querySelectorAll("#users-role-perms input[type='checkbox']:checked"))
+        .map((el) => String(el.value || "").trim())
+        .filter(Boolean);
+}
+
+async function usersSaveRole() {
+    const id = String(document.getElementById("users-role-id")?.value || "").trim();
+    const label = String(document.getElementById("users-role-label")?.value || "").trim();
+    const description = String(document.getElementById("users-role-description")?.value || "").trim();
+    if (!id) {
+        usersSetStatus("Role ID is required.", "status-error");
+        return;
+    }
+    const body = { label, description, permissions: usersSelectedPermissions() };
+    try {
+        if (USERS_STATE.selectedRole) {
+            await usersApi("/auth/roles/" + encodeURIComponent(USERS_STATE.selectedRole), {
+                method: "PUT",
+                body: JSON.stringify(body)
+            });
+        } else {
+            await usersApi("/auth/roles", {
+                method: "POST",
+                body: JSON.stringify(Object.assign({ id }, body))
+            });
+            USERS_STATE.selectedRole = id;
+        }
+        usersSetStatus("Role saved.", "status-ok");
+        await refreshAdminStatus();
+        await usersLoad();
+        usersEditRole(USERS_STATE.selectedRole);
+    } catch (e) {
+        usersSetStatus("Save role failed: " + e.toString(), "status-error");
+    }
+}
+
+async function usersDeleteRole(id) {
+    if (id === "admin") return;
+    if (!confirm("Delete role '" + id + "'?")) return;
+    try {
+        await usersApi("/auth/roles/" + encodeURIComponent(id), { method: "DELETE" });
+        usersSetStatus("Role deleted.", "status-ok");
+        if (USERS_STATE.selectedRole === id) usersClearRoleForm();
+        await usersLoad();
+    } catch (e) {
+        usersSetStatus("Delete role failed: " + e.toString(), "status-error");
+    }
+}
+
+async function usersSaveTimeout() {
+    const value = Number(document.getElementById("users-timeout")?.value || 0);
+    try {
+        await usersApi("/auth/timeout", {
+            method: "PUT",
+            body: JSON.stringify({ timeoutMinutes: Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0 })
+        });
+        usersSetStatus("Timeout saved.", "status-ok");
+        await usersLoad();
+    } catch (e) {
+        usersSetStatus("Save timeout failed: " + e.toString(), "status-error");
+    }
+}
+
+// SCADA-style Users tab implementation.
+const usersUi = {
+    treeExpanded: new Set(["users_root_roles", "users_root_users"]),
+    selectedNodeId: "",
+    formMode: "",
+    formTargetId: ""
+};
+
+function usersEl(id) {
+    return document.getElementById(id);
+}
+
+function usersSetLine(id, msg, cls = "") {
+    const el = usersEl(id);
+    if (!el) return;
+    el.textContent = String(msg || "");
+    el.className = "small" + (cls ? " " + cls : "");
+}
+
+function usersShowTablePanel() {
+    const table = usersEl("users-details-table-panel");
+    const form = usersEl("users-details-form-panel");
+    if (table) table.style.display = "block";
+    if (form) form.style.display = "none";
+}
+
+function usersShowFormPanel() {
+    const table = usersEl("users-details-table-panel");
+    const form = usersEl("users-details-form-panel");
+    if (table) table.style.display = "none";
+    if (form) form.style.display = "block";
+}
+
+function usersSetDetailsTable(headers, rows) {
+    const thead = usersEl("users-details-thead");
+    const tbody = usersEl("users-details-tbody");
+    if (!thead || !tbody) return;
+    thead.textContent = "";
+    tbody.textContent = "";
+    const trh = document.createElement("tr");
+    (headers || []).forEach((h) => {
+        const th = document.createElement("th");
+        th.textContent = String(h || "");
+        trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+    (rows || []).forEach((r) => {
+        const tr = document.createElement("tr");
+        (r?.cells || []).forEach((c) => {
+            const td = document.createElement("td");
+            td.textContent = String(c ?? "");
+            tr.appendChild(td);
+        });
+        if (typeof r?.onDblClick === "function") {
+            tr.addEventListener("dblclick", () => r.onDblClick());
+        }
+        tbody.appendChild(tr);
+    });
+}
+
+function usersBuildTree() {
+    const roles = (USERS_STATE.roles || []).slice().sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || "")));
+    const users = (USERS_STATE.users || []).slice().sort((a, b) => String(a?.username || "").localeCompare(String(b?.username || "")));
+    return [
+        {
+            id: "users_root_roles",
+            type: "roles_root",
+            label: "Roles",
+            children: roles.map((r) => ({
+                id: `role:${String(r?.id || "")}`,
+                type: "role",
+                label: String(r?.label || r?.id || ""),
+                meta: r,
+                children: []
+            }))
+        },
+        {
+            id: "users_root_users",
+            type: "users_root",
+            label: "Users",
+            children: users.map((u) => ({
+                id: `user:${String(u?.username || "")}`,
+                type: "user",
+                label: String(u?.username || ""),
+                meta: u,
+                children: []
+            }))
+        }
+    ];
+}
+
+function usersFlattenTree(roots) {
+    const out = [];
+    const walk = (node) => {
+        out.push(node);
+        (node.children || []).forEach(walk);
+    };
+    (roots || []).forEach(walk);
+    return out;
+}
+
+function usersShowContextMenu(x, y, items) {
+    const menu = document.getElementById("ws-context-menu");
+    if (!menu || !Array.isArray(items) || !items.length) return;
+    menu.textContent = "";
+    items.forEach((item) => {
+        const div = document.createElement("div");
+        div.className = "ws-menu-item";
+        div.textContent = String(item.label || "");
+        div.addEventListener("click", () => {
+            menu.style.display = "none";
+            try { item.onClick && item.onClick(); } catch { /* ignore */ }
+        });
+        menu.appendChild(div);
+    });
+    menu.style.left = `${Math.max(4, x)}px`;
+    menu.style.top = `${Math.max(4, y)}px`;
+    menu.style.display = "block";
+}
+
+function usersRenderTreeNode(node, container) {
+    const canExpand = node?.type === "roles_root" || node?.type === "users_root";
+    const expanded = usersUi.treeExpanded.has(node.id);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "users-tree-item";
+    btn.classList.toggle("is-active", usersUi.selectedNodeId === node.id);
+
+    const twisty = document.createElement("span");
+    twisty.className = "users-twisty";
+    twisty.classList.toggle("is-empty", !canExpand);
+    twisty.textContent = canExpand ? (expanded ? "−" : "+") : "";
+    if (canExpand) {
+        twisty.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (expanded) usersUi.treeExpanded.delete(node.id);
+            else usersUi.treeExpanded.add(node.id);
+            usersRenderTree();
+        });
+    }
+
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = String(node?.label || "");
+    btn.appendChild(twisty);
+    btn.appendChild(label);
+    btn.addEventListener("click", () => {
+        usersUi.selectedNodeId = node.id;
+        usersRenderTree();
+        usersRenderDetails(node);
+    });
+    btn.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        usersUi.selectedNodeId = node.id;
+        usersRenderTree();
+        usersRenderDetails(node);
+        if (!usersCanManage()) return;
+        const items = [];
+        if (node.type === "roles_root") {
+            items.push({ label: "Add Role…", onClick: () => usersOpenRoleForm({ mode: "new" }) });
+        } else if (node.type === "role") {
+            const roleId = String(node?.meta?.id || "").trim();
+            items.push({ label: "Edit Role…", onClick: () => usersOpenRoleForm({ mode: "edit", roleId }) });
+            if (roleId !== "admin") items.push({ label: "Delete Role…", onClick: () => usersDeleteRole(roleId) });
+        } else if (node.type === "users_root") {
+            items.push({ label: "Add User…", onClick: () => usersOpenUserForm({ mode: "new" }) });
+        } else if (node.type === "user") {
+            const username = String(node?.meta?.username || "").trim();
+            items.push({ label: "Edit User…", onClick: () => usersOpenUserForm({ mode: "edit", username }) });
+            items.push({ label: "Delete User…", onClick: () => usersDeleteUser(username) });
+        }
+        usersShowContextMenu(e.clientX, e.clientY, items);
+    });
+    container.appendChild(btn);
+    if (canExpand && expanded && Array.isArray(node.children) && node.children.length) {
+        const wrap = document.createElement("div");
+        wrap.className = "users-tree-children";
+        node.children.forEach((child) => usersRenderTreeNode(child, wrap));
+        container.appendChild(wrap);
+    }
+}
+
+function usersRenderTree() {
+    const tree = usersEl("users-tree-view");
+    if (!tree) return;
+    tree.textContent = "";
+    const roots = usersBuildTree();
+    roots.forEach((root) => {
+        if (!usersUi.treeExpanded.has(root.id)) usersUi.treeExpanded.add(root.id);
+        usersRenderTreeNode(root, tree);
+    });
+    const note = usersEl("users-tree-note");
+    if (note) note.textContent = `Roles: ${(USERS_STATE.roles || []).length} · Users: ${(USERS_STATE.users || []).length}`;
+    if (!usersUi.selectedNodeId && roots.length) usersUi.selectedNodeId = roots[0].id;
+}
+
+function usersRenderDetails(node) {
+    if (!node) return;
+    usersShowTablePanel();
+    usersSetLine("users-details-status", "");
+    if (node.type === "roles_root") {
+        const rows = (USERS_STATE.roles || []).slice().sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""))).map((role) => ({
+            cells: [
+                String(role?.id || ""),
+                String(role?.label || ""),
+                String(role?.description || ""),
+                Array.isArray(role?.permissions) ? role.permissions.join(", ") : ""
+            ],
+            onDblClick: () => usersOpenRoleForm({ mode: "edit", roleId: String(role?.id || "") })
+        }));
+        usersSetDetailsTable(["Role", "Label", "Description", "Permissions"], rows);
+        return;
+    }
+    if (node.type === "users_root") {
+        const rows = (USERS_STATE.users || []).slice().sort((a, b) => String(a?.username || "").localeCompare(String(b?.username || ""))).map((user) => ({
+            cells: [String(user?.username || ""), String(user?.name || user?.username || ""), String(user?.description || ""), String(user?.role || "")],
+            onDblClick: () => usersOpenUserForm({ mode: "edit", username: String(user?.username || "") })
+        }));
+        usersSetDetailsTable(["Username", "Name", "Description", "Role"], rows);
+        return;
+    }
+    if (node.type === "role") {
+        usersOpenRoleForm({ mode: "edit", roleId: String(node?.meta?.id || "") });
+        return;
+    }
+    if (node.type === "user") {
+        usersOpenUserForm({ mode: "edit", username: String(node?.meta?.username || "") });
+    }
+}
+
+function usersFillRoleSelect(selectedValue) {
+    const sel = usersEl("users-form-role");
+    if (!sel) return;
+    sel.textContent = "";
+    (USERS_STATE.roles || []).slice().sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""))).forEach((role) => {
+        const opt = document.createElement("option");
+        opt.value = String(role?.id || "");
+        opt.textContent = String(role?.label || role?.id || "");
+        sel.appendChild(opt);
+    });
+    if (selectedValue) sel.value = String(selectedValue);
+    if (!String(sel.value || "").trim() && sel.options.length) sel.value = String(sel.options[0].value || "");
+}
+
+function usersOpenRoleForm({ mode, roleId }) {
+    usersShowFormPanel();
+    usersSetLine("users-form-status", "");
+    usersSetLine("users-details-status", "");
+    usersUi.formMode = mode === "new" ? "role_new" : "role_edit";
+    usersUi.formTargetId = roleId ? String(roleId) : "";
+
+    const idLabel = usersEl("users-form-id-label");
+    const roleRow = usersEl("users-form-role-row");
+    const passRow = usersEl("users-form-password-row");
+    const confirmRow = usersEl("users-form-confirm-row");
+    const permsRow = usersEl("users-form-perms-row");
+    if (idLabel) idLabel.textContent = "Role ID";
+    if (roleRow) roleRow.style.display = "none";
+    if (passRow) passRow.style.display = "none";
+    if (confirmRow) confirmRow.style.display = "none";
+    if (permsRow) permsRow.style.display = "";
+
+    const role = mode === "edit" ? usersFindRole(roleId) : null;
+    const idEl = usersEl("users-form-id");
+    const labelEl = usersEl("users-form-label");
+    const descEl = usersEl("users-form-description");
+    const permsEl = usersEl("users-form-perms");
+    if (idEl) {
+        idEl.value = role ? String(role.id || "") : "";
+        idEl.disabled = mode === "edit";
+    }
+    if (labelEl) labelEl.value = role ? String(role.label || "") : "";
+    if (descEl) descEl.value = role ? String(role.description || "") : "";
+    if (permsEl) {
+        const isAdmin = !!(role && String(role.id || "") === "admin");
+        const current = new Set(isAdmin ? USERS_PERMISSION_DEFS.map((p) => p.id) : ((role?.permissions || []).map(String)));
+        permsEl.textContent = "";
+        USERS_PERMISSION_DEFS.forEach((perm) => {
+            const wrap = document.createElement("label");
+            wrap.className = "users-perm-item";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.dataset.permId = perm.id;
+            cb.checked = current.has(perm.id);
+            cb.disabled = isAdmin;
+            const txt = document.createElement("span");
+            txt.textContent = perm.label;
+            wrap.appendChild(cb);
+            wrap.appendChild(txt);
+            permsEl.appendChild(wrap);
+        });
+    }
+}
+
+function usersOpenUserForm({ mode, username }) {
+    usersShowFormPanel();
+    usersSetLine("users-form-status", "");
+    usersSetLine("users-details-status", "");
+    usersUi.formMode = mode === "new" ? "user_new" : "user_edit";
+    usersUi.formTargetId = username ? String(username) : "";
+    const self = String(USERNAME || "").trim();
+    const isSelfEdit = mode === "edit" && self && String(username || "").trim() === self;
+
+    const idLabel = usersEl("users-form-id-label");
+    const roleRow = usersEl("users-form-role-row");
+    const passRow = usersEl("users-form-password-row");
+    const confirmRow = usersEl("users-form-confirm-row");
+    const permsRow = usersEl("users-form-perms-row");
+    if (idLabel) idLabel.textContent = "Username";
+    if (permsRow) permsRow.style.display = "none";
+    if (roleRow) roleRow.style.display = "";
+    if (passRow) passRow.style.display = "";
+    if (confirmRow) confirmRow.style.display = "";
+
+    const user = mode === "edit" ? usersFindUser(username) : null;
+    const idEl = usersEl("users-form-id");
+    const labelEl = usersEl("users-form-label");
+    const descEl = usersEl("users-form-description");
+    const passEl = usersEl("users-form-password");
+    const confirmEl = usersEl("users-form-confirm");
+    const roleEl = usersEl("users-form-role");
+    if (idEl) {
+        idEl.value = user ? String(user.username || "") : "";
+        idEl.disabled = mode === "edit";
+    }
+    if (labelEl) labelEl.value = user ? String(user.name || user.username || "") : "";
+    if (descEl) descEl.value = user ? String(user.description || "") : "";
+    usersFillRoleSelect(user ? String(user.role || "") : "admin");
+    if (roleEl) roleEl.disabled = isSelfEdit || !usersCanManage();
+    if (passEl) passEl.value = "";
+    if (confirmEl) confirmEl.value = "";
+}
+
+async function usersDeleteRole(id) {
+    const roleId = String(id || "").trim();
+    if (!roleId || roleId === "admin") return;
+    if (!confirm("Delete role '" + roleId + "'?")) return;
+    usersSetLine("users-details-status", "Deleting role…");
+    try {
+        await usersApi("/auth/roles/" + encodeURIComponent(roleId), { method: "DELETE" });
+        if (usersUi.selectedNodeId === `role:${roleId}`) usersUi.selectedNodeId = "users_root_roles";
+        await usersLoad();
+        usersSetLine("users-details-status", "Role deleted.", "status-ok");
+    } catch (e) {
+        usersSetLine("users-details-status", "Delete failed: " + e.toString(), "status-error");
+    }
+}
+
+async function usersDeleteUser(username) {
+    const uname = String(username || "").trim();
+    if (!uname) return;
+    if (String(USERNAME || "").trim() === uname) {
+        alert("You cannot delete the currently logged-in user.");
+        return;
+    }
+    if (!confirm("Delete user '" + uname + "'?")) return;
+    usersSetLine("users-details-status", "Deleting user…");
+    try {
+        await usersApi("/auth/users/" + encodeURIComponent(uname), { method: "DELETE" });
+        if (usersUi.selectedNodeId === `user:${uname}`) usersUi.selectedNodeId = "users_root_users";
+        await refreshAdminStatus();
+        await usersLoad();
+        usersSetLine("users-details-status", "User deleted.", "status-ok");
+    } catch (e) {
+        usersSetLine("users-details-status", "Delete failed: " + e.toString(), "status-error");
+    }
+}
+
+async function usersLoad() {
+    if (!isUsersPage()) return;
+    const initWrap = usersEl("users-init-wrap");
+    const manageWrap = usersEl("users-manage-wrap");
+    if (!USER_LOGGED_IN && ADMIN_CONFIGURED) {
+        usersSetLine("users-status", "Login required.", "status-degraded");
+        if (initWrap) initWrap.style.display = "none";
+        if (manageWrap) manageWrap.style.display = "none";
+        return;
+    }
+    usersSetLine("users-status", "Loading…");
+    try {
+        const data = await usersApi("/auth/status", { method: "GET", headers: {} });
+        USERS_STATE.initialized = !!(data.initialized ?? data.configured);
+        USERS_STATE.users = Array.isArray(data.users) ? data.users : [];
+        USERS_STATE.roles = Array.isArray(data.roles) ? data.roles : [];
+        USERS_STATE.timeoutMinutes = Number(data.timeoutMinutes || 0);
+
+        if (initWrap) initWrap.style.display = USERS_STATE.initialized ? "none" : "block";
+        if (manageWrap) manageWrap.style.display = USERS_STATE.initialized ? "block" : "none";
+        const initTimeout = usersEl("users-init-timeout");
+        const timeout = usersEl("users-timeout-minutes");
+        if (initTimeout) initTimeout.value = String(USERS_STATE.timeoutMinutes || 0);
+        if (timeout) timeout.value = String(USERS_STATE.timeoutMinutes || 0);
+
+        const who = USER_LOGGED_IN ? `${USERNAME || "?"} (${USER_ROLE || "?"})` : "not logged in";
+        usersSetLine("users-status", `OPCBridge auth: configured=${ADMIN_CONFIGURED ? "yes" : "no"} initialized=${USERS_STATE.initialized ? "yes" : "no"} · ${who}`, USERS_STATE.initialized ? "status-ok" : "status-degraded");
+
+        if (!USERS_STATE.initialized) return;
+        usersSetLine("users-timeout-status", "");
+        const timeoutBtn = usersEl("users-timeout-save-btn");
+        if (timeoutBtn) timeoutBtn.disabled = !usersCanManage();
+        usersRenderTree();
+        const roots = usersBuildTree();
+        const selected = usersFlattenTree(roots).find((n) => n.id === usersUi.selectedNodeId) || roots[0];
+        if (selected) usersRenderDetails(selected);
+    } catch (e) {
+        usersSetLine("users-status", "Users panel failed: " + e.toString(), "status-error");
+        if (initWrap) initWrap.style.display = "none";
+        if (manageWrap) manageWrap.style.display = "none";
+    }
+}
+
+function usersWireUi() {
+    const root = usersEl("users-section");
+    if (!root || root.dataset.wired === "1") return;
+    root.dataset.wired = "1";
+
+    usersEl("users-refresh-btn")?.addEventListener("click", usersLoad);
+    usersEl("users-init-btn")?.addEventListener("click", async () => {
+        const username = String(usersEl("users-init-username")?.value || "").trim();
+        const password = String(usersEl("users-init-password")?.value || "");
+        const confirm = String(usersEl("users-init-confirm")?.value || "");
+        const timeoutMinutes = Math.max(0, Math.floor(Number(usersEl("users-init-timeout")?.value) || 0));
+        if (!username) return usersSetLine("users-init-status", "Username required.", "status-error");
+        if (!password) return usersSetLine("users-init-status", "Password required.", "status-error");
+        if (!confirm) return usersSetLine("users-init-status", "Confirm password required.", "status-error");
+        if (password !== confirm) return usersSetLine("users-init-status", "Passwords do not match.", "status-error");
+        usersSetLine("users-init-status", "Initializing…");
+        try {
+            await usersApi("/auth/init", { method: "POST", body: JSON.stringify({ username, password, confirm, timeoutMinutes }) });
+            if (usersEl("users-init-password")) usersEl("users-init-password").value = "";
+            if (usersEl("users-init-confirm")) usersEl("users-init-confirm").value = "";
+            await refreshAdminStatus();
+            await usersLoad();
+            usersSetLine("users-init-status", "Initialized.", "status-ok");
+        } catch (e) {
+            usersSetLine("users-init-status", "Init failed: " + e.toString(), "status-error");
+        }
+    });
+
+    usersEl("users-timeout-save-btn")?.addEventListener("click", async () => {
+        const timeoutMinutes = Math.max(0, Math.floor(Number(usersEl("users-timeout-minutes")?.value) || 0));
+        usersSetLine("users-timeout-status", "Saving…");
+        try {
+            await usersApi("/auth/timeout", { method: "PUT", body: JSON.stringify({ timeoutMinutes }) });
+            await usersLoad();
+            usersSetLine("users-timeout-status", "Saved.", "status-ok");
+        } catch (e) {
+            usersSetLine("users-timeout-status", "Save failed: " + e.toString(), "status-error");
+        }
+    });
+
+    usersEl("users-form-cancel-btn")?.addEventListener("click", () => {
+        usersShowTablePanel();
+        usersSetLine("users-form-status", "");
+        const roots = usersBuildTree();
+        const selected = usersFlattenTree(roots).find((n) => n.id === usersUi.selectedNodeId) || roots[0];
+        if (selected) usersRenderDetails(selected);
+    });
+
+    usersEl("users-form-save-btn")?.addEventListener("click", async () => {
+        const mode = usersUi.formMode;
+        const self = String(USERNAME || "").trim();
+        const isSelfEdit = mode === "user_edit" && self && String(usersUi.formTargetId || "").trim() === self;
+        if (!usersCanManage() && !isSelfEdit) {
+            usersSetLine("users-form-status", "Manage-users permission required.", "status-error");
+            return;
+        }
+        usersSetLine("users-form-status", "Saving…");
+        try {
+            if (mode === "role_new") {
+                const id = String(usersEl("users-form-id")?.value || "").trim().toLowerCase();
+                const label = String(usersEl("users-form-label")?.value || "").trim();
+                const description = String(usersEl("users-form-description")?.value || "").trim();
+                const permissions = Array.from(document.querySelectorAll("#users-form-perms input[type='checkbox'][data-perm-id]:checked")).map((cb) => String(cb.dataset.permId || "").trim()).filter(Boolean);
+                await usersApi("/auth/roles", { method: "POST", body: JSON.stringify({ id, label, description, permissions }) });
+                usersUi.selectedNodeId = `role:${id}`;
+            } else if (mode === "role_edit") {
+                const id = String(usersUi.formTargetId || "").trim();
+                const label = String(usersEl("users-form-label")?.value || "").trim();
+                const description = String(usersEl("users-form-description")?.value || "").trim();
+                const permissions = Array.from(document.querySelectorAll("#users-form-perms input[type='checkbox'][data-perm-id]:checked")).map((cb) => String(cb.dataset.permId || "").trim()).filter(Boolean);
+                await usersApi("/auth/roles/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify({ label, description, permissions }) });
+                usersUi.selectedNodeId = `role:${id}`;
+            } else if (mode === "user_new") {
+                const username = String(usersEl("users-form-id")?.value || "").trim();
+                const role = String(usersEl("users-form-role")?.value || "admin").trim();
+                const name = String(usersEl("users-form-label")?.value || "").trim();
+                const description = String(usersEl("users-form-description")?.value || "").trim();
+                const password = String(usersEl("users-form-password")?.value || "");
+                const confirm = String(usersEl("users-form-confirm")?.value || "");
+                if (!username) throw new Error("Username required.");
+                if (!password) throw new Error("Password required.");
+                if (!confirm) throw new Error("Confirm required.");
+                if (password !== confirm) throw new Error("Passwords do not match.");
+                await usersApi("/auth/users", { method: "POST", body: JSON.stringify({ username, name, description, password, role }) });
+                usersUi.selectedNodeId = `user:${username}`;
+            } else if (mode === "user_edit") {
+                const username = String(usersUi.formTargetId || "").trim();
+                const name = String(usersEl("users-form-label")?.value || "").trim();
+                const description = String(usersEl("users-form-description")?.value || "").trim();
+                const password = String(usersEl("users-form-password")?.value || "");
+                const confirm = String(usersEl("users-form-confirm")?.value || "");
+                const body = { name, description };
+                if (usersCanManage() && !isSelfEdit) body.role = String(usersEl("users-form-role")?.value || "admin").trim();
+                if (password) {
+                    if (!confirm) throw new Error("Confirm required.");
+                    if (password !== confirm) throw new Error("Passwords do not match.");
+                    body.password = password;
+                    body.confirm = confirm;
+                }
+                await usersApi("/auth/users/" + encodeURIComponent(username), { method: "PUT", body: JSON.stringify(body) });
+                usersUi.selectedNodeId = `user:${username}`;
+            } else {
+                throw new Error("Nothing to save.");
+            }
+            if (usersEl("users-form-password")) usersEl("users-form-password").value = "";
+            if (usersEl("users-form-confirm")) usersEl("users-form-confirm").value = "";
+            usersShowTablePanel();
+            await refreshAdminStatus();
+            await usersLoad();
+            usersSetLine("users-form-status", "Saved.", "status-ok");
+        } catch (e) {
+            usersSetLine("users-form-status", "Save failed: " + e.toString(), "status-error");
+        }
+    });
+}
+
 // ---------------------------
 // Workspace (SCADA-style, using opcbridge endpoints)
 // ---------------------------
@@ -13825,6 +15211,52 @@ const WS_PLC_TYPE_LABELS = {
 
 const WS_TAG_DATATYPES = ["bool", "int16", "uint16", "int32", "uint32", "float32", "float64", "string"];
 const WS_SCALED_DATATYPES = ["float64", "float32", "int32", "uint32", "int16", "uint16"];
+
+const wsNormalizePollingMode = (value) => String(value || "").trim() === "time_sliced" ? "time_sliced" : "standard";
+const wsNormalizePollingPacing = (value) => {
+    const v = String(value || "").trim();
+    return ["gentle", "balanced", "fast"].includes(v) ? v : "balanced";
+};
+const wsPositiveIntOrZero = (value) => {
+    const n = Math.trunc(Number(value || 0));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+};
+const wsIsModbusDriver = (driver) => {
+    const d = String(driver || "").trim().toLowerCase();
+    return d === "modbus_tcp" || d === "modbus-tcp";
+};
+const wsIsModbus32Datatype = (datatype) => {
+    const dt = String(datatype || "").trim().toLowerCase();
+    return dt === "int32" || dt === "uint32" || dt === "float32";
+};
+const wsNormalizeWordOrder = (value) => {
+    const v = String(value || "").trim().toLowerCase();
+    return (v === "lo_hi" || v === "low_high" || v === "swap" || v === "swapped") ? "lo_hi" : "hi_lo";
+};
+const wsParseFriendlyModbusAddress = (value) => {
+    const s = String(value || "").trim();
+    if (!/^\d+$/.test(s)) return null;
+    const n = Number(s);
+    if (!Number.isFinite(n)) return null;
+    if (n >= 40001 && n <= 49999) return { register_type: "holding_register", address: n };
+    if (n >= 30001 && n <= 39999) return { register_type: "input_register", address: n };
+    if (n >= 10001 && n <= 19999) return { register_type: "discrete_input", address: n };
+    if (n >= 1 && n <= 9999) return { register_type: "coil", address: n };
+    return null;
+};
+const wsFriendlyModbusAddress = (tag) => {
+    const type = String(tag?.register_type || "").trim().toLowerCase();
+    const raw = Number(tag?.address ?? tag?.modbus_address);
+    if (!Number.isFinite(raw)) return "";
+    if (raw >= 10001 || raw >= 30001 || raw >= 40001) return String(Math.trunc(raw));
+    const offset = Math.trunc(raw);
+    const zeroBased = tag?.zero_based_address === true;
+    if (type === "holding_register") return String(zeroBased ? offset + 40001 : offset);
+    if (type === "input_register") return String(zeroBased ? offset + 30001 : offset);
+    if (type === "discrete_input") return String(zeroBased ? offset + 10001 : offset);
+    if (type === "coil") return String(zeroBased ? offset + 1 : offset);
+    return "";
+};
 
 const wsLabelForDriver = (code) => {
     const k = String(code || "").trim();
@@ -13884,17 +15316,18 @@ const wsLabelForPlcType = (code) => {
 const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 
 	let wsLoadedOnce = false;
-		let wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [] };
-		let wsDraft = { connections: [], tags: [], alarms: [], alarm_groups: [] };
+	let wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [], live_tags: [] };
+		let wsDraft = { connections: [], tags: [], alarms: [], alarm_groups: [], live_tags: [] };
 	let wsDirty = false;
 	let wsSelectedId = "ws:root";
 	let wsChildrenSelRoot = "";
 	let wsChildrenSel = new Set(); // keys like "connection_id::tag_name"
 	let wsChildrenLastIndex = -1;
 	let wsChildrenSort = { key: "name", dir: "asc" };
-	let wsExpanded = new Set(["ws:root", "ws:connectivity", "ws:alarms"]);
+	let wsExpanded = new Set(["ws:root", "ws:connectivity", "ws:memory", "ws:mqtt", "ws:system", "ws:alarms"]);
 	let wsPendingDeletes = []; // { path: "connections/x.json" }
 	let wsNodeById = new Map();
+	const WS_MEMORY_CONNECTION_ID = "_memory";
 
 	const wsEls = () => ({
     treeStatus: document.getElementById("ws-tree-status"),
@@ -13910,16 +15343,21 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
     deviceModal: document.getElementById("ws-device-modal"),
     deviceTitle: document.getElementById("ws-device-title"),
     deviceId: document.getElementById("ws-device-id"),
-    deviceDesc: document.getElementById("ws-device-desc"),
     deviceDriver: document.getElementById("ws-device-driver"),
+    devicePlcTypeRow: document.getElementById("ws-device-plc-type-row"),
+    deviceGatewayRow: document.getElementById("ws-device-gateway-row"),
+    devicePathRow: document.getElementById("ws-device-path-row"),
+    deviceSlotRow: document.getElementById("ws-device-slot-row"),
     devicePlcType: document.getElementById("ws-device-plc-type"),
     deviceGateway: document.getElementById("ws-device-gateway"),
     devicePath: document.getElementById("ws-device-path"),
     deviceSlot: document.getElementById("ws-device-slot"),
-    deviceTimeout: document.getElementById("ws-device-timeout"),
-    deviceRead: document.getElementById("ws-device-read"),
-    deviceWrite: document.getElementById("ws-device-write"),
-    deviceDebug: document.getElementById("ws-device-debug"),
+    devicePollingMode: document.getElementById("ws-device-polling-mode"),
+    devicePollingPacing: document.getElementById("ws-device-polling-pacing"),
+    devicePollBatch: document.getElementById("ws-device-poll-batch"),
+    devicePollBudget: document.getElementById("ws-device-poll-budget"),
+    devicePollMax: document.getElementById("ws-device-poll-max"),
+    devicePollLanes: document.getElementById("ws-device-poll-lanes"),
     deviceStatus: document.getElementById("ws-device-status"),
     deviceCancelBtn: document.getElementById("ws-device-cancel-btn"),
     deviceSaveBtn: document.getElementById("ws-device-save-btn"),
@@ -13930,6 +15368,8 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 		    tagName: document.getElementById("ws-tag-name"),
 		    tagSourceKind: document.getElementById("ws-tag-source-kind"),
 		    tagPlc: document.getElementById("ws-tag-plc"),
+		    tagInitialRow: document.getElementById("ws-tag-initial-row"),
+		    tagInitial: document.getElementById("ws-tag-initial"),
 		    tagPathRow: document.getElementById("ws-tag-path-row"),
 		    tagPath: document.getElementById("ws-tag-path"),
 		    tagDerivedRow: document.getElementById("ws-tag-derived-row"),
@@ -13937,12 +15377,15 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 		    tagBitBox: document.getElementById("ws-tag-bit-box"),
 		    tagBit: document.getElementById("ws-tag-bit"),
 		    tagDt: document.getElementById("ws-tag-dt"),
+		    tagWordOrderRow: document.getElementById("ws-tag-word-order-row"),
+		    tagWordOrder: document.getElementById("ws-tag-word-order"),
 		    tagScan: document.getElementById("ws-tag-scan"),
 		    tagElemCountRow: document.getElementById("ws-tag-elem-count-row"),
 		    tagElemCount: document.getElementById("ws-tag-elem-count"),
 	    tagEnabled: document.getElementById("ws-tag-enabled"),
 	    tagWritable: document.getElementById("ws-tag-writable"),
 	    tagInvert: document.getElementById("ws-tag-invert"),
+	    tagLogEvent: document.getElementById("ws-tag-log-event"),
 	    tagScaling: document.getElementById("ws-tag-scaling"),
 	    tagScalingLinear: document.getElementById("ws-tag-scaling-linear"),
 	    tagRawLow: document.getElementById("ws-tag-raw-low"),
@@ -14059,8 +15502,16 @@ const wsApiJson = async (url, opts = {}) => {
 			    } catch (_) {
 			        alarms = [];
 			    }
+
+			    let live_tags = [];
+			    try {
+			        const liveResp = await wsApiJson("/tags?limit=1000");
+			        live_tags = Array.isArray(liveResp?.tags) ? liveResp.tags : [];
+			    } catch (_) {
+			        live_tags = [];
+			    }
 			
-			    return { connections, tags, alarms, alarm_groups };
+			    return { connections, tags, alarms, alarm_groups, live_tags };
 			};
 
 const wsBuildNodeIndex = (root) => {
@@ -14072,12 +15523,87 @@ const wsBuildNodeIndex = (root) => {
     walk(root, null);
 };
 
+	const wsIsMemoryTagConfig = (t) => {
+	    const source = String(t?.source || t?.source_type || "").trim().toLowerCase();
+	    const connId = String(t?.connection_id || "").trim();
+	    return source === "memory" || connId === WS_MEMORY_CONNECTION_ID;
+	};
+
+	const wsMemoryTags = () => {
+	    return (Array.isArray(wsDraft.tags) ? wsDraft.tags : [])
+	        .filter((t) => wsIsMemoryTagConfig(t))
+	        .slice()
+	        .sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" }));
+	};
+
+	const wsMqttConnections = () => {
+	    return (Array.isArray(wsDraft.connections) ? wsDraft.connections : [])
+	        .filter((c) => String(c?.driver || "").trim() === "mqtt")
+	        .slice()
+	        .sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
+	};
+
+	const wsMqttSettings = (conn) => {
+	    return (conn?.settings && typeof conn.settings === "object" && !Array.isArray(conn.settings)) ? conn.settings : {};
+	};
+
+	const wsMqttRows = (conn, key) => {
+	    const arr = wsMqttSettings(conn)?.[key];
+	    return Array.isArray(arr) ? arr : [];
+	};
+
+	const wsMqttNodeLabel = (row, fallback) => {
+	    const id = String(row?.id || "").trim();
+	    const topic = String(row?.topic || "").trim();
+	    return id || topic || fallback;
+	};
+
+	const wsLiveSystemTags = () => {
+	    return (Array.isArray(wsDraft.live_tags) ? wsDraft.live_tags : [])
+	        .filter((t) => String(t?.connection_id || "") === "_system")
+	        .slice()
+	        .sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" }));
+	};
+
+	const wsSystemTagNames = () => {
+	    const names = new Set();
+	    wsLiveSystemTags().forEach((t) => {
+	        const name = String(t?.name || t?.tag || "").trim();
+	        if (name) names.add(name);
+	    });
+	    return Array.from(names).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+	};
+
+	const wsSystemPathChildren = (prefix) => {
+	    const p = String(prefix || "").trim();
+	    const out = new Set();
+	    wsSystemTagNames().forEach((name) => {
+	        if (!name.startsWith(p)) return;
+	        const rest = name.slice(p.length);
+	        const slash = rest.indexOf("/");
+	        if (slash > 0) out.add(rest.slice(0, slash));
+	    });
+	    return Array.from(out).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+	};
+
+	const wsMakeSystemGroup = (id, label, prefix, children = []) => ({
+	    id,
+	    type: "system_group",
+	    label,
+	    tag_prefix: prefix,
+	    connection_id: "_system",
+	    children
+	});
+
 	const wsBuildTree = () => {
-	    const root = { id: "ws:root", type: "root", label: "opcbridge", children: [] };
+	    const root = { id: "ws:root", type: "root", label: "OPCBridge", children: [] };
 	    const connectivity = { id: "ws:connectivity", type: "connectivity", label: "Connectivity", children: [] };
+	    const memoryRoot = { id: "ws:memory", type: "memory", label: "Memory", connection_id: WS_MEMORY_CONNECTION_ID, children: [] };
+	    const mqttRoot = { id: "ws:mqtt", type: "mqtt", label: "MQTT", children: [] };
 	    const alarmsRoot = { id: "ws:alarms", type: "alarms", label: "Alarms & Events", children: [] };
 	    root.children.push(connectivity);
-	    root.children.push(alarmsRoot);
+	    root.children.push(memoryRoot);
+	    root.children.push(mqttRoot);
 
     const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
     conns.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
@@ -14085,6 +15611,7 @@ const wsBuildNodeIndex = (root) => {
     const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
     const tagsByConn = new Map();
     tags.forEach((t) => {
+        if (wsIsMemoryTagConfig(t)) return;
         const cid = String(t?.connection_id || "").trim();
         const name = String(t?.name || "").trim();
         if (!cid || !name) return;
@@ -14114,6 +15641,121 @@ const wsBuildNodeIndex = (root) => {
         });
 	        connectivity.children.push(node);
 	    });
+
+	    wsMemoryTags().forEach((t) => {
+	        const name = String(t?.name || "").trim();
+	        if (!name) return;
+	        memoryRoot.children.push({
+	            id: `ws:memory_tag:${encodeURIComponent(name)}`,
+	            type: "memory_tag",
+	            label: name,
+	            connection_id: WS_MEMORY_CONNECTION_ID,
+	            name,
+	            children: []
+	        });
+	    });
+
+	    wsMqttConnections().forEach((c) => {
+	        const cid = String(c?.id || "").trim();
+	        if (!cid) return;
+	        const brokerNode = {
+	            id: `ws:mqtt:broker:${encodeURIComponent(cid)}`,
+	            type: "mqtt_broker",
+	            label: cid,
+	            connection_id: cid,
+	            children: []
+	        };
+	        const subRoot = {
+	            id: `ws:mqtt:broker:${encodeURIComponent(cid)}:subscriptions`,
+	            type: "mqtt_subscriptions",
+	            label: "Subscriptions",
+	            connection_id: cid,
+	            children: []
+	        };
+	        const pubRoot = {
+	            id: `ws:mqtt:broker:${encodeURIComponent(cid)}:publications`,
+	            type: "mqtt_publications",
+	            label: "Publications",
+	            connection_id: cid,
+	            children: []
+	        };
+	        wsMqttRows(c, "messages").forEach((m, idx) => {
+	            const label = wsMqttNodeLabel(m, `subscription_${idx}`);
+	            subRoot.children.push({
+	                id: `ws:mqtt:broker:${encodeURIComponent(cid)}:subscription:${idx}`,
+	                type: "mqtt_subscription",
+	                label,
+	                connection_id: cid,
+	                mqtt_index: idx,
+	                children: []
+	            });
+	        });
+	        wsMqttRows(c, "publications").forEach((p, idx) => {
+	            const label = wsMqttNodeLabel(p, `publication_${idx}`);
+	            pubRoot.children.push({
+	                id: `ws:mqtt:broker:${encodeURIComponent(cid)}:publication:${idx}`,
+	                type: "mqtt_publication",
+	                label,
+	                connection_id: cid,
+	                mqtt_index: idx,
+	                children: []
+	            });
+	        });
+	        brokerNode.children.push(subRoot);
+	        brokerNode.children.push(pubRoot);
+	        mqttRoot.children.push(brokerNode);
+	    });
+
+	    const connSystemChildren = conns
+	        .map((c) => String(c?.id || "").trim())
+	        .filter(Boolean)
+	        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
+	        .map((id) => wsMakeSystemGroup(`ws:system:connections:${encodeURIComponent(id)}`, id, `System/Connections/${id}/`));
+	    const networkIfaceChildren = wsSystemPathChildren("System/Host/Network/")
+	        .map((iface) => wsMakeSystemGroup(`ws:system:host:network:${encodeURIComponent(iface)}`, iface, `System/Host/Network/${iface}/`));
+	    const reporterDatabaseChildren = wsSystemPathChildren("System/Reporter/Databases/")
+	        .map((id) => wsMakeSystemGroup(`ws:system:reporter:database:${encodeURIComponent(id)}`, id, `System/Reporter/Databases/${id}/`));
+	    const reporterCheckChildren = wsSystemPathChildren("System/Reporter/DataChecks/")
+	        .map((id) => wsMakeSystemGroup(`ws:system:reporter:data_check:${encodeURIComponent(id)}`, id, `System/Reporter/DataChecks/${id}/`));
+	    const mqttBrokerChildren = wsSystemPathChildren("System/MQTT/Subscriptions/")
+	        .map((id) => {
+	            const subChildren = wsSystemPathChildren(`System/MQTT/Subscriptions/${id}/`)
+	                .map((subId) => wsMakeSystemGroup(`ws:system:mqtt:subscription:${encodeURIComponent(id)}:${encodeURIComponent(subId)}`, subId, `System/MQTT/Subscriptions/${id}/${subId}/`));
+	            return wsMakeSystemGroup(`ws:system:mqtt:broker:${encodeURIComponent(id)}`, id, `System/MQTT/Subscriptions/${id}/`, subChildren);
+	        });
+	    const logicScriptChildren = wsSystemPathChildren("System/Logic/Scripts/")
+	        .map((id) => wsMakeSystemGroup(`ws:system:logic:script:${encodeURIComponent(id)}`, id, `System/Logic/Scripts/${id}/`));
+
+	    root.children.push({
+	        id: "ws:system",
+	        type: "system",
+	        label: "System",
+	        connection_id: "_system",
+	        children: [
+	            wsMakeSystemGroup("ws:system:alarms", "Alarms", "System/Alarms/"),
+	            wsMakeSystemGroup("ws:system:bridge", "Bridge", "System/Bridge/"),
+	            wsMakeSystemGroup("ws:system:clock", "Clock", "System/Clock/"),
+	            wsMakeSystemGroup("ws:system:connections", "Connections", "System/Connections/", connSystemChildren),
+	            wsMakeSystemGroup("ws:system:historian", "Historian", "System/Historian/"),
+	            wsMakeSystemGroup("ws:system:host", "Host", "System/Host/", [
+	                wsMakeSystemGroup("ws:system:host:network", "Network", "System/Host/Network/", networkIfaceChildren)
+	            ]),
+	            wsMakeSystemGroup("ws:system:logic", "Logic", "System/Logic/", [
+	                wsMakeSystemGroup("ws:system:logic:scripts", "Scripts", "System/Logic/Scripts/", logicScriptChildren)
+	            ]),
+	            wsMakeSystemGroup("ws:system:mqtt", "MQTT", "System/MQTT/", [
+	                wsMakeSystemGroup("ws:system:mqtt:subscriptions", "Subscriptions", "System/MQTT/Subscriptions/", mqttBrokerChildren)
+	            ]),
+	            wsMakeSystemGroup("ws:system:opcua", "OPC UA", "System/OpcUa/", [
+	                wsMakeSystemGroup("ws:system:opcua:sync", "Sync", "System/OpcUa/Sync/")
+	            ]),
+	            wsMakeSystemGroup("ws:system:reporter", "Reporter", "System/Reporter/", [
+	                wsMakeSystemGroup("ws:system:reporter:data_checks", "Data Checks", "System/Reporter/DataChecks/", reporterCheckChildren),
+	                wsMakeSystemGroup("ws:system:reporter:databases", "Databases", "System/Reporter/Databases/", reporterDatabaseChildren)
+	            ])
+	        ]
+	    });
+	    root.children.push(alarmsRoot);
 
 	    const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
 	    alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
@@ -14300,6 +15942,7 @@ const wsGetDerivedAliasSourceOptions = (connection_id, excludeName) => {
 const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
     const el = wsEls();
     const kind = String(el.tagSourceKind?.value || "plc").trim().toLowerCase();
+    const isMemory = (kind === "memory") || String(connId || "").trim() === WS_MEMORY_CONNECTION_ID;
     const isDerivedBit = (kind === "derived_bit");
     const isDerivedAlias = (kind === "derived_alias");
     const isDerived = (isDerivedBit || isDerivedAlias);
@@ -14307,15 +15950,17 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 
     if (el.tagDerivedRow) el.tagDerivedRow.style.display = isDerived ? "grid" : "none";
     if (el.tagBitBox) el.tagBitBox.style.display = isDerivedBit ? "" : "none";
-    if (el.tagPlc) el.tagPlc.disabled = isDerived || !canEdit;
-    if (el.tagPathRow) el.tagPathRow.style.display = isDerived ? "none" : "grid";
-    if (el.tagPath) el.tagPath.disabled = isDerived || !canEdit;
+    if (el.tagInitialRow) el.tagInitialRow.style.display = isMemory ? "grid" : "none";
+    if (el.tagInitial) el.tagInitial.disabled = !isMemory || !canEdit;
+    if (el.tagPlc) el.tagPlc.disabled = isDerived || isMemory || !canEdit;
+    if (el.tagPathRow) el.tagPathRow.style.display = (isDerived || isMemory) ? "none" : "grid";
+    if (el.tagPath) el.tagPath.disabled = isDerived || isMemory || !canEdit;
     if (el.tagSourceTag) el.tagSourceTag.disabled = !canEdit;
     if (el.tagBit) el.tagBit.disabled = isDerivedAlias || !canEdit;
 
     if (el.tagWritable) {
-        if (isDerivedAlias) el.tagWritable.checked = false;
-        el.tagWritable.disabled = isDerivedAlias || !canEdit;
+        if (isDerivedAlias || isMemory) el.tagWritable.checked = false;
+        el.tagWritable.disabled = isDerivedAlias || isMemory || !canEdit;
     }
     if (el.tagDt) {
         if (isDerivedBit) {
@@ -14326,8 +15971,8 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
         }
     }
 
-    if (el.tagElemCountRow) el.tagElemCountRow.style.display = isDerived ? "none" : "grid";
-    if (el.tagElemCount) el.tagElemCount.disabled = isDerived || !canEdit;
+    if (el.tagElemCountRow) el.tagElemCountRow.style.display = (isDerived || isMemory) ? "none" : "grid";
+    if (el.tagElemCount) el.tagElemCount.disabled = isDerived || isMemory || !canEdit;
 
     if (el.tagScaling) {
         if (isDerivedBit) {
@@ -14349,6 +15994,17 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
         const selected = String(el.tagSourceTag.value || "").trim();
         wsFillSelect(el.tagSourceTag, opts.map((n) => ({ value: n, label: n })), selected);
     }
+};
+
+const wsApplyTagWordOrderUi = () => {
+    const el = wsEls();
+    const cid = String(el.tagConn?.value || "").trim();
+    const conn = (Array.isArray(wsDraft.connections) ? wsDraft.connections : [])
+        .find((c) => String(c?.id || "") === cid);
+    const kind = String(el.tagSourceKind?.value || "plc").trim().toLowerCase();
+    const show = kind === "plc" && wsIsModbusDriver(conn?.driver) && wsIsModbus32Datatype(el.tagDt?.value);
+    if (el.tagWordOrderRow) el.tagWordOrderRow.style.display = show ? "grid" : "none";
+    if (el.tagWordOrder) el.tagWordOrder.disabled = !show || !wsIsEditable();
 };
 
 			let wsDeviceModalMode = "new";
@@ -14389,6 +16045,25 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 			    return String(tag?.datatype || "");
 			};
 
+	const wsApplyDeviceDriverUi = () => {
+	    const el = wsEls();
+	    const driver = String(el.deviceDriver?.value || "").trim();
+	    const isModbus = wsIsModbusDriver(driver);
+	    const isMqtt = driver === "mqtt";
+	    if (el.deviceGatewayRow) {
+	        const label = el.deviceGatewayRow.childNodes && el.deviceGatewayRow.childNodes[0];
+	        if (label) label.textContent = isModbus ? "Server " : "Gateway ";
+	    }
+	    if (el.devicePathRow) {
+	        const label = el.devicePathRow.childNodes && el.devicePathRow.childNodes[0];
+	        if (label) label.textContent = isModbus ? "Unit ID " : "Path ";
+	    }
+	    if (el.deviceGateway) el.deviceGateway.placeholder = isModbus ? "192.0.2.50:502" : "192.0.2.10";
+	    if (el.devicePath) el.devicePath.placeholder = isModbus ? "1" : "1,0";
+	    if (el.deviceSlotRow) el.deviceSlotRow.style.display = (!isMqtt && !isModbus) ? "" : "none";
+	    if (el.devicePlcTypeRow) el.devicePlcTypeRow.style.display = (!isMqtt && !isModbus) ? "" : "none";
+	};
+
 	const wsOpenDeviceModal = ({ mode, connection_id }) => {
 	    const el = wsEls();
 	    if (!el.deviceModal) return;
@@ -14414,16 +16089,19 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
         el.deviceId.value = wsDeviceModalMode === "edit" ? wsDeviceEditingId : "";
         el.deviceId.disabled = !wsIsEditable();
     }
-    if (el.deviceDesc) el.deviceDesc.value = String(obj?.description || "");
     if (el.deviceDriver) el.deviceDriver.value = String(obj?.driver || "ab_eip");
     if (el.devicePlcType) el.devicePlcType.value = String(obj?.plc_type || "lgx");
     if (el.deviceGateway) el.deviceGateway.value = String(obj?.gateway || "");
     if (el.devicePath) el.devicePath.value = String(obj?.path || "");
     if (el.deviceSlot) el.deviceSlot.value = obj?.slot == null ? "" : String(obj.slot);
-    if (el.deviceTimeout) el.deviceTimeout.value = obj?.default_timeout_ms == null ? "" : String(obj.default_timeout_ms);
-    if (el.deviceRead) el.deviceRead.value = obj?.default_read_ms == null ? "" : String(obj.default_read_ms);
-    if (el.deviceWrite) el.deviceWrite.value = obj?.default_write_ms == null ? "" : String(obj.default_write_ms);
-    if (el.deviceDebug) el.deviceDebug.value = obj?.debug == null ? "" : String(obj.debug);
+    if (el.devicePollingMode) el.devicePollingMode.value = wsNormalizePollingMode(obj?.polling_mode);
+    if (el.devicePollingPacing) el.devicePollingPacing.value = wsNormalizePollingPacing(obj?.polling_pacing);
+    if (el.devicePollBatch) el.devicePollBatch.value = obj?.poll_batch_size == null ? "" : String(obj.poll_batch_size);
+    if (el.devicePollBudget) el.devicePollBudget.value = obj?.poll_time_budget_ms == null ? "" : String(obj.poll_time_budget_ms);
+    if (el.devicePollMax) el.devicePollMax.value = obj?.poll_max_reads_per_sec == null ? "" : String(obj.poll_max_reads_per_sec);
+    if (el.devicePollLanes) el.devicePollLanes.value = obj?.poll_lanes == null ? "" : String(obj.poll_lanes);
+    if (el.deviceDriver) el.deviceDriver.onchange = wsApplyDeviceDriverUi;
+    wsApplyDeviceDriverUi();
 
     el.deviceModal.style.display = "flex";
     el.deviceId?.focus?.();
@@ -14444,11 +16122,17 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 	        .map((c) => String(c?.id || ""))
 	        .filter(Boolean)
 	        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
-	    wsFillSelect(el.tagConn, connIds.map((id) => ({ value: id, label: id })), wsTagEditingConn || (connIds[0] || ""));
+	    const connOptions = connIds.map((id) => ({ value: id, label: id }));
+	    wsFillSelect(el.tagConn, connOptions, wsTagEditingConn || (connIds[0] || ""));
 
 	    const tags = Array.isArray(wsDraft.tags) ? wsDraft.tags : [];
 	    const existing = wsTagModalMode === "edit"
-	        ? tags.find((t) => String(t?.connection_id || "") === wsTagEditingConn && String(t?.name || "") === wsTagEditingName)
+	        ? tags.find((t) => {
+	            const tName = String(t?.name || "") === wsTagEditingName;
+	            if (!tName) return false;
+	            if (wsTagEditingConn === WS_MEMORY_CONNECTION_ID) return wsIsMemoryTagConfig(t);
+	            return String(t?.connection_id || "") === wsTagEditingConn;
+	        })
 	        : null;
 
 	    if (el.tagTitle) {
@@ -14467,20 +16151,26 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 		            const curConn = String(el.tagConn?.value || "").trim();
 		            el.tagTitle.textContent = `New Tag: ${curConn}`;
 		            wsApplyTagSourceKindUi({ connId: curConn, excludeName: "" });
+		            wsApplyTagWordOrderUi();
 		        };
 		    }
 			    if (el.tagName) {
 			        el.tagName.value = wsTagModalMode === "edit" ? wsTagEditingName : "";
 			        el.tagName.disabled = !wsIsEditable();
 		    }
-		    if (el.tagPlc) el.tagPlc.value = existing ? String(existing?.plc_tag_name || "") : "";
+		    const existingPlc = existing
+		        ? (String(existing?.plc_tag_name || "") || wsFriendlyModbusAddress(existing))
+		        : "";
+		    if (el.tagPlc) el.tagPlc.value = existingPlc;
+		    if (el.tagInitial) el.tagInitial.value = existing ? String(existing?.initial_value ?? "") : "";
 		    if (el.tagPath) el.tagPath.value = existing ? String(existing?.path || "") : "";
 		    if (el.tagSourceKind) {
+		        const isMemory = existing ? wsIsMemoryTagConfig(existing) : (String(el.tagConn?.value || "") === WS_MEMORY_CONNECTION_ID);
 		        const hasSource = existing && String(existing?.source_tag || "").trim();
 		        const bitNum = existing && existing?.bit != null ? Number(existing.bit) : -1;
-		        el.tagSourceKind.value = hasSource
+		        el.tagSourceKind.value = isMemory ? "memory" : (hasSource
 		            ? ((Number.isFinite(bitNum) && bitNum >= 0) ? "derived_bit" : "derived_alias")
-		            : "plc";
+		            : "plc");
 		    }
 		    if (el.tagSourceTag) el.tagSourceTag.value = existing ? String(existing?.source_tag || "") : "";
 		    if (el.tagBit) el.tagBit.value = existing && existing?.bit != null ? String(existing.bit) : "0";
@@ -14490,6 +16180,8 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 		    if (el.tagEnabled) el.tagEnabled.checked = existing ? (existing?.enabled !== false) : true;
 		    if (el.tagWritable) el.tagWritable.checked = existing ? (existing?.writable === true) : false;
 		    if (el.tagInvert) el.tagInvert.checked = existing ? (existing?.invert === true) : false;
+		    if (el.tagLogEvent) el.tagLogEvent.checked = existing ? (existing?.log_event_on_change === true) : false;
+		    if (el.tagWordOrder) el.tagWordOrder.value = existing ? wsNormalizeWordOrder(existing?.word_order) : "hi_lo";
 	    const applyScalingUi = () => {
 	        const mode = String(el.tagScaling?.value || "none").toLowerCase();
 	        if (el.tagScalingLinear) {
@@ -14525,11 +16217,20 @@ const wsApplyTagSourceKindUi = ({ connId, excludeName }) => {
 		        el.tagSourceKind.onchange = () => {
 		            const curConn = String(el.tagConn?.value || wsTagEditingConn || "").trim();
 		            wsApplyTagSourceKindUi({ connId: curConn, excludeName: wsTagModalMode === "edit" ? wsTagEditingName : "" });
+		            wsApplyTagWordOrderUi();
 		        };
+		    }
+		    if (el.tagDt) {
+		        el.tagDt.onchange = () => wsApplyTagWordOrderUi();
 		    }
 		    {
 		        const curConn = String(el.tagConn?.value || wsTagEditingConn || "").trim();
+		        if (el.tagSourceKind && curConn === WS_MEMORY_CONNECTION_ID) {
+		            el.tagSourceKind.value = "memory";
+		            el.tagSourceKind.disabled = true;
+		        }
 		        wsApplyTagSourceKindUi({ connId: curConn, excludeName: wsTagModalMode === "edit" ? wsTagEditingName : "" });
+		        wsApplyTagWordOrderUi();
 		    }
 
 	    el.tagModal.style.display = "flex";
@@ -14888,12 +16589,15 @@ const wsRenderTree = () => {
 		    if (node.type === "root") {
 		        setHeaderSimple(["Name"]);
 		        addRowSimple(["Connectivity"], "ws:connectivity");
+		        addRowSimple(["Memory"], "ws:memory");
+		        addRowSimple(["MQTT"], "ws:mqtt");
+		        addRowSimple(["System"], "ws:system");
 		        addRowSimple(["Alarms & Events"], "ws:alarms");
 		        return;
 		    }
 
 	    if (node.type === "connectivity") {
-	        setHeaderSimple(["Name", "Description", "Driver", "PLC Type", "Gateway", "Path", "Slot"]);
+	        setHeaderSimple(["Name", "Driver", "PLC Type", "Gateway", "Path", "Slot"]);
 	        const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
 	        conns.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
 	        conns.forEach((c) => {
@@ -14901,7 +16605,6 @@ const wsRenderTree = () => {
 	            if (!cid) return;
 	            addRowSimple([
 	                cid,
-	                String(c?.description || ""),
 	                wsLabelForDriver(c?.driver),
 	                wsLabelForPlcType(c?.plc_type),
 	                String(c?.gateway || ""),
@@ -14909,6 +16612,157 @@ const wsRenderTree = () => {
 	                String(c?.slot ?? "")
 	            ], `ws:device:${encodeURIComponent(cid)}`);
 	        });
+	        return;
+	    }
+
+	    if (node.type === "memory") {
+	        setHeaderSimple(["Name", "Datatype", "Writable", "Initial Value"]);
+	        addRowSimple(["Memory tags are read-only here; create them from HMI, Automation, or SCADA workflows.", "", "", ""], null);
+	        const memTags = wsMemoryTags();
+	        if (!memTags.length) {
+	            addRowSimple(["(no memory tags)", "", "", ""], null);
+	            return;
+	        }
+	        memTags.forEach((t) => {
+	            const name = String(t?.name || "").trim();
+	            addRowSimple([
+	                name,
+	                String(t?.datatype || ""),
+	                t?.writable === true ? "yes" : "no",
+	                String(t?.initial_value ?? "")
+	            ], `ws:memory_tag:${encodeURIComponent(name)}`);
+	        });
+	        return;
+	    }
+
+	    if (node.type === "memory_tag") {
+	        setHeaderSimple(["Field", "Value"]);
+	        const name = String(node.name || "").trim();
+	        const t = wsMemoryTags().find((x) => String(x?.name || "") === name);
+	        if (!t) {
+	            addRowSimple(["(missing)", ""], null);
+	            return;
+	        }
+	        [
+	            ["name", String(t?.name || "")],
+	            ["source", "memory"],
+	            ["datatype", String(t?.datatype || "")],
+	            ["writable", t?.writable === true ? "yes" : "no"],
+	            ["initial_value", String(t?.initial_value ?? "")]
+	        ].forEach(([k, v]) => addRowSimple([k, v], null));
+	        return;
+	    }
+
+	    if (node.type === "mqtt") {
+	        setHeaderSimple(["Broker", "Host", "Port", "TLS", "Subscriptions", "Publications"]);
+	        const conns = wsMqttConnections();
+	        if (!conns.length) {
+	            addRowSimple(["(no MQTT connections)", "", "", "", "", ""], null);
+	            return;
+	        }
+	        conns.forEach((c) => {
+	            const cid = String(c?.id || "").trim();
+	            const settings = wsMqttSettings(c);
+	            addRowSimple([
+	                cid,
+	                String(settings?.host ?? c?.host ?? c?.gateway ?? ""),
+	                String(settings?.port ?? c?.port ?? ""),
+	                (settings?.use_tls === true || settings?.tls === true || c?.use_tls === true || c?.tls === true) ? "yes" : "no",
+	                String(wsMqttRows(c, "messages").length),
+	                String(wsMqttRows(c, "publications").length)
+	            ], `ws:mqtt:broker:${encodeURIComponent(cid)}`);
+	        });
+	        return;
+	    }
+
+	    if (node.type === "mqtt_broker") {
+	        setHeaderSimple(["Field", "Value"]);
+	        const cid = String(node.connection_id || "").trim();
+	        const conn = wsMqttConnections().find((c) => String(c?.id || "") === cid);
+	        if (!conn) {
+	            addRowSimple(["(missing)", ""], null);
+	            return;
+	        }
+	        const settings = wsMqttSettings(conn);
+	        [
+	            ["id", cid],
+	            ["host", String(settings?.host ?? conn?.host ?? conn?.gateway ?? "")],
+	            ["port", String(settings?.port ?? conn?.port ?? "")],
+	            ["client_id", String(settings?.client_id ?? conn?.client_id ?? "")],
+	            ["tls", (settings?.use_tls === true || settings?.tls === true || conn?.use_tls === true || conn?.tls === true) ? "yes" : "no"],
+	            ["tls_insecure", (settings?.tls_insecure === true || conn?.tls_insecure === true) ? "yes" : "no"],
+	            ["username", String(settings?.username ?? conn?.username ?? "")],
+	            ["subscriptions", String(wsMqttRows(conn, "messages").length)],
+	            ["publications", String(wsMqttRows(conn, "publications").length)]
+	        ].forEach(([k, v]) => addRowSimple([k, v], null));
+	        addRowSimple(["Subscriptions", ""], `ws:mqtt:broker:${encodeURIComponent(cid)}:subscriptions`);
+	        addRowSimple(["Publications", ""], `ws:mqtt:broker:${encodeURIComponent(cid)}:publications`);
+	        return;
+	    }
+
+	    if (node.type === "mqtt_subscriptions" || node.type === "mqtt_publications") {
+	        const isPub = node.type === "mqtt_publications";
+	        setHeaderSimple(isPub ? ["Name", "Topic", "Mode", "Interval ms", "Min update ms"] : ["Name", "Topic", "Timeout", "Timeout ms"]);
+	        const cid = String(node.connection_id || "").trim();
+	        const conn = wsMqttConnections().find((c) => String(c?.id || "") === cid);
+	        const rows = conn ? wsMqttRows(conn, isPub ? "publications" : "messages") : [];
+	        if (!rows.length) {
+	            addRowSimple([isPub ? "(no publications)" : "(no subscriptions)", "", "", "", ""].slice(0, isPub ? 5 : 4), null);
+	            return;
+	        }
+	        rows.forEach((row, idx) => {
+	            const label = wsMqttNodeLabel(row, isPub ? `publication_${idx}` : `subscription_${idx}`);
+	            if (isPub) {
+	                addRowSimple([
+	                    label,
+	                    String(row?.topic || ""),
+	                    String(row?.update_mode ?? row?.publish_mode ?? ""),
+	                    String(row?.interval_ms ?? row?.publish_interval_ms ?? ""),
+	                    String(row?.min_update_ms ?? row?.rate_limit_ms ?? "")
+	                ], `ws:mqtt:broker:${encodeURIComponent(cid)}:publication:${idx}`);
+	            } else {
+	                addRowSimple([
+	                    label,
+	                    String(row?.topic || ""),
+	                    (row?.timeout_enabled === true) ? "yes" : "no",
+	                    String(row?.timeout_ms ?? "")
+	                ], `ws:mqtt:broker:${encodeURIComponent(cid)}:subscription:${idx}`);
+	            }
+	        });
+	        return;
+	    }
+
+	    if (node.type === "mqtt_subscription" || node.type === "mqtt_publication") {
+	        setHeaderSimple(["Field", "Value"]);
+	        const cid = String(node.connection_id || "").trim();
+	        const conn = wsMqttConnections().find((c) => String(c?.id || "") === cid);
+	        const isPub = node.type === "mqtt_publication";
+	        const idx = Math.max(0, Math.floor(Number(node.mqtt_index) || 0));
+	        const row = conn ? wsMqttRows(conn, isPub ? "publications" : "messages")[idx] : null;
+	        if (!row) {
+	            addRowSimple(["(missing)", ""], null);
+	            return;
+	        }
+	        Object.keys(row).sort((a, b) => a.localeCompare(b)).forEach((k) => {
+	            const v = row[k];
+	            addRowSimple([k, (v && typeof v === "object") ? JSON.stringify(v) : String(v ?? "")], null);
+	        });
+	        return;
+	    }
+
+	    if (node.type === "system" || node.type === "system_group") {
+	        setHeaderSimple(["Name", "Datatype", "Value"]);
+	        const kids = Array.isArray(node.children) ? node.children : [];
+	        kids.forEach((c) => addRowSimple([String(c?.label || ""), "group", ""], String(c?.id || "")));
+	        const prefix = String(node.tag_prefix || "").trim();
+	        const rows = wsLiveSystemTags()
+	            .filter((t) => !prefix || String(t?.name || "").startsWith(prefix))
+	            .slice(0, 250);
+	        rows.forEach((t) => {
+	            const val = (t?.value === null || typeof t?.value === "undefined") ? "" : String(t.value);
+	            addRowSimple([String(t?.name || ""), String(t?.datatype || ""), val], null);
+	        });
+	        if (!kids.length && !rows.length) addRowSimple(["(no system tags loaded)", "", ""], null);
 	        return;
 	    }
 
@@ -14933,7 +16787,9 @@ const wsRenderTree = () => {
 	        ];
 	        setHeaderSortable(cols);
 
-	        const allTags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => String(t?.connection_id || "") === cid);
+	        const allTags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : [])
+	            .filter((t) => String(t?.connection_id || "") === cid)
+	            .filter((t) => !wsIsMemoryTagConfig(t));
 	        const getVal = (t, key) => {
 	            if (key === "name") return String(t?.name || "");
 	            if (key === "plc_tag_name") return String(t?.plc_tag_name || "");
@@ -15117,16 +16973,25 @@ const wsRenderTree = () => {
 
     const next = Object.assign({}, base);
     next.id = id;
-    next.description = String(el.deviceDesc?.value || "");
     next.driver = String(el.deviceDriver?.value || "ab_eip");
     next.plc_type = String(el.devicePlcType?.value || "lgx");
     next.gateway = String(el.deviceGateway?.value || "");
     next.path = String(el.devicePath?.value || "");
     next.slot = Math.max(0, Math.floor(Number(el.deviceSlot?.value) || 0));
-    if (String(el.deviceTimeout?.value || "").trim() !== "") next.default_timeout_ms = Math.max(0, Math.floor(Number(el.deviceTimeout.value) || 0));
-    if (String(el.deviceRead?.value || "").trim() !== "") next.default_read_ms = Math.max(0, Math.floor(Number(el.deviceRead.value) || 0));
-    if (String(el.deviceWrite?.value || "").trim() !== "") next.default_write_ms = Math.max(0, Math.floor(Number(el.deviceWrite.value) || 0));
-    if (String(el.deviceDebug?.value || "").trim() !== "") next.debug = Math.max(0, Math.floor(Number(el.deviceDebug.value) || 0));
+    next.polling_mode = wsNormalizePollingMode(el.devicePollingMode?.value);
+    next.polling_pacing = wsNormalizePollingPacing(el.devicePollingPacing?.value);
+    const pollBatch = wsPositiveIntOrZero(el.devicePollBatch?.value);
+    const pollBudget = wsPositiveIntOrZero(el.devicePollBudget?.value);
+    const pollMax = wsPositiveIntOrZero(el.devicePollMax?.value);
+    const pollLanes = wsPositiveIntOrZero(el.devicePollLanes?.value);
+    if (pollBatch > 0) next.poll_batch_size = pollBatch;
+    else delete next.poll_batch_size;
+    if (pollBudget > 0) next.poll_time_budget_ms = pollBudget;
+    else delete next.poll_time_budget_ms;
+    if (pollMax > 0) next.poll_max_reads_per_sec = pollMax;
+    else delete next.poll_max_reads_per_sec;
+    if (pollLanes > 1) next.poll_lanes = Math.min(8, Math.max(1, pollLanes));
+    else delete next.poll_lanes;
 
 	    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
 
@@ -15170,14 +17035,16 @@ const wsRenderTree = () => {
 		    const el = wsEls();
 		    const cid = String(el.tagConn?.value || "").trim();
 		    const name = String(el.tagName?.value || "").trim();
-	    const plc_tag_name = String(el.tagPlc?.value || "").trim();
+	    let plc_tag_name = String(el.tagPlc?.value || "").trim();
 	    const path = String(el.tagPath?.value || "").trim();
 	    const datatype = String(el.tagDt?.value || "").trim();
 		    const scanRaw = String(el.tagScan?.value || "").trim();
 		    const elemCountRaw = String(el.tagElemCount?.value || "").trim();
 		    const enabled = Boolean(el.tagEnabled?.checked);
 		    const invert = Boolean(el.tagInvert?.checked);
+		    const logEvent = Boolean(el.tagLogEvent?.checked);
 		    const sourceKind = String(el.tagSourceKind?.value || "plc").trim().toLowerCase();
+		    const isMemory = (sourceKind === "memory") || cid === WS_MEMORY_CONNECTION_ID;
 		    const isDerivedBit = (sourceKind === "derived_bit");
 		    const isDerivedAlias = (sourceKind === "derived_alias");
 		    const isDerived = (isDerivedBit || isDerivedAlias);
@@ -15198,7 +17065,7 @@ const wsRenderTree = () => {
 	        if (el.tagStatus) el.tagStatus.textContent = "Datatype is required.";
 	        return;
 	    }
-	    if (!isDerived && !plc_tag_name) {
+	    if (!isDerived && !isMemory && !plc_tag_name) {
 	        if (el.tagStatus) el.tagStatus.textContent = "PLC Tag is required.";
 	        return;
 	    }
@@ -15282,15 +17149,29 @@ const wsRenderTree = () => {
 		    let tags = Array.isArray(wsDraft.tags) ? wsDraft.tags.slice() : [];
 
 		    if (wsTagModalMode === "new") {
-		        if (tags.some((t) => String(t?.connection_id || "") === cid && String(t?.name || "") === name)) {
+		        if (tags.some((t) => String(t?.name || "") === name && (cid === WS_MEMORY_CONNECTION_ID ? wsIsMemoryTagConfig(t) : String(t?.connection_id || "") === cid))) {
 		            if (el.tagStatus) el.tagStatus.textContent = "Tag name already exists for this device.";
 		            return;
 		        }
 		        const next = { connection_id: cid, name };
-		        if (!isDerived) {
-		            next.plc_tag_name = plc_tag_name;
+		        if (isMemory) {
+		            next.connection_id = WS_MEMORY_CONNECTION_ID;
+		            next.source = "memory";
+		            next.datatype = datatype;
+		            const initialValue = String(el.tagInitial?.value ?? "").trim();
+		            if (initialValue) next.initial_value = initialValue;
+		        } else if (!isDerived) {
+		            const conn = (Array.isArray(wsDraft.connections) ? wsDraft.connections : []).find((c) => String(c?.id || "") === cid);
+		            const friendly = wsIsModbusDriver(conn?.driver) ? wsParseFriendlyModbusAddress(plc_tag_name) : null;
+		            if (friendly) {
+		                next.register_type = friendly.register_type;
+		                next.address = friendly.address;
+		            } else {
+		                next.plc_tag_name = plc_tag_name;
+		            }
 		            if (path) next.path = path;
 		            next.datatype = datatype;
+		            if (friendly && wsIsModbus32Datatype(datatype)) next.word_order = wsNormalizeWordOrder(el.tagWordOrder?.value);
 		            const ec = Math.max(1, Math.floor(Number(elemCountRaw) || 1));
 		            if (ec != 1) next.elem_count = ec;
 		            if (!applyScalingToTag(next)) return;
@@ -15306,6 +17187,7 @@ const wsRenderTree = () => {
 		        if (scanRaw !== "") next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 		        next.enabled = enabled;
 		        next.writable = isDerivedAlias ? false : writable;
+		        next.log_event_on_change = logEvent;
 		        if (invert) next.invert = true;
 		        else delete next.invert;
 		        tags.push(next);
@@ -15317,24 +17199,53 @@ const wsRenderTree = () => {
 			        }
 			        const existingObj = tags[idx] || {};
 			        const existingHasSource = Boolean(existingObj?.source_tag);
-			        if (!plc_tag_name && !existingHasSource) {
+			        if (!isMemory && !plc_tag_name && !existingHasSource) {
 			            if (el.tagStatus) el.tagStatus.textContent = "PLC Tag is required.";
 			            return;
 			        }
-			        if (tags.some((t, i) => i != idx && String(t?.connection_id || "") == cid && String(t?.name || "") == name)) {
+			        if (tags.some((t, i) => i != idx && String(t?.name || "") === name && (cid === WS_MEMORY_CONNECTION_ID ? wsIsMemoryTagConfig(t) : String(t?.connection_id || "") === cid))) {
 			            if (el.tagStatus) el.tagStatus.textContent = "A tag with this name already exists for the selected device.";
 			            return;
 			        }
 			        const next = Object.assign({}, existingObj);
 			        next.connection_id = cid;
 			        next.name = name;
-			        if (!isDerived) {
-			            next.plc_tag_name = plc_tag_name;
+			        if (isMemory) {
+			            next.connection_id = WS_MEMORY_CONNECTION_ID;
+			            next.name = name;
+			            next.source = "memory";
+			            next.datatype = datatype;
+			            delete next.plc_tag_name;
+			            delete next.register_type;
+			            delete next.address;
+			            delete next.modbus_address;
+			            delete next.path;
+			            delete next.source_tag;
+			            delete next.bit;
+			            delete next.elem_count;
+			            const initialValue = String(el.tagInitial?.value ?? "").trim();
+			            if (initialValue) next.initial_value = initialValue;
+			            else delete next.initial_value;
+			        } else if (!isDerived) {
+			            const conn = (Array.isArray(wsDraft.connections) ? wsDraft.connections : []).find((c) => String(c?.id || "") === cid);
+			            const friendly = wsIsModbusDriver(conn?.driver) ? wsParseFriendlyModbusAddress(plc_tag_name) : null;
+			            if (friendly) {
+			                delete next.plc_tag_name;
+			                next.register_type = friendly.register_type;
+			                next.address = friendly.address;
+			            } else {
+			                next.plc_tag_name = plc_tag_name;
+			                delete next.register_type;
+			                delete next.address;
+			                delete next.modbus_address;
+			            }
 			            if (path) next.path = path;
 			            else delete next.path;
 			            delete next.source_tag;
 			            delete next.bit;
 			            next.datatype = datatype;
+			            if (friendly && wsIsModbus32Datatype(datatype)) next.word_order = wsNormalizeWordOrder(el.tagWordOrder?.value);
+			            else delete next.word_order;
 			            const ec = Math.max(1, Math.floor(Number(elemCountRaw) || 1));
 			            if (ec == 1) delete next.elem_count;
 			            else next.elem_count = ec;
@@ -15359,6 +17270,7 @@ const wsRenderTree = () => {
 			        else next.scan_ms = Math.max(0, Math.floor(Number(scanRaw) || 0));
 			        next.enabled = enabled;
 			        next.writable = isDerivedAlias ? false : writable;
+			        next.log_event_on_change = logEvent;
 			        if (invert) next.invert = true;
 			        else delete next.invert;
 			        tags[idx] = next;
@@ -15397,7 +17309,12 @@ const wsDeleteDevice = (connection_id) => {
 		    const tn = String(name || "").trim();
 		    if (!cid || !tn) return;
 		    if (!confirm(`Delete tag '${cid}:${tn}'? (Applied on Save.)`)) return;
-		    wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => !(String(t?.connection_id || "") === cid && String(t?.name || "") === tn));
+		    wsDraft.tags = (Array.isArray(wsDraft.tags) ? wsDraft.tags : []).filter((t) => {
+		        const sameName = String(t?.name || "") === tn;
+		        if (!sameName) return true;
+		        if (cid === WS_MEMORY_CONNECTION_ID) return !wsIsMemoryTagConfig(t);
+		        return String(t?.connection_id || "") !== cid;
+		    });
 		    wsSetDirty(true);
 		    wsSelectNode(`ws:device:${encodeURIComponent(cid)}`);
 		};
@@ -15635,6 +17552,9 @@ function filterLiveTagsByConnection(connectionId) {
 		    let filterConn = "";
 		    if (node && node.type === "device") filterConn = String(node.connection_id || "");
 		    if (node && node.type === "tag") filterConn = String(node.connection_id || "");
+		    if (node && (node.type === "memory" || node.type === "memory_tag")) filterConn = WS_MEMORY_CONNECTION_ID;
+		    if (node && String(node.type || "").startsWith("mqtt")) filterConn = "_system";
+		    if (node && (node.type === "system" || node.type === "system_group")) filterConn = "_system";
 		    if (node && node.type === "alarm") filterConn = String(node.connection_id || "");
 		    filterLiveTagsByConnection(filterConn);
 		};
@@ -15684,8 +17604,8 @@ function filterLiveTagsByConnection(connectionId) {
 
 		    // If not logged in, keep the live tags panel but hide workspace config tree/details.
 		    if (!wsIsEditable()) {
-		        wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [] };
-		        wsDraft = { connections: [], tags: [], alarms: [] };
+		        wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [], live_tags: [] };
+		        wsDraft = { connections: [], tags: [], alarms: [], alarm_groups: [], live_tags: [] };
 		        wsPendingDeletes = [];
 		        wsNodeById = new Map();
 		        wsSetDirty(false);
@@ -15791,6 +17711,9 @@ async function refreshAdminStatus() {
                 wsSetStatus("Admin login restored. Save/Discard to reload workspace.", "status-degraded");
                 wsApplyEditability();
             }
+        }
+        if (isUsersPage()) {
+            usersLoad();
         }
     } catch (e) {
         const s = document.getElementById("admin-status-text");
@@ -15945,12 +17868,16 @@ async function refreshAdminStatus() {
 function disableAdminFeatures() {
     const reloadBtn = document.getElementById("reload-button");
     if (reloadBtn) reloadBtn.disabled = true;
+    const usersNav = document.getElementById("users-nav-link");
+    if (usersNav) usersNav.style.display = (!ADMIN_CONFIGURED || usersCanManage()) ? "" : "none";
     // You can also disable config upload buttons, CA upload, backup buttons, etc.
 }
 
 function enableAdminFeatures() {
     const reloadBtn = document.getElementById("reload-button");
     if (reloadBtn && !reloadBtn.dataset.reloading) reloadBtn.disabled = false;
+    const usersNav = document.getElementById("users-nav-link");
+    if (usersNav) usersNav.style.display = (!ADMIN_CONFIGURED || usersCanManage()) ? "" : "none";
 }
 
 	function showAdminLogin() {
@@ -16304,10 +18231,15 @@ document.addEventListener("visibilitychange", () => {
 		    return window.location.pathname === "/workspace";
 		}
 
+		function isUsersPage() {
+		    return window.location.pathname === "/users";
+		}
+
 	function applyPageMode() {
 	    const dash = document.getElementById("dashboard-section");
 	    const editors = document.getElementById("editors-section");
-	    if (!dash || !editors) return;
+	    const users = document.getElementById("users-section");
+	    if (!dash || !editors || !users) return;
 
 	    const moveLiveTagsPanel = () => {
 	        const panel = document.getElementById("live-tags-panel");
@@ -16323,11 +18255,19 @@ document.addEventListener("visibilitychange", () => {
 	        document.body.classList.add("is-editor-page");
 	        dash.style.display = "none";
 	        editors.style.display = "";
+	        users.style.display = "none";
+	        moveLiveTagsPanel();
+	    } else if (isUsersPage()) {
+	        document.body.classList.remove("is-editor-page");
+	        dash.style.display = "none";
+	        editors.style.display = "none";
+	        users.style.display = "";
 	        moveLiveTagsPanel();
 	    } else {
 	        document.body.classList.remove("is-editor-page");
 	        dash.style.display = "";
 	        editors.style.display = "none";
+	        users.style.display = "none";
 	        moveLiveTagsPanel();
 	    }
 	}
@@ -16344,12 +18284,15 @@ async function refreshInfo() {
     const infoTagsEl     = document.getElementById("info-tags");
     const connMetaEl     = document.getElementById("conn-summary-meta");
     const connBodyEl     = document.getElementById("conn-summary-body");
+    const heroConnEl     = document.getElementById("hero-connections");
+    const heroTagsEl     = document.getElementById("hero-tags");
+    const heroUptimeEl   = document.getElementById("hero-uptime");
 
 	    try {
 	        const resp = await fetch("/info");
 	        const data = await resp.json();
 
-        const name    = data.name    || "opcbridge";
+        const name    = data.name    || "OPCBridge";
         const version = data.version || "unknown";
         const suiteVersion = data.suite_version || "";
         const bdate   = data.build_date || "";
@@ -16367,6 +18310,9 @@ async function refreshInfo() {
 
         infoConnEl.textContent = "Connections: " + numConn;
         infoTagsEl.textContent = "Total tags: " + totalTags;
+        if (heroConnEl) heroConnEl.textContent = String(numConn);
+        if (heroTagsEl) heroTagsEl.textContent = String(totalTags);
+        if (heroUptimeEl) heroUptimeEl.textContent = (typeof up === "number" ? formatUptime(up) : "n/a");
 
         connMetaEl.textContent = "Connections: " + numConn + " | Tags: " + totalTags;
         const lines = [];
@@ -16455,6 +18401,9 @@ async function refreshInfo() {
         infoConnEl.textContent     = "";
         infoTagsEl.textContent     = "";
         authEl.textContent         = "";
+        if (heroConnEl) heroConnEl.textContent = "-";
+        if (heroTagsEl) heroTagsEl.textContent = "-";
+        if (heroUptimeEl) heroUptimeEl.textContent = "-";
         if (tlsEl) {
             tlsEl.textContent   = "";
             tlsEl.className     = "small";
@@ -16470,6 +18419,8 @@ async function refreshInfo() {
 async function refreshHealth() {
     const overallEl = document.getElementById("health-overall");
     const connEl    = document.getElementById("health-connections");
+    const heroStatusEl = document.getElementById("hero-status");
+    const heroSubEl = document.getElementById("hero-subtitle");
     try {
         const resp = await fetch("/health");
         const data = await resp.json();
@@ -16477,11 +18428,21 @@ async function refreshHealth() {
         const status = data.status || "error";
         overallEl.textContent = "Status: " + status.toUpperCase();
         overallEl.className   = classForStatus(status);
+        if (heroStatusEl) {
+            heroStatusEl.textContent = status.toUpperCase();
+            heroStatusEl.className = classForStatus(status);
+        }
 
         const conns = data.connections || {};
         const lines = [];
+        let okCount = 0;
+        let degradedCount = 0;
+        let errorCount = 0;
 	        for (const [cid, info] of Object.entries(conns)) {
 	            const st = info.status || "unknown";
+                if (st === "ok") okCount++;
+                else if (st === "degraded") degradedCount++;
+                else errorCount++;
 	            const reason = info.reason ? (" - " + info.reason) : "";
 	            const ratio = (typeof info.stale_ratio === "number")
 	                ? (" (" + Math.round(info.stale_ratio * 100) + "% stale/bad)")
@@ -16504,10 +18465,21 @@ async function refreshHealth() {
 	            );
 	        }
         connEl.innerHTML = lines.join("");
+        if (heroSubEl) {
+            const total = okCount + degradedCount + errorCount;
+            heroSubEl.textContent = total
+                ? (okCount + " ok, " + degradedCount + " degraded, " + errorCount + " error")
+                : "No connection health entries reported.";
+        }
     } catch (e) {
         overallEl.textContent = "Status: ERROR (exception)";
         overallEl.className   = "status-error";
         connEl.textContent    = e.toString();
+        if (heroStatusEl) {
+            heroStatusEl.textContent = "ERROR";
+            heroStatusEl.className = "status-error";
+        }
+        if (heroSubEl) heroSubEl.textContent = e.toString();
     }
 }
 
@@ -18133,8 +20105,12 @@ async function tagEditorSave(reloadAfter) {
 					try {
 					    restoreAdminTokenFromStorage();
 					    applyPageMode();
+					    usersWireUi();
 					    if (isEditorPage()) {
 					        wsInit();
+					    }
+					    if (isUsersPage()) {
+					        usersLoad();
 					    }
 
 		    // NEW: wire up modal key handling
@@ -18161,7 +20137,7 @@ async function tagEditorSave(reloadAfter) {
 			    try { refreshAdminStatus(); } catch (e) { console.warn("refreshAdminStatus failed:", e); }
 			    try { refreshInfo(); } catch (e) { console.warn("refreshInfo failed:", e); }
 			    try { refreshConfigFiles(); } catch (e) { console.warn("refreshConfigFiles failed:", e); }
-			    try { if (!isEditorPage()) refreshHealth(); } catch (e) { console.warn("refreshHealth failed:", e); }
+			    try { if (!isEditorPage() && !isUsersPage()) refreshHealth(); } catch (e) { console.warn("refreshHealth failed:", e); }
 			    try { refreshTags(); } catch (e) { console.warn("refreshTags failed:", e); }
 			    try { refreshAlarms(); } catch (e) { console.warn("refreshAlarms failed:", e); }
 
@@ -18173,7 +20149,7 @@ async function tagEditorSave(reloadAfter) {
 			    });
 			    setInterval(refreshInfo,   15000);
 			    setInterval(refreshConfigFiles, 60000); // e.g. once a minute
-			    if (!isEditorPage()) {
+			    if (!isEditorPage() && !isUsersPage()) {
 			        setInterval(refreshHealth,  5000);
 			    }
 			    setInterval(refreshTags,    5000);
@@ -18231,6 +20207,10 @@ window.addEventListener("load", startAutoRefresh);
 	                res.set_content(dashboard_html, "text/html");
 	            });
 
+	            svr.Get("/users", [dashboard_html](const httplib::Request &, httplib::Response &res) {
+	                res.set_content(dashboard_html, "text/html");
+	            });
+
                 svr.Get("/favicon.svg", [favicon_svg](const httplib::Request &, httplib::Response &res) {
                     res.set_content(favicon_svg, "image/svg+xml");
                 });
@@ -18245,7 +20225,7 @@ window.addEventListener("load", startAutoRefresh);
 					std::lock_guard<std::mutex> lock(driverMutex);
 					json root;
 
-					root["name"]              = "opcbridge";
+					root["name"]              = "OPCBridge";
 					root["version"]           = OPCBRIDGE_VERSION; // backward compat
 					root["component_version"] = OPCBRIDGE_VERSION;
 					root["suite_version"]     = OPCBRIDGE_SUITE_VERSION;

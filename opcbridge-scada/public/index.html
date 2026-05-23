@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark" />
-  <title>opcbridge SCADA</title>
+  <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css?v=20260522_force_dark" />
 </head>
@@ -13,7 +13,7 @@
     <div class="topbar-main">
       <div class="brand">
         <img class="brand-icon" src="favicon.svg?v=20260510" alt="" aria-hidden="true" />
-        <span>opcbridge SCADA</span>
+        <span>OPCBridge SCADA</span>
       </div>
       <div class="status topbar-auth" id="authLine"></div>
     </div>
@@ -33,7 +33,7 @@
 		      <button data-tab="logs" class="tab">Logs</button>
 		      <button data-tab="users" class="tab">Users</button>
 		      <div class="tabs-right">
-		        <a class="tab tab-link" id="topLinkOpcbridge" href="#" target="_blank" rel="noopener noreferrer">opcbridge</a>
+		        <a class="tab tab-link" id="topLinkOpcbridge" href="#" target="_blank" rel="noopener noreferrer">OPCBridge</a>
 		        <a class="tab tab-link" id="topLinkHmi" href="#" target="_blank" rel="noopener noreferrer">HMI</a>
 	      </div>
 	    </nav>
@@ -44,7 +44,7 @@
       <h2>Overview</h2>
       <div class="grid">
         <div class="card">
-          <div class="card-title">opcbridge /health</div>
+          <div class="card-title">OPCBridge /health</div>
                     <div id="overviewHealthOverall" class="status">Loading…</div>
           <div class="small" id="overviewHealthMeta"></div>
           <div class="small" id="overviewHealthConnections"></div>
@@ -54,7 +54,7 @@
           </details>
         </div>
 	        <div class="card">
-	          <div class="card-title">opcbridge-alarms /alarm/api/status</div>
+	          <div class="card-title">OPCBridge Alarms /alarm/api/status</div>
             <div class="status status-degraded" id="overviewAlarmRuntimeWarning" style="display:none; margin:8px 0;"></div>
             <div class="row-actions" id="overviewAlarmRuntimeWarningActions" style="display:none; margin:6px 0 8px 0;">
               <button class="btn" id="alarmRuntimeRefreshBtn" type="button">Re-test Now</button>
@@ -76,7 +76,7 @@
 
     <section id="tab-configure" class="panel">
       <h2>Configure Server</h2>
-      <div class="hint">SCADA server settings (where to find opcbridge/alarms/HMI, refresh rate). Tokens stay on the SCADA server.</div>
+      <div class="hint">SCADA server settings (where to find OPCBridge/alarms/HMI, refresh rate). Tokens stay on the SCADA server.</div>
 
       <div class="card">
         <div class="card-title">Server Settings</div>
@@ -98,18 +98,18 @@
             <div class="divider"></div>
 
             <div class="form-row">
-              <label>opcbridge Scheme</label>
+              <label>OPCBridge Scheme</label>
               <select id="scadaOpcbridgeScheme">
                 <option value="http">http</option>
                 <option value="https">https</option>
               </select>
             </div>
             <div class="form-row">
-              <label>opcbridge Host</label>
+              <label>OPCBridge Host</label>
               <input id="scadaOpcbridgeHost" type="text" placeholder="127.0.0.1" />
             </div>
             <div class="form-row">
-              <label>opcbridge Port</label>
+              <label>OPCBridge Port</label>
               <input id="scadaOpcbridgePort" type="number" min="1" max="65535" step="1" />
             </div>
 
@@ -170,7 +170,7 @@
 
       <div class="card" id="authAdminCard" style="margin-top: 14px;">
         <div class="card-title">Project Backup / Restore</div>
-        <div class="hint">Download or restore the complete project configuration: opcbridge config, alarms/audio, HMI screens/assets, SCADA settings, and data logger config. Database credentials and history are optional. Restore overwrites project files and creates a pre-restore backup in <code>/tmp</code>.</div>
+        <div class="hint">Download or restore the complete project configuration: OPCBridge config, alarms/audio, HMI screens/assets, SCADA settings, and data logger config. Database credentials and history are optional. Restore overwrites project files and creates a pre-restore backup in <code>/tmp</code>.</div>
         <div class="card-body">
           <div class="form" style="max-width: 820px;">
             <div class="form-row">
@@ -456,7 +456,7 @@
 		            <div class="form-row"><label>Username</label><input id="smtpUsername" type="text" autocomplete="off" /></div>
 		            <div class="form-row"><label>Password</label><input id="smtpPassword" type="password" autocomplete="new-password" placeholder="App password or SMTP password" /></div>
 		            <div class="form-row"><label>From Address</label><input id="smtpFromAddress" type="email" placeholder="alarms@example.com" /></div>
-		            <div class="form-row"><label>From Name</label><input id="smtpFromName" type="text" placeholder="OPC Bridge Alarms" /></div>
+		            <div class="form-row"><label>From Name</label><input id="smtpFromName" type="text" placeholder="OPCBridge Alarms" /></div>
 		            <div class="form-row"><label>Test Recipient</label><input id="smtpTestTo" type="email" placeholder="you@example.com" /></div>
 		            <div class="form-row">
 		              <label></label>
@@ -501,7 +501,7 @@
 	      </div>
 
       <div class="card" style="margin-top: 14px;">
-        <div class="card-title">opcbridge Service (systemd drop-in)</div>
+        <div class="card-title">OPCBridge Service (systemd drop-in)</div>
         <div class="hint">Writes a drop-in override for <code>opcbridge.service</code> to enable/disable endpoints and ports, then restarts the service.</div>
         <div class="card-body">
           <div class="form" style="max-width: 720px;">
@@ -555,10 +555,10 @@
 
     <section id="tab-users" class="panel">
       <h2>Users</h2>
-      <div class="hint">Manage users and roles in opcbridge (stored in <code>passwords.jsonc</code>). Requires admin role for changes.</div>
+        <div class="hint">Manage users and roles in OPCBridge (stored in <code>passwords.jsonc</code>). Requires admin role for changes.</div>
 
       <div class="card">
-        <div class="card-title">Users & Roles (opcbridge)</div>
+        <div class="card-title">Users & Roles (OPCBridge)</div>
         <div class="card-body">
           <div class="hint mono" id="usersStatusLine">Loading…</div>
 
@@ -838,7 +838,7 @@
           <div class="editor-toolbar">
             <div class="editor-title">Live Tags</div>
             <div class="hint mono" id="workspaceLiveTagsFilter"></div>
-            <div class="hint">Read-only from opcbridge <code>/tags</code>.</div>
+            <div class="hint">Read-only from OPCBridge <code>/tags</code>.</div>
           </div>
           <div class="row-actions" style="margin: 0 0 8px 0; flex-wrap: wrap;">
             <input id="workspaceLiveTagsSearch" type="search" placeholder="Narrow selected live tags" style="max-width: 260px;" />
@@ -1021,7 +1021,7 @@
 
 		    <section id="tab-logger" class="panel">
 		      <h2>Data Logger</h2>
-		      <div class="hint">Configure opcbridge-reporter connections. Settings are stored on the SCADA server.</div>
+		      <div class="hint">Configure OPCBridge Reporter connections. Settings are stored on the SCADA server.</div>
 
 		      <div class="workspace" style="height: calc(100vh - 230px); min-height: 600px; grid-template-rows: minmax(0, 1fr);">
 		        <aside class="sidebar tree">
@@ -1048,7 +1048,7 @@
 		                    <th>Port</th>
 		                    <th>User</th>
 		                    <th>Database</th>
-		                    <th>opcbridge</th>
+		                    <th>OPCBridge</th>
 		                    <th>Password</th>
 		                    <th>Monitor</th>
 		                    <th>Status</th>
@@ -1761,7 +1761,7 @@
   <div class="modal-overlay" id="loginModal" style="display:none;">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
       <div class="modal-titlebar">
-        <div class="modal-title" id="loginModalTitle">opcbridge Login</div>
+        <div class="modal-title" id="loginModalTitle">OPCBridge Login</div>
         <button class="btn" id="loginCloseBtn" type="button">Close</button>
       </div>
       <div class="modal-body">
@@ -1801,7 +1801,7 @@
 
           <div class="divider"></div>
 
-          <div class="form-row"><label>opcbridge Base URL</label><input id="loggerDbModalOpcbridgeBaseUrl" type="text" placeholder="default" /></div>
+          <div class="form-row"><label>OPCBridge Base URL</label><input id="loggerDbModalOpcbridgeBaseUrl" type="text" placeholder="default" /></div>
 
           <div class="divider"></div>
 
@@ -2017,7 +2017,7 @@
         <button class="btn" id="loggerTagPickerCloseBtn" type="button">Close</button>
       </div>
       <div class="modal-body">
-        <div class="hint">Choose tags to add to the log job. Uses live tag list from opcbridge.</div>
+        <div class="hint">Choose tags to add to the log job. Uses live tag list from OPCBridge.</div>
         <div class="form" style="max-width: 960px;">
           <div class="form-row">
             <label>Search</label>
