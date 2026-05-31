@@ -9,6 +9,9 @@
   </tr>
 </table>
 
+Manual version: 0.2.37  
+Last updated: 2026-05-30 (America/Chicago)
+
 Status: Draft (placeholders for screenshots)
 
 ## How to Read This Manual
@@ -548,6 +551,8 @@ Screenshot placeholder: SCADA Configure Server showing versions and URLs.
 
 Note: The SCADA **Configure Server** tab also includes an **API Quick Reference** card that lists common REST endpoints derived from your configured host/port settings.
 
+![OPCBridge-SCADA Configure Server (API quick reference)](screenshots/opcbridge-scada-configure-server-tab-api.png)
+
 ### 6.5 WebSockets (Live Updates)
 
 OPCBridge exposes WebSockets for streaming updates (used by some services and optional tools).
@@ -618,6 +623,22 @@ Repeat behavior is controlled by the routing/notification configuration:
 - maximum repeats (0 or blank may mean “indefinite”, depending on config)
 - stop conditions (acked, returned, etc.)
 
+### 7.6 Email Notifications (SMTP)
+
+In addition to phone callouts, alarms can be delivered via **email**.
+
+How it works:
+
+- Configure **SMTP Email Settings** in **SCADA → Configure Server** (host/port/security/credentials/from address).
+- Ensure the contact(s) you want to notify have an `email` value.
+- Create an **email notification policy** (policy output type `email`) and reference the desired targets/contacts.
+- Routes + schedules still control when email notifications are active (same as other outputs).
+
+Notes:
+
+- SCADA includes a **Send Test Email** button to validate SMTP settings.
+- Email policies support optional subject/body templates (advanced).
+
 ---
 
 ## 8. Reporter (Data Logger)
@@ -627,10 +648,15 @@ Configured via the SCADA Data Logger tab.
 Key concepts:
 
 - Databases
-- Logger jobs
+- Logger jobs (tree-based editor)
 - Data checks
 
-Screenshot placeholder: Reporter jobs list and editor.
+Notes:
+
+- The Data Logger UI is organized as a **tree** (Databases / Logger / Data Checks).
+- You select an item in the tree to edit it in the right pane (rather than a dedicated “jobs list” view).
+
+![OPCBridge-SCADA Data Logger tab](screenshots/opcbridge-scada-data-logger-tab.png)
 
 ---
 
@@ -642,7 +668,7 @@ Key concepts:
 - Retention
 - Performance tuning
 
-Screenshot placeholder: Historian configuration panel.
+![OPCBridge-SCADA Historian tab](screenshots/opcbridge-scada-historian-tab.png)
 
 ### 9.1 What It Does
 
