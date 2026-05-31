@@ -37,6 +37,7 @@
   scadaOpenHmiBtn: document.getElementById('scadaOpenHmiBtn'),
   topLinkOpcbridge: document.getElementById('topLinkOpcbridge'),
   topLinkHmi: document.getElementById('topLinkHmi'),
+  apiQuickRef: document.getElementById('apiQuickRef'),
   scadaSettingsReloadBtn: document.getElementById('scadaSettingsReloadBtn'),
   scadaSettingsSaveBtn: document.getElementById('scadaSettingsSaveBtn'),
   scadaSettingsStatus: document.getElementById('scadaSettingsStatus'),
@@ -9610,6 +9611,37 @@ function opcbridgeUrlFromForm() {
   return `${scheme}://${host}:${port}`;
 }
 
+function alarmsUrlFromForm() {
+  const currentHost = (window.location && window.location.hostname) ? String(window.location.hostname) : '';
+  const currentScheme = (window.location && window.location.protocol) ? String(window.location.protocol).replace(':', '') : '';
+  // For UI convenience, the header links should use the same host you used to reach SCADA.
+  const scheme = currentScheme || (els.scadaAlarmsScheme?.value || 'http');
+  const host = currentHost || (els.scadaAlarmsHost?.value?.trim() || '127.0.0.1');
+  const port = Number(els.scadaAlarmsPort?.value ?? 8085) || 8085;
+  return `${scheme}://${host}:${port}`;
+}
+
+function refreshApiQuickRef() {
+  if (!els.apiQuickRef) return;
+  const opcUrl = opcbridgeUrlFromForm();
+  const alarmsUrl = alarmsUrlFromForm();
+  const lines = [
+    'OPCBridge REST:',
+    `  GET  ${opcUrl}/info`,
+    `  GET  ${opcUrl}/tags`,
+    `  POST ${opcUrl}/write`,
+    `  POST ${opcUrl}/reload`,
+    '',
+    'Alarms REST:',
+    `  GET  ${alarmsUrl}/alarm/api/status`,
+    '',
+    'Notes:',
+    '  - /write and /reload are POST endpoints (SCADA uses tokens server-side).',
+    '  - /tags is a snapshot; use SCADA or WebSockets for live updates.'
+  ];
+  els.apiQuickRef.textContent = lines.join('\\n');
+}
+
 function refreshTopLinks() {
   const opcUrl = opcbridgeUrlFromForm();
   const hmiUrl = hmiUrlFromForm();
@@ -9642,6 +9674,7 @@ function fillScadaSettings(cfg) {
   if (els.scadaHmiPort) els.scadaHmiPort.value = String(cfg.hmi?.port ?? '');
 
   refreshTopLinks();
+  refreshApiQuickRef();
 }
 
 function readScadaSettingsFromForm() {
@@ -10703,6 +10736,7 @@ async function loadScadaSettings() {
     state.scadaConfigFull = data?.config || null;
     renderWorkspaceTree();
     refreshTopLinks();
+    refreshApiQuickRef();
     setScadaSettingsStatus(data?.local_only ? 'Ready. (Config updates restricted to localhost)' : 'Ready.');
   } catch (err) {
     setScadaSettingsStatus(`Failed: ${err.message}`);
@@ -10764,6 +10798,7 @@ async function saveScadaSettings() {
     const resp = await apiPostJson('/api/scada/config', { config: next });
     fillScadaSettings(resp?.config);
     refreshTopLinks();
+    refreshApiQuickRef();
 
     if (resp?.restart_required) {
     setScadaSettingsStatus('Saved. Restart OPCBridge SCADA for listen host/port changes to take effect.');
@@ -10824,11 +10859,18 @@ function wireScadaSettingsUi() {
   // Keep header links up-to-date while editing.
   [
     els.scadaOpcbridgeScheme, els.scadaOpcbridgeHost, els.scadaOpcbridgePort,
+    els.scadaAlarmsScheme, els.scadaAlarmsHost, els.scadaAlarmsPort,
     els.scadaHmiScheme, els.scadaHmiHost, els.scadaHmiPort
-  ].forEach((el) => el?.addEventListener?.('input', refreshTopLinks));
+  ].forEach((el) => el?.addEventListener?.('input', () => {
+    refreshTopLinks();
+    refreshApiQuickRef();
+  }));
   [
-    els.scadaOpcbridgeScheme, els.scadaHmiScheme
-  ].forEach((el) => el?.addEventListener?.('change', refreshTopLinks));
+    els.scadaOpcbridgeScheme, els.scadaAlarmsScheme, els.scadaHmiScheme
+  ].forEach((el) => el?.addEventListener?.('change', () => {
+    refreshTopLinks();
+    refreshApiQuickRef();
+  }));
 }
 
 function wireAlarmNotificationUi() {

@@ -11,7 +11,7 @@ Monorepo for the opcbridge ecosystem:
 
 ## Documentation
 
-- Core engine manual: `opcbridge/docs/manual.md`
+- Suite manual (canonical): `docs/manual/OPCBridge-Suite-Manual.md`
 - Suite architecture: `docs/architecture.md`
 - SCADA app readme: `opcbridge-scada/README.md`
 - System tags: `docs/system_tags.md`
@@ -22,8 +22,6 @@ Monorepo for the opcbridge ecosystem:
 - Toggle screen editor: `Ctrl+E` (Windows/Linux) or `Cmd+E` (macOS)
 - Open login/account panel: `Ctrl+Shift+L` or `Cmd+Shift+L`
 - Logout: `Ctrl+L` or `Cmd+L`
-
-Full HMI details live in `opcbridge/docs/manual.md`.
 
 ## Tag Features (Highlights)
 
