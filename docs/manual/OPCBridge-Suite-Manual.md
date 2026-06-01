@@ -9,8 +9,8 @@
   </tr>
 </table>
 
-Manual version: 0.2.37  
-Last updated: 2026-05-30 (America/Chicago)
+Manual version: 0.2.38  
+Last updated: 2026-05-31 (America/Chicago)
 
 Status: Draft (placeholders for screenshots)
 
