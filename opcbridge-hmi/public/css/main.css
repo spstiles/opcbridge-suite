@@ -679,8 +679,8 @@ body.runtime-mode .ws-badge {
 }
 
 .screen-file-modal {
-    width: min(980px, calc(100vw - 24px));
-    max-width: 980px;
+    width: min(1120px, calc(100vw - 24px));
+    max-width: 1120px;
 }
 
 .screen-file-chrome {
@@ -826,6 +826,7 @@ body.runtime-mode .ws-badge {
     justify-content: space-between;
     gap: 10px;
     padding-top: 4px;
+    flex-wrap: wrap;
 }
 
 .screen-file-footer .screen-file-name-row {
@@ -836,6 +837,20 @@ body.runtime-mode .ws-badge {
 .screen-file-footer .screen-manager-actions {
     justify-content: flex-end;
     flex: 0 0 auto;
+}
+
+@media (max-width: 820px) {
+    .screen-file-body {
+        grid-template-columns: 200px 1fr;
+    }
+
+    .screen-file-footer {
+        align-items: stretch;
+    }
+
+    .screen-file-footer .screen-manager-actions {
+        width: 100%;
+    }
 }
 
 .screen-file-dir {
