@@ -99,16 +99,16 @@ git clone https://github.com/spstiles/opcbridge-suite.git
 cd opcbridge-suite
 ```
 
-3. Run a full install (suite + OS deps + Node deps):
+3. Run a full install (suite + deps, including Node deps for SCADA/HMI):
 
 ```bash
-sudo ./install.sh --full --deps --with-node-deps -y
+sudo ./install.sh --full --deps -y
 ```
 
 If you want SIP callout support (build/install pjproject `pjsua`):
 
 ```bash
-sudo ./install.sh --full --deps --with-node-deps --with-pjsip -y
+sudo ./install.sh --full --deps --with-pjsip -y
 ```
 
 ### 1.3 First Login
@@ -199,8 +199,8 @@ The primary supported install path is `install.sh`.
 Common install flags:
 
 - `--full`: install/build the suite components
-- `--deps`: install OS dependencies
-- `--with-node-deps`: install Node dependencies (SCADA/HMI)
+- `--deps`: install dependencies (apt + source builds; includes Node deps for SCADA/HMI)
+- `--with-node-deps`: install Node dependencies only (useful with `--hmi-only` / `--scada-only`)
 - `--with-pjsip`: install/build pjproject utilities needed for SIP callouts (if you use SIP)
 - `-y`: auto-confirm
 
@@ -223,11 +223,11 @@ sudo git pull
 # full suite (no deps)
 sudo ./install.sh --full
 
-# full suite + OS deps + Node deps
-sudo ./install.sh --full --deps --with-node-deps -y
+# full suite + deps (includes Node deps)
+sudo ./install.sh --full --deps -y
 
-# full suite + deps + Node deps + SIP callout support (pjsua)
-sudo ./install.sh --full --deps --with-node-deps --with-pjsip -y
+# full suite + deps + SIP callout support (pjsua)
+sudo ./install.sh --full --deps --with-pjsip -y
 ```
 
 After updating, confirm the running versions in **SCADA → Configure Server** (versions are shown near the top of the page/card, as in the Configure Server screenshot in the Quick Start section).

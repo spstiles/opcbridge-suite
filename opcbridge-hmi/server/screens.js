@@ -3,222 +3,320 @@ const path = require("path");
 const fs = require("fs");
 const stripJsonComments = require("strip-json-comments");
 
-const createScreensRouter = ({ rootDir, audit }) => {
-  const router = express.Router();
-  const screensDir = path.join(rootDir, "screens");
-  const fsp = fs.promises;
-  const isExample = (filename) => filename.toLowerCase().endsWith(".jsonc.example");
-  const screenIdFromFilename = (filename) => filename.replace(/\.jsonc(\.example)?$/i, "");
+const SCREEN_EXTS = [".screen", ".jsonc"];
 
-  const ensureScreensDir = async () => {
-    await fsp.mkdir(screensDir, { recursive: true });
-  };
+const posixify = (value) => String(value || "").replace(/\\/g, "/");
 
-  const normalizeScreenId = (id) => {
-    return String(id || "")
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, "_")
-      .replace(/[^a-z0-9_-]/g, "")
-      .replace(/^_+|_+$/g, "");
-  };
+const normalizeRelDir = (value) => {
+  const raw = posixify(value).trim();
+  if (!raw) return "";
+  if (raw.startsWith("/")) return null;
+  const parts = raw.split("/").filter(Boolean);
+  for (const part of parts) {
+    if (part === "." || part === "..") return null;
+    if (!/^[A-Za-z0-9._ -]+$/.test(part)) return null;
+  }
+  return parts.join("/");
+};
 
-  const listScreenFiles = async () => {
-    await ensureScreensDir();
-    const entries = await fsp.readdir(screensDir, { withFileTypes: true });
-    const names = entries
-      .filter((entry) => entry.isFile() && entry.name.toLowerCase().includes(".jsonc"))
-      .map((entry) => entry.name);
+const normalizeScreenRelPath = (value, { defaultExt = ".screen" } = {}) => {
+  const raw = posixify(value).trim();
+  if (!raw) return null;
+  if (raw.startsWith("/")) return null;
+  const parts = raw.split("/").filter(Boolean);
+  if (!parts.length) return null;
+  for (const part of parts) {
+    if (part === "." || part === "..") return null;
+    if (!/^[A-Za-z0-9._ -]+$/.test(part)) return null;
+  }
+  let rel = parts.join("/");
+  const lower = rel.toLowerCase();
+  if (!SCREEN_EXTS.some((ext) => lower.endsWith(ext))) {
+    rel += defaultExt;
+  }
+  return rel;
+};
 
-    const byId = new Map();
-    names.forEach((name) => {
-      const id = screenIdFromFilename(name);
-      if (!id) return;
-      const prev = byId.get(id);
-      if (!prev) {
-        byId.set(id, name);
-        return;
-      }
-      // Prefer real .jsonc over .jsonc.example
-      if (isExample(prev) && !isExample(name)) byId.set(id, name);
-    });
-
-    return Array.from(byId.values()).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
-    );
-  };
-
-  const screenPathForId = (id) => {
-    const candidates = [`${id}.jsonc`, `${id}.jsonc.example`];
-    for (const filename of candidates) {
-      const fullPath = path.join(screensDir, filename);
-      if (!fullPath.startsWith(screensDir)) return null;
-      try {
-        fs.accessSync(fullPath, fs.constants.R_OK);
-        return { filename, fullPath };
-      } catch {
-        // try next candidate
-      }
+const resolveExistingScreenPath = async (screensRoot, relPath) => {
+  const rel = posixify(relPath).replace(/^\/+/, "");
+  const lower = rel.toLowerCase();
+  if (SCREEN_EXTS.some((ext) => lower.endsWith(ext))) return rel;
+  for (const ext of SCREEN_EXTS) {
+    const candidate = `${rel}${ext}`;
+    try {
+      await fs.promises.access(path.join(screensRoot, candidate), fs.constants.R_OK);
+      return candidate;
+    } catch {
+      // try next
     }
-    return { filename: `${id}.jsonc`, fullPath: path.join(screensDir, `${id}.jsonc`) };
+  }
+  return `${rel}.screen`;
+};
+
+const screenRefFromRelPath = (relPath) => {
+  const rel = posixify(relPath).replace(/^\/+/, "");
+  const lower = rel.toLowerCase();
+  for (const ext of SCREEN_EXTS) {
+    if (lower.endsWith(ext)) return rel.slice(0, -ext.length);
+  }
+  return rel.replace(/\.[^/.]+$/, "");
+};
+
+const isScreenFile = (name) => {
+  const lower = String(name || "").toLowerCase();
+  return SCREEN_EXTS.some((ext) => lower.endsWith(ext));
+};
+
+const ensureDir = async (dir) => {
+  await fs.promises.mkdir(dir, { recursive: true });
+};
+
+const listAllScreens = async (screensRoot) => {
+  await ensureDir(screensRoot);
+  const out = [];
+  const walk = async (absDir, relDir) => {
+    const entries = await fs.promises.readdir(absDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry) continue;
+      if (entry.name.startsWith(".")) continue;
+      if (entry.isDirectory()) {
+        const nextRel = relDir ? `${relDir}/${entry.name}` : entry.name;
+        await walk(path.join(absDir, entry.name), nextRel);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!isScreenFile(entry.name)) continue;
+      const relPath = relDir ? `${relDir}/${entry.name}` : entry.name;
+      out.push({ path: relPath, ref: screenRefFromRelPath(relPath) });
+    }
+  };
+  await walk(screensRoot, "");
+  out.sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true, sensitivity: "base" }));
+  return out;
+};
+
+const buildBackupFilename = () => {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  return `opcbridge-hmi-screens-${ts}.zip`;
+};
+
+const createScreensRouter = ({ rootDir, legacyScreensDir, audit }) => {
+  const router = express.Router();
+  const fsp = fs.promises;
+  const screensRoot = path.join(String(rootDir || "/etc/opcbridge/hmi"), "screens");
+  const legacyRoot = legacyScreensDir ? String(legacyScreensDir) : "";
+
+  let initPromise = null;
+  const ensureInitialized = async () => {
+    if (initPromise) return initPromise;
+    initPromise = (async () => {
+      await ensureDir(screensRoot);
+
+      const hasAnyScreenFiles = async (dir) => {
+        try {
+          const entries = await fsp.readdir(dir, { withFileTypes: true });
+          return entries.some((e) => e?.isFile?.() && isScreenFile(e.name));
+        } catch (error) {
+          if (String(error).includes("ENOENT")) return false;
+          throw error;
+        }
+      };
+
+      const destHasScreens = await hasAnyScreenFiles(screensRoot);
+      if (destHasScreens) return;
+      if (!legacyRoot) return;
+
+      const legacyHasScreens = await hasAnyScreenFiles(legacyRoot);
+      if (!legacyHasScreens) return;
+
+      const entries = await fsp.readdir(legacyRoot, { withFileTypes: true });
+      let copied = 0;
+      for (const entry of entries) {
+        if (!entry?.isFile?.()) continue;
+        if (!isScreenFile(entry.name)) continue;
+        const src = path.join(legacyRoot, entry.name);
+        const dst = path.join(screensRoot, entry.name);
+        try {
+          await fsp.access(dst, fs.constants.F_OK);
+          continue; // don't overwrite
+        } catch {
+          // copy
+        }
+        await fsp.copyFile(src, dst);
+        copied += 1;
+      }
+    })();
+    return initPromise;
+  };
+
+  const toAbs = (relPath) => {
+    const abs = path.join(screensRoot, relPath);
+    if (!abs.startsWith(screensRoot)) return null;
+    return abs;
   };
 
   router.get("/", async (req, res) => {
     try {
-      const files = await listScreenFiles();
-      const screens = files.map((fn) => ({
-        id: screenIdFromFilename(fn),
-        filename: fn
-      }));
-      const defaultId = screens[0]?.id ?? null;
-      res.json({ defaultId, screens });
+      await ensureInitialized();
+      const screens = await listAllScreens(screensRoot);
+      const defaultRef = screens[0]?.ref ?? null;
+      res.json({ defaultRef, screens });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
   });
 
-  router.get("/:id", async (req, res) => {
+  router.get("/backup", async (req, res) => {
     try {
-      const id = normalizeScreenId(req.params.id);
-      if (!id) return res.status(400).json({ error: "Bad screen id." });
-      const info = screenPathForId(id);
-      if (!info) return res.status(400).json({ error: "Bad screen id." });
+      await ensureInitialized();
+      await ensureDir(screensRoot);
+      const filename = buildBackupFilename();
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename=\"${filename}\"`);
 
-      const raw = await fsp.readFile(info.fullPath, "utf8");
+      let archiver = null;
+      try {
+        // Optional dependency; don't crash the whole server if missing.
+        archiver = require("archiver");
+      } catch {
+        res.status(501).json({ error: "Backup unavailable: missing optional dependency 'archiver'." });
+        return;
+      }
+
+      const archive = archiver("zip", { zlib: { level: 9 } });
+      archive.on("error", (err) => {
+        try {
+          res.status(500).end(String(err));
+        } catch {}
+      });
+      archive.pipe(res);
+
+      // Add all screens preserving paths relative to screensRoot.
+      const screens = await listAllScreens(screensRoot);
+      for (const entry of screens) {
+        const relPath = entry.path;
+        const absPath = path.join(screensRoot, relPath);
+        archive.file(absPath, { name: relPath });
+      }
+
+      await archive.finalize();
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.get("/list", async (req, res) => {
+    try {
+      await ensureInitialized();
+      const dir = normalizeRelDir(req.query?.dir);
+      if (dir == null) return res.status(400).json({ error: "Bad dir." });
+      await ensureDir(screensRoot);
+      const absDir = dir ? toAbs(dir) : screensRoot;
+      if (!absDir) return res.status(400).json({ error: "Bad dir." });
+
+      let entries = [];
+      try {
+        entries = await fsp.readdir(absDir, { withFileTypes: true });
+      } catch (error) {
+        if (String(error).includes("ENOENT")) return res.status(404).json({ error: "Folder not found." });
+        throw error;
+      }
+
+      const dirs = [];
+      const files = [];
+      for (const entry of entries) {
+        if (!entry) continue;
+        if (entry.name.startsWith(".")) continue;
+        if (entry.isDirectory()) {
+          dirs.push(entry.name);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        if (!isScreenFile(entry.name)) continue;
+        const relPath = dir ? `${dir}/${entry.name}` : entry.name;
+        files.push({ name: entry.name, path: relPath, ref: screenRefFromRelPath(relPath) });
+      }
+
+      dirs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+      files.sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true, sensitivity: "base" }));
+      res.json({ dir, dirs, files });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.get("/file", async (req, res) => {
+    try {
+      await ensureInitialized();
+      const requested = normalizeScreenRelPath(req.query?.path, { defaultExt: "" });
+      if (!requested) return res.status(400).json({ error: "Bad path." });
+      const relPath = await resolveExistingScreenPath(screensRoot, requested);
+      const abs = toAbs(relPath);
+      if (!abs) return res.status(400).json({ error: "Bad path." });
+      const raw = await fsp.readFile(abs, "utf8");
       let parsed = null;
       try {
         parsed = JSON.parse(stripJsonComments(raw));
       } catch {
         parsed = null;
       }
-
-      res.json({
-        id,
-        filename: info.filename,
-        raw,
-        parsed
-      });
+      res.json({ ok: true, path: relPath, ref: screenRefFromRelPath(relPath), raw, parsed });
     } catch (err) {
-      if (String(err).includes("ENOENT")) {
-        return res.status(404).json({ error: "Screen not found." });
-      }
+      if (String(err).includes("ENOENT")) return res.status(404).json({ error: "Screen not found." });
       res.status(500).json({ error: String(err) });
     }
   });
 
-  router.post("/", async (req, res) => {
+  router.get("/file/download", async (req, res) => {
     try {
-      const desiredIdRaw = normalizeScreenId(req.body?.id);
-      const width = Number(req.body?.width ?? 1920);
-      const height = Number(req.body?.height ?? 1080);
-
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-        return res.status(400).json({ error: "Invalid width/height." });
-      }
-
-      let id = desiredIdRaw || "new_screen";
-      await ensureScreensDir();
-
-      const base = id;
-      let finalId = base;
-      let filename = `${finalId}.jsonc`;
-      let fullPath = path.join(screensDir, filename);
-
-      for (let i = 1; i < 1000; i += 1) {
-        try {
-          await fsp.access(fullPath, fs.constants.F_OK);
-          finalId = `${base}_${i}`;
-          filename = `${finalId}.jsonc`;
-          fullPath = path.join(screensDir, filename);
-        } catch {
-          break;
-        }
-      }
-
-      const template = `{\n  // Screen: ${finalId}\n  \"width\": ${Math.floor(width)},\n  \"height\": ${Math.floor(height)},\n  \"background\": \"#202533\",\n  \"objects\": []\n}\n`;
-
-      await fsp.writeFile(fullPath, template, "utf8");
-      try { await audit?.(req, { event: "screen.create", screenId: finalId, filename }); } catch {}
-      res.json({ ok: true, id: finalId, filename, raw: template });
+      await ensureInitialized();
+      const requested = normalizeScreenRelPath(req.query?.path, { defaultExt: "" });
+      if (!requested) return res.status(400).json({ error: "Bad path." });
+      const relPath = await resolveExistingScreenPath(screensRoot, requested);
+      const abs = toAbs(relPath);
+      if (!abs) return res.status(400).json({ error: "Bad path." });
+      const filename = path.basename(relPath);
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename=\"${filename}\"`);
+      fs.createReadStream(abs).pipe(res);
     } catch (err) {
+      if (String(err).includes("ENOENT")) return res.status(404).json({ error: "Screen not found." });
       res.status(500).json({ error: String(err) });
     }
   });
 
-  router.put("/:id", async (req, res) => {
+  router.put("/file", async (req, res) => {
     try {
-      const id = normalizeScreenId(req.params.id);
-      if (!id) return res.status(400).json({ error: "Bad screen id." });
-      const info = screenPathForId(id);
-      if (!info) return res.status(400).json({ error: "Bad screen id." });
-
+      await ensureInitialized();
+      const relPath = normalizeScreenRelPath(req.query?.path, { defaultExt: ".screen" });
+      if (!relPath) return res.status(400).json({ error: "Bad path." });
+      const abs = toAbs(relPath);
+      if (!abs) return res.status(400).json({ error: "Bad path." });
       const raw = req.body?.raw;
-      if (typeof raw !== "string") {
-        return res.status(400).json({ error: "Body must include { raw: string }" });
-      }
+      if (typeof raw !== "string") return res.status(400).json({ error: "Body must include { raw: string }" });
 
-      await ensureScreensDir();
-      await fsp.writeFile(info.fullPath, raw, "utf8");
-      try { await audit?.(req, { event: "screen.update", screenId: id, filename: info.filename }); } catch {}
-      res.json({ ok: true });
+      await ensureDir(path.dirname(abs));
+      await fsp.writeFile(abs, raw, "utf8");
+      try {
+        await audit?.(req, { event: "screen.save", path: relPath, ref: screenRefFromRelPath(relPath) });
+      } catch {}
+      res.json({ ok: true, path: relPath, ref: screenRefFromRelPath(relPath) });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
   });
 
-  router.post("/:id/duplicate", async (req, res) => {
+  router.post("/mkdir", async (req, res) => {
     try {
-      const srcId = normalizeScreenId(req.params.id);
-      if (!srcId) return res.status(400).json({ error: "Missing source id." });
-
-      const srcInfo = screenPathForId(srcId);
-      if (!srcInfo) return res.status(400).json({ error: "Bad screen id." });
-      await fsp.access(srcInfo.fullPath, fs.constants.F_OK);
-
-      const desiredIdRaw = normalizeScreenId(req.body?.id);
-      let id = desiredIdRaw || `${srcId}_copy`;
-      const base = id;
-      let finalId = base;
-      let filename = `${finalId}.jsonc`;
-      let fullPath = path.join(screensDir, filename);
-
-      for (let i = 1; i < 1000; i += 1) {
-        try {
-          await fsp.access(fullPath, fs.constants.F_OK);
-          finalId = `${base}_${i}`;
-          filename = `${finalId}.jsonc`;
-          fullPath = path.join(screensDir, filename);
-        } catch {
-          break;
-        }
-      }
-
-      await fsp.copyFile(srcInfo.fullPath, fullPath);
-      try { await audit?.(req, { event: "screen.duplicate", from: srcId, to: finalId, filename }); } catch {}
-      res.json({ ok: true, id: finalId, filename });
+      await ensureInitialized();
+      const dir = normalizeRelDir(req.body?.dir);
+      if (dir == null) return res.status(400).json({ error: "Bad dir." });
+      const abs = dir ? toAbs(dir) : screensRoot;
+      if (!abs) return res.status(400).json({ error: "Bad dir." });
+      await ensureDir(abs);
+      try { await audit?.(req, { event: "screen.mkdir", dir }); } catch {}
+      res.json({ ok: true, dir });
     } catch (err) {
-      if (String(err).includes("ENOENT")) {
-        return res.status(404).json({ error: "Source screen not found." });
-      }
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
-  router.delete("/:id", async (req, res) => {
-    try {
-      const id = normalizeScreenId(req.params.id);
-      if (!id) return res.status(400).json({ error: "Missing screen id." });
-
-      const info = screenPathForId(id);
-      if (!info) return res.status(400).json({ error: "Bad screen id." });
-
-      await fsp.unlink(info.fullPath);
-      try { await audit?.(req, { event: "screen.delete", screenId: id, filename: info.filename }); } catch {}
-      res.json({ ok: true });
-    } catch (err) {
-      if (String(err).includes("ENOENT")) {
-        return res.status(404).json({ error: "Screen not found." });
-      }
       res.status(500).json({ error: String(err) });
     }
   });

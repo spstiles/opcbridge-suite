@@ -11,6 +11,15 @@ const screen = document.getElementById("screen");
 const screenTitle = document.getElementById("screen-title");
 const groupBreadcrumb = document.getElementById("groupBreadcrumb");
 const toolHint = document.getElementById("toolHint");
+const leftToolbar = document.getElementById("leftToolbar");
+const leftSelectToolBtn = document.getElementById("leftSelectToolBtn");
+const leftRectToolBtn = document.getElementById("leftRectToolBtn");
+const leftViewportToolBtn = document.getElementById("leftViewportToolBtn");
+const leftCircleToolBtn = document.getElementById("leftCircleToolBtn");
+const leftCircleFlyout = document.getElementById("leftCircleFlyout");
+const leftCircleDiameterBtn = document.getElementById("leftCircleDiameterBtn");
+const leftCircleCenterBtn = document.getElementById("leftCircleCenterBtn");
+const leftEllipseToolBtn = document.getElementById("leftEllipseToolBtn");
 const editorFilename = document.getElementById("editor-filename");
 const jsoncEditor = document.getElementById("jsoncEditor");
 const editorStatus = document.getElementById("editorStatus");
@@ -122,6 +131,13 @@ const snapToggleBtn = document.getElementById("snapToggleBtn");
 const groupToggleBtn = document.getElementById("groupToggleBtn");
 const menuToggleBtn = document.getElementById("menuToggleBtn");
 const menuDropdown = document.getElementById("menuDropdown");
+const fileMenuWrap = document.querySelector(".menu-flyout-wrap");
+const fileMenuBtn = document.getElementById("fileMenuBtn");
+const fileMenuFlyout = document.getElementById("fileMenuFlyout");
+const fileNewScreenMenuBtn = document.getElementById("fileNewScreenMenuBtn");
+const fileOpenScreenMenuBtn = document.getElementById("fileOpenScreenMenuBtn");
+const fileSaveAsMenuBtn = document.getElementById("fileSaveAsMenuBtn");
+const fileBackupScreensMenuBtn = document.getElementById("fileBackupScreensMenuBtn");
 const groupMenuBtn = document.getElementById("groupMenuBtn");
 const ungroupMenuBtn = document.getElementById("ungroupMenuBtn");
 const alignMenuLeft = document.getElementById("alignMenuLeft");
@@ -151,15 +167,20 @@ const setEditorStatusSafe = (message) => {
 };
 const usersMenuBtn = document.getElementById("usersMenuBtn");
 const auditMenuBtn = document.getElementById("auditMenuBtn");
-const screenManagerMenuBtn = document.getElementById("screenManagerMenuBtn");
 const screenSaveMenuBtn = document.getElementById("screenSaveMenuBtn");
 const openFileOverlay = document.getElementById("openFileOverlay");
 const openFileList = document.getElementById("openFileList");
-const screenMgrOpenBtn = document.getElementById("screenMgrOpenBtn");
-const screenMgrNewBtn = document.getElementById("screenMgrNewBtn");
-const screenMgrDuplicateBtn = document.getElementById("screenMgrDuplicateBtn");
-const screenMgrDeleteBtn = document.getElementById("screenMgrDeleteBtn");
-const screenMgrCancelBtn = document.getElementById("screenMgrCancelBtn");
+const screenFileTitle = document.getElementById("screenFileTitle");
+const screenFileBreadcrumb = document.getElementById("screenFileBreadcrumb");
+const screenFileTree = document.getElementById("screenFileTree");
+const screenFileBackBtn = document.getElementById("screenFileBackBtn");
+const screenFileForwardBtn = document.getElementById("screenFileForwardBtn");
+const screenFileUpBtn = document.getElementById("screenFileUpBtn");
+const screenFileNewFolderBtn = document.getElementById("screenFileNewFolderBtn");
+const screenFileNameInput = document.getElementById("screenFileNameInput");
+const screenFileDownloadBtn = document.getElementById("screenFileDownloadBtn");
+const screenFilePrimaryBtn = document.getElementById("screenFilePrimaryBtn");
+const screenFileCancelBtn = document.getElementById("screenFileCancelBtn");
 
 let hmiToastTimer = null;
 const showHmiToast = (message, durationMs = 15000) => {
@@ -179,71 +200,333 @@ const showHmiToast = (message, durationMs = 15000) => {
   }, Math.max(250, Number(durationMs) || 15000));
 };
 
-// Screen Manager Dialog
-let selectedOpenFileItem = null;
+// Screen Files (Open / Save As)
+let screenFileMode = "open"; // "open" | "saveAs"
+let screenFileDir = "";
+let screenFileSelected = null; // { kind:"dir"|"file", name, path, ref }
+let screenFileHistory = [];
+let screenFileHistoryIndex = -1;
 
-const updateScreenManagerButtons = () => {
-  const hasSelection = selectedOpenFileItem !== null;
-  if (screenMgrOpenBtn) screenMgrOpenBtn.disabled = !hasSelection;
-  if (screenMgrDuplicateBtn) screenMgrDuplicateBtn.disabled = !hasSelection;
-  if (screenMgrDeleteBtn) screenMgrDeleteBtn.disabled = !hasSelection;
+const updateScreenFileFooterButtons = () => {
+  const canDownload = screenFileMode === "open" && screenFileSelected?.kind === "file" && Boolean(screenFileSelected?.path);
+  if (screenFileDownloadBtn) screenFileDownloadBtn.disabled = !canDownload;
 };
 
-const showOpenFileDialog = () => {
-  if (!openFileOverlay || !openFileList) return;
+const normalizeDirForUi = (dir) => {
+  const trimmed = String(dir || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/g, "");
+  return trimmed;
+};
 
-  // Clear previous selection
-  selectedOpenFileItem = null;
-  openFileList.innerHTML = "";
-  updateScreenManagerButtons();
+const pathBasename = (p) => String(p || "").replace(/\\/g, "/").split("/").pop() || "";
+const screenRefFromPath = (relPath) => String(relPath || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\.(screen|jsonc)$/i, "");
 
-  // Get current screen ID
-  const currentScreenId = window.location.hash.replace("#", "");
+const setScreenFileDialogMode = (mode) => {
+  screenFileMode = mode === "saveAs" ? "saveAs" : "open";
+  if (screenFileTitle) screenFileTitle.textContent = screenFileMode === "saveAs" ? "Save Screen As…" : "Open Screen…";
+  if (screenFilePrimaryBtn) screenFilePrimaryBtn.textContent = screenFileMode === "saveAs" ? "Save" : "Open";
+  if (screenFileNameInput) screenFileNameInput.disabled = false;
+};
 
-  // Populate with screens from the dropdown
-  if (screenList && screenList.options) {
-    for (let i = 0; i < screenList.options.length; i++) {
-      const option = screenList.options[i];
-      const item = document.createElement("div");
-      item.className = "open-file-item";
-      item.textContent = option.value;
-      item.dataset.screenId = option.value;
-      item.dataset.filename = option.dataset.filename;
+const fetchScreenDir = async (dir) => {
+  const norm = normalizeDirForUi(dir);
+  const url = norm ? `/api/screens/list?dir=${encodeURIComponent(norm)}` : "/api/screens/list";
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.json();
+};
 
-      // Mark current screen
-      if (option.value === currentScreenId) {
-        item.classList.add("is-current");
-      }
+const renderScreenFileTree = (rootDir, payload) => {
+  if (!screenFileTree) return;
+  screenFileTree.innerHTML = "";
 
-      // Handle selection
-      item.addEventListener("click", () => {
-        // Remove previous selection
-        const prevSelected = openFileList.querySelector(".is-selected");
-        if (prevSelected) prevSelected.classList.remove("is-selected");
+  const buildNode = (name, relDir, hasChildrenHint = true) => {
+    const wrap = document.createElement("div");
+    const row = document.createElement("div");
+    row.className = "screen-file-tree-item";
+    row.dataset.dir = relDir;
 
-        // Mark this item as selected
-        item.classList.add("is-selected");
-        selectedOpenFileItem = {
-          id: item.dataset.screenId,
-          filename: item.dataset.filename
-        };
-        updateScreenManagerButtons();
-      });
+    const toggle = document.createElement("span");
+    toggle.className = "screen-file-tree-toggle";
+    toggle.textContent = "▸";
+    if (!hasChildrenHint) toggle.classList.add("is-hidden");
 
-      // Double-click to open immediately
-      item.addEventListener("dblclick", () => {
-        if (selectedOpenFileItem) {
-          applyScreenSelection(selectedOpenFileItem.id, selectedOpenFileItem.filename);
-          openFileOverlay.classList.add("is-hidden");
+    const label = document.createElement("span");
+    label.textContent = name;
+
+    row.appendChild(toggle);
+    row.appendChild(label);
+
+    const children = document.createElement("div");
+    children.className = "screen-file-tree-children is-hidden";
+
+    const setActive = () => {
+      screenFileTree.querySelectorAll(".screen-file-tree-item").forEach((el) => el.classList.remove("is-active"));
+      row.classList.add("is-active");
+    };
+
+    const ensureChildrenLoaded = async () => {
+      if (children.dataset.loaded === "1") return;
+      children.dataset.loaded = "1";
+      try {
+        const next = await fetchScreenDir(relDir);
+        const dirs = next?.dirs || [];
+        if (!dirs.length) {
+          toggle.classList.add("is-hidden");
+          return;
         }
-      });
+        dirs.forEach((childName) => {
+          const nextRel = relDir ? `${relDir}/${childName}` : childName;
+          const node = buildNode(childName, nextRel, true);
+          children.appendChild(node);
+        });
+      } catch {
+        // ignore
+      }
+    };
 
-      openFileList.appendChild(item);
+    toggle.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const isHidden = children.classList.contains("is-hidden");
+      if (isHidden) {
+        await ensureChildrenLoaded();
+        children.classList.remove("is-hidden");
+        toggle.textContent = "▾";
+      } else {
+        children.classList.add("is-hidden");
+        toggle.textContent = "▸";
+      }
+    });
+
+    row.addEventListener("click", async () => {
+      setActive();
+      await setScreenFileHistoryDir(relDir, { push: true });
+    });
+
+    wrap.appendChild(row);
+    wrap.appendChild(children);
+    return wrap;
+  };
+
+  const root = buildNode("screens", "", true);
+  screenFileTree.appendChild(root);
+  // Expand root
+  const rootToggle = root.querySelector(".screen-file-tree-toggle");
+  if (rootToggle) rootToggle.click();
+
+  // Highlight current dir if possible
+  window.setTimeout(() => {
+    const target = normalizeDirForUi(screenFileDir);
+    const active = screenFileTree.querySelector(`.screen-file-tree-item[data-dir=\"${CSS.escape(target)}\"]`);
+    if (active) active.classList.add("is-active");
+  }, 0);
+};
+
+const renderScreenFileList = (payload) => {
+  if (!openFileList) return;
+  openFileList.innerHTML = "";
+  screenFileSelected = null;
+  const dir = normalizeDirForUi(payload?.dir);
+  screenFileDir = dir;
+  renderScreenBreadcrumb(dir);
+  updateScreenFileNavButtons();
+  updateScreenFileFooterButtons();
+
+  const addItem = (kind, label, meta) => {
+    const item = document.createElement("div");
+    item.className = "open-file-item";
+    item.textContent = label;
+    item.dataset.kind = kind;
+    if (meta?.path) item.dataset.path = meta.path;
+    if (meta?.ref) item.dataset.ref = meta.ref;
+
+    item.addEventListener("click", () => {
+      openFileList.querySelectorAll(".open-file-item").forEach((el) => el.classList.remove("is-selected"));
+      item.classList.add("is-selected");
+      screenFileSelected = { kind, ...meta };
+      if (kind === "file" && screenFileNameInput) {
+        screenFileNameInput.value = meta?.name || "";
+      }
+      updateScreenFileFooterButtons();
+    });
+
+    item.addEventListener("dblclick", () => {
+      if (kind === "dir") {
+        navigateScreenDir(meta?.path || "");
+        return;
+      }
+      if (kind === "file" && screenFileMode === "open") {
+        openSelectedScreenFile();
+      }
+    });
+
+    openFileList.appendChild(item);
+  };
+
+  (payload?.dirs || []).forEach((name) => {
+    const clean = String(name || "").trim();
+    if (!clean) return;
+    const nextPath = dir ? `${dir}/${clean}` : clean;
+    addItem("dir", `📁 ${clean}`, { name: clean, path: nextPath });
+  });
+
+  (payload?.files || []).forEach((file) => {
+    const name = String(file?.name || "").trim();
+    if (!name) return;
+    addItem("file", name, { name, path: file.path, ref: file.ref });
+  });
+};
+
+const navigateScreenDir = async (dir) => {
+  try {
+    const payload = await fetchScreenDir(dir);
+    renderScreenFileTree("", payload);
+    renderScreenFileList(payload);
+  } catch (error) {
+    setEditorStatusSafe(`Failed to list screens: ${error.message}`);
+  }
+};
+
+const pushScreenFileHistory = (dir) => {
+  const norm = normalizeDirForUi(dir);
+  if (screenFileHistoryIndex >= 0 && screenFileHistory[screenFileHistoryIndex] === norm) return;
+  screenFileHistory = screenFileHistory.slice(0, screenFileHistoryIndex + 1);
+  screenFileHistory.push(norm);
+  screenFileHistoryIndex = screenFileHistory.length - 1;
+};
+
+const setScreenFileHistoryDir = async (dir, { push = true } = {}) => {
+  const norm = normalizeDirForUi(dir);
+  if (push) pushScreenFileHistory(norm);
+  await navigateScreenDir(norm);
+};
+
+const renderScreenBreadcrumb = (dir) => {
+  if (!screenFileBreadcrumb) return;
+  screenFileBreadcrumb.innerHTML = "";
+  const parts = normalizeDirForUi(dir).split("/").filter(Boolean);
+  const rootCrumb = document.createElement("span");
+  rootCrumb.className = "screen-file-crumb";
+  rootCrumb.textContent = "screens";
+  rootCrumb.title = "/ (screens root)";
+  rootCrumb.addEventListener("click", () => {
+    setScreenFileHistoryDir("", { push: true });
+  });
+  screenFileBreadcrumb.appendChild(rootCrumb);
+  parts.forEach((part, idx) => {
+    const sep = document.createElement("span");
+    sep.className = "screen-file-sep";
+    sep.textContent = "›";
+    screenFileBreadcrumb.appendChild(sep);
+    const crumb = document.createElement("span");
+    crumb.className = "screen-file-crumb";
+    crumb.textContent = part;
+    const to = parts.slice(0, idx + 1).join("/");
+    crumb.title = `/${to}`;
+    crumb.addEventListener("click", () => {
+      setScreenFileHistoryDir(to, { push: true });
+    });
+    screenFileBreadcrumb.appendChild(crumb);
+  });
+};
+
+const updateScreenFileNavButtons = () => {
+  if (screenFileBackBtn) screenFileBackBtn.disabled = !(screenFileHistoryIndex > 0);
+  if (screenFileForwardBtn) screenFileForwardBtn.disabled = !(screenFileHistoryIndex >= 0 && screenFileHistoryIndex < screenFileHistory.length - 1);
+  if (screenFileUpBtn) screenFileUpBtn.disabled = !normalizeDirForUi(screenFileDir);
+};
+
+const showScreenFileDialog = async (mode) => {
+  if (!openFileOverlay) return;
+  setScreenFileDialogMode(mode);
+  openFileOverlay.classList.remove("is-hidden");
+  if (screenFileNameInput && mode === "saveAs") {
+    const base = currentScreenPath ? pathBasename(currentScreenPath).replace(/\.(screen|jsonc)$/i, "") : "";
+    screenFileNameInput.value = base;
+    window.setTimeout(() => screenFileNameInput.focus(), 0);
+  }
+  if (mode === "saveAs" && currentScreenPath) {
+    const parts = String(currentScreenPath || "").replace(/\\/g, "/").split("/").filter(Boolean);
+    parts.pop();
+    screenFileDir = parts.join("/");
+  }
+  if (screenFileHistoryIndex === -1) {
+    pushScreenFileHistory(screenFileDir || "");
+  } else {
+    pushScreenFileHistory(screenFileDir || "");
+  }
+  await navigateScreenDir(screenFileDir || "");
+};
+
+const hideScreenFileDialog = () => {
+  if (!openFileOverlay) return;
+  openFileOverlay.classList.add("is-hidden");
+};
+
+const openSelectedScreenFile = async () => {
+  let nextPath = "";
+  if (screenFileSelected?.kind === "file") {
+    nextPath = String(screenFileSelected.path || "").trim();
+  } else {
+    const typed = String(screenFileNameInput?.value || "").trim();
+    if (typed) {
+      nextPath = normalizeDirForUi(screenFileDir) ? `${normalizeDirForUi(screenFileDir)}/${typed}` : typed;
     }
   }
+  if (!nextPath) return;
+  applyScreenSelection(screenRefFromPath(nextPath), nextPath);
+  hideScreenFileDialog();
+};
 
-  // Show the dialog
-  openFileOverlay.classList.remove("is-hidden");
+const downloadSelectedScreenFile = () => {
+  if (screenFileMode !== "open") return;
+  if (!screenFileSelected || screenFileSelected.kind !== "file") return;
+  const relPath = String(screenFileSelected.path || "").trim();
+  if (!relPath) return;
+  window.location.href = `/api/screens/file/download?path=${encodeURIComponent(relPath)}`;
+};
+
+const saveScreenToPath = async (relPath, raw) => {
+  const response = await fetch(`/api/screens/file?path=${encodeURIComponent(relPath)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw })
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return await response.json();
+};
+
+const saveCurrentScreenAs = async () => {
+  if (!jsoncEditor) return;
+  const baseDir = normalizeDirForUi(screenFileDir);
+  const nameRaw = String(screenFileNameInput?.value || "").trim();
+  if (!nameRaw) {
+    setEditorStatusSafe("Enter a file name.");
+    return;
+  }
+  const filename = nameRaw;
+  const relPath = baseDir ? `${baseDir}/${filename}` : filename;
+  try {
+    const saved = await saveScreenToPath(relPath, jsoncEditor.value);
+    currentScreenPath = saved.path;
+    currentScreenId = saved.ref;
+    currentScreenFilename = pathBasename(currentScreenPath);
+    if (screenTitle) screenTitle.textContent = currentScreenId || "Untitled";
+    if (editorFilename) editorFilename.textContent = currentScreenFilename;
+    await refreshScreensList();
+    hideScreenFileDialog();
+    setDirty(false);
+    setEditorStatusSafe(`Saved ${currentScreenFilename}.`);
+  } catch (error) {
+    setEditorStatusSafe(`Save failed: ${error.message}`);
+  }
+};
+
+const goUpOneScreenDir = async () => {
+  const dir = normalizeDirForUi(screenFileDir);
+  if (!dir) return;
+  const parts = dir.split("/").filter(Boolean);
+  parts.pop();
+  await setScreenFileHistoryDir(parts.join("/"), { push: true });
 };
 
 const aboutOverlay = document.getElementById("aboutOverlay");
@@ -1423,9 +1706,11 @@ let isEditMode = false;
 let defaultScreenId = DEFAULT_SCREEN_ID;
 let currentScreenId = DEFAULT_SCREEN_ID;
 let currentScreenFilename = DEFAULT_SCREEN_FILE;
+let currentScreenPath = DEFAULT_SCREEN_FILE;
 let lastLoadedFilename = "";
 let currentTab = "files";
 let currentTool = "select";
+let leftCircleFlyoutOpen = false;
 let currentScreenObj = null;
 let isDirty = false;
 let renderedElements = [];
@@ -1490,6 +1775,9 @@ let circleDraft = null;
 let circleDraftStart = null;
 let isDrawingCircleCenter = false;
 let circleCenterDraftStart = null;
+let isDrawingEllipse = false;
+let ellipseDraft = null;
+let ellipseDraftStart = null;
 let isDrawingLine = false;
 let lineDraft = null;
 let lineDraftStart = null;
@@ -3157,7 +3445,7 @@ const getObjectBounds = (obj) => {
     const bottom = Math.max(base.y + base.height, contentBox.y + contentBox.height);
     return { x: left, y: top, width: right - left, height: bottom - top };
   }
-  if (obj.type === "rect" || obj.type === "alarms-panel" || obj.type === "button" || obj.type === "viewport" || obj.type === "bar" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") {
+  if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "button" || obj.type === "viewport" || obj.type === "bar" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") {
     return {
       x: Number(obj.x ?? 0),
       y: Number(obj.y ?? 0),
@@ -3319,7 +3607,7 @@ const translateObject = (obj, dx, dy) => {
 
 const canSizeMatchObject = (obj) => {
   if (!obj) return false;
-  if (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "text" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") return true;
+  if (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "text" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") return true;
   if (obj.type === "circle") return true;
   return false;
 };
@@ -3338,7 +3626,7 @@ const applySizeToObject = (obj, refSize, mode) => {
     if (mode === "height" || mode === "size") obj.h = height;
     return;
   }
-  if (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") {
+  if (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") {
     if (mode === "width" || mode === "size") obj.w = Math.max(MIN_RESIZE_SIZE, width);
     if (mode === "height" || mode === "size") obj.h = Math.max(MIN_RESIZE_SIZE, height);
   }
@@ -3769,6 +4057,10 @@ const setMenuOpen = (isOpen) => {
   if (!menuDropdown || !menuToggleBtn) return;
   menuDropdown.classList.toggle("is-open", isOpen);
   menuToggleBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  if (!isOpen && fileMenuFlyout && fileMenuBtn) {
+    fileMenuFlyout.classList.add("is-hidden");
+    fileMenuBtn.setAttribute("aria-expanded", "false");
+  }
 };
 
 const scheduleWsReconnect = () => {
@@ -4638,7 +4930,7 @@ const loadClientConfig = async () => {
       };
       const nextDefault = String(parsed.hmi.defaultScreen || "")
         .trim()
-        .replace(/\.jsonc$/i, "");
+        .replace(/\.(jsonc|screen)$/i, "");
       if (nextDefault) defaultScreenId = nextDefault;
     }
     return opcbridgeConfig;
@@ -5901,11 +6193,11 @@ let currentPopupScreenId = null;
 const queueScreenLoad = (id) => {
   if (!id || pendingScreens.has(id)) return;
   pendingScreens.add(id);
-  fetch(`/api/screens/${encodeURIComponent(id)}`)
+  fetch(`/api/screens/file?path=${encodeURIComponent(id)}`)
     .then((res) => (res.ok ? res.json() : null))
     .then((data) => {
       if (data?.parsed) {
-        screenCache.set(id, data.parsed);
+        screenCache.set(String(data.ref || id), data.parsed);
         renderScreen();
         scheduleWsSubscribeRefresh();
       }
@@ -6656,7 +6948,7 @@ const renderScreen = () => {
 		    return;
 		  }
 
-	  if (obj?.type === "circle") {
+  if (obj?.type === "circle") {
 	    if (obj.shadow) {
 	      const shadow = document.createElementNS(ns, "circle");
 	      shadow.setAttribute("cx", Number(obj.cx ?? 0) + 4);
@@ -6680,6 +6972,33 @@ const renderScreen = () => {
     hmiSvg.appendChild(circle);
       renderedElements.push(circle);
       renderedElementMeta.push({ el: circle, index, type: "circle" });
+      return;
+    }
+
+    if (obj?.type === "ellipse") {
+      const x = Number(obj.x ?? 0);
+      const y = Number(obj.y ?? 0);
+      const w = Math.max(0, Number(obj.w ?? 0));
+      const h = Math.max(0, Number(obj.h ?? 0));
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const rx = Math.max(0, w / 2);
+      const ry = Math.max(0, h / 2);
+
+      const ellipse = document.createElementNS(ns, "ellipse");
+      ellipse.setAttribute("cx", cx);
+      ellipse.setAttribute("cy", cy);
+      ellipse.setAttribute("rx", rx);
+      ellipse.setAttribute("ry", ry);
+      const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
+      ellipse.setAttribute("fill", fillColor);
+      const baseStroke = obj.stroke || "#ffffff";
+      const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
+      ellipse.setAttribute("stroke", strokeColor);
+      ellipse.setAttribute("stroke-width", obj.strokeWidth ?? 1);
+      hmiSvg.appendChild(ellipse);
+      renderedElements.push(ellipse);
+      renderedElementMeta.push({ el: ellipse, index, type: "ellipse" });
       return;
     }
 
@@ -8823,11 +9142,15 @@ const applyJsoncEditor = () => {
 
 const saveJsoncEditor = async () => {
   if (!jsoncEditor) return;
+  if (!currentScreenPath) {
+    await showScreenFileDialog("saveAs");
+    return;
+  }
   try {
     if (currentScreenObj && currentScreenId) {
       screenCache.set(currentScreenId, currentScreenObj);
     }
-    const response = await fetch(`/api/screens/${encodeURIComponent(currentScreenId)}`, {
+    const response = await fetch(`/api/screens/file?path=${encodeURIComponent(currentScreenPath)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ raw: jsoncEditor.value })
@@ -8846,21 +9169,25 @@ const reloadJsoncEditor = () => {
   setDirty(false);
 };
 
-function applyScreenSelection(id, filename) {
-  currentScreenId = id;
-  currentScreenFilename = filename || `${id}.jsonc`;
+function applyScreenSelection(ref, relPath) {
+  currentScreenId = String(ref || "").trim();
+  currentScreenPath = String(relPath || "").trim();
+  currentScreenFilename = currentScreenPath ? pathBasename(currentScreenPath) : (currentScreenId ? `${currentScreenId}.screen` : "untitled.screen");
   lastLoadedFilename = "";
   selectedIndices = [];
   clearSelectedPolygonVertex();
-  if (screenTitle) screenTitle.textContent = currentScreenId;
+  if (screenTitle) screenTitle.textContent = currentScreenId || "Untitled";
   if (editorFilename) editorFilename.textContent = currentScreenFilename;
   loadJsonc();
 }
 
 const loadScreenById = (id) => {
   if (!id) return;
-  currentScreenId = id;
-  currentScreenFilename = `${id}.jsonc`;
+  const target = String(id || "").trim();
+  const match = (availableScreens || []).find((s) => s?.ref === target || s?.id === target) || null;
+  currentScreenId = match?.ref || target;
+  currentScreenPath = match?.path || `${target}`;
+  currentScreenFilename = currentScreenPath ? pathBasename(currentScreenPath) : `${target}.screen`;
   lastLoadedFilename = "";
   selectedIndices = [];
   clearSelectedPolygonVertex();
@@ -8877,11 +9204,12 @@ async function refreshScreensList() {
     const response = await fetch("/api/screens");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    availableScreens = data.screens || [];
-    data.screens.forEach((screenItem) => {
+    availableScreens = (data.screens || []).map((s) => ({ ref: s.ref, path: s.path, id: s.ref, filename: pathBasename(s.path) }));
+    availableScreens.forEach((screenItem) => {
       const opt = document.createElement("option");
-      opt.value = screenItem.id;
-      opt.textContent = screenItem.id;
+      opt.value = screenItem.ref;
+      opt.textContent = screenItem.ref;
+      opt.dataset.path = screenItem.path;
       opt.dataset.filename = screenItem.filename;
       screenList.appendChild(opt);
     });
@@ -8890,8 +9218,8 @@ async function refreshScreensList() {
       buttonTargetSelect.innerHTML = "";
       availableScreens.forEach((screenItem) => {
         const opt = document.createElement("option");
-        opt.value = screenItem.id;
-        opt.textContent = screenItem.id;
+        opt.value = screenItem.ref;
+        opt.textContent = screenItem.ref;
         buttonTargetSelect.appendChild(opt);
       });
     }
@@ -8903,17 +9231,17 @@ async function refreshScreensList() {
       viewportTargetSelect.innerHTML = "";
       availableScreens.forEach((screenItem) => {
         const opt = document.createElement("option");
-        opt.value = screenItem.id;
-        opt.textContent = screenItem.id;
+        opt.value = screenItem.ref;
+        opt.textContent = screenItem.ref;
         viewportTargetSelect.appendChild(opt);
       });
     }
     refreshGroupActionScreenOptions();
 
-    const preferred = data.screens.find((s) => s.id === currentScreenId) || data.screens[0];
+    const preferred = (data.screens || []).find((s) => s.ref === currentScreenId) || (data.screens || [])[0];
     if (preferred) {
-      screenList.value = preferred.id;
-      applyScreenSelection(preferred.id, preferred.filename);
+      screenList.value = preferred.ref;
+      applyScreenSelection(preferred.ref, preferred.path);
     } else {
       if (jsoncEditor) jsoncEditor.value = "";
       if (editorStatus) editorStatus.textContent = "No screens found.";
@@ -8924,96 +9252,197 @@ async function refreshScreensList() {
 }
 
 function bindScreenManager() {
-  // Screen Manager menu button
-  if (screenManagerMenuBtn) {
-    screenManagerMenuBtn.addEventListener("click", () => {
-      if (menuDropdown) menuDropdown.classList.remove("is-open");
-      showOpenFileDialog();
+  const setFileFlyoutOpen = (isOpen) => {
+    if (!fileMenuFlyout || !fileMenuBtn) return;
+    fileMenuFlyout.classList.toggle("is-hidden", !isOpen);
+    fileMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  };
+
+  let fileFlyoutCloseTimer = null;
+  const scheduleFileFlyoutClose = () => {
+    if (fileFlyoutCloseTimer) window.clearTimeout(fileFlyoutCloseTimer);
+    fileFlyoutCloseTimer = window.setTimeout(() => {
+      fileFlyoutCloseTimer = null;
+      setFileFlyoutOpen(false);
+    }, 150);
+  };
+  const cancelFileFlyoutClose = () => {
+    if (!fileFlyoutCloseTimer) return;
+    window.clearTimeout(fileFlyoutCloseTimer);
+    fileFlyoutCloseTimer = null;
+  };
+
+  if (fileMenuBtn) {
+    fileMenuBtn.addEventListener("click", () => {
+      cancelFileFlyoutClose();
+      const isOpen = !fileMenuFlyout?.classList.contains("is-hidden");
+      setFileFlyoutOpen(!isOpen);
     });
   }
 
-  // Screen Manager action buttons
-  if (screenMgrOpenBtn) {
-    screenMgrOpenBtn.addEventListener("click", () => {
-      if (selectedOpenFileItem) {
-        applyScreenSelection(selectedOpenFileItem.id, selectedOpenFileItem.filename);
-        openFileOverlay.classList.add("is-hidden");
-      }
+  // Hover opens the flyout (desktop), leaving closes it
+  if (fileMenuWrap && fileMenuBtn && fileMenuFlyout) {
+    fileMenuWrap.addEventListener("pointerenter", () => {
+      cancelFileFlyoutClose();
+      setFileFlyoutOpen(true);
+    });
+    fileMenuWrap.addEventListener("pointerleave", () => {
+      scheduleFileFlyoutClose();
+    });
+    fileMenuBtn.addEventListener("focus", () => {
+      cancelFileFlyoutClose();
+      setFileFlyoutOpen(true);
     });
   }
 
-  if (screenMgrNewBtn) {
-    screenMgrNewBtn.addEventListener("click", async () => {
-      const desiredId = window.prompt("New screen id (optional):", "");
-      if (desiredId === null) return; // User clicked Cancel
-      try {
-        const response = await fetch("/api/screens", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(desiredId ? { id: desiredId } : {})
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        await refreshScreensList();
-        openFileOverlay.classList.add("is-hidden");
-        applyScreenSelection(data.id, data.filename);
-      } catch (error) {
-        if (editorStatus) editorStatus.textContent = `Create failed: ${error.message}`;
-      }
+  document.addEventListener("click", (e) => {
+    if (!fileMenuFlyout || !fileMenuBtn) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    if (fileMenuFlyout.contains(target) || fileMenuBtn.contains(target)) return;
+    setFileFlyoutOpen(false);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    setFileFlyoutOpen(false);
+  });
+
+  // File menu: New
+  if (fileNewScreenMenuBtn) {
+    fileNewScreenMenuBtn.addEventListener("click", () => {
+      setFileFlyoutOpen(false);
+      setMenuOpen(false);
+      if (isDirty && !confirmDiscardChanges("New screen")) return;
+      currentScreenPath = "";
+      currentScreenId = "untitled";
+      currentScreenFilename = "untitled.screen";
+      lastLoadedFilename = "";
+      selectedIndices = [];
+      clearSelectedPolygonVertex();
+      if (screenTitle) screenTitle.textContent = "Untitled";
+      if (editorFilename) editorFilename.textContent = currentScreenFilename;
+      loadJsonc();
     });
   }
 
-  if (screenMgrDuplicateBtn) {
-    screenMgrDuplicateBtn.addEventListener("click", async () => {
-      if (!selectedOpenFileItem) return;
-      const desiredId = window.prompt("Duplicate to id (optional):", `${selectedOpenFileItem.id}_copy`);
-      if (desiredId === null) return; // User clicked Cancel
-      try {
-        const response = await fetch(`/api/screens/${encodeURIComponent(selectedOpenFileItem.id)}/duplicate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(desiredId ? { id: desiredId } : {})
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        await refreshScreensList();
-        openFileOverlay.classList.add("is-hidden");
-        applyScreenSelection(data.id, data.filename);
-      } catch (error) {
-        if (editorStatus) editorStatus.textContent = `Duplicate failed: ${error.message}`;
-      }
-    });
-  }
-
-  if (screenMgrDeleteBtn) {
-    screenMgrDeleteBtn.addEventListener("click", async () => {
-      if (!selectedOpenFileItem) return;
-      const ok = window.confirm(`Delete screen "${selectedOpenFileItem.id}"? This cannot be undone.`);
-      if (!ok) return;
-      try {
-        const response = await fetch(`/api/screens/${encodeURIComponent(selectedOpenFileItem.id)}`, {
-          method: "DELETE"
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        await refreshScreensList();
-        openFileOverlay.classList.add("is-hidden");
-      } catch (error) {
-        if (editorStatus) editorStatus.textContent = `Delete failed: ${error.message}`;
-      }
-    });
-  }
-
-  if (screenMgrCancelBtn) {
-    screenMgrCancelBtn.addEventListener("click", () => {
-      openFileOverlay.classList.add("is-hidden");
+  // File menu: Open…
+  if (fileOpenScreenMenuBtn) {
+    fileOpenScreenMenuBtn.addEventListener("click", async () => {
+      setFileFlyoutOpen(false);
+      setMenuOpen(false);
+      if (isDirty && !confirmDiscardChanges("Open screen")) return;
+      screenFileHistory = [];
+      screenFileHistoryIndex = -1;
+      await showScreenFileDialog("open");
     });
   }
 
   // Screen Save menu button
   if (screenSaveMenuBtn) {
     screenSaveMenuBtn.addEventListener("click", () => {
-      if (menuDropdown) menuDropdown.classList.remove("is-open");
+      setMenuOpen(false);
       saveJsoncEditor();
+    });
+  }
+
+  // File menu: Save As…
+  if (fileSaveAsMenuBtn) {
+    fileSaveAsMenuBtn.addEventListener("click", async () => {
+      setFileFlyoutOpen(false);
+      setMenuOpen(false);
+      screenFileHistory = [];
+      screenFileHistoryIndex = -1;
+      await showScreenFileDialog("saveAs");
+    });
+  }
+
+  // File menu: Backup Screens…
+  if (fileBackupScreensMenuBtn) {
+    fileBackupScreensMenuBtn.addEventListener("click", () => {
+      setFileFlyoutOpen(false);
+      setMenuOpen(false);
+      window.location.href = "/api/screens/backup";
+    });
+  }
+
+  if (screenFileBackBtn) {
+    screenFileBackBtn.addEventListener("click", async () => {
+      if (!(screenFileHistoryIndex > 0)) return;
+      screenFileHistoryIndex -= 1;
+      await setScreenFileHistoryDir(screenFileHistory[screenFileHistoryIndex], { push: false });
+      updateScreenFileNavButtons();
+    });
+  }
+
+  if (screenFileForwardBtn) {
+    screenFileForwardBtn.addEventListener("click", async () => {
+      if (!(screenFileHistoryIndex >= 0 && screenFileHistoryIndex < screenFileHistory.length - 1)) return;
+      screenFileHistoryIndex += 1;
+      await setScreenFileHistoryDir(screenFileHistory[screenFileHistoryIndex], { push: false });
+      updateScreenFileNavButtons();
+    });
+  }
+
+  if (screenFileUpBtn) {
+    screenFileUpBtn.addEventListener("click", async () => {
+      await goUpOneScreenDir();
+    });
+  }
+
+  if (screenFileNewFolderBtn) {
+    screenFileNewFolderBtn.addEventListener("click", async () => {
+      const name = window.prompt("New folder name:", "");
+      if (name == null) return;
+      const trimmed = String(name || "").trim();
+      if (!trimmed) return;
+      const base = normalizeDirForUi(screenFileDir);
+      const nextDir = base ? `${base}/${trimmed}` : trimmed;
+      try {
+        const resp = await fetch("/api/screens/mkdir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dir: nextDir })
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        await navigateScreenDir(base);
+      } catch (error) {
+        setEditorStatusSafe(`Create folder failed: ${error.message}`);
+      }
+    });
+  }
+
+  if (screenFilePrimaryBtn) {
+    screenFilePrimaryBtn.addEventListener("click", async () => {
+      if (screenFileMode === "saveAs") {
+        await saveCurrentScreenAs();
+        return;
+      }
+      await openSelectedScreenFile();
+    });
+  }
+
+  if (screenFileDownloadBtn) {
+    screenFileDownloadBtn.addEventListener("click", () => {
+      downloadSelectedScreenFile();
+    });
+  }
+
+  if (screenFileNameInput) {
+    screenFileNameInput.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (screenFileMode === "saveAs") {
+        await saveCurrentScreenAs();
+        return;
+      }
+      await openSelectedScreenFile();
+    });
+  }
+
+  if (screenFileCancelBtn) {
+    screenFileCancelBtn.addEventListener("click", () => {
+      hideScreenFileDialog();
     });
   }
 
@@ -9021,7 +9450,7 @@ function bindScreenManager() {
   if (openFileOverlay) {
     openFileOverlay.addEventListener("click", (e) => {
       if (e.target === openFileOverlay) {
-        openFileOverlay.classList.add("is-hidden");
+        hideScreenFileDialog();
       }
     });
   }
@@ -9041,7 +9470,7 @@ const setMode = (next) => {
   document.body.classList.toggle("runtime-mode", !isEditMode);
   if (toolbar) toolbar.classList.toggle("is-hidden", !isEditMode);
   if (editorPane) editorPane.classList.toggle("is-hidden", !isEditMode);
-  if (screenTitle) screenTitle.textContent = currentScreenId || currentScreenFilename.replace(/\.jsonc$/i, "");
+  if (screenTitle) screenTitle.textContent = currentScreenId || currentScreenFilename.replace(/\.(jsonc|screen)$/i, "");
   if (editorFilename) editorFilename.textContent = currentScreenFilename;
   if (!isEditMode) {
     selectedIndices = [];
@@ -9059,7 +9488,7 @@ const setMode = (next) => {
     selectedPolygonVertex = lastEditUiState.selectedPolygonVertex || null;
   }
   if (!isEditMode && wasEditMode) {
-    const baseId = currentScreenId || currentScreenFilename.replace(/\.jsonc$/i, "");
+    const baseId = currentScreenId || currentScreenFilename.replace(/\.(jsonc|screen)$/i, "");
     setRuntimeHistoryBase(baseId);
     initViewportHistoriesForCurrentScreen();
   }
@@ -9434,11 +9863,37 @@ window.addEventListener("resize", applyScale);
 
 const loadJsonc = async () => {
   if (!jsoncEditor) return;
-  if (lastLoadedFilename === currentScreenFilename) return;
-  lastLoadedFilename = currentScreenFilename;
+  if (!currentScreenPath) {
+    const template = `{\n  // Screen: Untitled\n  \"width\": 1920,\n  \"height\": 1080,\n  \"background\": \"#202533\",\n  \"objects\": []\n}\n`;
+    jsoncEditor.value = template;
+    try {
+      currentScreenObj = parseJsonc(template);
+      screenCache.set(currentScreenId || "untitled", currentScreenObj);
+      initViewportHistoriesForCurrentScreen();
+      selectedIndices = [];
+      groupEditStack.length = 0;
+      undoStack.length = 0;
+      recordHistory();
+      renderScreen();
+      refreshAlarmsForScreenLoad();
+      scheduleWsSubscribeRefresh();
+      updateGroupBreadcrumb();
+      refreshViewportIdOptions();
+      ensureRuntimeHistoryForCurrentScreen();
+      if (editorStatus) editorStatus.textContent = "New unsaved screen.";
+      setDirty(false);
+    } catch (parseError) {
+      currentScreenObj = null;
+      if (editorStatus) editorStatus.textContent = `Parse error: ${parseError.message}`;
+    }
+    lastLoadedFilename = "";
+    return;
+  }
+  if (lastLoadedFilename === currentScreenPath) return;
+  lastLoadedFilename = currentScreenPath;
   if (editorStatus) editorStatus.textContent = `Loading ${currentScreenFilename}...`;
   try {
-    const response = await fetch(`/api/screens/${encodeURIComponent(currentScreenId)}`);
+    const response = await fetch(`/api/screens/file?path=${encodeURIComponent(currentScreenPath)}`);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -12960,6 +13415,23 @@ document.addEventListener("keydown", (event) => {
   setMenuOpen(false);
 });
 
+document.addEventListener("click", (event) => {
+  if (!leftCircleFlyout || !leftCircleToolBtn) return;
+  if (!leftCircleFlyoutOpen) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (leftCircleFlyout.contains(target) || leftCircleToolBtn.contains(target)) return;
+  leftCircleFlyout.classList.add("is-hidden");
+  leftCircleFlyoutOpen = false;
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (!leftCircleFlyout || !leftCircleFlyoutOpen) return;
+  leftCircleFlyout.classList.add("is-hidden");
+  leftCircleFlyoutOpen = false;
+});
+
 window.addEventListener("keydown", (event) => {
   if (!isEditMode) return;
   if (event.key !== "Escape") return;
@@ -15498,6 +15970,46 @@ const finishCircleDraft = () => {
   circleCenterDraftStart = null;
 };
 
+const startEllipseDraft = (point) => {
+  if (!hmiSvg) return;
+  const ns = "http://www.w3.org/2000/svg";
+  ellipseDraftStart = point;
+  if (!ellipseDraft) {
+    ellipseDraft = document.createElementNS(ns, "ellipse");
+    ellipseDraft.setAttribute("fill", "rgba(255, 213, 74, 0.15)");
+    ellipseDraft.setAttribute("stroke", "#ffd54a");
+    ellipseDraft.setAttribute("stroke-dasharray", "4 3");
+    ellipseDraft.setAttribute("vector-effect", "non-scaling-stroke");
+    hmiSvg.appendChild(ellipseDraft);
+  } else if (!ellipseDraft.isConnected) {
+    hmiSvg.appendChild(ellipseDraft);
+  }
+  ellipseDraft.setAttribute("cx", point.x);
+  ellipseDraft.setAttribute("cy", point.y);
+  ellipseDraft.setAttribute("rx", 0);
+  ellipseDraft.setAttribute("ry", 0);
+};
+
+const updateEllipseDraft = (point) => {
+  if (!ellipseDraftStart || !ellipseDraft) return;
+  const cx = (ellipseDraftStart.x + point.x) / 2;
+  const cy = (ellipseDraftStart.y + point.y) / 2;
+  const rx = Math.max(0, Math.abs(point.x - ellipseDraftStart.x) / 2);
+  const ry = Math.max(0, Math.abs(point.y - ellipseDraftStart.y) / 2);
+  ellipseDraft.setAttribute("cx", cx);
+  ellipseDraft.setAttribute("cy", cy);
+  ellipseDraft.setAttribute("rx", rx);
+  ellipseDraft.setAttribute("ry", ry);
+};
+
+const finishEllipseDraft = () => {
+  if (ellipseDraft) {
+    ellipseDraft.remove();
+    ellipseDraft = null;
+  }
+  ellipseDraftStart = null;
+};
+
 const startLineDraft = (point) => {
   if (!hmiSvg) return;
   const ns = "http://www.w3.org/2000/svg";
@@ -15755,6 +16267,10 @@ const setTool = (nextTool) => {
     finishRectDraft();
     isDrawingAlarmsPanel = false;
   }
+  if (currentTool === "ellipse" && nextTool !== "ellipse" && isDrawingEllipse) {
+    finishEllipseDraft();
+    isDrawingEllipse = false;
+  }
   currentTool = nextTool;
   if (textToolBtn) {
     textToolBtn.classList.toggle("is-active", currentTool === "text");
@@ -15767,6 +16283,21 @@ const setTool = (nextTool) => {
   }
   if (rectToolBtn) {
     rectToolBtn.classList.toggle("is-active", currentTool === "rect");
+  }
+  if (leftSelectToolBtn) {
+    leftSelectToolBtn.classList.toggle("is-active", currentTool === "select");
+  }
+  if (leftRectToolBtn) {
+    leftRectToolBtn.classList.toggle("is-active", currentTool === "rect");
+  }
+  if (leftViewportToolBtn) {
+    leftViewportToolBtn.classList.toggle("is-active", currentTool === "viewport");
+  }
+  if (leftCircleToolBtn) {
+    leftCircleToolBtn.classList.toggle("is-active", currentTool === "circle" || currentTool === "circle-center");
+  }
+  if (leftEllipseToolBtn) {
+    leftEllipseToolBtn.classList.toggle("is-active", currentTool === "ellipse");
   }
   if (alarmsPanelToolBtn) {
     alarmsPanelToolBtn.classList.toggle("is-active", currentTool === "alarms-panel");
@@ -15799,7 +16330,7 @@ const setTool = (nextTool) => {
     curveToolBtn.classList.toggle("is-active", currentTool === "curve");
   }
   if (hmiSvg) {
-    if (["text", "button", "viewport", "rect", "alarms-panel", "polyline", "polygon", "regular-polygon", "stretched-polygon", "bar", "circle", "line", "curve"].includes(currentTool)) {
+    if (["text", "button", "viewport", "rect", "alarms-panel", "polyline", "polygon", "regular-polygon", "stretched-polygon", "bar", "circle", "ellipse", "line", "curve"].includes(currentTool)) {
       hmiSvg.style.cursor = "crosshair";
     } else {
       hmiSvg.style.cursor = "default";
@@ -15902,7 +16433,7 @@ const setTool = (nextTool) => {
 	        } else if (handleType !== "vertex") {
 	          clearSelectedPolygonVertex();
 	        }
-	        if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "polygon" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
+	  if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "polygon" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
 	          const point = getScreenPoint(event);
 	          if (!point) return;
 	          recordHistory();
@@ -15982,6 +16513,11 @@ const setTool = (nextTool) => {
     if (currentTool === "circle") {
       isDrawingCircle = true;
       startCircleDraft(point);
+      return;
+    }
+    if (currentTool === "ellipse") {
+      isDrawingEllipse = true;
+      startEllipseDraft(point);
       return;
     }
     if (currentTool === "circle-center") {
@@ -16204,6 +16740,12 @@ const setTool = (nextTool) => {
       const point = getScreenPoint(event);
       if (!point) return;
       updateCircleDraft(point);
+      return;
+    }
+    if (isDrawingEllipse && ellipseDraftStart) {
+      const point = getScreenPoint(event);
+      if (!point) return;
+      updateEllipseDraft(point);
       return;
     }
     if (isDrawingCircleCenter && circleCenterDraftStart) {
@@ -16940,6 +17482,40 @@ const setTool = (nextTool) => {
       setEditorTab("properties");
       return;
     }
+    if (isDrawingEllipse && ellipseDraftStart) {
+      const point = getScreenPoint(event);
+      if (!point) return;
+      const localStart = toActivePoint(ellipseDraftStart);
+      const localPoint = toActivePoint(point);
+      const x = Math.min(localStart.x, localPoint.x);
+      const y = Math.min(localStart.y, localPoint.y);
+      const w = Math.max(MIN_RESIZE_SIZE, Math.abs(localPoint.x - localStart.x));
+      const h = Math.max(MIN_RESIZE_SIZE, Math.abs(localPoint.y - localStart.y));
+      finishEllipseDraft();
+      isDrawingEllipse = false;
+      if (!currentScreenObj) return;
+      const activeObjects = ensureActiveObjects();
+      if (!activeObjects) return;
+      const nextEllipse = {
+        type: "ellipse",
+        x: snapValue(Math.round(x)),
+        y: snapValue(Math.round(y)),
+        w: snapValue(Math.round(w)),
+        h: snapValue(Math.round(h)),
+        fill: "#3a3f4b",
+        stroke: "#ffffff",
+        strokeWidth: 1
+      };
+      recordHistory();
+      activeObjects.push(nextEllipse);
+      selectedIndices = [activeObjects.length - 1];
+      renderScreen();
+      syncEditorFromScreen();
+      setTool("select");
+      setDirty(true);
+      setEditorTab("properties");
+      return;
+    }
     if (isDrawingLine && lineDraftStart) {
       const point = getScreenPoint(event);
       if (!point) return;
@@ -17178,6 +17754,57 @@ if (textToolBtn) {
 if (buttonToolBtn) {
   buttonToolBtn.addEventListener("click", () => {
     setTool(currentTool === "button" ? "select" : "button");
+  });
+}
+
+if (leftSelectToolBtn) {
+  leftSelectToolBtn.addEventListener("click", () => {
+    setTool("select");
+  });
+}
+
+if (leftRectToolBtn) {
+  leftRectToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "rect" ? "select" : "rect");
+  });
+}
+
+if (leftViewportToolBtn) {
+  leftViewportToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "viewport" ? "select" : "viewport");
+  });
+}
+
+if (leftCircleToolBtn) {
+  leftCircleToolBtn.addEventListener("click", () => {
+    if (!leftCircleFlyout) {
+      setTool(currentTool === "circle" ? "select" : "circle");
+      return;
+    }
+    leftCircleFlyoutOpen = !leftCircleFlyoutOpen;
+    leftCircleFlyout.classList.toggle("is-hidden", !leftCircleFlyoutOpen);
+  });
+}
+
+if (leftCircleDiameterBtn) {
+  leftCircleDiameterBtn.addEventListener("click", () => {
+    setTool("circle");
+    if (leftCircleFlyout) leftCircleFlyout.classList.add("is-hidden");
+    leftCircleFlyoutOpen = false;
+  });
+}
+
+if (leftCircleCenterBtn) {
+  leftCircleCenterBtn.addEventListener("click", () => {
+    setTool("circle-center");
+    if (leftCircleFlyout) leftCircleFlyout.classList.add("is-hidden");
+    leftCircleFlyoutOpen = false;
+  });
+}
+
+if (leftEllipseToolBtn) {
+  leftEllipseToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "ellipse" ? "select" : "ellipse");
   });
 }
 

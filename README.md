@@ -28,14 +28,14 @@ sudo apt install -y git
 git clone https://github.com/spstiles/opcbridge-suite.git
 cd opcbridge-suite
 
-# full suite + OS deps + Node deps
-sudo ./install.sh --full --deps --with-node-deps -y
+# full suite + deps (includes Node deps for SCADA/HMI)
+sudo ./install.sh --full --deps -y
 ```
 
 If you want SIP callout support (build/install pjproject `pjsua`):
 
 ```bash
-sudo ./install.sh --full --deps --with-node-deps --with-pjsip -y
+sudo ./install.sh --full --deps --with-pjsip -y
 ```
 
 First login:
@@ -55,7 +55,7 @@ The full suite manual (screenshots + workflows) lives here:
 ```bash
 cd /opt/opcbridge-suite
 sudo git pull
-sudo ./install.sh --full --deps --with-node-deps -y
+sudo ./install.sh --full --deps -y
 ```
 
 Verify versions in **SCADA → Configure Server**.

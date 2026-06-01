@@ -61,10 +61,10 @@ Options:
   --user USER             Service user (default: ${SERVICE_USER})
   --group GROUP           Service group (default: ${SERVICE_GROUP})
   --no-build              Do not build; use existing binaries
-  --deps                  Install OS dependencies via apt
+  --deps                  Install dependencies via apt (includes Node deps for Node services)
   --with-odbc             Install ODBC deps (SQL Server support for reporter)
   --odbc-driver NAME      ODBC driver: freetds | ms (default: freetds)
-  --with-node-deps        Run npm install for Node services (requires network)
+  --with-node-deps        Run npm install for Node services (requires network; useful for --hmi-only/--scada-only)
   --with-pjsip            Build/install pjproject (pjsua) for SIP callouts
   --no-pjsip              Do not build/install pjproject (pjsua)
   --init-historian-db     Create local Postgres role/db and load historian schema
@@ -1506,6 +1506,12 @@ main() {
   fi
 
   validate_components
+
+  # Treat Node deps like a dependency when doing a deps install.
+  # Keep --with-node-deps for cases where users want to install Node deps without --deps (e.g. --hmi-only).
+  if [[ "$INSTALL_DEPS" -eq 1 ]]; then
+    WITH_NODE_DEPS=1
+  fi
 
   # Default SIP UA behavior:
   # - Do NOT build/install pjsua unless the user asked for it (--with-pjsip), or they are doing a full deps install (--deps).

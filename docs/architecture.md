@@ -137,7 +137,7 @@ This is intentionally pragmatic: focus on cohesion, stability, and the “single
 
 **Installer**
 - `install.sh`:
-  - `--deps` installs required packages on Debian 12+ systems
+  - `--deps` installs required packages on Debian 12+ systems (includes Node deps for SCADA/HMI)
   - Interactive/flag-based selection: `opcbridge` only vs full suite
 - Systemd unit templates and a “status” helper command for quick diagnostics.
 

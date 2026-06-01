@@ -7,6 +7,7 @@ const stripJsonComments = require("strip-json-comments");
 const { createScreensRouter } = require("./screens");
 
 const ROOT = path.join(__dirname, "..");
+const FILES_ROOT = String(process.env.OPCBRIDGE_HMI_FILES_ROOT || "/etc/opcbridge/hmi");
 const CONFIG_PATH = path.join(ROOT, "public", "js", "config.jsonc");
 const CONFIG_EXAMPLE_PATH = path.join(ROOT, "public", "js", "config.jsonc.example");
 const IMAGES_DIR = path.join(ROOT, "public", "img");
@@ -455,7 +456,14 @@ const createApp = () => {
     }
   });
 
-  app.use("/api/screens", createScreensRouter({ rootDir: ROOT, audit: appendAudit }));
+  app.use(
+    "/api/screens",
+    createScreensRouter({
+      rootDir: FILES_ROOT,
+      legacyScreensDir: path.join(ROOT, "screens"),
+      audit: appendAudit
+    })
+  );
 
   // Proxy opcbridge admin auth so a login from HMI can set the shared cookie.
   // This enables single-login across opcbridge / scada / hmi (same hostname).

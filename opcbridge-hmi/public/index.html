@@ -17,8 +17,20 @@
       <div class="menu-wrap">
         <button id="menuToggleBtn" class="toolbar-btn menu-toggle" type="button" aria-haspopup="true" aria-expanded="false">☰</button>
         <div id="menuDropdown" class="menu-dropdown" role="menu">
-          <button id="screenManagerMenuBtn" class="menu-item" type="button">Screen...</button>
-          <button id="screenSaveMenuBtn" class="menu-item" type="button">Save</button>
+          <div class="menu-flyout-wrap">
+            <button id="fileMenuBtn" class="menu-item menu-item-flyout" type="button" aria-haspopup="true" aria-expanded="false">
+              <span>File</span>
+              <span class="menu-item-caret" aria-hidden="true">›</span>
+            </button>
+            <div id="fileMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="File menu">
+              <button id="fileNewScreenMenuBtn" class="menu-item" type="button">New</button>
+              <button id="fileOpenScreenMenuBtn" class="menu-item" type="button">Open…</button>
+              <button id="screenSaveMenuBtn" class="menu-item" type="button">Save</button>
+              <button id="fileSaveAsMenuBtn" class="menu-item" type="button">Save As…</button>
+              <div class="menu-separator"></div>
+              <button id="fileBackupScreensMenuBtn" class="menu-item" type="button">Backup Screens…</button>
+            </div>
+          </div>
           <div class="menu-separator"></div>
           <button id="groupMenuBtn" class="menu-item" type="button">Group</button>
           <button id="ungroupMenuBtn" class="menu-item" type="button">Ungroup</button>
@@ -47,8 +59,8 @@
           <button id="exportSelectionSvgBtn" class="menu-item" type="button">Export Selection…</button>
           <button id="explodeSelectedSvgBtn" class="menu-item" type="button">Explode Selected SVG…</button>
           <div class="menu-separator"></div>
-	          <button id="aboutMenuBtn" class="menu-item" type="button">About…</button>
-	          <button id="settingsMenuBtn" class="menu-item" type="button">Settings…</button>
+          <button id="aboutMenuBtn" class="menu-item" type="button">About…</button>
+          <button id="settingsMenuBtn" class="menu-item" type="button">Settings…</button>
 		          <button id="alarmsMenuBtn" class="menu-item" type="button">Alarms…</button>
 		          <button id="usersMenuBtn" class="menu-item" type="button">Users…</button>
 		          <button id="auditMenuBtn" class="menu-item" type="button">Audit Log…</button>
@@ -75,7 +87,49 @@
 	    </div>
 		  </header>
 
-	  <div id="wsBadge" class="ws-badge" aria-live="polite">ws://</div>
+    <nav id="leftToolbar" class="left-toolbar" aria-label="Edit tools">
+      <button id="leftSelectToolBtn" class="left-tool-btn" type="button" title="Select (cursor)" aria-label="Select tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M6 3l12 9-7 1.5L9.5 21 6 3zm3.9 6.2l1.9 7.1 1-2.6 2.8-.6-5.7-3.9z"/>
+        </svg>
+      </button>
+    <button id="leftRectToolBtn" class="left-tool-btn" type="button" title="Rectangle" aria-label="Rectangle tool">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+        <rect x="5" y="7" width="14" height="10" fill="none" stroke="currentColor" stroke-width="2"/>
+      </svg>
+    </button>
+      <div class="left-tool-flyout">
+        <button id="leftCircleToolBtn" class="left-tool-btn" type="button" title="Circle" aria-label="Circle tool">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/>
+          </svg>
+        </button>
+        <div id="leftCircleFlyout" class="left-flyout is-hidden" role="menu" aria-label="Circle tools">
+          <button id="leftCircleDiameterBtn" class="left-flyout-item" type="button" role="menuitem" title="Circle (diameter)">
+            <span class="left-flyout-icon">◯</span>
+            <span>Circle</span>
+          </button>
+          <button id="leftCircleCenterBtn" class="left-flyout-item" type="button" role="menuitem" title="Circle (center/radius)">
+            <span class="left-flyout-icon">◎</span>
+            <span>Circle (center)</span>
+          </button>
+        </div>
+      </div>
+      <button id="leftEllipseToolBtn" class="left-tool-btn" type="button" title="Ellipse" aria-label="Ellipse tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <ellipse cx="12" cy="12" rx="7.5" ry="5.5" fill="none" stroke="currentColor" stroke-width="2"/>
+        </svg>
+      </button>
+      <button id="leftViewportToolBtn" class="left-tool-btn" type="button" title="Viewport" aria-label="Viewport tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <rect x="5" y="6.5" width="14" height="11" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M10 10h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M10 16l6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </nav>
+
+		  <div id="wsBadge" class="ws-badge" aria-live="polite">ws://</div>
 
 	  <main id="app">
 	    <div id="workspace">
@@ -2046,20 +2100,41 @@
 	    </div>
 	  </div>
 	  <div id="openFileOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
-	    <div class="settings-modal">
+	    <div class="settings-modal screen-file-modal">
 	      <div class="popup-header">
-	        <div class="popup-title">Screens</div>
+	        <div id="screenFileTitle" class="popup-title">Screens</div>
 	      </div>
 	      <div class="settings-body">
 	        <div class="settings-section">
-	          <div id="openFileList" class="open-file-list"></div>
-	        </div>
-	        <div class="settings-actions screen-manager-actions">
-	          <button id="screenMgrOpenBtn" class="panel-btn" type="button">Open</button>
-	          <button id="screenMgrNewBtn" class="panel-btn" type="button">New</button>
-	          <button id="screenMgrDuplicateBtn" class="panel-btn" type="button">Duplicate</button>
-	          <button id="screenMgrDeleteBtn" class="panel-btn danger" type="button">Delete</button>
-	          <button id="screenMgrCancelBtn" class="panel-btn" type="button">Cancel</button>
+            <div class="screen-file-chrome">
+              <div class="screen-file-nav">
+                <button id="screenFileBackBtn" class="panel-btn" type="button" title="Back" aria-label="Back">←</button>
+                <button id="screenFileForwardBtn" class="panel-btn" type="button" title="Forward" aria-label="Forward">→</button>
+                <button id="screenFileUpBtn" class="panel-btn" type="button" title="Up" aria-label="Up one folder">↑</button>
+                <div id="screenFileBreadcrumb" class="screen-file-breadcrumb" title="Current folder"></div>
+                <button id="screenFileNewFolderBtn" class="panel-btn" type="button">New folder…</button>
+              </div>
+              <div class="screen-file-body">
+                <aside class="screen-file-sidebar" aria-label="Folders">
+                  <div class="screen-file-side-title">Folders</div>
+                  <div id="screenFileTree" class="screen-file-tree" role="tree"></div>
+                </aside>
+                <section class="screen-file-main" aria-label="Files">
+                  <div id="openFileList" class="open-file-list"></div>
+                </section>
+              </div>
+              <div class="screen-file-footer">
+                <div class="screen-file-name-row">
+                  <label for="screenFileNameInput">File name</label>
+                  <input id="screenFileNameInput" type="text" placeholder="Overview" />
+                </div>
+                <div class="settings-actions screen-manager-actions">
+                  <button id="screenFileDownloadBtn" class="panel-btn" type="button">Download…</button>
+                  <button id="screenFilePrimaryBtn" class="panel-btn" type="button">Open</button>
+                  <button id="screenFileCancelBtn" class="panel-btn" type="button">Cancel</button>
+                </div>
+              </div>
+            </div>
 	        </div>
 	      </div>
 	    </div>
