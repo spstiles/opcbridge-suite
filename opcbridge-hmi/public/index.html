@@ -17,7 +17,7 @@
       <div class="menu-wrap">
         <button id="menuToggleBtn" class="toolbar-btn menu-toggle" type="button" aria-haspopup="true" aria-expanded="false">☰</button>
         <div id="menuDropdown" class="menu-dropdown" role="menu">
-          <div class="menu-flyout-wrap">
+          <div id="fileMenuWrap" class="menu-flyout-wrap">
             <button id="fileMenuBtn" class="menu-item menu-item-flyout" type="button" aria-haspopup="true" aria-expanded="false">
               <span>File</span>
               <span class="menu-item-caret" aria-hidden="true">›</span>
@@ -29,6 +29,24 @@
               <button id="fileSaveAsMenuBtn" class="menu-item" type="button">Save As…</button>
               <div class="menu-separator"></div>
               <button id="fileBackupScreensMenuBtn" class="menu-item" type="button">Backup Screens…</button>
+            </div>
+          </div>
+          <div id="viewMenuWrap" class="menu-flyout-wrap">
+            <button id="viewMenuBtn" class="menu-item menu-item-flyout" type="button" aria-haspopup="true" aria-expanded="false">
+              <span>View</span>
+              <span class="menu-item-caret" aria-hidden="true">›</span>
+            </button>
+            <div id="viewMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="View menu">
+              <button id="viewTagsMenuBtn" class="menu-item" type="button">Tags</button>
+            </div>
+          </div>
+          <div id="insertMenuWrap" class="menu-flyout-wrap">
+            <button id="insertMenuBtn" class="menu-item menu-item-flyout" type="button" aria-haspopup="true" aria-expanded="false">
+              <span>Insert</span>
+              <span class="menu-item-caret" aria-hidden="true">›</span>
+            </button>
+            <div id="insertMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Insert menu">
+              <button id="insertLibraryMenuBtn" class="menu-item" type="button">Library…</button>
             </div>
           </div>
           <div class="menu-separator"></div>
@@ -73,13 +91,13 @@
       <span class="screen-title-wrap">
         <span id="screen-title" class="screen-title">Screen</span>
         <span id="groupBreadcrumb" class="group-breadcrumb is-hidden" title="Editing a group (Esc to exit)">Group edit</span>
-        <button id="screenSaveBtn" class="screen-save-btn toolbar-btn" type="button">Save</button>
       </span>
 	      <span id="toolHint" class="tool-hint is-hidden" aria-live="polite"></span>
 	      <span id="wsStatus" class="ws-status" aria-live="polite">ws://</span>
 	      <button id="alarmsBadge" class="alarms-badge" type="button" aria-live="polite" title="View alarms">Alarms: 0</button>
 	    </div>
     <div class="toolbar-right">
+      <button id="screenSaveBtn" class="screen-save-btn toolbar-btn" type="button">Save</button>
       <button id="snapToggleBtn" class="toolbar-btn" type="button" title="Toggle snap to grid">Snap</button>
       <button id="groupToggleBtn" class="toolbar-btn" type="button" title="Group selected items">Group</button>
       <a id="svgLabBtn" class="toolbar-btn" href="svg-lab.html">SVG Lab</a>
@@ -127,6 +145,13 @@
           <path d="M10 16l6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
       </button>
+      <button id="leftAlarmsPanelToolBtn" class="left-tool-btn" type="button" title="Alarm Panel" aria-label="Alarm panel tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <rect x="5" y="6" width="14" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M8 10h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M8 14h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
     </nav>
 
 		  <div id="wsBadge" class="ws-badge" aria-live="polite">ws://</div>
@@ -145,11 +170,17 @@
       </div>
       <div id="editor-resizer" class="editor-resizer" aria-hidden="true"></div>
       <aside id="editor-pane" class="editor-pane is-hidden">
+        <div id="editorPaneTitlebar" class="editor-pane-titlebar" aria-label="Editor panel window">
+          <div class="editor-pane-title" title="Drag to move (when floating)">Properties</div>
+          <div class="editor-pane-dock" aria-label="Dock controls">
+            <button id="editorPaneDockFloatBtn" class="toolbar-btn editor-pane-dock-btn" type="button" title="Float">⧉</button>
+            <button id="editorPaneDockLeftBtn" class="toolbar-btn editor-pane-dock-btn" type="button" title="Dock left">⟵</button>
+            <button id="editorPaneDockRightBtn" class="toolbar-btn editor-pane-dock-btn" type="button" title="Dock right">⟶</button>
+          </div>
+        </div>
         <div class="editor-tabs" role="tablist" aria-label="Editor Tabs">
           <button class="editor-tab is-active" data-tab="library" role="tab" aria-selected="true">Library</button>
           <button class="editor-tab" data-tab="properties" role="tab" aria-selected="false">Properties</button>
-          <button class="editor-tab" data-tab="tags" role="tab" aria-selected="false">Tags</button>
-          <button class="editor-tab" data-tab="jsonc" role="tab" aria-selected="false">JSONC</button>
         </div>
 
         <div class="editor-panel is-active" data-panel="library" role="tabpanel">
@@ -2063,16 +2094,7 @@
           </div>
         </div>
 
-        <div class="editor-panel" data-panel="tags" role="tabpanel">
-          <div class="editor-section-title">OPCBridge Tags</div>
-          <div class="tags-header">
-            <button id="tagsRefreshBtn" class="panel-btn" type="button">Refresh</button>
-            <div id="tagsStatus" class="tags-status">Loading…</div>
-          </div>
-          <div id="tagsList" class="tags-list"></div>
-        </div>
-
-        <div class="editor-panel" data-panel="jsonc" role="tabpanel">
+        <div class="editor-panel" data-panel="jsonc" role="tabpanel" style="display:none">
           <div class="editor-header">
             <div class="editor-title">Screen JSONC</div>
             <div class="editor-actions">
@@ -2129,13 +2151,42 @@
                   <input id="screenFileNameInput" type="text" placeholder="Overview" />
                 </div>
                 <div class="settings-actions screen-manager-actions">
-                  <button id="screenFileDownloadBtn" class="panel-btn" type="button">Download…</button>
                   <button id="screenFilePrimaryBtn" class="panel-btn" type="button">Open</button>
                   <button id="screenFileCancelBtn" class="panel-btn" type="button">Cancel</button>
+                  <button id="screenFileDownloadBtn" class="panel-btn" type="button">Download…</button>
                 </div>
               </div>
             </div>
 	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="tagsModalOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal screen-tags-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Tags</div>
+	        <button id="tagsModalCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div id="tagsModalHost" class="settings-section">
+	          <div class="tags-header">
+	            <button id="tagsRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	            <input id="tagsFilterInput" class="tags-filter-input" type="text" placeholder="Filter…" aria-label="Filter tags" />
+	            <div id="tagsStatus" class="tags-status">Loading…</div>
+	          </div>
+	          <div id="tagsList" class="tags-list"></div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="libraryModalOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal screen-library-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Library</div>
+	        <button id="libraryModalCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div id="libraryModalHost" class="settings-section"></div>
 	      </div>
 	    </div>
 	  </div>

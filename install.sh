@@ -988,6 +988,7 @@ install_hmi() {
       --exclude 'node_modules' \
       --exclude 'screens/*.jsonc' \
       --exclude 'screens/*.jsonc.example' \
+      --exclude 'public/js/config.jsonc' \
       --exclude 'passwords.jsonc' \
       --exclude 'audit.jsonl' \
       "$ROOT_DIR/opcbridge-hmi/" "$PREFIX/hmi/"
@@ -999,6 +1000,7 @@ install_hmi() {
         --exclude='node_modules' \
         --exclude='screens/*.jsonc' \
         --exclude='screens/*.jsonc.example' \
+        --exclude='public/js/config.jsonc' \
         --exclude='passwords.jsonc' \
         --exclude='audit.jsonl' \
         .
@@ -1076,6 +1078,8 @@ install_hmi() {
 EOF
     chown "$SERVICE_USER:$SERVICE_GROUP" "$hmi_config_path" 2>/dev/null || true
     chmod 660 "$hmi_config_path" 2>/dev/null || true
+  else
+    echo "Preserved existing HMI config: ${hmi_config_path}"
   fi
 }
 

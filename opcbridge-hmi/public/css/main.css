@@ -587,6 +587,18 @@ body.runtime-mode .ws-badge {
     display: none;
 }
 
+.screen-tags-modal {
+    width: min(880px, calc(100vw - 24px));
+    max-width: 880px;
+    max-height: calc(100vh - 96px);
+    overflow: hidden;
+}
+
+.screen-tags-modal .settings-body {
+    max-height: calc(100vh - 160px);
+    overflow: auto;
+}
+
 .menu-heading {
     font-size: 11px;
     font-weight: 600;
@@ -735,7 +747,7 @@ body.runtime-mode .ws-badge {
 
 .screen-file-body {
     display: grid;
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: minmax(220px, 40%) 1fr;
     gap: 10px;
     min-height: 420px;
 }
@@ -1810,6 +1822,29 @@ body {
   display: inline-flex;
 }
 
+/* Make the quick-save button match OPCBridge dashboard "login required" amber. */
+#screenSaveBtn.screen-save-btn.is-visible {
+  background: rgba(244,183,64,0.12);
+  color: #f4b740;
+  border-color: rgba(244,183,64,0.35);
+  font-weight: 700;
+  /* Keep button sizing/shape consistent with other title-bar buttons. */
+  box-shadow: 0 0 0 1px rgba(244,183,64,0.18);
+}
+
+#screenSaveBtn.screen-save-btn.is-visible:hover {
+  background: rgba(244,183,64,0.18);
+  border-color: rgba(244,183,64,0.45);
+}
+
+#screenSaveBtn.screen-save-btn.is-visible:active {
+  transform: translateY(1px);
+}
+
+.screen-save-btn.is-visible:active {
+  transform: translateY(1px);
+}
+
 
 .toolbar-btn {
   background: #2b2b2b;
@@ -1867,12 +1902,35 @@ body:not(.edit-mode) #workspace {
 .tags-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 12px;
 }
 
+.tags-filter-input {
+  flex: 1 1 auto;
+  min-width: 120px;
+  max-width: 320px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid #2d3a4d;
+  background: rgba(18, 24, 36, 0.8);
+  color: #e5e7eb;
+  font-size: 12px;
+}
+
+.tags-filter-input::placeholder {
+  color: #7b879a;
+}
+
+.tags-filter-input:focus {
+  outline: none;
+  border-color: rgba(96, 165, 250, 0.9);
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+}
+
 .tags-status {
+  margin-left: auto;
   color: #9aa3b2;
   font-size: 12px;
 }
@@ -2371,19 +2429,68 @@ body.runtime-mode #screen {
 }
 
 body.edit-mode #editor-resizer {
-  display: block;
+  display: none;
 }
 
 #editor-pane {
   width: var(--editor-pane-width);
   min-width: 280px;
   max-width: 60vw;
-  height: 100%;
+  height: calc(100vh - var(--toolbar-height));
   align-self: stretch;
+  position: fixed;
+  top: var(--toolbar-height);
+  z-index: 1040;
+  box-shadow: var(--shadow-lg);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 body.runtime-mode #editor-pane {
   display: none;
+}
+
+.editor-pane {
+  background: #121826;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.editor-pane-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+}
+
+.editor-pane-title {
+  color: #9aa3b2;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.editor-pane-dock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-pane-dock-btn {
+  padding: 4px 8px;
+  min-width: 34px;
+}
+
+/* Docking modes: always float over canvas, but snap to an edge. */
+.editor-pane[data-dock="right"] { right: 10px; }
+.editor-pane[data-dock="left"]  { left: calc(var(--left-toolbar-width) + 10px); }
+
+.editor-pane[data-dock="float"] {
+  /* left/top set via JS */
 }
 
 /* ================================================

@@ -7114,6 +7114,29 @@ async function importAlarmsCsv() {
   const { records } = parseCsv(csvText);
   if (!records.length) { window.alert('CSV had no data rows (make sure the first row is a header).'); return; }
 
+  // Validate imported alarms against configured tags (not runtime tags).
+  // This prevents "phantom" alarms created by typos in connection_id/tag_name.
+  if (!Array.isArray(state.tagConfigLoadedAll) || state.tagConfigLoadedAll.length === 0) {
+    await loadTagsConfig().catch(() => null);
+  }
+  const tagRefSet = new Set();
+  (Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : []).forEach((t) => {
+    const cid = String(t?.connection_id || '').trim();
+    if (!cid) return;
+    const add = (ref) => {
+      const s = String(ref || '').trim();
+      if (!s) return;
+      tagRefSet.add(`${cid}\0${s}`);
+    };
+    add(t?.name);
+    add(t?.plc_tag_name);
+    if (t?.address != null) add(String(t.address));
+  });
+  if (tagRefSet.size === 0) {
+    window.alert('Cannot import alarms CSV: configured tag list is empty or unavailable (needed to validate connection_id/tag_name).');
+    return;
+  }
+
   const cfg = await loadOpcbridgeAlarmsConfig();
   if (!Array.isArray(cfg.alarms)) cfg.alarms = [];
   ensureAlarmGroupsTree(cfg);
@@ -7143,10 +7166,12 @@ async function importAlarmsCsv() {
   let skipped = 0;
   let skippedMissing = 0;
   let skippedInvalid = 0;
+  let rejectedUnknownTag = 0;
   let sampleMissing = null;
   let sampleInvalid = null;
+  const failures = [];
 
-  records.forEach((r) => {
+  records.forEach((r, recordIdx) => {
     const id = String(csvGet(r, 'id') || csvGet(r, 'alarm_id') || '').trim();
     if (!id) {
       skipped += 1;
@@ -7206,6 +7231,21 @@ async function importAlarmsCsv() {
       skipped += 1;
       skippedInvalid += 1;
       if (!sampleInvalid) sampleInvalid = { id, reason: `invalid tag_name (contains whitespace): '${tagName}'` };
+      return;
+    }
+
+    // Strict validation: connection_id/tag_name must refer to a configured tag.
+    if (!tagRefSet.has(`${connectionId}\0${tagName}`)) {
+      skipped += 1;
+      rejectedUnknownTag += 1;
+      failures.push({
+        row: recordIdx + 2, // +1 for 0-index, +1 for header line
+        id,
+        connection_id: connectionId,
+        tag_name: tagName,
+        reason: 'unknown tag (not in configured tag list)'
+      });
+      if (!sampleInvalid) sampleInvalid = { id, reason: `unknown tag '${connectionId}:${tagName}'` };
       return;
     }
 
@@ -7305,12 +7345,26 @@ async function importAlarmsCsv() {
   const details = [];
   if (skippedMissing) details.push(`${skippedMissing} missing required fields`);
   if (skippedInvalid) details.push(`${skippedInvalid} invalid value(s)`);
+  if (rejectedUnknownTag) details.push(`${rejectedUnknownTag} unknown tag(s)`);
   const sample = sampleInvalid || sampleMissing;
   const suffix = details.length ? `, skipped ${skipped} (${details.join(', ')})` : (skipped ? `, skipped ${skipped}` : '');
   const example = sample ? ` Example: ${sample.id || '(blank id)'} - ${sample.reason}.` : '';
   const msg = `Imported alarms CSV: upserted ${upserts} alarm(s)${deleted ? `, deleted ${deleted}` : ''}${suffix}.${example}`;
   setWorkspaceSaveStatus(msg);
   window.alert(msg);
+
+  if (failures.length) {
+    const lines = failures.slice(0, 12).map((f) => `- row ${f.row}: ${f.id}: ${f.connection_id}:${f.tag_name}`);
+    const extra = failures.length > 12 ? `\n… +${failures.length - 12} more` : '';
+    const prompt = `Some rows were rejected and not imported (unknown tag):\n\n${lines.join('\n')}${extra}\n\nDownload a failures CSV now?`;
+    if (window.confirm(prompt)) {
+      downloadTextFile({
+        filename: `opcbridge-alarms-import-failures-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`,
+        mime: 'text/csv',
+        text: toCsv(failures, ['row', 'id', 'connection_id', 'tag_name', 'reason'])
+      });
+    }
+  }
 }
 
 const TAG_DATATYPE_OPTIONS = [

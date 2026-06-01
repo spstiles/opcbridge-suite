@@ -1,6 +1,10 @@
 const toolbar = document.getElementById("toolbar");
 const editorPane = document.getElementById("editor-pane");
 const editorResizer = document.getElementById("editor-resizer");
+const editorPaneTitlebar = document.getElementById("editorPaneTitlebar");
+const editorPaneDockFloatBtn = document.getElementById("editorPaneDockFloatBtn");
+const editorPaneDockLeftBtn = document.getElementById("editorPaneDockLeftBtn");
+const editorPaneDockRightBtn = document.getElementById("editorPaneDockRightBtn");
 const runtimeBtn = document.getElementById("runtimeBtn");
 const wsStatus = document.getElementById("wsStatus");
 const alarmsBadge = document.getElementById("alarmsBadge");
@@ -20,6 +24,7 @@ const leftCircleFlyout = document.getElementById("leftCircleFlyout");
 const leftCircleDiameterBtn = document.getElementById("leftCircleDiameterBtn");
 const leftCircleCenterBtn = document.getElementById("leftCircleCenterBtn");
 const leftEllipseToolBtn = document.getElementById("leftEllipseToolBtn");
+const leftAlarmsPanelToolBtn = document.getElementById("leftAlarmsPanelToolBtn");
 const editorFilename = document.getElementById("editor-filename");
 const jsoncEditor = document.getElementById("jsoncEditor");
 const editorStatus = document.getElementById("editorStatus");
@@ -131,13 +136,21 @@ const snapToggleBtn = document.getElementById("snapToggleBtn");
 const groupToggleBtn = document.getElementById("groupToggleBtn");
 const menuToggleBtn = document.getElementById("menuToggleBtn");
 const menuDropdown = document.getElementById("menuDropdown");
-const fileMenuWrap = document.querySelector(".menu-flyout-wrap");
+const fileMenuWrap = document.getElementById("fileMenuWrap");
 const fileMenuBtn = document.getElementById("fileMenuBtn");
 const fileMenuFlyout = document.getElementById("fileMenuFlyout");
 const fileNewScreenMenuBtn = document.getElementById("fileNewScreenMenuBtn");
 const fileOpenScreenMenuBtn = document.getElementById("fileOpenScreenMenuBtn");
 const fileSaveAsMenuBtn = document.getElementById("fileSaveAsMenuBtn");
 const fileBackupScreensMenuBtn = document.getElementById("fileBackupScreensMenuBtn");
+const viewMenuWrap = document.getElementById("viewMenuWrap");
+const viewMenuBtn = document.getElementById("viewMenuBtn");
+const viewMenuFlyout = document.getElementById("viewMenuFlyout");
+const viewTagsMenuBtn = document.getElementById("viewTagsMenuBtn");
+const insertMenuWrap = document.getElementById("insertMenuWrap");
+const insertMenuBtn = document.getElementById("insertMenuBtn");
+const insertMenuFlyout = document.getElementById("insertMenuFlyout");
+const insertLibraryMenuBtn = document.getElementById("insertLibraryMenuBtn");
 const groupMenuBtn = document.getElementById("groupMenuBtn");
 const ungroupMenuBtn = document.getElementById("ungroupMenuBtn");
 const alignMenuLeft = document.getElementById("alignMenuLeft");
@@ -181,6 +194,12 @@ const screenFileNameInput = document.getElementById("screenFileNameInput");
 const screenFileDownloadBtn = document.getElementById("screenFileDownloadBtn");
 const screenFilePrimaryBtn = document.getElementById("screenFilePrimaryBtn");
 const screenFileCancelBtn = document.getElementById("screenFileCancelBtn");
+const tagsModalOverlay = document.getElementById("tagsModalOverlay");
+const tagsModalCloseBtn = document.getElementById("tagsModalCloseBtn");
+const tagsModalHost = document.getElementById("tagsModalHost");
+const libraryModalOverlay = document.getElementById("libraryModalOverlay");
+const libraryModalCloseBtn = document.getElementById("libraryModalCloseBtn");
+const libraryModalHost = document.getElementById("libraryModalHost");
 
 let hmiToastTimer = null;
 const showHmiToast = (message, durationMs = 15000) => {
@@ -198,6 +217,71 @@ const showHmiToast = (message, durationMs = 15000) => {
   hmiToastTimer = window.setTimeout(() => {
     el.classList.remove("is-show");
   }, Math.max(250, Number(durationMs) || 15000));
+};
+
+// Editor pane docking / floating state
+const EDITOR_PANE_STATE_KEY = "opcbridge-hmi.editorPane.v1";
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const getEditorPaneState = () => {
+  try {
+    const raw = window.localStorage.getItem(EDITOR_PANE_STATE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const saveEditorPaneState = (state) => {
+  try {
+    window.localStorage.setItem(EDITOR_PANE_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+};
+
+const applyEditorPaneState = (state) => {
+  if (!editorPane) return;
+  const dock = String(state?.dock || "right");
+  const allowed = new Set(["right", "left", "float"]);
+  const nextDock = allowed.has(dock) ? dock : "right";
+  editorPane.dataset.dock = nextDock;
+
+  // Clear any previous inline positioning
+  editorPane.style.left = "";
+  editorPane.style.top = "";
+  editorPane.style.right = "";
+  editorPane.style.bottom = "";
+  editorPane.style.width = "";
+  editorPane.style.height = "";
+
+  if (nextDock === "float") {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const toolbarH = Number(getComputedStyle(document.documentElement).getPropertyValue("--toolbar-height").replace("px", "")) || 48;
+    const defaultW = Math.min(480, Math.max(320, Math.floor(vw * 0.32)));
+    const defaultH = Math.min(Math.floor(vh * 0.7), Math.max(340, vh - toolbarH - 40));
+    const w = clamp(Number(state?.w) || defaultW, 280, Math.floor(vw * 0.9));
+    const h = clamp(Number(state?.h) || defaultH, 240, Math.floor(vh * 0.9));
+    const x = clamp(Number(state?.x) || (vw - w - 20), 10, vw - w - 10);
+    const y = clamp(Number(state?.y) || (toolbarH + 10), toolbarH + 4, vh - h - 10);
+    editorPane.style.width = `${w}px`;
+    editorPane.style.height = `${h}px`;
+    editorPane.style.left = `${x}px`;
+    editorPane.style.top = `${y}px`;
+  }
+};
+
+const setEditorPaneDock = (dock) => {
+  const prev = getEditorPaneState() || {};
+  const next = { ...prev, dock: String(dock || "right") };
+  if (dock !== "float") {
+    delete next.x; delete next.y; delete next.w; delete next.h;
+  }
+  saveEditorPaneState(next);
+  applyEditorPaneState(next);
 };
 
 // Screen Files (Open / Save As)
@@ -460,6 +544,70 @@ const showScreenFileDialog = async (mode) => {
 const hideScreenFileDialog = () => {
   if (!openFileOverlay) return;
   openFileOverlay.classList.add("is-hidden");
+};
+
+const openTagsModal = () => {
+  if (!tagsModalOverlay) return;
+  setMenuOpen(false);
+  if (viewMenuFlyout) viewMenuFlyout.classList.add("is-hidden");
+  if (viewMenuBtn) viewMenuBtn.setAttribute("aria-expanded", "false");
+  tagsModalOverlay.classList.remove("is-hidden");
+  tagsModalOverlay.setAttribute("aria-hidden", "false");
+  try { tagsFilterInput?.focus?.(); } catch {}
+};
+
+const closeTagsModal = () => {
+  if (!tagsModalOverlay) return;
+  tagsModalOverlay.classList.add("is-hidden");
+  tagsModalOverlay.setAttribute("aria-hidden", "true");
+};
+
+// Standalone Library modal: reuse the existing library panel DOM (temporary).
+let libraryPanelOriginalParent = null;
+let libraryPanelOriginalNextSibling = null;
+
+const openLibraryModal = () => {
+  if (!libraryModalOverlay || !libraryModalHost) return;
+  const panel = document.querySelector('.editor-panel[data-panel="library"]');
+  if (!panel) return;
+  setMenuOpen(false);
+  if (insertMenuFlyout) insertMenuFlyout.classList.add("is-hidden");
+  if (insertMenuBtn) insertMenuBtn.setAttribute("aria-expanded", "false");
+
+  if (!libraryPanelOriginalParent) {
+    libraryPanelOriginalParent = panel.parentElement;
+    libraryPanelOriginalNextSibling = panel.nextSibling;
+  }
+
+  libraryModalHost.innerHTML = "";
+  panel.dataset._prevDisplay = panel.style.display || "";
+  panel.dataset._prevActive = panel.classList.contains("is-active") ? "1" : "0";
+  panel.style.display = "block";
+  panel.classList.add("is-active");
+  libraryModalHost.appendChild(panel);
+
+  libraryModalOverlay.classList.remove("is-hidden");
+  libraryModalOverlay.setAttribute("aria-hidden", "false");
+};
+
+const closeLibraryModal = () => {
+  if (!libraryModalOverlay) return;
+  const panel = document.querySelector('.editor-panel[data-panel="library"]');
+  if (panel && libraryPanelOriginalParent) {
+    const prevDisplay = panel.dataset._prevDisplay;
+    if (prevDisplay !== undefined) panel.style.display = prevDisplay;
+    const prevActive = panel.dataset._prevActive;
+    if (prevActive === "0") panel.classList.remove("is-active");
+    delete panel.dataset._prevDisplay;
+    delete panel.dataset._prevActive;
+    if (libraryPanelOriginalNextSibling && libraryPanelOriginalParent.contains(libraryPanelOriginalNextSibling)) {
+      libraryPanelOriginalParent.insertBefore(panel, libraryPanelOriginalNextSibling);
+    } else {
+      libraryPanelOriginalParent.appendChild(panel);
+    }
+  }
+  libraryModalOverlay.classList.add("is-hidden");
+  libraryModalOverlay.setAttribute("aria-hidden", "true");
 };
 
 const openSelectedScreenFile = async () => {
@@ -1113,6 +1261,7 @@ const setpointValueInput = document.getElementById("setpointValue");
 const setpointOkBtn = document.getElementById("setpointOkBtn");
 const setpointCancelBtn = document.getElementById("setpointCancelBtn");
 const tagsRefreshBtn = document.getElementById("tagsRefreshBtn");
+const tagsFilterInput = document.getElementById("tagsFilterInput");
 const tagsStatus = document.getElementById("tagsStatus");
 const tagsList = document.getElementById("tagsList");
 
@@ -1708,7 +1857,7 @@ let currentScreenId = DEFAULT_SCREEN_ID;
 let currentScreenFilename = DEFAULT_SCREEN_FILE;
 let currentScreenPath = DEFAULT_SCREEN_FILE;
 let lastLoadedFilename = "";
-let currentTab = "files";
+let currentTab = "library";
 let currentTool = "select";
 let leftCircleFlyoutOpen = false;
 let currentScreenObj = null;
@@ -2236,6 +2385,7 @@ let wsRuntimeRenderRaf = null;
 const tagValueCache = new Map();
 const tagQualityCache = new Map();
 let tagsCache = [];
+let tagsAllCache = [];
 let isKeypadOpen = false;
 let keypadTarget = null;
 const undoStack = [];
@@ -4487,19 +4637,7 @@ const renderTagsList = (tags) => {
     tagsList.appendChild(empty);
     return;
   }
-  const sorted = [...tags].sort((a, b) => {
-    const aKey = `${a.connection_id || ""}.${a.name || ""}`;
-    const bKey = `${b.connection_id || ""}.${b.name || ""}`;
-    return aKey.localeCompare(bKey, undefined, { numeric: true, sensitivity: "base" });
-  });
-  tagsCache = sorted;
-  refreshTextBindTagOptions();
-  refreshBarBindTagOptions();
-  refreshBarRangeTagOptions();
-  refreshNumberInputTagOptions();
-  refreshIndicatorTagOptions();
-  refreshVisibilityTagOptions();
-  refreshAutomationTagOptions();
+  const sorted = sortTagsForDisplay(tags);
   const groups = new Map();
   sorted.forEach((tag) => {
     const connectionId = String(tag.connection_id || "");
@@ -4566,16 +4704,57 @@ const renderTagsList = (tags) => {
   });
 };
 
+function sortTagsForDisplay(tags) {
+  if (!Array.isArray(tags)) return [];
+  return [...tags].sort((a, b) => {
+    const aConn = String(a?.connection_id || "");
+    const bConn = String(b?.connection_id || "");
+    const aSys = aConn.startsWith("_") ? 1 : 0;
+    const bSys = bConn.startsWith("_") ? 1 : 0;
+    if (aSys !== bSys) return aSys - bSys; // push "_" connections to bottom
+    const connCmp = aConn.localeCompare(bConn, undefined, { numeric: true, sensitivity: "base" });
+    if (connCmp) return connCmp;
+    const aName = String(a?.name || "");
+    const bName = String(b?.name || "");
+    return aName.localeCompare(bName, undefined, { numeric: true, sensitivity: "base" });
+  });
+}
+
+function getTagsFilterQuery() {
+  return String(tagsFilterInput?.value || "").trim().toLowerCase();
+}
+
+function applyTagsFilter(tags) {
+  const query = getTagsFilterQuery();
+  if (!query) return tags;
+  return (Array.isArray(tags) ? tags : []).filter((tag) => {
+    const conn = String(tag?.connection_id || "").toLowerCase();
+    const name = String(tag?.name || "").toLowerCase();
+    return conn.includes(query) || name.includes(query);
+  });
+}
+
 const loadTags = async () => {
   if (tagsStatus) tagsStatus.textContent = "Loading…";
   try {
     const response = await fetch("/api/opc/tags", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    const tags = data?.tags || [];
-    renderTagsList(tags);
-    if (Array.isArray(tags)) {
-      tags.forEach((tag) => {
+    const rawTags = data?.tags || [];
+    const sortedAll = sortTagsForDisplay(rawTags);
+    tagsAllCache = sortedAll;
+    tagsCache = sortedAll;
+    refreshTextBindTagOptions();
+    refreshBarBindTagOptions();
+    refreshBarRangeTagOptions();
+    refreshNumberInputTagOptions();
+    refreshIndicatorTagOptions();
+    refreshVisibilityTagOptions();
+    refreshAutomationTagOptions();
+    const filtered = applyTagsFilter(sortedAll);
+    renderTagsList(filtered);
+    if (Array.isArray(sortedAll)) {
+      sortedAll.forEach((tag) => {
         const connectionId = String(tag?.connection_id || "");
         const name = String(tag?.name || "");
         if (!connectionId || !name) return;
@@ -4593,10 +4772,14 @@ const loadTags = async () => {
         if (currentPopupScreenId) openPopup(currentPopupScreenId);
       }
     }
-    if (tagsStatus) tagsStatus.textContent = `${tags.length} tags`;
+    if (tagsStatus) {
+      const query = getTagsFilterQuery();
+      tagsStatus.textContent = query ? `${filtered.length}/${sortedAll.length} tags` : `${sortedAll.length} tags`;
+    }
   } catch (error) {
     if (tagsStatus) tagsStatus.textContent = `Failed to load tags: ${error.message}`;
     tagsCache = [];
+    tagsAllCache = [];
     refreshTextBindTagOptions();
     refreshBarBindTagOptions();
 	    refreshBarRangeTagOptions();
@@ -4604,6 +4787,7 @@ const loadTags = async () => {
 	    refreshIndicatorTagOptions();
 	    refreshVisibilityTagOptions();
 	    refreshAutomationTagOptions();
+      renderTagsList([]);
 	  }
 };
 
@@ -9258,6 +9442,18 @@ function bindScreenManager() {
     fileMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
   };
 
+  const setViewFlyoutOpen = (isOpen) => {
+    if (!viewMenuFlyout || !viewMenuBtn) return;
+    viewMenuFlyout.classList.toggle("is-hidden", !isOpen);
+    viewMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  };
+
+  const setInsertFlyoutOpen = (isOpen) => {
+    if (!insertMenuFlyout || !insertMenuBtn) return;
+    insertMenuFlyout.classList.toggle("is-hidden", !isOpen);
+    insertMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  };
+
   let fileFlyoutCloseTimer = null;
   const scheduleFileFlyoutClose = () => {
     if (fileFlyoutCloseTimer) window.clearTimeout(fileFlyoutCloseTimer);
@@ -9272,11 +9468,55 @@ function bindScreenManager() {
     fileFlyoutCloseTimer = null;
   };
 
+  let viewFlyoutCloseTimer = null;
+  const scheduleViewFlyoutClose = () => {
+    if (viewFlyoutCloseTimer) window.clearTimeout(viewFlyoutCloseTimer);
+    viewFlyoutCloseTimer = window.setTimeout(() => {
+      viewFlyoutCloseTimer = null;
+      setViewFlyoutOpen(false);
+    }, 150);
+  };
+  const cancelViewFlyoutClose = () => {
+    if (!viewFlyoutCloseTimer) return;
+    window.clearTimeout(viewFlyoutCloseTimer);
+    viewFlyoutCloseTimer = null;
+  };
+
+  let insertFlyoutCloseTimer = null;
+  const scheduleInsertFlyoutClose = () => {
+    if (insertFlyoutCloseTimer) window.clearTimeout(insertFlyoutCloseTimer);
+    insertFlyoutCloseTimer = window.setTimeout(() => {
+      insertFlyoutCloseTimer = null;
+      setInsertFlyoutOpen(false);
+    }, 150);
+  };
+  const cancelInsertFlyoutClose = () => {
+    if (!insertFlyoutCloseTimer) return;
+    window.clearTimeout(insertFlyoutCloseTimer);
+    insertFlyoutCloseTimer = null;
+  };
+
   if (fileMenuBtn) {
     fileMenuBtn.addEventListener("click", () => {
       cancelFileFlyoutClose();
       const isOpen = !fileMenuFlyout?.classList.contains("is-hidden");
       setFileFlyoutOpen(!isOpen);
+    });
+  }
+
+  if (viewMenuBtn) {
+    viewMenuBtn.addEventListener("click", () => {
+      cancelViewFlyoutClose();
+      const isOpen = !viewMenuFlyout?.classList.contains("is-hidden");
+      setViewFlyoutOpen(!isOpen);
+    });
+  }
+
+  if (insertMenuBtn) {
+    insertMenuBtn.addEventListener("click", () => {
+      cancelInsertFlyoutClose();
+      const isOpen = !insertMenuFlyout?.classList.contains("is-hidden");
+      setInsertFlyoutOpen(!isOpen);
     });
   }
 
@@ -9295,17 +9535,53 @@ function bindScreenManager() {
     });
   }
 
+  if (viewMenuWrap && viewMenuBtn && viewMenuFlyout) {
+    viewMenuWrap.addEventListener("pointerenter", () => {
+      cancelViewFlyoutClose();
+      setViewFlyoutOpen(true);
+    });
+    viewMenuWrap.addEventListener("pointerleave", () => {
+      scheduleViewFlyoutClose();
+    });
+    viewMenuBtn.addEventListener("focus", () => {
+      cancelViewFlyoutClose();
+      setViewFlyoutOpen(true);
+    });
+  }
+
+  if (insertMenuWrap && insertMenuBtn && insertMenuFlyout) {
+    insertMenuWrap.addEventListener("pointerenter", () => {
+      cancelInsertFlyoutClose();
+      setInsertFlyoutOpen(true);
+    });
+    insertMenuWrap.addEventListener("pointerleave", () => {
+      scheduleInsertFlyoutClose();
+    });
+    insertMenuBtn.addEventListener("focus", () => {
+      cancelInsertFlyoutClose();
+      setInsertFlyoutOpen(true);
+    });
+  }
+
   document.addEventListener("click", (e) => {
-    if (!fileMenuFlyout || !fileMenuBtn) return;
+    if (!fileMenuBtn && !viewMenuBtn && !insertMenuBtn) return;
     const target = e.target;
     if (!(target instanceof Element)) return;
-    if (fileMenuFlyout.contains(target) || fileMenuBtn.contains(target)) return;
+    if (fileMenuFlyout && fileMenuBtn && (fileMenuFlyout.contains(target) || fileMenuBtn.contains(target))) return;
+    if (viewMenuFlyout && viewMenuBtn && (viewMenuFlyout.contains(target) || viewMenuBtn.contains(target))) return;
+    if (insertMenuFlyout && insertMenuBtn && (insertMenuFlyout.contains(target) || insertMenuBtn.contains(target))) return;
     setFileFlyoutOpen(false);
+    setViewFlyoutOpen(false);
+    setInsertFlyoutOpen(false);
   });
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     setFileFlyoutOpen(false);
+    setViewFlyoutOpen(false);
+    setInsertFlyoutOpen(false);
+    closeTagsModal();
+    closeLibraryModal();
   });
 
   // File menu: New
@@ -9313,7 +9589,10 @@ function bindScreenManager() {
     fileNewScreenMenuBtn.addEventListener("click", () => {
       setFileFlyoutOpen(false);
       setMenuOpen(false);
-      if (isDirty && !confirmDiscardChanges("New screen")) return;
+      if (isDirty && !confirmLoseUnsavedChanges("New screen")) {
+        showHmiToast("New screen canceled (unsaved changes kept).", 6000);
+        return;
+      }
       currentScreenPath = "";
       currentScreenId = "untitled";
       currentScreenFilename = "untitled.screen";
@@ -9331,7 +9610,10 @@ function bindScreenManager() {
     fileOpenScreenMenuBtn.addEventListener("click", async () => {
       setFileFlyoutOpen(false);
       setMenuOpen(false);
-      if (isDirty && !confirmDiscardChanges("Open screen")) return;
+      if (isDirty && !confirmLoseUnsavedChanges("Open screen")) {
+        showHmiToast("Open canceled (unsaved changes kept).", 6000);
+        return;
+      }
       screenFileHistory = [];
       screenFileHistoryIndex = -1;
       await showScreenFileDialog("open");
@@ -9363,6 +9645,34 @@ function bindScreenManager() {
       setFileFlyoutOpen(false);
       setMenuOpen(false);
       window.location.href = "/api/screens/backup";
+    });
+  }
+
+  if (viewTagsMenuBtn) {
+    viewTagsMenuBtn.addEventListener("click", () => {
+      setViewFlyoutOpen(false);
+      openTagsModal();
+    });
+  }
+
+  if (insertLibraryMenuBtn) {
+    insertLibraryMenuBtn.addEventListener("click", () => {
+      setInsertFlyoutOpen(false);
+      openLibraryModal();
+    });
+  }
+
+  if (tagsModalCloseBtn) tagsModalCloseBtn.addEventListener("click", closeTagsModal);
+  if (tagsModalOverlay) {
+    tagsModalOverlay.addEventListener("click", (e) => {
+      if (e.target === tagsModalOverlay) closeTagsModal();
+    });
+  }
+
+  if (libraryModalCloseBtn) libraryModalCloseBtn.addEventListener("click", closeLibraryModal);
+  if (libraryModalOverlay) {
+    libraryModalOverlay.addEventListener("click", (e) => {
+      if (e.target === libraryModalOverlay) closeLibraryModal();
     });
   }
 
@@ -9860,6 +10170,10 @@ const bindResizer = () => {
 };
 
 window.addEventListener("resize", applyScale);
+window.addEventListener("resize", () => {
+  const state = getEditorPaneState();
+  if (state) applyEditorPaneState(state);
+});
 
 const loadJsonc = async () => {
   if (!jsoncEditor) return;
@@ -9948,16 +10262,17 @@ const loadJsonc = async () => {
 const setEditorTab = (nextTab) => {
   const tabs = Array.from(document.querySelectorAll(".editor-tab"));
   const panels = Array.from(document.querySelectorAll(".editor-panel"));
-  currentTab = nextTab;
+  const available = new Set(tabs.map((t) => String(t.dataset.tab || "").trim()).filter(Boolean));
+  currentTab = available.has(nextTab) ? nextTab : "library";
   tabs.forEach((tab) => {
-    const isActive = tab.dataset.tab === nextTab;
+    const isActive = tab.dataset.tab === currentTab;
     tab.classList.toggle("is-active", isActive);
     tab.setAttribute("aria-selected", isActive ? "true" : "false");
   });
   panels.forEach((panel) => {
-    panel.classList.toggle("is-active", panel.dataset.panel === nextTab);
+    panel.classList.toggle("is-active", panel.dataset.panel === currentTab);
   });
-  if (nextTab === "jsonc") {
+  if (currentTab === "jsonc") {
     loadJsonc();
   }
 };
@@ -10021,6 +10336,17 @@ if (runtimeBtn) {
 if (tagsRefreshBtn) {
   tagsRefreshBtn.addEventListener("click", () => {
     loadTags();
+  });
+}
+
+if (tagsFilterInput) {
+  tagsFilterInput.addEventListener("input", () => {
+    const filtered = applyTagsFilter(tagsAllCache);
+    renderTagsList(filtered);
+    if (tagsStatus) {
+      const query = getTagsFilterQuery();
+      tagsStatus.textContent = query ? `${filtered.length}/${tagsAllCache.length} tags` : `${tagsAllCache.length} tags`;
+    }
   });
 }
 
@@ -16299,6 +16625,9 @@ const setTool = (nextTool) => {
   if (leftEllipseToolBtn) {
     leftEllipseToolBtn.classList.toggle("is-active", currentTool === "ellipse");
   }
+  if (leftAlarmsPanelToolBtn) {
+    leftAlarmsPanelToolBtn.classList.toggle("is-active", currentTool === "alarms-panel");
+  }
   if (alarmsPanelToolBtn) {
     alarmsPanelToolBtn.classList.toggle("is-active", currentTool === "alarms-panel");
   }
@@ -17757,6 +18086,60 @@ if (buttonToolBtn) {
   });
 }
 
+// Editor pane dock buttons + drag (floating only)
+if (editorPane) {
+  const initial = getEditorPaneState() || { dock: "right" };
+  applyEditorPaneState(initial);
+  if (!editorPane.dataset.dock) editorPane.dataset.dock = String(initial.dock || "right");
+}
+
+if (editorPaneDockFloatBtn) editorPaneDockFloatBtn.addEventListener("click", () => setEditorPaneDock("float"));
+if (editorPaneDockLeftBtn) editorPaneDockLeftBtn.addEventListener("click", () => setEditorPaneDock("left"));
+if (editorPaneDockRightBtn) editorPaneDockRightBtn.addEventListener("click", () => setEditorPaneDock("right"));
+
+if (editorPaneTitlebar && editorPane) {
+  editorPaneTitlebar.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    if (String(editorPane.dataset.dock || "right") !== "float") return;
+    event.preventDefault();
+    const rect = editorPane.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const offsetX = startX - rect.left;
+    const offsetY = startY - rect.top;
+    const w = rect.width;
+    const h = rect.height;
+
+    const onMove = (e) => {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const toolbarH = Number(getComputedStyle(document.documentElement).getPropertyValue("--toolbar-height").replace("px", "")) || 48;
+      const x = clamp(e.clientX - offsetX, 10, vw - w - 10);
+      const y = clamp(e.clientY - offsetY, toolbarH + 4, vh - h - 10);
+      editorPane.style.left = `${x}px`;
+      editorPane.style.top = `${y}px`;
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      const state = getEditorPaneState() || {};
+      const rect2 = editorPane.getBoundingClientRect();
+      saveEditorPaneState({
+        ...state,
+        dock: "float",
+        x: Math.round(rect2.left),
+        y: Math.round(rect2.top),
+        w: Math.round(rect2.width),
+        h: Math.round(rect2.height)
+      });
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
+}
+
 if (leftSelectToolBtn) {
   leftSelectToolBtn.addEventListener("click", () => {
     setTool("select");
@@ -17772,6 +18155,12 @@ if (leftRectToolBtn) {
 if (leftViewportToolBtn) {
   leftViewportToolBtn.addEventListener("click", () => {
     setTool(currentTool === "viewport" ? "select" : "viewport");
+  });
+}
+
+if (leftAlarmsPanelToolBtn) {
+  leftAlarmsPanelToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "alarms-panel" ? "select" : "alarms-panel");
   });
 }
 
