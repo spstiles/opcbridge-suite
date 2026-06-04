@@ -462,7 +462,6 @@ const normalizeVisibilityState = (value) => {
     delete next.match;
     delete next.threshold;
     delete next.value;
-    delete next.invert;
   } else {
     delete next.sourceType;
     delete next.expression;
@@ -535,11 +534,6 @@ const syncVisibilityUiFromState = (state) => {
   if (visibilityMatchRow) {
     visibilityMatchRow.classList.toggle("is-hidden", expressionMode || mode !== "equals");
     visibilityMatchRow.hidden = expressionMode || mode !== "equals";
-  }
-  if (visibilityInvertInput?.closest(".inline-check")) {
-    const label = visibilityInvertInput.closest(".inline-check");
-    label.classList.toggle("is-hidden", expressionMode);
-    label.hidden = expressionMode;
   }
   if (visibilityExpressionRow) {
     visibilityExpressionRow.classList.toggle("is-hidden", !expressionMode);
@@ -4369,7 +4363,8 @@ const shouldRenderObject = (obj) => {
   if (vis.sourceType === "expression") {
     const result = evaluateVisibilityExpression(vis.expression);
     if (result === null || result === undefined) return true;
-    return coerceTagBoolean(result);
+    const isOn = coerceTagBoolean(result);
+    return vis.invert ? !isOn : isOn;
   }
   const connectionId = String(vis.connection_id || "");
   const tag = String(vis.tag || "");
