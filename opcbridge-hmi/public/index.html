@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/main.css?v=20260603-hmi-ui-v1" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -47,6 +47,15 @@
             </button>
             <div id="insertMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Insert menu">
               <button id="insertLibraryMenuBtn" class="menu-item" type="button">Library…</button>
+            </div>
+          </div>
+          <div id="dynamicsMenuWrap" class="menu-flyout-wrap">
+            <button id="dynamicsMenuBtn" class="menu-item menu-item-flyout" type="button" aria-haspopup="true" aria-expanded="false">
+              <span>Dynamics</span>
+              <span class="menu-item-caret" aria-hidden="true">›</span>
+            </button>
+            <div id="dynamicsMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Dynamics menu">
+              <button id="dynamicsAddVisibilityMenuBtn" class="menu-item" type="button">Visibility</button>
             </div>
           </div>
           <div class="menu-separator"></div>
@@ -111,6 +120,13 @@
           <path fill="currentColor" d="M6 3l12 9-7 1.5L9.5 21 6 3zm3.9 6.2l1.9 7.1 1-2.6 2.8-.6-5.7-3.9z"/>
         </svg>
       </button>
+      <button id="leftLineToolBtn" class="left-tool-btn" type="button" title="Line" aria-label="Line tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <path d="M7 17L17 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="7" cy="17" r="1.5" fill="currentColor"/>
+          <circle cx="17" cy="7" r="1.5" fill="currentColor"/>
+        </svg>
+      </button>
     <button id="leftRectToolBtn" class="left-tool-btn" type="button" title="Rectangle" aria-label="Rectangle tool">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
         <rect x="5" y="7" width="14" height="10" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -136,6 +152,17 @@
       <button id="leftEllipseToolBtn" class="left-tool-btn" type="button" title="Ellipse" aria-label="Ellipse tool">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
           <ellipse cx="12" cy="12" rx="7.5" ry="5.5" fill="none" stroke="currentColor" stroke-width="2"/>
+        </svg>
+      </button>
+      <button id="leftTextToolBtn" class="left-tool-btn" type="button" title="Text" aria-label="Text tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <path d="M6 7V5h12v2h-5v12h-2V7H6z" fill="currentColor"/>
+        </svg>
+      </button>
+      <button id="leftButtonToolBtn" class="left-tool-btn" type="button" title="Button" aria-label="Button tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <rect x="4.5" y="7" width="15" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M8 12h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
       </button>
       <button id="leftViewportToolBtn" class="left-tool-btn" type="button" title="Viewport" aria-label="Viewport tool">
@@ -178,12 +205,8 @@
             <button id="editorPaneDockRightBtn" class="toolbar-btn editor-pane-dock-btn" type="button" title="Dock right">⟶</button>
           </div>
         </div>
-        <div class="editor-tabs" role="tablist" aria-label="Editor Tabs">
-          <button class="editor-tab is-active" data-tab="library" role="tab" aria-selected="true">Library</button>
-          <button class="editor-tab" data-tab="properties" role="tab" aria-selected="false">Properties</button>
-        </div>
 
-        <div class="editor-panel is-active" data-panel="library" role="tabpanel">
+        <div class="editor-panel" data-panel="library" role="tabpanel">
           <div class="editor-section-title">Tools</div>
 	          <div class="library-toolbar">
 	            <button id="textToolBtn" class="tool-btn" type="button" title="Text tool">
@@ -243,7 +266,12 @@
 	          <div id="libraryImagesGrid" class="library-images-grid" aria-label="Image library"></div>
 	        </div>
 
-        <div class="editor-panel" data-panel="properties" role="tabpanel">
+        <div class="editor-panel is-active" data-panel="properties" role="tabpanel">
+          <div id="objectDynamicTabs" class="editor-tabs is-hidden">
+            <button id="objectDynamicTabPropertiesBtn" class="editor-tab is-active" type="button">Properties</button>
+            <button id="objectDynamicTabVisibilityBtn" class="editor-tab is-hidden" type="button">Visibility</button>
+          </div>
+          <div id="objectDynamicVisibilityHost" class="is-hidden"></div>
           <div id="screenProps" class="properties-form">
             <div class="prop-group-title">Screen</div>
             <div class="prop-row">
@@ -295,6 +323,26 @@
             <div class="prop-row">
               <label for="textValue">Text</label>
               <textarea id="textValue" rows="3" placeholder="Text"></textarea>
+            </div>
+            <div class="prop-row">
+              <label for="textX">X</label>
+              <input id="textX" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="textY">Y</label>
+              <input id="textY" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="textW">W</label>
+              <input id="textW" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="textH">H</label>
+              <input id="textH" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="textRotation">Rotation</label>
+              <input id="textRotation" type="number" step="1" />
             </div>
             <div class="prop-row">
               <label for="textFontSize">Font Size</label>
@@ -357,28 +405,8 @@
               </select>
             </div>
             <div class="prop-group-title">Binding</div>
-            <div class="prop-row">
-              <label for="textBindConnection">Connection</label>
-              <input id="textBindConnection" type="text" placeholder="connection_id" />
-            </div>
-            <div class="prop-row">
-              <label for="textBindTag">Tag</label>
-              <select id="textBindTag">
-                <option value="">Select tag…</option>
-              </select>
-            </div>
-            <div class="prop-row">
-              <label for="textBindDigits">Digits</label>
-              <input id="textBindDigits" type="number" min="1" step="1" />
-            </div>
-            <div class="prop-row">
-              <label for="textBindDecimals">Decimals</label>
-              <input id="textBindDecimals" type="number" min="0" step="1" />
-            </div>
-            <div class="prop-row">
-              <label for="textBindMultiplier">Multiplier</label>
-              <input id="textBindMultiplier" type="number" step="0.01" />
-            </div>
+            <div class="prop-help">Use placeholders like <code>{1}</code>, <code>{2}</code>, or <code>{flow}</code> in the text.</div>
+            <div id="textBindingRows" class="text-binding-rows"></div>
             <div class="prop-group-header">
               <div class="prop-group-title">Text Color Automation</div>
               <div class="prop-inline">
@@ -445,6 +473,8 @@
               <label for="buttonLabel">Label</label>
               <textarea id="buttonLabel" rows="3" placeholder="Button"></textarea>
             </div>
+            <div class="prop-help">Use placeholders like <code>{1}</code>, <code>{2}</code>, or <code>{state}</code> in the label.</div>
+            <div id="buttonLabelBindingRows" class="text-binding-rows"></div>
 	            <div class="prop-row">
 	              <label for="buttonActionType">Action</label>
 		              <select id="buttonActionType">
@@ -519,6 +549,10 @@
 	              <label for="buttonHeight">Height</label>
 	              <input id="buttonHeight" type="number" min="1" step="1" />
 	            </div>
+            <div class="prop-row">
+              <label for="buttonRotation">Rotation</label>
+              <input id="buttonRotation" type="number" step="1" />
+            </div>
             <div class="prop-row">
               <label for="buttonRadius">Radius</label>
               <input id="buttonRadius" type="number" min="0" step="1" />
@@ -595,29 +629,6 @@
                 <button id="buttonStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
                 <div id="buttonStrokeSwatches" class="swatch-popover" aria-label="Button stroke swatches"></div>
               </div>
-            </div>
-            <div class="prop-group-title">Label Bind</div>
-            <div class="prop-row">
-              <label for="buttonLabelBindConnection">Connection</label>
-              <input id="buttonLabelBindConnection" type="text" placeholder="connection_id" />
-            </div>
-            <div class="prop-row">
-              <label for="buttonLabelBindTag">Tag</label>
-              <select id="buttonLabelBindTag">
-                <option value="">Select tag…</option>
-              </select>
-            </div>
-            <div class="prop-row">
-              <label for="buttonLabelBindMultiplier">Multiplier</label>
-              <input id="buttonLabelBindMultiplier" type="number" step="any" />
-            </div>
-            <div class="prop-row">
-              <label for="buttonLabelBindDigits">Digits</label>
-              <input id="buttonLabelBindDigits" type="number" min="1" step="1" />
-            </div>
-            <div class="prop-row">
-              <label for="buttonLabelBindDecimals">Decimals</label>
-              <input id="buttonLabelBindDecimals" type="number" min="0" step="1" />
             </div>
             <div class="prop-group-header">
               <div class="prop-group-title">Fill Automation</div>
@@ -778,6 +789,10 @@
               <input id="numberInputHeight" type="number" min="1" step="1" />
             </div>
             <div class="prop-row">
+              <label for="numberInputRotation">Rotation</label>
+              <input id="numberInputRotation" type="number" step="1" />
+            </div>
+            <div class="prop-row">
               <label for="numberInputRadius">Radius</label>
               <input id="numberInputRadius" type="number" min="0" step="1" />
             </div>
@@ -858,6 +873,10 @@
 	              <label for="indicatorH">Height</label>
 	              <input id="indicatorH" type="number" min="1" step="1" />
 	            </div>
+            <div class="prop-row">
+              <label for="indicatorRotation">Rotation</label>
+              <input id="indicatorRotation" type="number" step="1" />
+            </div>
 	            <div class="prop-row">
 	              <label for="indicatorRadius">Radius</label>
 	              <input id="indicatorRadius" type="number" min="0" step="1" />
@@ -1000,6 +1019,10 @@
               <input id="viewportH" type="number" min="1" step="1" />
             </div>
             <div class="prop-row">
+              <label for="viewportRotation">Rotation</label>
+              <input id="viewportRotation" type="number" step="1" />
+            </div>
+            <div class="prop-row">
               <label for="viewportRadius">Radius</label>
               <input id="viewportRadius" type="number" min="0" step="1" />
             </div>
@@ -1057,6 +1080,10 @@
             <div class="prop-row">
               <label for="rectH">Height</label>
               <input id="rectH" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="rectRotation">Rotation</label>
+              <input id="rectRotation" type="number" step="1" />
             </div>
             <div class="prop-row">
               <label for="rectRadius">Radius</label>
@@ -1380,6 +1407,56 @@
             </div>
           </div>
 
+          <div id="ellipseProps" class="properties-form is-hidden">
+            <div class="prop-group-title">Ellipse</div>
+            <div class="prop-row">
+              <label for="ellipseX">X</label>
+              <input id="ellipseX" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="ellipseY">Y</label>
+              <input id="ellipseY" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="ellipseW">Width</label>
+              <input id="ellipseW" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="ellipseH">Height</label>
+              <input id="ellipseH" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="ellipseRotation">Rotation</label>
+              <input id="ellipseRotation" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="ellipseFill">Fill</label>
+              <div class="prop-inline">
+                <input id="ellipseFill" type="color" />
+                <input id="ellipseFillText" type="text" placeholder="#3a3f4b" />
+                <button id="ellipseFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="ellipseFillSwatches" class="swatch-popover" aria-label="Ellipse fill swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="ellipseBorderEnabled">Border</label>
+              <input id="ellipseBorderEnabled" type="checkbox" />
+            </div>
+            <div class="prop-row" id="ellipseStrokeRow">
+              <label for="ellipseStroke">Stroke</label>
+              <div class="prop-inline">
+                <input id="ellipseStroke" type="color" />
+                <input id="ellipseStrokeText" type="text" placeholder="#ffffff" />
+                <button id="ellipseStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="ellipseStrokeSwatches" class="swatch-popover" aria-label="Ellipse stroke swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row" id="ellipseStrokeWidthRow">
+              <label for="ellipseStrokeWidth">Stroke Width</label>
+              <input id="ellipseStrokeWidth" type="number" min="0" step="1" />
+            </div>
+          </div>
+
           <div id="circleProps" class="properties-form is-hidden">
             <div class="prop-group-title">Circle</div>
             <div class="prop-row">
@@ -1694,6 +1771,10 @@
 		          <div id="polygonProps" class="properties-form is-hidden">
 		            <div class="prop-group-title">Polygon</div>
 		            <div class="prop-row">
+		              <label for="polygonPoints">Vertices</label>
+		              <textarea id="polygonPoints" rows="3" placeholder="x,y x,y x,y"></textarea>
+		            </div>
+		            <div class="prop-row">
 		              <label for="polygonFill">Fill</label>
 		              <div class="prop-inline">
 		                <input id="polygonFill" type="color" />
@@ -1851,6 +1932,10 @@
 		              <label for="barH">Height</label>
 		              <input id="barH" type="number" min="1" step="1" />
 		            </div>
+            <div class="prop-row">
+              <label for="barRotation">Rotation</label>
+              <input id="barRotation" type="number" step="1" />
+            </div>
 		            <div class="prop-row">
 		              <label for="barOrientation">Orientation</label>
 		              <select id="barOrientation">
@@ -2013,6 +2098,10 @@
 	              <label for="groupH">Height</label>
 	              <input id="groupH" type="number" min="1" step="1" />
 	            </div>
+            <div class="prop-row">
+              <label for="groupRotation">Rotation</label>
+              <input id="groupRotation" type="number" step="1" />
+            </div>
 
 	            <div class="prop-group-title">Click Action</div>
 	            <div class="prop-row">
@@ -2038,7 +2127,7 @@
 	            </div>
 	          </div>
 
-	          <div id="visibilityProps" class="properties-form is-hidden">
+          <div id="visibilityProps" class="properties-form is-hidden">
 	            <div class="prop-group-header">
 	              <div class="prop-group-title">Visibility</div>
 	              <div class="prop-inline">
@@ -2053,6 +2142,13 @@
               </div>
             </div>
             <div id="visibilityFields" class="prop-subgroup is-hidden" hidden>
+              <div class="prop-row">
+                <label for="visibilitySourceType">Source Type</label>
+                <select id="visibilitySourceType">
+                  <option value="tag">Tag</option>
+                  <option value="expression">Expression</option>
+                </select>
+              </div>
               <div class="prop-row">
                 <label for="visibilityConnection">Connection</label>
                 <input id="visibilityConnection" type="text" placeholder="connection_id" />
@@ -2078,6 +2174,28 @@
                 <label for="visibilityMatch">Match</label>
                 <input id="visibilityMatch" type="text" placeholder="1" />
               </div>
+              <div class="prop-row is-hidden" id="visibilityExpressionRow">
+                <label for="visibilityExpressionEditBtn">Expression</label>
+                <div class="prop-subgroup">
+                  <div id="visibilityExpressionSummary" class="expression-summary">(empty)</div>
+                  <button id="visibilityExpressionEditBtn" class="panel-btn" type="button">Edit…</button>
+                </div>
+              </div>
+              <div id="visibilityActionRow" class="prop-row is-hidden">
+                <label>Actions</label>
+                <div class="prop-inline">
+                  <button id="visibilitySaveBtn" class="panel-btn" type="button">Save</button>
+                  <button id="visibilityCancelBtn" class="panel-btn" type="button">Cancel</button>
+                  <button id="visibilityDeleteBtn" class="panel-btn" type="button">Delete</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="automationLaunchRow" class="properties-form is-hidden">
+            <div class="prop-row">
+              <label for="automationLaunchBtn">Automation</label>
+              <button id="automationLaunchBtn" class="panel-btn" type="button">Automation…</button>
             </div>
           </div>
 
@@ -2110,6 +2228,33 @@
       </aside>
     </div>
   </main>
+  <div id="automationPanelStore" hidden aria-hidden="true"></div>
+  <div id="automationPanel" class="automation-panel is-hidden" role="dialog" aria-modal="false" aria-hidden="true">
+    <div id="automationPanelTitlebar" class="automation-panel-titlebar" aria-label="Automation panel window">
+      <div id="automationPanelTitle" class="automation-panel-title">Automation</div>
+      <button id="automationPanelCloseBtn" class="toolbar-btn automation-panel-close" type="button" title="Close">✕</button>
+    </div>
+    <div id="automationPanelTabs" class="automation-panel-tabs" role="tablist" aria-label="Automation tabs">
+      <button id="automationTabMotion" class="automation-tab" type="button" data-tab="motion" role="tab" aria-selected="false">Motion</button>
+      <button id="automationTabRotation" class="automation-tab" type="button" data-tab="rotation" role="tab" aria-selected="false">Rotation</button>
+      <button id="automationTabVisibility" class="automation-tab" type="button" data-tab="visibility" role="tab" aria-selected="false">Visibility</button>
+      <button id="automationTabText" class="automation-tab" type="button" data-tab="text" role="tab" aria-selected="false">Text</button>
+      <button id="automationTabColor" class="automation-tab" type="button" data-tab="color" role="tab" aria-selected="false">Color</button>
+      <button id="automationTabFill" class="automation-tab" type="button" data-tab="fill" role="tab" aria-selected="false">Fill</button>
+      <button id="automationTabStroke" class="automation-tab" type="button" data-tab="stroke" role="tab" aria-selected="false">Stroke</button>
+      <button id="automationTabValue" class="automation-tab" type="button" data-tab="value" role="tab" aria-selected="false">Value</button>
+    </div>
+    <div class="automation-panel-body">
+      <div id="automationTabPanelMotion" class="automation-tab-panel is-hidden" data-tab-panel="motion" role="tabpanel"></div>
+      <div id="automationTabPanelRotation" class="automation-tab-panel is-hidden" data-tab-panel="rotation" role="tabpanel"></div>
+      <div id="automationTabPanelVisibility" class="automation-tab-panel is-hidden" data-tab-panel="visibility" role="tabpanel"></div>
+      <div id="automationTabPanelText" class="automation-tab-panel is-hidden" data-tab-panel="text" role="tabpanel"></div>
+      <div id="automationTabPanelColor" class="automation-tab-panel is-hidden" data-tab-panel="color" role="tabpanel"></div>
+      <div id="automationTabPanelFill" class="automation-tab-panel is-hidden" data-tab-panel="fill" role="tabpanel"></div>
+      <div id="automationTabPanelStroke" class="automation-tab-panel is-hidden" data-tab-panel="stroke" role="tabpanel"></div>
+      <div id="automationTabPanelValue" class="automation-tab-panel is-hidden" data-tab-panel="value" role="tabpanel"></div>
+    </div>
+  </div>
 	  <div id="popupOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
 	    <div class="popup-modal">
 	      <div class="popup-header">
@@ -2188,6 +2333,141 @@
 	      <div class="settings-body">
 	        <div id="libraryModalHost" class="settings-section"></div>
 	      </div>
+	    </div>
+	  </div>
+	  <div id="textBindingOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal">
+	      <div class="popup-header">
+	        <div id="textBindingTitle" class="popup-title">Text Binding</div>
+	        <button id="textBindingCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div class="prop-row">
+	            <label for="textBindingConnection">Connection</label>
+	            <select id="textBindingConnection">
+	              <option value="">Select connection…</option>
+	            </select>
+	          </div>
+	          <div class="prop-row">
+	            <label for="textBindingTag">Tag</label>
+	            <select id="textBindingTag">
+	              <option value="">Select tag…</option>
+	            </select>
+	          </div>
+	          <div class="prop-row">
+	            <label for="textBindingTagFilter">Filter</label>
+	            <div class="prop-inline">
+	              <input id="textBindingTagFilter" type="text" placeholder="Filter tags…" />
+	              <button id="textBindingRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	            </div>
+	          </div>
+	          <div class="prop-row">
+	            <label for="textBindingDigits">Digits</label>
+	            <div class="prop-inline">
+	              <input id="textBindingDigits" type="number" min="1" step="1" />
+	              <label class="inline-check">
+	                <input id="textBindingPadZeros" type="checkbox" />
+	                <span>Pad with zeros</span>
+	              </label>
+	            </div>
+	          </div>
+	          <div class="prop-row">
+	            <label for="textBindingDecimals">Decimals</label>
+	            <input id="textBindingDecimals" type="number" min="0" step="1" />
+	          </div>
+	          <div class="prop-row">
+	            <label for="textBindingMultiplier">Multiplier</label>
+	            <input id="textBindingMultiplier" type="number" step="0.01" />
+	          </div>
+	          <div class="text-binding-actions">
+	            <button id="textBindingClearBtn" class="panel-btn" type="button">Clear</button>
+	            <button id="textBindingSaveBtn" class="panel-btn" type="button">Save</button>
+	            <button id="textBindingCancelBtn" class="panel-btn" type="button">Cancel</button>
+	          </div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="tagBindingOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal">
+	      <div class="popup-header">
+	        <div id="tagBindingTitle" class="popup-title">Tag Binding</div>
+	        <button id="tagBindingCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="settings-section">
+	          <div class="prop-row">
+	            <label for="tagBindingConnection">Connection</label>
+	            <select id="tagBindingConnection">
+	              <option value="">Select connection…</option>
+	            </select>
+	          </div>
+	          <div class="prop-row">
+	            <label for="tagBindingTag">Tag</label>
+	            <select id="tagBindingTag">
+	              <option value="">Select tag…</option>
+	            </select>
+	          </div>
+	          <div class="prop-row">
+	            <label for="tagBindingTagFilter">Filter</label>
+	            <div class="prop-inline">
+	              <input id="tagBindingTagFilter" type="text" placeholder="Filter tags…" />
+	              <button id="tagBindingRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	            </div>
+	          </div>
+	          <div class="text-binding-actions">
+	            <button id="tagBindingClearBtn" class="panel-btn" type="button">Clear</button>
+	            <button id="tagBindingSaveBtn" class="panel-btn" type="button">Save</button>
+	            <button id="tagBindingCancelBtn" class="panel-btn" type="button">Cancel</button>
+	          </div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="visibilityExpressionOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal visibility-expression-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Visibility Expression</div>
+	        <button id="visibilityExpressionCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+          <div class="settings-section">
+            <div class="prop-group-title">Expression</div>
+            <textarea id="visibilityExpressionEditor" rows="6" placeholder='tag("Controllogix1","Pump1.Run") && tag("Controllogix1","Pump1.Fault") == 0'></textarea>
+            <div class="text-binding-summary">Use helper menus to insert operators or tag references.</div>
+            <div id="visibilityExpressionError" class="expression-error expression-ok" role="status" aria-live="polite">OK</div>
+            <div class="prop-inline" id="visibilityExpressionHelperBar">
+              <button id="visibilityExprArithmeticBtn" class="panel-btn" type="button">Arithmetic</button>
+              <button id="visibilityExprRelationalBtn" class="panel-btn" type="button">Relational</button>
+              <button id="visibilityExprLogicalBtn" class="panel-btn" type="button">Logical</button>
+              <button id="visibilityExprFunctionsBtn" class="panel-btn" type="button">Functions</button>
+              <button id="visibilityExprTagsBtn" class="panel-btn" type="button">Tags</button>
+            </div>
+            <div id="visibilityExpressionInsertMenu" class="menu-flyout is-hidden" role="menu" aria-label="Expression helper menu"></div>
+            <div id="visibilityExpressionTagPicker" class="prop-subgroup is-hidden" hidden>
+              <div class="prop-row">
+                <label for="visibilityExprTagConnection">Connection</label>
+                <select id="visibilityExprTagConnection"></select>
+              </div>
+              <div class="prop-row">
+                <label for="visibilityExprTagName">Tag</label>
+                <select id="visibilityExprTagName"></select>
+              </div>
+              <div class="prop-row">
+                <label>Insert</label>
+                <div class="prop-inline">
+                  <button id="visibilityExprInsertTagBtn" class="panel-btn" type="button">Insert Tag</button>
+                </div>
+              </div>
+            </div>
+          </div>
+	      </div>
+        <div class="popup-footer">
+          <button id="visibilityExpressionSaveBtn" class="panel-btn" type="button">Save</button>
+          <button id="visibilityExpressionCancelBtn" class="panel-btn" type="button">Cancel</button>
+          <button id="visibilityExpressionClearBtn" class="panel-btn" type="button">Clear</button>
+        </div>
 	    </div>
 	  </div>
 	  <div id="setpointOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
@@ -2545,6 +2825,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=2025-12-28-alarms-panel-v18"></script>
+	  <script src="js/hmi.js?v=20260603-hmi-ui-v1"></script>
 	</body>
 	</html>

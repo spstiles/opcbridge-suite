@@ -587,6 +587,78 @@ body.runtime-mode .ws-badge {
     display: none;
 }
 
+#visibilityExpressionInsertMenu {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1101;
+}
+
+.popup-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 0 18px 18px;
+}
+
+.visibility-expression-modal {
+    width: min(760px, 94vw);
+}
+
+#visibilityExpressionEditor {
+    width: 100%;
+    min-height: 160px;
+    resize: vertical;
+}
+
+#visibilityExpressionHelperBar {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+#visibilityExpressionTagPicker {
+    margin-top: 4px;
+}
+
+.expression-error {
+    font-size: 10px;
+    color: #cfe7cf;
+    background: rgba(26, 82, 38, 0.22);
+    border: 1px solid rgba(124, 214, 148, 0.28);
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+}
+
+.expression-error.expression-error-state {
+    color: #ff8f8f;
+    background: rgba(120, 24, 24, 0.24);
+    border-color: rgba(255, 143, 143, 0.28);
+}
+
+.expression-error.expression-ok {
+    color: #cfe7cf;
+    background: rgba(26, 82, 38, 0.22);
+    border-color: rgba(124, 214, 148, 0.28);
+}
+
+.expression-summary {
+    font-size: 10px;
+    color: #b8c0cd;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 56px;
+    max-height: 112px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .screen-tags-modal {
     width: min(880px, calc(100vw - 24px));
     max-width: 880px;
@@ -1998,7 +2070,7 @@ body:not(.edit-mode) #workspace {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  z-index: 50;
+  z-index: 1100;
 }
 
 .popup-overlay.is-hidden {
@@ -2382,6 +2454,7 @@ body.runtime-mode #app {
   background: var(--screen-bg, #0f141d);
   min-width: 0;
   min-height: 0;
+  border-radius: 0;
 }
 
 body.edit-mode #screen-wrapper {
@@ -2470,7 +2543,7 @@ body.runtime-mode #editor-pane {
 
 .editor-pane-title {
   color: #9aa3b2;
-  font-weight: 700;
+  font-weight: 400;
   letter-spacing: 0.01em;
 }
 
@@ -2491,6 +2564,97 @@ body.runtime-mode #editor-pane {
 
 .editor-pane[data-dock="float"] {
   /* left/top set via JS */
+}
+
+.automation-panel {
+  position: fixed;
+  top: calc(var(--toolbar-height) + 12px);
+  right: 14px;
+  width: min(520px, calc(100vw - var(--left-toolbar-width) - 32px));
+  max-width: calc(100vw - var(--left-toolbar-width) - 24px);
+  height: min(70vh, calc(100vh - var(--toolbar-height) - 28px));
+  min-width: 320px;
+  min-height: 260px;
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  background: #101622;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+body.automation-panel-open #editor-pane {
+  display: none;
+}
+
+.automation-panel.is-hidden {
+  display: none;
+}
+
+.automation-panel-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+}
+
+.automation-panel-title {
+  color: #9aa3b2;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+.automation-panel-close {
+  padding: 4px 8px;
+  min-width: 34px;
+}
+
+.automation-panel-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 0;
+  background: #101622;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.automation-tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #9aa3b2;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 999px 999px 0 0;
+  cursor: pointer;
+}
+
+.automation-tab.is-active {
+  color: #e5e7eb;
+  border-color: rgba(255, 255, 255, 0.08);
+  border-bottom-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.automation-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.automation-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.automation-tab-panel.is-hidden {
+  display: none;
 }
 
 /* ================================================
@@ -2558,7 +2722,7 @@ body.runtime-mode #editor-pane {
   border-radius: 4px;
   padding: 7px 12px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -2626,7 +2790,7 @@ body.runtime-mode #editor-pane {
 .properties-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   padding: 6px 12px 12px;
   overflow: auto;
 }
@@ -2674,6 +2838,7 @@ body.runtime-mode #editor-pane {
   letter-spacing: 0.08em;
   color: #9aa3b2;
   margin-top: 4px;
+  padding-top: 8px;
 }
 
 .prop-group-header {
@@ -2682,16 +2847,29 @@ body.runtime-mode #editor-pane {
   justify-content: space-between;
   gap: 10px;
   margin-top: 4px;
+  padding-top: 8px;
 }
 
 .prop-group-header .prop-group-title {
   margin-top: 0;
 }
 
+#visibilityProps .prop-group-header {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  justify-content: initial;
+  gap: 8px;
+}
+
+#visibilityProps .prop-group-header .prop-inline {
+  justify-self: start;
+}
+
 .prop-subgroup {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
 }
 
 .prop-subgroup.is-hidden {
@@ -2709,11 +2887,14 @@ body.runtime-mode #editor-pane {
   grid-template-columns: 110px 1fr;
   align-items: center;
   gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .prop-row label {
-  font-size: 12px;
+  font-size: 10px;
   color: #c5cbd6;
+  font-weight: 400;
 }
 
 .prop-row input[type="number"],
@@ -2723,7 +2904,24 @@ body.runtime-mode #editor-pane {
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 400;
   transition: border-color 0.15s ease;
+}
+
+.prop-row input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.prop-row input[type="number"]::-webkit-outer-spin-button,
+.prop-row input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.prop-row input[type="checkbox"] {
+  justify-self: start;
 }
 
 .prop-row input[type="number"]:focus,
@@ -2743,6 +2941,8 @@ body.runtime-mode #editor-pane {
   max-width: none;
   resize: vertical;
   font: inherit;
+  font-size: 10px;
+  font-weight: 400;
   line-height: 1.25;
 }
 
@@ -2765,6 +2965,8 @@ body.runtime-mode #editor-pane {
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 400;
   transition: border-color 0.15s ease;
 }
 
@@ -2788,8 +2990,9 @@ body.runtime-mode #editor-pane {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 10px;
   color: #c5cbd6;
+  font-weight: 400;
 }
 
 .inline-check input {
@@ -2813,6 +3016,53 @@ body.runtime-mode #editor-pane {
 
 .prop-inline {
   position: relative;
+}
+
+.prop-help {
+  font-size: 10px;
+  color: #9aa3b2;
+  padding: 2px 0 4px;
+}
+
+.text-binding-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.text-binding-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.text-binding-key {
+  font-size: 10px;
+  color: #d7dde8;
+  white-space: nowrap;
+}
+
+.text-binding-summary {
+  min-width: 0;
+  font-size: 10px;
+  color: #b8c0cd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-binding-row {
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+}
+
+.text-binding-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
 }
 
 .swatch-btn {
@@ -2844,6 +3094,17 @@ body.runtime-mode #editor-pane {
   gap: 6px;
   z-index: 30;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.swatch-popover.is-floating {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  z-index: 10050;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(260px, calc(100vh - 16px));
+  overflow: auto;
 }
 
 .swatch-popover.is-open {
