@@ -56,6 +56,9 @@
             </button>
             <div id="dynamicsMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Dynamics menu">
               <button id="dynamicsAddVisibilityMenuBtn" class="menu-item" type="button">Visibility</button>
+              <button id="dynamicsAddColorMenuBtn" class="menu-item" type="button">Color</button>
+              <button id="dynamicsAddRotationMenuBtn" class="menu-item" type="button">Rotation</button>
+              <button id="dynamicsAddMotionMenuBtn" class="menu-item" type="button">Motion</button>
             </div>
           </div>
           <div class="menu-separator"></div>
@@ -270,8 +273,14 @@
           <div id="objectDynamicTabs" class="editor-tabs is-hidden">
             <button id="objectDynamicTabPropertiesBtn" class="editor-tab is-active" type="button">Properties</button>
             <button id="objectDynamicTabVisibilityBtn" class="editor-tab is-hidden" type="button">Visibility</button>
+            <button id="objectDynamicTabColorBtn" class="editor-tab is-hidden" type="button">Color</button>
+            <button id="objectDynamicTabRotationBtn" class="editor-tab is-hidden" type="button">Rotation</button>
+            <button id="objectDynamicTabMotionBtn" class="editor-tab is-hidden" type="button">Motion</button>
           </div>
           <div id="objectDynamicVisibilityHost" class="is-hidden"></div>
+          <div id="objectDynamicColorHost" class="is-hidden"></div>
+          <div id="objectDynamicRotationHost" class="is-hidden"></div>
+          <div id="objectDynamicMotionHost" class="is-hidden"></div>
           <div id="screenProps" class="properties-form">
             <div class="prop-group-title">Screen</div>
             <div class="prop-row">
@@ -1360,7 +1369,7 @@
                 </label>
               </div>
             </div>
-	            <div id="rectFillAutoFields" class="prop-subgroup is-hidden" hidden>
+            <div id="rectFillAutoFields" class="prop-subgroup is-hidden" hidden>
 	              <div class="prop-row">
 	                <label for="rectFillAutoConnection">Connection</label>
 	                <input id="rectFillAutoConnection" type="text" placeholder="connection_id" />
@@ -1403,6 +1412,97 @@
                   <button id="rectFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
                   <div id="rectFillAutoOffSwatches" class="swatch-popover" aria-label="Rectangle fill automation off swatches"></div>
                 </div>
+              </div>
+            </div>
+            <div id="rectColorDynamicSection" class="properties-form is-hidden">
+              <div class="prop-group-header">
+                <div class="prop-group-title">Color</div>
+                <div class="prop-inline">
+                  <label class="inline-check">
+                    <input id="rectColorEnabled" type="checkbox" />
+                    <span>Enabled</span>
+                  </label>
+                  <label class="inline-check">
+                    <input id="rectColorInvert" type="checkbox" />
+                    <span>Invert</span>
+                  </label>
+                </div>
+              </div>
+              <div id="rectColorFields" class="prop-subgroup is-hidden" hidden>
+                <div class="prop-row">
+                  <label for="rectColorSourceType">Source Type</label>
+                  <select id="rectColorSourceType">
+                    <option value="tag">Tag</option>
+                    <option value="expression">Expression</option>
+                  </select>
+                </div>
+                <div class="prop-row" id="rectColorConnectionRow">
+                  <label for="rectColorConnection">Connection</label>
+                  <input id="rectColorConnection" type="text" placeholder="connection_id" />
+                </div>
+                <div class="prop-row" id="rectColorTagRow">
+                  <label for="rectColorTag">Tag</label>
+                  <select id="rectColorTag">
+                    <option value="">Select tag…</option>
+                  </select>
+                </div>
+                <div class="prop-row" id="rectColorModeRow">
+                  <label for="rectColorMode">Mode</label>
+                  <select id="rectColorMode">
+                    <option value="threshold">Threshold</option>
+                    <option value="equals">Equals</option>
+                  </select>
+                </div>
+                <div class="prop-row" id="rectColorThresholdRow">
+                  <label for="rectColorThreshold">Threshold</label>
+                  <input id="rectColorThreshold" type="number" step="any" placeholder="0" />
+                </div>
+                <div class="prop-row is-hidden" id="rectColorMatchRow">
+                  <label for="rectColorMatch">Match</label>
+                  <input id="rectColorMatch" type="text" placeholder="1" />
+                </div>
+                <div class="prop-row is-hidden" id="rectColorExpressionRow">
+                  <label for="rectColorExpressionEditBtn">Expression</label>
+                  <div class="prop-subgroup">
+                    <div id="rectColorExpressionSummary" class="expression-summary">(empty)</div>
+                    <button id="rectColorExpressionEditBtn" class="panel-btn" type="button">Edit…</button>
+                  </div>
+                </div>
+                <div class="prop-row">
+                  <label>Targets</label>
+                  <div class="prop-inline">
+                    <label class="inline-check">
+                      <input id="rectColorFillEnabled" type="checkbox" />
+                      <span>Fill</span>
+                    </label>
+                    <label class="inline-check">
+                      <input id="rectColorStrokeEnabled" type="checkbox" />
+                      <span>Border</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="prop-row" id="rectColorFillRow">
+                  <label for="rectColorFill">Fill Color</label>
+                  <div class="prop-inline">
+                    <input id="rectColorFill" type="color" />
+                    <input id="rectColorFillText" type="text" placeholder="#3a3f4b" />
+                  </div>
+                </div>
+                <div class="prop-row" id="rectColorStrokeRow">
+                  <label for="rectColorStroke">Border Color</label>
+                  <div class="prop-inline">
+                    <input id="rectColorStroke" type="color" />
+                    <input id="rectColorStrokeText" type="text" placeholder="#ffffff" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="colorActionRow" class="prop-row is-hidden">
+              <label>Actions</label>
+              <div class="prop-inline">
+                <button id="colorSaveBtn" class="panel-btn" type="button">Save</button>
+                <button id="colorCancelBtn" class="panel-btn" type="button">Cancel</button>
+                <button id="colorDeleteBtn" class="panel-btn" type="button">Delete</button>
               </div>
             </div>
           </div>
@@ -2467,6 +2567,51 @@
           <button id="visibilityExpressionSaveBtn" class="panel-btn" type="button">Save</button>
           <button id="visibilityExpressionCancelBtn" class="panel-btn" type="button">Cancel</button>
           <button id="visibilityExpressionClearBtn" class="panel-btn" type="button">Clear</button>
+        </div>
+	    </div>
+	  </div>
+	  <div id="rectColorExpressionOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal visibility-expression-modal">
+	      <div class="popup-header">
+	        <div class="popup-title">Color Expression</div>
+	        <button id="rectColorExpressionCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+          <div class="settings-section">
+            <div class="prop-group-title">Expression</div>
+            <textarea id="rectColorExpressionEditor" rows="6" placeholder='tag("Controllogix1","Pump1.Run") && tag("Controllogix1","Pump1.Fault") == 0'></textarea>
+            <div class="text-binding-summary">Use helper menus to insert operators or tag references.</div>
+            <div id="rectColorExpressionError" class="expression-error expression-ok" role="status" aria-live="polite">OK</div>
+            <div class="prop-inline" id="rectColorExpressionHelperBar">
+              <button id="rectColorExprArithmeticBtn" class="panel-btn" type="button">Arithmetic</button>
+              <button id="rectColorExprRelationalBtn" class="panel-btn" type="button">Relational</button>
+              <button id="rectColorExprLogicalBtn" class="panel-btn" type="button">Logical</button>
+              <button id="rectColorExprFunctionsBtn" class="panel-btn" type="button">Functions</button>
+              <button id="rectColorExprTagsBtn" class="panel-btn" type="button">Tags</button>
+            </div>
+            <div id="rectColorExpressionInsertMenu" class="menu-flyout is-hidden" role="menu" aria-label="Expression helper menu"></div>
+            <div id="rectColorExpressionTagPicker" class="prop-subgroup is-hidden" hidden>
+              <div class="prop-row">
+                <label for="rectColorExprTagConnection">Connection</label>
+                <select id="rectColorExprTagConnection"></select>
+              </div>
+              <div class="prop-row">
+                <label for="rectColorExprTagName">Tag</label>
+                <select id="rectColorExprTagName"></select>
+              </div>
+              <div class="prop-row">
+                <label>Insert</label>
+                <div class="prop-inline">
+                  <button id="rectColorExprInsertTagBtn" class="panel-btn" type="button">Insert Tag</button>
+                </div>
+              </div>
+            </div>
+          </div>
+	      </div>
+        <div class="popup-footer">
+          <button id="rectColorExpressionSaveBtn" class="panel-btn" type="button">Save</button>
+          <button id="rectColorExpressionCancelBtn" class="panel-btn" type="button">Cancel</button>
+          <button id="rectColorExpressionClearBtn" class="panel-btn" type="button">Clear</button>
         </div>
 	    </div>
 	  </div>

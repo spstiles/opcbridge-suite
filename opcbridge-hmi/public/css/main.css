@@ -587,7 +587,8 @@ body.runtime-mode .ws-badge {
     display: none;
 }
 
-#visibilityExpressionInsertMenu {
+#visibilityExpressionInsertMenu,
+#rectColorExpressionInsertMenu {
     position: fixed;
     top: 0;
     left: 0;
@@ -605,19 +606,22 @@ body.runtime-mode .ws-badge {
     width: min(760px, 94vw);
 }
 
-#visibilityExpressionEditor {
+#visibilityExpressionEditor,
+#rectColorExpressionEditor {
     width: 100%;
     min-height: 160px;
     resize: vertical;
 }
 
-#visibilityExpressionHelperBar {
+#visibilityExpressionHelperBar,
+#rectColorExpressionHelperBar {
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
 }
 
-#visibilityExpressionTagPicker {
+#visibilityExpressionTagPicker,
+#rectColorExpressionTagPicker {
     margin-top: 4px;
 }
 
@@ -2070,7 +2074,7 @@ body:not(.edit-mode) #workspace {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  z-index: 1100;
+  z-index: 10060;
 }
 
 .popup-overlay.is-hidden {
@@ -2674,9 +2678,14 @@ body.automation-panel-open #editor-pane {
   padding: 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: #121826;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
 }
 
 .editor-tab {
+  flex: 0 0 auto;
   border: 1px solid transparent;
   background: transparent;
   color: #9aa3b2;

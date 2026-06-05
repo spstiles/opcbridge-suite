@@ -184,6 +184,9 @@ const dynamicsMenuWrap = document.getElementById("dynamicsMenuWrap");
 const dynamicsMenuBtn = document.getElementById("dynamicsMenuBtn");
 const dynamicsMenuFlyout = document.getElementById("dynamicsMenuFlyout");
 const dynamicsAddVisibilityMenuBtn = document.getElementById("dynamicsAddVisibilityMenuBtn");
+const dynamicsAddColorMenuBtn = document.getElementById("dynamicsAddColorMenuBtn");
+const dynamicsAddRotationMenuBtn = document.getElementById("dynamicsAddRotationMenuBtn");
+const dynamicsAddMotionMenuBtn = document.getElementById("dynamicsAddMotionMenuBtn");
 const groupMenuBtn = document.getElementById("groupMenuBtn");
 const ungroupMenuBtn = document.getElementById("ungroupMenuBtn");
 const alignMenuLeft = document.getElementById("alignMenuLeft");
@@ -230,7 +233,13 @@ const screenFileCancelBtn = document.getElementById("screenFileCancelBtn");
 const objectDynamicTabs = document.getElementById("objectDynamicTabs");
 const objectDynamicTabPropertiesBtn = document.getElementById("objectDynamicTabPropertiesBtn");
 const objectDynamicTabVisibilityBtn = document.getElementById("objectDynamicTabVisibilityBtn");
+const objectDynamicTabColorBtn = document.getElementById("objectDynamicTabColorBtn");
+const objectDynamicTabRotationBtn = document.getElementById("objectDynamicTabRotationBtn");
+const objectDynamicTabMotionBtn = document.getElementById("objectDynamicTabMotionBtn");
 const objectDynamicVisibilityHost = document.getElementById("objectDynamicVisibilityHost");
+const objectDynamicColorHost = document.getElementById("objectDynamicColorHost");
+const objectDynamicRotationHost = document.getElementById("objectDynamicRotationHost");
+const objectDynamicMotionHost = document.getElementById("objectDynamicMotionHost");
 const tagsModalOverlay = document.getElementById("tagsModalOverlay");
 const tagsModalCloseBtn = document.getElementById("tagsModalCloseBtn");
 const tagsModalHost = document.getElementById("tagsModalHost");
@@ -290,8 +299,24 @@ let currentAutomationTab = "motion";
 let currentObjectDynamicTab = "properties";
 let rectVisibilityDraft = null;
 let rectVisibilityDraftObject = null;
+let rectColorDraft = null;
+let rectColorDraftObject = null;
+let rectRotationDraft = null;
+let rectRotationDraftObject = null;
+let rectMotionDraft = null;
+let rectMotionDraftObject = null;
+let rectRotationActionRow = null;
+let rectRotationSaveBtn = null;
+let rectRotationCancelBtn = null;
+let rectRotationDeleteBtn = null;
+let rectMotionActionRow = null;
+let rectMotionSaveBtn = null;
+let rectMotionCancelBtn = null;
+let rectMotionDeleteBtn = null;
 let visibilityExpressionDraftValue = "";
 let visibilityExpressionInsertTargetBtn = null;
+let rectColorExpressionDraftValue = "";
+let rectColorExpressionInsertTargetBtn = null;
 const visibilityExpressionFunctionCache = new Map();
 const lastAutomationTabByType = new Map();
 const automationSectionConfigs = [];
@@ -444,9 +469,243 @@ const hasVisibilityDynamic = (obj) => {
   return Boolean(vis && typeof vis === "object" && Object.keys(vis).length);
 };
 
+const hasRectColorDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  const hasFill = Boolean(obj.fillAutomation && typeof obj.fillAutomation === "object" && Object.keys(obj.fillAutomation).length);
+  const hasStroke = Boolean(obj.strokeAutomation && typeof obj.strokeAutomation === "object" && Object.keys(obj.strokeAutomation).length);
+  return hasFill || hasStroke;
+};
+
+const hasRectRotationDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.rotationAutomation && typeof obj.rotationAutomation === "object" && Object.keys(obj.rotationAutomation).length);
+};
+
+const hasRectMotionDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
+};
+
 const cloneVisibilityState = (value) => {
   if (!value || typeof value !== "object") return { enabled: true };
   return JSON.parse(JSON.stringify(value));
+};
+
+const cloneRectColorDraft = (value) => {
+  if (!value || typeof value !== "object") return { enabled: true, sourceType: "tag", fillEnabled: true, strokeEnabled: false };
+  return JSON.parse(JSON.stringify(value));
+};
+
+const cloneRectRotationDraft = (value) => {
+  if (!value || typeof value !== "object") {
+    return {
+      pivotMode: "center",
+      rotationAutomation: {
+        enabled: true,
+        inputMin: 0,
+        inputMax: 1,
+        angleStart: 0,
+        angleEnd: 0,
+        direction: "shortest",
+        connection_id: "",
+        tag: ""
+      }
+    };
+  }
+  return JSON.parse(JSON.stringify(value));
+};
+
+const cloneRectMotionDraft = (value) => {
+  if (!value || typeof value !== "object") {
+    return {
+      enabled: true,
+      connection_id: "",
+      tag: "",
+      inputMin: 0,
+      inputMax: 1,
+      startPose: null,
+      endPose: null
+    };
+  }
+  return JSON.parse(JSON.stringify(value));
+};
+
+const normalizeRotationAutomationState = (value) => {
+  const next = value && typeof value === "object" ? { ...value } : {};
+  if ("connection_id" in next && !String(next.connection_id || "").trim()) delete next.connection_id;
+  if ("tag" in next && !String(next.tag || "").trim()) delete next.tag;
+  if (!Number.isFinite(Number(next.inputMin))) next.inputMin = 0;
+  else next.inputMin = Number(next.inputMin);
+  if (!Number.isFinite(Number(next.inputMax))) next.inputMax = 1;
+  else next.inputMax = Number(next.inputMax);
+  if (!Number.isFinite(Number(next.angleStart))) next.angleStart = 0;
+  else next.angleStart = Number(next.angleStart);
+  if (!Number.isFinite(Number(next.angleEnd))) next.angleEnd = 0;
+  else next.angleEnd = Number(next.angleEnd);
+  const direction = String(next.direction || "shortest").trim().toLowerCase();
+  next.direction = ["shortest", "cw", "ccw"].includes(direction) ? direction : "shortest";
+  if (next.enabled === undefined) next.enabled = true;
+  return next;
+};
+
+const normalizeColorAutomationState = (value) => {
+  const next = value && typeof value === "object" ? { ...value } : {};
+  next.sourceType = next.sourceType === "expression" ? "expression" : "tag";
+  if (next.sourceType === "expression") {
+    const expression = String(next.expression || "").trim();
+    if (expression) next.expression = expression;
+    else delete next.expression;
+    delete next.connection_id;
+    delete next.tag;
+    delete next.mode;
+    delete next.match;
+    delete next.threshold;
+  } else {
+    delete next.expression;
+    if (next.mode !== "equals" && next.mode !== "threshold") delete next.mode;
+    if (!String(next.connection_id || "").trim()) delete next.connection_id;
+    if (!String(next.tag || "").trim()) delete next.tag;
+    if (!String(next.match || "").trim()) delete next.match;
+    if (next.threshold === "" || next.threshold === null || next.threshold === undefined || !Number.isFinite(Number(next.threshold))) {
+      delete next.threshold;
+    } else {
+      next.threshold = Number(next.threshold);
+    }
+  }
+  if (!String(next.onColor || "").trim()) delete next.onColor;
+  delete next.offColor;
+  if (next.enabled == null) next.enabled = true;
+  if (!next.invert) delete next.invert;
+  return next;
+};
+
+const syncRectColorUiFromDraft = (obj, draft) => {
+  const strokePresent = Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
+  const next = draft || {};
+  const sourceType = next.sourceType === "expression" ? "expression" : "tag";
+  const mode = next.mode === "equals" ? "equals" : "threshold";
+  if (rectColorEnabledInput) rectColorEnabledInput.checked = next.enabled !== false;
+  if (rectColorInvertInput) rectColorInvertInput.checked = Boolean(next.invert);
+  if (rectColorFields) {
+    const show = next.enabled !== false;
+    rectColorFields.classList.toggle("is-hidden", !show);
+    rectColorFields.hidden = !show;
+  }
+  if (rectColorSourceTypeSelect) rectColorSourceTypeSelect.value = sourceType;
+  if (rectColorConnectionRow) {
+    rectColorConnectionRow.classList.toggle("is-hidden", sourceType === "expression");
+    rectColorConnectionRow.hidden = sourceType === "expression";
+  }
+  if (rectColorTagRow) {
+    rectColorTagRow.classList.toggle("is-hidden", sourceType === "expression");
+    rectColorTagRow.hidden = sourceType === "expression";
+  }
+  if (rectColorModeRow) {
+    rectColorModeRow.classList.toggle("is-hidden", sourceType === "expression");
+    rectColorModeRow.hidden = sourceType === "expression";
+  }
+  if (rectColorThresholdRow) {
+    const hide = sourceType === "expression" || mode === "equals";
+    rectColorThresholdRow.classList.toggle("is-hidden", hide);
+    rectColorThresholdRow.hidden = hide;
+  }
+  if (rectColorMatchRow) {
+    const hide = sourceType === "expression" || mode !== "equals";
+    rectColorMatchRow.classList.toggle("is-hidden", hide);
+    rectColorMatchRow.hidden = hide;
+  }
+  if (rectColorExpressionRow) {
+    const showExpression = sourceType === "expression";
+    rectColorExpressionRow.classList.toggle("is-hidden", !showExpression);
+    rectColorExpressionRow.hidden = !showExpression;
+  }
+  setInputValueSafe(rectColorConnectionInput, next.connection_id || "");
+  if (rectColorTagSelect) {
+    const connectionId = String(next.connection_id || "");
+    const tagName = String(next.tag || "");
+    const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
+    setSelectValueSafe(rectColorTagSelect, combined);
+  }
+  if (rectColorModeSelect) rectColorModeSelect.value = mode;
+  if (rectColorThresholdInput) setInputValueSafe(rectColorThresholdInput, next.threshold ?? "");
+  if (rectColorMatchInput) setInputValueSafe(rectColorMatchInput, next.match ?? "");
+  if (rectColorExpressionSummary) {
+    const expression = String(next.expression || "").trim();
+    const summary = expression || "(empty)";
+    rectColorExpressionSummary.textContent = summary;
+    rectColorExpressionSummary.title = expression;
+  }
+  if (rectColorFillEnabledInput) rectColorFillEnabledInput.checked = next.fillEnabled !== false;
+  if (rectColorStrokeEnabledInput) {
+    rectColorStrokeEnabledInput.checked = Boolean(next.strokeEnabled) && strokePresent;
+    rectColorStrokeEnabledInput.disabled = !strokePresent;
+  }
+  const fillFallback = String(obj?.fill || "#3a3f4b");
+  const strokeFallback = String((!obj?.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
+  if (rectColorFillInput) rectColorFillInput.value = next.fillColor || fillFallback;
+  if (rectColorFillTextInput) setInputValueSafe(rectColorFillTextInput, next.fillColor || "");
+  if (rectColorStrokeInput) rectColorStrokeInput.value = next.strokeColor || strokeFallback;
+  if (rectColorStrokeTextInput) setInputValueSafe(rectColorStrokeTextInput, next.strokeColor || "");
+  if (rectColorFillRow) {
+    rectColorFillRow.classList.toggle("is-hidden", !rectColorFillEnabledInput?.checked);
+    rectColorFillRow.hidden = !rectColorFillEnabledInput?.checked;
+  }
+  if (rectColorStrokeRow) {
+    const showStroke = Boolean(rectColorStrokeEnabledInput?.checked) && strokePresent;
+    rectColorStrokeRow.classList.toggle("is-hidden", !showStroke);
+    rectColorStrokeRow.hidden = !showStroke;
+  }
+};
+
+const applyRectColorModeUi = (mode) => {
+  if (rectColorSourceTypeSelect?.value === "expression") return;
+  const normalized = mode === "equals" ? "equals" : "threshold";
+  if (rectColorThresholdRow) {
+    rectColorThresholdRow.classList.toggle("is-hidden", normalized === "equals");
+    rectColorThresholdRow.hidden = normalized === "equals";
+  }
+  if (rectColorMatchRow) {
+    rectColorMatchRow.classList.toggle("is-hidden", normalized !== "equals");
+    rectColorMatchRow.hidden = normalized !== "equals";
+  }
+};
+
+const updateRectColorDraft = (patch) => {
+  const obj = getSelectedRectObject();
+  if (!obj || !isEditingRectColorDynamic()) return;
+  ensureRectColorDraft(obj);
+  const next = { ...(rectColorDraft || {}), ...patch };
+  if ("sourceType" in patch) {
+    next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
+    if (next.sourceType === "expression") {
+      delete next.connection_id;
+      delete next.tag;
+      delete next.mode;
+      delete next.threshold;
+      delete next.match;
+    } else {
+      delete next.expression;
+    }
+  }
+  if ("expression" in patch) {
+    const raw = String(patch.expression || "").trim();
+    if (raw) next.expression = raw;
+    else delete next.expression;
+  }
+  if ("connection_id" in patch && !patch.connection_id) delete next.connection_id;
+  if ("tag" in patch && !patch.tag) delete next.tag;
+  if ("match" in patch) {
+    const raw = String(patch.match ?? "").trim();
+    if (!raw) delete next.match;
+    else next.match = raw;
+  }
+  if ("threshold" in patch) {
+    if (patch.threshold === "" || patch.threshold === null || patch.threshold === undefined) delete next.threshold;
+    else next.threshold = patch.threshold;
+  }
+  if ("mode" in patch && patch.mode !== "equals" && patch.mode !== "threshold") delete next.mode;
+  rectColorDraft = next;
+  syncRectColorUiFromDraft(obj, rectColorDraft);
 };
 
 const normalizeVisibilityState = (value) => {
@@ -658,6 +917,141 @@ const openVisibilityExpressionModal = () => {
   if (visibilityExpressionEditor) requestAnimationFrame(() => visibilityExpressionEditor.focus());
 };
 
+const hideRectColorExpressionInsertMenu = () => {
+  if (!rectColorExpressionInsertMenu) return;
+  rectColorExpressionInsertMenu.classList.add("is-hidden");
+  rectColorExpressionInsertMenu.innerHTML = "";
+  rectColorExpressionInsertTargetBtn = null;
+};
+
+const setRectColorExpressionTagPickerVisible = (visible) => {
+  if (!rectColorExpressionTagPicker) return;
+  rectColorExpressionTagPicker.classList.toggle("is-hidden", !visible);
+  rectColorExpressionTagPicker.hidden = !visible;
+};
+
+const closeRectColorExpressionModal = () => {
+  hideRectColorExpressionInsertMenu();
+  setRectColorExpressionTagPickerVisible(false);
+  rectColorExpressionDraftValue = "";
+  if (!rectColorExpressionOverlay) return;
+  rectColorExpressionOverlay.classList.add("is-hidden");
+  rectColorExpressionOverlay.setAttribute("aria-hidden", "true");
+  rectColorExpressionOverlay.style.display = "";
+};
+
+const populateRectColorExpressionConnectionOptions = () => {
+  if (!rectColorExprTagConnection) return;
+  const previous = String(rectColorExprTagConnection.value || "");
+  rectColorExprTagConnection.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select connection…";
+  rectColorExprTagConnection.appendChild(placeholder);
+  sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((connectionId) => {
+    const option = document.createElement("option");
+    option.value = connectionId;
+    option.textContent = connectionId;
+    rectColorExprTagConnection.appendChild(option);
+  });
+  setSelectValueSafe(rectColorExprTagConnection, previous || String(rectColorDraft?.connection_id || ""));
+};
+
+const populateRectColorExpressionTagOptions = (connectionId = "") => {
+  if (!rectColorExprTagName) return;
+  const selectedConnectionId = String(connectionId || rectColorExprTagConnection?.value || rectColorDraft?.connection_id || "");
+  const previous = String(rectColorExprTagName.value || "");
+  rectColorExprTagName.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select tag…";
+  rectColorExprTagName.appendChild(placeholder);
+  const tagNames = tagsCache
+    .filter((tag) => !selectedConnectionId || String(tag?.connection_id || "") === selectedConnectionId)
+    .map((tag) => String(tag?.name || ""))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  tagNames.forEach((tagName) => {
+    const option = document.createElement("option");
+    option.value = tagName;
+    option.textContent = tagName;
+    rectColorExprTagName.appendChild(option);
+  });
+  setSelectValueSafe(rectColorExprTagName, previous || String(rectColorDraft?.tag || ""));
+};
+
+const insertRectColorExpressionText = (text) => {
+  if (!rectColorExpressionEditor) return;
+  const start = rectColorExpressionEditor.selectionStart ?? rectColorExpressionEditor.value.length;
+  const end = rectColorExpressionEditor.selectionEnd ?? rectColorExpressionEditor.value.length;
+  rectColorExpressionEditor.setRangeText(text, start, end, "end");
+  syncRectColorExpressionValidationUi();
+  rectColorExpressionEditor.focus();
+};
+
+const showRectColorExpressionInsertMenu = (button, items) => {
+  if (!rectColorExpressionInsertMenu || !button) return;
+  const nextItems = Array.isArray(items) ? items : [];
+  if (!nextItems.length) {
+    hideRectColorExpressionInsertMenu();
+    return;
+  }
+  if (!rectColorExpressionInsertMenu.classList.contains("is-hidden") && rectColorExpressionInsertTargetBtn === button) {
+    hideRectColorExpressionInsertMenu();
+    return;
+  }
+  rectColorExpressionInsertMenu.innerHTML = "";
+  nextItems.forEach((item) => {
+    const entryButton = document.createElement("button");
+    entryButton.type = "button";
+    entryButton.className = "panel-btn";
+    entryButton.textContent = item.label;
+    entryButton.addEventListener("click", () => {
+      insertRectColorExpressionText(item.insert);
+      hideRectColorExpressionInsertMenu();
+    });
+    rectColorExpressionInsertMenu.appendChild(entryButton);
+  });
+  const rect = button.getBoundingClientRect();
+  rectColorExpressionInsertMenu.style.left = `${Math.round(rect.left)}px`;
+  rectColorExpressionInsertMenu.style.top = `${Math.round(rect.bottom + 4)}px`;
+  rectColorExpressionInsertMenu.classList.remove("is-hidden");
+  rectColorExpressionInsertTargetBtn = button;
+};
+
+const syncRectColorExpressionValidationUi = () => {
+  if (!rectColorExpressionError || !rectColorExpressionSaveBtn) return "";
+  const error = getAutomationExpressionValidationError(rectColorExpressionEditor?.value || "");
+  const hasError = Boolean(error);
+  rectColorExpressionError.textContent = hasError ? error : "OK";
+  rectColorExpressionError.classList.toggle("expression-error-state", hasError);
+  rectColorExpressionError.classList.toggle("expression-ok", !hasError);
+  rectColorExpressionSaveBtn.disabled = hasError;
+  return error;
+};
+
+const openRectColorExpressionModal = () => {
+  if (!rectColorExpressionOverlay) return;
+  const obj = getSelectedRectObject();
+  if (!obj || !hasRectColorDynamic(obj)) return;
+  if (currentObjectDynamicTab !== "color") {
+    currentObjectDynamicTab = "color";
+    updatePropertiesPanel();
+  }
+  ensureRectColorDraft(obj);
+  rectColorExpressionDraftValue = String(rectColorDraft?.expression || "");
+  if (rectColorExpressionEditor) rectColorExpressionEditor.value = rectColorExpressionDraftValue;
+  syncRectColorExpressionValidationUi();
+  hideRectColorExpressionInsertMenu();
+  setRectColorExpressionTagPickerVisible(false);
+  populateRectColorExpressionConnectionOptions();
+  populateRectColorExpressionTagOptions();
+  rectColorExpressionOverlay.classList.remove("is-hidden");
+  rectColorExpressionOverlay.setAttribute("aria-hidden", "false");
+  rectColorExpressionOverlay.style.display = "flex";
+  if (rectColorExpressionEditor) requestAnimationFrame(() => rectColorExpressionEditor.focus());
+};
+
 const getVisibilityExpressionHelperItems = (group) => {
   switch (group) {
     case "arithmetic":
@@ -697,9 +1091,7 @@ const getVisibilityExpressionHelperItems = (group) => {
   }
 };
 
-const stripQuotedStrings = (expression) => String(expression || "").replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, " ");
-
-const getVisibilityExpressionValidationError = (expression) => {
+const getAutomationExpressionValidationError = (expression) => {
   const source = String(expression || "").trim();
   if (!source) return "Expression is empty.";
   const withoutStrings = stripQuotedStrings(source);
@@ -728,6 +1120,12 @@ const getVisibilityExpressionValidationError = (expression) => {
   }
 };
 
+const stripQuotedStrings = (expression) => String(expression || "").replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, " ");
+
+const getVisibilityExpressionValidationError = (expression) => {
+  return getAutomationExpressionValidationError(expression);
+};
+
 const syncVisibilityExpressionValidationUi = () => {
   if (!visibilityExpressionError || !visibilityExpressionSaveBtn) return "";
   const error = getVisibilityExpressionValidationError(visibilityExpressionEditor?.value || "");
@@ -744,7 +1142,7 @@ const compileVisibilityExpression = (expression) => {
   if (!source) return null;
   const cached = visibilityExpressionFunctionCache.get(source);
   if (cached !== undefined) return cached;
-  if (getVisibilityExpressionValidationError(source)) {
+  if (getAutomationExpressionValidationError(source)) {
     visibilityExpressionFunctionCache.set(source, null);
     return null;
   }
@@ -789,6 +1187,9 @@ const evaluateVisibilityExpression = (expression) => {
   }
 };
 
+const compileAutomationExpression = (expression) => compileVisibilityExpression(expression);
+const evaluateAutomationExpression = (expression) => evaluateVisibilityExpression(expression);
+
 const decodeExpressionStringLiteral = (literal) => {
   const source = String(literal || "");
   if (!source) return "";
@@ -823,9 +1224,26 @@ const extractVisibilityExpressionTagKeys = (expression, out) => {
   return target;
 };
 
+const extractAutomationExpressionTagKeys = (expression, out) => extractVisibilityExpressionTagKeys(expression, out);
+
 const isEditingRectVisibilityDynamic = () => {
   const obj = getSelectedRectObject();
   return Boolean(obj && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+};
+
+const isEditingRectColorDynamic = () => {
+  const obj = getSelectedRectObject();
+  return Boolean(obj && currentObjectDynamicTab === "color" && hasRectColorDynamic(obj));
+};
+
+const isEditingRectRotationDynamic = () => {
+  const obj = getSelectedRectObject();
+  return Boolean(obj && currentObjectDynamicTab === "rotation" && hasRectRotationDynamic(obj));
+};
+
+const isEditingRectMotionDynamic = () => {
+  const obj = getSelectedRectObject();
+  return Boolean(obj && currentObjectDynamicTab === "motion" && hasRectMotionDynamic(obj));
 };
 
 const ensureRectVisibilityDraft = (obj) => {
@@ -836,11 +1254,69 @@ const ensureRectVisibilityDraft = (obj) => {
   }
 };
 
+const ensureRectColorDraft = (obj) => {
+  if (!obj || obj.type !== "rect") return;
+  if (rectColorDraftObject !== obj || !rectColorDraft) {
+    const fillAuto = obj.fillAutomation || {};
+    const strokeAuto = obj.strokeAutomation || {};
+    const source = (Object.keys(fillAuto).length ? fillAuto : strokeAuto) || {};
+    rectColorDraftObject = obj;
+    rectColorDraft = cloneRectColorDraft({
+      enabled: source.enabled !== false,
+      sourceType: source.sourceType === "expression" ? "expression" : "tag",
+      expression: source.expression || "",
+      invert: Boolean(source.invert),
+      connection_id: source.connection_id || "",
+      tag: source.tag || "",
+      mode: source.mode || "",
+      threshold: source.threshold,
+      match: source.match || "",
+      fillEnabled: Object.keys(fillAuto).length > 0,
+      fillColor: fillAuto.onColor || "",
+      strokeEnabled: Object.keys(strokeAuto).length > 0,
+      strokeColor: strokeAuto.onColor || ""
+    });
+  }
+};
+
+const ensureRectRotationDraft = (obj) => {
+  if (!obj || obj.type !== "rect") return;
+  if (rectRotationDraftObject !== obj || !rectRotationDraft) {
+    rectRotationDraftObject = obj;
+    rectRotationDraft = cloneRectRotationDraft({
+      pivotMode: normalizePivotMode(obj.pivotMode, obj.type),
+      pivotX: obj.pivotX,
+      pivotY: obj.pivotY,
+      rotationAutomation: normalizeRotationAutomationState(obj.rotationAutomation || { enabled: true })
+    });
+  }
+};
+
+const ensureRectMotionDraft = (obj) => {
+  if (!obj || obj.type !== "rect") return;
+  if (rectMotionDraftObject !== obj || !rectMotionDraft) {
+    rectMotionDraftObject = obj;
+    rectMotionDraft = cloneRectMotionDraft({
+      ...(obj.motion || {}),
+      enabled: obj.motion?.enabled !== false
+    });
+  }
+};
+
 const setObjectDynamicTab = (tab) => {
-  const next = String(tab || "properties").trim() === "visibility" ? "visibility" : "properties";
+  const normalized = String(tab || "properties").trim();
+  const next =
+    normalized === "visibility" ? "visibility" :
+    normalized === "color" ? "color" :
+    normalized === "rotation" ? "rotation" :
+    normalized === "motion" ? "motion" :
+    "properties";
   currentObjectDynamicTab = next;
   if (objectDynamicTabPropertiesBtn) objectDynamicTabPropertiesBtn.classList.toggle("is-active", next === "properties");
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-active", next === "visibility");
+  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-active", next === "color");
+  if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-active", next === "rotation");
+  if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-active", next === "motion");
 };
 
 const ensureRectVisibilityDynamic = () => {
@@ -856,6 +1332,57 @@ const ensureRectVisibilityDynamic = () => {
   }
   ensureRectVisibilityDraft(obj);
   currentObjectDynamicTab = "visibility";
+  updatePropertiesPanel();
+  return true;
+};
+
+const ensureRectColorDynamic = () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedRectObject();
+  if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
+  if (!hasRectColorDynamic(obj)) {
+    recordHistory();
+    obj.fillAutomation = { enabled: true };
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+  }
+  ensureRectColorDraft(obj);
+  currentObjectDynamicTab = "color";
+  updatePropertiesPanel();
+  return true;
+};
+
+const ensureRectRotationDynamic = () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedRectObject();
+  if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
+  if (!hasRectRotationDynamic(obj)) {
+    recordHistory();
+    obj.rotationAutomation = { enabled: true, inputMin: 0, inputMax: 1, angleStart: 0, angleEnd: 0, direction: "shortest" };
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+  }
+  ensureRectRotationDraft(obj);
+  currentObjectDynamicTab = "rotation";
+  updatePropertiesPanel();
+  return true;
+};
+
+const ensureRectMotionDynamic = () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedRectObject();
+  if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
+  if (!hasRectMotionDynamic(obj)) {
+    recordHistory();
+    obj.motion = { enabled: true, inputMin: 0, inputMax: 1 };
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+  }
+  ensureRectMotionDraft(obj);
+  currentObjectDynamicTab = "motion";
   updatePropertiesPanel();
   return true;
 };
@@ -1745,6 +2272,32 @@ const rectFillAutoOnSwatches = document.getElementById("rectFillAutoOnSwatches")
 const rectFillAutoOnSwatchBtn = document.getElementById("rectFillAutoOnSwatchBtn");
 const rectFillAutoOffSwatches = document.getElementById("rectFillAutoOffSwatches");
 const rectFillAutoOffSwatchBtn = document.getElementById("rectFillAutoOffSwatchBtn");
+const rectColorDynamicSection = document.getElementById("rectColorDynamicSection");
+const rectColorEnabledInput = document.getElementById("rectColorEnabled");
+const rectColorInvertInput = document.getElementById("rectColorInvert");
+const rectColorFields = document.getElementById("rectColorFields");
+const rectColorSourceTypeSelect = document.getElementById("rectColorSourceType");
+const rectColorConnectionRow = document.getElementById("rectColorConnectionRow");
+const rectColorConnectionInput = document.getElementById("rectColorConnection");
+const rectColorTagRow = document.getElementById("rectColorTagRow");
+const rectColorTagSelect = document.getElementById("rectColorTag");
+const rectColorModeRow = document.getElementById("rectColorModeRow");
+const rectColorModeSelect = document.getElementById("rectColorMode");
+const rectColorThresholdRow = document.getElementById("rectColorThresholdRow");
+const rectColorThresholdInput = document.getElementById("rectColorThreshold");
+const rectColorMatchRow = document.getElementById("rectColorMatchRow");
+const rectColorMatchInput = document.getElementById("rectColorMatch");
+const rectColorExpressionRow = document.getElementById("rectColorExpressionRow");
+const rectColorExpressionSummary = document.getElementById("rectColorExpressionSummary");
+const rectColorExpressionEditBtn = document.getElementById("rectColorExpressionEditBtn");
+const rectColorFillEnabledInput = document.getElementById("rectColorFillEnabled");
+const rectColorStrokeEnabledInput = document.getElementById("rectColorStrokeEnabled");
+const rectColorFillRow = document.getElementById("rectColorFillRow");
+const rectColorFillInput = document.getElementById("rectColorFill");
+const rectColorFillTextInput = document.getElementById("rectColorFillText");
+const rectColorStrokeRow = document.getElementById("rectColorStrokeRow");
+const rectColorStrokeInput = document.getElementById("rectColorStroke");
+const rectColorStrokeTextInput = document.getElementById("rectColorStrokeText");
 const ellipseProps = document.getElementById("ellipseProps");
 const ellipseXInput = document.getElementById("ellipseX");
 const ellipseYInput = document.getElementById("ellipseY");
@@ -1973,6 +2526,10 @@ const visibilityActionRow = document.getElementById("visibilityActionRow");
 const visibilitySaveBtn = document.getElementById("visibilitySaveBtn");
 const visibilityCancelBtn = document.getElementById("visibilityCancelBtn");
 const visibilityDeleteBtn = document.getElementById("visibilityDeleteBtn");
+const colorActionRow = document.getElementById("colorActionRow");
+const colorSaveBtn = document.getElementById("colorSaveBtn");
+const colorCancelBtn = document.getElementById("colorCancelBtn");
+const colorDeleteBtn = document.getElementById("colorDeleteBtn");
 const visibilityExpressionOverlay = document.getElementById("visibilityExpressionOverlay");
 const visibilityExpressionCloseBtn = document.getElementById("visibilityExpressionCloseBtn");
 const visibilityExpressionEditor = document.getElementById("visibilityExpressionEditor");
@@ -1985,6 +2542,23 @@ const visibilityExprArithmeticBtn = document.getElementById("visibilityExprArith
 const visibilityExprRelationalBtn = document.getElementById("visibilityExprRelationalBtn");
 const visibilityExprLogicalBtn = document.getElementById("visibilityExprLogicalBtn");
 const visibilityExprFunctionsBtn = document.getElementById("visibilityExprFunctionsBtn");
+const rectColorExpressionOverlay = document.getElementById("rectColorExpressionOverlay");
+const rectColorExpressionCloseBtn = document.getElementById("rectColorExpressionCloseBtn");
+const rectColorExpressionEditor = document.getElementById("rectColorExpressionEditor");
+const rectColorExpressionSaveBtn = document.getElementById("rectColorExpressionSaveBtn");
+const rectColorExpressionCancelBtn = document.getElementById("rectColorExpressionCancelBtn");
+const rectColorExpressionClearBtn = document.getElementById("rectColorExpressionClearBtn");
+const rectColorExpressionError = document.getElementById("rectColorExpressionError");
+const rectColorExpressionInsertMenu = document.getElementById("rectColorExpressionInsertMenu");
+const rectColorExprArithmeticBtn = document.getElementById("rectColorExprArithmeticBtn");
+const rectColorExprRelationalBtn = document.getElementById("rectColorExprRelationalBtn");
+const rectColorExprLogicalBtn = document.getElementById("rectColorExprLogicalBtn");
+const rectColorExprFunctionsBtn = document.getElementById("rectColorExprFunctionsBtn");
+const rectColorExprTagsBtn = document.getElementById("rectColorExprTagsBtn");
+const rectColorExpressionTagPicker = document.getElementById("rectColorExpressionTagPicker");
+const rectColorExprTagConnection = document.getElementById("rectColorExprTagConnection");
+const rectColorExprTagName = document.getElementById("rectColorExprTagName");
+const rectColorExprInsertTagBtn = document.getElementById("rectColorExprInsertTagBtn");
 const visibilityExprTagsBtn = document.getElementById("visibilityExprTagsBtn");
 const visibilityExpressionTagPicker = document.getElementById("visibilityExpressionTagPicker");
 const visibilityExprTagConnection = document.getElementById("visibilityExprTagConnection");
@@ -4436,14 +5010,20 @@ const getAutomationState = (value, config) => {
 
 const getAutomationColor = (config, baseColor) => {
   if (!config || !config.enabled || isEditMode) return baseColor;
+  if (config.sourceType === "expression") {
+    const result = evaluateAutomationExpression(config.expression);
+    if (result === null || result === undefined) return baseColor;
+    const isOn = config.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
+    return isOn ? (config.onColor || baseColor) : (config.offColor ?? baseColor);
+  }
   const connectionId = String(config.connection_id || "");
   const tag = String(config.tag || "");
   if (!connectionId || !tag) return baseColor;
   const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
   const state = getAutomationState(rawValue, config);
-  if (state === null) return config.offColor || baseColor;
+  if (state === null) return config.offColor ?? baseColor;
   if (state) return config.onColor || baseColor;
-  return config.offColor || baseColor;
+  return config.offColor ?? baseColor;
 };
 
 const getAutomationText = (config, baseText, bindings = {}, previewOnly = false) => {
@@ -5319,7 +5899,7 @@ const updateMenuState = () => {
     && selectedIndices.every((idx) => canSizeMatchObject(activeObjects[idx]));
   const canReorder = selectedIndices.length > 0;
   const canFlip = selectedIndices.length > 0;
-  const canAddRectVisibility = Boolean(getSelectedRectObject());
+  const canAddRectDynamic = Boolean(getSelectedRectObject());
   const toggleItem = (el) => {
     if (!el) return;
     const disabled = el === groupMenuBtn ? !canGroup
@@ -5345,8 +5925,8 @@ const updateMenuState = () => {
   };
   const toggleDynamicItem = (el) => {
     if (!el) return;
-    el.classList.toggle("is-disabled", !canAddRectVisibility);
-    el.disabled = !canAddRectVisibility;
+    el.classList.toggle("is-disabled", !canAddRectDynamic);
+    el.disabled = !canAddRectDynamic;
   };
   if (explodeSelectedSvgBtn) {
     explodeSelectedSvgBtn.classList.toggle("is-disabled", !canExplodeSvg);
@@ -5379,6 +5959,9 @@ const updateMenuState = () => {
   toggleReorderItem(moveToBackMenuBtn);
   toggleDynamicItem(dynamicsMenuBtn);
   toggleDynamicItem(dynamicsAddVisibilityMenuBtn);
+  toggleDynamicItem(dynamicsAddColorMenuBtn);
+  toggleDynamicItem(dynamicsAddRotationMenuBtn);
+  toggleDynamicItem(dynamicsAddMotionMenuBtn);
 };
 
 const setMenuOpen = (isOpen) => {
@@ -5451,7 +6034,7 @@ const collectTagKeysFromValue = (value, out, depth = 0) => {
     if (key) out.add(key);
   }
   if (value.sourceType === "expression" && typeof value.expression === "string") {
-    extractVisibilityExpressionTagKeys(value.expression, out);
+    extractAutomationExpressionTagKeys(value.expression, out);
   }
 
   Object.values(value).forEach((v) => {
@@ -6027,6 +6610,10 @@ const refreshVisibilityTagOptions = () => {
   populateTagSelect(visibilityTagSelect);
 };
 
+const refreshRectColorTagOptions = () => {
+  populateTagSelect(rectColorTagSelect);
+};
+
 const refreshAutomationTagOptions = () => {
   populateTagSelect(textAutoTagSelect);
   if (textStateAutomationControl?.tagSelect) populateTagSelect(textStateAutomationControl.tagSelect);
@@ -6169,6 +6756,7 @@ const loadTags = async () => {
     refreshNumberInputTagOptions();
     refreshIndicatorTagOptions();
     refreshVisibilityTagOptions();
+    refreshRectColorTagOptions();
     refreshAutomationTagOptions();
     const filtered = applyTagsFilter(sortedAll);
     renderTagsList(filtered);
@@ -6206,6 +6794,7 @@ const loadTags = async () => {
 	    refreshNumberInputTagOptions();
 	    refreshIndicatorTagOptions();
 	    refreshVisibilityTagOptions();
+	    refreshRectColorTagOptions();
 	    refreshAutomationTagOptions();
       renderTagsList([]);
 	  }
@@ -9686,6 +10275,10 @@ const syncPropertiesFromSelection = () => {
     if (rectStrokeAutoOnTextInput) setInputValueSafe(rectStrokeAutoOnTextInput, strokeAuto.onColor || "");
     if (rectStrokeAutoOffInput) rectStrokeAutoOffInput.value = strokeAuto.offColor || strokeValue;
     if (rectStrokeAutoOffTextInput) setInputValueSafe(rectStrokeAutoOffTextInput, strokeAuto.offColor || "");
+    if (isEditingRectColorDynamic()) {
+      ensureRectColorDraft(obj);
+      syncRectColorUiFromDraft(obj, rectColorDraft);
+    }
   }
   if (obj.type === "ellipse") {
     if (ellipseXInput) ellipseXInput.value = Number(obj.x) || 0;
@@ -10069,23 +10662,84 @@ const updatePropertiesPanel = () => {
   if (automationLaunchRow) automationLaunchRow.classList.toggle("is-hidden", !showAutomationLaunch);
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
   if (showDynamicRect && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
+  if (showDynamicRect && !hasRectColorDynamic(obj) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
+  if (showDynamicRect && !hasRectRotationDynamic(obj) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
+  if (showDynamicRect && !hasRectMotionDynamic(obj) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
   if (!showDynamicRect) {
     currentObjectDynamicTab = "properties";
     rectVisibilityDraft = null;
     rectVisibilityDraftObject = null;
+    rectColorDraft = null;
+    rectColorDraftObject = null;
+    rectRotationDraft = null;
+    rectRotationDraftObject = null;
+    rectMotionDraft = null;
+    rectMotionDraftObject = null;
   }
   if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !showDynamicRect);
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !(showDynamicRect && hasVisibilityDynamic(obj)));
+  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !(showDynamicRect && hasRectColorDynamic(obj)));
+  if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !(showDynamicRect && hasRectRotationDynamic(obj)));
+  if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !(showDynamicRect && hasRectMotionDynamic(obj)));
   if (showDynamicRect) setObjectDynamicTab(currentObjectDynamicTab);
+  [
+    rectStrokeAutoHeader,
+    rectStrokeAutoFields?.previousElementSibling,
+    rectStrokeAutoFields,
+    rectFillAutoFields?.previousElementSibling,
+    rectFillAutoFields
+  ].forEach((node) => {
+    if (node && showDynamicRect) {
+      node.classList.add("is-hidden");
+      node.hidden = true;
+    }
+  });
   const showRectVisibilityTab = showDynamicRect && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
+  const showRectColorTab = showDynamicRect && currentObjectDynamicTab === "color" && hasRectColorDynamic(obj);
+  const showRectRotationTab = showDynamicRect && currentObjectDynamicTab === "rotation" && hasRectRotationDynamic(obj);
+  const showRectMotionTab = showDynamicRect && currentObjectDynamicTab === "motion" && hasRectMotionDynamic(obj);
   if (showRectVisibilityTab) ensureRectVisibilityDraft(obj);
-  if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab);
+  if (showRectColorTab) ensureRectColorDraft(obj);
+  if (showRectRotationTab) ensureRectRotationDraft(obj);
+  if (showRectMotionTab) ensureRectMotionDraft(obj);
+  if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
+  if (objectDynamicColorHost) objectDynamicColorHost.classList.toggle("is-hidden", !showRectColorTab);
+  if (objectDynamicRotationHost) objectDynamicRotationHost.classList.toggle("is-hidden", !showRectRotationTab);
+  if (objectDynamicMotionHost) objectDynamicMotionHost.classList.toggle("is-hidden", !showRectMotionTab);
   if (visibilityProps && objectDynamicVisibilityHost && showRectVisibilityTab) {
     if (visibilityProps.parentNode !== objectDynamicVisibilityHost) objectDynamicVisibilityHost.appendChild(visibilityProps);
     visibilityProps.classList.remove("is-hidden");
   }
+  if (showRectColorTab && objectDynamicColorHost) {
+    [
+      rectColorDynamicSection,
+      colorActionRow
+    ].forEach((node) => {
+      if (node && node.parentNode !== objectDynamicColorHost) objectDynamicColorHost.appendChild(node);
+      if (node) node.classList.remove("is-hidden");
+    });
+  }
+  if (showRectRotationTab && objectDynamicRotationHost) {
+    const control = getRectRotationControl();
+    if (control?.sectionEl && control.sectionEl.parentNode !== objectDynamicRotationHost) objectDynamicRotationHost.appendChild(control.sectionEl);
+    if (control?.sectionEl) control.sectionEl.classList.remove("is-hidden");
+    if (rectRotationActionRow && rectRotationActionRow.parentNode !== objectDynamicRotationHost) objectDynamicRotationHost.appendChild(rectRotationActionRow);
+    if (rectRotationActionRow) rectRotationActionRow.classList.remove("is-hidden");
+    syncRectRotationControlFromDraft(obj);
+  }
+  if (showRectMotionTab && objectDynamicMotionHost) {
+    const control = getRectMotionControl();
+    if (control?.sectionEl && control.sectionEl.parentNode !== objectDynamicMotionHost) objectDynamicMotionHost.appendChild(control.sectionEl);
+    if (control?.sectionEl) control.sectionEl.classList.remove("is-hidden");
+    if (rectMotionActionRow && rectMotionActionRow.parentNode !== objectDynamicMotionHost) objectDynamicMotionHost.appendChild(rectMotionActionRow);
+    if (rectMotionActionRow) rectMotionActionRow.classList.remove("is-hidden");
+    syncRectMotionControlFromDraft(obj);
+  }
   if (visibilityActionRow) visibilityActionRow.classList.toggle("is-hidden", !showRectVisibilityTab);
+  if (colorActionRow) colorActionRow.classList.toggle("is-hidden", !showRectColorTab);
+  if (rectRotationActionRow) rectRotationActionRow.classList.toggle("is-hidden", !showRectRotationTab);
+  if (rectMotionActionRow) rectMotionActionRow.classList.toggle("is-hidden", !showRectMotionTab);
   updateMenuState();
   if (automationPanelOpen) populateAutomationPanel();
 	  if (isMulti) {
@@ -10590,6 +11244,24 @@ const updateAutomationProperty = (key, patch) => {
   const obj = activeObjects[index];
   if (!obj) return;
   if (obj.type === "viewport") return;
+  if (isEditingRectColorDynamic() && (key === "fillAutomation" || key === "strokeAutomation")) {
+    ensureRectColorDraft(obj);
+    const current = rectColorDraft?.[key] || { enabled: true };
+    const next = { ...current, ...patch };
+    if ("threshold" in patch && (patch.threshold === "" || patch.threshold === null || patch.threshold === undefined)) delete next.threshold;
+    if ("match" in patch && (patch.match === "" || patch.match === null || patch.match === undefined)) delete next.match;
+    if ("mode" in patch && !patch.mode) delete next.mode;
+    if ("connection_id" in patch && !patch.connection_id) delete next.connection_id;
+    if ("tag" in patch && !patch.tag) delete next.tag;
+    if ("onColor" in patch && !patch.onColor) delete next.onColor;
+    if ("offColor" in patch && !patch.offColor) delete next.offColor;
+    if ("enabled" in patch && patch.enabled === false) next.enabled = false;
+    else if (next.enabled == null) next.enabled = true;
+    rectColorDraft = { ...(rectColorDraft || {}), [key]: next };
+    syncRectColorUiFromDraft(obj, rectColorDraft);
+    renderCompactTagBindingRows();
+    return;
+  }
   recordHistory();
   const current = obj[key] || { enabled: true };
   const next = { ...current, ...patch };
@@ -11264,6 +11936,30 @@ function bindScreenManager() {
       setDynamicsFlyoutOpen(false);
       setMenuOpen(false);
       ensureRectVisibilityDynamic();
+    });
+  }
+
+  if (dynamicsAddColorMenuBtn) {
+    dynamicsAddColorMenuBtn.addEventListener("click", () => {
+      setDynamicsFlyoutOpen(false);
+      setMenuOpen(false);
+      ensureRectColorDynamic();
+    });
+  }
+
+  if (dynamicsAddRotationMenuBtn) {
+    dynamicsAddRotationMenuBtn.addEventListener("click", () => {
+      setDynamicsFlyoutOpen(false);
+      setMenuOpen(false);
+      ensureRectRotationDynamic();
+    });
+  }
+
+  if (dynamicsAddMotionMenuBtn) {
+    dynamicsAddMotionMenuBtn.addEventListener("click", () => {
+      setDynamicsFlyoutOpen(false);
+      setMenuOpen(false);
+      ensureRectMotionDynamic();
     });
   }
 
@@ -15172,6 +15868,107 @@ if (visibilityExpressionOverlay) {
   });
 }
 
+if (rectColorExpressionCloseBtn) {
+  rectColorExpressionCloseBtn.addEventListener("click", () => closeRectColorExpressionModal());
+}
+
+if (rectColorExpressionCancelBtn) {
+  rectColorExpressionCancelBtn.addEventListener("click", () => closeRectColorExpressionModal());
+}
+
+if (rectColorExpressionClearBtn) {
+  rectColorExpressionClearBtn.addEventListener("click", () => {
+    if (rectColorExpressionEditor) rectColorExpressionEditor.value = "";
+    syncRectColorExpressionValidationUi();
+    if (rectColorExpressionEditor) rectColorExpressionEditor.focus();
+  });
+}
+
+if (rectColorExpressionSaveBtn) {
+  rectColorExpressionSaveBtn.addEventListener("click", () => {
+    const error = syncRectColorExpressionValidationUi();
+    if (error) return;
+    const nextExpression = String(rectColorExpressionEditor?.value || "");
+    updateRectColorDraft({ sourceType: "expression", expression: nextExpression, enabled: true });
+    closeRectColorExpressionModal();
+  });
+}
+
+if (rectColorExpressionEditor) {
+  rectColorExpressionEditor.addEventListener("input", () => {
+    syncRectColorExpressionValidationUi();
+  });
+}
+
+if (rectColorExprArithmeticBtn) {
+  rectColorExprArithmeticBtn.addEventListener("click", () => {
+    setRectColorExpressionTagPickerVisible(false);
+    showRectColorExpressionInsertMenu(rectColorExprArithmeticBtn, getVisibilityExpressionHelperItems("arithmetic"));
+  });
+}
+
+if (rectColorExprRelationalBtn) {
+  rectColorExprRelationalBtn.addEventListener("click", () => {
+    setRectColorExpressionTagPickerVisible(false);
+    showRectColorExpressionInsertMenu(rectColorExprRelationalBtn, getVisibilityExpressionHelperItems("relational"));
+  });
+}
+
+if (rectColorExprLogicalBtn) {
+  rectColorExprLogicalBtn.addEventListener("click", () => {
+    setRectColorExpressionTagPickerVisible(false);
+    showRectColorExpressionInsertMenu(rectColorExprLogicalBtn, getVisibilityExpressionHelperItems("logical"));
+  });
+}
+
+if (rectColorExprFunctionsBtn) {
+  rectColorExprFunctionsBtn.addEventListener("click", () => {
+    setRectColorExpressionTagPickerVisible(false);
+    showRectColorExpressionInsertMenu(rectColorExprFunctionsBtn, getVisibilityExpressionHelperItems("functions"));
+  });
+}
+
+if (rectColorExprTagsBtn) {
+  rectColorExprTagsBtn.addEventListener("click", () => {
+    hideRectColorExpressionInsertMenu();
+    const nextVisible = rectColorExpressionTagPicker?.classList.contains("is-hidden") ?? true;
+    setRectColorExpressionTagPickerVisible(nextVisible);
+    if (nextVisible) {
+      populateRectColorExpressionConnectionOptions();
+      populateRectColorExpressionTagOptions();
+      requestAnimationFrame(() => rectColorExprTagConnection?.focus());
+    }
+  });
+}
+
+if (rectColorExprTagConnection) {
+  rectColorExprTagConnection.addEventListener("change", () => {
+    populateRectColorExpressionTagOptions(rectColorExprTagConnection.value);
+  });
+}
+
+if (rectColorExprInsertTagBtn) {
+  rectColorExprInsertTagBtn.addEventListener("click", () => {
+    const connectionId = String(rectColorExprTagConnection?.value || "").trim();
+    const tagName = String(rectColorExprTagName?.value || "").trim();
+    if (!connectionId || !tagName) return;
+    insertRectColorExpressionText(`tag(${JSON.stringify(connectionId)}, ${JSON.stringify(tagName)})`);
+    setRectColorExpressionTagPickerVisible(false);
+  });
+}
+
+if (rectColorExpressionOverlay) {
+  rectColorExpressionOverlay.addEventListener("click", (event) => {
+    if (event.target === rectColorExpressionOverlay) closeRectColorExpressionModal();
+  });
+  rectColorExpressionOverlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeRectColorExpressionModal();
+    }
+  });
+}
+
 if (visibilitySaveBtn) {
   visibilitySaveBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
@@ -15208,6 +16005,190 @@ if (visibilityDeleteBtn) {
     delete obj.visibility;
     rectVisibilityDraft = null;
     rectVisibilityDraftObject = null;
+    currentObjectDynamicTab = "properties";
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+    updatePropertiesPanel();
+  });
+}
+
+if (rectColorEnabledInput) {
+  rectColorEnabledInput.addEventListener("change", () => {
+    updateRectColorDraft({ enabled: rectColorEnabledInput.checked });
+  });
+}
+
+if (rectColorSourceTypeSelect) {
+  rectColorSourceTypeSelect.addEventListener("change", () => {
+    const sourceType = rectColorSourceTypeSelect.value === "expression" ? "expression" : "tag";
+    updateRectColorDraft(sourceType === "expression"
+      ? { sourceType, enabled: true, expression: rectColorDraft?.expression || "" }
+      : { sourceType, enabled: true, connection_id: rectColorDraft?.connection_id || "", tag: rectColorDraft?.tag || "" });
+  });
+}
+
+if (rectColorInvertInput) {
+  rectColorInvertInput.addEventListener("change", () => {
+    updateRectColorDraft({ invert: rectColorInvertInput.checked });
+  });
+}
+
+if (rectColorConnectionInput) {
+  rectColorConnectionInput.addEventListener("change", () => {
+    updateRectColorDraft({ connection_id: rectColorConnectionInput.value.trim() });
+  });
+}
+
+if (rectColorTagSelect) {
+  rectColorTagSelect.addEventListener("change", () => {
+    const value = String(rectColorTagSelect.value || "");
+    if (!value) {
+      updateRectColorDraft({ tag: "" });
+      return;
+    }
+    const [connectionId, tagName] = value.split("::");
+    if (rectColorConnectionInput) rectColorConnectionInput.value = connectionId || "";
+    updateRectColorDraft({ connection_id: connectionId || "", tag: tagName || "" });
+  });
+}
+
+if (rectColorModeSelect) {
+  rectColorModeSelect.addEventListener("change", () => {
+    const mode = rectColorModeSelect.value === "equals" ? "equals" : "threshold";
+    applyRectColorModeUi(mode);
+    updateRectColorDraft({ mode });
+  });
+}
+
+if (rectColorThresholdInput) {
+  rectColorThresholdInput.addEventListener("change", () => {
+    const raw = rectColorThresholdInput.value.trim();
+    if (!raw) {
+      updateRectColorDraft({ mode: "threshold", threshold: "" });
+      return;
+    }
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return;
+    updateRectColorDraft({ mode: "threshold", threshold: num });
+  });
+}
+
+if (rectColorMatchInput) {
+  rectColorMatchInput.addEventListener("change", () => {
+    updateRectColorDraft({ mode: "equals", match: rectColorMatchInput.value.trim() });
+  });
+}
+
+if (rectColorExpressionEditBtn) {
+  rectColorExpressionEditBtn.addEventListener("click", () => openRectColorExpressionModal());
+}
+
+if (rectColorFillEnabledInput) {
+  rectColorFillEnabledInput.addEventListener("change", () => {
+    updateRectColorDraft({ fillEnabled: rectColorFillEnabledInput.checked });
+  });
+}
+
+if (rectColorStrokeEnabledInput) {
+  rectColorStrokeEnabledInput.addEventListener("change", () => {
+    updateRectColorDraft({ strokeEnabled: rectColorStrokeEnabledInput.checked });
+  });
+}
+
+if (rectColorFillInput) {
+  rectColorFillInput.addEventListener("input", () => {
+    updateRectColorDraft({ fillColor: rectColorFillInput.value, fillEnabled: true });
+    if (rectColorFillTextInput) rectColorFillTextInput.value = rectColorFillInput.value;
+  });
+}
+
+if (rectColorFillTextInput) {
+  rectColorFillTextInput.addEventListener("change", () => {
+    const value = rectColorFillTextInput.value.trim();
+    if (!value) return;
+    updateRectColorDraft({ fillColor: value, fillEnabled: true });
+    if (rectColorFillInput && isHexColor(value)) rectColorFillInput.value = value;
+  });
+}
+
+if (rectColorStrokeInput) {
+  rectColorStrokeInput.addEventListener("input", () => {
+    updateRectColorDraft({ strokeColor: rectColorStrokeInput.value, strokeEnabled: true });
+    if (rectColorStrokeTextInput) rectColorStrokeTextInput.value = rectColorStrokeInput.value;
+  });
+}
+
+if (rectColorStrokeTextInput) {
+  rectColorStrokeTextInput.addEventListener("change", () => {
+    const value = rectColorStrokeTextInput.value.trim();
+    if (!value) return;
+    updateRectColorDraft({ strokeColor: value, strokeEnabled: true });
+    if (rectColorStrokeInput && isHexColor(value)) rectColorStrokeInput.value = value;
+  });
+}
+
+if (colorSaveBtn) {
+  colorSaveBtn.addEventListener("click", () => {
+    const activeObjects = getActiveObjects();
+    const obj = getSelectedRectObject();
+    if (!activeObjects || !obj || !isEditingRectColorDynamic()) return;
+    ensureRectColorDraft(obj);
+    if (rectColorDraft?.sourceType === "expression" && getAutomationExpressionValidationError(rectColorDraft?.expression || "")) return;
+    recordHistory();
+    const shared = {
+      enabled: rectColorDraft?.enabled !== false,
+      sourceType: rectColorDraft?.sourceType === "expression" ? "expression" : "tag",
+      expression: rectColorDraft?.expression || "",
+      invert: Boolean(rectColorDraft?.invert),
+      connection_id: rectColorDraft?.connection_id || "",
+      tag: rectColorDraft?.tag || "",
+      mode: rectColorDraft?.mode || "",
+      threshold: rectColorDraft?.threshold,
+      match: rectColorDraft?.match || ""
+    };
+    if (rectColorDraft?.fillEnabled) {
+      obj.fillAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.fillColor || "" });
+    } else {
+      delete obj.fillAutomation;
+    }
+    if (rectColorDraft?.strokeEnabled) {
+      obj.strokeAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
+    } else {
+      delete obj.strokeAutomation;
+    }
+    rectColorDraftObject = obj;
+    rectColorDraft = null;
+    ensureRectColorDraft(obj);
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+    updatePropertiesPanel();
+  });
+}
+
+if (colorCancelBtn) {
+  colorCancelBtn.addEventListener("click", () => {
+    const obj = getSelectedRectObject();
+    if (!obj || !isEditingRectColorDynamic()) return;
+    rectColorDraft = null;
+    rectColorDraftObject = obj;
+    ensureRectColorDraft(obj);
+    syncRectColorUiFromDraft(obj, rectColorDraft);
+    renderCompactTagBindingRows();
+  });
+}
+
+if (colorDeleteBtn) {
+  colorDeleteBtn.addEventListener("click", () => {
+    const activeObjects = getActiveObjects();
+    const obj = getSelectedRectObject();
+    if (!activeObjects || !obj || !hasRectColorDynamic(obj)) return;
+    recordHistory();
+    delete obj.fillAutomation;
+    delete obj.strokeAutomation;
+    rectColorDraft = null;
+    rectColorDraftObject = null;
     currentObjectDynamicTab = "properties";
     renderScreen();
     syncEditorFromScreen();
@@ -15541,6 +16522,37 @@ const updateSelectedObjectRotationConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!obj || !ROTATION_PIVOT_TYPES.has(String(obj.type || ""))) return;
+  if (isEditingRectRotationDynamic() && obj.type === "rect") {
+    ensureRectRotationDraft(obj);
+    const next = cloneRectRotationDraft(rectRotationDraft || {});
+    if ("pivotMode" in patch) {
+      const mode = normalizePivotMode(patch.pivotMode, obj.type);
+      next.pivotMode = mode;
+      if (mode !== "custom") {
+        delete next.pivotX;
+        delete next.pivotY;
+      }
+    }
+    if ("pivotX" in patch) {
+      const value = Number(patch.pivotX);
+      if (Number.isFinite(value)) next.pivotX = value;
+      else delete next.pivotX;
+    }
+    if ("pivotY" in patch) {
+      const value = Number(patch.pivotY);
+      if (Number.isFinite(value)) next.pivotY = value;
+      else delete next.pivotY;
+    }
+    if ("rotationAutomation" in patch) {
+      next.rotationAutomation = normalizeRotationAutomationState({
+        ...(next.rotationAutomation || {}),
+        ...(patch.rotationAutomation || {})
+      });
+    }
+    rectRotationDraft = next;
+    syncRectRotationControlFromDraft(obj);
+    return;
+  }
   recordHistory();
   if ("pivotMode" in patch) {
     const mode = normalizePivotMode(patch.pivotMode, obj.type);
@@ -15802,7 +16814,9 @@ const initializeRotationControls = () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
         if (!obj || !control.types.includes(obj.type)) return { connection_id: "", tag: "" };
-        const automation = obj.rotationAutomation || {};
+        const automation = (control.id === "rect" && isEditingRectRotationDynamic())
+          ? (rectRotationDraft?.rotationAutomation || {})
+          : (obj.rotationAutomation || {});
         return {
           connection_id: String(automation.connection_id || "").trim(),
           tag: String(automation.tag || "").trim()
@@ -15814,6 +16828,9 @@ const initializeRotationControls = () => {
       getSummary: () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+        if (control.id === "rect" && isEditingRectRotationDynamic()) {
+          return getRotationAutomationSummary(rectRotationDraft?.rotationAutomation || {});
+        }
         return getRotationAutomationSummary(obj?.rotationAutomation || {});
       },
       summaryEl: sourceSummary
@@ -15876,6 +16893,106 @@ const initializeRotationControls = () => {
 
 initializeRotationControls();
 
+function getRectRotationControl() {
+  return rotationControlConfigs.find((control) => control.id === "rect") || null;
+}
+
+const rectRotationActionLabel = document.createElement("label");
+rectRotationActionLabel.textContent = "Actions";
+const rectRotationActionInline = document.createElement("div");
+rectRotationActionInline.className = "prop-inline";
+rectRotationActionRow = document.createElement("div");
+rectRotationActionRow.id = "rectRotationActionRow";
+rectRotationActionRow.className = "prop-row is-hidden";
+rectRotationSaveBtn = document.createElement("button");
+rectRotationSaveBtn.id = "rectRotationSaveBtn";
+rectRotationSaveBtn.className = "panel-btn";
+rectRotationSaveBtn.type = "button";
+rectRotationSaveBtn.textContent = "Save";
+rectRotationCancelBtn = document.createElement("button");
+rectRotationCancelBtn.id = "rectRotationCancelBtn";
+rectRotationCancelBtn.className = "panel-btn";
+rectRotationCancelBtn.type = "button";
+rectRotationCancelBtn.textContent = "Cancel";
+rectRotationDeleteBtn = document.createElement("button");
+rectRotationDeleteBtn.id = "rectRotationDeleteBtn";
+rectRotationDeleteBtn.className = "panel-btn";
+rectRotationDeleteBtn.type = "button";
+rectRotationDeleteBtn.textContent = "Delete";
+rectRotationActionInline.appendChild(rectRotationSaveBtn);
+rectRotationActionInline.appendChild(rectRotationCancelBtn);
+rectRotationActionInline.appendChild(rectRotationDeleteBtn);
+rectRotationActionRow.appendChild(rectRotationActionLabel);
+rectRotationActionRow.appendChild(rectRotationActionInline);
+
+rectRotationSaveBtn.addEventListener("click", () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedRectObject();
+  if (!activeObjects || !obj || !isEditingRectRotationDynamic()) return;
+  ensureRectRotationDraft(obj);
+  recordHistory();
+  obj.pivotMode = normalizePivotMode(rectRotationDraft?.pivotMode, obj.type);
+  if (obj.pivotMode === "custom") {
+    if (Number.isFinite(Number(rectRotationDraft?.pivotX))) obj.pivotX = Number(rectRotationDraft.pivotX);
+    else delete obj.pivotX;
+    if (Number.isFinite(Number(rectRotationDraft?.pivotY))) obj.pivotY = Number(rectRotationDraft.pivotY);
+    else delete obj.pivotY;
+  } else {
+    delete obj.pivotX;
+    delete obj.pivotY;
+  }
+  obj.rotationAutomation = normalizeRotationAutomationState(rectRotationDraft?.rotationAutomation || { enabled: true });
+  rectRotationDraftObject = obj;
+  rectRotationDraft = null;
+  ensureRectRotationDraft(obj);
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  updatePropertiesPanel();
+});
+
+rectRotationCancelBtn.addEventListener("click", () => {
+  const obj = getSelectedRectObject();
+  if (!obj || !isEditingRectRotationDynamic()) return;
+  rectRotationDraft = null;
+  rectRotationDraftObject = obj;
+  ensureRectRotationDraft(obj);
+  syncRectRotationControlFromDraft(obj);
+  renderCompactTagBindingRows();
+});
+
+rectRotationDeleteBtn.addEventListener("click", () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedRectObject();
+  if (!activeObjects || !obj || !hasRectRotationDynamic(obj)) return;
+  recordHistory();
+  delete obj.rotationAutomation;
+  delete obj.pivotMode;
+  delete obj.pivotX;
+  delete obj.pivotY;
+  rectRotationDraft = null;
+  rectRotationDraftObject = null;
+  currentObjectDynamicTab = "properties";
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  updatePropertiesPanel();
+});
+
+function syncRectRotationControlFromDraft(obj) {
+  const control = getRectRotationControl();
+  if (!control || !obj) return;
+  ensureRectRotationDraft(obj);
+  const draftObj = {
+    ...obj,
+    pivotMode: rectRotationDraft?.pivotMode ?? obj.pivotMode,
+    pivotX: rectRotationDraft?.pivotX,
+    pivotY: rectRotationDraft?.pivotY,
+    rotationAutomation: normalizeRotationAutomationState(rectRotationDraft?.rotationAutomation || {})
+  };
+  syncRotationControls(draftObj);
+}
+
 const syncRotationControls = (obj) => {
   rotationControlConfigs.forEach((control) => {
     if (!obj || !control.types.includes(obj.type)) return;
@@ -15923,6 +17040,21 @@ const updateSelectedObjectMotionConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!supportsMotionPose(obj)) return;
+  if (isEditingRectMotionDynamic() && obj.type === "rect") {
+    ensureRectMotionDraft(obj);
+    const next = cloneRectMotionDraft(rectMotionDraft || {});
+    Object.assign(next, patch || {});
+    if ("connection_id" in next && !String(next.connection_id || "").trim()) delete next.connection_id;
+    if ("tag" in next && !String(next.tag || "").trim()) delete next.tag;
+    if (!Number.isFinite(Number(next.inputMin))) next.inputMin = 0;
+    else next.inputMin = Number(next.inputMin);
+    if (!Number.isFinite(Number(next.inputMax))) next.inputMax = 1;
+    else next.inputMax = Number(next.inputMax);
+    if (next.enabled === undefined) next.enabled = true;
+    rectMotionDraft = next;
+    syncRectMotionControlFromDraft(obj);
+    return;
+  }
   recordHistory();
   const current = obj.motion || {};
   const merged = { ...current, ...(patch || {}) };
@@ -15961,7 +17093,10 @@ const startPoseEdit = (poseKey) => {
   if (poseEditSession) cancelPoseEdit({ keepTool: true });
   const currentPose = captureMotionPose(obj);
   if (!currentPose) return;
-  const editPose = obj.motion?.[poseKey] || currentPose;
+  const sourceMotion = (isEditingRectMotionDynamic() && obj.type === "rect")
+    ? (ensureRectMotionDraft(obj), rectMotionDraft || {})
+    : (obj.motion || {});
+  const editPose = sourceMotion?.[poseKey] || currentPose;
   poseEditSession = {
     object: obj,
     poseKey,
@@ -15982,16 +17117,25 @@ const savePoseEdit = () => {
   if (!capturedPose) return;
   applyMotionPoseToObject(session.object, session.originalPose);
   poseEditSession = null;
-  recordHistory();
-  session.object.motion = {
-    ...(session.object.motion || {}),
-    enabled: session.object.motion?.enabled !== false,
-    [session.poseKey]: capturedPose
-  };
+  if (isEditingRectMotionDynamic() && session.object.type === "rect") {
+    ensureRectMotionDraft(session.object);
+    rectMotionDraft = {
+      ...(rectMotionDraft || {}),
+      enabled: rectMotionDraft?.enabled !== false,
+      [session.poseKey]: capturedPose
+    };
+  } else {
+    recordHistory();
+    session.object.motion = {
+      ...(session.object.motion || {}),
+      enabled: session.object.motion?.enabled !== false,
+      [session.poseKey]: capturedPose
+    };
+    setDirty(true);
+  }
   renderScreen();
   syncEditorFromScreen();
   updatePropertiesPanel();
-  setDirty(true);
   if (session.previousTool && session.previousTool !== "select") setTool(session.previousTool);
 };
 
@@ -16189,7 +17333,9 @@ const initializeMotionControls = () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
         if (!obj || !control.types.includes(obj.type)) return { connection_id: "", tag: "" };
-        const motion = obj.motion || {};
+        const motion = (control.id === "rect" && isEditingRectMotionDynamic())
+          ? (rectMotionDraft || {})
+          : (obj.motion || {});
         return {
           connection_id: String(motion.connection_id || "").trim(),
           tag: String(motion.tag || "").trim()
@@ -16203,6 +17349,9 @@ const initializeMotionControls = () => {
       getSummary: () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+        if (control.id === "rect" && isEditingRectMotionDynamic()) {
+          return getMotionSummary(rectMotionDraft || {});
+        }
         return getMotionSummary(obj?.motion || {});
       },
       summaryEl: sourceSummary
@@ -16241,10 +17390,96 @@ const initializeMotionControls = () => {
 
 initializeMotionControls();
 
+function getRectMotionControl() {
+  return motionControlConfigs.find((control) => control.id === "rect") || null;
+}
+
+const rectMotionActionLabel = document.createElement("label");
+rectMotionActionLabel.textContent = "Actions";
+const rectMotionActionInline = document.createElement("div");
+rectMotionActionInline.className = "prop-inline";
+rectMotionActionRow = document.createElement("div");
+rectMotionActionRow.id = "rectMotionActionRow";
+rectMotionActionRow.className = "prop-row is-hidden";
+rectMotionSaveBtn = document.createElement("button");
+rectMotionSaveBtn.id = "rectMotionSaveBtn";
+rectMotionSaveBtn.className = "panel-btn";
+rectMotionSaveBtn.type = "button";
+rectMotionSaveBtn.textContent = "Save";
+rectMotionCancelBtn = document.createElement("button");
+rectMotionCancelBtn.id = "rectMotionCancelBtn";
+rectMotionCancelBtn.className = "panel-btn";
+rectMotionCancelBtn.type = "button";
+rectMotionCancelBtn.textContent = "Cancel";
+rectMotionDeleteBtn = document.createElement("button");
+rectMotionDeleteBtn.id = "rectMotionDeleteBtn";
+rectMotionDeleteBtn.className = "panel-btn";
+rectMotionDeleteBtn.type = "button";
+rectMotionDeleteBtn.textContent = "Delete";
+rectMotionActionInline.appendChild(rectMotionSaveBtn);
+rectMotionActionInline.appendChild(rectMotionCancelBtn);
+rectMotionActionInline.appendChild(rectMotionDeleteBtn);
+rectMotionActionRow.appendChild(rectMotionActionLabel);
+rectMotionActionRow.appendChild(rectMotionActionInline);
+
+function syncRectMotionControlFromDraft(obj) {
+  const control = getRectMotionControl();
+  if (!control || !obj) return;
+  ensureRectMotionDraft(obj);
+  const draftObj = {
+    ...obj,
+    motion: cloneRectMotionDraft(rectMotionDraft || {})
+  };
+  syncMotionControls(draftObj);
+}
+
+rectMotionSaveBtn.addEventListener("click", () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedRectObject();
+  if (!activeObjects || !obj || !isEditingRectMotionDynamic()) return;
+  ensureRectMotionDraft(obj);
+  recordHistory();
+  obj.motion = cloneRectMotionDraft(rectMotionDraft || { enabled: true, inputMin: 0, inputMax: 1 });
+  rectMotionDraftObject = obj;
+  rectMotionDraft = null;
+  ensureRectMotionDraft(obj);
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  updatePropertiesPanel();
+});
+
+rectMotionCancelBtn.addEventListener("click", () => {
+  const obj = getSelectedRectObject();
+  if (!obj || !isEditingRectMotionDynamic()) return;
+  rectMotionDraft = null;
+  rectMotionDraftObject = obj;
+  ensureRectMotionDraft(obj);
+  syncRectMotionControlFromDraft(obj);
+  renderCompactTagBindingRows();
+});
+
+rectMotionDeleteBtn.addEventListener("click", () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedRectObject();
+  if (!activeObjects || !obj || !hasRectMotionDynamic(obj)) return;
+  recordHistory();
+  delete obj.motion;
+  rectMotionDraft = null;
+  rectMotionDraftObject = null;
+  currentObjectDynamicTab = "properties";
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  updatePropertiesPanel();
+});
+
 const syncMotionControls = (obj) => {
   motionControlConfigs.forEach((control) => {
     if (!obj || !control.types.includes(obj.type)) return;
-    const motion = obj.motion || {};
+    const motion = (control.id === "rect" && isEditingRectMotionDynamic())
+      ? cloneRectMotionDraft(rectMotionDraft || obj.motion || {})
+      : (obj.motion || {});
     const enabled = Boolean(motion.enabled);
     control.enabledInput.checked = enabled;
     control.fields.classList.toggle("is-hidden", !enabled);
@@ -18676,7 +19911,9 @@ function updateSelectionOverlays() {
 
   if (poseEditSession && selectedIndices.length === 1) {
     const activeObj = poseEditSession.object;
-    const motion = activeObj?.motion || {};
+    const motion = (isEditingRectMotionDynamic() && activeObj?.type === "rect")
+      ? (rectMotionDraft || activeObj?.motion || {})
+      : (activeObj?.motion || {});
     const ghostPose = motion[poseEditSession.poseKey === "startPose" ? "endPose" : "startPose"] || null;
     if (activeObj && ghostPose) {
       const ghostObj = JSON.parse(JSON.stringify(activeObj));
@@ -21863,6 +23100,34 @@ if (objectDynamicTabVisibilityBtn) {
     updatePropertiesPanel();
   });
 }
+
+if (objectDynamicTabColorBtn) {
+  objectDynamicTabColorBtn.addEventListener("click", () => {
+    setObjectDynamicTab("color");
+    updatePropertiesPanel();
+  });
+}
+
+if (objectDynamicTabRotationBtn) {
+  objectDynamicTabRotationBtn.addEventListener("click", () => {
+    setObjectDynamicTab("rotation");
+    updatePropertiesPanel();
+  });
+}
+
+if (objectDynamicTabMotionBtn) {
+  objectDynamicTabMotionBtn.addEventListener("click", () => {
+    setObjectDynamicTab("motion");
+    updatePropertiesPanel();
+  });
+}
+
+document.addEventListener("click", (event) => {
+  const trigger = event.target instanceof Element ? event.target.closest("#rectColorExpressionEditBtn") : null;
+  if (!trigger) return;
+  event.preventDefault();
+  openRectColorExpressionModal();
+});
 
 if (automationPanelCloseBtn) {
   automationPanelCloseBtn.addEventListener("click", () => {
