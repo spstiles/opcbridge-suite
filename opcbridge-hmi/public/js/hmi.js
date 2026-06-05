@@ -236,6 +236,7 @@ const objectDynamicTabVisibilityBtn = document.getElementById("objectDynamicTabV
 const objectDynamicTabColorBtn = document.getElementById("objectDynamicTabColorBtn");
 const objectDynamicTabRotationBtn = document.getElementById("objectDynamicTabRotationBtn");
 const objectDynamicTabMotionBtn = document.getElementById("objectDynamicTabMotionBtn");
+const editorPaneTitle = document.getElementById("editorPaneTitle");
 const objectDynamicVisibilityHost = document.getElementById("objectDynamicVisibilityHost");
 const objectDynamicColorHost = document.getElementById("objectDynamicColorHost");
 const objectDynamicRotationHost = document.getElementById("objectDynamicRotationHost");
@@ -463,6 +464,31 @@ const getSelectedRectObject = () => {
   return obj && obj.type === "rect" ? obj : null;
 };
 
+const getSelectedLineObject = () => {
+  const obj = getAutomationObject();
+  return obj && obj.type === "line" ? obj : null;
+};
+
+const getSelectedVisibilityDynamicObject = () => {
+  const obj = getAutomationObject();
+  return obj && (obj.type === "rect" || obj.type === "line") ? obj : null;
+};
+
+const getSelectedColorDynamicObject = () => {
+  const obj = getAutomationObject();
+  return obj && (obj.type === "rect" || obj.type === "line") ? obj : null;
+};
+
+const getSelectedRotationDynamicObject = () => {
+  const obj = getAutomationObject();
+  return obj && (obj.type === "rect" || obj.type === "line") ? obj : null;
+};
+
+const getSelectedMotionDynamicObject = () => {
+  const obj = getAutomationObject();
+  return obj && (obj.type === "rect" || obj.type === "line") ? obj : null;
+};
+
 const hasVisibilityDynamic = (obj) => {
   if (!obj || typeof obj !== "object") return false;
   const vis = obj.visibility;
@@ -485,6 +511,23 @@ const hasRectMotionDynamic = (obj) => {
   if (!obj || typeof obj !== "object") return false;
   return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
 };
+
+const hasLineColorDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.strokeAutomation && typeof obj.strokeAutomation === "object" && Object.keys(obj.strokeAutomation).length);
+};
+
+const hasLineRotationDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.rotationAutomation && typeof obj.rotationAutomation === "object" && Object.keys(obj.rotationAutomation).length);
+};
+
+const hasLineMotionDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
+};
+
+const isLineColorDynamicTarget = (obj) => Boolean(obj && obj.type === "line");
 
 const cloneVisibilityState = (value) => {
   if (!value || typeof value !== "object") return { enabled: true };
@@ -580,6 +623,7 @@ const normalizeColorAutomationState = (value) => {
 };
 
 const syncRectColorUiFromDraft = (obj, draft) => {
+  const isLine = Boolean(obj && obj.type === "line");
   const strokePresent = Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
   const next = draft || {};
   const sourceType = next.sourceType === "expression" ? "expression" : "tag";
@@ -646,9 +690,19 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   if (rectColorFillTextInput) setInputValueSafe(rectColorFillTextInput, next.fillColor || "");
   if (rectColorStrokeInput) rectColorStrokeInput.value = next.strokeColor || strokeFallback;
   if (rectColorStrokeTextInput) setInputValueSafe(rectColorStrokeTextInput, next.strokeColor || "");
+  const fillTargetLabel = rectColorFillEnabledInput?.closest(".inline-check");
+  if (fillTargetLabel) {
+    fillTargetLabel.classList.toggle("is-hidden", isLine);
+    fillTargetLabel.hidden = isLine;
+  }
+  const strokeTargetText = rectColorStrokeEnabledInput?.closest(".inline-check")?.querySelector("span");
+  if (strokeTargetText) strokeTargetText.textContent = isLine ? "Line" : "Border";
+  const strokeColorLabel = rectColorStrokeRow?.querySelector('label[for="rectColorStroke"]');
+  if (strokeColorLabel) strokeColorLabel.textContent = isLine ? "Line Color" : "Border Color";
   if (rectColorFillRow) {
-    rectColorFillRow.classList.toggle("is-hidden", !rectColorFillEnabledInput?.checked);
-    rectColorFillRow.hidden = !rectColorFillEnabledInput?.checked;
+    const showFill = !isLine && Boolean(rectColorFillEnabledInput?.checked);
+    rectColorFillRow.classList.toggle("is-hidden", !showFill);
+    rectColorFillRow.hidden = !showFill;
   }
   if (rectColorStrokeRow) {
     const showStroke = Boolean(rectColorStrokeEnabledInput?.checked) && strokePresent;
@@ -671,8 +725,8 @@ const applyRectColorModeUi = (mode) => {
 };
 
 const updateRectColorDraft = (patch) => {
-  const obj = getSelectedRectObject();
-  if (!obj || !isEditingRectColorDynamic()) return;
+  const obj = getSelectedColorDynamicObject();
+  if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic())) return;
   ensureRectColorDraft(obj);
   const next = { ...(rectColorDraft || {}), ...patch };
   if ("sourceType" in patch) {
@@ -867,6 +921,7 @@ const insertVisibilityExpressionText = (text) => {
   const start = visibilityExpressionEditor.selectionStart ?? visibilityExpressionEditor.value.length;
   const end = visibilityExpressionEditor.selectionEnd ?? visibilityExpressionEditor.value.length;
   visibilityExpressionEditor.setRangeText(text, start, end, "end");
+  syncVisibilityExpressionValidationUi();
   visibilityExpressionEditor.focus();
 };
 
@@ -902,8 +957,8 @@ const showVisibilityExpressionInsertMenu = (button, items) => {
 
 const openVisibilityExpressionModal = () => {
   if (!visibilityExpressionOverlay) return;
-  const obj = getSelectedRectObject();
-  if (!obj || !isEditingRectVisibilityDynamic()) return;
+  const obj = getSelectedVisibilityDynamicObject();
+  if (!obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic())) return;
   ensureRectVisibilityDraft(obj);
   visibilityExpressionDraftValue = String(rectVisibilityDraft?.expression || "");
   if (visibilityExpressionEditor) visibilityExpressionEditor.value = visibilityExpressionDraftValue;
@@ -1032,8 +1087,8 @@ const syncRectColorExpressionValidationUi = () => {
 
 const openRectColorExpressionModal = () => {
   if (!rectColorExpressionOverlay) return;
-  const obj = getSelectedRectObject();
-  if (!obj || !hasRectColorDynamic(obj)) return;
+  const obj = getSelectedColorDynamicObject();
+  if (!obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj))) return;
   if (currentObjectDynamicTab !== "color") {
     currentObjectDynamicTab = "color";
     updatePropertiesPanel();
@@ -1227,27 +1282,47 @@ const extractVisibilityExpressionTagKeys = (expression, out) => {
 const extractAutomationExpressionTagKeys = (expression, out) => extractVisibilityExpressionTagKeys(expression, out);
 
 const isEditingRectVisibilityDynamic = () => {
-  const obj = getSelectedRectObject();
-  return Boolean(obj && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  const obj = getSelectedVisibilityDynamicObject();
+  return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+};
+
+const isEditingLineVisibilityDynamic = () => {
+  const obj = getSelectedVisibilityDynamicObject();
+  return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
 };
 
 const isEditingRectColorDynamic = () => {
-  const obj = getSelectedRectObject();
-  return Boolean(obj && currentObjectDynamicTab === "color" && hasRectColorDynamic(obj));
+  const obj = getSelectedColorDynamicObject();
+  return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "color" && hasRectColorDynamic(obj));
+};
+
+const isEditingLineColorDynamic = () => {
+  const obj = getSelectedColorDynamicObject();
+  return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "color" && hasLineColorDynamic(obj));
 };
 
 const isEditingRectRotationDynamic = () => {
-  const obj = getSelectedRectObject();
-  return Boolean(obj && currentObjectDynamicTab === "rotation" && hasRectRotationDynamic(obj));
+  const obj = getSelectedRotationDynamicObject();
+  return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "rotation" && hasRectRotationDynamic(obj));
+};
+
+const isEditingLineRotationDynamic = () => {
+  const obj = getSelectedRotationDynamicObject();
+  return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "rotation" && hasLineRotationDynamic(obj));
 };
 
 const isEditingRectMotionDynamic = () => {
-  const obj = getSelectedRectObject();
-  return Boolean(obj && currentObjectDynamicTab === "motion" && hasRectMotionDynamic(obj));
+  const obj = getSelectedMotionDynamicObject();
+  return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "motion" && hasRectMotionDynamic(obj));
+};
+
+const isEditingLineMotionDynamic = () => {
+  const obj = getSelectedMotionDynamicObject();
+  return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "motion" && hasLineMotionDynamic(obj));
 };
 
 const ensureRectVisibilityDraft = (obj) => {
-  if (!obj || obj.type !== "rect") return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line")) return;
   if (rectVisibilityDraftObject !== obj || !rectVisibilityDraft) {
     rectVisibilityDraftObject = obj;
     rectVisibilityDraft = cloneVisibilityState(obj.visibility || { enabled: true });
@@ -1255,9 +1330,9 @@ const ensureRectVisibilityDraft = (obj) => {
 };
 
 const ensureRectColorDraft = (obj) => {
-  if (!obj || obj.type !== "rect") return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line")) return;
   if (rectColorDraftObject !== obj || !rectColorDraft) {
-    const fillAuto = obj.fillAutomation || {};
+    const fillAuto = obj.type === "rect" ? (obj.fillAutomation || {}) : {};
     const strokeAuto = obj.strokeAutomation || {};
     const source = (Object.keys(fillAuto).length ? fillAuto : strokeAuto) || {};
     rectColorDraftObject = obj;
@@ -1271,16 +1346,16 @@ const ensureRectColorDraft = (obj) => {
       mode: source.mode || "",
       threshold: source.threshold,
       match: source.match || "",
-      fillEnabled: Object.keys(fillAuto).length > 0,
+      fillEnabled: obj.type === "rect" ? (Object.keys(fillAuto).length > 0) : false,
       fillColor: fillAuto.onColor || "",
-      strokeEnabled: Object.keys(strokeAuto).length > 0,
+      strokeEnabled: obj.type === "line" ? true : (Object.keys(strokeAuto).length > 0),
       strokeColor: strokeAuto.onColor || ""
     });
   }
 };
 
 const ensureRectRotationDraft = (obj) => {
-  if (!obj || obj.type !== "rect") return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line")) return;
   if (rectRotationDraftObject !== obj || !rectRotationDraft) {
     rectRotationDraftObject = obj;
     rectRotationDraft = cloneRectRotationDraft({
@@ -1293,7 +1368,7 @@ const ensureRectRotationDraft = (obj) => {
 };
 
 const ensureRectMotionDraft = (obj) => {
-  if (!obj || obj.type !== "rect") return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line")) return;
   if (rectMotionDraftObject !== obj || !rectMotionDraft) {
     rectMotionDraftObject = obj;
     rectMotionDraft = cloneRectMotionDraft({
@@ -1319,9 +1394,33 @@ const setObjectDynamicTab = (tab) => {
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-active", next === "motion");
 };
 
-const ensureRectVisibilityDynamic = () => {
+const getPropertiesPaneTitle = (obj) => {
+  if (!obj) return "Properties";
+  const type = String(obj.type || "").trim();
+  switch (type) {
+    case "text": return "Text Properties";
+    case "button": return "Button Properties";
+    case "group": return "Group Properties";
+    case "viewport": return "Viewport Properties";
+    case "rect": return "Rectangle Properties";
+    case "alarms-panel": return "Alarm Panel Properties";
+    case "ellipse": return "Ellipse Properties";
+    case "circle": return "Circle Properties";
+    case "line": return "Line Properties";
+    case "curve": return "Curve Properties";
+    case "polyline": return "Polyline Properties";
+    case "polygon": return "Polygon Properties";
+    case "bar": return "Bar Properties";
+    case "number-input": return "Number Input Properties";
+    case "indicator": return "Indicator Properties";
+    case "image": return "Image Properties";
+    default: return "Properties";
+  }
+};
+
+const ensureVisibilityDynamicForSelectedObject = () => {
   const activeObjects = getActiveObjects();
-  const obj = getSelectedRectObject();
+  const obj = getSelectedVisibilityDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
   if (!hasVisibilityDynamic(obj)) {
     recordHistory();
@@ -1338,11 +1437,12 @@ const ensureRectVisibilityDynamic = () => {
 
 const ensureRectColorDynamic = () => {
   const activeObjects = getActiveObjects();
-  const obj = getSelectedRectObject();
+  const obj = getSelectedColorDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!hasRectColorDynamic(obj)) {
+  if (!(hasRectColorDynamic(obj) || hasLineColorDynamic(obj))) {
     recordHistory();
-    obj.fillAutomation = { enabled: true };
+    if (obj.type === "rect") obj.fillAutomation = { enabled: true };
+    else obj.strokeAutomation = { enabled: true };
     renderScreen();
     syncEditorFromScreen();
     setDirty(true);
@@ -1355,9 +1455,9 @@ const ensureRectColorDynamic = () => {
 
 const ensureRectRotationDynamic = () => {
   const activeObjects = getActiveObjects();
-  const obj = getSelectedRectObject();
+  const obj = getSelectedRotationDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!hasRectRotationDynamic(obj)) {
+  if (!(hasRectRotationDynamic(obj) || hasLineRotationDynamic(obj))) {
     recordHistory();
     obj.rotationAutomation = { enabled: true, inputMin: 0, inputMax: 1, angleStart: 0, angleEnd: 0, direction: "shortest" };
     renderScreen();
@@ -1372,9 +1472,9 @@ const ensureRectRotationDynamic = () => {
 
 const ensureRectMotionDynamic = () => {
   const activeObjects = getActiveObjects();
-  const obj = getSelectedRectObject();
+  const obj = getSelectedMotionDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!hasRectMotionDynamic(obj)) {
+  if (!(hasRectMotionDynamic(obj) || hasLineMotionDynamic(obj))) {
     recordHistory();
     obj.motion = { enabled: true, inputMin: 0, inputMax: 1 };
     renderScreen();
@@ -5900,6 +6000,8 @@ const updateMenuState = () => {
   const canReorder = selectedIndices.length > 0;
   const canFlip = selectedIndices.length > 0;
   const canAddRectDynamic = Boolean(getSelectedRectObject());
+  const canAddLineDynamic = Boolean(getSelectedLineObject());
+  const canOpenDynamics = canAddRectDynamic || canAddLineDynamic;
   const toggleItem = (el) => {
     if (!el) return;
     const disabled = el === groupMenuBtn ? !canGroup
@@ -5923,10 +6025,10 @@ const updateMenuState = () => {
     if (!el) return;
     el.classList.toggle("is-disabled", !canFlip);
   };
-  const toggleDynamicItem = (el) => {
+  const toggleDynamicMenuItem = (el, enabled) => {
     if (!el) return;
-    el.classList.toggle("is-disabled", !canAddRectDynamic);
-    el.disabled = !canAddRectDynamic;
+    el.classList.toggle("is-disabled", !enabled);
+    el.disabled = !enabled;
   };
   if (explodeSelectedSvgBtn) {
     explodeSelectedSvgBtn.classList.toggle("is-disabled", !canExplodeSvg);
@@ -5957,11 +6059,11 @@ const updateMenuState = () => {
   toggleFlipItem(flipMenuVertical);
   toggleReorderItem(moveToFrontMenuBtn);
   toggleReorderItem(moveToBackMenuBtn);
-  toggleDynamicItem(dynamicsMenuBtn);
-  toggleDynamicItem(dynamicsAddVisibilityMenuBtn);
-  toggleDynamicItem(dynamicsAddColorMenuBtn);
-  toggleDynamicItem(dynamicsAddRotationMenuBtn);
-  toggleDynamicItem(dynamicsAddMotionMenuBtn);
+  toggleDynamicMenuItem(dynamicsMenuBtn, canOpenDynamics);
+  toggleDynamicMenuItem(dynamicsAddVisibilityMenuBtn, canOpenDynamics);
+  toggleDynamicMenuItem(dynamicsAddColorMenuBtn, canOpenDynamics);
+  toggleDynamicMenuItem(dynamicsAddRotationMenuBtn, canOpenDynamics);
+  toggleDynamicMenuItem(dynamicsAddMotionMenuBtn, canOpenDynamics);
 };
 
 const setMenuOpen = (isOpen) => {
@@ -10608,7 +10710,7 @@ const syncPropertiesFromSelection = () => {
     if (barTicksMinorInput) setInputValueSafe(barTicksMinorInput, ticks.minor ?? 4);
   }
   if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityModeSelect || visibilityThresholdInput || visibilityMatchInput || visibilityInvertInput) {
-    const vis = isEditingRectVisibilityDynamic()
+    const vis = (isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic())
       ? (rectVisibilityDraft || obj.visibility || { enabled: true })
       : (obj.visibility || {});
     syncVisibilityUiFromState(vis);
@@ -10628,12 +10730,16 @@ const updatePropertiesPanel = () => {
   }
   const activeObjects = getActiveObjects();
   const obj = isSingle ? activeObjects?.[selectedIndices[0]] : null;
+  if (editorPaneTitle) {
+    editorPaneTitle.textContent = isMulti ? "Multiple Properties" : getPropertiesPaneTitle(obj);
+  }
   const showText = Boolean(obj && obj.type === "text");
   const showButton = Boolean(obj && obj.type === "button");
   const showGroup = Boolean(obj && obj.type === "group");
   const showViewport = Boolean(obj && obj.type === "viewport");
   const showRect = Boolean(obj && (obj.type === "rect" || obj.type === "alarms-panel"));
   const showDynamicRect = Boolean(obj && obj.type === "rect");
+  const showDynamicLine = Boolean(obj && obj.type === "line");
   const showEllipse = Boolean(obj && obj.type === "ellipse");
   const showCircle = Boolean(obj && obj.type === "circle");
   const showLine = Boolean(obj && obj.type === "line");
@@ -10643,7 +10749,7 @@ const updatePropertiesPanel = () => {
   const showBar = Boolean(obj && obj.type === "bar");
   const showNumberInput = Boolean(obj && obj.type === "number-input");
   const showIndicator = Boolean(obj && obj.type === "indicator");
-  const showAutomationLaunch = Boolean(obj && supportsAutomationPanelForObject(obj) && !showDynamicRect);
+  const showAutomationLaunch = Boolean(obj && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine);
   if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showPolygon || showBar || showNumberInput || showIndicator);
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
@@ -10661,11 +10767,11 @@ const updatePropertiesPanel = () => {
   if (barProps) barProps.classList.toggle("is-hidden", !showBar);
   if (automationLaunchRow) automationLaunchRow.classList.toggle("is-hidden", !showAutomationLaunch);
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
-  if (showDynamicRect && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
-  if (showDynamicRect && !hasRectColorDynamic(obj) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
-  if (showDynamicRect && !hasRectRotationDynamic(obj) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
-  if (showDynamicRect && !hasRectMotionDynamic(obj) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
-  if (!showDynamicRect) {
+  if ((showDynamicRect || showDynamicLine) && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectColorDynamic(obj)) || (showDynamicLine && !hasLineColorDynamic(obj))) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
+  if (!showDynamicRect && !showDynamicLine) {
     currentObjectDynamicTab = "properties";
     rectVisibilityDraft = null;
     rectVisibilityDraftObject = null;
@@ -10676,12 +10782,12 @@ const updatePropertiesPanel = () => {
     rectMotionDraft = null;
     rectMotionDraftObject = null;
   }
-  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !showDynamicRect);
-  if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !(showDynamicRect && hasVisibilityDynamic(obj)));
-  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !(showDynamicRect && hasRectColorDynamic(obj)));
-  if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !(showDynamicRect && hasRectRotationDynamic(obj)));
-  if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !(showDynamicRect && hasRectMotionDynamic(obj)));
-  if (showDynamicRect) setObjectDynamicTab(currentObjectDynamicTab);
+  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine));
+  if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine) && hasVisibilityDynamic(obj)));
+  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj))));
+  if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj))));
+  if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj))));
+  if (showDynamicRect || showDynamicLine) setObjectDynamicTab(currentObjectDynamicTab);
   [
     rectStrokeAutoHeader,
     rectStrokeAutoFields?.previousElementSibling,
@@ -10694,15 +10800,25 @@ const updatePropertiesPanel = () => {
       node.hidden = true;
     }
   });
-  const showRectVisibilityTab = showDynamicRect && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
-  const showRectColorTab = showDynamicRect && currentObjectDynamicTab === "color" && hasRectColorDynamic(obj);
-  const showRectRotationTab = showDynamicRect && currentObjectDynamicTab === "rotation" && hasRectRotationDynamic(obj);
-  const showRectMotionTab = showDynamicRect && currentObjectDynamicTab === "motion" && hasRectMotionDynamic(obj);
+  [
+    lineStrokeAutoFields?.previousElementSibling,
+    lineStrokeAutoFields
+  ].forEach((node) => {
+    if (node && showDynamicLine) {
+      node.classList.add("is-hidden");
+      node.hidden = true;
+    }
+  });
+  const showRectVisibilityTab = (showDynamicRect || showDynamicLine) && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
+  const showRectColorTab = ((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj))) && currentObjectDynamicTab === "color";
+  const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
+  const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
   if (showRectVisibilityTab) ensureRectVisibilityDraft(obj);
   if (showRectColorTab) ensureRectColorDraft(obj);
   if (showRectRotationTab) ensureRectRotationDraft(obj);
   if (showRectMotionTab) ensureRectMotionDraft(obj);
   if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicLine && lineProps) lineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
   if (objectDynamicColorHost) objectDynamicColorHost.classList.toggle("is-hidden", !showRectColorTab);
   if (objectDynamicRotationHost) objectDynamicRotationHost.classList.toggle("is-hidden", !showRectRotationTab);
@@ -10719,9 +10835,10 @@ const updatePropertiesPanel = () => {
       if (node && node.parentNode !== objectDynamicColorHost) objectDynamicColorHost.appendChild(node);
       if (node) node.classList.remove("is-hidden");
     });
+    syncRectColorUiFromDraft(obj, rectColorDraft);
   }
   if (showRectRotationTab && objectDynamicRotationHost) {
-    const control = getRectRotationControl();
+    const control = getRotationDynamicControl(obj?.type);
     if (control?.sectionEl && control.sectionEl.parentNode !== objectDynamicRotationHost) objectDynamicRotationHost.appendChild(control.sectionEl);
     if (control?.sectionEl) control.sectionEl.classList.remove("is-hidden");
     if (rectRotationActionRow && rectRotationActionRow.parentNode !== objectDynamicRotationHost) objectDynamicRotationHost.appendChild(rectRotationActionRow);
@@ -10729,7 +10846,7 @@ const updatePropertiesPanel = () => {
     syncRectRotationControlFromDraft(obj);
   }
   if (showRectMotionTab && objectDynamicMotionHost) {
-    const control = getRectMotionControl();
+    const control = getMotionDynamicControl(obj?.type);
     if (control?.sectionEl && control.sectionEl.parentNode !== objectDynamicMotionHost) objectDynamicMotionHost.appendChild(control.sectionEl);
     if (control?.sectionEl) control.sectionEl.classList.remove("is-hidden");
     if (rectMotionActionRow && rectMotionActionRow.parentNode !== objectDynamicMotionHost) objectDynamicMotionHost.appendChild(rectMotionActionRow);
@@ -11151,7 +11268,7 @@ const updateBarRangeBinding = (which, patch) => {
 	  const index = selectedIndices[0];
 	  const obj = activeObjects[index];
 	  if (!obj) return;
-    if (isEditingRectVisibilityDynamic()) {
+    if (isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic()) {
       ensureRectVisibilityDraft(obj);
       const current = rectVisibilityDraft || { enabled: true };
       const next = { ...current, ...patch };
@@ -11935,7 +12052,7 @@ function bindScreenManager() {
     dynamicsAddVisibilityMenuBtn.addEventListener("click", () => {
       setDynamicsFlyoutOpen(false);
       setMenuOpen(false);
-      ensureRectVisibilityDynamic();
+      ensureVisibilityDynamicForSelectedObject();
     });
   }
 
@@ -15972,8 +16089,8 @@ if (rectColorExpressionOverlay) {
 if (visibilitySaveBtn) {
   visibilitySaveBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
-    const obj = getSelectedRectObject();
-    if (!activeObjects || !obj || !isEditingRectVisibilityDynamic()) return;
+    const obj = getSelectedVisibilityDynamicObject();
+    if (!activeObjects || !obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic())) return;
     ensureRectVisibilityDraft(obj);
     recordHistory();
     obj.visibility = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
@@ -15987,8 +16104,8 @@ if (visibilitySaveBtn) {
 
 if (visibilityCancelBtn) {
   visibilityCancelBtn.addEventListener("click", () => {
-    const obj = getSelectedRectObject();
-    if (!obj || !isEditingRectVisibilityDynamic()) return;
+    const obj = getSelectedVisibilityDynamicObject();
+    if (!obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic())) return;
     rectVisibilityDraftObject = obj;
     rectVisibilityDraft = cloneVisibilityState(obj.visibility || { enabled: true });
     syncVisibilityUiFromState(rectVisibilityDraft);
@@ -15999,7 +16116,7 @@ if (visibilityCancelBtn) {
 if (visibilityDeleteBtn) {
   visibilityDeleteBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
-    const obj = getSelectedRectObject();
+    const obj = getSelectedVisibilityDynamicObject();
     if (!activeObjects || !obj || !hasVisibilityDynamic(obj)) return;
     recordHistory();
     delete obj.visibility;
@@ -16131,8 +16248,8 @@ if (rectColorStrokeTextInput) {
 if (colorSaveBtn) {
   colorSaveBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
-    const obj = getSelectedRectObject();
-    if (!activeObjects || !obj || !isEditingRectColorDynamic()) return;
+    const obj = getSelectedColorDynamicObject();
+    if (!activeObjects || !obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic())) return;
     ensureRectColorDraft(obj);
     if (rectColorDraft?.sourceType === "expression" && getAutomationExpressionValidationError(rectColorDraft?.expression || "")) return;
     recordHistory();
@@ -16147,9 +16264,9 @@ if (colorSaveBtn) {
       threshold: rectColorDraft?.threshold,
       match: rectColorDraft?.match || ""
     };
-    if (rectColorDraft?.fillEnabled) {
+    if (obj.type === "rect" && rectColorDraft?.fillEnabled) {
       obj.fillAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.fillColor || "" });
-    } else {
+    } else if (obj.type === "rect") {
       delete obj.fillAutomation;
     }
     if (rectColorDraft?.strokeEnabled) {
@@ -16169,8 +16286,8 @@ if (colorSaveBtn) {
 
 if (colorCancelBtn) {
   colorCancelBtn.addEventListener("click", () => {
-    const obj = getSelectedRectObject();
-    if (!obj || !isEditingRectColorDynamic()) return;
+    const obj = getSelectedColorDynamicObject();
+    if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic())) return;
     rectColorDraft = null;
     rectColorDraftObject = obj;
     ensureRectColorDraft(obj);
@@ -16182,8 +16299,8 @@ if (colorCancelBtn) {
 if (colorDeleteBtn) {
   colorDeleteBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
-    const obj = getSelectedRectObject();
-    if (!activeObjects || !obj || !hasRectColorDynamic(obj)) return;
+    const obj = getSelectedColorDynamicObject();
+    if (!activeObjects || !obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj))) return;
     recordHistory();
     delete obj.fillAutomation;
     delete obj.strokeAutomation;
@@ -16522,7 +16639,7 @@ const updateSelectedObjectRotationConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!obj || !ROTATION_PIVOT_TYPES.has(String(obj.type || ""))) return;
-  if (isEditingRectRotationDynamic() && obj.type === "rect") {
+  if ((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line")) {
     ensureRectRotationDraft(obj);
     const next = cloneRectRotationDraft(rectRotationDraft || {});
     if ("pivotMode" in patch) {
@@ -16814,7 +16931,7 @@ const initializeRotationControls = () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
         if (!obj || !control.types.includes(obj.type)) return { connection_id: "", tag: "" };
-        const automation = (control.id === "rect" && isEditingRectRotationDynamic())
+        const automation = (((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic())))
           ? (rectRotationDraft?.rotationAutomation || {})
           : (obj.rotationAutomation || {});
         return {
@@ -16828,7 +16945,7 @@ const initializeRotationControls = () => {
       getSummary: () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-        if (control.id === "rect" && isEditingRectRotationDynamic()) {
+        if ((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic())) {
           return getRotationAutomationSummary(rectRotationDraft?.rotationAutomation || {});
         }
         return getRotationAutomationSummary(obj?.rotationAutomation || {});
@@ -16893,6 +17010,11 @@ const initializeRotationControls = () => {
 
 initializeRotationControls();
 
+function getRotationDynamicControl(type) {
+  if (!type) return null;
+  return rotationControlConfigs.find((control) => control.types.includes(type)) || null;
+}
+
 function getRectRotationControl() {
   return rotationControlConfigs.find((control) => control.id === "rect") || null;
 }
@@ -16927,8 +17049,8 @@ rectRotationActionRow.appendChild(rectRotationActionInline);
 
 rectRotationSaveBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
-  const obj = getSelectedRectObject();
-  if (!activeObjects || !obj || !isEditingRectRotationDynamic()) return;
+  const obj = getSelectedRotationDynamicObject();
+  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line"))) return;
   ensureRectRotationDraft(obj);
   recordHistory();
   obj.pivotMode = normalizePivotMode(rectRotationDraft?.pivotMode, obj.type);
@@ -16952,8 +17074,8 @@ rectRotationSaveBtn.addEventListener("click", () => {
 });
 
 rectRotationCancelBtn.addEventListener("click", () => {
-  const obj = getSelectedRectObject();
-  if (!obj || !isEditingRectRotationDynamic()) return;
+  const obj = getSelectedRotationDynamicObject();
+  if (!obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line"))) return;
   rectRotationDraft = null;
   rectRotationDraftObject = obj;
   ensureRectRotationDraft(obj);
@@ -16963,8 +17085,8 @@ rectRotationCancelBtn.addEventListener("click", () => {
 
 rectRotationDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
-  const obj = getSelectedRectObject();
-  if (!activeObjects || !obj || !hasRectRotationDynamic(obj)) return;
+  const obj = getSelectedRotationDynamicObject();
+  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectRotationDynamic(obj)) || (obj.type === "line" && hasLineRotationDynamic(obj)))) return;
   recordHistory();
   delete obj.rotationAutomation;
   delete obj.pivotMode;
@@ -16980,7 +17102,7 @@ rectRotationDeleteBtn.addEventListener("click", () => {
 });
 
 function syncRectRotationControlFromDraft(obj) {
-  const control = getRectRotationControl();
+  const control = getRotationDynamicControl(obj?.type);
   if (!control || !obj) return;
   ensureRectRotationDraft(obj);
   const draftObj = {
@@ -17040,7 +17162,7 @@ const updateSelectedObjectMotionConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!supportsMotionPose(obj)) return;
-  if (isEditingRectMotionDynamic() && obj.type === "rect") {
+  if ((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line")) {
     ensureRectMotionDraft(obj);
     const next = cloneRectMotionDraft(rectMotionDraft || {});
     Object.assign(next, patch || {});
@@ -17093,7 +17215,7 @@ const startPoseEdit = (poseKey) => {
   if (poseEditSession) cancelPoseEdit({ keepTool: true });
   const currentPose = captureMotionPose(obj);
   if (!currentPose) return;
-  const sourceMotion = (isEditingRectMotionDynamic() && obj.type === "rect")
+  const sourceMotion = (((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line")))
     ? (ensureRectMotionDraft(obj), rectMotionDraft || {})
     : (obj.motion || {});
   const editPose = sourceMotion?.[poseKey] || currentPose;
@@ -17117,7 +17239,7 @@ const savePoseEdit = () => {
   if (!capturedPose) return;
   applyMotionPoseToObject(session.object, session.originalPose);
   poseEditSession = null;
-  if (isEditingRectMotionDynamic() && session.object.type === "rect") {
+  if ((isEditingRectMotionDynamic() && session.object.type === "rect") || (isEditingLineMotionDynamic() && session.object.type === "line")) {
     ensureRectMotionDraft(session.object);
     rectMotionDraft = {
       ...(rectMotionDraft || {}),
@@ -17333,7 +17455,7 @@ const initializeMotionControls = () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
         if (!obj || !control.types.includes(obj.type)) return { connection_id: "", tag: "" };
-        const motion = (control.id === "rect" && isEditingRectMotionDynamic())
+        const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic())))
           ? (rectMotionDraft || {})
           : (obj.motion || {});
         return {
@@ -17349,7 +17471,7 @@ const initializeMotionControls = () => {
       getSummary: () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-        if (control.id === "rect" && isEditingRectMotionDynamic()) {
+        if ((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic())) {
           return getMotionSummary(rectMotionDraft || {});
         }
         return getMotionSummary(obj?.motion || {});
@@ -17390,6 +17512,11 @@ const initializeMotionControls = () => {
 
 initializeMotionControls();
 
+function getMotionDynamicControl(type) {
+  if (!type) return null;
+  return motionControlConfigs.find((control) => control.types.includes(type)) || null;
+}
+
 function getRectMotionControl() {
   return motionControlConfigs.find((control) => control.id === "rect") || null;
 }
@@ -17423,7 +17550,7 @@ rectMotionActionRow.appendChild(rectMotionActionLabel);
 rectMotionActionRow.appendChild(rectMotionActionInline);
 
 function syncRectMotionControlFromDraft(obj) {
-  const control = getRectMotionControl();
+  const control = getMotionDynamicControl(obj?.type);
   if (!control || !obj) return;
   ensureRectMotionDraft(obj);
   const draftObj = {
@@ -17435,8 +17562,8 @@ function syncRectMotionControlFromDraft(obj) {
 
 rectMotionSaveBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
-  const obj = getSelectedRectObject();
-  if (!activeObjects || !obj || !isEditingRectMotionDynamic()) return;
+  const obj = getSelectedMotionDynamicObject();
+  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line"))) return;
   ensureRectMotionDraft(obj);
   recordHistory();
   obj.motion = cloneRectMotionDraft(rectMotionDraft || { enabled: true, inputMin: 0, inputMax: 1 });
@@ -17450,8 +17577,8 @@ rectMotionSaveBtn.addEventListener("click", () => {
 });
 
 rectMotionCancelBtn.addEventListener("click", () => {
-  const obj = getSelectedRectObject();
-  if (!obj || !isEditingRectMotionDynamic()) return;
+  const obj = getSelectedMotionDynamicObject();
+  if (!obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line"))) return;
   rectMotionDraft = null;
   rectMotionDraftObject = obj;
   ensureRectMotionDraft(obj);
@@ -17461,8 +17588,8 @@ rectMotionCancelBtn.addEventListener("click", () => {
 
 rectMotionDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
-  const obj = getSelectedRectObject();
-  if (!activeObjects || !obj || !hasRectMotionDynamic(obj)) return;
+  const obj = getSelectedMotionDynamicObject();
+  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectMotionDynamic(obj)) || (obj.type === "line" && hasLineMotionDynamic(obj)))) return;
   recordHistory();
   delete obj.motion;
   rectMotionDraft = null;
@@ -17477,7 +17604,7 @@ rectMotionDeleteBtn.addEventListener("click", () => {
 const syncMotionControls = (obj) => {
   motionControlConfigs.forEach((control) => {
     if (!obj || !control.types.includes(obj.type)) return;
-    const motion = (control.id === "rect" && isEditingRectMotionDynamic())
+    const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic())))
       ? cloneRectMotionDraft(rectMotionDraft || obj.motion || {})
       : (obj.motion || {});
     const enabled = Boolean(motion.enabled);
@@ -19911,7 +20038,7 @@ function updateSelectionOverlays() {
 
   if (poseEditSession && selectedIndices.length === 1) {
     const activeObj = poseEditSession.object;
-    const motion = (isEditingRectMotionDynamic() && activeObj?.type === "rect")
+    const motion = (((isEditingRectMotionDynamic() && activeObj?.type === "rect") || (isEditingLineMotionDynamic() && activeObj?.type === "line")))
       ? (rectMotionDraft || activeObj?.motion || {})
       : (activeObj?.motion || {});
     const ghostPose = motion[poseEditSession.poseKey === "startPose" ? "endPose" : "startPose"] || null;

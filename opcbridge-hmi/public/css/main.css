@@ -2804,6 +2804,24 @@ body.automation-panel-open #editor-pane {
   overflow: auto;
 }
 
+#screenProps > .prop-group-title:first-child,
+#textProps > .prop-group-title:first-child,
+#buttonProps > .prop-group-title:first-child,
+#numberInputProps > .prop-group-title:first-child,
+#indicatorProps > .prop-group-title:first-child,
+#viewportProps > .prop-group-title:first-child,
+#rectProps > .prop-group-title:first-child,
+#ellipseProps > .prop-group-title:first-child,
+#circleProps > .prop-group-title:first-child,
+#lineProps > .prop-group-title:first-child,
+#curveProps > .prop-group-title:first-child,
+#polylineProps > .prop-group-title:first-child,
+#polygonProps > .prop-group-title:first-child,
+#barProps > .prop-group-title:first-child,
+#groupProps > .prop-group-title:first-child {
+  display: none;
+}
+
 .properties-form.is-hidden {
   display: none;
 }
