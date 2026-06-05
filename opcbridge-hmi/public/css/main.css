@@ -2462,7 +2462,7 @@ body.runtime-mode #app {
 }
 
 body.edit-mode #screen-wrapper {
-  background: #0f141d;
+  background: var(--screen-bg, #0f141d);
 }
 
 body.edit-mode #screen-wrapper {

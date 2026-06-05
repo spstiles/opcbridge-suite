@@ -11439,7 +11439,13 @@ const toggleSwatches = (target, anchorEl) => {
   openSwatchPopoverFloating(target, anchorEl);
 };
 const setDirty = (next) => {
-  if (poseEditSession) return;
+  if (poseEditSession && next) {
+    const activeObjects = getActiveObjects();
+    const selectedObj = (activeObjects && selectedIndices.length === 1)
+      ? activeObjects[selectedIndices[0]]
+      : null;
+    if (selectedObj && selectedObj === poseEditSession.object) return;
+  }
   isDirty = next;
   if (screenTitle) screenTitle.classList.toggle("is-dirty", isDirty);
   if (screenSaveBtn) screenSaveBtn.classList.toggle("is-visible", isDirty);
@@ -12440,6 +12446,7 @@ window.addEventListener("resize", () => {
 
 const loadJsonc = async () => {
   if (!jsoncEditor) return;
+  poseEditSession = null;
   if (!currentScreenPath) {
     const template = `{\n  // Screen: Untitled\n  \"width\": 1920,\n  \"height\": 1080,\n  \"background\": \"#202533\",\n  \"objects\": []\n}\n`;
     jsoncEditor.value = template;
