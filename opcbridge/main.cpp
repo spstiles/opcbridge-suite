@@ -1087,6 +1087,12 @@ static std::vector<SystemTagDef> collect_clock_system_tags() {
     std::time_t nowTime = static_cast<std::time_t>(nowSec);
     std::tm local {};
     localtime_r(&nowTime, &local);
+    const int hour12 = ((local.tm_hour + 11) % 12) + 1;
+    const bool isPm = local.tm_hour >= 12;
+    const char *amPm = isPm ? "PM" : "AM";
+    const double phase1s = static_cast<double>(nowMs % 1000) / 1000.0;
+    const double phase2s = static_cast<double>(nowMs % 2000) / 2000.0;
+    const double phase5s = static_cast<double>(nowMs % 5000) / 5000.0;
 
     return {
         {"System/Clock/UnixTimeMs", "int64", nowMs},
@@ -1095,6 +1101,9 @@ static std::vector<SystemTagDef> collect_clock_system_tags() {
         {"System/Clock/Month", "int32", local.tm_mon + 1},
         {"System/Clock/Day", "int32", local.tm_mday},
         {"System/Clock/Hour", "int32", local.tm_hour},
+        {"System/Clock/Hour12", "int32", hour12},
+        {"System/Clock/IsPm", "bool", isPm},
+        {"System/Clock/AmPm", "string", std::string(amPm)},
         {"System/Clock/Minute", "int32", local.tm_min},
         {"System/Clock/Second", "int32", local.tm_sec},
         {"System/Clock/DayOfWeek", "int32", local.tm_wday},
@@ -1102,7 +1111,10 @@ static std::vector<SystemTagDef> collect_clock_system_tags() {
         {"System/Clock/FastBlink", "bool", ((nowMs / 500) % 2) == 0},
         {"System/Clock/SlowBlink", "bool", ((nowMs / 1000) % 2) == 0},
         {"System/Clock/OneSecondPulse", "bool", (nowMs % 1000) < 100},
-        {"System/Clock/MinutePulse", "bool", (nowMs % 60000) < 1000}
+        {"System/Clock/MinutePulse", "bool", (nowMs % 60000) < 1000},
+        {"System/Clock/Phase1s", "double", phase1s},
+        {"System/Clock/Phase2s", "double", phase2s},
+        {"System/Clock/Phase5s", "double", phase5s}
     };
 }
 
@@ -1489,6 +1501,40 @@ static std::vector<SystemTagDef> collect_historian_system_tags() {
     std::lock_guard<std::mutex> lock(cacheMutex);
     cached = next;
     return cached;
+}
+
+static std::vector<SystemTagDef> collect_runtime_system_tags(
+    std::chrono::system_clock::time_point processStartTime,
+    bool mqttMode)
+{
+    std::vector<SystemTagDef> rows;
+    auto appendRows = [&](std::vector<SystemTagDef> next) {
+        rows.insert(rows.end(), next.begin(), next.end());
+    };
+    const int64_t uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now() - processStartTime
+    ).count();
+    ReloadState reloadCopy;
+    {
+        std::lock_guard<std::mutex> rlock(g_reloadMutex);
+        reloadCopy = g_reloadState;
+    }
+    rows.push_back({"System/Bridge/UptimeSeconds", "int64", uptime_sec});
+    rows.push_back({"System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION)});
+    rows.push_back({"System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested});
+    rows.push_back({"System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen});
+    appendRows(collect_clock_system_tags());
+    appendRows(collect_host_system_tags());
+    appendRows(collect_alarm_system_tags());
+    appendRows(collect_reporter_system_tags());
+    appendRows(collect_historian_system_tags());
+    appendRows(collect_logic_system_tags());
+    appendRows(collect_mqtt_system_tags(mqttMode));
+    appendRows(collect_opcua_sync_system_tags(
+        reloadCopy,
+        g_full_rebuild_required.load(std::memory_order_relaxed)
+    ));
+    return rows;
 }
 
 // -----------------------------
@@ -4645,6 +4691,28 @@ void ws_notify_tag_update(const TagSnapshot &snap,
 	    j["log_event_on_change"]   = cfg.log_event_on_change;
 	    j["log_periodic_mode"]     = cfg.log_periodic_mode;
 	    j["log_periodic_interval_sec"] = cfg.log_periodic_interval_sec;
+
+    ws_send_json(j);
+}
+
+void ws_notify_system_tag_update(const SystemTagDef &def, int64_t timestamp_ms)
+{
+    if (!ws_is_enabled()) return;
+
+    json j;
+    j["type"] = "tag_update";
+    j["connection_id"] = "_system";
+    j["name"] = def.name;
+    j["key"] = std::string("_system:") + def.name;
+    j["datatype"] = def.datatype;
+    j["quality"] = 1;
+    j["timestamp_ms"] = timestamp_ms;
+    j["value"] = def.value;
+    j["enabled"] = true;
+    j["writable"] = false;
+    j["log_event_on_change"] = false;
+    j["log_periodic_mode"] = false;
+    j["log_periodic_interval_sec"] = 0;
 
     ws_send_json(j);
 }
@@ -25206,6 +25274,8 @@ window.addEventListener("load", startAutoRefresh);
 	        std::mutex mqttQueueMutex;
 	        std::deque<MqttPublishJob> mqttQueue;
 	        auto lastSystemMqttPublish = std::chrono::steady_clock::time_point{};
+	        auto lastSystemWsPublish = std::chrono::steady_clock::time_point{};
+	        std::unordered_map<std::string, json> lastWsSystemValues;
 	        auto lastLogicConfigCheck = std::chrono::steady_clock::time_point{};
 
 	        struct PollTagItem {
@@ -26738,6 +26808,23 @@ window.addEventListener("load", startAutoRefresh);
 	                    }
 	                    lastSystemMqttPublish = mqttSysNow;
 	                }
+	            }
+
+	            auto wsSysNow = std::chrono::steady_clock::now();
+	            if (ws_is_enabled() &&
+	                (lastSystemWsPublish.time_since_epoch().count() == 0 ||
+	                 wsSysNow - lastSystemWsPublish >= std::chrono::milliseconds(250))) {
+	                const auto ts_ms = system_wall_now_ms();
+	                const auto sysRows = collect_runtime_system_tags(processStartTime, mqttMode);
+	                for (const auto &row : sysRows) {
+	                    auto it = lastWsSystemValues.find(row.name);
+	                    if (it != lastWsSystemValues.end() && it->second == row.value) {
+	                        continue;
+	                    }
+	                    lastWsSystemValues[row.name] = row.value;
+	                    ws_notify_system_tag_update(row, ts_ms);
+	                }
+	                lastSystemWsPublish = wsSysNow;
 	            }
 
 	            if (mqttMode && g_mqttCfg.publish_conn_json && !connHadMqttPublish.empty()) {

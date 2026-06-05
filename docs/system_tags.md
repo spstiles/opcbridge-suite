@@ -35,6 +35,9 @@ generated from the bridge host clock.
 | `System/Clock/Month` | `int32` | Local month, `1` through `12`. |
 | `System/Clock/Day` | `int32` | Local day of month, `1` through `31`. |
 | `System/Clock/Hour` | `int32` | Local hour, `0` through `23`. |
+| `System/Clock/Hour12` | `int32` | Local hour, `1` through `12`. |
+| `System/Clock/IsPm` | `bool` | `true` from 12:00 through 23:59 local time. |
+| `System/Clock/AmPm` | `string` | Local meridiem indicator: `AM` or `PM`. |
 | `System/Clock/Minute` | `int32` | Local minute, `0` through `59`. |
 | `System/Clock/Second` | `int32` | Local second, `0` through `59`. |
 | `System/Clock/DayOfWeek` | `int32` | Local day of week, `0` Sunday through `6` Saturday. |
@@ -43,6 +46,9 @@ generated from the bridge host clock.
 | `System/Clock/SlowBlink` | `bool` | Alternates every 1 second. |
 | `System/Clock/OneSecondPulse` | `bool` | `true` for the first 100 ms of each second. |
 | `System/Clock/MinutePulse` | `bool` | `true` for the first second of each minute. |
+| `System/Clock/Phase1s` | `double` | Smooth normalized phase ramp from `0.0` to just under `1.0`, repeating every 1 second. |
+| `System/Clock/Phase2s` | `double` | Smooth normalized phase ramp from `0.0` to just under `1.0`, repeating every 2 seconds. |
+| `System/Clock/Phase5s` | `double` | Smooth normalized phase ramp from `0.0` to just under `1.0`, repeating every 5 seconds. |
 
 ## Connection Tags
 

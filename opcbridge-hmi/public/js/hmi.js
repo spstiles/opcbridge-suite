@@ -506,12 +506,12 @@ const getSelectedColorDynamicObject = () => {
 
 const getSelectedRotationDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "group") ? obj : null;
 };
 
 const getSelectedMotionDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? obj : null;
 };
 
 const hasVisibilityDynamic = (obj) => {
@@ -591,6 +591,11 @@ const hasButtonRotationDynamic = (obj) => {
   return Boolean(obj.rotationAutomation && typeof obj.rotationAutomation === "object" && Object.keys(obj.rotationAutomation).length);
 };
 
+const hasGroupRotationDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.rotationAutomation && typeof obj.rotationAutomation === "object" && Object.keys(obj.rotationAutomation).length);
+};
+
 const hasLineMotionDynamic = (obj) => {
   if (!obj || typeof obj !== "object") return false;
   return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
@@ -616,6 +621,11 @@ const hasCircleMotionDynamic = (obj) => {
   return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
 };
 
+const hasGroupMotionDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
+};
+
 const isLineColorDynamicTarget = (obj) => Boolean(obj && obj.type === "line");
 
 const cloneVisibilityState = (value) => {
@@ -634,13 +644,15 @@ const cloneRectRotationDraft = (value) => {
       pivotMode: "center",
       rotationAutomation: {
         enabled: true,
+        sourceType: "tag",
         inputMin: 0,
         inputMax: 1,
         angleStart: 0,
         angleEnd: 0,
         direction: "shortest",
         connection_id: "",
-        tag: ""
+        tag: "",
+        expression: ""
       }
     };
   }
@@ -651,8 +663,10 @@ const cloneRectMotionDraft = (value) => {
   if (!value || typeof value !== "object") {
     return {
       enabled: true,
+      sourceType: "tag",
       connection_id: "",
       tag: "",
+      expression: "",
       inputMin: 0,
       inputMax: 1,
       startPose: null,
@@ -664,8 +678,18 @@ const cloneRectMotionDraft = (value) => {
 
 const normalizeRotationAutomationState = (value) => {
   const next = value && typeof value === "object" ? { ...value } : {};
-  if ("connection_id" in next && !String(next.connection_id || "").trim()) delete next.connection_id;
-  if ("tag" in next && !String(next.tag || "").trim()) delete next.tag;
+  next.sourceType = next.sourceType === "expression" ? "expression" : "tag";
+  if (next.sourceType === "expression") {
+    const expression = String(next.expression || "").trim();
+    if (expression) next.expression = expression;
+    else delete next.expression;
+    delete next.connection_id;
+    delete next.tag;
+  } else {
+    delete next.expression;
+    if ("connection_id" in next && !String(next.connection_id || "").trim()) delete next.connection_id;
+    if ("tag" in next && !String(next.tag || "").trim()) delete next.tag;
+  }
   if (!Number.isFinite(Number(next.inputMin))) next.inputMin = 0;
   else next.inputMin = Number(next.inputMin);
   if (!Number.isFinite(Number(next.inputMax))) next.inputMax = 1;
@@ -676,6 +700,28 @@ const normalizeRotationAutomationState = (value) => {
   else next.angleEnd = Number(next.angleEnd);
   const direction = String(next.direction || "shortest").trim().toLowerCase();
   next.direction = ["shortest", "cw", "ccw"].includes(direction) ? direction : "shortest";
+  if (next.enabled === undefined) next.enabled = true;
+  return next;
+};
+
+const normalizeMotionAutomationState = (value) => {
+  const next = value && typeof value === "object" ? { ...value } : {};
+  next.sourceType = next.sourceType === "expression" ? "expression" : "tag";
+  if (next.sourceType === "expression") {
+    const expression = String(next.expression || "").trim();
+    if (expression) next.expression = expression;
+    else delete next.expression;
+    delete next.connection_id;
+    delete next.tag;
+  } else {
+    delete next.expression;
+    if ("connection_id" in next && !String(next.connection_id || "").trim()) delete next.connection_id;
+    if ("tag" in next && !String(next.tag || "").trim()) delete next.tag;
+  }
+  if (!Number.isFinite(Number(next.inputMin))) next.inputMin = 0;
+  else next.inputMin = Number(next.inputMin);
+  if (!Number.isFinite(Number(next.inputMax))) next.inputMax = 1;
+  else next.inputMax = Number(next.inputMax);
   if (next.enabled === undefined) next.enabled = true;
   return next;
 };
@@ -1227,6 +1273,88 @@ const openRectColorExpressionModal = () => {
   if (rectColorExpressionEditor) requestAnimationFrame(() => rectColorExpressionEditor.focus());
 };
 
+let automationNumericExpressionOverlay = null;
+let automationNumericExpressionEditor = null;
+let automationNumericExpressionError = null;
+let automationNumericExpressionSaveBtn = null;
+let automationNumericExprTagConnection = null;
+let automationNumericExprTagName = null;
+let automationNumericExpressionInsertMenu = null;
+let automationNumericExpressionInsertTargetBtn = null;
+let automationNumericExpressionContext = null;
+
+const hideAutomationNumericExpressionInsertMenu = () => {
+  if (!automationNumericExpressionInsertMenu) return;
+  automationNumericExpressionInsertMenu.classList.add("is-hidden");
+  automationNumericExpressionInsertTargetBtn = null;
+};
+
+const setAutomationNumericExpressionTagPickerVisible = (visible) => {
+  const section = automationNumericExprTagConnection?.closest(".settings-section");
+  if (!section) return;
+  section.classList.toggle("is-hidden", !visible);
+  section.hidden = !visible;
+};
+
+const populateAutomationNumericExpressionConnectionOptions = () => {
+  populateConnectionSelect(automationNumericExprTagConnection);
+};
+
+const populateAutomationNumericExpressionTagOptions = (connectionId = "") => {
+  populateFilteredCombinedTagSelect(automationNumericExprTagName, connectionId || automationNumericExprTagConnection?.value || "");
+};
+
+const syncAutomationNumericExpressionValidationUi = () => {
+  const error = getAutomationExpressionValidationError(automationNumericExpressionEditor?.value || "");
+  const hasError = Boolean(error);
+  if (automationNumericExpressionError) {
+    automationNumericExpressionError.textContent = hasError ? error : "OK";
+    automationNumericExpressionError.classList.toggle("expression-error-state", hasError);
+    automationNumericExpressionError.classList.toggle("expression-ok", !hasError);
+  }
+  if (automationNumericExpressionSaveBtn) automationNumericExpressionSaveBtn.disabled = hasError;
+  return error;
+};
+
+const insertAutomationNumericExpressionText = (text) => {
+  if (!automationNumericExpressionEditor) return;
+  const start = automationNumericExpressionEditor.selectionStart ?? automationNumericExpressionEditor.value.length;
+  const end = automationNumericExpressionEditor.selectionEnd ?? automationNumericExpressionEditor.value.length;
+  automationNumericExpressionEditor.setRangeText(text, start, end, "end");
+  syncAutomationNumericExpressionValidationUi();
+  automationNumericExpressionEditor.focus();
+};
+
+const showAutomationNumericExpressionInsertMenu = (button, items) => {
+  if (!automationNumericExpressionInsertMenu || !button) return;
+  const nextItems = Array.isArray(items) ? items : [];
+  if (!nextItems.length) {
+    hideAutomationNumericExpressionInsertMenu();
+    return;
+  }
+  if (!automationNumericExpressionInsertMenu.classList.contains("is-hidden") && automationNumericExpressionInsertTargetBtn === button) {
+    hideAutomationNumericExpressionInsertMenu();
+    return;
+  }
+  automationNumericExpressionInsertMenu.innerHTML = "";
+  nextItems.forEach((item) => {
+    const entryButton = document.createElement("button");
+    entryButton.type = "button";
+    entryButton.className = "panel-btn";
+    entryButton.textContent = item.label;
+    entryButton.addEventListener("click", () => {
+      insertAutomationNumericExpressionText(item.insert);
+      hideAutomationNumericExpressionInsertMenu();
+    });
+    automationNumericExpressionInsertMenu.appendChild(entryButton);
+  });
+  const rect = button.getBoundingClientRect();
+  automationNumericExpressionInsertMenu.style.left = `${Math.round(rect.left)}px`;
+  automationNumericExpressionInsertMenu.style.top = `${Math.round(rect.bottom + 4)}px`;
+  automationNumericExpressionInsertMenu.classList.remove("is-hidden");
+  automationNumericExpressionInsertTargetBtn = button;
+};
+
 const getVisibilityExpressionHelperItems = (group) => {
   switch (group) {
     case "arithmetic":
@@ -1264,6 +1392,195 @@ const getVisibilityExpressionHelperItems = (group) => {
     default:
       return [];
   }
+};
+
+const ensureAutomationNumericExpressionModal = () => {
+  if (automationNumericExpressionOverlay) return;
+  const overlay = document.createElement("div");
+  overlay.className = "popup-overlay is-hidden";
+  overlay.setAttribute("aria-hidden", "true");
+  overlay.style.display = "none";
+
+  const modal = document.createElement("div");
+  modal.className = "settings-modal";
+
+  const header = document.createElement("div");
+  header.className = "popup-header";
+  const title = document.createElement("div");
+  title.id = "automationNumericExpressionTitle";
+  title.textContent = "Automation Expression";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "panel-btn";
+  closeBtn.textContent = "Close";
+  header.append(title, closeBtn);
+
+  const body = document.createElement("div");
+  body.className = "popup-content";
+
+  const section = document.createElement("div");
+  section.className = "settings-section";
+
+  const editorRow = document.createElement("div");
+  editorRow.className = "prop-row";
+  const editorLabel = document.createElement("label");
+  editorLabel.textContent = "Expression";
+  const editor = document.createElement("textarea");
+  editor.rows = 6;
+  editorRow.append(editorLabel, editor);
+  section.appendChild(editorRow);
+
+  const helperBar = document.createElement("div");
+  helperBar.className = "toolbar";
+  const makeBtn = (text) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "panel-btn";
+    btn.textContent = text;
+    return btn;
+  };
+  const arithmeticBtn = makeBtn("Arithmetic");
+  const relationalBtn = makeBtn("Relational");
+  const logicalBtn = makeBtn("Logical");
+  const functionsBtn = makeBtn("Functions");
+  const tagsBtn = makeBtn("Tags");
+  helperBar.append(arithmeticBtn, relationalBtn, logicalBtn, functionsBtn, tagsBtn);
+  section.appendChild(helperBar);
+
+  const insertMenu = document.createElement("div");
+  insertMenu.className = "toolbar is-hidden";
+  section.appendChild(insertMenu);
+
+  const tagSection = document.createElement("div");
+  tagSection.className = "settings-section is-hidden";
+  tagSection.hidden = true;
+  const connRow = document.createElement("div");
+  connRow.className = "prop-row";
+  const connLabel = document.createElement("label");
+  connLabel.textContent = "Connection";
+  const connSelect = document.createElement("select");
+  connRow.append(connLabel, connSelect);
+  const tagRow = document.createElement("div");
+  tagRow.className = "prop-row";
+  const tagLabel = document.createElement("label");
+  tagLabel.textContent = "Tag";
+  const tagSelect = document.createElement("select");
+  tagRow.append(tagLabel, tagSelect);
+  const insertRow = document.createElement("div");
+  insertRow.className = "prop-row";
+  const insertLabel = document.createElement("label");
+  insertLabel.textContent = "";
+  const insertBtn = document.createElement("button");
+  insertBtn.type = "button";
+  insertBtn.className = "panel-btn";
+  insertBtn.textContent = "Insert Tag";
+  insertRow.append(insertLabel, insertBtn);
+  tagSection.append(connRow, tagRow, insertRow);
+  section.appendChild(tagSection);
+
+  const status = document.createElement("div");
+  status.className = "expression-error expression-ok";
+  status.textContent = "OK";
+  section.appendChild(status);
+
+  body.appendChild(section);
+
+  const footer = document.createElement("div");
+  footer.className = "popup-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "panel-btn";
+  cancelBtn.textContent = "Cancel";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "panel-btn";
+  saveBtn.textContent = "Save";
+  footer.append(cancelBtn, saveBtn);
+
+  modal.append(header, body, footer);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  automationNumericExpressionOverlay = overlay;
+  automationNumericExpressionEditor = editor;
+  automationNumericExpressionError = status;
+  automationNumericExpressionSaveBtn = saveBtn;
+  automationNumericExprTagConnection = connSelect;
+  automationNumericExprTagName = tagSelect;
+  automationNumericExpressionInsertMenu = insertMenu;
+
+  const close = () => {
+    hideAutomationNumericExpressionInsertMenu();
+    setAutomationNumericExpressionTagPickerVisible(false);
+    automationNumericExpressionContext = null;
+    overlay.classList.add("is-hidden");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.style.display = "none";
+  };
+
+  closeBtn.addEventListener("click", close);
+  cancelBtn.addEventListener("click", close);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  editor.addEventListener("input", () => syncAutomationNumericExpressionValidationUi());
+  arithmeticBtn.addEventListener("click", () => {
+    setAutomationNumericExpressionTagPickerVisible(false);
+    showAutomationNumericExpressionInsertMenu(arithmeticBtn, getVisibilityExpressionHelperItems("arithmetic"));
+  });
+  relationalBtn.addEventListener("click", () => {
+    setAutomationNumericExpressionTagPickerVisible(false);
+    showAutomationNumericExpressionInsertMenu(relationalBtn, getVisibilityExpressionHelperItems("relational"));
+  });
+  logicalBtn.addEventListener("click", () => {
+    setAutomationNumericExpressionTagPickerVisible(false);
+    showAutomationNumericExpressionInsertMenu(logicalBtn, getVisibilityExpressionHelperItems("logical"));
+  });
+  functionsBtn.addEventListener("click", () => {
+    setAutomationNumericExpressionTagPickerVisible(false);
+    showAutomationNumericExpressionInsertMenu(functionsBtn, getVisibilityExpressionHelperItems("functions"));
+  });
+  tagsBtn.addEventListener("click", () => {
+    hideAutomationNumericExpressionInsertMenu();
+    const nextVisible = tagSection.classList.contains("is-hidden");
+    setAutomationNumericExpressionTagPickerVisible(nextVisible);
+    if (nextVisible) {
+      populateAutomationNumericExpressionConnectionOptions();
+      populateAutomationNumericExpressionTagOptions();
+    }
+  });
+  connSelect.addEventListener("change", () => {
+    populateAutomationNumericExpressionTagOptions(connSelect.value);
+  });
+  insertBtn.addEventListener("click", () => {
+    const { connection_id, tag } = parseTagSelectValue(tagSelect.value);
+    if (!connection_id || !tag) return;
+    insertAutomationNumericExpressionText(`tag(${JSON.stringify(connection_id)}, ${JSON.stringify(tag)})`);
+    setAutomationNumericExpressionTagPickerVisible(false);
+  });
+  saveBtn.addEventListener("click", () => {
+    const error = syncAutomationNumericExpressionValidationUi();
+    if (error || !automationNumericExpressionContext) return;
+    automationNumericExpressionContext.apply(String(editor.value || "").trim());
+    close();
+  });
+};
+
+const openAutomationNumericExpressionModal = ({ title, value, apply }) => {
+  ensureAutomationNumericExpressionModal();
+  automationNumericExpressionContext = { apply };
+  const titleEl = document.getElementById("automationNumericExpressionTitle");
+  if (titleEl) titleEl.textContent = title || "Automation Expression";
+  if (automationNumericExpressionEditor) automationNumericExpressionEditor.value = String(value || "");
+  syncAutomationNumericExpressionValidationUi();
+  hideAutomationNumericExpressionInsertMenu();
+  setAutomationNumericExpressionTagPickerVisible(false);
+  populateAutomationNumericExpressionConnectionOptions();
+  populateAutomationNumericExpressionTagOptions();
+  automationNumericExpressionOverlay.classList.remove("is-hidden");
+  automationNumericExpressionOverlay.setAttribute("aria-hidden", "false");
+  automationNumericExpressionOverlay.style.display = "flex";
+  requestAnimationFrame(() => automationNumericExpressionEditor?.focus());
 };
 
 const getAutomationExpressionValidationError = (expression) => {
@@ -1491,6 +1808,11 @@ const isEditingButtonRotationDynamic = () => {
   return Boolean(obj && obj.type === "button" && currentObjectDynamicTab === "rotation" && hasButtonRotationDynamic(obj));
 };
 
+const isEditingGroupRotationDynamic = () => {
+  const obj = getSelectedRotationDynamicObject();
+  return Boolean(obj && obj.type === "group" && currentObjectDynamicTab === "rotation" && hasGroupRotationDynamic(obj));
+};
+
 const isEditingRectMotionDynamic = () => {
   const obj = getSelectedMotionDynamicObject();
   return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "motion" && hasRectMotionDynamic(obj));
@@ -1521,6 +1843,11 @@ const isEditingCircleMotionDynamic = () => {
   return Boolean(obj && obj.type === "circle" && currentObjectDynamicTab === "motion" && hasCircleMotionDynamic(obj));
 };
 
+const isEditingGroupMotionDynamic = () => {
+  const obj = getSelectedMotionDynamicObject();
+  return Boolean(obj && obj.type === "group" && currentObjectDynamicTab === "motion" && hasGroupMotionDynamic(obj));
+};
+
 const ensureRectVisibilityDraft = (obj) => {
   if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "group" && obj.type !== "circle")) return;
   if (rectVisibilityDraftObject !== obj || !rectVisibilityDraft) {
@@ -1530,7 +1857,7 @@ const ensureRectVisibilityDraft = (obj) => {
 };
 
 const ensureRectColorDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "group")) return;
   if (rectColorDraftObject !== obj || !rectColorDraft) {
     const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle") ? (obj.fillAutomation || {}) : {};
     const strokeAuto = (obj.type === "text") ? (obj.backgroundAutomation || {}) : (obj.type === "button" ? (obj.textColorAutomation || {}) : (obj.strokeAutomation || {}));
@@ -1558,7 +1885,7 @@ const ensureRectColorDraft = (obj) => {
 };
 
 const ensureRectRotationDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "group")) return;
   if (rectRotationDraftObject !== obj || !rectRotationDraft) {
     rectRotationDraftObject = obj;
     rectRotationDraft = cloneRectRotationDraft({
@@ -1574,10 +1901,10 @@ const ensureRectMotionDraft = (obj) => {
   if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle")) return;
   if (rectMotionDraftObject !== obj || !rectMotionDraft) {
     rectMotionDraftObject = obj;
-    rectMotionDraft = cloneRectMotionDraft({
+    rectMotionDraft = cloneRectMotionDraft(normalizeMotionAutomationState({
       ...(obj.motion || {}),
       enabled: obj.motion?.enabled !== false
-    });
+    }));
   }
 };
 
@@ -1660,7 +1987,7 @@ const ensureRectRotationDynamic = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedRotationDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!(hasRectRotationDynamic(obj) || hasLineRotationDynamic(obj) || hasEllipseRotationDynamic(obj) || hasTextRotationDynamic(obj) || hasButtonRotationDynamic(obj))) {
+  if (!(hasRectRotationDynamic(obj) || hasLineRotationDynamic(obj) || hasEllipseRotationDynamic(obj) || hasTextRotationDynamic(obj) || hasButtonRotationDynamic(obj) || hasGroupRotationDynamic(obj))) {
     recordHistory();
     obj.rotationAutomation = { enabled: true, inputMin: 0, inputMax: 1, angleStart: 0, angleEnd: 0, direction: "shortest" };
     renderScreen();
@@ -1677,7 +2004,7 @@ const ensureRectMotionDynamic = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedMotionDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!(hasRectMotionDynamic(obj) || hasLineMotionDynamic(obj) || hasEllipseMotionDynamic(obj) || hasTextMotionDynamic(obj) || hasButtonMotionDynamic(obj) || hasCircleMotionDynamic(obj))) {
+  if (!(hasRectMotionDynamic(obj) || hasLineMotionDynamic(obj) || hasEllipseMotionDynamic(obj) || hasTextMotionDynamic(obj) || hasButtonMotionDynamic(obj) || hasCircleMotionDynamic(obj) || hasGroupMotionDynamic(obj))) {
     recordHistory();
     obj.motion = { enabled: true, inputMin: 0, inputMax: 1 };
     renderScreen();
@@ -5470,13 +5797,18 @@ const getRotationPivot = (obj, boundsOverride = null, offset = { x: 0, y: 0 }) =
 
 const getRotationAutomationValue = (obj) => {
   if (!obj || isEditMode) return 0;
-  const automation = obj.rotationAutomation;
+  const automation = normalizeRotationAutomationState(obj.rotationAutomation);
   if (!automation || automation.enabled === false) return 0;
-  const connectionId = String(automation.connection_id || "").trim();
-  const tag = String(automation.tag || "").trim();
-  if (!connectionId || !tag) return 0;
-  const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-  const numeric = coerceTagNumber(raw);
+  let numeric = null;
+  if (automation.sourceType === "expression") {
+    numeric = coerceTagNumber(evaluateAutomationExpression(automation.expression));
+  } else {
+    const connectionId = String(automation.connection_id || "").trim();
+    const tag = String(automation.tag || "").trim();
+    if (!connectionId || !tag) return 0;
+    const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
+    numeric = coerceTagNumber(raw);
+  }
   if (numeric === null) return 0;
   const inputMin = Number.isFinite(Number(automation.inputMin)) ? Number(automation.inputMin) : 0;
   const inputMax = Number.isFinite(Number(automation.inputMax)) ? Number(automation.inputMax) : 1;
@@ -5597,15 +5929,21 @@ const getMotionPreviewT = (obj) => {
 };
 
 const getMotionTFromSource = (motion) => {
-  if (!motion || motion.enabled === false) return null;
-  const connectionId = String(motion.connection_id || "").trim();
-  const tag = String(motion.tag || "").trim();
-  if (!connectionId || !tag) return null;
-  const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-  const numeric = coerceTagNumber(raw);
+  const normalized = normalizeMotionAutomationState(motion);
+  if (!normalized || normalized.enabled === false) return null;
+  let numeric = null;
+  if (normalized.sourceType === "expression") {
+    numeric = coerceTagNumber(evaluateAutomationExpression(normalized.expression));
+  } else {
+    const connectionId = String(normalized.connection_id || "").trim();
+    const tag = String(normalized.tag || "").trim();
+    if (!connectionId || !tag) return null;
+    const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
+    numeric = coerceTagNumber(raw);
+  }
   if (numeric === null) return null;
-  const inputMin = Number.isFinite(Number(motion.inputMin)) ? Number(motion.inputMin) : 0;
-  const inputMax = Number.isFinite(Number(motion.inputMax)) ? Number(motion.inputMax) : 1;
+  const inputMin = Number.isFinite(Number(normalized.inputMin)) ? Number(normalized.inputMin) : 0;
+  const inputMax = Number.isFinite(Number(normalized.inputMax)) ? Number(normalized.inputMax) : 1;
   if (inputMax === inputMin) return numeric >= inputMax ? 1 : 0;
   return Math.max(0, Math.min(1, (numeric - inputMin) / (inputMax - inputMin)));
 };
@@ -6218,10 +6556,10 @@ const updateMenuState = () => {
   const canAddTextDynamic = Boolean(getSelectedTextObject());
   const canAddButtonDynamic = Boolean(getSelectedButtonObject());
   const canAddCircleDynamic = Boolean(getSelectedCircleObject());
-  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic;
-  const canAddRotationDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic;
   const canAddGroupDynamic = Boolean(getSelectedGroupObject());
-  const canAddMotionDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic;
+  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic;
+  const canAddRotationDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic;
+  const canAddMotionDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
   const canOpenDynamics = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic || canAddCircleDynamic;
   const toggleItem = (el) => {
     if (!el) return;
@@ -10482,8 +10820,8 @@ const updatePropertiesPanel = () => {
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
   if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectColorDynamic(obj)) || (showDynamicLine && !hasLineColorDynamic(obj)) || (showDynamicEllipse && !hasEllipseColorDynamic(obj)) || (showDynamicText && !hasTextColorDynamic(obj)) || (showDynamicButton && !hasButtonColorDynamic(obj)) || (showDynamicCircle && !hasCircleColorDynamic(obj))) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
-  if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj)) || (showDynamicButton && !hasButtonRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
-  if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj)) || (showDynamicButton && !hasButtonRotationDynamic(obj)) || (showDynamicGroup && !hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
   if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle) {
     currentObjectDynamicTab = "properties";
     rectVisibilityDraft = null;
@@ -10498,8 +10836,8 @@ const updatePropertiesPanel = () => {
   if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle));
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && hasVisibilityDynamic(obj)));
   if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicButton && hasButtonColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj))));
-  if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj))));
-  if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj))));
+  if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))));
+  if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) setObjectDynamicTab(currentObjectDynamicTab);
   [
     rectStrokeAutoHeader,
@@ -10546,8 +10884,8 @@ const updatePropertiesPanel = () => {
   });
   const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
   const showRectColorTab = ((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicButton && hasButtonColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj))) && currentObjectDynamicTab === "color";
-  const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
-  const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
+  const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
+  const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
   if (showRectVisibilityTab) ensureRectVisibilityDraft(obj);
   if (showRectColorTab) ensureRectColorDraft(obj);
   if (showRectRotationTab) ensureRectRotationDraft(obj);
@@ -10557,7 +10895,7 @@ const updatePropertiesPanel = () => {
   if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicText && textProps) textProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicButton && buttonProps) buttonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab);
+  if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectMotionTab);
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
   if (objectDynamicColorHost) objectDynamicColorHost.classList.toggle("is-hidden", !showRectColorTab);
@@ -16430,7 +16768,7 @@ const updateSelectedObjectRotationConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!obj || !ROTATION_PIVOT_TYPES.has(String(obj.type || ""))) return;
-  if ((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button")) {
+  if ((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group")) {
     ensureRectRotationDraft(obj);
     const next = cloneRectRotationDraft(rectRotationDraft || {});
     if ("pivotMode" in patch) {
@@ -16482,17 +16820,10 @@ const updateSelectedObjectRotationConfig = (patch) => {
   }
   if ("rotationAutomation" in patch) {
     const current = obj.rotationAutomation || {};
-    const merged = { ...current, ...(patch.rotationAutomation || {}) };
-    if ("connection_id" in merged && !String(merged.connection_id || "").trim()) delete merged.connection_id;
-    if ("tag" in merged && !String(merged.tag || "").trim()) delete merged.tag;
-    if (!Number.isFinite(Number(merged.inputMin))) merged.inputMin = 0;
-    if (!Number.isFinite(Number(merged.inputMax))) merged.inputMax = 1;
-    if (!Number.isFinite(Number(merged.angleStart))) merged.angleStart = 0;
-    if (!Number.isFinite(Number(merged.angleEnd))) merged.angleEnd = 0;
-    const direction = String(merged.direction || "shortest").trim().toLowerCase();
-    merged.direction = ["shortest", "cw", "ccw"].includes(direction) ? direction : "shortest";
-    if (merged.enabled === undefined) merged.enabled = true;
-    const hasSource = String(merged.connection_id || "").trim() && String(merged.tag || "").trim();
+    const merged = normalizeRotationAutomationState({ ...current, ...(patch.rotationAutomation || {}) });
+    const hasSource = merged.sourceType === "expression"
+      ? Boolean(String(merged.expression || "").trim())
+      : (String(merged.connection_id || "").trim() && String(merged.tag || "").trim());
     const isDefault =
       !hasSource &&
       Number(merged.inputMin ?? 0) === 0 &&
@@ -16500,7 +16831,7 @@ const updateSelectedObjectRotationConfig = (patch) => {
       Number(merged.angleStart ?? 0) === 0 &&
       Number(merged.angleEnd ?? 0) === 0 &&
       String(merged.direction || "shortest") === "shortest" &&
-      merged.enabled !== true;
+      merged.enabled === true;
     if (isDefault) delete obj.rotationAutomation;
     else obj.rotationAutomation = merged;
   }
@@ -16511,15 +16842,23 @@ const updateSelectedObjectRotationConfig = (patch) => {
 };
 
 const getRotationAutomationSummary = (automation) => {
-  const connectionId = String(automation?.connection_id || "").trim();
-  const tag = String(automation?.tag || "").trim();
-  if (!connectionId && !tag) return "(unbound)";
-  let summary = connectionId && tag ? `${connectionId} / ${tag}` : (connectionId || tag);
-  const inputMin = Number.isFinite(Number(automation?.inputMin)) ? Number(automation.inputMin) : 0;
-  const inputMax = Number.isFinite(Number(automation?.inputMax)) ? Number(automation.inputMax) : 1;
-  const angleStart = Number.isFinite(Number(automation?.angleStart)) ? Number(automation.angleStart) : 0;
-  const angleEnd = Number.isFinite(Number(automation?.angleEnd)) ? Number(automation.angleEnd) : 0;
-  const direction = String(automation?.direction || "shortest").trim().toLowerCase();
+  const normalized = normalizeRotationAutomationState(automation);
+  let summary = "(unbound)";
+  if (normalized.sourceType === "expression") {
+    const expression = String(normalized.expression || "").trim();
+    if (!expression) return "(unbound)";
+    summary = expression.length > 72 ? `${expression.slice(0, 72)}…` : expression;
+  } else {
+    const connectionId = String(normalized.connection_id || "").trim();
+    const tag = String(normalized.tag || "").trim();
+    if (!connectionId && !tag) return "(unbound)";
+    summary = connectionId && tag ? `${connectionId} / ${tag}` : (connectionId || tag);
+  }
+  const inputMin = Number.isFinite(Number(normalized.inputMin)) ? Number(normalized.inputMin) : 0;
+  const inputMax = Number.isFinite(Number(normalized.inputMax)) ? Number(normalized.inputMax) : 1;
+  const angleStart = Number.isFinite(Number(normalized.angleStart)) ? Number(normalized.angleStart) : 0;
+  const angleEnd = Number.isFinite(Number(normalized.angleEnd)) ? Number(normalized.angleEnd) : 0;
+  const direction = String(normalized.direction || "shortest").trim().toLowerCase();
   const extras = [];
   extras.push(`${inputMin}\u2192${inputMax}`);
   extras.push(`${angleStart}\u00b0\u2192${angleEnd}\u00b0`);
@@ -16613,23 +16952,47 @@ const initializeRotationControls = () => {
     autoFields.className = "prop-subgroup is-hidden";
     autoFields.hidden = true;
 
-    const sourceRow = document.createElement("div");
-    sourceRow.className = "prop-row";
-    const sourceLabel = document.createElement("label");
-    sourceLabel.textContent = "Source";
-    const sourceInline = document.createElement("div");
-    sourceInline.className = "prop-inline";
-    const sourceSummary = document.createElement("div");
-    sourceSummary.className = "text-binding-summary";
-    sourceSummary.textContent = "(unbound)";
-    const sourceBtn = document.createElement("button");
-    sourceBtn.type = "button";
-    sourceBtn.className = "panel-btn";
-    sourceBtn.textContent = "...";
-    sourceInline.appendChild(sourceSummary);
-    sourceInline.appendChild(sourceBtn);
-    sourceRow.appendChild(sourceLabel);
-    sourceRow.appendChild(sourceInline);
+    const sourceTypeRow = document.createElement("div");
+    sourceTypeRow.className = "prop-row";
+    const sourceTypeLabel = document.createElement("label");
+    sourceTypeLabel.textContent = "Source Type";
+    const sourceTypeSelect = document.createElement("select");
+    sourceTypeSelect.innerHTML = '<option value="tag">Tag</option><option value="expression">Expression</option>';
+    sourceTypeRow.appendChild(sourceTypeLabel);
+    sourceTypeRow.appendChild(sourceTypeSelect);
+
+    const connectionRow = document.createElement("div");
+    connectionRow.className = "prop-row";
+    const connectionLabel = document.createElement("label");
+    connectionLabel.textContent = "Connection";
+    const connectionSelect = document.createElement("select");
+    connectionRow.appendChild(connectionLabel);
+    connectionRow.appendChild(connectionSelect);
+
+    const tagRow = document.createElement("div");
+    tagRow.className = "prop-row";
+    const tagLabel = document.createElement("label");
+    tagLabel.textContent = "Tag";
+    const tagSelect = document.createElement("select");
+    tagRow.appendChild(tagLabel);
+    tagRow.appendChild(tagSelect);
+
+    const expressionRow = document.createElement("div");
+    expressionRow.className = "prop-row is-hidden";
+    expressionRow.hidden = true;
+    const expressionLabel = document.createElement("label");
+    expressionLabel.textContent = "Expression";
+    const expressionInline = document.createElement("div");
+    expressionInline.className = "prop-subgroup";
+    const expressionSummary = document.createElement("div");
+    expressionSummary.className = "expression-summary";
+    expressionSummary.textContent = "(empty)";
+    const expressionBtn = document.createElement("button");
+    expressionBtn.type = "button";
+    expressionBtn.className = "panel-btn";
+    expressionBtn.textContent = "Edit…";
+    expressionInline.append(expressionSummary, expressionBtn);
+    expressionRow.append(expressionLabel, expressionInline);
 
     const inputMinRow = document.createElement("div");
     inputMinRow.className = "prop-row";
@@ -16685,7 +17048,10 @@ const initializeRotationControls = () => {
     directionRow.appendChild(directionLabel);
     directionRow.appendChild(directionSelect);
 
-    autoFields.appendChild(sourceRow);
+    autoFields.appendChild(sourceTypeRow);
+    autoFields.appendChild(connectionRow);
+    autoFields.appendChild(tagRow);
+    autoFields.appendChild(expressionRow);
     autoFields.appendChild(inputMinRow);
     autoFields.appendChild(inputMaxRow);
     autoFields.appendChild(angleStartRow);
@@ -16706,8 +17072,14 @@ const initializeRotationControls = () => {
       pivotYInput,
       enabledInput,
       autoFields,
-      sourceSummary,
-      sourceBtn,
+      sourceTypeSelect,
+      connectionRow,
+      connectionSelect,
+      tagRow,
+      tagSelect,
+      expressionRow,
+      expressionSummary,
+      expressionBtn,
       inputMinInput,
       inputMaxInput,
       angleStartInput,
@@ -16715,34 +17087,6 @@ const initializeRotationControls = () => {
       directionSelect
     };
     rotationControlConfigs.push(control);
-
-    compactTagBindingConfigs.push({
-      id: `rotation-${definition.id}`,
-      read: () => {
-        const activeObjects = getActiveObjects();
-        const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-        if (!obj || !control.types.includes(obj.type)) return { connection_id: "", tag: "" };
-        const automation = (((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic()) || (control.id === "ellipse" && isEditingEllipseRotationDynamic()) || (control.id === "text" && isEditingTextRotationDynamic()) || (control.id === "button" && isEditingButtonRotationDynamic())))
-          ? (rectRotationDraft?.rotationAutomation || {})
-          : (obj.rotationAutomation || {});
-        return {
-          connection_id: String(automation.connection_id || "").trim(),
-          tag: String(automation.tag || "").trim()
-        };
-      },
-      apply: ({ connection_id, tag }) => updateSelectedObjectRotationConfig({
-        rotationAutomation: { connection_id, tag, enabled: true }
-      }),
-      getSummary: () => {
-        const activeObjects = getActiveObjects();
-        const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-        if ((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic()) || (control.id === "ellipse" && isEditingEllipseRotationDynamic()) || (control.id === "text" && isEditingTextRotationDynamic()) || (control.id === "button" && isEditingButtonRotationDynamic())) {
-          return getRotationAutomationSummary(rectRotationDraft?.rotationAutomation || {});
-        }
-        return getRotationAutomationSummary(obj?.rotationAutomation || {});
-      },
-      summaryEl: sourceSummary
-    });
 
     const syncCustomVisibility = (mode) => {
       const show = normalizePivotMode(mode, definition.types[0]) === "custom";
@@ -16755,6 +17099,15 @@ const initializeRotationControls = () => {
       const show = Boolean(enabled);
       autoFields.classList.toggle("is-hidden", !show);
       autoFields.hidden = !show;
+    };
+    const syncSourceVisibility = (sourceType) => {
+      const showExpression = sourceType === "expression";
+      connectionRow.classList.toggle("is-hidden", showExpression);
+      connectionRow.hidden = showExpression;
+      tagRow.classList.toggle("is-hidden", showExpression);
+      tagRow.hidden = showExpression;
+      expressionRow.classList.toggle("is-hidden", !showExpression);
+      expressionRow.hidden = !showExpression;
     };
 
     pivotSelect.addEventListener("change", () => {
@@ -16774,8 +17127,37 @@ const initializeRotationControls = () => {
       syncAutoVisibility(enabledInput.checked);
       updateSelectedObjectRotationConfig({ rotationAutomation: { enabled: enabledInput.checked } });
     });
-    sourceBtn.addEventListener("click", () => {
-      openCompactTagBindingModal(`rotation-${definition.id}`);
+    sourceTypeSelect.addEventListener("change", () => {
+      const sourceType = sourceTypeSelect.value === "expression" ? "expression" : "tag";
+      syncSourceVisibility(sourceType);
+      updateSelectedObjectRotationConfig({
+        rotationAutomation: sourceType === "expression"
+          ? { sourceType, expression: "", enabled: true }
+          : { sourceType, connection_id: String(connectionSelect.value || "").trim(), tag: parseTagSelectValue(tagSelect.value || "").tag, enabled: true }
+      });
+    });
+    connectionSelect.addEventListener("change", () => {
+      populateFilteredCombinedTagSelect(tagSelect, connectionSelect.value);
+      setSelectValueSafe(tagSelect, "");
+      updateSelectedObjectRotationConfig({ rotationAutomation: { sourceType: "tag", connection_id: connectionSelect.value, tag: "", enabled: true } });
+    });
+    tagSelect.addEventListener("change", () => {
+      const { connection_id, tag } = parseTagSelectValue(tagSelect.value || "");
+      if (connection_id) setSelectValueSafe(connectionSelect, connection_id);
+      updateSelectedObjectRotationConfig({ rotationAutomation: { sourceType: "tag", connection_id, tag, enabled: true } });
+    });
+    expressionBtn.addEventListener("click", () => {
+      const activeObjects = getActiveObjects();
+      const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+      if (!obj || !control.types.includes(obj.type)) return;
+      const automation = (((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic()) || (control.id === "ellipse" && isEditingEllipseRotationDynamic()) || (control.id === "text" && isEditingTextRotationDynamic()) || (control.id === "button" && isEditingButtonRotationDynamic()) || (control.id === "group" && isEditingGroupRotationDynamic())))
+        ? (rectRotationDraft?.rotationAutomation || {})
+        : (obj.rotationAutomation || {});
+      openAutomationNumericExpressionModal({
+        title: "Rotation Expression",
+        value: automation?.expression || "",
+        apply: (expression) => updateSelectedObjectRotationConfig({ rotationAutomation: { sourceType: "expression", expression, enabled: true } })
+      });
     });
     inputMinInput.addEventListener("change", () => {
       const value = Number(inputMinInput.value);
@@ -16841,7 +17223,7 @@ rectRotationActionRow.appendChild(rectRotationActionInline);
 rectRotationSaveBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedRotationDynamicObject();
-  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button"))) return;
+  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group"))) return;
   ensureRectRotationDraft(obj);
   recordHistory();
   obj.pivotMode = normalizePivotMode(rectRotationDraft?.pivotMode, obj.type);
@@ -16866,7 +17248,7 @@ rectRotationSaveBtn.addEventListener("click", () => {
 
 rectRotationCancelBtn.addEventListener("click", () => {
   const obj = getSelectedRotationDynamicObject();
-  if (!obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button"))) return;
+  if (!obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group"))) return;
   rectRotationDraft = null;
   rectRotationDraftObject = obj;
   ensureRectRotationDraft(obj);
@@ -16877,7 +17259,7 @@ rectRotationCancelBtn.addEventListener("click", () => {
 rectRotationDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedRotationDynamicObject();
-  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectRotationDynamic(obj)) || (obj.type === "line" && hasLineRotationDynamic(obj)) || (obj.type === "ellipse" && hasEllipseRotationDynamic(obj)) || (obj.type === "text" && hasTextRotationDynamic(obj)) || (obj.type === "button" && hasButtonRotationDynamic(obj)))) return;
+  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectRotationDynamic(obj)) || (obj.type === "line" && hasLineRotationDynamic(obj)) || (obj.type === "ellipse" && hasEllipseRotationDynamic(obj)) || (obj.type === "text" && hasTextRotationDynamic(obj)) || (obj.type === "button" && hasButtonRotationDynamic(obj)) || (obj.type === "group" && hasGroupRotationDynamic(obj)))) return;
   recordHistory();
   delete obj.rotationAutomation;
   delete obj.pivotMode;
@@ -16919,30 +17301,49 @@ const syncRotationControls = (obj) => {
     control.pivotYRow.hidden = mode !== "custom";
     setInputValueSafe(control.pivotXInput, Number.isFinite(Number(obj.pivotX)) ? Number(obj.pivotX) : Number(pivot.x ?? 0));
     setInputValueSafe(control.pivotYInput, Number.isFinite(Number(obj.pivotY)) ? Number(obj.pivotY) : Number(pivot.y ?? 0));
-    const automation = obj.rotationAutomation || {};
+    const automation = normalizeRotationAutomationState(obj.rotationAutomation || {});
     const enabled = Boolean(automation.enabled);
     control.enabledInput.checked = enabled;
     control.autoFields.classList.toggle("is-hidden", !enabled);
     control.autoFields.hidden = !enabled;
+    setSelectValueSafe(control.sourceTypeSelect, automation.sourceType || "tag");
+    populateConnectionSelect(control.connectionSelect);
+    setSelectValueSafe(control.connectionSelect, automation.connection_id || "");
+    populateFilteredCombinedTagSelect(control.tagSelect, automation.connection_id || "");
+    setSelectValueSafe(control.tagSelect, automation.connection_id && automation.tag ? `${automation.connection_id}::${automation.tag}` : "");
+    control.connectionRow.classList.toggle("is-hidden", automation.sourceType === "expression");
+    control.connectionRow.hidden = automation.sourceType === "expression";
+    control.tagRow.classList.toggle("is-hidden", automation.sourceType === "expression");
+    control.tagRow.hidden = automation.sourceType === "expression";
+    control.expressionRow.classList.toggle("is-hidden", automation.sourceType !== "expression");
+    control.expressionRow.hidden = automation.sourceType !== "expression";
+    const expressionSummary = String(automation.expression || "").trim();
+    control.expressionSummary.textContent = expressionSummary || "(empty)";
+    control.expressionSummary.title = expressionSummary;
     setInputValueSafe(control.inputMinInput, Number.isFinite(Number(automation.inputMin)) ? Number(automation.inputMin) : 0);
     setInputValueSafe(control.inputMaxInput, Number.isFinite(Number(automation.inputMax)) ? Number(automation.inputMax) : 1);
     setInputValueSafe(control.angleStartInput, Number.isFinite(Number(automation.angleStart)) ? Number(automation.angleStart) : 0);
     setInputValueSafe(control.angleEndInput, Number.isFinite(Number(automation.angleEnd)) ? Number(automation.angleEnd) : 0);
     setSelectValueSafe(control.directionSelect, String(automation.direction || "shortest"));
-    const summary = getRotationAutomationSummary(automation);
-    control.sourceSummary.textContent = summary;
-    control.sourceSummary.title = summary;
   });
 };
 
 const getMotionSummary = (motion) => {
-  if (!motion) return "(unbound)";
-  const connectionId = String(motion.connection_id || "").trim();
-  const tag = String(motion.tag || "").trim();
-  if (!connectionId && !tag) return "(unbound)";
-  let summary = connectionId && tag ? `${connectionId} / ${tag}` : (connectionId || tag);
-  const inputMin = Number.isFinite(Number(motion.inputMin)) ? Number(motion.inputMin) : 0;
-  const inputMax = Number.isFinite(Number(motion.inputMax)) ? Number(motion.inputMax) : 1;
+  const normalized = normalizeMotionAutomationState(motion);
+  if (!normalized) return "(unbound)";
+  let summary = "(unbound)";
+  if (normalized.sourceType === "expression") {
+    const expression = String(normalized.expression || "").trim();
+    if (!expression) return "(unbound)";
+    summary = expression.length > 72 ? `${expression.slice(0, 72)}…` : expression;
+  } else {
+    const connectionId = String(normalized.connection_id || "").trim();
+    const tag = String(normalized.tag || "").trim();
+    if (!connectionId && !tag) return "(unbound)";
+    summary = connectionId && tag ? `${connectionId} / ${tag}` : (connectionId || tag);
+  }
+  const inputMin = Number.isFinite(Number(normalized.inputMin)) ? Number(normalized.inputMin) : 0;
+  const inputMax = Number.isFinite(Number(normalized.inputMax)) ? Number(normalized.inputMax) : 1;
   summary += ` · ${inputMin}→${inputMax}`;
   return summary;
 };
@@ -16953,32 +17354,21 @@ const updateSelectedObjectMotionConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!supportsMotionPose(obj)) return;
-  if ((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle")) {
+  if ((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group")) {
     ensureRectMotionDraft(obj);
-    const next = cloneRectMotionDraft(rectMotionDraft || {});
-    Object.assign(next, patch || {});
-    if ("connection_id" in next && !String(next.connection_id || "").trim()) delete next.connection_id;
-    if ("tag" in next && !String(next.tag || "").trim()) delete next.tag;
-    if (!Number.isFinite(Number(next.inputMin))) next.inputMin = 0;
-    else next.inputMin = Number(next.inputMin);
-    if (!Number.isFinite(Number(next.inputMax))) next.inputMax = 1;
-    else next.inputMax = Number(next.inputMax);
-    if (next.enabled === undefined) next.enabled = true;
-    rectMotionDraft = next;
+    const next = normalizeMotionAutomationState({ ...(rectMotionDraft || {}), ...(patch || {}) });
+    rectMotionDraft = cloneRectMotionDraft(next);
     syncRectMotionControlFromDraft(obj);
     return;
   }
   recordHistory();
   const current = obj.motion || {};
-  const merged = { ...current, ...(patch || {}) };
-  if ("connection_id" in merged && !String(merged.connection_id || "").trim()) delete merged.connection_id;
-  if ("tag" in merged && !String(merged.tag || "").trim()) delete merged.tag;
-  if (!Number.isFinite(Number(merged.inputMin))) merged.inputMin = 0;
-  if (!Number.isFinite(Number(merged.inputMax))) merged.inputMax = 1;
-  if (merged.enabled === undefined) merged.enabled = true;
-  const hasSource = String(merged.connection_id || "").trim() && String(merged.tag || "").trim();
+  const merged = normalizeMotionAutomationState({ ...current, ...(patch || {}) });
+  const hasSource = merged.sourceType === "expression"
+    ? Boolean(String(merged.expression || "").trim())
+    : (String(merged.connection_id || "").trim() && String(merged.tag || "").trim());
   const hasPoses = Boolean(merged.startPose || merged.endPose);
-  const isDefault = !hasSource && !hasPoses && Number(merged.inputMin ?? 0) === 0 && Number(merged.inputMax ?? 1) === 1 && merged.enabled !== true;
+  const isDefault = !hasSource && !hasPoses && Number(merged.inputMin ?? 0) === 0 && Number(merged.inputMax ?? 1) === 1 && merged.enabled === true;
   if (isDefault) delete obj.motion;
   else obj.motion = merged;
   renderScreen();
@@ -17006,7 +17396,7 @@ const startPoseEdit = (poseKey) => {
   if (poseEditSession) cancelPoseEdit({ keepTool: true });
   const currentPose = captureMotionPose(obj);
   if (!currentPose) return;
-  const sourceMotion = (((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle")))
+  const sourceMotion = (((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group")))
     ? (ensureRectMotionDraft(obj), rectMotionDraft || {})
     : (obj.motion || {});
   const editPose = sourceMotion?.[poseKey] || currentPose;
@@ -17030,7 +17420,7 @@ const savePoseEdit = () => {
   if (!capturedPose) return;
   applyMotionPoseToObject(session.object, session.originalPose);
   poseEditSession = null;
-  if ((isEditingRectMotionDynamic() && session.object.type === "rect") || (isEditingLineMotionDynamic() && session.object.type === "line") || (isEditingEllipseMotionDynamic() && session.object.type === "ellipse") || (isEditingTextMotionDynamic() && session.object.type === "text") || (isEditingButtonMotionDynamic() && session.object.type === "button") || (isEditingCircleMotionDynamic() && session.object.type === "circle")) {
+  if ((isEditingRectMotionDynamic() && session.object.type === "rect") || (isEditingLineMotionDynamic() && session.object.type === "line") || (isEditingEllipseMotionDynamic() && session.object.type === "ellipse") || (isEditingTextMotionDynamic() && session.object.type === "text") || (isEditingButtonMotionDynamic() && session.object.type === "button") || (isEditingCircleMotionDynamic() && session.object.type === "circle") || (isEditingGroupMotionDynamic() && session.object.type === "group")) {
     ensureRectMotionDraft(session.object);
     rectMotionDraft = {
       ...(rectMotionDraft || {}),
@@ -17095,23 +17485,44 @@ const initializeMotionControls = () => {
     fields.className = "prop-subgroup is-hidden";
     fields.hidden = true;
 
-    const sourceRow = document.createElement("div");
-    sourceRow.className = "prop-row";
-    const sourceLabel = document.createElement("label");
-    sourceLabel.textContent = "Source";
-    const sourceInline = document.createElement("div");
-    sourceInline.className = "prop-inline";
-    const sourceSummary = document.createElement("div");
-    sourceSummary.className = "text-binding-summary";
-    sourceSummary.textContent = "(unbound)";
-    const sourceBtn = document.createElement("button");
-    sourceBtn.type = "button";
-    sourceBtn.className = "panel-btn";
-    sourceBtn.textContent = "...";
-    sourceInline.appendChild(sourceSummary);
-    sourceInline.appendChild(sourceBtn);
-    sourceRow.appendChild(sourceLabel);
-    sourceRow.appendChild(sourceInline);
+    const sourceTypeRow = document.createElement("div");
+    sourceTypeRow.className = "prop-row";
+    const sourceTypeLabel = document.createElement("label");
+    sourceTypeLabel.textContent = "Source Type";
+    const sourceTypeSelect = document.createElement("select");
+    sourceTypeSelect.innerHTML = '<option value="tag">Tag</option><option value="expression">Expression</option>';
+    sourceTypeRow.append(sourceTypeLabel, sourceTypeSelect);
+
+    const connectionRow = document.createElement("div");
+    connectionRow.className = "prop-row";
+    const connectionLabel = document.createElement("label");
+    connectionLabel.textContent = "Connection";
+    const connectionSelect = document.createElement("select");
+    connectionRow.append(connectionLabel, connectionSelect);
+
+    const tagRow = document.createElement("div");
+    tagRow.className = "prop-row";
+    const tagLabel = document.createElement("label");
+    tagLabel.textContent = "Tag";
+    const tagSelect = document.createElement("select");
+    tagRow.append(tagLabel, tagSelect);
+
+    const expressionRow = document.createElement("div");
+    expressionRow.className = "prop-row is-hidden";
+    expressionRow.hidden = true;
+    const expressionLabel = document.createElement("label");
+    expressionLabel.textContent = "Expression";
+    const expressionInline = document.createElement("div");
+    expressionInline.className = "prop-subgroup";
+    const expressionSummary = document.createElement("div");
+    expressionSummary.className = "expression-summary";
+    expressionSummary.textContent = "(empty)";
+    const expressionBtn = document.createElement("button");
+    expressionBtn.type = "button";
+    expressionBtn.className = "panel-btn";
+    expressionBtn.textContent = "Edit…";
+    expressionInline.append(expressionSummary, expressionBtn);
+    expressionRow.append(expressionLabel, expressionInline);
 
     const minRow = document.createElement("div");
     minRow.className = "prop-row";
@@ -17206,7 +17617,10 @@ const initializeMotionControls = () => {
     editRow.appendChild(editLabel);
     editRow.appendChild(editInline);
 
-    fields.appendChild(sourceRow);
+    fields.appendChild(sourceTypeRow);
+    fields.appendChild(connectionRow);
+    fields.appendChild(tagRow);
+    fields.appendChild(expressionRow);
     fields.appendChild(minRow);
     fields.appendChild(maxRow);
     fields.appendChild(poseRow);
@@ -17224,8 +17638,14 @@ const initializeMotionControls = () => {
       sectionEl,
       enabledInput,
       fields,
-      sourceSummary,
-      sourceBtn,
+      sourceTypeSelect,
+      connectionRow,
+      connectionSelect,
+      tagRow,
+      tagSelect,
+      expressionRow,
+      expressionSummary,
+      expressionBtn,
       minInput,
       maxInput,
       editStartBtn,
@@ -17240,47 +17660,55 @@ const initializeMotionControls = () => {
     };
     motionControlConfigs.push(control);
 
-    compactTagBindingConfigs.push({
-      id: `motion-${definition.id}`,
-      read: () => {
-        const activeObjects = getActiveObjects();
-        const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-        if (!obj || !control.types.includes(obj.type)) return { connection_id: "", tag: "" };
-        const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic()) || (control.id === "ellipse" && isEditingEllipseMotionDynamic()) || (control.id === "text" && isEditingTextMotionDynamic()) || (control.id === "button" && isEditingButtonMotionDynamic()) || (control.id === "circle" && isEditingCircleMotionDynamic())))
-          ? (rectMotionDraft || {})
-          : (obj.motion || {});
-        return {
-          connection_id: String(motion.connection_id || "").trim(),
-          tag: String(motion.tag || "").trim()
-        };
-      },
-      apply: ({ connection_id, tag }) => updateSelectedObjectMotionConfig({
-        connection_id,
-        tag,
-        enabled: true
-      }),
-      getSummary: () => {
-        const activeObjects = getActiveObjects();
-        const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-        if ((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic()) || (control.id === "ellipse" && isEditingEllipseMotionDynamic()) || (control.id === "text" && isEditingTextMotionDynamic()) || (control.id === "button" && isEditingButtonMotionDynamic()) || (control.id === "circle" && isEditingCircleMotionDynamic())) {
-          return getMotionSummary(rectMotionDraft || {});
-        }
-        return getMotionSummary(obj?.motion || {});
-      },
-      summaryEl: sourceSummary
-    });
-
     const syncVisibility = (enabled) => {
       const show = Boolean(enabled);
       fields.classList.toggle("is-hidden", !show);
       fields.hidden = !show;
+    };
+    const syncSourceVisibility = (sourceType) => {
+      const showExpression = sourceType === "expression";
+      connectionRow.classList.toggle("is-hidden", showExpression);
+      connectionRow.hidden = showExpression;
+      tagRow.classList.toggle("is-hidden", showExpression);
+      tagRow.hidden = showExpression;
+      expressionRow.classList.toggle("is-hidden", !showExpression);
+      expressionRow.hidden = !showExpression;
     };
 
     enabledInput.addEventListener("change", () => {
       syncVisibility(enabledInput.checked);
       updateSelectedObjectMotionConfig({ enabled: enabledInput.checked });
     });
-    sourceBtn.addEventListener("click", () => openCompactTagBindingModal(`motion-${definition.id}`));
+    sourceTypeSelect.addEventListener("change", () => {
+      const sourceType = sourceTypeSelect.value === "expression" ? "expression" : "tag";
+      syncSourceVisibility(sourceType);
+      updateSelectedObjectMotionConfig(sourceType === "expression"
+        ? { sourceType, expression: "", enabled: true }
+        : { sourceType, connection_id: String(connectionSelect.value || "").trim(), tag: parseTagSelectValue(tagSelect.value || "").tag, enabled: true });
+    });
+    connectionSelect.addEventListener("change", () => {
+      populateFilteredCombinedTagSelect(tagSelect, connectionSelect.value);
+      setSelectValueSafe(tagSelect, "");
+      updateSelectedObjectMotionConfig({ sourceType: "tag", connection_id: connectionSelect.value, tag: "", enabled: true });
+    });
+    tagSelect.addEventListener("change", () => {
+      const { connection_id, tag } = parseTagSelectValue(tagSelect.value || "");
+      if (connection_id) setSelectValueSafe(connectionSelect, connection_id);
+      updateSelectedObjectMotionConfig({ sourceType: "tag", connection_id, tag, enabled: true });
+    });
+    expressionBtn.addEventListener("click", () => {
+      const activeObjects = getActiveObjects();
+      const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+      if (!obj || !control.types.includes(obj.type)) return;
+      const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic()) || (control.id === "ellipse" && isEditingEllipseMotionDynamic()) || (control.id === "text" && isEditingTextMotionDynamic()) || (control.id === "button" && isEditingButtonMotionDynamic()) || (control.id === "circle" && isEditingCircleMotionDynamic()) || (control.id === "group" && isEditingGroupMotionDynamic())))
+        ? (rectMotionDraft || {})
+        : (obj.motion || {});
+      openAutomationNumericExpressionModal({
+        title: "Motion Expression",
+        value: motion?.expression || "",
+        apply: (expression) => updateSelectedObjectMotionConfig({ sourceType: "expression", expression, enabled: true })
+      });
+    });
     minInput.addEventListener("change", () => {
       const value = Number(minInput.value);
       if (Number.isFinite(value)) updateSelectedObjectMotionConfig({ inputMin: value, enabled: true });
@@ -17346,7 +17774,7 @@ function syncRectMotionControlFromDraft(obj) {
   ensureRectMotionDraft(obj);
   const draftObj = {
     ...obj,
-    motion: cloneRectMotionDraft(rectMotionDraft || {})
+    motion: cloneRectMotionDraft(normalizeMotionAutomationState(rectMotionDraft || {}))
   };
   syncMotionControls(draftObj);
 }
@@ -17354,10 +17782,10 @@ function syncRectMotionControlFromDraft(obj) {
 rectMotionSaveBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedMotionDynamicObject();
-  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle"))) return;
+  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group"))) return;
   ensureRectMotionDraft(obj);
   recordHistory();
-  obj.motion = cloneRectMotionDraft(rectMotionDraft || { enabled: true, inputMin: 0, inputMax: 1 });
+  obj.motion = cloneRectMotionDraft(normalizeMotionAutomationState(rectMotionDraft || { enabled: true, inputMin: 0, inputMax: 1 }));
   rectMotionDraftObject = obj;
   rectMotionDraft = null;
   ensureRectMotionDraft(obj);
@@ -17369,7 +17797,7 @@ rectMotionSaveBtn.addEventListener("click", () => {
 
 rectMotionCancelBtn.addEventListener("click", () => {
   const obj = getSelectedMotionDynamicObject();
-  if (!obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle"))) return;
+  if (!obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group"))) return;
   rectMotionDraft = null;
   rectMotionDraftObject = obj;
   ensureRectMotionDraft(obj);
@@ -17380,7 +17808,7 @@ rectMotionCancelBtn.addEventListener("click", () => {
 rectMotionDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedMotionDynamicObject();
-  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectMotionDynamic(obj)) || (obj.type === "line" && hasLineMotionDynamic(obj)) || (obj.type === "ellipse" && hasEllipseMotionDynamic(obj)) || (obj.type === "text" && hasTextMotionDynamic(obj)) || (obj.type === "button" && hasButtonMotionDynamic(obj)) || (obj.type === "circle" && hasCircleMotionDynamic(obj)))) return;
+  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectMotionDynamic(obj)) || (obj.type === "line" && hasLineMotionDynamic(obj)) || (obj.type === "ellipse" && hasEllipseMotionDynamic(obj)) || (obj.type === "text" && hasTextMotionDynamic(obj)) || (obj.type === "button" && hasButtonMotionDynamic(obj)) || (obj.type === "circle" && hasCircleMotionDynamic(obj)) || (obj.type === "group" && hasGroupMotionDynamic(obj)))) return;
   recordHistory();
   delete obj.motion;
   rectMotionDraft = null;
@@ -17395,18 +17823,29 @@ rectMotionDeleteBtn.addEventListener("click", () => {
 const syncMotionControls = (obj) => {
   motionControlConfigs.forEach((control) => {
     if (!obj || !control.types.includes(obj.type)) return;
-    const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic()) || (control.id === "ellipse" && isEditingEllipseMotionDynamic()) || (control.id === "text" && isEditingTextMotionDynamic()) || (control.id === "button" && isEditingButtonMotionDynamic()) || (control.id === "circle" && isEditingCircleMotionDynamic())))
+    const motion = normalizeMotionAutomationState((((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic()) || (control.id === "ellipse" && isEditingEllipseMotionDynamic()) || (control.id === "text" && isEditingTextMotionDynamic()) || (control.id === "button" && isEditingButtonMotionDynamic()) || (control.id === "circle" && isEditingCircleMotionDynamic()) || (control.id === "group" && isEditingGroupMotionDynamic())))
       ? cloneRectMotionDraft(rectMotionDraft || obj.motion || {})
-      : (obj.motion || {});
+      : (obj.motion || {}));
     const enabled = Boolean(motion.enabled);
     control.enabledInput.checked = enabled;
     control.fields.classList.toggle("is-hidden", !enabled);
     control.fields.hidden = !enabled;
+    setSelectValueSafe(control.sourceTypeSelect, motion.sourceType || "tag");
+    populateConnectionSelect(control.connectionSelect);
+    setSelectValueSafe(control.connectionSelect, motion.connection_id || "");
+    populateFilteredCombinedTagSelect(control.tagSelect, motion.connection_id || "");
+    setSelectValueSafe(control.tagSelect, motion.connection_id && motion.tag ? `${motion.connection_id}::${motion.tag}` : "");
+    control.connectionRow.classList.toggle("is-hidden", motion.sourceType === "expression");
+    control.connectionRow.hidden = motion.sourceType === "expression";
+    control.tagRow.classList.toggle("is-hidden", motion.sourceType === "expression");
+    control.tagRow.hidden = motion.sourceType === "expression";
+    control.expressionRow.classList.toggle("is-hidden", motion.sourceType !== "expression");
+    control.expressionRow.hidden = motion.sourceType !== "expression";
+    const expressionSummary = String(motion.expression || "").trim();
+    control.expressionSummary.textContent = expressionSummary || "(empty)";
+    control.expressionSummary.title = expressionSummary;
     setInputValueSafe(control.minInput, Number.isFinite(Number(motion.inputMin)) ? Number(motion.inputMin) : 0);
     setInputValueSafe(control.maxInput, Number.isFinite(Number(motion.inputMax)) ? Number(motion.inputMax) : 1);
-    const summary = getMotionSummary(motion);
-    control.sourceSummary.textContent = summary;
-    control.sourceSummary.title = summary;
     const startSet = Boolean(motion.startPose);
     const endSet = Boolean(motion.endPose);
     control.poseStatus.textContent = `Start: ${startSet ? "set" : "unset"} · End: ${endSet ? "set" : "unset"}`;
@@ -19824,7 +20263,7 @@ function updateSelectionOverlays() {
 
   if (poseEditSession && selectedIndices.length === 1) {
     const activeObj = poseEditSession.object;
-    const motion = (((isEditingRectMotionDynamic() && activeObj?.type === "rect") || (isEditingLineMotionDynamic() && activeObj?.type === "line") || (isEditingEllipseMotionDynamic() && activeObj?.type === "ellipse") || (isEditingTextMotionDynamic() && activeObj?.type === "text") || (isEditingButtonMotionDynamic() && activeObj?.type === "button") || (isEditingCircleMotionDynamic() && activeObj?.type === "circle")))
+    const motion = (((isEditingRectMotionDynamic() && activeObj?.type === "rect") || (isEditingLineMotionDynamic() && activeObj?.type === "line") || (isEditingEllipseMotionDynamic() && activeObj?.type === "ellipse") || (isEditingTextMotionDynamic() && activeObj?.type === "text") || (isEditingButtonMotionDynamic() && activeObj?.type === "button") || (isEditingCircleMotionDynamic() && activeObj?.type === "circle") || (isEditingGroupMotionDynamic() && activeObj?.type === "group")))
       ? (rectMotionDraft || activeObj?.motion || {})
       : (activeObj?.motion || {});
     const ghostPose = motion[poseEditSession.poseKey === "startPose" ? "endPose" : "startPose"] || null;
