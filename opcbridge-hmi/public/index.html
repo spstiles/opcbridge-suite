@@ -398,6 +398,10 @@
               <input id="textRadius" type="number" min="0" step="1" />
             </div>
             <div class="prop-row">
+              <label for="textPadding">Padding</label>
+              <input id="textPadding" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
               <label for="textAlign">Align</label>
               <select id="textAlign">
                 <option value="left">Left</option>
@@ -416,64 +420,6 @@
             <div class="prop-group-title">Binding</div>
             <div class="prop-help">Use placeholders like <code>{1}</code>, <code>{2}</code>, or <code>{flow}</code> in the text.</div>
             <div id="textBindingRows" class="text-binding-rows"></div>
-            <div class="prop-group-header">
-              <div class="prop-group-title">Text Color Automation</div>
-              <div class="prop-inline">
-                <label class="inline-check">
-                  <input id="textAutoEnabled" type="checkbox" />
-                  <span>Enabled</span>
-                </label>
-                <label class="inline-check">
-                  <input id="textAutoInvert" type="checkbox" />
-                  <span>Invert</span>
-                </label>
-              </div>
-            </div>
-	            <div id="textAutoFields" class="prop-subgroup is-hidden" hidden>
-	              <div class="prop-row">
-	                <label for="textAutoConnection">Connection</label>
-	                <input id="textAutoConnection" type="text" placeholder="connection_id" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="textAutoTag">Tag</label>
-	                <select id="textAutoTag">
-	                  <option value="">Select tag…</option>
-	                </select>
-	              </div>
-	              <div class="prop-row">
-	                <label for="textAutoMode">Mode</label>
-	                <select id="textAutoMode">
-	                  <option value="threshold">Threshold</option>
-	                  <option value="equals">Equals</option>
-	                </select>
-	              </div>
-	              <div class="prop-row" id="textAutoThresholdRow">
-	                <label for="textAutoThreshold">Threshold</label>
-	                <input id="textAutoThreshold" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="textAutoMatchRow">
-	                <label for="textAutoMatch">Match</label>
-	                <input id="textAutoMatch" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="textAutoOn">On Color</label>
-	                <div class="prop-inline">
-	                  <input id="textAutoOn" type="color" />
-	                  <input id="textAutoOnText" type="text" placeholder="#ffffff" />
-                  <button id="textAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="textAutoOnSwatches" class="swatch-popover" aria-label="Text automation on swatches"></div>
-                </div>
-              </div>
-              <div class="prop-row">
-                <label for="textAutoOff">Off Color</label>
-                <div class="prop-inline">
-                  <input id="textAutoOff" type="color" />
-                  <input id="textAutoOffText" type="text" placeholder="#ffffff" />
-                  <button id="textAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="textAutoOffSwatches" class="swatch-popover" aria-label="Text automation off swatches"></div>
-                </div>
-              </div>
-            </div>
           </div>
 
           <div id="buttonProps" class="properties-form is-hidden">
@@ -1438,7 +1384,9 @@
                 </div>
                 <div class="prop-row" id="rectColorConnectionRow">
                   <label for="rectColorConnection">Connection</label>
-                  <input id="rectColorConnection" type="text" placeholder="connection_id" />
+                  <select id="rectColorConnection">
+                    <option value="">Select connection…</option>
+                  </select>
                 </div>
                 <div class="prop-row" id="rectColorTagRow">
                   <label for="rectColorTag">Tag</label>
@@ -1479,6 +1427,10 @@
                       <input id="rectColorStrokeEnabled" type="checkbox" />
                       <span>Border</span>
                     </label>
+                    <label class="inline-check is-hidden" id="rectColorBorderTargetLabel" hidden>
+                      <input id="rectColorBorderEnabled" type="checkbox" />
+                      <span>Border</span>
+                    </label>
                   </div>
                 </div>
                 <div class="prop-row" id="rectColorFillRow">
@@ -1486,6 +1438,8 @@
                   <div class="prop-inline">
                     <input id="rectColorFill" type="color" />
                     <input id="rectColorFillText" type="text" placeholder="#3a3f4b" />
+                    <button id="rectColorFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="rectColorFillSwatches" class="swatch-popover" aria-label="Dynamic fill swatches"></div>
                   </div>
                 </div>
                 <div class="prop-row" id="rectColorStrokeRow">
@@ -1493,6 +1447,17 @@
                   <div class="prop-inline">
                     <input id="rectColorStroke" type="color" />
                     <input id="rectColorStrokeText" type="text" placeholder="#ffffff" />
+                    <button id="rectColorStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="rectColorStrokeSwatches" class="swatch-popover" aria-label="Dynamic stroke swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row is-hidden" id="rectColorBorderRow" hidden>
+                  <label for="rectColorBorder">Border Color</label>
+                  <div class="prop-inline">
+                    <input id="rectColorBorder" type="color" />
+                    <input id="rectColorBorderText" type="text" placeholder="#ffffff" />
+                    <button id="rectColorBorderSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="rectColorBorderSwatches" class="swatch-popover" aria-label="Dynamic border swatches"></div>
                   </div>
                 </div>
               </div>
@@ -2251,7 +2216,9 @@
               </div>
               <div class="prop-row">
                 <label for="visibilityConnection">Connection</label>
-                <input id="visibilityConnection" type="text" placeholder="connection_id" />
+                <select id="visibilityConnection">
+                  <option value="">Select connection…</option>
+                </select>
               </div>
               <div class="prop-row">
                 <label for="visibilityTag">Tag</label>

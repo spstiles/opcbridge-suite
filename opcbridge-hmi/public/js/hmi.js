@@ -469,24 +469,39 @@ const getSelectedLineObject = () => {
   return obj && obj.type === "line" ? obj : null;
 };
 
+const getSelectedEllipseObject = () => {
+  const obj = getAutomationObject();
+  return obj && obj.type === "ellipse" ? obj : null;
+};
+
+const getSelectedTextObject = () => {
+  const obj = getAutomationObject();
+  return obj && obj.type === "text" ? obj : null;
+};
+
+const getSelectedCircleObject = () => {
+  const obj = getAutomationObject();
+  return obj && obj.type === "circle" ? obj : null;
+};
+
 const getSelectedVisibilityDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "circle") ? obj : null;
 };
 
 const getSelectedColorDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "circle") ? obj : null;
 };
 
 const getSelectedRotationDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text") ? obj : null;
 };
 
 const getSelectedMotionDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "circle") ? obj : null;
 };
 
 const hasVisibilityDynamic = (obj) => {
@@ -517,12 +532,59 @@ const hasLineColorDynamic = (obj) => {
   return Boolean(obj.strokeAutomation && typeof obj.strokeAutomation === "object" && Object.keys(obj.strokeAutomation).length);
 };
 
+const hasEllipseColorDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  const hasFill = Boolean(obj.fillAutomation && typeof obj.fillAutomation === "object" && Object.keys(obj.fillAutomation).length);
+  const hasStroke = Boolean(obj.strokeAutomation && typeof obj.strokeAutomation === "object" && Object.keys(obj.strokeAutomation).length);
+  return hasFill || hasStroke;
+};
+
+const hasTextColorDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  const hasText = Boolean(obj.fillAutomation && typeof obj.fillAutomation === "object" && Object.keys(obj.fillAutomation).length);
+  const hasBackground = Boolean(obj.backgroundAutomation && typeof obj.backgroundAutomation === "object" && Object.keys(obj.backgroundAutomation).length);
+  const hasBorder = Boolean(obj.borderColorAutomation && typeof obj.borderColorAutomation === "object" && Object.keys(obj.borderColorAutomation).length);
+  return hasText || hasBackground || hasBorder;
+};
+
+const hasCircleColorDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  const hasFill = Boolean(obj.fillAutomation && typeof obj.fillAutomation === "object" && Object.keys(obj.fillAutomation).length);
+  const hasStroke = Boolean(obj.strokeAutomation && typeof obj.strokeAutomation === "object" && Object.keys(obj.strokeAutomation).length);
+  return hasFill || hasStroke;
+};
+
 const hasLineRotationDynamic = (obj) => {
   if (!obj || typeof obj !== "object") return false;
   return Boolean(obj.rotationAutomation && typeof obj.rotationAutomation === "object" && Object.keys(obj.rotationAutomation).length);
 };
 
+const hasEllipseRotationDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.rotationAutomation && typeof obj.rotationAutomation === "object" && Object.keys(obj.rotationAutomation).length);
+};
+
+const hasTextRotationDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.rotationAutomation && typeof obj.rotationAutomation === "object" && Object.keys(obj.rotationAutomation).length);
+};
+
 const hasLineMotionDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
+};
+
+const hasEllipseMotionDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
+};
+
+const hasTextMotionDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
+};
+
+const hasCircleMotionDynamic = (obj) => {
   if (!obj || typeof obj !== "object") return false;
   return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
 };
@@ -535,7 +597,7 @@ const cloneVisibilityState = (value) => {
 };
 
 const cloneRectColorDraft = (value) => {
-  if (!value || typeof value !== "object") return { enabled: true, sourceType: "tag", fillEnabled: true, strokeEnabled: false };
+  if (!value || typeof value !== "object") return { enabled: true, sourceType: "tag", fillEnabled: true, strokeEnabled: false, borderEnabled: false };
   return JSON.parse(JSON.stringify(value));
 };
 
@@ -624,7 +686,8 @@ const normalizeColorAutomationState = (value) => {
 
 const syncRectColorUiFromDraft = (obj, draft) => {
   const isLine = Boolean(obj && obj.type === "line");
-  const strokePresent = Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
+  const isText = Boolean(obj && obj.type === "text");
+  const strokePresent = isText || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
   const next = draft || {};
   const sourceType = next.sourceType === "expression" ? "expression" : "tag";
   const mode = next.mode === "equals" ? "equals" : "threshold";
@@ -663,7 +726,9 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     rectColorExpressionRow.classList.toggle("is-hidden", !showExpression);
     rectColorExpressionRow.hidden = !showExpression;
   }
-  setInputValueSafe(rectColorConnectionInput, next.connection_id || "");
+  populateRectColorConnectionOptions();
+  setSelectValueSafe(rectColorConnectionInput, next.connection_id || "");
+  populateRectColorTagOptions(next.connection_id || "");
   if (rectColorTagSelect) {
     const connectionId = String(next.connection_id || "");
     const tagName = String(next.tag || "");
@@ -684,21 +749,37 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     rectColorStrokeEnabledInput.checked = Boolean(next.strokeEnabled) && strokePresent;
     rectColorStrokeEnabledInput.disabled = !strokePresent;
   }
-  const fillFallback = String(obj?.fill || "#3a3f4b");
-  const strokeFallback = String((!obj?.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
-  if (rectColorFillInput) rectColorFillInput.value = next.fillColor || fillFallback;
+  if (rectColorBorderEnabledInput) rectColorBorderEnabledInput.checked = Boolean(next.borderEnabled);
+  const fillFallback = isText
+    ? String(obj?.fill || "#ffffff")
+    : String(obj?.fill || "#3a3f4b");
+  const strokeFallback = isText
+    ? String(obj?.background || "#000000")
+    : String((!obj?.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
+  const borderFallback = String(obj?.borderColor || "#000000");
+  if (rectColorFillInput) rectColorFillInput.value = isHexColor(next.fillColor || fillFallback) ? (next.fillColor || fillFallback) : (isText ? "#ffffff" : "#3a3f4b");
   if (rectColorFillTextInput) setInputValueSafe(rectColorFillTextInput, next.fillColor || "");
-  if (rectColorStrokeInput) rectColorStrokeInput.value = next.strokeColor || strokeFallback;
+  if (rectColorStrokeInput) rectColorStrokeInput.value = isHexColor(next.strokeColor || strokeFallback) ? (next.strokeColor || strokeFallback) : "#000000";
   if (rectColorStrokeTextInput) setInputValueSafe(rectColorStrokeTextInput, next.strokeColor || "");
+  if (rectColorBorderInput) rectColorBorderInput.value = isHexColor(next.borderColor || borderFallback) ? (next.borderColor || borderFallback) : "#000000";
+  if (rectColorBorderTextInput) setInputValueSafe(rectColorBorderTextInput, next.borderColor || "");
   const fillTargetLabel = rectColorFillEnabledInput?.closest(".inline-check");
   if (fillTargetLabel) {
     fillTargetLabel.classList.toggle("is-hidden", isLine);
     fillTargetLabel.hidden = isLine;
   }
   const strokeTargetText = rectColorStrokeEnabledInput?.closest(".inline-check")?.querySelector("span");
-  if (strokeTargetText) strokeTargetText.textContent = isLine ? "Line" : "Border";
+  if (strokeTargetText) strokeTargetText.textContent = isLine ? "Line" : (isText ? "Background" : "Border");
   const strokeColorLabel = rectColorStrokeRow?.querySelector('label[for="rectColorStroke"]');
-  if (strokeColorLabel) strokeColorLabel.textContent = isLine ? "Line Color" : "Border Color";
+  if (strokeColorLabel) strokeColorLabel.textContent = isLine ? "Line Color" : (isText ? "Background Color" : "Border Color");
+  const fillTargetText = rectColorFillEnabledInput?.closest(".inline-check")?.querySelector("span");
+  if (fillTargetText) fillTargetText.textContent = isText ? "Text" : "Fill";
+  const fillColorLabel = rectColorFillRow?.querySelector('label[for="rectColorFill"]');
+  if (fillColorLabel) fillColorLabel.textContent = isText ? "Text Color" : "Fill Color";
+  if (rectColorBorderTargetLabel) {
+    rectColorBorderTargetLabel.classList.toggle("is-hidden", !isText);
+    rectColorBorderTargetLabel.hidden = !isText;
+  }
   if (rectColorFillRow) {
     const showFill = !isLine && Boolean(rectColorFillEnabledInput?.checked);
     rectColorFillRow.classList.toggle("is-hidden", !showFill);
@@ -708,6 +789,11 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     const showStroke = Boolean(rectColorStrokeEnabledInput?.checked) && strokePresent;
     rectColorStrokeRow.classList.toggle("is-hidden", !showStroke);
     rectColorStrokeRow.hidden = !showStroke;
+  }
+  if (rectColorBorderRow) {
+    const showBorder = isText && Boolean(rectColorBorderEnabledInput?.checked);
+    rectColorBorderRow.classList.toggle("is-hidden", !showBorder);
+    rectColorBorderRow.hidden = !showBorder;
   }
 };
 
@@ -726,7 +812,7 @@ const applyRectColorModeUi = (mode) => {
 
 const updateRectColorDraft = (patch) => {
   const obj = getSelectedColorDynamicObject();
-  if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic())) return;
+  if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic())) return;
   ensureRectColorDraft(obj);
   const next = { ...(rectColorDraft || {}), ...patch };
   if ("sourceType" in patch) {
@@ -806,7 +892,9 @@ const syncVisibilityUiFromState = (state) => {
     visibilityFields.hidden = !isEnabled;
   }
   if (visibilitySourceTypeSelect) setSelectValueSafe(visibilitySourceTypeSelect, sourceType);
-  setInputValueSafe(visibilityConnectionInput, vis.connection_id || "");
+  populateVisibilityConnectionOptions();
+  setSelectValueSafe(visibilityConnectionInput, vis.connection_id || "");
+  populateVisibilityTagOptions(vis.connection_id || "");
   if (visibilityTagSelect) {
     const connectionId = String(vis.connection_id || "");
     const tagName = String(vis.tag || "");
@@ -958,7 +1046,7 @@ const showVisibilityExpressionInsertMenu = (button, items) => {
 const openVisibilityExpressionModal = () => {
   if (!visibilityExpressionOverlay) return;
   const obj = getSelectedVisibilityDynamicObject();
-  if (!obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic())) return;
+  if (!obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingCircleVisibilityDynamic())) return;
   ensureRectVisibilityDraft(obj);
   visibilityExpressionDraftValue = String(rectVisibilityDraft?.expression || "");
   if (visibilityExpressionEditor) visibilityExpressionEditor.value = visibilityExpressionDraftValue;
@@ -1088,7 +1176,7 @@ const syncRectColorExpressionValidationUi = () => {
 const openRectColorExpressionModal = () => {
   if (!rectColorExpressionOverlay) return;
   const obj = getSelectedColorDynamicObject();
-  if (!obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj))) return;
+  if (!obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasCircleColorDynamic(obj))) return;
   if (currentObjectDynamicTab !== "color") {
     currentObjectDynamicTab = "color";
     updatePropertiesPanel();
@@ -1291,6 +1379,21 @@ const isEditingLineVisibilityDynamic = () => {
   return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
 };
 
+const isEditingEllipseVisibilityDynamic = () => {
+  const obj = getSelectedVisibilityDynamicObject();
+  return Boolean(obj && obj.type === "ellipse" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+};
+
+const isEditingTextVisibilityDynamic = () => {
+  const obj = getSelectedVisibilityDynamicObject();
+  return Boolean(obj && obj.type === "text" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+};
+
+const isEditingCircleVisibilityDynamic = () => {
+  const obj = getSelectedVisibilityDynamicObject();
+  return Boolean(obj && obj.type === "circle" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+};
+
 const isEditingRectColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
   return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "color" && hasRectColorDynamic(obj));
@@ -1299,6 +1402,21 @@ const isEditingRectColorDynamic = () => {
 const isEditingLineColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
   return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "color" && hasLineColorDynamic(obj));
+};
+
+const isEditingEllipseColorDynamic = () => {
+  const obj = getSelectedColorDynamicObject();
+  return Boolean(obj && obj.type === "ellipse" && currentObjectDynamicTab === "color" && hasEllipseColorDynamic(obj));
+};
+
+const isEditingTextColorDynamic = () => {
+  const obj = getSelectedColorDynamicObject();
+  return Boolean(obj && obj.type === "text" && currentObjectDynamicTab === "color" && hasTextColorDynamic(obj));
+};
+
+const isEditingCircleColorDynamic = () => {
+  const obj = getSelectedColorDynamicObject();
+  return Boolean(obj && obj.type === "circle" && currentObjectDynamicTab === "color" && hasCircleColorDynamic(obj));
 };
 
 const isEditingRectRotationDynamic = () => {
@@ -1311,6 +1429,16 @@ const isEditingLineRotationDynamic = () => {
   return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "rotation" && hasLineRotationDynamic(obj));
 };
 
+const isEditingEllipseRotationDynamic = () => {
+  const obj = getSelectedRotationDynamicObject();
+  return Boolean(obj && obj.type === "ellipse" && currentObjectDynamicTab === "rotation" && hasEllipseRotationDynamic(obj));
+};
+
+const isEditingTextRotationDynamic = () => {
+  const obj = getSelectedRotationDynamicObject();
+  return Boolean(obj && obj.type === "text" && currentObjectDynamicTab === "rotation" && hasTextRotationDynamic(obj));
+};
+
 const isEditingRectMotionDynamic = () => {
   const obj = getSelectedMotionDynamicObject();
   return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "motion" && hasRectMotionDynamic(obj));
@@ -1321,8 +1449,23 @@ const isEditingLineMotionDynamic = () => {
   return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "motion" && hasLineMotionDynamic(obj));
 };
 
+const isEditingEllipseMotionDynamic = () => {
+  const obj = getSelectedMotionDynamicObject();
+  return Boolean(obj && obj.type === "ellipse" && currentObjectDynamicTab === "motion" && hasEllipseMotionDynamic(obj));
+};
+
+const isEditingTextMotionDynamic = () => {
+  const obj = getSelectedMotionDynamicObject();
+  return Boolean(obj && obj.type === "text" && currentObjectDynamicTab === "motion" && hasTextMotionDynamic(obj));
+};
+
+const isEditingCircleMotionDynamic = () => {
+  const obj = getSelectedMotionDynamicObject();
+  return Boolean(obj && obj.type === "circle" && currentObjectDynamicTab === "motion" && hasCircleMotionDynamic(obj));
+};
+
 const ensureRectVisibilityDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "circle")) return;
   if (rectVisibilityDraftObject !== obj || !rectVisibilityDraft) {
     rectVisibilityDraftObject = obj;
     rectVisibilityDraft = cloneVisibilityState(obj.visibility || { enabled: true });
@@ -1330,11 +1473,12 @@ const ensureRectVisibilityDraft = (obj) => {
 };
 
 const ensureRectColorDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "circle")) return;
   if (rectColorDraftObject !== obj || !rectColorDraft) {
-    const fillAuto = obj.type === "rect" ? (obj.fillAutomation || {}) : {};
-    const strokeAuto = obj.strokeAutomation || {};
-    const source = (Object.keys(fillAuto).length ? fillAuto : strokeAuto) || {};
+    const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "circle") ? (obj.fillAutomation || {}) : {};
+    const strokeAuto = (obj.type === "text") ? (obj.backgroundAutomation || {}) : (obj.strokeAutomation || {});
+    const borderAuto = obj.type === "text" ? (obj.borderColorAutomation || {}) : {};
+    const source = (Object.keys(fillAuto).length ? fillAuto : (Object.keys(strokeAuto).length ? strokeAuto : borderAuto)) || {};
     rectColorDraftObject = obj;
     rectColorDraft = cloneRectColorDraft({
       enabled: source.enabled !== false,
@@ -1346,16 +1490,18 @@ const ensureRectColorDraft = (obj) => {
       mode: source.mode || "",
       threshold: source.threshold,
       match: source.match || "",
-      fillEnabled: obj.type === "rect" ? (Object.keys(fillAuto).length > 0) : false,
+      fillEnabled: (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "circle") ? (Object.keys(fillAuto).length > 0) : false,
       fillColor: fillAuto.onColor || "",
       strokeEnabled: obj.type === "line" ? true : (Object.keys(strokeAuto).length > 0),
-      strokeColor: strokeAuto.onColor || ""
+      strokeColor: strokeAuto.onColor || "",
+      borderEnabled: Object.keys(borderAuto).length > 0,
+      borderColor: borderAuto.onColor || ""
     });
   }
 };
 
 const ensureRectRotationDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text")) return;
   if (rectRotationDraftObject !== obj || !rectRotationDraft) {
     rectRotationDraftObject = obj;
     rectRotationDraft = cloneRectRotationDraft({
@@ -1368,7 +1514,7 @@ const ensureRectRotationDraft = (obj) => {
 };
 
 const ensureRectMotionDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "circle")) return;
   if (rectMotionDraftObject !== obj || !rectMotionDraft) {
     rectMotionDraftObject = obj;
     rectMotionDraft = cloneRectMotionDraft({
@@ -1439,9 +1585,9 @@ const ensureRectColorDynamic = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedColorDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!(hasRectColorDynamic(obj) || hasLineColorDynamic(obj))) {
+  if (!(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasCircleColorDynamic(obj))) {
     recordHistory();
-    if (obj.type === "rect") obj.fillAutomation = { enabled: true };
+    if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "circle") obj.fillAutomation = { enabled: true };
     else obj.strokeAutomation = { enabled: true };
     renderScreen();
     syncEditorFromScreen();
@@ -1457,7 +1603,7 @@ const ensureRectRotationDynamic = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedRotationDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!(hasRectRotationDynamic(obj) || hasLineRotationDynamic(obj))) {
+  if (!(hasRectRotationDynamic(obj) || hasLineRotationDynamic(obj) || hasEllipseRotationDynamic(obj) || hasTextRotationDynamic(obj))) {
     recordHistory();
     obj.rotationAutomation = { enabled: true, inputMin: 0, inputMax: 1, angleStart: 0, angleEnd: 0, direction: "shortest" };
     renderScreen();
@@ -1474,7 +1620,7 @@ const ensureRectMotionDynamic = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedMotionDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!(hasRectMotionDynamic(obj) || hasLineMotionDynamic(obj))) {
+  if (!(hasRectMotionDynamic(obj) || hasLineMotionDynamic(obj) || hasEllipseMotionDynamic(obj) || hasTextMotionDynamic(obj) || hasCircleMotionDynamic(obj))) {
     recordHistory();
     obj.motion = { enabled: true, inputMin: 0, inputMax: 1 };
     renderScreen();
@@ -2113,26 +2259,9 @@ const textBorderColorTextInput = document.getElementById("textBorderColorText");
 const textBorderSwatches = document.getElementById("textBorderSwatches");
 const textBorderSwatchBtn = document.getElementById("textBorderSwatchBtn");
 const textRadiusInput = document.getElementById("textRadius");
+const textPaddingInput = document.getElementById("textPadding");
 const textBindingRows = document.getElementById("textBindingRows");
 const buttonLabelBindingRows = document.getElementById("buttonLabelBindingRows");
-const textAutoEnabledInput = document.getElementById("textAutoEnabled");
-const textAutoInvertInput = document.getElementById("textAutoInvert");
-const textAutoFields = document.getElementById("textAutoFields");
-const textAutoConnectionInput = document.getElementById("textAutoConnection");
-const textAutoTagSelect = document.getElementById("textAutoTag");
-const textAutoModeSelect = document.getElementById("textAutoMode");
-const textAutoThresholdRow = document.getElementById("textAutoThresholdRow");
-const textAutoThresholdInput = document.getElementById("textAutoThreshold");
-const textAutoMatchRow = document.getElementById("textAutoMatchRow");
-const textAutoMatchInput = document.getElementById("textAutoMatch");
-const textAutoOnInput = document.getElementById("textAutoOn");
-const textAutoOnTextInput = document.getElementById("textAutoOnText");
-const textAutoOffInput = document.getElementById("textAutoOff");
-const textAutoOffTextInput = document.getElementById("textAutoOffText");
-const textAutoOnSwatches = document.getElementById("textAutoOnSwatches");
-const textAutoOnSwatchBtn = document.getElementById("textAutoOnSwatchBtn");
-const textAutoOffSwatches = document.getElementById("textAutoOffSwatches");
-const textAutoOffSwatchBtn = document.getElementById("textAutoOffSwatchBtn");
 const buttonProps = document.getElementById("buttonProps");
 const buttonLabelInput = document.getElementById("buttonLabel");
 const buttonActionSelect = document.getElementById("buttonActionType");
@@ -2392,12 +2521,23 @@ const rectColorExpressionSummary = document.getElementById("rectColorExpressionS
 const rectColorExpressionEditBtn = document.getElementById("rectColorExpressionEditBtn");
 const rectColorFillEnabledInput = document.getElementById("rectColorFillEnabled");
 const rectColorStrokeEnabledInput = document.getElementById("rectColorStrokeEnabled");
+const rectColorBorderTargetLabel = document.getElementById("rectColorBorderTargetLabel");
+const rectColorBorderEnabledInput = document.getElementById("rectColorBorderEnabled");
 const rectColorFillRow = document.getElementById("rectColorFillRow");
 const rectColorFillInput = document.getElementById("rectColorFill");
 const rectColorFillTextInput = document.getElementById("rectColorFillText");
+const rectColorFillSwatches = document.getElementById("rectColorFillSwatches");
+const rectColorFillSwatchBtn = document.getElementById("rectColorFillSwatchBtn");
 const rectColorStrokeRow = document.getElementById("rectColorStrokeRow");
 const rectColorStrokeInput = document.getElementById("rectColorStroke");
 const rectColorStrokeTextInput = document.getElementById("rectColorStrokeText");
+const rectColorStrokeSwatches = document.getElementById("rectColorStrokeSwatches");
+const rectColorStrokeSwatchBtn = document.getElementById("rectColorStrokeSwatchBtn");
+const rectColorBorderRow = document.getElementById("rectColorBorderRow");
+const rectColorBorderInput = document.getElementById("rectColorBorder");
+const rectColorBorderTextInput = document.getElementById("rectColorBorderText");
+const rectColorBorderSwatches = document.getElementById("rectColorBorderSwatches");
+const rectColorBorderSwatchBtn = document.getElementById("rectColorBorderSwatchBtn");
 const ellipseProps = document.getElementById("ellipseProps");
 const ellipseXInput = document.getElementById("ellipseX");
 const ellipseYInput = document.getElementById("ellipseY");
@@ -3318,6 +3458,22 @@ let snapEnabled = false;
 const GRID_SIZE = 10;
 const RESIZE_HANDLE_SIZE = 8;
 const MIN_RESIZE_SIZE = 10;
+
+const getTextBoxPadding = (obj) => {
+  const explicit = Number(obj?.padding);
+  if (Number.isFinite(explicit) && explicit >= 0) {
+    return { x: explicit, y: explicit };
+  }
+  const hasBgBox = Boolean(obj?.background || obj?.borderColor);
+  const rawW = Number(obj?.w);
+  const rawH = Number(obj?.h);
+  const explicitW = Number.isFinite(rawW) ? rawW : 0;
+  const explicitH = Number.isFinite(rawH) ? rawH : 0;
+  if (hasBgBox || explicitW || explicitH) {
+    return { x: TEXT_BG_PADDING_X, y: TEXT_BG_PADDING_Y };
+  }
+  return { x: 0, y: 0 };
+};
 let availableScreens = [];
 let nextNumberInputId = 1;
 let nextIndicatorId = 1;
@@ -5503,7 +5659,6 @@ const getObjectBounds = (obj) => {
     const fontSize = Number(obj.fontSize || 18);
     const sample = decodeNbspEntities(renderTextTemplate(obj, true));
     const measured = measureTextBlock(sample, fontSize, Boolean(obj.bold));
-    const hasBgBox = Boolean(obj.background || obj.borderColor);
     const rawW = Number(obj.w);
     const rawH = Number(obj.h);
     const explicitW = Number.isFinite(rawW) ? rawW : 0;
@@ -5512,8 +5667,9 @@ const getObjectBounds = (obj) => {
     const contentH = Math.max(explicitH, measured.height);
     const align = obj.align || "left";
     const valign = obj.valign || "top";
-    const padX = (hasBgBox || explicitW || explicitH) ? TEXT_BG_PADDING_X : 0;
-    const padY = (hasBgBox || explicitW || explicitH) ? TEXT_BG_PADDING_Y : 0;
+    const padding = getTextBoxPadding(obj);
+    const padX = padding.x;
+    const padY = padding.y;
     let rectX = x - padX;
     if (align === "center") rectX = x - contentW / 2 - padX;
     if (align === "right") rectX = x - contentW - padX;
@@ -6001,7 +6157,13 @@ const updateMenuState = () => {
   const canFlip = selectedIndices.length > 0;
   const canAddRectDynamic = Boolean(getSelectedRectObject());
   const canAddLineDynamic = Boolean(getSelectedLineObject());
-  const canOpenDynamics = canAddRectDynamic || canAddLineDynamic;
+  const canAddEllipseDynamic = Boolean(getSelectedEllipseObject());
+  const canAddTextDynamic = Boolean(getSelectedTextObject());
+  const canAddCircleDynamic = Boolean(getSelectedCircleObject());
+  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddCircleDynamic;
+  const canAddRotationDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic;
+  const canAddMotionDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddCircleDynamic;
+  const canOpenDynamics = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddCircleDynamic;
   const toggleItem = (el) => {
     if (!el) return;
     const disabled = el === groupMenuBtn ? !canGroup
@@ -6061,9 +6223,9 @@ const updateMenuState = () => {
   toggleReorderItem(moveToBackMenuBtn);
   toggleDynamicMenuItem(dynamicsMenuBtn, canOpenDynamics);
   toggleDynamicMenuItem(dynamicsAddVisibilityMenuBtn, canOpenDynamics);
-  toggleDynamicMenuItem(dynamicsAddColorMenuBtn, canOpenDynamics);
-  toggleDynamicMenuItem(dynamicsAddRotationMenuBtn, canOpenDynamics);
-  toggleDynamicMenuItem(dynamicsAddMotionMenuBtn, canOpenDynamics);
+  toggleDynamicMenuItem(dynamicsAddColorMenuBtn, canAddColorDynamic);
+  toggleDynamicMenuItem(dynamicsAddRotationMenuBtn, canAddRotationDynamic);
+  toggleDynamicMenuItem(dynamicsAddMotionMenuBtn, canAddMotionDynamic);
 };
 
 const setMenuOpen = (isOpen) => {
@@ -6465,6 +6627,54 @@ const populateTagSelect = (selectEl) => {
   }
 };
 
+const populateConnectionSelect = (selectEl) => {
+  if (!selectEl) return;
+  const previous = String(selectEl.value || "");
+  const connectionIds = sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || "")));
+  selectEl.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select connection…";
+  selectEl.appendChild(placeholder);
+  connectionIds.forEach((connectionId) => {
+    const opt = document.createElement("option");
+    opt.value = connectionId;
+    opt.textContent = connectionId;
+    selectEl.appendChild(opt);
+  });
+  if (previous && connectionIds.includes(previous)) {
+    selectEl.value = previous;
+  }
+};
+
+const populateFilteredCombinedTagSelect = (selectEl, connectionId = "") => {
+  if (!selectEl) return;
+  const previous = String(selectEl.value || "");
+  const selectedConnectionId = String(connectionId || "");
+  selectEl.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select tag…";
+  selectEl.appendChild(placeholder);
+  const tags = tagsCache
+    .filter((tag) => !selectedConnectionId || String(tag?.connection_id || "") === selectedConnectionId)
+    .map((tag) => ({
+      connectionId: String(tag?.connection_id || ""),
+      tagName: String(tag?.name || "")
+    }))
+    .filter((tag) => tag.connectionId && tag.tagName)
+    .sort((a, b) => a.tagName.localeCompare(b.tagName, undefined, { numeric: true, sensitivity: "base" }));
+  tags.forEach(({ connectionId: nextConnectionId, tagName }) => {
+    const opt = document.createElement("option");
+    opt.value = `${nextConnectionId}::${tagName}`;
+    opt.textContent = tagName;
+    selectEl.appendChild(opt);
+  });
+  if (previous && Array.from(selectEl.options).some((opt) => opt.value === previous)) {
+    selectEl.value = previous;
+  }
+};
+
 const populateTextBindingConnectionOptions = () => {
   if (!textBindingConnectionSelect) return;
   const previous = String(textBindingConnectionSelect.value || "");
@@ -6709,15 +6919,32 @@ const refreshIndicatorTagOptions = () => {
 };
 
 const refreshVisibilityTagOptions = () => {
-  populateTagSelect(visibilityTagSelect);
+  populateVisibilityConnectionOptions();
+  populateVisibilityTagOptions(visibilityConnectionInput?.value || "");
 };
 
 const refreshRectColorTagOptions = () => {
-  populateTagSelect(rectColorTagSelect);
+  populateRectColorConnectionOptions();
+  populateRectColorTagOptions(rectColorConnectionInput?.value || "");
+};
+
+const populateVisibilityConnectionOptions = () => {
+  populateConnectionSelect(visibilityConnectionInput);
+};
+
+const populateVisibilityTagOptions = (connectionId = "") => {
+  populateFilteredCombinedTagSelect(visibilityTagSelect, connectionId || visibilityConnectionInput?.value || "");
+};
+
+const populateRectColorConnectionOptions = () => {
+  populateConnectionSelect(rectColorConnectionInput);
+};
+
+const populateRectColorTagOptions = (connectionId = "") => {
+  populateFilteredCombinedTagSelect(rectColorTagSelect, connectionId || rectColorConnectionInput?.value || "");
 };
 
 const refreshAutomationTagOptions = () => {
-  populateTagSelect(textAutoTagSelect);
   if (textStateAutomationControl?.tagSelect) populateTagSelect(textStateAutomationControl.tagSelect);
   populateTagSelect(buttonFillAutoTagSelect);
   populateTagSelect(buttonTextAutoTagSelect);
@@ -8344,7 +8571,10 @@ const renderObjectInto = (parent, obj) => {
     const displayText = renderTextTemplate(obj, isEditMode);
     const decodedText = decodeNbspEntities(displayText);
     const bounds = getObjectBounds({ ...obj, text: decodedText, textBindings: {}, bindText: null });
-    if (obj.background || obj.borderColor) {
+    const bgColor = getAutomationColor(obj.backgroundAutomation, obj.background || "transparent");
+    const borderColor = getAutomationColor(obj.borderColorAutomation, obj.borderColor || "transparent");
+    const textPadding = getTextBoxPadding(obj);
+    if ((bgColor && bgColor !== "transparent") || (borderColor && borderColor !== "transparent")) {
       const bgRect = document.createElementNS(ns, "rect");
       if (bounds) {
         bgRect.setAttribute("x", bounds.x);
@@ -8352,17 +8582,17 @@ const renderObjectInto = (parent, obj) => {
         bgRect.setAttribute("width", bounds.width);
         bgRect.setAttribute("height", bounds.height);
       } else {
-        bgRect.setAttribute("x", x - TEXT_BG_PADDING_X);
-        bgRect.setAttribute("y", y - TEXT_BG_PADDING_Y);
-        bgRect.setAttribute("width", TEXT_BG_PADDING_X * 2);
-        bgRect.setAttribute("height", TEXT_BG_PADDING_Y * 2);
+        bgRect.setAttribute("x", x - textPadding.x);
+        bgRect.setAttribute("y", y - textPadding.y);
+        bgRect.setAttribute("width", textPadding.x * 2);
+        bgRect.setAttribute("height", textPadding.y * 2);
       }
       const textBounds = bounds || getObjectBounds({ ...obj, text: decodedText, textBindings: {}, bindText: null });
       if (hasRotation) applyRotationTransform(bgRect, obj, textBounds);
       bgRect.setAttribute("rx", obj.rx ?? 0);
-      bgRect.setAttribute("fill", obj.background || "transparent");
-      if (obj.borderColor) {
-        bgRect.setAttribute("stroke", obj.borderColor);
+      bgRect.setAttribute("fill", bgColor || "transparent");
+      if (borderColor && borderColor !== "transparent") {
+        bgRect.setAttribute("stroke", borderColor);
         bgRect.setAttribute("stroke-width", obj.borderWidth ?? 1);
         bgRect.setAttribute("vector-effect", "non-scaling-stroke");
       }
@@ -9639,7 +9869,10 @@ const renderScreen = () => {
 	      if (valign === "bottom") textEl.setAttribute("dominant-baseline", "text-after-edge");
 	      textEl.textContent = decodedText;
 	    }
-	    if (obj.background || obj.borderColor) {
+      const bgColor = getAutomationColor(obj.backgroundAutomation, obj.background || "transparent");
+      const borderColor = getAutomationColor(obj.borderColorAutomation, obj.borderColor || "transparent");
+      const textPadding = getTextBoxPadding(obj);
+	    if ((bgColor && bgColor !== "transparent") || (borderColor && borderColor !== "transparent")) {
 	      const bgRect = document.createElementNS(ns, "rect");
 	      if (bounds) {
 	        bgRect.setAttribute("x", bounds.x);
@@ -9647,15 +9880,15 @@ const renderScreen = () => {
 	        bgRect.setAttribute("width", bounds.width);
 	        bgRect.setAttribute("height", bounds.height);
       } else {
-        bgRect.setAttribute("x", x - TEXT_BG_PADDING_X);
-        bgRect.setAttribute("y", y - TEXT_BG_PADDING_Y);
-        bgRect.setAttribute("width", TEXT_BG_PADDING_X * 2);
-        bgRect.setAttribute("height", TEXT_BG_PADDING_Y * 2);
+        bgRect.setAttribute("x", x - textPadding.x);
+        bgRect.setAttribute("y", y - textPadding.y);
+        bgRect.setAttribute("width", textPadding.x * 2);
+        bgRect.setAttribute("height", textPadding.y * 2);
       }
       bgRect.setAttribute("rx", obj.rx ?? 0);
-      bgRect.setAttribute("fill", obj.background || "transparent");
-      if (obj.borderColor) {
-        bgRect.setAttribute("stroke", obj.borderColor);
+      bgRect.setAttribute("fill", bgColor || "transparent");
+      if (borderColor && borderColor !== "transparent") {
+        bgRect.setAttribute("stroke", borderColor);
         bgRect.setAttribute("stroke-width", obj.borderWidth ?? 1);
         bgRect.setAttribute("vector-effect", "non-scaling-stroke");
       }
@@ -9967,39 +10200,14 @@ const syncPropertiesFromSelection = () => {
     if (textBorderColorInput) textBorderColorInput.value = obj.borderColor || "#000000";
     if (textBorderColorTextInput) textBorderColorTextInput.value = obj.borderColor || "";
     if (textRadiusInput) textRadiusInput.value = Number(obj.rx ?? 0);
+    if (textPaddingInput) setInputValueSafe(textPaddingInput, Number.isFinite(Number(obj.padding)) ? Number(obj.padding) : "");
     renderTextBindingRows(obj);
 
-    const automation = obj.fillAutomation || {};
-    const autoEnabled = Boolean(automation.enabled);
-    if (textAutoEnabledInput) textAutoEnabledInput.checked = autoEnabled;
-    if (textAutoInvertInput) textAutoInvertInput.checked = Boolean(automation.invert);
-    if (textAutoFields) {
-      textAutoFields.classList.toggle("is-hidden", !autoEnabled);
-      textAutoFields.hidden = !autoEnabled;
-    }
-    const textAutoMode = automation.mode === "equals" ? "equals" : "threshold";
-    if (textAutoModeSelect) textAutoModeSelect.value = textAutoMode;
-    if (textAutoThresholdRow && textAutoMatchRow) {
-      const showMatch = textAutoMode === "equals";
-      textAutoThresholdRow.classList.toggle("is-hidden", showMatch);
-      textAutoThresholdRow.hidden = showMatch;
-      textAutoMatchRow.classList.toggle("is-hidden", !showMatch);
-      textAutoMatchRow.hidden = !showMatch;
-    }
-    setInputValueSafe(textAutoConnectionInput, automation.connection_id || "");
-    if (textAutoTagSelect) {
-      const connectionId = String(automation.connection_id || "");
-      const tagName = String(automation.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(textAutoTagSelect, combined);
-    }
-    if (textAutoThresholdInput) setInputValueSafe(textAutoThresholdInput, automation.threshold ?? "");
-    if (textAutoMatchInput) setInputValueSafe(textAutoMatchInput, automation.match ?? "");
-    if (textAutoOnInput) textAutoOnInput.value = automation.onColor || (obj.fill || "#ffffff");
-    if (textAutoOnTextInput) setInputValueSafe(textAutoOnTextInput, automation.onColor || "");
-    if (textAutoOffInput) textAutoOffInput.value = automation.offColor || (obj.fill || "#ffffff");
-    if (textAutoOffTextInput) setInputValueSafe(textAutoOffTextInput, automation.offColor || "");
     syncTextStateAutomationControl(obj);
+    if (isEditingTextColorDynamic() || isEditingCircleColorDynamic()) {
+      ensureRectColorDraft(obj);
+      syncRectColorUiFromDraft(obj, rectColorDraft);
+    }
   }
 	  if (obj.type === "button") {
 	    if (buttonLabelInput) buttonLabelInput.value = obj.label || "";
@@ -10377,7 +10585,7 @@ const syncPropertiesFromSelection = () => {
     if (rectStrokeAutoOnTextInput) setInputValueSafe(rectStrokeAutoOnTextInput, strokeAuto.onColor || "");
     if (rectStrokeAutoOffInput) rectStrokeAutoOffInput.value = strokeAuto.offColor || strokeValue;
     if (rectStrokeAutoOffTextInput) setInputValueSafe(rectStrokeAutoOffTextInput, strokeAuto.offColor || "");
-    if (isEditingRectColorDynamic()) {
+    if (isEditingRectColorDynamic() || isEditingEllipseColorDynamic()) {
       ensureRectColorDraft(obj);
       syncRectColorUiFromDraft(obj, rectColorDraft);
     }
@@ -10710,7 +10918,7 @@ const syncPropertiesFromSelection = () => {
     if (barTicksMinorInput) setInputValueSafe(barTicksMinorInput, ticks.minor ?? 4);
   }
   if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityModeSelect || visibilityThresholdInput || visibilityMatchInput || visibilityInvertInput) {
-    const vis = (isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic())
+    const vis = (isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingCircleVisibilityDynamic())
       ? (rectVisibilityDraft || obj.visibility || { enabled: true })
       : (obj.visibility || {});
     syncVisibilityUiFromState(vis);
@@ -10740,6 +10948,9 @@ const updatePropertiesPanel = () => {
   const showRect = Boolean(obj && (obj.type === "rect" || obj.type === "alarms-panel"));
   const showDynamicRect = Boolean(obj && obj.type === "rect");
   const showDynamicLine = Boolean(obj && obj.type === "line");
+  const showDynamicEllipse = Boolean(obj && obj.type === "ellipse");
+  const showDynamicText = Boolean(obj && obj.type === "text");
+  const showDynamicCircle = Boolean(obj && obj.type === "circle");
   const showEllipse = Boolean(obj && obj.type === "ellipse");
   const showCircle = Boolean(obj && obj.type === "circle");
   const showLine = Boolean(obj && obj.type === "line");
@@ -10749,7 +10960,7 @@ const updatePropertiesPanel = () => {
   const showBar = Boolean(obj && obj.type === "bar");
   const showNumberInput = Boolean(obj && obj.type === "number-input");
   const showIndicator = Boolean(obj && obj.type === "indicator");
-  const showAutomationLaunch = Boolean(obj && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine);
+  const showAutomationLaunch = Boolean(obj && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicCircle);
   if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showPolygon || showBar || showNumberInput || showIndicator);
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
@@ -10767,11 +10978,11 @@ const updatePropertiesPanel = () => {
   if (barProps) barProps.classList.toggle("is-hidden", !showBar);
   if (automationLaunchRow) automationLaunchRow.classList.toggle("is-hidden", !showAutomationLaunch);
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
-  if ((showDynamicRect || showDynamicLine) && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
-  if (((showDynamicRect && !hasRectColorDynamic(obj)) || (showDynamicLine && !hasLineColorDynamic(obj))) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
-  if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
-  if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
-  if (!showDynamicRect && !showDynamicLine) {
+  if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicCircle) && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectColorDynamic(obj)) || (showDynamicLine && !hasLineColorDynamic(obj)) || (showDynamicEllipse && !hasEllipseColorDynamic(obj)) || (showDynamicText && !hasTextColorDynamic(obj)) || (showDynamicCircle && !hasCircleColorDynamic(obj))) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
+  if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicCircle) {
     currentObjectDynamicTab = "properties";
     rectVisibilityDraft = null;
     rectVisibilityDraftObject = null;
@@ -10782,12 +10993,12 @@ const updatePropertiesPanel = () => {
     rectMotionDraft = null;
     rectMotionDraftObject = null;
   }
-  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine));
-  if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine) && hasVisibilityDynamic(obj)));
-  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj))));
-  if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj))));
-  if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj))));
-  if (showDynamicRect || showDynamicLine) setObjectDynamicTab(currentObjectDynamicTab);
+  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicCircle));
+  if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicCircle) && hasVisibilityDynamic(obj)));
+  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj))));
+  if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj))));
+  if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj))));
+  if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicCircle) setObjectDynamicTab(currentObjectDynamicTab);
   [
     rectStrokeAutoHeader,
     rectStrokeAutoFields?.previousElementSibling,
@@ -10809,16 +11020,30 @@ const updatePropertiesPanel = () => {
       node.hidden = true;
     }
   });
-  const showRectVisibilityTab = (showDynamicRect || showDynamicLine) && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
-  const showRectColorTab = ((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj))) && currentObjectDynamicTab === "color";
-  const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
-  const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
+  [
+    circleStrokeAutoFields?.previousElementSibling,
+    circleStrokeAutoFields,
+    circleFillAutoFields?.previousElementSibling,
+    circleFillAutoFields
+  ].forEach((node) => {
+    if (node && showDynamicCircle) {
+      node.classList.add("is-hidden");
+      node.hidden = true;
+    }
+  });
+  const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicCircle) && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
+  const showRectColorTab = ((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj))) && currentObjectDynamicTab === "color";
+  const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
+  const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
   if (showRectVisibilityTab) ensureRectVisibilityDraft(obj);
   if (showRectColorTab) ensureRectColorDraft(obj);
   if (showRectRotationTab) ensureRectRotationDraft(obj);
   if (showRectMotionTab) ensureRectMotionDraft(obj);
   if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicLine && lineProps) lineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicText && textProps) textProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectMotionTab);
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
   if (objectDynamicColorHost) objectDynamicColorHost.classList.toggle("is-hidden", !showRectColorTab);
   if (objectDynamicRotationHost) objectDynamicRotationHost.classList.toggle("is-hidden", !showRectRotationTab);
@@ -11268,7 +11493,7 @@ const updateBarRangeBinding = (which, patch) => {
 	  const index = selectedIndices[0];
 	  const obj = activeObjects[index];
 	  if (!obj) return;
-    if (isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic()) {
+    if (isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingCircleVisibilityDynamic()) {
       ensureRectVisibilityDraft(obj);
       const current = rectVisibilityDraft || { enabled: true };
       const next = { ...current, ...patch };
@@ -11361,7 +11586,7 @@ const updateAutomationProperty = (key, patch) => {
   const obj = activeObjects[index];
   if (!obj) return;
   if (obj.type === "viewport") return;
-  if (isEditingRectColorDynamic() && (key === "fillAutomation" || key === "strokeAutomation")) {
+  if ((isEditingRectColorDynamic() || isEditingEllipseColorDynamic()) && (key === "fillAutomation" || key === "strokeAutomation")) {
     ensureRectColorDraft(obj);
     const current = rectColorDraft?.[key] || { enabled: true };
     const next = { ...current, ...patch };
@@ -11532,8 +11757,6 @@ const closeSwatches = () => {
   if (numberInputFillSwatches) numberInputFillSwatches.classList.remove("is-open");
   if (numberInputTextColorSwatches) numberInputTextColorSwatches.classList.remove("is-open");
   if (numberInputStrokeSwatches) numberInputStrokeSwatches.classList.remove("is-open");
-  if (textAutoOnSwatches) textAutoOnSwatches.classList.remove("is-open");
-  if (textAutoOffSwatches) textAutoOffSwatches.classList.remove("is-open");
   if (buttonFillAutoOnSwatches) buttonFillAutoOnSwatches.classList.remove("is-open");
   if (buttonFillAutoOffSwatches) buttonFillAutoOffSwatches.classList.remove("is-open");
   if (buttonTextAutoOnSwatches) buttonTextAutoOnSwatches.classList.remove("is-open");
@@ -13889,6 +14112,20 @@ if (textBorderColorTextInput) {
     });
   }
 
+if (textPaddingInput) {
+  textPaddingInput.addEventListener("change", () => {
+    const raw = textPaddingInput.value.trim();
+    if (!raw) {
+      updateTextProperty({ padding: undefined });
+      return;
+    }
+    const value = Number(raw);
+    if (Number.isFinite(value) && value >= 0) {
+      updateTextProperty({ padding: Math.round(value) });
+    }
+  });
+}
+
 if (buttonLabelInput) {
   buttonLabelInput.addEventListener("focus", () => {
     const activeObjects = getActiveObjects();
@@ -15812,7 +16049,9 @@ if (visibilitySourceTypeSelect) {
 
 if (visibilityConnectionInput) {
   visibilityConnectionInput.addEventListener("change", () => {
-    updateVisibilityProperty({ connection_id: visibilityConnectionInput.value.trim(), enabled: true });
+    const connectionId = String(visibilityConnectionInput.value || "").trim();
+    populateVisibilityTagOptions(connectionId);
+    updateVisibilityProperty({ connection_id: connectionId, tag: "", enabled: true });
   });
 }
 
@@ -15824,7 +16063,7 @@ if (visibilityTagSelect) {
       return;
     }
     const [connectionId, tagName] = value.split("::");
-    if (visibilityConnectionInput) visibilityConnectionInput.value = connectionId || "";
+    if (visibilityConnectionInput) setSelectValueSafe(visibilityConnectionInput, connectionId || "");
     updateVisibilityProperty({ connection_id: connectionId || "", tag: tagName || "", enabled: true });
   });
 }
@@ -16090,7 +16329,7 @@ if (visibilitySaveBtn) {
   visibilitySaveBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
     const obj = getSelectedVisibilityDynamicObject();
-    if (!activeObjects || !obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic())) return;
+    if (!activeObjects || !obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingCircleVisibilityDynamic())) return;
     ensureRectVisibilityDraft(obj);
     recordHistory();
     obj.visibility = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
@@ -16105,7 +16344,7 @@ if (visibilitySaveBtn) {
 if (visibilityCancelBtn) {
   visibilityCancelBtn.addEventListener("click", () => {
     const obj = getSelectedVisibilityDynamicObject();
-    if (!obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic())) return;
+    if (!obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingCircleVisibilityDynamic())) return;
     rectVisibilityDraftObject = obj;
     rectVisibilityDraft = cloneVisibilityState(obj.visibility || { enabled: true });
     syncVisibilityUiFromState(rectVisibilityDraft);
@@ -16153,7 +16392,9 @@ if (rectColorInvertInput) {
 
 if (rectColorConnectionInput) {
   rectColorConnectionInput.addEventListener("change", () => {
-    updateRectColorDraft({ connection_id: rectColorConnectionInput.value.trim() });
+    const connectionId = String(rectColorConnectionInput.value || "").trim();
+    populateRectColorTagOptions(connectionId);
+    updateRectColorDraft({ connection_id: connectionId, tag: "" });
   });
 }
 
@@ -16165,7 +16406,7 @@ if (rectColorTagSelect) {
       return;
     }
     const [connectionId, tagName] = value.split("::");
-    if (rectColorConnectionInput) rectColorConnectionInput.value = connectionId || "";
+    if (rectColorConnectionInput) setSelectValueSafe(rectColorConnectionInput, connectionId || "");
     updateRectColorDraft({ connection_id: connectionId || "", tag: tagName || "" });
   });
 }
@@ -16213,6 +16454,12 @@ if (rectColorStrokeEnabledInput) {
   });
 }
 
+if (rectColorBorderEnabledInput) {
+  rectColorBorderEnabledInput.addEventListener("change", () => {
+    updateRectColorDraft({ borderEnabled: rectColorBorderEnabledInput.checked });
+  });
+}
+
 if (rectColorFillInput) {
   rectColorFillInput.addEventListener("input", () => {
     updateRectColorDraft({ fillColor: rectColorFillInput.value, fillEnabled: true });
@@ -16245,11 +16492,27 @@ if (rectColorStrokeTextInput) {
   });
 }
 
-if (colorSaveBtn) {
+if (rectColorBorderInput) {
+  rectColorBorderInput.addEventListener("input", () => {
+    updateRectColorDraft({ borderColor: rectColorBorderInput.value, borderEnabled: true });
+    if (rectColorBorderTextInput) rectColorBorderTextInput.value = rectColorBorderInput.value;
+  });
+}
+
+if (rectColorBorderTextInput) {
+  rectColorBorderTextInput.addEventListener("change", () => {
+    const value = rectColorBorderTextInput.value.trim();
+    if (!value) return;
+    updateRectColorDraft({ borderColor: value, borderEnabled: true });
+    if (rectColorBorderInput && isHexColor(value)) rectColorBorderInput.value = value;
+  });
+}
+
+  if (colorSaveBtn) {
   colorSaveBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
     const obj = getSelectedColorDynamicObject();
-    if (!activeObjects || !obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic())) return;
+    if (!activeObjects || !obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingCircleColorDynamic())) return;
     ensureRectColorDraft(obj);
     if (rectColorDraft?.sourceType === "expression" && getAutomationExpressionValidationError(rectColorDraft?.expression || "")) return;
     recordHistory();
@@ -16264,15 +16527,23 @@ if (colorSaveBtn) {
       threshold: rectColorDraft?.threshold,
       match: rectColorDraft?.match || ""
     };
-    if (obj.type === "rect" && rectColorDraft?.fillEnabled) {
+    if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "circle") && rectColorDraft?.fillEnabled) {
       obj.fillAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.fillColor || "" });
-    } else if (obj.type === "rect") {
+    } else if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "circle") {
       delete obj.fillAutomation;
     }
     if (rectColorDraft?.strokeEnabled) {
-      obj.strokeAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
+      if (obj.type === "text") obj.backgroundAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
+      else obj.strokeAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
+    } else if (obj.type === "text") {
+      delete obj.backgroundAutomation;
     } else {
       delete obj.strokeAutomation;
+    }
+    if (obj.type === "text" && rectColorDraft?.borderEnabled) {
+      obj.borderColorAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.borderColor || "" });
+    } else if (obj.type === "text") {
+      delete obj.borderColorAutomation;
     }
     rectColorDraftObject = obj;
     rectColorDraft = null;
@@ -16287,7 +16558,7 @@ if (colorSaveBtn) {
 if (colorCancelBtn) {
   colorCancelBtn.addEventListener("click", () => {
     const obj = getSelectedColorDynamicObject();
-    if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic())) return;
+    if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingCircleColorDynamic())) return;
     rectColorDraft = null;
     rectColorDraftObject = obj;
     ensureRectColorDraft(obj);
@@ -16300,10 +16571,12 @@ if (colorDeleteBtn) {
   colorDeleteBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
     const obj = getSelectedColorDynamicObject();
-    if (!activeObjects || !obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj))) return;
+    if (!activeObjects || !obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasCircleColorDynamic(obj))) return;
     recordHistory();
     delete obj.fillAutomation;
     delete obj.strokeAutomation;
+    delete obj.backgroundAutomation;
+    delete obj.borderColorAutomation;
     rectColorDraft = null;
     rectColorDraftObject = null;
     currentObjectDynamicTab = "properties";
@@ -16513,7 +16786,6 @@ function initializeCompactTagBindingRows() {
   });
 
   [
-    { id: "textFillAutomation", fields: textAutoFields, modeSelect: textAutoModeSelect, connectionInput: textAutoConnectionInput, tagSelect: textAutoTagSelect, key: "fillAutomation", title: "Text Automation Tag" },
     { id: "buttonFillAutomation", fields: buttonFillAutoFields, modeSelect: buttonFillAutoModeSelect, connectionInput: buttonFillAutoConnectionInput, tagSelect: buttonFillAutoTagSelect, key: "fillAutomation", title: "Button Fill Automation Tag" },
     { id: "buttonTextAutomation", fields: buttonTextAutoFields, modeSelect: buttonTextAutoModeSelect, connectionInput: buttonTextAutoConnectionInput, tagSelect: buttonTextAutoTagSelect, key: "textColorAutomation", title: "Button Text Automation Tag" },
     { id: "rectFillAutomation", fields: rectFillAutoFields, modeSelect: rectFillAutoModeSelect, connectionInput: rectFillAutoConnectionInput, tagSelect: rectFillAutoTagSelect, key: "fillAutomation", title: "Rectangle Fill Automation Tag" },
@@ -16639,7 +16911,7 @@ const updateSelectedObjectRotationConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!obj || !ROTATION_PIVOT_TYPES.has(String(obj.type || ""))) return;
-  if ((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line")) {
+  if ((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text")) {
     ensureRectRotationDraft(obj);
     const next = cloneRectRotationDraft(rectRotationDraft || {});
     if ("pivotMode" in patch) {
@@ -16931,7 +17203,7 @@ const initializeRotationControls = () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
         if (!obj || !control.types.includes(obj.type)) return { connection_id: "", tag: "" };
-        const automation = (((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic())))
+        const automation = (((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic()) || (control.id === "ellipse" && isEditingEllipseRotationDynamic()) || (control.id === "text" && isEditingTextRotationDynamic())))
           ? (rectRotationDraft?.rotationAutomation || {})
           : (obj.rotationAutomation || {});
         return {
@@ -16945,7 +17217,7 @@ const initializeRotationControls = () => {
       getSummary: () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-        if ((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic())) {
+        if ((control.id === "rect" && isEditingRectRotationDynamic()) || (control.id === "line" && isEditingLineRotationDynamic()) || (control.id === "ellipse" && isEditingEllipseRotationDynamic()) || (control.id === "text" && isEditingTextRotationDynamic())) {
           return getRotationAutomationSummary(rectRotationDraft?.rotationAutomation || {});
         }
         return getRotationAutomationSummary(obj?.rotationAutomation || {});
@@ -17050,7 +17322,7 @@ rectRotationActionRow.appendChild(rectRotationActionInline);
 rectRotationSaveBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedRotationDynamicObject();
-  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line"))) return;
+  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text"))) return;
   ensureRectRotationDraft(obj);
   recordHistory();
   obj.pivotMode = normalizePivotMode(rectRotationDraft?.pivotMode, obj.type);
@@ -17075,7 +17347,7 @@ rectRotationSaveBtn.addEventListener("click", () => {
 
 rectRotationCancelBtn.addEventListener("click", () => {
   const obj = getSelectedRotationDynamicObject();
-  if (!obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line"))) return;
+  if (!obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text"))) return;
   rectRotationDraft = null;
   rectRotationDraftObject = obj;
   ensureRectRotationDraft(obj);
@@ -17086,7 +17358,7 @@ rectRotationCancelBtn.addEventListener("click", () => {
 rectRotationDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedRotationDynamicObject();
-  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectRotationDynamic(obj)) || (obj.type === "line" && hasLineRotationDynamic(obj)))) return;
+  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectRotationDynamic(obj)) || (obj.type === "line" && hasLineRotationDynamic(obj)) || (obj.type === "ellipse" && hasEllipseRotationDynamic(obj)) || (obj.type === "text" && hasTextRotationDynamic(obj)))) return;
   recordHistory();
   delete obj.rotationAutomation;
   delete obj.pivotMode;
@@ -17162,7 +17434,7 @@ const updateSelectedObjectMotionConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!supportsMotionPose(obj)) return;
-  if ((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line")) {
+  if ((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingCircleMotionDynamic() && obj.type === "circle")) {
     ensureRectMotionDraft(obj);
     const next = cloneRectMotionDraft(rectMotionDraft || {});
     Object.assign(next, patch || {});
@@ -17215,7 +17487,7 @@ const startPoseEdit = (poseKey) => {
   if (poseEditSession) cancelPoseEdit({ keepTool: true });
   const currentPose = captureMotionPose(obj);
   if (!currentPose) return;
-  const sourceMotion = (((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line")))
+  const sourceMotion = (((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingCircleMotionDynamic() && obj.type === "circle")))
     ? (ensureRectMotionDraft(obj), rectMotionDraft || {})
     : (obj.motion || {});
   const editPose = sourceMotion?.[poseKey] || currentPose;
@@ -17239,7 +17511,7 @@ const savePoseEdit = () => {
   if (!capturedPose) return;
   applyMotionPoseToObject(session.object, session.originalPose);
   poseEditSession = null;
-  if ((isEditingRectMotionDynamic() && session.object.type === "rect") || (isEditingLineMotionDynamic() && session.object.type === "line")) {
+  if ((isEditingRectMotionDynamic() && session.object.type === "rect") || (isEditingLineMotionDynamic() && session.object.type === "line") || (isEditingEllipseMotionDynamic() && session.object.type === "ellipse") || (isEditingTextMotionDynamic() && session.object.type === "text") || (isEditingCircleMotionDynamic() && session.object.type === "circle")) {
     ensureRectMotionDraft(session.object);
     rectMotionDraft = {
       ...(rectMotionDraft || {}),
@@ -17455,7 +17727,7 @@ const initializeMotionControls = () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
         if (!obj || !control.types.includes(obj.type)) return { connection_id: "", tag: "" };
-        const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic())))
+        const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic()) || (control.id === "ellipse" && isEditingEllipseMotionDynamic()) || (control.id === "text" && isEditingTextMotionDynamic()) || (control.id === "circle" && isEditingCircleMotionDynamic())))
           ? (rectMotionDraft || {})
           : (obj.motion || {});
         return {
@@ -17471,7 +17743,7 @@ const initializeMotionControls = () => {
       getSummary: () => {
         const activeObjects = getActiveObjects();
         const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-        if ((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic())) {
+        if ((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic()) || (control.id === "ellipse" && isEditingEllipseMotionDynamic()) || (control.id === "text" && isEditingTextMotionDynamic()) || (control.id === "circle" && isEditingCircleMotionDynamic())) {
           return getMotionSummary(rectMotionDraft || {});
         }
         return getMotionSummary(obj?.motion || {});
@@ -17563,7 +17835,7 @@ function syncRectMotionControlFromDraft(obj) {
 rectMotionSaveBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedMotionDynamicObject();
-  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line"))) return;
+  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingCircleMotionDynamic() && obj.type === "circle"))) return;
   ensureRectMotionDraft(obj);
   recordHistory();
   obj.motion = cloneRectMotionDraft(rectMotionDraft || { enabled: true, inputMin: 0, inputMax: 1 });
@@ -17578,7 +17850,7 @@ rectMotionSaveBtn.addEventListener("click", () => {
 
 rectMotionCancelBtn.addEventListener("click", () => {
   const obj = getSelectedMotionDynamicObject();
-  if (!obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line"))) return;
+  if (!obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingCircleMotionDynamic() && obj.type === "circle"))) return;
   rectMotionDraft = null;
   rectMotionDraftObject = obj;
   ensureRectMotionDraft(obj);
@@ -17589,7 +17861,7 @@ rectMotionCancelBtn.addEventListener("click", () => {
 rectMotionDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedMotionDynamicObject();
-  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectMotionDynamic(obj)) || (obj.type === "line" && hasLineMotionDynamic(obj)))) return;
+  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectMotionDynamic(obj)) || (obj.type === "line" && hasLineMotionDynamic(obj)) || (obj.type === "ellipse" && hasEllipseMotionDynamic(obj)) || (obj.type === "text" && hasTextMotionDynamic(obj)) || (obj.type === "circle" && hasCircleMotionDynamic(obj)))) return;
   recordHistory();
   delete obj.motion;
   rectMotionDraft = null;
@@ -17604,7 +17876,7 @@ rectMotionDeleteBtn.addEventListener("click", () => {
 const syncMotionControls = (obj) => {
   motionControlConfigs.forEach((control) => {
     if (!obj || !control.types.includes(obj.type)) return;
-    const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic())))
+    const motion = (((control.id === "rect" && isEditingRectMotionDynamic()) || (control.id === "line" && isEditingLineMotionDynamic()) || (control.id === "ellipse" && isEditingEllipseMotionDynamic()) || (control.id === "text" && isEditingTextMotionDynamic()) || (control.id === "circle" && isEditingCircleMotionDynamic())))
       ? cloneRectMotionDraft(rectMotionDraft || obj.motion || {})
       : (obj.motion || {});
     const enabled = Boolean(motion.enabled);
@@ -18126,24 +18398,6 @@ function bindAutomationControls(opts) {
     });
   }
 }
-
-bindAutomationControls({
-  key: "fillAutomation",
-  enabledInput: textAutoEnabledInput,
-  invertInput: textAutoInvertInput,
-  fields: textAutoFields,
-  connectionInput: textAutoConnectionInput,
-  tagSelect: textAutoTagSelect,
-  modeSelect: textAutoModeSelect,
-  thresholdRow: textAutoThresholdRow,
-  thresholdInput: textAutoThresholdInput,
-  matchRow: textAutoMatchRow,
-  matchInput: textAutoMatchInput,
-  onInput: textAutoOnInput,
-  onTextInput: textAutoOnTextInput,
-  offInput: textAutoOffInput,
-  offTextInput: textAutoOffTextInput
-});
 
 bindAutomationControls({
   key: "fillAutomation",
@@ -18700,6 +18954,30 @@ buildSwatches(rectStrokeSwatches, (color) => {
   closeSwatches();
 });
 
+buildSwatches(rectColorFillSwatches, (color) => {
+  if (color === "transparent" || color === "none") return;
+  if (rectColorFillInput) rectColorFillInput.value = color;
+  if (rectColorFillTextInput) rectColorFillTextInput.value = color;
+  updateRectColorDraft({ fillColor: color, fillEnabled: true });
+  closeSwatches();
+});
+
+buildSwatches(rectColorStrokeSwatches, (color) => {
+  if (color === "transparent" || color === "none") return;
+  if (rectColorStrokeInput) rectColorStrokeInput.value = color;
+  if (rectColorStrokeTextInput) rectColorStrokeTextInput.value = color;
+  updateRectColorDraft({ strokeColor: color, strokeEnabled: true });
+  closeSwatches();
+});
+
+buildSwatches(rectColorBorderSwatches, (color) => {
+  if (color === "transparent" || color === "none") return;
+  if (rectColorBorderInput) rectColorBorderInput.value = color;
+  if (rectColorBorderTextInput) rectColorBorderTextInput.value = color;
+  updateRectColorDraft({ borderColor: color, borderEnabled: true });
+  closeSwatches();
+});
+
 buildSwatches(ellipseFillSwatches, (color) => {
   updateEllipseProperty({ fill: color });
   if (ellipseFillInput) ellipseFillInput.value = color;
@@ -18823,20 +19101,6 @@ buildSwatches(indicatorStrokeSwatches, (color) => {
   updateIndicatorProperty({ stroke: color });
   if (indicatorStrokeTextInput) indicatorStrokeTextInput.value = color;
   if (indicatorStrokeInput && isHexColor(color)) indicatorStrokeInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(textAutoOnSwatches, (color) => {
-  updateAutomationProperty("fillAutomation", { onColor: color, enabled: true });
-  if (textAutoOnInput) textAutoOnInput.value = color;
-  if (textAutoOnTextInput) textAutoOnTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(textAutoOffSwatches, (color) => {
-  updateAutomationProperty("fillAutomation", { offColor: color, enabled: true });
-  if (textAutoOffInput) textAutoOffInput.value = color;
-  if (textAutoOffTextInput) textAutoOffTextInput.value = color;
   closeSwatches();
 });
 
@@ -19155,6 +19419,27 @@ if (rectStrokeSwatchBtn && rectStrokeSwatches) {
   });
 }
 
+if (rectColorFillSwatchBtn && rectColorFillSwatches) {
+  rectColorFillSwatchBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSwatches(rectColorFillSwatches, rectColorFillSwatchBtn);
+  });
+}
+
+if (rectColorStrokeSwatchBtn && rectColorStrokeSwatches) {
+  rectColorStrokeSwatchBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSwatches(rectColorStrokeSwatches, rectColorStrokeSwatchBtn);
+  });
+}
+
+if (rectColorBorderSwatchBtn && rectColorBorderSwatches) {
+  rectColorBorderSwatchBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSwatches(rectColorBorderSwatches, rectColorBorderSwatchBtn);
+  });
+}
+
 if (ellipseFillSwatchBtn && ellipseFillSwatches) {
   ellipseFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -19278,20 +19563,6 @@ if (indicatorStrokeSwatchBtn && indicatorStrokeSwatches) {
   indicatorStrokeSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleSwatches(indicatorStrokeSwatches, indicatorStrokeSwatchBtn);
-  });
-}
-
-if (textAutoOnSwatchBtn && textAutoOnSwatches) {
-  textAutoOnSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(textAutoOnSwatches, textAutoOnSwatchBtn);
-  });
-}
-
-if (textAutoOffSwatchBtn && textAutoOffSwatches) {
-  textAutoOffSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(textAutoOffSwatches, textAutoOffSwatchBtn);
   });
 }
 
@@ -19566,9 +19837,7 @@ document.addEventListener("click", (event) => {
 	    indicatorFillSwatches?.contains(target) ||
 	    indicatorTextColorSwatches?.contains(target) ||
 	    indicatorStrokeSwatches?.contains(target) ||
-	    textAutoOnSwatches?.contains(target) ||
-	    textAutoOffSwatches?.contains(target) ||
-    buttonFillAutoOnSwatches?.contains(target) ||
+	    buttonFillAutoOnSwatches?.contains(target) ||
     buttonFillAutoOffSwatches?.contains(target) ||
     buttonTextAutoOnSwatches?.contains(target) ||
     buttonTextAutoOffSwatches?.contains(target) ||
@@ -19613,9 +19882,7 @@ document.addEventListener("click", (event) => {
 	    polygonFillSwatchBtn?.contains(target) ||
 	    polygonStrokeSwatchBtn?.contains(target) ||
 	    viewportBorderSwatchBtn?.contains(target) ||
-	    textAutoOnSwatchBtn?.contains(target) ||
-	    textAutoOffSwatchBtn?.contains(target) ||
-    buttonFillAutoOnSwatchBtn?.contains(target) ||
+	    buttonFillAutoOnSwatchBtn?.contains(target) ||
     buttonFillAutoOffSwatchBtn?.contains(target) ||
     buttonTextAutoOnSwatchBtn?.contains(target) ||
     buttonTextAutoOffSwatchBtn?.contains(target) ||
@@ -20038,7 +20305,7 @@ function updateSelectionOverlays() {
 
   if (poseEditSession && selectedIndices.length === 1) {
     const activeObj = poseEditSession.object;
-    const motion = (((isEditingRectMotionDynamic() && activeObj?.type === "rect") || (isEditingLineMotionDynamic() && activeObj?.type === "line")))
+    const motion = (((isEditingRectMotionDynamic() && activeObj?.type === "rect") || (isEditingLineMotionDynamic() && activeObj?.type === "line") || (isEditingEllipseMotionDynamic() && activeObj?.type === "ellipse") || (isEditingTextMotionDynamic() && activeObj?.type === "text") || (isEditingCircleMotionDynamic() && activeObj?.type === "circle")))
       ? (rectMotionDraft || activeObj?.motion || {})
       : (activeObj?.motion || {});
     const ghostPose = motion[poseEditSession.poseKey === "startPose" ? "endPose" : "startPose"] || null;
