@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260603-hmi-ui-v1" />
+  <link rel="stylesheet" href="css/main.css?v=20260605-hmi-ui-v2" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -585,122 +585,6 @@
                 <div id="buttonStrokeSwatches" class="swatch-popover" aria-label="Button stroke swatches"></div>
               </div>
             </div>
-            <div class="prop-group-header">
-              <div class="prop-group-title">Fill Automation</div>
-              <div class="prop-inline">
-                <label class="inline-check">
-                  <input id="buttonFillAutoEnabled" type="checkbox" />
-                  <span>Enabled</span>
-                </label>
-                <label class="inline-check">
-                  <input id="buttonFillAutoInvert" type="checkbox" />
-                  <span>Invert</span>
-                </label>
-              </div>
-            </div>
-	            <div id="buttonFillAutoFields" class="prop-subgroup is-hidden" hidden>
-	              <div class="prop-row">
-	                <label for="buttonFillAutoConnection">Connection</label>
-	                <input id="buttonFillAutoConnection" type="text" placeholder="connection_id" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="buttonFillAutoTag">Tag</label>
-	                <select id="buttonFillAutoTag">
-	                  <option value="">Select tag…</option>
-	                </select>
-	              </div>
-	              <div class="prop-row">
-	                <label for="buttonFillAutoMode">Mode</label>
-	                <select id="buttonFillAutoMode">
-	                  <option value="threshold">Threshold</option>
-	                  <option value="equals">Equals</option>
-	                </select>
-	              </div>
-	              <div class="prop-row" id="buttonFillAutoThresholdRow">
-	                <label for="buttonFillAutoThreshold">Threshold</label>
-	                <input id="buttonFillAutoThreshold" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="buttonFillAutoMatchRow">
-	                <label for="buttonFillAutoMatch">Match</label>
-	                <input id="buttonFillAutoMatch" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="buttonFillAutoOn">On Color</label>
-	                <div class="prop-inline">
-	                  <input id="buttonFillAutoOn" type="color" />
-	                  <input id="buttonFillAutoOnText" type="text" placeholder="#2b2f3a" />
-                  <button id="buttonFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="buttonFillAutoOnSwatches" class="swatch-popover" aria-label="Button fill automation on swatches"></div>
-                </div>
-              </div>
-              <div class="prop-row">
-                <label for="buttonFillAutoOff">Off Color</label>
-                <div class="prop-inline">
-                  <input id="buttonFillAutoOff" type="color" />
-                  <input id="buttonFillAutoOffText" type="text" placeholder="#2b2f3a" />
-                  <button id="buttonFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="buttonFillAutoOffSwatches" class="swatch-popover" aria-label="Button fill automation off swatches"></div>
-                </div>
-              </div>
-            </div>
-            <div class="prop-group-header">
-              <div class="prop-group-title">Text Color Automation</div>
-              <div class="prop-inline">
-                <label class="inline-check">
-                  <input id="buttonTextAutoEnabled" type="checkbox" />
-                  <span>Enabled</span>
-                </label>
-                <label class="inline-check">
-                  <input id="buttonTextAutoInvert" type="checkbox" />
-                  <span>Invert</span>
-                </label>
-              </div>
-            </div>
-	            <div id="buttonTextAutoFields" class="prop-subgroup is-hidden" hidden>
-	              <div class="prop-row">
-	                <label for="buttonTextAutoConnection">Connection</label>
-	                <input id="buttonTextAutoConnection" type="text" placeholder="connection_id" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="buttonTextAutoTag">Tag</label>
-	                <select id="buttonTextAutoTag">
-	                  <option value="">Select tag…</option>
-	                </select>
-	              </div>
-	              <div class="prop-row">
-	                <label for="buttonTextAutoMode">Mode</label>
-	                <select id="buttonTextAutoMode">
-	                  <option value="threshold">Threshold</option>
-	                  <option value="equals">Equals</option>
-	                </select>
-	              </div>
-	              <div class="prop-row" id="buttonTextAutoThresholdRow">
-	                <label for="buttonTextAutoThreshold">Threshold</label>
-	                <input id="buttonTextAutoThreshold" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="buttonTextAutoMatchRow">
-	                <label for="buttonTextAutoMatch">Match</label>
-	                <input id="buttonTextAutoMatch" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="buttonTextAutoOn">On Color</label>
-	                <div class="prop-inline">
-	                  <input id="buttonTextAutoOn" type="color" />
-	                  <input id="buttonTextAutoOnText" type="text" placeholder="#ffffff" />
-                  <button id="buttonTextAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="buttonTextAutoOnSwatches" class="swatch-popover" aria-label="Button text automation on swatches"></div>
-                </div>
-              </div>
-              <div class="prop-row">
-                <label for="buttonTextAutoOff">Off Color</label>
-                <div class="prop-inline">
-                  <input id="buttonTextAutoOff" type="color" />
-                  <input id="buttonTextAutoOffText" type="text" placeholder="#ffffff" />
-                  <button id="buttonTextAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="buttonTextAutoOffSwatches" class="swatch-popover" aria-label="Button text automation off swatches"></div>
-                </div>
-              </div>
-            </div>
           </div>
 
 	          <div id="numberInputProps" class="properties-form is-hidden">
@@ -1244,122 +1128,6 @@
                   </div>
                 </div>
               </div>
-	            <div class="prop-group-header" id="rectStrokeAutoHeader">
-	              <div class="prop-group-title">Border Color Automation</div>
-	              <div class="prop-inline">
-	                <label class="inline-check">
-                  <input id="rectStrokeAutoEnabled" type="checkbox" />
-                  <span>Enabled</span>
-                </label>
-                <label class="inline-check">
-                  <input id="rectStrokeAutoInvert" type="checkbox" />
-                  <span>Invert</span>
-                </label>
-              </div>
-            </div>
-	            <div id="rectStrokeAutoFields" class="prop-subgroup is-hidden" hidden>
-	              <div class="prop-row">
-	                <label for="rectStrokeAutoConnection">Connection</label>
-	                <input id="rectStrokeAutoConnection" type="text" placeholder="connection_id" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="rectStrokeAutoTag">Tag</label>
-	                <select id="rectStrokeAutoTag">
-	                  <option value="">Select tag…</option>
-	                </select>
-	              </div>
-	              <div class="prop-row">
-	                <label for="rectStrokeAutoMode">Mode</label>
-	                <select id="rectStrokeAutoMode">
-	                  <option value="threshold">Threshold</option>
-	                  <option value="equals">Equals</option>
-	                </select>
-	              </div>
-	              <div class="prop-row" id="rectStrokeAutoThresholdRow">
-	                <label for="rectStrokeAutoThreshold">Threshold</label>
-	                <input id="rectStrokeAutoThreshold" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="rectStrokeAutoMatchRow">
-	                <label for="rectStrokeAutoMatch">Match</label>
-	                <input id="rectStrokeAutoMatch" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="rectStrokeAutoOn">On Color</label>
-	                <div class="prop-inline">
-	                  <input id="rectStrokeAutoOn" type="color" />
-	                  <input id="rectStrokeAutoOnText" type="text" placeholder="#ffffff" />
-                  <button id="rectStrokeAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="rectStrokeAutoOnSwatches" class="swatch-popover" aria-label="Rectangle border automation on swatches"></div>
-                </div>
-              </div>
-              <div class="prop-row">
-                <label for="rectStrokeAutoOff">Off Color</label>
-                <div class="prop-inline">
-                  <input id="rectStrokeAutoOff" type="color" />
-                  <input id="rectStrokeAutoOffText" type="text" placeholder="#ffffff" />
-                  <button id="rectStrokeAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="rectStrokeAutoOffSwatches" class="swatch-popover" aria-label="Rectangle border automation off swatches"></div>
-                </div>
-              </div>
-            </div>
-            <div class="prop-group-header">
-              <div class="prop-group-title">Fill Automation</div>
-              <div class="prop-inline">
-                <label class="inline-check">
-                  <input id="rectFillAutoEnabled" type="checkbox" />
-                  <span>Enabled</span>
-                </label>
-                <label class="inline-check">
-                  <input id="rectFillAutoInvert" type="checkbox" />
-                  <span>Invert</span>
-                </label>
-              </div>
-            </div>
-            <div id="rectFillAutoFields" class="prop-subgroup is-hidden" hidden>
-	              <div class="prop-row">
-	                <label for="rectFillAutoConnection">Connection</label>
-	                <input id="rectFillAutoConnection" type="text" placeholder="connection_id" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="rectFillAutoTag">Tag</label>
-	                <select id="rectFillAutoTag">
-	                  <option value="">Select tag…</option>
-	                </select>
-	              </div>
-	              <div class="prop-row">
-	                <label for="rectFillAutoMode">Mode</label>
-	                <select id="rectFillAutoMode">
-	                  <option value="threshold">Threshold</option>
-	                  <option value="equals">Equals</option>
-	                </select>
-	              </div>
-	              <div class="prop-row" id="rectFillAutoThresholdRow">
-	                <label for="rectFillAutoThreshold">Threshold</label>
-	                <input id="rectFillAutoThreshold" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="rectFillAutoMatchRow">
-	                <label for="rectFillAutoMatch">Match</label>
-	                <input id="rectFillAutoMatch" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="rectFillAutoOn">On Color</label>
-	                <div class="prop-inline">
-	                  <input id="rectFillAutoOn" type="color" />
-	                  <input id="rectFillAutoOnText" type="text" placeholder="#3a3f4b" />
-                  <button id="rectFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="rectFillAutoOnSwatches" class="swatch-popover" aria-label="Rectangle fill automation on swatches"></div>
-                </div>
-              </div>
-              <div class="prop-row">
-                <label for="rectFillAutoOff">Off Color</label>
-                <div class="prop-inline">
-                  <input id="rectFillAutoOff" type="color" />
-                  <input id="rectFillAutoOffText" type="text" placeholder="#3a3f4b" />
-                  <button id="rectFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="rectFillAutoOffSwatches" class="swatch-popover" aria-label="Rectangle fill automation off swatches"></div>
-                </div>
-              </div>
-            </div>
             <div id="rectColorDynamicSection" class="properties-form is-hidden">
               <div class="prop-group-header">
                 <div class="prop-group-title">Color</div>
@@ -1416,7 +1184,7 @@
                     <button id="rectColorExpressionEditBtn" class="panel-btn" type="button">Edit…</button>
                   </div>
                 </div>
-                <div class="prop-row">
+                <div class="prop-row" id="rectColorTargetsRow">
                   <label>Targets</label>
                   <div class="prop-inline">
                     <label class="inline-check">
@@ -1426,6 +1194,14 @@
                     <label class="inline-check">
                       <input id="rectColorStrokeEnabled" type="checkbox" />
                       <span>Border</span>
+                    </label>
+                    <label class="inline-check is-hidden" id="rectColorTextTargetLabel" hidden>
+                      <input id="rectColorTextEnabled" type="checkbox" />
+                      <span>Text</span>
+                    </label>
+                    <label class="inline-check is-hidden" id="rectColorBackgroundTargetLabel" hidden>
+                      <input id="rectColorBackgroundEnabled" type="checkbox" />
+                      <span>Background</span>
                     </label>
                     <label class="inline-check is-hidden" id="rectColorBorderTargetLabel" hidden>
                       <input id="rectColorBorderEnabled" type="checkbox" />
@@ -1449,6 +1225,24 @@
                     <input id="rectColorStrokeText" type="text" placeholder="#ffffff" />
                     <button id="rectColorStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
                     <div id="rectColorStrokeSwatches" class="swatch-popover" aria-label="Dynamic stroke swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row is-hidden" id="rectColorTextRow" hidden>
+                  <label for="rectColorText">Text Color</label>
+                  <div class="prop-inline">
+                    <input id="rectColorText" type="color" />
+                    <input id="rectColorTextText" type="text" placeholder="#ffffff" />
+                    <button id="rectColorTextSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="rectColorTextSwatches" class="swatch-popover" aria-label="Dynamic text swatches"></div>
+                  </div>
+                </div>
+                <div class="prop-row is-hidden" id="rectColorBackgroundRow" hidden>
+                  <label for="rectColorBackground">Background Color</label>
+                  <div class="prop-inline">
+                    <input id="rectColorBackground" type="color" />
+                    <input id="rectColorBackgroundText" type="text" placeholder="#ffffff" />
+                    <button id="rectColorBackgroundSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <div id="rectColorBackgroundSwatches" class="swatch-popover" aria-label="Dynamic background swatches"></div>
                   </div>
                 </div>
                 <div class="prop-row is-hidden" id="rectColorBorderRow" hidden>
@@ -1566,122 +1360,6 @@
               <label for="circleStrokeWidth">Stroke Width</label>
               <input id="circleStrokeWidth" type="number" min="0" step="1" />
             </div>
-            <div class="prop-group-header" id="circleStrokeAutoHeader">
-              <div class="prop-group-title">Border Color Automation</div>
-              <div class="prop-inline">
-                <label class="inline-check">
-                  <input id="circleStrokeAutoEnabled" type="checkbox" />
-                  <span>Enabled</span>
-                </label>
-                <label class="inline-check">
-                  <input id="circleStrokeAutoInvert" type="checkbox" />
-                  <span>Invert</span>
-                </label>
-              </div>
-            </div>
-	            <div id="circleStrokeAutoFields" class="prop-subgroup is-hidden" hidden>
-	              <div class="prop-row">
-	                <label for="circleStrokeAutoConnection">Connection</label>
-	                <input id="circleStrokeAutoConnection" type="text" placeholder="connection_id" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="circleStrokeAutoTag">Tag</label>
-	                <select id="circleStrokeAutoTag">
-	                  <option value="">Select tag…</option>
-	                </select>
-	              </div>
-	              <div class="prop-row">
-	                <label for="circleStrokeAutoMode">Mode</label>
-	                <select id="circleStrokeAutoMode">
-	                  <option value="threshold">Threshold</option>
-	                  <option value="equals">Equals</option>
-	                </select>
-	              </div>
-	              <div class="prop-row" id="circleStrokeAutoThresholdRow">
-	                <label for="circleStrokeAutoThreshold">Threshold</label>
-	                <input id="circleStrokeAutoThreshold" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="circleStrokeAutoMatchRow">
-	                <label for="circleStrokeAutoMatch">Match</label>
-	                <input id="circleStrokeAutoMatch" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="circleStrokeAutoOn">On Color</label>
-	                <div class="prop-inline">
-	                  <input id="circleStrokeAutoOn" type="color" />
-	                  <input id="circleStrokeAutoOnText" type="text" placeholder="#ffffff" />
-                  <button id="circleStrokeAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="circleStrokeAutoOnSwatches" class="swatch-popover" aria-label="Circle border automation on swatches"></div>
-                </div>
-              </div>
-              <div class="prop-row">
-                <label for="circleStrokeAutoOff">Off Color</label>
-                <div class="prop-inline">
-                  <input id="circleStrokeAutoOff" type="color" />
-                  <input id="circleStrokeAutoOffText" type="text" placeholder="#ffffff" />
-                  <button id="circleStrokeAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="circleStrokeAutoOffSwatches" class="swatch-popover" aria-label="Circle border automation off swatches"></div>
-                </div>
-              </div>
-            </div>
-            <div class="prop-group-header">
-              <div class="prop-group-title">Fill Automation</div>
-              <div class="prop-inline">
-                <label class="inline-check">
-                  <input id="circleFillAutoEnabled" type="checkbox" />
-                  <span>Enabled</span>
-                </label>
-                <label class="inline-check">
-                  <input id="circleFillAutoInvert" type="checkbox" />
-                  <span>Invert</span>
-                </label>
-              </div>
-            </div>
-	            <div id="circleFillAutoFields" class="prop-subgroup is-hidden" hidden>
-	              <div class="prop-row">
-	                <label for="circleFillAutoConnection">Connection</label>
-	                <input id="circleFillAutoConnection" type="text" placeholder="connection_id" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="circleFillAutoTag">Tag</label>
-	                <select id="circleFillAutoTag">
-	                  <option value="">Select tag…</option>
-	                </select>
-	              </div>
-	              <div class="prop-row">
-	                <label for="circleFillAutoMode">Mode</label>
-	                <select id="circleFillAutoMode">
-	                  <option value="threshold">Threshold</option>
-	                  <option value="equals">Equals</option>
-	                </select>
-	              </div>
-	              <div class="prop-row" id="circleFillAutoThresholdRow">
-	                <label for="circleFillAutoThreshold">Threshold</label>
-	                <input id="circleFillAutoThreshold" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="circleFillAutoMatchRow">
-	                <label for="circleFillAutoMatch">Match</label>
-	                <input id="circleFillAutoMatch" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="circleFillAutoOn">On Color</label>
-	                <div class="prop-inline">
-	                  <input id="circleFillAutoOn" type="color" />
-	                  <input id="circleFillAutoOnText" type="text" placeholder="#3a3f4b" />
-                  <button id="circleFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="circleFillAutoOnSwatches" class="swatch-popover" aria-label="Circle fill automation on swatches"></div>
-                </div>
-              </div>
-              <div class="prop-row">
-                <label for="circleFillAutoOff">Off Color</label>
-                <div class="prop-inline">
-                  <input id="circleFillAutoOff" type="color" />
-                  <input id="circleFillAutoOffText" type="text" placeholder="#3a3f4b" />
-                  <button id="circleFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="circleFillAutoOffSwatches" class="swatch-popover" aria-label="Circle fill automation off swatches"></div>
-                </div>
-              </div>
-            </div>
           </div>
 
           <div id="lineProps" class="properties-form is-hidden">
@@ -1714,64 +1392,6 @@
             <div class="prop-row">
               <label for="lineStrokeWidth">Stroke Width</label>
               <input id="lineStrokeWidth" type="number" min="0" step="1" />
-            </div>
-            <div class="prop-group-header">
-              <div class="prop-group-title">Stroke Automation</div>
-              <div class="prop-inline">
-                <label class="inline-check">
-                  <input id="lineStrokeAutoEnabled" type="checkbox" />
-                  <span>Enabled</span>
-                </label>
-                <label class="inline-check">
-                  <input id="lineStrokeAutoInvert" type="checkbox" />
-                  <span>Invert</span>
-                </label>
-              </div>
-            </div>
-	            <div id="lineStrokeAutoFields" class="prop-subgroup is-hidden" hidden>
-	              <div class="prop-row">
-	                <label for="lineStrokeAutoConnection">Connection</label>
-	                <input id="lineStrokeAutoConnection" type="text" placeholder="connection_id" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="lineStrokeAutoTag">Tag</label>
-	                <select id="lineStrokeAutoTag">
-	                  <option value="">Select tag…</option>
-	                </select>
-	              </div>
-	              <div class="prop-row">
-	                <label for="lineStrokeAutoMode">Mode</label>
-	                <select id="lineStrokeAutoMode">
-	                  <option value="threshold">Threshold</option>
-	                  <option value="equals">Equals</option>
-	                </select>
-	              </div>
-	              <div class="prop-row" id="lineStrokeAutoThresholdRow">
-	                <label for="lineStrokeAutoThreshold">Threshold</label>
-	                <input id="lineStrokeAutoThreshold" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="lineStrokeAutoMatchRow">
-	                <label for="lineStrokeAutoMatch">Match</label>
-	                <input id="lineStrokeAutoMatch" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="lineStrokeAutoOn">On Color</label>
-	                <div class="prop-inline">
-	                  <input id="lineStrokeAutoOn" type="color" />
-	                  <input id="lineStrokeAutoOnText" type="text" placeholder="#ffffff" />
-                  <button id="lineStrokeAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="lineStrokeAutoOnSwatches" class="swatch-popover" aria-label="Line stroke automation on swatches"></div>
-                </div>
-              </div>
-              <div class="prop-row">
-                <label for="lineStrokeAutoOff">Off Color</label>
-                <div class="prop-inline">
-                  <input id="lineStrokeAutoOff" type="color" />
-                  <input id="lineStrokeAutoOffText" type="text" placeholder="#ffffff" />
-                  <button id="lineStrokeAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                  <div id="lineStrokeAutoOffSwatches" class="swatch-popover" aria-label="Line stroke automation off swatches"></div>
-                </div>
-              </div>
             </div>
           </div>
 
@@ -2937,6 +2557,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260603-hmi-ui-v1"></script>
+	  <script src="js/hmi.js?v=20260605-hmi-ui-v2"></script>
 	</body>
 	</html>

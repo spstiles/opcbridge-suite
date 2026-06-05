@@ -501,7 +501,7 @@ const getSelectedVisibilityDynamicObject = () => {
 
 const getSelectedColorDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? obj : null;
 };
 
 const getSelectedRotationDynamicObject = () => {
@@ -571,6 +571,16 @@ const hasCircleColorDynamic = (obj) => {
   return hasFill || hasStroke;
 };
 
+const hasGroupColorDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  const hasFill = Boolean(obj.fillAutomation && typeof obj.fillAutomation === "object" && Object.keys(obj.fillAutomation).length);
+  const hasStroke = Boolean(obj.strokeAutomation && typeof obj.strokeAutomation === "object" && Object.keys(obj.strokeAutomation).length);
+  const hasText = Boolean(obj.textColorAutomation && typeof obj.textColorAutomation === "object" && Object.keys(obj.textColorAutomation).length);
+  const hasBackground = Boolean(obj.backgroundAutomation && typeof obj.backgroundAutomation === "object" && Object.keys(obj.backgroundAutomation).length);
+  const hasBorder = Boolean(obj.borderColorAutomation && typeof obj.borderColorAutomation === "object" && Object.keys(obj.borderColorAutomation).length);
+  return hasFill || hasStroke || hasText || hasBackground || hasBorder;
+};
+
 const hasLineRotationDynamic = (obj) => {
   if (!obj || typeof obj !== "object") return false;
   return Boolean(obj.rotationAutomation && typeof obj.rotationAutomation === "object" && Object.keys(obj.rotationAutomation).length);
@@ -634,7 +644,7 @@ const cloneVisibilityState = (value) => {
 };
 
 const cloneRectColorDraft = (value) => {
-  if (!value || typeof value !== "object") return { enabled: true, sourceType: "tag", fillEnabled: true, strokeEnabled: false, borderEnabled: false };
+  if (!value || typeof value !== "object") return { enabled: true, sourceType: "tag", fillEnabled: true, strokeEnabled: false, textEnabled: false, backgroundEnabled: false, borderEnabled: false };
   return JSON.parse(JSON.stringify(value));
 };
 
@@ -761,7 +771,8 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   const isLine = Boolean(obj && obj.type === "line");
   const isText = Boolean(obj && obj.type === "text");
   const isButton = Boolean(obj && obj.type === "button");
-  const strokePresent = isText || isButton || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
+  const isGroup = Boolean(obj && obj.type === "group");
+  const strokePresent = isText || isButton || isGroup || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
   const next = draft || {};
   const sourceType = next.sourceType === "expression" ? "expression" : "tag";
   const mode = next.mode === "equals" ? "equals" : "threshold";
@@ -820,9 +831,11 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   }
   if (rectColorFillEnabledInput) rectColorFillEnabledInput.checked = next.fillEnabled !== false;
   if (rectColorStrokeEnabledInput) {
-    rectColorStrokeEnabledInput.checked = Boolean(next.strokeEnabled) && strokePresent;
-    rectColorStrokeEnabledInput.disabled = !strokePresent;
+    rectColorStrokeEnabledInput.checked = isLine ? true : (Boolean(next.strokeEnabled) && strokePresent);
+    rectColorStrokeEnabledInput.disabled = isLine || !strokePresent;
   }
+  if (rectColorTextEnabledInput) rectColorTextEnabledInput.checked = Boolean(next.textEnabled);
+  if (rectColorBackgroundEnabledInput) rectColorBackgroundEnabledInput.checked = Boolean(next.backgroundEnabled);
   if (rectColorBorderEnabledInput) rectColorBorderEnabledInput.checked = Boolean(next.borderEnabled);
   const fillFallback = isText
     ? String(obj?.fill || "#ffffff")
@@ -835,41 +848,79 @@ const syncRectColorUiFromDraft = (obj, draft) => {
       ? String(obj?.textColor || "#ffffff")
     : String((!obj?.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
   const borderFallback = String(obj?.borderColor || "#000000");
+  const textFallback = String(obj?.textColor || "#ffffff");
+  const backgroundFallback = String(obj?.background || "#000000");
   if (rectColorFillInput) rectColorFillInput.value = isHexColor(next.fillColor || fillFallback) ? (next.fillColor || fillFallback) : (isText ? "#ffffff" : "#3a3f4b");
   if (rectColorFillTextInput) setInputValueSafe(rectColorFillTextInput, next.fillColor || "");
   if (rectColorStrokeInput) rectColorStrokeInput.value = isHexColor(next.strokeColor || strokeFallback) ? (next.strokeColor || strokeFallback) : "#000000";
   if (rectColorStrokeTextInput) setInputValueSafe(rectColorStrokeTextInput, next.strokeColor || "");
+  if (rectColorTextInput) rectColorTextInput.value = isHexColor(next.textColor || textFallback) ? (next.textColor || textFallback) : "#ffffff";
+  if (rectColorTextTextInput) setInputValueSafe(rectColorTextTextInput, next.textColor || "");
+  if (rectColorBackgroundInput) rectColorBackgroundInput.value = isHexColor(next.backgroundColor || backgroundFallback) ? (next.backgroundColor || backgroundFallback) : "#000000";
+  if (rectColorBackgroundTextInput) setInputValueSafe(rectColorBackgroundTextInput, next.backgroundColor || "");
   if (rectColorBorderInput) rectColorBorderInput.value = isHexColor(next.borderColor || borderFallback) ? (next.borderColor || borderFallback) : "#000000";
   if (rectColorBorderTextInput) setInputValueSafe(rectColorBorderTextInput, next.borderColor || "");
   const fillTargetLabel = rectColorFillEnabledInput?.closest(".inline-check");
+  const strokeTargetLabel = rectColorStrokeEnabledInput?.closest(".inline-check");
+  const supportsFillTarget = !isLine;
+  const supportsStrokeTarget = strokePresent;
+  const supportsTextTarget = isGroup;
+  const supportsBackgroundTarget = isGroup;
+  const supportsBorderTarget = isText || isGroup;
   if (fillTargetLabel) {
-    fillTargetLabel.classList.toggle("is-hidden", isLine);
-    fillTargetLabel.hidden = isLine;
+    fillTargetLabel.classList.toggle("is-hidden", !supportsFillTarget);
+    fillTargetLabel.hidden = !supportsFillTarget;
   }
-  const strokeTargetText = rectColorStrokeEnabledInput?.closest(".inline-check")?.querySelector("span");
-  if (strokeTargetText) strokeTargetText.textContent = isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : "Border"));
+  if (strokeTargetLabel) {
+    strokeTargetLabel.classList.toggle("is-hidden", !supportsStrokeTarget);
+    strokeTargetLabel.hidden = !supportsStrokeTarget;
+  }
+  const strokeTargetText = strokeTargetLabel?.querySelector("span");
+  if (strokeTargetText) strokeTargetText.textContent = isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : (isGroup ? "Line" : "Border")));
   const strokeColorLabel = rectColorStrokeRow?.querySelector('label[for="rectColorStroke"]');
-  if (strokeColorLabel) strokeColorLabel.textContent = isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : "Border Color"));
+  if (strokeColorLabel) strokeColorLabel.textContent = isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : (isGroup ? "Line Color" : "Border Color")));
   const fillTargetText = rectColorFillEnabledInput?.closest(".inline-check")?.querySelector("span");
   if (fillTargetText) fillTargetText.textContent = isText ? "Text" : (isButton ? "Background" : "Fill");
   const fillColorLabel = rectColorFillRow?.querySelector('label[for="rectColorFill"]');
   if (fillColorLabel) fillColorLabel.textContent = isText ? "Text Color" : (isButton ? "Background Color" : "Fill Color");
+  if (rectColorTextTargetLabel) {
+    rectColorTextTargetLabel.classList.toggle("is-hidden", !supportsTextTarget);
+    rectColorTextTargetLabel.hidden = !supportsTextTarget;
+  }
+  if (rectColorBackgroundTargetLabel) {
+    rectColorBackgroundTargetLabel.classList.toggle("is-hidden", !supportsBackgroundTarget);
+    rectColorBackgroundTargetLabel.hidden = !supportsBackgroundTarget;
+  }
   if (rectColorBorderTargetLabel) {
-    rectColorBorderTargetLabel.classList.toggle("is-hidden", !(isText));
-    rectColorBorderTargetLabel.hidden = !(isText);
+    rectColorBorderTargetLabel.classList.toggle("is-hidden", !supportsBorderTarget);
+    rectColorBorderTargetLabel.hidden = !supportsBorderTarget;
+  }
+  if (rectColorTargetsRow) {
+    rectColorTargetsRow.classList.toggle("is-hidden", isLine);
+    rectColorTargetsRow.hidden = isLine;
   }
   if (rectColorFillRow) {
-    const showFill = !isLine && Boolean(rectColorFillEnabledInput?.checked);
+    const showFill = supportsFillTarget && Boolean(rectColorFillEnabledInput?.checked);
     rectColorFillRow.classList.toggle("is-hidden", !showFill);
     rectColorFillRow.hidden = !showFill;
   }
   if (rectColorStrokeRow) {
-    const showStroke = Boolean(rectColorStrokeEnabledInput?.checked) && strokePresent;
+    const showStroke = supportsStrokeTarget && Boolean(rectColorStrokeEnabledInput?.checked);
     rectColorStrokeRow.classList.toggle("is-hidden", !showStroke);
     rectColorStrokeRow.hidden = !showStroke;
   }
+  if (rectColorTextRow) {
+    const showText = supportsTextTarget && Boolean(rectColorTextEnabledInput?.checked);
+    rectColorTextRow.classList.toggle("is-hidden", !showText);
+    rectColorTextRow.hidden = !showText;
+  }
+  if (rectColorBackgroundRow) {
+    const showBackground = supportsBackgroundTarget && Boolean(rectColorBackgroundEnabledInput?.checked);
+    rectColorBackgroundRow.classList.toggle("is-hidden", !showBackground);
+    rectColorBackgroundRow.hidden = !showBackground;
+  }
   if (rectColorBorderRow) {
-    const showBorder = isText && Boolean(rectColorBorderEnabledInput?.checked);
+    const showBorder = supportsBorderTarget && Boolean(rectColorBorderEnabledInput?.checked);
     rectColorBorderRow.classList.toggle("is-hidden", !showBorder);
     rectColorBorderRow.hidden = !showBorder;
   }
@@ -890,7 +941,7 @@ const applyRectColorModeUi = (mode) => {
 
 const updateRectColorDraft = (patch) => {
   const obj = getSelectedColorDynamicObject();
-  if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic())) return;
+  if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
   ensureRectColorDraft(obj);
   const next = { ...(rectColorDraft || {}), ...patch };
   if ("sourceType" in patch) {
@@ -1254,7 +1305,7 @@ const syncRectColorExpressionValidationUi = () => {
 const openRectColorExpressionModal = () => {
   if (!rectColorExpressionOverlay) return;
   const obj = getSelectedColorDynamicObject();
-  if (!obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj))) return;
+  if (!obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj) || hasGroupColorDynamic(obj))) return;
   if (currentObjectDynamicTab !== "color") {
     currentObjectDynamicTab = "color";
     updatePropertiesPanel();
@@ -1783,6 +1834,11 @@ const isEditingCircleColorDynamic = () => {
   return Boolean(obj && obj.type === "circle" && currentObjectDynamicTab === "color" && hasCircleColorDynamic(obj));
 };
 
+const isEditingGroupColorDynamic = () => {
+  const obj = getSelectedColorDynamicObject();
+  return Boolean(obj && obj.type === "group" && currentObjectDynamicTab === "color" && hasGroupColorDynamic(obj));
+};
+
 const isEditingRectRotationDynamic = () => {
   const obj = getSelectedRotationDynamicObject();
   return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "rotation" && hasRectRotationDynamic(obj));
@@ -1859,10 +1915,12 @@ const ensureRectVisibilityDraft = (obj) => {
 const ensureRectColorDraft = (obj) => {
   if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "group")) return;
   if (rectColorDraftObject !== obj || !rectColorDraft) {
-    const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle") ? (obj.fillAutomation || {}) : {};
+    const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? (obj.fillAutomation || {}) : {};
     const strokeAuto = (obj.type === "text") ? (obj.backgroundAutomation || {}) : (obj.type === "button" ? (obj.textColorAutomation || {}) : (obj.strokeAutomation || {}));
-    const borderAuto = obj.type === "text" ? (obj.borderColorAutomation || {}) : {};
-    const source = (Object.keys(fillAuto).length ? fillAuto : (Object.keys(strokeAuto).length ? strokeAuto : borderAuto)) || {};
+    const textAuto = obj.type === "group" ? (obj.textColorAutomation || {}) : {};
+    const backgroundAuto = obj.type === "group" ? (obj.backgroundAutomation || {}) : {};
+    const borderAuto = (obj.type === "text" || obj.type === "group") ? (obj.borderColorAutomation || {}) : {};
+    const source = (Object.keys(fillAuto).length ? fillAuto : (Object.keys(strokeAuto).length ? strokeAuto : (Object.keys(textAuto).length ? textAuto : (Object.keys(backgroundAuto).length ? backgroundAuto : borderAuto)))) || {};
     rectColorDraftObject = obj;
     rectColorDraft = cloneRectColorDraft({
       enabled: source.enabled !== false,
@@ -1874,10 +1932,14 @@ const ensureRectColorDraft = (obj) => {
       mode: source.mode || "",
       threshold: source.threshold,
       match: source.match || "",
-      fillEnabled: (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle") ? (Object.keys(fillAuto).length > 0) : false,
+      fillEnabled: (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? (Object.keys(fillAuto).length > 0) : false,
       fillColor: fillAuto.onColor || "",
       strokeEnabled: obj.type === "line" ? true : (Object.keys(strokeAuto).length > 0),
       strokeColor: strokeAuto.onColor || "",
+      textEnabled: Object.keys(textAuto).length > 0,
+      textColor: textAuto.onColor || "",
+      backgroundEnabled: Object.keys(backgroundAuto).length > 0,
+      backgroundColor: backgroundAuto.onColor || "",
       borderEnabled: Object.keys(borderAuto).length > 0,
       borderColor: borderAuto.onColor || ""
     });
@@ -1969,9 +2031,9 @@ const ensureRectColorDynamic = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedColorDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj))) {
+  if (!(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj) || hasGroupColorDynamic(obj))) {
     recordHistory();
-    if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle") obj.fillAutomation = { enabled: true };
+    if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") obj.fillAutomation = { enabled: true };
     else obj.strokeAutomation = { enabled: true };
     renderScreen();
     syncEditorFromScreen();
@@ -2700,42 +2762,6 @@ const buttonLabelBindTagSelect = document.getElementById("buttonLabelBindTag");
 const buttonLabelBindMultiplierInput = document.getElementById("buttonLabelBindMultiplier");
 const buttonLabelBindDigitsInput = document.getElementById("buttonLabelBindDigits");
 const buttonLabelBindDecimalsInput = document.getElementById("buttonLabelBindDecimals");
-const buttonFillAutoEnabledInput = document.getElementById("buttonFillAutoEnabled");
-const buttonFillAutoInvertInput = document.getElementById("buttonFillAutoInvert");
-const buttonFillAutoFields = document.getElementById("buttonFillAutoFields");
-const buttonFillAutoConnectionInput = document.getElementById("buttonFillAutoConnection");
-const buttonFillAutoTagSelect = document.getElementById("buttonFillAutoTag");
-const buttonFillAutoModeSelect = document.getElementById("buttonFillAutoMode");
-const buttonFillAutoThresholdRow = document.getElementById("buttonFillAutoThresholdRow");
-const buttonFillAutoThresholdInput = document.getElementById("buttonFillAutoThreshold");
-const buttonFillAutoMatchRow = document.getElementById("buttonFillAutoMatchRow");
-const buttonFillAutoMatchInput = document.getElementById("buttonFillAutoMatch");
-const buttonFillAutoOnInput = document.getElementById("buttonFillAutoOn");
-const buttonFillAutoOnTextInput = document.getElementById("buttonFillAutoOnText");
-const buttonFillAutoOffInput = document.getElementById("buttonFillAutoOff");
-const buttonFillAutoOffTextInput = document.getElementById("buttonFillAutoOffText");
-const buttonFillAutoOnSwatches = document.getElementById("buttonFillAutoOnSwatches");
-const buttonFillAutoOnSwatchBtn = document.getElementById("buttonFillAutoOnSwatchBtn");
-const buttonFillAutoOffSwatches = document.getElementById("buttonFillAutoOffSwatches");
-const buttonFillAutoOffSwatchBtn = document.getElementById("buttonFillAutoOffSwatchBtn");
-const buttonTextAutoEnabledInput = document.getElementById("buttonTextAutoEnabled");
-const buttonTextAutoInvertInput = document.getElementById("buttonTextAutoInvert");
-const buttonTextAutoFields = document.getElementById("buttonTextAutoFields");
-const buttonTextAutoConnectionInput = document.getElementById("buttonTextAutoConnection");
-const buttonTextAutoTagSelect = document.getElementById("buttonTextAutoTag");
-const buttonTextAutoModeSelect = document.getElementById("buttonTextAutoMode");
-const buttonTextAutoThresholdRow = document.getElementById("buttonTextAutoThresholdRow");
-const buttonTextAutoThresholdInput = document.getElementById("buttonTextAutoThreshold");
-const buttonTextAutoMatchRow = document.getElementById("buttonTextAutoMatchRow");
-const buttonTextAutoMatchInput = document.getElementById("buttonTextAutoMatch");
-const buttonTextAutoOnInput = document.getElementById("buttonTextAutoOn");
-const buttonTextAutoOnTextInput = document.getElementById("buttonTextAutoOnText");
-const buttonTextAutoOffInput = document.getElementById("buttonTextAutoOff");
-const buttonTextAutoOffTextInput = document.getElementById("buttonTextAutoOffText");
-const buttonTextAutoOnSwatches = document.getElementById("buttonTextAutoOnSwatches");
-const buttonTextAutoOnSwatchBtn = document.getElementById("buttonTextAutoOnSwatchBtn");
-const buttonTextAutoOffSwatches = document.getElementById("buttonTextAutoOffSwatches");
-const buttonTextAutoOffSwatchBtn = document.getElementById("buttonTextAutoOffSwatchBtn");
 const viewportProps = document.getElementById("viewportProps");
 const viewportIdInput = document.getElementById("viewportId");
 const viewportXInput = document.getElementById("viewportX");
@@ -2778,25 +2804,6 @@ const rectStrokeSwatchBtn = document.getElementById("rectStrokeSwatchBtn");
 const rectStrokeWidthInput = document.getElementById("rectStrokeWidth");
 const rectStrokeRow = document.getElementById("rectStrokeRow");
 const rectStrokeWidthRow = document.getElementById("rectStrokeWidthRow");
-const rectStrokeAutoHeader = document.getElementById("rectStrokeAutoHeader");
-const rectStrokeAutoEnabledInput = document.getElementById("rectStrokeAutoEnabled");
-const rectStrokeAutoInvertInput = document.getElementById("rectStrokeAutoInvert");
-const rectStrokeAutoFields = document.getElementById("rectStrokeAutoFields");
-const rectStrokeAutoConnectionInput = document.getElementById("rectStrokeAutoConnection");
-const rectStrokeAutoTagSelect = document.getElementById("rectStrokeAutoTag");
-const rectStrokeAutoModeSelect = document.getElementById("rectStrokeAutoMode");
-const rectStrokeAutoThresholdRow = document.getElementById("rectStrokeAutoThresholdRow");
-const rectStrokeAutoThresholdInput = document.getElementById("rectStrokeAutoThreshold");
-const rectStrokeAutoMatchRow = document.getElementById("rectStrokeAutoMatchRow");
-const rectStrokeAutoMatchInput = document.getElementById("rectStrokeAutoMatch");
-const rectStrokeAutoOnInput = document.getElementById("rectStrokeAutoOn");
-const rectStrokeAutoOnTextInput = document.getElementById("rectStrokeAutoOnText");
-const rectStrokeAutoOnSwatches = document.getElementById("rectStrokeAutoOnSwatches");
-const rectStrokeAutoOnSwatchBtn = document.getElementById("rectStrokeAutoOnSwatchBtn");
-const rectStrokeAutoOffInput = document.getElementById("rectStrokeAutoOff");
-const rectStrokeAutoOffTextInput = document.getElementById("rectStrokeAutoOffText");
-const rectStrokeAutoOffSwatches = document.getElementById("rectStrokeAutoOffSwatches");
-const rectStrokeAutoOffSwatchBtn = document.getElementById("rectStrokeAutoOffSwatchBtn");
 const rectPropsTitle = document.getElementById("rectPropsTitle");
 const alarmsPanelPropsFields = document.getElementById("alarmsPanelPropsFields");
 const alarmsPanelMaxRowsInput = document.getElementById("alarmsPanelMaxRows");
@@ -2867,24 +2874,6 @@ const alarmsPanelStripeBadQualityInput = document.getElementById("alarmsPanelStr
 const alarmsPanelStripeBadQualityTextInput = document.getElementById("alarmsPanelStripeBadQualityText");
 const alarmsPanelStripeBadQualitySwatches = document.getElementById("alarmsPanelStripeBadQualitySwatches");
 const alarmsPanelStripeBadQualitySwatchBtn = document.getElementById("alarmsPanelStripeBadQualitySwatchBtn");
-const rectFillAutoEnabledInput = document.getElementById("rectFillAutoEnabled");
-const rectFillAutoInvertInput = document.getElementById("rectFillAutoInvert");
-const rectFillAutoFields = document.getElementById("rectFillAutoFields");
-const rectFillAutoConnectionInput = document.getElementById("rectFillAutoConnection");
-const rectFillAutoTagSelect = document.getElementById("rectFillAutoTag");
-const rectFillAutoModeSelect = document.getElementById("rectFillAutoMode");
-const rectFillAutoThresholdRow = document.getElementById("rectFillAutoThresholdRow");
-const rectFillAutoThresholdInput = document.getElementById("rectFillAutoThreshold");
-const rectFillAutoMatchRow = document.getElementById("rectFillAutoMatchRow");
-const rectFillAutoMatchInput = document.getElementById("rectFillAutoMatch");
-const rectFillAutoOnInput = document.getElementById("rectFillAutoOn");
-const rectFillAutoOnTextInput = document.getElementById("rectFillAutoOnText");
-const rectFillAutoOffInput = document.getElementById("rectFillAutoOff");
-const rectFillAutoOffTextInput = document.getElementById("rectFillAutoOffText");
-const rectFillAutoOnSwatches = document.getElementById("rectFillAutoOnSwatches");
-const rectFillAutoOnSwatchBtn = document.getElementById("rectFillAutoOnSwatchBtn");
-const rectFillAutoOffSwatches = document.getElementById("rectFillAutoOffSwatches");
-const rectFillAutoOffSwatchBtn = document.getElementById("rectFillAutoOffSwatchBtn");
 const rectColorDynamicSection = document.getElementById("rectColorDynamicSection");
 const rectColorEnabledInput = document.getElementById("rectColorEnabled");
 const rectColorInvertInput = document.getElementById("rectColorInvert");
@@ -2894,6 +2883,7 @@ const rectColorConnectionRow = document.getElementById("rectColorConnectionRow")
 const rectColorConnectionInput = document.getElementById("rectColorConnection");
 const rectColorTagRow = document.getElementById("rectColorTagRow");
 const rectColorTagSelect = document.getElementById("rectColorTag");
+const rectColorTargetsRow = document.getElementById("rectColorTargetsRow");
 const rectColorModeRow = document.getElementById("rectColorModeRow");
 const rectColorModeSelect = document.getElementById("rectColorMode");
 const rectColorThresholdRow = document.getElementById("rectColorThresholdRow");
@@ -2905,6 +2895,10 @@ const rectColorExpressionSummary = document.getElementById("rectColorExpressionS
 const rectColorExpressionEditBtn = document.getElementById("rectColorExpressionEditBtn");
 const rectColorFillEnabledInput = document.getElementById("rectColorFillEnabled");
 const rectColorStrokeEnabledInput = document.getElementById("rectColorStrokeEnabled");
+const rectColorTextTargetLabel = document.getElementById("rectColorTextTargetLabel");
+const rectColorTextEnabledInput = document.getElementById("rectColorTextEnabled");
+const rectColorBackgroundTargetLabel = document.getElementById("rectColorBackgroundTargetLabel");
+const rectColorBackgroundEnabledInput = document.getElementById("rectColorBackgroundEnabled");
 const rectColorBorderTargetLabel = document.getElementById("rectColorBorderTargetLabel");
 const rectColorBorderEnabledInput = document.getElementById("rectColorBorderEnabled");
 const rectColorFillRow = document.getElementById("rectColorFillRow");
@@ -2917,6 +2911,16 @@ const rectColorStrokeInput = document.getElementById("rectColorStroke");
 const rectColorStrokeTextInput = document.getElementById("rectColorStrokeText");
 const rectColorStrokeSwatches = document.getElementById("rectColorStrokeSwatches");
 const rectColorStrokeSwatchBtn = document.getElementById("rectColorStrokeSwatchBtn");
+const rectColorTextRow = document.getElementById("rectColorTextRow");
+const rectColorTextInput = document.getElementById("rectColorText");
+const rectColorTextTextInput = document.getElementById("rectColorTextText");
+const rectColorTextSwatches = document.getElementById("rectColorTextSwatches");
+const rectColorTextSwatchBtn = document.getElementById("rectColorTextSwatchBtn");
+const rectColorBackgroundRow = document.getElementById("rectColorBackgroundRow");
+const rectColorBackgroundInput = document.getElementById("rectColorBackground");
+const rectColorBackgroundTextInput = document.getElementById("rectColorBackgroundText");
+const rectColorBackgroundSwatches = document.getElementById("rectColorBackgroundSwatches");
+const rectColorBackgroundSwatchBtn = document.getElementById("rectColorBackgroundSwatchBtn");
 const rectColorBorderRow = document.getElementById("rectColorBorderRow");
 const rectColorBorderInput = document.getElementById("rectColorBorder");
 const rectColorBorderTextInput = document.getElementById("rectColorBorderText");
@@ -2957,61 +2961,6 @@ const circleStrokeSwatchBtn = document.getElementById("circleStrokeSwatchBtn");
 const circleStrokeWidthInput = document.getElementById("circleStrokeWidth");
 const circleStrokeRow = document.getElementById("circleStrokeRow");
 const circleStrokeWidthRow = document.getElementById("circleStrokeWidthRow");
-const circleStrokeAutoHeader = document.getElementById("circleStrokeAutoHeader");
-const circleStrokeAutoEnabledInput = document.getElementById("circleStrokeAutoEnabled");
-const circleStrokeAutoInvertInput = document.getElementById("circleStrokeAutoInvert");
-const circleStrokeAutoFields = document.getElementById("circleStrokeAutoFields");
-const circleStrokeAutoConnectionInput = document.getElementById("circleStrokeAutoConnection");
-const circleStrokeAutoTagSelect = document.getElementById("circleStrokeAutoTag");
-const circleStrokeAutoModeSelect = document.getElementById("circleStrokeAutoMode");
-const circleStrokeAutoThresholdRow = document.getElementById("circleStrokeAutoThresholdRow");
-const circleStrokeAutoThresholdInput = document.getElementById("circleStrokeAutoThreshold");
-const circleStrokeAutoMatchRow = document.getElementById("circleStrokeAutoMatchRow");
-const circleStrokeAutoMatchInput = document.getElementById("circleStrokeAutoMatch");
-const circleStrokeAutoOnInput = document.getElementById("circleStrokeAutoOn");
-const circleStrokeAutoOnTextInput = document.getElementById("circleStrokeAutoOnText");
-const circleStrokeAutoOnSwatches = document.getElementById("circleStrokeAutoOnSwatches");
-const circleStrokeAutoOnSwatchBtn = document.getElementById("circleStrokeAutoOnSwatchBtn");
-const circleStrokeAutoOffInput = document.getElementById("circleStrokeAutoOff");
-const circleStrokeAutoOffTextInput = document.getElementById("circleStrokeAutoOffText");
-const circleStrokeAutoOffSwatches = document.getElementById("circleStrokeAutoOffSwatches");
-const circleStrokeAutoOffSwatchBtn = document.getElementById("circleStrokeAutoOffSwatchBtn");
-const circleFillAutoEnabledInput = document.getElementById("circleFillAutoEnabled");
-const circleFillAutoInvertInput = document.getElementById("circleFillAutoInvert");
-const circleFillAutoFields = document.getElementById("circleFillAutoFields");
-const circleFillAutoConnectionInput = document.getElementById("circleFillAutoConnection");
-const circleFillAutoTagSelect = document.getElementById("circleFillAutoTag");
-const circleFillAutoModeSelect = document.getElementById("circleFillAutoMode");
-const circleFillAutoThresholdRow = document.getElementById("circleFillAutoThresholdRow");
-const circleFillAutoThresholdInput = document.getElementById("circleFillAutoThreshold");
-const circleFillAutoMatchRow = document.getElementById("circleFillAutoMatchRow");
-const circleFillAutoMatchInput = document.getElementById("circleFillAutoMatch");
-const circleFillAutoOnInput = document.getElementById("circleFillAutoOn");
-const circleFillAutoOnTextInput = document.getElementById("circleFillAutoOnText");
-const circleFillAutoOffInput = document.getElementById("circleFillAutoOff");
-const circleFillAutoOffTextInput = document.getElementById("circleFillAutoOffText");
-const circleFillAutoOnSwatches = document.getElementById("circleFillAutoOnSwatches");
-const circleFillAutoOnSwatchBtn = document.getElementById("circleFillAutoOnSwatchBtn");
-const circleFillAutoOffSwatches = document.getElementById("circleFillAutoOffSwatches");
-const circleFillAutoOffSwatchBtn = document.getElementById("circleFillAutoOffSwatchBtn");
-const lineStrokeAutoEnabledInput = document.getElementById("lineStrokeAutoEnabled");
-const lineStrokeAutoInvertInput = document.getElementById("lineStrokeAutoInvert");
-const lineStrokeAutoFields = document.getElementById("lineStrokeAutoFields");
-const lineStrokeAutoConnectionInput = document.getElementById("lineStrokeAutoConnection");
-const lineStrokeAutoTagSelect = document.getElementById("lineStrokeAutoTag");
-const lineStrokeAutoModeSelect = document.getElementById("lineStrokeAutoMode");
-const lineStrokeAutoThresholdRow = document.getElementById("lineStrokeAutoThresholdRow");
-const lineStrokeAutoThresholdInput = document.getElementById("lineStrokeAutoThreshold");
-const lineStrokeAutoMatchRow = document.getElementById("lineStrokeAutoMatchRow");
-const lineStrokeAutoMatchInput = document.getElementById("lineStrokeAutoMatch");
-const lineStrokeAutoOnInput = document.getElementById("lineStrokeAutoOn");
-const lineStrokeAutoOnTextInput = document.getElementById("lineStrokeAutoOnText");
-const lineStrokeAutoOnSwatches = document.getElementById("lineStrokeAutoOnSwatches");
-const lineStrokeAutoOnSwatchBtn = document.getElementById("lineStrokeAutoOnSwatchBtn");
-const lineStrokeAutoOffInput = document.getElementById("lineStrokeAutoOff");
-const lineStrokeAutoOffTextInput = document.getElementById("lineStrokeAutoOffText");
-const lineStrokeAutoOffSwatches = document.getElementById("lineStrokeAutoOffSwatches");
-const lineStrokeAutoOffSwatchBtn = document.getElementById("lineStrokeAutoOffSwatchBtn");
 const lineProps = document.getElementById("lineProps");
 const lineX1Input = document.getElementById("lineX1");
 const lineY1Input = document.getElementById("lineY1");
@@ -5666,6 +5615,81 @@ const getAutomationColor = (config, baseColor) => {
   return config.offColor ?? baseColor;
 };
 
+const getActiveAutomationOverrideColor = (config) => {
+  if (!config || !config.enabled || isEditMode) return null;
+  const onColor = String(config.onColor || "").trim();
+  if (!onColor) return null;
+  if (config.sourceType === "expression") {
+    const result = evaluateAutomationExpression(config.expression);
+    if (result === null || result === undefined) return null;
+    const isOn = config.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
+    return isOn ? onColor : null;
+  }
+  const connectionId = String(config.connection_id || "");
+  const tag = String(config.tag || "");
+  if (!connectionId || !tag) return null;
+  const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
+  const state = getAutomationState(rawValue, config);
+  return state ? onColor : null;
+};
+
+const getGroupColorOverrides = (groupObj) => {
+  if (!groupObj || groupObj.type !== "group") return null;
+  const overrides = {};
+  const fillColor = getActiveAutomationOverrideColor(groupObj.fillAutomation);
+  const lineColor = getActiveAutomationOverrideColor(groupObj.strokeAutomation);
+  const textColor = getActiveAutomationOverrideColor(groupObj.textColorAutomation);
+  const backgroundColor = getActiveAutomationOverrideColor(groupObj.backgroundAutomation);
+  const borderColor = getActiveAutomationOverrideColor(groupObj.borderColorAutomation);
+  if (fillColor) overrides.fillColor = fillColor;
+  if (lineColor) overrides.lineColor = lineColor;
+  if (textColor) overrides.textColor = textColor;
+  if (backgroundColor) overrides.backgroundColor = backgroundColor;
+  if (borderColor) overrides.borderColor = borderColor;
+  return Object.keys(overrides).length ? overrides : null;
+};
+
+const mergeGroupColorOverrides = (parentOverrides, localOverrides) => {
+  if (!parentOverrides && !localOverrides) return null;
+  return { ...(parentOverrides || {}), ...(localOverrides || {}) };
+};
+
+const applyGroupColorOverridesToObject = (sourceObj, overrides) => {
+  if (!sourceObj || !overrides || !Object.keys(overrides).length) return sourceObj;
+  const obj = { ...sourceObj };
+  const hasStrokeProp = Object.prototype.hasOwnProperty.call(obj, "stroke");
+  const type = String(obj.type || "").trim();
+
+  if (overrides.fillColor && ["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type)) {
+    obj.fill = overrides.fillColor;
+    delete obj.fillAutomation;
+  }
+  if (overrides.lineColor) {
+    if (["rect", "alarms-panel", "ellipse", "circle", "line", "curve", "polyline", "polygon", "button", "indicator"].includes(type) || hasStrokeProp) {
+      obj.stroke = overrides.lineColor;
+      delete obj.strokeAutomation;
+    }
+  }
+  if (overrides.textColor) {
+    if (type === "text") {
+      obj.fill = overrides.textColor;
+      delete obj.fillAutomation;
+    } else if (["button", "indicator", "number-input"].includes(type)) {
+      obj.textColor = overrides.textColor;
+      delete obj.textColorAutomation;
+    }
+  }
+  if (overrides.backgroundColor && type === "text") {
+    obj.background = overrides.backgroundColor;
+    delete obj.backgroundAutomation;
+  }
+  if (overrides.borderColor && type === "text") {
+    obj.borderColor = overrides.borderColor;
+    delete obj.borderColorAutomation;
+  }
+  return obj;
+};
+
 const getAutomationText = (config, baseText, bindings = {}, previewOnly = false) => {
   if (!config || !config.enabled || isEditMode) return renderBoundTemplate(baseText, bindings, previewOnly);
   const connectionId = String(config.connection_id || "");
@@ -6557,7 +6581,7 @@ const updateMenuState = () => {
   const canAddButtonDynamic = Boolean(getSelectedButtonObject());
   const canAddCircleDynamic = Boolean(getSelectedCircleObject());
   const canAddGroupDynamic = Boolean(getSelectedGroupObject());
-  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic;
+  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
   const canAddRotationDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic;
   const canAddMotionDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
   const canOpenDynamics = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic || canAddCircleDynamic;
@@ -7343,14 +7367,7 @@ const populateRectColorTagOptions = (connectionId = "") => {
 
 const refreshAutomationTagOptions = () => {
   if (textStateAutomationControl?.tagSelect) populateTagSelect(textStateAutomationControl.tagSelect);
-  populateTagSelect(buttonFillAutoTagSelect);
-  populateTagSelect(buttonTextAutoTagSelect);
   populateTagSelect(buttonLabelBindTagSelect);
-  populateTagSelect(rectFillAutoTagSelect);
-  populateTagSelect(rectStrokeAutoTagSelect);
-  populateTagSelect(circleFillAutoTagSelect);
-  populateTagSelect(circleStrokeAutoTagSelect);
-  populateTagSelect(lineStrokeAutoTagSelect);
   populateTagSelect(polygonFillAutoTagSelect);
   populateTagSelect(polygonStrokeAutoTagSelect);
   populateTagSelect(buttonWriteTagSelect);
@@ -8384,9 +8401,10 @@ const renderIndicatorInto = (parent, obj) => {
   return group;
 };
 
-const renderObjectInto = (parent, obj) => {
+const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
   if (!parent || !obj) return;
   obj = getDisplayObject(obj);
+  obj = applyGroupColorOverridesToObject(obj, inheritedGroupColorOverrides);
   if (!shouldRenderObject(obj)) return;
   const ns = "http://www.w3.org/2000/svg";
   const xhtml = "http://www.w3.org/1999/xhtml";
@@ -8407,8 +8425,9 @@ const renderObjectInto = (parent, obj) => {
     }
     groupEl.setAttribute("transform", transform);
     parent.appendChild(groupEl);
+    const nextInheritedGroupColorOverrides = mergeGroupColorOverrides(inheritedGroupColorOverrides, getGroupColorOverrides(obj));
     const children = Array.isArray(obj.children) ? obj.children : [];
-    children.forEach((child) => renderObjectIntoWithOffset(groupEl, child, 0, 0));
+    children.forEach((child) => renderObjectIntoWithOffset(groupEl, child, 0, 0, nextInheritedGroupColorOverrides));
     return;
   }
   if (obj.type === "image") {
@@ -9185,12 +9204,12 @@ const renderObjectInto = (parent, obj) => {
   }
 };
 
-const renderObjectIntoWithOffset = (parent, obj, offsetX, offsetY) => {
+const renderObjectIntoWithOffset = (parent, obj, offsetX, offsetY, inheritedGroupColorOverrides = null) => {
   if (!parent || !obj) return;
   if (!shouldRenderObject(obj)) return;
   const clone = JSON.parse(JSON.stringify(obj));
   translateObject(clone, offsetX, offsetY);
-  renderObjectInto(parent, clone);
+  renderObjectInto(parent, clone, inheritedGroupColorOverrides);
 };
 
 const SHARED_TOP_LEVEL_RENDER_TYPES = new Set([
@@ -10042,7 +10061,7 @@ const syncPropertiesFromSelection = () => {
     renderTextBindingRows(obj);
 
     syncTextStateAutomationControl(obj);
-    if (isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic()) {
+    if (isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic()) {
       ensureRectColorDraft(obj);
       syncRectColorUiFromDraft(obj, rectColorDraft);
     }
@@ -10094,67 +10113,6 @@ const syncPropertiesFromSelection = () => {
     if (buttonPromptMaxInput) setInputValueSafe(buttonPromptMaxInput, writeAction?.max ?? "");
     if (buttonPromptStepInput) setInputValueSafe(buttonPromptStepInput, writeAction?.step ?? "");
 
-    const fillAuto = obj.fillAutomation || {};
-    const fillEnabled = Boolean(fillAuto.enabled);
-    if (buttonFillAutoEnabledInput) buttonFillAutoEnabledInput.checked = fillEnabled;
-    if (buttonFillAutoInvertInput) buttonFillAutoInvertInput.checked = Boolean(fillAuto.invert);
-    if (buttonFillAutoFields) {
-      buttonFillAutoFields.classList.toggle("is-hidden", !fillEnabled);
-      buttonFillAutoFields.hidden = !fillEnabled;
-    }
-    const buttonFillMode = fillAuto.mode === "equals" ? "equals" : "threshold";
-    if (buttonFillAutoModeSelect) buttonFillAutoModeSelect.value = buttonFillMode;
-    if (buttonFillAutoThresholdRow && buttonFillAutoMatchRow) {
-      const showMatch = buttonFillMode === "equals";
-      buttonFillAutoThresholdRow.classList.toggle("is-hidden", showMatch);
-      buttonFillAutoThresholdRow.hidden = showMatch;
-      buttonFillAutoMatchRow.classList.toggle("is-hidden", !showMatch);
-      buttonFillAutoMatchRow.hidden = !showMatch;
-    }
-    setInputValueSafe(buttonFillAutoConnectionInput, fillAuto.connection_id || "");
-    if (buttonFillAutoTagSelect) {
-      const connectionId = String(fillAuto.connection_id || "");
-      const tagName = String(fillAuto.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(buttonFillAutoTagSelect, combined);
-    }
-    if (buttonFillAutoThresholdInput) setInputValueSafe(buttonFillAutoThresholdInput, fillAuto.threshold ?? "");
-    if (buttonFillAutoMatchInput) setInputValueSafe(buttonFillAutoMatchInput, fillAuto.match ?? "");
-    if (buttonFillAutoOnInput) buttonFillAutoOnInput.value = fillAuto.onColor || (obj.fill || "#2b2f3a");
-    if (buttonFillAutoOnTextInput) setInputValueSafe(buttonFillAutoOnTextInput, fillAuto.onColor || "");
-    if (buttonFillAutoOffInput) buttonFillAutoOffInput.value = fillAuto.offColor || (obj.fill || "#2b2f3a");
-    if (buttonFillAutoOffTextInput) setInputValueSafe(buttonFillAutoOffTextInput, fillAuto.offColor || "");
-
-    const textAuto = obj.textColorAutomation || {};
-    const textEnabled = Boolean(textAuto.enabled);
-    if (buttonTextAutoEnabledInput) buttonTextAutoEnabledInput.checked = textEnabled;
-    if (buttonTextAutoInvertInput) buttonTextAutoInvertInput.checked = Boolean(textAuto.invert);
-    if (buttonTextAutoFields) {
-      buttonTextAutoFields.classList.toggle("is-hidden", !textEnabled);
-      buttonTextAutoFields.hidden = !textEnabled;
-    }
-    const buttonTextMode = textAuto.mode === "equals" ? "equals" : "threshold";
-    if (buttonTextAutoModeSelect) buttonTextAutoModeSelect.value = buttonTextMode;
-    if (buttonTextAutoThresholdRow && buttonTextAutoMatchRow) {
-      const showMatch = buttonTextMode === "equals";
-      buttonTextAutoThresholdRow.classList.toggle("is-hidden", showMatch);
-      buttonTextAutoThresholdRow.hidden = showMatch;
-      buttonTextAutoMatchRow.classList.toggle("is-hidden", !showMatch);
-      buttonTextAutoMatchRow.hidden = !showMatch;
-    }
-    setInputValueSafe(buttonTextAutoConnectionInput, textAuto.connection_id || "");
-    if (buttonTextAutoTagSelect) {
-      const connectionId = String(textAuto.connection_id || "");
-      const tagName = String(textAuto.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(buttonTextAutoTagSelect, combined);
-    }
-    if (buttonTextAutoThresholdInput) setInputValueSafe(buttonTextAutoThresholdInput, textAuto.threshold ?? "");
-    if (buttonTextAutoMatchInput) setInputValueSafe(buttonTextAutoMatchInput, textAuto.match ?? "");
-    if (buttonTextAutoOnInput) buttonTextAutoOnInput.value = textAuto.onColor || (obj.textColor || "#ffffff");
-    if (buttonTextAutoOnTextInput) setInputValueSafe(buttonTextAutoOnTextInput, textAuto.onColor || "");
-    if (buttonTextAutoOffInput) buttonTextAutoOffInput.value = textAuto.offColor || (obj.textColor || "#ffffff");
-    if (buttonTextAutoOffTextInput) setInputValueSafe(buttonTextAutoOffTextInput, textAuto.offColor || "");
   }
   if (obj.type === "number-input") {
     const bind = obj.bindValue || {};
@@ -10347,11 +10305,6 @@ const syncPropertiesFromSelection = () => {
       }
       if (rectStrokeRow) rectStrokeRow.classList.toggle("is-hidden", !hasStroke);
       if (rectStrokeWidthRow) rectStrokeWidthRow.classList.toggle("is-hidden", !hasStroke);
-      if (rectStrokeAutoHeader) rectStrokeAutoHeader.classList.toggle("is-hidden", !hasStroke);
-      if (rectStrokeAutoFields && !hasStroke) {
-        rectStrokeAutoFields.classList.add("is-hidden");
-        rectStrokeAutoFields.hidden = true;
-      }
     }
     if (rectFillInput) rectFillInput.value = obj.fill || "#3a3f4b";
     if (rectFillTextInput) rectFillTextInput.value = obj.fill || "";
@@ -10360,70 +10313,7 @@ const syncPropertiesFromSelection = () => {
     if (rectStrokeTextInput) rectStrokeTextInput.value = strokeValue;
     if (rectStrokeWidthInput) rectStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
 
-    const fillAuto = obj.fillAutomation || {};
-    const fillEnabled = Boolean(fillAuto.enabled);
-    if (rectFillAutoEnabledInput) rectFillAutoEnabledInput.checked = fillEnabled;
-    if (rectFillAutoInvertInput) rectFillAutoInvertInput.checked = Boolean(fillAuto.invert);
-    if (rectFillAutoFields) {
-      rectFillAutoFields.classList.toggle("is-hidden", !fillEnabled);
-      rectFillAutoFields.hidden = !fillEnabled;
-    }
-    const rectFillMode = fillAuto.mode === "equals" ? "equals" : "threshold";
-    if (rectFillAutoModeSelect) rectFillAutoModeSelect.value = rectFillMode;
-    if (rectFillAutoThresholdRow && rectFillAutoMatchRow) {
-      const showMatch = rectFillMode === "equals";
-      rectFillAutoThresholdRow.classList.toggle("is-hidden", showMatch);
-      rectFillAutoThresholdRow.hidden = showMatch;
-      rectFillAutoMatchRow.classList.toggle("is-hidden", !showMatch);
-      rectFillAutoMatchRow.hidden = !showMatch;
-    }
-    setInputValueSafe(rectFillAutoConnectionInput, fillAuto.connection_id || "");
-    if (rectFillAutoTagSelect) {
-      const connectionId = String(fillAuto.connection_id || "");
-      const tagName = String(fillAuto.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(rectFillAutoTagSelect, combined);
-    }
-    if (rectFillAutoThresholdInput) setInputValueSafe(rectFillAutoThresholdInput, fillAuto.threshold ?? "");
-    if (rectFillAutoMatchInput) setInputValueSafe(rectFillAutoMatchInput, fillAuto.match ?? "");
-    if (rectFillAutoOnInput) rectFillAutoOnInput.value = fillAuto.onColor || (obj.fill || "#3a3f4b");
-    if (rectFillAutoOnTextInput) setInputValueSafe(rectFillAutoOnTextInput, fillAuto.onColor || "");
-    if (rectFillAutoOffInput) rectFillAutoOffInput.value = fillAuto.offColor || (obj.fill || "#3a3f4b");
-    if (rectFillAutoOffTextInput) setInputValueSafe(rectFillAutoOffTextInput, fillAuto.offColor || "");
-
-    const strokeAuto = obj.strokeAutomation || {};
-    const strokeEnabled = Boolean(strokeAuto.enabled);
-    const strokePresent = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
-    if (rectStrokeAutoEnabledInput) rectStrokeAutoEnabledInput.checked = strokeEnabled;
-    if (rectStrokeAutoInvertInput) rectStrokeAutoInvertInput.checked = Boolean(strokeAuto.invert);
-    if (rectStrokeAutoFields) {
-      const showFields = strokePresent && strokeEnabled;
-      rectStrokeAutoFields.classList.toggle("is-hidden", !showFields);
-      rectStrokeAutoFields.hidden = !showFields;
-    }
-    const rectStrokeMode = strokeAuto.mode === "equals" ? "equals" : "threshold";
-    if (rectStrokeAutoModeSelect) rectStrokeAutoModeSelect.value = rectStrokeMode;
-    if (rectStrokeAutoThresholdRow && rectStrokeAutoMatchRow) {
-      const showMatch = rectStrokeMode === "equals";
-      rectStrokeAutoThresholdRow.classList.toggle("is-hidden", showMatch);
-      rectStrokeAutoThresholdRow.hidden = showMatch;
-      rectStrokeAutoMatchRow.classList.toggle("is-hidden", !showMatch);
-      rectStrokeAutoMatchRow.hidden = !showMatch;
-    }
-    setInputValueSafe(rectStrokeAutoConnectionInput, strokeAuto.connection_id || "");
-    if (rectStrokeAutoTagSelect) {
-      const connectionId = String(strokeAuto.connection_id || "");
-      const tagName = String(strokeAuto.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(rectStrokeAutoTagSelect, combined);
-    }
-    if (rectStrokeAutoThresholdInput) setInputValueSafe(rectStrokeAutoThresholdInput, strokeAuto.threshold ?? "");
-    if (rectStrokeAutoMatchInput) setInputValueSafe(rectStrokeAutoMatchInput, strokeAuto.match ?? "");
-    if (rectStrokeAutoOnInput) rectStrokeAutoOnInput.value = strokeAuto.onColor || strokeValue;
-    if (rectStrokeAutoOnTextInput) setInputValueSafe(rectStrokeAutoOnTextInput, strokeAuto.onColor || "");
-    if (rectStrokeAutoOffInput) rectStrokeAutoOffInput.value = strokeAuto.offColor || strokeValue;
-    if (rectStrokeAutoOffTextInput) setInputValueSafe(rectStrokeAutoOffTextInput, strokeAuto.offColor || "");
-    if (isEditingRectColorDynamic() || isEditingEllipseColorDynamic()) {
+    if (isEditingRectColorDynamic() || isEditingEllipseColorDynamic() || isEditingGroupColorDynamic()) {
       ensureRectColorDraft(obj);
       syncRectColorUiFromDraft(obj, rectColorDraft);
     }
@@ -10455,11 +10345,6 @@ const syncPropertiesFromSelection = () => {
       circleBorderEnabledInput.checked = Boolean(hasStroke);
       if (circleStrokeRow) circleStrokeRow.classList.toggle("is-hidden", !hasStroke);
       if (circleStrokeWidthRow) circleStrokeWidthRow.classList.toggle("is-hidden", !hasStroke);
-      if (circleStrokeAutoHeader) circleStrokeAutoHeader.classList.toggle("is-hidden", !hasStroke);
-      if (circleStrokeAutoFields && !hasStroke) {
-        circleStrokeAutoFields.classList.add("is-hidden");
-        circleStrokeAutoFields.hidden = true;
-      }
     }
     if (circleFillInput) circleFillInput.value = obj.fill || "#3a3f4b";
     if (circleFillTextInput) circleFillTextInput.value = obj.fill || "";
@@ -10468,71 +10353,8 @@ const syncPropertiesFromSelection = () => {
     if (circleStrokeTextInput) circleStrokeTextInput.value = strokeValue;
     if (circleStrokeWidthInput) circleStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
 
-    const fillAuto = obj.fillAutomation || {};
-    const fillEnabled = Boolean(fillAuto.enabled);
-    if (circleFillAutoEnabledInput) circleFillAutoEnabledInput.checked = fillEnabled;
-    if (circleFillAutoInvertInput) circleFillAutoInvertInput.checked = Boolean(fillAuto.invert);
-    if (circleFillAutoFields) {
-      circleFillAutoFields.classList.toggle("is-hidden", !fillEnabled);
-      circleFillAutoFields.hidden = !fillEnabled;
-    }
-    const circleFillMode = fillAuto.mode === "equals" ? "equals" : "threshold";
-    if (circleFillAutoModeSelect) circleFillAutoModeSelect.value = circleFillMode;
-    if (circleFillAutoThresholdRow && circleFillAutoMatchRow) {
-      const showMatch = circleFillMode === "equals";
-      circleFillAutoThresholdRow.classList.toggle("is-hidden", showMatch);
-      circleFillAutoThresholdRow.hidden = showMatch;
-      circleFillAutoMatchRow.classList.toggle("is-hidden", !showMatch);
-      circleFillAutoMatchRow.hidden = !showMatch;
-    }
-    setInputValueSafe(circleFillAutoConnectionInput, fillAuto.connection_id || "");
-    if (circleFillAutoTagSelect) {
-      const connectionId = String(fillAuto.connection_id || "");
-      const tagName = String(fillAuto.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(circleFillAutoTagSelect, combined);
-    }
-    if (circleFillAutoThresholdInput) setInputValueSafe(circleFillAutoThresholdInput, fillAuto.threshold ?? "");
-    if (circleFillAutoMatchInput) setInputValueSafe(circleFillAutoMatchInput, fillAuto.match ?? "");
-    if (circleFillAutoOnInput) circleFillAutoOnInput.value = fillAuto.onColor || (obj.fill || "#3a3f4b");
-    if (circleFillAutoOnTextInput) setInputValueSafe(circleFillAutoOnTextInput, fillAuto.onColor || "");
-    if (circleFillAutoOffInput) circleFillAutoOffInput.value = fillAuto.offColor || (obj.fill || "#3a3f4b");
-    if (circleFillAutoOffTextInput) setInputValueSafe(circleFillAutoOffTextInput, fillAuto.offColor || "");
-
-    const strokeAuto = obj.strokeAutomation || {};
-    const strokeEnabled = Boolean(strokeAuto.enabled);
-    const strokePresent = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
-    if (circleStrokeAutoEnabledInput) circleStrokeAutoEnabledInput.checked = strokeEnabled;
-    if (circleStrokeAutoInvertInput) circleStrokeAutoInvertInput.checked = Boolean(strokeAuto.invert);
-    if (circleStrokeAutoFields) {
-      const showFields = strokePresent && strokeEnabled;
-      circleStrokeAutoFields.classList.toggle("is-hidden", !showFields);
-      circleStrokeAutoFields.hidden = !showFields;
-    }
-    const circleStrokeMode = strokeAuto.mode === "equals" ? "equals" : "threshold";
-    if (circleStrokeAutoModeSelect) circleStrokeAutoModeSelect.value = circleStrokeMode;
-    if (circleStrokeAutoThresholdRow && circleStrokeAutoMatchRow) {
-      const showMatch = circleStrokeMode === "equals";
-      circleStrokeAutoThresholdRow.classList.toggle("is-hidden", showMatch);
-      circleStrokeAutoThresholdRow.hidden = showMatch;
-      circleStrokeAutoMatchRow.classList.toggle("is-hidden", !showMatch);
-      circleStrokeAutoMatchRow.hidden = !showMatch;
-    }
-    setInputValueSafe(circleStrokeAutoConnectionInput, strokeAuto.connection_id || "");
-    if (circleStrokeAutoTagSelect) {
-      const connectionId = String(strokeAuto.connection_id || "");
-      const tagName = String(strokeAuto.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(circleStrokeAutoTagSelect, combined);
-    }
-    if (circleStrokeAutoThresholdInput) setInputValueSafe(circleStrokeAutoThresholdInput, strokeAuto.threshold ?? "");
-    if (circleStrokeAutoMatchInput) setInputValueSafe(circleStrokeAutoMatchInput, strokeAuto.match ?? "");
-    if (circleStrokeAutoOnInput) circleStrokeAutoOnInput.value = strokeAuto.onColor || strokeValue;
-    if (circleStrokeAutoOnTextInput) setInputValueSafe(circleStrokeAutoOnTextInput, strokeAuto.onColor || "");
-    if (circleStrokeAutoOffInput) circleStrokeAutoOffInput.value = strokeAuto.offColor || strokeValue;
-    if (circleStrokeAutoOffTextInput) setInputValueSafe(circleStrokeAutoOffTextInput, strokeAuto.offColor || "");
 	  }
-	    if (obj.type === "line") {
+	  if (obj.type === "line") {
       if (lineX1Input) lineX1Input.value = Number(obj.x1) || 0;
       if (lineY1Input) lineY1Input.value = Number(obj.y1) || 0;
       if (lineX2Input) lineX2Input.value = Number(obj.x2) || 0;
@@ -10542,36 +10364,6 @@ const syncPropertiesFromSelection = () => {
       if (lineStrokeTextInput) lineStrokeTextInput.value = strokeValue;
       if (lineStrokeWidthInput) lineStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
 
-    const strokeAuto = obj.strokeAutomation || {};
-    const strokeEnabled = Boolean(strokeAuto.enabled);
-    if (lineStrokeAutoEnabledInput) lineStrokeAutoEnabledInput.checked = strokeEnabled;
-    if (lineStrokeAutoInvertInput) lineStrokeAutoInvertInput.checked = Boolean(strokeAuto.invert);
-    if (lineStrokeAutoFields) {
-      lineStrokeAutoFields.classList.toggle("is-hidden", !strokeEnabled);
-      lineStrokeAutoFields.hidden = !strokeEnabled;
-    }
-    const lineStrokeMode = strokeAuto.mode === "equals" ? "equals" : "threshold";
-    if (lineStrokeAutoModeSelect) lineStrokeAutoModeSelect.value = lineStrokeMode;
-    if (lineStrokeAutoThresholdRow && lineStrokeAutoMatchRow) {
-      const showMatch = lineStrokeMode === "equals";
-      lineStrokeAutoThresholdRow.classList.toggle("is-hidden", showMatch);
-      lineStrokeAutoThresholdRow.hidden = showMatch;
-      lineStrokeAutoMatchRow.classList.toggle("is-hidden", !showMatch);
-      lineStrokeAutoMatchRow.hidden = !showMatch;
-    }
-    setInputValueSafe(lineStrokeAutoConnectionInput, strokeAuto.connection_id || "");
-    if (lineStrokeAutoTagSelect) {
-      const connectionId = String(strokeAuto.connection_id || "");
-      const tagName = String(strokeAuto.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(lineStrokeAutoTagSelect, combined);
-    }
-    if (lineStrokeAutoThresholdInput) setInputValueSafe(lineStrokeAutoThresholdInput, strokeAuto.threshold ?? "");
-    if (lineStrokeAutoMatchInput) setInputValueSafe(lineStrokeAutoMatchInput, strokeAuto.match ?? "");
-    if (lineStrokeAutoOnInput) lineStrokeAutoOnInput.value = strokeAuto.onColor || strokeValue;
-    if (lineStrokeAutoOnTextInput) setInputValueSafe(lineStrokeAutoOnTextInput, strokeAuto.onColor || "");
-	  if (lineStrokeAutoOffInput) lineStrokeAutoOffInput.value = strokeAuto.offColor || strokeValue;
-	  if (lineStrokeAutoOffTextInput) setInputValueSafe(lineStrokeAutoOffTextInput, strokeAuto.offColor || "");
 	  }
 	  if (obj.type === "curve") {
 	    if (curveX1Input) curveX1Input.value = Number(obj.x1) || 0;
@@ -10819,7 +10611,7 @@ const updatePropertiesPanel = () => {
   if (automationLaunchRow) automationLaunchRow.classList.toggle("is-hidden", !showAutomationLaunch);
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
   if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
-  if (((showDynamicRect && !hasRectColorDynamic(obj)) || (showDynamicLine && !hasLineColorDynamic(obj)) || (showDynamicEllipse && !hasEllipseColorDynamic(obj)) || (showDynamicText && !hasTextColorDynamic(obj)) || (showDynamicButton && !hasButtonColorDynamic(obj)) || (showDynamicCircle && !hasCircleColorDynamic(obj))) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
+  if (((showDynamicRect && !hasRectColorDynamic(obj)) || (showDynamicLine && !hasLineColorDynamic(obj)) || (showDynamicEllipse && !hasEllipseColorDynamic(obj)) || (showDynamicText && !hasTextColorDynamic(obj)) || (showDynamicButton && !hasButtonColorDynamic(obj)) || (showDynamicCircle && !hasCircleColorDynamic(obj)) || (showDynamicGroup && !hasGroupColorDynamic(obj))) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj)) || (showDynamicButton && !hasButtonRotationDynamic(obj)) || (showDynamicGroup && !hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
   if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle) {
@@ -10835,55 +10627,12 @@ const updatePropertiesPanel = () => {
   }
   if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle));
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && hasVisibilityDynamic(obj)));
-  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicButton && hasButtonColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj))));
+  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicButton && hasButtonColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj)) || (showDynamicGroup && hasGroupColorDynamic(obj))));
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))));
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) setObjectDynamicTab(currentObjectDynamicTab);
-  [
-    rectStrokeAutoHeader,
-    rectStrokeAutoFields?.previousElementSibling,
-    rectStrokeAutoFields,
-    rectFillAutoFields?.previousElementSibling,
-    rectFillAutoFields
-  ].forEach((node) => {
-    if (node && showDynamicRect) {
-      node.classList.add("is-hidden");
-      node.hidden = true;
-    }
-  });
-  [
-    lineStrokeAutoFields?.previousElementSibling,
-    lineStrokeAutoFields
-  ].forEach((node) => {
-    if (node && showDynamicLine) {
-      node.classList.add("is-hidden");
-      node.hidden = true;
-    }
-  });
-  [
-    buttonFillAutoFields?.previousElementSibling,
-    buttonFillAutoFields,
-    buttonTextAutoFields?.previousElementSibling,
-    buttonTextAutoFields
-  ].forEach((node) => {
-    if (node && showDynamicButton) {
-      node.classList.add("is-hidden");
-      node.hidden = true;
-    }
-  });
-  [
-    circleStrokeAutoFields?.previousElementSibling,
-    circleStrokeAutoFields,
-    circleFillAutoFields?.previousElementSibling,
-    circleFillAutoFields
-  ].forEach((node) => {
-    if (node && showDynamicCircle) {
-      node.classList.add("is-hidden");
-      node.hidden = true;
-    }
-  });
   const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
-  const showRectColorTab = ((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicButton && hasButtonColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj))) && currentObjectDynamicTab === "color";
+  const showRectColorTab = ((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicButton && hasButtonColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj)) || (showDynamicGroup && hasGroupColorDynamic(obj))) && currentObjectDynamicTab === "color";
   const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
   const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
   if (showRectVisibilityTab) ensureRectVisibilityDraft(obj);
@@ -10895,7 +10644,7 @@ const updatePropertiesPanel = () => {
   if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicText && textProps) textProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicButton && buttonProps) buttonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectMotionTab);
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
   if (objectDynamicColorHost) objectDynamicColorHost.classList.toggle("is-hidden", !showRectColorTab);
@@ -11610,20 +11359,6 @@ const closeSwatches = () => {
   if (numberInputFillSwatches) numberInputFillSwatches.classList.remove("is-open");
   if (numberInputTextColorSwatches) numberInputTextColorSwatches.classList.remove("is-open");
   if (numberInputStrokeSwatches) numberInputStrokeSwatches.classList.remove("is-open");
-  if (buttonFillAutoOnSwatches) buttonFillAutoOnSwatches.classList.remove("is-open");
-  if (buttonFillAutoOffSwatches) buttonFillAutoOffSwatches.classList.remove("is-open");
-  if (buttonTextAutoOnSwatches) buttonTextAutoOnSwatches.classList.remove("is-open");
-  if (buttonTextAutoOffSwatches) buttonTextAutoOffSwatches.classList.remove("is-open");
-  if (rectFillAutoOnSwatches) rectFillAutoOnSwatches.classList.remove("is-open");
-  if (rectFillAutoOffSwatches) rectFillAutoOffSwatches.classList.remove("is-open");
-  if (circleFillAutoOnSwatches) circleFillAutoOnSwatches.classList.remove("is-open");
-  if (circleFillAutoOffSwatches) circleFillAutoOffSwatches.classList.remove("is-open");
-  if (rectStrokeAutoOnSwatches) rectStrokeAutoOnSwatches.classList.remove("is-open");
-  if (rectStrokeAutoOffSwatches) rectStrokeAutoOffSwatches.classList.remove("is-open");
-  if (circleStrokeAutoOnSwatches) circleStrokeAutoOnSwatches.classList.remove("is-open");
-  if (circleStrokeAutoOffSwatches) circleStrokeAutoOffSwatches.classList.remove("is-open");
-  if (lineStrokeAutoOnSwatches) lineStrokeAutoOnSwatches.classList.remove("is-open");
-  if (lineStrokeAutoOffSwatches) lineStrokeAutoOffSwatches.classList.remove("is-open");
   if (polygonFillAutoOnSwatches) polygonFillAutoOnSwatches.classList.remove("is-open");
   if (polygonFillAutoOffSwatches) polygonFillAutoOffSwatches.classList.remove("is-open");
   if (polygonStrokeAutoOnSwatches) polygonStrokeAutoOnSwatches.classList.remove("is-open");
@@ -14747,11 +14482,6 @@ if (rectBorderEnabledInput) {
     }
     if (rectStrokeRow) rectStrokeRow.classList.toggle("is-hidden", !enabled);
     if (rectStrokeWidthRow) rectStrokeWidthRow.classList.toggle("is-hidden", !enabled);
-    if (rectStrokeAutoHeader) rectStrokeAutoHeader.classList.toggle("is-hidden", !enabled);
-    if (rectStrokeAutoFields && !enabled) {
-      rectStrokeAutoFields.classList.add("is-hidden");
-      rectStrokeAutoFields.hidden = true;
-    }
     if (!enabled) {
       updateRectProperty({ stroke: "none" });
       return;
@@ -14909,11 +14639,6 @@ if (circleBorderEnabledInput) {
     const enabled = circleBorderEnabledInput.checked;
     if (circleStrokeRow) circleStrokeRow.classList.toggle("is-hidden", !enabled);
     if (circleStrokeWidthRow) circleStrokeWidthRow.classList.toggle("is-hidden", !enabled);
-    if (circleStrokeAutoHeader) circleStrokeAutoHeader.classList.toggle("is-hidden", !enabled);
-    if (circleStrokeAutoFields && !enabled) {
-      circleStrokeAutoFields.classList.add("is-hidden");
-      circleStrokeAutoFields.hidden = true;
-    }
     if (!enabled) {
       updateCircleProperty({ stroke: "none" });
       return;
@@ -16307,6 +16032,18 @@ if (rectColorStrokeEnabledInput) {
   });
 }
 
+if (rectColorTextEnabledInput) {
+  rectColorTextEnabledInput.addEventListener("change", () => {
+    updateRectColorDraft({ textEnabled: rectColorTextEnabledInput.checked });
+  });
+}
+
+if (rectColorBackgroundEnabledInput) {
+  rectColorBackgroundEnabledInput.addEventListener("change", () => {
+    updateRectColorDraft({ backgroundEnabled: rectColorBackgroundEnabledInput.checked });
+  });
+}
+
 if (rectColorBorderEnabledInput) {
   rectColorBorderEnabledInput.addEventListener("change", () => {
     updateRectColorDraft({ borderEnabled: rectColorBorderEnabledInput.checked });
@@ -16345,6 +16082,38 @@ if (rectColorStrokeTextInput) {
   });
 }
 
+if (rectColorTextInput) {
+  rectColorTextInput.addEventListener("input", () => {
+    updateRectColorDraft({ textColor: rectColorTextInput.value, textEnabled: true });
+    if (rectColorTextTextInput) rectColorTextTextInput.value = rectColorTextInput.value;
+  });
+}
+
+if (rectColorTextTextInput) {
+  rectColorTextTextInput.addEventListener("change", () => {
+    const value = rectColorTextTextInput.value.trim();
+    if (!value) return;
+    updateRectColorDraft({ textColor: value, textEnabled: true });
+    if (rectColorTextInput && isHexColor(value)) rectColorTextInput.value = value;
+  });
+}
+
+if (rectColorBackgroundInput) {
+  rectColorBackgroundInput.addEventListener("input", () => {
+    updateRectColorDraft({ backgroundColor: rectColorBackgroundInput.value, backgroundEnabled: true });
+    if (rectColorBackgroundTextInput) rectColorBackgroundTextInput.value = rectColorBackgroundInput.value;
+  });
+}
+
+if (rectColorBackgroundTextInput) {
+  rectColorBackgroundTextInput.addEventListener("change", () => {
+    const value = rectColorBackgroundTextInput.value.trim();
+    if (!value) return;
+    updateRectColorDraft({ backgroundColor: value, backgroundEnabled: true });
+    if (rectColorBackgroundInput && isHexColor(value)) rectColorBackgroundInput.value = value;
+  });
+}
+
 if (rectColorBorderInput) {
   rectColorBorderInput.addEventListener("input", () => {
     updateRectColorDraft({ borderColor: rectColorBorderInput.value, borderEnabled: true });
@@ -16365,10 +16134,12 @@ if (rectColorBorderTextInput) {
   colorSaveBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
     const obj = getSelectedColorDynamicObject();
-    if (!activeObjects || !obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic())) return;
+    if (!activeObjects || !obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
     ensureRectColorDraft(obj);
     if (rectColorDraft?.sourceType === "expression" && getAutomationExpressionValidationError(rectColorDraft?.expression || "")) return;
     recordHistory();
+    const fillEnabled = obj.type === "line" ? false : Boolean(rectColorDraft?.fillEnabled);
+    const strokeEnabled = obj.type === "line" ? true : Boolean(rectColorDraft?.strokeEnabled);
     const shared = {
       enabled: rectColorDraft?.enabled !== false,
       sourceType: rectColorDraft?.sourceType === "expression" ? "expression" : "tag",
@@ -16380,15 +16151,17 @@ if (rectColorBorderTextInput) {
       threshold: rectColorDraft?.threshold,
       match: rectColorDraft?.match || ""
     };
-    if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle") && rectColorDraft?.fillEnabled) {
+    if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") && fillEnabled) {
       obj.fillAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.fillColor || "" });
-    } else if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle") {
+    } else if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") {
       delete obj.fillAutomation;
     }
-    if (rectColorDraft?.strokeEnabled) {
+    if (strokeEnabled) {
       if (obj.type === "text") obj.backgroundAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
       else if (obj.type === "button") obj.textColorAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
       else obj.strokeAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
+    } else if (obj.type === "group") {
+      delete obj.strokeAutomation;
     } else if (obj.type === "text") {
       delete obj.backgroundAutomation;
     } else if (obj.type === "button") {
@@ -16396,9 +16169,19 @@ if (rectColorBorderTextInput) {
     } else {
       delete obj.strokeAutomation;
     }
-    if (obj.type === "text" && rectColorDraft?.borderEnabled) {
+    if (obj.type === "group" && rectColorDraft?.textEnabled) {
+      obj.textColorAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.textColor || "" });
+    } else if (obj.type === "group") {
+      delete obj.textColorAutomation;
+    }
+    if (obj.type === "group" && rectColorDraft?.backgroundEnabled) {
+      obj.backgroundAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.backgroundColor || "" });
+    } else if (obj.type === "group") {
+      delete obj.backgroundAutomation;
+    }
+    if ((obj.type === "text" || obj.type === "group") && rectColorDraft?.borderEnabled) {
       obj.borderColorAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.borderColor || "" });
-    } else if (obj.type === "text") {
+    } else if (obj.type === "text" || obj.type === "group") {
       delete obj.borderColorAutomation;
     }
     rectColorDraftObject = obj;
@@ -16414,7 +16197,7 @@ if (rectColorBorderTextInput) {
 if (colorCancelBtn) {
   colorCancelBtn.addEventListener("click", () => {
     const obj = getSelectedColorDynamicObject();
-    if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic())) return;
+    if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
     rectColorDraft = null;
     rectColorDraftObject = obj;
     ensureRectColorDraft(obj);
@@ -16427,7 +16210,7 @@ if (colorDeleteBtn) {
   colorDeleteBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
     const obj = getSelectedColorDynamicObject();
-    if (!activeObjects || !obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj))) return;
+    if (!activeObjects || !obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj) || hasGroupColorDynamic(obj))) return;
     recordHistory();
     delete obj.fillAutomation;
     delete obj.strokeAutomation;
@@ -16643,13 +16426,6 @@ function initializeCompactTagBindingRows() {
   });
 
   [
-    { id: "buttonFillAutomation", fields: buttonFillAutoFields, modeSelect: buttonFillAutoModeSelect, connectionInput: buttonFillAutoConnectionInput, tagSelect: buttonFillAutoTagSelect, key: "fillAutomation", title: "Button Fill Automation Tag" },
-    { id: "buttonTextAutomation", fields: buttonTextAutoFields, modeSelect: buttonTextAutoModeSelect, connectionInput: buttonTextAutoConnectionInput, tagSelect: buttonTextAutoTagSelect, key: "textColorAutomation", title: "Button Text Automation Tag" },
-    { id: "rectFillAutomation", fields: rectFillAutoFields, modeSelect: rectFillAutoModeSelect, connectionInput: rectFillAutoConnectionInput, tagSelect: rectFillAutoTagSelect, key: "fillAutomation", title: "Rectangle Fill Automation Tag" },
-    { id: "rectStrokeAutomation", fields: rectStrokeAutoFields, modeSelect: rectStrokeAutoModeSelect, connectionInput: rectStrokeAutoConnectionInput, tagSelect: rectStrokeAutoTagSelect, key: "strokeAutomation", title: "Rectangle Stroke Automation Tag" },
-    { id: "circleFillAutomation", fields: circleFillAutoFields, modeSelect: circleFillAutoModeSelect, connectionInput: circleFillAutoConnectionInput, tagSelect: circleFillAutoTagSelect, key: "fillAutomation", title: "Ellipse Fill Automation Tag" },
-    { id: "circleStrokeAutomation", fields: circleStrokeAutoFields, modeSelect: circleStrokeAutoModeSelect, connectionInput: circleStrokeAutoConnectionInput, tagSelect: circleStrokeAutoTagSelect, key: "strokeAutomation", title: "Ellipse Stroke Automation Tag" },
-    { id: "lineStrokeAutomation", fields: lineStrokeAutoFields, modeSelect: lineStrokeAutoModeSelect, connectionInput: lineStrokeAutoConnectionInput, tagSelect: lineStrokeAutoTagSelect, key: "strokeAutomation", title: "Line Stroke Automation Tag" },
     { id: "polygonFillAutomation", fields: polygonFillAutoFields, modeSelect: polygonFillAutoModeSelect, connectionInput: polygonFillAutoConnectionInput, tagSelect: polygonFillAutoTagSelect, key: "fillAutomation", title: "Polygon Fill Automation Tag" },
     { id: "polygonStrokeAutomation", fields: polygonStrokeAutoFields, modeSelect: polygonStrokeAutoModeSelect, connectionInput: polygonStrokeAutoConnectionInput, tagSelect: polygonStrokeAutoTagSelect, key: "strokeAutomation", title: "Polygon Stroke Automation Tag" }
   ].forEach((entry) => {
@@ -18076,59 +17852,10 @@ const initializeAdditionalAutomationSections = () => {
   initializeTextStateAutomationControl();
 
   registerAutomationSection({
-    id: "button-text-automation",
-    tab: "color",
-    types: ["button"],
-    nodes: [buttonTextAutoFields?.previousElementSibling, buttonTextAutoFields]
-  });
-
-  registerAutomationSection({
-    id: "button-fill-automation",
-    tab: "color",
-    types: ["button"],
-    nodes: [buttonFillAutoFields?.previousElementSibling, buttonFillAutoFields]
-  });
-
-  registerAutomationSection({
-    id: "rect-fill-automation",
-    tab: "fill",
-    types: ["rect", "alarms-panel"],
-    nodes: [rectFillAutoFields?.previousElementSibling, rectFillAutoFields]
-  });
-
-  registerAutomationSection({
-    id: "circle-fill-automation",
-    tab: "fill",
-    types: ["circle"],
-    nodes: [circleFillAutoFields?.previousElementSibling, circleFillAutoFields]
-  });
-
-  registerAutomationSection({
     id: "polygon-fill-automation",
     tab: "fill",
     types: ["polygon"],
     nodes: [polygonFillAutoFields?.previousElementSibling, polygonFillAutoFields]
-  });
-
-  registerAutomationSection({
-    id: "rect-stroke-automation",
-    tab: "stroke",
-    types: ["rect", "alarms-panel"],
-    nodes: [rectStrokeAutoFields?.previousElementSibling, rectStrokeAutoFields]
-  });
-
-  registerAutomationSection({
-    id: "circle-stroke-automation",
-    tab: "stroke",
-    types: ["circle"],
-    nodes: [circleStrokeAutoFields?.previousElementSibling, circleStrokeAutoFields]
-  });
-
-  registerAutomationSection({
-    id: "line-stroke-automation",
-    tab: "stroke",
-    types: ["line"],
-    nodes: [lineStrokeAutoFields?.previousElementSibling, lineStrokeAutoFields]
   });
 
   registerAutomationSection({
@@ -18356,132 +18083,6 @@ function bindAutomationControls(opts) {
     });
   }
 }
-
-bindAutomationControls({
-  key: "fillAutomation",
-  enabledInput: buttonFillAutoEnabledInput,
-  invertInput: buttonFillAutoInvertInput,
-  fields: buttonFillAutoFields,
-  connectionInput: buttonFillAutoConnectionInput,
-  tagSelect: buttonFillAutoTagSelect,
-  modeSelect: buttonFillAutoModeSelect,
-  thresholdRow: buttonFillAutoThresholdRow,
-  thresholdInput: buttonFillAutoThresholdInput,
-  matchRow: buttonFillAutoMatchRow,
-  matchInput: buttonFillAutoMatchInput,
-  onInput: buttonFillAutoOnInput,
-  onTextInput: buttonFillAutoOnTextInput,
-  offInput: buttonFillAutoOffInput,
-  offTextInput: buttonFillAutoOffTextInput
-});
-
-bindAutomationControls({
-  key: "textColorAutomation",
-  enabledInput: buttonTextAutoEnabledInput,
-  invertInput: buttonTextAutoInvertInput,
-  fields: buttonTextAutoFields,
-  connectionInput: buttonTextAutoConnectionInput,
-  tagSelect: buttonTextAutoTagSelect,
-  modeSelect: buttonTextAutoModeSelect,
-  thresholdRow: buttonTextAutoThresholdRow,
-  thresholdInput: buttonTextAutoThresholdInput,
-  matchRow: buttonTextAutoMatchRow,
-  matchInput: buttonTextAutoMatchInput,
-  onInput: buttonTextAutoOnInput,
-  onTextInput: buttonTextAutoOnTextInput,
-  offInput: buttonTextAutoOffInput,
-  offTextInput: buttonTextAutoOffTextInput
-});
-
-bindAutomationControls({
-  key: "fillAutomation",
-  enabledInput: rectFillAutoEnabledInput,
-  invertInput: rectFillAutoInvertInput,
-  fields: rectFillAutoFields,
-  connectionInput: rectFillAutoConnectionInput,
-  tagSelect: rectFillAutoTagSelect,
-  modeSelect: rectFillAutoModeSelect,
-  thresholdRow: rectFillAutoThresholdRow,
-  thresholdInput: rectFillAutoThresholdInput,
-  matchRow: rectFillAutoMatchRow,
-  matchInput: rectFillAutoMatchInput,
-  onInput: rectFillAutoOnInput,
-  onTextInput: rectFillAutoOnTextInput,
-  offInput: rectFillAutoOffInput,
-  offTextInput: rectFillAutoOffTextInput
-});
-
-bindAutomationControls({
-  key: "fillAutomation",
-  enabledInput: circleFillAutoEnabledInput,
-  invertInput: circleFillAutoInvertInput,
-  fields: circleFillAutoFields,
-  connectionInput: circleFillAutoConnectionInput,
-  tagSelect: circleFillAutoTagSelect,
-  modeSelect: circleFillAutoModeSelect,
-  thresholdRow: circleFillAutoThresholdRow,
-  thresholdInput: circleFillAutoThresholdInput,
-  matchRow: circleFillAutoMatchRow,
-  matchInput: circleFillAutoMatchInput,
-  onInput: circleFillAutoOnInput,
-  onTextInput: circleFillAutoOnTextInput,
-  offInput: circleFillAutoOffInput,
-  offTextInput: circleFillAutoOffTextInput
-});
-
-bindAutomationControls({
-  key: "strokeAutomation",
-  enabledInput: lineStrokeAutoEnabledInput,
-  invertInput: lineStrokeAutoInvertInput,
-  fields: lineStrokeAutoFields,
-  connectionInput: lineStrokeAutoConnectionInput,
-  tagSelect: lineStrokeAutoTagSelect,
-  modeSelect: lineStrokeAutoModeSelect,
-  thresholdRow: lineStrokeAutoThresholdRow,
-  thresholdInput: lineStrokeAutoThresholdInput,
-  matchRow: lineStrokeAutoMatchRow,
-  matchInput: lineStrokeAutoMatchInput,
-  onInput: lineStrokeAutoOnInput,
-  onTextInput: lineStrokeAutoOnTextInput,
-  offInput: lineStrokeAutoOffInput,
-  offTextInput: lineStrokeAutoOffTextInput
-});
-
-bindAutomationControls({
-  key: "strokeAutomation",
-  enabledInput: rectStrokeAutoEnabledInput,
-  invertInput: rectStrokeAutoInvertInput,
-  fields: rectStrokeAutoFields,
-  connectionInput: rectStrokeAutoConnectionInput,
-  tagSelect: rectStrokeAutoTagSelect,
-  modeSelect: rectStrokeAutoModeSelect,
-  thresholdRow: rectStrokeAutoThresholdRow,
-  thresholdInput: rectStrokeAutoThresholdInput,
-  matchRow: rectStrokeAutoMatchRow,
-  matchInput: rectStrokeAutoMatchInput,
-  onInput: rectStrokeAutoOnInput,
-  onTextInput: rectStrokeAutoOnTextInput,
-  offInput: rectStrokeAutoOffInput,
-  offTextInput: rectStrokeAutoOffTextInput
-});
-
-bindAutomationControls({
-  key: "strokeAutomation",
-  enabledInput: circleStrokeAutoEnabledInput,
-  invertInput: circleStrokeAutoInvertInput,
-  fields: circleStrokeAutoFields,
-  connectionInput: circleStrokeAutoConnectionInput,
-  tagSelect: circleStrokeAutoTagSelect,
-  modeSelect: circleStrokeAutoModeSelect,
-  thresholdRow: circleStrokeAutoThresholdRow,
-  thresholdInput: circleStrokeAutoThresholdInput,
-  matchRow: circleStrokeAutoMatchRow,
-  matchInput: circleStrokeAutoMatchInput,
-  onInput: circleStrokeAutoOnInput,
-  onTextInput: circleStrokeAutoOnTextInput,
-  offInput: circleStrokeAutoOffInput,
-  offTextInput: circleStrokeAutoOffTextInput
-});
 
 bindAutomationControls({
   key: "fillAutomation",
@@ -18928,6 +18529,22 @@ buildSwatches(rectColorStrokeSwatches, (color) => {
   closeSwatches();
 });
 
+buildSwatches(rectColorTextSwatches, (color) => {
+  if (color === "transparent" || color === "none") return;
+  if (rectColorTextInput) rectColorTextInput.value = color;
+  if (rectColorTextTextInput) rectColorTextTextInput.value = color;
+  updateRectColorDraft({ textColor: color, textEnabled: true });
+  closeSwatches();
+});
+
+buildSwatches(rectColorBackgroundSwatches, (color) => {
+  if (color === "transparent" || color === "none") return;
+  if (rectColorBackgroundInput) rectColorBackgroundInput.value = color;
+  if (rectColorBackgroundTextInput) rectColorBackgroundTextInput.value = color;
+  updateRectColorDraft({ backgroundColor: color, backgroundEnabled: true });
+  closeSwatches();
+});
+
 buildSwatches(rectColorBorderSwatches, (color) => {
   if (color === "transparent" || color === "none") return;
   if (rectColorBorderInput) rectColorBorderInput.value = color;
@@ -19059,104 +18676,6 @@ buildSwatches(indicatorStrokeSwatches, (color) => {
   updateIndicatorProperty({ stroke: color });
   if (indicatorStrokeTextInput) indicatorStrokeTextInput.value = color;
   if (indicatorStrokeInput && isHexColor(color)) indicatorStrokeInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(buttonFillAutoOnSwatches, (color) => {
-  updateAutomationProperty("fillAutomation", { onColor: color, enabled: true });
-  if (buttonFillAutoOnInput) buttonFillAutoOnInput.value = color;
-  if (buttonFillAutoOnTextInput) buttonFillAutoOnTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(buttonFillAutoOffSwatches, (color) => {
-  updateAutomationProperty("fillAutomation", { offColor: color, enabled: true });
-  if (buttonFillAutoOffInput) buttonFillAutoOffInput.value = color;
-  if (buttonFillAutoOffTextInput) buttonFillAutoOffTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(buttonTextAutoOnSwatches, (color) => {
-  updateAutomationProperty("textColorAutomation", { onColor: color, enabled: true });
-  if (buttonTextAutoOnInput) buttonTextAutoOnInput.value = color;
-  if (buttonTextAutoOnTextInput) buttonTextAutoOnTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(buttonTextAutoOffSwatches, (color) => {
-  updateAutomationProperty("textColorAutomation", { offColor: color, enabled: true });
-  if (buttonTextAutoOffInput) buttonTextAutoOffInput.value = color;
-  if (buttonTextAutoOffTextInput) buttonTextAutoOffTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(rectFillAutoOnSwatches, (color) => {
-  updateAutomationProperty("fillAutomation", { onColor: color, enabled: true });
-  if (rectFillAutoOnInput) rectFillAutoOnInput.value = color;
-  if (rectFillAutoOnTextInput) rectFillAutoOnTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(rectFillAutoOffSwatches, (color) => {
-  updateAutomationProperty("fillAutomation", { offColor: color, enabled: true });
-  if (rectFillAutoOffInput) rectFillAutoOffInput.value = color;
-  if (rectFillAutoOffTextInput) rectFillAutoOffTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(circleFillAutoOnSwatches, (color) => {
-  updateAutomationProperty("fillAutomation", { onColor: color, enabled: true });
-  if (circleFillAutoOnInput) circleFillAutoOnInput.value = color;
-  if (circleFillAutoOnTextInput) circleFillAutoOnTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(circleFillAutoOffSwatches, (color) => {
-  updateAutomationProperty("fillAutomation", { offColor: color, enabled: true });
-  if (circleFillAutoOffInput) circleFillAutoOffInput.value = color;
-  if (circleFillAutoOffTextInput) circleFillAutoOffTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(rectStrokeAutoOnSwatches, (color) => {
-  updateAutomationProperty("strokeAutomation", { onColor: color, enabled: true });
-  if (rectStrokeAutoOnInput) rectStrokeAutoOnInput.value = color;
-  if (rectStrokeAutoOnTextInput) rectStrokeAutoOnTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(rectStrokeAutoOffSwatches, (color) => {
-  updateAutomationProperty("strokeAutomation", { offColor: color, enabled: true });
-  if (rectStrokeAutoOffInput) rectStrokeAutoOffInput.value = color;
-  if (rectStrokeAutoOffTextInput) rectStrokeAutoOffTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(circleStrokeAutoOnSwatches, (color) => {
-  updateAutomationProperty("strokeAutomation", { onColor: color, enabled: true });
-  if (circleStrokeAutoOnInput) circleStrokeAutoOnInput.value = color;
-  if (circleStrokeAutoOnTextInput) circleStrokeAutoOnTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(circleStrokeAutoOffSwatches, (color) => {
-  updateAutomationProperty("strokeAutomation", { offColor: color, enabled: true });
-  if (circleStrokeAutoOffInput) circleStrokeAutoOffInput.value = color;
-  if (circleStrokeAutoOffTextInput) circleStrokeAutoOffTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(lineStrokeAutoOnSwatches, (color) => {
-  updateAutomationProperty("strokeAutomation", { onColor: color, enabled: true });
-  if (lineStrokeAutoOnInput) lineStrokeAutoOnInput.value = color;
-  if (lineStrokeAutoOnTextInput) lineStrokeAutoOnTextInput.value = color;
-  closeSwatches();
-});
-
-buildSwatches(lineStrokeAutoOffSwatches, (color) => {
-  updateAutomationProperty("strokeAutomation", { offColor: color, enabled: true });
-  if (lineStrokeAutoOffInput) lineStrokeAutoOffInput.value = color;
-  if (lineStrokeAutoOffTextInput) lineStrokeAutoOffTextInput.value = color;
   closeSwatches();
 });
 
@@ -19391,6 +18910,20 @@ if (rectColorStrokeSwatchBtn && rectColorStrokeSwatches) {
   });
 }
 
+if (rectColorTextSwatchBtn && rectColorTextSwatches) {
+  rectColorTextSwatchBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSwatches(rectColorTextSwatches, rectColorTextSwatchBtn);
+  });
+}
+
+if (rectColorBackgroundSwatchBtn && rectColorBackgroundSwatches) {
+  rectColorBackgroundSwatchBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSwatches(rectColorBackgroundSwatches, rectColorBackgroundSwatchBtn);
+  });
+}
+
 if (rectColorBorderSwatchBtn && rectColorBorderSwatches) {
   rectColorBorderSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -19521,104 +19054,6 @@ if (indicatorStrokeSwatchBtn && indicatorStrokeSwatches) {
   indicatorStrokeSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleSwatches(indicatorStrokeSwatches, indicatorStrokeSwatchBtn);
-  });
-}
-
-if (buttonFillAutoOnSwatchBtn && buttonFillAutoOnSwatches) {
-  buttonFillAutoOnSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(buttonFillAutoOnSwatches, buttonFillAutoOnSwatchBtn);
-  });
-}
-
-if (buttonFillAutoOffSwatchBtn && buttonFillAutoOffSwatches) {
-  buttonFillAutoOffSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(buttonFillAutoOffSwatches, buttonFillAutoOffSwatchBtn);
-  });
-}
-
-if (buttonTextAutoOnSwatchBtn && buttonTextAutoOnSwatches) {
-  buttonTextAutoOnSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(buttonTextAutoOnSwatches, buttonTextAutoOnSwatchBtn);
-  });
-}
-
-if (buttonTextAutoOffSwatchBtn && buttonTextAutoOffSwatches) {
-  buttonTextAutoOffSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(buttonTextAutoOffSwatches, buttonTextAutoOffSwatchBtn);
-  });
-}
-
-if (rectFillAutoOnSwatchBtn && rectFillAutoOnSwatches) {
-  rectFillAutoOnSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(rectFillAutoOnSwatches, rectFillAutoOnSwatchBtn);
-  });
-}
-
-if (rectFillAutoOffSwatchBtn && rectFillAutoOffSwatches) {
-  rectFillAutoOffSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(rectFillAutoOffSwatches, rectFillAutoOffSwatchBtn);
-  });
-}
-
-if (circleFillAutoOnSwatchBtn && circleFillAutoOnSwatches) {
-  circleFillAutoOnSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(circleFillAutoOnSwatches, circleFillAutoOnSwatchBtn);
-  });
-}
-
-if (circleFillAutoOffSwatchBtn && circleFillAutoOffSwatches) {
-  circleFillAutoOffSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(circleFillAutoOffSwatches, circleFillAutoOffSwatchBtn);
-  });
-}
-
-if (rectStrokeAutoOnSwatchBtn && rectStrokeAutoOnSwatches) {
-  rectStrokeAutoOnSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(rectStrokeAutoOnSwatches, rectStrokeAutoOnSwatchBtn);
-  });
-}
-
-if (rectStrokeAutoOffSwatchBtn && rectStrokeAutoOffSwatches) {
-  rectStrokeAutoOffSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(rectStrokeAutoOffSwatches, rectStrokeAutoOffSwatchBtn);
-  });
-}
-
-if (circleStrokeAutoOnSwatchBtn && circleStrokeAutoOnSwatches) {
-  circleStrokeAutoOnSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(circleStrokeAutoOnSwatches, circleStrokeAutoOnSwatchBtn);
-  });
-}
-
-if (circleStrokeAutoOffSwatchBtn && circleStrokeAutoOffSwatches) {
-  circleStrokeAutoOffSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(circleStrokeAutoOffSwatches, circleStrokeAutoOffSwatchBtn);
-  });
-}
-
-if (lineStrokeAutoOnSwatchBtn && lineStrokeAutoOnSwatches) {
-  lineStrokeAutoOnSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(lineStrokeAutoOnSwatches, lineStrokeAutoOnSwatchBtn);
-  });
-}
-
-if (lineStrokeAutoOffSwatchBtn && lineStrokeAutoOffSwatches) {
-  lineStrokeAutoOffSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleSwatches(lineStrokeAutoOffSwatches, lineStrokeAutoOffSwatchBtn);
   });
 }
 
@@ -19795,20 +19230,6 @@ document.addEventListener("click", (event) => {
 	    indicatorFillSwatches?.contains(target) ||
 	    indicatorTextColorSwatches?.contains(target) ||
 	    indicatorStrokeSwatches?.contains(target) ||
-	    buttonFillAutoOnSwatches?.contains(target) ||
-    buttonFillAutoOffSwatches?.contains(target) ||
-    buttonTextAutoOnSwatches?.contains(target) ||
-    buttonTextAutoOffSwatches?.contains(target) ||
-    rectFillAutoOnSwatches?.contains(target) ||
-    rectFillAutoOffSwatches?.contains(target) ||
-    circleFillAutoOnSwatches?.contains(target) ||
-    circleFillAutoOffSwatches?.contains(target) ||
-    rectStrokeAutoOnSwatches?.contains(target) ||
-    rectStrokeAutoOffSwatches?.contains(target) ||
-    circleStrokeAutoOnSwatches?.contains(target) ||
-    circleStrokeAutoOffSwatches?.contains(target) ||
-    lineStrokeAutoOnSwatches?.contains(target) ||
-    lineStrokeAutoOffSwatches?.contains(target) ||
     polygonFillAutoOnSwatches?.contains(target) ||
     polygonFillAutoOffSwatches?.contains(target) ||
     polygonStrokeAutoOnSwatches?.contains(target) ||
@@ -19840,20 +19261,6 @@ document.addEventListener("click", (event) => {
 	    polygonFillSwatchBtn?.contains(target) ||
 	    polygonStrokeSwatchBtn?.contains(target) ||
 	    viewportBorderSwatchBtn?.contains(target) ||
-	    buttonFillAutoOnSwatchBtn?.contains(target) ||
-    buttonFillAutoOffSwatchBtn?.contains(target) ||
-    buttonTextAutoOnSwatchBtn?.contains(target) ||
-    buttonTextAutoOffSwatchBtn?.contains(target) ||
-    rectFillAutoOnSwatchBtn?.contains(target) ||
-    rectFillAutoOffSwatchBtn?.contains(target) ||
-    circleFillAutoOnSwatchBtn?.contains(target) ||
-    circleFillAutoOffSwatchBtn?.contains(target) ||
-    rectStrokeAutoOnSwatchBtn?.contains(target) ||
-    rectStrokeAutoOffSwatchBtn?.contains(target) ||
-    circleStrokeAutoOnSwatchBtn?.contains(target) ||
-    circleStrokeAutoOffSwatchBtn?.contains(target) ||
-    lineStrokeAutoOnSwatchBtn?.contains(target) ||
-    lineStrokeAutoOffSwatchBtn?.contains(target) ||
     polygonFillAutoOnSwatchBtn?.contains(target) ||
     polygonFillAutoOffSwatchBtn?.contains(target) ||
     polygonStrokeAutoOnSwatchBtn?.contains(target) ||
