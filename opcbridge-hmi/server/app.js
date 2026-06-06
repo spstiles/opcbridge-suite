@@ -678,13 +678,60 @@ const createApp = () => {
       await fsp.mkdir(IMAGES_DIR, { recursive: true });
       const entries = await fsp.readdir(IMAGES_DIR, { withFileTypes: true });
       const allowed = new Set([".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
-      const files = entries
-        .filter((entry) => entry.isFile())
-        .map((entry) => entry.name)
-        .filter((name) => allowed.has(path.extname(name).toLowerCase()))
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
-      res.json({ files });
+      const fileNames = [];
+      const items = [];
+      for (const entry of entries) {
+        if (!entry?.isFile?.()) continue;
+        const name = String(entry.name || "");
+        if (!allowed.has(path.extname(name).toLowerCase())) continue;
+        fileNames.push(name);
+        let size = 0;
+        let mtimeMs = 0;
+        try {
+          const stats = await fsp.stat(path.join(IMAGES_DIR, name));
+          size = Number(stats?.size || 0);
+          mtimeMs = Number(stats?.mtimeMs || 0);
+        } catch {}
+        items.push({ name, size, mtimeMs });
+      }
+      fileNames.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+      items.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+      res.json({ files: fileNames, items });
     } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/img-files/rename", async (req, res) => {
+    try {
+      const oldInfo = resolveImagePath(req.body?.oldName);
+      const newInfo = resolveImagePath(req.body?.newName);
+      if (!oldInfo || !newInfo) return res.status(400).json({ error: "Invalid image filename." });
+      await fsp.mkdir(IMAGES_DIR, { recursive: true });
+      await fsp.rename(oldInfo.fullPath, newInfo.fullPath);
+      try { await audit?.(req, { event: "img.rename", oldFilename: oldInfo.filename, newFilename: newInfo.filename }); } catch {}
+      res.json({ ok: true, filename: newInfo.filename });
+    } catch (error) {
+      if (String(error).includes("ENOENT")) {
+        return res.status(404).json({ error: "Image not found." });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/img-files/duplicate", async (req, res) => {
+    try {
+      const sourceInfo = resolveImagePath(req.body?.sourceName);
+      const targetInfo = resolveImagePath(req.body?.targetName);
+      if (!sourceInfo || !targetInfo) return res.status(400).json({ error: "Invalid image filename." });
+      await fsp.mkdir(IMAGES_DIR, { recursive: true });
+      await fsp.copyFile(sourceInfo.fullPath, targetInfo.fullPath);
+      try { await audit?.(req, { event: "img.duplicate", sourceFilename: sourceInfo.filename, targetFilename: targetInfo.filename }); } catch {}
+      res.json({ ok: true, filename: targetInfo.filename });
+    } catch (error) {
+      if (String(error).includes("ENOENT")) {
+        return res.status(404).json({ error: "Image not found." });
+      }
       res.status(500).json({ error: String(error) });
     }
   });

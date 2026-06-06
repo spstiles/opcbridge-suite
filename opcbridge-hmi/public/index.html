@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260605-hmi-ui-v3" />
+  <link rel="stylesheet" href="css/main.css?v=20260605-hmi-ui-v4" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -24,7 +24,7 @@
             </button>
             <div id="fileMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="File menu">
               <button id="fileNewScreenMenuBtn" class="menu-item" type="button">New</button>
-              <button id="fileOpenScreenMenuBtn" class="menu-item" type="button">Open…</button>
+              <button id="fileOpenScreenMenuBtn" class="menu-item" type="button">File Manager…</button>
               <button id="screenSaveMenuBtn" class="menu-item" type="button">Save</button>
               <button id="fileSaveAsMenuBtn" class="menu-item" type="button">Save As…</button>
               <div class="menu-separator"></div>
@@ -1974,11 +1974,33 @@
                   <div id="screenFileTree" class="screen-file-tree" role="tree"></div>
                 </aside>
                 <section class="screen-file-main" aria-label="Files">
-                  <div id="openFileList" class="open-file-list"></div>
+                  <div class="screen-file-main-toolbar">
+                    <div class="screen-file-actions">
+                      <button id="screenFileNewBtn" class="panel-btn" type="button">New</button>
+                      <button id="screenFileOpenBtn" class="panel-btn" type="button">Open</button>
+                      <button id="screenFileRenameBtn" class="panel-btn" type="button">Rename</button>
+                      <button id="screenFileDuplicateBtn" class="panel-btn" type="button">Duplicate</button>
+                      <button id="screenFileDeleteBtn" class="panel-btn" type="button">Delete</button>
+                    </div>
+                    <div class="screen-file-actions screen-file-actions-right">
+                      <button id="screenFileRefreshBtn" class="panel-btn" type="button">Refresh</button>
+                    </div>
+                  </div>
+                  <div class="screen-file-list-shell">
+                    <div class="screen-file-list-header" aria-hidden="true">
+                      <div class="screen-file-col-name">Name</div>
+                      <div class="screen-file-col-modified">Modified</div>
+                      <div class="screen-file-col-size">Size</div>
+                    </div>
+                    <div id="openFileList" class="open-file-list"></div>
+                  </div>
                 </section>
               </div>
               <div class="screen-file-footer">
-                <div class="screen-file-name-row">
+                <div class="screen-file-details">
+                  <div id="screenFileSelectionSummary" class="screen-file-selection-summary">No file selected.</div>
+                </div>
+                <div id="screenFileNameRow" class="screen-file-name-row">
                   <label for="screenFileNameInput">File name</label>
                   <input id="screenFileNameInput" type="text" placeholder="Overview" />
                 </div>
@@ -2557,6 +2579,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260605-hmi-ui-v3"></script>
+	  <script src="js/hmi.js?v=20260605-hmi-ui-v4"></script>
 	</body>
 	</html>

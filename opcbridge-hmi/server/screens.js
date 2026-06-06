@@ -234,7 +234,14 @@ const createScreensRouter = ({ rootDir, legacyScreensDir, audit }) => {
         if (!entry.isFile()) continue;
         if (!isScreenFile(entry.name)) continue;
         const relPath = dir ? `${dir}/${entry.name}` : entry.name;
-        files.push({ name: entry.name, path: relPath, ref: screenRefFromRelPath(relPath) });
+        let size = 0;
+        let mtimeMs = 0;
+        try {
+          const stats = await fsp.stat(path.join(absDir, entry.name));
+          size = Number(stats?.size || 0);
+          mtimeMs = Number(stats?.mtimeMs || 0);
+        } catch {}
+        files.push({ name: entry.name, path: relPath, ref: screenRefFromRelPath(relPath), size, mtimeMs });
       }
 
       dirs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
@@ -302,6 +309,79 @@ const createScreensRouter = ({ rootDir, legacyScreensDir, audit }) => {
       } catch {}
       res.json({ ok: true, path: relPath, ref: screenRefFromRelPath(relPath) });
     } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.delete("/file", async (req, res) => {
+    try {
+      await ensureInitialized();
+      const requested = normalizeScreenRelPath(req.query?.path, { defaultExt: "" });
+      if (!requested) return res.status(400).json({ error: "Bad path." });
+      const relPath = await resolveExistingScreenPath(screensRoot, requested);
+      const abs = toAbs(relPath);
+      if (!abs) return res.status(400).json({ error: "Bad path." });
+      await fsp.unlink(abs);
+      try {
+        await audit?.(req, { event: "screen.delete", path: relPath, ref: screenRefFromRelPath(relPath) });
+      } catch {}
+      res.json({ ok: true, path: relPath, ref: screenRefFromRelPath(relPath) });
+    } catch (err) {
+      if (String(err).includes("ENOENT")) return res.status(404).json({ error: "Screen not found." });
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.post("/rename", async (req, res) => {
+    try {
+      await ensureInitialized();
+      const oldRequested = normalizeScreenRelPath(req.body?.oldPath, { defaultExt: "" });
+      const newRelPath = normalizeScreenRelPath(req.body?.newPath, { defaultExt: ".screen" });
+      if (!oldRequested || !newRelPath) return res.status(400).json({ error: "Bad path." });
+      const oldRelPath = await resolveExistingScreenPath(screensRoot, oldRequested);
+      const oldAbs = toAbs(oldRelPath);
+      const newAbs = toAbs(newRelPath);
+      if (!oldAbs || !newAbs) return res.status(400).json({ error: "Bad path." });
+      await ensureDir(path.dirname(newAbs));
+      await fsp.rename(oldAbs, newAbs);
+      try {
+        await audit?.(req, {
+          event: "screen.rename",
+          oldPath: oldRelPath,
+          newPath: newRelPath,
+          ref: screenRefFromRelPath(newRelPath)
+        });
+      } catch {}
+      res.json({ ok: true, path: newRelPath, ref: screenRefFromRelPath(newRelPath) });
+    } catch (err) {
+      if (String(err).includes("ENOENT")) return res.status(404).json({ error: "Screen not found." });
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.post("/duplicate", async (req, res) => {
+    try {
+      await ensureInitialized();
+      const sourceRequested = normalizeScreenRelPath(req.body?.sourcePath, { defaultExt: "" });
+      const targetRelPath = normalizeScreenRelPath(req.body?.targetPath, { defaultExt: ".screen" });
+      if (!sourceRequested || !targetRelPath) return res.status(400).json({ error: "Bad path." });
+      const sourceRelPath = await resolveExistingScreenPath(screensRoot, sourceRequested);
+      const sourceAbs = toAbs(sourceRelPath);
+      const targetAbs = toAbs(targetRelPath);
+      if (!sourceAbs || !targetAbs) return res.status(400).json({ error: "Bad path." });
+      await ensureDir(path.dirname(targetAbs));
+      await fsp.copyFile(sourceAbs, targetAbs);
+      try {
+        await audit?.(req, {
+          event: "screen.duplicate",
+          sourcePath: sourceRelPath,
+          targetPath: targetRelPath,
+          ref: screenRefFromRelPath(targetRelPath)
+        });
+      } catch {}
+      res.json({ ok: true, path: targetRelPath, ref: screenRefFromRelPath(targetRelPath) });
+    } catch (err) {
+      if (String(err).includes("ENOENT")) return res.status(404).json({ error: "Screen not found." });
       res.status(500).json({ error: String(err) });
     }
   });
