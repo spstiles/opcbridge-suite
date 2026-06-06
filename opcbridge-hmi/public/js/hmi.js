@@ -4095,6 +4095,7 @@ let currentScreenFilename = DEFAULT_SCREEN_FILE;
 let currentScreenPath = DEFAULT_SCREEN_FILE;
 let lastLoadedFilename = "";
 let currentTab = "properties";
+let jsonEditorSyncPending = false;
 let currentTool = "select";
 let leftCircleFlyoutOpen = false;
 let currentScreenObj = null;
@@ -10263,10 +10264,18 @@ const renderScreen = () => {
   }
 };
 
-const syncEditorFromScreen = () => {
+const flushJsonEditorFromScreen = () => {
   if (!jsoncEditor || !currentScreenObj) return;
   jsoncEditor.value = JSON.stringify(currentScreenObj, null, 2);
+  jsonEditorSyncPending = false;
   if (editorStatus) editorStatus.textContent = `Updated ${currentScreenFilename}.`;
+};
+
+const syncEditorFromScreen = () => {
+  if (!jsoncEditor || !currentScreenObj) return;
+  jsonEditorSyncPending = true;
+  if (currentTab !== "jsonc") return;
+  flushJsonEditorFromScreen();
 };
 
 const syncPropertiesFromScreen = () => {
@@ -11906,6 +11915,7 @@ const saveJsoncEditor = async () => {
 const reloadJsoncEditor = () => {
   lastLoadedFilename = "";
   loadJsonc();
+  jsonEditorSyncPending = false;
   setDirty(false);
 };
 
@@ -12875,6 +12885,7 @@ const loadJsonc = async () => {
   if (!currentScreenPath) {
     const template = `{\n  // Screen: Untitled\n  \"width\": 1920,\n  \"height\": 1080,\n  \"background\": \"#202533\",\n  \"objects\": []\n}\n`;
     jsoncEditor.value = template;
+    jsonEditorSyncPending = false;
     try {
       currentScreenObj = parseJsonc(template);
       screenCache.set(currentScreenId || "untitled", currentScreenObj);
@@ -12909,6 +12920,7 @@ const loadJsonc = async () => {
     const data = await response.json();
     const raw = data.raw || "";
     jsoncEditor.value = raw;
+    jsonEditorSyncPending = false;
     try {
       currentScreenObj = parseJsonc(raw);
       const migrateButtonFlags = (objects) => {
@@ -12965,7 +12977,13 @@ const setEditorTab = (nextTab) => {
     panels.forEach((panel) => {
       panel.classList.toggle("is-active", panel.dataset.panel === currentTab);
     });
-    if (currentTab === "jsonc") loadJsonc();
+    if (currentTab === "jsonc") {
+      if (jsonEditorSyncPending) {
+        flushJsonEditorFromScreen();
+      } else if (!jsoncEditor?.value || (currentScreenPath && lastLoadedFilename !== currentScreenPath)) {
+        loadJsonc();
+      }
+    }
     return;
   }
 
@@ -12979,7 +12997,13 @@ const setEditorTab = (nextTab) => {
   panels.forEach((panel) => {
     panel.classList.toggle("is-active", panel.dataset.panel === currentTab);
   });
-  if (currentTab === "jsonc") loadJsonc();
+  if (currentTab === "jsonc") {
+    if (jsonEditorSyncPending) {
+      flushJsonEditorFromScreen();
+    } else if (!jsoncEditor?.value || (currentScreenPath && lastLoadedFilename !== currentScreenPath)) {
+      loadJsonc();
+    }
+  }
 };
 
 const bindEditorTabs = () => {
