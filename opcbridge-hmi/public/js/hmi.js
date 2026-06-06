@@ -4661,6 +4661,7 @@ const tagValueCache = new Map();
 const tagQualityCache = new Map();
 let tagsCache = [];
 let tagsAllCache = [];
+let tagsCacheVersion = 0;
 let isKeypadOpen = false;
 let keypadTarget = null;
 const undoStack = [];
@@ -7498,6 +7499,13 @@ const populateTagSelect = (selectEl) => {
 const populateConnectionSelect = (selectEl) => {
   if (!selectEl) return;
   const previous = String(selectEl.value || "");
+  const nextVersion = String(tagsCacheVersion);
+  if (selectEl.dataset.tagsVersion === nextVersion && selectEl.options.length) {
+    if (previous && Array.from(selectEl.options).some((opt) => opt.value === previous)) {
+      selectEl.value = previous;
+    }
+    return;
+  }
   const connectionIds = sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || "")));
   selectEl.innerHTML = "";
   const placeholder = document.createElement("option");
@@ -7510,6 +7518,7 @@ const populateConnectionSelect = (selectEl) => {
     opt.textContent = connectionId;
     selectEl.appendChild(opt);
   });
+  selectEl.dataset.tagsVersion = nextVersion;
   if (previous && connectionIds.includes(previous)) {
     selectEl.value = previous;
   }
@@ -7519,6 +7528,17 @@ const populateFilteredCombinedTagSelect = (selectEl, connectionId = "") => {
   if (!selectEl) return;
   const previous = String(selectEl.value || "");
   const selectedConnectionId = String(connectionId || "");
+  const nextVersion = String(tagsCacheVersion);
+  if (
+    selectEl.dataset.tagsVersion === nextVersion
+    && selectEl.dataset.connectionId === selectedConnectionId
+    && selectEl.options.length
+  ) {
+    if (previous && Array.from(selectEl.options).some((opt) => opt.value === previous)) {
+      selectEl.value = previous;
+    }
+    return;
+  }
   selectEl.innerHTML = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
@@ -7538,6 +7558,8 @@ const populateFilteredCombinedTagSelect = (selectEl, connectionId = "") => {
     opt.textContent = tagName;
     selectEl.appendChild(opt);
   });
+  selectEl.dataset.tagsVersion = nextVersion;
+  selectEl.dataset.connectionId = selectedConnectionId;
   if (previous && Array.from(selectEl.options).some((opt) => opt.value === previous)) {
     selectEl.value = previous;
   }
@@ -7937,6 +7959,7 @@ const loadTags = async () => {
     const sortedAll = sortTagsForDisplay(rawTags);
     tagsAllCache = sortedAll;
     tagsCache = sortedAll;
+    tagsCacheVersion += 1;
     const filtered = applyTagsFilter(sortedAll);
     renderTagsList(filtered);
     if (Array.isArray(sortedAll)) {
@@ -7969,6 +7992,7 @@ const loadTags = async () => {
     if (tagsStatus) tagsStatus.textContent = `Failed to load tags: ${error.message}`;
     tagsCache = [];
     tagsAllCache = [];
+    tagsCacheVersion += 1;
     if (isEditMode && selectedIndices.length === 1) {
       syncPropertiesFromSelection();
       updatePropertiesPanel();
