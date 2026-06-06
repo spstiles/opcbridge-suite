@@ -234,6 +234,8 @@ const screenFileNameRow = document.getElementById("screenFileNameRow");
 const screenFileSelectionSummary = document.getElementById("screenFileSelectionSummary");
 const screenFileNewBtn = document.getElementById("screenFileNewBtn");
 const screenFileOpenBtn = document.getElementById("screenFileOpenBtn");
+const screenFileUploadBtn = document.getElementById("screenFileUploadBtn");
+const screenFileUploadInput = document.getElementById("screenFileUploadInput");
 const screenFileRenameBtn = document.getElementById("screenFileRenameBtn");
 const screenFileDuplicateBtn = document.getElementById("screenFileDuplicateBtn");
 const screenFileDeleteBtn = document.getElementById("screenFileDeleteBtn");
@@ -2214,6 +2216,8 @@ let screenFileDir = "";
 let screenFileSelected = null; // { kind:"dir"|"file", name, path, ref }
 let screenFileHistory = [];
 let screenFileHistoryIndex = -1;
+let screenFileUploadTargetSource = "screens";
+let screenFileUploadTargetDir = "";
 
 const screenFileDateFormatter = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
@@ -2225,12 +2229,19 @@ const screenFileDateFormatter = new Intl.DateTimeFormat(undefined, {
 
 const updateScreenFileFooterButtons = () => {
   const isScreens = screenFileSource === "screens";
-  const canDownload = isScreens && screenFileMode === "open" && screenFileSelected?.kind === "file" && Boolean(screenFileSelected?.path);
+  const isImages = screenFileSource === "images";
+  const canDownload = screenFileMode === "open"
+    && Boolean(screenFileSelected)
+    && (
+      (isScreens && ((screenFileSelected?.kind === "file" && Boolean(screenFileSelected?.path)) || screenFileSelected?.kind === "dir"))
+      || (isImages && screenFileSelected?.kind === "file" && Boolean(screenFileSelected?.name))
+    );
   if (screenFileDownloadBtn) screenFileDownloadBtn.disabled = !canDownload;
   const canOpen = isScreens && screenFileSelected?.kind === "file" && Boolean(screenFileSelected?.path);
   const canManageFile = screenFileSelected?.kind === "file";
   if (screenFilePrimaryBtn) screenFilePrimaryBtn.disabled = screenFileMode === "open" ? !canOpen : !isScreens;
   if (screenFileOpenBtn) screenFileOpenBtn.disabled = !canOpen;
+  if (screenFileUploadBtn) screenFileUploadBtn.disabled = screenFileMode !== "open";
   if (screenFileRenameBtn) screenFileRenameBtn.disabled = !canManageFile;
   if (screenFileDuplicateBtn) screenFileDuplicateBtn.disabled = !canManageFile;
   if (screenFileDeleteBtn) screenFileDeleteBtn.disabled = !canManageFile;
@@ -2291,7 +2302,18 @@ const setScreenFileDialogMode = (mode) => {
   if (screenFileNameInput) screenFileNameInput.disabled = false;
   if (screenFileNameRow) screenFileNameRow.classList.toggle("is-hidden", screenFileMode !== "saveAs" || screenFileSource !== "screens");
   if (screenFileOpenBtn) screenFileOpenBtn.classList.toggle("is-hidden", screenFileMode !== "open");
-  if (screenFileDownloadBtn) screenFileDownloadBtn.classList.toggle("is-hidden", screenFileMode !== "open" || screenFileSource !== "screens");
+  if (screenFileUploadBtn) screenFileUploadBtn.classList.toggle("is-hidden", screenFileMode !== "open");
+  if (screenFileDownloadBtn) screenFileDownloadBtn.classList.toggle("is-hidden", screenFileMode !== "open");
+  if (screenFileUploadInput) {
+    screenFileUploadInput.value = "";
+    if (screenFileSource === "images") {
+      screenFileUploadInput.accept = ".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,image/*";
+      screenFileUploadInput.multiple = true;
+    } else {
+      screenFileUploadInput.accept = ".screen,.jsonc,application/json,text/plain";
+      screenFileUploadInput.multiple = true;
+    }
+  }
   updateScreenFileSelectionSummary();
   updateScreenFileFooterButtons();
 };
@@ -2379,7 +2401,19 @@ const renderScreenFileTree = (payload) => {
 
     row.addEventListener("click", async () => {
       setActive();
+      screenFileSelected = { kind: "dir", source, name, path: relDir };
+      updateScreenFileFooterButtons();
+      updateScreenFileSelectionSummary();
       await setScreenFileLocation({ source, dir: relDir }, { push: true });
+    });
+
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      setActive();
+      screenFileSelected = { kind: "dir", source, name, path: relDir };
+      updateScreenFileFooterButtons();
+      updateScreenFileSelectionSummary();
+      showScreenFileContextMenu(event.clientX, event.clientY, { kind: "dir", source, name, path: relDir });
     });
 
     wrap.appendChild(row);
@@ -2458,6 +2492,12 @@ const renderScreenFileList = (payload) => {
       }
     });
 
+    item.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      item.click();
+      showScreenFileContextMenu(event.clientX, event.clientY, { kind, source: "screens", ...meta });
+    });
+
     openFileList.appendChild(item);
   };
 
@@ -2507,11 +2547,131 @@ const renderImageFileList = (payload) => {
       updateScreenFileFooterButtons();
       updateScreenFileSelectionSummary();
     });
+    item.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      item.click();
+      showScreenFileContextMenu(event.clientX, event.clientY, { kind: "file", source: "images", name: file.name, size: file.size, mtimeMs: file.mtimeMs });
+    });
     openFileList.appendChild(item);
   };
   (payload?.items || []).forEach(addItem);
   updateScreenFileFooterButtons();
   updateScreenFileSelectionSummary();
+};
+
+const ensureScreenFileContextMenu = () => {
+  if (screenFileContextMenu) return screenFileContextMenu;
+  const menu = document.createElement("div");
+  menu.className = "hmi-context-menu is-hidden";
+  menu.setAttribute("role", "menu");
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  document.body.appendChild(menu);
+  screenFileContextMenu = menu;
+
+  const closeIfOpen = () => {
+    if (!screenFileContextMenuOpen) return;
+    screenFileContextMenuOpen = false;
+    menu.classList.add("is-hidden");
+    menu.innerHTML = "";
+  };
+
+  document.addEventListener("click", closeIfOpen);
+  window.addEventListener("blur", closeIfOpen);
+  window.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape") closeIfOpen();
+  });
+
+  return menu;
+};
+
+const showScreenFileContextMenu = (clientX, clientY, target) => {
+  if (!target) return;
+  const menu = ensureScreenFileContextMenu();
+  screenFileContextMenuOpen = true;
+  menu.innerHTML = "";
+
+  const title = document.createElement("div");
+  title.className = "hmi-context-menu-title";
+  title.textContent = String(target.name || target.path || target.source || "Item");
+  menu.appendChild(title);
+
+  const addItem = (label, onClick, disabled = false) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "hmi-context-menu-item";
+    btn.textContent = label;
+    btn.disabled = disabled;
+    btn.addEventListener("click", async () => {
+      try {
+        await onClick?.();
+      } finally {
+        screenFileContextMenuOpen = false;
+        menu.classList.add("is-hidden");
+        menu.innerHTML = "";
+      }
+    });
+    menu.appendChild(btn);
+  };
+
+  if (target.kind === "dir") {
+    addItem("Open", async () => {
+      await setScreenFileLocation({ source: target.source, dir: target.path || "" }, { push: true });
+    });
+    if (target.source === "screens") {
+      addItem("Upload Here…", async () => {
+        if (!screenFileUploadInput) return;
+        screenFileUploadInput.value = "";
+        screenFileUploadInput.accept = ".screen,.jsonc,application/json,text/plain";
+        screenFileUploadInput.multiple = true;
+        screenFileUploadTargetSource = "screens";
+        screenFileUploadTargetDir = target.path || "";
+        screenFileUploadInput.click();
+      });
+      addItem("Download Folder…", async () => {
+        downloadScreenManagerEntry(target, "screens");
+      });
+    } else {
+      addItem("Upload Here…", async () => {
+        if (!screenFileUploadInput) return;
+        screenFileUploadInput.value = "";
+        screenFileUploadInput.accept = ".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,image/*";
+        screenFileUploadInput.multiple = true;
+        screenFileUploadTargetSource = "images";
+        screenFileUploadTargetDir = "";
+        screenFileUploadInput.click();
+      });
+    }
+    addItem("Cancel", async () => {});
+  } else if (target.kind === "file") {
+    if (target.source === "screens") {
+      addItem("Open", async () => {
+        screenFileSelected = target;
+        await openSelectedScreenFile();
+      });
+    }
+    addItem("Download…", async () => {
+      downloadScreenManagerEntry(target, target.source || screenFileSource);
+    });
+    addItem("Rename", async () => {
+      screenFileSelected = target;
+      await renameSelectedScreenFile();
+    });
+    addItem("Duplicate", async () => {
+      screenFileSelected = target;
+      await duplicateSelectedScreenFile();
+    });
+    addItem("Delete", async () => {
+      screenFileSelected = target;
+      await deleteSelectedScreenFile();
+    });
+    addItem("Cancel", async () => {});
+  }
+
+  menu.style.left = `${Math.max(8, clientX)}px`;
+  menu.style.top = `${Math.max(8, clientY)}px`;
+  menu.classList.remove("is-hidden");
 };
 
 const navigateScreenFileLocation = async (source, dir) => {
@@ -2595,6 +2755,8 @@ const updateScreenFileNavButtons = () => {
 const showScreenFileDialog = async (mode) => {
   if (!openFileOverlay) return;
   if (mode === "saveAs") screenFileSource = "screens";
+  screenFileUploadTargetSource = screenFileSource;
+  screenFileUploadTargetDir = screenFileDir || "";
   setScreenFileDialogMode(mode);
   openFileOverlay.classList.remove("is-hidden");
   if (screenFileNameInput && mode === "saveAs") {
@@ -2717,10 +2879,24 @@ const createNewUnsavedScreen = () => {
   return true;
 };
 
-const downloadSelectedScreenFile = () => {
+const downloadScreenManagerEntry = (entry = screenFileSelected, source = screenFileSource) => {
   if (screenFileMode !== "open") return;
-  if (!screenFileSelected || screenFileSelected.kind !== "file") return;
-  const relPath = String(screenFileSelected.path || "").trim();
+  if (!entry) return;
+  if (source === "images") {
+    const filename = String(entry.name || "").trim();
+    if (!filename) return;
+    window.location.href = `/api/img-files/${encodeURIComponent(filename)}/download`;
+    return;
+  }
+  if (entry.kind === "dir") {
+    const dir = normalizeDirForUi(entry.path || "");
+    const url = dir
+      ? `/api/screens/folder/download?dir=${encodeURIComponent(dir)}`
+      : "/api/screens/folder/download";
+    window.location.href = url;
+    return;
+  }
+  const relPath = String(entry.path || "").trim();
   if (!relPath) return;
   window.location.href = `/api/screens/file/download?path=${encodeURIComponent(relPath)}`;
 };
@@ -2769,6 +2945,32 @@ const saveCurrentScreenAs = async () => {
   } catch (error) {
     setEditorStatusSafe(`Save failed: ${error.message}`);
   }
+};
+
+const uploadScreenManagerFiles = async (files, { source = screenFileSource, dir = screenFileDir } = {}) => {
+  const uploads = Array.from(files || []);
+  if (!uploads.length) return;
+  if (source === "images") {
+    setEditorStatusSafe(`Uploading ${uploads.length} image(s)…`);
+    for (const file of uploads) {
+      await uploadImageFile(file);
+    }
+    await loadImageFiles();
+    await navigateScreenFileLocation("images", "");
+    setEditorStatusSafe(`Uploaded ${uploads.length} image(s).`);
+    return;
+  }
+  const baseDir = normalizeDirForUi(dir);
+  setEditorStatusSafe(`Uploading ${uploads.length} screen file(s)…`);
+  for (const file of uploads) {
+    const raw = await file.text();
+    const filename = pathBasename(String(file?.name || "").trim());
+    if (!filename) continue;
+    const relPath = baseDir ? `${baseDir}/${filename}` : filename;
+    await saveScreenToPath(relPath, raw);
+  }
+  await navigateScreenFileLocation("screens", dir);
+  setEditorStatusSafe(`Uploaded ${uploads.length} screen file(s).`);
 };
 
 const renameSelectedScreenFile = async () => {
@@ -4174,6 +4376,8 @@ let imageLibraryContextMenuFile = "";
 let objectContextMenu = null;
 let objectContextMenuOpen = false;
 let objectContextMenuIndex = -1;
+let screenFileContextMenu = null;
+let screenFileContextMenuOpen = false;
 let textBindingModalKey = "";
 let textBindingModalObjectType = "text";
 let activeCompactTagBindingId = "";
@@ -12418,6 +12622,31 @@ function bindScreenManager() {
     });
   }
 
+  if (screenFileUploadBtn && screenFileUploadInput) {
+    screenFileUploadBtn.addEventListener("click", () => {
+      screenFileUploadInput.value = "";
+      screenFileUploadTargetSource = screenFileSource;
+      screenFileUploadTargetDir = screenFileDir;
+      screenFileUploadInput.click();
+    });
+    screenFileUploadInput.addEventListener("change", async () => {
+      const files = Array.from(screenFileUploadInput.files || []);
+      if (!files.length) return;
+      try {
+        await uploadScreenManagerFiles(files, {
+          source: screenFileUploadTargetSource,
+          dir: screenFileUploadTargetDir
+        });
+      } catch (error) {
+        setEditorStatusSafe(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        screenFileUploadInput.value = "";
+        screenFileUploadTargetSource = screenFileSource;
+        screenFileUploadTargetDir = screenFileDir;
+      }
+    });
+  }
+
   if (screenFileRenameBtn) {
     screenFileRenameBtn.addEventListener("click", async () => {
       await renameSelectedScreenFile();
@@ -12444,7 +12673,7 @@ function bindScreenManager() {
 
   if (screenFileDownloadBtn) {
     screenFileDownloadBtn.addEventListener("click", () => {
-      downloadSelectedScreenFile();
+      downloadScreenManagerEntry();
     });
   }
 

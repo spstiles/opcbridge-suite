@@ -95,6 +95,31 @@ const listAllScreens = async (screensRoot) => {
   return out;
 };
 
+const listScreensUnderDir = async (screensRoot, relDir = "") => {
+  await ensureDir(screensRoot);
+  const out = [];
+  const baseDir = relDir ? path.join(screensRoot, relDir) : screensRoot;
+  const walk = async (absDir, childRelDir) => {
+    const entries = await fs.promises.readdir(absDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry) continue;
+      if (entry.name.startsWith(".")) continue;
+      if (entry.isDirectory()) {
+        const nextRel = childRelDir ? `${childRelDir}/${entry.name}` : entry.name;
+        await walk(path.join(absDir, entry.name), nextRel);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!isScreenFile(entry.name)) continue;
+      const relPath = childRelDir ? `${childRelDir}/${entry.name}` : entry.name;
+      out.push(relPath);
+    }
+  };
+  await walk(baseDir, "");
+  out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  return out;
+};
+
 const buildBackupFilename = () => {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   return `opcbridge-hmi-screens-${ts}.zip`;
@@ -201,6 +226,49 @@ const createScreensRouter = ({ rootDir, legacyScreensDir, audit }) => {
 
       await archive.finalize();
     } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.get("/folder/download", async (req, res) => {
+    try {
+      await ensureInitialized();
+      const dir = normalizeRelDir(req.query?.dir);
+      if (dir == null) return res.status(400).json({ error: "Bad dir." });
+      const absDir = dir ? toAbs(dir) : screensRoot;
+      if (!absDir) return res.status(400).json({ error: "Bad dir." });
+      await fsp.access(absDir, fs.constants.R_OK);
+
+      let archiver = null;
+      try {
+        archiver = require("archiver");
+      } catch {
+        res.status(501).json({ error: "Folder download unavailable: missing optional dependency 'archiver'." });
+        return;
+      }
+
+      const filenameBase = dir ? path.basename(dir) : "screens";
+      const filename = `${filenameBase || "screens"}.zip`;
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename=\"${filename}\"`);
+
+      const archive = archiver("zip", { zlib: { level: 9 } });
+      archive.on("error", (err) => {
+        try {
+          res.status(500).end(String(err));
+        } catch {}
+      });
+      archive.pipe(res);
+
+      const files = await listScreensUnderDir(screensRoot, dir || "");
+      for (const relPath of files) {
+        const absPath = path.join(absDir, relPath);
+        archive.file(absPath, { name: relPath });
+      }
+
+      await archive.finalize();
+    } catch (err) {
+      if (String(err).includes("ENOENT")) return res.status(404).json({ error: "Folder not found." });
       res.status(500).json({ error: String(err) });
     }
   });

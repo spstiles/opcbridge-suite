@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260606-hmi-ui-v10" />
+  <link rel="stylesheet" href="css/main.css?v=20260606-hmi-ui-v11" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -1978,9 +1978,11 @@
                     <div class="screen-file-actions">
                       <button id="screenFileNewBtn" class="panel-btn" type="button">New</button>
                       <button id="screenFileOpenBtn" class="panel-btn" type="button">Open</button>
+                      <button id="screenFileUploadBtn" class="panel-btn" type="button">Upload…</button>
                       <button id="screenFileRenameBtn" class="panel-btn" type="button">Rename</button>
                       <button id="screenFileDuplicateBtn" class="panel-btn" type="button">Duplicate</button>
                       <button id="screenFileDeleteBtn" class="panel-btn" type="button">Delete</button>
+                      <input id="screenFileUploadInput" type="file" hidden />
                     </div>
                     <div class="screen-file-actions screen-file-actions-right">
                       <button id="screenFileRefreshBtn" class="panel-btn" type="button">Refresh</button>
@@ -2579,6 +2581,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260606-hmi-ui-v10"></script>
+	  <script src="js/hmi.js?v=20260606-hmi-ui-v11"></script>
 	</body>
 	</html>

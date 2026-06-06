@@ -1539,7 +1539,7 @@ body.editor-panel-hidden #editor-resizer {
 
 .hmi-context-menu {
     position: fixed;
-    z-index: 9999;
+    z-index: 10080;
     min-width: 220px;
     max-width: 360px;
     padding: 6px;

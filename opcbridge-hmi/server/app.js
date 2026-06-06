@@ -736,6 +736,21 @@ const createApp = () => {
     }
   });
 
+  app.get("/api/img-files/:name/download", async (req, res) => {
+    try {
+      const info = resolveImagePath(req.params.name);
+      if (!info) return res.status(400).json({ error: "Invalid image filename." });
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename=\"${info.filename}\"`);
+      fs.createReadStream(info.fullPath).pipe(res);
+    } catch (error) {
+      if (String(error).includes("ENOENT")) {
+        return res.status(404).json({ error: "Image not found." });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   // Streaming upload to avoid buffering large files in memory.
   app.post("/api/img-files/upload", async (req, res) => {
     try {
