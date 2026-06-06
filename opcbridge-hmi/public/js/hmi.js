@@ -2735,6 +2735,16 @@ const saveScreenToPath = async (relPath, raw) => {
   return await response.json();
 };
 
+const getCurrentScreenRawForSave = () => {
+  if (!jsoncEditor) return "";
+  if (currentTab === "jsonc") return jsoncEditor.value;
+  if (!currentScreenObj) return jsoncEditor.value;
+  const raw = JSON.stringify(currentScreenObj, null, 2);
+  jsoncEditor.value = raw;
+  jsonEditorSyncPending = false;
+  return raw;
+};
+
 const saveCurrentScreenAs = async () => {
   if (!jsoncEditor) return;
   const baseDir = normalizeDirForUi(screenFileDir);
@@ -2746,7 +2756,7 @@ const saveCurrentScreenAs = async () => {
   const filename = nameRaw;
   const relPath = baseDir ? `${baseDir}/${filename}` : filename;
   try {
-    const saved = await saveScreenToPath(relPath, jsoncEditor.value);
+    const saved = await saveScreenToPath(relPath, getCurrentScreenRawForSave());
     currentScreenPath = saved.path;
     currentScreenId = saved.ref;
     currentScreenFilename = pathBasename(currentScreenPath);
@@ -4655,6 +4665,9 @@ let isKeypadOpen = false;
 let keypadTarget = null;
 const undoStack = [];
 let historySuspended = false;
+let lastHistoryRecordedAt = 0;
+const HISTORY_COALESCE_MS = 750;
+const HISTORY_MAX_ENTRIES = 25;
 let clipboardObjects = [];
 let clipboardBounds = null;
 let lastMouseScreenPoint = null;
@@ -5083,11 +5096,14 @@ const cancelEditingGesture = () => {
 
 const recordHistory = () => {
   if (historySuspended || poseEditSession || !currentScreenObj) return;
+  const now = Date.now();
+  if (undoStack.length && now - lastHistoryRecordedAt < HISTORY_COALESCE_MS) return;
   const snapshot = JSON.stringify(currentScreenObj);
   const last = undoStack[undoStack.length - 1];
   if (snapshot === last) return;
   undoStack.push(snapshot);
-  if (undoStack.length > 100) {
+  lastHistoryRecordedAt = now;
+  if (undoStack.length > HISTORY_MAX_ENTRIES) {
     undoStack.shift();
   }
 };
@@ -11899,10 +11915,11 @@ const saveJsoncEditor = async () => {
     if (currentScreenObj && currentScreenId) {
       screenCache.set(currentScreenId, currentScreenObj);
     }
+    const rawToSave = getCurrentScreenRawForSave();
     const response = await fetch(`/api/screens/file?path=${encodeURIComponent(currentScreenPath)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ raw: jsoncEditor.value })
+      body: JSON.stringify({ raw: rawToSave })
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     if (editorStatus) editorStatus.textContent = "Saved.";
@@ -12893,6 +12910,7 @@ const loadJsonc = async () => {
       selectedIndices = [];
       groupEditStack.length = 0;
       undoStack.length = 0;
+      lastHistoryRecordedAt = 0;
       recordHistory();
       renderScreen();
       refreshAlarmsForScreenLoad();
@@ -12944,6 +12962,7 @@ const loadJsonc = async () => {
       selectedIndices = [];
       groupEditStack.length = 0;
       undoStack.length = 0;
+      lastHistoryRecordedAt = 0;
       recordHistory();
       renderScreen();
       refreshAlarmsForScreenLoad();
