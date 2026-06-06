@@ -2613,6 +2613,10 @@ const showScreenFileDialog = async (mode) => {
 
 const hideScreenFileDialog = () => {
   if (!openFileOverlay) return;
+  const activeEl = document.activeElement;
+  if (activeEl instanceof HTMLElement && openFileOverlay.contains(activeEl)) {
+    try { activeEl.blur(); } catch {}
+  }
   openFileOverlay.classList.add("is-hidden");
 };
 
