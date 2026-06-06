@@ -4716,6 +4716,73 @@ const measureTextBlock = (text, fontSize, isBold = false) => {
   return { lines, width, height, lineHeight, fontSize: size, ascent, descent, singleLineHeight };
 };
 
+const wrapTextToWidth = (text, maxWidth, fontSize, isBold = false) => {
+  const ctx = getTextMeasureCtx();
+  const size = Number(fontSize) || 16;
+  const lineHeight = size * TEXT_LINE_HEIGHT_FACTOR;
+  ctx.font = `${isBold ? "700 " : ""}${size}px Arial, sans-serif`;
+  const widthLimit = Math.max(1, Number(maxWidth) || 1);
+  const sourceLines = splitMultiline(String(text || ""));
+  const wrappedLines = [];
+
+  const pushWrappedWord = (word) => {
+    let remaining = String(word || "");
+    while (remaining) {
+      let slice = remaining;
+      while (slice.length > 1 && ctx.measureText(slice).width > widthLimit) {
+        slice = slice.slice(0, -1);
+      }
+      if (!slice) slice = remaining.charAt(0);
+      wrappedLines.push(slice);
+      remaining = remaining.slice(slice.length);
+    }
+  };
+
+  sourceLines.forEach((rawLine) => {
+    const line = String(rawLine || "");
+    if (!line.trim()) {
+      wrappedLines.push("");
+      return;
+    }
+    const words = line.trim().split(/\s+/).filter(Boolean);
+    let currentLine = "";
+    words.forEach((word) => {
+      const candidate = currentLine ? `${currentLine} ${word}` : word;
+      if (ctx.measureText(candidate).width <= widthLimit) {
+        currentLine = candidate;
+        return;
+      }
+      if (currentLine) {
+        wrappedLines.push(currentLine);
+        currentLine = "";
+      }
+      if (ctx.measureText(word).width <= widthLimit) {
+        currentLine = word;
+        return;
+      }
+      pushWrappedWord(word);
+    });
+    if (currentLine || !words.length) wrappedLines.push(currentLine);
+  });
+
+  const metrics = wrappedLines.map((line) => ctx.measureText(line || " "));
+  const widths = metrics.map((m) => m.width);
+  const width = widths.length ? Math.ceil(Math.max(...widths)) : 0;
+  const ascent = Math.max(
+    0,
+    ...metrics.map((m) => (Number.isFinite(m.actualBoundingBoxAscent) ? m.actualBoundingBoxAscent : size * 0.8))
+  );
+  const descent = Math.max(
+    0,
+    ...metrics.map((m) => (Number.isFinite(m.actualBoundingBoxDescent) ? m.actualBoundingBoxDescent : size * 0.2))
+  );
+  const singleLineHeight = Math.ceil(ascent + descent);
+  const height = wrappedLines.length <= 1
+    ? singleLineHeight
+    : Math.ceil(lineHeight * Math.max(1, wrappedLines.length));
+  return { lines: wrappedLines, width, height, lineHeight, fontSize: size, ascent, descent, singleLineHeight };
+};
+
 const evalQuadratic = (p0, p1, p2, t) => {
   const mt = 1 - t;
   return (mt * mt * p0) + (2 * mt * t * p1) + (t * t * p2);
@@ -7550,8 +7617,6 @@ const updateButtonLabelBindingProperty = (placeholderKey, patch, { clear = false
   if (textBindingModalObjectType === "button" && textBindingModalKey && !getTextPlaceholderKeys(obj.label || "").includes(textBindingModalKey)) {
     closeTextBindingModal();
   }
-  const autoPatch = autosizeButtonObject(obj);
-  if (autoPatch) Object.assign(obj, autoPatch);
   renderScreen();
   syncEditorFromScreen();
   setDirty(true);
@@ -9523,9 +9588,10 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     if (align === "center") label.setAttribute("text-anchor", "middle");
     if (align === "right") label.setAttribute("text-anchor", "end");
     let labelText = decodeNbspEntities(renderButtonLabelTemplate(obj, isEditMode));
-    const labelLines = splitMultiline(labelText);
-    if (labelLines.length > 1) {
-      const measured = measureTextBlock(labelText, fontSize, Boolean(obj.bold));
+    const horizontalPadding = 8;
+    const availableTextWidth = Math.max(1, w - (horizontalPadding * 2));
+    const measured = wrapTextToWidth(labelText, availableTextWidth, fontSize, Boolean(obj.bold));
+    if (measured.lines.length > 1) {
       label.setAttribute("dominant-baseline", "hanging");
       let yStart = vPad;
       if (valign === "middle") yStart = (h - measured.height) / 2;
@@ -9535,7 +9601,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       if (valign === "top") label.setAttribute("dominant-baseline", "hanging");
       if (valign === "middle") label.setAttribute("dominant-baseline", "middle");
       if (valign === "bottom") label.setAttribute("dominant-baseline", "text-after-edge");
-      label.textContent = labelText;
+      label.textContent = measured.lines[0] ?? "";
     }
     group.appendChild(label);
 
@@ -11084,18 +11150,6 @@ const autosizeTextObject = (obj) => {
   return {
     w: Math.max(10, metrics.width),
     h: Math.max(10, metrics.height)
-  };
-};
-
-const autosizeButtonObject = (obj) => {
-  if (!obj || obj.type !== "button") return null;
-  const label = decodeNbspEntities(renderButtonLabelTemplate(obj, true));
-  const metrics = measureTextBlock(label, obj.fontSize || 16, Boolean(obj.bold));
-  const width = metrics.width + 16;
-  const height = metrics.height + 16;
-  return {
-    w: Math.max(40, Math.round(width)),
-    h: Math.max(24, Math.round(height))
   };
 };
 
@@ -13813,7 +13867,6 @@ if (screenBorderColorTextInput) {
   }
 
   let textValueAutosizeSession = null;
-  let buttonLabelAutosizeSession = null;
 
 if (textValueInput) {
   textValueInput.addEventListener("focus", () => {
@@ -14089,30 +14142,6 @@ if (textPaddingInput) {
 }
 
 if (buttonLabelInput) {
-  buttonLabelInput.addEventListener("focus", () => {
-    const activeObjects = getActiveObjects();
-    const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-    if (!obj || obj.type !== "button") return;
-    buttonLabelAutosizeSession = { obj, value: buttonLabelInput.value };
-  });
-	    buttonLabelInput.addEventListener("blur", () => {
-	      if (!buttonLabelAutosizeSession) return;
-	      const { obj, value } = buttonLabelAutosizeSession;
-	      buttonLabelAutosizeSession = null;
-	      if (buttonLabelInput.value === value) return;
-	      const patch = autosizeButtonObject(obj);
-	      if (!patch) return;
-	      const currentW = Number(obj.w ?? NaN);
-	      const currentH = Number(obj.h ?? NaN);
-	      const nextW = Number.isFinite(currentW) ? Math.max(currentW, patch.w) : patch.w;
-	      const nextH = Number.isFinite(currentH) ? Math.max(currentH, patch.h) : patch.h;
-	      if (currentW === nextW && currentH === nextH) return;
-	      recordHistory();
-	      Object.assign(obj, { w: nextW, h: nextH });
-	      renderScreen();
-	      syncEditorFromScreen();
-	      setDirty(true);
-	    });
     buttonLabelInput.addEventListener("input", () => {
       updateButtonProperty({ label: buttonLabelInput.value });
   });
