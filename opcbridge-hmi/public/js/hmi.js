@@ -7285,6 +7285,25 @@ const setSelectValueSafe = (select, value) => {
   select.value = value;
 };
 
+const ensureCombinedTagSelectValue = (select, connectionId, tagName) => {
+  if (!select) return;
+  const conn = String(connectionId || "").trim();
+  const tag = String(tagName || "").trim();
+  const combined = conn && tag ? `${conn}::${tag}` : "";
+  if (!combined) {
+    setSelectValueSafe(select, "");
+    return;
+  }
+  const hasOption = Array.from(select.options || []).some((opt) => opt.value === combined);
+  if (!hasOption) {
+    const opt = document.createElement("option");
+    opt.value = combined;
+    opt.textContent = tag;
+    select.appendChild(opt);
+  }
+  setSelectValueSafe(select, combined);
+};
+
 const blurActiveFormControl = () => {
   const el = document.activeElement;
   if (!el) return;
@@ -7901,15 +7920,6 @@ const loadTags = async () => {
     const sortedAll = sortTagsForDisplay(rawTags);
     tagsAllCache = sortedAll;
     tagsCache = sortedAll;
-    populateTextBindingConnectionOptions();
-    populateTextBindingTagOptions();
-    refreshBarBindTagOptions();
-    refreshBarRangeTagOptions();
-    refreshNumberInputTagOptions();
-    refreshIndicatorTagOptions();
-    refreshVisibilityTagOptions();
-    refreshRectColorTagOptions();
-    refreshAutomationTagOptions();
     const filtered = applyTagsFilter(sortedAll);
     renderTagsList(filtered);
     if (Array.isArray(sortedAll)) {
@@ -7929,6 +7939,9 @@ const loadTags = async () => {
       if (!isEditMode) {
         renderScreen();
         if (currentPopupScreenId) openPopup(currentPopupScreenId);
+      } else if (selectedIndices.length === 1) {
+        syncPropertiesFromSelection();
+        updatePropertiesPanel();
       }
     }
     if (tagsStatus) {
@@ -7939,15 +7952,10 @@ const loadTags = async () => {
     if (tagsStatus) tagsStatus.textContent = `Failed to load tags: ${error.message}`;
     tagsCache = [];
     tagsAllCache = [];
-    populateTextBindingConnectionOptions();
-    populateTextBindingTagOptions();
-    refreshBarBindTagOptions();
-	    refreshBarRangeTagOptions();
-	    refreshNumberInputTagOptions();
-	    refreshIndicatorTagOptions();
-	    refreshVisibilityTagOptions();
-	    refreshRectColorTagOptions();
-	    refreshAutomationTagOptions();
+    if (isEditMode && selectedIndices.length === 1) {
+      syncPropertiesFromSelection();
+      updatePropertiesPanel();
+    }
       renderTagsList([]);
 	  }
 };
@@ -10513,8 +10521,7 @@ const syncPropertiesFromSelection = () => {
     if (buttonWriteTagSelect) {
       const connectionId = String(writeAction?.connection_id || "");
       const tagName = String(writeAction?.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(buttonWriteTagSelect, combined);
+      ensureCombinedTagSelectValue(buttonWriteTagSelect, connectionId, tagName);
     }
     if (buttonWriteOnValueInput) setInputValueSafe(buttonWriteOnValueInput, writeAction?.onValue ?? "1");
     if (buttonWriteOffValueInput) setInputValueSafe(buttonWriteOffValueInput, writeAction?.offValue ?? "0");
@@ -10530,8 +10537,7 @@ const syncPropertiesFromSelection = () => {
     if (numberInputTagSelect) {
       const connectionId = String(bind.connection_id || "");
       const tagName = String(bind.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(numberInputTagSelect, combined);
+      ensureCombinedTagSelectValue(numberInputTagSelect, connectionId, tagName);
     }
     const digitsValue = Number.isFinite(Number(bind.digits)) ? Number(bind.digits) : 7;
     setInputValueSafe(numberInputDigitsInput, digitsValue);
@@ -10631,8 +10637,7 @@ const syncPropertiesFromSelection = () => {
     if (indicatorTagSelect) {
       const connectionId = String(bind.connection_id || "");
       const tagName = String(bind.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(indicatorTagSelect, combined);
+      ensureCombinedTagSelectValue(indicatorTagSelect, connectionId, tagName);
     }
     if (indicatorStateModeSelect) indicatorStateModeSelect.value = obj.stateMode === "threshold" ? "threshold" : "equals";
     if (indicatorLabelOverlayInput) indicatorLabelOverlayInput.checked = Boolean(obj.labelOverlay);
@@ -10824,8 +10829,7 @@ const syncPropertiesFromSelection = () => {
 	    if (polygonFillAutoTagSelect) {
 	      const connectionId = String(fillAuto.connection_id || "");
 	      const tagName = String(fillAuto.tag || "");
-	      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-	      setSelectValueSafe(polygonFillAutoTagSelect, combined);
+	      ensureCombinedTagSelectValue(polygonFillAutoTagSelect, connectionId, tagName);
 	    }
 	    if (polygonFillAutoThresholdInput) setInputValueSafe(polygonFillAutoThresholdInput, fillAuto.threshold ?? "");
 	    if (polygonFillAutoMatchInput) setInputValueSafe(polygonFillAutoMatchInput, fillAuto.match ?? "");
@@ -10855,8 +10859,7 @@ const syncPropertiesFromSelection = () => {
 	    if (polygonStrokeAutoTagSelect) {
 	      const connectionId = String(strokeAuto.connection_id || "");
 	      const tagName = String(strokeAuto.tag || "");
-	      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-	      setSelectValueSafe(polygonStrokeAutoTagSelect, combined);
+	      ensureCombinedTagSelectValue(polygonStrokeAutoTagSelect, connectionId, tagName);
 	    }
 	    if (polygonStrokeAutoThresholdInput) setInputValueSafe(polygonStrokeAutoThresholdInput, strokeAuto.threshold ?? "");
 	    if (polygonStrokeAutoMatchInput) setInputValueSafe(polygonStrokeAutoMatchInput, strokeAuto.match ?? "");
@@ -10885,8 +10888,7 @@ const syncPropertiesFromSelection = () => {
     if (barMinTagSelect) {
       const connectionId = String(minBinding.connection_id || "");
       const tagName = String(minBinding.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(barMinTagSelect, combined);
+      ensureCombinedTagSelectValue(barMinTagSelect, connectionId, tagName);
     }
 
     const maxBinding = obj.maxBinding || {};
@@ -10900,8 +10902,7 @@ const syncPropertiesFromSelection = () => {
     if (barMaxTagSelect) {
       const connectionId = String(maxBinding.connection_id || "");
       const tagName = String(maxBinding.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(barMaxTagSelect, combined);
+      ensureCombinedTagSelectValue(barMaxTagSelect, connectionId, tagName);
     }
 
     const bind = obj.bindValue || {};
@@ -10909,8 +10910,7 @@ const syncPropertiesFromSelection = () => {
     if (barBindTagSelect) {
       const connectionId = String(bind.connection_id || "");
       const tagName = String(bind.tag || "");
-      const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-      setSelectValueSafe(barBindTagSelect, combined);
+      ensureCombinedTagSelectValue(barBindTagSelect, connectionId, tagName);
     }
     const digitsValue = Number.isFinite(Number(bind.digits)) ? Number(bind.digits) : 7;
     setInputValueSafe(barDigitsInput, digitsValue);
