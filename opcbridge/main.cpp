@@ -161,6 +161,7 @@ struct ConnectionConfig {
     std::string gateway;     // IP/host of PLC, ENxT, or Modbus TCP server
     std::string path;        // CIP path ("1,0") or Modbus unit/server ID
     std::string plc_type;    // "lgx", "mlgx", "plc5", "slc"
+    bool enabled = true;
     std::string polling_mode = "standard"; // "standard" or "time_sliced"
     std::string polling_pacing = "balanced"; // "gentle", "balanced", "fast"
     int poll_batch_size = 0; // 0 = auto
@@ -3664,6 +3665,7 @@ ConnectionConfig load_connection_config(const std::string &path) {
     c.id       = j.at("id").get<std::string>();
     c.driver   = j.value("driver", std::string("ab_eip"));
     c.gateway  = j.value("gateway", std::string{});
+    c.enabled  = j.value("enabled", true);
     std::string raw_path = j.value("path", std::string{});
     c.slot     = j.value("slot", 0);
     c.plc_type = j.value("plc_type", std::string("lgx"));
@@ -6117,6 +6119,12 @@ static bool load_single_driver_for_connection(DriverContext &out,
     if (!foundConn) {
         err = "Connection '" + connId + "' not found.";
         return false;
+    }
+
+    if (!conn_cfg.enabled) {
+        hasDriver = false;
+        err.clear();
+        return true;
     }
 
     const std::string canonicalJson = joinPath(tagDir, connId + ".json");
@@ -8993,6 +9001,10 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
     for (const auto &kv : connection_map) {
         const std::string &conn_id = kv.first;
         const ConnectionConfig &conn_cfg = kv.second;
+        if (!conn_cfg.enabled) {
+            std::cout << "[load] Info: connection '" << conn_id << "' is disabled. Skipping.\n";
+            continue;
+        }
         auto tags_it = tags_by_conn.find(conn_id);
         if (tags_it == tags_by_conn.end()) {
             std::cerr << "[load] Info: no tags defined for connection '"
@@ -13769,6 +13781,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 								<label id="ws-device-poll-budget-row">Time Budget (ms) <input id="ws-device-poll-budget" type="number" min="0" step="1" placeholder="Auto" /></label>
 								<label id="ws-device-poll-max-row">Max Reads / sec <input id="ws-device-poll-max" type="number" min="0" step="1" placeholder="Unlimited" /></label>
 								<label id="ws-device-poll-lanes-row">Poll Lanes <input id="ws-device-poll-lanes" type="number" min="1" max="8" step="1" placeholder="1" /></label>
+								<label class="ws-inline"><input id="ws-device-enabled" type="checkbox" /> Enabled</label>
 							</div>
 							<div class="small" id="ws-device-status"></div>
 							<div class="ws-modal-actions">
@@ -15426,6 +15439,7 @@ const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
     devicePollBudget: document.getElementById("ws-device-poll-budget"),
     devicePollMax: document.getElementById("ws-device-poll-max"),
     devicePollLanes: document.getElementById("ws-device-poll-lanes"),
+    deviceEnabled: document.getElementById("ws-device-enabled"),
     deviceStatus: document.getElementById("ws-device-status"),
     deviceCancelBtn: document.getElementById("ws-device-cancel-btn"),
     deviceSaveBtn: document.getElementById("ws-device-save-btn"),
@@ -15693,7 +15707,7 @@ const wsBuildNodeIndex = (root) => {
 	    conns.forEach((c) => {
 	        const cid = String(c?.id || "").trim();
 	        if (!cid) return;
-	        const node = { id: `ws:device:${encodeURIComponent(cid)}`, type: "device", label: cid, connection_id: cid, children: [] };
+	        const node = { id: `ws:device:${encodeURIComponent(cid)}`, type: "device", label: cid, connection_id: cid, enabled: c?.enabled !== false, children: [] };
         const tagList = tagsByConn.get(cid) || [];
         tagList.forEach((t) => {
             const name = String(t?.name || "").trim();
@@ -16168,6 +16182,10 @@ const wsApplyTagWordOrderUi = () => {
     if (el.devicePollBudget) el.devicePollBudget.value = obj?.poll_time_budget_ms == null ? "" : String(obj.poll_time_budget_ms);
     if (el.devicePollMax) el.devicePollMax.value = obj?.poll_max_reads_per_sec == null ? "" : String(obj.poll_max_reads_per_sec);
     if (el.devicePollLanes) el.devicePollLanes.value = obj?.poll_lanes == null ? "" : String(obj.poll_lanes);
+    if (el.deviceEnabled) {
+        el.deviceEnabled.checked = obj?.enabled !== false;
+        el.deviceEnabled.disabled = !wsIsEditable();
+    }
     if (el.deviceDriver) el.deviceDriver.onchange = wsApplyDeviceDriverUi;
     wsApplyDeviceDriverUi();
 
@@ -16449,6 +16467,7 @@ const wsApplyTagWordOrderUi = () => {
 	    } else if (node.type === "device") {
 	        addItem("Add Tag…", "add-tag");
 	        addItem("Properties…", "edit-device");
+	        addItem((node?.enabled === false) ? "Enable Device" : "Disable Device", (node?.enabled === false) ? "enable-device" : "disable-device");
 	        addItem("Delete Device", "delete-device");
 		    } else if (node.type === "alarm") {
 		        addItem("Properties…", "edit-alarm");
@@ -16510,6 +16529,8 @@ const wsApplyTagWordOrderUi = () => {
 	    if (action === "add-alarm") return wsAddAlarmFromNode(nodeId);
 		    if (action === "edit-device") return wsOpenDeviceModal({ mode: "edit", connection_id: node.connection_id });
 		    if (action === "edit-alarm") return wsOpenAlarmModal({ mode: "edit", alarm_id: node.alarm_id });
+		    if (action === "enable-device") return wsSetDeviceEnabled(node.connection_id, true);
+		    if (action === "disable-device") return wsSetDeviceEnabled(node.connection_id, false);
 		    if (action === "delete-device") return wsDeleteDevice(node.connection_id);
 		    if (action === "delete-alarm") return wsDeleteAlarm(node.alarm_id);
 		    if (action === "add-tag") return wsOpenTagModal({ mode: "new", connection_id: node.connection_id });
@@ -16665,7 +16686,7 @@ const wsRenderTree = () => {
 		    }
 
 	    if (node.type === "connectivity") {
-	        setHeaderSimple(["Name", "Driver", "PLC Type", "Gateway", "Path", "Slot"]);
+	        setHeaderSimple(["Name", "Enabled", "Driver", "PLC Type", "Gateway", "Path", "Slot"]);
 	        const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
 	        conns.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
 	        conns.forEach((c) => {
@@ -16673,6 +16694,7 @@ const wsRenderTree = () => {
 	            if (!cid) return;
 	            addRowSimple([
 	                cid,
+	                c?.enabled === false ? "no" : "yes",
 	                wsLabelForDriver(c?.driver),
 	                wsLabelForPlcType(c?.plc_type),
 	                String(c?.gateway || ""),
@@ -17052,6 +17074,7 @@ const wsRenderTree = () => {
     const pollBudget = wsPositiveIntOrZero(el.devicePollBudget?.value);
     const pollMax = wsPositiveIntOrZero(el.devicePollMax?.value);
     const pollLanes = wsPositiveIntOrZero(el.devicePollLanes?.value);
+    next.enabled = el.deviceEnabled ? Boolean(el.deviceEnabled.checked) : true;
     if (pollBatch > 0) next.poll_batch_size = pollBatch;
     else delete next.poll_batch_size;
     if (pollBudget > 0) next.poll_time_budget_ms = pollBudget;
@@ -17370,6 +17393,19 @@ const wsDeleteDevice = (connection_id) => {
     wsPendingDeletes.push({ path: `tags/${cid}.json` });
     wsSetDirty(true);
     wsSelectNode("ws:connectivity");
+};
+
+const wsSetDeviceEnabled = (connection_id, enabled) => {
+    const cid = String(connection_id || "").trim();
+    if (!cid) return;
+    const conns = Array.isArray(wsDraft.connections) ? wsDraft.connections.slice() : [];
+    const idx = conns.findIndex((c) => String(c?.id || "") === cid);
+    if (idx < 0) return;
+    conns[idx] = Object.assign({}, conns[idx], { enabled: Boolean(enabled) });
+    wsDraft.connections = conns;
+    wsSetDirty(true);
+    wsRenderTree();
+    wsRenderChildrenTable();
 };
 
 		const wsDeleteTag = (connection_id, name) => {

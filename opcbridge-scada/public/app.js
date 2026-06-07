@@ -495,6 +495,8 @@
   editDevPollMaxReadsPerSec: document.getElementById('editDevPollMaxReadsPerSec'),
   editDevPollLanesRow: document.getElementById('editDevPollLanesRow'),
   editDevPollLanes: document.getElementById('editDevPollLanes'),
+  editDevEnabledRow: document.getElementById('editDevEnabledRow'),
+  editDevEnabled: document.getElementById('editDevEnabled'),
   editDevMqttHostRow: document.getElementById('editDevMqttHostRow'),
   editDevMqttHost: document.getElementById('editDevMqttHost'),
   editDevMqttPortRow: document.getElementById('editDevMqttPortRow'),
@@ -11698,12 +11700,14 @@ async function loadConnectionsList() {
 async function getConnObjForPath(pathRel) {
   const key = String(pathRel || '').trim();
   if (!key) return null;
+  if (state.workspaceConnDirty?.has?.(key)) return state.workspaceConnDirty.get(key);
   if (state.connObjCache?.has(key)) return state.connObjCache.get(key);
 
   const raw = await apiGetText(`/api/opcbridge/config/file?path=${encodeURIComponent(key)}`);
   const obj = parseJsonc(raw);
+  if (state.workspaceConnDirty?.has?.(key)) return state.workspaceConnDirty.get(key);
   if (state.connObjCache) state.connObjCache.set(key, obj);
-  return obj;
+  return state.connObjCache?.get?.(key) || obj;
 }
 
 async function loadWorkspaceConnectionObjects() {
@@ -12206,6 +12210,12 @@ function showContextMenu(x, y, items) {
   closeContextMenu();
   const menu = document.createElement('div');
   menu.className = 'ctxmenu';
+  menu.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+  menu.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+  });
 
   items.forEach((it) => {
     if (it === 'sep') {
@@ -12218,11 +12228,13 @@ function showContextMenu(x, y, items) {
     btn.type = 'button';
     btn.className = 'item';
     btn.textContent = it.label;
-    btn.addEventListener('click', (e) => {
+    const invoke = (e) => {
       e.preventDefault();
+      e.stopPropagation();
       closeContextMenu();
       it.onClick?.();
-    });
+    };
+    btn.addEventListener('click', invoke);
     menu.appendChild(btn);
   });
 
@@ -12811,6 +12823,7 @@ function openWorkspaceItemModal(node) {
         if (els.editDevPollTimeBudgetMs) els.editDevPollTimeBudgetMs.value = obj?.poll_time_budget_ms == null ? '' : String(obj.poll_time_budget_ms);
         if (els.editDevPollMaxReadsPerSec) els.editDevPollMaxReadsPerSec.value = obj?.poll_max_reads_per_sec == null ? '' : String(obj.poll_max_reads_per_sec);
         if (els.editDevPollLanes) els.editDevPollLanes.value = obj?.poll_lanes == null ? '1' : String(obj.poll_lanes);
+        if (els.editDevEnabled) els.editDevEnabled.checked = obj?.enabled !== false;
         const mqtt = mqttSettingsFromConnection(obj);
         if (els.editDevMqttHost) els.editDevMqttHost.value = mqtt.host;
         if (els.editDevMqttPort) els.editDevMqttPort.value = mqtt.port ? String(mqtt.port) : (mqtt.use_tls ? '8883' : '1883');
@@ -13659,6 +13672,7 @@ async function saveEditedDeviceFromModal() {
           pollLanes: readOptionalPositiveInt(els.editDevPollLanes)
         }
       );
+    obj.enabled = Boolean(els.editDevEnabled?.checked);
   } catch (err) {
     setEditDevStatus(err.message || String(err));
     return;
@@ -13957,6 +13971,30 @@ async function deleteMqttTopicFromWorkspace(node) {
   renderWorkspaceSaveBar();
   saveWorkspaceDraft();
   renderWorkspaceTree();
+}
+
+function setWorkspaceDeviceEnabled(connectionId, relPath, enabled) {
+  if (!canEditConfig()) {
+    window.alert('Login required to edit devices.');
+    return;
+  }
+  const path = String(relPath || '').trim();
+  if (!path) return;
+  const currentConnObj = state.connObjCache?.get?.(path);
+  if (!currentConnObj) {
+    window.alert(`Missing device config for '${connectionId}'.`);
+    return;
+  }
+  const connObj = { ...currentConnObj, enabled: Boolean(enabled) };
+  if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
+  state.workspaceConnDirty.set(path, connObj);
+  if (state.connObjCache) state.connObjCache.set(path, connObj);
+  setWorkspaceSaveStatus(`Device '${connectionId}' ${connObj.enabled ? 'enabled' : 'disabled'} locally. Click Save or Apply Polling Changes.`);
+  renderWorkspaceSaveBar();
+  saveWorkspaceDraft();
+  renderWorkspaceTree();
+  const selected = state.selectedNodeId ? findWorkspaceNodeById(state.workspaceTreeRoot, state.selectedNodeId) : null;
+  if (selected) renderWorkspaceDetails(selected);
 }
 
 function wireWorkspaceItemModalUi() {
@@ -18945,7 +18983,7 @@ function buildTree() {
       id: deviceId,
       type: 'device',
       label: connectionId,
-      meta: { path: pathRel, connection_id: connectionId, driver: String(connObj?.driver || '') },
+      meta: { path: pathRel, connection_id: connectionId, driver: String(connObj?.driver || ''), enabled: connObj?.enabled !== false },
       children: tagChildren
     };
     connectivity.children.push(deviceNode);
@@ -19185,6 +19223,7 @@ function renderTreeNode(node, container) {
         items.push({ label: 'Download CSV', onClick: () => downloadDeviceTagsCsv(cid) });
         items.push({ label: 'Upload CSV…', onClick: () => importTagsCsvIntoWorkspace(cid).catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
       }
+      items.push({ label: node.meta?.enabled === false ? 'Enable Device' : 'Disable Device', onClick: () => setWorkspaceDeviceEnabled(cid, relPath, node.meta?.enabled === false) });
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Delete Device…', onClick: () => deleteDeviceById(cid, relPath) });
       items.push('sep');
@@ -19243,6 +19282,7 @@ function renderWorkspaceDetails(node) {
   addCol('name', 'Name', true);
   if (showDeviceCols) {
     addCol('description', 'Description', true);
+    addCol('enabled', 'Enabled', true);
     addCol('driver', 'Driver', true);
     addCol('gateway', 'Gateway', true);
     addCol('path', 'Path', true);
@@ -19373,6 +19413,7 @@ function renderWorkspaceDetails(node) {
     const obj = pathRel ? state.connObjCache?.get?.(pathRel) : null;
     if (!obj) return '';
     if (k === 'description') return String(obj?.description || '');
+    if (k === 'enabled') return obj?.enabled === false ? 0 : 1;
     if (k === 'driver') return labelForDriver(obj?.driver);
     if (isMqttConnectionObj(obj)) {
       const mqtt = mqttSettingsFromConnection(obj);
@@ -19602,6 +19643,7 @@ function renderWorkspaceDetails(node) {
     let tDesc = null;
 
     let tDriver = null;
+    let tEnabled = null;
     let tGateway = null;
     let tPath = null;
     let tSlot = null;
@@ -19610,6 +19652,7 @@ function renderWorkspaceDetails(node) {
     if (showDeviceCols) {
       // Only device rows get values; other child rows get blanks.
       tDesc = addCell(tr, '', true);
+      tEnabled = addCell(tr, '', true);
       tDriver = addCell(tr, '', true);
       tGateway = addCell(tr, '', true);
       tPath = addCell(tr, '', true);
@@ -19626,6 +19669,7 @@ function renderWorkspaceDetails(node) {
 
             const desc = String(obj?.description || '').trim();
             const driver = String(obj?.driver || '').trim();
+            const enabled = obj?.enabled === false ? 'no' : 'yes';
             const mqtt = mqttSettingsFromConnection(obj);
             const isMqttRow = isMqttConnectionObj(obj);
             const gateway = isMqttRow ? mqtt.host : String(obj?.gateway || '').trim();
@@ -19634,19 +19678,21 @@ function renderWorkspaceDetails(node) {
             const plcType = isMqttRow ? 'MQTT' : String(obj?.plc_type || obj?.plcType || '').trim();
 
             tDesc.textContent = desc;
+            tEnabled.textContent = enabled;
             tDriver.textContent = labelForDriver(driver);
             tGateway.textContent = gateway;
             tPath.textContent = pathVal;
             tSlot.textContent = slotVal;
             tPlc.textContent = isMqttRow ? plcType : labelForPlcType(plcType);
 
-            [tDesc, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+            [tDesc, tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
               if (!td) return;
-              td.classList.toggle('audit-cell-dim', !String(td.textContent || '').trim());
+              const text = String(td.textContent || '').trim();
+              td.classList.toggle('audit-cell-dim', !text);
             });
           }).catch(() => {
             if (seq !== state.workspaceRenderSeq) return;
-            [tDesc, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+            [tDesc, tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
               if (!td?.isConnected) return;
               td.textContent = '';
               td.classList.add('audit-cell-dim');
@@ -19655,12 +19701,13 @@ function renderWorkspaceDetails(node) {
         }
       } else if (type === 'mqtt_broker') {
         tDesc.textContent = 'MQTT broker';
+        tEnabled.textContent = 'yes';
         tDriver.textContent = 'MQTT Broker';
         tGateway.textContent = String(c?.meta?.host || '').trim();
         tPath.textContent = '';
         tSlot.textContent = '';
         tPlc.textContent = '';
-        [tDesc, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+        [tDesc, tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
           if (!td) return;
           td.classList.toggle('audit-cell-dim', !String(td.textContent || '').trim());
         });
