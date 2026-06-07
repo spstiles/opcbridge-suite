@@ -507,7 +507,21 @@ const createApp = () => {
       const opcbridge = parsed?.opcbridge || {};
       const host = opcbridge.host || "127.0.0.1";
       const port = Number(opcbridge.httpPort) || 8080;
-      const response = await fetch(`http://${host}:${port}/tags`, { headers: { Accept: "application/json" } });
+      const upstreamUrl = new URL(`http://${host}:${port}/tags`);
+      Object.entries(req.query || {}).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          value.forEach((item) => {
+            if (item !== undefined && item !== null && String(item) !== "") {
+              upstreamUrl.searchParams.append(key, String(item));
+            }
+          });
+          return;
+        }
+        if (value !== undefined && value !== null && String(value) !== "") {
+          upstreamUrl.searchParams.set(key, String(value));
+        }
+      });
+      const response = await fetch(String(upstreamUrl), { headers: { Accept: "application/json" } });
       if (!response.ok) {
         return res.status(502).json({ error: `OPCBridge HTTP ${response.status}` });
       }
