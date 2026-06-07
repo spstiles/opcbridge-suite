@@ -5,6 +5,9 @@ const editorPaneTitlebar = document.getElementById("editorPaneTitlebar");
 const editorPaneDockFloatBtn = document.getElementById("editorPaneDockFloatBtn");
 const editorPaneDockLeftBtn = document.getElementById("editorPaneDockLeftBtn");
 const editorPaneDockRightBtn = document.getElementById("editorPaneDockRightBtn");
+const editorZoomOutBtn = document.getElementById("editorZoomOutBtn");
+const editorZoomResetBtn = document.getElementById("editorZoomResetBtn");
+const editorZoomInBtn = document.getElementById("editorZoomInBtn");
 const automationLaunchRow = document.getElementById("automationLaunchRow");
 const automationLaunchBtn = document.getElementById("automationLaunchBtn");
 const automationPanel = document.getElementById("automationPanel");
@@ -42,6 +45,8 @@ const leftToolbar = document.getElementById("leftToolbar");
 const leftSelectToolBtn = document.getElementById("leftSelectToolBtn");
 const leftLineToolBtn = document.getElementById("leftLineToolBtn");
 const leftRectToolBtn = document.getElementById("leftRectToolBtn");
+const leftPolygonToolBtn = document.getElementById("leftPolygonToolBtn");
+const leftSplineToolBtn = document.getElementById("leftSplineToolBtn");
 const leftViewportToolBtn = document.getElementById("leftViewportToolBtn");
 const leftCircleToolBtn = document.getElementById("leftCircleToolBtn");
 const leftCircleFlyout = document.getElementById("leftCircleFlyout");
@@ -64,6 +69,7 @@ const viewportToolBtn = document.getElementById("viewportToolBtn");
 const rectToolBtn = document.getElementById("rectToolBtn");
 const polylineToolBtn = document.getElementById("polylineToolBtn");
 const polygonToolBtn = document.getElementById("polygonToolBtn");
+const splineToolBtn = document.getElementById("splineToolBtn");
 const regularPolygonToolBtn = document.getElementById("regularPolygonToolBtn");
 const stretchedPolygonToolBtn = document.getElementById("stretchedPolygonToolBtn");
 const barToolBtn = document.getElementById("barToolBtn");
@@ -2011,6 +2017,7 @@ const getPropertiesPaneTitle = (obj) => {
     case "line": return "Line Properties";
     case "curve": return "Curve Properties";
     case "polyline": return "Polyline Properties";
+    case "spline": return "Spline Properties";
     case "polygon": return "Polygon Properties";
     case "bar": return "Bar Properties";
     case "number-input": return "Number Input Properties";
@@ -2969,6 +2976,7 @@ const uploadScreenManagerFiles = async (files, { source = screenFileSource, dir 
     const relPath = baseDir ? `${baseDir}/${filename}` : filename;
     await saveScreenToPath(relPath, raw);
   }
+  await refreshScreensList();
   await navigateScreenFileLocation("screens", dir);
   setEditorStatusSafe(`Uploaded ${uploads.length} screen file(s).`);
 };
@@ -3023,6 +3031,7 @@ const renameSelectedScreenFile = async () => {
       if (screenTitle) screenTitle.textContent = currentScreenId || "Untitled";
       if (editorFilename) editorFilename.textContent = currentScreenFilename;
     }
+    await refreshScreensList();
     await navigateScreenFileLocation("screens", screenFileDir);
     screenFileSelected = { kind: "file", name: pathBasename(saved.path), path: saved.path, ref: saved.ref };
     if (screenFileNameInput) screenFileNameInput.value = pathBasename(saved.path);
@@ -3083,6 +3092,7 @@ const duplicateSelectedScreenFile = async () => {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const saved = await response.json();
+    await refreshScreensList();
     await navigateScreenFileLocation("screens", screenFileDir);
     screenFileSelected = { kind: "file", name: pathBasename(saved.path), path: saved.path, ref: saved.ref };
     if (screenFileNameInput) screenFileNameInput.value = pathBasename(saved.path);
@@ -3129,6 +3139,7 @@ const deleteSelectedScreenFile = async () => {
       if (editorFilename) editorFilename.textContent = currentScreenFilename;
       loadJsonc();
     }
+    await refreshScreensList();
     screenFileSelected = null;
     if (screenFileNameInput) screenFileNameInput.value = "";
     await navigateScreenFileLocation("screens", screenFileDir);
@@ -3501,9 +3512,11 @@ const ellipseStrokeSwatchBtn = document.getElementById("ellipseStrokeSwatchBtn")
 const ellipseStrokeWidthRow = document.getElementById("ellipseStrokeWidthRow");
 const ellipseStrokeWidthInput = document.getElementById("ellipseStrokeWidth");
 const circleProps = document.getElementById("circleProps");
-const circleCxInput = document.getElementById("circleCx");
-const circleCyInput = document.getElementById("circleCy");
-const circleRInput = document.getElementById("circleR");
+const circleXInput = document.getElementById("circleX");
+const circleYInput = document.getElementById("circleY");
+const circleWInput = document.getElementById("circleW");
+const circleHInput = document.getElementById("circleH");
+const circleDiameterInput = document.getElementById("circleDiameter");
 const circleShadowInput = document.getElementById("circleShadow");
 const circleBorderEnabledInput = document.getElementById("circleBorderEnabled");
 const circleFillInput = document.getElementById("circleFill");
@@ -3545,6 +3558,12 @@ const polylineStrokeTextInput = document.getElementById("polylineStrokeText");
 const polylineStrokeSwatches = document.getElementById("polylineStrokeSwatches");
 const polylineStrokeSwatchBtn = document.getElementById("polylineStrokeSwatchBtn");
 const polylineStrokeWidthInput = document.getElementById("polylineStrokeWidth");
+const splineProps = document.getElementById("splineProps");
+const splineStrokeInput = document.getElementById("splineStroke");
+const splineStrokeTextInput = document.getElementById("splineStrokeText");
+const splineStrokeSwatches = document.getElementById("splineStrokeSwatches");
+const splineStrokeSwatchBtn = document.getElementById("splineStrokeSwatchBtn");
+const splineStrokeWidthInput = document.getElementById("splineStrokeWidth");
 const polygonProps = document.getElementById("polygonProps");
 const polygonPointsInput = document.getElementById("polygonPoints");
 const polygonFillInput = document.getElementById("polygonFill");
@@ -4318,6 +4337,30 @@ let selectedIndices = [];
 let lastSelectionSignature = "";
 let selectionLayer = null;
 let resizeLayer = null;
+let editorScreenZoom = 1;
+
+const MIN_EDITOR_ZOOM = 0.25;
+const MAX_EDITOR_ZOOM = 4;
+const EDITOR_ZOOM_STEP = 0.1;
+
+const normalizeEditorZoom = (value) => {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return 1;
+  return Math.min(MAX_EDITOR_ZOOM, Math.max(MIN_EDITOR_ZOOM, Math.round(next * 100) / 100));
+};
+
+const updateEditorZoomUi = () => {
+  if (editorZoomResetBtn) {
+    editorZoomResetBtn.textContent = `${Math.round(editorScreenZoom * 100)}%`;
+  }
+};
+
+const applyEditorZoom = (nextZoom) => {
+  editorScreenZoom = normalizeEditorZoom(nextZoom);
+  document.documentElement.style.setProperty("--editor-screen-zoom", String(editorScreenZoom));
+  updateEditorZoomUi();
+  applyScale();
+};
 let selectionBox = null;
 let isSelecting = false;
 let selectionStart = null;
@@ -4418,6 +4461,9 @@ let curveDraftControl = null;
 let isDrawingPolyline = false;
 let polylineDraft = null;
 let polylineDraftPoints = [];
+let isDrawingSpline = false;
+let splineDraft = null;
+let splineDraftPoints = [];
 let isDrawingPolygon = false;
 let polygonDraft = null;
 let polygonDraftPoints = [];
@@ -5860,7 +5906,7 @@ const translateObjectForExport = (obj, dx, dy) => {
     obj.y2 = Number(obj.y2 ?? 0) + dy;
     return;
   }
-  if (obj.type === "polyline" || obj.type === "polygon") {
+  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
     const points = Array.isArray(obj.points) ? obj.points : [];
     obj.points = points.map((pt) => ({
       x: Number(pt?.x ?? 0) + dx,
@@ -6298,7 +6344,7 @@ const applyGroupColorOverridesToObject = (sourceObj, overrides) => {
     delete obj.fillAutomation;
   }
   if (overrides.lineColor) {
-    if (["rect", "alarms-panel", "ellipse", "circle", "line", "curve", "polyline", "polygon", "button", "indicator"].includes(type) || hasStrokeProp) {
+    if (["rect", "alarms-panel", "ellipse", "circle", "line", "curve", "polyline", "spline", "polygon", "button", "indicator"].includes(type) || hasStrokeProp) {
       obj.stroke = overrides.lineColor;
       delete obj.strokeAutomation;
     }
@@ -6679,7 +6725,7 @@ const getObjectBounds = (obj) => {
     const minY = Math.min(y1, y2);
     return { x: minX, y: minY, width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) };
   }
-  if (obj.type === "curve") {
+	  if (obj.type === "curve") {
     const x1 = Number(obj.x1 ?? 0);
     const y1 = Number(obj.y1 ?? 0);
     const x2 = Number(obj.x2 ?? 0);
@@ -6692,8 +6738,8 @@ const getObjectBounds = (obj) => {
     const pad = strokeWidth / 2;
     return { x: bx.min - pad, y: by.min - pad, width: (bx.max - bx.min) + pad * 2, height: (by.max - by.min) + pad * 2 };
   }
-  if (obj.type === "polyline" || obj.type === "polygon") {
-    const points = Array.isArray(obj.points) ? obj.points : [];
+  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+    const points = obj.type === "spline" ? getSplineSamplePoints(obj.points) : (Array.isArray(obj.points) ? obj.points : []);
     if (!points.length) return { x: 0, y: 0, width: 0, height: 0 };
     const xs = points.map((p) => Number(p?.x ?? 0));
     const ys = points.map((p) => Number(p?.y ?? 0));
@@ -6701,7 +6747,7 @@ const getObjectBounds = (obj) => {
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
-    const strokeWidth = Math.max(0, Number(obj.strokeWidth ?? 1));
+    const strokeWidth = Math.max(0, Number(obj.strokeWidth ?? (obj.type === "spline" ? 2 : 1)));
     const pad = strokeWidth / 2;
     return { x: minX - pad, y: minY - pad, width: (maxX - minX) + pad * 2, height: (maxY - minY) + pad * 2 };
   }
@@ -6801,7 +6847,7 @@ const translateObject = (obj, dx, dy) => {
     obj.y = Number(obj.y ?? 0) + dy;
     return;
   }
-  if (obj.type === "polyline" || obj.type === "polygon") {
+  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
     if (!Array.isArray(obj.points)) return;
     obj.points = obj.points.map((pt) => ({
       x: Number(pt?.x ?? 0) + dx,
@@ -7003,7 +7049,7 @@ const flipObjectInBox = (obj, axis, box) => {
     return;
   }
 
-  if (obj.type === "polyline" || obj.type === "polygon") {
+  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
     if (!Array.isArray(obj.points)) return;
     obj.points = obj.points.map((pt) => ({
       x: axis === "horizontal" ? 2 * centerX - Number(pt?.x ?? 0) : Number(pt?.x ?? 0),
@@ -8531,14 +8577,17 @@ const renderLibraryImages = () => {
 const applyScale = () => {
   if (!screen || !screenWrapper) return;
   const { width, height } = getScreenSize();
-  screen.style.width = `${width}px`;
-  screen.style.height = `${height}px`;
   lastScreenSize = { width, height };
 
   if (isEditMode) {
+    screen.style.width = `${Math.round(width * editorScreenZoom)}px`;
+    screen.style.height = `${Math.round(height * editorScreenZoom)}px`;
     screen.style.transform = "none";
     return;
   }
+
+  screen.style.width = `${width}px`;
+  screen.style.height = `${height}px`;
 
   const bounds = screenWrapper.getBoundingClientRect();
   if (!bounds.width || !bounds.height) {
@@ -9557,6 +9606,40 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     containerParent.appendChild(el);
     return;
   }
+  if (obj.type === "spline") {
+    const points = Array.isArray(obj.points) ? obj.points : [];
+    const samplePoints = getSplineSamplePoints(points);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    samplePoints.forEach((pt) => {
+      const x = Number(pt?.x ?? 0);
+      const y = Number(pt?.y ?? 0);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    });
+    const containerParent = hasRotation
+      ? (() => {
+          const cx = Number.isFinite(minX) ? (minX + maxX) / 2 : 0;
+          const cy = Number.isFinite(minY) ? (minY + maxY) / 2 : 0;
+          const wrapper = document.createElementNS(ns, "g");
+          wrapper.setAttribute("transform", `rotate(${rotation} ${cx} ${cy})`);
+          parent.appendChild(wrapper);
+          return wrapper;
+        })()
+      : parent;
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", getSplinePathData(points));
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", obj.stroke || "#ffffff");
+    path.setAttribute("stroke-width", obj.strokeWidth ?? 2);
+    path.setAttribute("vector-effect", "non-scaling-stroke");
+    containerParent.appendChild(path);
+    return;
+  }
   if (obj.type === "polygon") {
     const points = Array.isArray(obj.points) ? obj.points : [];
     let minX = Infinity;
@@ -9886,6 +9969,7 @@ const SHARED_TOP_LEVEL_RENDER_TYPES = new Set([
   "line",
   "curve",
   "polyline",
+  "spline",
   "polygon",
   "bar",
   "text",
@@ -11004,9 +11088,12 @@ const syncPropertiesFromSelection = () => {
     if (ellipseStrokeWidthInput) ellipseStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
   }
   if (obj.type === "circle") {
-    if (circleCxInput) circleCxInput.value = Number(obj.cx) || 0;
-    if (circleCyInput) circleCyInput.value = Number(obj.cy) || 0;
-    if (circleRInput) circleRInput.value = Number(obj.r) || 40;
+    const { x, y, diameter } = getCircleFrame(obj);
+    if (circleXInput) circleXInput.value = Math.round(x);
+    if (circleYInput) circleYInput.value = Math.round(y);
+    if (circleWInput) circleWInput.value = Math.round(diameter);
+    if (circleHInput) circleHInput.value = Math.round(diameter);
+    if (circleDiameterInput) circleDiameterInput.value = Math.round(diameter);
     if (circleShadowInput) circleShadowInput.checked = Boolean(obj.shadow);
     if (circleBorderEnabledInput) {
       const hasStroke = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
@@ -11050,6 +11137,12 @@ const syncPropertiesFromSelection = () => {
 	    if (polylineStrokeInput) polylineStrokeInput.value = strokeValue;
 	    if (polylineStrokeTextInput) polylineStrokeTextInput.value = strokeValue;
 	    if (polylineStrokeWidthInput) polylineStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
+	  }
+	  if (obj.type === "spline") {
+	    const strokeValue = (!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke;
+	    if (splineStrokeInput) splineStrokeInput.value = strokeValue;
+	    if (splineStrokeTextInput) splineStrokeTextInput.value = strokeValue;
+	    if (splineStrokeWidthInput) splineStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
 	  }
 	  if (obj.type === "polygon") {
 	    const fillValue = obj.fill || "#3a3f4b";
@@ -11251,12 +11344,13 @@ const updatePropertiesPanel = () => {
   const showLine = Boolean(obj && obj.type === "line");
   const showCurve = Boolean(obj && obj.type === "curve");
   const showPolyline = Boolean(obj && obj.type === "polyline");
+  const showSpline = Boolean(obj && obj.type === "spline");
   const showPolygon = Boolean(obj && obj.type === "polygon");
   const showBar = Boolean(obj && obj.type === "bar");
   const showNumberInput = Boolean(obj && obj.type === "number-input");
   const showIndicator = Boolean(obj && obj.type === "indicator");
   const showAutomationLaunch = Boolean(obj && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle);
-  if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showPolygon || showBar || showNumberInput || showIndicator);
+  if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showSpline || showPolygon || showBar || showNumberInput || showIndicator);
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
   if (groupProps) groupProps.classList.toggle("is-hidden", !showGroup);
@@ -11269,6 +11363,7 @@ const updatePropertiesPanel = () => {
   if (lineProps) lineProps.classList.toggle("is-hidden", !showLine);
   if (curveProps) curveProps.classList.toggle("is-hidden", !showCurve);
   if (polylineProps) polylineProps.classList.toggle("is-hidden", !showPolyline);
+  if (splineProps) splineProps.classList.toggle("is-hidden", !showSpline);
   if (polygonProps) polygonProps.classList.toggle("is-hidden", !showPolygon);
   if (barProps) barProps.classList.toggle("is-hidden", !showBar);
   if (automationLaunchRow) automationLaunchRow.classList.toggle("is-hidden", !showAutomationLaunch);
@@ -11482,6 +11577,24 @@ const updateEllipseProperty = (patch) => {
   setDirty(true);
 };
 
+const getCircleFrame = (obj) => {
+  const radius = Math.max(0, Number(obj?.r ?? 0));
+  const diameter = radius * 2;
+  const x = Number(obj?.cx ?? 0) - radius;
+  const y = Number(obj?.cy ?? 0) - radius;
+  return { x, y, diameter, radius };
+};
+
+const getCirclePatchFromFrame = (x, y, diameter) => {
+  const nextDiameter = Math.max(1, Number(diameter ?? 1));
+  const radius = nextDiameter / 2;
+  return {
+    cx: Number(x ?? 0) + radius,
+    cy: Number(y ?? 0) + radius,
+    r: radius
+  };
+};
+
 const updateCircleProperty = (patch) => {
   const activeObjects = getActiveObjects();
   if (!activeObjects || !Array.isArray(activeObjects)) return;
@@ -11531,6 +11644,20 @@ const updatePolylineProperty = (patch) => {
   const index = selectedIndices[0];
   const obj = activeObjects[index];
   if (!obj || obj.type !== "polyline") return;
+  recordHistory();
+  Object.assign(obj, patch);
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+};
+
+const updateSplineProperty = (patch) => {
+  const activeObjects = getActiveObjects();
+  if (!activeObjects || !Array.isArray(activeObjects)) return;
+  if (selectedIndices.length !== 1) return;
+  const index = selectedIndices[0];
+  const obj = activeObjects[index];
+  if (!obj || obj.type !== "spline") return;
   recordHistory();
   Object.assign(obj, patch);
   renderScreen();
@@ -12002,6 +12129,7 @@ const closeSwatches = () => {
   if (lineStrokeSwatches) lineStrokeSwatches.classList.remove("is-open");
   if (curveStrokeSwatches) curveStrokeSwatches.classList.remove("is-open");
   if (polylineStrokeSwatches) polylineStrokeSwatches.classList.remove("is-open");
+  if (splineStrokeSwatches) splineStrokeSwatches.classList.remove("is-open");
   if (polygonFillSwatches) polygonFillSwatches.classList.remove("is-open");
   if (polygonStrokeSwatches) polygonStrokeSwatches.classList.remove("is-open");
   if (barFillSwatches) barFillSwatches.classList.remove("is-open");
@@ -12236,7 +12364,13 @@ async function refreshScreensList() {
     const preferred = (data.screens || []).find((s) => s.ref === currentScreenId) || (data.screens || [])[0];
     if (preferred) {
       screenList.value = preferred.ref;
-      applyScreenSelection(preferred.ref, preferred.path);
+      const sameScreenLoaded =
+        currentScreenObj &&
+        String(currentScreenId || "").trim() === String(preferred.ref || "").trim() &&
+        String(currentScreenPath || "").trim() === String(preferred.path || "").trim();
+      if (!sameScreenLoaded) {
+        applyScreenSelection(preferred.ref, preferred.path);
+      }
     } else {
       if (jsoncEditor) jsoncEditor.value = "";
       if (editorStatus) editorStatus.textContent = "No screens found.";
@@ -13049,7 +13183,7 @@ window.addEventListener("keydown", (evt) => {
 	      obj.y2 = snapValue(Math.round((obj.y2 ?? 0) + delta.y));
 	      return;
 	    }
-	    if (obj.type === "polyline" || obj.type === "polygon") {
+	    if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
 	      const points = Array.isArray(obj.points) ? obj.points : [];
 	      obj.points = points.map((pt) => ({
 	        x: snapValue(Math.round(Number(pt?.x ?? 0) + delta.x)),
@@ -15310,24 +15444,55 @@ bindAlarmsPanelColor(alarmsPanelStripeActiveAckedInput, alarmsPanelStripeActiveA
 bindAlarmsPanelColor(alarmsPanelStripeReturnedInput, alarmsPanelStripeReturnedTextInput, "stripeReturned", "#6b7280");
 bindAlarmsPanelColor(alarmsPanelStripeBadQualityInput, alarmsPanelStripeBadQualityTextInput, "stripeBadQuality", "#be185d");
 
-if (circleCxInput) {
-  circleCxInput.addEventListener("change", () => {
-    const value = Number(circleCxInput.value);
-    if (Number.isFinite(value)) updateCircleProperty({ cx: value });
+if (circleXInput) {
+  circleXInput.addEventListener("change", () => {
+    const activeObjects = getActiveObjects();
+    const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+    if (!obj || obj.type !== "circle") return;
+    const value = Number(circleXInput.value);
+    if (!Number.isFinite(value)) return;
+    const { y, diameter } = getCircleFrame(obj);
+    updateCircleProperty(getCirclePatchFromFrame(value, y, diameter));
   });
 }
 
-if (circleCyInput) {
-  circleCyInput.addEventListener("change", () => {
-    const value = Number(circleCyInput.value);
-    if (Number.isFinite(value)) updateCircleProperty({ cy: value });
+if (circleYInput) {
+  circleYInput.addEventListener("change", () => {
+    const activeObjects = getActiveObjects();
+    const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+    if (!obj || obj.type !== "circle") return;
+    const value = Number(circleYInput.value);
+    if (!Number.isFinite(value)) return;
+    const { x, diameter } = getCircleFrame(obj);
+    updateCircleProperty(getCirclePatchFromFrame(x, value, diameter));
   });
 }
 
-if (circleRInput) {
-  circleRInput.addEventListener("change", () => {
-    const value = Number(circleRInput.value);
-    if (Number.isFinite(value) && value > 0) updateCircleProperty({ r: value });
+const applyCircleDiameterChange = (diameterValue) => {
+  const activeObjects = getActiveObjects();
+  const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+  if (!obj || obj.type !== "circle") return;
+  const value = Number(diameterValue);
+  if (!Number.isFinite(value) || value <= 0) return;
+  const { x, y } = getCircleFrame(obj);
+  updateCircleProperty(getCirclePatchFromFrame(x, y, value));
+};
+
+if (circleWInput) {
+  circleWInput.addEventListener("change", () => {
+    applyCircleDiameterChange(circleWInput.value);
+  });
+}
+
+if (circleHInput) {
+  circleHInput.addEventListener("change", () => {
+    applyCircleDiameterChange(circleHInput.value);
+  });
+}
+
+if (circleDiameterInput) {
+  circleDiameterInput.addEventListener("change", () => {
+    applyCircleDiameterChange(circleDiameterInput.value);
   });
 }
 
@@ -15535,6 +15700,30 @@ if (polylineStrokeWidthInput) {
   polylineStrokeWidthInput.addEventListener("change", () => {
     const value = Number(polylineStrokeWidthInput.value);
     if (Number.isFinite(value) && value >= 0) updatePolylineProperty({ strokeWidth: value });
+  });
+}
+
+if (splineStrokeInput) {
+  splineStrokeInput.addEventListener("input", () => {
+    updateSplineProperty({ stroke: splineStrokeInput.value });
+    if (splineStrokeTextInput) splineStrokeTextInput.value = splineStrokeInput.value;
+  });
+}
+
+if (splineStrokeTextInput) {
+  splineStrokeTextInput.addEventListener("change", () => {
+    const value = splineStrokeTextInput.value.trim();
+    if (value) {
+      updateSplineProperty({ stroke: value });
+      if (splineStrokeInput) splineStrokeInput.value = value;
+    }
+  });
+}
+
+if (splineStrokeWidthInput) {
+  splineStrokeWidthInput.addEventListener("change", () => {
+    const value = Number(splineStrokeWidthInput.value);
+    if (Number.isFinite(value) && value >= 0) updateSplineProperty({ strokeWidth: value });
   });
 }
 
@@ -19092,6 +19281,13 @@ window.addEventListener("keydown", (event) => {
 	    setTool("select");
 	    return;
 	  }
+  if (event.key === "Escape" && isDrawingSpline) {
+    event.preventDefault();
+    finishSplineDraft();
+    isDrawingSpline = false;
+    setTool("select");
+    return;
+  }
 	  if (event.key === "Enter" && currentTool === "polyline" && isDrawingPolyline) {
 	    event.preventDefault();
 	    if (!currentScreenObj) return;
@@ -19112,6 +19308,29 @@ window.addEventListener("keydown", (event) => {
     }
     finishPolylineDraft();
     isDrawingPolyline = false;
+    setTool("select");
+    return;
+  }
+  if (event.key === "Enter" && currentTool === "spline" && isDrawingSpline) {
+    event.preventDefault();
+    if (!currentScreenObj) return;
+    const activeObjects = ensureActiveObjects();
+    if (!activeObjects) return;
+    const points = splineDraftPoints.map((pt) => {
+      const local = toActivePoint(pt);
+      return { x: snapValue(Math.round(local.x)), y: snapValue(Math.round(local.y)) };
+    });
+    if (points.length >= 2) {
+      recordHistory();
+      activeObjects.push({ type: "spline", points, stroke: "#ffffff", strokeWidth: 2 });
+      selectedIndices = [activeObjects.length - 1];
+      renderScreen();
+      syncEditorFromScreen();
+      setDirty(true);
+      setEditorTab("properties");
+    }
+    finishSplineDraft();
+    isDrawingSpline = false;
     setTool("select");
     return;
   }
@@ -19302,6 +19521,13 @@ buildSwatches(polylineStrokeSwatches, (color) => {
   updatePolylineProperty({ stroke: color });
   if (polylineStrokeInput) polylineStrokeInput.value = color;
   if (polylineStrokeTextInput) polylineStrokeTextInput.value = color;
+  closeSwatches();
+});
+
+buildSwatches(splineStrokeSwatches, (color) => {
+  updateSplineProperty({ stroke: color });
+  if (splineStrokeInput) splineStrokeInput.value = color;
+  if (splineStrokeTextInput) splineStrokeTextInput.value = color;
   closeSwatches();
 });
 
@@ -19683,6 +19909,13 @@ if (polylineStrokeSwatchBtn && polylineStrokeSwatches) {
   });
 }
 
+if (splineStrokeSwatchBtn && splineStrokeSwatches) {
+  splineStrokeSwatchBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSwatches(splineStrokeSwatches, splineStrokeSwatchBtn);
+  });
+}
+
 if (polygonFillSwatchBtn && polygonFillSwatches) {
   polygonFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -19922,6 +20155,7 @@ document.addEventListener("click", (event) => {
 	    lineStrokeSwatches?.contains(target) ||
 	    curveStrokeSwatches?.contains(target) ||
 	    polylineStrokeSwatches?.contains(target) ||
+    splineStrokeSwatches?.contains(target) ||
 	    polygonFillSwatches?.contains(target) ||
 	    polygonStrokeSwatches?.contains(target) ||
 	    barFillSwatches?.contains(target) ||
@@ -19961,6 +20195,7 @@ document.addEventListener("click", (event) => {
 	    circleFillSwatchBtn?.contains(target) ||
 	    circleStrokeSwatchBtn?.contains(target) ||
 	    polylineStrokeSwatchBtn?.contains(target) ||
+    splineStrokeSwatchBtn?.contains(target) ||
 	    polygonFillSwatchBtn?.contains(target) ||
 	    polygonStrokeSwatchBtn?.contains(target) ||
 	    viewportBorderSwatchBtn?.contains(target) ||
@@ -20198,9 +20433,9 @@ function updateSelectionOverlays() {
 
     if (!isEditMode || selectedIndices.length !== 1) return;
     if (poseEditSession && baseObj === poseEditSession.object && obj.type !== "line") return;
-    if (!obj || !["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "circle", "line", "polyline", "polygon", "number-input", "indicator", "image", "group"].includes(obj.type)) return;
+    if (!obj || !["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "circle", "line", "polyline", "spline", "polygon", "number-input", "indicator", "image", "group"].includes(obj.type)) return;
     if (!resizeLayer) return;
-		    if (obj.type === "polyline" || obj.type === "polygon") {
+		    if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
 		      const points = Array.isArray(obj.points) ? obj.points : [];
 		      if (!points.length) return;
 	      const offset = getActiveOffset();
@@ -20209,7 +20444,7 @@ function updateSelectionOverlays() {
 		        const x = Number(pt?.x ?? 0) + Number(offset.x ?? 0);
 		        const y = Number(pt?.y ?? 0) + Number(offset.y ?? 0);
 		        const isVertexSelected =
-		          obj.type === "polygon" &&
+		          (obj.type === "polygon" || obj.type === "spline") &&
 		          activeSelectedVertex &&
 		          activeSelectedVertex.objectIndex === item.index &&
 		          activeSelectedVertex.vertexIndex === vertexIndex;
@@ -20627,6 +20862,53 @@ const pointToSegmentDistance = (point, start, end) => {
   return Math.hypot(px - projX, py - projY);
 };
 
+const getSplinePathData = (points) => {
+  const pts = (Array.isArray(points) ? points : [])
+    .map((pt) => ({ x: Number(pt?.x ?? 0), y: Number(pt?.y ?? 0) }));
+  if (!pts.length) return "";
+  if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+  if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${p2.x} ${p2.y}`;
+  }
+  return d;
+};
+
+const getSplineSamplePoints = (points, segmentsPerCurve = 12) => {
+  const pts = (Array.isArray(points) ? points : [])
+    .map((pt) => ({ x: Number(pt?.x ?? 0), y: Number(pt?.y ?? 0) }));
+  if (pts.length <= 2) return pts;
+  const out = [{ ...pts[0] }];
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    for (let step = 1; step <= segmentsPerCurve; step += 1) {
+      const t = step / segmentsPerCurve;
+      const mt = 1 - t;
+      out.push({
+        x: mt * mt * mt * p1.x + 3 * mt * mt * t * cp1x + 3 * mt * t * t * cp2x + t * t * t * p2.x,
+        y: mt * mt * mt * p1.y + 3 * mt * mt * t * cp1y + 3 * mt * t * t * cp2y + t * t * t * p2.y
+      });
+    }
+  }
+  return out;
+};
+
 const pointHitsLine = (point, obj) => {
   if (!point || !obj || obj.type !== "line") return false;
   const strokeWidth = Math.max(1, Number(obj.strokeWidth ?? 2));
@@ -20637,6 +20919,18 @@ const pointHitsLine = (point, obj) => {
     { x: Number(obj.x2 ?? 0), y: Number(obj.y2 ?? 0) }
   );
   return distance <= tolerance;
+};
+
+const pointHitsSpline = (point, obj) => {
+  if (!point || !obj || obj.type !== "spline") return false;
+  const strokeWidth = Math.max(1, Number(obj.strokeWidth ?? 2));
+  const tolerance = Math.max(6, (strokeWidth / 2) + 4);
+  const samplePoints = getSplineSamplePoints(obj.points);
+  if (samplePoints.length < 2) return false;
+  for (let i = 0; i < samplePoints.length - 1; i += 1) {
+    if (pointToSegmentDistance(point, samplePoints[i], samplePoints[i + 1]) <= tolerance) return true;
+  }
+  return false;
 };
 
 const rotatePointAround = (point, center, angleRad) => {
@@ -20788,7 +21082,7 @@ const scaleObjectUniformFromBounds = (obj, startObj, scale, fromB, toB) => {
     return;
   }
 
-  if (startObj.type === "polyline" || startObj.type === "polygon") {
+  if (startObj.type === "polyline" || startObj.type === "polygon" || startObj.type === "spline") {
     obj.points = (Array.isArray(startObj.points) ? startObj.points : []).map((pt) => {
       const scaled = scalePointFromBounds({ x: n(pt?.x, 0), y: n(pt?.y, 0) }, fromB, scale, toB);
       return { x: Math.round(scaled.x), y: Math.round(scaled.y) };
@@ -20863,7 +21157,7 @@ const getObjectCenter = (obj) => {
   if (obj.type === "circle") {
     return { x: Number(obj.cx ?? 0), y: Number(obj.cy ?? 0) };
   }
-  if (obj.type === "polyline" || obj.type === "polygon") {
+  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
     const b = getObjectBounds(obj);
     if (b) return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
   }
@@ -20876,7 +21170,7 @@ const getObjectCenter = (obj) => {
 
 const applyRotationToObject = (obj, startObj, deltaRad, center, deltaDeg) => {
   if (!obj || !startObj || !center) return;
-  if (startObj.type === "polyline" || startObj.type === "polygon") {
+  if (startObj.type === "polyline" || startObj.type === "polygon" || startObj.type === "spline") {
     const pts = Array.isArray(startObj.points) ? startObj.points : [];
     obj.points = pts.map((pt) => {
       const p = rotatePointAround({ x: Number(pt?.x ?? 0), y: Number(pt?.y ?? 0) }, center, deltaRad);
@@ -21113,6 +21407,9 @@ const getMetaAtPoint = (point) => {
     const item = renderedElementMeta[i];
     const obj = getDisplayObject(getActiveObjects()?.[item.index]);
     if (obj?.type === "line" && pointHitsLine(point, obj)) {
+      return item;
+    }
+    if (obj?.type === "spline" && pointHitsSpline(point, obj)) {
       return item;
     }
     let bbox = null;
@@ -21768,6 +22065,38 @@ const finishPolylineDraft = () => {
   polylineDraftPoints = [];
 };
 
+const startSplineDraft = (point) => {
+  splineDraftPoints = [point];
+  if (!hmiSvg) return;
+  if (!splineDraft) {
+    splineDraft = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    splineDraft.setAttribute("fill", "none");
+    splineDraft.setAttribute("stroke", "#ffd54a");
+    splineDraft.setAttribute("stroke-width", "2");
+    splineDraft.setAttribute("vector-effect", "non-scaling-stroke");
+    hmiSvg.appendChild(splineDraft);
+  } else if (!splineDraft.isConnected) {
+    hmiSvg.appendChild(splineDraft);
+  }
+  splineDraft.setAttribute("d", getSplinePathData([point]));
+};
+
+const updateSplineDraft = (point) => {
+  if (!splineDraft || !splineDraftPoints.length) return;
+  if (hmiSvg && !splineDraft.isConnected) {
+    hmiSvg.appendChild(splineDraft);
+  }
+  splineDraft.setAttribute("d", getSplinePathData([...splineDraftPoints, point]));
+};
+
+const finishSplineDraft = () => {
+  if (splineDraft) {
+    splineDraft.remove();
+    splineDraft = null;
+  }
+  splineDraftPoints = [];
+};
+
 const startPolygonDraft = (point) => {
   polygonDraftPoints = [point];
   if (!hmiSvg) return;
@@ -21894,6 +22223,10 @@ const setTool = (nextTool) => {
     finishPolylineDraft();
     isDrawingPolyline = false;
   }
+  if (currentTool === "spline" && nextTool !== "spline" && isDrawingSpline) {
+    finishSplineDraft();
+    isDrawingSpline = false;
+  }
   if (currentTool === "polygon" && nextTool !== "polygon" && isDrawingPolygon) {
     finishPolygonDraft();
     isDrawingPolygon = false;
@@ -21932,6 +22265,12 @@ const setTool = (nextTool) => {
   if (leftRectToolBtn) {
     leftRectToolBtn.classList.toggle("is-active", currentTool === "rect");
   }
+  if (leftPolygonToolBtn) {
+    leftPolygonToolBtn.classList.toggle("is-active", currentTool === "polygon");
+  }
+  if (leftSplineToolBtn) {
+    leftSplineToolBtn.classList.toggle("is-active", currentTool === "spline");
+  }
   if (leftViewportToolBtn) {
     leftViewportToolBtn.classList.toggle("is-active", currentTool === "viewport");
   }
@@ -21959,6 +22298,9 @@ const setTool = (nextTool) => {
   if (polygonToolBtn) {
     polygonToolBtn.classList.toggle("is-active", currentTool === "polygon");
   }
+  if (splineToolBtn) {
+    splineToolBtn.classList.toggle("is-active", currentTool === "spline");
+  }
   if (regularPolygonToolBtn) {
     regularPolygonToolBtn.classList.toggle("is-active", currentTool === "regular-polygon");
   }
@@ -21981,7 +22323,7 @@ const setTool = (nextTool) => {
     curveToolBtn.classList.toggle("is-active", currentTool === "curve");
   }
   if (hmiSvg) {
-    if (["text", "button", "viewport", "rect", "alarms-panel", "polyline", "polygon", "regular-polygon", "stretched-polygon", "bar", "circle", "ellipse", "line", "curve"].includes(currentTool)) {
+    if (["text", "button", "viewport", "rect", "alarms-panel", "polyline", "spline", "polygon", "regular-polygon", "stretched-polygon", "bar", "circle", "ellipse", "line", "curve"].includes(currentTool)) {
       hmiSvg.style.cursor = "crosshair";
     } else {
       hmiSvg.style.cursor = "default";
@@ -22083,13 +22425,13 @@ const setTool = (nextTool) => {
 		        resizeVertexIndex = vertexIndexAttr == null ? null : Number(vertexIndexAttr);
 		        if (!Number.isFinite(resizeVertexIndex)) resizeVertexIndex = null;
 	        const obj = getActiveObjects()?.[handleIndex];
-	        if (handleType === "vertex" && obj?.type === "polygon" && resizeVertexIndex != null) {
+	        if (handleType === "vertex" && (obj?.type === "polygon" || obj?.type === "spline") && resizeVertexIndex != null) {
 	          selectedPolygonVertex = { groupDepth: groupEditStack.length, objectIndex: handleIndex, vertexIndex: resizeVertexIndex };
 	          updateSelectionOverlays();
 	        } else if (handleType !== "vertex") {
 	          clearSelectedPolygonVertex();
 	        }
-	  if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "polygon" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
+	  if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
 	          const point = getScreenPoint(event);
 	          if (!point) return;
 	          recordHistory();
@@ -22097,7 +22439,7 @@ const setTool = (nextTool) => {
 	          resizeHandle = handleType;
 	          resizeIndex = handleIndex;
 	          resizeStart = point;
-	          if (obj.type === "polyline" || obj.type === "polygon") {
+	          if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
 	            resizeStartBounds = {
 	              type: obj.type,
 	              points: (Array.isArray(obj.points) ? obj.points : []).map((pt) => ({
@@ -22242,11 +22584,11 @@ const setTool = (nextTool) => {
 	      startLineDraft(point);
 	      return;
 	    }
-	    if (currentTool === "polyline") {
-	      if (!isDrawingPolyline) {
-	        isDrawingPolyline = true;
-	        startPolylineDraft(point);
-	        return;
+    if (currentTool === "polyline") {
+      if (!isDrawingPolyline) {
+        isDrawingPolyline = true;
+        startPolylineDraft(point);
+        return;
 	      }
 	      polylineDraftPoints.push(point);
 	      if (polylineDraft) {
@@ -22254,9 +22596,21 @@ const setTool = (nextTool) => {
 	          "points",
 	          polylineDraftPoints.map((p) => `${p.x},${p.y}`).join(" ")
 	        );
-	      }
-	      return;
-	    }
+      }
+      return;
+    }
+    if (currentTool === "spline") {
+      if (!isDrawingSpline) {
+        isDrawingSpline = true;
+        startSplineDraft(point);
+        return;
+      }
+      splineDraftPoints.push(point);
+      if (splineDraft) {
+        splineDraft.setAttribute("d", getSplinePathData(splineDraftPoints));
+      }
+      return;
+    }
 		    if (currentTool === "polygon") {
 		      if (!isDrawingPolygon) {
 		        isDrawingPolygon = true;
@@ -22324,7 +22678,7 @@ const setTool = (nextTool) => {
 		      dragStart = point;
 	      dragOrigins = selectedIndices.map((index) => {
 	        const obj = getActiveObjects()?.[index];
-	        if (obj?.type === "polyline" || obj?.type === "polygon") {
+	        if (obj?.type === "polyline" || obj?.type === "polygon" || obj?.type === "spline") {
 	          return {
 	            index,
 	            points: (Array.isArray(obj.points) ? obj.points : []).map((pt) => ({
@@ -22455,6 +22809,12 @@ const setTool = (nextTool) => {
 	      updatePolylineDraft(point);
 	      return;
 	    }
+    if (isDrawingSpline) {
+      const point = getScreenPoint(event);
+      if (!point) return;
+      updateSplineDraft(point);
+      return;
+    }
 	    if (isDrawingPolygon) {
 	      const point = getScreenPoint(event);
 	      if (!point) return;
@@ -22575,7 +22935,7 @@ const setTool = (nextTool) => {
 	      const obj = getActiveObjects()?.[resizeIndex];
 	      if (!obj || !resizeStartBounds) return;
 
-	      if (resizeStartBounds.type === "polyline" || resizeStartBounds.type === "polygon") {
+	      if (resizeStartBounds.type === "polyline" || resizeStartBounds.type === "polygon" || resizeStartBounds.type === "spline") {
 	        const startPoints = resizeStartBounds.points;
 	        if (!Array.isArray(startPoints) || !startPoints.length) return;
 	        if (handle === "vertex") {
@@ -23351,6 +23711,30 @@ const setTool = (nextTool) => {
       isDrawingPolyline = false;
       setTool("select");
       event.preventDefault();
+	      event.stopPropagation();
+	      return;
+	    }
+    if (currentTool === "spline" && isDrawingSpline) {
+      if (!currentScreenObj) return;
+      const activeObjects = ensureActiveObjects();
+      if (!activeObjects) return;
+      const points = splineDraftPoints.map((pt) => {
+        const local = toActivePoint(pt);
+        return { x: snapValue(Math.round(local.x)), y: snapValue(Math.round(local.y)) };
+      });
+      if (points.length >= 2) {
+        recordHistory();
+        activeObjects.push({ type: "spline", points, stroke: "#ffffff", strokeWidth: 2 });
+        selectedIndices = [activeObjects.length - 1];
+        renderScreen();
+        syncEditorFromScreen();
+        setDirty(true);
+        setEditorTab("properties");
+      }
+      finishSplineDraft();
+      isDrawingSpline = false;
+      setTool("select");
+      event.preventDefault();
       event.stopPropagation();
       return;
     }
@@ -23443,6 +23827,30 @@ const setTool = (nextTool) => {
 	      setTool("select");
 	      return;
 	    }
+      if (currentTool === "spline") {
+        if (!isDrawingSpline) return;
+        event.preventDefault();
+        if (!currentScreenObj) return;
+        const activeObjects = ensureActiveObjects();
+        if (!activeObjects) return;
+        const points = splineDraftPoints.map((pt) => {
+          const local = toActivePoint(pt);
+          return { x: snapValue(Math.round(local.x)), y: snapValue(Math.round(local.y)) };
+        });
+        if (points.length >= 2) {
+          recordHistory();
+          activeObjects.push({ type: "spline", points, stroke: "#ffffff", strokeWidth: 2 });
+          selectedIndices = [activeObjects.length - 1];
+          renderScreen();
+          syncEditorFromScreen();
+          setDirty(true);
+          setEditorTab("properties");
+        }
+        finishSplineDraft();
+        isDrawingSpline = false;
+        setTool("select");
+        return;
+      }
 	    if (currentTool !== "select") return;
 	    const point = getScreenPoint(event);
 	    if (!point) return;
@@ -23486,6 +23894,24 @@ if (editorPane) {
   button.addEventListener("click", () => setEditorPaneDock(dock));
 });
 
+if (editorZoomOutBtn) {
+  editorZoomOutBtn.addEventListener("click", () => {
+    applyEditorZoom(editorScreenZoom - EDITOR_ZOOM_STEP);
+  });
+}
+
+if (editorZoomInBtn) {
+  editorZoomInBtn.addEventListener("click", () => {
+    applyEditorZoom(editorScreenZoom + EDITOR_ZOOM_STEP);
+  });
+}
+
+if (editorZoomResetBtn) {
+  editorZoomResetBtn.addEventListener("click", () => {
+    applyEditorZoom(1);
+  });
+}
+
 if (editorPaneTitlebar && editorPane) {
   let activePointerId = null;
   let dragOffsetX = 0;
@@ -23510,7 +23936,7 @@ if (editorPaneTitlebar && editorPane) {
 
   editorPaneTitlebar.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
-    if (event.target instanceof Element && event.target.closest(".editor-pane-dock-btn")) return;
+    if (event.target instanceof Element && event.target.closest(".editor-pane-dock-btn, .editor-pane-zoom-btn, .editor-pane-zoom-readout")) return;
     if (String(editorPane.dataset.dock || "right") !== "float") return;
     event.preventDefault();
     const rect = editorPane.getBoundingClientRect();
@@ -23542,6 +23968,8 @@ if (editorPaneTitlebar && editorPane) {
     finishEditorPaneDrag();
   });
 }
+
+applyEditorZoom(1);
 
 if (automationLaunchBtn) {
   automationLaunchBtn.addEventListener("click", () => {
@@ -23670,6 +24098,18 @@ if (leftRectToolBtn) {
   });
 }
 
+if (leftPolygonToolBtn) {
+  leftPolygonToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "polygon" ? "select" : "polygon");
+  });
+}
+
+if (leftSplineToolBtn) {
+  leftSplineToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "spline" ? "select" : "spline");
+  });
+}
+
 if (leftLineToolBtn) {
   leftLineToolBtn.addEventListener("click", () => {
     setTool(currentTool === "line" ? "select" : "line");
@@ -23784,6 +24224,12 @@ if (polylineToolBtn) {
 if (polygonToolBtn) {
   polygonToolBtn.addEventListener("click", () => {
     setTool(currentTool === "polygon" ? "select" : "polygon");
+  });
+}
+
+if (splineToolBtn) {
+  splineToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "spline" ? "select" : "spline");
   });
 }
 

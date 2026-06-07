@@ -28,6 +28,7 @@ body.theme-light {
     color-scheme: dark;
     --screen-width: 1920px;
     --screen-height: 1080px;
+    --editor-screen-zoom: 1;
     --toolbar-height: 48px;
     --left-toolbar-width: 38px;
 
@@ -1992,6 +1993,27 @@ body {
   gap: 12px;
 }
 
+.toolbar-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-zoom-label {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.toolbar-zoom-btn {
+  min-width: 30px;
+  padding: 4px 8px;
+}
+
+.toolbar-zoom-readout {
+  min-width: 58px;
+  padding: 4px 8px;
+}
+
 .project-title {
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -2598,7 +2620,10 @@ body.edit-mode #screen-wrapper {
 }
 
 body.edit-mode #screen {
+  width: calc(var(--screen-width) * var(--editor-screen-zoom, 1));
+  height: calc(var(--screen-height) * var(--editor-screen-zoom, 1));
   transform: none;
+  transform-origin: top left;
 }
 
 body.runtime-mode #screen {
@@ -2656,6 +2681,7 @@ body.runtime-mode #editor-pane {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: nowrap;
   gap: 8px;
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.04);
@@ -2667,12 +2693,18 @@ body.runtime-mode #editor-pane {
   color: #9aa3b2;
   font-weight: 400;
   letter-spacing: 0.01em;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-pane-dock {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .editor-pane-dock-btn {
