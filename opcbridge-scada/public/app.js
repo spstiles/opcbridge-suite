@@ -871,6 +871,10 @@ const state = {
   healthLast: null,
   healthLastOkAtMs: 0,
   healthLastFetchError: '',
+  metricsLast: null,
+  metricsLastOkAtMs: 0,
+  metricsLastFetchError: '',
+  overviewHealthExpanded: new Set(),
 
   // alarms/events (from opcbridge-alarms)
   alarmsAllLast: null,
@@ -6004,7 +6008,7 @@ function classForStatus(status) {
   return 'status-error';
 }
 
-function renderOverviewHealth(health) {
+function renderOverviewHealth(health, metrics = null) {
   if (!health) return;
 
   const overall = String(health?.status || 'error');
@@ -6031,23 +6035,73 @@ function renderOverviewHealth(health) {
 
   if (els.overviewHealthConnections) {
     const lines = [];
+    const metricConns = metrics?.connections && typeof metrics.connections === 'object' ? metrics.connections : {};
     Object.entries(conns).forEach(([cid, info]) => {
       const st = String(info?.status || 'unknown');
+      const metricInfo = metricConns[cid] && typeof metricConns[cid] === 'object' ? metricConns[cid] : {};
       const reason = info?.reason ? (` - ${info.reason}`) : '';
       const ratio = (typeof info?.stale_ratio === 'number') ? ` (${Math.round(info.stale_ratio * 100)}% stale/bad)` : '';
       const seen = (typeof info?.tags_seen === 'number') ? info.tags_seen : null;
       const good = (typeof info?.good_recent === 'number') ? info.good_recent : null;
       const age = (typeof info?.newest_age_ms === 'number') ? info.newest_age_ms : null;
+      const readMsAvg = (typeof info?.read_ms_avg === 'number' && info.read_ms_avg > 0) ? info.read_ms_avg : null;
+      const sweepMs = (typeof info?.expected_sweep_ms === 'number' && info.expected_sweep_ms >= 0) ? info.expected_sweep_ms : null;
+      const sweepLastMs = (typeof info?.sweep_ms_last === 'number' && info.sweep_ms_last > 0) ? info.sweep_ms_last : null;
+      const sweepAvg10sMs = (typeof info?.sweep_ms_avg_10s === 'number' && info.sweep_ms_avg_10s > 0) ? info.sweep_ms_avg_10s : null;
+      const sweepAvg60sMs = (typeof info?.sweep_ms_avg_60s === 'number' && info.sweep_ms_avg_60s > 0) ? info.sweep_ms_avg_60s : null;
+      const lanes = (typeof info?.poll_lanes === 'number' && info.poll_lanes > 0) ? info.poll_lanes : null;
+      const lastOkAgeMs = (typeof info?.last_ok_age_ms === 'number' && info.last_ok_age_ms >= 0) ? info.last_ok_age_ms : null;
+
+      const formatMsCompact = (value) => {
+        const ms = Number(value);
+        if (!Number.isFinite(ms) || ms < 0) return '';
+        if (ms >= 10000) return `${(ms / 1000).toFixed(1)} s`;
+        if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`;
+        return `${Math.round(ms)} ms`;
+      };
 
       let details = '';
       if (seen != null && good != null) details += ` • ${good}/${seen} good recent`;
       if (age != null) details += ` • newest ${age} ms`;
+      if (readMsAvg != null) details += ` • read ${formatMsCompact(readMsAvg)} avg`;
+      if (sweepAvg10sMs != null) details += ` • sweep ${formatMsCompact(sweepAvg10sMs)} avg10s`;
+      else if (sweepLastMs != null) details += ` • sweep ${formatMsCompact(sweepLastMs)} last`;
+      if (sweepMs != null) details += ` • est ${formatMsCompact(sweepMs)}`;
+      if (sweepAvg60sMs != null && sweepAvg10sMs != null) details += ` • avg60s ${formatMsCompact(sweepAvg60sMs)}`;
+      if (lanes != null) details += ` • lanes ${lanes}`;
+      if (lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
 
       const cls = classForStatus(st);
-      lines.push(`<div class="${cls}">${cid}: ${st.toUpperCase()}${reason}${ratio}${details}</div>`);
+      const blocks = Array.isArray(metricInfo?.blocks) ? metricInfo.blocks : [];
+      let blockHtml = '';
+      if (blocks.length) {
+        const rows = blocks.map((block) => {
+          const name = escapeHtml(String(block?.logical_name || ''));
+          const datatype = escapeHtml(String(block?.datatype || ''));
+          const elemCount = Math.max(1, Number(block?.elem_count || 1) || 1);
+          const mapped = Math.max(1, Number(block?.mapped_tag_count || elemCount) || elemCount);
+          const readAvg = (typeof block?.read_ms_avg === 'number' && block.read_ms_avg > 0) ? formatMsCompact(block.read_ms_avg) : '-';
+          const readLast = (typeof block?.read_ms_last === 'number' && block.read_ms_last > 0) ? formatMsCompact(block.read_ms_last) : '-';
+          const okAge = (typeof block?.last_ok_age_ms === 'number' && block.last_ok_age_ms >= 0) ? `${formatMsCompact(block.last_ok_age_ms)} ago` : '-';
+          const readsOk = Math.max(0, Number(block?.reads_ok || 0) || 0);
+          const readsErr = Math.max(0, Number(block?.reads_err || 0) || 0);
+          return `<tr><td><code>${name}</code></td><td>${datatype}${elemCount > 1 ? ` [${elemCount}]` : ''}</td><td>${mapped}</td><td>${readAvg}</td><td>${readLast}</td><td>${okAge}</td><td>${readsOk}</td><td>${readsErr}</td></tr>`;
+        }).join('');
+        const isExpanded = state.overviewHealthExpanded.has(cid);
+        blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK</th><th>Err</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+      }
+      lines.push(`<div class="${cls}">${cid}: ${st.toUpperCase()}${reason}${ratio}${details}${blockHtml}</div>`);
     });
 
     els.overviewHealthConnections.innerHTML = lines.join('');
+    els.overviewHealthConnections.querySelectorAll('.overview-health-blocks').forEach((detailEl) => {
+      detailEl.addEventListener('toggle', () => {
+        const cid = String(detailEl.dataset.connId || '');
+        if (!cid) return;
+        if (detailEl.open) state.overviewHealthExpanded.add(cid);
+        else state.overviewHealthExpanded.delete(cid);
+      });
+    });
   }
 }
 
@@ -6117,6 +6171,27 @@ async function loadOpcbridgeHealth({ allowCached = true } = {}) {
       cached.ui_cached = true;
       cached.ui_cache_age_ms = ageMs;
       cached.ui_fetch_error = state.healthLastFetchError;
+      return cached;
+    }
+    throw err;
+  }
+}
+
+async function loadOpcbridgeMetrics({ allowCached = true } = {}) {
+  try {
+    const metrics = await apiGet('/api/opcbridge/metrics');
+    state.metricsLast = metrics;
+    state.metricsLastOkAtMs = Date.now();
+    state.metricsLastFetchError = '';
+    return metrics;
+  } catch (err) {
+    state.metricsLastFetchError = String(err?.message || err || '');
+    const ageMs = Date.now() - Number(state.metricsLastOkAtMs || 0);
+    if (allowCached && state.metricsLast && ageMs >= 0 && ageMs <= 30000) {
+      const cached = { ...state.metricsLast };
+      cached.ui_cached = true;
+      cached.ui_cache_age_ms = ageMs;
+      cached.ui_fetch_error = state.metricsLastFetchError;
       return cached;
     }
     throw err;
@@ -20670,13 +20745,14 @@ async function refreshAlarmsRuntimeViews({ renderTree = true } = {}) {
 async function refreshAll() {
   const started = Date.now();
   try {
-    const [health, alarmsStatus, reloadStatus] = await Promise.all([
+    const [health, metrics, alarmsStatus, reloadStatus] = await Promise.all([
       loadOpcbridgeHealth(),
+      loadOpcbridgeMetrics().catch(() => null),
       apiGet('/api/alarms/alarm/api/status'),
       apiGet('/api/opcbridge/reload/status').catch(() => null)
     ]);
 
-    renderOverviewHealth(health);
+    renderOverviewHealth(health, metrics);
     renderRuntimeRebuildStatus(reloadStatus);
     renderJson(els.healthJson, health);
     renderJson(els.alarmsStatusJson, alarmsStatus);
@@ -20749,8 +20825,9 @@ async function refreshVisible() {
   state.refreshVisibleInFlight = true;
   const started = Date.now();
   try {
-    const [health, alarmsStatus, reloadStatus] = await Promise.all([
+    const [health, metrics, alarmsStatus, reloadStatus] = await Promise.all([
       loadOpcbridgeHealth(),
+      loadOpcbridgeMetrics().catch(() => null),
       apiGet('/api/alarms/alarm/api/status'),
       apiGet('/api/opcbridge/reload/status').catch(() => null)
     ]);
@@ -20761,7 +20838,7 @@ async function refreshVisible() {
     state.alarmsStatusLast = alarmsStatus;
     renderRuntimeRebuildStatus(reloadStatus);
     renderAlarmsSchemaStatus(alarmsStatus);
-    renderOverviewHealth(health);
+    renderOverviewHealth(health, metrics);
     setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
     const wantLiveTags = isPanelActive('tab-workspace') || isPanelActive('tab-tags');

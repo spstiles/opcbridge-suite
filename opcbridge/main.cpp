@@ -800,6 +800,21 @@ static bool mqtt_publish_topic_value(const std::string &conn_id,
 }
 
 // Polling performance metrics (updated by poller threads; exposed via GET /metrics).
+struct BlockPollMetrics {
+    std::string logical_name;
+    std::string datatype;
+    int elem_count = 1;
+    int mapped_tag_count = 1;
+    uint64_t reads_total = 0;
+    uint64_t reads_ok = 0;
+    uint64_t reads_err = 0;
+    uint64_t read_us_total = 0;
+    uint64_t read_us_last = 0;
+    uint64_t read_us_max = 0;
+    int64_t last_ok_ts_ms = -1;
+    int64_t last_err_ts_ms = -1;
+};
+
 struct ConnPollMetrics {
     std::atomic<uint64_t> reads_total{0};
     std::atomic<uint64_t> reads_ok{0};
@@ -825,10 +840,129 @@ struct ConnPollMetrics {
     std::atomic<uint64_t> deferred_handle_open_us_total{0};
     std::atomic<uint64_t> deferred_handle_open_us_last{0};
     std::atomic<uint64_t> deferred_handle_open_us_max{0};
+
+    std::mutex sweep_mutex;
+    uint64_t sweep_epoch = 1;
+    uint64_t sweep_seen_count = 0;
+    std::vector<uint64_t> sweep_seen_epochs;
+    std::chrono::steady_clock::time_point sweep_started_steady{};
+    double sweep_ms_last = 0.0;
+    std::deque<std::pair<int64_t, double>> sweep_samples;
+
+    std::mutex blocks_mutex;
+    std::vector<BlockPollMetrics> blocks;
 };
 
 static std::mutex g_metricsMutex;
 static std::unordered_map<std::string, std::shared_ptr<ConnPollMetrics>> g_connPollMetrics;
+
+static void reset_connection_sweep_tracking(const std::shared_ptr<ConnPollMetrics> &metrics,
+                                            uint64_t pollTagCount)
+{
+    if (!metrics) return;
+    std::lock_guard<std::mutex> lock(metrics->sweep_mutex);
+    metrics->sweep_epoch = 1;
+    metrics->sweep_seen_count = 0;
+    metrics->sweep_seen_epochs.assign(static_cast<size_t>(pollTagCount), 0);
+    metrics->sweep_started_steady = std::chrono::steady_clock::now();
+    metrics->sweep_ms_last = 0.0;
+    metrics->sweep_samples.clear();
+}
+
+template <typename TagItem>
+static void reset_connection_block_metrics(const std::shared_ptr<ConnPollMetrics> &metrics,
+                                          const std::vector<TagItem> &tags)
+{
+    if (!metrics) return;
+    std::lock_guard<std::mutex> lock(metrics->blocks_mutex);
+    metrics->blocks.clear();
+    metrics->blocks.reserve(tags.size());
+    for (const auto &tag : tags) {
+        BlockPollMetrics block;
+        block.logical_name = tag.cfg.logical_name;
+        block.datatype = tag.cfg.datatype;
+        block.elem_count = std::max(1, tag.cfg.elem_count);
+        block.mapped_tag_count = block.elem_count;
+        metrics->blocks.push_back(std::move(block));
+    }
+}
+
+static void record_connection_block_read(const std::shared_ptr<ConnPollMetrics> &metrics,
+                                         size_t blockIndex,
+                                         int32_t status,
+                                         uint64_t readUs,
+                                         int64_t tsMs)
+{
+    if (!metrics) return;
+    std::lock_guard<std::mutex> lock(metrics->blocks_mutex);
+    if (blockIndex >= metrics->blocks.size()) return;
+    auto &block = metrics->blocks[blockIndex];
+    block.reads_total++;
+    block.read_us_total += readUs;
+    block.read_us_last = readUs;
+    if (readUs > block.read_us_max) block.read_us_max = readUs;
+    if (status == PLCTAG_STATUS_OK) {
+        block.reads_ok++;
+        block.last_ok_ts_ms = tsMs;
+    } else {
+        block.reads_err++;
+        block.last_err_ts_ms = tsMs;
+    }
+}
+
+static void record_connection_sweep_progress(const std::shared_ptr<ConnPollMetrics> &metrics,
+                                             size_t sweepIndex,
+                                             uint64_t pollTagCount)
+{
+    if (!metrics || pollTagCount == 0) return;
+    std::lock_guard<std::mutex> lock(metrics->sweep_mutex);
+    if (metrics->sweep_seen_epochs.size() != static_cast<size_t>(pollTagCount)) {
+        metrics->sweep_epoch = 1;
+        metrics->sweep_seen_count = 0;
+        metrics->sweep_seen_epochs.assign(static_cast<size_t>(pollTagCount), 0);
+        metrics->sweep_started_steady = std::chrono::steady_clock::now();
+        metrics->sweep_ms_last = 0.0;
+        metrics->sweep_samples.clear();
+    }
+    if (sweepIndex >= metrics->sweep_seen_epochs.size()) return;
+    if (metrics->sweep_seen_epochs[sweepIndex] == metrics->sweep_epoch) return;
+
+    metrics->sweep_seen_epochs[sweepIndex] = metrics->sweep_epoch;
+    metrics->sweep_seen_count++;
+    if (metrics->sweep_seen_count < pollTagCount) return;
+
+    const auto nowSteady = std::chrono::steady_clock::now();
+    const double sweepMs = static_cast<double>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(nowSteady - metrics->sweep_started_steady).count()
+    );
+    metrics->sweep_ms_last = sweepMs;
+    const int64_t nowEpochMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    metrics->sweep_samples.emplace_back(nowEpochMs, sweepMs);
+    while (!metrics->sweep_samples.empty() && (nowEpochMs - metrics->sweep_samples.front().first) > 60000) {
+        metrics->sweep_samples.pop_front();
+    }
+    metrics->sweep_epoch++;
+    if (metrics->sweep_epoch == 0) {
+        metrics->sweep_epoch = 1;
+        std::fill(metrics->sweep_seen_epochs.begin(), metrics->sweep_seen_epochs.end(), 0);
+    }
+    metrics->sweep_seen_count = 0;
+    metrics->sweep_started_steady = nowSteady;
+}
+
+static double average_connection_sweep_ms_locked(const ConnPollMetrics &metrics, int64_t windowMs, int64_t nowEpochMs)
+{
+    double total = 0.0;
+    uint64_t count = 0;
+    for (auto it = metrics.sweep_samples.rbegin(); it != metrics.sweep_samples.rend(); ++it) {
+        if (windowMs > 0 && (nowEpochMs - it->first) > windowMs) break;
+        total += it->second;
+        count++;
+    }
+    return count > 0 ? (total / static_cast<double>(count)) : 0.0;
+}
 
 struct RuntimeLogEntry {
     int64_t ts_ms = 0;
@@ -20563,6 +20697,36 @@ window.addEventListener("load", startAutoRefresh);
 		                    j["last_err_ts_ms"] = (last_err >= 0) ? json(last_err) : json(nullptr);
 		                    j["last_ok_age_ms"]  = (last_ok >= 0) ? json(now_ms - last_ok) : json(nullptr);
 		                    j["last_err_age_ms"] = (last_err >= 0) ? json(now_ms - last_err) : json(nullptr);
+		                    {
+		                        std::lock_guard<std::mutex> sweepLock(m->sweep_mutex);
+		                        j["sweep_ms_last"] = m->sweep_ms_last;
+		                        j["sweep_ms_avg_10s"] = average_connection_sweep_ms_locked(*m, 10000, now_ms);
+		                        j["sweep_ms_avg_60s"] = average_connection_sweep_ms_locked(*m, 60000, now_ms);
+		                    }
+		                    {
+		                        std::lock_guard<std::mutex> blockLock(m->blocks_mutex);
+		                        j["blocks"] = json::array();
+		                        for (const auto &block : m->blocks) {
+		                            json jb;
+		                            jb["logical_name"] = block.logical_name;
+		                            jb["datatype"] = block.datatype;
+		                            jb["elem_count"] = block.elem_count;
+		                            jb["mapped_tag_count"] = block.mapped_tag_count;
+		                            jb["reads_total"] = block.reads_total;
+		                            jb["reads_ok"] = block.reads_ok;
+		                            jb["reads_err"] = block.reads_err;
+		                            jb["read_ms_last"] = static_cast<double>(block.read_us_last) / 1000.0;
+		                            jb["read_ms_max"] = static_cast<double>(block.read_us_max) / 1000.0;
+		                            jb["read_ms_avg"] = block.reads_total > 0
+		                                ? (static_cast<double>(block.read_us_total) / 1000.0) / static_cast<double>(block.reads_total)
+		                                : 0.0;
+		                            jb["last_ok_ts_ms"] = (block.last_ok_ts_ms >= 0) ? json(block.last_ok_ts_ms) : json(nullptr);
+		                            jb["last_err_ts_ms"] = (block.last_err_ts_ms >= 0) ? json(block.last_err_ts_ms) : json(nullptr);
+		                            jb["last_ok_age_ms"] = (block.last_ok_ts_ms >= 0) ? json(now_ms - block.last_ok_ts_ms) : json(nullptr);
+		                            jb["last_err_age_ms"] = (block.last_err_ts_ms >= 0) ? json(now_ms - block.last_err_ts_ms) : json(nullptr);
+		                            j["blocks"].push_back(std::move(jb));
+		                        }
+		                    }
 
 		                    root["connections"][connId] = std::move(j);
 		                }
@@ -21669,6 +21833,9 @@ window.addEventListener("load", startAutoRefresh);
 								uint64_t deferred_handle_open_failures = 0;
 								double deferred_handle_open_ms_avg = 0.0;
 								double deferred_handle_open_ms_last = 0.0;
+								double sweep_ms_last = 0.0;
+								double sweep_ms_avg_10s = 0.0;
+								double sweep_ms_avg_60s = 0.0;
 
 								{
 									std::lock_guard<std::mutex> mlock(g_metricsMutex);
@@ -21695,6 +21862,12 @@ window.addEventListener("load", startAutoRefresh);
 											measured_read_ms_avg =
 												(static_cast<double>(us_total) / 1000.0) /
 												static_cast<double>(metric_reads_total);
+										}
+										{
+											std::lock_guard<std::mutex> sweepLock(m->sweep_mutex);
+											sweep_ms_last = m->sweep_ms_last;
+											sweep_ms_avg_10s = average_connection_sweep_ms_locked(*m, 10000, now_epoch_ms);
+											sweep_ms_avg_60s = average_connection_sweep_ms_locked(*m, 60000, now_epoch_ms);
 										}
 									}
 								}
@@ -21845,6 +22018,9 @@ window.addEventListener("load", startAutoRefresh);
 								if (poll_tag_count > 0) dstatus["poll_tag_count"] = poll_tag_count;
 								if (poll_cursor > 0) dstatus["poll_cursor"] = poll_cursor;
 								if (measured_read_ms_avg > 0.0) dstatus["read_ms_avg"] = measured_read_ms_avg;
+								if (sweep_ms_last > 0.0) dstatus["sweep_ms_last"] = sweep_ms_last;
+								if (sweep_ms_avg_10s > 0.0) dstatus["sweep_ms_avg_10s"] = sweep_ms_avg_10s;
+								if (sweep_ms_avg_60s > 0.0) dstatus["sweep_ms_avg_60s"] = sweep_ms_avg_60s;
 								if (last_ok_age_ms >= 0) dstatus["last_ok_age_ms"] = last_ok_age_ms;
 								if (last_err_age_ms >= 0) dstatus["last_err_age_ms"] = last_err_age_ms;
 								if (deferred_handle_count > 0) {
@@ -25318,7 +25494,10 @@ window.addEventListener("load", startAutoRefresh);
 	            int32_t handle = PLCTAG_ERR_NOT_FOUND;
 	            bool handle_deferred = false;
 	            bool poller_owns_handle = false;
+	            size_t sweep_index = 0;
+	            bool handle_pending_observed = false;
 	            std::chrono::steady_clock::time_point next_poll;
+	            std::chrono::steady_clock::time_point handle_pending_since{};
 
 	            // Scaling runtime (copied from TagRuntime so pollers can publish scaled values)
 	            bool scaling_linear = false;
@@ -25412,7 +25591,8 @@ window.addEventListener("load", startAutoRefresh);
 			                    baseSpec.tags.clear();
 			                    baseSpec.derived_bits_by_source.clear();
 			                    baseSpec.derived_alias_by_source.clear();
-		                    for (const auto &t : d.tags) {
+	                    size_t sweepIndex = 0;
+	                    for (const auto &t : d.tags) {
 		                        if (t.cfg.enabled && !t.cfg.source_tag.empty()) {
 		                            if (t.cfg.bit >= 0) {
 		                                baseSpec.derived_bits_by_source[t.cfg.source_tag].push_back(t.cfg);
@@ -25432,9 +25612,10 @@ window.addEventListener("load", startAutoRefresh);
 	                        it.handle = t.handle;
 	                        it.handle_deferred = t.handle_deferred;
 	                        it.scaling_linear = t.scaling_linear;
-	                        it.scale_slope = t.scale_slope;
-	                        it.scale_offset = t.scale_offset;
-	                        it.out_datatype = t.out_datatype;
+		                        it.scale_slope = t.scale_slope;
+		                        it.scale_offset = t.scale_offset;
+		                        it.out_datatype = t.out_datatype;
+	                        it.sweep_index = sweepIndex++;
 
 	                        int scan_ms = it.cfg.scan_ms;
 	                        if (scan_ms <= 0) scan_ms = 1000;
@@ -25451,6 +25632,8 @@ window.addEventListener("load", startAutoRefresh);
 	                    const int laneCount = std::max(1, std::min<int>(baseSpec.conn.poll_lanes, static_cast<int>(std::max<size_t>(totalTags, 1))));
 	                    if (baseSpec.metrics) {
 	                        baseSpec.metrics->poll_tag_count.store(static_cast<uint64_t>(totalTags), std::memory_order_relaxed);
+	                        reset_connection_sweep_tracking(baseSpec.metrics, static_cast<uint64_t>(totalTags));
+	                        reset_connection_block_metrics(baseSpec.metrics, baseSpec.tags);
 	                        size_t deferredTagCount = 0;
 	                        for (const auto &it : baseSpec.tags) {
 	                            if (it.handle_deferred) deferredTagCount++;
@@ -25635,6 +25818,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                                }
 		                                                t.handle = newHandle;
 		                                                t.poller_owns_handle = true;
+		                                                t.handle_pending_observed = false;
 		                                                if (pending) {
 		                                                    continue;
 		                                                }
@@ -25647,8 +25831,25 @@ window.addEventListener("load", startAutoRefresh);
 		                                    } else {
 			                                const int32_t handleStatus = plc_tag_status(t.handle);
 			                                if (handleStatus == PLCTAG_STATUS_PENDING) {
+			                                    if (!t.handle_pending_observed) {
+			                                        t.handle_pending_observed = true;
+			                                        t.handle_pending_since = nowSteady;
+			                                    } else if (t.handle_deferred && t.poller_owns_handle) {
+			                                        const int pendingResetMs = std::max(5000, spec.conn.default_read_ms * 4);
+			                                        if (std::chrono::duration_cast<std::chrono::milliseconds>(nowSteady - t.handle_pending_since).count() >= pendingResetMs) {
+			                                            std::cerr << "Deferred handle stuck pending for ["
+			                                                      << spec.conn.id << "]."
+			                                                      << t.cfg.logical_name
+			                                                      << "; forcing reopen." << std::endl;
+			                                            plc_tag_destroy(t.handle);
+			                                            t.handle = PLCTAG_ERR_NOT_FOUND;
+			                                            t.poller_owns_handle = false;
+			                                            t.handle_pending_observed = false;
+			                                        }
+			                                    }
 			                                    continue;
 			                                }
+		                                t.handle_pending_observed = false;
 		                                if (handleStatus != PLCTAG_STATUS_OK) {
 		                                    status = handleStatus;
 		                                } else {
@@ -25660,14 +25861,15 @@ window.addEventListener("load", startAutoRefresh);
 	                                    uint64_t us = static_cast<uint64_t>(
 	                                        std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
 	                                    );
+	                                    const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                                        std::chrono::system_clock::now().time_since_epoch()
+	                                    ).count();
 	                                    spec.metrics->reads_total.fetch_add(1, std::memory_order_relaxed);
 	                                    spec.metrics->read_us_total.fetch_add(us, std::memory_order_relaxed);
 	                                    spec.metrics->read_us_last.store(us, std::memory_order_relaxed);
 	                                    atomic_update_max(spec.metrics->read_us_max, us);
+	                                    record_connection_block_read(spec.metrics, t.sweep_index, status, us, ts_ms);
 
-	                                    int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-	                                        std::chrono::system_clock::now().time_since_epoch()
-	                                    ).count();
 	                                    if (status == PLCTAG_STATUS_OK) {
 	                                        spec.metrics->reads_ok.fetch_add(1, std::memory_order_relaxed);
 	                                        spec.metrics->last_ok_ts_ms.store(ts_ms, std::memory_order_relaxed);
@@ -25676,6 +25878,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                        spec.metrics->last_err_ts_ms.store(ts_ms, std::memory_order_relaxed);
 		                                    }
 		                                }
+		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 
 		                                if (status == PLCTAG_STATUS_OK) {
 		                                    TagRuntime tmp;
