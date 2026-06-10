@@ -21730,7 +21730,6 @@ window.addEventListener("load", startAutoRefresh);
 
 							for (auto &t : driver.tags) {
 								if (!t.cfg.enabled) continue;
-								if (t.handle < 0 && !t.handle_deferred) continue;
 								has_valid_tag = true;
 
 								std::string key = make_tag_key(driver.conn.id, t.cfg.logical_name);
