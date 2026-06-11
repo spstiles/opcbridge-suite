@@ -6088,7 +6088,7 @@ function renderOverviewHealth(health, metrics = null) {
           return `<tr><td><code>${name}</code></td><td>${datatype}${elemCount > 1 ? ` [${elemCount}]` : ''}</td><td>${mapped}</td><td>${readAvg}</td><td>${readLast}</td><td>${okAge}</td><td>${readsOk}</td><td>${readsErr}</td></tr>`;
         }).join('');
         const isExpanded = state.overviewHealthExpanded.has(cid);
-        blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK</th><th>Err</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+        blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK Count</th><th>Err Count</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
       }
       lines.push(`<div class="${cls}">${cid}: ${st.toUpperCase()}${reason}${ratio}${details}${blockHtml}</div>`);
     });
