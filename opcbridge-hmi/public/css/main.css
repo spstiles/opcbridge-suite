@@ -3235,6 +3235,16 @@ body.automation-panel-open #editor-pane {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.text-binding-inline-row {
+  grid-template-columns: 56px minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.text-binding-inline-row .automation-tag-input {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
 .text-binding-key {
   font-size: 10px;
   color: #d7dde8;

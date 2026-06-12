@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260611-hmi-ui-v20" />
+  <link rel="stylesheet" href="css/main.css?v=20260611-hmi-ui-v21" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -2108,21 +2108,13 @@
 	        <div class="settings-section">
 	          <div class="prop-row">
 	            <label for="textBindingConnection">Connection</label>
-	            <select id="textBindingConnection">
-	              <option value="">Select connection…</option>
-	            </select>
+	            <input id="textBindingConnection" class="automation-tag-input" type="text" placeholder="connection_id" />
 	          </div>
 	          <div class="prop-row">
 	            <label for="textBindingTag">Tag</label>
-	            <select id="textBindingTag">
-	              <option value="">Select tag…</option>
-	            </select>
-	          </div>
-	          <div class="prop-row">
-	            <label for="textBindingTagFilter">Filter</label>
-	            <div class="prop-inline">
-	              <input id="textBindingTagFilter" type="text" placeholder="Filter tags…" />
-	              <button id="textBindingRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	            <div class="prop-inline automation-tag-inline">
+	              <input id="textBindingTag" class="automation-tag-input" type="text" placeholder="tag" />
+	              <button id="textBindingTagPickBtn" class="panel-btn" type="button">Pick…</button>
 	            </div>
 	          </div>
 	          <div class="prop-row">
@@ -2633,6 +2625,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260611-hmi-ui-v20"></script>
+	  <script src="js/hmi.js?v=20260611-hmi-ui-v21"></script>
 	</body>
 	</html>

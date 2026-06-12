@@ -266,10 +266,9 @@ const libraryModalHost = document.getElementById("libraryModalHost");
 const textBindingOverlay = document.getElementById("textBindingOverlay");
 const textBindingTitle = document.getElementById("textBindingTitle");
 const textBindingCloseBtn = document.getElementById("textBindingCloseBtn");
-const textBindingConnectionSelect = document.getElementById("textBindingConnection");
-const textBindingTagSelect = document.getElementById("textBindingTag");
-const textBindingTagFilterInput = document.getElementById("textBindingTagFilter");
-const textBindingRefreshBtn = document.getElementById("textBindingRefreshBtn");
+const textBindingConnectionInput = document.getElementById("textBindingConnection");
+const textBindingTagInput = document.getElementById("textBindingTag");
+const textBindingTagPickBtn = document.getElementById("textBindingTagPickBtn");
 const textBindingDigitsInput = document.getElementById("textBindingDigits");
 const textBindingPadZerosInput = document.getElementById("textBindingPadZeros");
 const textBindingDecimalsInput = document.getElementById("textBindingDecimals");
@@ -6254,6 +6253,50 @@ const getButtonLabelBindingsMap = (obj) => {
   return next;
 };
 
+const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
+  const row = document.createElement("div");
+  row.className = "text-binding-row text-binding-inline-row";
+
+  const keyEl = document.createElement("div");
+  keyEl.className = "text-binding-key";
+  keyEl.textContent = `{${key}}`;
+
+  const connectionInput = document.createElement("input");
+  connectionInput.type = "text";
+  connectionInput.className = "automation-tag-input";
+  connectionInput.placeholder = "connection_id";
+  connectionInput.value = String(binding?.connection_id || "");
+
+  const tagInput = document.createElement("input");
+  tagInput.type = "text";
+  tagInput.className = "automation-tag-input";
+  tagInput.placeholder = "tag";
+  tagInput.value = String(binding?.tag || "");
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "panel-btn";
+  editBtn.textContent = "...";
+
+  const applyPatch = (patch, options = {}) => {
+    if (objectType === "button") updateButtonLabelBindingProperty(key, patch, options);
+    else updateTextBindingProperty(key, patch, options);
+  };
+
+  connectionInput.addEventListener("change", () => {
+    applyPatch({ connection_id: String(connectionInput.value || "").trim() });
+  });
+  tagInput.addEventListener("change", () => {
+    applyPatch({ tag: String(tagInput.value || "").trim() });
+  });
+  editBtn.addEventListener("click", () => {
+    openTextBindingModal(key, objectType);
+  });
+
+  row.append(keyEl, connectionInput, tagInput, editBtn);
+  return row;
+};
+
 const renderBoundTemplate = (rawText, bindings, previewOnly = false) => {
   return String(rawText || "").replace(TEXT_PLACEHOLDER_RE, (_, key) => {
     const bind = bindings[String(key)] || null;
@@ -8052,57 +8095,10 @@ const populateFilteredCombinedTagSelect = (selectEl, connectionId = "") => {
   }
 };
 
-const populateTextBindingConnectionOptions = () => {
-  if (!textBindingConnectionSelect) return;
-  const previous = String(textBindingConnectionSelect.value || "");
-  const connectionIds = Array.from(new Set(tagsCache.map((tag) => String(tag.connection_id || "")).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  textBindingConnectionSelect.innerHTML = "";
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = "Select connection…";
-  textBindingConnectionSelect.appendChild(placeholder);
-  connectionIds.forEach((connectionId) => {
-    const opt = document.createElement("option");
-    opt.value = connectionId;
-    opt.textContent = connectionId;
-    textBindingConnectionSelect.appendChild(opt);
-  });
-  if (previous && connectionIds.includes(previous)) {
-    textBindingConnectionSelect.value = previous;
-  }
-};
-
-const populateTextBindingTagOptions = (connectionId = "") => {
-  if (!textBindingTagSelect) return;
-  const previous = String(textBindingTagSelect.value || "");
-  const selectedConnectionId = String(connectionId || textBindingConnectionSelect?.value || "");
-  const filterQuery = String(textBindingTagFilterInput?.value || "");
-  textBindingTagSelect.innerHTML = "";
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = "Select tag…";
-  textBindingTagSelect.appendChild(placeholder);
-  const tags = filterTagNamesByQuery(tagsCache
-    .filter((tag) => !selectedConnectionId || String(tag.connection_id || "") === selectedConnectionId)
-    .map((tag) => String(tag.name || ""))
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b)), filterQuery);
-  tags.forEach((tagName) => {
-    const opt = document.createElement("option");
-    opt.value = tagName;
-    opt.textContent = tagName;
-    textBindingTagSelect.appendChild(opt);
-  });
-  if (previous && tags.includes(previous)) {
-    textBindingTagSelect.value = previous;
-  }
-};
-
 const closeTextBindingModal = () => {
   if (!textBindingOverlay) return;
   textBindingModalKey = "";
   textBindingModalObjectType = "text";
-  if (textBindingTagFilterInput) textBindingTagFilterInput.value = "";
   textBindingOverlay.classList.add("is-hidden");
   textBindingOverlay.setAttribute("aria-hidden", "true");
 };
@@ -8184,30 +8180,11 @@ const renderTextBindingRows = (obj) => {
   }
   const bindings = getTextBindingsMap(obj);
   placeholderKeys.forEach((key) => {
-    const row = document.createElement("div");
-    row.className = "text-binding-row";
-
-    const keyEl = document.createElement("div");
-    keyEl.className = "text-binding-key";
-    keyEl.textContent = `{${key}}`;
-
-    const summary = document.createElement("div");
-    summary.className = "text-binding-summary";
-    summary.textContent = getTextBindingSummary(bindings[key]);
-    summary.title = summary.textContent;
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "panel-btn";
-    btn.textContent = "...";
-    btn.addEventListener("click", () => {
-      openTextBindingModal(key);
-    });
-
-    row.appendChild(keyEl);
-    row.appendChild(summary);
-    row.appendChild(btn);
-    textBindingRows.appendChild(row);
+    textBindingRows.appendChild(createInlineTextBindingRow({
+      key,
+      binding: bindings[key],
+      objectType: "text"
+    }));
   });
 };
 
@@ -8224,30 +8201,11 @@ const renderButtonLabelBindingRows = (obj) => {
   }
   const bindings = getButtonLabelBindingsMap(obj);
   placeholderKeys.forEach((key) => {
-    const row = document.createElement("div");
-    row.className = "text-binding-row";
-
-    const keyEl = document.createElement("div");
-    keyEl.className = "text-binding-key";
-    keyEl.textContent = `{${key}}`;
-
-    const summary = document.createElement("div");
-    summary.className = "text-binding-summary";
-    summary.textContent = getTextBindingSummary(bindings[key]);
-    summary.title = summary.textContent;
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "panel-btn";
-    btn.textContent = "...";
-    btn.addEventListener("click", () => {
-      openTextBindingModal(key, "button");
-    });
-
-    row.appendChild(keyEl);
-    row.appendChild(summary);
-    row.appendChild(btn);
-    buttonLabelBindingRows.appendChild(row);
+    buttonLabelBindingRows.appendChild(createInlineTextBindingRow({
+      key,
+      binding: bindings[key],
+      objectType: "button"
+    }));
   });
 };
 
@@ -8262,18 +8220,14 @@ const openTextBindingModal = (placeholderKey, objectType = "text") => {
   textBindingModalKey = key;
   textBindingModalObjectType = objectType;
   if (textBindingTitle) textBindingTitle.textContent = `${objectType === "button" ? "Button Label" : "Text"} Binding {${key}}`;
-  if (textBindingTagFilterInput) textBindingTagFilterInput.value = "";
-  populateTextBindingConnectionOptions();
-  setSelectValueSafe(textBindingConnectionSelect, binding?.connection_id || "");
-  populateTextBindingTagOptions(binding?.connection_id || "");
-  setSelectValueSafe(textBindingTagSelect, binding?.tag || "");
+  setTagBindingFieldValues(textBindingConnectionInput, textBindingTagInput, binding);
   setInputValueSafe(textBindingDigitsInput, binding?.digits ?? "");
   if (textBindingPadZerosInput) textBindingPadZerosInput.checked = Boolean(binding?.padZeros);
   setInputValueSafe(textBindingDecimalsInput, Number.isFinite(Number(binding?.decimals)) ? Number(binding.decimals) : 0);
   setInputValueSafe(textBindingMultiplierInput, Number.isFinite(Number(binding?.multiplier)) ? Number(binding.multiplier) : 1);
   textBindingOverlay.classList.remove("is-hidden");
   textBindingOverlay.setAttribute("aria-hidden", "false");
-  if (textBindingTagFilterInput) requestAnimationFrame(() => textBindingTagFilterInput.focus());
+  if (textBindingTagInput) requestAnimationFrame(() => textBindingTagInput.focus());
 };
 
 const refreshBarBindTagOptions = () => {
@@ -8352,9 +8306,8 @@ const renderTagsList = (tags) => {
           }
 	        if (!obj || (obj.type !== "text" && obj.type !== "bar" && obj.type !== "number-input" && obj.type !== "button" && obj.type !== "indicator")) return;
 	        if (textBindingModalKey && (obj.type === "text" || obj.type === "button") && textBindingModalObjectType === obj.type) {
-	          if (textBindingConnectionSelect) textBindingConnectionSelect.value = tagConnectionId;
-	          populateTextBindingTagOptions(tagConnectionId);
-	          if (textBindingTagSelect) textBindingTagSelect.value = tagName;
+	          if (textBindingConnectionInput) textBindingConnectionInput.value = tagConnectionId;
+	          if (textBindingTagInput) textBindingTagInput.value = tagName;
 	          return;
 	        }
 	        if (obj.type === "text") return;
@@ -14642,10 +14595,10 @@ if (textValignSelect) {
   });
 }
 
-if (textBindingConnectionSelect) {
-  textBindingConnectionSelect.addEventListener("change", () => {
-    populateTextBindingTagOptions(textBindingConnectionSelect.value);
-    if (textBindingTagSelect) textBindingTagSelect.value = "";
+if (textBindingTagPickBtn) {
+  textBindingTagPickBtn.addEventListener("click", () => {
+    if (!textBindingModalKey) return;
+    openCompactTagBindingModal("textBindingModal");
   });
 }
 
@@ -14653,8 +14606,8 @@ if (textBindingSaveBtn) {
   textBindingSaveBtn.addEventListener("click", () => {
     if (!textBindingModalKey) return;
     const patch = {
-      connection_id: String(textBindingConnectionSelect?.value || "").trim(),
-      tag: String(textBindingTagSelect?.value || "").trim(),
+      connection_id: String(textBindingConnectionInput?.value || "").trim(),
+      tag: String(textBindingTagInput?.value || "").trim(),
       digits: Number.isFinite(Number(textBindingDigitsInput?.value)) ? Number(textBindingDigitsInput.value) : "",
       padZeros: Boolean(textBindingPadZerosInput?.checked),
       decimals: Number.isFinite(Number(textBindingDecimalsInput?.value)) ? Number(textBindingDecimalsInput.value) : 0,
@@ -14677,18 +14630,6 @@ if (textBindingClearBtn) {
 
 if (textBindingCancelBtn) textBindingCancelBtn.addEventListener("click", closeTextBindingModal);
 if (textBindingCloseBtn) textBindingCloseBtn.addEventListener("click", closeTextBindingModal);
-if (textBindingTagFilterInput) {
-  textBindingTagFilterInput.addEventListener("input", () => {
-    populateTextBindingTagOptions(textBindingConnectionSelect?.value || "");
-  });
-}
-if (textBindingRefreshBtn) {
-  textBindingRefreshBtn.addEventListener("click", async () => {
-    await loadTags();
-    populateTextBindingConnectionOptions();
-    populateTextBindingTagOptions(textBindingConnectionSelect?.value || "");
-  });
-}
 if (textBindingOverlay) {
   textBindingOverlay.addEventListener("click", (event) => {
     if (event.target === textBindingOverlay) closeTextBindingModal();
@@ -17684,6 +17625,20 @@ function initializeCompactTagBindingRows() {
     }),
     apply: ({ connection_id, tag }) => updateRectColorDraft({ connection_id, tag, enabled: true })
   });
+
+  registerCompactTagBinding({
+    id: "textBindingModal",
+    connectionInput: textBindingConnectionInput,
+    tagInput: textBindingTagInput,
+    modalTitle: "Binding Tag",
+    inlineOnly: true,
+    read: () => ({
+      connection_id: String(textBindingConnectionInput?.value || "").trim(),
+      tag: String(textBindingTagInput?.value || "").trim()
+    }),
+    apply: ({ connection_id, tag }) => setTagBindingFieldValues(textBindingConnectionInput, textBindingTagInput, { connection_id, tag })
+  });
+
 
   [
     { id: "polygonFillAutomation", fields: polygonFillAutoFields, modeSelect: polygonFillAutoModeSelect, connectionInput: polygonFillAutoConnectionInput, tagSelect: polygonFillAutoTagSelect, key: "fillAutomation", title: "Polygon Fill Automation Tag" },
