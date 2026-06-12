@@ -3127,6 +3127,25 @@ body.automation-panel-open #editor-pane {
   max-width: 110px;
 }
 
+.prop-row input.automation-tag-input[type="text"] {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.automation-tag-inline {
+  width: 100%;
+  min-width: 0;
+}
+
+.automation-tag-inline .automation-tag-input {
+  flex: 1 1 auto;
+}
+
+.automation-tag-inline .panel-btn {
+  flex: 0 0 auto;
+}
+
 .prop-row input[type="color"] {
   width: 36px;
   height: 32px;

@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260611-hmi-ui-v19" />
+  <link rel="stylesheet" href="css/main.css?v=20260611-hmi-ui-v20" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -1181,12 +1181,12 @@
                 </div>
                 <div class="prop-row" id="rectColorConnectionRow">
                   <label for="rectColorConnection">Connection</label>
-                  <input id="rectColorConnection" type="text" placeholder="connection_id" />
+                  <input id="rectColorConnection" class="automation-tag-input" type="text" placeholder="connection_id" />
                 </div>
                 <div class="prop-row" id="rectColorTagRow">
                   <label for="rectColorTag">Tag</label>
-                  <div class="prop-subgroup">
-                    <input id="rectColorTag" type="text" placeholder="tag" />
+                  <div class="prop-inline automation-tag-inline">
+                    <input id="rectColorTag" class="automation-tag-input" type="text" placeholder="tag" />
                     <button id="rectColorTagPickBtn" class="panel-btn" type="button">Pick…</button>
                   </div>
                 </div>
@@ -1889,12 +1889,12 @@
               </div>
               <div class="prop-row">
                 <label for="visibilityConnection">Connection</label>
-                <input id="visibilityConnection" type="text" placeholder="connection_id" />
+                <input id="visibilityConnection" class="automation-tag-input" type="text" placeholder="connection_id" />
               </div>
               <div class="prop-row">
                 <label for="visibilityTag">Tag</label>
-                <div class="prop-subgroup">
-                  <input id="visibilityTag" type="text" placeholder="tag" />
+                <div class="prop-inline automation-tag-inline">
+                  <input id="visibilityTag" class="automation-tag-input" type="text" placeholder="tag" />
                   <button id="visibilityTagPickBtn" class="panel-btn" type="button">Pick…</button>
                 </div>
               </div>
@@ -2633,6 +2633,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260611-hmi-ui-v19"></script>
+	  <script src="js/hmi.js?v=20260611-hmi-ui-v20"></script>
 	</body>
 	</html>

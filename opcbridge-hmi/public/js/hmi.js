@@ -18004,6 +18004,7 @@ const initializeRotationControls = () => {
     const connectionInput = document.createElement("input");
     connectionInput.type = "text";
     connectionInput.placeholder = "connection_id";
+    connectionInput.className = "automation-tag-input";
     connectionRow.appendChild(connectionLabel);
     connectionRow.appendChild(connectionInput);
 
@@ -18012,10 +18013,11 @@ const initializeRotationControls = () => {
     const tagLabel = document.createElement("label");
     tagLabel.textContent = "Tag";
     const tagInline = document.createElement("div");
-    tagInline.className = "prop-subgroup";
+    tagInline.className = "prop-inline automation-tag-inline";
     const tagInput = document.createElement("input");
     tagInput.type = "text";
     tagInput.placeholder = "tag";
+    tagInput.className = "automation-tag-input";
     const tagPickBtn = document.createElement("button");
     tagPickBtn.type = "button";
     tagPickBtn.className = "panel-btn";
@@ -18563,6 +18565,7 @@ const initializeMotionControls = () => {
     const connectionInput = document.createElement("input");
     connectionInput.type = "text";
     connectionInput.placeholder = "connection_id";
+    connectionInput.className = "automation-tag-input";
     connectionRow.append(connectionLabel, connectionInput);
 
     const tagRow = document.createElement("div");
@@ -18570,10 +18573,11 @@ const initializeMotionControls = () => {
     const tagLabel = document.createElement("label");
     tagLabel.textContent = "Tag";
     const tagInline = document.createElement("div");
-    tagInline.className = "prop-subgroup";
+    tagInline.className = "prop-inline automation-tag-inline";
     const tagInput = document.createElement("input");
     tagInput.type = "text";
     tagInput.placeholder = "tag";
+    tagInput.className = "automation-tag-input";
     const tagPickBtn = document.createElement("button");
     tagPickBtn.type = "button";
     tagPickBtn.className = "panel-btn";
