@@ -1445,9 +1445,8 @@
 	            <div class="form-row"><label>Name</label><input id="editAlarmName" type="text" placeholder="Wetwell High Level" /></div>
 	            <div class="form-row"><label>Group</label><select id="editAlarmGroup"></select></div>
 	            <div class="form-row"><label>Site</label><select id="editAlarmSite"></select></div>
-	            <div class="form-row"><label>Connection</label><select id="editAlarmConn"></select></div>
-            <div class="form-row"><label>Filter Tags</label><input id="editAlarmTagFilter" type="search" placeholder="Type part of a tag name" /></div>
-            <div class="form-row"><label>Tag</label><select id="editAlarmTag" size="8" style="min-height: 180px;"></select></div>
+	            <div class="form-row"><label>Connection</label><input id="editAlarmConn" type="text" placeholder="Connection ID" /></div>
+            <div class="form-row"><label>Tag</label><div class="row-actions" style="gap:8px;"><input id="editAlarmTag" type="text" placeholder="Tag name" style="flex:1; min-width:0;" /><button class="btn" id="editAlarmTagPickBtn" type="button">...</button></div></div>
             <div class="form-row"><label>Type</label><select id="editAlarmType">
               <option value="high">High</option>
               <option value="low">Low</option>
@@ -2076,6 +2075,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260612_scada_workspace_children_v6"></script>
+  <script src="app.js?v=20260612_scada_alarm_tag_inputs_v7"></script>
 </body>
 </html>

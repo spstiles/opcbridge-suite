@@ -576,8 +576,8 @@
   editAlarmGroup: document.getElementById('editAlarmGroup'),
   editAlarmSite: document.getElementById('editAlarmSite'),
   editAlarmConn: document.getElementById('editAlarmConn'),
-  editAlarmTagFilter: document.getElementById('editAlarmTagFilter'),
   editAlarmTag: document.getElementById('editAlarmTag'),
+  editAlarmTagPickBtn: document.getElementById('editAlarmTagPickBtn'),
   editAlarmType: document.getElementById('editAlarmType'),
   editAlarmEnabled: document.getElementById('editAlarmEnabled'),
   editAlarmAudibleMode: document.getElementById('editAlarmAudibleMode'),
@@ -994,6 +994,7 @@ const state = {
   loggerTagPickerTreeExpanded: new Set(),
   loggerTagPickerLoadedAtMs: 0,
   loggerTagPickerLoadingPromise: null,
+  alarmInlinePickerTarget: null,
 
   // MQTT tab
   mqttConfigPayload: null,
@@ -3248,11 +3249,11 @@ function closeLoggerTagPickerModal() {
 }
 
 function isLoggerTagPickerSingleMode(mode = state.loggerTagPickerMode) {
-  return ['panel_row', 'panel_add', 'logic_insert', 'historian_add', 'historian_field_row', 'historian_field_add'].includes(String(mode || ''));
+  return ['panel_row', 'panel_add', 'logic_insert', 'historian_add', 'historian_field_row', 'historian_field_add', 'alarm_source', 'alarm_source_inline'].includes(String(mode || ''));
 }
 
 function isLoggerTagPickerTreeMode(mode = state.loggerTagPickerMode) {
-  return ['panel_row', 'panel_add', 'logic_insert', 'historian_add', 'historian_field_row', 'historian_field_add'].includes(String(mode || ''));
+  return ['panel_row', 'panel_add', 'logic_insert', 'historian_add', 'historian_field_row', 'historian_field_add', 'alarm_source', 'alarm_source_inline'].includes(String(mode || ''));
 }
 
 function tagKeyFromLiveTag(t) {
@@ -3680,7 +3681,7 @@ function renderLoggerTagPickerTreeNode(node, container, depth = 0) {
     if (node.type === 'tag') {
       const key = String(node.meta?.tag_key || '');
       state.loggerTagPickerSelected = key ? new Set([key]) : new Set();
-      if (['panel_row', 'panel_add', 'historian_add', 'historian_field_row', 'historian_field_add'].includes(String(state.loggerTagPickerMode || ''))) {
+      if (['panel_row', 'panel_add', 'historian_add', 'historian_field_row', 'historian_field_add', 'alarm_source', 'alarm_source_inline'].includes(String(state.loggerTagPickerMode || ''))) {
         applyLoggerTagPickerSelectionToTextarea();
         return;
       }
@@ -3754,7 +3755,7 @@ async function openLoggerTagPickerModal(opts = {}) {
   const title = document.getElementById('loggerTagPickerTitle');
   const singleTreeMode = isLoggerTagPickerTreeMode(mode);
   if (title) title.textContent = mode === 'logic_insert' ? 'Insert Tag' : ((mode === 'historian_add' || mode === 'historian_field_row' || mode === 'historian_field_add') ? 'Select Historian Tag' : 'Select Tag');
-  if (els.loggerTagPickerApplyBtn) els.loggerTagPickerApplyBtn.textContent = mode === 'logic_insert' ? 'Insert Name' : ((mode === 'historian_add' || mode === 'historian_field_row' || mode === 'historian_field_add' || mode === 'panel_row' || mode === 'panel_add') ? 'Use Tag' : 'Apply Selection');
+  if (els.loggerTagPickerApplyBtn) els.loggerTagPickerApplyBtn.textContent = mode === 'logic_insert' ? 'Insert Name' : ((mode === 'historian_add' || mode === 'historian_field_row' || mode === 'historian_field_add' || mode === 'panel_row' || mode === 'panel_add' || mode === 'alarm_source' || mode === 'alarm_source_inline') ? 'Use Tag' : 'Apply Selection');
   if (els.loggerTagPickerSelectAllBtn) els.loggerTagPickerSelectAllBtn.style.display = singleTreeMode ? 'none' : '';
   if (els.loggerTagPickerClearBtn) els.loggerTagPickerClearBtn.style.display = singleTreeMode ? 'none' : '';
   if (els.loggerTagPickerFullTagBtn) els.loggerTagPickerFullTagBtn.style.display = mode === 'logic_insert' ? '' : 'none';
@@ -3795,6 +3796,36 @@ async function openLoggerTagPickerModal(opts = {}) {
 }
 
 function applyLoggerTagPickerSelectionToTextarea() {
+  if (state.loggerTagPickerMode === 'alarm_source') {
+    const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+    const parts = loggerTagSpecParts(selected);
+    if (parts.connection_id && parts.tag_name) {
+      if (els.editAlarmConn) els.editAlarmConn.value = parts.connection_id;
+      if (els.editAlarmTag) els.editAlarmTag.value = parts.tag_name;
+      maybeRefreshAlarmSourceLists(parts.connection_id);
+      refreshAlarmTypeOptions();
+      syncNewAlarmDefaults();
+      updateAlarmPreview();
+    }
+    closeLoggerTagPickerModal();
+    return;
+  }
+  if (state.loggerTagPickerMode === 'alarm_source_inline') {
+    const selected = Array.from(state.loggerTagPickerSelected || []).map((s) => String(s || '').trim()).filter(Boolean)[0] || '';
+    const parts = loggerTagSpecParts(selected);
+    const target = state.alarmInlinePickerTarget || {};
+    if (parts.connection_id && parts.tag_name && target.connSel && target.tagSel) {
+      target.connSel.value = parts.connection_id;
+      target.tagSel.value = parts.tag_name;
+      maybeRefreshAlarmSourceLists(parts.connection_id);
+      if (typeof target.refreshTypeSelectLocal === 'function') target.refreshTypeSelectLocal();
+      if (typeof target.syncTypeUiLocal === 'function') target.syncTypeUiLocal();
+      if (typeof target.markPropsDirty === 'function') target.markPropsDirty();
+    }
+    state.alarmInlinePickerTarget = null;
+    closeLoggerTagPickerModal();
+    return;
+  }
   if (state.loggerTagPickerMode === 'logic_insert') {
     insertLogicSelectedTagName();
     return;
@@ -8575,15 +8606,8 @@ function fillAlarmConnectionSelect(want = '') {
   if (!els.editAlarmConn) return;
   const conns = getAlarmConnectionIds();
   conns.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
-  els.editAlarmConn.textContent = '';
-  conns.forEach((cid) => {
-    const opt = document.createElement('option');
-    opt.value = cid;
-    opt.textContent = cid === '_system' ? 'System (_system)' : cid;
-    els.editAlarmConn.appendChild(opt);
-  });
   if (want) els.editAlarmConn.value = want;
-  else if (els.editAlarmConn.options.length) els.editAlarmConn.value = String(els.editAlarmConn.options[0].value || '');
+  else if (!String(els.editAlarmConn.value || '').trim() && conns.length) els.editAlarmConn.value = String(conns[0] || '');
 }
 
 function getAlarmConnectionIds() {
@@ -8803,31 +8827,9 @@ function refreshAlarmTagSelect(want = '') {
   if (cid === '_system' && !(state.systemTagsForSelection || []).length) {
     loadSystemTagsForSelection().then(() => refreshAlarmTagSelect(want)).catch(() => {});
   }
-  const filter = String(els.editAlarmTagFilter?.value || '').trim().toLowerCase();
-  els.editAlarmTag.textContent = '';
-  const tags = getAlarmCandidateTagsForConnection(cid)
-    .filter((t) => {
-      if (!filter) return true;
-      return String(t?.name || '').toLowerCase().includes(filter) || String(t?.plc_tag_name || '').toLowerCase().includes(filter);
-    })
-    .slice()
-    .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
-  const frag = document.createDocumentFragment();
-  tags.forEach((t) => {
-    const name = String(t?.name || '');
-    const plc = String(t?.plc_tag_name || '').trim();
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = cid === '_system' ? `${name}  (system)` : (plc && plc !== name ? `${name}  (${plc})` : name);
-    frag.appendChild(opt);
-  });
-  els.editAlarmTag.appendChild(frag);
   if (want) els.editAlarmTag.value = want;
-  else if (els.editAlarmTag.options.length) els.editAlarmTag.value = String(els.editAlarmTag.options[0].value || '');
   refreshAlarmTypeOptions();
-  if (filter && !els.editAlarmTag.options.length) setEditAlarmStatus('No matching tags found.');
-  else if (filter) setEditAlarmStatus(`Showing ${tags.length} matching tag(s).`);
-  else setEditAlarmStatus('');
+  setEditAlarmStatus('');
 }
 
 function readAlarmAudioFromUi() {
@@ -9478,7 +9480,6 @@ function wireAlarmPreviewInputs() {
     els.editAlarmGroup,
     els.editAlarmSite,
     els.editAlarmConn,
-    els.editAlarmTagFilter,
     els.editAlarmTag,
     els.editAlarmType,
     els.editAlarmEnabled,
@@ -9492,31 +9493,13 @@ function wireAlarmPreviewInputs() {
     els.editAlarmValue
   ].filter(Boolean);
 
-  // Some browsers can "lose" a listbox selection if the mouse is released outside the control.
-  // Commit selection on mousedown so the chosen tag sticks even if the user slips off the modal.
-  if (els.editAlarmTag && els.editAlarmTag.dataset.forceSelectWired !== '1') {
-    els.editAlarmTag.dataset.forceSelectWired = '1';
-    els.editAlarmTag.addEventListener('mousedown', (e) => {
-      const opt = e.target && e.target.tagName === 'OPTION' ? e.target : null;
-      if (!opt) return;
-      const v = String(opt.value || '').trim();
-      if (!v) return;
-      els.editAlarmTag.value = v;
-      opt.selected = true;
-      // prevent accidental text selection/drag causing selection rollback
-      e.preventDefault();
-      refreshAlarmTypeOptions();
-      updateAlarmPreview();
-    }, true);
-  }
-
   inputs.forEach((el) => {
     if (el.dataset.alarmPreviewWired === '1') return;
     el.dataset.alarmPreviewWired = '1';
     el.addEventListener('input', () => {
       if (el === els.editAlarmSeverity) syncSeverityPresetFromValue();
-      if (el === els.editAlarmTagFilter) refreshAlarmTagSelect();
       if ([els.editAlarmConn, els.editAlarmTag, els.editAlarmType].includes(el)) syncNewAlarmDefaults();
+      if ([els.editAlarmConn, els.editAlarmTag].includes(el)) refreshAlarmTypeOptions();
       if (el === els.editAlarmGroup) {
         const g = String(els.editAlarmGroup?.value || '').trim();
         fillAlarmSiteSelect(g, g ? String(els.editAlarmSite?.value || '') : '');
@@ -9527,7 +9510,7 @@ function wireAlarmPreviewInputs() {
     el.addEventListener('change', () => {
       if (el === els.editAlarmSeverity) syncSeverityPresetFromValue();
       if (el === els.editAlarmConn) {
-        refreshAlarmTagSelect();
+        maybeRefreshAlarmSourceLists(String(els.editAlarmConn?.value || '').trim());
         refreshAlarmTypeOptions();
         syncNewAlarmDefaults();
       }
@@ -9541,6 +9524,13 @@ function wireAlarmPreviewInputs() {
       updateAlarmPreview();
     });
   });
+
+  if (els.editAlarmTagPickBtn && els.editAlarmTagPickBtn.dataset.alarmSourcePickerWired !== '1') {
+    els.editAlarmTagPickBtn.dataset.alarmSourcePickerWired = '1';
+    els.editAlarmTagPickBtn.addEventListener('click', () => {
+      openLoggerTagPickerModal({ mode: 'alarm_source' }).catch((err) => setEditAlarmStatus(`Tag picker failed: ${err.message || err}`));
+    });
+  }
 
   if (els.editAlarmSeverityPreset && els.editAlarmSeverityPreset.dataset.alarmPreviewWired !== '1') {
     els.editAlarmSeverityPreset.dataset.alarmPreviewWired = '1';
@@ -13218,7 +13208,6 @@ function openWorkspaceItemModal(node) {
 
     const want = existing ? String(existing.connection_id || '') : String(node.meta?.source?.connection_id || '');
     const wantTag = existing ? String(existing.tag_name || '') : String(node.meta?.source?.tag || '');
-    if (els.editAlarmTagFilter) els.editAlarmTagFilter.value = '';
     fillAlarmConnectionSelect(want);
     refreshAlarmTagSelect(wantTag);
 
@@ -13397,7 +13386,6 @@ function openNewAlarmModal({ group, site } = {}) {
   fillAlarmGroupSelect(wantGroup);
   fillAlarmSiteSelect(wantGroup, wantGroup ? wantSite : '');
 
-  if (els.editAlarmTagFilter) els.editAlarmTagFilter.value = '';
   fillAlarmConnectionSelect();
   refreshAlarmTagSelect();
   maybeRefreshAlarmSourceLists();
@@ -18123,56 +18111,38 @@ function renderAlarmsEventsProperties(item, parentNode) {
     nameBox.value = String(cur?.name || item?.label || alarmId);
     addRow('Name', nameBox);
 
-    const connSel = document.createElement('select');
+    const connSel = document.createElement('input');
+    connSel.type = 'text';
+    connSel.placeholder = 'Connection ID';
     const connWant = String(cur?.connection_id || item?.meta?.source?.connection_id || '').trim();
-    const conns = getAlarmConnectionIds()
-      .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
-    connSel.innerHTML = conns.map((cid) => `<option value="${escapeHtml(cid)}">${escapeHtml(cid === '_system' ? 'System (_system)' : cid)}</option>`).join('');
-    if (connWant && !conns.includes(connWant)) {
-      const opt = document.createElement('option');
-      opt.value = connWant;
-      opt.textContent = `${connWant} (missing)`;
-      connSel.appendChild(opt);
-    }
     connSel.value = connWant;
     addRow('Connection', connSel);
     maybeRefreshAlarmSourceLists(connWant);
 
-    const tagFilter = document.createElement('input');
-    tagFilter.type = 'search';
-    tagFilter.placeholder = 'Type part of a tag name';
-    addRow('Filter Tags', tagFilter);
-
-    const tagSel = document.createElement('select');
-    tagSel.size = 8;
-    tagSel.style.minHeight = '180px';
+    const tagSel = document.createElement('input');
+    tagSel.type = 'text';
+    tagSel.placeholder = 'Tag name';
     const tagWant = String(cur?.tag_name || item?.meta?.source?.tag || '').trim();
+    const tagWrap = document.createElement('div');
+    tagWrap.className = 'row-actions';
+    tagWrap.style.gap = '8px';
+    const tagPickBtn = document.createElement('button');
+    tagPickBtn.className = 'btn';
+    tagPickBtn.type = 'button';
+    tagPickBtn.textContent = '...';
+    tagSel.style.flex = '1';
+    tagSel.style.minWidth = '0';
+    tagWrap.appendChild(tagSel);
+    tagWrap.appendChild(tagPickBtn);
     const refreshTagSelectLocal = (wantTag = '') => {
       const cid = String(connSel.value || '').trim();
       if (cid === '_system' && !(state.systemTagsForSelection || []).length) {
         loadSystemTagsForSelection().then(() => refreshTagSelectLocal(wantTag)).catch(() => {});
       }
-      const filter = String(tagFilter.value || '').trim().toLowerCase();
-      tagSel.textContent = '';
-      const tags = getAlarmCandidateTagsForConnection(cid)
-        .filter((t) => {
-          if (!filter) return true;
-          return String(t?.name || '').toLowerCase().includes(filter) || String(t?.plc_tag_name || '').toLowerCase().includes(filter);
-        })
-        .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
-      tags.forEach((t) => {
-        const name = String(t?.name || '');
-        const plc = String(t?.plc_tag_name || '').trim();
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = cid === '_system' ? `${name}  (system)` : (plc && plc !== name ? `${name}  (${plc})` : name);
-        tagSel.appendChild(opt);
-      });
       if (wantTag) tagSel.value = wantTag;
-      else if (tagSel.options.length) tagSel.value = String(tagSel.options[0].value || '');
     };
     refreshTagSelectLocal(tagWant);
-    addRow('Tag', tagSel);
+    addRow('Tag', tagWrap);
 
     const typeSel = document.createElement('select');
     const refreshTypeSelectLocal = (preferred = '') => {
@@ -18364,14 +18334,19 @@ function renderAlarmsEventsProperties(item, parentNode) {
     speechBox.placeholder = 'Optional text-to-speech for this alarm';
     speechBox.disabled = !canEditConfig();
     addRow('Speech Text', speechBox);
-    [idBox, nameBox, connSel, tagFilter, tagSel, typeSel, thresholdBox, hysteresisBox, compareBox, enabledBox, sevPreset, sevBox, groupSel, siteSel, modeSel, speechBox, gapBox, msgOnBox, msgOffBox].forEach((el) => {
+    [idBox, nameBox, connSel, tagSel, typeSel, thresholdBox, hysteresisBox, compareBox, enabledBox, sevPreset, sevBox, groupSel, siteSel, modeSel, speechBox, gapBox, msgOnBox, msgOffBox].forEach((el) => {
       if (!el) return;
       el.addEventListener('input', markPropsDirty);
       el.addEventListener('change', markPropsDirty);
     });
     connSel.addEventListener('change', () => { refreshTagSelectLocal(''); refreshTypeSelectLocal(); syncTypeUiLocal(); });
+    connSel.addEventListener('input', () => { refreshTypeSelectLocal(); syncTypeUiLocal(); });
     tagSel.addEventListener('change', () => { refreshTypeSelectLocal(); syncTypeUiLocal(); });
-    tagFilter.addEventListener('input', () => refreshTagSelectLocal(String(tagSel.value || '').trim()));
+    tagSel.addEventListener('input', () => { refreshTypeSelectLocal(); syncTypeUiLocal(); });
+    tagPickBtn.addEventListener('click', () => {
+      state.alarmInlinePickerTarget = { connSel, tagSel, refreshTypeSelectLocal, syncTypeUiLocal, markPropsDirty };
+      openLoggerTagPickerModal({ mode: 'alarm_source_inline' }).catch((err) => setStatus(`Tag picker failed: ${err.message || err}`));
+    });
     typeSel.addEventListener('change', syncTypeUiLocal);
 
 
