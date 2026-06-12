@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260606-hmi-ui-v13" />
+  <link rel="stylesheet" href="css/main.css?v=20260611-hmi-ui-v14" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -1162,6 +1162,16 @@
                 </div>
               </div>
               <div id="rectColorFields" class="prop-subgroup is-hidden" hidden>
+                <div class="prop-row" id="rectColorRuleRow">
+                  <label for="rectColorRuleSelect">Rule</label>
+                  <div class="prop-inline">
+                    <select id="rectColorRuleSelect"></select>
+                    <button id="rectColorRuleAddBtn" class="panel-btn" type="button">Add</button>
+                    <button id="rectColorRuleDeleteBtn" class="panel-btn" type="button">Delete</button>
+                    <button id="rectColorRuleUpBtn" class="panel-btn" type="button">↑</button>
+                    <button id="rectColorRuleDownBtn" class="panel-btn" type="button">↓</button>
+                  </div>
+                </div>
                 <div class="prop-row">
                   <label for="rectColorSourceType">Source Type</label>
                   <select id="rectColorSourceType">
@@ -2625,6 +2635,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260606-hmi-ui-v13"></script>
+	  <script src="js/hmi.js?v=20260611-hmi-ui-v14"></script>
 	</body>
 	</html>

@@ -660,8 +660,76 @@ const cloneVisibilityState = (value) => {
 };
 
 const cloneRectColorDraft = (value) => {
-  if (!value || typeof value !== "object") return { enabled: true, sourceType: "tag", fillEnabled: true, strokeEnabled: false, textEnabled: false, backgroundEnabled: false, borderEnabled: false };
+  if (!value || typeof value !== "object") return { rules: [], selectedRuleIndex: 0 };
   return JSON.parse(JSON.stringify(value));
+};
+
+const getDefaultColorRuleForObject = (obj) => ({
+  enabled: true,
+  sourceType: "tag",
+  fillEnabled: Boolean(obj && obj.type !== "line"),
+  strokeEnabled: Boolean(obj && obj.type === "line"),
+  textEnabled: false,
+  backgroundEnabled: false,
+  borderEnabled: false
+});
+
+const normalizeStoredColorRule = (value) => {
+  const next = normalizeColorAutomationState(value);
+  if (!String(next.onColor || "").trim()) delete next.onColor;
+  return next;
+};
+
+const getColorAutomationRules = (config) => {
+  if (!config || typeof config !== "object") return [];
+  if (Array.isArray(config.rules)) {
+    return config.rules
+      .filter((rule) => rule && typeof rule === "object")
+      .map((rule) => normalizeStoredColorRule(rule))
+      .filter((rule) => Object.keys(rule).length);
+  }
+  const single = normalizeStoredColorRule(config);
+  return Object.keys(single).length ? [single] : [];
+};
+
+const serializeColorAutomationRules = (rules) => {
+  const nextRules = (Array.isArray(rules) ? rules : [])
+    .map((rule) => normalizeStoredColorRule(rule))
+    .filter((rule) => Object.keys(rule).length);
+  if (!nextRules.length) return null;
+  if (nextRules.length === 1) return nextRules[0];
+  return { rules: nextRules };
+};
+
+const buildColorRuleSummary = (rule, index) => {
+  const next = rule && typeof rule === "object" ? rule : {};
+  const parts = [];
+  if (next.fillEnabled) parts.push("Fill");
+  if (next.strokeEnabled) parts.push("Stroke");
+  if (next.textEnabled) parts.push("Text");
+  if (next.backgroundEnabled) parts.push("Background");
+  if (next.borderEnabled) parts.push("Border");
+  const targetText = parts.length ? parts.join("/") : "No targets";
+  if (next.sourceType === "expression") {
+    const expr = String(next.expression || "").trim();
+    return `Rule ${index + 1} · ${targetText} · ${expr ? "Expression" : "Expression (empty)"}`;
+  }
+  const tagText = String(next.tag || "").trim();
+  return `Rule ${index + 1} · ${targetText} · ${tagText || "Unbound tag"}`;
+};
+
+const normalizeRectColorDraft = (obj, value) => {
+  const baseRule = getDefaultColorRuleForObject(obj);
+  const draft = value && typeof value === "object" ? { ...value } : {};
+  const rawRules = Array.isArray(draft.rules) ? draft.rules : [];
+  const rules = rawRules.length
+    ? rawRules.map((rule) => ({ ...baseRule, ...(rule && typeof rule === "object" ? rule : {}) }))
+    : [{ ...baseRule }];
+  const selectedRuleIndex = Math.max(0, Math.min(
+    Number.isInteger(Number(draft.selectedRuleIndex)) ? Number(draft.selectedRuleIndex) : 0,
+    rules.length - 1
+  ));
+  return { rules, selectedRuleIndex };
 };
 
 const cloneRectRotationDraft = (value) => {
@@ -789,9 +857,26 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   const isButton = Boolean(obj && obj.type === "button");
   const isGroup = Boolean(obj && obj.type === "group");
   const strokePresent = isText || isButton || isGroup || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
-  const next = draft || {};
+  const normalizedDraft = normalizeRectColorDraft(obj, draft);
+  const rules = normalizedDraft.rules;
+  const next = rules[normalizedDraft.selectedRuleIndex] || getDefaultColorRuleForObject(obj);
   const sourceType = next.sourceType === "expression" ? "expression" : "tag";
   const mode = next.mode === "equals" ? "equals" : "threshold";
+  if (rectColorRuleSelect) {
+    const previous = String(rectColorRuleSelect.value || "");
+    rectColorRuleSelect.innerHTML = "";
+    rules.forEach((rule, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = buildColorRuleSummary(rule, index);
+      rectColorRuleSelect.appendChild(option);
+    });
+    setSelectValueSafe(rectColorRuleSelect, String(Math.max(0, Math.min(normalizedDraft.selectedRuleIndex, rules.length - 1))));
+    if (!rectColorRuleSelect.value && previous) setSelectValueSafe(rectColorRuleSelect, previous);
+  }
+  if (rectColorRuleDeleteBtn) rectColorRuleDeleteBtn.disabled = rules.length <= 1;
+  if (rectColorRuleUpBtn) rectColorRuleUpBtn.disabled = normalizedDraft.selectedRuleIndex <= 0;
+  if (rectColorRuleDownBtn) rectColorRuleDownBtn.disabled = normalizedDraft.selectedRuleIndex >= (rules.length - 1);
   if (rectColorEnabledInput) rectColorEnabledInput.checked = next.enabled !== false;
   if (rectColorInvertInput) rectColorInvertInput.checked = Boolean(next.invert);
   if (rectColorFields) {
@@ -959,7 +1044,9 @@ const updateRectColorDraft = (patch) => {
   const obj = getSelectedColorDynamicObject();
   if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
   ensureRectColorDraft(obj);
-  const next = { ...(rectColorDraft || {}), ...patch };
+  const draft = normalizeRectColorDraft(obj, rectColorDraft);
+  const selectedRuleIndex = Math.max(0, Math.min(draft.selectedRuleIndex, draft.rules.length - 1));
+  const next = { ...(draft.rules[selectedRuleIndex] || getDefaultColorRuleForObject(obj)), ...patch };
   if ("sourceType" in patch) {
     next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
     if (next.sourceType === "expression") {
@@ -989,7 +1076,9 @@ const updateRectColorDraft = (patch) => {
     else next.threshold = patch.threshold;
   }
   if ("mode" in patch && patch.mode !== "equals" && patch.mode !== "threshold") delete next.mode;
-  rectColorDraft = next;
+  const rules = draft.rules.slice();
+  rules[selectedRuleIndex] = next;
+  rectColorDraft = { rules, selectedRuleIndex };
   syncRectColorUiFromDraft(obj, rectColorDraft);
 };
 
@@ -1230,6 +1319,9 @@ const closeRectColorExpressionModal = () => {
 
 const populateRectColorExpressionConnectionOptions = () => {
   if (!rectColorExprTagConnection) return;
+  const obj = getSelectedColorDynamicObject();
+  const draft = normalizeRectColorDraft(obj, rectColorDraft);
+  const rule = draft.rules[draft.selectedRuleIndex] || {};
   const previous = String(rectColorExprTagConnection.value || "");
   rectColorExprTagConnection.innerHTML = "";
   const placeholder = document.createElement("option");
@@ -1242,12 +1334,15 @@ const populateRectColorExpressionConnectionOptions = () => {
     option.textContent = connectionId;
     rectColorExprTagConnection.appendChild(option);
   });
-  setSelectValueSafe(rectColorExprTagConnection, previous || String(rectColorDraft?.connection_id || ""));
+  setSelectValueSafe(rectColorExprTagConnection, previous || String(rule.connection_id || ""));
 };
 
 const populateRectColorExpressionTagOptions = (connectionId = "") => {
   if (!rectColorExprTagName) return;
-  const selectedConnectionId = String(connectionId || rectColorExprTagConnection?.value || rectColorDraft?.connection_id || "");
+  const obj = getSelectedColorDynamicObject();
+  const draft = normalizeRectColorDraft(obj, rectColorDraft);
+  const rule = draft.rules[draft.selectedRuleIndex] || {};
+  const selectedConnectionId = String(connectionId || rectColorExprTagConnection?.value || rule.connection_id || "");
   const previous = String(rectColorExprTagName.value || "");
   rectColorExprTagName.innerHTML = "";
   const placeholder = document.createElement("option");
@@ -1265,7 +1360,7 @@ const populateRectColorExpressionTagOptions = (connectionId = "") => {
     option.textContent = tagName;
     rectColorExprTagName.appendChild(option);
   });
-  setSelectValueSafe(rectColorExprTagName, previous || String(rectColorDraft?.tag || ""));
+  setSelectValueSafe(rectColorExprTagName, previous || String(rule.tag || ""));
 };
 
 const insertRectColorExpressionText = (text) => {
@@ -1327,7 +1422,9 @@ const openRectColorExpressionModal = () => {
     updatePropertiesPanel();
   }
   ensureRectColorDraft(obj);
-  rectColorExpressionDraftValue = String(rectColorDraft?.expression || "");
+  const draft = normalizeRectColorDraft(obj, rectColorDraft);
+  const rule = draft.rules[draft.selectedRuleIndex] || {};
+  rectColorExpressionDraftValue = String(rule.expression || "");
   if (rectColorExpressionEditor) rectColorExpressionEditor.value = rectColorExpressionDraftValue;
   syncRectColorExpressionValidationUi();
   hideRectColorExpressionInsertMenu();
@@ -1931,34 +2028,41 @@ const ensureRectVisibilityDraft = (obj) => {
 const ensureRectColorDraft = (obj) => {
   if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "group")) return;
   if (rectColorDraftObject !== obj || !rectColorDraft) {
-    const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? (obj.fillAutomation || {}) : {};
-    const strokeAuto = (obj.type === "text") ? (obj.backgroundAutomation || {}) : (obj.type === "button" ? (obj.textColorAutomation || {}) : (obj.strokeAutomation || {}));
-    const textAuto = obj.type === "group" ? (obj.textColorAutomation || {}) : {};
-    const backgroundAuto = obj.type === "group" ? (obj.backgroundAutomation || {}) : {};
-    const borderAuto = (obj.type === "text" || obj.type === "group") ? (obj.borderColorAutomation || {}) : {};
-    const source = (Object.keys(fillAuto).length ? fillAuto : (Object.keys(strokeAuto).length ? strokeAuto : (Object.keys(textAuto).length ? textAuto : (Object.keys(backgroundAuto).length ? backgroundAuto : borderAuto)))) || {};
+    const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? getColorAutomationRules(obj.fillAutomation || {}) : [];
+    const strokeAuto = (obj.type === "text") ? getColorAutomationRules(obj.backgroundAutomation || {}) : (obj.type === "button" ? getColorAutomationRules(obj.textColorAutomation || {}) : getColorAutomationRules(obj.strokeAutomation || {}));
+    const textAuto = obj.type === "group" ? getColorAutomationRules(obj.textColorAutomation || {}) : [];
+    const backgroundAuto = obj.type === "group" ? getColorAutomationRules(obj.backgroundAutomation || {}) : [];
+    const borderAuto = (obj.type === "text" || obj.type === "group") ? getColorAutomationRules(obj.borderColorAutomation || {}) : [];
+    const maxRules = Math.max(fillAuto.length, strokeAuto.length, textAuto.length, backgroundAuto.length, borderAuto.length, 1);
+    const rules = [];
+    for (let index = 0; index < maxRules; index += 1) {
+      const source = fillAuto[index] || strokeAuto[index] || textAuto[index] || backgroundAuto[index] || borderAuto[index] || {};
+      rules.push({
+        ...getDefaultColorRuleForObject(obj),
+        enabled: source.enabled !== false,
+        sourceType: source.sourceType === "expression" ? "expression" : "tag",
+        expression: source.expression || "",
+        invert: Boolean(source.invert),
+        connection_id: source.connection_id || "",
+        tag: source.tag || "",
+        mode: source.mode || "",
+        threshold: source.threshold,
+        match: source.match || "",
+        fillEnabled: index < fillAuto.length,
+        fillColor: fillAuto[index]?.onColor || "",
+        strokeEnabled: obj.type === "line" ? true : (index < strokeAuto.length),
+        strokeColor: strokeAuto[index]?.onColor || "",
+        textEnabled: index < textAuto.length,
+        textColor: textAuto[index]?.onColor || "",
+        backgroundEnabled: index < backgroundAuto.length,
+        backgroundColor: backgroundAuto[index]?.onColor || "",
+        borderEnabled: index < borderAuto.length,
+        borderColor: borderAuto[index]?.onColor || ""
+      });
+    }
     rectColorDraftObject = obj;
-    rectColorDraft = cloneRectColorDraft({
-      enabled: source.enabled !== false,
-      sourceType: source.sourceType === "expression" ? "expression" : "tag",
-      expression: source.expression || "",
-      invert: Boolean(source.invert),
-      connection_id: source.connection_id || "",
-      tag: source.tag || "",
-      mode: source.mode || "",
-      threshold: source.threshold,
-      match: source.match || "",
-      fillEnabled: (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? (Object.keys(fillAuto).length > 0) : false,
-      fillColor: fillAuto.onColor || "",
-      strokeEnabled: obj.type === "line" ? true : (Object.keys(strokeAuto).length > 0),
-      strokeColor: strokeAuto.onColor || "",
-      textEnabled: Object.keys(textAuto).length > 0,
-      textColor: textAuto.onColor || "",
-      backgroundEnabled: Object.keys(backgroundAuto).length > 0,
-      backgroundColor: backgroundAuto.onColor || "",
-      borderEnabled: Object.keys(borderAuto).length > 0,
-      borderColor: borderAuto.onColor || ""
-    });
+    rectColorDraft = cloneRectColorDraft({ rules, selectedRuleIndex: 0 });
+    rectColorDraft = normalizeRectColorDraft(obj, rectColorDraft);
   }
 };
 
@@ -3445,6 +3549,11 @@ const rectColorDynamicSection = document.getElementById("rectColorDynamicSection
 const rectColorEnabledInput = document.getElementById("rectColorEnabled");
 const rectColorInvertInput = document.getElementById("rectColorInvert");
 const rectColorFields = document.getElementById("rectColorFields");
+const rectColorRuleSelect = document.getElementById("rectColorRuleSelect");
+const rectColorRuleAddBtn = document.getElementById("rectColorRuleAddBtn");
+const rectColorRuleDeleteBtn = document.getElementById("rectColorRuleDeleteBtn");
+const rectColorRuleUpBtn = document.getElementById("rectColorRuleUpBtn");
+const rectColorRuleDownBtn = document.getElementById("rectColorRuleDownBtn");
 const rectColorSourceTypeSelect = document.getElementById("rectColorSourceType");
 const rectColorConnectionRow = document.getElementById("rectColorConnectionRow");
 const rectColorConnectionInput = document.getElementById("rectColorConnection");
@@ -5198,6 +5307,27 @@ const clearSelectedPolygonVertex = () => {
   selectedPolygonVertex = null;
 };
 
+const isEditablePathVertexObject = (obj) => Boolean(obj && ["polyline", "polygon", "spline"].includes(String(obj.type || "")));
+
+const getProjectedPointOnSegment = (point, start, end) => {
+  const ax = Number(start?.x ?? 0);
+  const ay = Number(start?.y ?? 0);
+  const bx = Number(end?.x ?? 0);
+  const by = Number(end?.y ?? 0);
+  const px = Number(point?.x ?? 0);
+  const py = Number(point?.y ?? 0);
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq <= 0) return { x: ax, y: ay, t: 0 };
+  const t = Math.max(0, Math.min(1, (((px - ax) * dx) + ((py - ay) * dy)) / lenSq));
+  return {
+    x: ax + dx * t,
+    y: ay + dy * t,
+    t
+  };
+};
+
 const syncSelectedPolygonVertex = () => {
   if (!selectedPolygonVertex) return;
   if (selectedPolygonVertex.groupDepth !== groupEditStack.length) {
@@ -5209,7 +5339,7 @@ const syncSelectedPolygonVertex = () => {
     return;
   }
   const obj = getActiveObjects()?.[selectedPolygonVertex.objectIndex];
-  if (!obj || obj.type !== "polygon") {
+  if (!isEditablePathVertexObject(obj)) {
     clearSelectedPolygonVertex();
     return;
   }
@@ -6277,39 +6407,50 @@ const getAutomationState = (value, config) => {
 };
 
 const getAutomationColor = (config, baseColor) => {
-  if (!config || !config.enabled || isEditMode) return baseColor;
-  if (config.sourceType === "expression") {
-    const result = evaluateAutomationExpression(config.expression);
-    if (result === null || result === undefined) return baseColor;
-    const isOn = config.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
-    return isOn ? (config.onColor || baseColor) : (config.offColor ?? baseColor);
+  if (!config || isEditMode) return baseColor;
+  const rules = getColorAutomationRules(config);
+  if (!rules.length) return baseColor;
+  for (const rule of rules) {
+    if (!rule || !rule.enabled) continue;
+    if (rule.sourceType === "expression") {
+      const result = evaluateAutomationExpression(rule.expression);
+      if (result === null || result === undefined) continue;
+      const isOn = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
+      if (isOn) return rule.onColor || baseColor;
+      continue;
+    }
+    const connectionId = String(rule.connection_id || "");
+    const tag = String(rule.tag || "");
+    if (!connectionId || !tag) continue;
+    const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
+    const state = getAutomationState(rawValue, rule);
+    if (state) return rule.onColor || baseColor;
   }
-  const connectionId = String(config.connection_id || "");
-  const tag = String(config.tag || "");
-  if (!connectionId || !tag) return baseColor;
-  const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-  const state = getAutomationState(rawValue, config);
-  if (state === null) return config.offColor ?? baseColor;
-  if (state) return config.onColor || baseColor;
-  return config.offColor ?? baseColor;
+  return baseColor;
 };
 
 const getActiveAutomationOverrideColor = (config) => {
-  if (!config || !config.enabled || isEditMode) return null;
-  const onColor = String(config.onColor || "").trim();
-  if (!onColor) return null;
-  if (config.sourceType === "expression") {
-    const result = evaluateAutomationExpression(config.expression);
-    if (result === null || result === undefined) return null;
-    const isOn = config.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
-    return isOn ? onColor : null;
+  if (!config || isEditMode) return null;
+  const rules = getColorAutomationRules(config);
+  for (const rule of rules) {
+    if (!rule || !rule.enabled) continue;
+    const onColor = String(rule.onColor || "").trim();
+    if (!onColor) continue;
+    if (rule.sourceType === "expression") {
+      const result = evaluateAutomationExpression(rule.expression);
+      if (result === null || result === undefined) continue;
+      const isOn = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
+      if (isOn) return onColor;
+      continue;
+    }
+    const connectionId = String(rule.connection_id || "");
+    const tag = String(rule.tag || "");
+    if (!connectionId || !tag) continue;
+    const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
+    const state = getAutomationState(rawValue, rule);
+    if (state) return onColor;
   }
-  const connectionId = String(config.connection_id || "");
-  const tag = String(config.tag || "");
-  if (!connectionId || !tag) return null;
-  const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-  const state = getAutomationState(rawValue, config);
-  return state ? onColor : null;
+  return null;
 };
 
 const getGroupColorOverrides = (groupObj) => {
@@ -11967,19 +12108,17 @@ const updateAutomationProperty = (key, patch) => {
   if (!obj) return;
   if (obj.type === "viewport") return;
   if ((isEditingRectColorDynamic() || isEditingEllipseColorDynamic()) && (key === "fillAutomation" || key === "strokeAutomation")) {
-    ensureRectColorDraft(obj);
-    const current = rectColorDraft?.[key] || { enabled: true };
-    const next = { ...current, ...patch };
-    if ("threshold" in patch && (patch.threshold === "" || patch.threshold === null || patch.threshold === undefined)) delete next.threshold;
-    if ("match" in patch && (patch.match === "" || patch.match === null || patch.match === undefined)) delete next.match;
-    if ("mode" in patch && !patch.mode) delete next.mode;
-    if ("connection_id" in patch && !patch.connection_id) delete next.connection_id;
-    if ("tag" in patch && !patch.tag) delete next.tag;
-    if ("onColor" in patch && !patch.onColor) delete next.onColor;
-    if ("offColor" in patch && !patch.offColor) delete next.offColor;
-    if ("enabled" in patch && patch.enabled === false) next.enabled = false;
-    else if (next.enabled == null) next.enabled = true;
-    rectColorDraft = { ...(rectColorDraft || {}), [key]: next };
+    const mappedPatch = { ...patch };
+    if (key === "fillAutomation") {
+      if ("enabled" in mappedPatch) mappedPatch.fillEnabled = mappedPatch.enabled;
+      if ("onColor" in mappedPatch) mappedPatch.fillColor = mappedPatch.onColor;
+    } else {
+      if ("enabled" in mappedPatch) mappedPatch.strokeEnabled = mappedPatch.enabled;
+      if ("onColor" in mappedPatch) mappedPatch.strokeColor = mappedPatch.onColor;
+    }
+    delete mappedPatch.onColor;
+    delete mappedPatch.offColor;
+    updateRectColorDraft(mappedPatch);
     syncRectColorUiFromDraft(obj, rectColorDraft);
     renderCompactTagBindingRows();
     return;
@@ -13154,7 +13293,7 @@ window.addEventListener("keydown", (evt) => {
 	  }[evt.key];
 	  if (selectedPolygonVertex && selectedIndices.length === 1 && selectedIndices[0] === selectedPolygonVertex.objectIndex) {
 	    const obj = activeObjects[selectedPolygonVertex.objectIndex];
-	    if (obj?.type === "polygon") {
+	    if (isEditablePathVertexObject(obj)) {
 	      const points = Array.isArray(obj.points) ? obj.points : [];
 	      const vertexIndex = selectedPolygonVertex.vertexIndex;
 	      const pt = points[vertexIndex];
@@ -16845,12 +16984,84 @@ if (rectColorEnabledInput) {
   });
 }
 
+if (rectColorRuleSelect) {
+  rectColorRuleSelect.addEventListener("change", () => {
+    const obj = getSelectedColorDynamicObject();
+    if (!obj) return;
+    ensureRectColorDraft(obj);
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    draft.selectedRuleIndex = Math.max(0, Math.min(Number(rectColorRuleSelect.value || 0), draft.rules.length - 1));
+    rectColorDraft = draft;
+    syncRectColorUiFromDraft(obj, rectColorDraft);
+  });
+}
+
+if (rectColorRuleAddBtn) {
+  rectColorRuleAddBtn.addEventListener("click", () => {
+    const obj = getSelectedColorDynamicObject();
+    if (!obj) return;
+    ensureRectColorDraft(obj);
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    draft.rules.push({ ...getDefaultColorRuleForObject(obj) });
+    draft.selectedRuleIndex = draft.rules.length - 1;
+    rectColorDraft = draft;
+    syncRectColorUiFromDraft(obj, rectColorDraft);
+  });
+}
+
+if (rectColorRuleDeleteBtn) {
+  rectColorRuleDeleteBtn.addEventListener("click", () => {
+    const obj = getSelectedColorDynamicObject();
+    if (!obj) return;
+    ensureRectColorDraft(obj);
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    if (draft.rules.length <= 1) return;
+    draft.rules.splice(draft.selectedRuleIndex, 1);
+    draft.selectedRuleIndex = Math.max(0, Math.min(draft.selectedRuleIndex, draft.rules.length - 1));
+    rectColorDraft = draft;
+    syncRectColorUiFromDraft(obj, rectColorDraft);
+  });
+}
+
+if (rectColorRuleUpBtn) {
+  rectColorRuleUpBtn.addEventListener("click", () => {
+    const obj = getSelectedColorDynamicObject();
+    if (!obj) return;
+    ensureRectColorDraft(obj);
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    const index = draft.selectedRuleIndex;
+    if (index <= 0) return;
+    [draft.rules[index - 1], draft.rules[index]] = [draft.rules[index], draft.rules[index - 1]];
+    draft.selectedRuleIndex = index - 1;
+    rectColorDraft = draft;
+    syncRectColorUiFromDraft(obj, rectColorDraft);
+  });
+}
+
+if (rectColorRuleDownBtn) {
+  rectColorRuleDownBtn.addEventListener("click", () => {
+    const obj = getSelectedColorDynamicObject();
+    if (!obj) return;
+    ensureRectColorDraft(obj);
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    const index = draft.selectedRuleIndex;
+    if (index >= draft.rules.length - 1) return;
+    [draft.rules[index + 1], draft.rules[index]] = [draft.rules[index], draft.rules[index + 1]];
+    draft.selectedRuleIndex = index + 1;
+    rectColorDraft = draft;
+    syncRectColorUiFromDraft(obj, rectColorDraft);
+  });
+}
+
 if (rectColorSourceTypeSelect) {
   rectColorSourceTypeSelect.addEventListener("change", () => {
     const sourceType = rectColorSourceTypeSelect.value === "expression" ? "expression" : "tag";
+    const obj = getSelectedColorDynamicObject();
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    const rule = draft.rules[draft.selectedRuleIndex] || {};
     updateRectColorDraft(sourceType === "expression"
-      ? { sourceType, enabled: true, expression: rectColorDraft?.expression || "" }
-      : { sourceType, enabled: true, connection_id: rectColorDraft?.connection_id || "", tag: rectColorDraft?.tag || "" });
+      ? { sourceType, enabled: true, expression: rule.expression || "" }
+      : { sourceType, enabled: true, connection_id: rule.connection_id || "", tag: rule.tag || "" });
   });
 }
 
@@ -17022,59 +17233,83 @@ if (rectColorBorderTextInput) {
   });
 }
 
-  if (colorSaveBtn) {
+if (colorSaveBtn) {
   colorSaveBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
     const obj = getSelectedColorDynamicObject();
     if (!activeObjects || !obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
     ensureRectColorDraft(obj);
-    if (rectColorDraft?.sourceType === "expression" && getAutomationExpressionValidationError(rectColorDraft?.expression || "")) return;
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    const rules = draft.rules || [];
+    for (const rule of rules) {
+      if (rule?.sourceType === "expression" && getAutomationExpressionValidationError(rule?.expression || "")) return;
+    }
     recordHistory();
-    const fillEnabled = obj.type === "line" ? false : Boolean(rectColorDraft?.fillEnabled);
-    const strokeEnabled = obj.type === "line" ? true : Boolean(rectColorDraft?.strokeEnabled);
-    const shared = {
-      enabled: rectColorDraft?.enabled !== false,
-      sourceType: rectColorDraft?.sourceType === "expression" ? "expression" : "tag",
-      expression: rectColorDraft?.expression || "",
-      invert: Boolean(rectColorDraft?.invert),
-      connection_id: rectColorDraft?.connection_id || "",
-      tag: rectColorDraft?.tag || "",
-      mode: rectColorDraft?.mode || "",
-      threshold: rectColorDraft?.threshold,
-      match: rectColorDraft?.match || ""
-    };
-    if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") && fillEnabled) {
-      obj.fillAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.fillColor || "" });
-    } else if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") {
-      delete obj.fillAutomation;
-    }
-    if (strokeEnabled) {
-      if (obj.type === "text") obj.backgroundAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
-      else if (obj.type === "button") obj.textColorAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
-      else obj.strokeAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.strokeColor || "" });
-    } else if (obj.type === "group") {
-      delete obj.strokeAutomation;
-    } else if (obj.type === "text") {
-      delete obj.backgroundAutomation;
+    const fillRules = [];
+    const strokeRules = [];
+    const textRules = [];
+    const backgroundRules = [];
+    const borderRules = [];
+    rules.forEach((rule) => {
+      const shared = {
+        enabled: rule?.enabled !== false,
+        sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
+        expression: rule?.expression || "",
+        invert: Boolean(rule?.invert),
+        connection_id: rule?.connection_id || "",
+        tag: rule?.tag || "",
+        mode: rule?.mode || "",
+        threshold: rule?.threshold,
+        match: rule?.match || ""
+      };
+      if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") && rule?.fillEnabled && String(rule?.fillColor || "").trim()) {
+        fillRules.push({ ...shared, onColor: rule.fillColor });
+      }
+      if ((obj.type === "line" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "circle" || obj.type === "group") && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
+        strokeRules.push({ ...shared, onColor: rule.strokeColor });
+      }
+      if (obj.type === "text" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
+        backgroundRules.push({ ...shared, onColor: rule.strokeColor });
+      }
+      if (obj.type === "button" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
+        textRules.push({ ...shared, onColor: rule.strokeColor });
+      }
+      if (obj.type === "group" && rule?.textEnabled && String(rule?.textColor || "").trim()) {
+        textRules.push({ ...shared, onColor: rule.textColor });
+      }
+      if (obj.type === "group" && rule?.backgroundEnabled && String(rule?.backgroundColor || "").trim()) {
+        backgroundRules.push({ ...shared, onColor: rule.backgroundColor });
+      }
+      if ((obj.type === "text" || obj.type === "group") && rule?.borderEnabled && String(rule?.borderColor || "").trim()) {
+        borderRules.push({ ...shared, onColor: rule.borderColor });
+      }
+    });
+    const fillConfig = serializeColorAutomationRules(fillRules);
+    const strokeConfig = serializeColorAutomationRules(strokeRules);
+    const textConfig = serializeColorAutomationRules(textRules);
+    const backgroundConfig = serializeColorAutomationRules(backgroundRules);
+    const borderConfig = serializeColorAutomationRules(borderRules);
+    if (fillConfig) obj.fillAutomation = fillConfig;
+    else delete obj.fillAutomation;
+    if (obj.type === "text") {
+      if (backgroundConfig) obj.backgroundAutomation = backgroundConfig;
+      else delete obj.backgroundAutomation;
     } else if (obj.type === "button") {
-      delete obj.textColorAutomation;
+      if (textConfig) obj.textColorAutomation = textConfig;
+      else delete obj.textColorAutomation;
     } else {
-      delete obj.strokeAutomation;
+      if (strokeConfig) obj.strokeAutomation = strokeConfig;
+      else delete obj.strokeAutomation;
     }
-    if (obj.type === "group" && rectColorDraft?.textEnabled) {
-      obj.textColorAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.textColor || "" });
-    } else if (obj.type === "group") {
-      delete obj.textColorAutomation;
+    if (obj.type === "group") {
+      if (textConfig) obj.textColorAutomation = textConfig;
+      else delete obj.textColorAutomation;
+      if (backgroundConfig) obj.backgroundAutomation = backgroundConfig;
+      else delete obj.backgroundAutomation;
     }
-    if (obj.type === "group" && rectColorDraft?.backgroundEnabled) {
-      obj.backgroundAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.backgroundColor || "" });
-    } else if (obj.type === "group") {
-      delete obj.backgroundAutomation;
-    }
-    if ((obj.type === "text" || obj.type === "group") && rectColorDraft?.borderEnabled) {
-      obj.borderColorAutomation = normalizeColorAutomationState({ ...shared, onColor: rectColorDraft?.borderColor || "" });
-    } else if (obj.type === "text" || obj.type === "group") {
-      delete obj.borderColorAutomation;
+    if (obj.type === "text" || obj.type === "group") {
+      if (borderConfig) obj.borderColorAutomation = borderConfig;
+      else delete obj.borderColorAutomation;
     }
     rectColorDraftObject = obj;
     rectColorDraft = null;
@@ -20444,10 +20679,33 @@ function updateSelectionOverlays() {
 		        const x = Number(pt?.x ?? 0) + Number(offset.x ?? 0);
 		        const y = Number(pt?.y ?? 0) + Number(offset.y ?? 0);
 		        const isVertexSelected =
-		          (obj.type === "polygon" || obj.type === "spline") &&
+		          isEditablePathVertexObject(obj) &&
 		          activeSelectedVertex &&
 		          activeSelectedVertex.objectIndex === item.index &&
 		          activeSelectedVertex.vertexIndex === vertexIndex;
+            if (obj.type === "polyline" || obj.type === "polygon") {
+              const nextIndex = vertexIndex + 1;
+              const hasNext = nextIndex < points.length;
+              const closesLoop = obj.type === "polygon" && points.length > 2;
+              if (hasNext || closesLoop) {
+                const nextPoint = hasNext ? points[nextIndex] : points[0];
+                const segment = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                segment.setAttribute("x1", x);
+                segment.setAttribute("y1", y);
+                segment.setAttribute("x2", Number(nextPoint?.x ?? 0) + Number(offset.x ?? 0));
+                segment.setAttribute("y2", Number(nextPoint?.y ?? 0) + Number(offset.y ?? 0));
+                segment.setAttribute("stroke", "#4aa3ff");
+                segment.setAttribute("stroke-opacity", "0.001");
+                segment.setAttribute("stroke-width", String(Math.max(12, RESIZE_HANDLE_SIZE * 2)));
+                segment.setAttribute("vector-effect", "non-scaling-stroke");
+                segment.setAttribute("pointer-events", "stroke");
+                segment.setAttribute("data-resize-handle", "segment-insert");
+                segment.setAttribute("data-resize-index", String(item.index));
+                segment.setAttribute("data-segment-index", String(vertexIndex));
+                segment.style.cursor = "copy";
+                resizeLayer.appendChild(segment);
+              }
+            }
 		        const handle = document.createElementNS("http://www.w3.org/2000/svg", "rect");
 		        handle.setAttribute("x", x - half);
 		        handle.setAttribute("y", y - half);
@@ -22421,11 +22679,50 @@ const setTool = (nextTool) => {
 			          return;
 			        }
 			        const handleIndex = Number(handleEl.getAttribute("data-resize-index"));
+			        const segmentIndexAttr = handleEl.getAttribute("data-segment-index");
+			        const segmentIndex = segmentIndexAttr == null ? null : Number(segmentIndexAttr);
 			        const vertexIndexAttr = handleEl.getAttribute("data-vertex-index");
 		        resizeVertexIndex = vertexIndexAttr == null ? null : Number(vertexIndexAttr);
 		        if (!Number.isFinite(resizeVertexIndex)) resizeVertexIndex = null;
 	        const obj = getActiveObjects()?.[handleIndex];
-	        if (handleType === "vertex" && (obj?.type === "polygon" || obj?.type === "spline") && resizeVertexIndex != null) {
+	        if (handleType === "segment-insert" && (obj?.type === "polyline" || obj?.type === "polygon") && Number.isInteger(segmentIndex)) {
+	          const point = getScreenPoint(event);
+	          if (!point) return;
+	          const activePoint = toActivePoint(point);
+	          const startPoints = Array.isArray(obj.points) ? obj.points : [];
+	          const pointA = startPoints[segmentIndex];
+	          const pointB = startPoints[(segmentIndex + 1) % startPoints.length];
+	          if (!pointA || !pointB) return;
+	          const projected = getProjectedPointOnSegment(activePoint, pointA, pointB);
+	          const x = snapEnabled ? snapValue(Math.round(projected.x)) : Math.round(projected.x);
+	          const y = snapEnabled ? snapValue(Math.round(projected.y)) : Math.round(projected.y);
+	          recordHistory();
+	          const nextPoints = startPoints.slice();
+	          nextPoints.splice(segmentIndex + 1, 0, { x, y });
+	          obj.points = nextPoints;
+	          resizeVertexIndex = segmentIndex + 1;
+	          selectedPolygonVertex = { groupDepth: groupEditStack.length, objectIndex: handleIndex, vertexIndex: resizeVertexIndex };
+	          isResizing = true;
+	          resizeHandle = "vertex";
+	          resizeIndex = handleIndex;
+	          resizeStart = point;
+	          resizeStartBounds = {
+	            type: obj.type,
+	            points: nextPoints.map((pt) => ({
+	              x: Number(pt?.x ?? 0),
+	              y: Number(pt?.y ?? 0)
+	            }))
+	          };
+	          renderScreen();
+	          syncEditorFromScreen();
+	          updateSelectionOverlays();
+	          updatePropertiesPanel();
+	          setDirty(true);
+	          event.preventDefault();
+	          event.stopPropagation();
+	          return;
+	        }
+	        if (handleType === "vertex" && isEditablePathVertexObject(obj) && resizeVertexIndex != null) {
 	          selectedPolygonVertex = { groupDepth: groupEditStack.length, objectIndex: handleIndex, vertexIndex: resizeVertexIndex };
 	          updateSelectionOverlays();
 	        } else if (handleType !== "vertex") {
