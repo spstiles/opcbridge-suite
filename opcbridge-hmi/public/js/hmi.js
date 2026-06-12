@@ -740,17 +740,22 @@ const normalizeRectColorDraft = (obj, value) => {
 
 const buildColorRulesFromObject = (obj) => {
   if (!obj || !["rect", "line", "ellipse", "text", "button", "circle", "group"].includes(String(obj.type || ""))) return [];
+  const metaRules = Array.isArray(obj.colorAutomationRules)
+    ? normalizeRectColorDraft(obj, { rules: obj.colorAutomationRules }).rules
+    : [];
   const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? getColorAutomationRules(obj.fillAutomation) : [];
   const strokeAuto = (obj.type === "text") ? getColorAutomationRules(obj.backgroundAutomation) : (obj.type === "button" ? getColorAutomationRules(obj.textColorAutomation) : getColorAutomationRules(obj.strokeAutomation));
   const textAuto = obj.type === "group" ? getColorAutomationRules(obj.textColorAutomation) : [];
   const backgroundAuto = obj.type === "group" ? getColorAutomationRules(obj.backgroundAutomation) : [];
   const borderAuto = (obj.type === "text" || obj.type === "group") ? getColorAutomationRules(obj.borderColorAutomation) : [];
-  const maxRules = Math.max(fillAuto.length, strokeAuto.length, textAuto.length, backgroundAuto.length, borderAuto.length, 0);
+  const maxRules = Math.max(metaRules.length, fillAuto.length, strokeAuto.length, textAuto.length, backgroundAuto.length, borderAuto.length, 0);
   const rules = [];
   for (let index = 0; index < maxRules; index += 1) {
-    const source = fillAuto[index] || strokeAuto[index] || textAuto[index] || backgroundAuto[index] || borderAuto[index] || {};
+    const source = metaRules[index] || fillAuto[index] || strokeAuto[index] || textAuto[index] || backgroundAuto[index] || borderAuto[index] || {};
+    const meta = metaRules[index] || {};
     rules.push({
       ...getDefaultColorRuleForObject(obj),
+      ...meta,
       enabled: source.enabled !== false,
       sourceType: source.sourceType === "expression" ? "expression" : "tag",
       expression: source.expression || "",
@@ -760,16 +765,16 @@ const buildColorRulesFromObject = (obj) => {
       mode: source.mode || "",
       threshold: source.threshold,
       match: source.match || "",
-      fillEnabled: Boolean(fillAuto[index]),
-      fillColor: fillAuto[index]?.onColor || "",
-      strokeEnabled: obj.type === "line" ? true : Boolean(strokeAuto[index]),
-      strokeColor: strokeAuto[index]?.onColor || "",
-      textEnabled: Boolean(textAuto[index]),
-      textColor: textAuto[index]?.onColor || "",
-      backgroundEnabled: Boolean(backgroundAuto[index]),
-      backgroundColor: backgroundAuto[index]?.onColor || "",
-      borderEnabled: Boolean(borderAuto[index]),
-      borderColor: borderAuto[index]?.onColor || ""
+      fillEnabled: ("fillEnabled" in meta) ? Boolean(meta.fillEnabled) : Boolean(fillAuto[index]),
+      fillColor: fillAuto[index]?.onColor || meta.fillColor || "",
+      strokeEnabled: obj.type === "line" ? true : (("strokeEnabled" in meta) ? Boolean(meta.strokeEnabled) : Boolean(strokeAuto[index])),
+      strokeColor: strokeAuto[index]?.onColor || meta.strokeColor || "",
+      textEnabled: ("textEnabled" in meta) ? Boolean(meta.textEnabled) : Boolean(textAuto[index]),
+      textColor: textAuto[index]?.onColor || meta.textColor || "",
+      backgroundEnabled: ("backgroundEnabled" in meta) ? Boolean(meta.backgroundEnabled) : Boolean(backgroundAuto[index]),
+      backgroundColor: backgroundAuto[index]?.onColor || meta.backgroundColor || "",
+      borderEnabled: ("borderEnabled" in meta) ? Boolean(meta.borderEnabled) : Boolean(borderAuto[index]),
+      borderColor: borderAuto[index]?.onColor || meta.borderColor || ""
     });
   }
   return rules;
@@ -1062,6 +1067,8 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   if (fillTargetText) fillTargetText.textContent = isText ? "Text" : (isButton ? "Background" : "Fill");
   const fillColorLabel = rectColorFillRow?.querySelector('label[for="rectColorFill"]');
   if (fillColorLabel) fillColorLabel.textContent = isText ? "Text Color" : (isButton ? "Background Color" : "Fill Color");
+  const textTargetText = rectColorTextTargetLabel?.querySelector("span");
+  if (textTargetText) textTargetText.textContent = "Text";
   if (rectColorTextTargetLabel) {
     rectColorTextTargetLabel.classList.toggle("is-hidden", !supportsTextTarget);
     rectColorTextTargetLabel.hidden = !supportsTextTarget;
@@ -17389,6 +17396,29 @@ if (colorSaveBtn) {
     const textConfig = serializeColorAutomationRules(textRules);
     const backgroundConfig = serializeColorAutomationRules(backgroundRules);
     const borderConfig = serializeColorAutomationRules(borderRules);
+    const colorRuleMeta = rules
+      .map((rule) => ({
+        enabled: rule?.enabled !== false,
+        sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
+        expression: rule?.expression || "",
+        invert: Boolean(rule?.invert),
+        connection_id: rule?.connection_id || "",
+        tag: rule?.tag || "",
+        mode: rule?.mode || "",
+        threshold: rule?.threshold,
+        match: rule?.match || "",
+        fillEnabled: Boolean(rule?.fillEnabled),
+        fillColor: rule?.fillColor || "",
+        strokeEnabled: Boolean(rule?.strokeEnabled),
+        strokeColor: rule?.strokeColor || "",
+        textEnabled: Boolean(rule?.textEnabled),
+        textColor: rule?.textColor || "",
+        backgroundEnabled: Boolean(rule?.backgroundEnabled),
+        backgroundColor: rule?.backgroundColor || "",
+        borderEnabled: Boolean(rule?.borderEnabled),
+        borderColor: rule?.borderColor || ""
+      }))
+      .filter((rule) => rule.fillEnabled || rule.strokeEnabled || rule.textEnabled || rule.backgroundEnabled || rule.borderEnabled);
     if (fillConfig) obj.fillAutomation = fillConfig;
     else delete obj.fillAutomation;
     if (obj.type === "text") {
@@ -17411,6 +17441,8 @@ if (colorSaveBtn) {
       if (borderConfig) obj.borderColorAutomation = borderConfig;
       else delete obj.borderColorAutomation;
     }
+    if (colorRuleMeta.length) obj.colorAutomationRules = colorRuleMeta;
+    else delete obj.colorAutomationRules;
     rectColorDraftObject = obj;
     rectColorDraft = null;
     ensureRectColorDraft(obj);
@@ -17470,6 +17502,7 @@ if (colorDeleteBtn) {
     delete obj.backgroundAutomation;
     delete obj.textColorAutomation;
     delete obj.borderColorAutomation;
+    delete obj.colorAutomationRules;
     renderScreen();
     syncEditorFromScreen();
     setDirty(true);
