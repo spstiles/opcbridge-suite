@@ -3077,6 +3077,7 @@ body.automation-panel-open #editor-pane {
 .prop-row input[type="number"],
 .prop-row input[type="text"],
 .text-binding-inline-row .automation-tag-input {
+  font-family: inherit;
   background: var(--bg-primary);
   color: var(--text-primary);
   border: 1px solid var(--border-subtle);
@@ -3084,6 +3085,7 @@ body.automation-panel-open #editor-pane {
   padding: 6px 8px;
   font-size: 10px;
   font-weight: 400;
+  line-height: 1.25;
   transition: border-color 0.15s ease;
 }
 
