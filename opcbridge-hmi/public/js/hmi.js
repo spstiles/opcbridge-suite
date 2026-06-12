@@ -684,20 +684,26 @@ const getColorAutomationRules = (config) => {
   if (!config || typeof config !== "object") return [];
   if (Array.isArray(config.rules)) {
     return config.rules
-      .filter((rule) => rule && typeof rule === "object")
-      .map((rule) => normalizeStoredColorRule(rule))
-      .filter((rule) => Object.keys(rule).length);
+      .map((rule) => {
+        if (!rule || typeof rule !== "object") return null;
+        const normalized = normalizeStoredColorRule(rule);
+        return Object.keys(normalized).length ? normalized : null;
+      });
   }
   const single = normalizeStoredColorRule(config);
   return Object.keys(single).length ? [single] : [];
 };
 
 const serializeColorAutomationRules = (rules) => {
-  const nextRules = (Array.isArray(rules) ? rules : [])
-    .map((rule) => normalizeStoredColorRule(rule))
-    .filter((rule) => Object.keys(rule).length);
-  if (!nextRules.length) return null;
-  if (nextRules.length === 1) return nextRules[0];
+  const sourceRules = Array.isArray(rules) ? rules : [];
+  const nextRules = sourceRules.map((rule) => {
+    if (!rule || typeof rule !== "object") return null;
+    const normalized = normalizeStoredColorRule(rule);
+    return Object.keys(normalized).length ? normalized : null;
+  });
+  const nonNullCount = nextRules.filter(Boolean).length;
+  if (!nonNullCount) return null;
+  if (nextRules.length === 1 && nextRules[0]) return nextRules[0];
   return { rules: nextRules };
 };
 
@@ -754,15 +760,15 @@ const buildColorRulesFromObject = (obj) => {
       mode: source.mode || "",
       threshold: source.threshold,
       match: source.match || "",
-      fillEnabled: index < fillAuto.length,
+      fillEnabled: Boolean(fillAuto[index]),
       fillColor: fillAuto[index]?.onColor || "",
-      strokeEnabled: obj.type === "line" ? true : (index < strokeAuto.length),
+      strokeEnabled: obj.type === "line" ? true : Boolean(strokeAuto[index]),
       strokeColor: strokeAuto[index]?.onColor || "",
-      textEnabled: index < textAuto.length,
+      textEnabled: Boolean(textAuto[index]),
       textColor: textAuto[index]?.onColor || "",
-      backgroundEnabled: index < backgroundAuto.length,
+      backgroundEnabled: Boolean(backgroundAuto[index]),
       backgroundColor: backgroundAuto[index]?.onColor || "",
-      borderEnabled: index < borderAuto.length,
+      borderEnabled: Boolean(borderAuto[index]),
       borderColor: borderAuto[index]?.onColor || ""
     });
   }
@@ -783,14 +789,21 @@ const getColorDynamicTabKey = (index = 0) => {
   return normalized <= 0 ? "color" : `color-${normalized}`;
 };
 
+const getStoredColorRulesForObject = (obj) => buildColorRulesFromObject(obj);
+
 const getCurrentColorRulesForObject = (obj) => {
   if (rectColorDraftObject === obj && rectColorDraft) {
     return normalizeRectColorDraft(obj, rectColorDraft).rules;
   }
-  return buildColorRulesFromObject(obj);
+  return getStoredColorRulesForObject(obj);
 };
 
-const hasEditableColorDynamic = (obj) => getCurrentColorRulesForObject(obj).length > 0;
+const hasEditableColorDynamic = (obj) => {
+  if (rectColorDraftObject === obj && rectColorDraft && isColorDynamicTab()) {
+    return getCurrentColorRulesForObject(obj).length > 0;
+  }
+  return getStoredColorRulesForObject(obj).length > 0;
+};
 
 const cloneRectRotationDraft = (value) => {
   if (!value || typeof value !== "object") {
@@ -17332,12 +17345,12 @@ if (colorSaveBtn) {
       if (rule?.sourceType === "expression" && getAutomationExpressionValidationError(rule?.expression || "")) return;
     }
     recordHistory();
-    const fillRules = [];
-    const strokeRules = [];
-    const textRules = [];
-    const backgroundRules = [];
-    const borderRules = [];
-    rules.forEach((rule) => {
+    const fillRules = new Array(rules.length).fill(null);
+    const strokeRules = new Array(rules.length).fill(null);
+    const textRules = new Array(rules.length).fill(null);
+    const backgroundRules = new Array(rules.length).fill(null);
+    const borderRules = new Array(rules.length).fill(null);
+    rules.forEach((rule, index) => {
       const shared = {
         enabled: rule?.enabled !== false,
         sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
@@ -17350,25 +17363,25 @@ if (colorSaveBtn) {
         match: rule?.match || ""
       };
       if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") && rule?.fillEnabled && String(rule?.fillColor || "").trim()) {
-        fillRules.push({ ...shared, onColor: rule.fillColor });
+        fillRules[index] = { ...shared, onColor: rule.fillColor };
       }
       if ((obj.type === "line" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "circle" || obj.type === "group") && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
-        strokeRules.push({ ...shared, onColor: rule.strokeColor });
+        strokeRules[index] = { ...shared, onColor: rule.strokeColor };
       }
       if (obj.type === "text" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
-        backgroundRules.push({ ...shared, onColor: rule.strokeColor });
+        backgroundRules[index] = { ...shared, onColor: rule.strokeColor };
       }
       if (obj.type === "button" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
-        textRules.push({ ...shared, onColor: rule.strokeColor });
+        textRules[index] = { ...shared, onColor: rule.strokeColor };
       }
       if (obj.type === "group" && rule?.textEnabled && String(rule?.textColor || "").trim()) {
-        textRules.push({ ...shared, onColor: rule.textColor });
+        textRules[index] = { ...shared, onColor: rule.textColor };
       }
       if (obj.type === "group" && rule?.backgroundEnabled && String(rule?.backgroundColor || "").trim()) {
-        backgroundRules.push({ ...shared, onColor: rule.backgroundColor });
+        backgroundRules[index] = { ...shared, onColor: rule.backgroundColor };
       }
       if ((obj.type === "text" || obj.type === "group") && rule?.borderEnabled && String(rule?.borderColor || "").trim()) {
-        borderRules.push({ ...shared, onColor: rule.borderColor });
+        borderRules[index] = { ...shared, onColor: rule.borderColor };
       }
     });
     const fillConfig = serializeColorAutomationRules(fillRules);
