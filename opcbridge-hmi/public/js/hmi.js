@@ -732,6 +732,66 @@ const normalizeRectColorDraft = (obj, value) => {
   return { rules, selectedRuleIndex };
 };
 
+const buildColorRulesFromObject = (obj) => {
+  if (!obj || !["rect", "line", "ellipse", "text", "button", "circle", "group"].includes(String(obj.type || ""))) return [];
+  const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? getColorAutomationRules(obj.fillAutomation || {}) : [];
+  const strokeAuto = (obj.type === "text") ? getColorAutomationRules(obj.backgroundAutomation || {}) : (obj.type === "button" ? getColorAutomationRules(obj.textColorAutomation || {}) : getColorAutomationRules(obj.strokeAutomation || {}));
+  const textAuto = obj.type === "group" ? getColorAutomationRules(obj.textColorAutomation || {}) : [];
+  const backgroundAuto = obj.type === "group" ? getColorAutomationRules(obj.backgroundAutomation || {}) : [];
+  const borderAuto = (obj.type === "text" || obj.type === "group") ? getColorAutomationRules(obj.borderColorAutomation || {}) : [];
+  const maxRules = Math.max(fillAuto.length, strokeAuto.length, textAuto.length, backgroundAuto.length, borderAuto.length, 0);
+  const rules = [];
+  for (let index = 0; index < maxRules; index += 1) {
+    const source = fillAuto[index] || strokeAuto[index] || textAuto[index] || backgroundAuto[index] || borderAuto[index] || {};
+    rules.push({
+      ...getDefaultColorRuleForObject(obj),
+      enabled: source.enabled !== false,
+      sourceType: source.sourceType === "expression" ? "expression" : "tag",
+      expression: source.expression || "",
+      invert: Boolean(source.invert),
+      connection_id: source.connection_id || "",
+      tag: source.tag || "",
+      mode: source.mode || "",
+      threshold: source.threshold,
+      match: source.match || "",
+      fillEnabled: index < fillAuto.length,
+      fillColor: fillAuto[index]?.onColor || "",
+      strokeEnabled: obj.type === "line" ? true : (index < strokeAuto.length),
+      strokeColor: strokeAuto[index]?.onColor || "",
+      textEnabled: index < textAuto.length,
+      textColor: textAuto[index]?.onColor || "",
+      backgroundEnabled: index < backgroundAuto.length,
+      backgroundColor: backgroundAuto[index]?.onColor || "",
+      borderEnabled: index < borderAuto.length,
+      borderColor: borderAuto[index]?.onColor || ""
+    });
+  }
+  return rules;
+};
+
+const isColorDynamicTab = (tab = currentObjectDynamicTab) => /^color(?:-\d+)?$/.test(String(tab || "").trim());
+
+const getColorDynamicTabIndex = (tab = currentObjectDynamicTab) => {
+  const normalized = String(tab || "").trim();
+  if (!isColorDynamicTab(normalized)) return -1;
+  const match = normalized.match(/^color-(\d+)$/);
+  return match ? Math.max(0, Number(match[1]) || 0) : 0;
+};
+
+const getColorDynamicTabKey = (index = 0) => {
+  const normalized = Math.max(0, Number(index) || 0);
+  return normalized <= 0 ? "color" : `color-${normalized}`;
+};
+
+const getCurrentColorRulesForObject = (obj) => {
+  if (rectColorDraftObject === obj && rectColorDraft) {
+    return normalizeRectColorDraft(obj, rectColorDraft).rules;
+  }
+  return buildColorRulesFromObject(obj);
+};
+
+const hasEditableColorDynamic = (obj) => getCurrentColorRulesForObject(obj).length > 0;
+
 const cloneRectRotationDraft = (value) => {
   if (!value || typeof value !== "object") {
     return {
@@ -858,10 +918,15 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   const isGroup = Boolean(obj && obj.type === "group");
   const strokePresent = isText || isButton || isGroup || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
   const normalizedDraft = normalizeRectColorDraft(obj, draft);
+  if (isColorDynamicTab()) normalizedDraft.selectedRuleIndex = Math.max(0, Math.min(getColorDynamicTabIndex(), normalizedDraft.rules.length - 1));
   const rules = normalizedDraft.rules;
   const next = rules[normalizedDraft.selectedRuleIndex] || getDefaultColorRuleForObject(obj);
   const sourceType = next.sourceType === "expression" ? "expression" : "tag";
   const mode = next.mode === "equals" ? "equals" : "threshold";
+  if (rectColorRuleRow) {
+    rectColorRuleRow.classList.add("is-hidden");
+    rectColorRuleRow.hidden = true;
+  }
   if (rectColorRuleSelect) {
     const previous = String(rectColorRuleSelect.value || "");
     rectColorRuleSelect.innerHTML = "";
@@ -1045,7 +1110,7 @@ const updateRectColorDraft = (patch) => {
   if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
   ensureRectColorDraft(obj);
   const draft = normalizeRectColorDraft(obj, rectColorDraft);
-  const selectedRuleIndex = Math.max(0, Math.min(draft.selectedRuleIndex, draft.rules.length - 1));
+  const selectedRuleIndex = Math.max(0, Math.min(getColorDynamicTabIndex(), draft.rules.length - 1));
   const next = { ...(draft.rules[selectedRuleIndex] || getDefaultColorRuleForObject(obj)), ...patch };
   if ("sourceType" in patch) {
     next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
@@ -1416,8 +1481,8 @@ const syncRectColorExpressionValidationUi = () => {
 const openRectColorExpressionModal = () => {
   if (!rectColorExpressionOverlay) return;
   const obj = getSelectedColorDynamicObject();
-  if (!obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj) || hasGroupColorDynamic(obj))) return;
-  if (currentObjectDynamicTab !== "color") {
+  if (!obj || !hasEditableColorDynamic(obj)) return;
+  if (!isColorDynamicTab()) {
     currentObjectDynamicTab = "color";
     updatePropertiesPanel();
   }
@@ -1919,37 +1984,37 @@ const isEditingCircleVisibilityDynamic = () => {
 
 const isEditingRectColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "color" && hasRectColorDynamic(obj));
+  return Boolean(obj && obj.type === "rect" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingLineColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "color" && hasLineColorDynamic(obj));
+  return Boolean(obj && obj.type === "line" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingEllipseColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "ellipse" && currentObjectDynamicTab === "color" && hasEllipseColorDynamic(obj));
+  return Boolean(obj && obj.type === "ellipse" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingTextColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "text" && currentObjectDynamicTab === "color" && hasTextColorDynamic(obj));
+  return Boolean(obj && obj.type === "text" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingButtonColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "button" && currentObjectDynamicTab === "color" && hasButtonColorDynamic(obj));
+  return Boolean(obj && obj.type === "button" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingCircleColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "circle" && currentObjectDynamicTab === "color" && hasCircleColorDynamic(obj));
+  return Boolean(obj && obj.type === "circle" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingGroupColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "group" && currentObjectDynamicTab === "color" && hasGroupColorDynamic(obj));
+  return Boolean(obj && obj.type === "group" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingRectRotationDynamic = () => {
@@ -2028,38 +2093,7 @@ const ensureRectVisibilityDraft = (obj) => {
 const ensureRectColorDraft = (obj) => {
   if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "group")) return;
   if (rectColorDraftObject !== obj || !rectColorDraft) {
-    const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? getColorAutomationRules(obj.fillAutomation || {}) : [];
-    const strokeAuto = (obj.type === "text") ? getColorAutomationRules(obj.backgroundAutomation || {}) : (obj.type === "button" ? getColorAutomationRules(obj.textColorAutomation || {}) : getColorAutomationRules(obj.strokeAutomation || {}));
-    const textAuto = obj.type === "group" ? getColorAutomationRules(obj.textColorAutomation || {}) : [];
-    const backgroundAuto = obj.type === "group" ? getColorAutomationRules(obj.backgroundAutomation || {}) : [];
-    const borderAuto = (obj.type === "text" || obj.type === "group") ? getColorAutomationRules(obj.borderColorAutomation || {}) : [];
-    const maxRules = Math.max(fillAuto.length, strokeAuto.length, textAuto.length, backgroundAuto.length, borderAuto.length, 1);
-    const rules = [];
-    for (let index = 0; index < maxRules; index += 1) {
-      const source = fillAuto[index] || strokeAuto[index] || textAuto[index] || backgroundAuto[index] || borderAuto[index] || {};
-      rules.push({
-        ...getDefaultColorRuleForObject(obj),
-        enabled: source.enabled !== false,
-        sourceType: source.sourceType === "expression" ? "expression" : "tag",
-        expression: source.expression || "",
-        invert: Boolean(source.invert),
-        connection_id: source.connection_id || "",
-        tag: source.tag || "",
-        mode: source.mode || "",
-        threshold: source.threshold,
-        match: source.match || "",
-        fillEnabled: index < fillAuto.length,
-        fillColor: fillAuto[index]?.onColor || "",
-        strokeEnabled: obj.type === "line" ? true : (index < strokeAuto.length),
-        strokeColor: strokeAuto[index]?.onColor || "",
-        textEnabled: index < textAuto.length,
-        textColor: textAuto[index]?.onColor || "",
-        backgroundEnabled: index < backgroundAuto.length,
-        backgroundColor: backgroundAuto[index]?.onColor || "",
-        borderEnabled: index < borderAuto.length,
-        borderColor: borderAuto[index]?.onColor || ""
-      });
-    }
+    const rules = buildColorRulesFromObject(obj);
     rectColorDraftObject = obj;
     rectColorDraft = cloneRectColorDraft({ rules, selectedRuleIndex: 0 });
     rectColorDraft = normalizeRectColorDraft(obj, rectColorDraft);
@@ -2094,16 +2128,63 @@ const setObjectDynamicTab = (tab) => {
   const normalized = String(tab || "properties").trim();
   const next =
     normalized === "visibility" ? "visibility" :
-    normalized === "color" ? "color" :
+    isColorDynamicTab(normalized) ? getColorDynamicTabKey(getColorDynamicTabIndex(normalized)) :
     normalized === "rotation" ? "rotation" :
     normalized === "motion" ? "motion" :
     "properties";
   currentObjectDynamicTab = next;
+  if (isColorDynamicTab(next)) {
+    const obj = getSelectedColorDynamicObject();
+    if (obj && rectColorDraftObject === obj && rectColorDraft) {
+      rectColorDraft = {
+        ...rectColorDraft,
+        selectedRuleIndex: Math.max(0, Math.min(getColorDynamicTabIndex(next), normalizeRectColorDraft(obj, rectColorDraft).rules.length - 1))
+      };
+    }
+  }
   if (objectDynamicTabPropertiesBtn) objectDynamicTabPropertiesBtn.classList.toggle("is-active", next === "properties");
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-active", next === "visibility");
-  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-active", next === "color");
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-active", next === "rotation");
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-active", next === "motion");
+  syncObjectDynamicColorTabs(getSelectedColorDynamicObject());
+};
+
+const syncObjectDynamicColorTabs = (obj) => {
+  if (!objectDynamicTabs || !objectDynamicTabColorBtn) return;
+  const count = hasEditableColorDynamic(obj) ? getCurrentColorRulesForObject(obj).length : 0;
+  const existing = [...objectDynamicTabs.querySelectorAll("[data-color-tab-index]")];
+  existing.forEach((button) => {
+    const index = Number(button.getAttribute("data-color-tab-index") || "0");
+    if (index <= 0 || index < count) return;
+    button.remove();
+  });
+  if (count <= 0) {
+    objectDynamicTabColorBtn.classList.add("is-hidden");
+    objectDynamicTabColorBtn.hidden = true;
+    return;
+  }
+  objectDynamicTabColorBtn.classList.remove("is-hidden");
+  objectDynamicTabColorBtn.hidden = false;
+  objectDynamicTabColorBtn.textContent = "Color";
+  objectDynamicTabColorBtn.dataset.colorTabIndex = "0";
+  objectDynamicTabColorBtn.dataset.objectDynamicTab = "color";
+  for (let index = 1; index < count; index += 1) {
+    let button = objectDynamicTabs.querySelector(`[data-color-tab-index="${index}"]`);
+    if (!button) {
+      button = objectDynamicTabColorBtn.cloneNode(true);
+      button.id = "";
+      objectDynamicTabRotationBtn?.before(button);
+    }
+    button.classList.remove("is-hidden");
+    button.hidden = false;
+    button.textContent = `Color ${index + 1}`;
+    button.dataset.colorTabIndex = String(index);
+    button.dataset.objectDynamicTab = getColorDynamicTabKey(index);
+  }
+  [...objectDynamicTabs.querySelectorAll("[data-color-tab-index]")].forEach((button) => {
+    const tabKey = String(button.dataset.objectDynamicTab || "color");
+    button.classList.toggle("is-active", currentObjectDynamicTab === tabKey);
+  });
 };
 
 const getPropertiesPaneTitle = (obj) => {
@@ -2152,16 +2233,17 @@ const ensureRectColorDynamic = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedColorDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  if (!(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj) || hasGroupColorDynamic(obj))) {
-    recordHistory();
-    if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") obj.fillAutomation = { enabled: true };
-    else obj.strokeAutomation = { enabled: true };
-    renderScreen();
-    syncEditorFromScreen();
-    setDirty(true);
-  }
+  const hadDraftForObject = rectColorDraftObject === obj && Boolean(rectColorDraft);
   ensureRectColorDraft(obj);
-  currentObjectDynamicTab = "color";
+  const storedRuleCount = buildColorRulesFromObject(obj).length;
+  const draft = normalizeRectColorDraft(obj, rectColorDraft);
+  if (storedRuleCount > 0 || hadDraftForObject) {
+    draft.rules.push({ ...getDefaultColorRuleForObject(obj) });
+  }
+  const nextIndex = Math.max(0, draft.rules.length - 1);
+  draft.selectedRuleIndex = nextIndex;
+  rectColorDraft = draft;
+  currentObjectDynamicTab = getColorDynamicTabKey(nextIndex);
   updatePropertiesPanel();
   return true;
 };
@@ -3549,6 +3631,7 @@ const rectColorDynamicSection = document.getElementById("rectColorDynamicSection
 const rectColorEnabledInput = document.getElementById("rectColorEnabled");
 const rectColorInvertInput = document.getElementById("rectColorInvert");
 const rectColorFields = document.getElementById("rectColorFields");
+const rectColorRuleRow = document.getElementById("rectColorRuleRow");
 const rectColorRuleSelect = document.getElementById("rectColorRuleSelect");
 const rectColorRuleAddBtn = document.getElementById("rectColorRuleAddBtn");
 const rectColorRuleDeleteBtn = document.getElementById("rectColorRuleDeleteBtn");
@@ -11510,7 +11593,11 @@ const updatePropertiesPanel = () => {
   if (automationLaunchRow) automationLaunchRow.classList.toggle("is-hidden", !showAutomationLaunch);
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
   if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
-  if (((showDynamicRect && !hasRectColorDynamic(obj)) || (showDynamicLine && !hasLineColorDynamic(obj)) || (showDynamicEllipse && !hasEllipseColorDynamic(obj)) || (showDynamicText && !hasTextColorDynamic(obj)) || (showDynamicButton && !hasButtonColorDynamic(obj)) || (showDynamicCircle && !hasCircleColorDynamic(obj)) || (showDynamicGroup && !hasGroupColorDynamic(obj))) && currentObjectDynamicTab === "color") currentObjectDynamicTab = "properties";
+  if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && !hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab)) currentObjectDynamicTab = "properties";
+  if (isColorDynamicTab(currentObjectDynamicTab) && hasEditableColorDynamic(obj)) {
+    const colorRuleCount = getCurrentColorRulesForObject(obj).length;
+    currentObjectDynamicTab = getColorDynamicTabKey(Math.min(getColorDynamicTabIndex(), Math.max(0, colorRuleCount - 1)));
+  }
   if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj)) || (showDynamicButton && !hasButtonRotationDynamic(obj)) || (showDynamicGroup && !hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
   if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle) {
@@ -11526,12 +11613,12 @@ const updatePropertiesPanel = () => {
   }
   if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle));
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && hasVisibilityDynamic(obj)));
-  if (objectDynamicTabColorBtn) objectDynamicTabColorBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicButton && hasButtonColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj)) || (showDynamicGroup && hasGroupColorDynamic(obj))));
+  syncObjectDynamicColorTabs(obj);
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))));
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) setObjectDynamicTab(currentObjectDynamicTab);
   const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
-  const showRectColorTab = ((showDynamicRect && hasRectColorDynamic(obj)) || (showDynamicLine && hasLineColorDynamic(obj)) || (showDynamicEllipse && hasEllipseColorDynamic(obj)) || (showDynamicText && hasTextColorDynamic(obj)) || (showDynamicButton && hasButtonColorDynamic(obj)) || (showDynamicCircle && hasCircleColorDynamic(obj)) || (showDynamicGroup && hasGroupColorDynamic(obj))) && currentObjectDynamicTab === "color";
+  const showRectColorTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab);
   const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
   const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
   if (showRectVisibilityTab) ensureRectVisibilityDraft(obj);
@@ -17327,7 +17414,14 @@ if (colorCancelBtn) {
     if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
     rectColorDraft = null;
     rectColorDraftObject = obj;
+    const storedRules = buildColorRulesFromObject(obj);
+    if (!storedRules.length) {
+      currentObjectDynamicTab = "properties";
+      updatePropertiesPanel();
+      return;
+    }
     ensureRectColorDraft(obj);
+    setObjectDynamicTab(getColorDynamicTabKey(Math.min(getColorDynamicTabIndex(), storedRules.length - 1)));
     syncRectColorUiFromDraft(obj, rectColorDraft);
     renderCompactTagBindingRows();
   });
@@ -17337,16 +17431,32 @@ if (colorDeleteBtn) {
   colorDeleteBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
     const obj = getSelectedColorDynamicObject();
-    if (!activeObjects || !obj || !(hasRectColorDynamic(obj) || hasLineColorDynamic(obj) || hasEllipseColorDynamic(obj) || hasTextColorDynamic(obj) || hasButtonColorDynamic(obj) || hasCircleColorDynamic(obj) || hasGroupColorDynamic(obj))) return;
+    if (!activeObjects || !obj || !hasEditableColorDynamic(obj)) return;
+    ensureRectColorDraft(obj);
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    const index = Math.max(0, Math.min(getColorDynamicTabIndex(), draft.rules.length - 1));
+    if (draft.rules.length > 1) {
+      draft.rules.splice(index, 1);
+      draft.selectedRuleIndex = Math.max(0, Math.min(index, draft.rules.length - 1));
+      rectColorDraft = draft;
+      setObjectDynamicTab(getColorDynamicTabKey(draft.selectedRuleIndex));
+      updatePropertiesPanel();
+      return;
+    }
+    const hadStoredRules = buildColorRulesFromObject(obj).length > 0;
+    rectColorDraft = null;
+    rectColorDraftObject = null;
+    currentObjectDynamicTab = "properties";
+    if (!hadStoredRules) {
+      updatePropertiesPanel();
+      return;
+    }
     recordHistory();
     delete obj.fillAutomation;
     delete obj.strokeAutomation;
     delete obj.backgroundAutomation;
     delete obj.textColorAutomation;
     delete obj.borderColorAutomation;
-    rectColorDraft = null;
-    rectColorDraftObject = null;
-    currentObjectDynamicTab = "properties";
     renderScreen();
     syncEditorFromScreen();
     setDirty(true);
@@ -24291,6 +24401,17 @@ if (objectDynamicTabVisibilityBtn) {
 if (objectDynamicTabColorBtn) {
   objectDynamicTabColorBtn.addEventListener("click", () => {
     setObjectDynamicTab("color");
+    updatePropertiesPanel();
+  });
+}
+
+if (objectDynamicTabs) {
+  objectDynamicTabs.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-object-dynamic-tab]") : null;
+    if (!(button instanceof HTMLButtonElement)) return;
+    const tab = String(button.dataset.objectDynamicTab || "");
+    if (!isColorDynamicTab(tab)) return;
+    setObjectDynamicTab(tab);
     updatePropertiesPanel();
   });
 }
