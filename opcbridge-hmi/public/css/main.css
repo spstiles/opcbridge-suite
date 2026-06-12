@@ -3075,7 +3075,8 @@ body.automation-panel-open #editor-pane {
 }
 
 .prop-row input[type="number"],
-.prop-row input[type="text"] {
+.prop-row input[type="text"],
+.text-binding-inline-row .automation-tag-input {
   background: var(--bg-primary);
   color: var(--text-primary);
   border: 1px solid var(--border-subtle);
@@ -3102,7 +3103,8 @@ body.automation-panel-open #editor-pane {
 }
 
 .prop-row input[type="number"]:focus,
-.prop-row input[type="text"]:focus {
+.prop-row input[type="text"]:focus,
+.text-binding-inline-row .automation-tag-input:focus {
   outline: none;
   border-color: var(--border-focus);
   box-shadow: 0 0 0 1px var(--border-focus);
@@ -3240,25 +3242,9 @@ body.automation-panel-open #editor-pane {
 }
 
 .text-binding-inline-row .automation-tag-input {
-  font: inherit;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  padding: 6px 8px;
-  font-size: 10px;
-  font-weight: 400;
-  line-height: 1.25;
-  transition: border-color 0.15s ease;
   width: 100%;
   max-width: none;
   min-width: 0;
-}
-
-.text-binding-inline-row .automation-tag-input:focus {
-  outline: none;
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .text-binding-key {
