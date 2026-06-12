@@ -824,6 +824,7 @@ struct ConnPollMetrics {
     std::atomic<uint64_t> read_us_max{0};
     std::atomic<uint64_t> read_us_last{0};
 
+    std::atomic<int64_t> last_read_ts_ms{-1};
     std::atomic<int64_t> last_ok_ts_ms{-1};
     std::atomic<int64_t> last_err_ts_ms{-1};
 
@@ -20644,6 +20645,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    uint64_t us_last  = m->read_us_last.load(std::memory_order_relaxed);
 		                    uint64_t us_max   = m->read_us_max.load(std::memory_order_relaxed);
 
+		                    int64_t last_read = m->last_read_ts_ms.load(std::memory_order_relaxed);
 		                    int64_t last_ok = m->last_ok_ts_ms.load(std::memory_order_relaxed);
 		                    int64_t last_err= m->last_err_ts_ms.load(std::memory_order_relaxed);
 
@@ -20693,8 +20695,10 @@ window.addEventListener("load", startAutoRefresh);
 		                        ? (static_cast<double>(deferredOpenUsTotal) / 1000.0) / static_cast<double>(deferredOpened)
 		                        : 0.0;
 
+		                    j["last_read_ts_ms"] = (last_read >= 0) ? json(last_read) : json(nullptr);
 		                    j["last_ok_ts_ms"]  = (last_ok >= 0) ? json(last_ok) : json(nullptr);
 		                    j["last_err_ts_ms"] = (last_err >= 0) ? json(last_err) : json(nullptr);
+		                    j["last_read_age_ms"] = (last_read >= 0) ? json(now_ms - last_read) : json(nullptr);
 		                    j["last_ok_age_ms"]  = (last_ok >= 0) ? json(now_ms - last_ok) : json(nullptr);
 		                    j["last_err_age_ms"] = (last_err >= 0) ? json(now_ms - last_err) : json(nullptr);
 		                    {
@@ -21783,6 +21787,8 @@ window.addEventListener("load", startAutoRefresh);
 						int ok_count = 0;
 						int degraded_count = 0;
 						int error_count = 0;
+						int stalled_connection_count = 0;
+						int64_t runtime_last_read_age_ms = -1;
 						json conn_obj = json::object();
 
 					{
@@ -21825,6 +21831,7 @@ window.addEventListener("load", startAutoRefresh);
 								uint64_t poll_tag_count = 0;
 								double measured_read_ms_avg = 0.0;
 								uint64_t metric_reads_total = 0;
+								int64_t metric_last_read_ts_ms = -1;
 								int64_t metric_last_ok_ts_ms = -1;
 								int64_t metric_last_err_ts_ms = -1;
 								uint64_t poll_cursor = 0;
@@ -21843,6 +21850,7 @@ window.addEventListener("load", startAutoRefresh);
 									if (mit != g_connPollMetrics.end() && mit->second) {
 										auto &m = mit->second;
 										metric_reads_total = m->reads_total.load(std::memory_order_relaxed);
+										metric_last_read_ts_ms = m->last_read_ts_ms.load(std::memory_order_relaxed);
 										metric_last_ok_ts_ms = m->last_ok_ts_ms.load(std::memory_order_relaxed);
 										metric_last_err_ts_ms = m->last_err_ts_ms.load(std::memory_order_relaxed);
 										uint64_t us_total = m->read_us_total.load(std::memory_order_relaxed);
@@ -21949,6 +21957,18 @@ window.addEventListener("load", startAutoRefresh);
 								const int64_t last_err_age_ms = (metric_last_err_ts_ms >= 0)
 									? (now_epoch_ms - metric_last_err_ts_ms)
 									: -1;
+								const int64_t last_read_age_ms = (metric_last_read_ts_ms >= 0)
+									? (now_epoch_ms - metric_last_read_ts_ms)
+									: -1;
+								if (last_read_age_ms >= 0 && (runtime_last_read_age_ms < 0 || last_read_age_ms < runtime_last_read_age_ms)) {
+									runtime_last_read_age_ms = last_read_age_ms;
+								}
+								const int64_t stall_budget_ms = std::max<int64_t>(
+									60000,
+									expected_sweep_ms > 0 ? expected_sweep_ms * 3 : freshness_budget_ms
+								);
+								const bool connection_stalled = (last_read_age_ms >= 0 && last_read_age_ms > stall_budget_ms);
+								if (connection_stalled) stalled_connection_count++;
 								const bool transient_full_bad_snapshot =
 									(good_recent == 0 &&
 									 total_seen > 0 &&
@@ -22021,8 +22041,10 @@ window.addEventListener("load", startAutoRefresh);
 								if (sweep_ms_last > 0.0) dstatus["sweep_ms_last"] = sweep_ms_last;
 								if (sweep_ms_avg_10s > 0.0) dstatus["sweep_ms_avg_10s"] = sweep_ms_avg_10s;
 								if (sweep_ms_avg_60s > 0.0) dstatus["sweep_ms_avg_60s"] = sweep_ms_avg_60s;
+								if (last_read_age_ms >= 0) dstatus["last_read_age_ms"] = last_read_age_ms;
 								if (last_ok_age_ms >= 0) dstatus["last_ok_age_ms"] = last_ok_age_ms;
 								if (last_err_age_ms >= 0) dstatus["last_err_age_ms"] = last_err_age_ms;
+								dstatus["stalled"] = connection_stalled;
 								if (deferred_handle_count > 0) {
 									dstatus["deferred_handle_count"] = deferred_handle_count;
 									dstatus["deferred_handles_opened"] = deferred_handles_opened;
@@ -22056,7 +22078,26 @@ window.addEventListener("load", startAutoRefresh);
 					if (conn_obj.empty()) {
 						resp["reason"] = "no monitored PLC connections configured";
 					}
+					json watchdog;
+					watchdog["http_ok"] = true;
+					watchdog["ws_enabled"] = ws_is_enabled();
+					watchdog["connections_stalled"] = stalled_connection_count;
+					watchdog["runtime_last_read_age_ms"] = runtime_last_read_age_ms >= 0 ? json(runtime_last_read_age_ms) : json(nullptr);
+					if (runtime_last_read_age_ms < 0) {
+						watchdog["status"] = "unknown";
+						watchdog["reason"] = "no runtime reads observed yet";
+					} else if (runtime_last_read_age_ms <= 15000) {
+						watchdog["status"] = "ok";
+						watchdog["reason"] = "runtime reads active";
+					} else if (runtime_last_read_age_ms <= 60000) {
+						watchdog["status"] = "degraded";
+						watchdog["reason"] = "runtime reads delayed";
+					} else {
+						watchdog["status"] = "error";
+						watchdog["reason"] = "runtime reads stalled";
+					}
 					resp["connections"] = conn_obj;
+					resp["watchdog"] = watchdog;
 					resp["counts"] = {
 						{"ok", ok_count},
 						{"degraded", degraded_count},
@@ -25868,6 +25909,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                    spec.metrics->read_us_total.fetch_add(us, std::memory_order_relaxed);
 	                                    spec.metrics->read_us_last.store(us, std::memory_order_relaxed);
 	                                    atomic_update_max(spec.metrics->read_us_max, us);
+	                                    spec.metrics->last_read_ts_ms.store(ts_ms, std::memory_order_relaxed);
 	                                    record_connection_block_read(spec.metrics, t.sweep_index, status, us, ts_ms);
 
 	                                    if (status == PLCTAG_STATUS_OK) {

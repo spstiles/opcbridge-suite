@@ -45,7 +45,8 @@
       <div class="grid">
         <div class="card">
           <div class="card-title">OPCBridge /health</div>
-                    <div id="overviewHealthOverall" class="status">Loading…</div>
+          <div id="overviewHealthOverall" class="status">Loading…</div>
+          <div id="overviewHealthWatchdog" class="small"></div>
           <div class="small" id="overviewHealthMeta"></div>
           <div class="small" id="overviewHealthConnections"></div>
           <details class="details" style="margin-top: 10px;">
@@ -828,6 +829,7 @@
         <section class="editor workspace-right workspace-children-pane">
           <div class="editor-toolbar">
             <div class="sidebar-title workspace-children-title">Children</div>
+            <input id="workspaceChildrenFilterInput" type="text" placeholder="Filter tags…" style="display:none; min-width:220px; max-width:320px;" />
             <div class="hint" id="workspaceChildrenHint" style="margin:0;"></div>
           </div>
           <div class="editor-body workspace-table-body">
@@ -2074,6 +2076,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260612_scada_sip_codes_v3"></script>
+  <script src="app.js?v=20260612_scada_watchdog_v4"></script>
 </body>
 </html>

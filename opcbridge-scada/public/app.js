@@ -8,6 +8,7 @@
 
   // Overview
   overviewHealthOverall: document.getElementById('overviewHealthOverall'),
+  overviewHealthWatchdog: document.getElementById('overviewHealthWatchdog'),
   overviewHealthMeta: document.getElementById('overviewHealthMeta'),
   overviewHealthConnections: document.getElementById('overviewHealthConnections'),
   overviewRebuildStatus: document.getElementById('overviewRebuildStatus'),
@@ -413,6 +414,7 @@
   treeView: document.getElementById('treeView'),
   treeNote: document.getElementById('treeNote'),
   workspaceChildrenHint: document.getElementById('workspaceChildrenHint'),
+  workspaceChildrenFilterInput: document.getElementById('workspaceChildrenFilterInput'),
   workspaceChildrenTable: document.getElementById('workspaceChildrenTable'),
   workspaceChildrenTbody: document.getElementById('workspaceChildrenTbody'),
 
@@ -942,6 +944,7 @@ const state = {
   workspaceChildrenSel: new Set(), // keys like "connection_id::tag_name"
   workspaceChildrenLastIndex: -1,
   workspaceChildrenSort: { key: 'name', dir: 'asc' },
+  workspaceChildrenFilter: '',
 
   // auth status cache (opcbridge cookie-based)
   opcbridgeAuthStatus: null,
@@ -6013,9 +6016,35 @@ function renderOverviewHealth(health, metrics = null) {
 
   const overall = String(health?.status || 'error');
   const cached = Boolean(health?.ui_cached);
+  const formatMsCompact = (value) => {
+    const ms = Number(value);
+    if (!Number.isFinite(ms) || ms < 0) return '';
+    if (ms >= 10000) return `${(ms / 1000).toFixed(1)} s`;
+    if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`;
+    return `${Math.round(ms)} ms`;
+  };
   if (els.overviewHealthOverall) {
     els.overviewHealthOverall.textContent = `Status: ${overall.toUpperCase()}${cached ? ' (cached)' : ''}`;
     els.overviewHealthOverall.className = classForStatus(overall);
+  }
+  if (els.overviewHealthWatchdog) {
+    const watchdog = (health?.watchdog && typeof health.watchdog === 'object') ? health.watchdog : null;
+    if (!watchdog) {
+      els.overviewHealthWatchdog.textContent = '';
+      els.overviewHealthWatchdog.className = 'small';
+    } else {
+      const wdStatus = String(watchdog?.status || 'unknown');
+      const lastReadAgeMs = (typeof watchdog?.runtime_last_read_age_ms === 'number' && watchdog.runtime_last_read_age_ms >= 0)
+        ? watchdog.runtime_last_read_age_ms
+        : null;
+      const stalledCount = Math.max(0, Number(watchdog?.connections_stalled || 0) || 0);
+      const wsState = watchdog?.ws_enabled ? 'ws on' : 'ws off';
+      const reason = watchdog?.reason ? ` • ${watchdog.reason}` : '';
+      const lastRead = lastReadAgeMs != null ? ` • last read ${formatMsCompact(lastReadAgeMs)} ago` : '';
+      const stalled = ` • stalled ${stalledCount}`;
+      els.overviewHealthWatchdog.textContent = `Watchdog: ${wdStatus.toUpperCase()} • ${wsState}${lastRead}${stalled}${reason}`;
+      els.overviewHealthWatchdog.className = `small ${classForStatus(wdStatus)}`;
+    }
   }
 
   const counts = health?.counts || {};
@@ -6052,14 +6081,6 @@ function renderOverviewHealth(health, metrics = null) {
       const lanes = (typeof info?.poll_lanes === 'number' && info.poll_lanes > 0) ? info.poll_lanes : null;
       const lastOkAgeMs = (typeof info?.last_ok_age_ms === 'number' && info.last_ok_age_ms >= 0) ? info.last_ok_age_ms : null;
 
-      const formatMsCompact = (value) => {
-        const ms = Number(value);
-        if (!Number.isFinite(ms) || ms < 0) return '';
-        if (ms >= 10000) return `${(ms / 1000).toFixed(1)} s`;
-        if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`;
-        return `${Math.round(ms)} ms`;
-      };
-
       let details = '';
       if (seen != null && good != null) details += ` • ${good}/${seen} good recent`;
       if (age != null) details += ` • newest ${age} ms`;
@@ -6069,7 +6090,9 @@ function renderOverviewHealth(health, metrics = null) {
       if (sweepMs != null) details += ` • est ${formatMsCompact(sweepMs)}`;
       if (sweepAvg60sMs != null && sweepAvg10sMs != null) details += ` • avg60s ${formatMsCompact(sweepAvg60sMs)}`;
       if (lanes != null) details += ` • lanes ${lanes}`;
+      if (typeof info?.last_read_age_ms === 'number' && info.last_read_age_ms >= 0) details += ` • last read ${formatMsCompact(info.last_read_age_ms)} ago`;
       if (lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
+      if (info?.stalled === true) details += ` • stalled`;
 
       const cls = classForStatus(st);
       const blocks = Array.isArray(metricInfo?.blocks) ? metricInfo.blocks : [];
@@ -6109,6 +6132,15 @@ function badge(status) {
   const s = String(status || '').toLowerCase();
   const cls = s === 'ok' ? 'ok' : s === 'degraded' ? 'warn' : 'bad';
   return `<span class="badge ${cls}">${s || '-'}</span>`;
+}
+
+if (els.workspaceChildrenFilterInput) {
+  els.workspaceChildrenFilterInput.addEventListener('input', () => {
+    state.workspaceChildrenFilter = String(els.workspaceChildrenFilterInput.value || '').trim();
+    state.workspaceChildrenSel = new Set();
+    state.workspaceChildrenLastIndex = -1;
+    renderWorkspaceTree();
+  });
 }
 
 async function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
@@ -19444,16 +19476,38 @@ function renderWorkspaceDetails(node) {
         .slice();
   }
 
-  const rowsToRender = showTagCols
+  const rawRowsToRender = showTagCols
     ? tagRows
     : (isMqttDevice
       ? buildMqttWorkspaceChildren(connectionId, state.connObjCache?.get?.(String(node.meta?.path || '')) || {}, String(node.meta?.path || ''))
       : children);
+  const filterText = String(state.workspaceChildrenFilter || '').trim().toLowerCase();
+  const rowsToRender = (showTagCols && filterText)
+    ? rawRowsToRender.filter((row) => {
+        const haystack = [
+          row?.name,
+          row?.plc_tag_name,
+          row?.datatype,
+          row?.connection_id
+        ]
+          .map((value) => String(value || '').toLowerCase())
+          .join(' ');
+        return haystack.includes(filterText);
+      })
+    : rawRowsToRender;
+
+  if (els.workspaceChildrenFilterInput) {
+    els.workspaceChildrenFilterInput.style.display = showTagCols ? '' : 'none';
+    els.workspaceChildrenFilterInput.disabled = !showTagCols;
+    if (showTagCols && els.workspaceChildrenFilterInput.value !== state.workspaceChildrenFilter) {
+      els.workspaceChildrenFilterInput.value = state.workspaceChildrenFilter;
+    }
+  }
   if (els.workspaceChildrenHint) {
     const label = String(node?.label || '').trim();
     const count = rowsToRender.length;
     els.workspaceChildrenHint.textContent = showTagCols
-      ? `${count} tag${count === 1 ? '' : 's'}${connectionId ? ` · ${connectionId}` : ''}`
+      ? `${count} tag${count === 1 ? '' : 's'}${rawRowsToRender.length !== count ? ` of ${rawRowsToRender.length}` : ''}${connectionId ? ` · ${connectionId}` : ''}`
       : `${count} item${count === 1 ? '' : 's'}${label ? ` · ${label}` : ''}`;
   }
 
