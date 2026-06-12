@@ -22060,11 +22060,48 @@ const getGroupHotspotBounds = (obj) => {
 
 const findRuntimeGroupHotspot = (point) => {
   if (!currentScreenObj || !Array.isArray(currentScreenObj.objects)) return null;
-  const findInList = (objects, offsetX, offsetY, path) => {
+  const scaleBounds = (bounds, scale, offsetX, offsetY) => ({
+    x: offsetX + bounds.x * scale,
+    y: offsetY + bounds.y * scale,
+    width: bounds.width * scale,
+    height: bounds.height * scale
+  });
+  const findInList = (objects, offsetX, offsetY, path, testPoint = point) => {
     if (!Array.isArray(objects)) return null;
     for (let i = objects.length - 1; i >= 0; i -= 1) {
       const obj = objects[i];
-      if (!obj || obj.type !== "group") continue;
+      if (!obj) continue;
+      if (obj.type === "viewport") {
+        const targetId = obj.target || obj.screenId || obj.targetScreen || obj.targetId;
+        const child = targetId ? screenCache.get(targetId) : null;
+        const transform = child ? computeViewportTransform(obj, child) : null;
+        if (!transform || !transform.scale) continue;
+        const viewportBox = {
+          x: offsetX + transform.x,
+          y: offsetY + transform.y,
+          width: transform.w,
+          height: transform.h
+        };
+        if (!pointInBox(testPoint, viewportBox)) continue;
+        const childOriginX = viewportBox.x + transform.offsetX;
+        const childOriginY = viewportBox.y + transform.offsetY;
+        const childPoint = {
+          x: (testPoint.x - childOriginX) / transform.scale,
+          y: (testPoint.y - childOriginY) / transform.scale
+        };
+        const nested = findInList(child.objects, 0, 0, [], childPoint);
+        if (nested) {
+          return {
+            ...nested,
+            bounds: scaleBounds(nested.bounds, transform.scale, childOriginX, childOriginY),
+            rotation: Number(nested.rotation || 0),
+            viewportId: String(obj.id || ""),
+            viewportTargetId: targetId
+          };
+        }
+        continue;
+      }
+      if (obj.type !== "group") continue;
       if (!shouldRenderObject(obj)) continue;
       const rawBounds = getGroupHotspotBounds(obj);
       if (!rawBounds) continue;
@@ -22075,8 +22112,8 @@ const findRuntimeGroupHotspot = (point) => {
         height: rawBounds.height
       };
       const rotation = getObjectRotationDegrees(obj);
-      if (!pointInRotatedObjectBox(point, obj, bounds, rotation)) continue;
-      const nested = findInList(obj.children, offsetX + Number(obj.x ?? 0), offsetY + Number(obj.y ?? 0), [...path, i]);
+      if (!pointInRotatedObjectBox(testPoint, obj, bounds, rotation)) continue;
+      const nested = findInList(obj.children, offsetX + Number(obj.x ?? 0), offsetY + Number(obj.y ?? 0), [...path, i], testPoint);
       if (nested) return nested;
       const action = obj.action;
       if (!action || !action.type) continue;
@@ -24914,6 +24951,10 @@ if (hmiSvg) {
 	          if (hotspot) {
 	            const action = hotspot.obj.action || {};
 	            if (action.type === "navigate") {
+                if (hotspot.viewportId) {
+                  loadViewportTarget(hotspot.viewportId, action.screenId);
+                  return;
+                }
 	              runtimeNavigateTo(action.screenId);
 	              return;
 	            }
