@@ -121,6 +121,35 @@ function detectReporterCapabilities() {
   return caps;
 }
 
+function listNetworkInterfaces() {
+  const raw = os.networkInterfaces();
+  const rows = [];
+  Object.entries(raw || {}).forEach(([name, addresses]) => {
+    const ifaceName = String(name || '').trim();
+    if (!ifaceName) return;
+    const ipv4 = [];
+    const ipv6 = [];
+    let hasNonInternal = false;
+    (Array.isArray(addresses) ? addresses : []).forEach((addr) => {
+      if (!addr || typeof addr !== 'object') return;
+      const family = String(addr.family || '').toUpperCase();
+      const address = String(addr.address || '').trim();
+      if (!address) return;
+      if (!addr.internal) hasNonInternal = true;
+      if (family === 'IPV4') ipv4.push(address);
+      else if (family === 'IPV6') ipv6.push(address);
+    });
+    if (!hasNonInternal) return;
+    rows.push({
+      name: ifaceName,
+      ipv4: Array.from(new Set(ipv4)),
+      ipv6: Array.from(new Set(ipv6))
+    });
+  });
+  rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  return rows;
+}
+
 const REPORTER_CAPABILITIES = detectReporterCapabilities();
 
 const REPORTER_REPORTS_PATH = String(
@@ -3673,6 +3702,15 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
+    return;
+  }
+
+  if (url.pathname === '/api/system/network-interfaces') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, interfaces: listNetworkInterfaces() });
     return;
   }
 

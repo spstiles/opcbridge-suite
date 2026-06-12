@@ -10545,12 +10545,14 @@ async function loadSipSettings() {
   try {
     const cfg = await loadOpcbridgeAlarmsConfig();
     const sip = (cfg && typeof cfg === 'object' && cfg.sip && typeof cfg.sip === 'object') ? cfg.sip : {};
+    const selectedNetIf = String(sip.net_if || '').trim();
+    await loadSipInterfaceOptions(selectedNetIf);
     if (els.sipEnabled) els.sipEnabled.checked = Boolean(sip.enabled);
     if (els.sipServer) els.sipServer.value = String(sip.server || '').trim();
     if (els.sipExt) els.sipExt.value = String(sip.ext || '').trim();
     if (els.sipPass) els.sipPass.value = String(sip.pass || '').trim();
     if (els.sipTransport) els.sipTransport.value = String(sip.transport || 'udp').trim().toLowerCase() || 'udp';
-    if (els.sipNetIf) els.sipNetIf.value = String(sip.net_if || '').trim();
+    if (els.sipNetIf) els.sipNetIf.value = selectedNetIf;
     // This is the default SIP call duration used by runtime (not just the test).
     if (els.sipDurationSec) els.sipDurationSec.value = String(Number(sip.duration_sec ?? 20) || 20);
 	    const files = Array.isArray(cfg?.audio?.files) ? cfg.audio.files : [];
@@ -10599,6 +10601,53 @@ async function loadSipSettings() {
 	  } catch (err) {
     setSipStatus(`Load failed: ${err.message}`);
   }
+  }
+
+  async function loadSipInterfaceOptions(selectedValue = '') {
+    if (!els.sipNetIf) return;
+    let interfaces = [];
+    try {
+      const resp = await apiJson('/api/system/network-interfaces');
+      if (Array.isArray(resp?.interfaces)) interfaces = resp.interfaces;
+    } catch {
+      interfaces = [];
+    }
+    const normalizedSelected = String(selectedValue || '').trim();
+    const seen = new Set();
+    const options = [];
+    interfaces.forEach((entry) => {
+      const name = String(entry?.name || '').trim();
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      const ipv4 = Array.isArray(entry?.ipv4) ? entry.ipv4.filter(Boolean) : [];
+      const ipv6 = Array.isArray(entry?.ipv6) ? entry.ipv6.filter(Boolean) : [];
+      const details = [];
+      if (ipv4.length) details.push(`IPv4 ${ipv4.join(', ')}`);
+      if (ipv6.length) details.push(`IPv6 ${ipv6.join(', ')}`);
+      options.push({
+        value: name,
+        label: details.length ? `${name} — ${details.join(' • ')}` : name
+      });
+    });
+    options.sort((a, b) => a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: 'base' }));
+    els.sipNetIf.textContent = '';
+    const autoOpt = document.createElement('option');
+    autoOpt.value = '';
+    autoOpt.textContent = '(Auto-detect via route)';
+    els.sipNetIf.appendChild(autoOpt);
+    options.forEach((entry) => {
+      const opt = document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      els.sipNetIf.appendChild(opt);
+    });
+    if (normalizedSelected && !seen.has(normalizedSelected)) {
+      const customOpt = document.createElement('option');
+      customOpt.value = normalizedSelected;
+      customOpt.textContent = `${normalizedSelected} (saved, not currently detected)`;
+      els.sipNetIf.appendChild(customOpt);
+    }
+    els.sipNetIf.value = normalizedSelected;
   }
 
   async function saveSipSettings() {
