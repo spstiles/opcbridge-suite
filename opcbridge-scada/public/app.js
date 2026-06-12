@@ -6221,7 +6221,10 @@ async function apiPostJson(url, bodyObj, { timeoutMs = 120000 } = {}) {
       }
     }
     const msg = parsed?.error || `HTTP ${res.status}`;
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    err.response = parsed;
+    throw err;
   }
   return parsed;
 }
@@ -6245,7 +6248,10 @@ async function apiJson(url, { method, bodyObj, timeoutMs } = {}) {
       }
     }
     const msg = parsed?.error || `HTTP ${res.status}`;
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    err.response = parsed;
+    throw err;
   }
   return parsed;
 }
@@ -10628,7 +10634,9 @@ async function testSipCall() {
     const codes = Array.isArray(resp?.codes) ? resp.codes.join(',') : '';
     setSipStatus(`OK. net_if=${resp?.net_if || ''} codes=[${codes}]`);
   } catch (err) {
-    setSipStatus(`Test failed: ${err.message}`);
+    const codes = Array.isArray(err?.response?.codes) ? err.response.codes.map((code) => String(code || '').trim()).filter(Boolean) : [];
+    const codeText = codes.length ? ` codes=[${codes.join(', ')}]` : '';
+    setSipStatus(`Test failed: ${err.message}${codeText}`);
   } finally {
     if (els.sipTestBtn) els.sipTestBtn.disabled = false;
   }
