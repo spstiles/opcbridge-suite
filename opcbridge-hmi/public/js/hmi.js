@@ -7828,6 +7828,11 @@ const setSelectValueSafe = (select, value) => {
   select.value = value;
 };
 
+const isActiveElementWithin = (container) => {
+  const active = document.activeElement;
+  return Boolean(container && active && container.contains(active));
+};
+
 const setTagBindingFieldValues = (connectionInput, tagInput, binding) => {
   setInputValueSafe(connectionInput, String(binding?.connection_id || "").trim());
   setInputValueSafe(tagInput, String(binding?.tag || "").trim());
@@ -10977,7 +10982,7 @@ const syncPropertiesFromSelection = () => {
     if (textBorderColorTextInput) textBorderColorTextInput.value = obj.borderColor || "";
     if (textRadiusInput) textRadiusInput.value = Number(obj.rx ?? 0);
     if (textPaddingInput) setInputValueSafe(textPaddingInput, Number.isFinite(Number(obj.padding)) ? Number(obj.padding) : "");
-    renderTextBindingRows(obj);
+    if (!isActiveElementWithin(textBindingRows)) renderTextBindingRows(obj);
 
     syncTextStateAutomationControl(obj);
     if (isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic()) {
@@ -10987,7 +10992,7 @@ const syncPropertiesFromSelection = () => {
   }
 	  if (obj.type === "button") {
 	    if (buttonLabelInput) buttonLabelInput.value = obj.label || "";
-    renderButtonLabelBindingRows(obj);
+    if (!isActiveElementWithin(buttonLabelBindingRows)) renderButtonLabelBindingRows(obj);
     if (buttonWidthInput) buttonWidthInput.value = Number(obj.w) || 160;
     if (buttonXInput) buttonXInput.value = Number(obj.x) || 0;
     if (buttonYInput) buttonYInput.value = Number(obj.y) || 0;
