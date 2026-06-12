@@ -740,11 +740,11 @@ const normalizeRectColorDraft = (obj, value) => {
 
 const buildColorRulesFromObject = (obj) => {
   if (!obj || !["rect", "line", "ellipse", "text", "button", "circle", "group"].includes(String(obj.type || ""))) return [];
-  const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? getColorAutomationRules(obj.fillAutomation || {}) : [];
-  const strokeAuto = (obj.type === "text") ? getColorAutomationRules(obj.backgroundAutomation || {}) : (obj.type === "button" ? getColorAutomationRules(obj.textColorAutomation || {}) : getColorAutomationRules(obj.strokeAutomation || {}));
-  const textAuto = obj.type === "group" ? getColorAutomationRules(obj.textColorAutomation || {}) : [];
-  const backgroundAuto = obj.type === "group" ? getColorAutomationRules(obj.backgroundAutomation || {}) : [];
-  const borderAuto = (obj.type === "text" || obj.type === "group") ? getColorAutomationRules(obj.borderColorAutomation || {}) : [];
+  const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? getColorAutomationRules(obj.fillAutomation) : [];
+  const strokeAuto = (obj.type === "text") ? getColorAutomationRules(obj.backgroundAutomation) : (obj.type === "button" ? getColorAutomationRules(obj.textColorAutomation) : getColorAutomationRules(obj.strokeAutomation));
+  const textAuto = obj.type === "group" ? getColorAutomationRules(obj.textColorAutomation) : [];
+  const backgroundAuto = obj.type === "group" ? getColorAutomationRules(obj.backgroundAutomation) : [];
+  const borderAuto = (obj.type === "text" || obj.type === "group") ? getColorAutomationRules(obj.borderColorAutomation) : [];
   const maxRules = Math.max(fillAuto.length, strokeAuto.length, textAuto.length, backgroundAuto.length, borderAuto.length, 0);
   const rules = [];
   for (let index = 0; index < maxRules; index += 1) {
