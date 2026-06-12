@@ -803,7 +803,7 @@ const getCurrentColorRulesForObject = (obj) => {
 };
 
 const hasEditableColorDynamic = (obj) => {
-  if (rectColorDraftObject === obj && rectColorDraft && isColorDynamicTab()) {
+  if (rectColorDraftObject === obj && rectColorDraft) {
     return getCurrentColorRulesForObject(obj).length > 0;
   }
   return getStoredColorRulesForObject(obj).length > 0;
