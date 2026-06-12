@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260611-hmi-ui-v18" />
+  <link rel="stylesheet" href="css/main.css?v=20260611-hmi-ui-v19" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -1181,15 +1181,14 @@
                 </div>
                 <div class="prop-row" id="rectColorConnectionRow">
                   <label for="rectColorConnection">Connection</label>
-                  <select id="rectColorConnection">
-                    <option value="">Select connection…</option>
-                  </select>
+                  <input id="rectColorConnection" type="text" placeholder="connection_id" />
                 </div>
                 <div class="prop-row" id="rectColorTagRow">
                   <label for="rectColorTag">Tag</label>
-                  <select id="rectColorTag">
-                    <option value="">Select tag…</option>
-                  </select>
+                  <div class="prop-subgroup">
+                    <input id="rectColorTag" type="text" placeholder="tag" />
+                    <button id="rectColorTagPickBtn" class="panel-btn" type="button">Pick…</button>
+                  </div>
                 </div>
                 <div class="prop-row" id="rectColorModeRow">
                   <label for="rectColorMode">Mode</label>
@@ -1890,15 +1889,14 @@
               </div>
               <div class="prop-row">
                 <label for="visibilityConnection">Connection</label>
-                <select id="visibilityConnection">
-                  <option value="">Select connection…</option>
-                </select>
+                <input id="visibilityConnection" type="text" placeholder="connection_id" />
               </div>
               <div class="prop-row">
                 <label for="visibilityTag">Tag</label>
-                <select id="visibilityTag">
-                  <option value="">Select tag…</option>
-                </select>
+                <div class="prop-subgroup">
+                  <input id="visibilityTag" type="text" placeholder="tag" />
+                  <button id="visibilityTagPickBtn" class="panel-btn" type="button">Pick…</button>
+                </div>
               </div>
               <div class="prop-row">
                 <label for="visibilityMode">Mode</label>
@@ -2635,6 +2633,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260611-hmi-ui-v18"></script>
+	  <script src="js/hmi.js?v=20260611-hmi-ui-v19"></script>
 	</body>
 	</html>

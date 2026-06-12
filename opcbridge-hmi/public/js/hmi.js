@@ -995,15 +995,8 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     rectColorExpressionRow.classList.toggle("is-hidden", !showExpression);
     rectColorExpressionRow.hidden = !showExpression;
   }
-  populateRectColorConnectionOptions();
-  setSelectValueSafe(rectColorConnectionInput, next.connection_id || "");
-  populateRectColorTagOptions(next.connection_id || "");
-  if (rectColorTagSelect) {
-    const connectionId = String(next.connection_id || "");
-    const tagName = String(next.tag || "");
-    const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-    setSelectValueSafe(rectColorTagSelect, combined);
-  }
+  setInputValueSafe(rectColorConnectionInput, next.connection_id || "");
+  setInputValueSafe(rectColorTagInput, next.tag || "");
   if (rectColorModeSelect) rectColorModeSelect.value = mode;
   if (rectColorThresholdInput) setInputValueSafe(rectColorThresholdInput, next.threshold ?? "");
   if (rectColorMatchInput) setInputValueSafe(rectColorMatchInput, next.match ?? "");
@@ -1211,15 +1204,8 @@ const syncVisibilityUiFromState = (state) => {
     visibilityFields.hidden = !isEnabled;
   }
   if (visibilitySourceTypeSelect) setSelectValueSafe(visibilitySourceTypeSelect, sourceType);
-  populateVisibilityConnectionOptions();
-  setSelectValueSafe(visibilityConnectionInput, vis.connection_id || "");
-  populateVisibilityTagOptions(vis.connection_id || "");
-  if (visibilityTagSelect) {
-    const connectionId = String(vis.connection_id || "");
-    const tagName = String(vis.tag || "");
-    const combined = connectionId && tagName ? `${connectionId}::${tagName}` : "";
-    setSelectValueSafe(visibilityTagSelect, combined);
-  }
+  setInputValueSafe(visibilityConnectionInput, vis.connection_id || "");
+  setInputValueSafe(visibilityTagInput, vis.tag || "");
   const thresholdValue = (vis.threshold ?? vis.value);
   const hasMatch = String(vis.match ?? "").trim() !== "";
   const mode = (vis.mode === "equals" || vis.mode === "threshold")
@@ -3661,7 +3647,8 @@ const rectColorSourceTypeSelect = document.getElementById("rectColorSourceType")
 const rectColorConnectionRow = document.getElementById("rectColorConnectionRow");
 const rectColorConnectionInput = document.getElementById("rectColorConnection");
 const rectColorTagRow = document.getElementById("rectColorTagRow");
-const rectColorTagSelect = document.getElementById("rectColorTag");
+const rectColorTagInput = document.getElementById("rectColorTag");
+const rectColorTagPickBtn = document.getElementById("rectColorTagPickBtn");
 const rectColorTargetsRow = document.getElementById("rectColorTargetsRow");
 const rectColorModeRow = document.getElementById("rectColorModeRow");
 const rectColorModeSelect = document.getElementById("rectColorMode");
@@ -3871,7 +3858,8 @@ const visibilityProps = document.getElementById("visibilityProps");
 const visibilityFields = document.getElementById("visibilityFields");
 const visibilityEnabledInput = document.getElementById("visibilityEnabled");
 const visibilityConnectionInput = document.getElementById("visibilityConnection");
-const visibilityTagSelect = document.getElementById("visibilityTag");
+const visibilityTagInput = document.getElementById("visibilityTag");
+const visibilityTagPickBtn = document.getElementById("visibilityTagPickBtn");
 const visibilityModeSelect = document.getElementById("visibilityMode");
 const visibilityThresholdRow = document.getElementById("visibilityThresholdRow");
 const visibilityThresholdInput = document.getElementById("visibilityThreshold");
@@ -7797,6 +7785,11 @@ const setSelectValueSafe = (select, value) => {
   select.value = value;
 };
 
+const setTagBindingFieldValues = (connectionInput, tagInput, binding) => {
+  setInputValueSafe(connectionInput, String(binding?.connection_id || "").trim());
+  setInputValueSafe(tagInput, String(binding?.tag || "").trim());
+};
+
 const ensureCombinedTagSelectValue = (select, connectionId, tagName) => {
   if (!select) return;
   const conn = String(connectionId || "").trim();
@@ -8298,32 +8291,6 @@ const refreshNumberInputTagOptions = () => {
 
 const refreshIndicatorTagOptions = () => {
   populateTagSelect(indicatorTagSelect);
-};
-
-const refreshVisibilityTagOptions = () => {
-  populateVisibilityConnectionOptions();
-  populateVisibilityTagOptions(visibilityConnectionInput?.value || "");
-};
-
-const refreshRectColorTagOptions = () => {
-  populateRectColorConnectionOptions();
-  populateRectColorTagOptions(rectColorConnectionInput?.value || "");
-};
-
-const populateVisibilityConnectionOptions = () => {
-  populateConnectionSelect(visibilityConnectionInput);
-};
-
-const populateVisibilityTagOptions = (connectionId = "") => {
-  populateFilteredCombinedTagSelect(visibilityTagSelect, connectionId || visibilityConnectionInput?.value || "");
-};
-
-const populateRectColorConnectionOptions = () => {
-  populateConnectionSelect(rectColorConnectionInput);
-};
-
-const populateRectColorTagOptions = (connectionId = "") => {
-  populateFilteredCombinedTagSelect(rectColorTagSelect, connectionId || rectColorConnectionInput?.value || "");
 };
 
 const refreshAutomationTagOptions = () => {
@@ -11547,7 +11514,7 @@ const syncPropertiesFromSelection = () => {
     if (barTicksMajorInput) setInputValueSafe(barTicksMajorInput, ticks.major ?? 5);
     if (barTicksMinorInput) setInputValueSafe(barTicksMinorInput, ticks.minor ?? 4);
   }
-  if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagSelect || visibilityModeSelect || visibilityThresholdInput || visibilityMatchInput || visibilityInvertInput) {
+  if (visibilityEnabledInput || visibilityConnectionInput || visibilityTagInput || visibilityModeSelect || visibilityThresholdInput || visibilityMatchInput || visibilityInvertInput) {
     const vis = (isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingButtonVisibilityDynamic() || isEditingGroupVisibilityDynamic() || isEditingCircleVisibilityDynamic())
       ? (rectVisibilityDraft || obj.visibility || { enabled: true })
       : (obj.visibility || {});
@@ -14754,6 +14721,7 @@ if (tagBindingSaveBtn) {
     const connection_id = String(tagBindingConnectionSelect?.value || "").trim();
     const tag = String(tagBindingTagSelect?.value || "").trim();
     if (config.connectionInput) config.connectionInput.value = connection_id;
+    if (config.tagInput) config.tagInput.value = tag;
     if (config.tagSelect) setSelectValueSafe(config.tagSelect, connection_id && tag ? `${connection_id}::${tag}` : "");
     config.apply({ connection_id, tag });
     closeCompactTagBindingModal();
@@ -14766,6 +14734,7 @@ if (tagBindingClearBtn) {
     const config = getCompactTagBindingConfig(activeCompactTagBindingId);
     if (!config) return;
     if (config.connectionInput) config.connectionInput.value = "";
+    if (config.tagInput) config.tagInput.value = "";
     if (config.tagSelect) setSelectValueSafe(config.tagSelect, "");
     config.apply({ connection_id: "", tag: "" });
     closeCompactTagBindingModal();
@@ -16766,22 +16735,18 @@ if (visibilitySourceTypeSelect) {
 if (visibilityConnectionInput) {
   visibilityConnectionInput.addEventListener("change", () => {
     const connectionId = String(visibilityConnectionInput.value || "").trim();
-    populateVisibilityTagOptions(connectionId);
-    updateVisibilityProperty({ connection_id: connectionId, tag: "", enabled: true });
+    updateVisibilityProperty({ connection_id: connectionId, enabled: true });
   });
 }
 
-if (visibilityTagSelect) {
-  visibilityTagSelect.addEventListener("change", () => {
-    const value = visibilityTagSelect.value;
-    if (!value) {
-      updateVisibilityProperty({ tag: "", enabled: true });
-      return;
-    }
-    const [connectionId, tagName] = value.split("::");
-    if (visibilityConnectionInput) setSelectValueSafe(visibilityConnectionInput, connectionId || "");
-    updateVisibilityProperty({ connection_id: connectionId || "", tag: tagName || "", enabled: true });
+if (visibilityTagInput) {
+  visibilityTagInput.addEventListener("change", () => {
+    updateVisibilityProperty({ tag: String(visibilityTagInput.value || "").trim(), enabled: true });
   });
+}
+
+if (visibilityTagPickBtn) {
+  visibilityTagPickBtn.addEventListener("click", () => openCompactTagBindingModal("visibility"));
 }
 
 if (visibilityThresholdInput) {
@@ -17181,22 +17146,18 @@ if (rectColorInvertInput) {
 if (rectColorConnectionInput) {
   rectColorConnectionInput.addEventListener("change", () => {
     const connectionId = String(rectColorConnectionInput.value || "").trim();
-    populateRectColorTagOptions(connectionId);
-    updateRectColorDraft({ connection_id: connectionId, tag: "" });
+    updateRectColorDraft({ connection_id: connectionId });
   });
 }
 
-if (rectColorTagSelect) {
-  rectColorTagSelect.addEventListener("change", () => {
-    const value = String(rectColorTagSelect.value || "");
-    if (!value) {
-      updateRectColorDraft({ tag: "" });
-      return;
-    }
-    const [connectionId, tagName] = value.split("::");
-    if (rectColorConnectionInput) setSelectValueSafe(rectColorConnectionInput, connectionId || "");
-    updateRectColorDraft({ connection_id: connectionId || "", tag: tagName || "" });
+if (rectColorTagInput) {
+  rectColorTagInput.addEventListener("change", () => {
+    updateRectColorDraft({ tag: String(rectColorTagInput.value || "").trim() });
   });
+}
+
+if (rectColorTagPickBtn) {
+  rectColorTagPickBtn.addEventListener("click", () => openCompactTagBindingModal("rectColor"));
 }
 
 if (rectColorModeSelect) {
@@ -17623,7 +17584,12 @@ function renderCompactTagBindingRows() {
 }
 
 function registerCompactTagBinding(config) {
-  if (!config?.container || !config?.buttonLabel || !config?.read || !config?.apply) return;
+  if (!config?.read || !config?.apply || !config?.id) return;
+  if (config.inlineOnly) {
+    compactTagBindingConfigs.push({ ...config, row: null, summaryEl: null });
+    return;
+  }
+  if (!config?.container || !config?.buttonLabel) return;
   const row = document.createElement("div");
   row.className = "text-binding-row compact-binding-row";
 
@@ -17695,17 +17661,28 @@ function initializeCompactTagBindingRows() {
 
   registerCompactTagBinding({
     id: "visibility",
-    container: visibilityFields,
-    beforeEl: visibilityModeSelect?.closest(".prop-row"),
     connectionInput: visibilityConnectionInput,
-    tagSelect: visibilityTagSelect,
-    buttonLabel: "Source",
+    tagInput: visibilityTagInput,
     modalTitle: "Visibility Tag",
+    inlineOnly: true,
     read: () => ({
       connection_id: String(visibilityConnectionInput?.value || "").trim(),
-      tag: parseTagSelectValue(visibilityTagSelect?.value || "").tag
+      tag: String(visibilityTagInput?.value || "").trim()
     }),
     apply: ({ connection_id, tag }) => updateVisibilityProperty({ connection_id, tag, enabled: true })
+  });
+
+  registerCompactTagBinding({
+    id: "rectColor",
+    connectionInput: rectColorConnectionInput,
+    tagInput: rectColorTagInput,
+    modalTitle: "Color Tag",
+    inlineOnly: true,
+    read: () => ({
+      connection_id: String(rectColorConnectionInput?.value || "").trim(),
+      tag: String(rectColorTagInput?.value || "").trim()
+    }),
+    apply: ({ connection_id, tag }) => updateRectColorDraft({ connection_id, tag, enabled: true })
   });
 
   [
@@ -18024,17 +18001,28 @@ const initializeRotationControls = () => {
     connectionRow.className = "prop-row";
     const connectionLabel = document.createElement("label");
     connectionLabel.textContent = "Connection";
-    const connectionSelect = document.createElement("select");
+    const connectionInput = document.createElement("input");
+    connectionInput.type = "text";
+    connectionInput.placeholder = "connection_id";
     connectionRow.appendChild(connectionLabel);
-    connectionRow.appendChild(connectionSelect);
+    connectionRow.appendChild(connectionInput);
 
     const tagRow = document.createElement("div");
     tagRow.className = "prop-row";
     const tagLabel = document.createElement("label");
     tagLabel.textContent = "Tag";
-    const tagSelect = document.createElement("select");
+    const tagInline = document.createElement("div");
+    tagInline.className = "prop-subgroup";
+    const tagInput = document.createElement("input");
+    tagInput.type = "text";
+    tagInput.placeholder = "tag";
+    const tagPickBtn = document.createElement("button");
+    tagPickBtn.type = "button";
+    tagPickBtn.className = "panel-btn";
+    tagPickBtn.textContent = "Pick…";
+    tagInline.append(tagInput, tagPickBtn);
     tagRow.appendChild(tagLabel);
-    tagRow.appendChild(tagSelect);
+    tagRow.appendChild(tagInline);
 
     const expressionRow = document.createElement("div");
     expressionRow.className = "prop-row is-hidden";
@@ -18133,9 +18121,10 @@ const initializeRotationControls = () => {
       autoFields,
       sourceTypeSelect,
       connectionRow,
-      connectionSelect,
+      connectionInput,
       tagRow,
-      tagSelect,
+      tagInput,
+      tagPickBtn,
       expressionRow,
       expressionSummary,
       expressionBtn,
@@ -18192,19 +18181,37 @@ const initializeRotationControls = () => {
       updateSelectedObjectRotationConfig({
         rotationAutomation: sourceType === "expression"
           ? { sourceType, expression: "", enabled: true }
-          : { sourceType, connection_id: String(connectionSelect.value || "").trim(), tag: parseTagSelectValue(tagSelect.value || "").tag, enabled: true }
+          : { sourceType, connection_id: String(connectionInput.value || "").trim(), tag: String(tagInput.value || "").trim(), enabled: true }
       });
     });
-    connectionSelect.addEventListener("change", () => {
-      populateFilteredCombinedTagSelect(tagSelect, connectionSelect.value);
-      setSelectValueSafe(tagSelect, "");
-      updateSelectedObjectRotationConfig({ rotationAutomation: { sourceType: "tag", connection_id: connectionSelect.value, tag: "", enabled: true } });
+    connectionInput.addEventListener("change", () => {
+      updateSelectedObjectRotationConfig({ rotationAutomation: { sourceType: "tag", connection_id: String(connectionInput.value || "").trim(), enabled: true } });
     });
-    tagSelect.addEventListener("change", () => {
-      const { connection_id, tag } = parseTagSelectValue(tagSelect.value || "");
-      if (connection_id) setSelectValueSafe(connectionSelect, connection_id);
-      updateSelectedObjectRotationConfig({ rotationAutomation: { sourceType: "tag", connection_id, tag, enabled: true } });
+    tagInput.addEventListener("change", () => {
+      updateSelectedObjectRotationConfig({
+        rotationAutomation: {
+          sourceType: "tag",
+          connection_id: String(connectionInput.value || "").trim(),
+          tag: String(tagInput.value || "").trim(),
+          enabled: true
+        }
+      });
     });
+    registerCompactTagBinding({
+      id: `rotation-${definition.id}`,
+      connectionInput,
+      tagInput,
+      modalTitle: `${definition.title} Tag`,
+      inlineOnly: true,
+      read: () => ({
+        connection_id: String(connectionInput.value || "").trim(),
+        tag: String(tagInput.value || "").trim()
+      }),
+      apply: ({ connection_id, tag }) => updateSelectedObjectRotationConfig({
+        rotationAutomation: { sourceType: "tag", connection_id, tag, enabled: true }
+      })
+    });
+    tagPickBtn.addEventListener("click", () => openCompactTagBindingModal(`rotation-${definition.id}`));
     expressionBtn.addEventListener("click", () => {
       const activeObjects = getActiveObjects();
       const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
@@ -18366,10 +18373,7 @@ const syncRotationControls = (obj) => {
     control.autoFields.classList.toggle("is-hidden", !enabled);
     control.autoFields.hidden = !enabled;
     setSelectValueSafe(control.sourceTypeSelect, automation.sourceType || "tag");
-    populateConnectionSelect(control.connectionSelect);
-    setSelectValueSafe(control.connectionSelect, automation.connection_id || "");
-    populateFilteredCombinedTagSelect(control.tagSelect, automation.connection_id || "");
-    setSelectValueSafe(control.tagSelect, automation.connection_id && automation.tag ? `${automation.connection_id}::${automation.tag}` : "");
+    setTagBindingFieldValues(control.connectionInput, control.tagInput, automation);
     control.connectionRow.classList.toggle("is-hidden", automation.sourceType === "expression");
     control.connectionRow.hidden = automation.sourceType === "expression";
     control.tagRow.classList.toggle("is-hidden", automation.sourceType === "expression");
@@ -18556,15 +18560,26 @@ const initializeMotionControls = () => {
     connectionRow.className = "prop-row";
     const connectionLabel = document.createElement("label");
     connectionLabel.textContent = "Connection";
-    const connectionSelect = document.createElement("select");
-    connectionRow.append(connectionLabel, connectionSelect);
+    const connectionInput = document.createElement("input");
+    connectionInput.type = "text";
+    connectionInput.placeholder = "connection_id";
+    connectionRow.append(connectionLabel, connectionInput);
 
     const tagRow = document.createElement("div");
     tagRow.className = "prop-row";
     const tagLabel = document.createElement("label");
     tagLabel.textContent = "Tag";
-    const tagSelect = document.createElement("select");
-    tagRow.append(tagLabel, tagSelect);
+    const tagInline = document.createElement("div");
+    tagInline.className = "prop-subgroup";
+    const tagInput = document.createElement("input");
+    tagInput.type = "text";
+    tagInput.placeholder = "tag";
+    const tagPickBtn = document.createElement("button");
+    tagPickBtn.type = "button";
+    tagPickBtn.className = "panel-btn";
+    tagPickBtn.textContent = "Pick…";
+    tagInline.append(tagInput, tagPickBtn);
+    tagRow.append(tagLabel, tagInline);
 
     const expressionRow = document.createElement("div");
     expressionRow.className = "prop-row is-hidden";
@@ -18699,9 +18714,10 @@ const initializeMotionControls = () => {
       fields,
       sourceTypeSelect,
       connectionRow,
-      connectionSelect,
+      connectionInput,
       tagRow,
-      tagSelect,
+      tagInput,
+      tagPickBtn,
       expressionRow,
       expressionSummary,
       expressionBtn,
@@ -18743,18 +18759,37 @@ const initializeMotionControls = () => {
       syncSourceVisibility(sourceType);
       updateSelectedObjectMotionConfig(sourceType === "expression"
         ? { sourceType, expression: "", enabled: true }
-        : { sourceType, connection_id: String(connectionSelect.value || "").trim(), tag: parseTagSelectValue(tagSelect.value || "").tag, enabled: true });
+        : { sourceType, connection_id: String(connectionInput.value || "").trim(), tag: String(tagInput.value || "").trim(), enabled: true });
     });
-    connectionSelect.addEventListener("change", () => {
-      populateFilteredCombinedTagSelect(tagSelect, connectionSelect.value);
-      setSelectValueSafe(tagSelect, "");
-      updateSelectedObjectMotionConfig({ sourceType: "tag", connection_id: connectionSelect.value, tag: "", enabled: true });
+    connectionInput.addEventListener("change", () => {
+      updateSelectedObjectMotionConfig({ sourceType: "tag", connection_id: String(connectionInput.value || "").trim(), enabled: true });
     });
-    tagSelect.addEventListener("change", () => {
-      const { connection_id, tag } = parseTagSelectValue(tagSelect.value || "");
-      if (connection_id) setSelectValueSafe(connectionSelect, connection_id);
-      updateSelectedObjectMotionConfig({ sourceType: "tag", connection_id, tag, enabled: true });
+    tagInput.addEventListener("change", () => {
+      updateSelectedObjectMotionConfig({
+        sourceType: "tag",
+        connection_id: String(connectionInput.value || "").trim(),
+        tag: String(tagInput.value || "").trim(),
+        enabled: true
+      });
     });
+    registerCompactTagBinding({
+      id: `motion-${definition.id}`,
+      connectionInput,
+      tagInput,
+      modalTitle: `${definition.title} Tag`,
+      inlineOnly: true,
+      read: () => ({
+        connection_id: String(connectionInput.value || "").trim(),
+        tag: String(tagInput.value || "").trim()
+      }),
+      apply: ({ connection_id, tag }) => updateSelectedObjectMotionConfig({
+        sourceType: "tag",
+        connection_id,
+        tag,
+        enabled: true
+      })
+    });
+    tagPickBtn.addEventListener("click", () => openCompactTagBindingModal(`motion-${definition.id}`));
     expressionBtn.addEventListener("click", () => {
       const activeObjects = getActiveObjects();
       const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
@@ -18890,10 +18925,7 @@ const syncMotionControls = (obj) => {
     control.fields.classList.toggle("is-hidden", !enabled);
     control.fields.hidden = !enabled;
     setSelectValueSafe(control.sourceTypeSelect, motion.sourceType || "tag");
-    populateConnectionSelect(control.connectionSelect);
-    setSelectValueSafe(control.connectionSelect, motion.connection_id || "");
-    populateFilteredCombinedTagSelect(control.tagSelect, motion.connection_id || "");
-    setSelectValueSafe(control.tagSelect, motion.connection_id && motion.tag ? `${motion.connection_id}::${motion.tag}` : "");
+    setTagBindingFieldValues(control.connectionInput, control.tagInput, motion);
     control.connectionRow.classList.toggle("is-hidden", motion.sourceType === "expression");
     control.connectionRow.hidden = motion.sourceType === "expression";
     control.tagRow.classList.toggle("is-hidden", motion.sourceType === "expression");
