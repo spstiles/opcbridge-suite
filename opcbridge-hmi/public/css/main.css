@@ -3240,9 +3240,23 @@ body.automation-panel-open #editor-pane {
 }
 
 .text-binding-inline-row .automation-tag-input {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 400;
+  transition: border-color 0.15s ease;
   width: 100%;
   max-width: none;
   min-width: 0;
+}
+
+.text-binding-inline-row .automation-tag-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .text-binding-key {
