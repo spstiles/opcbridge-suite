@@ -902,6 +902,7 @@ const state = {
   // connections
   connFiles: [],
   connObjCache: new Map(),
+  connObjInflight: new Map(),
 
   // workspace rendering
   workspaceRenderSeq: 0,
@@ -11866,12 +11867,21 @@ async function getConnObjForPath(pathRel) {
   if (!key) return null;
   if (state.workspaceConnDirty?.has?.(key)) return state.workspaceConnDirty.get(key);
   if (state.connObjCache?.has(key)) return state.connObjCache.get(key);
+  if (state.connObjInflight?.has?.(key)) return state.connObjInflight.get(key);
 
-  const raw = await apiGetText(`/api/opcbridge/config/file?path=${encodeURIComponent(key)}`);
-  const obj = parseJsonc(raw);
-  if (state.workspaceConnDirty?.has?.(key)) return state.workspaceConnDirty.get(key);
-  if (state.connObjCache) state.connObjCache.set(key, obj);
-  return state.connObjCache?.get?.(key) || obj;
+  const inflight = (async () => {
+    const raw = await apiGetText(`/api/opcbridge/config/file?path=${encodeURIComponent(key)}`);
+    const obj = parseJsonc(raw);
+    if (state.workspaceConnDirty?.has?.(key)) return state.workspaceConnDirty.get(key);
+    if (state.connObjCache) state.connObjCache.set(key, obj);
+    return state.connObjCache?.get?.(key) || obj;
+  })();
+  if (state.connObjInflight) state.connObjInflight.set(key, inflight);
+  try {
+    return await inflight;
+  } finally {
+    state.connObjInflight?.delete?.(key);
+  }
 }
 
 async function loadWorkspaceConnectionObjects() {
@@ -20005,9 +20015,13 @@ async function refreshWorkspaceTab() {
       loadTagsConfig(),
       refreshMqttWorkspaceConfig()
     ]);
-    await loadWorkspaceConnectionObjects();
     renderWorkspaceTree();
     if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
+    loadWorkspaceConnectionObjects().then(() => {
+      if (!isPanelActive('tab-workspace')) return;
+      renderWorkspaceTree();
+      if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
+    }).catch(() => {});
   } finally {
     state.workspaceTabLoadInFlight = false;
   }
@@ -20019,8 +20033,10 @@ async function refreshWorkspaceConfigViews() {
     loadTagsConfig(),
     refreshMqttWorkspaceConfig()
   ]);
-  await loadWorkspaceConnectionObjects();
   renderWorkspaceTree();
+  loadWorkspaceConnectionObjects().then(() => {
+    renderWorkspaceTree();
+  }).catch(() => {});
   if (isPanelActive('tab-workspace')) {
     await refreshVisible().catch(() => {});
   }
