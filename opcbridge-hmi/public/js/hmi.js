@@ -9136,31 +9136,41 @@ const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, strokeWidth
   const top = Number(y);
   if (!Number.isFinite(left) || !Number.isFinite(top)) return;
   const widthPx = Math.max(1, Number(strokeWidth) || 1);
-  const offset = Math.max(0.5, widthPx / 2);
+  const bandCount = Math.max(1, Math.min(12, Math.ceil(widthPx)));
+  const bandWidth = widthPx / bandCount;
+  const highlightColor = inset ? "#000000" : "#ffffff";
+  const shadeColor = inset ? "#ffffff" : "#000000";
 
-  const highlight = document.createElementNS(ns, "path");
-  highlight.setAttribute("d", `M ${left + offset} ${top + height - offset} L ${left + offset} ${top + offset} L ${left + width - offset} ${top + offset}`);
-  highlight.setAttribute("fill", "none");
-  highlight.setAttribute("stroke", inset ? "#000000" : "#ffffff");
-  highlight.setAttribute("stroke-opacity", "0.6");
-  highlight.setAttribute("stroke-width", widthPx);
-  highlight.setAttribute("stroke-linecap", "round");
-  highlight.setAttribute("stroke-linejoin", "round");
-  highlight.setAttribute("pointer-events", "none");
-  if (transform) highlight.setAttribute("transform", transform);
-  parent.appendChild(highlight);
+  for (let i = 0; i < bandCount; i += 1) {
+    const progress = bandCount === 1 ? 0 : i / (bandCount - 1);
+    const offset = Math.max(0.5, (bandWidth / 2) + (i * bandWidth));
+    const highlightOpacity = Math.max(0.08, 0.72 - (progress * 0.54));
+    const shadeOpacity = Math.max(0.06, 0.58 - (progress * 0.42));
 
-  const shade = document.createElementNS(ns, "path");
-  shade.setAttribute("d", `M ${left + offset} ${top + height - offset} L ${left + width - offset} ${top + height - offset} L ${left + width - offset} ${top + offset}`);
-  shade.setAttribute("fill", "none");
-  shade.setAttribute("stroke", inset ? "#ffffff" : "#000000");
-  shade.setAttribute("stroke-opacity", "0.6");
-  shade.setAttribute("stroke-width", widthPx);
-  shade.setAttribute("stroke-linecap", "round");
-  shade.setAttribute("stroke-linejoin", "round");
-  shade.setAttribute("pointer-events", "none");
-  if (transform) shade.setAttribute("transform", transform);
-  parent.appendChild(shade);
+    const highlight = document.createElementNS(ns, "path");
+    highlight.setAttribute("d", `M ${left + offset} ${top + height - offset} L ${left + offset} ${top + offset} L ${left + width - offset} ${top + offset}`);
+    highlight.setAttribute("fill", "none");
+    highlight.setAttribute("stroke", highlightColor);
+    highlight.setAttribute("stroke-opacity", highlightOpacity.toFixed(3));
+    highlight.setAttribute("stroke-width", bandWidth);
+    highlight.setAttribute("stroke-linecap", "butt");
+    highlight.setAttribute("stroke-linejoin", "miter");
+    highlight.setAttribute("pointer-events", "none");
+    if (transform) highlight.setAttribute("transform", transform);
+    parent.appendChild(highlight);
+
+    const shade = document.createElementNS(ns, "path");
+    shade.setAttribute("d", `M ${left + offset} ${top + height - offset} L ${left + width - offset} ${top + height - offset} L ${left + width - offset} ${top + offset}`);
+    shade.setAttribute("fill", "none");
+    shade.setAttribute("stroke", shadeColor);
+    shade.setAttribute("stroke-opacity", shadeOpacity.toFixed(3));
+    shade.setAttribute("stroke-width", bandWidth);
+    shade.setAttribute("stroke-linecap", "butt");
+    shade.setAttribute("stroke-linejoin", "miter");
+    shade.setAttribute("pointer-events", "none");
+    if (transform) shade.setAttribute("transform", transform);
+    parent.appendChild(shade);
+  }
 };
 
 const appendOutsetPaths = (parent, x, y, w, h, strokeWidth, transform) => appendFrameEffectPaths(parent, x, y, w, h, { strokeWidth, transform });
