@@ -3448,7 +3448,10 @@ const textProps = document.getElementById("textProps");
 const textValueInput = document.getElementById("textValue");
 const textXInput = document.getElementById("textX");
 const textYInput = document.getElementById("textY");
+const textAutoSizeInput = document.getElementById("textAutoSize");
+const textWRow = document.getElementById("textWRow");
 const textWInput = document.getElementById("textW");
+const textHRow = document.getElementById("textHRow");
 const textHInput = document.getElementById("textH");
 const textRotationInput = document.getElementById("textRotation");
 const textFontSizeInput = document.getElementById("textFontSize");
@@ -3467,6 +3470,9 @@ const textBorderColorInput = document.getElementById("textBorderColor");
 const textBorderColorTextInput = document.getElementById("textBorderColorText");
 const textBorderSwatches = document.getElementById("textBorderSwatches");
 const textBorderSwatchBtn = document.getElementById("textBorderSwatchBtn");
+const textBorderWidthInput = document.getElementById("textBorderWidth");
+const textBevelInput = document.getElementById("textBevel");
+const textInsetInput = document.getElementById("textInset");
 const textRadiusInput = document.getElementById("textRadius");
 const textPaddingInput = document.getElementById("textPadding");
 const textBindingRows = document.getElementById("textBindingRows");
@@ -4617,6 +4623,29 @@ const getTextBoxPadding = (obj) => {
     return { x: TEXT_BG_PADDING_X, y: TEXT_BG_PADDING_Y };
   }
   return { x: 0, y: 0 };
+};
+
+const isTextAutoSize = (obj) => obj?.autoSize !== false;
+
+const getTextFixedSize = (obj) => {
+  const w = Number(obj?.w);
+  const h = Number(obj?.h);
+  return {
+    w: Number.isFinite(w) && w > 0 ? w : 160,
+    h: Number.isFinite(h) && h > 0 ? h : 40
+  };
+};
+
+const syncTextLayoutModeRows = (autoSize) => {
+  const hidden = Boolean(autoSize);
+  if (textWRow) {
+    textWRow.classList.toggle("is-hidden", hidden);
+    textWRow.hidden = hidden;
+  }
+  if (textHRow) {
+    textHRow.classList.toggle("is-hidden", hidden);
+    textHRow.hidden = hidden;
+  }
 };
 let availableScreens = [];
 let nextNumberInputId = 1;
@@ -7039,17 +7068,25 @@ const getObjectBounds = (obj) => {
     return { x: minX - pad, y: minY - pad, width: (maxX - minX) + pad * 2, height: (maxY - minY) + pad * 2 };
   }
   if (obj.type === "text") {
+    if (!isTextAutoSize(obj)) {
+      const bounds = getObjectBounds(obj);
+      if (!bounds) return;
+      if (axis === "horizontal") obj.x = Math.round(2 * centerX - (bounds.x + bounds.width));
+      else obj.y = Math.round(2 * centerY - (bounds.y + bounds.height));
+      applyRotationFlip();
+      return;
+    }
     const x = Number(obj.x ?? 0);
     const y = Number(obj.y ?? 0);
     const fontSize = Number(obj.fontSize || 18);
     const sample = decodeNbspEntities(renderTextTemplate(obj, true));
     const measured = measureTextBlock(sample, fontSize, Boolean(obj.bold));
-    const rawW = Number(obj.w);
-    const rawH = Number(obj.h);
-    const explicitW = Number.isFinite(rawW) ? rawW : 0;
-    const explicitH = Number.isFinite(rawH) ? rawH : 0;
-    const contentW = Math.max(explicitW, measured.width);
-    const contentH = Math.max(explicitH, measured.height);
+    if (!isTextAutoSize(obj)) {
+      const fixed = getTextFixedSize(obj);
+      return { x, y, width: fixed.w, height: fixed.h };
+    }
+    const contentW = measured.width;
+    const contentH = measured.height;
     const align = obj.align || "left";
     const valign = obj.valign || "top";
     const padding = getTextBoxPadding(obj);
@@ -7163,6 +7200,7 @@ const applySizeToObject = (obj, refSize, mode) => {
     return;
   }
   if (obj.type === "text") {
+    obj.autoSize = false;
     if (mode === "width" || mode === "size") obj.w = width;
     if (mode === "height" || mode === "size") obj.h = height;
     return;
@@ -8141,9 +8179,7 @@ const updateTextBindingProperty = (placeholderKey, patch, { clear = false } = {}
   if (Object.keys(nextBindings).length) obj.textBindings = nextBindings;
   else delete obj.textBindings;
   delete obj.bindText;
-  const hasW = Number.isFinite(Number(obj.w));
-  const hasH = Number.isFinite(Number(obj.h));
-  if (hasW || hasH) {
+  if (isTextAutoSize(obj)) {
     const autoPatch = autosizeTextObject(obj);
     if (autoPatch) Object.assign(obj, autoPatch);
   }
@@ -9957,17 +9993,20 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     return;
   }
   if (obj.type === "text") {
-	    const textEl = document.createElementNS(ns, "text");
-	    textEl.setAttribute("xml:space", "preserve");
-	    textEl.style.whiteSpace = "pre";
-	    const x = Number(obj.x ?? 0);
-	    const y = Number(obj.y ?? 0);
+    const group = document.createElementNS(ns, "g");
+    const textEl = document.createElementNS(ns, "text");
+    textEl.setAttribute("xml:space", "preserve");
+    textEl.style.whiteSpace = "pre";
+    const x = Number(obj.x ?? 0);
+    const y = Number(obj.y ?? 0);
     const displayText = renderTextTemplate(obj, isEditMode);
     const decodedText = decodeNbspEntities(displayText);
     const bounds = getObjectBounds({ ...obj, text: decodedText, textBindings: {}, bindText: null });
     const bgColor = getAutomationColor(obj.backgroundAutomation, obj.background || "transparent");
     const borderColor = getAutomationColor(obj.borderColorAutomation, obj.borderColor || "transparent");
     const textPadding = getTextBoxPadding(obj);
+    const autoSize = isTextAutoSize(obj);
+    if (hasRotation) applyRotationTransform(group, obj, bounds);
     if ((bgColor && bgColor !== "transparent") || (borderColor && borderColor !== "transparent")) {
       const bgRect = document.createElementNS(ns, "rect");
       if (bounds) {
@@ -9981,42 +10020,63 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         bgRect.setAttribute("width", textPadding.x * 2);
         bgRect.setAttribute("height", textPadding.y * 2);
       }
-      const textBounds = bounds || getObjectBounds({ ...obj, text: decodedText, textBindings: {}, bindText: null });
-      if (hasRotation) applyRotationTransform(bgRect, obj, textBounds);
       bgRect.setAttribute("rx", obj.rx ?? 0);
       bgRect.setAttribute("fill", bgColor || "transparent");
-      if (borderColor && borderColor !== "transparent") {
+      const borderWidth = Math.max(0, Number(obj.borderWidth ?? 1));
+      if (borderColor && borderColor !== "transparent" && borderWidth > 0) {
         bgRect.setAttribute("stroke", borderColor);
-        bgRect.setAttribute("stroke-width", obj.borderWidth ?? 1);
+        bgRect.setAttribute("stroke-width", borderWidth);
         bgRect.setAttribute("vector-effect", "non-scaling-stroke");
       }
-      parent.appendChild(bgRect);
+      group.appendChild(bgRect);
+      if (bounds && borderColor && borderColor !== "transparent" && borderWidth > 0) {
+        if (obj.bevel) appendBevelPaths(group, bounds.x, bounds.y, bounds.width, bounds.height);
+        else if (obj.inset) appendInsetPaths(group, bounds.x, bounds.y, bounds.width, bounds.height);
+      }
     }
-    textEl.setAttribute("x", x);
-    textEl.setAttribute("y", y);
-    if (hasRotation) applyRotationTransform(textEl, obj, bounds);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#ffffff");
     textEl.setAttribute("fill", fillColor);
     const fontSize = Number(obj.fontSize || 18);
     textEl.setAttribute("font-size", fontSize);
     textEl.setAttribute("font-weight", obj.bold ? "700" : "400");
-    if (obj.align === "center") textEl.setAttribute("text-anchor", "middle");
-    if (obj.align === "right") textEl.setAttribute("text-anchor", "end");
-	    const lines = splitMultiline(decodedText);
-    if (lines.length > 1) {
+    const align = obj.align || "left";
+    const valign = obj.valign || "top";
+    if (align === "center") textEl.setAttribute("text-anchor", "middle");
+    if (align === "right") textEl.setAttribute("text-anchor", "end");
+    if (autoSize) {
+      textEl.setAttribute("x", x);
+      textEl.setAttribute("y", y);
+      const lines = splitMultiline(decodedText);
+      if (lines.length > 1) {
+        textEl.setAttribute("dominant-baseline", "hanging");
+        const measured = measureTextBlock(decodedText, fontSize, Boolean(obj.bold));
+        let yStart = y;
+        if (valign === "middle") yStart = y - measured.height / 2;
+        if (valign === "bottom") yStart = y - measured.height;
+        applyMultilineSvgText(textEl, measured.lines, x, yStart, measured.lineHeight);
+      } else {
+        if (valign === "middle") textEl.setAttribute("dominant-baseline", "middle");
+        if (valign === "bottom") textEl.setAttribute("dominant-baseline", "text-after-edge");
+        textEl.textContent = decodedText;
+      }
+    } else {
+      const box = bounds || { x, y, width: getTextFixedSize(obj).w, height: getTextFixedSize(obj).h };
+      const contentLeft = Number(box.x ?? x) + textPadding.x;
+      const contentTop = Number(box.y ?? y) + textPadding.y;
+      const contentWidth = Math.max(1, Number(box.width ?? 1) - textPadding.x * 2);
+      const contentHeight = Math.max(1, Number(box.height ?? 1) - textPadding.y * 2);
+      const measured = wrapTextToWidth(decodedText, contentWidth, fontSize, Boolean(obj.bold));
+      let textX = contentLeft;
+      if (align === "center") textX = contentLeft + contentWidth / 2;
+      if (align === "right") textX = contentLeft + contentWidth;
       textEl.setAttribute("dominant-baseline", "hanging");
-      const valign = obj.valign || "top";
-      const measured = measureTextBlock(decodedText, fontSize, Boolean(obj.bold));
-      let yStart = y;
-      if (valign === "middle") yStart = y - measured.height / 2;
-      if (valign === "bottom") yStart = y - measured.height;
-	      applyMultilineSvgText(textEl, measured.lines, x, yStart, measured.lineHeight);
-	    } else {
-      if (obj.valign === "middle") textEl.setAttribute("dominant-baseline", "middle");
-      if (obj.valign === "bottom") textEl.setAttribute("dominant-baseline", "text-after-edge");
-	      textEl.textContent = decodedText;
-	    }
-    parent.appendChild(textEl);
+      let yStart = contentTop;
+      if (valign === "middle") yStart = contentTop + (contentHeight - measured.height) / 2;
+      if (valign === "bottom") yStart = contentTop + contentHeight - measured.height;
+      applyMultilineSvgText(textEl, measured.lines, textX, yStart, measured.lineHeight);
+    }
+    group.appendChild(textEl);
+    parent.appendChild(group);
     return;
   }
 
@@ -10971,6 +11031,9 @@ const syncPropertiesFromSelection = () => {
 	  if (obj.type === "text") {
 	    if (textXInput) textXInput.value = Number(obj.x) || 0;
 	    if (textYInput) textYInput.value = Number(obj.y) || 0;
+    const textAutoSize = isTextAutoSize(obj);
+    if (textAutoSizeInput) textAutoSizeInput.checked = textAutoSize;
+    syncTextLayoutModeRows(textAutoSize);
 	    if (textWInput) textWInput.value = Number(obj.w) || 0;
 	    if (textHInput) textHInput.value = Number(obj.h) || 0;
 	    if (textRotationInput) textRotationInput.value = Number(obj.rotation) || 0;
@@ -10985,6 +11048,9 @@ const syncPropertiesFromSelection = () => {
     if (textBgTextInput) textBgTextInput.value = obj.background || "";
     if (textBorderColorInput) textBorderColorInput.value = obj.borderColor || "#000000";
     if (textBorderColorTextInput) textBorderColorTextInput.value = obj.borderColor || "";
+    if (textBorderWidthInput) textBorderWidthInput.value = Number(obj.borderWidth ?? 1);
+    if (textBevelInput) textBevelInput.checked = Boolean(obj.bevel);
+    if (textInsetInput) textInsetInput.checked = Boolean(obj.inset);
     if (textRadiusInput) textRadiusInput.value = Number(obj.rx ?? 0);
     if (textPaddingInput) setInputValueSafe(textPaddingInput, Number.isFinite(Number(obj.padding)) ? Number(obj.padding) : "");
     if (!isActiveElementWithin(textBindingRows)) renderTextBindingRows(obj);
@@ -11684,9 +11750,7 @@ const updateTextProperty = (patch) => {
   if (!obj || obj.type !== "text") return;
   recordHistory();
   Object.assign(obj, patch);
-  const hasW = Number.isFinite(Number(obj.w));
-  const hasH = Number.isFinite(Number(obj.h));
-  if (hasW || hasH) {
+  if (isTextAutoSize(obj)) {
     const autoPatch = autosizeTextObject(obj);
     if (autoPatch) Object.assign(obj, autoPatch);
   }
@@ -14516,6 +14580,7 @@ if (textValueInput) {
       const { obj, value } = textValueAutosizeSession;
       textValueAutosizeSession = null;
       if (textValueInput.value === value) return;
+      if (!isTextAutoSize(obj)) return;
       const patch = autosizeTextObject(obj);
       if (!patch) return;
       const currentW = Number(obj.w ?? NaN);
@@ -14554,17 +14619,58 @@ if (textYInput) {
   });
 }
 
+if (textAutoSizeInput) {
+  textAutoSizeInput.addEventListener("change", () => {
+    const autoSize = textAutoSizeInput.checked;
+    syncTextLayoutModeRows(autoSize);
+    const activeObjects = getActiveObjects();
+    const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+    if (!obj || obj.type !== "text") return;
+    if (!autoSize) {
+      const bounds = getObjectBounds(obj);
+      const patch = {
+        autoSize: false,
+        x: Math.round(Number(bounds?.x ?? obj.x ?? 0)),
+        y: Math.round(Number(bounds?.y ?? obj.y ?? 0)),
+        w: Math.max(1, Math.round(Number(bounds?.width ?? obj.w ?? 160))),
+        h: Math.max(1, Math.round(Number(bounds?.height ?? obj.h ?? 40)))
+      };
+      updateTextProperty(patch);
+      return;
+    }
+    const padding = getTextBoxPadding(obj);
+    const box = getObjectBounds(obj) || { x: Number(obj.x ?? 0), y: Number(obj.y ?? 0), width: Number(obj.w ?? 160), height: Number(obj.h ?? 40) };
+    const fontSize = Number(obj.fontSize || 18);
+    const sample = decodeNbspEntities(renderTextTemplate(obj, true));
+    const measured = measureTextBlock(sample, fontSize, Boolean(obj.bold));
+    const contentLeft = Number(box.x ?? 0) + padding.x;
+    const contentTop = Number(box.y ?? 0) + padding.y;
+    const contentWidth = Math.max(1, Number(box.width ?? 1) - padding.x * 2);
+    const contentHeight = Math.max(1, Number(box.height ?? 1) - padding.y * 2);
+    const align = obj.align || "left";
+    const valign = obj.valign || "top";
+    let nextX = contentLeft;
+    if (align === "center") nextX = contentLeft + contentWidth / 2;
+    if (align === "right") nextX = contentLeft + contentWidth;
+    let nextY = contentTop;
+    if (measured.lines.length <= 1 && valign === "top") nextY = contentTop + (measured.ascent ?? fontSize * 0.8);
+    else if (valign === "middle") nextY = contentTop + contentHeight / 2;
+    else if (valign === "bottom") nextY = contentTop + contentHeight;
+    updateTextProperty({ autoSize: true, x: Math.round(nextX), y: Math.round(nextY) });
+  });
+}
+
 if (textWInput) {
   textWInput.addEventListener("change", () => {
     const value = Number(textWInput.value);
-    if (Number.isFinite(value) && value > 0) updateTextProperty({ w: value });
+    if (Number.isFinite(value) && value > 0) updateTextProperty({ autoSize: false, w: value });
   });
 }
 
 if (textHInput) {
   textHInput.addEventListener("change", () => {
     const value = Number(textHInput.value);
-    if (Number.isFinite(value) && value > 0) updateTextProperty({ h: value });
+    if (Number.isFinite(value) && value > 0) updateTextProperty({ autoSize: false, h: value });
   });
 }
 
@@ -14744,14 +14850,35 @@ if (textBorderColorTextInput) {
   });
 }
 
-  if (textRadiusInput) {
-    textRadiusInput.addEventListener("change", () => {
-      const value = Number(textRadiusInput.value);
-      if (Number.isFinite(value) && value >= 0) {
-        updateTextProperty({ rx: value });
-      }
-    });
-  }
+if (textBorderWidthInput) {
+  textBorderWidthInput.addEventListener("change", () => {
+    const value = Number(textBorderWidthInput.value);
+    if (Number.isFinite(value) && value >= 0) updateTextProperty({ borderWidth: value });
+  });
+}
+
+if (textBevelInput) {
+  textBevelInput.addEventListener("change", () => {
+    if (textBevelInput.checked && textInsetInput) textInsetInput.checked = false;
+    updateTextProperty({ bevel: textBevelInput.checked, inset: textBevelInput.checked ? false : Boolean(textInsetInput?.checked) });
+  });
+}
+
+if (textInsetInput) {
+  textInsetInput.addEventListener("change", () => {
+    if (textInsetInput.checked && textBevelInput) textBevelInput.checked = false;
+    updateTextProperty({ inset: textInsetInput.checked, bevel: textInsetInput.checked ? false : Boolean(textBevelInput?.checked) });
+  });
+}
+
+if (textRadiusInput) {
+  textRadiusInput.addEventListener("change", () => {
+    const value = Number(textRadiusInput.value);
+    if (Number.isFinite(value) && value >= 0) {
+      updateTextProperty({ rx: value });
+    }
+  });
+}
 
 if (textPaddingInput) {
   textPaddingInput.addEventListener("change", () => {
@@ -21599,11 +21726,20 @@ const scaleObjectUniformFromBounds = (obj, startObj, scale, fromB, toB) => {
     return;
   }
   if (startObj.type === "text") {
-    const p = scalePointFromBounds({ x: n(startObj.x, 0), y: n(startObj.y, 0) }, fromB, scale, toB);
-    obj.x = Math.round(p.x);
-    obj.y = Math.round(p.y);
-    if (startObj.w != null) obj.w = Math.max(1, Math.round(n(startObj.w, 0) * scale));
-    if (startObj.h != null) obj.h = Math.max(1, Math.round(n(startObj.h, 0) * scale));
+    const bounds = getObjectBounds(startObj);
+    if (bounds) {
+      const p1 = scalePointFromBounds({ x: bounds.x, y: bounds.y }, fromB, scale, toB);
+      const p2 = scalePointFromBounds({ x: bounds.x + bounds.width, y: bounds.y + bounds.height }, fromB, scale, toB);
+      obj.x = Math.round(Math.min(p1.x, p2.x));
+      obj.y = Math.round(Math.min(p1.y, p2.y));
+      obj.w = Math.max(1, Math.round(Math.abs(p2.x - p1.x)));
+      obj.h = Math.max(1, Math.round(Math.abs(p2.y - p1.y)));
+      obj.autoSize = false;
+    } else {
+      const p = scalePointFromBounds({ x: n(startObj.x, 0), y: n(startObj.y, 0) }, fromB, scale, toB);
+      obj.x = Math.round(p.x);
+      obj.y = Math.round(p.y);
+    }
     scaleFont(obj, startObj);
     return;
   }

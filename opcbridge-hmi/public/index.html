@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v31" />
+  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v32" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -368,11 +368,20 @@
               <label for="textY">Y</label>
               <input id="textY" type="number" step="1" />
             </div>
-            <div class="prop-row">
+            <div class="prop-row prop-row-compact">
+              <label>Layout</label>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="textAutoSize" type="checkbox" />
+                  <span>Auto Size</span>
+                </label>
+              </div>
+            </div>
+            <div class="prop-row" id="textWRow">
               <label for="textW">W</label>
               <input id="textW" type="number" min="1" step="1" />
             </div>
-            <div class="prop-row">
+            <div class="prop-row" id="textHRow">
               <label for="textH">H</label>
               <input id="textH" type="number" min="1" step="1" />
             </div>
@@ -418,6 +427,23 @@
                 <input id="textBorderColorText" type="text" placeholder="transparent" />
                 <button id="textBorderSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
                 <div id="textBorderSwatches" class="swatch-popover" aria-label="Text border swatches"></div>
+              </div>
+            </div>
+            <div class="prop-row">
+              <label for="textBorderWidth">Border Width</label>
+              <input id="textBorderWidth" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row prop-row-compact">
+              <label>Frame</label>
+              <div class="prop-inline">
+                <label class="inline-check">
+                  <input id="textBevel" type="checkbox" />
+                  <span>Bezel</span>
+                </label>
+                <label class="inline-check">
+                  <input id="textInset" type="checkbox" />
+                  <span>Inset</span>
+                </label>
               </div>
             </div>
             <div class="prop-row">
@@ -2662,6 +2688,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260613-hmi-ui-v31"></script>
+	  <script src="js/hmi.js?v=20260613-hmi-ui-v32"></script>
 	</body>
 	</html>
