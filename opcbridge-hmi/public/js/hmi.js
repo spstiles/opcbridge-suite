@@ -45,6 +45,7 @@ const leftToolbar = document.getElementById("leftToolbar");
 const leftSelectToolBtn = document.getElementById("leftSelectToolBtn");
 const leftLineToolBtn = document.getElementById("leftLineToolBtn");
 const leftRectToolBtn = document.getElementById("leftRectToolBtn");
+const leftBarToolBtn = document.getElementById("leftBarToolBtn");
 const leftPolygonToolBtn = document.getElementById("leftPolygonToolBtn");
 const leftSplineToolBtn = document.getElementById("leftSplineToolBtn");
 const leftViewportToolBtn = document.getElementById("leftViewportToolBtn");
@@ -22712,6 +22713,9 @@ const setTool = (nextTool) => {
   if (leftRectToolBtn) {
     leftRectToolBtn.classList.toggle("is-active", currentTool === "rect");
   }
+  if (leftBarToolBtn) {
+    leftBarToolBtn.classList.toggle("is-active", currentTool === "bar");
+  }
   if (leftPolygonToolBtn) {
     leftPolygonToolBtn.classList.toggle("is-active", currentTool === "polygon");
   }
@@ -24592,6 +24596,12 @@ if (leftSelectToolBtn) {
 if (leftRectToolBtn) {
   leftRectToolBtn.addEventListener("click", () => {
     setTool(currentTool === "rect" ? "select" : "rect");
+  });
+}
+
+if (leftBarToolBtn) {
+  leftBarToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "bar" ? "select" : "bar");
   });
 }
 

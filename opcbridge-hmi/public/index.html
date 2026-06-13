@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260612-hmi-ui-v28" />
+  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v29" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -141,6 +141,14 @@
         <rect x="5" y="7" width="14" height="10" fill="none" stroke="currentColor" stroke-width="2"/>
       </svg>
     </button>
+      <button id="leftBarToolBtn" class="left-tool-btn" type="button" title="Bar Graph" aria-label="Bar graph tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <rect x="6" y="11" width="3.5" height="7" rx="0.5" fill="currentColor"/>
+          <rect x="10.75" y="7" width="3.5" height="11" rx="0.5" fill="currentColor"/>
+          <rect x="15.5" y="4" width="3.5" height="14" rx="0.5" fill="currentColor"/>
+          <path d="M5 19h15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
       <button id="leftPolygonToolBtn" class="left-tool-btn" type="button" title="Polygon" aria-label="Polygon tool">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
           <path d="M7 8l6-3 5 4-2 7-7 2-4-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
@@ -1654,6 +1662,7 @@
 
 	          <div id="barProps" class="properties-form is-hidden">
 	            <div class="prop-group-title">Bar Graph</div>
+	            <div class="prop-group-title">Layout</div>
 	            <div class="prop-row">
 	              <label for="barX">X</label>
               <input id="barX" type="number" step="1" />
@@ -1679,8 +1688,31 @@
 		              <select id="barOrientation">
 		                <option value="vertical">Vertical</option>
 	                <option value="horizontal">Horizontal</option>
+		              </select>
+            </div>
+            <div class="prop-row">
+              <label for="barBindConnection">Connection</label>
+              <input id="barBindConnection" type="text" placeholder="connection_id" />
+            </div>
+            <div class="prop-row">
+              <label for="barBindTag">Tag</label>
+              <select id="barBindTag">
+                <option value="">Select tag…</option>
               </select>
             </div>
+            <div class="prop-row">
+              <label for="barDigits">Digits</label>
+              <input id="barDigits" type="number" min="1" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="barDecimals">Decimals</label>
+              <input id="barDecimals" type="number" min="0" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="barMultiplier">Multiplier</label>
+              <input id="barMultiplier" type="number" step="0.01" />
+            </div>
+	            <div class="prop-group-title">Range</div>
 	            <div class="prop-row">
 	              <label for="barMin">Min</label>
 	              <input id="barMin" type="number" step="any" placeholder="0" />
@@ -1731,28 +1763,7 @@
 	                </select>
 	              </div>
 	            </div>
-            <div class="prop-row">
-              <label for="barBindConnection">Connection</label>
-              <input id="barBindConnection" type="text" placeholder="connection_id" />
-            </div>
-            <div class="prop-row">
-              <label for="barBindTag">Tag</label>
-              <select id="barBindTag">
-                <option value="">Select tag…</option>
-              </select>
-            </div>
-            <div class="prop-row">
-              <label for="barDigits">Digits</label>
-              <input id="barDigits" type="number" min="1" step="1" />
-            </div>
-            <div class="prop-row">
-              <label for="barDecimals">Decimals</label>
-              <input id="barDecimals" type="number" min="0" step="1" />
-            </div>
-            <div class="prop-row">
-              <label for="barMultiplier">Multiplier</label>
-              <input id="barMultiplier" type="number" step="0.01" />
-            </div>
+	            <div class="prop-group-title">Appearance</div>
             <div class="prop-row">
               <label for="barFill">Fill</label>
               <div class="prop-inline">
@@ -1768,9 +1779,10 @@
 	                <input id="barBackground" type="color" />
                 <input id="barBackgroundText" type="text" placeholder="transparent" />
                 <button id="barBackgroundSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                <div id="barBackgroundSwatches" class="swatch-popover" aria-label="Bar background swatches"></div>
+	                <div id="barBackgroundSwatches" class="swatch-popover" aria-label="Bar background swatches"></div>
 	              </div>
 	            </div>
+            <div class="prop-group-title">Ticks</div>
             <div class="prop-row prop-row-compact">
               <label>Ticks</label>
               <div class="prop-inline">
@@ -1790,6 +1802,7 @@
 	                <input id="barTicksMinor" type="number" min="0" step="1" placeholder="4" />
 	              </div>
 	            </div>
+	            <div class="prop-group-title">Border</div>
 		            <div class="prop-row prop-row-compact">
 		              <label>Border</label>
 		              <div class="prop-inline">
@@ -2625,6 +2638,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260612-hmi-ui-v28"></script>
+	  <script src="js/hmi.js?v=20260613-hmi-ui-v29"></script>
 	</body>
 	</html>
