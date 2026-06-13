@@ -3462,11 +3462,15 @@ const textBgInput = document.getElementById("textBg");
 const textBgTextInput = document.getElementById("textBgText");
 const textBgSwatches = document.getElementById("textBgSwatches");
 const textBgSwatchBtn = document.getElementById("textBgSwatchBtn");
+const textBorderEnabledInput = document.getElementById("textBorderEnabled");
+const textBorderColorRow = document.getElementById("textBorderColorRow");
 const textBorderColorInput = document.getElementById("textBorderColor");
 const textBorderColorTextInput = document.getElementById("textBorderColorText");
 const textBorderSwatches = document.getElementById("textBorderSwatches");
 const textBorderSwatchBtn = document.getElementById("textBorderSwatchBtn");
+const textBorderWidthRow = document.getElementById("textBorderWidthRow");
 const textBorderWidthInput = document.getElementById("textBorderWidth");
+const textBorderStyleRow = document.getElementById("textBorderStyleRow");
 const textBorderStyleSelect = document.getElementById("textBorderStyle");
 const textRadiusInput = document.getElementById("textRadius");
 const textPaddingInput = document.getElementById("textPadding");
@@ -6096,6 +6100,7 @@ const explodeSvgDocumentToObjects = (svgEl, imageObj) => {
         text,
         fontSize: fontSize != null ? Math.max(1, Math.round(fontSize * strokeScale)) : 18,
         fill: fill === "none" ? "none" : (fill || "#ffffff"),
+        borderEnabled: false,
         borderStyle: "flat"
       });
       return;
@@ -9188,6 +9193,13 @@ const normalizeBorderStyle = (value) => {
   return style === "outset" || style === "inset" ? style : "flat";
 };
 const isStyledBorder = (borderStyle) => normalizeBorderStyle(borderStyle) !== "flat";
+const isTextBorderEnabled = (obj) => {
+  if (!obj || obj.type !== "text") return false;
+  if ("borderEnabled" in obj) return Boolean(obj.borderEnabled);
+  const color = String(obj.borderColor || "").trim().toLowerCase();
+  const width = Number(obj.borderWidth ?? 1);
+  return Boolean(color && color !== "transparent" && color !== "none" && width > 0);
+};
 const appendBorderStylePaths = (parent, x, y, w, h, borderStyle, strokeWidth = 1, transform) => {
   const style = normalizeBorderStyle(borderStyle);
   if (style === "outset") appendOutsetPaths(parent, x, y, w, h, strokeWidth, transform);
@@ -10023,10 +10035,11 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const bounds = getObjectBounds({ ...obj, text: decodedText, textBindings: {}, bindText: null });
     const bgColor = getAutomationColor(obj.backgroundAutomation, obj.background || "transparent");
     const borderColor = getAutomationColor(obj.borderColorAutomation, obj.borderColor || "transparent");
+    const borderEnabled = isTextBorderEnabled(obj);
     const textPadding = getTextBoxPadding(obj);
     const autoSize = isTextAutoSize(obj);
     if (hasRotation) applyRotationTransform(group, obj, bounds);
-    if ((bgColor && bgColor !== "transparent") || (borderColor && borderColor !== "transparent")) {
+    if ((bgColor && bgColor !== "transparent") || (borderEnabled && borderColor && borderColor !== "transparent" && borderColor !== "none")) {
       const bgRect = document.createElementNS(ns, "rect");
       if (bounds) {
         bgRect.setAttribute("x", bounds.x);
@@ -10042,12 +10055,12 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       bgRect.setAttribute("rx", obj.rx ?? 0);
       bgRect.setAttribute("fill", bgColor || "transparent");
       const borderWidth = Math.max(0, Number(obj.borderWidth ?? 1));
-      if (borderColor && borderColor !== "transparent" && borderWidth > 0) {
+      if (borderEnabled && borderColor && borderColor !== "transparent" && borderColor !== "none" && borderWidth > 0) {
         setFlatBorderStroke(bgRect, borderColor, borderWidth, obj.borderStyle);
         bgRect.setAttribute("vector-effect", "non-scaling-stroke");
       }
       group.appendChild(bgRect);
-      if (bounds && borderColor && borderColor !== "transparent" && borderWidth > 0) {
+      if (bounds && borderEnabled && borderColor && borderColor !== "transparent" && borderColor !== "none" && borderWidth > 0) {
         appendBorderStylePaths(group, bounds.x, bounds.y, bounds.width, bounds.height, obj.borderStyle, borderWidth);
       }
     }
@@ -11060,6 +11073,20 @@ const syncPropertiesFromSelection = () => {
     if (textValignSelect) textValignSelect.value = obj.valign || "top";
     if (textBgInput) textBgInput.value = obj.background || "#000000";
     if (textBgTextInput) textBgTextInput.value = obj.background || "";
+    const textBorderEnabled = isTextBorderEnabled(obj);
+    if (textBorderEnabledInput) textBorderEnabledInput.checked = textBorderEnabled;
+    if (textBorderColorRow) {
+      textBorderColorRow.classList.toggle("is-hidden", !textBorderEnabled);
+      textBorderColorRow.hidden = !textBorderEnabled;
+    }
+    if (textBorderWidthRow) {
+      textBorderWidthRow.classList.toggle("is-hidden", !textBorderEnabled);
+      textBorderWidthRow.hidden = !textBorderEnabled;
+    }
+    if (textBorderStyleRow) {
+      textBorderStyleRow.classList.toggle("is-hidden", !textBorderEnabled);
+      textBorderStyleRow.hidden = !textBorderEnabled;
+    }
     if (textBorderColorInput) textBorderColorInput.value = obj.borderColor || "#000000";
     if (textBorderColorTextInput) textBorderColorTextInput.value = obj.borderColor || "";
     if (textBorderWidthInput) textBorderWidthInput.value = Number(obj.borderWidth ?? 1);
@@ -14826,9 +14853,38 @@ if (tagBindingOverlay) {
   });
 }
 
+if (textBorderEnabledInput) {
+  textBorderEnabledInput.addEventListener("change", () => {
+    const enabled = textBorderEnabledInput.checked;
+    if (textBorderColorRow) {
+      textBorderColorRow.classList.toggle("is-hidden", !enabled);
+      textBorderColorRow.hidden = !enabled;
+    }
+    if (textBorderWidthRow) {
+      textBorderWidthRow.classList.toggle("is-hidden", !enabled);
+      textBorderWidthRow.hidden = !enabled;
+    }
+    if (textBorderStyleRow) {
+      textBorderStyleRow.classList.toggle("is-hidden", !enabled);
+      textBorderStyleRow.hidden = !enabled;
+    }
+    if (!enabled) {
+      updateTextProperty({ borderEnabled: false });
+      return;
+    }
+    let nextBorderColor = textBorderColorTextInput?.value?.trim() || textBorderColorInput?.value || "#ffffff";
+    if (!nextBorderColor || nextBorderColor === "transparent" || nextBorderColor === "none") nextBorderColor = "#ffffff";
+    const nextBorderWidth = Math.max(1, Number(textBorderWidthInput?.value ?? 1) || 1);
+    updateTextProperty({ borderEnabled: true, borderColor: nextBorderColor, borderWidth: nextBorderWidth });
+    if (textBorderColorInput && isHexColor(nextBorderColor)) textBorderColorInput.value = nextBorderColor;
+    if (textBorderColorTextInput) textBorderColorTextInput.value = nextBorderColor;
+    if (textBorderWidthInput) textBorderWidthInput.value = String(nextBorderWidth);
+  });
+}
+
 if (textBorderColorInput) {
   textBorderColorInput.addEventListener("input", () => {
-    updateTextProperty({ borderColor: textBorderColorInput.value });
+    updateTextProperty({ borderEnabled: true, borderColor: textBorderColorInput.value });
     if (textBorderColorTextInput) textBorderColorTextInput.value = textBorderColorInput.value;
   });
 }
@@ -14837,7 +14893,7 @@ if (textBorderColorTextInput) {
   textBorderColorTextInput.addEventListener("change", () => {
     const value = textBorderColorTextInput.value.trim();
     if (value) {
-      updateTextProperty({ borderColor: value });
+      updateTextProperty({ borderEnabled: true, borderColor: value });
       if (textBorderColorInput) textBorderColorInput.value = value;
     }
   });
@@ -14846,13 +14902,13 @@ if (textBorderColorTextInput) {
 if (textBorderWidthInput) {
   textBorderWidthInput.addEventListener("change", () => {
     const value = Number(textBorderWidthInput.value);
-    if (Number.isFinite(value) && value >= 0) updateTextProperty({ borderWidth: value });
+    if (Number.isFinite(value) && value >= 0) updateTextProperty({ borderEnabled: value > 0, borderWidth: value });
   });
 }
 
 if (textBorderStyleSelect) {
   textBorderStyleSelect.addEventListener("change", () => {
-    updateTextProperty({ borderStyle: normalizeBorderStyle(textBorderStyleSelect.value) });
+    updateTextProperty({ borderEnabled: true, borderStyle: normalizeBorderStyle(textBorderStyleSelect.value) });
   });
 }
 
@@ -19911,7 +19967,7 @@ buildSwatches(textBgSwatches, (color) => {
 });
 
 buildSwatches(textBorderSwatches, (color) => {
-  updateTextProperty({ borderColor: color });
+  updateTextProperty({ borderEnabled: true, borderColor: color });
   if (textBorderColorInput) textBorderColorInput.value = color;
   if (textBorderColorTextInput) textBorderColorTextInput.value = color;
   closeSwatches();
@@ -25212,6 +25268,7 @@ if (hmiSvg) {
       fontSize: 18,
       fill: "#ffffff",
       background: "transparent",
+      borderEnabled: false,
       borderColor: "transparent",
       borderWidth: 1,
       borderStyle: "flat"

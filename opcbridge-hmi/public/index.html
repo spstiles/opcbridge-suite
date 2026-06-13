@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v37" />
+  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v38" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -421,7 +421,11 @@
               </div>
             </div>
             <div class="prop-row">
-              <label for="textBorderColor">Border</label>
+              <label for="textBorderEnabled">Border</label>
+              <input id="textBorderEnabled" type="checkbox" />
+            </div>
+            <div class="prop-row is-hidden" id="textBorderColorRow" hidden>
+              <label for="textBorderColor">Border Color</label>
               <div class="prop-inline">
                 <input id="textBorderColor" type="color" />
                 <input id="textBorderColorText" type="text" placeholder="transparent" />
@@ -429,11 +433,11 @@
                 <div id="textBorderSwatches" class="swatch-popover" aria-label="Text border swatches"></div>
               </div>
             </div>
-            <div class="prop-row">
+            <div class="prop-row is-hidden" id="textBorderWidthRow" hidden>
               <label for="textBorderWidth">Border Width</label>
               <input id="textBorderWidth" type="number" min="0" step="1" />
             </div>
-            <div class="prop-row prop-row-compact">
+            <div class="prop-row prop-row-compact is-hidden" id="textBorderStyleRow" hidden>
               <label for="textBorderStyle">Border Style</label>
               <select id="textBorderStyle">
                 <option value="flat">Flat</option>
@@ -2687,6 +2691,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260613-hmi-ui-v37"></script>
+	  <script src="js/hmi.js?v=20260613-hmi-ui-v38"></script>
 	</body>
 	</html>
