@@ -115,6 +115,8 @@ const numberInputBoldInput = document.getElementById("numberInputBold");
 const numberInputBorderEnabledInput = document.getElementById("numberInputBorderEnabled");
 const numberInputBevelRow = document.getElementById("numberInputBevelRow");
 const numberInputBevelInput = document.getElementById("numberInputBevel");
+const numberInputInsetRow = document.getElementById("numberInputInsetRow");
+const numberInputInsetInput = document.getElementById("numberInputInset");
 const numberInputStrokeRow = document.getElementById("numberInputStrokeRow");
 const numberInputStrokeInput = document.getElementById("numberInputStroke");
 const numberInputStrokeTextInput = document.getElementById("numberInputStrokeText");
@@ -145,6 +147,8 @@ const indicatorBoldInput = document.getElementById("indicatorBold");
 const indicatorBorderEnabledInput = document.getElementById("indicatorBorderEnabled");
 const indicatorBevelRow = document.getElementById("indicatorBevelRow");
 const indicatorBevelInput = document.getElementById("indicatorBevel");
+const indicatorInsetRow = document.getElementById("indicatorInsetRow");
+const indicatorInsetInput = document.getElementById("indicatorInset");
 const indicatorStrokeRow = document.getElementById("indicatorStrokeRow");
 const indicatorStrokeInput = document.getElementById("indicatorStroke");
 const indicatorStrokeTextInput = document.getElementById("indicatorStrokeText");
@@ -3516,6 +3520,7 @@ const buttonBorderEnabledInput = document.getElementById("buttonBorderEnabled");
 const buttonStrokeRow = document.getElementById("buttonStrokeRow");
 const buttonShadowInput = document.getElementById("buttonShadow");
 const buttonBevelInput = document.getElementById("buttonBevel");
+const buttonInsetInput = document.getElementById("buttonInset");
 const buttonLabelBindConnectionInput = document.getElementById("buttonLabelBindConnection");
 const buttonLabelBindTagSelect = document.getElementById("buttonLabelBindTag");
 const buttonLabelBindMultiplierInput = document.getElementById("buttonLabelBindMultiplier");
@@ -3534,6 +3539,8 @@ const viewportScaleModeSelect = document.getElementById("viewportScaleMode");
 const viewportBorderEnabledInput = document.getElementById("viewportBorderEnabled");
 const viewportBevelRow = document.getElementById("viewportBevelRow");
 const viewportBevelInput = document.getElementById("viewportBevel");
+const viewportInsetRow = document.getElementById("viewportInsetRow");
+const viewportInsetInput = document.getElementById("viewportInset");
 const viewportBorderColorInput = document.getElementById("viewportBorderColor");
 const viewportBorderColorTextInput = document.getElementById("viewportBorderColorText");
 const viewportBorderSwatches = document.getElementById("viewportBorderSwatches");
@@ -3552,6 +3559,8 @@ const rectShadowInput = document.getElementById("rectShadow");
 const rectBorderEnabledInput = document.getElementById("rectBorderEnabled");
 const rectBevelRow = document.getElementById("rectBevelRow");
 const rectBevelInput = document.getElementById("rectBevel");
+const rectInsetRow = document.getElementById("rectInsetRow");
+const rectInsetInput = document.getElementById("rectInset");
 const rectFillInput = document.getElementById("rectFill");
 const rectFillTextInput = document.getElementById("rectFillText");
 const rectFillSwatches = document.getElementById("rectFillSwatches");
@@ -3847,6 +3856,8 @@ const barTicksMinorInput = document.getElementById("barTicksMinor");
 const barBorderEnabledInput = document.getElementById("barBorderEnabled");
 const barBevelRow = document.getElementById("barBevelRow");
 const barBevelInput = document.getElementById("barBevel");
+const barInsetRow = document.getElementById("barInsetRow");
+const barInsetInput = document.getElementById("barInset");
 const barBorderColorRow = document.getElementById("barBorderColorRow");
 const barBorderWidthRow = document.getElementById("barBorderWidthRow");
 const barBorderColorInput = document.getElementById("barBorderColor");
@@ -9088,7 +9099,7 @@ const setImageHref = (imageEl, href) => {
   }
 };
 
-const appendBevelPaths = (parent, x, y, w, h, transform) => {
+const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, transform = "" } = {}) => {
   if (!parent) return;
   const ns = "http://www.w3.org/2000/svg";
   const width = Number(w);
@@ -9101,7 +9112,7 @@ const appendBevelPaths = (parent, x, y, w, h, transform) => {
   const highlight = document.createElementNS(ns, "path");
   highlight.setAttribute("d", `M ${left + 1} ${top + height - 1} L ${left + 1} ${top + 1} L ${left + width - 1} ${top + 1}`);
   highlight.setAttribute("fill", "none");
-  highlight.setAttribute("stroke", "#ffffff");
+  highlight.setAttribute("stroke", inset ? "#000000" : "#ffffff");
   highlight.setAttribute("stroke-opacity", "0.6");
   highlight.setAttribute("stroke-width", "3");
   highlight.setAttribute("stroke-linecap", "round");
@@ -9113,7 +9124,7 @@ const appendBevelPaths = (parent, x, y, w, h, transform) => {
   const shade = document.createElementNS(ns, "path");
   shade.setAttribute("d", `M ${left + 1} ${top + height - 1} L ${left + width - 1} ${top + height - 1} L ${left + width - 1} ${top + 1}`);
   shade.setAttribute("fill", "none");
-  shade.setAttribute("stroke", "#000000");
+  shade.setAttribute("stroke", inset ? "#ffffff" : "#000000");
   shade.setAttribute("stroke-opacity", "0.6");
   shade.setAttribute("stroke-width", "3");
   shade.setAttribute("stroke-linecap", "round");
@@ -9122,6 +9133,9 @@ const appendBevelPaths = (parent, x, y, w, h, transform) => {
   if (transform) shade.setAttribute("transform", transform);
   parent.appendChild(shade);
 };
+
+const appendBevelPaths = (parent, x, y, w, h, transform) => appendFrameEffectPaths(parent, x, y, w, h, { transform });
+const appendInsetPaths = (parent, x, y, w, h, transform) => appendFrameEffectPaths(parent, x, y, w, h, { inset: true, transform });
 
 const renderIndicatorInto = (parent, obj) => {
   if (!parent || !obj) return null;
@@ -9273,8 +9287,9 @@ const renderIndicatorInto = (parent, obj) => {
     content.appendChild(text);
   }
 
-  if (obj.bevel && hasStroke) {
-    appendBevelPaths(content, x, y, w, h);
+  if (hasStroke) {
+    if (obj.bevel) appendBevelPaths(content, x, y, w, h);
+    else if (obj.inset) appendInsetPaths(content, x, y, w, h);
   }
 
   group.appendChild(content);
@@ -9367,8 +9382,9 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       rect.setAttribute("stroke", stroke);
       rect.setAttribute("stroke-width", strokeWidth);
       containerParent.appendChild(rect);
-      if (obj.bevel && stroke !== "none" && strokeWidth > 0) {
-        appendBevelPaths(containerParent, x, y, w, h);
+      if (stroke !== "none" && strokeWidth > 0) {
+        if (obj.bevel) appendBevelPaths(containerParent, x, y, w, h);
+        else if (obj.inset) appendInsetPaths(containerParent, x, y, w, h);
       }
       const label = document.createElementNS(ns, "text");
       label.setAttribute("x", x + w / 2);
@@ -9427,8 +9443,9 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 		    container.appendChild(input);
 		    fo.appendChild(container);
 		    containerParent.appendChild(fo);
-		    if (obj.bevel && borderColor !== "none" && borderWidth > 0) {
-		      appendBevelPaths(containerParent, x, y, w, h);
+		    if (borderColor !== "none" && borderWidth > 0) {
+		      if (obj.bevel) appendBevelPaths(containerParent, x, y, w, h);
+		      else if (obj.inset) appendInsetPaths(containerParent, x, y, w, h);
 		    }
 		    return;
 		  }
@@ -9471,8 +9488,9 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    const strokeWidth = Number(obj.strokeWidth ?? 1);
 	    rect.setAttribute("stroke-width", strokeWidth);
 	    containerParent.appendChild(rect);
-	    if (obj.bevel && strokeColor !== "none" && strokeWidth > 0) {
-	      appendBevelPaths(containerParent, x, y, w, h);
+	    if (strokeColor !== "none" && strokeWidth > 0) {
+	      if (obj.bevel) appendBevelPaths(containerParent, x, y, w, h);
+	      else if (obj.inset) appendInsetPaths(containerParent, x, y, w, h);
 	    }
 	    return;
 	  }
@@ -9931,6 +9949,8 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         borderRect.setAttribute("stroke-width", strokeWidth);
         borderRect.setAttribute("vector-effect", "non-scaling-stroke");
         containerParent.appendChild(borderRect);
+        if (obj.bevel) appendBevelPaths(containerParent, x, y, w, h);
+        else if (obj.inset) appendInsetPaths(containerParent, x, y, w, h);
       }
     }
     appendBarTicks(containerParent, x, y, w, h, orientation, obj.ticks, border.color || "#ffffff");
@@ -10054,27 +10074,8 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       group.appendChild(activeRing);
     }
 
-    if (obj.bevel) {
-      const highlight = document.createElementNS(ns, "path");
-      highlight.setAttribute("d", `M 1 ${h - 1} L 1 1 L ${w - 1} 1`);
-      highlight.setAttribute("fill", "none");
-      highlight.setAttribute("stroke", "#ffffff");
-      highlight.setAttribute("stroke-opacity", "0.6");
-      highlight.setAttribute("stroke-width", "3");
-      highlight.setAttribute("stroke-linecap", "round");
-      highlight.setAttribute("stroke-linejoin", "round");
-      group.appendChild(highlight);
-
-      const shade = document.createElementNS(ns, "path");
-      shade.setAttribute("d", `M 1 ${h - 1} L ${w - 1} ${h - 1} L ${w - 1} 1`);
-      shade.setAttribute("fill", "none");
-      shade.setAttribute("stroke", "#000000");
-      shade.setAttribute("stroke-opacity", "0.6");
-      shade.setAttribute("stroke-width", "3");
-      shade.setAttribute("stroke-linecap", "round");
-      shade.setAttribute("stroke-linejoin", "round");
-      group.appendChild(shade);
-    }
+    if (obj.bevel) appendBevelPaths(group, 0, 0, w, h);
+    else if (obj.inset) appendInsetPaths(group, 0, 0, w, h);
 
 	    const label = document.createElementNS(ns, "text");
 	    label.setAttribute("xml:space", "preserve");
@@ -10483,8 +10484,9 @@ const renderScreen = () => {
 	        rect.setAttribute("stroke", stroke);
 	        rect.setAttribute("stroke-width", strokeWidth);
 	        group.appendChild(rect);
-	        if (obj.bevel && stroke !== "none" && strokeWidth > 0) {
-	          appendBevelPaths(group, x, y, w, h);
+	        if (stroke !== "none" && strokeWidth > 0) {
+	          if (obj.bevel) appendBevelPaths(group, x, y, w, h);
+	          else if (obj.inset) appendInsetPaths(group, x, y, w, h);
 	        }
 	        const label = document.createElementNS(ns, "text");
 	        label.setAttribute("x", x + w / 2);
@@ -10538,8 +10540,9 @@ const renderScreen = () => {
 	        container.appendChild(input);
 	        fo.appendChild(container);
 	        group.appendChild(fo);
-	        if (obj.bevel && borderColor !== "none" && borderWidth > 0) {
-	          appendBevelPaths(group, x, y, w, h);
+	        if (borderColor !== "none" && borderWidth > 0) {
+	          if (obj.bevel) appendBevelPaths(group, x, y, w, h);
+	          else if (obj.inset) appendInsetPaths(group, x, y, w, h);
 	        }
 		      }
 		      const rotation = getObjectRotationDegrees(obj);
@@ -10581,8 +10584,9 @@ const renderScreen = () => {
 	        frame.setAttribute("stroke-width", borderWidth);
 	      }
 	      group.appendChild(frame);
-	      if (obj.bevel && borderEnabled && borderColor !== "none" && borderWidth > 0) {
-	        appendBevelPaths(group, x, y, w, h);
+	      if (borderEnabled && borderColor !== "none" && borderWidth > 0) {
+	        if (obj.bevel) appendBevelPaths(group, x, y, w, h);
+	        else if (obj.inset) appendInsetPaths(group, x, y, w, h);
 	      }
 
 	      const contentGroup = document.createElementNS(ns, "g");
@@ -11002,6 +11006,7 @@ const syncPropertiesFromSelection = () => {
     if (buttonRadiusInput) buttonRadiusInput.value = Number(obj.rx ?? 0);
     if (buttonShadowInput) buttonShadowInput.checked = Boolean(obj.shadow);
     if (buttonBevelInput) buttonBevelInput.checked = Boolean(obj.bevel);
+    if (buttonInsetInput) buttonInsetInput.checked = Boolean(obj.inset);
 	    if (buttonFillInput) buttonFillInput.value = obj.fill || "#2b2f3a";
 	    if (buttonFillTextInput) buttonFillTextInput.value = obj.fill || "";
 	    if (buttonTextColorInput) buttonTextColorInput.value = obj.textColor || "#ffffff";
@@ -11073,9 +11078,14 @@ const syncPropertiesFromSelection = () => {
     const hasStroke = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
     if (numberInputBorderEnabledInput) numberInputBorderEnabledInput.checked = Boolean(hasStroke);
     if (numberInputBevelInput) numberInputBevelInput.checked = Boolean(obj.bevel);
+    if (numberInputInsetInput) numberInputInsetInput.checked = Boolean(obj.inset);
     if (numberInputBevelRow) {
       numberInputBevelRow.classList.toggle("is-hidden", !hasStroke);
       numberInputBevelRow.hidden = !hasStroke;
+    }
+    if (numberInputInsetRow) {
+      numberInputInsetRow.classList.toggle("is-hidden", !hasStroke);
+      numberInputInsetRow.hidden = !hasStroke;
     }
     if (numberInputStrokeRow) {
       numberInputStrokeRow.classList.toggle("is-hidden", !hasStroke);
@@ -11122,9 +11132,14 @@ const syncPropertiesFromSelection = () => {
     const hasStroke = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
     if (indicatorBorderEnabledInput) indicatorBorderEnabledInput.checked = Boolean(hasStroke);
     if (indicatorBevelInput) indicatorBevelInput.checked = Boolean(obj.bevel);
+    if (indicatorInsetInput) indicatorInsetInput.checked = Boolean(obj.inset);
     if (indicatorBevelRow) {
       indicatorBevelRow.classList.toggle("is-hidden", !hasStroke);
       indicatorBevelRow.hidden = !hasStroke;
+    }
+    if (indicatorInsetRow) {
+      indicatorInsetRow.classList.toggle("is-hidden", !hasStroke);
+      indicatorInsetRow.hidden = !hasStroke;
     }
     if (indicatorStrokeRow) {
       indicatorStrokeRow.classList.toggle("is-hidden", !hasStroke);
@@ -11167,9 +11182,14 @@ const syncPropertiesFromSelection = () => {
     if (viewportBorderColorRow) viewportBorderColorRow.classList.toggle("is-hidden", !borderEnabled);
     if (viewportBorderWidthRow) viewportBorderWidthRow.classList.toggle("is-hidden", !borderEnabled);
     if (viewportBevelInput) viewportBevelInput.checked = Boolean(obj.bevel);
+    if (viewportInsetInput) viewportInsetInput.checked = Boolean(obj.inset);
     if (viewportBevelRow) {
       viewportBevelRow.classList.toggle("is-hidden", !borderEnabled);
       viewportBevelRow.hidden = !borderEnabled;
+    }
+    if (viewportInsetRow) {
+      viewportInsetRow.classList.toggle("is-hidden", !borderEnabled);
+      viewportInsetRow.hidden = !borderEnabled;
     }
     if (viewportBorderColorInput) viewportBorderColorInput.value = borderCfg.color || "#ffffff";
     if (viewportBorderColorTextInput) viewportBorderColorTextInput.value = borderCfg.color || "";
@@ -11221,9 +11241,14 @@ const syncPropertiesFromSelection = () => {
       const hasStroke = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
       rectBorderEnabledInput.checked = Boolean(hasStroke);
       if (rectBevelInput) rectBevelInput.checked = Boolean(obj.bevel);
+      if (rectInsetInput) rectInsetInput.checked = Boolean(obj.inset);
       if (rectBevelRow) {
         rectBevelRow.classList.toggle("is-hidden", !hasStroke);
         rectBevelRow.hidden = !hasStroke;
+      }
+      if (rectInsetRow) {
+        rectInsetRow.classList.toggle("is-hidden", !hasStroke);
+        rectInsetRow.hidden = !hasStroke;
       }
       if (rectStrokeRow) rectStrokeRow.classList.toggle("is-hidden", !hasStroke);
       if (rectStrokeWidthRow) rectStrokeWidthRow.classList.toggle("is-hidden", !hasStroke);
@@ -11446,9 +11471,14 @@ const syncPropertiesFromSelection = () => {
     const borderEnabled = Boolean(border.enabled);
     if (barBorderEnabledInput) barBorderEnabledInput.checked = borderEnabled;
     if (barBevelInput) barBevelInput.checked = Boolean(obj.bevel);
+    if (barInsetInput) barInsetInput.checked = Boolean(obj.inset);
     if (barBevelRow) {
       barBevelRow.classList.toggle("is-hidden", !borderEnabled);
       barBevelRow.hidden = !borderEnabled;
+    }
+    if (barInsetRow) {
+      barInsetRow.classList.toggle("is-hidden", !borderEnabled);
+      barInsetRow.hidden = !borderEnabled;
     }
     if (barBorderColorRow) {
       barBorderColorRow.classList.toggle("is-hidden", !borderEnabled);
@@ -15141,7 +15171,15 @@ if (buttonShadowInput) {
 
 if (buttonBevelInput) {
   buttonBevelInput.addEventListener("change", () => {
-    updateButtonProperty({ bevel: buttonBevelInput.checked });
+    if (buttonBevelInput.checked && buttonInsetInput) buttonInsetInput.checked = false;
+    updateButtonProperty({ bevel: buttonBevelInput.checked, inset: buttonBevelInput.checked ? false : Boolean(buttonInsetInput?.checked) });
+  });
+}
+
+if (buttonInsetInput) {
+  buttonInsetInput.addEventListener("change", () => {
+    if (buttonInsetInput.checked && buttonBevelInput) buttonBevelInput.checked = false;
+    updateButtonProperty({ inset: buttonInsetInput.checked, bevel: buttonInsetInput.checked ? false : Boolean(buttonBevelInput?.checked) });
   });
 }
 
@@ -15305,13 +15343,25 @@ if (viewportBorderEnabledInput) {
       viewportBevelRow.classList.toggle("is-hidden", !viewportBorderEnabledInput.checked);
       viewportBevelRow.hidden = !viewportBorderEnabledInput.checked;
     }
+    if (viewportInsetRow) {
+      viewportInsetRow.classList.toggle("is-hidden", !viewportBorderEnabledInput.checked);
+      viewportInsetRow.hidden = !viewportBorderEnabledInput.checked;
+    }
     updateViewportBorder({ enabled: viewportBorderEnabledInput.checked });
   });
 }
 
 if (viewportBevelInput) {
   viewportBevelInput.addEventListener("change", () => {
-    updateViewportProperty({ bevel: viewportBevelInput.checked });
+    if (viewportBevelInput.checked && viewportInsetInput) viewportInsetInput.checked = false;
+    updateViewportProperty({ bevel: viewportBevelInput.checked, inset: viewportBevelInput.checked ? false : Boolean(viewportInsetInput?.checked) });
+  });
+}
+
+if (viewportInsetInput) {
+  viewportInsetInput.addEventListener("change", () => {
+    if (viewportInsetInput.checked && viewportBevelInput) viewportBevelInput.checked = false;
+    updateViewportProperty({ inset: viewportInsetInput.checked, bevel: viewportInsetInput.checked ? false : Boolean(viewportBevelInput?.checked) });
   });
 }
 
@@ -15479,6 +15529,10 @@ if (rectBorderEnabledInput) {
       rectBevelRow.classList.toggle("is-hidden", !enabled);
       rectBevelRow.hidden = !enabled;
     }
+    if (rectInsetRow) {
+      rectInsetRow.classList.toggle("is-hidden", !enabled);
+      rectInsetRow.hidden = !enabled;
+    }
     if (rectStrokeRow) rectStrokeRow.classList.toggle("is-hidden", !enabled);
     if (rectStrokeWidthRow) rectStrokeWidthRow.classList.toggle("is-hidden", !enabled);
     if (!enabled) {
@@ -15496,7 +15550,15 @@ if (rectBorderEnabledInput) {
 
 if (rectBevelInput) {
   rectBevelInput.addEventListener("change", () => {
-    updateRectProperty({ bevel: rectBevelInput.checked });
+    if (rectBevelInput.checked && rectInsetInput) rectInsetInput.checked = false;
+    updateRectProperty({ bevel: rectBevelInput.checked, inset: rectBevelInput.checked ? false : Boolean(rectInsetInput?.checked) });
+  });
+}
+
+if (rectInsetInput) {
+  rectInsetInput.addEventListener("change", () => {
+    if (rectInsetInput.checked && rectBevelInput) rectBevelInput.checked = false;
+    updateRectProperty({ inset: rectInsetInput.checked, bevel: rectInsetInput.checked ? false : Boolean(rectBevelInput?.checked) });
   });
 }
 
@@ -16261,6 +16323,10 @@ if (numberInputBorderEnabledInput) {
       numberInputBevelRow.classList.toggle("is-hidden", !enabled);
       numberInputBevelRow.hidden = !enabled;
     }
+    if (numberInputInsetRow) {
+      numberInputInsetRow.classList.toggle("is-hidden", !enabled);
+      numberInputInsetRow.hidden = !enabled;
+    }
     if (numberInputStrokeRow) {
       numberInputStrokeRow.classList.toggle("is-hidden", !enabled);
       numberInputStrokeRow.hidden = !enabled;
@@ -16285,7 +16351,15 @@ if (numberInputBorderEnabledInput) {
 
 if (numberInputBevelInput) {
   numberInputBevelInput.addEventListener("change", () => {
-    updateNumberInputProperty({ bevel: numberInputBevelInput.checked });
+    if (numberInputBevelInput.checked && numberInputInsetInput) numberInputInsetInput.checked = false;
+    updateNumberInputProperty({ bevel: numberInputBevelInput.checked, inset: numberInputBevelInput.checked ? false : Boolean(numberInputInsetInput?.checked) });
+  });
+}
+
+if (numberInputInsetInput) {
+  numberInputInsetInput.addEventListener("change", () => {
+    if (numberInputInsetInput.checked && numberInputBevelInput) numberInputBevelInput.checked = false;
+    updateNumberInputProperty({ inset: numberInputInsetInput.checked, bevel: numberInputInsetInput.checked ? false : Boolean(numberInputBevelInput?.checked) });
   });
 }
 
@@ -16435,6 +16509,10 @@ if (indicatorBorderEnabledInput) {
       indicatorBevelRow.classList.toggle("is-hidden", !enabled);
       indicatorBevelRow.hidden = !enabled;
     }
+    if (indicatorInsetRow) {
+      indicatorInsetRow.classList.toggle("is-hidden", !enabled);
+      indicatorInsetRow.hidden = !enabled;
+    }
     if (indicatorStrokeRow) {
       indicatorStrokeRow.classList.toggle("is-hidden", !enabled);
       indicatorStrokeRow.hidden = !enabled;
@@ -16459,7 +16537,15 @@ if (indicatorBorderEnabledInput) {
 
 if (indicatorBevelInput) {
   indicatorBevelInput.addEventListener("change", () => {
-    updateIndicatorProperty({ bevel: indicatorBevelInput.checked });
+    if (indicatorBevelInput.checked && indicatorInsetInput) indicatorInsetInput.checked = false;
+    updateIndicatorProperty({ bevel: indicatorBevelInput.checked, inset: indicatorBevelInput.checked ? false : Boolean(indicatorInsetInput?.checked) });
+  });
+}
+
+if (indicatorInsetInput) {
+  indicatorInsetInput.addEventListener("change", () => {
+    if (indicatorInsetInput.checked && indicatorBevelInput) indicatorBevelInput.checked = false;
+    updateIndicatorProperty({ inset: indicatorInsetInput.checked, bevel: indicatorInsetInput.checked ? false : Boolean(indicatorBevelInput?.checked) });
   });
 }
 
@@ -16621,6 +16707,10 @@ if (barBorderEnabledInput) {
       barBevelRow.classList.toggle("is-hidden", !enabled);
       barBevelRow.hidden = !enabled;
     }
+    if (barInsetRow) {
+      barInsetRow.classList.toggle("is-hidden", !enabled);
+      barInsetRow.hidden = !enabled;
+    }
     if (barBorderColorRow) {
       barBorderColorRow.classList.toggle("is-hidden", !enabled);
       barBorderColorRow.hidden = !enabled;
@@ -16635,7 +16725,15 @@ if (barBorderEnabledInput) {
 
 if (barBevelInput) {
   barBevelInput.addEventListener("change", () => {
-    updateBarProperty({ bevel: barBevelInput.checked });
+    if (barBevelInput.checked && barInsetInput) barInsetInput.checked = false;
+    updateBarProperty({ bevel: barBevelInput.checked, inset: barBevelInput.checked ? false : Boolean(barInsetInput?.checked) });
+  });
+}
+
+if (barInsetInput) {
+  barInsetInput.addEventListener("change", () => {
+    if (barInsetInput.checked && barBevelInput) barBevelInput.checked = false;
+    updateBarProperty({ inset: barInsetInput.checked, bevel: barInsetInput.checked ? false : Boolean(barBevelInput?.checked) });
   });
 }
 

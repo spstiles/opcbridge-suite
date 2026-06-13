@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v30" />
+  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v31" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -550,6 +550,10 @@
                   <input id="buttonBevel" type="checkbox" />
                   <span>Raised</span>
                 </label>
+                <label class="inline-check">
+                  <input id="buttonInset" type="checkbox" />
+                  <span>Inset</span>
+                </label>
               </div>
             </div>
             <div class="prop-row">
@@ -706,6 +710,10 @@
 	              <label for="numberInputBevel">Bezel</label>
 	              <input id="numberInputBevel" type="checkbox" />
 	            </div>
+	            <div class="prop-row is-hidden" id="numberInputInsetRow" hidden>
+	              <label for="numberInputInset">Inset</label>
+	              <input id="numberInputInset" type="checkbox" />
+	            </div>
 	            <div class="prop-row" id="numberInputStrokeRow">
 	              <label for="numberInputStroke">Border Color</label>
 	              <div class="prop-inline">
@@ -798,6 +806,10 @@
 		            <div class="prop-row is-hidden" id="indicatorBevelRow" hidden>
 		              <label for="indicatorBevel">Bezel</label>
 		              <input id="indicatorBevel" type="checkbox" />
+		            </div>
+		            <div class="prop-row is-hidden" id="indicatorInsetRow" hidden>
+		              <label for="indicatorInset">Inset</label>
+		              <input id="indicatorInset" type="checkbox" />
 		            </div>
 		            <div class="prop-row" id="indicatorStrokeRow">
 		              <label for="indicatorStroke">Border Color</label>
@@ -914,6 +926,10 @@
 	              <label for="viewportBevel">Bezel</label>
 	              <input id="viewportBevel" type="checkbox" />
 	            </div>
+	            <div class="prop-row is-hidden" id="viewportInsetRow" hidden>
+	              <label for="viewportInset">Inset</label>
+	              <input id="viewportInset" type="checkbox" />
+	            </div>
 	            <div class="prop-row" id="viewportBorderColorRow">
 	              <label for="viewportBorderColor">Color</label>
 	              <div class="prop-inline">
@@ -966,6 +982,10 @@
 	            <div class="prop-row is-hidden" id="rectBevelRow" hidden>
 	              <label for="rectBevel">Bezel</label>
 	              <input id="rectBevel" type="checkbox" />
+	            </div>
+	            <div class="prop-row is-hidden" id="rectInsetRow" hidden>
+	              <label for="rectInset">Inset</label>
+	              <input id="rectInset" type="checkbox" />
 	            </div>
 	            <div class="prop-row">
 	              <label for="rectFill">Fill</label>
@@ -1816,6 +1836,10 @@
 	              <label for="barBevel">Bezel</label>
 	              <input id="barBevel" type="checkbox" />
 	            </div>
+	            <div class="prop-row is-hidden" id="barInsetRow" hidden>
+	              <label for="barInset">Inset</label>
+	              <input id="barInset" type="checkbox" />
+	            </div>
 	            <div class="prop-row" id="barBorderColorRow">
 	              <label for="barBorderColor">Border Color</label>
 	              <div class="prop-inline">
@@ -2638,6 +2662,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260613-hmi-ui-v30"></script>
+	  <script src="js/hmi.js?v=20260613-hmi-ui-v31"></script>
 	</body>
 	</html>
