@@ -7059,14 +7059,6 @@ const getObjectBounds = (obj) => {
     return { x: minX - pad, y: minY - pad, width: (maxX - minX) + pad * 2, height: (maxY - minY) + pad * 2 };
   }
   if (obj.type === "text") {
-    if (!isTextAutoSize(obj)) {
-      const bounds = getObjectBounds(obj);
-      if (!bounds) return;
-      if (axis === "horizontal") obj.x = Math.round(2 * centerX - (bounds.x + bounds.width));
-      else obj.y = Math.round(2 * centerY - (bounds.y + bounds.height));
-      applyRotationFlip();
-      return;
-    }
     const x = Number(obj.x ?? 0);
     const y = Number(obj.y ?? 0);
     const fontSize = Number(obj.fontSize || 18);
@@ -7376,6 +7368,14 @@ const flipObjectInBox = (obj, axis, box) => {
   }
 
   if (obj.type === "text") {
+    if (!isTextAutoSize(obj)) {
+      const bounds = getObjectBounds(obj);
+      if (!bounds) return;
+      if (axis === "horizontal") obj.x = Math.round(2 * centerX - (bounds.x + bounds.width));
+      else obj.y = Math.round(2 * centerY - (bounds.y + bounds.height));
+      applyRotationFlip();
+      return;
+    }
     const x = Number(obj.x ?? 0);
     const y = Number(obj.y ?? 0);
     if (axis === "horizontal") {
@@ -9126,7 +9126,7 @@ const setImageHref = (imageEl, href) => {
   }
 };
 
-const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, transform = "" } = {}) => {
+const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, strokeWidth = 3, transform = "" } = {}) => {
   if (!parent) return;
   const ns = "http://www.w3.org/2000/svg";
   const width = Number(w);
@@ -9135,13 +9135,15 @@ const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, transform =
   const left = Number(x);
   const top = Number(y);
   if (!Number.isFinite(left) || !Number.isFinite(top)) return;
+  const widthPx = Math.max(1, Number(strokeWidth) || 1);
+  const offset = Math.max(0.5, widthPx / 2);
 
   const highlight = document.createElementNS(ns, "path");
-  highlight.setAttribute("d", `M ${left + 1} ${top + height - 1} L ${left + 1} ${top + 1} L ${left + width - 1} ${top + 1}`);
+  highlight.setAttribute("d", `M ${left + offset} ${top + height - offset} L ${left + offset} ${top + offset} L ${left + width - offset} ${top + offset}`);
   highlight.setAttribute("fill", "none");
   highlight.setAttribute("stroke", inset ? "#000000" : "#ffffff");
   highlight.setAttribute("stroke-opacity", "0.6");
-  highlight.setAttribute("stroke-width", "3");
+  highlight.setAttribute("stroke-width", widthPx);
   highlight.setAttribute("stroke-linecap", "round");
   highlight.setAttribute("stroke-linejoin", "round");
   highlight.setAttribute("pointer-events", "none");
@@ -9149,11 +9151,11 @@ const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, transform =
   parent.appendChild(highlight);
 
   const shade = document.createElementNS(ns, "path");
-  shade.setAttribute("d", `M ${left + 1} ${top + height - 1} L ${left + width - 1} ${top + height - 1} L ${left + width - 1} ${top + 1}`);
+  shade.setAttribute("d", `M ${left + offset} ${top + height - offset} L ${left + width - offset} ${top + height - offset} L ${left + width - offset} ${top + offset}`);
   shade.setAttribute("fill", "none");
   shade.setAttribute("stroke", inset ? "#ffffff" : "#000000");
   shade.setAttribute("stroke-opacity", "0.6");
-  shade.setAttribute("stroke-width", "3");
+  shade.setAttribute("stroke-width", widthPx);
   shade.setAttribute("stroke-linecap", "round");
   shade.setAttribute("stroke-linejoin", "round");
   shade.setAttribute("pointer-events", "none");
@@ -9161,16 +9163,25 @@ const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, transform =
   parent.appendChild(shade);
 };
 
-const appendOutsetPaths = (parent, x, y, w, h, transform) => appendFrameEffectPaths(parent, x, y, w, h, { transform });
-const appendInsetPaths = (parent, x, y, w, h, transform) => appendFrameEffectPaths(parent, x, y, w, h, { inset: true, transform });
+const appendOutsetPaths = (parent, x, y, w, h, strokeWidth, transform) => appendFrameEffectPaths(parent, x, y, w, h, { strokeWidth, transform });
+const appendInsetPaths = (parent, x, y, w, h, strokeWidth, transform) => appendFrameEffectPaths(parent, x, y, w, h, { inset: true, strokeWidth, transform });
 const normalizeBorderStyle = (value) => {
   const style = String(value || "flat").trim().toLowerCase();
   return style === "outset" || style === "inset" ? style : "flat";
 };
-const appendBorderStylePaths = (parent, x, y, w, h, borderStyle, transform) => {
+const isStyledBorder = (borderStyle) => normalizeBorderStyle(borderStyle) !== "flat";
+const appendBorderStylePaths = (parent, x, y, w, h, borderStyle, strokeWidth = 1, transform) => {
   const style = normalizeBorderStyle(borderStyle);
-  if (style === "outset") appendOutsetPaths(parent, x, y, w, h, transform);
-  if (style === "inset") appendInsetPaths(parent, x, y, w, h, transform);
+  if (style === "outset") appendOutsetPaths(parent, x, y, w, h, strokeWidth, transform);
+  if (style === "inset") appendInsetPaths(parent, x, y, w, h, strokeWidth, transform);
+};
+const setFlatBorderStroke = (el, color, strokeWidth, borderStyle) => {
+  if (!el) return;
+  const width = Math.max(0, Number(strokeWidth) || 0);
+  const stroke = color || "#ffffff";
+  const drawFlat = !isStyledBorder(borderStyle) && stroke !== "none" && width > 0;
+  el.setAttribute("stroke", drawFlat ? stroke : "none");
+  el.setAttribute("stroke-width", drawFlat ? width : 0);
 };
 
 const renderIndicatorInto = (parent, obj) => {
@@ -9231,8 +9242,7 @@ const renderIndicatorInto = (parent, obj) => {
     rect.setAttribute("height", h);
     rect.setAttribute("rx", rx);
     rect.setAttribute("fill", fill);
-    rect.setAttribute("stroke", hasStroke ? stroke : "none");
-    rect.setAttribute("stroke-width", hasStroke ? strokeWidth : 0);
+    setFlatBorderStroke(rect, hasStroke ? stroke : "none", strokeWidth, obj.borderStyle);
     content.appendChild(rect);
   } else if (hasStroke) {
     const borderRect = document.createElementNS(ns, "rect");
@@ -9242,8 +9252,7 @@ const renderIndicatorInto = (parent, obj) => {
     borderRect.setAttribute("height", h);
     borderRect.setAttribute("rx", rx);
     borderRect.setAttribute("fill", "none");
-    borderRect.setAttribute("stroke", stroke);
-    borderRect.setAttribute("stroke-width", strokeWidth);
+    setFlatBorderStroke(borderRect, stroke, strokeWidth, obj.borderStyle);
     content.appendChild(borderRect);
   }
 
@@ -9324,7 +9333,7 @@ const renderIndicatorInto = (parent, obj) => {
   }
 
   if (hasStroke) {
-    appendBorderStylePaths(content, x, y, w, h, obj.borderStyle);
+    appendBorderStylePaths(content, x, y, w, h, obj.borderStyle, strokeWidth);
   }
 
   group.appendChild(content);
@@ -9414,11 +9423,10 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       rect.setAttribute("fill", obj.fill || "#2b2f3a");
       const stroke = obj.stroke || "#ffffff";
       const strokeWidth = Number(obj.strokeWidth ?? 1);
-      rect.setAttribute("stroke", stroke);
-      rect.setAttribute("stroke-width", strokeWidth);
+      setFlatBorderStroke(rect, stroke, strokeWidth, obj.borderStyle);
       containerParent.appendChild(rect);
       if (stroke !== "none" && strokeWidth > 0) {
-        appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle);
+        appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle, strokeWidth);
       }
       const label = document.createElementNS(ns, "text");
       label.setAttribute("x", x + w / 2);
@@ -9447,7 +9455,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    container.style.borderRadius = `${Math.max(0, rx)}px`;
 	    const borderWidth = Number(obj.strokeWidth ?? 1);
 	    const borderColor = obj.stroke || "#ffffff";
-	    container.style.border = borderColor === "none" || borderWidth <= 0 ? "none" : `${borderWidth}px solid ${borderColor}`;
+	    container.style.border = borderColor === "none" || borderWidth <= 0 || isStyledBorder(obj.borderStyle) ? "none" : `${borderWidth}px solid ${borderColor}`;
 	    const input = document.createElementNS(xhtml, "input");
 	    input.type = "text";
 	    input.inputMode = "decimal";
@@ -9478,7 +9486,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 		    fo.appendChild(container);
 		    containerParent.appendChild(fo);
 		    if (borderColor !== "none" && borderWidth > 0) {
-		      appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle);
+		      appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle, borderWidth);
 		    }
 		    return;
 		  }
@@ -9517,12 +9525,11 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     rect.setAttribute("fill", fillColor);
 	    const baseStroke = obj.stroke || "#ffffff";
 	    const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
-	    rect.setAttribute("stroke", strokeColor);
 	    const strokeWidth = Number(obj.strokeWidth ?? 1);
-	    rect.setAttribute("stroke-width", strokeWidth);
+	    setFlatBorderStroke(rect, strokeColor, strokeWidth, obj.borderStyle);
 	    containerParent.appendChild(rect);
 	    if (strokeColor !== "none" && strokeWidth > 0) {
-	      appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle);
+	      appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle, strokeWidth);
 	    }
 	    return;
 	  }
@@ -9977,11 +9984,10 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         borderRect.setAttribute("width", w);
         borderRect.setAttribute("height", h);
         borderRect.setAttribute("fill", "none");
-        borderRect.setAttribute("stroke", border.color || "#ffffff");
-        borderRect.setAttribute("stroke-width", strokeWidth);
+        setFlatBorderStroke(borderRect, border.color || "#ffffff", strokeWidth, obj.borderStyle);
         borderRect.setAttribute("vector-effect", "non-scaling-stroke");
         containerParent.appendChild(borderRect);
-        appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle);
+        appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle, strokeWidth);
       }
     }
     appendBarTicks(containerParent, x, y, w, h, orientation, obj.ticks, border.color || "#ffffff");
@@ -10019,13 +10025,12 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       bgRect.setAttribute("fill", bgColor || "transparent");
       const borderWidth = Math.max(0, Number(obj.borderWidth ?? 1));
       if (borderColor && borderColor !== "transparent" && borderWidth > 0) {
-        bgRect.setAttribute("stroke", borderColor);
-        bgRect.setAttribute("stroke-width", borderWidth);
+        setFlatBorderStroke(bgRect, borderColor, borderWidth, obj.borderStyle);
         bgRect.setAttribute("vector-effect", "non-scaling-stroke");
       }
       group.appendChild(bgRect);
       if (bounds && borderColor && borderColor !== "transparent" && borderWidth > 0) {
-        appendBorderStylePaths(group, bounds.x, bounds.y, bounds.width, bounds.height, obj.borderStyle);
+        appendBorderStylePaths(group, bounds.x, bounds.y, bounds.width, bounds.height, obj.borderStyle, borderWidth);
       }
     }
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#ffffff");
@@ -10112,8 +10117,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const buttonStroke = obj.stroke || "#ffffff";
     const buttonStrokeWidth = Number(obj.strokeWidth ?? 1);
     rect.setAttribute("fill", fillColor);
-    rect.setAttribute("stroke", buttonStroke);
-    rect.setAttribute("stroke-width", buttonStrokeWidth);
+    setFlatBorderStroke(rect, buttonStroke, buttonStrokeWidth, obj.borderStyle);
     group.appendChild(rect);
 
     if (isWriteActive) {
@@ -10131,7 +10135,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     }
 
     if (buttonStroke !== "none" && buttonStrokeWidth > 0) {
-      appendBorderStylePaths(group, 0, 0, w, h, obj.borderStyle);
+      appendBorderStylePaths(group, 0, 0, w, h, obj.borderStyle, buttonStrokeWidth);
     }
 
 	    const label = document.createElementNS(ns, "text");
@@ -10538,11 +10542,10 @@ const renderScreen = () => {
 	        rect.setAttribute("fill", obj.fill || "#2b2f3a");
 	        const stroke = obj.stroke || "#ffffff";
 	        const strokeWidth = Number(obj.strokeWidth ?? 1);
-	        rect.setAttribute("stroke", stroke);
-	        rect.setAttribute("stroke-width", strokeWidth);
+	        setFlatBorderStroke(rect, stroke, strokeWidth, obj.borderStyle);
 	        group.appendChild(rect);
 	        if (stroke !== "none" && strokeWidth > 0) {
-	          appendBorderStylePaths(group, x, y, w, h, obj.borderStyle);
+	          appendBorderStylePaths(group, x, y, w, h, obj.borderStyle, strokeWidth);
 	        }
 	        const label = document.createElementNS(ns, "text");
 	        label.setAttribute("x", x + w / 2);
@@ -10567,7 +10570,7 @@ const renderScreen = () => {
 	        container.style.borderRadius = `${Math.max(0, rx)}px`;
 	        const borderWidth = Number(obj.strokeWidth ?? 1);
 	        const borderColor = obj.stroke || "#ffffff";
-	        container.style.border = borderColor === "none" || borderWidth <= 0 ? "none" : `${borderWidth}px solid ${borderColor}`;
+	        container.style.border = borderColor === "none" || borderWidth <= 0 || isStyledBorder(obj.borderStyle) ? "none" : `${borderWidth}px solid ${borderColor}`;
         const input = document.createElementNS(xhtml, "input");
         input.type = "text";
         input.inputMode = "decimal";
@@ -10597,7 +10600,7 @@ const renderScreen = () => {
 	        fo.appendChild(container);
 	        group.appendChild(fo);
 	        if (borderColor !== "none" && borderWidth > 0) {
-	          appendBorderStylePaths(group, x, y, w, h, obj.borderStyle);
+	          appendBorderStylePaths(group, x, y, w, h, obj.borderStyle, borderWidth);
 	        }
 		      }
 		      const rotation = getObjectRotationDegrees(obj);
@@ -10635,12 +10638,11 @@ const renderScreen = () => {
 	      if (radius > 0) frame.setAttribute("rx", radius);
 	      frame.setAttribute("fill", "none");
 	      if (borderEnabled) {
-	        frame.setAttribute("stroke", borderColor);
-	        frame.setAttribute("stroke-width", borderWidth);
+	        setFlatBorderStroke(frame, borderColor, borderWidth, obj.borderStyle);
 	      }
 	      group.appendChild(frame);
 	      if (borderEnabled && borderColor !== "none" && borderWidth > 0) {
-	        appendBorderStylePaths(group, x, y, w, h, obj.borderStyle);
+	        appendBorderStylePaths(group, x, y, w, h, obj.borderStyle, borderWidth);
 	      }
 
 	      const contentGroup = document.createElementNS(ns, "g");
