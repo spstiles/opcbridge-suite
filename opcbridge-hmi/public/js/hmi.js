@@ -113,10 +113,8 @@ const numberInputTextColorSwatchBtn = document.getElementById("numberInputTextCo
 const numberInputFontSizeInput = document.getElementById("numberInputFontSize");
 const numberInputBoldInput = document.getElementById("numberInputBold");
 const numberInputBorderEnabledInput = document.getElementById("numberInputBorderEnabled");
-const numberInputBevelRow = document.getElementById("numberInputBevelRow");
-const numberInputBevelInput = document.getElementById("numberInputBevel");
-const numberInputInsetRow = document.getElementById("numberInputInsetRow");
-const numberInputInsetInput = document.getElementById("numberInputInset");
+const numberInputBorderStyleRow = document.getElementById("numberInputBorderStyleRow");
+const numberInputBorderStyleSelect = document.getElementById("numberInputBorderStyle");
 const numberInputStrokeRow = document.getElementById("numberInputStrokeRow");
 const numberInputStrokeInput = document.getElementById("numberInputStroke");
 const numberInputStrokeTextInput = document.getElementById("numberInputStrokeText");
@@ -145,10 +143,8 @@ const indicatorTextColorSwatchBtn = document.getElementById("indicatorTextColorS
 const indicatorFontSizeInput = document.getElementById("indicatorFontSize");
 const indicatorBoldInput = document.getElementById("indicatorBold");
 const indicatorBorderEnabledInput = document.getElementById("indicatorBorderEnabled");
-const indicatorBevelRow = document.getElementById("indicatorBevelRow");
-const indicatorBevelInput = document.getElementById("indicatorBevel");
-const indicatorInsetRow = document.getElementById("indicatorInsetRow");
-const indicatorInsetInput = document.getElementById("indicatorInset");
+const indicatorBorderStyleRow = document.getElementById("indicatorBorderStyleRow");
+const indicatorBorderStyleSelect = document.getElementById("indicatorBorderStyle");
 const indicatorStrokeRow = document.getElementById("indicatorStrokeRow");
 const indicatorStrokeInput = document.getElementById("indicatorStroke");
 const indicatorStrokeTextInput = document.getElementById("indicatorStrokeText");
@@ -3471,8 +3467,7 @@ const textBorderColorTextInput = document.getElementById("textBorderColorText");
 const textBorderSwatches = document.getElementById("textBorderSwatches");
 const textBorderSwatchBtn = document.getElementById("textBorderSwatchBtn");
 const textBorderWidthInput = document.getElementById("textBorderWidth");
-const textBevelInput = document.getElementById("textBevel");
-const textInsetInput = document.getElementById("textInset");
+const textBorderStyleSelect = document.getElementById("textBorderStyle");
 const textRadiusInput = document.getElementById("textRadius");
 const textPaddingInput = document.getElementById("textPadding");
 const textBindingRows = document.getElementById("textBindingRows");
@@ -3520,13 +3515,15 @@ const buttonStrokeInput = document.getElementById("buttonStroke");
 const buttonStrokeTextInput = document.getElementById("buttonStrokeText");
 const buttonStrokeSwatches = document.getElementById("buttonStrokeSwatches");
 const buttonStrokeSwatchBtn = document.getElementById("buttonStrokeSwatchBtn");
+const buttonStrokeWidthRow = document.getElementById("buttonStrokeWidthRow");
+const buttonStrokeWidthInput = document.getElementById("buttonStrokeWidth");
 const buttonAlignSelect = document.getElementById("buttonAlign");
 const buttonValignSelect = document.getElementById("buttonValign");
 const buttonBorderEnabledInput = document.getElementById("buttonBorderEnabled");
 const buttonStrokeRow = document.getElementById("buttonStrokeRow");
 const buttonShadowInput = document.getElementById("buttonShadow");
-const buttonBevelInput = document.getElementById("buttonBevel");
-const buttonInsetInput = document.getElementById("buttonInset");
+const buttonBorderStyleRow = document.getElementById("buttonBorderStyleRow");
+const buttonBorderStyleSelect = document.getElementById("buttonBorderStyle");
 const buttonLabelBindConnectionInput = document.getElementById("buttonLabelBindConnection");
 const buttonLabelBindTagSelect = document.getElementById("buttonLabelBindTag");
 const buttonLabelBindMultiplierInput = document.getElementById("buttonLabelBindMultiplier");
@@ -3543,10 +3540,8 @@ const viewportRadiusInput = document.getElementById("viewportRadius");
 const viewportTargetSelect = document.getElementById("viewportTarget");
 const viewportScaleModeSelect = document.getElementById("viewportScaleMode");
 const viewportBorderEnabledInput = document.getElementById("viewportBorderEnabled");
-const viewportBevelRow = document.getElementById("viewportBevelRow");
-const viewportBevelInput = document.getElementById("viewportBevel");
-const viewportInsetRow = document.getElementById("viewportInsetRow");
-const viewportInsetInput = document.getElementById("viewportInset");
+const viewportBorderStyleRow = document.getElementById("viewportBorderStyleRow");
+const viewportBorderStyleSelect = document.getElementById("viewportBorderStyle");
 const viewportBorderColorInput = document.getElementById("viewportBorderColor");
 const viewportBorderColorTextInput = document.getElementById("viewportBorderColorText");
 const viewportBorderSwatches = document.getElementById("viewportBorderSwatches");
@@ -3563,10 +3558,8 @@ const rectRotationInput = document.getElementById("rectRotation");
 const rectRadiusInput = document.getElementById("rectRadius");
 const rectShadowInput = document.getElementById("rectShadow");
 const rectBorderEnabledInput = document.getElementById("rectBorderEnabled");
-const rectBevelRow = document.getElementById("rectBevelRow");
-const rectBevelInput = document.getElementById("rectBevel");
-const rectInsetRow = document.getElementById("rectInsetRow");
-const rectInsetInput = document.getElementById("rectInset");
+const rectBorderStyleRow = document.getElementById("rectBorderStyleRow");
+const rectBorderStyleSelect = document.getElementById("rectBorderStyle");
 const rectFillInput = document.getElementById("rectFill");
 const rectFillTextInput = document.getElementById("rectFillText");
 const rectFillSwatches = document.getElementById("rectFillSwatches");
@@ -3860,10 +3853,8 @@ const barTicksFields = document.getElementById("barTicksFields");
 const barTicksMajorInput = document.getElementById("barTicksMajor");
 const barTicksMinorInput = document.getElementById("barTicksMinor");
 const barBorderEnabledInput = document.getElementById("barBorderEnabled");
-const barBevelRow = document.getElementById("barBevelRow");
-const barBevelInput = document.getElementById("barBevel");
-const barInsetRow = document.getElementById("barInsetRow");
-const barInsetInput = document.getElementById("barInset");
+const barBorderStyleRow = document.getElementById("barBorderStyleRow");
+const barBorderStyleSelect = document.getElementById("barBorderStyle");
 const barBorderColorRow = document.getElementById("barBorderColorRow");
 const barBorderWidthRow = document.getElementById("barBorderWidthRow");
 const barBorderColorInput = document.getElementById("barBorderColor");
@@ -9170,8 +9161,17 @@ const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, transform =
   parent.appendChild(shade);
 };
 
-const appendBevelPaths = (parent, x, y, w, h, transform) => appendFrameEffectPaths(parent, x, y, w, h, { transform });
+const appendOutsetPaths = (parent, x, y, w, h, transform) => appendFrameEffectPaths(parent, x, y, w, h, { transform });
 const appendInsetPaths = (parent, x, y, w, h, transform) => appendFrameEffectPaths(parent, x, y, w, h, { inset: true, transform });
+const normalizeBorderStyle = (value) => {
+  const style = String(value || "flat").trim().toLowerCase();
+  return style === "outset" || style === "inset" ? style : "flat";
+};
+const appendBorderStylePaths = (parent, x, y, w, h, borderStyle, transform) => {
+  const style = normalizeBorderStyle(borderStyle);
+  if (style === "outset") appendOutsetPaths(parent, x, y, w, h, transform);
+  if (style === "inset") appendInsetPaths(parent, x, y, w, h, transform);
+};
 
 const renderIndicatorInto = (parent, obj) => {
   if (!parent || !obj) return null;
@@ -9324,8 +9324,7 @@ const renderIndicatorInto = (parent, obj) => {
   }
 
   if (hasStroke) {
-    if (obj.bevel) appendBevelPaths(content, x, y, w, h);
-    else if (obj.inset) appendInsetPaths(content, x, y, w, h);
+    appendBorderStylePaths(content, x, y, w, h, obj.borderStyle);
   }
 
   group.appendChild(content);
@@ -9419,8 +9418,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       rect.setAttribute("stroke-width", strokeWidth);
       containerParent.appendChild(rect);
       if (stroke !== "none" && strokeWidth > 0) {
-        if (obj.bevel) appendBevelPaths(containerParent, x, y, w, h);
-        else if (obj.inset) appendInsetPaths(containerParent, x, y, w, h);
+        appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle);
       }
       const label = document.createElementNS(ns, "text");
       label.setAttribute("x", x + w / 2);
@@ -9480,8 +9478,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 		    fo.appendChild(container);
 		    containerParent.appendChild(fo);
 		    if (borderColor !== "none" && borderWidth > 0) {
-		      if (obj.bevel) appendBevelPaths(containerParent, x, y, w, h);
-		      else if (obj.inset) appendInsetPaths(containerParent, x, y, w, h);
+		      appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle);
 		    }
 		    return;
 		  }
@@ -9525,8 +9522,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    rect.setAttribute("stroke-width", strokeWidth);
 	    containerParent.appendChild(rect);
 	    if (strokeColor !== "none" && strokeWidth > 0) {
-	      if (obj.bevel) appendBevelPaths(containerParent, x, y, w, h);
-	      else if (obj.inset) appendInsetPaths(containerParent, x, y, w, h);
+	      appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle);
 	    }
 	    return;
 	  }
@@ -9985,8 +9981,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         borderRect.setAttribute("stroke-width", strokeWidth);
         borderRect.setAttribute("vector-effect", "non-scaling-stroke");
         containerParent.appendChild(borderRect);
-        if (obj.bevel) appendBevelPaths(containerParent, x, y, w, h);
-        else if (obj.inset) appendInsetPaths(containerParent, x, y, w, h);
+        appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle);
       }
     }
     appendBarTicks(containerParent, x, y, w, h, orientation, obj.ticks, border.color || "#ffffff");
@@ -10030,8 +10025,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       }
       group.appendChild(bgRect);
       if (bounds && borderColor && borderColor !== "transparent" && borderWidth > 0) {
-        if (obj.bevel) appendBevelPaths(group, bounds.x, bounds.y, bounds.width, bounds.height);
-        else if (obj.inset) appendInsetPaths(group, bounds.x, bounds.y, bounds.width, bounds.height);
+        appendBorderStylePaths(group, bounds.x, bounds.y, bounds.width, bounds.height, obj.borderStyle);
       }
     }
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#ffffff");
@@ -10115,9 +10109,11 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const isWriteActive = !isEditMode
       && (obj.action?.type === "toggle-write" || obj.action?.type === "set-write")
       && getWriteActionActiveState(obj.action);
+    const buttonStroke = obj.stroke || "#ffffff";
+    const buttonStrokeWidth = Number(obj.strokeWidth ?? 1);
     rect.setAttribute("fill", fillColor);
-    rect.setAttribute("stroke", obj.stroke || "#ffffff");
-    rect.setAttribute("stroke-width", obj.strokeWidth ?? 1);
+    rect.setAttribute("stroke", buttonStroke);
+    rect.setAttribute("stroke-width", buttonStrokeWidth);
     group.appendChild(rect);
 
     if (isWriteActive) {
@@ -10134,8 +10130,9 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       group.appendChild(activeRing);
     }
 
-    if (obj.bevel) appendBevelPaths(group, 0, 0, w, h);
-    else if (obj.inset) appendInsetPaths(group, 0, 0, w, h);
+    if (buttonStroke !== "none" && buttonStrokeWidth > 0) {
+      appendBorderStylePaths(group, 0, 0, w, h, obj.borderStyle);
+    }
 
 	    const label = document.createElementNS(ns, "text");
 	    label.setAttribute("xml:space", "preserve");
@@ -10545,8 +10542,7 @@ const renderScreen = () => {
 	        rect.setAttribute("stroke-width", strokeWidth);
 	        group.appendChild(rect);
 	        if (stroke !== "none" && strokeWidth > 0) {
-	          if (obj.bevel) appendBevelPaths(group, x, y, w, h);
-	          else if (obj.inset) appendInsetPaths(group, x, y, w, h);
+	          appendBorderStylePaths(group, x, y, w, h, obj.borderStyle);
 	        }
 	        const label = document.createElementNS(ns, "text");
 	        label.setAttribute("x", x + w / 2);
@@ -10601,8 +10597,7 @@ const renderScreen = () => {
 	        fo.appendChild(container);
 	        group.appendChild(fo);
 	        if (borderColor !== "none" && borderWidth > 0) {
-	          if (obj.bevel) appendBevelPaths(group, x, y, w, h);
-	          else if (obj.inset) appendInsetPaths(group, x, y, w, h);
+	          appendBorderStylePaths(group, x, y, w, h, obj.borderStyle);
 	        }
 		      }
 		      const rotation = getObjectRotationDegrees(obj);
@@ -10645,8 +10640,7 @@ const renderScreen = () => {
 	      }
 	      group.appendChild(frame);
 	      if (borderEnabled && borderColor !== "none" && borderWidth > 0) {
-	        if (obj.bevel) appendBevelPaths(group, x, y, w, h);
-	        else if (obj.inset) appendInsetPaths(group, x, y, w, h);
+	        appendBorderStylePaths(group, x, y, w, h, obj.borderStyle);
 	      }
 
 	      const contentGroup = document.createElementNS(ns, "g");
@@ -11049,8 +11043,7 @@ const syncPropertiesFromSelection = () => {
     if (textBorderColorInput) textBorderColorInput.value = obj.borderColor || "#000000";
     if (textBorderColorTextInput) textBorderColorTextInput.value = obj.borderColor || "";
     if (textBorderWidthInput) textBorderWidthInput.value = Number(obj.borderWidth ?? 1);
-    if (textBevelInput) textBevelInput.checked = Boolean(obj.bevel);
-    if (textInsetInput) textInsetInput.checked = Boolean(obj.inset);
+    if (textBorderStyleSelect) textBorderStyleSelect.value = normalizeBorderStyle(obj.borderStyle);
     if (textRadiusInput) textRadiusInput.value = Number(obj.rx ?? 0);
     if (textPaddingInput) setInputValueSafe(textPaddingInput, Number.isFinite(Number(obj.padding)) ? Number(obj.padding) : "");
     if (!isActiveElementWithin(textBindingRows)) renderTextBindingRows(obj);
@@ -11071,8 +11064,7 @@ const syncPropertiesFromSelection = () => {
     if (buttonRotationInput) buttonRotationInput.value = Number(obj.rotation) || 0;
     if (buttonRadiusInput) buttonRadiusInput.value = Number(obj.rx ?? 0);
     if (buttonShadowInput) buttonShadowInput.checked = Boolean(obj.shadow);
-    if (buttonBevelInput) buttonBevelInput.checked = Boolean(obj.bevel);
-    if (buttonInsetInput) buttonInsetInput.checked = Boolean(obj.inset);
+    if (buttonBorderStyleSelect) buttonBorderStyleSelect.value = normalizeBorderStyle(obj.borderStyle);
 	    if (buttonFillInput) buttonFillInput.value = obj.fill || "#2b2f3a";
 	    if (buttonFillTextInput) buttonFillTextInput.value = obj.fill || "";
 	    if (buttonTextColorInput) buttonTextColorInput.value = obj.textColor || "#ffffff";
@@ -11084,8 +11076,14 @@ const syncPropertiesFromSelection = () => {
     if (buttonBorderEnabledInput) {
       const hasStroke = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
       buttonBorderEnabledInput.checked = Boolean(hasStroke);
+      if (buttonBorderStyleRow) {
+        buttonBorderStyleRow.classList.toggle("is-hidden", !hasStroke);
+        buttonBorderStyleRow.hidden = !hasStroke;
+      }
       if (buttonStrokeRow) buttonStrokeRow.classList.toggle("is-hidden", !hasStroke);
+      if (buttonStrokeWidthRow) buttonStrokeWidthRow.classList.toggle("is-hidden", !hasStroke);
     }
+    if (buttonStrokeWidthInput) buttonStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
     if (buttonAlignSelect) buttonAlignSelect.value = obj.align || "center";
     if (buttonValignSelect) buttonValignSelect.value = obj.valign || "middle";
     if (buttonTargetSelect) buttonTargetSelect.value = obj.action?.screenId || "";
@@ -11143,15 +11141,10 @@ const syncPropertiesFromSelection = () => {
 
     const hasStroke = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
     if (numberInputBorderEnabledInput) numberInputBorderEnabledInput.checked = Boolean(hasStroke);
-    if (numberInputBevelInput) numberInputBevelInput.checked = Boolean(obj.bevel);
-    if (numberInputInsetInput) numberInputInsetInput.checked = Boolean(obj.inset);
-    if (numberInputBevelRow) {
-      numberInputBevelRow.classList.toggle("is-hidden", !hasStroke);
-      numberInputBevelRow.hidden = !hasStroke;
-    }
-    if (numberInputInsetRow) {
-      numberInputInsetRow.classList.toggle("is-hidden", !hasStroke);
-      numberInputInsetRow.hidden = !hasStroke;
+    if (numberInputBorderStyleSelect) numberInputBorderStyleSelect.value = normalizeBorderStyle(obj.borderStyle);
+    if (numberInputBorderStyleRow) {
+      numberInputBorderStyleRow.classList.toggle("is-hidden", !hasStroke);
+      numberInputBorderStyleRow.hidden = !hasStroke;
     }
     if (numberInputStrokeRow) {
       numberInputStrokeRow.classList.toggle("is-hidden", !hasStroke);
@@ -11197,15 +11190,10 @@ const syncPropertiesFromSelection = () => {
 
     const hasStroke = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
     if (indicatorBorderEnabledInput) indicatorBorderEnabledInput.checked = Boolean(hasStroke);
-    if (indicatorBevelInput) indicatorBevelInput.checked = Boolean(obj.bevel);
-    if (indicatorInsetInput) indicatorInsetInput.checked = Boolean(obj.inset);
-    if (indicatorBevelRow) {
-      indicatorBevelRow.classList.toggle("is-hidden", !hasStroke);
-      indicatorBevelRow.hidden = !hasStroke;
-    }
-    if (indicatorInsetRow) {
-      indicatorInsetRow.classList.toggle("is-hidden", !hasStroke);
-      indicatorInsetRow.hidden = !hasStroke;
+    if (indicatorBorderStyleSelect) indicatorBorderStyleSelect.value = normalizeBorderStyle(obj.borderStyle);
+    if (indicatorBorderStyleRow) {
+      indicatorBorderStyleRow.classList.toggle("is-hidden", !hasStroke);
+      indicatorBorderStyleRow.hidden = !hasStroke;
     }
     if (indicatorStrokeRow) {
       indicatorStrokeRow.classList.toggle("is-hidden", !hasStroke);
@@ -11247,15 +11235,10 @@ const syncPropertiesFromSelection = () => {
     if (viewportBorderEnabledInput) viewportBorderEnabledInput.checked = borderEnabled;
     if (viewportBorderColorRow) viewportBorderColorRow.classList.toggle("is-hidden", !borderEnabled);
     if (viewportBorderWidthRow) viewportBorderWidthRow.classList.toggle("is-hidden", !borderEnabled);
-    if (viewportBevelInput) viewportBevelInput.checked = Boolean(obj.bevel);
-    if (viewportInsetInput) viewportInsetInput.checked = Boolean(obj.inset);
-    if (viewportBevelRow) {
-      viewportBevelRow.classList.toggle("is-hidden", !borderEnabled);
-      viewportBevelRow.hidden = !borderEnabled;
-    }
-    if (viewportInsetRow) {
-      viewportInsetRow.classList.toggle("is-hidden", !borderEnabled);
-      viewportInsetRow.hidden = !borderEnabled;
+    if (viewportBorderStyleSelect) viewportBorderStyleSelect.value = normalizeBorderStyle(obj.borderStyle);
+    if (viewportBorderStyleRow) {
+      viewportBorderStyleRow.classList.toggle("is-hidden", !borderEnabled);
+      viewportBorderStyleRow.hidden = !borderEnabled;
     }
     if (viewportBorderColorInput) viewportBorderColorInput.value = borderCfg.color || "#ffffff";
     if (viewportBorderColorTextInput) viewportBorderColorTextInput.value = borderCfg.color || "";
@@ -11306,15 +11289,10 @@ const syncPropertiesFromSelection = () => {
     if (rectBorderEnabledInput) {
       const hasStroke = obj.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0;
       rectBorderEnabledInput.checked = Boolean(hasStroke);
-      if (rectBevelInput) rectBevelInput.checked = Boolean(obj.bevel);
-      if (rectInsetInput) rectInsetInput.checked = Boolean(obj.inset);
-      if (rectBevelRow) {
-        rectBevelRow.classList.toggle("is-hidden", !hasStroke);
-        rectBevelRow.hidden = !hasStroke;
-      }
-      if (rectInsetRow) {
-        rectInsetRow.classList.toggle("is-hidden", !hasStroke);
-        rectInsetRow.hidden = !hasStroke;
+      if (rectBorderStyleSelect) rectBorderStyleSelect.value = normalizeBorderStyle(obj.borderStyle);
+      if (rectBorderStyleRow) {
+        rectBorderStyleRow.classList.toggle("is-hidden", !hasStroke);
+        rectBorderStyleRow.hidden = !hasStroke;
       }
       if (rectStrokeRow) rectStrokeRow.classList.toggle("is-hidden", !hasStroke);
       if (rectStrokeWidthRow) rectStrokeWidthRow.classList.toggle("is-hidden", !hasStroke);
@@ -11536,15 +11514,10 @@ const syncPropertiesFromSelection = () => {
     const border = obj.border || {};
     const borderEnabled = Boolean(border.enabled);
     if (barBorderEnabledInput) barBorderEnabledInput.checked = borderEnabled;
-    if (barBevelInput) barBevelInput.checked = Boolean(obj.bevel);
-    if (barInsetInput) barInsetInput.checked = Boolean(obj.inset);
-    if (barBevelRow) {
-      barBevelRow.classList.toggle("is-hidden", !borderEnabled);
-      barBevelRow.hidden = !borderEnabled;
-    }
-    if (barInsetRow) {
-      barInsetRow.classList.toggle("is-hidden", !borderEnabled);
-      barInsetRow.hidden = !borderEnabled;
+    if (barBorderStyleSelect) barBorderStyleSelect.value = normalizeBorderStyle(obj.borderStyle);
+    if (barBorderStyleRow) {
+      barBorderStyleRow.classList.toggle("is-hidden", !borderEnabled);
+      barBorderStyleRow.hidden = !borderEnabled;
     }
     if (barBorderColorRow) {
       barBorderColorRow.classList.toggle("is-hidden", !borderEnabled);
@@ -13603,7 +13576,7 @@ const loadJsonc = async () => {
             return;
           }
           if (obj.type !== "button") return;
-          if ("raised" in obj && !("shadow" in obj) && !("bevel" in obj)) {
+          if ("raised" in obj && !("shadow" in obj)) {
             obj.shadow = Boolean(obj.raised);
             delete obj.raised;
           }
@@ -14857,17 +14830,9 @@ if (textBorderWidthInput) {
   });
 }
 
-if (textBevelInput) {
-  textBevelInput.addEventListener("change", () => {
-    if (textBevelInput.checked && textInsetInput) textInsetInput.checked = false;
-    updateTextProperty({ bevel: textBevelInput.checked, inset: textBevelInput.checked ? false : Boolean(textInsetInput?.checked) });
-  });
-}
-
-if (textInsetInput) {
-  textInsetInput.addEventListener("change", () => {
-    if (textInsetInput.checked && textBevelInput) textBevelInput.checked = false;
-    updateTextProperty({ inset: textInsetInput.checked, bevel: textInsetInput.checked ? false : Boolean(textBevelInput?.checked) });
+if (textBorderStyleSelect) {
+  textBorderStyleSelect.addEventListener("change", () => {
+    updateTextProperty({ borderStyle: normalizeBorderStyle(textBorderStyleSelect.value) });
   });
 }
 
@@ -15296,17 +15261,9 @@ if (buttonShadowInput) {
   });
 }
 
-if (buttonBevelInput) {
-  buttonBevelInput.addEventListener("change", () => {
-    if (buttonBevelInput.checked && buttonInsetInput) buttonInsetInput.checked = false;
-    updateButtonProperty({ bevel: buttonBevelInput.checked, inset: buttonBevelInput.checked ? false : Boolean(buttonInsetInput?.checked) });
-  });
-}
-
-if (buttonInsetInput) {
-  buttonInsetInput.addEventListener("change", () => {
-    if (buttonInsetInput.checked && buttonBevelInput) buttonBevelInput.checked = false;
-    updateButtonProperty({ inset: buttonInsetInput.checked, bevel: buttonInsetInput.checked ? false : Boolean(buttonBevelInput?.checked) });
+if (buttonBorderStyleSelect) {
+  buttonBorderStyleSelect.addEventListener("change", () => {
+    updateButtonProperty({ borderStyle: normalizeBorderStyle(buttonBorderStyleSelect.value) });
   });
 }
 
@@ -15391,7 +15348,12 @@ if (buttonStrokeTextInput) {
 if (buttonBorderEnabledInput) {
   buttonBorderEnabledInput.addEventListener("change", () => {
     const enabled = buttonBorderEnabledInput.checked;
+    if (buttonBorderStyleRow) {
+      buttonBorderStyleRow.classList.toggle("is-hidden", !enabled);
+      buttonBorderStyleRow.hidden = !enabled;
+    }
     if (buttonStrokeRow) buttonStrokeRow.classList.toggle("is-hidden", !enabled);
+    if (buttonStrokeWidthRow) buttonStrokeWidthRow.classList.toggle("is-hidden", !enabled);
     if (!enabled) {
       updateButtonProperty({ stroke: "none" });
       return;
@@ -15403,6 +15365,14 @@ if (buttonBorderEnabledInput) {
     updateButtonProperty({ stroke: nextStroke, strokeWidth: nextWidth });
     if (buttonStrokeInput) buttonStrokeInput.value = nextStroke;
     if (buttonStrokeTextInput) buttonStrokeTextInput.value = nextStroke;
+    if (buttonStrokeWidthInput) buttonStrokeWidthInput.value = String(nextWidth);
+  });
+}
+
+if (buttonStrokeWidthInput) {
+  buttonStrokeWidthInput.addEventListener("change", () => {
+    const value = Number(buttonStrokeWidthInput.value);
+    if (Number.isFinite(value) && value >= 0) updateButtonProperty({ strokeWidth: value });
   });
 }
 
@@ -15466,29 +15436,17 @@ if (viewportBorderEnabledInput) {
   viewportBorderEnabledInput.addEventListener("change", () => {
     if (viewportBorderColorRow) viewportBorderColorRow.classList.toggle("is-hidden", !viewportBorderEnabledInput.checked);
     if (viewportBorderWidthRow) viewportBorderWidthRow.classList.toggle("is-hidden", !viewportBorderEnabledInput.checked);
-    if (viewportBevelRow) {
-      viewportBevelRow.classList.toggle("is-hidden", !viewportBorderEnabledInput.checked);
-      viewportBevelRow.hidden = !viewportBorderEnabledInput.checked;
-    }
-    if (viewportInsetRow) {
-      viewportInsetRow.classList.toggle("is-hidden", !viewportBorderEnabledInput.checked);
-      viewportInsetRow.hidden = !viewportBorderEnabledInput.checked;
+    if (viewportBorderStyleRow) {
+      viewportBorderStyleRow.classList.toggle("is-hidden", !viewportBorderEnabledInput.checked);
+      viewportBorderStyleRow.hidden = !viewportBorderEnabledInput.checked;
     }
     updateViewportBorder({ enabled: viewportBorderEnabledInput.checked });
   });
 }
 
-if (viewportBevelInput) {
-  viewportBevelInput.addEventListener("change", () => {
-    if (viewportBevelInput.checked && viewportInsetInput) viewportInsetInput.checked = false;
-    updateViewportProperty({ bevel: viewportBevelInput.checked, inset: viewportBevelInput.checked ? false : Boolean(viewportInsetInput?.checked) });
-  });
-}
-
-if (viewportInsetInput) {
-  viewportInsetInput.addEventListener("change", () => {
-    if (viewportInsetInput.checked && viewportBevelInput) viewportBevelInput.checked = false;
-    updateViewportProperty({ inset: viewportInsetInput.checked, bevel: viewportInsetInput.checked ? false : Boolean(viewportBevelInput?.checked) });
+if (viewportBorderStyleSelect) {
+  viewportBorderStyleSelect.addEventListener("change", () => {
+    updateViewportProperty({ borderStyle: normalizeBorderStyle(viewportBorderStyleSelect.value) });
   });
 }
 
@@ -15652,13 +15610,9 @@ if (rectShadowInput) {
 if (rectBorderEnabledInput) {
   rectBorderEnabledInput.addEventListener("change", () => {
     const enabled = rectBorderEnabledInput.checked;
-    if (rectBevelRow) {
-      rectBevelRow.classList.toggle("is-hidden", !enabled);
-      rectBevelRow.hidden = !enabled;
-    }
-    if (rectInsetRow) {
-      rectInsetRow.classList.toggle("is-hidden", !enabled);
-      rectInsetRow.hidden = !enabled;
+    if (rectBorderStyleRow) {
+      rectBorderStyleRow.classList.toggle("is-hidden", !enabled);
+      rectBorderStyleRow.hidden = !enabled;
     }
     if (rectStrokeRow) rectStrokeRow.classList.toggle("is-hidden", !enabled);
     if (rectStrokeWidthRow) rectStrokeWidthRow.classList.toggle("is-hidden", !enabled);
@@ -15675,17 +15629,9 @@ if (rectBorderEnabledInput) {
   });
 }
 
-if (rectBevelInput) {
-  rectBevelInput.addEventListener("change", () => {
-    if (rectBevelInput.checked && rectInsetInput) rectInsetInput.checked = false;
-    updateRectProperty({ bevel: rectBevelInput.checked, inset: rectBevelInput.checked ? false : Boolean(rectInsetInput?.checked) });
-  });
-}
-
-if (rectInsetInput) {
-  rectInsetInput.addEventListener("change", () => {
-    if (rectInsetInput.checked && rectBevelInput) rectBevelInput.checked = false;
-    updateRectProperty({ inset: rectInsetInput.checked, bevel: rectInsetInput.checked ? false : Boolean(rectBevelInput?.checked) });
+if (rectBorderStyleSelect) {
+  rectBorderStyleSelect.addEventListener("change", () => {
+    updateRectProperty({ borderStyle: normalizeBorderStyle(rectBorderStyleSelect.value) });
   });
 }
 
@@ -16446,13 +16392,9 @@ if (numberInputBoldInput) {
 if (numberInputBorderEnabledInput) {
   numberInputBorderEnabledInput.addEventListener("change", () => {
     const enabled = numberInputBorderEnabledInput.checked;
-    if (numberInputBevelRow) {
-      numberInputBevelRow.classList.toggle("is-hidden", !enabled);
-      numberInputBevelRow.hidden = !enabled;
-    }
-    if (numberInputInsetRow) {
-      numberInputInsetRow.classList.toggle("is-hidden", !enabled);
-      numberInputInsetRow.hidden = !enabled;
+    if (numberInputBorderStyleRow) {
+      numberInputBorderStyleRow.classList.toggle("is-hidden", !enabled);
+      numberInputBorderStyleRow.hidden = !enabled;
     }
     if (numberInputStrokeRow) {
       numberInputStrokeRow.classList.toggle("is-hidden", !enabled);
@@ -16476,17 +16418,9 @@ if (numberInputBorderEnabledInput) {
   });
 }
 
-if (numberInputBevelInput) {
-  numberInputBevelInput.addEventListener("change", () => {
-    if (numberInputBevelInput.checked && numberInputInsetInput) numberInputInsetInput.checked = false;
-    updateNumberInputProperty({ bevel: numberInputBevelInput.checked, inset: numberInputBevelInput.checked ? false : Boolean(numberInputInsetInput?.checked) });
-  });
-}
-
-if (numberInputInsetInput) {
-  numberInputInsetInput.addEventListener("change", () => {
-    if (numberInputInsetInput.checked && numberInputBevelInput) numberInputBevelInput.checked = false;
-    updateNumberInputProperty({ inset: numberInputInsetInput.checked, bevel: numberInputInsetInput.checked ? false : Boolean(numberInputBevelInput?.checked) });
+if (numberInputBorderStyleSelect) {
+  numberInputBorderStyleSelect.addEventListener("change", () => {
+    updateNumberInputProperty({ borderStyle: normalizeBorderStyle(numberInputBorderStyleSelect.value) });
   });
 }
 
@@ -16632,13 +16566,9 @@ if (indicatorBoldInput) {
 if (indicatorBorderEnabledInput) {
   indicatorBorderEnabledInput.addEventListener("change", () => {
     const enabled = indicatorBorderEnabledInput.checked;
-    if (indicatorBevelRow) {
-      indicatorBevelRow.classList.toggle("is-hidden", !enabled);
-      indicatorBevelRow.hidden = !enabled;
-    }
-    if (indicatorInsetRow) {
-      indicatorInsetRow.classList.toggle("is-hidden", !enabled);
-      indicatorInsetRow.hidden = !enabled;
+    if (indicatorBorderStyleRow) {
+      indicatorBorderStyleRow.classList.toggle("is-hidden", !enabled);
+      indicatorBorderStyleRow.hidden = !enabled;
     }
     if (indicatorStrokeRow) {
       indicatorStrokeRow.classList.toggle("is-hidden", !enabled);
@@ -16662,17 +16592,9 @@ if (indicatorBorderEnabledInput) {
   });
 }
 
-if (indicatorBevelInput) {
-  indicatorBevelInput.addEventListener("change", () => {
-    if (indicatorBevelInput.checked && indicatorInsetInput) indicatorInsetInput.checked = false;
-    updateIndicatorProperty({ bevel: indicatorBevelInput.checked, inset: indicatorBevelInput.checked ? false : Boolean(indicatorInsetInput?.checked) });
-  });
-}
-
-if (indicatorInsetInput) {
-  indicatorInsetInput.addEventListener("change", () => {
-    if (indicatorInsetInput.checked && indicatorBevelInput) indicatorBevelInput.checked = false;
-    updateIndicatorProperty({ inset: indicatorInsetInput.checked, bevel: indicatorInsetInput.checked ? false : Boolean(indicatorBevelInput?.checked) });
+if (indicatorBorderStyleSelect) {
+  indicatorBorderStyleSelect.addEventListener("change", () => {
+    updateIndicatorProperty({ borderStyle: normalizeBorderStyle(indicatorBorderStyleSelect.value) });
   });
 }
 
@@ -16830,13 +16752,9 @@ if (barTicksMinorInput) {
 if (barBorderEnabledInput) {
   barBorderEnabledInput.addEventListener("change", () => {
     const enabled = barBorderEnabledInput.checked;
-    if (barBevelRow) {
-      barBevelRow.classList.toggle("is-hidden", !enabled);
-      barBevelRow.hidden = !enabled;
-    }
-    if (barInsetRow) {
-      barInsetRow.classList.toggle("is-hidden", !enabled);
-      barInsetRow.hidden = !enabled;
+    if (barBorderStyleRow) {
+      barBorderStyleRow.classList.toggle("is-hidden", !enabled);
+      barBorderStyleRow.hidden = !enabled;
     }
     if (barBorderColorRow) {
       barBorderColorRow.classList.toggle("is-hidden", !enabled);
@@ -16850,17 +16768,9 @@ if (barBorderEnabledInput) {
   });
 }
 
-if (barBevelInput) {
-  barBevelInput.addEventListener("change", () => {
-    if (barBevelInput.checked && barInsetInput) barInsetInput.checked = false;
-    updateBarProperty({ bevel: barBevelInput.checked, inset: barBevelInput.checked ? false : Boolean(barInsetInput?.checked) });
-  });
-}
-
-if (barInsetInput) {
-  barInsetInput.addEventListener("change", () => {
-    if (barInsetInput.checked && barBevelInput) barBevelInput.checked = false;
-    updateBarProperty({ inset: barInsetInput.checked, bevel: barInsetInput.checked ? false : Boolean(barBevelInput?.checked) });
+if (barBorderStyleSelect) {
+  barBorderStyleSelect.addEventListener("change", () => {
+    updateBarProperty({ borderStyle: normalizeBorderStyle(barBorderStyleSelect.value) });
   });
 }
 

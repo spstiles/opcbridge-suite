@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v32" />
+  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v33" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -435,16 +435,11 @@
             </div>
             <div class="prop-row prop-row-compact">
               <label>Frame</label>
-              <div class="prop-inline">
-                <label class="inline-check">
-                  <input id="textBevel" type="checkbox" />
-                  <span>Bezel</span>
-                </label>
-                <label class="inline-check">
-                  <input id="textInset" type="checkbox" />
-                  <span>Inset</span>
-                </label>
-              </div>
+              <select id="textBorderStyle">
+                <option value="flat">Flat</option>
+                <option value="outset">Outset</option>
+                <option value="inset">Inset</option>
+              </select>
             </div>
             <div class="prop-row">
               <label for="textRadius">Radius</label>
@@ -572,14 +567,6 @@
                   <input id="buttonShadow" type="checkbox" />
                   <span>Shadow</span>
                 </label>
-                <label class="inline-check">
-                  <input id="buttonBevel" type="checkbox" />
-                  <span>Raised</span>
-                </label>
-                <label class="inline-check">
-                  <input id="buttonInset" type="checkbox" />
-                  <span>Inset</span>
-                </label>
               </div>
             </div>
             <div class="prop-row">
@@ -633,6 +620,14 @@
               <label for="buttonBorderEnabled">Border</label>
               <input id="buttonBorderEnabled" type="checkbox" />
             </div>
+            <div class="prop-row" id="buttonBorderStyleRow">
+              <label for="buttonBorderStyle">Border Style</label>
+              <select id="buttonBorderStyle">
+                <option value="flat">Flat</option>
+                <option value="outset">Outset</option>
+                <option value="inset">Inset</option>
+              </select>
+            </div>
             <div class="prop-row" id="buttonStrokeRow">
               <label for="buttonStroke">Stroke</label>
               <div class="prop-inline">
@@ -641,6 +636,10 @@
                 <button id="buttonStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
                 <div id="buttonStrokeSwatches" class="swatch-popover" aria-label="Button stroke swatches"></div>
               </div>
+            </div>
+            <div class="prop-row" id="buttonStrokeWidthRow">
+              <label for="buttonStrokeWidth">Border Width</label>
+              <input id="buttonStrokeWidth" type="number" min="0" step="1" />
             </div>
           </div>
 
@@ -732,13 +731,13 @@
 	                </label>
 	              </div>
 	            </div>
-	            <div class="prop-row is-hidden" id="numberInputBevelRow" hidden>
-	              <label for="numberInputBevel">Bezel</label>
-	              <input id="numberInputBevel" type="checkbox" />
-	            </div>
-	            <div class="prop-row is-hidden" id="numberInputInsetRow" hidden>
-	              <label for="numberInputInset">Inset</label>
-	              <input id="numberInputInset" type="checkbox" />
+	            <div class="prop-row is-hidden" id="numberInputBorderStyleRow" hidden>
+	              <label for="numberInputBorderStyle">Border Style</label>
+	              <select id="numberInputBorderStyle">
+	                <option value="flat">Flat</option>
+	                <option value="outset">Outset</option>
+	                <option value="inset">Inset</option>
+	              </select>
 	            </div>
 	            <div class="prop-row" id="numberInputStrokeRow">
 	              <label for="numberInputStroke">Border Color</label>
@@ -829,13 +828,13 @@
 		                </label>
 		              </div>
 		            </div>
-		            <div class="prop-row is-hidden" id="indicatorBevelRow" hidden>
-		              <label for="indicatorBevel">Bezel</label>
-		              <input id="indicatorBevel" type="checkbox" />
-		            </div>
-		            <div class="prop-row is-hidden" id="indicatorInsetRow" hidden>
-		              <label for="indicatorInset">Inset</label>
-		              <input id="indicatorInset" type="checkbox" />
+		            <div class="prop-row is-hidden" id="indicatorBorderStyleRow" hidden>
+		              <label for="indicatorBorderStyle">Border Style</label>
+		              <select id="indicatorBorderStyle">
+		                <option value="flat">Flat</option>
+		                <option value="outset">Outset</option>
+		                <option value="inset">Inset</option>
+		              </select>
 		            </div>
 		            <div class="prop-row" id="indicatorStrokeRow">
 		              <label for="indicatorStroke">Border Color</label>
@@ -948,13 +947,13 @@
 	              <label for="viewportBorderEnabled">Enabled</label>
 	              <input id="viewportBorderEnabled" type="checkbox" />
 	            </div>
-	            <div class="prop-row is-hidden" id="viewportBevelRow" hidden>
-	              <label for="viewportBevel">Bezel</label>
-	              <input id="viewportBevel" type="checkbox" />
-	            </div>
-	            <div class="prop-row is-hidden" id="viewportInsetRow" hidden>
-	              <label for="viewportInset">Inset</label>
-	              <input id="viewportInset" type="checkbox" />
+	            <div class="prop-row is-hidden" id="viewportBorderStyleRow" hidden>
+	              <label for="viewportBorderStyle">Border Style</label>
+	              <select id="viewportBorderStyle">
+	                <option value="flat">Flat</option>
+	                <option value="outset">Outset</option>
+	                <option value="inset">Inset</option>
+	              </select>
 	            </div>
 	            <div class="prop-row" id="viewportBorderColorRow">
 	              <label for="viewportBorderColor">Color</label>
@@ -1005,13 +1004,13 @@
 	              <label for="rectBorderEnabled">Border</label>
 	              <input id="rectBorderEnabled" type="checkbox" />
 	            </div>
-	            <div class="prop-row is-hidden" id="rectBevelRow" hidden>
-	              <label for="rectBevel">Bezel</label>
-	              <input id="rectBevel" type="checkbox" />
-	            </div>
-	            <div class="prop-row is-hidden" id="rectInsetRow" hidden>
-	              <label for="rectInset">Inset</label>
-	              <input id="rectInset" type="checkbox" />
+	            <div class="prop-row is-hidden" id="rectBorderStyleRow" hidden>
+	              <label for="rectBorderStyle">Border Style</label>
+	              <select id="rectBorderStyle">
+	                <option value="flat">Flat</option>
+	                <option value="outset">Outset</option>
+	                <option value="inset">Inset</option>
+	              </select>
 	            </div>
 	            <div class="prop-row">
 	              <label for="rectFill">Fill</label>
@@ -1858,13 +1857,13 @@
 	                </label>
 	              </div>
 	            </div>
-	            <div class="prop-row is-hidden" id="barBevelRow" hidden>
-	              <label for="barBevel">Bezel</label>
-	              <input id="barBevel" type="checkbox" />
-	            </div>
-	            <div class="prop-row is-hidden" id="barInsetRow" hidden>
-	              <label for="barInset">Inset</label>
-	              <input id="barInset" type="checkbox" />
+	            <div class="prop-row is-hidden" id="barBorderStyleRow" hidden>
+	              <label for="barBorderStyle">Border Style</label>
+	              <select id="barBorderStyle">
+	                <option value="flat">Flat</option>
+	                <option value="outset">Outset</option>
+	                <option value="inset">Inset</option>
+	              </select>
 	            </div>
 	            <div class="prop-row" id="barBorderColorRow">
 	              <label for="barBorderColor">Border Color</label>
@@ -2688,6 +2687,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260613-hmi-ui-v32"></script>
+	  <script src="js/hmi.js?v=20260613-hmi-ui-v33"></script>
 	</body>
 	</html>
