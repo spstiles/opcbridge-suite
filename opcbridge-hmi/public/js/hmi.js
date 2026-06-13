@@ -6095,7 +6095,8 @@ const explodeSvgDocumentToObjects = (svgEl, imageObj) => {
         y: Math.round(p.y),
         text,
         fontSize: fontSize != null ? Math.max(1, Math.round(fontSize * strokeScale)) : 18,
-        fill: fill === "none" ? "none" : (fill || "#ffffff")
+        fill: fill === "none" ? "none" : (fill || "#ffffff"),
+        borderStyle: "flat"
       });
       return;
     }
@@ -25209,7 +25210,11 @@ if (hmiSvg) {
       y,
       text: "New Text",
       fontSize: 18,
-      fill: "#ffffff"
+      fill: "#ffffff",
+      background: "transparent",
+      borderColor: "transparent",
+      borderWidth: 1,
+      borderStyle: "flat"
     };
     recordHistory();
     activeObjects.push(nextText);
