@@ -9138,20 +9138,27 @@ const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, strokeWidth
   const widthPx = Math.max(1, Number(strokeWidth) || 1);
   const bandCount = Math.max(1, Math.min(12, Math.ceil(widthPx)));
   const bandWidth = widthPx / bandCount;
-  const highlightColor = inset ? "#000000" : "#ffffff";
-  const shadeColor = inset ? "#ffffff" : "#000000";
+  const gradientColor = (from, to, progress) => {
+    const value = Math.round(from + ((to - from) * progress));
+    const hex = value.toString(16).padStart(2, "0");
+    return `#${hex}${hex}${hex}`;
+  };
+  const highlightStart = inset ? 0 : 255;
+  const highlightEnd = inset ? 96 : 176;
+  const shadeStart = inset ? 255 : 0;
+  const shadeEnd = inset ? 176 : 96;
 
   for (let i = 0; i < bandCount; i += 1) {
     const progress = bandCount === 1 ? 0 : i / (bandCount - 1);
     const offset = Math.max(0.5, (bandWidth / 2) + (i * bandWidth));
-    const highlightOpacity = Math.max(0.08, 0.72 - (progress * 0.54));
-    const shadeOpacity = Math.max(0.06, 0.58 - (progress * 0.42));
+    const highlightColor = gradientColor(highlightStart, highlightEnd, progress);
+    const shadeColor = gradientColor(shadeStart, shadeEnd, progress);
 
     const highlight = document.createElementNS(ns, "path");
     highlight.setAttribute("d", `M ${left + offset} ${top + height - offset} L ${left + offset} ${top + offset} L ${left + width - offset} ${top + offset}`);
     highlight.setAttribute("fill", "none");
     highlight.setAttribute("stroke", highlightColor);
-    highlight.setAttribute("stroke-opacity", highlightOpacity.toFixed(3));
+    highlight.setAttribute("stroke-opacity", "1");
     highlight.setAttribute("stroke-width", bandWidth);
     highlight.setAttribute("stroke-linecap", "butt");
     highlight.setAttribute("stroke-linejoin", "miter");
@@ -9163,7 +9170,7 @@ const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, strokeWidth
     shade.setAttribute("d", `M ${left + offset} ${top + height - offset} L ${left + width - offset} ${top + height - offset} L ${left + width - offset} ${top + offset}`);
     shade.setAttribute("fill", "none");
     shade.setAttribute("stroke", shadeColor);
-    shade.setAttribute("stroke-opacity", shadeOpacity.toFixed(3));
+    shade.setAttribute("stroke-opacity", "1");
     shade.setAttribute("stroke-width", bandWidth);
     shade.setAttribute("stroke-linecap", "butt");
     shade.setAttribute("stroke-linejoin", "miter");
