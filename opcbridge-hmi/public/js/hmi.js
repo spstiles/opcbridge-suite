@@ -11519,7 +11519,7 @@ const updatePropertiesPanel = () => {
   const showBar = Boolean(obj && obj.type === "bar");
   const showNumberInput = Boolean(obj && obj.type === "number-input");
   const showIndicator = Boolean(obj && obj.type === "indicator");
-  const showAutomationLaunch = Boolean(obj && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle);
+  const showAutomationLaunch = Boolean(obj && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showBar);
   if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showSpline || showPolygon || showBar || showNumberInput || showIndicator);
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
@@ -19170,25 +19170,6 @@ const initializeAdditionalAutomationSections = () => {
       indicatorTagSelect?.closest(".prop-row"),
       compactBindingRowBefore(indicatorStateModeSelect?.closest(".prop-row")),
       indicatorStateModeSelect?.closest(".prop-row")
-    ]
-  });
-
-  registerAutomationSection({
-    id: "bar-bindings",
-    tab: "value",
-    types: ["bar"],
-    title: "Value Bindings",
-    nodes: [
-      barMinTagEnabledInput?.closest(".prop-row"),
-      barMinTagFields,
-      barMaxTagEnabledInput?.closest(".prop-row"),
-      barMaxTagFields,
-      barBindConnectionInput?.closest(".prop-row"),
-      barBindTagSelect?.closest(".prop-row"),
-      compactBindingRowBefore(barDigitsInput?.closest(".prop-row")),
-      barDigitsInput?.closest(".prop-row"),
-      barDecimalsInput?.closest(".prop-row"),
-      barMultiplierInput?.closest(".prop-row")
     ]
   });
 
