@@ -9251,34 +9251,16 @@ const svgRootForPaint = (parent) => {
   return parent.ownerSVGElement || null;
 };
 
-const getGradientVectorForBounds = (angle, bounds) => {
-  const x = Number(bounds?.x ?? 0);
-  const y = Number(bounds?.y ?? 0);
-  const width = Math.max(1, Number(bounds?.width ?? 1));
-  const height = Math.max(1, Number(bounds?.height ?? 1));
+const getGradientVectorForObjectBox = (angle) => {
   const radians = (((Number(angle) || 0) - 90) * Math.PI) / 180;
   const dx = Math.cos(radians);
   const dy = Math.sin(radians);
-  const span = Math.abs(width * dx) + Math.abs(height * dy);
-  const cx = x + width / 2;
-  const cy = y + height / 2;
+  const span = Math.abs(dx) + Math.abs(dy);
   return {
-    x1: cx - (dx * span) / 2,
-    y1: cy - (dy * span) / 2,
-    x2: cx + (dx * span) / 2,
-    y2: cy + (dy * span) / 2
-  };
-};
-
-const getGradientCircleForBounds = (bounds) => {
-  const x = Number(bounds?.x ?? 0);
-  const y = Number(bounds?.y ?? 0);
-  const width = Math.max(1, Number(bounds?.width ?? 1));
-  const height = Math.max(1, Number(bounds?.height ?? 1));
-  return {
-    cx: x + width / 2,
-    cy: y + height / 2,
-    r: Math.sqrt((width * width) + (height * height)) / 2
+    x1: 0.5 - (dx * span) / 2,
+    y1: 0.5 - (dy * span) / 2,
+    x2: 0.5 + (dx * span) / 2,
+    y2: 0.5 + (dy * span) / 2
   };
 };
 
@@ -9293,14 +9275,13 @@ const resolveSvgPaint = (parent, paint, bounds) => {
   const gradientEl = document.createElementNS("http://www.w3.org/2000/svg", isRadial ? "radialGradient" : "linearGradient");
   const id = `paintGradient${nextPaintGradientId++}`;
   gradientEl.setAttribute("id", id);
-  gradientEl.setAttribute("gradientUnits", "userSpaceOnUse");
+  gradientEl.setAttribute("gradientUnits", "objectBoundingBox");
   if (isRadial) {
-    const circle = getGradientCircleForBounds(bounds);
-    gradientEl.setAttribute("cx", circle.cx);
-    gradientEl.setAttribute("cy", circle.cy);
-    gradientEl.setAttribute("r", circle.r);
+    gradientEl.setAttribute("cx", "0.5");
+    gradientEl.setAttribute("cy", "0.5");
+    gradientEl.setAttribute("r", "0.707");
   } else {
-    const vector = getGradientVectorForBounds(gradient.angle, bounds);
+    const vector = getGradientVectorForObjectBox(gradient.angle);
     gradientEl.setAttribute("x1", vector.x1);
     gradientEl.setAttribute("y1", vector.y1);
     gradientEl.setAttribute("x2", vector.x2);
