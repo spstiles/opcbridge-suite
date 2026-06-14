@@ -5321,6 +5321,11 @@ const applyMultilineSvgText = (textEl, lines, x, yStart, lineHeight) => {
     textEl.appendChild(tspan);
   });
 };
+const getTextBaselineStart = (blockTop, measured) => {
+  const ascent = Number(measured?.ascent);
+  const fallback = Number(measured?.fontSize || 16) * 0.8;
+  return Number(blockTop || 0) + (Number.isFinite(ascent) ? ascent : fallback);
+};
 const groupEditStack = [];
 let selectedPolygonVertex = null;
 let lastEditUiState = null;
@@ -10075,18 +10080,17 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     if (align === "right") textEl.setAttribute("text-anchor", "end");
     if (autoSize) {
       textEl.setAttribute("x", x);
-      textEl.setAttribute("y", y);
-      const lines = splitMultiline(decodedText);
-      if (lines.length > 1) {
-        textEl.setAttribute("dominant-baseline", "hanging");
-        const measured = measureTextBlock(decodedText, fontSize, Boolean(obj.bold));
-        let yStart = y;
-        if (valign === "middle") yStart = y - measured.height / 2;
-        if (valign === "bottom") yStart = y - measured.height;
-        applyMultilineSvgText(textEl, measured.lines, x, yStart, measured.lineHeight);
+      const measured = measureTextBlock(decodedText, fontSize, Boolean(obj.bold));
+      if (measured.lines.length > 1) {
+        let blockTop = y;
+        if (valign === "middle") blockTop = y - measured.height / 2;
+        if (valign === "bottom") blockTop = y - measured.height;
+        applyMultilineSvgText(textEl, measured.lines, x, getTextBaselineStart(blockTop, measured), measured.lineHeight);
       } else {
-        if (valign === "middle") textEl.setAttribute("dominant-baseline", "middle");
-        if (valign === "bottom") textEl.setAttribute("dominant-baseline", "text-after-edge");
+        let baselineY = y;
+        if (valign === "middle") baselineY = getTextBaselineStart(y - measured.height / 2, measured);
+        if (valign === "bottom") baselineY = getTextBaselineStart(y - measured.height, measured);
+        textEl.setAttribute("y", baselineY);
         textEl.textContent = decodedText;
       }
     } else {
@@ -10099,11 +10103,10 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       let textX = contentLeft;
       if (align === "center") textX = contentLeft + contentWidth / 2;
       if (align === "right") textX = contentLeft + contentWidth;
-      textEl.setAttribute("dominant-baseline", "hanging");
-      let yStart = contentTop;
-      if (valign === "middle") yStart = contentTop + (contentHeight - measured.height) / 2;
-      if (valign === "bottom") yStart = contentTop + contentHeight - measured.height;
-      applyMultilineSvgText(textEl, measured.lines, textX, yStart, measured.lineHeight);
+      let blockTop = contentTop;
+      if (valign === "middle") blockTop = contentTop + (contentHeight - measured.height) / 2;
+      if (valign === "bottom") blockTop = contentTop + contentHeight - measured.height;
+      applyMultilineSvgText(textEl, measured.lines, textX, getTextBaselineStart(blockTop, measured), measured.lineHeight);
     }
     group.appendChild(textEl);
     parent.appendChild(group);
