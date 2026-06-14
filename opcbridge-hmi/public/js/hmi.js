@@ -5198,6 +5198,11 @@ const getTextMeasureCtx = () => {
   return textMeasureCtx;
 };
 
+const getMeasuredTextHeight = (lineCount, lineHeight, ascent, descent) => {
+  const count = Math.max(1, Number(lineCount) || 1);
+  return Math.ceil(Number(ascent || 0) + Number(descent || 0) + (Number(lineHeight || 0) * (count - 1)));
+};
+
 const measureTextBlock = (text, fontSize, isBold = false) => {
   const ctx = getTextMeasureCtx();
   const size = Number(fontSize) || 16;
@@ -5216,9 +5221,7 @@ const measureTextBlock = (text, fontSize, isBold = false) => {
     ...metrics.map((m) => (Number.isFinite(m.actualBoundingBoxDescent) ? m.actualBoundingBoxDescent : size * 0.2))
   );
   const singleLineHeight = Math.ceil(ascent + descent);
-  const height = lines.length <= 1
-    ? singleLineHeight
-    : Math.ceil(lineHeight * Math.max(1, lines.length));
+  const height = getMeasuredTextHeight(lines.length, lineHeight, ascent, descent);
   return { lines, width, height, lineHeight, fontSize: size, ascent, descent, singleLineHeight };
 };
 
@@ -5283,9 +5286,7 @@ const wrapTextToWidth = (text, maxWidth, fontSize, isBold = false) => {
     ...metrics.map((m) => (Number.isFinite(m.actualBoundingBoxDescent) ? m.actualBoundingBoxDescent : size * 0.2))
   );
   const singleLineHeight = Math.ceil(ascent + descent);
-  const height = wrappedLines.length <= 1
-    ? singleLineHeight
-    : Math.ceil(lineHeight * Math.max(1, wrappedLines.length));
+  const height = getMeasuredTextHeight(wrappedLines.length, lineHeight, ascent, descent);
   return { lines: wrappedLines, width, height, lineHeight, fontSize: size, ascent, descent, singleLineHeight };
 };
 
@@ -10109,6 +10110,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const textEl = document.createElementNS(ns, "text");
     textEl.setAttribute("xml:space", "preserve");
     textEl.style.whiteSpace = "pre";
+    textEl.setAttribute("font-family", "Arial, sans-serif");
     const x = Number(obj.x ?? 0);
     const y = Number(obj.y ?? 0);
     const displayText = renderTextTemplate(obj, isEditMode);
@@ -10251,6 +10253,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    const label = document.createElementNS(ns, "text");
 	    label.setAttribute("xml:space", "preserve");
 	    label.style.whiteSpace = "pre";
+	    label.setAttribute("font-family", "Arial, sans-serif");
 	    const align = obj.align || "center";
 	    const valign = obj.valign || "middle";
     let labelX = w / 2;
