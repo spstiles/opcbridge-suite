@@ -11417,8 +11417,14 @@ const syncPropertiesFromSelection = () => {
         rectBorderStyleRow.classList.toggle("is-hidden", !hasStroke);
         rectBorderStyleRow.hidden = !hasStroke;
       }
-      if (rectStrokeRow) rectStrokeRow.classList.toggle("is-hidden", !hasStroke);
-      if (rectStrokeWidthRow) rectStrokeWidthRow.classList.toggle("is-hidden", !hasStroke);
+      if (rectStrokeRow) {
+        rectStrokeRow.classList.toggle("is-hidden", !hasStroke);
+        rectStrokeRow.hidden = !hasStroke;
+      }
+      if (rectStrokeWidthRow) {
+        rectStrokeWidthRow.classList.toggle("is-hidden", !hasStroke);
+        rectStrokeWidthRow.hidden = !hasStroke;
+      }
     }
     if (rectFillInput) rectFillInput.value = obj.fill || "#3a3f4b";
     if (rectFillTextInput) rectFillTextInput.value = obj.fill || "";
@@ -15766,8 +15772,14 @@ if (rectBorderEnabledInput) {
       rectBorderStyleRow.classList.toggle("is-hidden", !enabled);
       rectBorderStyleRow.hidden = !enabled;
     }
-    if (rectStrokeRow) rectStrokeRow.classList.toggle("is-hidden", !enabled);
-    if (rectStrokeWidthRow) rectStrokeWidthRow.classList.toggle("is-hidden", !enabled);
+    if (rectStrokeRow) {
+      rectStrokeRow.classList.toggle("is-hidden", !enabled);
+      rectStrokeRow.hidden = !enabled;
+    }
+    if (rectStrokeWidthRow) {
+      rectStrokeWidthRow.classList.toggle("is-hidden", !enabled);
+      rectStrokeWidthRow.hidden = !enabled;
+    }
     if (!enabled) {
       updateRectProperty({ stroke: "none" });
       return;

@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v41" />
+  <link rel="stylesheet" href="css/main.css?v=20260613-hmi-ui-v42" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -1008,6 +1008,19 @@
 	              <label for="rectBorderEnabled">Border</label>
 	              <input id="rectBorderEnabled" type="checkbox" />
 	            </div>
+            <div class="prop-row" id="rectStrokeRow">
+              <label for="rectStroke">Border Color</label>
+              <div class="prop-inline">
+                <input id="rectStroke" type="color" />
+                <input id="rectStrokeText" type="text" placeholder="#ffffff" />
+                <button id="rectStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <div id="rectStrokeSwatches" class="swatch-popover" aria-label="Rectangle border swatches"></div>
+              </div>
+            </div>
+	            <div class="prop-row" id="rectStrokeWidthRow">
+	              <label for="rectStrokeWidth">Border Width</label>
+	              <input id="rectStrokeWidth" type="number" min="0" step="1" />
+	            </div>
 	            <div class="prop-row is-hidden" id="rectBorderStyleRow" hidden>
 	              <label for="rectBorderStyle">Border Style</label>
 	              <select id="rectBorderStyle">
@@ -1025,19 +1038,6 @@
                 <div id="rectFillSwatches" class="swatch-popover" aria-label="Rectangle fill swatches"></div>
               </div>
             </div>
-            <div class="prop-row" id="rectStrokeRow">
-              <label for="rectStroke">Stroke</label>
-              <div class="prop-inline">
-                <input id="rectStroke" type="color" />
-                <input id="rectStrokeText" type="text" placeholder="#ffffff" />
-                <button id="rectStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-                <div id="rectStrokeSwatches" class="swatch-popover" aria-label="Rectangle stroke swatches"></div>
-              </div>
-            </div>
-	            <div class="prop-row" id="rectStrokeWidthRow">
-	              <label for="rectStrokeWidth">Stroke Width</label>
-	              <input id="rectStrokeWidth" type="number" min="0" step="1" />
-	            </div>
 
               <div id="alarmsPanelPropsFields" class="prop-subgroup is-hidden" hidden>
                 <div class="prop-group-title">Alarms Panel</div>
@@ -2691,6 +2691,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260613-hmi-ui-v41"></script>
+	  <script src="js/hmi.js?v=20260613-hmi-ui-v42"></script>
 	</body>
 	</html>
