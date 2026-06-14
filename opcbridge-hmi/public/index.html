@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260614-hmi-ui-v43" />
+  <link rel="stylesheet" href="css/main.css?v=20260614-hmi-ui-v44" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -323,7 +323,7 @@
               <div class="prop-inline">
                 <input id="screenBg" type="color" />
                 <input id="screenBgText" type="text" placeholder="#202533" />
-                <button id="screenBgSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="screenBgSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="screenBgSwatches" class="swatch-popover" aria-label="Background swatches"></div>
               </div>
             </div>
@@ -344,7 +344,7 @@
               <div class="prop-inline">
                 <input id="screenBorderColor" type="color" />
                 <input id="screenBorderColorText" type="text" placeholder="#ffffff" />
-                <button id="screenBorderSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="screenBorderSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="screenBorderSwatches" class="swatch-popover" aria-label="Border swatches"></div>
               </div>
             </div>
@@ -407,7 +407,7 @@
               <div class="prop-inline">
                 <input id="textFill" type="color" />
                 <input id="textFillText" type="text" placeholder="#ffffff" />
-                <button id="textFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="textFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="textFillSwatches" class="swatch-popover" aria-label="Text fill swatches"></div>
               </div>
             </div>
@@ -416,7 +416,7 @@
               <div class="prop-inline">
                 <input id="textBg" type="color" />
                 <input id="textBgText" type="text" placeholder="transparent" />
-                <button id="textBgSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="textBgSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="textBgSwatches" class="swatch-popover" aria-label="Text background swatches"></div>
               </div>
             </div>
@@ -578,7 +578,7 @@
               <div class="prop-inline">
                 <input id="buttonFill" type="color" />
                 <input id="buttonFillText" type="text" placeholder="#2b2f3a" />
-                <button id="buttonFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="buttonFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="buttonFillSwatches" class="swatch-popover" aria-label="Button fill swatches"></div>
               </div>
             </div>
@@ -1013,7 +1013,7 @@
               <div class="prop-inline">
                 <input id="rectStroke" type="color" />
                 <input id="rectStrokeText" type="text" placeholder="#ffffff" />
-                <button id="rectStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="rectStrokeSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="rectStrokeSwatches" class="swatch-popover" aria-label="Rectangle border swatches"></div>
               </div>
             </div>
@@ -1034,7 +1034,7 @@
 	              <div class="prop-inline">
 	                <input id="rectFill" type="color" />
                 <input id="rectFillText" type="text" placeholder="#3a3f4b" />
-                <button id="rectFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="rectFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="rectFillSwatches" class="swatch-popover" aria-label="Rectangle fill swatches"></div>
               </div>
             </div>
@@ -1299,7 +1299,7 @@
                   <div class="prop-inline">
                     <input id="rectColorFill" type="color" />
                     <input id="rectColorFillText" type="text" placeholder="#3a3f4b" />
-                    <button id="rectColorFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <button id="rectColorFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                     <div id="rectColorFillSwatches" class="swatch-popover" aria-label="Dynamic fill swatches"></div>
                   </div>
                 </div>
@@ -1308,7 +1308,7 @@
                   <div class="prop-inline">
                     <input id="rectColorStroke" type="color" />
                     <input id="rectColorStrokeText" type="text" placeholder="#ffffff" />
-                    <button id="rectColorStrokeSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <button id="rectColorStrokeSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                     <div id="rectColorStrokeSwatches" class="swatch-popover" aria-label="Dynamic stroke swatches"></div>
                   </div>
                 </div>
@@ -1317,7 +1317,7 @@
                   <div class="prop-inline">
                     <input id="rectColorText" type="color" />
                     <input id="rectColorTextText" type="text" placeholder="#ffffff" />
-                    <button id="rectColorTextSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <button id="rectColorTextSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                     <div id="rectColorTextSwatches" class="swatch-popover" aria-label="Dynamic text swatches"></div>
                   </div>
                 </div>
@@ -1326,7 +1326,7 @@
                   <div class="prop-inline">
                     <input id="rectColorBackground" type="color" />
                     <input id="rectColorBackgroundText" type="text" placeholder="#ffffff" />
-                    <button id="rectColorBackgroundSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <button id="rectColorBackgroundSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                     <div id="rectColorBackgroundSwatches" class="swatch-popover" aria-label="Dynamic background swatches"></div>
                   </div>
                 </div>
@@ -1335,7 +1335,7 @@
                   <div class="prop-inline">
                     <input id="rectColorBorder" type="color" />
                     <input id="rectColorBorderText" type="text" placeholder="#ffffff" />
-                    <button id="rectColorBorderSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                    <button id="rectColorBorderSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                     <div id="rectColorBorderSwatches" class="swatch-popover" aria-label="Dynamic border swatches"></div>
                   </div>
                 </div>
@@ -1378,7 +1378,7 @@
               <div class="prop-inline">
                 <input id="ellipseFill" type="color" />
                 <input id="ellipseFillText" type="text" placeholder="#3a3f4b" />
-                <button id="ellipseFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="ellipseFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="ellipseFillSwatches" class="swatch-popover" aria-label="Ellipse fill swatches"></div>
               </div>
             </div>
@@ -1436,7 +1436,7 @@
               <div class="prop-inline">
                 <input id="circleFill" type="color" />
                 <input id="circleFillText" type="text" placeholder="#3a3f4b" />
-                <button id="circleFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="circleFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="circleFillSwatches" class="swatch-popover" aria-label="Circle fill swatches"></div>
               </div>
             </div>
@@ -1574,7 +1574,7 @@
 		              <div class="prop-inline">
 		                <input id="polygonFill" type="color" />
 		                <input id="polygonFillText" type="text" placeholder="#3a3f4b" />
-		                <button id="polygonFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                <button id="polygonFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
 		                <div id="polygonFillSwatches" class="swatch-popover" aria-label="Polygon fill swatches"></div>
 		              </div>
 		            </div>
@@ -1635,7 +1635,7 @@
 		                <div class="prop-inline">
 		                  <input id="polygonFillAutoOn" type="color" />
 		                  <input id="polygonFillAutoOnText" type="text" placeholder="#3a3f4b" />
-		                  <button id="polygonFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                  <button id="polygonFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
 		                  <div id="polygonFillAutoOnSwatches" class="swatch-popover" aria-label="Polygon fill automation on swatches"></div>
 		                </div>
 		              </div>
@@ -1644,7 +1644,7 @@
 		                <div class="prop-inline">
 		                  <input id="polygonFillAutoOff" type="color" />
 		                  <input id="polygonFillAutoOffText" type="text" placeholder="#3a3f4b" />
-		                  <button id="polygonFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+		                  <button id="polygonFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
 		                  <div id="polygonFillAutoOffSwatches" class="swatch-popover" aria-label="Polygon fill automation off swatches"></div>
 		                </div>
 		              </div>
@@ -1818,7 +1818,7 @@
               <div class="prop-inline">
                 <input id="barFill" type="color" />
                 <input id="barFillText" type="text" placeholder="#46ff64" />
-                <button id="barFillSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+                <button id="barFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
                 <div id="barFillSwatches" class="swatch-popover" aria-label="Bar fill swatches"></div>
               </div>
             </div>
@@ -2663,6 +2663,82 @@
 	      </div>
 	    </div>
 	  </div>
+	  <div id="paintPickerOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="settings-modal paint-picker-modal">
+	      <div class="popup-header">
+	        <div id="paintPickerTitle" class="popup-title">Color</div>
+	        <button id="paintPickerCloseBtn" class="panel-btn" type="button">Close</button>
+	      </div>
+	      <div class="settings-body">
+	        <div class="paint-picker-tabs" role="tablist" aria-label="Paint type">
+	          <button id="paintPickerSolidTab" class="paint-picker-tab is-active" type="button">Solid Color</button>
+	          <button id="paintPickerGradientTab" class="paint-picker-tab" type="button">Gradient</button>
+	        </div>
+	        <div class="paint-picker-layout">
+		          <div class="paint-picker-preview-column">
+		            <div id="paintPickerPreview" class="paint-picker-preview"></div>
+		            <input id="paintPickerHex" class="paint-picker-hex" type="text" placeholder="#ffffff" aria-label="Hex color" />
+		            <select id="paintPickerGradientType" class="paint-picker-gradient-type" aria-label="Gradient mode">
+		              <option value="linear">Linear Gradient</option>
+		              <option value="radial">Radial Gradient</option>
+		            </select>
+		            <input id="paintPickerNativeFallback" class="paint-picker-native-fallback" type="color" value="#ffffff" tabindex="-1" aria-hidden="true" />
+		          </div>
+	          <div class="paint-picker-editor">
+	            <div class="paint-picker-top-row">
+	              <div class="paint-picker-specials">
+	                <button id="paintPickerTransparentBtn" class="paint-picker-special" type="button">Transparent</button>
+	                <button id="paintPickerNoneBtn" class="paint-picker-special" type="button">None</button>
+	                <button id="paintPickerEyedropperBtn" class="paint-picker-special" type="button">Eyedropper</button>
+	              </div>
+	            </div>
+	            <div class="paint-picker-visual">
+	              <div id="paintPickerSpectrum" class="paint-picker-spectrum" role="slider" aria-label="Color shade" tabindex="0">
+	                <div id="paintPickerSpectrumMarker" class="paint-picker-spectrum-marker"></div>
+	              </div>
+	              <input id="paintPickerHue" class="paint-picker-hue" type="range" min="0" max="360" step="1" value="0" aria-label="Hue" />
+	            </div>
+	            <div id="paintPickerGradientPanel" class="paint-picker-gradient is-hidden">
+	              <div class="paint-picker-gradient-row">
+	                <label>
+	                  <span>Angle</span>
+	                  <input id="paintPickerGradientAngle" type="number" min="0" max="360" step="1" value="90" />
+	                </label>
+	                <div class="paint-picker-gradient-hint">Stops are 0–100% sliders. Click to edit, drag to move, double-click bar to add, right-click to delete.</div>
+	              </div>
+	              <div id="paintPickerGradientBar" class="paint-picker-gradient-bar" aria-label="Gradient stop editor">
+	                <div id="paintPickerGradientHandles" class="paint-picker-gradient-handles"></div>
+	              </div>
+	            </div>
+	            <div class="paint-picker-fields">
+	              <label>
+	                <span>Red</span>
+	                <input id="paintPickerRed" type="number" min="0" max="255" step="1" />
+	              </label>
+	              <label>
+	                <span>Green</span>
+	                <input id="paintPickerGreen" type="number" min="0" max="255" step="1" />
+	              </label>
+	              <label>
+	                <span>Blue</span>
+	                <input id="paintPickerBlue" type="number" min="0" max="255" step="1" />
+	              </label>
+	              <label>
+	                <span>Opacity</span>
+	                <input id="paintPickerOpacity" type="number" min="0" max="255" step="1" />
+	              </label>
+	            </div>
+	            <div class="paint-picker-primary" id="paintPickerPrimaryPalette" aria-label="Basic color palette"></div>
+	            <div class="paint-picker-palette" id="paintPickerPalette" aria-label="Solid color palette"></div>
+	          </div>
+	        </div>
+	      </div>
+	      <div class="popup-footer">
+	        <button id="paintPickerApplyBtn" class="panel-btn" type="button">OK</button>
+	        <button id="paintPickerCancelBtn" class="panel-btn" type="button">Cancel</button>
+	      </div>
+	    </div>
+	  </div>
 	  <div id="keypadOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
 	    <div class="keypad-modal">
 	      <div class="popup-header">
@@ -2691,6 +2767,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260614-hmi-ui-v43"></script>
+	  <script src="js/hmi.js?v=20260614-hmi-ui-v44"></script>
 	</body>
 	</html>

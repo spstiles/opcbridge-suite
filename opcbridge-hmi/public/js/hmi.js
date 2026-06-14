@@ -3589,6 +3589,33 @@ const rectStrokeWidthInput = document.getElementById("rectStrokeWidth");
 const rectStrokeRow = document.getElementById("rectStrokeRow");
 const rectStrokeWidthRow = document.getElementById("rectStrokeWidthRow");
 const rectPropsTitle = document.getElementById("rectPropsTitle");
+const paintPickerOverlay = document.getElementById("paintPickerOverlay");
+const paintPickerTitle = document.getElementById("paintPickerTitle");
+const paintPickerCloseBtn = document.getElementById("paintPickerCloseBtn");
+const paintPickerSolidTab = document.getElementById("paintPickerSolidTab");
+const paintPickerGradientTab = document.getElementById("paintPickerGradientTab");
+const paintPickerPreview = document.getElementById("paintPickerPreview");
+const paintPickerHexInput = document.getElementById("paintPickerHex");
+const paintPickerGradientTypeSelect = document.getElementById("paintPickerGradientType");
+const paintPickerNativeFallback = document.getElementById("paintPickerNativeFallback");
+const paintPickerSpectrum = document.getElementById("paintPickerSpectrum");
+const paintPickerSpectrumMarker = document.getElementById("paintPickerSpectrumMarker");
+const paintPickerHueInput = document.getElementById("paintPickerHue");
+const paintPickerRedInput = document.getElementById("paintPickerRed");
+const paintPickerGreenInput = document.getElementById("paintPickerGreen");
+const paintPickerBlueInput = document.getElementById("paintPickerBlue");
+const paintPickerOpacityInput = document.getElementById("paintPickerOpacity");
+const paintPickerGradientPanel = document.getElementById("paintPickerGradientPanel");
+const paintPickerGradientAngleInput = document.getElementById("paintPickerGradientAngle");
+const paintPickerGradientBar = document.getElementById("paintPickerGradientBar");
+const paintPickerGradientHandles = document.getElementById("paintPickerGradientHandles");
+const paintPickerTransparentBtn = document.getElementById("paintPickerTransparentBtn");
+const paintPickerNoneBtn = document.getElementById("paintPickerNoneBtn");
+const paintPickerEyedropperBtn = document.getElementById("paintPickerEyedropperBtn");
+const paintPickerPrimaryPalette = document.getElementById("paintPickerPrimaryPalette");
+const paintPickerPalette = document.getElementById("paintPickerPalette");
+const paintPickerApplyBtn = document.getElementById("paintPickerApplyBtn");
+const paintPickerCancelBtn = document.getElementById("paintPickerCancelBtn");
 const alarmsPanelPropsFields = document.getElementById("alarmsPanelPropsFields");
 const alarmsPanelMaxRowsInput = document.getElementById("alarmsPanelMaxRows");
 const alarmsPanelOnlyUnackedInput = document.getElementById("alarmsPanelOnlyUnacked");
@@ -9204,6 +9231,7 @@ const resolveIndicatorState = (obj) => {
 };
 
 let nextClipPathId = 1;
+let nextPaintGradientId = 1;
 const getOrCreateDefs = (svgRoot) => {
   if (!svgRoot) return null;
   const existing = svgRoot.querySelector("defs");
@@ -9211,6 +9239,89 @@ const getOrCreateDefs = (svgRoot) => {
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
   svgRoot.insertBefore(defs, svgRoot.firstChild);
   return defs;
+};
+
+const isLinearGradientPaint = (value) => /^linear-gradient\(/i.test(String(value || "").trim());
+const isRadialGradientPaint = (value) => /^radial-gradient\(/i.test(String(value || "").trim());
+const isGradientPaint = (value) => isLinearGradientPaint(value) || isRadialGradientPaint(value);
+
+const svgRootForPaint = (parent) => {
+  if (!parent) return null;
+  if (parent.tagName && parent.tagName.toLowerCase() === "svg") return parent;
+  return parent.ownerSVGElement || null;
+};
+
+const getGradientVectorForBounds = (angle, bounds) => {
+  const x = Number(bounds?.x ?? 0);
+  const y = Number(bounds?.y ?? 0);
+  const width = Math.max(1, Number(bounds?.width ?? 1));
+  const height = Math.max(1, Number(bounds?.height ?? 1));
+  const radians = (((Number(angle) || 0) - 90) * Math.PI) / 180;
+  const dx = Math.cos(radians);
+  const dy = Math.sin(radians);
+  const span = Math.abs(width * dx) + Math.abs(height * dy);
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  return {
+    x1: cx - (dx * span) / 2,
+    y1: cy - (dy * span) / 2,
+    x2: cx + (dx * span) / 2,
+    y2: cy + (dy * span) / 2
+  };
+};
+
+const getGradientCircleForBounds = (bounds) => {
+  const x = Number(bounds?.x ?? 0);
+  const y = Number(bounds?.y ?? 0);
+  const width = Math.max(1, Number(bounds?.width ?? 1));
+  const height = Math.max(1, Number(bounds?.height ?? 1));
+  return {
+    cx: x + width / 2,
+    cy: y + height / 2,
+    r: Math.sqrt((width * width) + (height * height)) / 2
+  };
+};
+
+const resolveSvgPaint = (parent, paint, bounds) => {
+  const raw = String(paint || "").trim();
+  if (!isGradientPaint(raw)) return paint;
+  const svgRoot = svgRootForPaint(parent);
+  const defs = getOrCreateDefs(svgRoot);
+  if (!defs) return paint;
+  const gradient = parsePaintGradient(raw, "#ffffff");
+  const isRadial = gradient.type === "radial";
+  const gradientEl = document.createElementNS("http://www.w3.org/2000/svg", isRadial ? "radialGradient" : "linearGradient");
+  const id = `paintGradient${nextPaintGradientId++}`;
+  gradientEl.setAttribute("id", id);
+  gradientEl.setAttribute("gradientUnits", "userSpaceOnUse");
+  if (isRadial) {
+    const circle = getGradientCircleForBounds(bounds);
+    gradientEl.setAttribute("cx", circle.cx);
+    gradientEl.setAttribute("cy", circle.cy);
+    gradientEl.setAttribute("r", circle.r);
+  } else {
+    const vector = getGradientVectorForBounds(gradient.angle, bounds);
+    gradientEl.setAttribute("x1", vector.x1);
+    gradientEl.setAttribute("y1", vector.y1);
+    gradientEl.setAttribute("x2", vector.x2);
+    gradientEl.setAttribute("y2", vector.y2);
+  }
+  const stops = Array.isArray(gradient.stops) && gradient.stops.length ? gradient.stops : [];
+  stops.forEach((stop) => {
+    const stopEl = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+    const position = Math.max(0, Math.min(100, Number(stop.position) || 0));
+    stopEl.setAttribute("offset", `${position}%`);
+    stopEl.setAttribute("stop-color", String(stop.color || "#ffffff"));
+    gradientEl.appendChild(stopEl);
+  });
+  defs.appendChild(gradientEl);
+  return `url(#${id})`;
+};
+
+const setSvgPaint = (el, attr, paint, bounds, parentForDefs = null) => {
+  if (!el) return;
+  const parent = parentForDefs || el.parentNode || el.ownerSVGElement;
+  el.setAttribute(attr, resolveSvgPaint(parent, paint, bounds));
 };
 
 const setImageHref = (imageEl, href) => {
@@ -9362,7 +9473,7 @@ const renderIndicatorInto = (parent, obj) => {
     rect.setAttribute("width", w);
     rect.setAttribute("height", h);
     rect.setAttribute("rx", rx);
-    rect.setAttribute("fill", fill);
+    setSvgPaint(rect, "fill", fill, { x, y, width: w, height: h }, parent);
     setFlatBorderStroke(rect, hasStroke ? stroke : "none", strokeWidth, obj.borderStyle);
     content.appendChild(rect);
   } else if (hasStroke) {
@@ -9541,7 +9652,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       rect.setAttribute("width", w);
       rect.setAttribute("height", h);
       rect.setAttribute("rx", rx);
-      rect.setAttribute("fill", obj.fill || "#2b2f3a");
+      setSvgPaint(rect, "fill", obj.fill || "#2b2f3a", { x, y, width: w, height: h }, containerParent);
       const stroke = obj.stroke || "#ffffff";
       const strokeWidth = Number(obj.strokeWidth ?? 1);
       setFlatBorderStroke(rect, stroke, strokeWidth, obj.borderStyle);
@@ -9643,7 +9754,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     rect.setAttribute("height", h);
     rect.setAttribute("rx", obj.rx ?? 0);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
-    rect.setAttribute("fill", fillColor);
+    setSvgPaint(rect, "fill", fillColor, { x, y, width: w, height: h }, containerParent);
 	    const baseStroke = obj.stroke || "#ffffff";
 	    const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
 	    const strokeWidth = Number(obj.strokeWidth ?? 1);
@@ -9675,7 +9786,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    rect.setAttribute("width", w);
 	    rect.setAttribute("height", h);
 	    rect.setAttribute("rx", obj.rx ?? 0);
-	    rect.setAttribute("fill", obj.fill || "#ffffff");
+	    setSvgPaint(rect, "fill", obj.fill || "#ffffff", { x, y, width: w, height: h }, containerParent);
 	    const strokeColor = obj.stroke || "#000000";
 	    const strokeWidth = Number(obj.strokeWidth ?? 2);
 	    rect.setAttribute("stroke", strokeColor === "none" || strokeWidth <= 0 ? "none" : strokeColor);
@@ -9816,7 +9927,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     circle.setAttribute("cy", cy);
     circle.setAttribute("r", r);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
-    circle.setAttribute("fill", fillColor);
+    setSvgPaint(circle, "fill", fillColor, { x: cx - r, y: cy - r, width: r * 2, height: r * 2 }, containerParent);
     const baseStroke = obj.stroke || "#ffffff";
     const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
     circle.setAttribute("stroke", strokeColor);
@@ -9859,7 +9970,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     ellipse.setAttribute("rx", rx);
     ellipse.setAttribute("ry", ry);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
-    ellipse.setAttribute("fill", fillColor);
+    setSvgPaint(ellipse, "fill", fillColor, { x, y, width: w, height: h }, containerParent);
     const baseStroke = obj.stroke || "#ffffff";
     const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
     ellipse.setAttribute("stroke", strokeColor);
@@ -10016,7 +10127,12 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const attr = points.map((pt) => `${Number(pt?.x ?? 0)},${Number(pt?.y ?? 0)}`).join(" ");
     el.setAttribute("points", attr);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
-    el.setAttribute("fill", fillColor);
+    setSvgPaint(el, "fill", fillColor, {
+      x: Number.isFinite(minX) ? minX : 0,
+      y: Number.isFinite(minY) ? minY : 0,
+      width: Number.isFinite(maxX - minX) ? Math.max(1, maxX - minX) : 1,
+      height: Number.isFinite(maxY - minY) ? Math.max(1, maxY - minY) : 1
+    }, containerParent);
     const baseStroke = obj.stroke || "#ffffff";
     const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
     el.setAttribute("stroke", strokeColor);
@@ -10045,7 +10161,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       bgRect.setAttribute("y", y);
       bgRect.setAttribute("width", w);
       bgRect.setAttribute("height", h);
-      bgRect.setAttribute("fill", bg);
+      setSvgPaint(bgRect, "fill", bg, { x, y, width: w, height: h }, containerParent);
       bgRect.setAttribute("stroke", "none");
       containerParent.appendChild(bgRect);
     }
@@ -10090,7 +10206,12 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         fillRect.setAttribute("width", w);
         fillRect.setAttribute("height", fillH);
       }
-      fillRect.setAttribute("fill", fill);
+      setSvgPaint(fillRect, "fill", fill, {
+        x: Number(fillRect.getAttribute("x")) || x,
+        y: Number(fillRect.getAttribute("y")) || y,
+        width: Number(fillRect.getAttribute("width")) || w,
+        height: Number(fillRect.getAttribute("height")) || h
+      }, containerParent);
       fillRect.setAttribute("stroke", "none");
       containerParent.appendChild(fillRect);
     }
@@ -10145,7 +10266,12 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         bgRect.setAttribute("height", textPadding.y * 2);
       }
       bgRect.setAttribute("rx", obj.rx ?? 0);
-      bgRect.setAttribute("fill", bgColor || "transparent");
+      setSvgPaint(bgRect, "fill", bgColor || "transparent", bounds || {
+        x: x - textPadding.x,
+        y: y - textPadding.y,
+        width: textPadding.x * 2,
+        height: textPadding.y * 2
+      }, parent);
       const borderWidth = Math.max(0, Number(obj.borderWidth ?? 1));
       if (borderEnabled && borderColor && borderColor !== "transparent" && borderColor !== "none" && borderWidth > 0) {
         setFlatBorderStroke(bgRect, borderColor, borderWidth, obj.borderStyle);
@@ -10157,7 +10283,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       }
     }
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#ffffff");
-    textEl.setAttribute("fill", fillColor);
+    setSvgPaint(textEl, "fill", fillColor, bounds || { x, y, width: 1, height: Number(obj.fontSize || 18) }, parent);
     const fontSize = Number(obj.fontSize || 18);
     textEl.setAttribute("font-size", fontSize);
     textEl.setAttribute("font-weight", obj.bold ? "700" : "400");
@@ -10237,7 +10363,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       && getWriteActionActiveState(obj.action);
     const buttonStroke = obj.stroke || "#ffffff";
     const buttonStrokeWidth = Number(obj.strokeWidth ?? 1);
-    rect.setAttribute("fill", fillColor);
+    setSvgPaint(rect, "fill", fillColor, { x: 0, y: 0, width: w, height: h }, parent);
     setFlatBorderStroke(rect, buttonStroke, buttonStrokeWidth, obj.borderStyle);
     group.appendChild(rect);
 
@@ -10594,7 +10720,11 @@ const renderScreen = () => {
   hmiSvg.setAttribute("viewBox", `0 0 ${screenWidth} ${screenHeight}`);
   const resolvedBg = (background && background !== "none") ? background : "transparent";
   hmiSvg.style.background = "";
-  hmiSvg.style.backgroundColor = resolvedBg;
+  if (isGradientPaint(resolvedBg)) {
+    hmiSvg.style.background = resolvedBg;
+  } else {
+    hmiSvg.style.backgroundColor = resolvedBg;
+  }
   const bgImage = String(currentScreenObj.backgroundImage || "").trim();
   if (bgImage) {
     hmiSvg.style.backgroundImage = `url("${imgUrl(bgImage)}")`;
@@ -10610,6 +10740,7 @@ const renderScreen = () => {
   document.documentElement.style.setProperty("--screen-bg", resolvedBg);
   hmiSvg.textContent = "";
   didClear = true;
+  nextPaintGradientId = 1;
   renderedElements = [];
   renderedElementMeta = [];
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
@@ -10655,7 +10786,7 @@ const renderScreen = () => {
 	        rect.setAttribute("width", w);
 	        rect.setAttribute("height", h);
 	        rect.setAttribute("rx", rx);
-	        rect.setAttribute("fill", obj.fill || "#2b2f3a");
+	        setSvgPaint(rect, "fill", obj.fill || "#2b2f3a", { x, y, width: w, height: h }, hmiSvg);
 	        const stroke = obj.stroke || "#ffffff";
 	        const strokeWidth = Number(obj.strokeWidth ?? 1);
 	        setFlatBorderStroke(rect, stroke, strokeWidth, obj.borderStyle);
@@ -11556,10 +11687,10 @@ const syncPropertiesFromSelection = () => {
 	    }
 	    if (polygonFillAutoThresholdInput) setInputValueSafe(polygonFillAutoThresholdInput, fillAuto.threshold ?? "");
 	    if (polygonFillAutoMatchInput) setInputValueSafe(polygonFillAutoMatchInput, fillAuto.match ?? "");
-	    if (polygonFillAutoOnInput) polygonFillAutoOnInput.value = fillAuto.onColor || fillValue;
-	    if (polygonFillAutoOnTextInput) setInputValueSafe(polygonFillAutoOnTextInput, fillAuto.onColor || "");
-	    if (polygonFillAutoOffInput) polygonFillAutoOffInput.value = fillAuto.offColor || fillValue;
-	    if (polygonFillAutoOffTextInput) setInputValueSafe(polygonFillAutoOffTextInput, fillAuto.offColor || "");
+		    if (polygonFillAutoOnInput) polygonFillAutoOnInput.value = isHexColor(fillAuto.onColor || fillValue) ? (fillAuto.onColor || fillValue) : "#3a3f4b";
+		    if (polygonFillAutoOnTextInput) setInputValueSafe(polygonFillAutoOnTextInput, fillAuto.onColor || "");
+		    if (polygonFillAutoOffInput) polygonFillAutoOffInput.value = isHexColor(fillAuto.offColor || fillValue) ? (fillAuto.offColor || fillValue) : "#3a3f4b";
+		    if (polygonFillAutoOffTextInput) setInputValueSafe(polygonFillAutoOffTextInput, fillAuto.offColor || "");
 
 	    const strokeAuto = obj.strokeAutomation || {};
 	    const strokeEnabled = Boolean(strokeAuto.enabled);
@@ -12446,6 +12577,60 @@ const SWATCH_COLORS = [
   { value: "#46ff64", label: "#46FF64" }
 ];
 
+const PAINT_PICKER_PRIMARY_COLORS = [
+  "#000000",
+  "#ff0000",
+  "#ffff00",
+  "#00ff00",
+  "#00ffff",
+  "#0000ff",
+  "#ff00ff",
+  "#800000",
+  "#008000",
+  "#000080"
+].map((value) => ({ value, label: value.toUpperCase() }));
+
+const hslToHex = (hue, saturation, lightness) => {
+  const chroma = (1 - Math.abs((2 * lightness) - 1)) * saturation;
+  const huePrime = hue / 60;
+  const x = chroma * (1 - Math.abs((huePrime % 2) - 1));
+  const match = lightness - (chroma / 2);
+  const [red1, green1, blue1] = huePrime < 1
+    ? [chroma, x, 0]
+    : huePrime < 2
+      ? [x, chroma, 0]
+      : huePrime < 3
+        ? [0, chroma, x]
+        : huePrime < 4
+          ? [0, x, chroma]
+          : huePrime < 5
+            ? [x, 0, chroma]
+            : [chroma, 0, x];
+  return `#${[red1, green1, blue1]
+    .map((channel) => Math.round((channel + match) * 255).toString(16).padStart(2, "0"))
+    .join("")}`;
+};
+
+const PAINT_PICKER_COLORS = [
+  ...Array.from({ length: 18 }, (_, index) => {
+    const channel = Math.round((index / 17) * 255);
+    const value = `#${channel.toString(16).padStart(2, "0").repeat(3)}`;
+    return { value, label: value.toUpperCase() };
+  }),
+  ...[0.18, 0.28, 0.38, 0.5, 0.62, 0.74].flatMap((lightness) => (
+    [0, 20, 40, 60, 80, 100, 120, 150, 180, 200, 220, 240, 260, 280, 300, 320, 340, 355].map((hue) => {
+      const value = hslToHex(hue, 0.85, lightness);
+      return { value, label: value.toUpperCase() };
+    })
+  )),
+  { value: "#002878", label: "HMI Blue" },
+  { value: "#506484", label: "HMI Slate" },
+  { value: "#c8ecfa", label: "HMI Light Blue" },
+  { value: "#008c3c", label: "HMI Green" },
+  { value: "#fa3232", label: "HMI Red" },
+  { value: "#fff546", label: "HMI Yellow" }
+];
+
 const buildSwatches = (container, onPick) => {
   if (!container) return;
   container.textContent = "";
@@ -12454,8 +12639,9 @@ const buildSwatches = (container, onPick) => {
     btn.type = "button";
     btn.className = "color-swatch";
     btn.style.background = swatch.value;
-    btn.setAttribute("aria-label", `Color ${swatch.label}`);
-    btn.title = swatch.label;
+    const colorLabel = paintColorLabel(swatch.value);
+    btn.setAttribute("aria-label", `Color ${colorLabel}`);
+    btn.title = colorLabel;
     if (swatch.value === "transparent") {
       btn.style.background = "linear-gradient(135deg, #ffffff 0%, #ffffff 50%, #d32f2f 50%, #d32f2f 60%, #ffffff 60%, #ffffff 100%)";
     }
@@ -12465,6 +12651,621 @@ const buildSwatches = (container, onPick) => {
     btn.addEventListener("click", () => onPick(swatch.value));
     container.appendChild(btn);
   });
+};
+
+let activePaintPicker = null;
+let isPaintPickerNativeFallbackOpen = false;
+let paintPickerGradientDragIndex = null;
+
+const clampByte = (value, fallback = 0) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(255, Math.round(numeric)));
+};
+
+const rgbToHex = (r, g, b) => (
+  `#${[r, g, b].map((value) => clampByte(value).toString(16).padStart(2, "0")).join("")}`
+);
+
+const paintColorLabel = (value) => {
+  const raw = String(value || "").trim();
+  if (raw === "transparent" || raw === "none") return raw;
+  const color = parseSolidColor(raw, "#ffffff");
+  const red = clampByte(color.r, 255);
+  const green = clampByte(color.g, 255);
+  const blue = clampByte(color.b, 255);
+  const opacity = clampByte(color.opacity, 255);
+  const rgb = opacity >= 255
+    ? `RGB(${red}, ${green}, ${blue})`
+    : `RGBA(${red}, ${green}, ${blue}, ${opacity})`;
+  return `${rgb} ${rgbToHex(red, green, blue).toUpperCase()}`;
+};
+
+const rgbToHsv = (r, g, b) => {
+  const red = clampByte(r, 255) / 255;
+  const green = clampByte(g, 255) / 255;
+  const blue = clampByte(b, 255) / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  let hue = 0;
+  if (delta) {
+    if (max === red) hue = 60 * (((green - blue) / delta) % 6);
+    else if (max === green) hue = 60 * (((blue - red) / delta) + 2);
+    else hue = 60 * (((red - green) / delta) + 4);
+  }
+  return {
+    h: Math.round((hue + 360) % 360),
+    s: max === 0 ? 0 : delta / max,
+    v: max
+  };
+};
+
+const hsvToRgb = (h, s, v) => {
+  const hue = ((Number(h) % 360) + 360) % 360;
+  const saturation = Math.max(0, Math.min(1, Number(s) || 0));
+  const value = Math.max(0, Math.min(1, Number(v) || 0));
+  const chroma = value * saturation;
+  const huePrime = hue / 60;
+  const x = chroma * (1 - Math.abs((huePrime % 2) - 1));
+  const match = value - chroma;
+  const [red1, green1, blue1] = huePrime < 1
+    ? [chroma, x, 0]
+    : huePrime < 2
+      ? [x, chroma, 0]
+      : huePrime < 3
+        ? [0, chroma, x]
+        : huePrime < 4
+          ? [0, x, chroma]
+          : huePrime < 5
+            ? [x, 0, chroma]
+            : [chroma, 0, x];
+  return {
+    r: clampByte((red1 + match) * 255),
+    g: clampByte((green1 + match) * 255),
+    b: clampByte((blue1 + match) * 255)
+  };
+};
+
+const parseSolidColor = (value, fallback = "#ffffff") => {
+  const raw = String(value || "").trim();
+  if (raw === "transparent" || raw === "none") return { special: raw, r: 255, g: 255, b: 255, opacity: raw === "transparent" ? 0 : 255 };
+  const rgbaMatch = raw.match(/^rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+)\s*)?\)$/i);
+  if (rgbaMatch) {
+    const alphaRaw = rgbaMatch[4] === undefined ? 1 : Number(rgbaMatch[4]);
+    return {
+      special: "",
+      r: clampByte(rgbaMatch[1], 255),
+      g: clampByte(rgbaMatch[2], 255),
+      b: clampByte(rgbaMatch[3], 255),
+      opacity: clampByte(alphaRaw <= 1 ? alphaRaw * 255 : alphaRaw, 255)
+    };
+  }
+  const hex = isHexColor(raw) ? raw : (isHexColor(fallback) ? fallback : "#ffffff");
+  const intValue = Number.parseInt(hex.slice(1), 16);
+  return {
+    special: "",
+    r: (intValue >> 16) & 255,
+    g: (intValue >> 8) & 255,
+    b: intValue & 255,
+    opacity: 255
+  };
+};
+
+const solidColorValue = ({ special = "", r = 255, g = 255, b = 255, opacity = 255 } = {}) => {
+  if (special === "transparent" || special === "none") return special;
+  const alpha = clampByte(opacity, 255);
+  const red = clampByte(r, 255);
+  const green = clampByte(g, 255);
+  const blue = clampByte(b, 255);
+  if (alpha >= 255) return rgbToHex(red, green, blue);
+  return `rgba(${red}, ${green}, ${blue}, ${(alpha / 255).toFixed(3)})`;
+};
+
+const splitGradientArgs = (value) => {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+  String(value || "").split("").forEach((char) => {
+    if (char === "(") depth += 1;
+    if (char === ")") depth = Math.max(0, depth - 1);
+    if (char === "," && depth === 0) {
+      parts.push(current.trim());
+      current = "";
+      return;
+    }
+    current += char;
+  });
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+};
+
+const parsePaintGradient = (value, fallback = "#ffffff") => {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(linear|radial)-gradient\((.*)\)$/i);
+  if (!match) {
+    const color = solidColorValue(parseSolidColor(raw, fallback));
+    return {
+      type: "linear",
+      angle: 90,
+      stops: [
+        { color, position: 0 },
+        { color, position: 100 }
+      ]
+    };
+  }
+  const type = match[1].toLowerCase() === "radial" ? "radial" : "linear";
+  const parts = splitGradientArgs(match[2]);
+  let angle = 90;
+  let colors = parts;
+  const angleMatch = parts[0]?.match(/^(-?\d+(?:\.\d+)?)deg$/i);
+  const radialShapeMatch = parts[0]?.match(/^(circle|ellipse)(?:\s+at\s+center)?$/i);
+  if (type === "linear" && angleMatch) {
+    angle = Math.round(Number(angleMatch[1]));
+    colors = parts.slice(1);
+  } else if (type === "radial" && radialShapeMatch) {
+    colors = parts.slice(1);
+  }
+  const stops = colors.map((part, index) => {
+    const stopMatch = String(part || "").trim().match(/^(.*?)(?:\s+(-?\d+(?:\.\d+)?)%)?$/);
+    const color = (stopMatch?.[1] || fallback).trim() || fallback;
+    const explicitPosition = stopMatch?.[2] !== undefined ? Number(stopMatch[2]) : null;
+    return {
+      color,
+      position: Number.isFinite(explicitPosition)
+        ? Math.max(0, Math.min(100, explicitPosition))
+        : null,
+      index
+    };
+  }).filter((stop) => stop.color);
+  const usableStops = stops.length >= 2 ? stops : [
+    { color: fallback, position: 0, index: 0 },
+    { color: fallback, position: 100, index: 1 }
+  ];
+  const lastIndex = Math.max(1, usableStops.length - 1);
+  return {
+    type,
+    angle: ((angle % 360) + 360) % 360,
+    stops: usableStops.map((stop, index) => ({
+      color: stop.color,
+      position: stop.position ?? ((index / lastIndex) * 100)
+    }))
+  };
+};
+
+const parseLinearGradient = (value, fallback = "#ffffff") => parsePaintGradient(value, fallback);
+
+const gradientValue = (gradient = {}) => {
+  const type = gradient.type === "radial" ? "radial" : "linear";
+  const angle = ((Number(gradient.angle) || 0) % 360 + 360) % 360;
+  const stops = Array.isArray(gradient.stops) && gradient.stops.length
+    ? gradient.stops
+    : [
+      { color: "#ffffff", position: 0 },
+      { color: "#000000", position: 100 }
+    ];
+  const sortedStops = [...stops].sort((a, b) => Number(a.position) - Number(b.position));
+  const stopText = sortedStops.map((stop) => {
+    const position = Math.max(0, Math.min(100, Number(stop.position) || 0));
+    return `${String(stop.color || "#ffffff").trim() || "#ffffff"} ${Number(position.toFixed(1))}%`;
+  }).join(", ");
+  return type === "radial"
+    ? `radial-gradient(circle, ${stopText})`
+    : `linear-gradient(${Math.round(angle)}deg, ${stopText})`;
+};
+
+const gradientBarValue = (gradient = {}) => {
+  const stops = Array.isArray(gradient.stops) && gradient.stops.length
+    ? gradient.stops
+    : [
+      { color: "#ffffff", position: 0 },
+      { color: "#000000", position: 100 }
+    ];
+  const sortedStops = [...stops].sort((a, b) => Number(a.position) - Number(b.position));
+  const stopText = sortedStops.map((stop) => {
+    const position = Math.max(0, Math.min(100, Number(stop.position) || 0));
+    return `${String(stop.color || "#ffffff").trim() || "#ffffff"} ${Number(position.toFixed(1))}%`;
+  }).join(", ");
+  return `linear-gradient(90deg, ${stopText})`;
+};
+
+const paintPickerGradientStopColor = (state) => {
+  const color = solidColorValue(state);
+  return color === "none" ? "transparent" : color;
+};
+
+const paintPickerGradientStops = () => {
+  if (!activePaintPicker) return [];
+  if (!activePaintPicker.gradient) activePaintPicker.gradient = { type: "linear", angle: 90, stops: [] };
+  if (!Array.isArray(activePaintPicker.gradient.stops) || activePaintPicker.gradient.stops.length < 2) {
+    activePaintPicker.gradient.stops = [
+      { color: paintPickerGradientStopColor(activePaintPicker.state), position: 0 },
+      { color: "#000000", position: 100 }
+    ];
+  }
+  activePaintPicker.activeGradientStopIndex = Math.max(
+    0,
+    Math.min(activePaintPicker.gradient.stops.length - 1, Number(activePaintPicker.activeGradientStopIndex) || 0)
+  );
+  return activePaintPicker.gradient.stops;
+};
+
+const updateActiveGradientStopColor = () => {
+  if (!activePaintPicker || activePaintPicker.mode !== "gradient") return;
+  const stops = paintPickerGradientStops();
+  stops[activePaintPicker.activeGradientStopIndex || 0].color = paintPickerGradientStopColor(activePaintPicker.state);
+};
+
+const renderPaintPickerGradientStops = () => {
+  if (!paintPickerGradientHandles || !activePaintPicker?.gradient) return;
+  const stops = paintPickerGradientStops();
+  paintPickerGradientHandles.textContent = "";
+  stops.forEach((stop, index) => {
+    const handle = document.createElement("button");
+    handle.type = "button";
+    handle.className = "paint-picker-gradient-handle";
+    handle.classList.toggle("is-active", index === activePaintPicker.activeGradientStopIndex);
+    handle.dataset.index = String(index);
+    handle.style.left = `${Math.max(0, Math.min(100, Number(stop.position) || 0))}%`;
+    handle.style.setProperty("--paint-picker-stop-color", stop.color || "#ffffff");
+    handle.dataset.position = `${Math.round(Number(stop.position) || 0)}%`;
+    handle.title = `${paintColorLabel(stop.color)} at ${Math.round(Number(stop.position) || 0)}%`;
+    handle.setAttribute("aria-label", `Gradient stop ${index + 1}`);
+    paintPickerGradientHandles.appendChild(handle);
+  });
+};
+
+const syncPaintPickerUi = (state) => {
+  if (!state) return;
+  const mode = activePaintPicker?.mode || "solid";
+  const red = clampByte(state.r, 255);
+  const green = clampByte(state.g, 255);
+  const blue = clampByte(state.b, 255);
+  const opacity = clampByte(state.opacity, 255);
+  const hex = rgbToHex(red, green, blue);
+  const hsv = activePaintPicker?.hsv || rgbToHsv(red, green, blue);
+  if (paintPickerHexInput) paintPickerHexInput.value = state.special || hex;
+  if (paintPickerNativeFallback && !state.special) paintPickerNativeFallback.value = hex;
+  if (paintPickerRedInput) paintPickerRedInput.value = red;
+  if (paintPickerGreenInput) paintPickerGreenInput.value = green;
+  if (paintPickerBlueInput) paintPickerBlueInput.value = blue;
+  if (paintPickerOpacityInput) paintPickerOpacityInput.value = opacity;
+  if (paintPickerSolidTab) paintPickerSolidTab.classList.toggle("is-active", mode === "solid");
+  if (paintPickerGradientTab) paintPickerGradientTab.classList.toggle("is-active", mode === "gradient");
+  if (paintPickerGradientPanel) paintPickerGradientPanel.classList.toggle("is-hidden", mode !== "gradient");
+  const gradientType = activePaintPicker?.gradient?.type === "radial" ? "radial" : "linear";
+  if (paintPickerGradientTypeSelect) {
+    paintPickerGradientTypeSelect.value = gradientType;
+    paintPickerGradientTypeSelect.disabled = mode !== "gradient";
+  }
+  if (paintPickerGradientAngleInput) {
+    paintPickerGradientAngleInput.value = Math.round(activePaintPicker?.gradient?.angle ?? 90);
+    paintPickerGradientAngleInput.disabled = mode !== "gradient" || gradientType === "radial";
+  }
+  if (paintPickerGradientBar && activePaintPicker?.gradient) paintPickerGradientBar.style.background = gradientBarValue(activePaintPicker.gradient);
+  renderPaintPickerGradientStops();
+  if (paintPickerHueInput) paintPickerHueInput.value = Math.round(hsv.h);
+  if (paintPickerSpectrum) paintPickerSpectrum.style.setProperty("--paint-picker-hue", String(Math.round(hsv.h)));
+  if (paintPickerSpectrumMarker) {
+    paintPickerSpectrumMarker.style.left = `${Math.max(0, Math.min(1, hsv.s)) * 100}%`;
+    paintPickerSpectrumMarker.style.top = `${(1 - Math.max(0, Math.min(1, hsv.v))) * 100}%`;
+  }
+  if (paintPickerPreview) {
+    paintPickerPreview.dataset.special = mode === "gradient" ? "" : (state.special || "");
+    paintPickerPreview.style.setProperty("--paint-picker-preview", mode === "gradient"
+      ? gradientValue(activePaintPicker?.gradient)
+      : `rgba(${red}, ${green}, ${blue}, ${opacity / 255})`);
+  }
+  paintPickerTransparentBtn?.classList.toggle("is-active", state.special === "transparent");
+  paintPickerNoneBtn?.classList.toggle("is-active", state.special === "none");
+};
+
+const updatePaintPickerState = (patch) => {
+  if (!activePaintPicker) return;
+  activePaintPicker.state = {
+    ...activePaintPicker.state,
+    ...patch,
+    special: patch.special !== undefined ? patch.special : ""
+  };
+  if ("r" in patch || "g" in patch || "b" in patch || patch.special) {
+    activePaintPicker.hsv = rgbToHsv(activePaintPicker.state.r, activePaintPicker.state.g, activePaintPicker.state.b);
+  }
+  updateActiveGradientStopColor();
+  syncPaintPickerUi(activePaintPicker.state);
+};
+
+const setPaintPickerMode = (mode) => {
+  if (!activePaintPicker) return;
+  activePaintPicker.mode = mode === "gradient" ? "gradient" : "solid";
+  if (activePaintPicker.mode === "gradient") {
+    const current = paintPickerGradientStopColor(activePaintPicker.state);
+    activePaintPicker.gradient = activePaintPicker.gradient || {
+      type: "linear",
+      angle: 90,
+      stops: [
+        { color: current, position: 0 },
+        { color: "#000000", position: 100 }
+      ]
+    };
+    paintPickerGradientStops();
+  }
+  syncPaintPickerUi(activePaintPicker.state);
+};
+
+const setPaintPickerGradientStop = (index) => {
+  if (!activePaintPicker) return;
+  const stops = paintPickerGradientStops();
+  activePaintPicker.activeGradientStopIndex = Math.max(0, Math.min(stops.length - 1, Number(index) || 0));
+  const stopValue = stops[activePaintPicker.activeGradientStopIndex]?.color || "#ffffff";
+  const state = parseSolidColor(stopValue, "#ffffff");
+  activePaintPicker.state = state;
+  activePaintPicker.hsv = rgbToHsv(state.r, state.g, state.b);
+  syncPaintPickerUi(activePaintPicker.state);
+};
+
+const updatePaintPickerGradient = (patch) => {
+  if (!activePaintPicker) return;
+  activePaintPicker.gradient = {
+    type: "linear",
+    angle: 90,
+    stops: [
+      { color: "#ffffff", position: 0 },
+      { color: "#000000", position: 100 }
+    ],
+    ...activePaintPicker.gradient,
+    ...patch
+  };
+  syncPaintPickerUi(activePaintPicker.state);
+};
+
+const paintPickerGradientPositionFromEvent = (event) => {
+  if (!paintPickerGradientBar) return 0;
+  const rect = paintPickerGradientBar.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+  return rect.width ? (x / rect.width) * 100 : 0;
+};
+
+const movePaintPickerGradientStop = (index, position) => {
+  if (!activePaintPicker) return;
+  const stops = paintPickerGradientStops();
+  const stopIndex = Math.max(0, Math.min(stops.length - 1, Number(index) || 0));
+  stops[stopIndex].position = Math.max(0, Math.min(100, Number(position) || 0));
+  activePaintPicker.activeGradientStopIndex = stopIndex;
+  syncPaintPickerUi(activePaintPicker.state);
+};
+
+const addPaintPickerGradientStop = (position) => {
+  if (!activePaintPicker) return;
+  const stops = paintPickerGradientStops();
+  const color = paintPickerGradientStopColor(activePaintPicker.state);
+  stops.push({ color, position: Math.max(0, Math.min(100, Number(position) || 0)) });
+  activePaintPicker.activeGradientStopIndex = stops.length - 1;
+  setPaintPickerGradientStop(activePaintPicker.activeGradientStopIndex);
+};
+
+const deletePaintPickerGradientStop = (index) => {
+  if (!activePaintPicker) return;
+  const stops = paintPickerGradientStops();
+  if (stops.length <= 2) return;
+  const stopIndex = Math.max(0, Math.min(stops.length - 1, Number(index) || 0));
+  stops.splice(stopIndex, 1);
+  activePaintPicker.activeGradientStopIndex = Math.max(0, Math.min(stops.length - 1, stopIndex - 1));
+  setPaintPickerGradientStop(activePaintPicker.activeGradientStopIndex);
+};
+
+const closePaintPicker = () => {
+  activePaintPicker = null;
+  isPaintPickerNativeFallbackOpen = false;
+  paintPickerGradientDragIndex = null;
+  if (!paintPickerOverlay) return;
+  paintPickerOverlay.style.visibility = "";
+  paintPickerOverlay.classList.add("is-hidden");
+  paintPickerOverlay.setAttribute("aria-hidden", "true");
+};
+
+const setPaintPickerTemporarilyHidden = (hidden) => {
+  if (!paintPickerOverlay || paintPickerOverlay.classList.contains("is-hidden")) return;
+  paintPickerOverlay.style.visibility = hidden ? "hidden" : "";
+};
+
+const restorePaintPickerFromNativeFallback = () => {
+  if (!isPaintPickerNativeFallbackOpen || !activePaintPicker) return;
+  if (paintPickerNativeFallback?.value && isHexColor(paintPickerNativeFallback.value)) {
+    pickPaintPickerColor(paintPickerNativeFallback.value);
+  }
+  isPaintPickerNativeFallbackOpen = false;
+  setPaintPickerTemporarilyHidden(false);
+  paintPickerHexInput?.focus();
+};
+
+const openPaintPicker = ({ title = "Color", value = "#ffffff", fallback = "#ffffff", onApply = null } = {}) => {
+  if (!paintPickerOverlay) return;
+  closeSwatches();
+  const isGradient = isGradientPaint(value);
+  const gradient = parsePaintGradient(value, fallback);
+  const state = parseSolidColor(isGradient ? gradient.stops?.[0]?.color : value, fallback);
+  activePaintPicker = {
+    onApply,
+    mode: isGradient ? "gradient" : "solid",
+    state,
+    hsv: rgbToHsv(state.r, state.g, state.b),
+    gradient,
+    activeGradientStopIndex: 0
+  };
+  if (paintPickerTitle) paintPickerTitle.textContent = title;
+  syncPaintPickerUi(activePaintPicker.state);
+  paintPickerOverlay.classList.remove("is-hidden");
+  paintPickerOverlay.setAttribute("aria-hidden", "false");
+  if (paintPickerHexInput) paintPickerHexInput.focus();
+};
+
+const pickPaintPickerColor = (value) => {
+  if (!activePaintPicker) return;
+  activePaintPicker.state = parseSolidColor(value);
+  activePaintPicker.hsv = rgbToHsv(activePaintPicker.state.r, activePaintPicker.state.g, activePaintPicker.state.b);
+  updateActiveGradientStopColor();
+  syncPaintPickerUi(activePaintPicker.state);
+};
+
+const updatePaintPickerFromHsv = (nextHsv) => {
+  if (!activePaintPicker) return;
+  const currentHsv = activePaintPicker.hsv || rgbToHsv(
+    activePaintPicker.state.r,
+    activePaintPicker.state.g,
+    activePaintPicker.state.b
+  );
+  activePaintPicker.hsv = {
+    ...currentHsv,
+    ...nextHsv,
+    h: Math.max(0, Math.min(360, Number(nextHsv.h ?? currentHsv.h) || 0)),
+    s: Math.max(0, Math.min(1, Number(nextHsv.s ?? currentHsv.s) || 0)),
+    v: Math.max(0, Math.min(1, Number(nextHsv.v ?? currentHsv.v) || 0))
+  };
+  const rgb = hsvToRgb(activePaintPicker.hsv.h, activePaintPicker.hsv.s, activePaintPicker.hsv.v);
+  activePaintPicker.state = {
+    ...activePaintPicker.state,
+    ...rgb,
+    special: ""
+  };
+  updateActiveGradientStopColor();
+  syncPaintPickerUi(activePaintPicker.state);
+};
+
+const updatePaintPickerFromSpectrum = (event) => {
+  if (!paintPickerSpectrum || !activePaintPicker) return;
+  const rect = paintPickerSpectrum.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+  const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+  updatePaintPickerFromHsv({
+    s: rect.width ? x / rect.width : 0,
+    v: rect.height ? 1 - (y / rect.height) : 0
+  });
+};
+
+const buildPaintPickerColorButton = (swatch) => {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "color-swatch";
+  const colorLabel = paintColorLabel(swatch.value);
+  btn.title = colorLabel;
+  btn.setAttribute("aria-label", `Color ${colorLabel}`);
+  btn.style.background = swatch.value;
+  btn.addEventListener("click", () => pickPaintPickerColor(swatch.value));
+  return btn;
+};
+
+const buildPaintPickerPalette = () => {
+  if (paintPickerPrimaryPalette) {
+    paintPickerPrimaryPalette.textContent = "";
+    PAINT_PICKER_PRIMARY_COLORS.forEach((swatch) => {
+      paintPickerPrimaryPalette.appendChild(buildPaintPickerColorButton(swatch));
+    });
+  }
+  if (!paintPickerPalette) return;
+  paintPickerPalette.textContent = "";
+  PAINT_PICKER_COLORS.forEach((swatch) => {
+    paintPickerPalette.appendChild(buildPaintPickerColorButton(swatch));
+  });
+};
+
+const applyScreenBackgroundColor = (color) => {
+  updateScreenProperty({ background: color });
+  if (screenBgInput && isHexColor(color)) screenBgInput.value = color;
+  if (screenBgTextInput) screenBgTextInput.value = color;
+};
+
+const applyScreenBorderColor = (color) => {
+  updateScreenBorder({ color });
+  if (screenBorderColorInput && isHexColor(color)) screenBorderColorInput.value = color;
+  if (screenBorderColorTextInput) screenBorderColorTextInput.value = color;
+};
+
+const runPaintPickerEyedropper = async () => {
+  if (!activePaintPicker) return;
+  setPaintPickerTemporarilyHidden(true);
+  if (!window.EyeDropper) {
+    isPaintPickerNativeFallbackOpen = true;
+    paintPickerNativeFallback?.click();
+    return;
+  }
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const result = await new window.EyeDropper().open();
+    if (result?.sRGBHex) pickPaintPickerColor(result.sRGBHex);
+  } catch (err) {
+    if (err?.name !== "AbortError") console.warn("Eyedropper failed", err);
+  } finally {
+    setPaintPickerTemporarilyHidden(false);
+    paintPickerHexInput?.focus();
+  }
+};
+
+const applyRectFillColor = (color) => {
+  updateRectProperty({ fill: color });
+  if (rectFillInput && isHexColor(color)) rectFillInput.value = color;
+  if (rectFillTextInput) rectFillTextInput.value = color;
+};
+
+const applyRectStrokeColor = (color) => {
+  updateRectProperty({ stroke: color });
+  if (rectStrokeInput && isHexColor(color)) rectStrokeInput.value = color;
+  if (rectStrokeTextInput) rectStrokeTextInput.value = color;
+};
+
+const applyTextFillColor = (color) => {
+  updateTextProperty({ fill: color });
+  if (textFillInput && isHexColor(color)) textFillInput.value = color;
+  if (textFillTextInput) textFillTextInput.value = color;
+};
+
+const applyTextBackgroundColor = (color) => {
+  updateTextProperty({ background: color });
+  if (textBgInput && isHexColor(color)) textBgInput.value = color;
+  if (textBgTextInput) textBgTextInput.value = color;
+};
+
+const applyButtonFillColor = (color) => {
+  updateButtonProperty({ fill: color });
+  if (buttonFillInput && isHexColor(color)) buttonFillInput.value = color;
+  if (buttonFillTextInput) buttonFillTextInput.value = color;
+};
+
+const applyEllipseFillColor = (color) => {
+  updateEllipseProperty({ fill: color });
+  if (ellipseFillInput && isHexColor(color)) ellipseFillInput.value = color;
+  if (ellipseFillTextInput) ellipseFillTextInput.value = color;
+};
+
+const applyCircleFillColor = (color) => {
+  updateCircleProperty({ fill: color });
+  if (circleFillInput && isHexColor(color)) circleFillInput.value = color;
+  if (circleFillTextInput) circleFillTextInput.value = color;
+};
+
+const applyPolygonFillColor = (color) => {
+  updatePolygonProperty({ fill: color });
+  if (polygonFillInput && isHexColor(color)) polygonFillInput.value = color;
+  if (polygonFillTextInput) polygonFillTextInput.value = color;
+};
+
+const applyBarFillColor = (color) => {
+  updateBarProperty({ fill: color });
+  if (barFillInput && isHexColor(color)) barFillInput.value = color;
+  if (barFillTextInput) barFillTextInput.value = color;
+};
+
+const applyRectColorDraftColor = (color, colorInput, textInput, colorKey, enabledKey) => {
+  if (!String(color || "").trim()) return;
+  if (colorInput && isHexColor(color)) colorInput.value = color;
+  if (textInput) textInput.value = color;
+  updateRectColorDraft({ [colorKey]: color, [enabledKey]: true });
+};
+
+const applyAutomationColor = (key, colorKey, color, colorInput, textInput) => {
+  if (!String(color || "").trim()) return;
+  updateAutomationProperty(key, { [colorKey]: color, enabled: true });
+  if (colorInput && isHexColor(color)) colorInput.value = color;
+  if (textInput) textInput.value = color;
 };
 
 const closeSwatches = () => {
@@ -19627,10 +20428,10 @@ function bindAutomationControls(opts) {
   if (onTextInput) {
     onTextInput.addEventListener("change", () => {
       const value = onTextInput.value.trim();
-      if (!value) return;
-      ensureEnabledUi();
-      updateAutomationProperty(key, { onColor: value, enabled: true });
-      if (onInput) onInput.value = value;
+	      if (!value) return;
+	      ensureEnabledUi();
+	      updateAutomationProperty(key, { onColor: value, enabled: true });
+	      if (onInput && isHexColor(value)) onInput.value = value;
     });
   }
 
@@ -19645,10 +20446,10 @@ function bindAutomationControls(opts) {
   if (offTextInput) {
     offTextInput.addEventListener("change", () => {
       const value = offTextInput.value.trim();
-      if (!value) return;
-      ensureEnabledUi();
-      updateAutomationProperty(key, { offColor: value, enabled: true });
-      if (offInput) offInput.value = value;
+	      if (!value) return;
+	      ensureEnabledUi();
+	      updateAutomationProperty(key, { offColor: value, enabled: true });
+	      if (offInput && isHexColor(value)) offInput.value = value;
     });
   }
 }
@@ -20035,6 +20836,133 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
+buildPaintPickerPalette();
+
+if (paintPickerCloseBtn) paintPickerCloseBtn.addEventListener("click", closePaintPicker);
+if (paintPickerCancelBtn) paintPickerCancelBtn.addEventListener("click", closePaintPicker);
+if (paintPickerOverlay) {
+  paintPickerOverlay.addEventListener("click", (event) => {
+    if (event.target === paintPickerOverlay) closePaintPicker();
+  });
+}
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activePaintPicker) closePaintPicker();
+});
+if (paintPickerHexInput) {
+  paintPickerHexInput.addEventListener("change", () => {
+    const value = String(paintPickerHexInput.value || "").trim();
+    if (value === "transparent" || value === "none") {
+      updatePaintPickerState(parseSolidColor(value));
+      return;
+    }
+    if (!isHexColor(value)) {
+      syncPaintPickerUi(activePaintPicker?.state);
+      return;
+    }
+    updatePaintPickerState(parseSolidColor(value));
+  });
+}
+if (paintPickerSolidTab) {
+  paintPickerSolidTab.addEventListener("click", () => setPaintPickerMode("solid"));
+}
+if (paintPickerGradientTab) {
+  paintPickerGradientTab.addEventListener("click", () => setPaintPickerMode("gradient"));
+}
+if (paintPickerGradientAngleInput) {
+  paintPickerGradientAngleInput.addEventListener("input", () => updatePaintPickerGradient({
+    angle: Number(paintPickerGradientAngleInput.value)
+  }));
+}
+if (paintPickerGradientTypeSelect) {
+  paintPickerGradientTypeSelect.addEventListener("change", () => updatePaintPickerGradient({
+    type: paintPickerGradientTypeSelect.value === "radial" ? "radial" : "linear"
+  }));
+}
+if (paintPickerGradientBar) {
+  paintPickerGradientBar.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    if (event.target instanceof Element && event.target.classList.contains("paint-picker-gradient-handle")) return;
+    if (!activePaintPicker || activePaintPicker.mode !== "gradient") return;
+    addPaintPickerGradientStop(paintPickerGradientPositionFromEvent(event));
+  });
+  paintPickerGradientBar.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.classList.contains("paint-picker-gradient-handle")) return;
+    event.preventDefault();
+    const index = Number(target.dataset.index || 0);
+    setPaintPickerGradientStop(index);
+    paintPickerGradientDragIndex = index;
+    movePaintPickerGradientStop(index, paintPickerGradientPositionFromEvent(event));
+  });
+  paintPickerGradientBar.addEventListener("contextmenu", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.classList.contains("paint-picker-gradient-handle")) return;
+    event.preventDefault();
+    deletePaintPickerGradientStop(Number(target.dataset.index || 0));
+  });
+}
+window.addEventListener("pointermove", (event) => {
+  if (paintPickerGradientDragIndex === null) return;
+  if (!activePaintPicker || activePaintPicker.mode !== "gradient") return;
+  movePaintPickerGradientStop(paintPickerGradientDragIndex, paintPickerGradientPositionFromEvent(event));
+});
+window.addEventListener("pointerup", () => {
+  paintPickerGradientDragIndex = null;
+});
+window.addEventListener("pointercancel", () => {
+  paintPickerGradientDragIndex = null;
+});
+if (paintPickerHueInput) {
+  paintPickerHueInput.addEventListener("input", () => updatePaintPickerFromHsv({ h: Number(paintPickerHueInput.value) }));
+}
+if (paintPickerSpectrum) {
+  paintPickerSpectrum.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    paintPickerSpectrum.setPointerCapture?.(event.pointerId);
+    updatePaintPickerFromSpectrum(event);
+  });
+  paintPickerSpectrum.addEventListener("pointermove", (event) => {
+    if (event.buttons !== 1) return;
+    updatePaintPickerFromSpectrum(event);
+  });
+}
+[
+  [paintPickerRedInput, "r"],
+  [paintPickerGreenInput, "g"],
+  [paintPickerBlueInput, "b"],
+  [paintPickerOpacityInput, "opacity"]
+].forEach(([input, key]) => {
+  if (!input) return;
+  input.addEventListener("input", () => updatePaintPickerState({ [key]: clampByte(input.value) }));
+});
+if (paintPickerTransparentBtn) {
+  paintPickerTransparentBtn.addEventListener("click", () => updatePaintPickerState(parseSolidColor("transparent")));
+}
+if (paintPickerNoneBtn) {
+  paintPickerNoneBtn.addEventListener("click", () => updatePaintPickerState(parseSolidColor("none")));
+}
+if (paintPickerNativeFallback) {
+  paintPickerNativeFallback.addEventListener("input", restorePaintPickerFromNativeFallback);
+  paintPickerNativeFallback.addEventListener("change", restorePaintPickerFromNativeFallback);
+  window.addEventListener("focus", () => setTimeout(restorePaintPickerFromNativeFallback, 0));
+  document.addEventListener("visibilitychange", restorePaintPickerFromNativeFallback);
+  document.addEventListener("pointerdown", restorePaintPickerFromNativeFallback, true);
+}
+if (paintPickerEyedropperBtn) {
+  paintPickerEyedropperBtn.title = window.EyeDropper
+    ? "Pick a color from the screen"
+    : "Use the browser color picker eyedropper";
+  paintPickerEyedropperBtn.addEventListener("click", runPaintPickerEyedropper);
+}
+if (paintPickerApplyBtn) {
+  paintPickerApplyBtn.addEventListener("click", () => {
+    const picker = activePaintPicker;
+    if (!picker) return;
+    picker.onApply?.(picker.mode === "gradient" ? gradientValue(picker.gradient) : solidColorValue(picker.state));
+    closePaintPicker();
+  });
+}
+
 buildSwatches(screenBgSwatches, (color) => {
   updateScreenProperty({ background: color });
   if (screenBgInput) screenBgInput.value = color;
@@ -20099,16 +21027,12 @@ buildSwatches(buttonStrokeSwatches, (color) => {
 });
 
 buildSwatches(rectFillSwatches, (color) => {
-  updateRectProperty({ fill: color });
-  if (rectFillInput) rectFillInput.value = color;
-  if (rectFillTextInput) rectFillTextInput.value = color;
+  applyRectFillColor(color);
   closeSwatches();
 });
 
 buildSwatches(rectStrokeSwatches, (color) => {
-  updateRectProperty({ stroke: color });
-  if (rectStrokeInput) rectStrokeInput.value = color;
-  if (rectStrokeTextInput) rectStrokeTextInput.value = color;
+  applyRectStrokeColor(color);
   closeSwatches();
 });
 
@@ -20428,28 +21352,48 @@ buildSwatches(alarmsPanelStripeBadQualitySwatches, (color) => {
 if (screenBgSwatchBtn && screenBgSwatches) {
   screenBgSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(screenBgSwatches, screenBgSwatchBtn);
+    openPaintPicker({
+      title: "Screen Background",
+      value: screenBgTextInput?.value || screenBgInput?.value || "#202533",
+      fallback: "#202533",
+      onApply: applyScreenBackgroundColor
+    });
   });
 }
 
 if (screenBorderSwatchBtn && screenBorderSwatches) {
   screenBorderSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(screenBorderSwatches, screenBorderSwatchBtn);
+    openPaintPicker({
+      title: "Screen Border Color",
+      value: screenBorderColorTextInput?.value || screenBorderColorInput?.value || "#ffffff",
+      fallback: "#ffffff",
+      onApply: applyScreenBorderColor
+    });
   });
 }
 
 if (textFillSwatchBtn && textFillSwatches) {
   textFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(textFillSwatches, textFillSwatchBtn);
+    openPaintPicker({
+      title: "Text Fill",
+      value: textFillTextInput?.value || textFillInput?.value || "#ffffff",
+      fallback: "#ffffff",
+      onApply: applyTextFillColor
+    });
   });
 }
 
 if (textBgSwatchBtn && textBgSwatches) {
   textBgSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(textBgSwatches, textBgSwatchBtn);
+    openPaintPicker({
+      title: "Text Background",
+      value: textBgTextInput?.value || textBgInput?.value || "transparent",
+      fallback: "#000000",
+      onApply: applyTextBackgroundColor
+    });
   });
 }
 
@@ -20463,7 +21407,12 @@ if (textBorderSwatchBtn && textBorderSwatches) {
 if (buttonFillSwatchBtn && buttonFillSwatches) {
   buttonFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(buttonFillSwatches, buttonFillSwatchBtn);
+    openPaintPicker({
+      title: "Button Fill",
+      value: buttonFillTextInput?.value || buttonFillInput?.value || "#2b2f3a",
+      fallback: "#2b2f3a",
+      onApply: applyButtonFillColor
+    });
   });
 }
 
@@ -20491,56 +21440,96 @@ if (viewportBorderSwatchBtn && viewportBorderSwatches) {
 if (rectFillSwatchBtn && rectFillSwatches) {
   rectFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(rectFillSwatches, rectFillSwatchBtn);
+    openPaintPicker({
+      title: "Rectangle Fill",
+      value: rectFillTextInput?.value || rectFillInput?.value || "#3a3f4b",
+      fallback: "#3a3f4b",
+      onApply: applyRectFillColor
+    });
   });
 }
 
 if (rectStrokeSwatchBtn && rectStrokeSwatches) {
   rectStrokeSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(rectStrokeSwatches, rectStrokeSwatchBtn);
+    openPaintPicker({
+      title: "Rectangle Border Color",
+      value: rectStrokeTextInput?.value || rectStrokeInput?.value || "#ffffff",
+      fallback: "#ffffff",
+      onApply: applyRectStrokeColor
+    });
   });
 }
 
 if (rectColorFillSwatchBtn && rectColorFillSwatches) {
   rectColorFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(rectColorFillSwatches, rectColorFillSwatchBtn);
+    openPaintPicker({
+      title: "Automation Fill Color",
+      value: rectColorFillTextInput?.value || rectColorFillInput?.value || "#3a3f4b",
+      fallback: "#3a3f4b",
+      onApply: (color) => applyRectColorDraftColor(color, rectColorFillInput, rectColorFillTextInput, "fillColor", "fillEnabled")
+    });
   });
 }
 
 if (rectColorStrokeSwatchBtn && rectColorStrokeSwatches) {
   rectColorStrokeSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(rectColorStrokeSwatches, rectColorStrokeSwatchBtn);
+    openPaintPicker({
+      title: "Automation Border Color",
+      value: rectColorStrokeTextInput?.value || rectColorStrokeInput?.value || "#ffffff",
+      fallback: "#ffffff",
+      onApply: (color) => applyRectColorDraftColor(color, rectColorStrokeInput, rectColorStrokeTextInput, "strokeColor", "strokeEnabled")
+    });
   });
 }
 
 if (rectColorTextSwatchBtn && rectColorTextSwatches) {
   rectColorTextSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(rectColorTextSwatches, rectColorTextSwatchBtn);
+    openPaintPicker({
+      title: "Automation Text Color",
+      value: rectColorTextTextInput?.value || rectColorTextInput?.value || "#ffffff",
+      fallback: "#ffffff",
+      onApply: (color) => applyRectColorDraftColor(color, rectColorTextInput, rectColorTextTextInput, "textColor", "textEnabled")
+    });
   });
 }
 
 if (rectColorBackgroundSwatchBtn && rectColorBackgroundSwatches) {
   rectColorBackgroundSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(rectColorBackgroundSwatches, rectColorBackgroundSwatchBtn);
+    openPaintPicker({
+      title: "Automation Background Color",
+      value: rectColorBackgroundTextInput?.value || rectColorBackgroundInput?.value || "#000000",
+      fallback: "#000000",
+      onApply: (color) => applyRectColorDraftColor(color, rectColorBackgroundInput, rectColorBackgroundTextInput, "backgroundColor", "backgroundEnabled")
+    });
   });
 }
 
 if (rectColorBorderSwatchBtn && rectColorBorderSwatches) {
   rectColorBorderSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(rectColorBorderSwatches, rectColorBorderSwatchBtn);
+    openPaintPicker({
+      title: "Automation Border Color",
+      value: rectColorBorderTextInput?.value || rectColorBorderInput?.value || "#000000",
+      fallback: "#000000",
+      onApply: (color) => applyRectColorDraftColor(color, rectColorBorderInput, rectColorBorderTextInput, "borderColor", "borderEnabled")
+    });
   });
 }
 
 if (ellipseFillSwatchBtn && ellipseFillSwatches) {
   ellipseFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(ellipseFillSwatches, ellipseFillSwatchBtn);
+    openPaintPicker({
+      title: "Ellipse Fill",
+      value: ellipseFillTextInput?.value || ellipseFillInput?.value || "#3a3f4b",
+      fallback: "#3a3f4b",
+      onApply: applyEllipseFillColor
+    });
   });
 }
 
@@ -20554,7 +21543,12 @@ if (ellipseStrokeSwatchBtn && ellipseStrokeSwatches) {
 if (circleFillSwatchBtn && circleFillSwatches) {
   circleFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(circleFillSwatches, circleFillSwatchBtn);
+    openPaintPicker({
+      title: "Circle Fill",
+      value: circleFillTextInput?.value || circleFillInput?.value || "#3a3f4b",
+      fallback: "#3a3f4b",
+      onApply: applyCircleFillColor
+    });
   });
 }
 
@@ -20596,7 +21590,12 @@ if (splineStrokeSwatchBtn && splineStrokeSwatches) {
 if (polygonFillSwatchBtn && polygonFillSwatches) {
   polygonFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(polygonFillSwatches, polygonFillSwatchBtn);
+    openPaintPicker({
+      title: "Polygon Fill",
+      value: polygonFillTextInput?.value || polygonFillInput?.value || "#3a3f4b",
+      fallback: "#3a3f4b",
+      onApply: applyPolygonFillColor
+    });
   });
 }
 
@@ -20610,7 +21609,12 @@ if (polygonStrokeSwatchBtn && polygonStrokeSwatches) {
 if (barFillSwatchBtn && barFillSwatches) {
   barFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(barFillSwatches, barFillSwatchBtn);
+    openPaintPicker({
+      title: "Bar Fill",
+      value: barFillTextInput?.value || barFillInput?.value || "#46ff64",
+      fallback: "#46ff64",
+      onApply: applyBarFillColor
+    });
   });
 }
 
@@ -20673,14 +21677,24 @@ if (indicatorStrokeSwatchBtn && indicatorStrokeSwatches) {
 if (polygonFillAutoOnSwatchBtn && polygonFillAutoOnSwatches) {
   polygonFillAutoOnSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(polygonFillAutoOnSwatches, polygonFillAutoOnSwatchBtn);
+    openPaintPicker({
+      title: "Fill Automation On Color",
+      value: polygonFillAutoOnTextInput?.value || polygonFillAutoOnInput?.value || "#3a3f4b",
+      fallback: "#3a3f4b",
+      onApply: (color) => applyAutomationColor("fillAutomation", "onColor", color, polygonFillAutoOnInput, polygonFillAutoOnTextInput)
+    });
   });
 }
 
 if (polygonFillAutoOffSwatchBtn && polygonFillAutoOffSwatches) {
   polygonFillAutoOffSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(polygonFillAutoOffSwatches, polygonFillAutoOffSwatchBtn);
+    openPaintPicker({
+      title: "Fill Automation Off Color",
+      value: polygonFillAutoOffTextInput?.value || polygonFillAutoOffInput?.value || "#3a3f4b",
+      fallback: "#3a3f4b",
+      onApply: (color) => applyAutomationColor("fillAutomation", "offColor", color, polygonFillAutoOffInput, polygonFillAutoOffTextInput)
+    });
   });
 }
 
