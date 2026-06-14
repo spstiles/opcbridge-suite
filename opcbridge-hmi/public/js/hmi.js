@@ -12560,6 +12560,7 @@ const SWATCH_COLORS = [
 
 const PAINT_PICKER_PRIMARY_COLORS = [
   "#000000",
+  "#ffffff",
   "#ff0000",
   "#ffff00",
   "#00ff00",
@@ -12593,9 +12594,12 @@ const hslToHex = (hue, saturation, lightness) => {
 };
 
 const PAINT_PICKER_COLORS = [
-  ...Array.from({ length: 18 }, (_, index) => {
-    const channel = Math.round((index / 17) * 255);
-    const value = `#${channel.toString(16).padStart(2, "0").repeat(3)}`;
+  ...[
+    0, 15, 30, 45, 60, 75, 90, 105, 120,
+    135, 150, 165, 180, 195, 210, 225, 240, 255
+  ].map((channel) => {
+    const hex = channel.toString(16).padStart(2, "0");
+    const value = `#${hex}${hex}${hex}`;
     return { value, label: value.toUpperCase() };
   }),
   ...[0.18, 0.28, 0.38, 0.5, 0.62, 0.74].flatMap((lightness) => (

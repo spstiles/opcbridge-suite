@@ -2653,7 +2653,7 @@ body:not(.edit-mode) #workspace {
 
 .paint-picker-primary {
   display: grid;
-  grid-template-columns: repeat(10, 20px);
+  grid-template-columns: repeat(11, 20px);
   gap: 3px;
   padding-bottom: 5px;
   border-bottom: 1px solid #232a39;
