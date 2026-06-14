@@ -532,6 +532,35 @@ const createApp = () => {
     }
   });
 
+  app.post("/api/opc/tags/query", async (req, res) => {
+    try {
+      const { config: parsed } = await readConfig();
+      const opcbridge = parsed?.opcbridge || {};
+      const host = opcbridge.host || "127.0.0.1";
+      const port = Number(opcbridge.httpPort) || 8080;
+      const tags = Array.isArray(req.body?.tags) ? req.body.tags : [];
+      const normalized = tags
+        .map((tag) => ({
+          connection_id: String(tag?.connection_id || "").trim(),
+          name: String(tag?.name || tag?.tag || "").trim()
+        }))
+        .filter((tag) => tag.connection_id && tag.name)
+        .slice(0, 500);
+      const response = await fetch(`http://${host}:${port}/tags/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ tags: normalized })
+      });
+      if (!response.ok) {
+        return res.status(502).json({ error: `OPCBridge HTTP ${response.status}` });
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   app.post("/api/opc/write", async (req, res) => {
     try {
       const { config: parsed } = await readConfig();

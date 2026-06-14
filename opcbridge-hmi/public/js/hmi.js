@@ -5129,6 +5129,8 @@ let wsConnected = false;
 let wsReconnectTimer = null;
 let wsCurrentUrl = "";
 let wsSubscribeTimer = null;
+let tagSeedRefreshTimer = null;
+let tagSeedRefreshInFlight = false;
 let wsLastSubscribeFingerprint = "";
 let alarmsWsClient = null;
 let alarmsWsConnected = false;
@@ -7774,6 +7776,79 @@ const collectActiveWsSubscriptions = () => {
   return Array.from(out).sort();
 };
 
+const wsTagKeyToQueryItem = (key) => {
+  const raw = String(key || "");
+  const sep = raw.indexOf(":");
+  if (sep <= 0 || sep >= raw.length - 1) return null;
+  const connection_id = raw.slice(0, sep).trim();
+  const name = raw.slice(sep + 1).trim();
+  if (!connection_id || !name) return null;
+  return { connection_id, name };
+};
+
+const applyTagRowsToCache = (rows) => {
+  let changed = false;
+  (Array.isArray(rows) ? rows : []).forEach((tag) => {
+    const connectionId = String(tag?.connection_id || "");
+    const name = String(tag?.name || "");
+    const key = normalizeTagCacheKey(connectionId, name);
+    if (!key) return;
+    if (Object.prototype.hasOwnProperty.call(tag, "value")) {
+      tagValueCache.set(key, tag.value);
+      changed = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(tag, "quality")) {
+      tagQualityCache.set(key, tag.quality);
+    }
+  });
+  return changed;
+};
+
+const seedTagValuesForKeys = async (keys) => {
+  const queryItems = Array.from(new Set(keys || []))
+    .map(wsTagKeyToQueryItem)
+    .filter(Boolean);
+  if (!queryItems.length) return false;
+  let changed = false;
+  for (let i = 0; i < queryItems.length; i += 500) {
+    const chunk = queryItems.slice(i, i + 500);
+    const response = await fetch("/api/opc/tags/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ tags: chunk })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    changed = applyTagRowsToCache(data?.tags) || changed;
+  }
+  return changed;
+};
+
+const seedActiveTagValues = async () => {
+  if (tagSeedRefreshInFlight) return;
+  tagSeedRefreshInFlight = true;
+  try {
+    const changed = await seedTagValuesForKeys(collectActiveWsSubscriptions());
+    if (changed && !isEditingGestureActive() && !isKeypadOpen) {
+      renderScreen();
+      if (currentPopupScreenId) openPopup(currentPopupScreenId);
+    }
+  } catch {
+    // WebSocket updates remain primary; exact seeding is a best-effort catch-up path.
+  } finally {
+    tagSeedRefreshInFlight = false;
+  }
+};
+
+const scheduleTagSeedRefresh = () => {
+  if (tagSeedRefreshTimer) return;
+  tagSeedRefreshTimer = setTimeout(() => {
+    tagSeedRefreshTimer = null;
+    seedActiveTagValues();
+  }, 150);
+};
+
 const wsSendSubscribe = (tags) => {
   if (!wsConnected || !wsClient || wsClient.readyState !== WebSocket.OPEN) return;
   try {
@@ -7797,6 +7872,7 @@ const scheduleWsSubscribeRefresh = () => {
   wsSubscribeTimer = setTimeout(() => {
     wsSubscribeTimer = null;
     updateWsSubscriptions();
+    scheduleTagSeedRefresh();
   }, 100);
 };
 
@@ -10181,11 +10257,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     if (align === "left") labelX = 8;
     if (align === "right") labelX = w - 8;
     const vPad = 8;
-    let labelY = h / 2;
-    if (valign === "top") labelY = vPad;
-    if (valign === "bottom") labelY = h - vPad;
     label.setAttribute("x", labelX);
-    label.setAttribute("y", labelY);
     const textColor = getAutomationColor(obj.textColorAutomation, obj.textColor || "#ffffff");
     label.setAttribute("fill", textColor);
     const fontSize = Number(obj.fontSize || 16);
@@ -10197,16 +10269,14 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const horizontalPadding = 8;
     const availableTextWidth = Math.max(1, w - (horizontalPadding * 2));
     const measured = wrapTextToWidth(labelText, availableTextWidth, fontSize, Boolean(obj.bold));
+    let blockTop = vPad;
+    if (valign === "middle") blockTop = (h - measured.height) / 2;
+    if (valign === "bottom") blockTop = h - vPad - measured.height;
+    const baselineStart = getTextBaselineStart(blockTop, measured);
     if (measured.lines.length > 1) {
-      label.setAttribute("dominant-baseline", "hanging");
-      let yStart = vPad;
-      if (valign === "middle") yStart = (h - measured.height) / 2;
-      if (valign === "bottom") yStart = h - vPad - measured.height;
-      applyMultilineSvgText(label, measured.lines, labelX, yStart, measured.lineHeight);
+      applyMultilineSvgText(label, measured.lines, labelX, baselineStart, measured.lineHeight);
     } else {
-      if (valign === "top") label.setAttribute("dominant-baseline", "hanging");
-      if (valign === "middle") label.setAttribute("dominant-baseline", "middle");
-      if (valign === "bottom") label.setAttribute("dominant-baseline", "text-after-edge");
+      label.setAttribute("y", baselineStart);
       label.textContent = measured.lines[0] ?? "";
     }
     group.appendChild(label);
