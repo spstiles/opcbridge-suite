@@ -2758,6 +2758,21 @@ const renderImageFileList = (payload) => {
   updateScreenFileSelectionSummary();
 };
 
+const showFixedContextMenuAt = (menu, clientX, clientY) => {
+  if (!menu) return;
+  const margin = 8;
+  menu.style.left = `${margin}px`;
+  menu.style.top = `${margin}px`;
+  menu.classList.remove("is-hidden");
+  const rect = menu.getBoundingClientRect();
+  const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+  const left = Math.min(Math.max(margin, Number(clientX) || margin), maxLeft);
+  const top = Math.min(Math.max(margin, Number(clientY) || margin), maxTop);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+};
+
 const ensureScreenFileContextMenu = () => {
   if (screenFileContextMenu) return screenFileContextMenu;
   const menu = document.createElement("div");
@@ -2868,9 +2883,7 @@ const showScreenFileContextMenu = (clientX, clientY, target) => {
     addItem("Cancel", async () => {});
   }
 
-  menu.style.left = `${Math.max(8, clientX)}px`;
-  menu.style.top = `${Math.max(8, clientY)}px`;
-  menu.classList.remove("is-hidden");
+  showFixedContextMenuAt(menu, clientX, clientY);
 };
 
 const navigateScreenFileLocation = async (source, dir) => {
@@ -8720,9 +8733,7 @@ const showImageLibraryContextMenu = (clientX, clientY, file) => {
 
   addItem("Cancel", async () => {});
 
-  menu.style.left = `${Math.max(8, clientX)}px`;
-  menu.style.top = `${Math.max(8, clientY)}px`;
-  menu.classList.remove("is-hidden");
+  showFixedContextMenuAt(menu, clientX, clientY);
 };
 
 const ensureObjectContextMenu = () => {
@@ -8796,9 +8807,7 @@ const showObjectContextMenu = (clientX, clientY, objectIndex) => {
   });
   addItem("Cancel", () => {});
 
-  menu.style.left = `${Math.max(8, clientX)}px`;
-  menu.style.top = `${Math.max(8, clientY)}px`;
-  menu.classList.remove("is-hidden");
+  showFixedContextMenuAt(menu, clientX, clientY);
 };
 
 const renderLibraryImages = () => {
