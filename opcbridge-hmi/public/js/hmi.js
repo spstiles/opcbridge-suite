@@ -5680,6 +5680,13 @@ const clearSelectedPolygonVertex = () => {
 
 const isEditablePathVertexObject = (obj) => Boolean(obj && ["polyline", "polygon", "spline"].includes(String(obj.type || "")));
 
+const getMinimumPathVertexCount = (obj) => {
+  if (!obj) return 0;
+  if (obj.type === "polygon") return 3;
+  if (obj.type === "polyline" || obj.type === "spline") return 2;
+  return 0;
+};
+
 const getProjectedPointOnSegment = (point, start, end) => {
   const ax = Number(start?.x ?? 0);
   const ay = Number(start?.y ?? 0);
@@ -15063,6 +15070,35 @@ window.addEventListener("keydown", (evt) => {
   if (!activeObjects || !Array.isArray(activeObjects)) return;
   if (!selectedIndices.length) return;
   evt.preventDefault();
+  syncSelectedPolygonVertex();
+  if (selectedPolygonVertex && selectedIndices.length === 1 && selectedIndices[0] === selectedPolygonVertex.objectIndex) {
+    const obj = activeObjects[selectedPolygonVertex.objectIndex];
+    if (isEditablePathVertexObject(obj)) {
+      const points = Array.isArray(obj.points) ? obj.points.slice() : [];
+      const minCount = getMinimumPathVertexCount(obj);
+      const vertexIndex = selectedPolygonVertex.vertexIndex;
+      if (points.length > minCount && Number.isInteger(vertexIndex) && vertexIndex >= 0 && vertexIndex < points.length) {
+        recordHistory();
+        points.splice(vertexIndex, 1);
+        obj.points = points;
+        if (points.length) {
+          selectedPolygonVertex = {
+            groupDepth: groupEditStack.length,
+            objectIndex: selectedIndices[0],
+            vertexIndex: Math.max(0, Math.min(vertexIndex, points.length - 1))
+          };
+        } else {
+          clearSelectedPolygonVertex();
+        }
+        renderScreen();
+        syncEditorFromScreen();
+        updateSelectionOverlays();
+        updatePropertiesPanel();
+        setDirty(true);
+        return;
+      }
+    }
+  }
 	  recordHistory();
 	  const deleteSet = new Set(selectedIndices);
 	  setActiveObjects(activeObjects.filter((_, index) => !deleteSet.has(index)));
@@ -25579,27 +25615,26 @@ const setTool = (nextTool) => {
 	              }
 	              return { x, y };
 	            });
-	            return;
+	          } else {
+	            const sx = newW / oldW;
+	            const sy = newH / oldH;
+	            obj.points = startPoints.map((pt) => {
+	              const px = Number(pt?.x ?? 0);
+	              const py = Number(pt?.y ?? 0);
+	              let x = anchorX + (px - anchorX) * sx;
+	              let y = anchorY + (py - anchorY) * sy;
+	              if (handle === "nw" || handle === "sw") x = anchorX - (anchorX - px) * sx;
+	              if (handle === "nw" || handle === "ne") y = anchorY - (anchorY - py) * sy;
+	              if (snapEnabled) {
+	                x = snapValue(Math.round(x));
+	                y = snapValue(Math.round(y));
+	              } else {
+	                x = Math.round(x);
+	                y = Math.round(y);
+	              }
+	              return { x, y };
+	            });
 	          }
-
-	          const sx = newW / oldW;
-	          const sy = newH / oldH;
-	          obj.points = startPoints.map((pt) => {
-	            const px = Number(pt?.x ?? 0);
-	            const py = Number(pt?.y ?? 0);
-	            let x = anchorX + (px - anchorX) * sx;
-	            let y = anchorY + (py - anchorY) * sy;
-	            if (handle === "nw" || handle === "sw") x = anchorX - (anchorX - px) * sx;
-	            if (handle === "nw" || handle === "ne") y = anchorY - (anchorY - py) * sy;
-	            if (snapEnabled) {
-	              x = snapValue(Math.round(x));
-	              y = snapValue(Math.round(y));
-	            } else {
-	              x = Math.round(x);
-	              y = Math.round(y);
-	            }
-	            return { x, y };
-	          });
 	        } else {
 	          return;
 	        }
