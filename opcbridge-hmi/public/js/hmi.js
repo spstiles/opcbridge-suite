@@ -16288,8 +16288,10 @@ if (tagBindingSaveBtn) {
   tagBindingSaveBtn.addEventListener("click", () => {
     const config = getCompactTagBindingConfig(activeCompactTagBindingId);
     if (!config) return;
-    const connection_id = String(tagBindingConnectionSelect?.value || "").trim();
-    const tag = String(tagBindingTagSelect?.value || "").trim();
+    const selectedTagOption = tagBindingTagSelect?.selectedOptions?.[0] || null;
+    const parsedSelection = parseTagSelectValue(String(tagBindingTagSelect?.value || ""));
+    const connection_id = String(selectedTagOption?.dataset?.connectionId || tagBindingConnectionSelect?.value || parsedSelection.connection_id || "").trim();
+    const tag = String(selectedTagOption?.dataset?.tag || parsedSelection.tag || "").trim();
     if (config.connectionInput) config.connectionInput.value = connection_id;
     if (config.tagInput) config.tagInput.value = tag;
     if (config.tagSelect) setSelectValueSafe(config.tagSelect, connection_id && tag ? `${connection_id}::${tag}` : "");
@@ -19117,12 +19119,6 @@ function sortConnectionIdsForDisplay(connectionIds) {
   });
 }
 
-function filterTagNamesByQuery(tagNames, query) {
-  const normalizedQuery = String(query || "").trim().toLowerCase();
-  if (!normalizedQuery) return Array.isArray(tagNames) ? tagNames : [];
-  return (Array.isArray(tagNames) ? tagNames : []).filter((tagName) => String(tagName || "").toLowerCase().includes(normalizedQuery));
-}
-
 function populateCompactTagBindingConnectionOptions() {
   if (!tagBindingConnectionSelect) return;
   const previous = String(tagBindingConnectionSelect.value || "");
@@ -19142,7 +19138,10 @@ function populateCompactTagBindingConnectionOptions() {
 
 function populateCompactTagBindingTagOptions(connectionId = "") {
   if (!tagBindingTagSelect) return;
-  const previous = String(tagBindingTagSelect.value || "");
+  const previousOption = tagBindingTagSelect.selectedOptions?.[0] || null;
+  const previousConnectionId = String(previousOption?.dataset?.connectionId || tagBindingConnectionSelect?.value || "").trim();
+  const previousTagName = String(previousOption?.dataset?.tag || "").trim();
+  const previousKey = previousConnectionId && previousTagName ? `${previousConnectionId}::${previousTagName}` : String(tagBindingTagSelect.value || "");
   const selectedConnectionId = String(connectionId || tagBindingConnectionSelect?.value || "");
   const filterQuery = String(tagBindingTagFilterInput?.value || "");
   tagBindingTagSelect.innerHTML = "";
@@ -19150,18 +19149,37 @@ function populateCompactTagBindingTagOptions(connectionId = "") {
   placeholder.value = "";
   placeholder.textContent = "Select tag…";
   tagBindingTagSelect.appendChild(placeholder);
-  const tagNames = filterTagNamesByQuery(tagsCache
-    .filter((tag) => !selectedConnectionId || String(tag?.connection_id || "") === selectedConnectionId)
-    .map((tag) => String(tag?.name || ""))
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })), filterQuery);
-  tagNames.forEach((tagName) => {
+  const createTagOption = (connectionIdValue, tagName) => {
     const option = document.createElement("option");
-    option.value = tagName;
+    option.value = `${connectionIdValue}::${tagName}`;
     option.textContent = tagName;
-    tagBindingTagSelect.appendChild(option);
-  });
-  if (previous && tagNames.includes(previous)) tagBindingTagSelect.value = previous;
+    option.dataset.connectionId = connectionIdValue;
+    option.dataset.tag = tagName;
+    return option;
+  };
+  const matchesFilter = (tagName) => !filterQuery || String(tagName || "").toLowerCase().includes(filterQuery.toLowerCase());
+  if (selectedConnectionId) {
+    const tagNames = tagsCache
+      .filter((tag) => String(tag?.connection_id || "") === selectedConnectionId)
+      .map((tag) => String(tag?.name || ""))
+      .filter((tagName) => tagName && matchesFilter(tagName))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+    tagNames.forEach((tagName) => tagBindingTagSelect.appendChild(createTagOption(selectedConnectionId, tagName)));
+  } else {
+    sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((tagConnectionId) => {
+      const tagNames = tagsCache
+        .filter((tag) => String(tag?.connection_id || "") === tagConnectionId)
+        .map((tag) => String(tag?.name || ""))
+        .filter((tagName) => tagName && matchesFilter(tagName))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+      if (!tagNames.length) return;
+      const group = document.createElement("optgroup");
+      group.label = tagConnectionId;
+      tagNames.forEach((tagName) => group.appendChild(createTagOption(tagConnectionId, tagName)));
+      tagBindingTagSelect.appendChild(group);
+    });
+  }
+  if (previousKey) tagBindingTagSelect.value = previousKey;
 }
 
 function getCompactTagBindingSummary(binding, emptyText = "(unbound)") {
@@ -19195,7 +19213,7 @@ function openCompactTagBindingModal(id) {
   populateCompactTagBindingConnectionOptions();
   setSelectValueSafe(tagBindingConnectionSelect, binding.connection_id || "");
   populateCompactTagBindingTagOptions(binding.connection_id || "");
-  setSelectValueSafe(tagBindingTagSelect, binding.tag || "");
+  setSelectValueSafe(tagBindingTagSelect, binding.connection_id && binding.tag ? `${binding.connection_id}::${binding.tag}` : "");
   tagBindingOverlay.classList.remove("is-hidden");
   tagBindingOverlay.setAttribute("aria-hidden", "false");
   if (tagBindingTagFilterInput) requestAnimationFrame(() => tagBindingTagFilterInput.focus());
