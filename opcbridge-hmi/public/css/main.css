@@ -3518,6 +3518,70 @@ body.automation-panel-open #editor-pane {
   box-shadow: 0 0 0 1px var(--border-focus);
 }
 
+.multi-state-grid {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 10px;
+  margin-top: 4px;
+  min-height: 0;
+}
+
+.multi-state-list-pane,
+.multi-state-list,
+.multi-state-details {
+  min-width: 0;
+}
+
+.multi-state-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.multi-state-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.multi-state-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.multi-state-actions .panel-btn {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.multi-state-list-item {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.multi-state-list-item.is-active {
+  background: var(--bg-elevated);
+  border-color: var(--border-focus);
+}
+
+.multi-state-details .prop-row {
+  grid-template-columns: 78px minmax(0, 1fr);
+}
+
 .prop-inline {
   display: flex;
   gap: 8px;

@@ -6659,6 +6659,36 @@ async function downloadConnectivityCsv() {
   });
 }
 
+function firstPresentTagValue(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return '';
+}
+
+function getTagScalingCsvFields(tag) {
+  const t = tag && typeof tag === 'object' ? tag : {};
+  const nested = (t.scale && typeof t.scale === 'object') ? t.scale
+    : ((t.scaling_config && typeof t.scaling_config === 'object') ? t.scaling_config
+      : ((t.scaling && typeof t.scaling === 'object') ? t.scaling : {}));
+  const modeRaw = firstPresentTagValue(
+    typeof t.scaling === 'string' ? t.scaling : '',
+    nested.mode,
+    nested.type,
+    nested.scaling
+  );
+  return {
+    scaling: String(modeRaw || '').trim(),
+    raw_low: firstPresentTagValue(t.raw_low, t.rawLow, nested.raw_low, nested.rawLow, nested.input_low, nested.inputLow),
+    raw_high: firstPresentTagValue(t.raw_high, t.rawHigh, nested.raw_high, nested.rawHigh, nested.input_high, nested.inputHigh),
+    scaled_low: firstPresentTagValue(t.scaled_low, t.scaledLow, nested.scaled_low, nested.scaledLow, nested.output_low, nested.outputLow),
+    scaled_high: firstPresentTagValue(t.scaled_high, t.scaledHigh, nested.scaled_high, nested.scaledHigh, nested.output_high, nested.outputHigh),
+    clamp_low: firstPresentTagValue(t.clamp_low, t.clampLow, nested.clamp_low, nested.clampLow),
+    clamp_high: firstPresentTagValue(t.clamp_high, t.clampHigh, nested.clamp_high, nested.clampHigh),
+    scaled_datatype: firstPresentTagValue(t.scaled_datatype, t.scaledDatatype, nested.scaled_datatype, nested.scaledDatatype, nested.datatype)
+  };
+}
+
 function downloadDeviceTagsCsv(connectionId) {
   const cid = String(connectionId || '').trim();
   if (!cid) return;
@@ -6701,6 +6731,7 @@ function downloadDeviceTagsCsv(connectionId) {
 
 	  const rows = tags.map((t) => {
 	    const historian = normalizeTagHistorianSettings(t);
+	    const scaling = getTagScalingCsvFields(t);
 	    return {
 	      // Derived tags: source_tag is set (bit optional) and no plc_tag_name
 	      // Direct tags: plc_tag_name and no source_tag/bit
@@ -6717,14 +6748,14 @@ function downloadDeviceTagsCsv(connectionId) {
 	      scan_ms: (t?.scan_ms == null) ? '' : String(t.scan_ms),
 	      enabled: (t?.enabled !== false) ? 'true' : 'false',
 	      writable: (t?.writable === true) ? 'true' : 'false',
-	      scaling: String(t?.scaling || '').trim(),
-	      raw_low: (t?.raw_low == null) ? '' : String(t.raw_low),
-	      raw_high: (t?.raw_high == null) ? '' : String(t.raw_high),
-	      scaled_low: (t?.scaled_low == null) ? '' : String(t.scaled_low),
-	      scaled_high: (t?.scaled_high == null) ? '' : String(t.scaled_high),
-	      clamp_low: (t?.clamp_low === true) ? 'true' : 'false',
-	      clamp_high: (t?.clamp_high === true) ? 'true' : 'false',
-	      scaled_datatype: String(t?.scaled_datatype || '').trim(),
+	      scaling: String(scaling.scaling || '').trim(),
+	      raw_low: String(scaling.raw_low ?? ''),
+	      raw_high: String(scaling.raw_high ?? ''),
+	      scaled_low: String(scaling.scaled_low ?? ''),
+	      scaled_high: String(scaling.scaled_high ?? ''),
+	      clamp_low: (String(scaling.clamp_low).toLowerCase() === 'true') ? 'true' : 'false',
+	      clamp_high: (String(scaling.clamp_high).toLowerCase() === 'true') ? 'true' : 'false',
+	      scaled_datatype: String(scaling.scaled_datatype || '').trim(),
 	      log_event_on_change: (t?.log_event_on_change === true) ? 'true' : 'false',
 	      log_periodic_mode: String(t?.log_periodic_mode || '').trim(),
 	      log_periodic_interval_sec: (t?.log_periodic_interval_sec == null) ? '' : String(t.log_periodic_interval_sec),

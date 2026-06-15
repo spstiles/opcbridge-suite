@@ -192,6 +192,7 @@ const dynamicsMenuBtn = document.getElementById("dynamicsMenuBtn");
 const dynamicsMenuFlyout = document.getElementById("dynamicsMenuFlyout");
 const dynamicsAddVisibilityMenuBtn = document.getElementById("dynamicsAddVisibilityMenuBtn");
 const dynamicsAddColorMenuBtn = document.getElementById("dynamicsAddColorMenuBtn");
+const dynamicsAddStatesMenuBtn = document.getElementById("dynamicsAddStatesMenuBtn");
 const dynamicsAddRotationMenuBtn = document.getElementById("dynamicsAddRotationMenuBtn");
 const dynamicsAddMotionMenuBtn = document.getElementById("dynamicsAddMotionMenuBtn");
 const groupMenuBtn = document.getElementById("groupMenuBtn");
@@ -251,11 +252,13 @@ const objectDynamicTabs = document.getElementById("objectDynamicTabs");
 const objectDynamicTabPropertiesBtn = document.getElementById("objectDynamicTabPropertiesBtn");
 const objectDynamicTabVisibilityBtn = document.getElementById("objectDynamicTabVisibilityBtn");
 const objectDynamicTabColorBtn = document.getElementById("objectDynamicTabColorBtn");
+const objectDynamicTabStatesBtn = document.getElementById("objectDynamicTabStatesBtn");
 const objectDynamicTabRotationBtn = document.getElementById("objectDynamicTabRotationBtn");
 const objectDynamicTabMotionBtn = document.getElementById("objectDynamicTabMotionBtn");
 const editorPaneTitle = document.getElementById("editorPaneTitle");
 const objectDynamicVisibilityHost = document.getElementById("objectDynamicVisibilityHost");
 const objectDynamicColorHost = document.getElementById("objectDynamicColorHost");
+const objectDynamicStatesHost = document.getElementById("objectDynamicStatesHost");
 const objectDynamicRotationHost = document.getElementById("objectDynamicRotationHost");
 const objectDynamicMotionHost = document.getElementById("objectDynamicMotionHost");
 const tagsModalOverlay = document.getElementById("tagsModalOverlay");
@@ -525,6 +528,11 @@ const getSelectedRotationDynamicObject = () => {
   return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "group") ? obj : null;
 };
 
+const getSelectedMultiStateDynamicObject = () => {
+  const obj = getAutomationObject();
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? obj : null;
+};
+
 const getSelectedMotionDynamicObject = () => {
   const obj = getAutomationObject();
   return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? obj : null;
@@ -551,6 +559,11 @@ const hasRectRotationDynamic = (obj) => {
 const hasRectMotionDynamic = (obj) => {
   if (!obj || typeof obj !== "object") return false;
   return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
+};
+
+const hasMultiStateDynamic = (obj) => {
+  if (!obj || typeof obj !== "object") return false;
+  return Boolean(obj.multiStateAutomation && typeof obj.multiStateAutomation === "object" && Object.keys(obj.multiStateAutomation).length);
 };
 
 const hasLineColorDynamic = (obj) => {
@@ -895,6 +908,47 @@ const normalizeMotionAutomationState = (value) => {
   if (!Number.isFinite(Number(next.inputMax))) next.inputMax = 1;
   else next.inputMax = Number(next.inputMax);
   if (next.enabled === undefined) next.enabled = true;
+  return next;
+};
+
+const normalizeMultiStateAutomationState = (value) => {
+  const next = value && typeof value === "object" ? { ...value } : {};
+  next.enabled = next.enabled !== false;
+  next.sourceType = next.sourceType === "expression" ? "expression" : "tag";
+  next.mode = next.mode === "threshold" ? "threshold" : "equals";
+  if (next.sourceType === "expression") {
+    next.expression = String(next.expression || "").trim();
+    delete next.connection_id;
+    delete next.tag;
+  } else {
+    delete next.expression;
+    next.connection_id = String(next.connection_id || "").trim();
+    next.tag = String(next.tag || "").trim();
+  }
+  const rawStates = Array.isArray(next.states) ? next.states : [];
+  const states = rawStates.map((state, index) => {
+    const source = state && typeof state === "object" ? state : {};
+    const normalized = {
+      name: String(source.name || `State ${index + 1}`).trim() || `State ${index + 1}`,
+      match: String(source.match ?? "").trim(),
+      rotationEnabled: Boolean(source.rotationEnabled),
+      rotation: Number.isFinite(Number(source.rotation)) ? Number(source.rotation) : 0,
+      textEnabled: Boolean(source.textEnabled),
+      text: String(source.text ?? ""),
+      fillEnabled: Boolean(source.fillEnabled),
+      fillColor: String(source.fillColor ?? "").trim(),
+      backgroundEnabled: Boolean(source.backgroundEnabled),
+      backgroundColor: String(source.backgroundColor ?? "").trim(),
+      borderEnabled: Boolean(source.borderEnabled),
+      borderColor: String(source.borderColor ?? "").trim()
+    };
+    return normalized;
+  });
+  next.states = states.length ? states : [
+    { name: "State 1", match: "0", rotationEnabled: false, rotation: 0 },
+    { name: "State 2", match: "1", rotationEnabled: false, rotation: 0 }
+  ];
+  next.selectedStateIndex = Math.max(0, Math.min(Number.isInteger(Number(next.selectedStateIndex)) ? Number(next.selectedStateIndex) : 0, next.states.length - 1));
   return next;
 };
 
@@ -2135,6 +2189,7 @@ const setObjectDynamicTab = (tab) => {
   const next =
     normalized === "visibility" ? "visibility" :
     isColorDynamicTab(normalized) ? getColorDynamicTabKey(getColorDynamicTabIndex(normalized)) :
+    normalized === "states" ? "states" :
     normalized === "rotation" ? "rotation" :
     normalized === "motion" ? "motion" :
     "properties";
@@ -2150,6 +2205,7 @@ const setObjectDynamicTab = (tab) => {
   }
   if (objectDynamicTabPropertiesBtn) objectDynamicTabPropertiesBtn.classList.toggle("is-active", next === "properties");
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-active", next === "visibility");
+  if (objectDynamicTabStatesBtn) objectDynamicTabStatesBtn.classList.toggle("is-active", next === "states");
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-active", next === "rotation");
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-active", next === "motion");
   syncObjectDynamicColorTabs(getSelectedColorDynamicObject());
@@ -2179,7 +2235,7 @@ const syncObjectDynamicColorTabs = (obj) => {
     if (!button) {
       button = objectDynamicTabColorBtn.cloneNode(true);
       button.id = "";
-      objectDynamicTabRotationBtn?.before(button);
+      (objectDynamicTabStatesBtn || objectDynamicTabRotationBtn)?.before(button);
     }
     button.classList.remove("is-hidden");
     button.hidden = false;
@@ -2267,6 +2323,22 @@ const ensureRectRotationDynamic = () => {
   }
   ensureRectRotationDraft(obj);
   currentObjectDynamicTab = "rotation";
+  updatePropertiesPanel();
+  return true;
+};
+
+const ensureMultiStateDynamic = () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedMultiStateDynamicObject();
+  if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
+  if (!hasMultiStateDynamic(obj)) {
+    recordHistory();
+    obj.multiStateAutomation = normalizeMultiStateAutomationState({});
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+  }
+  currentObjectDynamicTab = "states";
   updatePropertiesPanel();
   return true;
 };
@@ -3125,6 +3197,7 @@ const saveScreenToPath = async (relPath, raw) => {
 
 const getCurrentScreenRawForSave = () => {
   if (!jsoncEditor) return "";
+  blurActiveFormControl();
   if (currentTab === "jsonc") return jsoncEditor.value;
   if (!currentScreenObj) return jsoncEditor.value;
   const raw = JSON.stringify(currentScreenObj, null, 2);
@@ -4644,12 +4717,25 @@ const GRID_SIZE = 10;
 const RESIZE_HANDLE_SIZE = 8;
 const MIN_RESIZE_SIZE = 10;
 
+const paintValueCreatesBox = (value) => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return Boolean(normalized && normalized !== "none");
+};
+
+const textBorderValueCreatesBox = (obj) => {
+  if (!obj) return false;
+  if ("borderEnabled" in obj) return Boolean(obj.borderEnabled);
+  const color = String(obj.borderColor || "").trim().toLowerCase();
+  const width = Number(obj.borderWidth ?? 1);
+  return Boolean(color && color !== "none" && width > 0);
+};
+
 const getTextBoxPadding = (obj) => {
   const explicit = Number(obj?.padding);
   if (Number.isFinite(explicit) && explicit >= 0) {
     return { x: explicit, y: explicit };
   }
-  const hasBgBox = Boolean(obj?.background || obj?.borderColor);
+  const hasBgBox = paintValueCreatesBox(obj?.background) || textBorderValueCreatesBox(obj);
   const rawW = Number(obj?.w);
   const rawH = Number(obj?.h);
   const explicitW = Number.isFinite(rawW) ? rawW : 0;
@@ -6407,6 +6493,8 @@ const getTextBindingDisplayValue = (rawValue, bind, previewOnly = false) => {
 const renderTextTemplate = (obj, previewOnly = false) => {
   const baseText = String(obj?.text || "");
   const bindings = getTextBindingsMap(obj);
+  const multiStateText = getMultiStateTextOverride(obj);
+  if (multiStateText !== null) return renderBoundTemplate(multiStateText, bindings, previewOnly);
   return getAutomationText(obj?.textStateAutomation, baseText, bindings, previewOnly);
 };
 
@@ -6676,16 +6764,20 @@ const getActiveAutomationOverrideColor = (config) => {
 const getGroupColorOverrides = (groupObj) => {
   if (!groupObj || groupObj.type !== "group") return null;
   const overrides = {};
+  const stateOverrides = getMultiStateVisualOverrides(groupObj);
   const fillColor = getActiveAutomationOverrideColor(groupObj.fillAutomation);
   const lineColor = getActiveAutomationOverrideColor(groupObj.strokeAutomation);
   const textColor = getActiveAutomationOverrideColor(groupObj.textColorAutomation);
   const backgroundColor = getActiveAutomationOverrideColor(groupObj.backgroundAutomation);
   const borderColor = getActiveAutomationOverrideColor(groupObj.borderColorAutomation);
-  if (fillColor) overrides.fillColor = fillColor;
+  if (stateOverrides?.fillColor) overrides.fillColor = stateOverrides.fillColor;
+  else if (fillColor) overrides.fillColor = fillColor;
   if (lineColor) overrides.lineColor = lineColor;
   if (textColor) overrides.textColor = textColor;
-  if (backgroundColor) overrides.backgroundColor = backgroundColor;
-  if (borderColor) overrides.borderColor = borderColor;
+  if (stateOverrides?.backgroundColor) overrides.backgroundColor = stateOverrides.backgroundColor;
+  else if (backgroundColor) overrides.backgroundColor = backgroundColor;
+  if (stateOverrides?.borderColor) overrides.borderColor = stateOverrides.borderColor;
+  else if (borderColor) overrides.borderColor = borderColor;
   return Object.keys(overrides).length ? overrides : null;
 };
 
@@ -6897,6 +6989,8 @@ const getRotationAutomationValue = (obj) => {
 };
 
 const getObjectRotationDegrees = (obj) => {
+  const multiStateRotation = getMultiStateRotationOverride(obj);
+  if (multiStateRotation !== null) return multiStateRotation;
   const base = Number.isFinite(Number(obj?.rotation)) ? Number(obj.rotation) : 0;
   return base + getRotationAutomationValue(obj);
 };
@@ -7027,7 +7121,7 @@ const getRenderedMotionObject = (sourceObj) => {
   return nextObj;
 };
 
-const getDisplayObject = (obj) => getRenderedMotionObject(obj);
+const getDisplayObject = (obj) => applyMultiStateVisualOverridesToObject(getRenderedMotionObject(obj));
 
 const applyRotationTransform = (el, obj, boundsOverride = null, offset = { x: 0, y: 0 }, rotationOverride = null) => {
   if (!el || !obj) return false;
@@ -7631,6 +7725,7 @@ const updateMenuState = () => {
   const canAddCircleDynamic = Boolean(getSelectedCircleObject());
   const canAddGroupDynamic = Boolean(getSelectedGroupObject());
   const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
+  const canAddStatesDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
   const canAddRotationDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic;
   const canAddMotionDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
   const canOpenDynamics = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic || canAddCircleDynamic;
@@ -7694,6 +7789,7 @@ const updateMenuState = () => {
   toggleDynamicMenuItem(dynamicsMenuBtn, canOpenDynamics);
   toggleDynamicMenuItem(dynamicsAddVisibilityMenuBtn, canOpenDynamics);
   toggleDynamicMenuItem(dynamicsAddColorMenuBtn, canAddColorDynamic);
+  toggleDynamicMenuItem(dynamicsAddStatesMenuBtn, canAddStatesDynamic);
   toggleDynamicMenuItem(dynamicsAddRotationMenuBtn, canAddRotationDynamic);
   toggleDynamicMenuItem(dynamicsAddMotionMenuBtn, canAddMotionDynamic);
 };
@@ -9291,7 +9387,7 @@ const resolveSvgPaint = (parent, paint, bounds) => {
   stops.forEach((stop) => {
     const stopEl = document.createElementNS("http://www.w3.org/2000/svg", "stop");
     const position = Math.max(0, Math.min(100, Number(stop.position) || 0));
-    stopEl.setAttribute("offset", `${position}%`);
+    stopEl.setAttribute("offset", `${isRadial ? 100 - position : position}%`);
     stopEl.setAttribute("stop-color", String(stop.color || "#ffffff"));
     gradientEl.appendChild(stopEl);
   });
@@ -10229,11 +10325,12 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const bounds = getObjectBounds({ ...obj, text: decodedText, textBindings: {}, bindText: null });
     const bgColor = getAutomationColor(obj.backgroundAutomation, obj.background || "transparent");
     const borderColor = getAutomationColor(obj.borderColorAutomation, obj.borderColor || "transparent");
+    const backgroundBoxEnabled = paintValueCreatesBox(bgColor);
     const borderEnabled = isTextBorderEnabled(obj);
     const textPadding = getTextBoxPadding(obj);
     const autoSize = isTextAutoSize(obj);
     if (hasRotation) applyRotationTransform(group, obj, bounds);
-    if ((bgColor && bgColor !== "transparent") || (borderEnabled && borderColor && borderColor !== "transparent" && borderColor !== "none")) {
+    if (backgroundBoxEnabled || (borderEnabled && borderColor && borderColor !== "transparent" && borderColor !== "none")) {
       const bgRect = document.createElementNS(ns, "rect");
       if (bounds) {
         bgRect.setAttribute("x", bounds.x);
@@ -10247,7 +10344,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         bgRect.setAttribute("height", textPadding.y * 2);
       }
       bgRect.setAttribute("rx", obj.rx ?? 0);
-      setSvgPaint(bgRect, "fill", bgColor || "transparent", bounds || {
+      setSvgPaint(bgRect, "fill", backgroundBoxEnabled ? (bgColor || "transparent") : "transparent", bounds || {
         x: x - textPadding.x,
         y: y - textPadding.y,
         width: textPadding.x * 2,
@@ -11803,6 +11900,482 @@ const syncPropertiesFromSelection = () => {
   renderCompactTagBindingRows();
 };
 
+function getMultiStateSourceValue(automation) {
+  if (!automation || automation.enabled === false) return undefined;
+  if (automation.sourceType === "expression") return evaluateAutomationExpression(automation.expression);
+  const connectionId = String(automation.connection_id || "").trim();
+  const tag = String(automation.tag || "").trim();
+  if (!connectionId || !tag) return undefined;
+  const key = normalizeTagCacheKey(connectionId, tag);
+  return key ? tagValueCache.get(key) : undefined;
+}
+
+function matchMultiStateValue(rawValue, state, mode) {
+  if (!state) return false;
+  if (mode === "threshold") {
+    const numericValue = coerceTagNumber(rawValue);
+    const numericMatch = Number(state.match);
+    return numericValue !== null && Number.isFinite(numericMatch) && numericValue >= numericMatch;
+  }
+  const matchRaw = String(state.match ?? "").trim();
+  if (!matchRaw || rawValue === undefined || rawValue === null) return false;
+  const numericMatch = Number(matchRaw);
+  const numericValue = coerceTagNumber(rawValue);
+  if (Number.isFinite(numericMatch) && numericValue !== null) return numericValue === numericMatch;
+  const normalizedMatch = matchRaw.toLowerCase();
+  if (["true", "false", "on", "off", "yes", "no"].includes(normalizedMatch)) {
+    return coerceTagBoolean(rawValue) === coerceTagBoolean(matchRaw);
+  }
+  return String(rawValue).trim() === matchRaw;
+}
+
+function getActiveMultiState(obj) {
+  if (!obj || !hasMultiStateDynamic(obj)) return null;
+  const automation = normalizeMultiStateAutomationState(obj.multiStateAutomation);
+  if (!automation.enabled || !automation.states.length) return null;
+  if (isEditMode) return automation.states[automation.selectedStateIndex] || null;
+  const rawValue = getMultiStateSourceValue(automation);
+  if (rawValue === undefined || rawValue === null) return null;
+  if (automation.mode === "threshold") {
+    return automation.states
+      .filter((state) => matchMultiStateValue(rawValue, state, automation.mode))
+      .sort((a, b) => Number(b.match) - Number(a.match))[0] || null;
+  }
+  return automation.states.find((state) => matchMultiStateValue(rawValue, state, automation.mode)) || null;
+}
+
+function getMultiStateRotationOverride(obj) {
+  const state = getActiveMultiState(obj);
+  if (!state || state.rotationEnabled === false) return null;
+  return Number.isFinite(Number(state.rotation)) ? Number(state.rotation) : null;
+}
+
+function getMultiStateTextOverride(obj) {
+  if (!obj || obj.type !== "text") return null;
+  const state = getActiveMultiState(obj);
+  if (!state || !state.textEnabled) return null;
+  return String(state.text ?? "");
+}
+
+function getMultiStateVisualOverrides(obj) {
+  if (!obj) return null;
+  const state = getActiveMultiState(obj);
+  if (!state) return null;
+  const overrides = {};
+  if (state.fillEnabled && String(state.fillColor || "").trim()) overrides.fillColor = String(state.fillColor).trim();
+  if (state.backgroundEnabled && String(state.backgroundColor || "").trim()) overrides.backgroundColor = String(state.backgroundColor).trim();
+  if (state.borderEnabled && String(state.borderColor || "").trim()) overrides.borderColor = String(state.borderColor).trim();
+  return Object.keys(overrides).length ? overrides : null;
+}
+
+function applyMultiStateVisualOverridesToObject(sourceObj) {
+  const overrides = getMultiStateVisualOverrides(sourceObj);
+  if (!sourceObj || !overrides) return sourceObj;
+  const obj = { ...sourceObj };
+  const type = String(obj.type || "").trim();
+  if (overrides.fillColor) {
+    if (["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type)) {
+      obj.fill = overrides.fillColor;
+      delete obj.fillAutomation;
+    } else if (type === "line" || type === "curve" || type === "polyline" || type === "spline") {
+      obj.stroke = overrides.fillColor;
+      delete obj.strokeAutomation;
+    } else if (type === "text") {
+      obj.fill = overrides.fillColor;
+      delete obj.fillAutomation;
+    }
+  }
+  if (overrides.backgroundColor) {
+    if (type === "text" || type === "number-input" || type === "bar") {
+      obj.background = overrides.backgroundColor;
+      delete obj.backgroundAutomation;
+    } else if (type === "button" || type === "indicator") {
+      obj.fill = overrides.backgroundColor;
+      delete obj.fillAutomation;
+    }
+  }
+  if (overrides.borderColor) {
+    if (type === "text") {
+      obj.borderEnabled = true;
+      obj.borderColor = overrides.borderColor;
+      delete obj.borderColorAutomation;
+    } else if (["rect", "alarms-panel", "ellipse", "circle", "line", "curve", "polyline", "spline", "polygon", "button", "indicator"].includes(type)) {
+      obj.stroke = overrides.borderColor;
+      delete obj.strokeAutomation;
+    }
+  }
+  return obj;
+}
+
+const persistMultiStateAutomation = (obj, automation) => {
+  if (!obj) return;
+  recordHistory();
+  obj.multiStateAutomation = normalizeMultiStateAutomationState(automation);
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  updatePropertiesPanel();
+};
+
+const renderMultiStateEditor = (obj) => {
+  if (!objectDynamicStatesHost) return;
+  objectDynamicStatesHost.innerHTML = "";
+  if (!obj || !hasMultiStateDynamic(obj)) return;
+  const automation = normalizeMultiStateAutomationState(obj.multiStateAutomation);
+  const selectedIndex = automation.selectedStateIndex;
+  const selectedState = automation.states[selectedIndex];
+
+  const form = document.createElement("div");
+  form.className = "properties-form multi-state-editor";
+
+  const sourceTitle = document.createElement("div");
+  sourceTitle.className = "prop-group-title";
+  sourceTitle.textContent = "Multi-State Source";
+  form.appendChild(sourceTitle);
+
+  const makeRow = (labelText, control) => {
+    const row = document.createElement("div");
+    row.className = "prop-row";
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    row.append(label, control);
+    return row;
+  };
+  const makeStateColorRow = (labelText, value, fallback) => {
+    const inline = document.createElement("div");
+    inline.className = "prop-inline automation-tag-inline";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "automation-tag-input";
+    input.value = value || "";
+    input.placeholder = fallback;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "panel-btn";
+    button.textContent = "…";
+    inline.append(input, button);
+    const row = makeRow(labelText, inline);
+    return { row, input, button, fallback };
+  };
+
+  const enabledLabel = document.createElement("label");
+  enabledLabel.className = "inline-check";
+  const enabledInput = document.createElement("input");
+  enabledInput.type = "checkbox";
+  enabledInput.checked = automation.enabled;
+  const enabledText = document.createElement("span");
+  enabledText.textContent = "Enabled";
+  enabledLabel.append(enabledInput, enabledText);
+  form.appendChild(makeRow("Enabled", enabledLabel));
+
+  const sourceTypeSelect = document.createElement("select");
+  sourceTypeSelect.innerHTML = '<option value="tag">Tag</option><option value="expression">Expression</option>';
+  sourceTypeSelect.value = automation.sourceType;
+  form.appendChild(makeRow("Source Type", sourceTypeSelect));
+
+  const connectionInput = document.createElement("input");
+  connectionInput.type = "text";
+  connectionInput.className = "automation-tag-input";
+  connectionInput.value = automation.connection_id || "";
+  const connectionRow = makeRow("Connection", connectionInput);
+  form.appendChild(connectionRow);
+
+  const tagInline = document.createElement("div");
+  tagInline.className = "prop-inline automation-tag-inline";
+  const tagInput = document.createElement("input");
+  tagInput.type = "text";
+  tagInput.className = "automation-tag-input";
+  tagInput.value = automation.tag || "";
+  const tagPickBtn = document.createElement("button");
+  tagPickBtn.type = "button";
+  tagPickBtn.className = "panel-btn";
+  tagPickBtn.textContent = "…";
+  tagInline.append(tagInput, tagPickBtn);
+  const tagRow = makeRow("Tag", tagInline);
+  form.appendChild(tagRow);
+
+  const expressionInput = document.createElement("input");
+  expressionInput.type = "text";
+  expressionInput.className = "automation-tag-input";
+  expressionInput.value = automation.expression || "";
+  expressionInput.placeholder = 'tag("conn", "tag")';
+  const expressionRow = makeRow("Expression", expressionInput);
+  form.appendChild(expressionRow);
+
+  const modeSelect = document.createElement("select");
+  modeSelect.innerHTML = '<option value="equals">Equals</option><option value="threshold">Threshold</option>';
+  modeSelect.value = automation.mode;
+  form.appendChild(makeRow("Match Mode", modeSelect));
+
+  const sourceActions = document.createElement("div");
+  sourceActions.className = "prop-inline";
+  const deleteAutomationBtn = document.createElement("button");
+  deleteAutomationBtn.type = "button";
+  deleteAutomationBtn.className = "panel-btn danger";
+  deleteAutomationBtn.textContent = "Delete Automation";
+  sourceActions.appendChild(deleteAutomationBtn);
+  form.appendChild(makeRow("Actions", sourceActions));
+
+  const statesTitle = document.createElement("div");
+  statesTitle.className = "prop-group-title";
+  statesTitle.textContent = "States";
+  form.appendChild(statesTitle);
+
+  const stateEditor = document.createElement("div");
+  stateEditor.className = "multi-state-grid";
+  const stateListPane = document.createElement("div");
+  stateListPane.className = "multi-state-list-pane";
+  const stateList = document.createElement("div");
+  stateList.className = "multi-state-list";
+  const stateActions = document.createElement("div");
+  stateActions.className = "multi-state-actions";
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "panel-btn";
+  addBtn.textContent = "Add";
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "panel-btn danger";
+  deleteBtn.textContent = "Delete";
+  deleteBtn.disabled = automation.states.length <= 1;
+  stateActions.append(addBtn, deleteBtn);
+  stateListPane.append(stateList, stateActions);
+  const stateDetails = document.createElement("div");
+  stateDetails.className = "multi-state-details";
+  automation.states.forEach((state, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "multi-state-list-item";
+    button.classList.toggle("is-active", index === selectedIndex);
+    button.textContent = `${index + 1}. ${state.name || `State ${index + 1}`}`;
+    button.addEventListener("click", () => {
+      obj.multiStateAutomation = normalizeMultiStateAutomationState({ ...automation, selectedStateIndex: index });
+      renderScreen();
+      updatePropertiesPanel();
+    });
+    stateList.appendChild(button);
+  });
+
+  const stateNameInput = document.createElement("input");
+  stateNameInput.type = "text";
+  stateNameInput.className = "automation-tag-input";
+  stateNameInput.value = selectedState?.name || "";
+  stateDetails.appendChild(makeRow("Name", stateNameInput));
+
+  const matchInput = document.createElement("input");
+  matchInput.type = automation.mode === "threshold" ? "number" : "text";
+  matchInput.step = "0.01";
+  matchInput.className = "automation-tag-input";
+  matchInput.value = selectedState?.match || "";
+  stateDetails.appendChild(makeRow(automation.mode === "threshold" ? "Threshold" : "Value", matchInput));
+
+  const rotationLabel = document.createElement("label");
+  rotationLabel.className = "inline-check";
+  const rotationEnabledInput = document.createElement("input");
+  rotationEnabledInput.type = "checkbox";
+  rotationEnabledInput.checked = selectedState?.rotationEnabled !== false;
+  const rotationText = document.createElement("span");
+  rotationText.textContent = "Apply Rotation";
+  rotationLabel.append(rotationEnabledInput, rotationText);
+  stateDetails.appendChild(makeRow("Rotation", rotationLabel));
+
+  const rotationInput = document.createElement("input");
+  rotationInput.type = "number";
+  rotationInput.step = "1";
+  rotationInput.value = Number.isFinite(Number(selectedState?.rotation)) ? String(Number(selectedState.rotation)) : "0";
+  const rotationAngleRow = makeRow("Angle", rotationInput);
+  stateDetails.appendChild(rotationAngleRow);
+
+  let textEnabledInput = null;
+  let stateTextInput = null;
+  let stateTextRow = null;
+  if (obj.type === "text") {
+    const textLabel = document.createElement("label");
+    textLabel.className = "inline-check";
+    textEnabledInput = document.createElement("input");
+    textEnabledInput.type = "checkbox";
+    textEnabledInput.checked = Boolean(selectedState?.textEnabled);
+    const textSpan = document.createElement("span");
+    textSpan.textContent = "Apply Text";
+    textLabel.append(textEnabledInput, textSpan);
+    stateDetails.appendChild(makeRow("Text", textLabel));
+
+    stateTextInput = document.createElement("textarea");
+    stateTextInput.rows = 3;
+    stateTextInput.value = selectedState?.text ?? "";
+    stateTextInput.placeholder = "State text";
+    stateTextRow = makeRow("Value", stateTextInput);
+    stateDetails.appendChild(stateTextRow);
+  }
+
+  const fillLabel = document.createElement("label");
+  fillLabel.className = "inline-check";
+  const fillEnabledInput = document.createElement("input");
+  fillEnabledInput.type = "checkbox";
+  fillEnabledInput.checked = Boolean(selectedState?.fillEnabled);
+  const fillSpan = document.createElement("span");
+  fillSpan.textContent = obj.type === "line" ? "Apply Line Color" : "Apply Fill";
+  fillLabel.append(fillEnabledInput, fillSpan);
+  stateDetails.appendChild(makeRow("Fill", fillLabel));
+  const fillColor = makeStateColorRow(obj.type === "line" ? "Line Color" : "Fill Color", selectedState?.fillColor, obj.type === "text" ? "#ffffff" : "#3a3f4b");
+  stateDetails.appendChild(fillColor.row);
+
+  let backgroundEnabledInput = null;
+  let backgroundColor = null;
+  if (obj.type === "text" || obj.type === "button") {
+    const backgroundLabel = document.createElement("label");
+    backgroundLabel.className = "inline-check";
+    backgroundEnabledInput = document.createElement("input");
+    backgroundEnabledInput.type = "checkbox";
+    backgroundEnabledInput.checked = Boolean(selectedState?.backgroundEnabled);
+    const backgroundSpan = document.createElement("span");
+    backgroundSpan.textContent = "Apply Background";
+    backgroundLabel.append(backgroundEnabledInput, backgroundSpan);
+    stateDetails.appendChild(makeRow("Background", backgroundLabel));
+    backgroundColor = makeStateColorRow("Bg Color", selectedState?.backgroundColor, obj.type === "text" ? "transparent" : "#2b2f3a");
+    stateDetails.appendChild(backgroundColor.row);
+  }
+
+  let borderEnabledInput = null;
+  let borderColor = null;
+  let borderSpan = null;
+  if (obj.type !== "line") {
+    const borderLabel = document.createElement("label");
+    borderLabel.className = "inline-check";
+    borderEnabledInput = document.createElement("input");
+    borderEnabledInput.type = "checkbox";
+    borderEnabledInput.checked = Boolean(selectedState?.borderEnabled);
+    borderSpan = document.createElement("span");
+    borderSpan.textContent = "Apply Border";
+    borderLabel.append(borderEnabledInput, borderSpan);
+    stateDetails.appendChild(makeRow("Border", borderLabel));
+    borderColor = makeStateColorRow("Border Color", selectedState?.borderColor, "#ffffff");
+    stateDetails.appendChild(borderColor.row);
+  }
+
+  const syncStateOverrideRows = () => {
+    rotationAngleRow.classList.toggle("is-hidden", !rotationEnabledInput.checked);
+    if (stateTextRow && textEnabledInput) stateTextRow.classList.toggle("is-hidden", !textEnabledInput.checked);
+    fillColor.row.classList.toggle("is-hidden", !fillEnabledInput.checked);
+    if (backgroundColor && backgroundEnabledInput) backgroundColor.row.classList.toggle("is-hidden", !backgroundEnabledInput.checked);
+    if (borderColor && borderEnabledInput) borderColor.row.classList.toggle("is-hidden", !borderEnabledInput.checked);
+  };
+  syncStateOverrideRows();
+
+  stateEditor.append(stateListPane, stateDetails);
+  form.appendChild(stateEditor);
+  objectDynamicStatesHost.appendChild(form);
+
+  const syncSourceRows = () => {
+    const isExpression = sourceTypeSelect.value === "expression";
+    connectionRow.classList.toggle("is-hidden", isExpression);
+    tagRow.classList.toggle("is-hidden", isExpression);
+    expressionRow.classList.toggle("is-hidden", !isExpression);
+  };
+  syncSourceRows();
+
+  const updateAutomation = (patch) => persistMultiStateAutomation(obj, { ...automation, ...patch });
+  const updateSelectedState = (patch) => {
+    const states = automation.states.map((state, index) => index === selectedIndex ? { ...state, ...patch } : state);
+    updateAutomation({ states });
+  };
+
+  enabledInput.addEventListener("change", () => updateAutomation({ enabled: enabledInput.checked }));
+  sourceTypeSelect.addEventListener("change", () => {
+    syncSourceRows();
+    updateAutomation({
+      sourceType: sourceTypeSelect.value === "expression" ? "expression" : "tag",
+      connection_id: connectionInput.value,
+      tag: tagInput.value,
+      expression: expressionInput.value
+    });
+  });
+  connectionInput.addEventListener("change", () => updateAutomation({ sourceType: "tag", connection_id: connectionInput.value, tag: tagInput.value }));
+  tagInput.addEventListener("change", () => updateAutomation({ sourceType: "tag", connection_id: connectionInput.value, tag: tagInput.value }));
+  expressionInput.addEventListener("change", () => updateAutomation({ sourceType: "expression", expression: expressionInput.value }));
+  modeSelect.addEventListener("change", () => updateAutomation({ mode: modeSelect.value === "threshold" ? "threshold" : "equals" }));
+  deleteAutomationBtn.addEventListener("click", () => {
+    recordHistory();
+    delete obj.multiStateAutomation;
+    currentObjectDynamicTab = "properties";
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+    updatePropertiesPanel();
+  });
+  stateNameInput.addEventListener("change", () => updateSelectedState({ name: stateNameInput.value }));
+  matchInput.addEventListener("change", () => updateSelectedState({ match: matchInput.value }));
+  rotationEnabledInput.addEventListener("change", () => updateSelectedState({ rotationEnabled: rotationEnabledInput.checked }));
+  rotationInput.addEventListener("change", () => updateSelectedState({ rotation: Number(rotationInput.value) || 0 }));
+  if (textEnabledInput) {
+    textEnabledInput.addEventListener("change", () => updateSelectedState({ textEnabled: textEnabledInput.checked }));
+  }
+  if (stateTextInput) {
+    stateTextInput.addEventListener("change", () => updateSelectedState({ text: stateTextInput.value, textEnabled: true }));
+  }
+  fillEnabledInput.addEventListener("change", () => updateSelectedState({ fillEnabled: fillEnabledInput.checked }));
+  fillColor.input.addEventListener("change", () => updateSelectedState({ fillColor: fillColor.input.value, fillEnabled: true }));
+  fillColor.button.addEventListener("click", () => openPaintPicker({
+    title: fillSpan.textContent,
+    value: fillColor.input.value || fillColor.fallback,
+    fallback: fillColor.fallback,
+    onApply: (color) => updateSelectedState({ fillColor: color, fillEnabled: true })
+  }));
+  if (backgroundEnabledInput && backgroundColor) {
+    backgroundEnabledInput.addEventListener("change", () => updateSelectedState({ backgroundEnabled: backgroundEnabledInput.checked }));
+    backgroundColor.input.addEventListener("change", () => updateSelectedState({ backgroundColor: backgroundColor.input.value, backgroundEnabled: true }));
+    backgroundColor.button.addEventListener("click", () => openPaintPicker({
+      title: "State Background",
+      value: backgroundColor.input.value || backgroundColor.fallback,
+      fallback: backgroundColor.fallback,
+      onApply: (color) => updateSelectedState({ backgroundColor: color, backgroundEnabled: true })
+    }));
+  }
+  if (borderEnabledInput && borderColor) {
+    borderEnabledInput.addEventListener("change", () => updateSelectedState({ borderEnabled: borderEnabledInput.checked }));
+    borderColor.input.addEventListener("change", () => updateSelectedState({ borderColor: borderColor.input.value, borderEnabled: true }));
+    borderColor.button.addEventListener("click", () => openPaintPicker({
+      title: borderSpan?.textContent || "State Border",
+      value: borderColor.input.value || borderColor.fallback,
+      fallback: borderColor.fallback,
+      onApply: (color) => updateSelectedState({ borderColor: color, borderEnabled: true })
+    }));
+  }
+  addBtn.addEventListener("click", () => {
+    const states = automation.states.concat({
+      name: `State ${automation.states.length + 1}`,
+      match: String(automation.states.length),
+      rotationEnabled: false,
+      rotation: 0,
+      textEnabled: false,
+      text: "",
+      fillEnabled: false,
+      fillColor: "",
+      backgroundEnabled: false,
+      backgroundColor: "",
+      borderEnabled: false,
+      borderColor: ""
+    });
+    updateAutomation({ states, selectedStateIndex: states.length - 1 });
+  });
+  deleteBtn.addEventListener("click", () => {
+    if (automation.states.length <= 1) return;
+    const states = automation.states.filter((_, index) => index !== selectedIndex);
+    updateAutomation({ states, selectedStateIndex: Math.max(0, Math.min(selectedIndex, states.length - 1)) });
+  });
+  registerCompactTagBinding({
+    id: "multi-state-source",
+    connectionInput,
+    tagInput,
+    modalTitle: "Multi-State Source Tag",
+    inlineOnly: true,
+    read: () => ({ connection_id: connectionInput.value, tag: tagInput.value }),
+    apply: ({ connection_id, tag }) => updateAutomation({ sourceType: "tag", connection_id, tag })
+  });
+  tagPickBtn.addEventListener("click", () => openCompactTagBindingModal("multi-state-source"));
+  renderCompactTagBindingRows();
+};
+
 const updatePropertiesPanel = () => {
   const isSingle = selectedIndices.length === 1;
   const isMulti = selectedIndices.length > 1;
@@ -11863,6 +12436,7 @@ const updatePropertiesPanel = () => {
     const colorRuleCount = getCurrentColorRulesForObject(obj).length;
     currentObjectDynamicTab = getColorDynamicTabKey(Math.min(getColorDynamicTabIndex(), Math.max(0, colorRuleCount - 1)));
   }
+  if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && !hasMultiStateDynamic(obj) && currentObjectDynamicTab === "states") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj)) || (showDynamicButton && !hasButtonRotationDynamic(obj)) || (showDynamicGroup && !hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
   if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle) {
@@ -11879,26 +12453,29 @@ const updatePropertiesPanel = () => {
   if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle));
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && hasVisibilityDynamic(obj)));
   syncObjectDynamicColorTabs(obj);
+  if (objectDynamicTabStatesBtn) objectDynamicTabStatesBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && hasMultiStateDynamic(obj)));
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))));
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) setObjectDynamicTab(currentObjectDynamicTab);
   const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle) && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
   const showRectColorTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab);
+  const showRectStatesTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && currentObjectDynamicTab === "states" && hasMultiStateDynamic(obj);
   const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
   const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
   if (showRectVisibilityTab) ensureRectVisibilityDraft(obj);
   if (showRectColorTab) ensureRectColorDraft(obj);
   if (showRectRotationTab) ensureRectRotationDraft(obj);
   if (showRectMotionTab) ensureRectMotionDraft(obj);
-  if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicLine && lineProps) lineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicText && textProps) textProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicButton && buttonProps) buttonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectMotionTab);
+  if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicLine && lineProps) lineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicText && textProps) textProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicButton && buttonProps) buttonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectMotionTab);
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
   if (objectDynamicColorHost) objectDynamicColorHost.classList.toggle("is-hidden", !showRectColorTab);
+  if (objectDynamicStatesHost) objectDynamicStatesHost.classList.toggle("is-hidden", !showRectStatesTab);
   if (objectDynamicRotationHost) objectDynamicRotationHost.classList.toggle("is-hidden", !showRectRotationTab);
   if (objectDynamicMotionHost) objectDynamicMotionHost.classList.toggle("is-hidden", !showRectMotionTab);
   if (visibilityProps && objectDynamicVisibilityHost && showRectVisibilityTab) {
@@ -11914,6 +12491,9 @@ const updatePropertiesPanel = () => {
       if (node) node.classList.remove("is-hidden");
     });
     syncRectColorUiFromDraft(obj, rectColorDraft);
+  }
+  if (showRectStatesTab && objectDynamicStatesHost) {
+    renderMultiStateEditor(obj);
   }
   if (showRectRotationTab && objectDynamicRotationHost) {
     const control = getRotationDynamicControl(obj?.type);
@@ -13819,6 +14399,14 @@ function bindScreenManager() {
     });
   }
 
+  if (dynamicsAddStatesMenuBtn) {
+    dynamicsAddStatesMenuBtn.addEventListener("click", () => {
+      setDynamicsFlyoutOpen(false);
+      setMenuOpen(false);
+      ensureMultiStateDynamic();
+    });
+  }
+
   if (dynamicsAddRotationMenuBtn) {
     dynamicsAddRotationMenuBtn.addEventListener("click", () => {
       setDynamicsFlyoutOpen(false);
@@ -14630,6 +15218,7 @@ loadImageFiles();
 if (runtimeBtn) {
   runtimeBtn.addEventListener("click", () => {
     if (!isEditMode) return;
+    blurActiveFormControl();
     if (!confirmLoseUnsavedChanges('Switching to runtime')) return;
     setMode(false);
   });
@@ -18626,6 +19215,12 @@ function renderCompactTagBindingRows() {
 
 function registerCompactTagBinding(config) {
   if (!config?.read || !config?.apply || !config?.id) return;
+  const existingIndex = compactTagBindingConfigs.findIndex((entry) => entry.id === config.id);
+  if (existingIndex >= 0) {
+    const existing = compactTagBindingConfigs[existingIndex];
+    if (existing?.row?.parentNode) existing.row.parentNode.removeChild(existing.row);
+    compactTagBindingConfigs.splice(existingIndex, 1);
+  }
   if (config.inlineOnly) {
     compactTagBindingConfigs.push({ ...config, row: null, summaryEl: null });
     return;
@@ -21900,6 +22495,103 @@ const getScreenPoint = (event) => {
   };
 };
 
+const createLibraryDropObject = (kind, x, y) => {
+  const isImageDrop = typeof kind === "string" && kind.startsWith("image:");
+  const imageName = isImageDrop ? kind.slice("image:".length).trim() : "";
+  if (kind === "number-input") {
+    return {
+      type: "number-input",
+      id: createNumberInputId(),
+      x,
+      y,
+      w: 140,
+      h: 36,
+      rx: 0,
+      fill: "#2b2f3a",
+      stroke: "#ffffff",
+      strokeWidth: 1,
+      textColor: "#ffffff",
+      fontSize: 16,
+      bindValue: { connection_id: "", tag: "", multiplier: 1, digits: 7, decimals: 0 }
+    };
+  }
+  if (kind === "indicator") {
+    return {
+      type: "indicator",
+      id: createIndicatorId(),
+      x,
+      y,
+      w: 160,
+      h: 64,
+      rx: 0,
+      shadow: false,
+      fill: "#3a3f4b",
+      stroke: "#ffffff",
+      strokeWidth: 1,
+      textColor: "#ffffff",
+      fontSize: 16,
+      bindValue: { connection_id: "", tag: "" },
+      stateMode: "equals",
+      labelOverlay: true,
+      labelValign: "middle",
+      states: [
+        { value: 0, label: "Off", color: "#333333", image: "" },
+        { value: 1, label: "On", color: "#008C3C", image: "" }
+      ]
+    };
+  }
+  if (isImageDrop) {
+    return {
+      type: "image",
+      x,
+      y,
+      w: 120,
+      h: 120,
+      src: imageName
+    };
+  }
+  if (kind === "nav-button") {
+    return {
+      type: "button",
+      x,
+      y,
+      w: 160,
+      h: 48,
+      rx: 0,
+      label: "Button",
+      fill: "#2b2f3a",
+      stroke: "#ffffff",
+      strokeWidth: 1,
+      textColor: "#ffffff",
+      action: {
+        type: "navigate",
+        screenId: availableScreens[0]?.id || DEFAULT_SCREEN_ID
+      }
+    };
+  }
+  return null;
+};
+
+const insertLibraryItemAt = (kind, point) => {
+  if (!isEditMode || !currentScreenObj) return false;
+  const activeObjects = ensureActiveObjects();
+  if (!activeObjects) return false;
+  const localPoint = toActivePoint(point || {
+    x: Math.round((lastScreenSize.width || Number(currentScreenObj.width) || 1920) / 2),
+    y: Math.round((lastScreenSize.height || Number(currentScreenObj.height) || 1080) / 2)
+  });
+  const nextObj = createLibraryDropObject(kind, Math.round(localPoint.x), Math.round(localPoint.y));
+  if (!nextObj) return false;
+  recordHistory();
+  activeObjects.push(nextObj);
+  selectedIndices = [activeObjects.length - 1];
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  setEditorTab("properties");
+  return true;
+};
+
 function updateSelectionOverlays() {
   if (!selectionLayer || !renderedElementMeta.length) return;
   selectionLayer.textContent = "";
@@ -22014,6 +22706,8 @@ function updateSelectionOverlays() {
         width: Number(obj.w ?? 0),
         height: Number(obj.h ?? 0)
       };
+    } else if (!bbox && obj && item.type === "text") {
+      bbox = getObjectBounds(obj);
     } else if (!bbox && obj && item.type === "circle") {
       const r = Number(obj.r ?? 0);
       bbox = {
@@ -25785,6 +26479,13 @@ if (objectDynamicTabColorBtn) {
   });
 }
 
+if (objectDynamicTabStatesBtn) {
+  objectDynamicTabStatesBtn.addEventListener("click", () => {
+    setObjectDynamicTab("states");
+    updatePropertiesPanel();
+  });
+}
+
 if (objectDynamicTabs) {
   objectDynamicTabs.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-object-dynamic-tab]") : null;
@@ -26070,6 +26771,9 @@ if (stretchedPolygonToolBtn) {
 }
 
 if (navToolBtn) {
+  navToolBtn.addEventListener("click", () => {
+    if (insertLibraryItemAt("nav-button")) closeLibraryModal();
+  });
   navToolBtn.addEventListener("dragstart", (event) => {
     event.dataTransfer?.setData("text/plain", "nav-button");
     event.dataTransfer?.setData("application/x-opcbridge-hmi", "nav-button");
@@ -26078,6 +26782,9 @@ if (navToolBtn) {
 }
 
 if (numberInputToolBtn) {
+  numberInputToolBtn.addEventListener("click", () => {
+    if (insertLibraryItemAt("number-input")) closeLibraryModal();
+  });
   numberInputToolBtn.addEventListener("dragstart", (event) => {
     event.dataTransfer?.setData("text/plain", "number-input");
     event.dataTransfer?.setData("application/x-opcbridge-hmi", "number-input");
@@ -26086,6 +26793,9 @@ if (numberInputToolBtn) {
 }
 
 if (indicatorToolBtn) {
+  indicatorToolBtn.addEventListener("click", () => {
+    if (insertLibraryItemAt("indicator")) closeLibraryModal();
+  });
   indicatorToolBtn.addEventListener("dragstart", (event) => {
     event.dataTransfer?.setData("text/plain", "indicator");
     event.dataTransfer?.setData("application/x-opcbridge-hmi", "indicator");
@@ -26114,88 +26824,9 @@ if (hmiSvg) {
 	      || event.dataTransfer?.getData("text/plain");
 	    const isImageDrop = typeof kind === "string" && kind.startsWith("image:");
 	    if (kind !== "nav-button" && kind !== "number-input" && kind !== "indicator" && !isImageDrop) return;
-	    if (!currentScreenObj) return;
-	    const activeObjects = ensureActiveObjects();
-	    if (!activeObjects) return;
 	    const point = getScreenPoint(event);
 	    if (!point) return;
-	    const localPoint = toActivePoint(point);
-	    const x = Math.round(localPoint.x);
-	    const y = Math.round(localPoint.y);
-      const imageName = isImageDrop ? kind.slice("image:".length).trim() : "";
-	      const nextObj = kind === "number-input"
-	        ? {
-	          type: "number-input",
-	          id: createNumberInputId(),
-	          x,
-	          y,
-	          w: 140,
-	          h: 36,
-	          rx: 0,
-	          fill: "#2b2f3a",
-	          stroke: "#ffffff",
-	          strokeWidth: 1,
-	          textColor: "#ffffff",
-          fontSize: 16,
-          bindValue: { connection_id: "", tag: "", multiplier: 1, digits: 7, decimals: 0 }
-          }
-	        : kind === "indicator"
-	          ? {
-	            type: "indicator",
-	            id: createIndicatorId(),
-	            x,
-	            y,
-	            w: 160,
-	            h: 64,
-	            rx: 0,
-	            shadow: false,
-	            fill: "#3a3f4b",
-	            stroke: "#ffffff",
-	            strokeWidth: 1,
-            textColor: "#ffffff",
-            fontSize: 16,
-            bindValue: { connection_id: "", tag: "" },
-            stateMode: "equals",
-            labelOverlay: true,
-            labelValign: "middle",
-            states: [
-              { value: 0, label: "Off", color: "#333333", image: "" },
-              { value: 1, label: "On", color: "#008C3C", image: "" }
-            ]
-          }
-          : isImageDrop
-            ? {
-              type: "image",
-              x,
-              y,
-              w: 120,
-              h: 120,
-              src: imageName
-            }
-	          : {
-	            type: "button",
-	            x,
-	            y,
-	            w: 160,
-	            h: 48,
-	            rx: 0,
-	            label: "Button",
-	            fill: "#2b2f3a",
-	            stroke: "#ffffff",
-	            strokeWidth: 1,
-	            textColor: "#ffffff",
-            action: {
-              type: "navigate",
-              screenId: availableScreens[0]?.id || DEFAULT_SCREEN_ID
-            }
-          };
-      recordHistory();
-      activeObjects.push(nextObj);
-      selectedIndices = [activeObjects.length - 1];
-      renderScreen();
-      syncEditorFromScreen();
-      setDirty(true);
-      setEditorTab("properties");
+	    insertLibraryItemAt(kind, point);
 	  });
 
 		  const releaseMomentary = async (pointerId) => {

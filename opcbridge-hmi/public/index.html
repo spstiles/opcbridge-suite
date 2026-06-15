@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260614-hmi-ui-v46" />
+  <link rel="stylesheet" href="css/main.css?v=20260615-hmi-ui-v47" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -57,6 +57,7 @@
             <div id="dynamicsMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Dynamics menu">
               <button id="dynamicsAddVisibilityMenuBtn" class="menu-item" type="button">Visibility</button>
               <button id="dynamicsAddColorMenuBtn" class="menu-item" type="button">Color</button>
+              <button id="dynamicsAddStatesMenuBtn" class="menu-item" type="button">States</button>
               <button id="dynamicsAddRotationMenuBtn" class="menu-item" type="button">Rotation</button>
               <button id="dynamicsAddMotionMenuBtn" class="menu-item" type="button">Motion</button>
             </div>
@@ -301,11 +302,13 @@
             <button id="objectDynamicTabPropertiesBtn" class="editor-tab is-active" type="button">Properties</button>
             <button id="objectDynamicTabVisibilityBtn" class="editor-tab is-hidden" type="button">Visibility</button>
             <button id="objectDynamicTabColorBtn" class="editor-tab is-hidden" type="button">Color</button>
+            <button id="objectDynamicTabStatesBtn" class="editor-tab is-hidden" type="button">States</button>
             <button id="objectDynamicTabRotationBtn" class="editor-tab is-hidden" type="button">Rotation</button>
             <button id="objectDynamicTabMotionBtn" class="editor-tab is-hidden" type="button">Motion</button>
           </div>
           <div id="objectDynamicVisibilityHost" class="is-hidden"></div>
           <div id="objectDynamicColorHost" class="is-hidden"></div>
+          <div id="objectDynamicStatesHost" class="is-hidden"></div>
           <div id="objectDynamicRotationHost" class="is-hidden"></div>
           <div id="objectDynamicMotionHost" class="is-hidden"></div>
           <div id="screenProps" class="properties-form">
@@ -2767,6 +2770,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260614-hmi-ui-v46"></script>
+	  <script src="js/hmi.js?v=20260615-hmi-ui-v47"></script>
 	</body>
 	</html>
