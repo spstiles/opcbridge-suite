@@ -4659,6 +4659,7 @@ let isDirty = false;
 let renderedElements = [];
 let renderedElementMeta = [];
 let selectedIndices = [];
+let selectionAnchorIndex = null;
 let lastSelectionSignature = "";
 let selectionLayer = null;
 let resizeLayer = null;
@@ -5475,6 +5476,7 @@ const exitAllGroupEdit = () => {
   if (!groupEditStack.length) return;
   groupEditStack.length = 0;
   selectedIndices = [];
+  selectionAnchorIndex = null;
   clearSelectedPolygonVertex();
   renderScreen();
   updateSelectionOverlays();
@@ -5799,6 +5801,7 @@ const enterGroupEdit = (groupObj) => {
   if (!groupObj || !Array.isArray(groupObj.children)) return;
   groupEditStack.push(groupObj);
   selectedIndices = [];
+  selectionAnchorIndex = null;
   clearSelectedPolygonVertex();
   renderScreen();
   updateSelectionOverlays();
@@ -5810,6 +5813,7 @@ const exitGroupEdit = () => {
   if (!groupEditStack.length) return;
   groupEditStack.pop();
   selectedIndices = [];
+  selectionAnchorIndex = null;
   clearSelectedPolygonVertex();
   renderScreen();
   updateSelectionOverlays();
@@ -7411,10 +7415,43 @@ const alignSelected = (mode) => {
   const activeObjects = getActiveObjects();
   if (!activeObjects || !Array.isArray(activeObjects)) return;
   if (selectedIndices.length < 2) return;
-  recordHistory();
-  const targets = selectedIndices.map((idx) => activeObjects[idx]).filter(Boolean);
-  const bounds = targets.map(getObjectBounds).filter(Boolean);
-  if (!bounds.length) return;
+  const items = selectedIndices
+    .map((idx) => ({ idx, obj: activeObjects[idx] }))
+    .filter((item) => item.obj)
+    .map((item) => ({ ...item, bounds: getObjectBounds(item.obj) }))
+    .filter((item) => item.bounds);
+  if (!items.length) return;
+  const anchorItem = Number.isInteger(selectionAnchorIndex)
+    ? items.find((item) => item.idx === selectionAnchorIndex)
+    : null;
+  if (anchorItem && items.length > 1) {
+    const anchorBounds = anchorItem.bounds;
+    const anchorLeft = anchorBounds.x;
+    const anchorRight = anchorBounds.x + anchorBounds.width;
+    const anchorTop = anchorBounds.y;
+    const anchorBottom = anchorBounds.y + anchorBounds.height;
+    const anchorCenterX = anchorBounds.x + anchorBounds.width / 2;
+    const anchorCenterY = anchorBounds.y + anchorBounds.height / 2;
+    recordHistory();
+    items.forEach((item) => {
+      if (item.idx === anchorItem.idx) return;
+      const b = item.bounds;
+      let dx = 0;
+      let dy = 0;
+      if (mode === "left") dx = anchorLeft - b.x;
+      if (mode === "right") dx = anchorRight - (b.x + b.width);
+      if (mode === "center") dx = anchorCenterX - (b.x + b.width / 2);
+      if (mode === "top") dy = anchorTop - b.y;
+      if (mode === "bottom") dy = anchorBottom - (b.y + b.height);
+      if (mode === "middle") dy = anchorCenterY - (b.y + b.height / 2);
+      translateObject(item.obj, dx, dy);
+    });
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+    return;
+  }
+  const bounds = items.map((item) => item.bounds);
   const left = Math.min(...bounds.map((b) => b.x));
   const right = Math.max(...bounds.map((b) => b.x + b.width));
   const top = Math.min(...bounds.map((b) => b.y));
@@ -7422,9 +7459,9 @@ const alignSelected = (mode) => {
   const centerX = (left + right) / 2;
   const centerY = (top + bottom) / 2;
 
-  targets.forEach((obj) => {
-    const b = getObjectBounds(obj);
-    if (!b) return;
+  recordHistory();
+  items.forEach((item) => {
+    const b = item.bounds;
     let dx = 0;
     let dy = 0;
     if (mode === "left") dx = left - b.x;
@@ -7433,7 +7470,7 @@ const alignSelected = (mode) => {
     if (mode === "top") dy = top - b.y;
     if (mode === "bottom") dy = bottom - (b.y + b.height);
     if (mode === "middle") dy = centerY - (b.y + b.height / 2);
-    translateObject(obj, dx, dy);
+    translateObject(item.obj, dx, dy);
   });
 
   renderScreen();
@@ -25160,8 +25197,10 @@ const setTool = (nextTool) => {
 	      if (event.ctrlKey || event.metaKey) {
 	        if (selectedIndices.includes(hitMeta.index)) {
 	          selectedIndices = selectedIndices.filter((idx) => idx !== hitMeta.index);
+            selectionAnchorIndex = selectedIndices[selectedIndices.length - 1] ?? null;
 	        } else {
 	          selectedIndices = [...selectedIndices, hitMeta.index];
+            selectionAnchorIndex = hitMeta.index;
 	        }
 	        syncSelectedPolygonVertex();
 	        updateSelectionOverlays();
@@ -25170,6 +25209,7 @@ const setTool = (nextTool) => {
 	      }
 	      if (!selectedIndices.includes(hitMeta.index)) {
 	        selectedIndices = [hitMeta.index];
+          selectionAnchorIndex = hitMeta.index;
 	        syncSelectedPolygonVertex();
 	        updateSelectionOverlays();
 	        updatePropertiesPanel();
@@ -26137,12 +26177,15 @@ const setTool = (nextTool) => {
 	        if (hitMeta) {
 	          if (selectedIndices.includes(hitMeta.index)) {
 	            selectedIndices = selectedIndices.filter((idx) => idx !== hitMeta.index);
+              selectionAnchorIndex = selectedIndices[selectedIndices.length - 1] ?? null;
 	          } else {
 	            selectedIndices = [...selectedIndices, hitMeta.index];
+              selectionAnchorIndex = hitMeta.index;
 	          }
 	        }
 	      } else {
 	        selectedIndices = hitMeta ? [hitMeta.index] : [];
+          selectionAnchorIndex = hitMeta ? hitMeta.index : null;
 	      }
 	    } else {
       const box = {
@@ -26173,6 +26216,7 @@ const setTool = (nextTool) => {
 	      selectedIndices = selectionAdditive
 	        ? Array.from(new Set([...selectedIndices, ...matched]))
 	        : matched;
+      selectionAnchorIndex = null;
 	    }
 	    syncSelectedPolygonVertex();
 
