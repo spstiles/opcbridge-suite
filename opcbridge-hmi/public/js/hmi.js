@@ -7256,6 +7256,49 @@ const getGroupContentBounds = (groupObj) => {
   return { x: left, y: top, width: right - left, height: bottom - top };
 };
 
+const getTextVisualAlignmentBounds = (obj) => {
+  if (!obj || obj.type !== "text" || !isTextAutoSize(obj)) return null;
+  if (paintValueCreatesBox(obj.background) || textBorderValueCreatesBox(obj)) return null;
+  const x = Number(obj.x ?? 0);
+  const y = Number(obj.y ?? 0);
+  const fontSize = Number(obj.fontSize || 18);
+  const sample = decodeNbspEntities(renderTextTemplate(obj, true));
+  const ctx = getTextMeasureCtx();
+  ctx.font = `${obj.bold ? "700 " : ""}${fontSize}px Arial, sans-serif`;
+  const lines = splitMultiline(sample);
+  const metrics = lines.map((line) => ctx.measureText(line || " "));
+  if (!metrics.length) return null;
+  const measured = measureTextBlock(sample, fontSize, Boolean(obj.bold));
+  const align = obj.align || "left";
+  const valign = obj.valign || "top";
+  const lineBounds = metrics.map((metric) => {
+    const width = Number(metric.width) || 0;
+    const actualLeft = Number.isFinite(metric.actualBoundingBoxLeft) ? Number(metric.actualBoundingBoxLeft) : 0;
+    const actualRight = Number.isFinite(metric.actualBoundingBoxRight) ? Number(metric.actualBoundingBoxRight) : width;
+    let lineStart = 0;
+    if (align === "center") lineStart = -width / 2;
+    if (align === "right") lineStart = -width;
+    return {
+      left: x + lineStart - actualLeft,
+      right: x + lineStart + actualRight
+    };
+  });
+  const left = Math.min(...lineBounds.map((bounds) => bounds.left));
+  const right = Math.max(...lineBounds.map((bounds) => bounds.right));
+  let blockTop = y;
+  if (measured.lines.length > 1) {
+    if (valign === "middle") blockTop = y - measured.height / 2;
+    if (valign === "bottom") blockTop = y - measured.height;
+  } else {
+    if (valign === "top") blockTop = y - (measured.ascent ?? fontSize * 0.8);
+    if (valign === "middle") blockTop = y - measured.height / 2;
+    if (valign === "bottom") blockTop = y - measured.height;
+  }
+  return { x: left, y: blockTop, width: right - left, height: measured.height };
+};
+
+const getObjectAlignmentBounds = (obj) => getTextVisualAlignmentBounds(obj) || getObjectBounds(obj);
+
 const buildGroupEditMeta = () => {
   const activeObjects = getActiveObjects();
   if (!activeObjects || !Array.isArray(activeObjects)) return;
@@ -7418,7 +7461,7 @@ const alignSelected = (mode) => {
   const items = selectedIndices
     .map((idx) => ({ idx, obj: activeObjects[idx] }))
     .filter((item) => item.obj)
-    .map((item) => ({ ...item, bounds: getObjectBounds(item.obj) }))
+    .map((item) => ({ ...item, bounds: getObjectAlignmentBounds(item.obj) }))
     .filter((item) => item.bounds);
   if (!items.length) return;
   const anchorItem = Number.isInteger(selectionAnchorIndex)
