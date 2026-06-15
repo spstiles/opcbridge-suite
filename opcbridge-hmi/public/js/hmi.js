@@ -10263,20 +10263,21 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     }
     const ratio = Number.isFinite(range) && range !== 0 ? (value - min) / range : 0;
     const clamped = Math.min(1, Math.max(0, ratio));
+    const displayRatio = isEditMode ? 1 : clamped;
     const orientation = obj.orientation === "horizontal" ? "horizontal" : "vertical";
     const fill = obj.fill ?? "#46ff64";
     if (fill && fill !== "none") {
       const fillRect = document.createElementNS(ns, "rect");
       let isFull = false;
       if (orientation === "horizontal") {
-        const fillW = w * clamped;
+        const fillW = w * displayRatio;
         isFull = fillW >= w - 0.001;
         fillRect.setAttribute("x", x);
         fillRect.setAttribute("y", y);
         fillRect.setAttribute("width", fillW);
         fillRect.setAttribute("height", h);
       } else {
-        const fillH = h * clamped;
+        const fillH = h * displayRatio;
         isFull = fillH >= h - 0.001;
         fillRect.setAttribute("x", x);
         fillRect.setAttribute("y", y + (h - fillH));
