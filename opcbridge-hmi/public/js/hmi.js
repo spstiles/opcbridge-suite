@@ -1212,6 +1212,117 @@ const updateRectColorDraft = (patch) => {
   rules[selectedRuleIndex] = next;
   rectColorDraft = { rules, selectedRuleIndex };
   syncRectColorUiFromDraft(obj, rectColorDraft);
+  applyRectColorDraftToObject();
+};
+
+const applyRectColorDraftToObject = () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedColorDynamicObject();
+  if (!activeObjects || !obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return false;
+  ensureRectColorDraft(obj);
+  const draft = normalizeRectColorDraft(obj, rectColorDraft);
+  const rules = draft.rules || [];
+  for (const rule of rules) {
+    if (rule?.sourceType === "expression" && getAutomationExpressionValidationError(rule?.expression || "")) return false;
+  }
+  recordHistory();
+  const fillRules = new Array(rules.length).fill(null);
+  const strokeRules = new Array(rules.length).fill(null);
+  const textRules = new Array(rules.length).fill(null);
+  const backgroundRules = new Array(rules.length).fill(null);
+  const borderRules = new Array(rules.length).fill(null);
+  rules.forEach((rule, index) => {
+    const shared = {
+      enabled: rule?.enabled !== false,
+      sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
+      expression: rule?.expression || "",
+      invert: Boolean(rule?.invert),
+      connection_id: rule?.connection_id || "",
+      tag: rule?.tag || "",
+      mode: rule?.mode || "",
+      threshold: rule?.threshold,
+      match: rule?.match || ""
+    };
+    if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") && rule?.fillEnabled && String(rule?.fillColor || "").trim()) {
+      fillRules[index] = { ...shared, onColor: rule.fillColor };
+    }
+    if ((obj.type === "line" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "circle" || obj.type === "group") && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
+      strokeRules[index] = { ...shared, onColor: rule.strokeColor };
+    }
+    if (obj.type === "text" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
+      backgroundRules[index] = { ...shared, onColor: rule.strokeColor };
+    }
+    if (obj.type === "button" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
+      textRules[index] = { ...shared, onColor: rule.strokeColor };
+    }
+    if (obj.type === "group" && rule?.textEnabled && String(rule?.textColor || "").trim()) {
+      textRules[index] = { ...shared, onColor: rule.textColor };
+    }
+    if (obj.type === "group" && rule?.backgroundEnabled && String(rule?.backgroundColor || "").trim()) {
+      backgroundRules[index] = { ...shared, onColor: rule.backgroundColor };
+    }
+    if ((obj.type === "text" || obj.type === "group") && rule?.borderEnabled && String(rule?.borderColor || "").trim()) {
+      borderRules[index] = { ...shared, onColor: rule.borderColor };
+    }
+  });
+  const fillConfig = serializeColorAutomationRules(fillRules);
+  const strokeConfig = serializeColorAutomationRules(strokeRules);
+  const textConfig = serializeColorAutomationRules(textRules);
+  const backgroundConfig = serializeColorAutomationRules(backgroundRules);
+  const borderConfig = serializeColorAutomationRules(borderRules);
+  const colorRuleMeta = rules
+    .map((rule) => ({
+      enabled: rule?.enabled !== false,
+      sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
+      expression: rule?.expression || "",
+      invert: Boolean(rule?.invert),
+      connection_id: rule?.connection_id || "",
+      tag: rule?.tag || "",
+      mode: rule?.mode || "",
+      threshold: rule?.threshold,
+      match: rule?.match || "",
+      fillEnabled: Boolean(rule?.fillEnabled),
+      fillColor: rule?.fillColor || "",
+      strokeEnabled: Boolean(rule?.strokeEnabled),
+      strokeColor: rule?.strokeColor || "",
+      textEnabled: Boolean(rule?.textEnabled),
+      textColor: rule?.textColor || "",
+      backgroundEnabled: Boolean(rule?.backgroundEnabled),
+      backgroundColor: rule?.backgroundColor || "",
+      borderEnabled: Boolean(rule?.borderEnabled),
+      borderColor: rule?.borderColor || ""
+    }))
+    .filter((rule) => rule.fillEnabled || rule.strokeEnabled || rule.textEnabled || rule.backgroundEnabled || rule.borderEnabled);
+  if (fillConfig) obj.fillAutomation = fillConfig;
+  else delete obj.fillAutomation;
+  if (obj.type === "text") {
+    if (backgroundConfig) obj.backgroundAutomation = backgroundConfig;
+    else delete obj.backgroundAutomation;
+  } else if (obj.type === "button") {
+    if (textConfig) obj.textColorAutomation = textConfig;
+    else delete obj.textColorAutomation;
+  } else {
+    if (strokeConfig) obj.strokeAutomation = strokeConfig;
+    else delete obj.strokeAutomation;
+  }
+  if (obj.type === "group") {
+    if (textConfig) obj.textColorAutomation = textConfig;
+    else delete obj.textColorAutomation;
+    if (backgroundConfig) obj.backgroundAutomation = backgroundConfig;
+    else delete obj.backgroundAutomation;
+  }
+  if (obj.type === "text" || obj.type === "group") {
+    if (borderConfig) obj.borderColorAutomation = borderConfig;
+    else delete obj.borderColorAutomation;
+  }
+  if (colorRuleMeta.length) obj.colorAutomationRules = colorRuleMeta;
+  else delete obj.colorAutomationRules;
+  rectColorDraftObject = obj;
+  rectColorDraft = normalizeRectColorDraft(obj, { rules, selectedRuleIndex: draft.selectedRuleIndex });
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  return true;
 };
 
 const normalizeVisibilityState = (value) => {
@@ -4000,8 +4111,6 @@ const visibilitySaveBtn = document.getElementById("visibilitySaveBtn");
 const visibilityCancelBtn = document.getElementById("visibilityCancelBtn");
 const visibilityDeleteBtn = document.getElementById("visibilityDeleteBtn");
 const colorActionRow = document.getElementById("colorActionRow");
-const colorSaveBtn = document.getElementById("colorSaveBtn");
-const colorCancelBtn = document.getElementById("colorCancelBtn");
 const colorDeleteBtn = document.getElementById("colorDeleteBtn");
 const visibilityExpressionOverlay = document.getElementById("visibilityExpressionOverlay");
 const visibilityExpressionCloseBtn = document.getElementById("visibilityExpressionCloseBtn");
@@ -18791,6 +18900,7 @@ if (rectColorRuleAddBtn) {
     draft.selectedRuleIndex = draft.rules.length - 1;
     rectColorDraft = draft;
     syncRectColorUiFromDraft(obj, rectColorDraft);
+    applyRectColorDraftToObject();
   });
 }
 
@@ -18805,6 +18915,7 @@ if (rectColorRuleDeleteBtn) {
     draft.selectedRuleIndex = Math.max(0, Math.min(draft.selectedRuleIndex, draft.rules.length - 1));
     rectColorDraft = draft;
     syncRectColorUiFromDraft(obj, rectColorDraft);
+    applyRectColorDraftToObject();
   });
 }
 
@@ -18820,6 +18931,7 @@ if (rectColorRuleUpBtn) {
     draft.selectedRuleIndex = index - 1;
     rectColorDraft = draft;
     syncRectColorUiFromDraft(obj, rectColorDraft);
+    applyRectColorDraftToObject();
   });
 }
 
@@ -18835,6 +18947,7 @@ if (rectColorRuleDownBtn) {
     draft.selectedRuleIndex = index + 1;
     rectColorDraft = draft;
     syncRectColorUiFromDraft(obj, rectColorDraft);
+    applyRectColorDraftToObject();
   });
 }
 
@@ -19014,138 +19127,6 @@ if (rectColorBorderTextInput) {
   });
 }
 
-if (colorSaveBtn) {
-  colorSaveBtn.addEventListener("click", () => {
-    const activeObjects = getActiveObjects();
-    const obj = getSelectedColorDynamicObject();
-    if (!activeObjects || !obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
-    ensureRectColorDraft(obj);
-    const draft = normalizeRectColorDraft(obj, rectColorDraft);
-    const rules = draft.rules || [];
-    for (const rule of rules) {
-      if (rule?.sourceType === "expression" && getAutomationExpressionValidationError(rule?.expression || "")) return;
-    }
-    recordHistory();
-    const fillRules = new Array(rules.length).fill(null);
-    const strokeRules = new Array(rules.length).fill(null);
-    const textRules = new Array(rules.length).fill(null);
-    const backgroundRules = new Array(rules.length).fill(null);
-    const borderRules = new Array(rules.length).fill(null);
-    rules.forEach((rule, index) => {
-      const shared = {
-        enabled: rule?.enabled !== false,
-        sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
-        expression: rule?.expression || "",
-        invert: Boolean(rule?.invert),
-        connection_id: rule?.connection_id || "",
-        tag: rule?.tag || "",
-        mode: rule?.mode || "",
-        threshold: rule?.threshold,
-        match: rule?.match || ""
-      };
-      if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") && rule?.fillEnabled && String(rule?.fillColor || "").trim()) {
-        fillRules[index] = { ...shared, onColor: rule.fillColor };
-      }
-      if ((obj.type === "line" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "circle" || obj.type === "group") && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
-        strokeRules[index] = { ...shared, onColor: rule.strokeColor };
-      }
-      if (obj.type === "text" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
-        backgroundRules[index] = { ...shared, onColor: rule.strokeColor };
-      }
-      if (obj.type === "button" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
-        textRules[index] = { ...shared, onColor: rule.strokeColor };
-      }
-      if (obj.type === "group" && rule?.textEnabled && String(rule?.textColor || "").trim()) {
-        textRules[index] = { ...shared, onColor: rule.textColor };
-      }
-      if (obj.type === "group" && rule?.backgroundEnabled && String(rule?.backgroundColor || "").trim()) {
-        backgroundRules[index] = { ...shared, onColor: rule.backgroundColor };
-      }
-      if ((obj.type === "text" || obj.type === "group") && rule?.borderEnabled && String(rule?.borderColor || "").trim()) {
-        borderRules[index] = { ...shared, onColor: rule.borderColor };
-      }
-    });
-    const fillConfig = serializeColorAutomationRules(fillRules);
-    const strokeConfig = serializeColorAutomationRules(strokeRules);
-    const textConfig = serializeColorAutomationRules(textRules);
-    const backgroundConfig = serializeColorAutomationRules(backgroundRules);
-    const borderConfig = serializeColorAutomationRules(borderRules);
-    const colorRuleMeta = rules
-      .map((rule) => ({
-        enabled: rule?.enabled !== false,
-        sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
-        expression: rule?.expression || "",
-        invert: Boolean(rule?.invert),
-        connection_id: rule?.connection_id || "",
-        tag: rule?.tag || "",
-        mode: rule?.mode || "",
-        threshold: rule?.threshold,
-        match: rule?.match || "",
-        fillEnabled: Boolean(rule?.fillEnabled),
-        fillColor: rule?.fillColor || "",
-        strokeEnabled: Boolean(rule?.strokeEnabled),
-        strokeColor: rule?.strokeColor || "",
-        textEnabled: Boolean(rule?.textEnabled),
-        textColor: rule?.textColor || "",
-        backgroundEnabled: Boolean(rule?.backgroundEnabled),
-        backgroundColor: rule?.backgroundColor || "",
-        borderEnabled: Boolean(rule?.borderEnabled),
-        borderColor: rule?.borderColor || ""
-      }))
-      .filter((rule) => rule.fillEnabled || rule.strokeEnabled || rule.textEnabled || rule.backgroundEnabled || rule.borderEnabled);
-    if (fillConfig) obj.fillAutomation = fillConfig;
-    else delete obj.fillAutomation;
-    if (obj.type === "text") {
-      if (backgroundConfig) obj.backgroundAutomation = backgroundConfig;
-      else delete obj.backgroundAutomation;
-    } else if (obj.type === "button") {
-      if (textConfig) obj.textColorAutomation = textConfig;
-      else delete obj.textColorAutomation;
-    } else {
-      if (strokeConfig) obj.strokeAutomation = strokeConfig;
-      else delete obj.strokeAutomation;
-    }
-    if (obj.type === "group") {
-      if (textConfig) obj.textColorAutomation = textConfig;
-      else delete obj.textColorAutomation;
-      if (backgroundConfig) obj.backgroundAutomation = backgroundConfig;
-      else delete obj.backgroundAutomation;
-    }
-    if (obj.type === "text" || obj.type === "group") {
-      if (borderConfig) obj.borderColorAutomation = borderConfig;
-      else delete obj.borderColorAutomation;
-    }
-    if (colorRuleMeta.length) obj.colorAutomationRules = colorRuleMeta;
-    else delete obj.colorAutomationRules;
-    rectColorDraftObject = obj;
-    rectColorDraft = null;
-    ensureRectColorDraft(obj);
-    renderScreen();
-    syncEditorFromScreen();
-    setDirty(true);
-    updatePropertiesPanel();
-  });
-}
-
-if (colorCancelBtn) {
-  colorCancelBtn.addEventListener("click", () => {
-    const obj = getSelectedColorDynamicObject();
-    if (!obj || !(isEditingRectColorDynamic() || isEditingLineColorDynamic() || isEditingEllipseColorDynamic() || isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic())) return;
-    rectColorDraft = null;
-    rectColorDraftObject = obj;
-    const storedRules = buildColorRulesFromObject(obj);
-    if (!storedRules.length) {
-      currentObjectDynamicTab = "properties";
-      updatePropertiesPanel();
-      return;
-    }
-    ensureRectColorDraft(obj);
-    setObjectDynamicTab(getColorDynamicTabKey(Math.min(getColorDynamicTabIndex(), storedRules.length - 1)));
-    syncRectColorUiFromDraft(obj, rectColorDraft);
-    renderCompactTagBindingRows();
-  });
-}
-
 if (colorDeleteBtn) {
   colorDeleteBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
@@ -19158,6 +19139,7 @@ if (colorDeleteBtn) {
       draft.rules.splice(index, 1);
       draft.selectedRuleIndex = Math.max(0, Math.min(index, draft.rules.length - 1));
       rectColorDraft = draft;
+      applyRectColorDraftToObject();
       setObjectDynamicTab(getColorDynamicTabKey(draft.selectedRuleIndex));
       updatePropertiesPanel();
       return;
