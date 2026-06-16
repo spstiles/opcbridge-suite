@@ -4957,6 +4957,7 @@ let hmiUiConfig = {
 };
 
 const AUTH_SESSION_KEY = "opcbridge-hmi.session";
+const AUTH_DIAGNOSTICS_KEY = "opcbridge-hmi.authDiagnostics";
 let authInfo = { initialized: false, timeoutMinutes: 0, users: [] };
 let authSession = null;
 let authActivityTimer = null;
@@ -4964,7 +4965,6 @@ let authSyncTimer = null;
 let authActivityLastMarkMs = 0;
 let authServerLoggedOutStreak = 0;
 let pendingEditModeAfterLogin = false;
-const AUTH_SERVER_LOGOUT_CONFIRMATIONS = 3;
 
 const getAuthRole = () => String(authSession?.role || "").trim();
 
@@ -5028,6 +5028,33 @@ const clearAuthSession = () => {
   saveAuthSession(null);
 };
 
+const recordAuthDiagnostic = (event, detail = {}) => {
+  const entry = {
+    ts: new Date().toISOString(),
+    event: String(event || "auth"),
+    detail
+  };
+  try {
+    const rows = JSON.parse(sessionStorage.getItem(AUTH_DIAGNOSTICS_KEY) || "[]");
+    const next = Array.isArray(rows) ? rows.slice(-49) : [];
+    next.push(entry);
+    sessionStorage.setItem(AUTH_DIAGNOSTICS_KEY, JSON.stringify(next));
+  } catch {}
+  try {
+    console.warn("[HMI auth]", entry.event, entry.detail);
+  } catch {}
+};
+
+const authStatusSummary = (status) => ({
+  configured: Boolean(status?.configured),
+  initialized: Boolean(status?.initialized),
+  logged_in: Boolean(status?.logged_in),
+  user_logged_in: Boolean(status?.user_logged_in),
+  username: String(status?.user?.username || ""),
+  role: String(status?.user?.role || ""),
+  timeoutMinutes: Number(status?.timeoutMinutes) || 0
+});
+
 const markAuthActivity = ({ force = false } = {}) => {
   if (!authSession) return;
   const now = Date.now();
@@ -5039,13 +5066,15 @@ const markAuthActivity = ({ force = false } = {}) => {
   } catch {}
 };
 
-const clearLocalAuthState = () => {
+const clearLocalAuthState = (reason, detail = {}) => {
+  recordAuthDiagnostic("clear-local-auth", { reason, ...detail });
   authServerLoggedOutStreak = 0;
   clearAuthSession();
   if (isEditMode) setMode(false);
   closeSettings();
   closeUsers();
   updateAuthUiVisibility();
+  if (reason) showHmiToast(`Logged out: ${reason}`, 20000);
 };
 
 const getAuthTimeoutMinutes = () => {
@@ -5062,6 +5091,14 @@ const isAuthSessionExpired = () => {
   const lastActivityMs = Number(authSession.lastActivityMs) || 0;
   if (!lastActivityMs) return false;
   return Date.now() - lastActivityMs > timeoutMinutes * 60 * 1000;
+};
+
+window.opcbridgeHmiAuthDiagnostics = () => {
+  try {
+    return JSON.parse(sessionStorage.getItem(AUTH_DIAGNOSTICS_KEY) || "[]");
+  } catch {
+    return [];
+  }
 };
 
 const apiAuthStatus = async () => {
@@ -5220,9 +5257,23 @@ const refreshAuthUi = async () => {
     const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
     if (!serverLoggedIn && authSession) {
-      clearAuthSession();
+      authServerLoggedOutStreak += 1;
+      recordAuthDiagnostic("auth-status-mismatch-kept-local", {
+        source: "refreshAuthUi",
+        streak: authServerLoggedOutStreak,
+        status: authStatusSummary(authInfo)
+      });
+      return;
     }
     if (serverLoggedIn && serverUsername) {
+      if (authServerLoggedOutStreak) {
+        recordAuthDiagnostic("auth-status-recovered", {
+          source: "refreshAuthUi",
+          previousStreak: authServerLoggedOutStreak,
+          status: authStatusSummary(authInfo)
+        });
+      }
+      authServerLoggedOutStreak = 0;
       const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
       const needsSync = !authSession ||
         String(authSession?.username || "").trim() !== serverUsername ||
@@ -5261,13 +5312,22 @@ const syncAuthFromServer = async () => {
 
     if (!serverLoggedIn && authSession) {
       authServerLoggedOutStreak += 1;
-      if (authServerLoggedOutStreak >= AUTH_SERVER_LOGOUT_CONFIRMATIONS) {
-        clearLocalAuthState();
-      }
+      recordAuthDiagnostic("auth-status-mismatch-kept-local", {
+        source: "syncAuthFromServer",
+        streak: authServerLoggedOutStreak,
+        status: authStatusSummary(status)
+      });
       return;
     }
 
     if (serverLoggedIn && serverUsername) {
+      if (authServerLoggedOutStreak) {
+        recordAuthDiagnostic("auth-status-recovered", {
+          source: "syncAuthFromServer",
+          previousStreak: authServerLoggedOutStreak,
+          status: authStatusSummary(status)
+        });
+      }
       authServerLoggedOutStreak = 0;
       const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
       const needsSync = !authSession ||
@@ -5302,9 +5362,23 @@ const refreshUsersUi = async () => {
     const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
     if (!serverLoggedIn && authSession) {
-      clearAuthSession();
+      authServerLoggedOutStreak += 1;
+      recordAuthDiagnostic("auth-status-mismatch-kept-local", {
+        source: "refreshUsersUi",
+        streak: authServerLoggedOutStreak,
+        status: authStatusSummary(authInfo)
+      });
+      return;
     }
     if (serverLoggedIn && serverUsername) {
+      if (authServerLoggedOutStreak) {
+        recordAuthDiagnostic("auth-status-recovered", {
+          source: "refreshUsersUi",
+          previousStreak: authServerLoggedOutStreak,
+          status: authStatusSummary(authInfo)
+        });
+      }
+      authServerLoggedOutStreak = 0;
       const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
       const needsSync = !authSession ||
         String(authSession?.username || "").trim() !== serverUsername ||
@@ -5364,7 +5438,13 @@ const closeUsers = () => {
 };
 
 authSession = loadAuthSession();
-if (authSession && isAuthSessionExpired()) clearAuthSession();
+if (authSession && isAuthSessionExpired()) {
+  recordAuthDiagnostic("local-session-expired-on-load", {
+    timeoutMinutes: getAuthTimeoutMinutes(),
+    lastActivityMs: Number(authSession.lastActivityMs) || 0
+  });
+  clearAuthSession();
+}
 updateAuthUiVisibility();
 installAuditActorHeaders();
 setTimeout(() => refreshAuthUi().catch(() => {}), 0);
@@ -14910,6 +14990,7 @@ window.addEventListener("keydown", (evt) => {
     .catch(() => {})
     .finally(async () => {
       pendingEditModeAfterLogin = false;
+      recordAuthDiagnostic("explicit-logout", { source: "ctrl-l" });
       clearAuthSession();
       await refreshAuthUi().catch(() => {});
       showHmiToast("User logged out", 15000);
@@ -14942,6 +15023,7 @@ window.addEventListener("keydown", (evt) => {
     }
 
     if (!serverLoggedIn) {
+      recordAuthDiagnostic("auth-modal-open-server-not-logged-in", { source: "ctrl-shift-l" });
       clearAuthSession();
       await openAuth();
       return;
@@ -14952,6 +15034,7 @@ window.addEventListener("keydown", (evt) => {
       .catch(() => {})
       .finally(async () => {
         pendingEditModeAfterLogin = false;
+        recordAuthDiagnostic("explicit-logout", { source: "ctrl-shift-l" });
         clearAuthSession();
         await refreshAuthUi().catch(() => {});
         showHmiToast("User logged out", 15000);
@@ -15881,6 +15964,7 @@ if (authLogoutBtn) {
       // ignore (still clear local session)
     }
     pendingEditModeAfterLogin = false;
+    recordAuthDiagnostic("explicit-logout", { source: "auth-button" });
     clearAuthSession();
     if (isEditMode) setMode(false);
     closeSettings();
@@ -15907,12 +15991,14 @@ if (!authActivityTimer) {
   authActivityTimer = window.setInterval(() => {
     if (!authSession) return;
     if (!isAuthSessionExpired()) return;
+    recordAuthDiagnostic("local-session-expired", {
+      timeoutMinutes: getAuthTimeoutMinutes(),
+      lastActivityMs: Number(authSession.lastActivityMs) || 0,
+      idleMs: Date.now() - (Number(authSession.lastActivityMs) || Date.now())
+    });
     apiAuthLogout().catch(() => {});
-    clearAuthSession();
-    if (isEditMode) setMode(false);
-    closeSettings();
+    clearLocalAuthState("local inactivity timeout");
     if (authStatusEl) authStatusEl.textContent = "Session expired.";
-    updateAuthUiVisibility();
   }, 2000);
 }
 
