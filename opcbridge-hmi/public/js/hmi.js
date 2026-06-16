@@ -5279,7 +5279,12 @@ const apiAuthLogin = async ({ username, password }) => {
 };
 
 const apiAuthLogout = async () => {
-  const response = await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  const response = await fetch("/api/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ explicit: true })
+  });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`HTTP ${response.status} ${text}`.trim());

@@ -21727,7 +21727,7 @@ async function loginUser() {
 async function logoutUser() {
   try {
     state.authLastLogoutAtMs = Date.now();
-    await apiPostJson('/api/opcbridge/auth/logout', {});
+    await apiPostJson('/api/opcbridge/auth/logout', { explicit: true });
     await refreshUserAuthLine();
   } catch (err) {
     window.alert(`Logout failed: ${err.message}`);

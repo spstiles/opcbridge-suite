@@ -18161,8 +18161,8 @@ async function adminLogout() {
     try {
         await fetch("/auth/logout", {
             method: "POST",
-            headers: withAdminHeaders(),
-            body: "{}"
+            headers: withAdminHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ explicit: true })
         });
     } catch (e) {
         // ignore
@@ -25500,21 +25500,38 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 	            });
 
-	            // POST /auth/logout
-	            svr.Post("/auth/logout", [&](const httplib::Request &req, httplib::Response &res) {
-	                json resp;
+		            // POST /auth/logout
+		            svr.Post("/auth/logout", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                json body = json::object();
+		                try {
+		                    if (!req.body.empty()) body = json::parse(req.body);
+		                } catch (...) {
+		                    body = json::object();
+		                }
+		                const bool explicitLogout =
+		                    body.value("explicit", false) ||
+		                    body.value("confirm", std::string{}) == "logout" ||
+		                    req.get_header_value("X-OPCBRIDGE-Explicit-Logout") == "true";
+		                if (!explicitLogout) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Explicit logout confirmation required.";
+		                    resp["ignored"] = true;
+		                    res.status = 409;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    std::cerr << "[auth] Ignored non-explicit logout request from "
+		                              << req.remote_addr << "\n";
+		                    return;
+		                }
 
-	                auto token = req.get_header_value("X-Admin-Token");
-	                if (token.empty()) {
-	                    token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
-	                }
-	                if (token.empty()) {
-	                    // Also allow in JSON body
-	                    try {
-	                        json body = json::parse(req.body);
-	                        token = body.value("admin_token", std::string{});
-	                    } catch (...) {}
-	                }
+		                auto token = req.get_header_value("X-Admin-Token");
+		                if (token.empty()) {
+		                    token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
+		                }
+		                if (token.empty()) {
+		                    // Also allow in JSON body
+		                    token = body.value("admin_token", std::string{});
+		                }
 
                 if (!token.empty()) {
                     std::lock_guard<std::mutex> lock(g_adminMutex);
