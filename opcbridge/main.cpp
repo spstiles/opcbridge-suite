@@ -3171,6 +3171,36 @@ static bool is_user_logged_in(const httplib::Request &req, AdminSessionInfo &out
     return true;
 }
 
+static json admin_session_diagnostics_for_status(const AdminSessionInfo *session = nullptr) {
+    json out = json::object();
+    const auto now = std::chrono::system_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(g_adminMutex);
+        out["active_count"] = static_cast<int>(g_adminSessions.size());
+    }
+    if (session && !session->username.empty() && session->username != "service") {
+        const int64_t expiresMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            session->expires_at.time_since_epoch()
+        ).count();
+        const int64_t lastActivityMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            session->last_activity_at.time_since_epoch()
+        ).count();
+        const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()
+        ).count();
+        out["current"] = json::object({
+            {"username", session->username},
+            {"role", normalize_auth_role_id(session->role)},
+            {"expires_in_ms", std::max<int64_t>(0, expiresMs - nowMs)},
+            {"idle_for_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
+            {"idle_timeout_ms", g_authTimeoutMinutes > 0 ? static_cast<int64_t>(g_authTimeoutMinutes) * 60 * 1000 : 0}
+        });
+    } else {
+        out["current"] = json(nullptr);
+    }
+    return out;
+}
+
 static bool is_admin_user_request(const httplib::Request &req, AdminSessionInfo &out) {
     AdminSessionInfo s;
     if (!get_session_from_request(req, s)) return false;
@@ -24395,9 +24425,17 @@ window.addEventListener("load", startAutoRefresh);
 
 				                cleanup_expired_admin_sessions();
 				                json resp;
+			                AdminSessionInfo sess;
+			                const bool hasSession = get_session_from_request(req, sess);
+			                const bool interactiveSession = hasSession && sess.username != "service";
+			                const bool editorSession = hasSession && (
+			                    session_has_permission(sess, "opcbridge.edit_config") ||
+			                    session_has_permission(sess, "suite.manage_server")
+			                );
+
 				                // Backwards-compatible admin status (editor+).
 				                resp["configured"] = g_userStoreConfigured;
-				                resp["logged_in"]  = is_admin_request(req);
+				                resp["logged_in"]  = editorSession;
 				                {
 				                    std::lock_guard<std::mutex> lock(g_userStoreMutex);
 				                    resp["passwords_store"] = json::object({
@@ -24412,8 +24450,7 @@ window.addEventListener("load", startAutoRefresh);
 				                resp["legacy_admin_auth_configured"] = g_legacyAdminConfigured;
 				                resp["legacy_admin_auth_error"] = g_adminAuthLoadError.empty() ? json(nullptr) : json(g_adminAuthLoadError);
 			                // New unified auth status (any role).
-			                AdminSessionInfo sess;
-			                const bool userLoggedIn = is_user_logged_in(req, sess);
+			                const bool userLoggedIn = interactiveSession;
 				                resp["user_logged_in"] = userLoggedIn;
 				                    if (userLoggedIn) {
 				                    std::string displayName = sess.username;
@@ -24437,6 +24474,8 @@ window.addEventListener("load", startAutoRefresh);
 				                }
 			                resp["initialized"] = g_userStoreConfigured;
 			                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
+			                resp["auth_debug"] = admin_session_diagnostics_for_status(userLoggedIn ? &sess : nullptr);
+			                resp["auth_debug"]["cookie_present"] = !get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN").empty();
 			                resp["roles"] = json::array();
 				                for (const auto &r : g_authRoles) {
 				                    resp["roles"].push_back({
@@ -24492,6 +24531,7 @@ window.addEventListener("load", startAutoRefresh);
 				                    }
 		                }
 		                resp["is_admin_request"] = is_admin_request(req);
+		                resp["auth_debug"] = admin_session_diagnostics_for_status(nullptr);
 		                res.set_content(resp.dump(2), "application/json");
 		            });
 
