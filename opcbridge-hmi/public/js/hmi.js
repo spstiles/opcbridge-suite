@@ -3601,6 +3601,7 @@ const settingsAlarmsHostInput = document.getElementById("settingsAlarmsHost");
 const settingsAlarmsHttpPortInput = document.getElementById("settingsAlarmsHttpPort");
 const settingsAlarmsWsPortInput = document.getElementById("settingsAlarmsWsPort");
 const settingsDefaultScreenSelect = document.getElementById("settingsDefaultScreen");
+const settingsScreenTimeoutInput = document.getElementById("settingsScreenTimeout");
 const settingsTouchscreenModeInput = document.getElementById("settingsTouchscreenMode");
 const settingsViewOnlyModeInput = document.getElementById("settingsViewOnlyMode");
 const settingsWriteAccessEnabledInput = document.getElementById("settingsWriteAccessEnabled");
@@ -9400,6 +9401,7 @@ const populateSettingsForm = (config) => {
   if (settingsAlarmsHttpPortInput) settingsAlarmsHttpPortInput.value = String(Number(alarms.httpPort) || "");
   if (settingsAlarmsWsPortInput) settingsAlarmsWsPortInput.value = String(Number(alarms.wsPort) || "");
   populateDefaultScreenOptions(settingsDefaultScreenSelect, String(hmi.defaultScreen || ""));
+  if (settingsScreenTimeoutInput) settingsScreenTimeoutInput.value = String(Number(authInfo?.timeoutMinutes) || 0);
   if (settingsTouchscreenModeInput) settingsTouchscreenModeInput.checked = Boolean(hmi.touchscreenMode);
   if (settingsViewOnlyModeInput) settingsViewOnlyModeInput.checked = Boolean(hmi.viewOnlyMode);
 
@@ -9422,7 +9424,11 @@ const openSettings = async () => {
   if (settingsStatus) settingsStatus.textContent = "Loading…";
   setOverlayOpen(settingsOverlay, true);
   try {
-    const data = await apiGetConfig();
+    const [data, authStatus] = await Promise.all([
+      apiGetConfig(),
+      apiAuthStatus().catch(() => null)
+    ]);
+    if (authStatus) authInfo = authStatus;
     populateSettingsForm(data?.config || {});
     if (settingsWriteAccessEnabledInput) {
       settingsWriteAccessEnabledInput.onchange = applyWriteAccessUi;
@@ -9457,6 +9463,15 @@ const saveSettings = async (apply) => {
       }
     }
     await apiSaveConfig(next);
+    if (settingsScreenTimeoutInput) {
+      const timeout = Math.max(0, Math.floor(Number(settingsScreenTimeoutInput.value) || 0));
+      await apiAuthSaveTimeout(timeout);
+      authInfo = { ...(authInfo || {}), timeoutMinutes: timeout };
+      if (authSession) {
+        authSession.timeoutMinutes = timeout;
+        saveAuthSession(authSession);
+      }
+    }
     opcbridgeConfig = { ...opcbridgeConfig, ...next.opcbridge };
     alarmsConfig = { ...alarmsConfig, ...next.alarms };
     hmiUiConfig = { ...hmiUiConfig, ...next.hmi };
