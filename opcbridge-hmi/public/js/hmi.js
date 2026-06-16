@@ -5002,7 +5002,6 @@ let authSession = null;
 let authActivityTimer = null;
 let authSyncTimer = null;
 let authActivityLastMarkMs = 0;
-let authServerLoggedOutStreak = 0;
 let pendingEditModeAfterLogin = false;
 
 const getAuthRole = () => String(authSession?.role || "").trim();
@@ -5094,6 +5093,54 @@ const authStatusSummary = (status) => ({
   timeoutMinutes: Number(status?.timeoutMinutes) || 0
 });
 
+const syncLocalAuthFromStatus = (status, source = "auth-status") => {
+  authInfo = status || { initialized: false };
+  const serverLoggedIn = Boolean(authInfo?.user_logged_in);
+  const serverUser = authInfo?.user;
+  const serverUsername = String(serverUser?.username || "").trim();
+  const serverRole = String(serverUser?.role || "").trim();
+  const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
+
+  if (!serverLoggedIn) {
+    if (authSession) {
+      clearLocalAuthState("server session ended", {
+        source,
+        status: authStatusSummary(authInfo)
+      });
+    }
+    return false;
+  }
+
+  if (!serverUsername) {
+    if (authSession) {
+      clearLocalAuthState("server session missing user", {
+        source,
+        status: authStatusSummary(authInfo)
+      });
+    }
+    return false;
+  }
+
+  const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
+  const localPermsKey = JSON.stringify((Array.isArray(authSession?.permissions) ? authSession.permissions : []).slice().map(String).sort());
+  const needsSync = !authSession ||
+    String(authSession?.username || "").trim() !== serverUsername ||
+    String(authSession?.role || "").trim() !== serverRole ||
+    localPermsKey !== permsKey ||
+    Number(authSession?.timeoutMinutes || 0) !== Number(authInfo?.timeoutMinutes || 0);
+
+  if (needsSync) {
+    saveAuthSession({
+      username: serverUsername,
+      role: serverRole,
+      permissions: serverPerms,
+      timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
+      lastActivityMs: Number(authSession?.lastActivityMs) || Date.now()
+    });
+  }
+  return true;
+};
+
 const markAuthActivity = ({ force = false } = {}) => {
   if (!authSession) return;
   const now = Date.now();
@@ -5107,7 +5154,6 @@ const markAuthActivity = ({ force = false } = {}) => {
 
 const clearLocalAuthState = (reason, detail = {}) => {
   recordAuthDiagnostic("clear-local-auth", { reason, ...detail });
-  authServerLoggedOutStreak = 0;
   clearAuthSession();
   if (isEditMode) setMode(false);
   closeSettings();
@@ -5288,46 +5334,7 @@ const refreshAuthUi = async () => {
   if (authStatusEl) authStatusEl.textContent = "Loading…";
   try {
     const status = await apiAuthStatus();
-    authInfo = status || { initialized: false };
-    const serverLoggedIn = Boolean(authInfo?.user_logged_in);
-    const serverUser = authInfo?.user;
-    const serverUsername = String(serverUser?.username || "").trim();
-    const serverRole = String(serverUser?.role || "").trim();
-    const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
-
-    if (!serverLoggedIn && authSession) {
-      authServerLoggedOutStreak += 1;
-      recordAuthDiagnostic("auth-status-mismatch-kept-local", {
-        source: "refreshAuthUi",
-        streak: authServerLoggedOutStreak,
-        status: authStatusSummary(authInfo)
-      });
-      return;
-    }
-    if (serverLoggedIn && serverUsername) {
-      if (authServerLoggedOutStreak) {
-        recordAuthDiagnostic("auth-status-recovered", {
-          source: "refreshAuthUi",
-          previousStreak: authServerLoggedOutStreak,
-          status: authStatusSummary(authInfo)
-        });
-      }
-      authServerLoggedOutStreak = 0;
-      const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
-      const needsSync = !authSession ||
-        String(authSession?.username || "").trim() !== serverUsername ||
-        String(authSession?.role || "").trim() !== serverRole ||
-        JSON.stringify((Array.isArray(authSession?.permissions) ? authSession.permissions : []).slice().map(String).sort()) !== permsKey;
-      if (needsSync) {
-        saveAuthSession({
-          username: serverUsername,
-          role: serverRole,
-          permissions: serverPerms,
-          timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
-          lastActivityMs: Date.now()
-        });
-      }
-    }
+    syncLocalAuthFromStatus(status, "refreshAuthUi");
     updateAuthUiVisibility();
     if (authStatusEl) authStatusEl.textContent = "Ready.";
   } catch (error) {
@@ -5342,48 +5349,8 @@ const syncAuthFromServer = async () => {
   if (document?.hidden) return;
   try {
     const status = await apiAuthStatus();
-    authInfo = status || authInfo;
-    const serverLoggedIn = Boolean(status?.user_logged_in);
-    const serverUser = status?.user;
-    const serverUsername = String(serverUser?.username || "").trim();
-    const serverRole = String(serverUser?.role || "").trim();
-    const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
-
-    if (!serverLoggedIn && authSession) {
-      authServerLoggedOutStreak += 1;
-      recordAuthDiagnostic("auth-status-mismatch-kept-local", {
-        source: "syncAuthFromServer",
-        streak: authServerLoggedOutStreak,
-        status: authStatusSummary(status)
-      });
-      return;
-    }
-
-    if (serverLoggedIn && serverUsername) {
-      if (authServerLoggedOutStreak) {
-        recordAuthDiagnostic("auth-status-recovered", {
-          source: "syncAuthFromServer",
-          previousStreak: authServerLoggedOutStreak,
-          status: authStatusSummary(status)
-        });
-      }
-      authServerLoggedOutStreak = 0;
-      const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
-      const needsSync = !authSession ||
-        String(authSession?.username || "").trim() !== serverUsername ||
-        String(authSession?.role || "").trim() !== serverRole ||
-        JSON.stringify((Array.isArray(authSession?.permissions) ? authSession.permissions : []).slice().map(String).sort()) !== permsKey;
-      if (needsSync) {
-        saveAuthSession({
-          username: serverUsername,
-          role: serverRole,
-          permissions: serverPerms,
-          timeoutMinutes: Number(status?.timeoutMinutes) || 0,
-          lastActivityMs: Date.now()
-        });
-        updateAuthUiVisibility();
-      }
-    }
+    syncLocalAuthFromStatus(status, "syncAuthFromServer");
+    updateAuthUiVisibility();
   } catch {
     // ignore (offline/unavailable)
   }
@@ -5393,46 +5360,7 @@ const refreshUsersUi = async () => {
   if (usersStatusEl) usersStatusEl.textContent = "Loading…";
   try {
     const status = await apiAuthStatus();
-    authInfo = status || { initialized: false };
-    const serverLoggedIn = Boolean(authInfo?.user_logged_in);
-    const serverUser = authInfo?.user;
-    const serverUsername = String(serverUser?.username || "").trim();
-    const serverRole = String(serverUser?.role || "").trim();
-    const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
-
-    if (!serverLoggedIn && authSession) {
-      authServerLoggedOutStreak += 1;
-      recordAuthDiagnostic("auth-status-mismatch-kept-local", {
-        source: "refreshUsersUi",
-        streak: authServerLoggedOutStreak,
-        status: authStatusSummary(authInfo)
-      });
-      return;
-    }
-    if (serverLoggedIn && serverUsername) {
-      if (authServerLoggedOutStreak) {
-        recordAuthDiagnostic("auth-status-recovered", {
-          source: "refreshUsersUi",
-          previousStreak: authServerLoggedOutStreak,
-          status: authStatusSummary(authInfo)
-        });
-      }
-      authServerLoggedOutStreak = 0;
-      const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
-      const needsSync = !authSession ||
-        String(authSession?.username || "").trim() !== serverUsername ||
-        String(authSession?.role || "").trim() !== serverRole ||
-        JSON.stringify((Array.isArray(authSession?.permissions) ? authSession.permissions : []).slice().map(String).sort()) !== permsKey;
-      if (needsSync) {
-        saveAuthSession({
-          username: serverUsername,
-          role: serverRole,
-          permissions: serverPerms,
-          timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
-          lastActivityMs: Date.now()
-        });
-      }
-    }
+    syncLocalAuthFromStatus(status, "refreshUsersUi");
     updateAuthUiVisibility();
     if (usersTimeoutMinutes) usersTimeoutMinutes.value = String(Number(authInfo?.timeoutMinutes) || 0);
     renderUsersList();

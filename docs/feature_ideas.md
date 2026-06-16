@@ -118,3 +118,25 @@ Desired behavior:
 Non-goals:
 - No gradient favorites in the first pass.
 - No requirement to synchronize favorites across machines initially.
+
+## Read-Only Inbound SIP Status Line
+
+Idea:
+- Allow an authorized caller to dial into `opcbridge-alarms` and hear a read-only status report.
+
+Why:
+- Once SIP callout is configured, the same SIP account could eventually provide a low-friction way to check site health remotely.
+- Operators or support staff may want a quick spoken summary without opening SCADA or VPN tools.
+
+Desired behavior:
+- Add an explicit `Enable inbound SIP status` setting, disabled by default.
+- Register a persistent SIP listener using the configured SIP account.
+- Answer incoming calls automatically only when inbound status is enabled.
+- Play a TTS summary of active alarms, unacknowledged alarms, connection health, and selected system/diagnostic status.
+- Optionally support a small DTMF read-only menu such as alarm summary, connection status, repeat, and hang up.
+- Log inbound calls and status-menu usage for diagnostics.
+
+Non-goals:
+- No alarm acknowledgement from inbound calls.
+- No tag writes or process control from inbound calls.
+- No inbound behavior enabled implicitly by normal outbound SIP callout settings.
