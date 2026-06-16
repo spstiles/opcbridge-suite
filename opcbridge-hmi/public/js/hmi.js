@@ -4961,7 +4961,9 @@ let authSession = null;
 let authActivityTimer = null;
 let authSyncTimer = null;
 let authActivityLastMarkMs = 0;
+let authServerLoggedOutStreak = 0;
 let pendingEditModeAfterLogin = false;
+const AUTH_SERVER_LOGOUT_CONFIRMATIONS = 3;
 
 const getAuthRole = () => String(authSession?.role || "").trim();
 
@@ -5034,6 +5036,15 @@ const markAuthActivity = ({ force = false } = {}) => {
   try {
     sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authSession));
   } catch {}
+};
+
+const clearLocalAuthState = () => {
+  authServerLoggedOutStreak = 0;
+  clearAuthSession();
+  if (isEditMode) setMode(false);
+  closeSettings();
+  closeUsers();
+  updateAuthUiVisibility();
 };
 
 const getAuthTimeoutMinutes = () => {
@@ -5248,14 +5259,15 @@ const syncAuthFromServer = async () => {
     const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
     if (!serverLoggedIn && authSession) {
-      clearAuthSession();
-      if (isEditMode) setMode(false);
-      closeSettings();
-      closeUsers();
-      updateAuthUiVisibility();
+      authServerLoggedOutStreak += 1;
+      if (authServerLoggedOutStreak >= AUTH_SERVER_LOGOUT_CONFIRMATIONS) {
+        clearLocalAuthState();
+      }
+      return;
     }
 
     if (serverLoggedIn && serverUsername) {
+      authServerLoggedOutStreak = 0;
       const permsKey = JSON.stringify(serverPerms.slice().map(String).sort());
       const needsSync = !authSession ||
         String(authSession?.username || "").trim() !== serverUsername ||
