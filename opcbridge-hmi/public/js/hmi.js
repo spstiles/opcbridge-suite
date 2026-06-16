@@ -4997,11 +4997,13 @@ let hmiUiConfig = {
 
 const AUTH_SESSION_KEY = "opcbridge-hmi.session";
 const AUTH_DIAGNOSTICS_KEY = "opcbridge-hmi.authDiagnostics";
+const AUTH_SERVER_LOGOUT_GRACE_MS = 10000;
 let authInfo = { initialized: false, timeoutMinutes: 0, users: [] };
 let authSession = null;
 let authActivityTimer = null;
 let authSyncTimer = null;
 let authActivityLastMarkMs = 0;
+let authServerLoggedOutSinceMs = 0;
 let pendingEditModeAfterLogin = false;
 
 const getAuthRole = () => String(authSession?.role || "").trim();
@@ -5053,8 +5055,10 @@ const loadAuthSession = () => {
 
 const saveAuthSession = (session) => {
   authSession = session;
+  if (session) authServerLoggedOutSinceMs = 0;
   try {
     if (!session) {
+      authServerLoggedOutSinceMs = 0;
       sessionStorage.removeItem(AUTH_SESSION_KEY);
       return;
     }
@@ -5090,7 +5094,8 @@ const authStatusSummary = (status) => ({
   user_logged_in: Boolean(status?.user_logged_in),
   username: String(status?.user?.username || ""),
   role: String(status?.user?.role || ""),
-  timeoutMinutes: Number(status?.timeoutMinutes) || 0
+  timeoutMinutes: Number(status?.timeoutMinutes) || 0,
+  auth_debug: status?.auth_debug || null
 });
 
 const syncLocalAuthFromStatus = (status, source = "auth-status") => {
@@ -5103,6 +5108,15 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
 
   if (!serverLoggedIn) {
     if (authSession) {
+      const now = Date.now();
+      if (!authServerLoggedOutSinceMs) {
+        authServerLoggedOutSinceMs = now;
+        recordAuthDiagnostic("server-session-missing-grace", {
+          source,
+          status: authStatusSummary(authInfo)
+        });
+      }
+      if (now - authServerLoggedOutSinceMs < AUTH_SERVER_LOGOUT_GRACE_MS) return false;
       clearLocalAuthState("server session ended", {
         source,
         status: authStatusSummary(authInfo)
@@ -5110,6 +5124,7 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
     }
     return false;
   }
+  authServerLoggedOutSinceMs = 0;
 
   if (!serverUsername) {
     if (authSession) {
@@ -5187,7 +5202,7 @@ window.opcbridgeHmiAuthDiagnostics = () => {
 };
 
 const apiAuthStatus = async () => {
-  const response = await fetch("/api/auth/status", { cache: "no-store" });
+  const response = await fetch("/api/auth/status", { cache: "no-store", credentials: "same-origin" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 };
@@ -5195,6 +5210,7 @@ const apiAuthStatus = async () => {
 const apiAuthInit = async ({ username, password, timeoutMinutes }) => {
   const response = await fetch("/api/auth/init", {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password, timeoutMinutes })
   });
@@ -5208,6 +5224,7 @@ const apiAuthInit = async ({ username, password, timeoutMinutes }) => {
 const apiAuthLogin = async ({ username, password }) => {
   const response = await fetch("/api/auth/login", {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password })
   });
@@ -5219,7 +5236,7 @@ const apiAuthLogin = async ({ username, password }) => {
 };
 
 const apiAuthLogout = async () => {
-  const response = await fetch("/api/auth/logout", { method: "POST" });
+  const response = await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`HTTP ${response.status} ${text}`.trim());
@@ -5230,6 +5247,7 @@ const apiAuthLogout = async () => {
 const apiAuthAddUser = async ({ username, password, role }) => {
   const response = await fetch("/api/auth/users", {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password, role })
   });
@@ -5241,7 +5259,7 @@ const apiAuthAddUser = async ({ username, password, role }) => {
 };
 
 const apiAuthDeleteUser = async (username) => {
-  const response = await fetch(`/api/auth/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+  const response = await fetch(`/api/auth/users/${encodeURIComponent(username)}`, { method: "DELETE", credentials: "same-origin" });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`HTTP ${response.status} ${text}`.trim());
@@ -5252,6 +5270,7 @@ const apiAuthDeleteUser = async (username) => {
 const apiAuthSaveTimeout = async (timeoutMinutes) => {
   const response = await fetch("/api/auth/timeout", {
     method: "PUT",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ timeoutMinutes })
   });

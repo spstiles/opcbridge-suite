@@ -950,7 +950,9 @@ const state = {
   // auth status cache (opcbridge cookie-based)
   opcbridgeAuthStatus: null,
   authWasLoggedIn: false,
+  authLoggedOutSinceMs: 0,
   authLastLogoutAtMs: 0,
+  authLastUser: null,
   authAdminLoaded: false,
   authAdminLoadInFlight: false,
 
@@ -6179,7 +6181,7 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, { credentials: 'same-origin', ...init, signal: controller.signal });
   } catch (err) {
     if (err?.name === 'AbortError') {
       throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds`);
@@ -21074,11 +21076,24 @@ async function refreshUserAuthLine() {
     updateHistorianTabVisibility();
     ensureAuthAdminPanelLoaded();
     const configured = Boolean(s?.configured);
-    const loggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
-    const username = String(s?.user?.username || '').trim();
-    const role = String(s?.user?.role || '').trim();
+    const rawLoggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
+    let loggedIn = rawLoggedIn;
+    let username = String(s?.user?.username || '').trim();
+    let role = String(s?.user?.role || '').trim();
+    if (rawLoggedIn) {
+      state.authLoggedOutSinceMs = 0;
+      state.authLastUser = { username, role };
+    } else if (state.authWasLoggedIn && configured) {
+      const now = Date.now();
+      if (!state.authLoggedOutSinceMs) state.authLoggedOutSinceMs = now;
+      if (now - state.authLoggedOutSinceMs < 10000) {
+        loggedIn = true;
+        username = String(state.authLastUser?.username || '').trim();
+        role = String(state.authLastUser?.role || '').trim();
+      }
+    }
 
-    if (state.authWasLoggedIn && configured && !loggedIn) {
+    if (state.authWasLoggedIn && configured && !rawLoggedIn && !loggedIn) {
       const sinceLogout = Date.now() - (Number(state.authLastLogoutAtMs) || 0);
       if (sinceLogout > 5000) {
         setWorkspaceSaveStatus('Session expired. Press Login to continue.');
@@ -21092,10 +21107,12 @@ async function refreshUserAuthLine() {
     }
     if (loggedIn) {
       const who = username ? ` as ${escapeHtml(username)}${role ? ` (${escapeHtml(role)})` : ''}` : '';
-      els.authLine.innerHTML = `<button class="btn" id="authLogoutBtn" type="button">Logout</button> <span class="badge ok">auth</span> logged in${who}`;
+      const pending = rawLoggedIn ? '' : ' · verifying session';
+      els.authLine.innerHTML = `<button class="btn" id="authLogoutBtn" type="button">Logout</button> <span class="badge ok">auth</span> logged in${who}${pending}`;
       document.getElementById('authLogoutBtn')?.addEventListener('click', logoutUser);
       return;
     }
+    state.authLoggedOutSinceMs = 0;
     els.authLine.innerHTML = `<button class="btn primary" id="authLoginBtn" type="button">Login</button> <span class="badge warn">auth</span> not logged in`;
     document.getElementById('authLoginBtn')?.addEventListener('click', loginUser);
   } catch {
