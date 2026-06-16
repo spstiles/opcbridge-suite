@@ -326,12 +326,8 @@ let rectRotationDraftObject = null;
 let rectMotionDraft = null;
 let rectMotionDraftObject = null;
 let rectRotationActionRow = null;
-let rectRotationSaveBtn = null;
-let rectRotationCancelBtn = null;
 let rectRotationDeleteBtn = null;
 let rectMotionActionRow = null;
-let rectMotionSaveBtn = null;
-let rectMotionCancelBtn = null;
 let rectMotionDeleteBtn = null;
 let visibilityExpressionDraftValue = "";
 let visibilityExpressionInsertTargetBtn = null;
@@ -2285,7 +2281,7 @@ const ensureRectRotationDraft = (obj) => {
 };
 
 const ensureRectMotionDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "group")) return;
   if (rectMotionDraftObject !== obj || !rectMotionDraft) {
     rectMotionDraftObject = obj;
     rectMotionDraft = cloneRectMotionDraft(normalizeMotionAutomationState({
@@ -4107,8 +4103,6 @@ const visibilityExpressionRow = document.getElementById("visibilityExpressionRow
 const visibilityExpressionSummary = document.getElementById("visibilityExpressionSummary");
 const visibilityExpressionEditBtn = document.getElementById("visibilityExpressionEditBtn");
 const visibilityActionRow = document.getElementById("visibilityActionRow");
-const visibilitySaveBtn = document.getElementById("visibilitySaveBtn");
-const visibilityCancelBtn = document.getElementById("visibilityCancelBtn");
 const visibilityDeleteBtn = document.getElementById("visibilityDeleteBtn");
 const colorActionRow = document.getElementById("colorActionRow");
 const colorDeleteBtn = document.getElementById("colorDeleteBtn");
@@ -13134,6 +13128,21 @@ const updateBarRangeBinding = (which, patch) => {
   setDirty(true);
 };
 
+const applyVisibilityDraftToObject = () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedVisibilityDynamicObject();
+  if (!activeObjects || !obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingButtonVisibilityDynamic() || isEditingGroupVisibilityDynamic() || isEditingCircleVisibilityDynamic())) return false;
+  ensureRectVisibilityDraft(obj);
+  recordHistory();
+  obj.visibility = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
+  rectVisibilityDraftObject = obj;
+  rectVisibilityDraft = cloneVisibilityState(obj.visibility);
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  return true;
+};
+
 	const updateVisibilityProperty = (patch) => {
 	  const activeObjects = getActiveObjects();
 	  if (!activeObjects || !Array.isArray(activeObjects)) return;
@@ -13170,6 +13179,7 @@ const updateBarRangeBinding = (which, patch) => {
       rectVisibilityDraft = next;
       syncVisibilityUiFromState(rectVisibilityDraft);
       renderCompactTagBindingRows();
+      applyVisibilityDraftToObject();
       return;
     }
 	  recordHistory();
@@ -18864,33 +18874,6 @@ if (rectColorExpressionOverlay) {
   });
 }
 
-if (visibilitySaveBtn) {
-  visibilitySaveBtn.addEventListener("click", () => {
-    const activeObjects = getActiveObjects();
-    const obj = getSelectedVisibilityDynamicObject();
-    if (!activeObjects || !obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingButtonVisibilityDynamic() || isEditingGroupVisibilityDynamic() || isEditingCircleVisibilityDynamic())) return;
-    ensureRectVisibilityDraft(obj);
-    recordHistory();
-    obj.visibility = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
-    rectVisibilityDraft = cloneVisibilityState(obj.visibility);
-    renderScreen();
-    syncEditorFromScreen();
-    setDirty(true);
-    updatePropertiesPanel();
-  });
-}
-
-if (visibilityCancelBtn) {
-  visibilityCancelBtn.addEventListener("click", () => {
-    const obj = getSelectedVisibilityDynamicObject();
-    if (!obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingButtonVisibilityDynamic() || isEditingGroupVisibilityDynamic() || isEditingCircleVisibilityDynamic())) return;
-    rectVisibilityDraftObject = obj;
-    rectVisibilityDraft = cloneVisibilityState(obj.visibility || { enabled: true });
-    syncVisibilityUiFromState(rectVisibilityDraft);
-    renderCompactTagBindingRows();
-  });
-}
-
 if (visibilityDeleteBtn) {
   visibilityDeleteBtn.addEventListener("click", () => {
     const activeObjects = getActiveObjects();
@@ -19565,6 +19548,36 @@ function initializeCompactTagBindingRows() {
 
 initializeCompactTagBindingRows();
 
+const applyRectRotationDraftToObject = () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedRotationDynamicObject();
+  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group"))) return false;
+  ensureRectRotationDraft(obj);
+  recordHistory();
+  obj.pivotMode = normalizePivotMode(rectRotationDraft?.pivotMode, obj.type);
+  if (obj.pivotMode === "custom") {
+    if (Number.isFinite(Number(rectRotationDraft?.pivotX))) obj.pivotX = Number(rectRotationDraft.pivotX);
+    else delete obj.pivotX;
+    if (Number.isFinite(Number(rectRotationDraft?.pivotY))) obj.pivotY = Number(rectRotationDraft.pivotY);
+    else delete obj.pivotY;
+  } else {
+    delete obj.pivotX;
+    delete obj.pivotY;
+  }
+  obj.rotationAutomation = normalizeRotationAutomationState(rectRotationDraft?.rotationAutomation || { enabled: true });
+  rectRotationDraftObject = obj;
+  rectRotationDraft = cloneRectRotationDraft({
+    pivotMode: normalizePivotMode(obj.pivotMode, obj.type),
+    pivotX: obj.pivotX,
+    pivotY: obj.pivotY,
+    rotationAutomation: normalizeRotationAutomationState(obj.rotationAutomation || { enabled: true })
+  });
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  return true;
+};
+
 const updateSelectedObjectRotationConfig = (patch) => {
   const activeObjects = getActiveObjects();
   if (!activeObjects || !Array.isArray(activeObjects)) return;
@@ -19600,6 +19613,7 @@ const updateSelectedObjectRotationConfig = (patch) => {
     }
     rectRotationDraft = next;
     syncRectRotationControlFromDraft(obj);
+    applyRectRotationDraftToObject();
     return;
   }
   recordHistory();
@@ -20034,62 +20048,14 @@ rectRotationActionInline.className = "prop-inline";
 rectRotationActionRow = document.createElement("div");
 rectRotationActionRow.id = "rectRotationActionRow";
 rectRotationActionRow.className = "prop-row is-hidden";
-rectRotationSaveBtn = document.createElement("button");
-rectRotationSaveBtn.id = "rectRotationSaveBtn";
-rectRotationSaveBtn.className = "panel-btn";
-rectRotationSaveBtn.type = "button";
-rectRotationSaveBtn.textContent = "Save";
-rectRotationCancelBtn = document.createElement("button");
-rectRotationCancelBtn.id = "rectRotationCancelBtn";
-rectRotationCancelBtn.className = "panel-btn";
-rectRotationCancelBtn.type = "button";
-rectRotationCancelBtn.textContent = "Cancel";
 rectRotationDeleteBtn = document.createElement("button");
 rectRotationDeleteBtn.id = "rectRotationDeleteBtn";
 rectRotationDeleteBtn.className = "panel-btn";
 rectRotationDeleteBtn.type = "button";
 rectRotationDeleteBtn.textContent = "Delete";
-rectRotationActionInline.appendChild(rectRotationSaveBtn);
-rectRotationActionInline.appendChild(rectRotationCancelBtn);
 rectRotationActionInline.appendChild(rectRotationDeleteBtn);
 rectRotationActionRow.appendChild(rectRotationActionLabel);
 rectRotationActionRow.appendChild(rectRotationActionInline);
-
-rectRotationSaveBtn.addEventListener("click", () => {
-  const activeObjects = getActiveObjects();
-  const obj = getSelectedRotationDynamicObject();
-  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group"))) return;
-  ensureRectRotationDraft(obj);
-  recordHistory();
-  obj.pivotMode = normalizePivotMode(rectRotationDraft?.pivotMode, obj.type);
-  if (obj.pivotMode === "custom") {
-    if (Number.isFinite(Number(rectRotationDraft?.pivotX))) obj.pivotX = Number(rectRotationDraft.pivotX);
-    else delete obj.pivotX;
-    if (Number.isFinite(Number(rectRotationDraft?.pivotY))) obj.pivotY = Number(rectRotationDraft.pivotY);
-    else delete obj.pivotY;
-  } else {
-    delete obj.pivotX;
-    delete obj.pivotY;
-  }
-  obj.rotationAutomation = normalizeRotationAutomationState(rectRotationDraft?.rotationAutomation || { enabled: true });
-  rectRotationDraftObject = obj;
-  rectRotationDraft = null;
-  ensureRectRotationDraft(obj);
-  renderScreen();
-  syncEditorFromScreen();
-  setDirty(true);
-  updatePropertiesPanel();
-});
-
-rectRotationCancelBtn.addEventListener("click", () => {
-  const obj = getSelectedRotationDynamicObject();
-  if (!obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group"))) return;
-  rectRotationDraft = null;
-  rectRotationDraftObject = obj;
-  ensureRectRotationDraft(obj);
-  syncRectRotationControlFromDraft(obj);
-  renderCompactTagBindingRows();
-});
 
 rectRotationDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
@@ -20180,6 +20146,24 @@ const getMotionSummary = (motion) => {
   return summary;
 };
 
+const applyRectMotionDraftToObject = () => {
+  const activeObjects = getActiveObjects();
+  const obj = getSelectedMotionDynamicObject();
+  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group"))) return false;
+  ensureRectMotionDraft(obj);
+  recordHistory();
+  obj.motion = cloneRectMotionDraft(normalizeMotionAutomationState(rectMotionDraft || { enabled: true, inputMin: 0, inputMax: 1 }));
+  rectMotionDraftObject = obj;
+  rectMotionDraft = cloneRectMotionDraft(normalizeMotionAutomationState({
+    ...(obj.motion || {}),
+    enabled: obj.motion?.enabled !== false
+  }));
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+  return true;
+};
+
 const updateSelectedObjectMotionConfig = (patch) => {
   const activeObjects = getActiveObjects();
   if (!activeObjects || !Array.isArray(activeObjects)) return;
@@ -20191,6 +20175,7 @@ const updateSelectedObjectMotionConfig = (patch) => {
     const next = normalizeMotionAutomationState({ ...(rectMotionDraft || {}), ...(patch || {}) });
     rectMotionDraft = cloneRectMotionDraft(next);
     syncRectMotionControlFromDraft(obj);
+    applyRectMotionDraftToObject();
     return;
   }
   recordHistory();
@@ -20259,6 +20244,7 @@ const savePoseEdit = () => {
       enabled: rectMotionDraft?.enabled !== false,
       [session.poseKey]: capturedPose
     };
+    applyRectMotionDraftToObject();
   } else {
     recordHistory();
     session.object.motion = {
@@ -20612,23 +20598,11 @@ rectMotionActionInline.className = "prop-inline";
 rectMotionActionRow = document.createElement("div");
 rectMotionActionRow.id = "rectMotionActionRow";
 rectMotionActionRow.className = "prop-row is-hidden";
-rectMotionSaveBtn = document.createElement("button");
-rectMotionSaveBtn.id = "rectMotionSaveBtn";
-rectMotionSaveBtn.className = "panel-btn";
-rectMotionSaveBtn.type = "button";
-rectMotionSaveBtn.textContent = "Save";
-rectMotionCancelBtn = document.createElement("button");
-rectMotionCancelBtn.id = "rectMotionCancelBtn";
-rectMotionCancelBtn.className = "panel-btn";
-rectMotionCancelBtn.type = "button";
-rectMotionCancelBtn.textContent = "Cancel";
 rectMotionDeleteBtn = document.createElement("button");
 rectMotionDeleteBtn.id = "rectMotionDeleteBtn";
 rectMotionDeleteBtn.className = "panel-btn";
 rectMotionDeleteBtn.type = "button";
 rectMotionDeleteBtn.textContent = "Delete";
-rectMotionActionInline.appendChild(rectMotionSaveBtn);
-rectMotionActionInline.appendChild(rectMotionCancelBtn);
 rectMotionActionInline.appendChild(rectMotionDeleteBtn);
 rectMotionActionRow.appendChild(rectMotionActionLabel);
 rectMotionActionRow.appendChild(rectMotionActionInline);
@@ -20643,32 +20617,6 @@ function syncRectMotionControlFromDraft(obj) {
   };
   syncMotionControls(draftObj);
 }
-
-rectMotionSaveBtn.addEventListener("click", () => {
-  const activeObjects = getActiveObjects();
-  const obj = getSelectedMotionDynamicObject();
-  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group"))) return;
-  ensureRectMotionDraft(obj);
-  recordHistory();
-  obj.motion = cloneRectMotionDraft(normalizeMotionAutomationState(rectMotionDraft || { enabled: true, inputMin: 0, inputMax: 1 }));
-  rectMotionDraftObject = obj;
-  rectMotionDraft = null;
-  ensureRectMotionDraft(obj);
-  renderScreen();
-  syncEditorFromScreen();
-  setDirty(true);
-  updatePropertiesPanel();
-});
-
-rectMotionCancelBtn.addEventListener("click", () => {
-  const obj = getSelectedMotionDynamicObject();
-  if (!obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group"))) return;
-  rectMotionDraft = null;
-  rectMotionDraftObject = obj;
-  ensureRectMotionDraft(obj);
-  syncRectMotionControlFromDraft(obj);
-  renderCompactTagBindingRows();
-});
 
 rectMotionDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();

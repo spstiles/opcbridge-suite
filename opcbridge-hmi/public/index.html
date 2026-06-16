@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="css/main.css?v=20260615-hmi-ui-v53" />
+  <link rel="stylesheet" href="css/main.css?v=20260615-hmi-ui-v54" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -363,14 +363,6 @@
               <label for="textValue">Text</label>
               <textarea id="textValue" rows="3" placeholder="Text"></textarea>
             </div>
-            <div class="prop-row">
-              <label for="textX">X</label>
-              <input id="textX" type="number" step="1" />
-            </div>
-            <div class="prop-row">
-              <label for="textY">Y</label>
-              <input id="textY" type="number" step="1" />
-            </div>
             <div class="prop-row prop-row-compact">
               <label>Layout</label>
               <div class="prop-inline">
@@ -379,6 +371,14 @@
                   <span>Auto Size</span>
                 </label>
               </div>
+            </div>
+            <div class="prop-row">
+              <label for="textX">X</label>
+              <input id="textX" type="number" step="1" />
+            </div>
+            <div class="prop-row">
+              <label for="textY">Y</label>
+              <input id="textY" type="number" step="1" />
             </div>
             <div class="prop-row" id="textWRow">
               <label for="textW">W</label>
@@ -1990,8 +1990,6 @@
               <div id="visibilityActionRow" class="prop-row is-hidden">
                 <label>Actions</label>
                 <div class="prop-inline">
-                  <button id="visibilitySaveBtn" class="panel-btn" type="button">Save</button>
-                  <button id="visibilityCancelBtn" class="panel-btn" type="button">Cancel</button>
                   <button id="visibilityDeleteBtn" class="panel-btn" type="button">Delete</button>
                 </div>
               </div>
@@ -2768,6 +2766,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260615-hmi-ui-v53"></script>
+	  <script src="js/hmi.js?v=20260615-hmi-ui-v54"></script>
 	</body>
 	</html>
