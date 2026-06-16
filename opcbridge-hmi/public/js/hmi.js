@@ -4960,6 +4960,7 @@ let authInfo = { initialized: false, timeoutMinutes: 0, users: [] };
 let authSession = null;
 let authActivityTimer = null;
 let authSyncTimer = null;
+let authActivityLastMarkMs = 0;
 let pendingEditModeAfterLogin = false;
 
 const getAuthRole = () => String(authSession?.role || "").trim();
@@ -5024,9 +5025,11 @@ const clearAuthSession = () => {
   saveAuthSession(null);
 };
 
-const markAuthActivity = () => {
+const markAuthActivity = ({ force = false } = {}) => {
   if (!authSession) return;
   const now = Date.now();
+  if (!force && now - authActivityLastMarkMs < 1000) return;
+  authActivityLastMarkMs = now;
   authSession.lastActivityMs = now;
   try {
     sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authSession));
@@ -15860,8 +15863,19 @@ if (authLogoutBtn) {
   });
 }
 
-window.addEventListener("pointerdown", () => markAuthActivity(), { capture: true });
-window.addEventListener("keydown", () => markAuthActivity(), { capture: true });
+[
+  "pointerdown",
+  "pointermove",
+  "keydown",
+  "input",
+  "change",
+  "wheel",
+  "dragstart",
+  "drop"
+].forEach((eventName) => {
+  window.addEventListener(eventName, () => markAuthActivity(), { capture: true, passive: true });
+});
+window.addEventListener("focus", () => markAuthActivity({ force: true }), { capture: true });
 if (!authActivityTimer) {
   authActivityTimer = window.setInterval(() => {
     if (!authSession) return;
