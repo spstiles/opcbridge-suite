@@ -15989,7 +15989,6 @@ if (!authActivityTimer) {
       lastActivityMs: Number(authSession.lastActivityMs) || 0,
       idleMs: Date.now() - (Number(authSession.lastActivityMs) || Date.now())
     });
-    apiAuthLogout().catch(() => {});
     clearLocalAuthState("local inactivity timeout");
     if (authStatusEl) authStatusEl.textContent = "Session expired.";
   }, 2000);
