@@ -1250,6 +1250,10 @@
                     <input id="rectColorInvert" type="checkbox" />
                     <span>Invert</span>
                   </label>
+                  <label class="inline-check">
+                    <input id="rectColorFlashEnabled" type="checkbox" />
+                    <span>Flash</span>
+                  </label>
                 </div>
               </div>
               <div id="rectColorFields" class="prop-subgroup is-hidden" hidden>
@@ -1302,6 +1306,20 @@
                     <div id="rectColorExpressionSummary" class="expression-summary">(empty)</div>
                     <button id="rectColorExpressionEditBtn" class="panel-btn" type="button">Edit…</button>
                   </div>
+                </div>
+                <div class="prop-row is-hidden" id="rectColorFlashRateRow" hidden>
+                  <label for="rectColorFlashRate">Flash Rate</label>
+                  <select id="rectColorFlashRate">
+                    <option value="slow">Slow Blink</option>
+                    <option value="fast">Fast Blink</option>
+                  </select>
+                </div>
+                <div class="prop-row is-hidden" id="rectColorFlashWhenRow" hidden>
+                  <label for="rectColorFlashWhen">Evaluate When</label>
+                  <select id="rectColorFlashWhen">
+                    <option value="true">True</option>
+                    <option value="false">False</option>
+                  </select>
                 </div>
                 <div class="prop-row" id="rectColorTargetsRow">
                   <label>Targets</label>
@@ -2801,6 +2819,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="js/hmi.js?v=20260616-hmi-auth-local-timeout-v62"></script>
+	  <script src="js/hmi.js?v=20260616-hmi-color-flash-v63"></script>
 	</body>
 	</html>

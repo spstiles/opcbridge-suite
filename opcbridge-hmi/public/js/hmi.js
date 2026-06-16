@@ -693,6 +693,9 @@ const cloneRectColorDraft = (value) => {
 const getDefaultColorRuleForObject = (obj) => ({
   enabled: true,
   sourceType: "tag",
+  flashEnabled: false,
+  flashRate: "slow",
+  flashWhen: true,
   fillEnabled: Boolean(obj && obj.type !== "line"),
   strokeEnabled: Boolean(obj && obj.type === "line"),
   textEnabled: false,
@@ -744,10 +747,10 @@ const buildColorRuleSummary = (rule, index) => {
   const targetText = parts.length ? parts.join("/") : "No targets";
   if (next.sourceType === "expression") {
     const expr = String(next.expression || "").trim();
-    return `Rule ${index + 1} · ${targetText} · ${expr ? "Expression" : "Expression (empty)"}`;
+    return `Rule ${index + 1} · ${targetText} · ${expr ? "Expression" : "Expression (empty)"}${next.flashEnabled ? " · Flash" : ""}`;
   }
   const tagText = String(next.tag || "").trim();
-  return `Rule ${index + 1} · ${targetText} · ${tagText || "Unbound tag"}`;
+  return `Rule ${index + 1} · ${targetText} · ${tagText || "Unbound tag"}${next.flashEnabled ? " · Flash" : ""}`;
 };
 
 const normalizeRectColorDraft = (obj, value) => {
@@ -786,6 +789,9 @@ const buildColorRulesFromObject = (obj) => {
       sourceType: source.sourceType === "expression" ? "expression" : "tag",
       expression: source.expression || "",
       invert: Boolean(source.invert),
+      flashEnabled: Boolean(source.flashEnabled),
+      flashRate: source.flashRate === "fast" ? "fast" : "slow",
+      flashWhen: source.flashWhen === false ? false : true,
       connection_id: source.connection_id || "",
       tag: source.tag || "",
       mode: source.mode || "",
@@ -993,6 +999,15 @@ const normalizeColorAutomationState = (value) => {
   delete next.offColor;
   if (next.enabled == null) next.enabled = true;
   if (!next.invert) delete next.invert;
+  if (next.flashEnabled) {
+    next.flashEnabled = true;
+    next.flashRate = next.flashRate === "fast" ? "fast" : "slow";
+    next.flashWhen = next.flashWhen === false ? false : true;
+  } else {
+    delete next.flashEnabled;
+    delete next.flashRate;
+    delete next.flashWhen;
+  }
   return next;
 };
 
@@ -1029,6 +1044,10 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   if (rectColorRuleDownBtn) rectColorRuleDownBtn.disabled = normalizedDraft.selectedRuleIndex >= (rules.length - 1);
   if (rectColorEnabledInput) rectColorEnabledInput.checked = next.enabled !== false;
   if (rectColorInvertInput) rectColorInvertInput.checked = Boolean(next.invert);
+  const flashEnabled = Boolean(next.flashEnabled);
+  if (rectColorFlashEnabledInput) rectColorFlashEnabledInput.checked = flashEnabled;
+  if (rectColorFlashRateSelect) rectColorFlashRateSelect.value = next.flashRate === "fast" ? "fast" : "slow";
+  if (rectColorFlashWhenSelect) rectColorFlashWhenSelect.value = next.flashWhen === false ? "false" : "true";
   if (rectColorFields) {
     const show = next.enabled !== false;
     rectColorFields.classList.toggle("is-hidden", !show);
@@ -1061,6 +1080,14 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     const showExpression = sourceType === "expression";
     rectColorExpressionRow.classList.toggle("is-hidden", !showExpression);
     rectColorExpressionRow.hidden = !showExpression;
+  }
+  if (rectColorFlashRateRow) {
+    rectColorFlashRateRow.classList.toggle("is-hidden", !flashEnabled);
+    rectColorFlashRateRow.hidden = !flashEnabled;
+  }
+  if (rectColorFlashWhenRow) {
+    rectColorFlashWhenRow.classList.toggle("is-hidden", !flashEnabled);
+    rectColorFlashWhenRow.hidden = !flashEnabled;
   }
   setInputValueSafe(rectColorConnectionInput, next.connection_id || "");
   setInputValueSafe(rectColorTagInput, next.tag || "");
@@ -1232,6 +1259,11 @@ const updateRectColorDraft = (patch) => {
     else next.threshold = patch.threshold;
   }
   if ("mode" in patch && patch.mode !== "equals" && patch.mode !== "threshold") delete next.mode;
+  if ("flashEnabled" in patch && !patch.flashEnabled) {
+    next.flashEnabled = false;
+    next.flashRate = "slow";
+    next.flashWhen = true;
+  }
   const rules = draft.rules.slice();
   rules[selectedRuleIndex] = next;
   rectColorDraft = { rules, selectedRuleIndex };
@@ -1261,6 +1293,9 @@ const applyRectColorDraftToObject = () => {
       sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
       expression: rule?.expression || "",
       invert: Boolean(rule?.invert),
+      flashEnabled: Boolean(rule?.flashEnabled),
+      flashRate: rule?.flashRate === "fast" ? "fast" : "slow",
+      flashWhen: rule?.flashWhen === false ? false : true,
       connection_id: rule?.connection_id || "",
       tag: rule?.tag || "",
       mode: rule?.mode || "",
@@ -1300,6 +1335,9 @@ const applyRectColorDraftToObject = () => {
       sourceType: rule?.sourceType === "expression" ? "expression" : "tag",
       expression: rule?.expression || "",
       invert: Boolean(rule?.invert),
+      flashEnabled: Boolean(rule?.flashEnabled),
+      flashRate: rule?.flashRate === "fast" ? "fast" : "slow",
+      flashWhen: rule?.flashWhen === false ? false : true,
       connection_id: rule?.connection_id || "",
       tag: rule?.tag || "",
       mode: rule?.mode || "",
@@ -3907,6 +3945,7 @@ const alarmsPanelStripeBadQualitySwatchBtn = document.getElementById("alarmsPane
 const rectColorDynamicSection = document.getElementById("rectColorDynamicSection");
 const rectColorEnabledInput = document.getElementById("rectColorEnabled");
 const rectColorInvertInput = document.getElementById("rectColorInvert");
+const rectColorFlashEnabledInput = document.getElementById("rectColorFlashEnabled");
 const rectColorFields = document.getElementById("rectColorFields");
 const rectColorRuleRow = document.getElementById("rectColorRuleRow");
 const rectColorRuleSelect = document.getElementById("rectColorRuleSelect");
@@ -3930,6 +3969,10 @@ const rectColorMatchInput = document.getElementById("rectColorMatch");
 const rectColorExpressionRow = document.getElementById("rectColorExpressionRow");
 const rectColorExpressionSummary = document.getElementById("rectColorExpressionSummary");
 const rectColorExpressionEditBtn = document.getElementById("rectColorExpressionEditBtn");
+const rectColorFlashRateRow = document.getElementById("rectColorFlashRateRow");
+const rectColorFlashRateSelect = document.getElementById("rectColorFlashRate");
+const rectColorFlashWhenRow = document.getElementById("rectColorFlashWhenRow");
+const rectColorFlashWhenSelect = document.getElementById("rectColorFlashWhen");
 const rectColorFillEnabledInput = document.getElementById("rectColorFillEnabled");
 const rectColorStrokeEnabledInput = document.getElementById("rectColorStrokeEnabled");
 const rectColorTextTargetLabel = document.getElementById("rectColorTextTargetLabel");
@@ -6910,6 +6953,22 @@ const getAutomationState = (value, config) => {
   return config.invert ? !isOn : isOn;
 };
 
+const getColorRuleFlashTag = (rule) => (
+  rule?.flashRate === "fast"
+    ? "System/Clock/FastBlink"
+    : "System/Clock/SlowBlink"
+);
+
+const isColorRuleFlashActive = (rule) => {
+  if (!rule?.flashEnabled) return true;
+  const key = normalizeTagCacheKey("_system", getColorRuleFlashTag(rule));
+  const rawValue = tagValueCache.get(key);
+  if (rawValue === undefined || rawValue === null) return false;
+  const state = coerceTagBoolean(rawValue);
+  const expected = rule.flashWhen === false ? false : true;
+  return state === expected;
+};
+
 const getAutomationColor = (config, baseColor) => {
   if (!config || isEditMode) return baseColor;
   const rules = getColorAutomationRules(config);
@@ -6920,7 +6979,7 @@ const getAutomationColor = (config, baseColor) => {
       const result = evaluateAutomationExpression(rule.expression);
       if (result === null || result === undefined) continue;
       const isOn = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
-      if (isOn) return rule.onColor || baseColor;
+      if (isOn && isColorRuleFlashActive(rule)) return rule.onColor || baseColor;
       continue;
     }
     const connectionId = String(rule.connection_id || "");
@@ -6928,7 +6987,7 @@ const getAutomationColor = (config, baseColor) => {
     if (!connectionId || !tag) continue;
     const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
     const state = getAutomationState(rawValue, rule);
-    if (state) return rule.onColor || baseColor;
+    if (state && isColorRuleFlashActive(rule)) return rule.onColor || baseColor;
   }
   return baseColor;
 };
@@ -6944,7 +7003,7 @@ const getActiveAutomationOverrideColor = (config) => {
       const result = evaluateAutomationExpression(rule.expression);
       if (result === null || result === undefined) continue;
       const isOn = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
-      if (isOn) return onColor;
+      if (isOn && isColorRuleFlashActive(rule)) return onColor;
       continue;
     }
     const connectionId = String(rule.connection_id || "");
@@ -6952,7 +7011,7 @@ const getActiveAutomationOverrideColor = (config) => {
     if (!connectionId || !tag) continue;
     const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
     const state = getAutomationState(rawValue, rule);
-    if (state) return onColor;
+    if (state && isColorRuleFlashActive(rule)) return onColor;
   }
   return null;
 };
@@ -8138,6 +8197,10 @@ const collectTagKeysFromValue = (value, out, depth = 0) => {
   }
   if (value.sourceType === "expression" && typeof value.expression === "string") {
     extractAutomationExpressionTagKeys(value.expression, out);
+  }
+  if (value.flashEnabled) {
+    const rate = value.flashRate === "fast" ? "FastBlink" : "SlowBlink";
+    out.add(normalizeWsTagKey("_system", `System/Clock/${rate}`));
   }
 
   Object.values(value).forEach((v) => {
@@ -19104,6 +19167,28 @@ if (rectColorSourceTypeSelect) {
 if (rectColorInvertInput) {
   rectColorInvertInput.addEventListener("change", () => {
     updateRectColorDraft({ invert: rectColorInvertInput.checked });
+  });
+}
+
+if (rectColorFlashEnabledInput) {
+  rectColorFlashEnabledInput.addEventListener("change", () => {
+    updateRectColorDraft({
+      flashEnabled: rectColorFlashEnabledInput.checked,
+      flashRate: rectColorFlashRateSelect?.value === "fast" ? "fast" : "slow",
+      flashWhen: rectColorFlashWhenSelect?.value === "false" ? false : true
+    });
+  });
+}
+
+if (rectColorFlashRateSelect) {
+  rectColorFlashRateSelect.addEventListener("change", () => {
+    updateRectColorDraft({ flashEnabled: true, flashRate: rectColorFlashRateSelect.value === "fast" ? "fast" : "slow" });
+  });
+}
+
+if (rectColorFlashWhenSelect) {
+  rectColorFlashWhenSelect.addEventListener("change", () => {
+    updateRectColorDraft({ flashEnabled: true, flashWhen: rectColorFlashWhenSelect.value === "false" ? false : true });
   });
 }
 
