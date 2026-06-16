@@ -20563,7 +20563,7 @@ function liveTagsQueryParamsForCurrentScope() {
   let scopeKey = 'all';
   if (isPanelActive('tab-workspace')) {
     const f = state.liveTagFilter || { type: 'all' };
-    if ((f?.type === 'device' || f?.type === 'mqtt' || f?.type === 'tag' || f?.type === 'system') && f.connection_id) {
+    if ((f?.type === 'device' || f?.type === 'mqtt' || f?.type === 'tag' || f?.type === 'system' || f?.type === 'memory') && f.connection_id) {
       params.set('connection_id', String(f.connection_id));
       scopeKey = `${String(f.type)}:${String(f.connection_id)}`;
       if (f.type === 'tag' && f.name) {
