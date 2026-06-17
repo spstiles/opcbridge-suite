@@ -459,6 +459,7 @@
   newTagModbusRow: document.getElementById('newTagModbusRow'),
   newTagModbusRegisterType: document.getElementById('newTagModbusRegisterType'),
   newTagModbusAddress: document.getElementById('newTagModbusAddress'),
+  newTagModbusResolved: document.getElementById('newTagModbusResolved'),
   newTagInitialRow: document.getElementById('newTagInitialRow'),
   newTagInitialValue: document.getElementById('newTagInitialValue'),
   newTagDerivedRow: document.getElementById('newTagDerivedRow'),
@@ -562,6 +563,7 @@
   editTagModbusRow: document.getElementById('editTagModbusRow'),
   editTagModbusRegisterType: document.getElementById('editTagModbusRegisterType'),
   editTagModbusAddress: document.getElementById('editTagModbusAddress'),
+  editTagModbusResolved: document.getElementById('editTagModbusResolved'),
   editTagInitialRow: document.getElementById('editTagInitialRow'),
   editTagInitialValue: document.getElementById('editTagInitialValue'),
   editTagDerivedRow: document.getElementById('editTagDerivedRow'),
@@ -7187,8 +7189,7 @@ function applyTagSourceKindUi({ kindEl, plcEl, initialRowEl, initialEl, derivedR
 
   if (elemCountEl) elemCountEl.disabled = isDerived || isMemory || !canEditConfig();
   if (writableEl) {
-    if (isDerivedAlias) writableEl.checked = false;
-    writableEl.disabled = isDerivedAlias || !canEditConfig();
+    writableEl.disabled = !canEditConfig();
   }
   if (scalingEl) {
     if (isDerivedBit || isMemory) {
@@ -11834,7 +11835,44 @@ function modbusAddressFromTag(row, connObj = null) {
   return '';
 }
 
-function applyModbusTagUi({ rowEl, typeEl, addressEl, plcEl, writableEl }, { connId, sourceKind }) {
+function modbusPrefixForRegisterType(registerType) {
+  const type = normalizeModbusRegisterType(registerType);
+  if (type === 'coil') return 'co';
+  if (type === 'discrete_input') return 'di';
+  if (type === 'input_register') return 'ir';
+  return 'hr';
+}
+
+function modbusResolvedOffset(registerType, value, addressMode) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n)) return null;
+  if (addressMode === 'offset') return n >= 0 ? n : null;
+  if (n <= 0) return null;
+  const type = normalizeModbusRegisterType(registerType);
+  if (type === 'holding_register' && n >= 40001) return n - 40001;
+  if (type === 'input_register' && n >= 30001) return n - 30001;
+  if (type === 'discrete_input' && n >= 10001) return n - 10001;
+  return n - 1;
+}
+
+function updateModbusResolvedHint({ typeEl, addressEl, resolvedEl }, connObj) {
+  if (!resolvedEl) return;
+  const raw = String(addressEl?.value || '').trim();
+  if (!raw) {
+    resolvedEl.textContent = '';
+    return;
+  }
+  const addressMode = modbusAddressModeFromConnection(connObj);
+  const offset = modbusResolvedOffset(typeEl?.value, raw, addressMode);
+  if (offset == null || offset < 0) {
+    resolvedEl.textContent = 'Resolved: invalid Modbus address/offset';
+    return;
+  }
+  const prefix = modbusPrefixForRegisterType(typeEl?.value);
+  resolvedEl.textContent = `Resolved: ${prefix}${offset} (offset ${offset})`;
+}
+
+function applyModbusTagUi({ rowEl, typeEl, addressEl, resolvedEl, plcEl, writableEl }, { connId, sourceKind }) {
   const connObj = getConnObjById(connId);
   const show = sourceKind === 'plc' && isModbusDriver(connObj?.driver || '');
   const addressMode = modbusAddressModeFromConnection(connObj);
@@ -11851,6 +11889,10 @@ function applyModbusTagUi({ rowEl, typeEl, addressEl, plcEl, writableEl }, { con
   }
   if (plcEl) {
     plcEl.placeholder = show ? 'Optional raw name, e.g. hr0' : 'Pump1.Running';
+  }
+  if (resolvedEl) {
+    resolvedEl.style.display = show ? '' : 'none';
+    updateModbusResolvedHint({ typeEl, addressEl, resolvedEl }, connObj);
   }
   if (show && writableEl && readOnlyRegister) {
     writableEl.checked = false;
@@ -12781,7 +12823,7 @@ function showNewTagModal(connectionId) {
         scalingLinearRowEl: els.newTagScalingLinearRow
       }, { connId: cid, excludeTagName: '' });
       applyTagWordOrderUi({ rowEl: els.newTagWordOrderRow, selectEl: els.newTagWordOrder }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc'), datatype: String(els.newTagDatatype?.value || ''), existingRow: null });
-      applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
+      applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, resolvedEl: els.newTagModbusResolved, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
     };
     applyTagSourceKindUi({
       kindEl: els.newTagSourceKind,
@@ -12800,7 +12842,7 @@ function showNewTagModal(connectionId) {
     }, { connId: cid, excludeTagName: '' });
     els.newTagSourceKind.disabled = memoryMode || !canEditConfig();
   }
-  applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
+  applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, resolvedEl: els.newTagModbusResolved, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
   if (els.newTagModbusRegisterType) {
     els.newTagModbusRegisterType.onchange = () => {
       applyTagSourceKindUi({
@@ -12818,7 +12860,15 @@ function showNewTagModal(connectionId) {
         scalingEl: els.newTagScaling,
         scalingLinearRowEl: els.newTagScalingLinearRow
       }, { connId: cid, excludeTagName: '' });
-      applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
+      applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, resolvedEl: els.newTagModbusResolved, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
+    };
+  }
+  if (els.newTagModbusAddress) {
+    els.newTagModbusAddress.oninput = () => {
+      updateModbusResolvedHint(
+        { typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, resolvedEl: els.newTagModbusResolved },
+        getConnObjById(cid)
+      );
     };
   }
 
@@ -12932,7 +12982,7 @@ async function createNewTagFromModal() {
     name,
     datatype,
     enabled,
-	    writable: isDerivedAlias || (modbusUi && (modbusUi.register_type === 'input_register' || modbusUi.register_type === 'discrete_input')) ? false : writable,
+	    writable: (modbusUi && (modbusUi.register_type === 'input_register' || modbusUi.register_type === 'discrete_input')) ? false : writable,
     log_event_on_change
   };
   if (isMemory) {
@@ -13357,10 +13407,6 @@ function openWorkspaceItemModal(node) {
 	        const plc = String(row?.plc_tag_name || '').trim();
         if (plc) {
           els.editTagPlc.value = plc;
-        } else if (isModbus && row?.address != null) {
-          // For Modbus tags, we may persist {register_type,address} instead of plc_tag_name.
-          // Show the friendly address back to the user.
-          els.editTagPlc.value = String(row.address);
         } else {
 	          els.editTagPlc.value = '';
 	        }
@@ -13423,7 +13469,7 @@ function openWorkspaceItemModal(node) {
 	          { rowEl: els.editTagWordOrderRow, selectEl: els.editTagWordOrder },
 	          { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc'), datatype: String(els.editTagDatatype?.value || ''), existingRow: row }
 	        );
-	        applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
+	        applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, resolvedEl: els.editTagModbusResolved, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
 	      };
       applyTagSourceKindUi({
         kindEl: els.editTagSourceKind,
@@ -13442,7 +13488,7 @@ function openWorkspaceItemModal(node) {
       }, { connId: conn, excludeTagName: name });
 	      els.editTagSourceKind.disabled = (conn === MEMORY_CONNECTION_ID) || !canEditConfig();
 	    }
-	    applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
+	    applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, resolvedEl: els.editTagModbusResolved, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
 	    if (els.editTagModbusRegisterType) {
 	      els.editTagModbusRegisterType.onchange = () => {
 	        applyTagSourceKindUi({
@@ -13460,7 +13506,15 @@ function openWorkspaceItemModal(node) {
 	          scalingEl: els.editTagScaling,
 	          scalingLinearRowEl: els.editTagScalingLinearRow
 	        }, { connId: conn, excludeTagName: name });
-	        applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
+	        applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, resolvedEl: els.editTagModbusResolved, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
+	      };
+	    }
+	    if (els.editTagModbusAddress) {
+	      els.editTagModbusAddress.oninput = () => {
+	        updateModbusResolvedHint(
+	          { typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, resolvedEl: els.editTagModbusResolved },
+	          getConnObjById(conn)
+	        );
 	      };
 	    }
 
@@ -13902,7 +13956,7 @@ async function saveEditedTagFromModal() {
   }
   next.datatype = datatype;
   next.enabled = enabled;
-	  next.writable = isDerivedAlias || (modbusUi && (modbusUi.register_type === 'input_register' || modbusUi.register_type === 'discrete_input')) ? false : writable;
+	  next.writable = (modbusUi && (modbusUi.register_type === 'input_register' || modbusUi.register_type === 'discrete_input')) ? false : writable;
   next.log_event_on_change = log_event_on_change;
   if (historianEnabled) {
     next.historian = {

@@ -1410,12 +1410,13 @@
 		                    <option value="discrete_input">Discrete Input</option>
 		                  </select>
 		                </div>
-		                <div>
-		                  <div class="hint">Address</div>
-		                  <input id="editTagModbusAddress" type="number" min="1" step="1" placeholder="40001" />
-		                </div>
+		              <div>
+		                <div class="hint">Address</div>
+		                <input id="editTagModbusAddress" type="number" min="1" step="1" placeholder="40001" />
 		              </div>
+		              <div class="hint" id="editTagModbusResolved" style="grid-column: 1 / -1;"></div>
 		            </div>
+		          </div>
 	            <div class="form-row" id="editTagInitialRow" style="display:none;"><label>Initial Value</label><input id="editTagInitialValue" type="text" placeholder="0" /></div>
 	            <div class="form-row" id="editTagDerivedRow" style="display:none;">
 	              <label>Derived</label>
@@ -1776,6 +1777,7 @@
 		                <div class="hint">Address</div>
 		                <input id="newTagModbusAddress" type="number" min="1" step="1" placeholder="40001" />
 		              </div>
+		              <div class="hint" id="newTagModbusResolved" style="grid-column: 1 / -1;"></div>
 		            </div>
 		          </div>
 	          <div class="form-row" id="newTagInitialRow" style="display:none;"><label>Initial Value</label><input id="newTagInitialValue" type="text" placeholder="0" /></div>

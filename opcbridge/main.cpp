@@ -4324,8 +4324,6 @@ static std::string normalize_word_order(const std::string &raw) {
 	                t.scan_ms = 0;
 	            }
 	            if (isDerivedAlias) {
-	                // Derived-alias tags are currently read-only; strict writes are only supported for derived-bit tags.
-	                t.writable = false;
 	                t.bit = -1; // keep the stored config canonical for alias tags
 	            }
 	            if (t.invert && t.datatype != "bool") {
@@ -4408,6 +4406,49 @@ static bool is_modbus_driver_name(const std::string &driver) {
 
 static bool is_modbus_connection(const ConnectionConfig &conn) {
     return is_modbus_driver_name(conn.driver);
+}
+
+static int modbus_register_span_for_datatype(const std::string &datatype) {
+    if (datatype == "int32" || datatype == "uint32" || datatype == "float32") return 2;
+    if (datatype == "float64") return 4;
+    return 1;
+}
+
+static bool split_modbus_plc_tag_name(const std::string &name, std::string &prefixOut, int &offsetOut) {
+    const std::string s = trim_copy(name);
+    prefixOut.clear();
+    offsetOut = -1;
+    if (s.size() < 3) return false;
+    const std::string prefix = to_lower_copy(s.substr(0, 2));
+    if (prefix != "hr" && prefix != "ir" && prefix != "co" && prefix != "di") return false;
+    size_t pos = 2;
+    if (pos >= s.size() || !std::isdigit(static_cast<unsigned char>(s[pos]))) return false;
+    size_t end = pos;
+    while (end < s.size() && std::isdigit(static_cast<unsigned char>(s[end]))) ++end;
+    if (end != s.size()) return false;
+    try {
+        const int offset = std::stoi(s.substr(pos, end - pos));
+        if (offset < 0) return false;
+        prefixOut = prefix;
+        offsetOut = offset;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static std::string build_array_element_plc_tag_name(const ConnectionConfig &conn,
+                                                    const TagConfig &tag,
+                                                    int elementIndex) {
+    if (is_modbus_connection(conn)) {
+        std::string prefix;
+        int offset = -1;
+        if (split_modbus_plc_tag_name(tag.plc_tag_name, prefix, offset)) {
+            const int span = modbus_register_span_for_datatype(tag.datatype);
+            return prefix + std::to_string(offset + (std::max(0, elementIndex) * span));
+        }
+    }
+    return tag.plc_tag_name + "[" + std::to_string(elementIndex) + "]";
 }
 
 static bool is_memory_connection_id(const std::string &connId) {
@@ -4582,12 +4623,8 @@ std::string build_tag_conn_str(const ConnectionConfig &c,
     const bool isModbus = is_modbus_connection(c);
     int elemCount = std::max(1, t.elem_count);
     if (isModbus) {
-        // libplctag Modbus treats elements as 16-bit registers; for 32-bit values we must request 2 registers.
-        if (t.datatype == "int32" || t.datatype == "uint32" || t.datatype == "float32") {
-            elemCount = std::max(elemCount, 2);
-        } else if (t.datatype == "float64") {
-            elemCount = std::max(elemCount, 4);
-        }
+        // libplctag Modbus elem_count is 16-bit registers, not logical typed elements.
+        elemCount = std::max(1, t.elem_count) * modbus_register_span_for_datatype(t.datatype);
         // Do not set elem_size for Modbus: libplctag Modbus expects 16-bit registers and can return OOB
         // when elem_size is set to 4 for float32/int32.
     } else {
@@ -5606,6 +5643,102 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         return false;
     }
 
+    const bool isDerivedAlias = (!cfg.source_tag.empty() && cfg.bit < 0);
+    if (isDerivedAlias) {
+        const std::string sourceName = cfg.source_tag;
+        if (sourceName.empty() || sourceName == logical_name) {
+            std::cerr << "Derived alias '" << logical_name
+                      << "' has invalid source tag '" << sourceName << "'.\n";
+            return false;
+        }
+
+        TagConfig srcCfg;
+        bool sourceFound = false;
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            for (const auto &driver : drivers) {
+                if (driver.conn.id != conn_id) continue;
+                for (const auto &t : driver.tags) {
+                    if (t.cfg.logical_name == sourceName) {
+                        srcCfg = t.cfg;
+                        sourceFound = true;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+
+        if (!sourceFound) {
+            std::cerr << "Derived alias '" << logical_name
+                      << "' source tag '" << sourceName
+                      << "' not found.\n";
+            return false;
+        }
+        if (!srcCfg.writable) {
+            std::cerr << "Derived alias '" << logical_name
+                      << "' source tag '" << sourceName
+                      << "' is not marked writable.\n";
+            return false;
+        }
+
+        std::string sourceValueText = value_str;
+        if (scaling_linear) {
+            double scaledNum = 0.0;
+            try {
+                sourceValueText = trim_copy(sourceValueText);
+                if (sourceValueText.empty()) throw std::runtime_error("empty value");
+                scaledNum = std::stod(sourceValueText);
+            } catch (const std::exception &ex) {
+                std::cerr << "Derived alias write parse failed for ["
+                          << conn_id << "]." << logical_name
+                          << ": " << ex.what() << "\n";
+                return false;
+            }
+
+            if (cfg.clamp_low)  scaledNum = std::max(scaledNum, cfg.scaled_low);
+            if (cfg.clamp_high) scaledNum = std::min(scaledNum, cfg.scaled_high);
+            const double rawNum = scaledNum * inv_slope + inv_offset;
+
+            TagValue rawValue{};
+            std::string castErr;
+            if (!cast_double_to_tagvalue(rawNum, srcCfg.datatype, rawValue, castErr)) {
+                std::cerr << "Derived alias write scaling cast failed for ["
+                          << conn_id << "]." << logical_name
+                          << " to source datatype '" << srcCfg.datatype
+                          << "': " << castErr << "\n";
+                return false;
+            }
+            sourceValueText = tag_value_to_string(rawValue);
+        }
+
+        if (!write_tag_by_name(drivers, conn_id, sourceName, sourceValueText, table, driverMutex)) {
+            std::cerr << "Derived alias write-through failed for ["
+                      << conn_id << "]." << logical_name
+                      << " -> " << sourceName << "\n";
+            return false;
+        }
+
+        TagValue aliasValue{};
+        if (parse_string_to_tagvalue(value_str, cfg.datatype, aliasValue)) {
+            TagSnapshot snap;
+            snap.connection_id = conn.id;
+            snap.logical_name = logical_name;
+            snap.datatype = scaling_linear ? (out_datatype.empty() ? cfg.datatype : out_datatype) : cfg.datatype;
+            snap.timestamp = std::chrono::system_clock::now();
+            snap.quality = 1;
+            snap.value = aliasValue;
+
+            std::lock_guard<std::mutex> lock(driverMutex);
+            table[key] = snap;
+        }
+
+        std::cout << "Write OK (derived alias): [" << conn.id << "] "
+                  << logical_name << " := " << value_str
+                  << " (source=" << sourceName << " := " << sourceValueText << ")\n";
+        return true;
+    }
+
     if (is_memory_tag(cfg)) {
         TagValue value{};
         if (!parse_string_to_tagvalue(value_str, cfg.datatype, value)) {
@@ -6348,7 +6481,7 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
                     e.cfg.source_tag.clear();
                     e.cfg.bit = -1;
                     e.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
-                    e.cfg.plc_tag_name = tc.plc_tag_name + "[" + std::to_string(i) + "]";
+                    e.cfg.plc_tag_name = build_array_element_plc_tag_name(conn_cfg, tc, i);
                     e.handle = PLCTAG_ERR_NOT_FOUND;
                     e.handle_deferred = false;
                     const std::string elName = e.cfg.logical_name;
@@ -6388,7 +6521,7 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
                 e.cfg.source_tag.clear();
                 e.cfg.bit = -1;
                 e.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
-                e.cfg.plc_tag_name = tc.plc_tag_name + "[" + std::to_string(i) + "]";
+                e.cfg.plc_tag_name = build_array_element_plc_tag_name(conn_cfg, tc, i);
                 e.handle = PLCTAG_ERR_NOT_FOUND;
                 const std::string elName = e.cfg.logical_name;
                 if (!elName.empty() && !seen_logical_names.insert(elName).second) {
@@ -26095,6 +26228,7 @@ window.addEventListener("load", startAutoRefresh);
 			                            TagSnapshot snap;
 			                            const bool isArray = (t.cfg.elem_count > 1);
 			                            std::vector<TagSnapshot> elemSnaps;
+			                            bool metricsRecorded = false;
 
 			                            {
 		                                std::shared_lock<std::shared_mutex> plcLock;
@@ -26195,6 +26329,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                    atomic_update_max(spec.metrics->read_us_max, us);
 	                                    spec.metrics->last_read_ts_ms.store(ts_ms, std::memory_order_relaxed);
 	                                    record_connection_block_read(spec.metrics, t.sweep_index, status, us, ts_ms);
+	                                    metricsRecorded = true;
 
 	                                    if (status == PLCTAG_STATUS_OK) {
 	                                        spec.metrics->reads_ok.fetch_add(1, std::memory_order_relaxed);
@@ -26233,6 +26368,18 @@ window.addEventListener("load", startAutoRefresh);
 		                                }
 		                                }
 		                                }
+		                            }
+
+		                            if (!metricsRecorded && status != PLCTAG_STATUS_OK && spec.metrics) {
+		                                const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		                                    std::chrono::system_clock::now().time_since_epoch()
+		                                ).count();
+		                                spec.metrics->reads_total.fetch_add(1, std::memory_order_relaxed);
+		                                spec.metrics->reads_err.fetch_add(1, std::memory_order_relaxed);
+		                                spec.metrics->last_read_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                spec.metrics->last_err_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                record_connection_block_read(spec.metrics, t.sweep_index, status, 0, ts_ms);
+		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 		                            }
 
 		                            TagSnapshot prevSnap;

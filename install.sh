@@ -1292,6 +1292,7 @@ install_systemd_units() {
 	ExecStart=/bin/sh -c 'exec ${PREFIX}/bin/opcbridge --config ${CONFIG_ROOT} --http --ws --ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --opcua --opcua-port \"\${OPCBRIDGE_OPCUA_PORT:-4840}\"'
 	User=${SERVICE_USER}
 	Group=${SERVICE_GROUP}
+	LimitNOFILE=65536
 	Restart=always
 	RestartSec=2
 

@@ -1042,6 +1042,7 @@ function writeOpcbridgeSystemdDropIn(settings) {
 [Service]
 ExecStart=
 ExecStart=${execStart}
+LimitNOFILE=65536
 `;
 
   const inst = installSystemdDropIn(content);
