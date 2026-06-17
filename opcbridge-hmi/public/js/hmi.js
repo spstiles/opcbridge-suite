@@ -11073,7 +11073,7 @@ const submitSetpointPrompt = async () => {
   if (value == null || !Number.isFinite(value)) return;
   closeSetpointPrompt();
   try {
-    await apiWriteTag({ connection_id: connectionId, tag: tagName, value });
+    await apiWriteTag({ connection_id: connectionId, tag: tagName, value, audit: { action: "prompt-write" } });
   } catch (error) {
     console.error("[prompt-write] failed:", error);
   }
@@ -16118,7 +16118,7 @@ document.addEventListener("click", (event) => {
       const maxValue = parseOptionalNumber(targetInfo.max);
       if (minValue != null && value < minValue) return;
       if (maxValue != null && value > maxValue) return;
-      apiWriteTag({ connection_id: connectionId, tag: tagName, value }).catch((error) => {
+      apiWriteTag({ connection_id: connectionId, tag: tagName, value, audit: { action: "keypad" } }).catch((error) => {
         console.error("[keypad] write failed:", error);
       });
     }
@@ -16133,7 +16133,20 @@ document.addEventListener("click", (event) => {
   }
 });
 
-const apiWriteTag = async ({ connection_id, tag, value }) => {
+const getAuditContextForWrite = (connectionId, tagName, audit = {}) => {
+  const cacheKey = normalizeTagCacheKey(connectionId, tagName);
+  const context = {
+    screen_id: currentScreenId || "",
+    screen: currentScreenFilename || currentScreenId || "",
+    ...audit
+  };
+  if (!Object.prototype.hasOwnProperty.call(context, "old_value") && cacheKey && tagValueCache.has(cacheKey)) {
+    context.old_value = tagValueCache.get(cacheKey);
+  }
+  return context;
+};
+
+const apiWriteTag = async ({ connection_id, tag, value, audit = {} }) => {
   if (isViewOnlyRuntime()) {
     throw new Error("Writes are disabled in view-only mode.");
   }
@@ -16143,7 +16156,7 @@ const apiWriteTag = async ({ connection_id, tag, value }) => {
   const response = await fetch("/api/opc/write", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ connection_id: connectionId, tag: tagName, value })
+    body: JSON.stringify({ connection_id: connectionId, tag: tagName, value, audit: getAuditContextForWrite(connectionId, tagName, audit) })
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -16194,7 +16207,7 @@ const writeNumberInputById = async (id, rawValue) => {
   if (!Number.isFinite(numeric)) return false;
   const multiplier = Number.isFinite(Number(bind.multiplier)) ? Number(bind.multiplier) : 1;
   const valueToWrite = multiplier && multiplier !== 0 ? numeric / multiplier : numeric;
-  await apiWriteTag({ connection_id: connectionId, tag: tagName, value: valueToWrite });
+  await apiWriteTag({ connection_id: connectionId, tag: tagName, value: valueToWrite, audit: { action: "number-input", object_id: obj?.id || "", object_label: obj?.label || "" } });
   return true;
 };
 
@@ -16297,7 +16310,7 @@ const matchesToggleOnValue = (rawValue, onValue) => {
   return rawStr !== "" && rawStr === onStr;
 };
 
-const runToggleWriteAction = async (action) => {
+const runToggleWriteAction = async (action, obj = null) => {
   if (!action) return;
   if (isViewOnlyRuntime()) return;
   const connectionId = String(action.connection_id || "").trim();
@@ -16307,10 +16320,10 @@ const runToggleWriteAction = async (action) => {
   const rawValue = key ? tagValueCache.get(key) : undefined;
   const isOn = matchesToggleOnValue(rawValue, action.onValue);
   const valueToWrite = isOn ? action.offValue : action.onValue;
-  await apiWriteTag({ connection_id: connectionId, tag: tagName, value: valueToWrite });
+  await apiWriteTag({ connection_id: connectionId, tag: tagName, value: valueToWrite, audit: { action: "toggle-write", object_id: obj?.id || "", object_label: obj?.label || "" } });
 };
 
-const runSetWriteAction = async (action) => {
+const runSetWriteAction = async (action, obj = null) => {
   if (!action) return;
   if (isViewOnlyRuntime()) return;
   const connectionId = String(action.connection_id || "").trim();
@@ -16320,7 +16333,7 @@ const runSetWriteAction = async (action) => {
   const rawValue = key ? tagValueCache.get(key) : undefined;
   const isOn = matchesToggleOnValue(rawValue, action.onValue);
   if (isOn) return;
-  await apiWriteTag({ connection_id: connectionId, tag: tagName, value: action.onValue });
+  await apiWriteTag({ connection_id: connectionId, tag: tagName, value: action.onValue, audit: { action: "set-write", object_id: obj?.id || "", object_label: obj?.label || "" } });
 };
 
 const getWriteActionActiveState = (action) => {
@@ -27165,10 +27178,10 @@ if (hmiSvg) {
 		      return;
 		    }
 	    if (pointerId != null && momentaryPress.pointerId !== pointerId) return;
-	    const { action } = momentaryPress;
-	    momentaryPress = null;
-	    try {
-      await apiWriteTag({ connection_id: action.connection_id, tag: action.tag, value: action.offValue });
+		    const { action, object } = momentaryPress;
+		    momentaryPress = null;
+		    try {
+		      await apiWriteTag({ connection_id: action.connection_id, tag: action.tag, value: action.offValue, audit: { action: "momentary-write-release", object_id: object?.id || "", object_label: object?.label || "" } });
     } catch (error) {
       console.error("[momentary-write] release failed:", error);
     }
@@ -27184,9 +27197,9 @@ if (hmiSvg) {
     const obj = getObjectFromMeta(hitMeta);
     if (obj?.type !== "button" || obj?.action?.type !== "momentary-write") return;
     const action = obj.action || {};
-    momentaryPress = { pointerId: event.pointerId, action };
+	    momentaryPress = { pointerId: event.pointerId, action, object: obj };
     try {
-      await apiWriteTag({ connection_id: action.connection_id, tag: action.tag, value: action.onValue });
+	      await apiWriteTag({ connection_id: action.connection_id, tag: action.tag, value: action.onValue, audit: { action: "momentary-write-press", object_id: obj?.id || "", object_label: obj?.label || "" } });
     } catch (error) {
       console.error("[momentary-write] press failed:", error);
     }
@@ -27289,13 +27302,13 @@ if (hmiSvg) {
 	      }
 		      if (obj?.type === "button" && obj?.action?.type === "toggle-write") {
 		        if (writesDisabled) return;
-		        runToggleWriteAction(obj.action).catch((error) => {
+			        runToggleWriteAction(obj.action, obj).catch((error) => {
 		          console.error("[toggle-write] failed:", error);
 	        });
 	      }
 	      if (obj?.type === "button" && obj?.action?.type === "set-write") {
 	        if (writesDisabled) return;
-	        runSetWriteAction(obj.action).catch((error) => {
+		        runSetWriteAction(obj.action, obj).catch((error) => {
 	          console.error("[set-write] failed:", error);
 	        });
 	      }

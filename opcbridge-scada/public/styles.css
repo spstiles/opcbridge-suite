@@ -825,6 +825,7 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 
 .form { max-width: 720px; }
 .form-row { display: grid; grid-template-columns: 160px 1fr; gap: 10px; align-items: center; margin-bottom: 10px; }
+.form-grid.two { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 0 16px; }
 @media (max-width: 700px) { .form-row { grid-template-columns: 1fr; } }
 
 label { color: var(--muted); font-size: var(--font-small); }

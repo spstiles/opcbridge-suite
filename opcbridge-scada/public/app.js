@@ -410,6 +410,20 @@
   logsStatus: document.getElementById('logsStatus'),
   logsOutput: document.getElementById('logsOutput'),
 
+  // HMI Audit
+  hmiAuditStart: document.getElementById('hmiAuditStart'),
+  hmiAuditEnd: document.getElementById('hmiAuditEnd'),
+  hmiAuditUser: document.getElementById('hmiAuditUser'),
+  hmiAuditResult: document.getElementById('hmiAuditResult'),
+  hmiAuditConnection: document.getElementById('hmiAuditConnection'),
+  hmiAuditTag: document.getElementById('hmiAuditTag'),
+  hmiAuditValue: document.getElementById('hmiAuditValue'),
+  hmiAuditLimit: document.getElementById('hmiAuditLimit'),
+  hmiAuditRefreshBtn: document.getElementById('hmiAuditRefreshBtn'),
+  hmiAuditCsvBtn: document.getElementById('hmiAuditCsvBtn'),
+  hmiAuditStatus: document.getElementById('hmiAuditStatus'),
+  hmiAuditTbody: document.getElementById('hmiAuditTbody'),
+
   // Workspace (tree)
   treeView: document.getElementById('treeView'),
   treeNote: document.getElementById('treeNote'),
@@ -442,6 +456,9 @@
   newTagName: document.getElementById('newTagName'),
   newTagSourceKind: document.getElementById('newTagSourceKind'),
   newTagPlc: document.getElementById('newTagPlc'),
+  newTagModbusRow: document.getElementById('newTagModbusRow'),
+  newTagModbusRegisterType: document.getElementById('newTagModbusRegisterType'),
+  newTagModbusAddress: document.getElementById('newTagModbusAddress'),
   newTagInitialRow: document.getElementById('newTagInitialRow'),
   newTagInitialValue: document.getElementById('newTagInitialValue'),
   newTagDerivedRow: document.getElementById('newTagDerivedRow'),
@@ -540,6 +557,9 @@
   editTagName: document.getElementById('editTagName'),
   editTagSourceKind: document.getElementById('editTagSourceKind'),
   editTagPlc: document.getElementById('editTagPlc'),
+  editTagModbusRow: document.getElementById('editTagModbusRow'),
+  editTagModbusRegisterType: document.getElementById('editTagModbusRegisterType'),
+  editTagModbusAddress: document.getElementById('editTagModbusAddress'),
   editTagInitialRow: document.getElementById('editTagInitialRow'),
   editTagInitialValue: document.getElementById('editTagInitialValue'),
   editTagDerivedRow: document.getElementById('editTagDerivedRow'),
@@ -1237,13 +1257,14 @@ function updateLogicTabVisibility() {
 
 function updateLogsTabVisibility() {
   const logsBtn = document.querySelector('.tabs .tab[data-tab="logs"]');
-  if (!logsBtn) return;
+  const auditBtn = document.querySelector('.tabs .tab[data-tab="hmi_audit"]');
   const canSee = canAccessLogsTab();
-  logsBtn.style.display = canSee ? '' : 'none';
+  if (logsBtn) logsBtn.style.display = canSee ? '' : 'none';
+  if (auditBtn) auditBtn.style.display = canSee ? '' : 'none';
 
   if (!canSee) {
     const activePanel = document.querySelector('.panel.is-active');
-    if (activePanel && activePanel.id === 'tab-logs') {
+    if (activePanel && (activePanel.id === 'tab-logs' || activePanel.id === 'tab-hmi_audit')) {
       setTab('overview');
     }
   }
@@ -5874,6 +5895,79 @@ function logsSetOutput(text) {
   els.logsOutput.textContent = String(text || '');
 }
 
+function hmiAuditSetStatus(msg) {
+  if (els.hmiAuditStatus) els.hmiAuditStatus.textContent = String(msg || '');
+}
+
+function hmiAuditQueryString() {
+  const params = new URLSearchParams();
+  const add = (key, value) => {
+    const raw = String(value || '').trim();
+    if (raw) params.set(key, raw);
+  };
+  add('start', els.hmiAuditStart?.value);
+  add('end', els.hmiAuditEnd?.value);
+  add('user', els.hmiAuditUser?.value);
+  add('result', els.hmiAuditResult?.value);
+  add('connection_id', els.hmiAuditConnection?.value);
+  add('tag', els.hmiAuditTag?.value);
+  add('value', els.hmiAuditValue?.value);
+  params.set('event_type', 'tag_write');
+  params.set('limit', String(Math.max(10, Math.min(10000, Math.trunc(Number(els.hmiAuditLimit?.value || 500) || 500)))));
+  return params.toString();
+}
+
+function renderHmiAuditRows(events) {
+  if (!els.hmiAuditTbody) return;
+  const rows = Array.isArray(events) ? events : [];
+  if (!rows.length) {
+    els.hmiAuditTbody.innerHTML = '<tr><td colspan="10" class="muted">No matching HMI audit records.</td></tr>';
+    return;
+  }
+  els.hmiAuditTbody.innerHTML = rows.map((item) => {
+    const ts = item?.ts ? new Date(item.ts).toLocaleString() : '';
+    const result = String(item?.result || '');
+    const action = [item?.action, item?.error].filter(Boolean).join(' / ');
+    return `<tr>
+      <td>${escapeHtml(ts)}</td>
+      <td>${escapeHtml(item?.user || '')}</td>
+      <td><span class="badge ${result === 'failure' ? 'bad' : 'ok'}">${escapeHtml(result || 'unknown')}</span></td>
+      <td>${escapeHtml(item?.connection_id || '')}</td>
+      <td>${escapeHtml(item?.tag || '')}</td>
+      <td>${escapeHtml(item?.old_value ?? '')}</td>
+      <td>${escapeHtml(item?.new_value ?? item?.value ?? '')}</td>
+      <td>${escapeHtml(item?.screen || item?.screen_id || '')}</td>
+      <td>${escapeHtml(item?.object_label || item?.object_id || '')}</td>
+      <td>${escapeHtml(action)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function refreshHmiAudit() {
+  if (!els.hmiAuditTbody) return;
+  hmiAuditSetStatus('Loading…');
+  try {
+    const data = await apiGet(`/api/hmi-audit/query?${hmiAuditQueryString()}`, { timeoutMs: 20000 });
+    if (!data?.ok) throw new Error(data?.error || 'HMI audit query failed.');
+    renderHmiAuditRows(data.events || []);
+    hmiAuditSetStatus(`OK · ${Number(data.matched || 0)} matched · showing ${Array.isArray(data.events) ? data.events.length : 0} · ${Number(data.total || 0)} total`);
+  } catch (err) {
+    renderHmiAuditRows([]);
+    hmiAuditSetStatus(`Failed: ${err.message || err}`);
+  }
+}
+
+function downloadHmiAuditCsv() {
+  window.location.href = `/api/hmi-audit/csv?${hmiAuditQueryString()}`;
+}
+
+function wireHmiAuditUi() {
+  if (!els.hmiAuditRefreshBtn || els.hmiAuditRefreshBtn.dataset.wired === '1') return;
+  els.hmiAuditRefreshBtn.dataset.wired = '1';
+  els.hmiAuditRefreshBtn.addEventListener('click', () => refreshHmiAudit());
+  els.hmiAuditCsvBtn?.addEventListener('click', downloadHmiAuditCsv);
+}
+
 async function refreshLogs() {
   if (!els.logsOutput) return;
   const source = String(els.logsSource?.value || 'systemd').trim() || 'systemd';
@@ -5981,7 +6075,7 @@ function setTab(id) {
   if (next === 'logic' && !canAccessLogicTab()) {
     id = 'overview';
   }
-  if (next === 'logs' && !canAccessLogsTab()) {
+  if ((next === 'logs' || next === 'hmi_audit') && !canAccessLogsTab()) {
     id = 'overview';
   }
   if (next === 'users' && !canAccessUsersTab()) {
@@ -5997,6 +6091,9 @@ function setTab(id) {
   }
   if (id === 'logs') {
     refreshLogs().catch(() => {});
+  }
+  if (id === 'hmi_audit') {
+    refreshHmiAudit().catch(() => {});
   }
   if (id === 'logger') {
     refreshReporterAll().catch(() => {});
@@ -11684,6 +11781,61 @@ function applyTagWordOrderUi({ rowEl, selectEl }, { connId, sourceKind, datatype
   }
 }
 
+function normalizeModbusRegisterType(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value === 'coil' || value === 'coils' || value === 'co') return 'coil';
+  if (value === 'discrete_input' || value === 'discrete input' || value === 'di') return 'discrete_input';
+  if (value === 'input_register' || value === 'input register' || value === 'ir') return 'input_register';
+  return 'holding_register';
+}
+
+function modbusAddressFromTag(row) {
+  if (!row || typeof row !== 'object') return '';
+  if (row.address != null && String(row.address).trim() !== '') return String(row.address);
+  if (row.modbus_address != null && String(row.modbus_address).trim() !== '') return String(row.modbus_address);
+  if (row.offset != null && String(row.offset).trim() !== '') {
+    const offset = Math.trunc(Number(row.offset));
+    if (!Number.isFinite(offset) || offset < 0) return '';
+    const type = normalizeModbusRegisterType(row.register_type || row.modbus_type || row.register);
+    if (type === 'holding_register') return String(offset + 40001);
+    if (type === 'input_register') return String(offset + 30001);
+    if (type === 'discrete_input') return String(offset + 10001);
+    if (type === 'coil') return String(offset + 1);
+  }
+  return '';
+}
+
+function applyModbusTagUi({ rowEl, typeEl, addressEl, plcEl, writableEl }, { connId, sourceKind }) {
+  const connObj = getConnObjById(connId);
+  const show = sourceKind === 'plc' && isModbusDriver(connObj?.driver || '');
+  const registerType = normalizeModbusRegisterType(typeEl?.value);
+  const readOnlyRegister = registerType === 'input_register' || registerType === 'discrete_input';
+  if (rowEl) rowEl.style.display = show ? '' : 'none';
+  if (typeEl) typeEl.disabled = !show || !canEditConfig();
+  if (addressEl) addressEl.disabled = !show || !canEditConfig();
+  if (plcEl) {
+    plcEl.placeholder = show ? 'Optional raw name, e.g. hr0' : 'Pump1.Running';
+  }
+  if (show && writableEl && readOnlyRegister) {
+    writableEl.checked = false;
+    writableEl.disabled = true;
+  }
+}
+
+function readModbusTagAddressFromUi({ typeEl, addressEl }) {
+  const addressRaw = String(addressEl?.value || '').trim();
+  if (!addressRaw) return null;
+  const address = Math.trunc(Number(addressRaw));
+  if (!Number.isFinite(address) || address <= 0) {
+    return { ok: false, error: 'Modbus address must be a positive number.' };
+  }
+  return {
+    ok: true,
+    register_type: normalizeModbusRegisterType(typeEl?.value),
+    address
+  };
+}
+
 function setRowVisible(row, visible) {
   if (row) row.style.display = visible ? '' : 'none';
 }
@@ -12530,6 +12682,8 @@ function showNewTagModal(connectionId) {
   if (els.newTagName) els.newTagName.value = '';
   if (els.newTagSourceKind) els.newTagSourceKind.value = memoryMode ? 'memory' : 'plc';
   if (els.newTagPlc) els.newTagPlc.value = '';
+  if (els.newTagModbusRegisterType) els.newTagModbusRegisterType.value = 'holding_register';
+  if (els.newTagModbusAddress) els.newTagModbusAddress.value = '';
   if (els.newTagInitialValue) els.newTagInitialValue.value = '';
   if (els.newTagBit) els.newTagBit.value = '';
   fillTagDatatypeSelect(els.newTagDatatype, 'bool');
@@ -12576,6 +12730,7 @@ function showNewTagModal(connectionId) {
         scalingLinearRowEl: els.newTagScalingLinearRow
       }, { connId: cid, excludeTagName: '' });
       applyTagWordOrderUi({ rowEl: els.newTagWordOrderRow, selectEl: els.newTagWordOrder }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc'), datatype: String(els.newTagDatatype?.value || ''), existingRow: null });
+      applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
     };
     applyTagSourceKindUi({
       kindEl: els.newTagSourceKind,
@@ -12593,6 +12748,27 @@ function showNewTagModal(connectionId) {
       scalingLinearRowEl: els.newTagScalingLinearRow
     }, { connId: cid, excludeTagName: '' });
     els.newTagSourceKind.disabled = memoryMode || !canEditConfig();
+  }
+  applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
+  if (els.newTagModbusRegisterType) {
+    els.newTagModbusRegisterType.onchange = () => {
+      applyTagSourceKindUi({
+        kindEl: els.newTagSourceKind,
+        plcEl: els.newTagPlc,
+        initialRowEl: els.newTagInitialRow,
+        initialEl: els.newTagInitialValue,
+        derivedRowEl: els.newTagDerivedRow,
+        sourceEl: els.newTagSourceTag,
+        bitBoxEl: els.newTagBitBox,
+        bitEl: els.newTagBit,
+        datatypeEl: els.newTagDatatype,
+        elemCountEl: els.newTagElemCount,
+        writableEl: els.newTagWritable,
+        scalingEl: els.newTagScaling,
+        scalingLinearRowEl: els.newTagScalingLinearRow
+      }, { connId: cid, excludeTagName: '' });
+      applyModbusTagUi({ rowEl: els.newTagModbusRow, typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, plcEl: els.newTagPlc, writableEl: els.newTagWritable }, { connId: cid, sourceKind: String(els.newTagSourceKind?.value || 'plc') });
+    };
   }
 
   if (els.newTagDatatype) {
@@ -12670,6 +12846,12 @@ async function createNewTagFromModal() {
   const isDerivedBit = (sourceKind === 'derived_bit');
   const isDerivedAlias = (sourceKind === 'derived_alias');
   const isDerived = (isDerivedBit || isDerivedAlias);
+  const connObj = getConnObjById(cid);
+  const isModbusPlc = !isDerived && !isMemory && isModbusDriver(connObj?.driver || '');
+  const modbusUi = isModbusPlc
+    ? readModbusTagAddressFromUi({ typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress })
+    : null;
+  if (modbusUi && !modbusUi.ok) { setNewTagStatus(modbusUi.error); return; }
 
   let plc_tag_name = String(els.newTagPlc?.value || '').trim();
   const initialValue = String(els.newTagInitialValue?.value || '').trim();
@@ -12677,7 +12859,7 @@ async function createNewTagFromModal() {
   const bitRaw = String(els.newTagBit?.value || '').trim();
   const bit = bitRaw === '' ? null : Math.trunc(Number(bitRaw));
 
-  if (!isDerived && !isMemory && !plc_tag_name) { setNewTagStatus('PLC Tag is required.'); return; }
+  if (!isDerived && !isMemory && !plc_tag_name && !modbusUi) { setNewTagStatus(isModbusPlc ? 'Modbus Address or raw PLC Tag is required.' : 'PLC Tag is required.'); return; }
   if (isDerivedBit) {
     if (!source_tag) { setNewTagStatus('Source Tag is required for a Derived Bit.'); return; }
     if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) { setNewTagStatus('Bit must be between 0 and 63.'); return; }
@@ -12699,7 +12881,7 @@ async function createNewTagFromModal() {
     name,
     datatype,
     enabled,
-    writable: isDerivedAlias ? false : writable,
+	    writable: isDerivedAlias || (modbusUi && (modbusUi.register_type === 'input_register' || modbusUi.register_type === 'discrete_input')) ? false : writable,
     log_event_on_change
   };
   if (isMemory) {
@@ -12708,13 +12890,12 @@ async function createNewTagFromModal() {
     if (initialValue !== '') tag.initial_value = initialValue;
   } else if (!isDerived) {
     // Modbus convenience: allow "friendly" numeric addresses (e.g. 40001) entered in the PLC Tag field.
-    const connObj = getConnObjById(cid);
-    if (isModbusDriver(connObj?.driver || '')) {
-      const friendly = parseFriendlyModbusAddress(plc_tag_name);
-      if (friendly) {
-        delete tag.plc_tag_name;
-        tag.register_type = friendly.register_type;
-        tag.address = friendly.address;
+	    if (isModbusDriver(connObj?.driver || '')) {
+	      const friendly = modbusUi || parseFriendlyModbusAddress(plc_tag_name);
+	      if (friendly?.ok || friendly) {
+	        delete tag.plc_tag_name;
+	        tag.register_type = friendly.register_type;
+	        tag.address = friendly.address;
         plc_tag_name = '';
       }
       if (isModbus32Datatype(datatype)) {
@@ -13074,8 +13255,10 @@ function openWorkspaceItemModal(node) {
     const row = getEffectiveTagsAll().find((tt) => String(tt?.connection_id || '') === conn && String(tt?.name || '') === name) || null;
     if (!row) {
       if (els.editTagSourceKind) els.editTagSourceKind.value = 'plc';
-      if (els.editTagPlc) els.editTagPlc.value = '';
-      if (els.editTagInitialValue) els.editTagInitialValue.value = '';
+	      if (els.editTagPlc) els.editTagPlc.value = '';
+	      if (els.editTagModbusRegisterType) els.editTagModbusRegisterType.value = 'holding_register';
+	      if (els.editTagModbusAddress) els.editTagModbusAddress.value = '';
+	      if (els.editTagInitialValue) els.editTagInitialValue.value = '';
       if (els.editTagSourceTag) els.editTagSourceTag.textContent = '';
       if (els.editTagBit) els.editTagBit.value = '0';
       fillTagDatatypeSelect(els.editTagDatatype, 'bool');
@@ -13110,10 +13293,10 @@ function openWorkspaceItemModal(node) {
           ? ((Number.isFinite(bitNum) && bitNum >= 0) ? 'derived_bit' : 'derived_alias')
           : 'plc';
       }
-      if (els.editTagPlc) {
-        const connObj = getConnObjById(conn);
-        const isModbus = isModbusDriver(connObj?.driver || '');
-        const plc = String(row?.plc_tag_name || '').trim();
+	      if (els.editTagPlc) {
+	        const connObj = getConnObjById(conn);
+	        const isModbus = isModbusDriver(connObj?.driver || '');
+	        const plc = String(row?.plc_tag_name || '').trim();
         if (plc) {
           els.editTagPlc.value = plc;
         } else if (isModbus && row?.address != null) {
@@ -13121,9 +13304,15 @@ function openWorkspaceItemModal(node) {
           // Show the friendly address back to the user.
           els.editTagPlc.value = String(row.address);
         } else {
-          els.editTagPlc.value = '';
-        }
-      }
+	          els.editTagPlc.value = '';
+	        }
+	      }
+	      if (els.editTagModbusRegisterType) {
+	        els.editTagModbusRegisterType.value = normalizeModbusRegisterType(row?.register_type || row?.modbus_type || row?.register);
+	      }
+	      if (els.editTagModbusAddress) {
+	        els.editTagModbusAddress.value = modbusAddressFromTag(row);
+	      }
       if (els.editTagInitialValue) els.editTagInitialValue.value = String(row?.initial_value ?? '');
       if (els.editTagSourceTag) els.editTagSourceTag.value = String(row?.source_tag || '');
       if (els.editTagBit) els.editTagBit.value = (row?.bit == null) ? '0' : String(row.bit);
@@ -13172,11 +13361,12 @@ function openWorkspaceItemModal(node) {
           scalingEl: els.editTagScaling,
           scalingLinearRowEl: els.editTagScalingLinearRow
         }, { connId: conn, excludeTagName: name });
-        applyTagWordOrderUi(
-          { rowEl: els.editTagWordOrderRow, selectEl: els.editTagWordOrder },
-          { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc'), datatype: String(els.editTagDatatype?.value || ''), existingRow: row }
-        );
-      };
+	        applyTagWordOrderUi(
+	          { rowEl: els.editTagWordOrderRow, selectEl: els.editTagWordOrder },
+	          { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc'), datatype: String(els.editTagDatatype?.value || ''), existingRow: row }
+	        );
+	        applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
+	      };
       applyTagSourceKindUi({
         kindEl: els.editTagSourceKind,
         plcEl: els.editTagPlc,
@@ -13192,8 +13382,29 @@ function openWorkspaceItemModal(node) {
         scalingEl: els.editTagScaling,
         scalingLinearRowEl: els.editTagScalingLinearRow
       }, { connId: conn, excludeTagName: name });
-      els.editTagSourceKind.disabled = (conn === MEMORY_CONNECTION_ID) || !canEditConfig();
-    }
+	      els.editTagSourceKind.disabled = (conn === MEMORY_CONNECTION_ID) || !canEditConfig();
+	    }
+	    applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
+	    if (els.editTagModbusRegisterType) {
+	      els.editTagModbusRegisterType.onchange = () => {
+	        applyTagSourceKindUi({
+	          kindEl: els.editTagSourceKind,
+	          plcEl: els.editTagPlc,
+	          initialRowEl: els.editTagInitialRow,
+	          initialEl: els.editTagInitialValue,
+	          derivedRowEl: els.editTagDerivedRow,
+	          sourceEl: els.editTagSourceTag,
+	          bitBoxEl: els.editTagBitBox,
+	          bitEl: els.editTagBit,
+	          datatypeEl: els.editTagDatatype,
+	          elemCountEl: els.editTagElemCount,
+	          writableEl: els.editTagWritable,
+	          scalingEl: els.editTagScaling,
+	          scalingLinearRowEl: els.editTagScalingLinearRow
+	        }, { connId: conn, excludeTagName: name });
+	        applyModbusTagUi({ rowEl: els.editTagModbusRow, typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, plcEl: els.editTagPlc, writableEl: els.editTagWritable }, { connId: conn, sourceKind: String(els.editTagSourceKind?.value || 'plc') });
+	      };
+	    }
 
     if (els.editTagDatatype) {
       els.editTagDatatype.onchange = () => {
@@ -13470,6 +13681,12 @@ async function saveEditedTagFromModal() {
   const isDerivedBit = (sourceKind === 'derived_bit');
   const isDerivedAlias = (sourceKind === 'derived_alias');
   const isDerived = (isDerivedBit || isDerivedAlias);
+  const connObj = getConnObjById(conn);
+  const isModbusPlc = !isDerived && !isMemory && isModbusDriver(connObj?.driver || '');
+  const modbusUi = isModbusPlc
+    ? readModbusTagAddressFromUi({ typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress })
+    : null;
+  if (modbusUi && !modbusUi.ok) { setEditTagStatus(modbusUi.error); return; }
 
   const plc_tag_name = String(els.editTagPlc?.value || '').trim();
   const initialValue = String(els.editTagInitialValue?.value || '').trim();
@@ -13491,7 +13708,7 @@ async function saveEditedTagFromModal() {
 
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
 
-  if (!isDerived && !isMemory && !plc_tag_name) { setEditTagStatus('PLC Tag is required.'); return; }
+  if (!isDerived && !isMemory && !plc_tag_name && !modbusUi) { setEditTagStatus(isModbusPlc ? 'Modbus Address or raw PLC Tag is required.' : 'PLC Tag is required.'); return; }
   if (isDerivedBit) {
     if (!source_tag) { setEditTagStatus('Source Tag is required for a Derived Bit.'); return; }
     if (bit == null || !Number.isFinite(bit) || bit < 0 || bit > 63) { setEditTagStatus('Bit must be between 0 and 63.'); return; }
@@ -13552,10 +13769,9 @@ async function saveEditedTagFromModal() {
     delete next.initial_value;
     // Modbus convenience: allow "friendly" numeric addresses (e.g. 40001) entered in the PLC Tag field.
     // Store as {register_type,address} so opcbridge can derive the proper Modbus handle.
-    const connObj = getConnObjById(conn);
     if (isModbusDriver(connObj?.driver || '')) {
-      const friendly = parseFriendlyModbusAddress(plc_tag_name);
-      if (friendly) {
+      const friendly = modbusUi || parseFriendlyModbusAddress(plc_tag_name);
+      if (friendly?.ok || friendly) {
         delete next.plc_tag_name;
         next.register_type = friendly.register_type;
         next.address = friendly.address;
@@ -13605,7 +13821,7 @@ async function saveEditedTagFromModal() {
   }
   next.datatype = datatype;
   next.enabled = enabled;
-  next.writable = isDerivedAlias ? false : writable;
+	  next.writable = isDerivedAlias || (modbusUi && (modbusUi.register_type === 'input_register' || modbusUi.register_type === 'discrete_input')) ? false : writable;
   next.log_event_on_change = log_event_on_change;
   if (historianEnabled) {
     next.historian = {
@@ -21772,6 +21988,7 @@ async function main() {
   wireLoginModalUi();
   wireUsersUi();
   wireLogsUi();
+  wireHmiAuditUi();
   wireNewDeviceFormUi();
   wireWorkspaceSaveBarUi();
   wireWorkspaceItemModalUi();

@@ -31,6 +31,7 @@
 		      <button data-tab="logger" class="tab">Data Logger</button>
 		      <button data-tab="historian" class="tab">Historian</button>
 		      <button data-tab="logs" class="tab">Logs</button>
+		      <button data-tab="hmi_audit" class="tab">HMI Audit</button>
 		      <button data-tab="users" class="tab">Users</button>
 		      <div class="tabs-right">
 		        <a class="tab tab-link" id="topLinkOpcbridge" href="#" target="_blank" rel="noopener noreferrer">OPCBridge</a>
@@ -1266,8 +1267,39 @@
 	          <pre class="mono" id="logsOutput" style="max-height: 520px; overflow:auto; white-space: pre; margin:0;">Select a service and click Refresh.</pre>
 	        </div>
 	      </div>
-	    </section>
-	  </main>
+		    </section>
+
+			    <section id="tab-hmi_audit" class="panel">
+			      <h2>HMI Audit</h2>
+			      <div class="hint">Operational HMI write audit. Requires <code>suite.view_logs</code>.</div>
+		      <div class="card">
+		        <div class="card-title">HMI Audit Filters</div>
+		        <div class="card-body">
+		          <div class="form" style="max-width: 980px;">
+		            <div class="form-grid two">
+		              <div class="form-row"><label>Start</label><input id="hmiAuditStart" type="datetime-local" /></div>
+		              <div class="form-row"><label>End</label><input id="hmiAuditEnd" type="datetime-local" /></div>
+		              <div class="form-row"><label>User</label><input id="hmiAuditUser" type="text" placeholder="operator username" /></div>
+		              <div class="form-row"><label>Result</label><select id="hmiAuditResult"><option value="">Any</option><option value="success">Success</option><option value="failure">Failure</option></select></div>
+		              <div class="form-row"><label>Connection</label><input id="hmiAuditConnection" type="text" placeholder="connection id" /></div>
+		              <div class="form-row"><label>Tag</label><input id="hmiAuditTag" type="text" placeholder="tag name" /></div>
+		              <div class="form-row"><label>Value</label><input id="hmiAuditValue" type="text" placeholder="old or new value" /></div>
+		              <div class="form-row"><label>Limit</label><input id="hmiAuditLimit" type="number" min="10" max="10000" step="10" value="500" /></div>
+		            </div>
+		            <div class="form-row"><label></label><div class="row-actions"><button class="btn primary" id="hmiAuditRefreshBtn" type="button">Refresh</button><button class="btn" id="hmiAuditCsvBtn" type="button">Download CSV</button></div></div>
+		            <div class="hint mono" id="hmiAuditStatus"></div>
+		          </div>
+		          <div class="divider"></div>
+		          <div class="table-wrap" style="max-height: 560px; overflow:auto;">
+		            <table class="table" id="hmiAuditTable">
+		              <thead><tr><th>Time</th><th>User</th><th>Result</th><th>Connection</th><th>Tag</th><th>Old</th><th>New</th><th>Screen</th><th>Object</th><th>Action/Error</th></tr></thead>
+		              <tbody id="hmiAuditTbody"></tbody>
+		            </table>
+		          </div>
+		        </div>
+		      </div>
+		    </section>
+		  </main>
 
 
   
@@ -1361,7 +1393,25 @@
 	                <option value="derived_alias">Derived Alias</option>
 	              </select>
 	            </div>
-	            <div class="form-row"><label>PLC Tag</label><input id="editTagPlc" type="text" placeholder="Pump1.Running" /></div>
+		            <div class="form-row"><label>PLC Tag</label><input id="editTagPlc" type="text" placeholder="Pump1.Running" /></div>
+		            <div class="form-row" id="editTagModbusRow" style="display:none;">
+		              <label>Modbus</label>
+		              <div style="display:grid; grid-template-columns: minmax(180px, .9fr) minmax(160px, .8fr); gap: 10px;">
+		                <div>
+		                  <div class="hint">Register Type</div>
+		                  <select id="editTagModbusRegisterType">
+		                    <option value="holding_register">Holding Register</option>
+		                    <option value="input_register">Input Register</option>
+		                    <option value="coil">Coil</option>
+		                    <option value="discrete_input">Discrete Input</option>
+		                  </select>
+		                </div>
+		                <div>
+		                  <div class="hint">Address</div>
+		                  <input id="editTagModbusAddress" type="number" min="1" step="1" placeholder="40001" />
+		                </div>
+		              </div>
+		            </div>
 	            <div class="form-row" id="editTagInitialRow" style="display:none;"><label>Initial Value</label><input id="editTagInitialValue" type="text" placeholder="0" /></div>
 	            <div class="form-row" id="editTagDerivedRow" style="display:none;">
 	              <label>Derived</label>
@@ -1701,7 +1751,25 @@
 	              <option value="derived_alias">Derived Alias</option>
 	            </select>
 	          </div>
-	          <div class="form-row"><label>PLC Tag</label><input id="newTagPlc" type="text" placeholder="Pump1.Running" /></div>
+		          <div class="form-row"><label>PLC Tag</label><input id="newTagPlc" type="text" placeholder="Pump1.Running" /></div>
+		          <div class="form-row" id="newTagModbusRow" style="display:none;">
+		            <label>Modbus</label>
+		            <div style="display:grid; grid-template-columns: minmax(180px, .9fr) minmax(160px, .8fr); gap: 10px;">
+		              <div>
+		                <div class="hint">Register Type</div>
+		                <select id="newTagModbusRegisterType">
+		                  <option value="holding_register">Holding Register</option>
+		                  <option value="input_register">Input Register</option>
+		                  <option value="coil">Coil</option>
+		                  <option value="discrete_input">Discrete Input</option>
+		                </select>
+		              </div>
+		              <div>
+		                <div class="hint">Address</div>
+		                <input id="newTagModbusAddress" type="number" min="1" step="1" placeholder="40001" />
+		              </div>
+		            </div>
+		          </div>
 	          <div class="form-row" id="newTagInitialRow" style="display:none;"><label>Initial Value</label><input id="newTagInitialValue" type="text" placeholder="0" /></div>
 	          <div class="form-row" id="newTagDerivedRow" style="display:none;">
 	            <label>Derived</label>

@@ -420,6 +420,23 @@ async function fetchUpstreamJson(req, target, path, { timeoutMs = 8000 } = {}) {
   });
 }
 
+async function fetchUpstreamRaw(req, target, path, { timeoutMs = 8000, accept = '*/*' } = {}) {
+  const { scheme, host, port } = target || {};
+  const client = String(scheme || 'http') === 'https' ? https : http;
+  const headers = { Accept: accept };
+  if (req.headers['cookie']) headers['Cookie'] = String(req.headers['cookie']);
+  return await new Promise((resolve, reject) => {
+    const up = client.request({ host, port, method: 'GET', path, headers, timeout: timeoutMs }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode || 0, headers: res.headers || {}, body: Buffer.concat(chunks) }));
+    });
+    up.on('timeout', () => up.destroy(new Error('upstream timeout')));
+    up.on('error', reject);
+    up.end();
+  });
+}
+
 function sendJson(res, status, obj) {
   send(res, status, {
     'Content-Type': 'application/json',
@@ -2163,8 +2180,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/logs/source') {
     if (req.method !== 'GET') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
+    return;
+  }
 
     if (!await requireViewLogsPerm()) return;
 
@@ -2229,6 +2246,40 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 400, { ok: false, error: 'Unsupported source.', source, allowed: ['opcbridge_runtime', 'opcbridge_events', 'alarm_server_history', 'hmi_audit'] });
     } catch (err) {
       sendJson(res, 200, { ok: false, error: String(err.message || err), source });
+    }
+	    return;
+	  }
+
+  if (url.pathname === '/api/hmi-audit/query') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireViewLogsPerm()) return;
+    try {
+      const up = await fetchUpstreamJson(req, cfg.hmi, `/api/audit/query${url.search}`, { timeoutMs: 12000 });
+      sendJson(res, up.status || 502, up.json || { ok: false, error: 'Empty HMI audit response.' });
+    } catch (err) {
+      sendJson(res, 502, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/hmi-audit/csv') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireViewLogsPerm()) return;
+    try {
+      const up = await fetchUpstreamRaw(req, cfg.hmi, `/api/audit/csv${url.search}`, { timeoutMs: 12000, accept: 'text/csv' });
+      send(res, up.status || 502, {
+        'Content-Type': up.headers['content-type'] || 'text/csv; charset=utf-8',
+        'Content-Disposition': up.headers['content-disposition'] || 'attachment; filename="hmi-audit.csv"',
+        'Cache-Control': 'no-store'
+      }, up.body || Buffer.alloc(0));
+    } catch (err) {
+      sendJson(res, 502, { ok: false, error: String(err.message || err) });
     }
     return;
   }

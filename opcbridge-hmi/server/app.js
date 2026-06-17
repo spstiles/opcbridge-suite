@@ -194,6 +194,83 @@ const appendAudit = async (req, event) => {
   await pruneAuditLog();
 };
 
+const parseAuditTime = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : null;
+};
+
+const auditTextMatches = (value, needle) => {
+  const n = String(needle || "").trim().toLowerCase();
+  if (!n) return true;
+  return String(value ?? "").toLowerCase().includes(n);
+};
+
+const readAuditEvents = async (query = {}) => {
+  const limit = Math.max(1, Math.min(10000, Math.trunc(Number(query.limit) || 500)));
+  const startMs = parseAuditTime(query.start || query.from);
+  const endMs = parseAuditTime(query.end || query.to);
+  const filters = {
+    user: String(query.user || "").trim().toLowerCase(),
+    event: String(query.event || query.event_type || "").trim().toLowerCase(),
+    result: String(query.result || "").trim().toLowerCase(),
+    connection_id: String(query.connection_id || "").trim().toLowerCase(),
+    tag: String(query.tag || "").trim().toLowerCase(),
+    value: String(query.value || "").trim().toLowerCase(),
+    q: String(query.q || "").trim().toLowerCase()
+  };
+  let raw = "";
+  try {
+    raw = await fsp.readFile(AUDIT_PATH, "utf8");
+  } catch (error) {
+    if (String(error).includes("ENOENT")) return { exists: false, total: 0, matched: 0, limit, events: [] };
+    throw error;
+  }
+  const events = [];
+  let total = 0;
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    total += 1;
+    let item = null;
+    try {
+      item = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const tsMs = parseAuditTime(item?.ts);
+    if (startMs != null && (tsMs == null || tsMs < startMs)) continue;
+    if (endMs != null && (tsMs == null || tsMs > endMs)) continue;
+    const eventName = String(item?.event_type || item?.event || "").toLowerCase();
+    const valueText = [item?.value, item?.old_value, item?.new_value].map((v) => String(v ?? "")).join(" ");
+    if (filters.user && String(item?.user || "").toLowerCase() !== filters.user) continue;
+    if (filters.event && eventName !== filters.event) continue;
+    if (filters.result && String(item?.result || "").toLowerCase() !== filters.result) continue;
+    if (filters.connection_id && !auditTextMatches(item?.connection_id, filters.connection_id)) continue;
+    if (filters.tag && !auditTextMatches(item?.tag, filters.tag)) continue;
+    if (filters.value && !auditTextMatches(valueText, filters.value)) continue;
+    if (filters.q && !auditTextMatches(JSON.stringify(item), filters.q)) continue;
+    events.push(item);
+  }
+  events.sort((a, b) => (parseAuditTime(b?.ts) || 0) - (parseAuditTime(a?.ts) || 0));
+  return { exists: true, total, matched: events.length, limit, events: events.slice(0, limit) };
+};
+
+const csvCell = (value) => {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const auditEventsToCsv = (events) => {
+  const columns = ["ts", "user", "role", "ip", "event", "result", "connection_id", "tag", "old_value", "new_value", "screen", "object_label", "action", "error"];
+  const lines = [columns.join(",")];
+  for (const item of events) {
+    lines.push(columns.map((key) => csvCell(key === "event" ? (item?.event_type || item?.event) : item?.[key])).join(","));
+  }
+  return `${lines.join("\n")}\n`;
+};
+
 const writeConfig = async (nextConfig) => {
   const opcbridge = nextConfig?.opcbridge || {};
   const alarms = nextConfig?.alarms || {};
@@ -420,6 +497,27 @@ const createApp = () => {
     }
   });
 
+  app.get("/api/audit/query", async (req, res) => {
+    try {
+      const data = await readAuditEvents(req.query || {});
+      res.json({ ok: true, ...data });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
+  app.get("/api/audit/csv", async (req, res) => {
+    try {
+      const data = await readAuditEvents(req.query || {});
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="hmi-audit-${new Date().toISOString().slice(0, 10)}.csv"`);
+      res.send(auditEventsToCsv(data.events || []));
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error) });
+    }
+  });
+
   app.get("/api/config", async (req, res) => {
     try {
       const { raw, config } = await readConfig();
@@ -606,16 +704,38 @@ const createApp = () => {
         return res.status(400).json({ error: "Value must be a string, number, or boolean." });
       }
       const valueString = typeof value === "string" ? value : String(value);
-      const response = await fetch(`http://${host}:${port}/write`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ connection_id, name, value: valueString, token })
-      });
+      const auditIn = (req.body?.audit && typeof req.body.audit === "object") ? req.body.audit : {};
+      const auditBase = {
+        event: "hmi.tag_write",
+        event_type: "tag_write",
+        connection_id,
+        tag: name,
+        old_value: auditIn.old_value,
+        new_value: valueString,
+        value: valueString,
+        screen: auditIn.screen,
+        screen_id: auditIn.screen_id,
+        object_id: auditIn.object_id,
+        object_label: auditIn.object_label,
+        action: auditIn.action
+      };
+      let response = null;
+      try {
+        response = await fetch(`http://${host}:${port}/write`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ connection_id, name, value: valueString, token })
+        });
+      } catch (error) {
+        await appendAudit(req, { ...auditBase, result: "failure", error: String(error.message || error) });
+        throw error;
+      }
       const text = await response.text();
       if (!response.ok) {
+        await appendAudit(req, { ...auditBase, result: "failure", error: `OPCBridge HTTP ${response.status}`, details: text });
         return res.status(502).json({ error: `OPCBridge HTTP ${response.status}`, details: text });
       }
-      await appendAudit(req, { event: "opc.write", connection_id, tag: name, value: valueString });
+      await appendAudit(req, { ...auditBase, result: "success" });
       try {
         res.json(JSON.parse(text));
       } catch {
