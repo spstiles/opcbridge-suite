@@ -6231,6 +6231,7 @@ function renderOverviewHealth(health, metrics = null) {
       if (blocks.length) {
         const rows = blocks.map((block) => {
           const name = escapeHtml(String(block?.logical_name || ''));
+          const plcName = escapeHtml(String(block?.plc_tag_name || ''));
           const datatype = escapeHtml(String(block?.datatype || ''));
           const elemCount = Math.max(1, Number(block?.elem_count || 1) || 1);
           const mapped = Math.max(1, Number(block?.mapped_tag_count || elemCount) || elemCount);
@@ -6239,10 +6240,13 @@ function renderOverviewHealth(health, metrics = null) {
           const okAge = (typeof block?.last_ok_age_ms === 'number' && block.last_ok_age_ms >= 0) ? `${formatMsCompact(block.last_ok_age_ms)} ago` : '-';
           const readsOk = Math.max(0, Number(block?.reads_ok || 0) || 0);
           const readsErr = Math.max(0, Number(block?.reads_err || 0) || 0);
-          return `<tr><td><code>${name}</code></td><td>${datatype}${elemCount > 1 ? ` [${elemCount}]` : ''}</td><td>${mapped}</td><td>${readAvg}</td><td>${readLast}</td><td>${okAge}</td><td>${readsOk}</td><td>${readsErr}</td></tr>`;
+          const statusText = String(block?.last_status_text || '').trim();
+          const statusCode = Number.isFinite(Number(block?.last_status)) ? String(block.last_status) : '';
+          const lastStatus = statusText ? `${escapeHtml(statusText)}${statusCode ? ` (${escapeHtml(statusCode)})` : ''}` : '-';
+          return `<tr><td><code>${name}</code></td><td><code>${plcName}</code></td><td>${datatype}${elemCount > 1 ? ` [${elemCount}]` : ''}</td><td>${mapped}</td><td>${readAvg}</td><td>${readLast}</td><td>${okAge}</td><td>${readsOk}</td><td>${readsErr}</td><td>${lastStatus}</td></tr>`;
         }).join('');
         const isExpanded = state.overviewHealthExpanded.has(cid);
-        blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK Count</th><th>Err Count</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+        blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>PLC Tag</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK Count</th><th>Err Count</th><th>Last Status</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
       }
       lines.push(`<div class="${cls}">${cid}: ${st.toUpperCase()}${reason}${ratio}${details}${blockHtml}</div>`);
     });

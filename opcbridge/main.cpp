@@ -805,6 +805,7 @@ static bool mqtt_publish_topic_value(const std::string &conn_id,
 // Polling performance metrics (updated by poller threads; exposed via GET /metrics).
 struct BlockPollMetrics {
     std::string logical_name;
+    std::string plc_tag_name;
     std::string datatype;
     int elem_count = 1;
     int mapped_tag_count = 1;
@@ -816,6 +817,8 @@ struct BlockPollMetrics {
     uint64_t read_us_max = 0;
     int64_t last_ok_ts_ms = -1;
     int64_t last_err_ts_ms = -1;
+    int32_t last_status = PLCTAG_STATUS_OK;
+    std::string last_status_text;
 };
 
 struct ConnPollMetrics {
@@ -884,6 +887,7 @@ static void reset_connection_block_metrics(const std::shared_ptr<ConnPollMetrics
     for (const auto &tag : tags) {
         BlockPollMetrics block;
         block.logical_name = tag.cfg.logical_name;
+        block.plc_tag_name = tag.cfg.plc_tag_name;
         block.datatype = tag.cfg.datatype;
         block.elem_count = std::max(1, tag.cfg.elem_count);
         block.mapped_tag_count = block.elem_count;
@@ -905,6 +909,8 @@ static void record_connection_block_read(const std::shared_ptr<ConnPollMetrics> 
     block.read_us_total += readUs;
     block.read_us_last = readUs;
     if (readUs > block.read_us_max) block.read_us_max = readUs;
+    block.last_status = status;
+    block.last_status_text = plc_tag_decode_error(status);
     if (status == PLCTAG_STATUS_OK) {
         block.reads_ok++;
         block.last_ok_ts_ms = tsMs;
@@ -20930,6 +20936,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        for (const auto &block : m->blocks) {
 		                            json jb;
 		                            jb["logical_name"] = block.logical_name;
+		                            jb["plc_tag_name"] = block.plc_tag_name;
 		                            jb["datatype"] = block.datatype;
 		                            jb["elem_count"] = block.elem_count;
 		                            jb["mapped_tag_count"] = block.mapped_tag_count;
@@ -20945,6 +20952,8 @@ window.addEventListener("load", startAutoRefresh);
 		                            jb["last_err_ts_ms"] = (block.last_err_ts_ms >= 0) ? json(block.last_err_ts_ms) : json(nullptr);
 		                            jb["last_ok_age_ms"] = (block.last_ok_ts_ms >= 0) ? json(now_ms - block.last_ok_ts_ms) : json(nullptr);
 		                            jb["last_err_age_ms"] = (block.last_err_ts_ms >= 0) ? json(now_ms - block.last_err_ts_ms) : json(nullptr);
+		                            jb["last_status"] = block.last_status;
+		                            jb["last_status_text"] = block.last_status_text;
 		                            j["blocks"].push_back(std::move(jb));
 		                        }
 		                    }
