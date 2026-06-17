@@ -6100,6 +6100,15 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             if (handle >= 0) plc_tag_destroy(handle);
             return fail(msg);
         }
+        if (!is_modbus_connection(conn)) {
+            const int readStatus = plc_tag_read(handle, conn.default_read_ms);
+            if (readStatus != PLCTAG_STATUS_OK) {
+                const std::string msg = "Write failed reading temporary handle for [" + conn_id + "]." + logical_name + ": " + plc_tag_decode_error(readStatus);
+                std::cerr << msg << "\n";
+                plc_tag_destroy(handle);
+                return fail(msg);
+            }
+        }
         destroyWriteHandle = true;
     }
 
