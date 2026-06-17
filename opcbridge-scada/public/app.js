@@ -498,6 +498,8 @@
   editDevGateway: document.getElementById('editDevGateway'),
   editDevPathRow: document.getElementById('editDevPathRow'),
   editDevPath: document.getElementById('editDevPath'),
+  editDevModbusAddressModeRow: document.getElementById('editDevModbusAddressModeRow'),
+  editDevModbusAddressMode: document.getElementById('editDevModbusAddressMode'),
   editDevSlotRow: document.getElementById('editDevSlotRow'),
   editDevSlot: document.getElementById('editDevSlot'),
   editDevPlcTypeRow: document.getElementById('editDevPlcTypeRow'),
@@ -666,6 +668,8 @@
   newDevGateway: document.getElementById('newDevGateway'),
   newDevPathRow: document.getElementById('newDevPathRow'),
   newDevPath: document.getElementById('newDevPath'),
+  newDevModbusAddressModeRow: document.getElementById('newDevModbusAddressModeRow'),
+  newDevModbusAddressMode: document.getElementById('newDevModbusAddressMode'),
   newDevSlotRow: document.getElementById('newDevSlotRow'),
   newDevSlot: document.getElementById('newDevSlot'),
   newDevPlcTypeRow: document.getElementById('newDevPlcTypeRow'),
@@ -11770,6 +11774,15 @@ function isModbus32Datatype(datatype) {
   return dt === 'int32' || dt === 'uint32' || dt === 'float32';
 }
 
+function normalizeModbusAddressMode(raw) {
+  const mode = String(raw || '').trim().toLowerCase();
+  return (mode === 'offset' || mode === 'zero_based' || mode === 'zero_based_offset') ? 'offset' : 'address';
+}
+
+function modbusAddressModeFromConnection(connObj) {
+  return normalizeModbusAddressMode(connObj?.modbus_address_mode || connObj?.address_mode || connObj?.settings?.modbus_address_mode);
+}
+
 function normalizeWordOrder(raw) {
   const s = String(raw || '').trim().toLowerCase();
   return (s === 'lo_hi' || s === 'low_high' || s === 'swap' || s === 'swapped') ? 'lo_hi' : 'hi_lo';
@@ -11793,30 +11806,49 @@ function normalizeModbusRegisterType(raw) {
   return 'holding_register';
 }
 
-function modbusAddressFromTag(row) {
+function modbusAddressFromTag(row, connObj = null) {
   if (!row || typeof row !== 'object') return '';
-  if (row.address != null && String(row.address).trim() !== '') return String(row.address);
-  if (row.modbus_address != null && String(row.modbus_address).trim() !== '') return String(row.modbus_address);
+  const showOffset = modbusAddressModeFromConnection(connObj) === 'offset';
   if (row.offset != null && String(row.offset).trim() !== '') {
     const offset = Math.trunc(Number(row.offset));
     if (!Number.isFinite(offset) || offset < 0) return '';
+    if (showOffset) return String(offset);
     const type = normalizeModbusRegisterType(row.register_type || row.modbus_type || row.register);
     if (type === 'holding_register') return String(offset + 40001);
     if (type === 'input_register') return String(offset + 30001);
     if (type === 'discrete_input') return String(offset + 10001);
     if (type === 'coil') return String(offset + 1);
   }
+  if (row.modbus_offset != null && String(row.modbus_offset).trim() !== '') {
+    const offset = Math.trunc(Number(row.modbus_offset));
+    if (!Number.isFinite(offset) || offset < 0) return '';
+    if (showOffset) return String(offset);
+    const type = normalizeModbusRegisterType(row.register_type || row.modbus_type || row.register);
+    if (type === 'holding_register') return String(offset + 40001);
+    if (type === 'input_register') return String(offset + 30001);
+    if (type === 'discrete_input') return String(offset + 10001);
+    if (type === 'coil') return String(offset + 1);
+  }
+  if (row.address != null && String(row.address).trim() !== '') return String(row.address);
+  if (row.modbus_address != null && String(row.modbus_address).trim() !== '') return String(row.modbus_address);
   return '';
 }
 
 function applyModbusTagUi({ rowEl, typeEl, addressEl, plcEl, writableEl }, { connId, sourceKind }) {
   const connObj = getConnObjById(connId);
   const show = sourceKind === 'plc' && isModbusDriver(connObj?.driver || '');
+  const addressMode = modbusAddressModeFromConnection(connObj);
   const registerType = normalizeModbusRegisterType(typeEl?.value);
   const readOnlyRegister = registerType === 'input_register' || registerType === 'discrete_input';
   if (rowEl) rowEl.style.display = show ? '' : 'none';
   if (typeEl) typeEl.disabled = !show || !canEditConfig();
-  if (addressEl) addressEl.disabled = !show || !canEditConfig();
+  if (addressEl) {
+    addressEl.disabled = !show || !canEditConfig();
+    addressEl.min = addressMode === 'offset' ? '0' : '1';
+    addressEl.placeholder = addressMode === 'offset' ? '0' : '40001';
+    const hint = addressEl.closest('div')?.querySelector?.('.hint');
+    if (hint) hint.textContent = addressMode === 'offset' ? 'Offset' : 'Address';
+  }
   if (plcEl) {
     plcEl.placeholder = show ? 'Optional raw name, e.g. hr0' : 'Pump1.Running';
   }
@@ -11826,17 +11858,28 @@ function applyModbusTagUi({ rowEl, typeEl, addressEl, plcEl, writableEl }, { con
   }
 }
 
-function readModbusTagAddressFromUi({ typeEl, addressEl }) {
+function readModbusTagAddressFromUi({ typeEl, addressEl, connObj = null }) {
   const addressRaw = String(addressEl?.value || '').trim();
   if (!addressRaw) return null;
-  const address = Math.trunc(Number(addressRaw));
-  if (!Number.isFinite(address) || address <= 0) {
+  const value = Math.trunc(Number(addressRaw));
+  const mode = modbusAddressModeFromConnection(connObj);
+  if (mode === 'offset') {
+    if (!Number.isFinite(value) || value < 0) {
+      return { ok: false, error: 'Modbus offset must be zero or greater.' };
+    }
+    return {
+      ok: true,
+      register_type: normalizeModbusRegisterType(typeEl?.value),
+      offset: value
+    };
+  }
+  if (!Number.isFinite(value) || value <= 0) {
     return { ok: false, error: 'Modbus address must be a positive number.' };
   }
   return {
     ok: true,
     register_type: normalizeModbusRegisterType(typeEl?.value),
-    address
+    address: value
   };
 }
 
@@ -11919,13 +11962,14 @@ function applyDeviceDriverUi(prefix) {
   const isMqtt = driver === 'mqtt';
   const isModbus = isModbusDriver(driver);
   const plcRows = isEdit
-    ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
-    : [els.newDevGatewayRow, els.newDevPathRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
+    ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevModbusAddressModeRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
+    : [els.newDevGatewayRow, els.newDevPathRow, els.newDevModbusAddressModeRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
   const mqttRows = isEdit
     ? [els.editDevMqttHostRow, els.editDevMqttPortRow, els.editDevMqttClientIdRow, els.editDevMqttUsernameRow, els.editDevMqttPasswordRow, els.editDevMqttTlsRow, els.editDevMqttTlsInsecureRow, els.editDevMqttCaFileRow, els.editDevMqttCertFileRow, els.editDevMqttKeyFileRow, els.editDevMqttPublishPatternsRow, els.editDevMqttPublishModeRow, els.editDevMqttPublishIntervalRow, els.editDevMqttPublishMinRow, els.editDevMqttTestRow]
     : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttCertFileRow, els.newDevMqttKeyFileRow, els.newDevMqttPublishPatternsRow, els.newDevMqttPublishModeRow, els.newDevMqttPublishIntervalRow, els.newDevMqttPublishMinRow, els.newDevMqttTestRow];
 
   plcRows.forEach((row) => setRowVisible(row, !isMqtt));
+  setRowVisible(isEdit ? els.editDevModbusAddressModeRow : els.newDevModbusAddressModeRow, !isMqtt && isModbus);
   setRowVisible(isEdit ? els.editDevSlotRow : els.newDevSlotRow, !isMqtt && !isModbus);
   setRowVisible(isEdit ? els.editDevPlcTypeRow : els.newDevPlcTypeRow, !isMqtt && !isModbus);
   setFormRowLabel(isEdit ? els.editDevGatewayRow : els.newDevGatewayRow, isModbus ? 'Server' : 'Gateway');
@@ -11934,6 +11978,8 @@ function applyDeviceDriverUi(prefix) {
   const pathEl = isEdit ? els.editDevPath : els.newDevPath;
   if (gatewayEl) gatewayEl.placeholder = isModbus ? '192.0.2.50:502' : '192.0.2.10';
   if (pathEl) pathEl.placeholder = isModbus ? '1' : '1,0';
+  const modeEl = isEdit ? els.editDevModbusAddressMode : els.newDevModbusAddressMode;
+  if (modeEl && !modeEl.value) modeEl.value = 'address';
   mqttRows.forEach((row) => setRowVisible(row, isMqtt));
 }
 
@@ -12635,6 +12681,7 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevDriver) els.newDevDriver.value = 'ab_eip';
   if (els.newDevGateway) els.newDevGateway.value = '';
   if (els.newDevPath) els.newDevPath.value = '';
+  if (els.newDevModbusAddressMode) els.newDevModbusAddressMode.value = 'address';
   if (els.newDevSlot) els.newDevSlot.value = '';
   if (els.newDevPlcType) els.newDevPlcType.value = 'lgx';
   if (els.newDevPollingMode) els.newDevPollingMode.value = 'standard';
@@ -12853,7 +12900,7 @@ async function createNewTagFromModal() {
   const connObj = getConnObjById(cid);
   const isModbusPlc = !isDerived && !isMemory && isModbusDriver(connObj?.driver || '');
   const modbusUi = isModbusPlc
-    ? readModbusTagAddressFromUi({ typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress })
+    ? readModbusTagAddressFromUi({ typeEl: els.newTagModbusRegisterType, addressEl: els.newTagModbusAddress, connObj })
     : null;
   if (modbusUi && !modbusUi.ok) { setNewTagStatus(modbusUi.error); return; }
 
@@ -12899,7 +12946,13 @@ async function createNewTagFromModal() {
 	      if (friendly?.ok || friendly) {
 	        delete tag.plc_tag_name;
 	        tag.register_type = friendly.register_type;
-	        tag.address = friendly.address;
+	        if (friendly.offset != null) {
+	          tag.offset = friendly.offset;
+	          delete tag.address;
+	        } else {
+	          tag.address = friendly.address;
+	          delete tag.offset;
+	        }
         plc_tag_name = '';
       }
       if (isModbus32Datatype(datatype)) {
@@ -13197,6 +13250,7 @@ function openWorkspaceItemModal(node) {
         if (els.editDevDriver) els.editDevDriver.value = driver;
         if (els.editDevGateway) els.editDevGateway.value = String(obj?.gateway || '');
         if (els.editDevPath) els.editDevPath.value = String(obj?.path || '1,0') || '1,0';
+        if (els.editDevModbusAddressMode) els.editDevModbusAddressMode.value = modbusAddressModeFromConnection(obj);
         if (els.editDevSlot) els.editDevSlot.value = (obj?.slot == null) ? '' : String(obj.slot);
         if (els.editDevPlcType) els.editDevPlcType.value = String(obj?.plc_type || obj?.plcType || 'lgx') || 'lgx';
         if (els.editDevPollingMode) els.editDevPollingMode.value = normalizePollingMode(obj?.polling_mode);
@@ -13315,7 +13369,7 @@ function openWorkspaceItemModal(node) {
 	        els.editTagModbusRegisterType.value = normalizeModbusRegisterType(row?.register_type || row?.modbus_type || row?.register);
 	      }
 	      if (els.editTagModbusAddress) {
-	        els.editTagModbusAddress.value = modbusAddressFromTag(row);
+	        els.editTagModbusAddress.value = modbusAddressFromTag(row, getConnObjById(conn));
 	      }
       if (els.editTagInitialValue) els.editTagInitialValue.value = String(row?.initial_value ?? '');
       if (els.editTagSourceTag) els.editTagSourceTag.value = String(row?.source_tag || '');
@@ -13688,7 +13742,7 @@ async function saveEditedTagFromModal() {
   const connObj = getConnObjById(conn);
   const isModbusPlc = !isDerived && !isMemory && isModbusDriver(connObj?.driver || '');
   const modbusUi = isModbusPlc
-    ? readModbusTagAddressFromUi({ typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress })
+    ? readModbusTagAddressFromUi({ typeEl: els.editTagModbusRegisterType, addressEl: els.editTagModbusAddress, connObj })
     : null;
   if (modbusUi && !modbusUi.ok) { setEditTagStatus(modbusUi.error); return; }
 
@@ -13760,6 +13814,9 @@ async function saveEditedTagFromModal() {
     delete next.plc_tag_name;
     delete next.register_type;
     delete next.address;
+    delete next.offset;
+    delete next.modbus_address;
+    delete next.modbus_offset;
     delete next.word_order;
     delete next.source_tag;
     delete next.bit;
@@ -13778,12 +13835,23 @@ async function saveEditedTagFromModal() {
       if (friendly?.ok || friendly) {
         delete next.plc_tag_name;
         next.register_type = friendly.register_type;
-        next.address = friendly.address;
+        if (friendly.offset != null) {
+          next.offset = friendly.offset;
+          delete next.address;
+        } else {
+          next.address = friendly.address;
+          delete next.offset;
+        }
+        delete next.modbus_address;
+        delete next.modbus_offset;
       } else {
         // If user entered a non-numeric Modbus tag (e.g. hr0), keep it as plc_tag_name.
         next.plc_tag_name = plc_tag_name;
         delete next.register_type;
         delete next.address;
+        delete next.offset;
+        delete next.modbus_address;
+        delete next.modbus_offset;
       }
       if (isModbus32Datatype(datatype)) {
         next.word_order = normalizeWordOrder(els.editTagWordOrder?.value);
@@ -13794,6 +13862,9 @@ async function saveEditedTagFromModal() {
       next.plc_tag_name = plc_tag_name;
       delete next.register_type;
       delete next.address;
+      delete next.offset;
+      delete next.modbus_address;
+      delete next.modbus_offset;
       delete next.word_order;
     }
     if (elemCount === 1) delete next.elem_count;
@@ -13807,6 +13878,9 @@ async function saveEditedTagFromModal() {
     delete next.plc_tag_name;
     delete next.register_type;
     delete next.address;
+    delete next.offset;
+    delete next.modbus_address;
+    delete next.modbus_offset;
     delete next.word_order;
     delete next.elem_count;
     next.source_tag = source_tag;
@@ -13818,6 +13892,9 @@ async function saveEditedTagFromModal() {
     delete next.plc_tag_name;
     delete next.register_type;
     delete next.address;
+    delete next.offset;
+    delete next.modbus_address;
+    delete next.modbus_offset;
     delete next.word_order;
     delete next.elem_count;
     next.source_tag = source_tag;
@@ -14046,6 +14123,7 @@ async function saveEditedDeviceFromModal() {
   const driver = String(els.editDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.editDevGateway?.value || '').trim();
   const pathVal = String(els.editDevPath?.value || '').trim() || (isModbusDriver(driver) ? '1' : '1,0');
+  const modbus_address_mode = normalizeModbusAddressMode(els.editDevModbusAddressMode?.value);
   const slot = Number(String(els.editDevSlot?.value || '0').trim() || '0') || 0;
   const plc_type = isModbusDriver(driver) ? 'modbus_tcp' : (String(els.editDevPlcType?.value || '').trim() || 'lgx');
 
@@ -14087,6 +14165,11 @@ async function saveEditedDeviceFromModal() {
           pollLanes: readOptionalPositiveInt(els.editDevPollLanes)
         }
       );
+    if (isModbusDriver(driver)) {
+      obj.modbus_address_mode = modbus_address_mode;
+    } else {
+      delete obj.modbus_address_mode;
+    }
     obj.enabled = Boolean(els.editDevEnabled?.checked);
   } catch (err) {
     setEditDevStatus(err.message || String(err));
@@ -14474,7 +14557,7 @@ function wireWorkspaceItemModalUi() {
   }
 
   // Intentionally do not close modals on overlay click or Escape. Close via explicit UI buttons.
-  [els.editDevGateway, els.editDevPath, els.editDevSlot, els.editDevPlcType, els.editDevDriver, els.editDevMqttHost, els.editDevMqttPort, els.editDevMqttClientId, els.editDevMqttUsername, els.editDevMqttPassword, els.editDevMqttCaFile, els.editDevMqttCertFile, els.editDevMqttKeyFile]
+  [els.editDevGateway, els.editDevPath, els.editDevModbusAddressMode, els.editDevSlot, els.editDevPlcType, els.editDevDriver, els.editDevMqttHost, els.editDevMqttPort, els.editDevMqttClientId, els.editDevMqttUsername, els.editDevMqttPassword, els.editDevMqttCaFile, els.editDevMqttCertFile, els.editDevMqttKeyFile]
     .filter(Boolean)
     .forEach((el) => el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && els.workspaceItemModal?.style.display === 'flex') {
@@ -14523,6 +14606,7 @@ async function createNewDeviceFromWorkspace() {
   const driver = String(els.newDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.newDevGateway?.value || '').trim();
   const pathVal = String(els.newDevPath?.value || '').trim() || (isModbusDriver(driver) ? '1' : '1,0');
+  const modbus_address_mode = normalizeModbusAddressMode(els.newDevModbusAddressMode?.value);
   const slot = Number(String(els.newDevSlot?.value || '0').trim() || '0') || 0;
   const plc_type = isModbusDriver(driver) ? 'modbus_tcp' : (String(els.newDevPlcType?.value || '').trim() || 'lgx');
 
@@ -14560,6 +14644,11 @@ async function createNewDeviceFromWorkspace() {
           timeBudgetMs: readOptionalPositiveInt(els.newDevPollTimeBudgetMs)
         }
       );
+    if (isModbusDriver(driver)) {
+      obj.modbus_address_mode = modbus_address_mode;
+    } else {
+      delete obj.modbus_address_mode;
+    }
   } catch (err) {
     setNewDevStatus(err.message || String(err));
     return;
@@ -14615,7 +14704,7 @@ function wireNewDeviceFormUi() {
   }
 
   // Enter to create when focused in an input
-  [els.newDevId, els.newDevDriver, els.newDevGateway, els.newDevPath, els.newDevSlot, els.newDevPlcType, els.newDevMqttHost, els.newDevMqttPort, els.newDevMqttClientId, els.newDevMqttUsername, els.newDevMqttPassword, els.newDevMqttCaFile, els.newDevMqttCertFile, els.newDevMqttKeyFile]
+  [els.newDevId, els.newDevDriver, els.newDevGateway, els.newDevPath, els.newDevModbusAddressMode, els.newDevSlot, els.newDevPlcType, els.newDevMqttHost, els.newDevMqttPort, els.newDevMqttClientId, els.newDevMqttUsername, els.newDevMqttPassword, els.newDevMqttCaFile, els.newDevMqttCertFile, els.newDevMqttKeyFile]
     .filter(Boolean)
     .forEach((el) => el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {

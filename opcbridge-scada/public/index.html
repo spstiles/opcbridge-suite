@@ -1322,6 +1322,10 @@
             </select></div>
             <div class="form-row" id="editDevGatewayRow"><label>Gateway</label><input id="editDevGateway" type="text" placeholder="192.0.2.10" /></div>
             <div class="form-row" id="editDevPathRow"><label>Path</label><input id="editDevPath" type="text" placeholder="1,0" /></div>
+            <div class="form-row" id="editDevModbusAddressModeRow" style="display:none;"><label>Address Entry</label><select id="editDevModbusAddressMode">
+              <option value="address">Modbus addresses (40001 / 30001 / 1)</option>
+              <option value="offset">Zero-based offsets (hr0 / ir0 / co0)</option>
+            </select></div>
             <div class="form-row" id="editDevSlotRow"><label>Slot</label><input id="editDevSlot" type="number" step="1" min="0" placeholder="0" /></div>
             <div class="form-row" id="editDevPlcTypeRow"><label>PLC Type</label><select id="editDevPlcType">
               <option value="lgx">Allen-Bradley Logix (ControlLogix / CompactLogix)</option>
@@ -1674,6 +1678,10 @@
           </select></div>
           <div class="form-row" id="newDevGatewayRow"><label>Gateway</label><input id="newDevGateway" type="text" placeholder="192.0.2.10" /></div>
           <div class="form-row" id="newDevPathRow"><label>Path</label><input id="newDevPath" type="text" placeholder="1,0" /></div>
+          <div class="form-row" id="newDevModbusAddressModeRow" style="display:none;"><label>Address Entry</label><select id="newDevModbusAddressMode">
+            <option value="address">Modbus addresses (40001 / 30001 / 1)</option>
+            <option value="offset">Zero-based offsets (hr0 / ir0 / co0)</option>
+          </select></div>
           <div class="form-row" id="newDevSlotRow"><label>Slot</label><input id="newDevSlot" type="number" step="1" min="0" placeholder="0" /></div>
           <div class="form-row" id="newDevPlcTypeRow"><label>PLC Type</label><select id="newDevPlcType">
             <option value="lgx">Allen-Bradley Logix (ControlLogix / CompactLogix)</option>
