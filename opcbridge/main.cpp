@@ -716,7 +716,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &logical_name,
                        const std::string &value_str,
                        TagTable &table,
-                       std::mutex &driverMutex);
+                       std::mutex &driverMutex,
+                       std::string *errorOut = nullptr);
 void mqtt_publish_raw(const std::string &topic, const std::string &payload);
 bool mqtt_publish_snapshot(const TagSnapshot &snap, const TagSnapshot *prevSnap);
 
@@ -5508,8 +5509,15 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &logical_name,
                        const std::string &value_str,
                        TagTable &table,
-                       std::mutex &driverMutex)
+                       std::mutex &driverMutex,
+                       std::string *errorOut)
 {
+    auto fail = [&](const std::string &message) {
+        if (errorOut) *errorOut = message;
+        return false;
+    };
+    if (errorOut) errorOut->clear();
+
     ConnectionConfig conn;
     TagConfig cfg;
     int32_t handle = PLCTAG_ERR_NOT_FOUND;
@@ -5633,23 +5641,23 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                       << logical_name << " := " << value_str << "\n";
             return true;
         }
-        std::cerr << "Connection/tag not found for write: ["
-                  << conn_id << "]." << logical_name << "\n";
-        return false;
+        const std::string msg = "Connection/tag not found for write: [" + conn_id + "]." + logical_name;
+        std::cerr << msg << "\n";
+        return fail(msg);
     }
     if (!cfg.writable) {
-        std::cerr << "Tag '" << logical_name
-                  << "' is not marked writable in config.\n";
-        return false;
+        const std::string msg = "Tag '" + logical_name + "' is not marked writable in config.";
+        std::cerr << msg << "\n";
+        return fail(msg);
     }
 
     const bool isDerivedAlias = (!cfg.source_tag.empty() && cfg.bit < 0);
     if (isDerivedAlias) {
         const std::string sourceName = cfg.source_tag;
         if (sourceName.empty() || sourceName == logical_name) {
-            std::cerr << "Derived alias '" << logical_name
-                      << "' has invalid source tag '" << sourceName << "'.\n";
-            return false;
+            const std::string msg = "Derived alias '" + logical_name + "' has invalid source tag '" + sourceName + "'.";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         TagConfig srcCfg;
@@ -5670,16 +5678,14 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
 
         if (!sourceFound) {
-            std::cerr << "Derived alias '" << logical_name
-                      << "' source tag '" << sourceName
-                      << "' not found.\n";
-            return false;
+            const std::string msg = "Derived alias '" + logical_name + "' source tag '" + sourceName + "' not found.";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
         if (!srcCfg.writable) {
-            std::cerr << "Derived alias '" << logical_name
-                      << "' source tag '" << sourceName
-                      << "' is not marked writable.\n";
-            return false;
+            const std::string msg = "Derived alias '" + logical_name + "' source tag '" + sourceName + "' is not marked writable.";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         std::string sourceValueText = value_str;
@@ -5690,10 +5696,9 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                 if (sourceValueText.empty()) throw std::runtime_error("empty value");
                 scaledNum = std::stod(sourceValueText);
             } catch (const std::exception &ex) {
-                std::cerr << "Derived alias write parse failed for ["
-                          << conn_id << "]." << logical_name
-                          << ": " << ex.what() << "\n";
-                return false;
+                const std::string msg = "Derived alias write parse failed for [" + conn_id + "]." + logical_name + ": " + ex.what();
+                std::cerr << msg << "\n";
+                return fail(msg);
             }
 
             if (cfg.clamp_low)  scaledNum = std::max(scaledNum, cfg.scaled_low);
@@ -5703,20 +5708,18 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             TagValue rawValue{};
             std::string castErr;
             if (!cast_double_to_tagvalue(rawNum, srcCfg.datatype, rawValue, castErr)) {
-                std::cerr << "Derived alias write scaling cast failed for ["
-                          << conn_id << "]." << logical_name
-                          << " to source datatype '" << srcCfg.datatype
-                          << "': " << castErr << "\n";
-                return false;
+                const std::string msg = "Derived alias write scaling cast failed for [" + conn_id + "]." + logical_name + " to source datatype '" + srcCfg.datatype + "': " + castErr;
+                std::cerr << msg << "\n";
+                return fail(msg);
             }
             sourceValueText = tag_value_to_string(rawValue);
         }
 
-        if (!write_tag_by_name(drivers, conn_id, sourceName, sourceValueText, table, driverMutex)) {
-            std::cerr << "Derived alias write-through failed for ["
-                      << conn_id << "]." << logical_name
-                      << " -> " << sourceName << "\n";
-            return false;
+        std::string sourceErr;
+        if (!write_tag_by_name(drivers, conn_id, sourceName, sourceValueText, table, driverMutex, &sourceErr)) {
+            const std::string msg = "Derived alias write-through failed for [" + conn_id + "]." + logical_name + " -> " + sourceName + (sourceErr.empty() ? "" : ": " + sourceErr);
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         TagValue aliasValue{};
@@ -6084,20 +6087,18 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         try {
             tagStr = build_tag_conn_str(conn, cfg);
         } catch (const std::exception &ex) {
-            std::cerr << "Write failed building tag string for ["
-                      << conn_id << "]." << logical_name << ": "
-                      << ex.what() << "\n";
-            return false;
+            const std::string msg = "Write failed building tag string for [" + conn_id + "]." + logical_name + ": " + ex.what();
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         handle = plc_tag_create(tagStr.c_str(), conn.default_timeout_ms);
         std::string readyErr;
         if (!wait_for_tag_ready(handle, conn.default_timeout_ms, readyErr)) {
-            std::cerr << "Write failed creating temporary handle for ["
-                      << conn_id << "]." << logical_name << ": "
-                      << readyErr << "\n";
+            const std::string msg = "Write failed creating temporary handle for [" + conn_id + "]." + logical_name + ": " + readyErr;
+            std::cerr << msg << "\n";
             if (handle >= 0) plc_tag_destroy(handle);
-            return false;
+            return fail(msg);
         }
         destroyWriteHandle = true;
     }
@@ -6108,27 +6109,27 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
     if (scaling_linear) {
         if (!is_numeric_datatype(cfg.datatype)) {
-            std::cerr << "Tag '" << logical_name
-                      << "' has scaling enabled but non-numeric datatype '" << cfg.datatype
-                      << "'.\n";
+            const std::string msg = "Tag '" + logical_name + "' has scaling enabled but non-numeric datatype '" + cfg.datatype + "'.";
+            std::cerr << msg << "\n";
             if (destroyWriteHandle) plc_tag_destroy(handle);
-            return false;
+            return fail(msg);
         }
 
         double scaledNum = 0.0;
         try {
             std::string s = trim_copy(value_str);
             if (s.empty()) {
-                std::cerr << "Write value is empty.\n";
+                const std::string msg = "Write value is empty.";
+                std::cerr << msg << "\n";
                 if (destroyWriteHandle) plc_tag_destroy(handle);
-                return false;
+                return fail(msg);
             }
             scaledNum = std::stod(s);
         } catch (const std::exception &ex) {
-            std::cerr << "Write parse failed for scaled value '"
-                      << value_str << "': " << ex.what() << "\n";
+            const std::string msg = "Write parse failed for scaled value '" + value_str + "': " + ex.what();
+            std::cerr << msg << "\n";
             if (destroyWriteHandle) plc_tag_destroy(handle);
-            return false;
+            return fail(msg);
         }
 
         if (cfg.clamp_low)  scaledNum = std::max(scaledNum, cfg.scaled_low);
@@ -6138,10 +6139,10 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         std::string castErr;
         if (!cast_double_to_tagvalue(rawNum, cfg.datatype, rawValue, castErr)) {
-            std::cerr << "Write scaling cast failed for raw datatype '" << cfg.datatype
-                      << "': " << castErr << "\n";
+            const std::string msg = "Write scaling cast failed for raw datatype '" + cfg.datatype + "': " + castErr;
+            std::cerr << msg << "\n";
             if (destroyWriteHandle) plc_tag_destroy(handle);
-            return false;
+            return fail(msg);
         }
 
         const std::string dtOut = out_datatype.empty() ? std::string("float64") : out_datatype;
@@ -6150,30 +6151,27 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
 
         if (!plc_tag_set_from_tagvalue(cfg.datatype, handle, rawValue, parseErr, is_modbus_connection(conn), cfg.word_order)) {
-            std::cerr << "Write set failed for ["
-                      << conn_id << "]." << logical_name
-                      << ": " << parseErr << "\n";
+            const std::string msg = "Write set failed for [" + conn_id + "]." + logical_name + ": " + parseErr;
+            std::cerr << msg << "\n";
             if (destroyWriteHandle) plc_tag_destroy(handle);
-            return false;
+            return fail(msg);
         }
     } else {
         if (!plc_set_value_from_string(cfg.datatype, handle, value_str, rawValue, parseErr, is_modbus_connection(conn), cfg.word_order)) {
-            std::cerr << "Write parse/set failed for ["
-                      << conn_id << "]." << logical_name
-                      << ": " << parseErr << "\n";
+            const std::string msg = "Write parse/set failed for [" + conn_id + "]." + logical_name + ": " + parseErr;
+            std::cerr << msg << "\n";
             if (destroyWriteHandle) plc_tag_destroy(handle);
-            return false;
+            return fail(msg);
         }
         scaledValue = rawValue;
     }
 
     int status = plc_tag_write(handle, conn.default_write_ms);
     if (status != PLCTAG_STATUS_OK) {
-        std::cerr << "plc_tag_write failed for ["
-                  << conn_id << "]." << logical_name
-                  << ": " << plc_tag_decode_error(status) << "\n";
+        const std::string msg = "plc_tag_write failed for [" + conn_id + "]." + logical_name + ": " + plc_tag_decode_error(status);
+        std::cerr << msg << "\n";
         if (destroyWriteHandle) plc_tag_destroy(handle);
-        return false;
+        return fail(msg);
     }
 
     TagSnapshot snap;
@@ -8796,8 +8794,9 @@ static LogicReferenceValidation apply_logic_memory_writes(
                 continue;
             }
 
-            if (!write_tag_by_name(drivers, conn, name, valueText, tagTable, driverMutex)) {
-                if (errors.size() < 5) errors.push_back("Write failed: " + conn + ":" + name);
+            std::string writeErr;
+            if (!write_tag_by_name(drivers, conn, name, valueText, tagTable, driverMutex, &writeErr)) {
+                if (errors.size() < 5) errors.push_back("Write failed: " + conn + ":" + name + (writeErr.empty() ? "" : " - " + writeErr));
                 continue;
             }
 
@@ -8825,8 +8824,9 @@ static LogicReferenceValidation apply_logic_memory_writes(
         }
 
         // Reuse the canonical write path (same behavior as POST /write).
-        if (!write_tag_by_name(drivers, conn, name, valueText, tagTable, driverMutex)) {
-            if (errors.size() < 5) errors.push_back("Write failed: " + conn + ":" + name);
+        std::string writeErr;
+        if (!write_tag_by_name(drivers, conn, name, valueText, tagTable, driverMutex, &writeErr)) {
+            if (errors.size() < 5) errors.push_back("Write failed: " + conn + ":" + name + (writeErr.empty() ? "" : " - " + writeErr));
             continue;
         }
 
