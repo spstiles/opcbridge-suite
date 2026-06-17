@@ -147,6 +147,8 @@ struct AdminSessionInfo {
 
 static std::unordered_map<std::string, AdminSessionInfo> g_adminSessions;
 static std::mutex g_adminMutex;
+static std::deque<json> g_authSessionEvents;
+static std::mutex g_authSessionEventsMutex;
 
 static std::mutex g_userStoreMutex;
 
@@ -3046,6 +3048,38 @@ static bool save_passwords_store(const std::string &path) {
     }
 }
 
+static int64_t auth_now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+}
+
+static void record_auth_session_event(const std::string &event, json detail = json::object()) {
+    try {
+        detail["ts_ms"] = auth_now_ms();
+        detail["event"] = event;
+        if (!detail.contains("active_count")) {
+            std::lock_guard<std::mutex> lock(g_adminMutex);
+            detail["active_count"] = static_cast<int>(g_adminSessions.size());
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_authSessionEventsMutex);
+            g_authSessionEvents.push_back(detail);
+            while (g_authSessionEvents.size() > 100) g_authSessionEvents.pop_front();
+        }
+        std::cerr << "[auth] " << event << " " << detail.dump() << "\n";
+    } catch (...) {
+        // Diagnostics must never affect auth behavior.
+    }
+}
+
+static json auth_session_events_snapshot() {
+    json events = json::array();
+    std::lock_guard<std::mutex> lock(g_authSessionEventsMutex);
+    for (const auto &event : g_authSessionEvents) events.push_back(event);
+    return events;
+}
+
 static void cleanup_expired_admin_sessions() {
     std::lock_guard<std::mutex> lock(g_adminMutex);
     auto now = std::chrono::system_clock::now();
@@ -3055,7 +3089,24 @@ static void cleanup_expired_admin_sessions() {
                                  it->second.last_activity_at.time_since_epoch().count() > 0 &&
                                  (now - it->second.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes));
         if (expired || idleExpired) {
+            const int64_t nowMs = auth_now_ms();
+            const int64_t lastActivityMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                it->second.last_activity_at.time_since_epoch()
+            ).count();
+            const int64_t expiresMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                it->second.expires_at.time_since_epoch()
+            ).count();
+            json detail = {
+                {"reason", expired ? "hard_expired" : "idle_expired"},
+                {"username", it->second.username},
+                {"role", normalize_auth_role_id(it->second.role)},
+                {"idle_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
+                {"expires_in_ms", expiresMs - nowMs},
+                {"idle_timeout_ms", g_authTimeoutMinutes > 0 ? static_cast<int64_t>(g_authTimeoutMinutes) * 60 * 1000 : 0},
+                {"active_count", static_cast<int>(g_adminSessions.size())}
+            };
             it = g_adminSessions.erase(it);
+            record_auth_session_event("session_erased", detail);
         } else {
             ++it;
         }
@@ -3113,7 +3164,9 @@ static std::string get_cookie_value(const httplib::Request &req, const std::stri
 
 static bool get_session_from_request(const httplib::Request &req, AdminSessionInfo &out) {
     std::string token = req.get_header_value("X-Admin-Token");
+    const bool headerPresent = !token.empty();
     if (token.empty()) token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
+    const bool cookiePresent = !token.empty() && !headerPresent;
     if (token.empty()) return false;
 
     // Service token always maps to admin.
@@ -3129,10 +3182,29 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
     cleanup_expired_admin_sessions();
     std::lock_guard<std::mutex> lock(g_adminMutex);
     auto it = g_adminSessions.find(token);
-    if (it == g_adminSessions.end()) return false;
+    if (it == g_adminSessions.end()) {
+        record_auth_session_event("session_lookup_miss", {
+            {"remote", req.remote_addr},
+            {"via", headerPresent ? "header" : (cookiePresent ? "cookie" : "unknown")},
+            {"active_count", static_cast<int>(g_adminSessions.size())}
+        });
+        return false;
+    }
 
     auto now = std::chrono::system_clock::now();
     if (it->second.expires_at <= now) {
+        const int64_t nowMs = auth_now_ms();
+        const int64_t expiresMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            it->second.expires_at.time_since_epoch()
+        ).count();
+        record_auth_session_event("session_erased", {
+            {"reason", "hard_expired_on_lookup"},
+            {"remote", req.remote_addr},
+            {"username", it->second.username},
+            {"role", normalize_auth_role_id(it->second.role)},
+            {"expires_in_ms", expiresMs - nowMs},
+            {"active_count", static_cast<int>(g_adminSessions.size())}
+        });
         g_adminSessions.erase(it);
         return false;
     }
@@ -3140,6 +3212,19 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
     if (g_authTimeoutMinutes > 0 &&
         it->second.last_activity_at.time_since_epoch().count() > 0 &&
         (now - it->second.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes)) {
+        const int64_t nowMs = auth_now_ms();
+        const int64_t lastActivityMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            it->second.last_activity_at.time_since_epoch()
+        ).count();
+        record_auth_session_event("session_erased", {
+            {"reason", "idle_expired_on_lookup"},
+            {"remote", req.remote_addr},
+            {"username", it->second.username},
+            {"role", normalize_auth_role_id(it->second.role)},
+            {"idle_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
+            {"idle_timeout_ms", static_cast<int64_t>(g_authTimeoutMinutes) * 60 * 1000},
+            {"active_count", static_cast<int>(g_adminSessions.size())}
+        });
         g_adminSessions.erase(it);
         return false;
     }
@@ -3198,6 +3283,7 @@ static json admin_session_diagnostics_for_status(const AdminSessionInfo *session
     } else {
         out["current"] = json(nullptr);
     }
+    out["events"] = auth_session_events_snapshot();
     return out;
 }
 
@@ -24626,17 +24712,22 @@ window.addEventListener("load", startAutoRefresh);
 	                    auto now = std::chrono::system_clock::now();
 	                    auto expiry = now + std::chrono::hours(8); // 8h session
 
-	                    {
-	                        std::lock_guard<std::mutex> lock(g_adminMutex);
-	                        AdminSessionInfo info;
-	                        info.expires_at = expiry;
+		                    {
+		                        std::lock_guard<std::mutex> lock(g_adminMutex);
+		                        AdminSessionInfo info;
+		                        info.expires_at = expiry;
 	                        info.last_activity_at = now;
 	                        info.username = username;
-	                        info.role = role;
-	                        g_adminSessions[token] = info;
-	                    }
+		                        info.role = role;
+		                        g_adminSessions[token] = info;
+		                    }
+		                    record_auth_session_event("session_created", {
+		                        {"remote", req.remote_addr},
+		                        {"username", username},
+		                        {"role", normalize_auth_role_id(role)}
+		                    });
 
-	                    resp["ok"] = true;
+		                    resp["ok"] = true;
 	                    resp["admin_token"] = token;
 	                    resp["username"] = username;
 	                    resp["role"] = role;
@@ -25519,8 +25610,12 @@ window.addEventListener("load", startAutoRefresh);
 		                    resp["ignored"] = true;
 		                    res.status = 409;
 		                    res.set_content(resp.dump(2), "application/json");
-		                    std::cerr << "[auth] Ignored non-explicit logout request from "
-		                              << req.remote_addr << "\n";
+		                    record_auth_session_event("logout_ignored", {
+		                        {"reason", "not_explicit"},
+		                        {"remote", req.remote_addr},
+		                        {"cookie_present", !get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN").empty()},
+		                        {"header_present", !req.get_header_value("X-Admin-Token").empty()}
+		                    });
 		                    return;
 		                }
 
@@ -25533,12 +25628,32 @@ window.addEventListener("load", startAutoRefresh);
 		                    token = body.value("admin_token", std::string{});
 		                }
 
-                if (!token.empty()) {
-                    std::lock_guard<std::mutex> lock(g_adminMutex);
-                    g_adminSessions.erase(token);
-	                }
+		                bool erased = false;
+		                std::string erasedUsername;
+		                std::string erasedRole;
+		                int activeCount = 0;
+		                if (!token.empty()) {
+		                    std::lock_guard<std::mutex> lock(g_adminMutex);
+		                    auto it = g_adminSessions.find(token);
+		                    if (it != g_adminSessions.end()) {
+		                        erased = true;
+		                        erasedUsername = it->second.username;
+		                        erasedRole = normalize_auth_role_id(it->second.role);
+		                        g_adminSessions.erase(it);
+		                    }
+		                    activeCount = static_cast<int>(g_adminSessions.size());
+		                }
+		                record_auth_session_event("logout_explicit", {
+		                    {"remote", req.remote_addr},
+		                    {"erased", erased},
+		                    {"username", erasedUsername},
+		                    {"role", erasedRole},
+		                    {"cookie_present", !get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN").empty()},
+		                    {"header_present", !req.get_header_value("X-Admin-Token").empty()},
+		                    {"active_count", activeCount}
+		                });
 
-	                resp["ok"] = true;
+		                resp["ok"] = true;
 	                // Clear cookie in browser as well.
 	                res.set_header("Set-Cookie",
 	                               "OPCBRIDGE_ADMIN_TOKEN=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
