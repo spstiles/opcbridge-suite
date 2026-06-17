@@ -149,6 +149,7 @@ static std::unordered_map<std::string, AdminSessionInfo> g_adminSessions;
 static std::mutex g_adminMutex;
 static std::deque<json> g_authSessionEvents;
 static std::mutex g_authSessionEventsMutex;
+static std::string g_adminSessionStorePath;
 
 static std::mutex g_userStoreMutex;
 
@@ -3080,37 +3081,135 @@ static json auth_session_events_snapshot() {
     return events;
 }
 
+static int64_t timepoint_to_ms(std::chrono::system_clock::time_point value) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        value.time_since_epoch()
+    ).count();
+}
+
+static std::chrono::system_clock::time_point ms_to_timepoint(int64_t value) {
+    return std::chrono::system_clock::time_point(std::chrono::milliseconds(value));
+}
+
+static bool save_admin_sessions_store() {
+    if (g_adminSessionStorePath.empty()) return false;
+    try {
+        json root = json::object();
+        root["version"] = 1;
+        root["saved_ms"] = auth_now_ms();
+        root["sessions"] = json::array();
+        {
+            std::lock_guard<std::mutex> lock(g_adminMutex);
+            for (const auto &entry : g_adminSessions) {
+                const auto &token = entry.first;
+                const auto &session = entry.second;
+                if (token.empty() || session.username.empty() || session.username == "service") continue;
+                root["sessions"].push_back({
+                    {"token", token},
+                    {"username", session.username},
+                    {"role", normalize_auth_role_id(session.role)},
+                    {"expires_ms", timepoint_to_ms(session.expires_at)},
+                    {"last_activity_ms", timepoint_to_ms(session.last_activity_at)}
+                });
+            }
+        }
+        fs::create_directories(fs::path(g_adminSessionStorePath).parent_path());
+        write_string_to_file_atomic(g_adminSessionStorePath, root.dump(2) + "\n");
+        fs::permissions(g_adminSessionStorePath,
+                        fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace);
+        return true;
+    } catch (const std::exception &ex) {
+        std::cerr << "[auth] Failed to save admin sessions: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+static bool load_admin_sessions_store() {
+    if (g_adminSessionStorePath.empty()) return false;
+    try {
+        if (!fs::exists(g_adminSessionStorePath)) return true;
+        const json root = json::parse(read_file_to_string(g_adminSessionStorePath));
+        const auto now = std::chrono::system_clock::now();
+        int loaded = 0;
+        int skipped = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_adminMutex);
+            const auto sessions = root.value("sessions", json::array());
+            for (const auto &item : sessions) {
+                if (!item.is_object()) { skipped++; continue; }
+                const std::string token = item.value("token", std::string{});
+                AdminSessionInfo session;
+                session.username = normalize_auth_username(item.value("username", std::string{}));
+                session.role = normalize_auth_role_id(item.value("role", std::string{"admin"}));
+                session.expires_at = ms_to_timepoint(item.value("expires_ms", int64_t{0}));
+                session.last_activity_at = ms_to_timepoint(item.value("last_activity_ms", int64_t{0}));
+                if (token.empty() || session.username.empty() || session.expires_at <= now) {
+                    skipped++;
+                    continue;
+                }
+                if (g_authTimeoutMinutes > 0 &&
+                    session.last_activity_at.time_since_epoch().count() > 0 &&
+                    (now - session.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes)) {
+                    skipped++;
+                    continue;
+                }
+                g_adminSessions[token] = session;
+                loaded++;
+            }
+        }
+        record_auth_session_event("sessions_loaded", {
+            {"loaded", loaded},
+            {"skipped", skipped},
+            {"path", g_adminSessionStorePath}
+        });
+        if (skipped > 0) save_admin_sessions_store();
+        return true;
+    } catch (const std::exception &ex) {
+        record_auth_session_event("sessions_load_failed", {
+            {"path", g_adminSessionStorePath},
+            {"error", std::string(ex.what())}
+        });
+        return false;
+    }
+}
+
 static void cleanup_expired_admin_sessions() {
-    std::lock_guard<std::mutex> lock(g_adminMutex);
-    auto now = std::chrono::system_clock::now();
-    for (auto it = g_adminSessions.begin(); it != g_adminSessions.end(); ) {
-        const bool expired = (it->second.expires_at <= now);
-        const bool idleExpired = (g_authTimeoutMinutes > 0 &&
-                                 it->second.last_activity_at.time_since_epoch().count() > 0 &&
-                                 (now - it->second.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes));
-        if (expired || idleExpired) {
-            const int64_t nowMs = auth_now_ms();
-            const int64_t lastActivityMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                it->second.last_activity_at.time_since_epoch()
-            ).count();
-            const int64_t expiresMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                it->second.expires_at.time_since_epoch()
-            ).count();
-            json detail = {
-                {"reason", expired ? "hard_expired" : "idle_expired"},
-                {"username", it->second.username},
-                {"role", normalize_auth_role_id(it->second.role)},
-                {"idle_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
-                {"expires_in_ms", expiresMs - nowMs},
-                {"idle_timeout_ms", g_authTimeoutMinutes > 0 ? static_cast<int64_t>(g_authTimeoutMinutes) * 60 * 1000 : 0},
-                {"active_count", static_cast<int>(g_adminSessions.size())}
-            };
-            it = g_adminSessions.erase(it);
-            record_auth_session_event("session_erased", detail);
-        } else {
-            ++it;
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(g_adminMutex);
+        auto now = std::chrono::system_clock::now();
+        for (auto it = g_adminSessions.begin(); it != g_adminSessions.end(); ) {
+            const bool expired = (it->second.expires_at <= now);
+            const bool idleExpired = (g_authTimeoutMinutes > 0 &&
+                                     it->second.last_activity_at.time_since_epoch().count() > 0 &&
+                                     (now - it->second.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes));
+            if (expired || idleExpired) {
+                const int64_t nowMs = auth_now_ms();
+                const int64_t lastActivityMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    it->second.last_activity_at.time_since_epoch()
+                ).count();
+                const int64_t expiresMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    it->second.expires_at.time_since_epoch()
+                ).count();
+                json detail = {
+                    {"reason", expired ? "hard_expired" : "idle_expired"},
+                    {"username", it->second.username},
+                    {"role", normalize_auth_role_id(it->second.role)},
+                    {"idle_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
+                    {"expires_in_ms", expiresMs - nowMs},
+                    {"idle_timeout_ms", g_authTimeoutMinutes > 0 ? static_cast<int64_t>(g_authTimeoutMinutes) * 60 * 1000 : 0},
+                    {"active_count", static_cast<int>(g_adminSessions.size())}
+                };
+                it = g_adminSessions.erase(it);
+                changed = true;
+                record_auth_session_event("session_erased", detail);
+            } else {
+                ++it;
+            }
         }
     }
+    if (changed) save_admin_sessions_store();
 }
 
 static std::string g_adminServiceToken;
@@ -12394,11 +12493,13 @@ static bool apply_config_bundle_json(const std::string &configDir,
 
 	        std::string adminAuthPath = joinPath(configDir, "admin_auth.json");
 	        load_admin_auth(adminAuthPath);
-	        init_admin_service_token_from_env();
-	        std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
-	        load_passwords_store(passwordsPath);
+		        init_admin_service_token_from_env();
+		        std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		        load_passwords_store(passwordsPath);
+		        g_adminSessionStorePath = joinPath(configDir, "admin_sessions.json");
+		        load_admin_sessions_store();
 
-		        std::cout << "Executable directory: " << getExecutableDir() << "\n";
+			        std::cout << "Executable directory: " << getExecutableDir() << "\n";
 		        std::cout << "Using configDir:      " << configDir << "\n";
 	        std::cout << "Connections dir:      " << connDir << "\n";
 	        std::cout << "Tags dir:             " << tagDir << "\n";
@@ -24726,6 +24827,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        {"username", username},
 		                        {"role", normalize_auth_role_id(role)}
 		                    });
+		                    save_admin_sessions_store();
 
 		                    resp["ok"] = true;
 	                    resp["admin_token"] = token;
@@ -25652,6 +25754,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    {"header_present", !req.get_header_value("X-Admin-Token").empty()},
 		                    {"active_count", activeCount}
 		                });
+		                if (erased) save_admin_sessions_store();
 
 		                resp["ok"] = true;
 	                // Clear cookie in browser as well.
