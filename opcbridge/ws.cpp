@@ -41,6 +41,12 @@ static void ws_forget_client_locked(const std::string &id)
     g_subsById.erase(id);
 }
 
+static void ws_forget_client(const std::string &id)
+{
+    std::lock_guard<std::mutex> lock(g_wsMutex);
+    ws_forget_client_locked(id);
+}
+
 bool ws_init(uint16_t port)
 {
     std::lock_guard<std::mutex> lock(g_wsMutex);
@@ -63,6 +69,7 @@ bool ws_init(uint16_t port)
 
             auto webSocket = webSocketWeak.lock();
             if (!webSocket) return;
+            webSocket->setPingInterval(15);
 
             {
                 std::lock_guard<std::mutex> lock(g_wsMutex);
@@ -76,7 +83,7 @@ bool ws_init(uint16_t port)
             // ixwebsocket requires registering a per-connection onMessage callback
             // inside the onConnection callback.
             webSocket->setOnMessageCallback(
-                [connectionState](const ix::WebSocketMessagePtr & msg)
+                [connectionState, webSocketWeak](const ix::WebSocketMessagePtr & msg)
                 {
                     if (!msg) return;
 
@@ -94,14 +101,22 @@ bool ws_init(uint16_t port)
                                   << " reason=" << msg->closeInfo.reason << "\n";
 
                         if (connectionState) {
-                            std::lock_guard<std::mutex> lock(g_wsMutex);
-                            ws_forget_client_locked(connectionState->getId());
+                            ws_forget_client(connectionState->getId());
                         }
                     }
                     else if (msg->type == ix::WebSocketMessageType::Error)
                     {
                         std::cerr << "[ws] client ERROR: "
                                   << msg->errorInfo.reason << "\n";
+                        if (connectionState) {
+                            ws_forget_client(connectionState->getId());
+                        }
+                        if (auto ws = webSocketWeak.lock()) {
+                            try {
+                                ws->close();
+                            } catch (...) {
+                            }
+                        }
                     }
                     else if (msg->type == ix::WebSocketMessageType::Message)
                     {
@@ -196,14 +211,7 @@ bool ws_is_enabled()
 
 void ws_send_json(const json &msg)
 {
-    std::lock_guard<std::mutex> lock(g_wsMutex);
-
-    if (!g_wsEnabled || !g_wsServer) {
-        return;
-    }
-
     const std::string payload = msg.dump();
-
     std::string type;
     if (msg.contains("type") && msg["type"].is_string()) {
         type = msg["type"].get<std::string>();
@@ -219,29 +227,63 @@ void ws_send_json(const json &msg)
         }
     }
 
-    for (auto it = g_clientsById.begin(); it != g_clientsById.end(); ) {
-        const std::string id = it->first;
-        auto ws = it->second.lock();
-        if (!ws) {
-            g_subsById.erase(id);
-            it = g_clientsById.erase(it);
-            continue;
+    std::vector<std::pair<std::string, std::shared_ptr<ix::WebSocket>>> targets;
+    {
+        std::lock_guard<std::mutex> lock(g_wsMutex);
+
+        if (!g_wsEnabled || !g_wsServer) {
+            return;
         }
 
-        if (type == "tag_update") {
-            auto sit = g_subsById.find(id);
-            if (sit != g_subsById.end()) {
-                const ClientSubs &subs = sit->second;
-                if (subs.has_custom && !subs.subscribe_all) {
-                    if (key.empty() || subs.tags.find(key) == subs.tags.end()) {
-                        ++it;
-                        continue;
+        for (auto it = g_clientsById.begin(); it != g_clientsById.end(); ) {
+            const std::string id = it->first;
+            auto ws = it->second.lock();
+            if (!ws || ws->getReadyState() == ix::ReadyState::Closed) {
+                g_subsById.erase(id);
+                it = g_clientsById.erase(it);
+                continue;
+            }
+
+            if (type == "tag_update") {
+                auto sit = g_subsById.find(id);
+                if (sit != g_subsById.end()) {
+                    const ClientSubs &subs = sit->second;
+                    if (subs.has_custom && !subs.subscribe_all) {
+                        if (key.empty() || subs.tags.find(key) == subs.tags.end()) {
+                            ++it;
+                            continue;
+                        }
                     }
                 }
             }
-        }
 
-        ws->send(payload, false); // text frame
-        ++it;
+            targets.emplace_back(id, ws);
+            ++it;
+        }
+    }
+
+    std::vector<std::string> failedIds;
+    for (const auto &target : targets) {
+        const std::string &id = target.first;
+        const auto &ws = target.second;
+        if (!ws || ws->getReadyState() != ix::ReadyState::Open) {
+            failedIds.push_back(id);
+            continue;
+        }
+        const auto info = ws->send(payload, false); // text frame
+        if (!info.success) {
+            failedIds.push_back(id);
+            try {
+                ws->close();
+            } catch (...) {
+            }
+        }
+    }
+
+    if (!failedIds.empty()) {
+        std::lock_guard<std::mutex> lock(g_wsMutex);
+        for (const auto &id : failedIds) {
+            ws_forget_client_locked(id);
+        }
     }
 }
