@@ -7118,6 +7118,24 @@ function isNumericBitSourceDatatype(dt) {
   return s === 'int16' || s === 'uint16' || s === 'int32' || s === 'uint32';
 }
 
+function isDirectPlcSourceTag(t) {
+  if (!t || typeof t !== 'object') return false;
+  const sourceRaw = String(t?.source || t?.source_type || t?.source_kind || '').trim().toLowerCase();
+  if (sourceRaw === 'memory') return false;
+  if (String(t?.source_tag || '').trim()) return false;
+  if (String(t?.plc_tag_name || '').trim()) return true;
+  const registerType = normalizeModbusRegisterType(t?.register_type || t?.modbus_type || t?.register);
+  const hasModbusRegister = registerType === 'coil' ||
+    registerType === 'discrete_input' ||
+    registerType === 'input_register' ||
+    registerType === 'holding_register';
+  const hasModbusAddress = t?.address != null ||
+    t?.offset != null ||
+    t?.modbus_address != null ||
+    t?.modbus_offset != null;
+  return hasModbusRegister && hasModbusAddress;
+}
+
 function getDerivedBitSourceOptions(connectionId, excludeTagName) {
   const cid = String(connectionId || '').trim();
   const ex = String(excludeTagName || '').trim();
@@ -7125,7 +7143,7 @@ function getDerivedBitSourceOptions(connectionId, excludeTagName) {
   const names = all
     .filter((t) => String(t?.connection_id || '') === cid)
     .filter((t) => String(t?.name || '') !== ex)
-    .filter((t) => String(t?.plc_tag_name || '').trim() !== '')
+    .filter((t) => isDirectPlcSourceTag(t))
     .filter((t) => isNumericBitSourceDatatype(t?.datatype))
     .flatMap((t) => {
       const name = String(t?.name || '').trim();
@@ -7148,7 +7166,7 @@ function getDerivedAliasSourceOptions(connectionId, excludeTagName) {
   const names = all
     .filter((t) => String(t?.connection_id || '') === cid)
     .filter((t) => String(t?.name || '') !== ex)
-    .filter((t) => String(t?.plc_tag_name || '').trim() !== '')
+    .filter((t) => isDirectPlcSourceTag(t))
     .flatMap((t) => {
       const name = String(t?.name || '').trim();
       if (!name) return [];
