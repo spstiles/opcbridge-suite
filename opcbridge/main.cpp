@@ -4452,6 +4452,30 @@ static std::string build_array_element_plc_tag_name(const ConnectionConfig &conn
     return tag.plc_tag_name + "[" + std::to_string(elementIndex) + "]";
 }
 
+static bool parse_array_element_logical_name(const std::string &name,
+                                             std::string &baseNameOut,
+                                             int &elementIndexOut) {
+    baseNameOut.clear();
+    elementIndexOut = -1;
+    if (name.empty() || name.back() != ']') return false;
+    const size_t open = name.rfind('[');
+    if (open == std::string::npos || open == 0 || open + 1 >= name.size() - 1) return false;
+    const std::string idxText = name.substr(open + 1, name.size() - open - 2);
+    if (idxText.empty()) return false;
+    for (char ch : idxText) {
+        if (!std::isdigit(static_cast<unsigned char>(ch))) return false;
+    }
+    try {
+        const int idx = std::stoi(idxText);
+        if (idx < 0) return false;
+        baseNameOut = name.substr(0, open);
+        elementIndexOut = idx;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 static bool is_memory_connection_id(const std::string &connId) {
     return trim_copy(connId) == "_memory";
 }
@@ -5204,7 +5228,8 @@ static bool plc_set_value_from_string(const std::string &datatype,
                                       TagValue &outValue,
                                       std::string &outError,
                                       bool bitAccess = false,
-                                      const std::string &word_order = std::string("hi_lo"))
+                                      const std::string &word_order = std::string("hi_lo"),
+                                      int byteOffset = 0)
 {
     try {
         int status = PLCTAG_STATUS_OK;
@@ -5221,14 +5246,14 @@ static bool plc_set_value_from_string(const std::string &datatype,
                 const bool swapWords = (word_order == "lo_hi");
                 const uint16_t w0 = swapWords ? lo : hi;
                 const uint16_t w1 = swapWords ? hi : lo;
-                status = plc_tag_set_uint16(handle, 0, w0);
-                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+                status = plc_tag_set_uint16(handle, byteOffset + 0, w0);
+                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, byteOffset + 2, w1);
             } else {
-                status = plc_tag_set_float32(handle, 0, v);
+                status = plc_tag_set_float32(handle, byteOffset, v);
             }
         } else if (datatype == "float64") {
             double v = std::stod(value_str);
-            status = plc_tag_set_float64(handle, 0, v);
+            status = plc_tag_set_float64(handle, byteOffset, v);
             outValue = v;
         } else if (datatype == "int32") {
             int32_t v = static_cast<int32_t>(std::stol(value_str));
@@ -5240,10 +5265,10 @@ static bool plc_set_value_from_string(const std::string &datatype,
                 const bool swapWords = (word_order == "lo_hi");
                 const uint16_t w0 = swapWords ? lo : hi;
                 const uint16_t w1 = swapWords ? hi : lo;
-                status = plc_tag_set_uint16(handle, 0, w0);
-                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+                status = plc_tag_set_uint16(handle, byteOffset + 0, w0);
+                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, byteOffset + 2, w1);
             } else {
-                status = plc_tag_set_int32(handle, 0, v);
+                status = plc_tag_set_int32(handle, byteOffset, v);
             }
         } else if (datatype == "uint32") {
             uint32_t v = static_cast<uint32_t>(std::stoul(value_str));
@@ -5254,18 +5279,18 @@ static bool plc_set_value_from_string(const std::string &datatype,
                 const bool swapWords = (word_order == "lo_hi");
                 const uint16_t w0 = swapWords ? lo : hi;
                 const uint16_t w1 = swapWords ? hi : lo;
-                status = plc_tag_set_uint16(handle, 0, w0);
-                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+                status = plc_tag_set_uint16(handle, byteOffset + 0, w0);
+                if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, byteOffset + 2, w1);
             } else {
-                status = plc_tag_set_uint32(handle, 0, v);
+                status = plc_tag_set_uint32(handle, byteOffset, v);
             }
         } else if (datatype == "int16") {
             int16_t v = static_cast<int16_t>(std::stoi(value_str));
-            status = plc_tag_set_int16(handle, 0, v);
+            status = plc_tag_set_int16(handle, byteOffset, v);
             outValue = v;
         } else if (datatype == "uint16") {
             uint16_t v = static_cast<uint16_t>(std::stoul(value_str));
-            status = plc_tag_set_uint16(handle, 0, v);
+            status = plc_tag_set_uint16(handle, byteOffset, v);
             outValue = v;
         } else if (datatype == "bool") {
             bool bv;
@@ -5274,14 +5299,14 @@ static bool plc_set_value_from_string(const std::string &datatype,
                 return false;
             }
             if (bitAccess) {
-                status = plc_tag_set_bit(handle, 0, bv ? 1 : 0);
+                status = plc_tag_set_bit(handle, byteOffset, bv ? 1 : 0);
             } else {
                 int8_t raw = bv ? 1 : 0;
-                status = plc_tag_set_int8(handle, 0, raw);
+                status = plc_tag_set_int8(handle, byteOffset, raw);
             }
             outValue = bv;
         } else if (datatype == "string") {
-            status = plc_tag_set_string(handle, 0, value_str.c_str());
+            status = plc_tag_set_string(handle, byteOffset, value_str.c_str());
             outValue = value_str;
         } else {
             outError = "Unsupported datatype '" + datatype + "'";
@@ -5305,7 +5330,8 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
                                       const TagValue &v,
                                       std::string &outError,
                                       bool bitAccess = false,
-                                      const std::string &word_order = std::string("hi_lo"))
+                                      const std::string &word_order = std::string("hi_lo"),
+                                      int byteOffset = 0)
 {
     outError.clear();
     int status = PLCTAG_STATUS_OK;
@@ -5322,15 +5348,15 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
             const bool swapWords = (word_order == "lo_hi");
             const uint16_t w0 = swapWords ? lo : hi;
             const uint16_t w1 = swapWords ? hi : lo;
-            status = plc_tag_set_uint16(handle, 0, w0);
-            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+            status = plc_tag_set_uint16(handle, byteOffset + 0, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, byteOffset + 2, w1);
         } else {
-            status = plc_tag_set_float32(handle, 0, *pv);
+            status = plc_tag_set_float32(handle, byteOffset, *pv);
         }
     } else if (datatype == "float64") {
         const double *pv = std::get_if<double>(&v);
         if (!pv) { outError = "Type mismatch: expected float64"; return false; }
-        status = plc_tag_set_float64(handle, 0, *pv);
+        status = plc_tag_set_float64(handle, byteOffset, *pv);
     } else if (datatype == "int32") {
         const int32_t *pv = std::get_if<int32_t>(&v);
         if (!pv) { outError = "Type mismatch: expected int32"; return false; }
@@ -5341,10 +5367,10 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
             const bool swapWords = (word_order == "lo_hi");
             const uint16_t w0 = swapWords ? lo : hi;
             const uint16_t w1 = swapWords ? hi : lo;
-            status = plc_tag_set_uint16(handle, 0, w0);
-            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+            status = plc_tag_set_uint16(handle, byteOffset + 0, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, byteOffset + 2, w1);
         } else {
-            status = plc_tag_set_int32(handle, 0, *pv);
+            status = plc_tag_set_int32(handle, byteOffset, *pv);
         }
     } else if (datatype == "uint32") {
         const uint32_t *pv = std::get_if<uint32_t>(&v);
@@ -5355,32 +5381,32 @@ static bool plc_tag_set_from_tagvalue(const std::string &datatype,
             const bool swapWords = (word_order == "lo_hi");
             const uint16_t w0 = swapWords ? lo : hi;
             const uint16_t w1 = swapWords ? hi : lo;
-            status = plc_tag_set_uint16(handle, 0, w0);
-            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+            status = plc_tag_set_uint16(handle, byteOffset + 0, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, byteOffset + 2, w1);
         } else {
-            status = plc_tag_set_uint32(handle, 0, *pv);
+            status = plc_tag_set_uint32(handle, byteOffset, *pv);
         }
     } else if (datatype == "int16") {
         const int16_t *pv = std::get_if<int16_t>(&v);
         if (!pv) { outError = "Type mismatch: expected int16"; return false; }
-        status = plc_tag_set_int16(handle, 0, *pv);
+        status = plc_tag_set_int16(handle, byteOffset, *pv);
     } else if (datatype == "uint16") {
         const uint16_t *pv = std::get_if<uint16_t>(&v);
         if (!pv) { outError = "Type mismatch: expected uint16"; return false; }
-        status = plc_tag_set_uint16(handle, 0, *pv);
+        status = plc_tag_set_uint16(handle, byteOffset, *pv);
     } else if (datatype == "bool") {
         const bool *pv = std::get_if<bool>(&v);
         if (!pv) { outError = "Type mismatch: expected bool"; return false; }
         if (bitAccess) {
-            status = plc_tag_set_bit(handle, 0, *pv ? 1 : 0);
+            status = plc_tag_set_bit(handle, byteOffset, *pv ? 1 : 0);
         } else {
             int8_t raw = (*pv) ? 1 : 0;
-            status = plc_tag_set_int8(handle, 0, raw);
+            status = plc_tag_set_int8(handle, byteOffset, raw);
         }
     } else if (datatype == "string") {
         const std::string *pv = std::get_if<std::string>(&v);
         if (!pv) { outError = "Type mismatch: expected string"; return false; }
-        status = plc_tag_set_string(handle, 0, pv->c_str());
+        status = plc_tag_set_string(handle, byteOffset, pv->c_str());
     } else {
         outError = "Unsupported datatype '" + datatype + "'";
         return false;
@@ -5529,8 +5555,19 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     bool hadPrev = false;
     bool found = false;
     bool connectionFound = false;
+    TagConfig parentArrayCfg;
+    int32_t parentArrayHandle = PLCTAG_ERR_NOT_FOUND;
+    bool parentArrayScalingLinear = false;
+    double parentArrayInvSlope = 1.0;
+    double parentArrayInvOffset = 0.0;
+    std::string parentArrayOutDatatype;
+    bool hasParentArray = false;
+    int parentArrayIndex = -1;
 
     const std::string key = make_tag_key(conn_id, logical_name);
+    std::string parentArrayName;
+    int parsedArrayIndex = -1;
+    const bool nameLooksLikeArrayElement = parse_array_element_logical_name(logical_name, parentArrayName, parsedArrayIndex);
 
     {
         std::lock_guard<std::mutex> lock(driverMutex);
@@ -5549,6 +5586,23 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                     out_datatype = t.out_datatype;
                     found = true;
                     break;
+                }
+            }
+            if (nameLooksLikeArrayElement && parsedArrayIndex >= 0) {
+                for (auto &t : driver.tags) {
+                    if (t.cfg.logical_name == parentArrayName &&
+                        t.cfg.elem_count > parsedArrayIndex &&
+                        t.cfg.datatype == cfg.datatype) {
+                        parentArrayCfg = t.cfg;
+                        parentArrayHandle = t.handle;
+                        parentArrayScalingLinear = t.scaling_linear;
+                        parentArrayInvSlope = t.inv_slope;
+                        parentArrayInvOffset = t.inv_offset;
+                        parentArrayOutDatatype = t.out_datatype;
+                        hasParentArray = true;
+                        parentArrayIndex = parsedArrayIndex;
+                        break;
+                    }
                 }
             }
             break;
@@ -5823,6 +5877,156 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     std::unique_lock<std::shared_mutex> plcLock;
     if (g_plcMutex) {
         plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
+    }
+
+    if (hasParentArray && parentArrayIndex >= 0 && parentArrayCfg.elem_count > parentArrayIndex) {
+        if (!parentArrayCfg.writable) {
+            const std::string msg = "Parent array tag '" + parentArrayName + "' is not marked writable.";
+            std::cerr << msg << "\n";
+            return fail(msg);
+        }
+
+        bool destroyParentHandle = false;
+        int32_t writeHandle = parentArrayHandle;
+        if (writeHandle < 0) {
+            TagConfig parentTmp = parentArrayCfg;
+            parentTmp.elem_count = std::max(1, parentArrayCfg.elem_count);
+
+            std::string tagStr;
+            try {
+                tagStr = build_tag_conn_str(conn, parentTmp);
+            } catch (const std::exception &ex) {
+                const std::string msg = "Array element write failed building parent tag string for [" + conn_id + "]." + logical_name + ": " + ex.what();
+                std::cerr << msg << "\n";
+                return fail(msg);
+            }
+
+            writeHandle = plc_tag_create(tagStr.c_str(), conn.default_timeout_ms);
+            std::string readyErr;
+            if (!wait_for_tag_ready(writeHandle, conn.default_timeout_ms, readyErr)) {
+                const std::string msg = "Array element write failed creating parent handle for [" + conn_id + "]." + logical_name + ": " + readyErr;
+                std::cerr << msg << "\n";
+                if (writeHandle >= 0) plc_tag_destroy(writeHandle);
+                return fail(msg);
+            }
+            destroyParentHandle = true;
+        }
+
+        const int readStatus = plc_tag_read(writeHandle, conn.default_read_ms);
+        if (readStatus != PLCTAG_STATUS_OK) {
+            const std::string msg = "Array element write failed reading parent array for [" + conn_id + "]." + logical_name + ": " + plc_tag_decode_error(readStatus);
+            std::cerr << msg << "\n";
+            if (destroyParentHandle) plc_tag_destroy(writeHandle);
+            return fail(msg);
+        }
+
+        const int byteOffset = parentArrayIndex * static_cast<int>(datatype_size_bytes(parentArrayCfg.datatype));
+        TagValue rawValue{};
+        TagValue scaledValue{};
+        std::string parseErr;
+
+        if (parentArrayScalingLinear) {
+            if (!is_numeric_datatype(parentArrayCfg.datatype)) {
+                const std::string msg = "Array parent tag '" + parentArrayName + "' has scaling enabled but non-numeric datatype '" + parentArrayCfg.datatype + "'.";
+                std::cerr << msg << "\n";
+                if (destroyParentHandle) plc_tag_destroy(writeHandle);
+                return fail(msg);
+            }
+
+            double scaledNum = 0.0;
+            try {
+                std::string s = trim_copy(value_str);
+                if (s.empty()) throw std::runtime_error("empty value");
+                scaledNum = std::stod(s);
+            } catch (const std::exception &ex) {
+                const std::string msg = "Array element write parse failed for scaled value '" + value_str + "': " + ex.what();
+                std::cerr << msg << "\n";
+                if (destroyParentHandle) plc_tag_destroy(writeHandle);
+                return fail(msg);
+            }
+
+            if (parentArrayCfg.clamp_low)  scaledNum = std::max(scaledNum, parentArrayCfg.scaled_low);
+            if (parentArrayCfg.clamp_high) scaledNum = std::min(scaledNum, parentArrayCfg.scaled_high);
+
+            const double rawNum = scaledNum * parentArrayInvSlope + parentArrayInvOffset;
+            std::string castErr;
+            if (!cast_double_to_tagvalue(rawNum, parentArrayCfg.datatype, rawValue, castErr)) {
+                const std::string msg = "Array element write scaling cast failed for [" + conn_id + "]." + logical_name + " to parent datatype '" + parentArrayCfg.datatype + "': " + castErr;
+                std::cerr << msg << "\n";
+                if (destroyParentHandle) plc_tag_destroy(writeHandle);
+                return fail(msg);
+            }
+
+            const std::string dtOut = parentArrayOutDatatype.empty() ? std::string("float64") : parentArrayOutDatatype;
+            if (!cast_double_to_tagvalue(scaledNum, dtOut, scaledValue, castErr)) {
+                scaledValue = static_cast<double>(scaledNum);
+            }
+
+            if (!plc_tag_set_from_tagvalue(parentArrayCfg.datatype, writeHandle, rawValue, parseErr, is_modbus_connection(conn), parentArrayCfg.word_order, byteOffset)) {
+                const std::string msg = "Array element write set failed for [" + conn_id + "]." + logical_name + ": " + parseErr;
+                std::cerr << msg << "\n";
+                if (destroyParentHandle) plc_tag_destroy(writeHandle);
+                return fail(msg);
+            }
+        } else {
+            if (!plc_set_value_from_string(parentArrayCfg.datatype, writeHandle, value_str, rawValue, parseErr, is_modbus_connection(conn), parentArrayCfg.word_order, byteOffset)) {
+                const std::string msg = "Array element write parse/set failed for [" + conn_id + "]." + logical_name + ": " + parseErr;
+                std::cerr << msg << "\n";
+                if (destroyParentHandle) plc_tag_destroy(writeHandle);
+                return fail(msg);
+            }
+            scaledValue = rawValue;
+        }
+
+        const int writeStatus = plc_tag_write(writeHandle, conn.default_write_ms);
+        if (writeStatus != PLCTAG_STATUS_OK) {
+            const std::string msg = "Array element plc_tag_write failed for [" + conn_id + "]." + logical_name + ": " + plc_tag_decode_error(writeStatus);
+            std::cerr << msg << "\n";
+            if (destroyParentHandle) plc_tag_destroy(writeHandle);
+            return fail(msg);
+        }
+
+        TagSnapshot snap;
+        snap.connection_id = conn.id;
+        snap.logical_name = logical_name;
+        snap.datatype = parentArrayScalingLinear ? (parentArrayOutDatatype.empty() ? std::string("float64") : parentArrayOutDatatype) : parentArrayCfg.datatype;
+        snap.timestamp = std::chrono::system_clock::now();
+        snap.quality = 1;
+        snap.value = parentArrayScalingLinear ? scaledValue : rawValue;
+
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            table[key] = snap;
+        }
+
+        std::cout << "Write OK (array element): [" << conn.id << "] "
+                  << logical_name << " := " << value_str
+                  << " (parent=" << parentArrayName << ", index=" << parentArrayIndex << ")\n";
+
+        if (destroyParentHandle) {
+            plc_tag_destroy(writeHandle);
+        }
+
+        if (cfg.log_event_on_change) {
+            bool valueChanged = !hadPrev || !snapshot_values_equal(snap, prevSnap);
+            if (valueChanged) {
+                int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    snap.timestamp.time_since_epoch()
+                ).count();
+                sqlite_log_event(
+                    conn.id,
+                    logical_name,
+                    hadPrev ? snapshot_value_to_string(prevSnap) : std::string{},
+                    snapshot_value_to_string(snap),
+                    hadPrev ? prevSnap.quality : -1,
+                    snap.quality,
+                    ts_ms,
+                    R"({"source":"write_array_element"})"
+                );
+            }
+        }
+
+        return true;
     }
 
     const bool isDerivedBit = (!cfg.source_tag.empty() && cfg.bit >= 0);
