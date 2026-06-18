@@ -5046,6 +5046,7 @@ let authSession = null;
 let authActivityTimer = null;
 let authSyncTimer = null;
 let authActivityLastMarkMs = 0;
+let authActivityLastTouchMs = 0;
 let authServerLoggedOutSinceMs = 0;
 let pendingEditModeAfterLogin = false;
 
@@ -5201,6 +5202,15 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
 
 const markAuthActivity = ({ force = false } = {}) => {
   if (!authSession) return;
+  if (isAuthSessionExpired()) {
+    recordAuthDiagnostic("local-session-expired-on-activity", {
+      timeoutMinutes: getAuthTimeoutMinutes(),
+      lastActivityMs: Number(authSession.lastActivityMs) || 0
+    });
+    apiAuthLogout().catch(() => {});
+    clearLocalAuthState("local inactivity timeout");
+    return;
+  }
   const now = Date.now();
   if (!force && now - authActivityLastMarkMs < 1000) return;
   authActivityLastMarkMs = now;
@@ -5208,6 +5218,11 @@ const markAuthActivity = ({ force = false } = {}) => {
   try {
     sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authSession));
   } catch {}
+  const timeoutMinutes = getAuthTimeoutMinutes();
+  if (timeoutMinutes > 0 && (force || now - authActivityLastTouchMs > 30000)) {
+    authActivityLastTouchMs = now;
+    apiAuthTouch().catch(() => {});
+  }
 };
 
 const clearLocalAuthState = (reason, detail = {}) => {
@@ -5284,6 +5299,20 @@ const apiAuthLogout = async () => {
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ explicit: true })
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status} ${text}`.trim());
+  }
+  return response.json().catch(() => ({ ok: true }));
+};
+
+const apiAuthTouch = async () => {
+  const response = await fetch("/api/auth/touch", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -16057,6 +16086,7 @@ if (!authActivityTimer) {
       lastActivityMs: Number(authSession.lastActivityMs) || 0,
       idleMs: Date.now() - (Number(authSession.lastActivityMs) || Date.now())
     });
+    apiAuthLogout().catch(() => {});
     clearLocalAuthState("local inactivity timeout");
     if (authStatusEl) authStatusEl.textContent = "Session expired.";
   }, 2000);

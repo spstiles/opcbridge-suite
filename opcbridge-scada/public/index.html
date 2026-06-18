@@ -579,7 +579,7 @@
               <div class="form-row"><label>Username</label><input id="usersInitUsername" type="text" autocomplete="username" /></div>
               <div class="form-row"><label>Admin Password</label><input id="usersInitPassword" type="password" autocomplete="new-password" /></div>
               <div class="form-row"><label>Confirm Password</label><input id="usersInitConfirm" type="password" autocomplete="new-password" /></div>
-              <div class="form-row"><label>Session Timeout (min)</label><input id="usersInitTimeout" type="number" min="0" step="1" placeholder="0" /></div>
+              <div class="form-row"><label>Session Timeout (min)</label><input id="usersInitTimeout" type="number" min="0" step="1" placeholder="0 = no timeout" /></div>
               <div class="form-row"><label></label>
                 <div class="row-actions">
                   <button class="btn primary" id="usersInitBtn" type="button">Initialize</button>
@@ -592,7 +592,7 @@
           <div id="usersManageWrap" style="display:none; margin-top: 10px;">
             <div class="divider"></div>
             <div class="form" style="max-width: 520px;">
-              <div class="form-row"><label>Session Timeout (min)</label><input id="usersTimeoutMinutes" type="number" min="0" step="1" placeholder="0" /></div>
+              <div class="form-row"><label>Session Timeout (min)</label><input id="usersTimeoutMinutes" type="number" min="0" step="1" placeholder="0 = no timeout" /></div>
               <div class="form-row"><label></label>
                 <div class="row-actions">
                   <button class="btn" id="usersRefreshBtn" type="button">Refresh</button>
@@ -600,6 +600,7 @@
                 </div>
               </div>
               <div class="hint mono" id="usersTimeoutStatus"></div>
+              <div class="hint">This is the shared OPCBridge session timeout used by SCADA and HMI. Set to 0 to disable automatic logout.</div>
             </div>
 
             <div class="divider"></div>

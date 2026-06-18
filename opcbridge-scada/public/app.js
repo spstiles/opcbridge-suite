@@ -978,6 +978,7 @@ const state = {
   authWasLoggedIn: false,
   authLoggedOutSinceMs: 0,
   authLastLogoutAtMs: 0,
+  authLastActivityTouchMs: 0,
   authLastUser: null,
   authAdminLoaded: false,
   authAdminLoadInFlight: false,
@@ -6056,6 +6057,20 @@ window.addEventListener('unhandledrejection', (e) => {
   setFatalStatus(e?.reason || 'Unhandled rejection');
 });
 
+[
+  'pointerdown',
+  'pointermove',
+  'keydown',
+  'input',
+  'change',
+  'wheel',
+  'dragstart',
+  'drop'
+].forEach((eventName) => {
+  window.addEventListener(eventName, () => touchOpcbridgeAuthActivity(), { capture: true, passive: true });
+});
+window.addEventListener('focus', () => touchOpcbridgeAuthActivity({ force: true }), { capture: true });
+
 function setTab(id) {
   const next = String(id || '').trim();
   if (!next) return;
@@ -6237,7 +6252,7 @@ function renderOverviewHealth(health, metrics = null) {
       if (blocks.length) {
         const rows = blocks.map((block) => {
           const name = escapeHtml(String(block?.logical_name || ''));
-          const plcName = escapeHtml(String(block?.plc_tag_name || ''));
+          const addressCell = formatOverviewBlockAddress(cid, block);
           const datatype = escapeHtml(String(block?.datatype || ''));
           const elemCount = Math.max(1, Number(block?.elem_count || 1) || 1);
           const mapped = Math.max(1, Number(block?.mapped_tag_count || elemCount) || elemCount);
@@ -6249,10 +6264,10 @@ function renderOverviewHealth(health, metrics = null) {
           const statusText = String(block?.last_status_text || '').trim();
           const statusCode = Number.isFinite(Number(block?.last_status)) ? String(block.last_status) : '';
           const lastStatus = statusText ? `${escapeHtml(statusText)}${statusCode ? ` (${escapeHtml(statusCode)})` : ''}` : '-';
-          return `<tr><td><code>${name}</code></td><td><code>${plcName}</code></td><td>${datatype}${elemCount > 1 ? ` [${elemCount}]` : ''}</td><td>${mapped}</td><td>${readAvg}</td><td>${readLast}</td><td>${okAge}</td><td>${readsOk}</td><td>${readsErr}</td><td>${lastStatus}</td></tr>`;
+          return `<tr><td><code>${name}</code></td><td>${addressCell}</td><td>${datatype}${elemCount > 1 ? ` [${elemCount}]` : ''}</td><td>${mapped}</td><td>${readAvg}</td><td>${readLast}</td><td>${okAge}</td><td>${readsOk}</td><td>${readsErr}</td><td>${lastStatus}</td></tr>`;
         }).join('');
         const isExpanded = state.overviewHealthExpanded.has(cid);
-        blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>PLC Tag</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK Count</th><th>Err Count</th><th>Last Status</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+        blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>Address</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK Count</th><th>Err Count</th><th>Last Status</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
       }
       lines.push(`<div class="${cls}">${cid}: ${st.toUpperCase()}${reason}${ratio}${details}${blockHtml}</div>`);
     });
@@ -11859,6 +11874,49 @@ function modbusPrefixForRegisterType(registerType) {
   if (type === 'discrete_input') return 'di';
   if (type === 'input_register') return 'ir';
   return 'hr';
+}
+
+function modbusRegisterTypeLabel(registerType) {
+  const type = normalizeModbusRegisterType(registerType);
+  if (type === 'coil') return 'Coil';
+  if (type === 'discrete_input') return 'Discrete Input';
+  if (type === 'input_register') return 'Input Register';
+  return 'Holding Register';
+}
+
+function modbusDisplayAddressForTag(row, connObj = null) {
+  if (!row || typeof row !== 'object') return '';
+  const addressText = modbusAddressFromTag(row, connObj);
+  if (!addressText) return '';
+  const type = normalizeModbusRegisterType(row.register_type || row.modbus_type || row.register);
+  const mode = modbusAddressModeFromConnection(connObj);
+  const label = modbusRegisterTypeLabel(type);
+  return mode === 'offset' ? `${label} offset ${addressText}` : `${label} ${addressText}`;
+}
+
+function findConfiguredTag(connectionId, tagName) {
+  const cid = String(connectionId || '').trim();
+  const name = String(tagName || '').trim();
+  if (!cid || !name) return null;
+  return getEffectiveTagsAll().find((t) =>
+    String(t?.connection_id || '') === cid &&
+    String(t?.name || '') === name
+  ) || null;
+}
+
+function formatOverviewBlockAddress(connectionId, block) {
+  const logicalName = String(block?.logical_name || '').trim();
+  const internalName = String(block?.plc_tag_name || '').trim();
+  const tagRow = findConfiguredTag(connectionId, logicalName);
+  const connObj = getConnObjById(connectionId);
+  const friendly = tagRow && isModbusDriver(connObj?.driver || '')
+    ? modbusDisplayAddressForTag(tagRow, connObj)
+    : '';
+  if (!friendly) return `<code>${escapeHtml(internalName)}</code>`;
+  const internal = internalName && internalName !== friendly
+    ? `<div class="muted">internal <code>${escapeHtml(internalName)}</code></div>`
+    : '';
+  return `<span>${escapeHtml(friendly)}</span>${internal}`;
 }
 
 function modbusResolvedOffset(registerType, value, addressMode) {
@@ -21500,6 +21558,25 @@ async function refreshUserAuthLine() {
     updateAuthAdminPanelVisibility();
     els.authLine.innerHTML = `<span class="badge warn">auth</span> unavailable`;
   }
+}
+
+function getOpcbridgeAuthTimeoutMinutes() {
+  return Math.max(0, Math.floor(Number(state.opcbridgeAuthStatus?.timeoutMinutes) || 0));
+}
+
+function touchOpcbridgeAuthActivity({ force = false } = {}) {
+  const status = state.opcbridgeAuthStatus || null;
+  if (!status?.user_logged_in) return;
+  if (getOpcbridgeAuthTimeoutMinutes() <= 0) return;
+  const now = Date.now();
+  if (!force && now - state.authLastActivityTouchMs < 30000) return;
+  state.authLastActivityTouchMs = now;
+  fetch('/api/opcbridge/auth/touch', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}'
+  }).catch(() => {});
 }
 
 function isOpcbridgeAdmin() {

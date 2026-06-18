@@ -2452,7 +2452,7 @@
 	            <select id="settingsDefaultScreen"></select>
 	          </div>
 	          <div class="prop-row">
-	            <label for="settingsScreenTimeout">Screen timeout (minutes)</label>
+	            <label for="settingsScreenTimeout">Session timeout (minutes)</label>
 	            <input id="settingsScreenTimeout" type="number" min="0" step="1" placeholder="0 = no timeout" />
 	          </div>
 	          <div class="prop-row prop-row-inline">
@@ -2463,7 +2463,7 @@
 	            <label for="settingsViewOnlyMode">View-only mode</label>
 	            <input id="settingsViewOnlyMode" type="checkbox" />
 	          </div>
-	          <div class="settings-hint">Screen timeout controls login/edit-mode inactivity. Touchscreen mode uses the on-screen keypad. View-only mode disables all writes in runtime.</div>
+	          <div class="settings-hint">Session timeout is shared with SCADA user settings; 0 disables automatic logout. Touchscreen mode uses the on-screen keypad. View-only mode disables all writes in runtime.</div>
 	        </div>
 
 	        <div class="settings-section">
@@ -2700,7 +2700,7 @@
 	        <div class="settings-section">
 	          <div class="prop-group-title">Policy</div>
 	          <div class="prop-row">
-	            <label for="usersTimeoutMinutes">Timeout (minutes)</label>
+	            <label for="usersTimeoutMinutes">Session timeout (minutes)</label>
 	            <input id="usersTimeoutMinutes" type="number" min="0" step="1" placeholder="0 = no timeout" />
 	          </div>
 	          <div class="settings-actions">

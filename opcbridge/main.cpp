@@ -3268,7 +3268,7 @@ static std::string get_cookie_value(const httplib::Request &req, const std::stri
     return "";
 }
 
-static bool get_session_from_request(const httplib::Request &req, AdminSessionInfo &out) {
+static bool get_session_from_request(const httplib::Request &req, AdminSessionInfo &out, bool refreshActivity = true) {
     std::string token = req.get_header_value("X-Admin-Token");
     const bool headerPresent = !token.empty();
     if (token.empty()) token = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
@@ -3335,11 +3335,13 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
         return false;
     }
 
-    // Rolling activity
-    it->second.last_activity_at = now;
-    // Rolling expiry: keep the session alive while the user is active.
-    // (Idle timeout still applies if configured.)
-    it->second.expires_at = now + std::chrono::hours(8);
+    if (refreshActivity) {
+        // Rolling activity
+        it->second.last_activity_at = now;
+        // Rolling expiry: keep the session alive while the user is active.
+        // (Idle timeout still applies if configured.)
+        it->second.expires_at = now + std::chrono::hours(8);
+    }
     out = it->second;
     return true;
 }
@@ -24968,7 +24970,7 @@ window.addEventListener("load", startAutoRefresh);
 				                cleanup_expired_admin_sessions();
 				                json resp;
 			                AdminSessionInfo sess;
-			                const bool hasSession = get_session_from_request(req, sess);
+			                const bool hasSession = get_session_from_request(req, sess, false);
 			                const bool interactiveSession = hasSession && sess.username != "service";
 			                const bool editorSession = hasSession && (
 			                    session_has_permission(sess, "opcbridge.edit_config") ||
@@ -25041,6 +25043,30 @@ window.addEventListener("load", startAutoRefresh);
 			                }
 		                resp["service_token_enabled"] = !g_adminServiceToken.empty();
 		                resp["service_token_len"] = static_cast<int>(g_adminServiceToken.size());
+		                res.set_content(resp.dump(2), "application/json");
+		            });
+
+		            // POST /auth/touch
+		            // Extends the idle timeout only when the UI reports real user activity.
+		            svr.Post("/auth/touch", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                AdminSessionInfo sess;
+		                if (!get_session_from_request(req, sess)) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Login required.";
+		                    res.status = 401;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
+		                }
+		                if (sess.username == "service") {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Interactive login required.";
+		                    res.status = 401;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
+		                }
+		                resp["ok"] = true;
+		                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
 		                res.set_content(resp.dump(2), "application/json");
 		            });
 
