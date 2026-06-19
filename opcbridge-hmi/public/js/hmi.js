@@ -741,8 +741,6 @@ const buildColorRuleSummary = (rule, index) => {
   const parts = [];
   if (next.fillEnabled) parts.push("Fill");
   if (next.strokeEnabled) parts.push("Stroke");
-  if (next.textEnabled) parts.push("Text");
-  if (next.backgroundEnabled) parts.push("Background");
   if (next.borderEnabled) parts.push("Border");
   const targetText = parts.length ? parts.join("/") : "No targets";
   if (next.sourceType === "expression") {
@@ -797,13 +795,13 @@ const buildColorRulesFromObject = (obj) => {
       mode: source.mode || "",
       threshold: source.threshold,
       match: source.match || "",
-      fillEnabled: ("fillEnabled" in meta) ? Boolean(meta.fillEnabled) : Boolean(fillAuto[index]),
-      fillColor: fillAuto[index]?.onColor || meta.fillColor || "",
+      fillEnabled: ("fillEnabled" in meta) ? Boolean(meta.fillEnabled || meta.textEnabled) : Boolean(fillAuto[index] || textAuto[index]),
+      fillColor: fillAuto[index]?.onColor || textAuto[index]?.onColor || meta.fillColor || meta.textColor || "",
       strokeEnabled: obj.type === "line" ? true : (("strokeEnabled" in meta) ? Boolean(meta.strokeEnabled) : Boolean(strokeAuto[index])),
       strokeColor: strokeAuto[index]?.onColor || meta.strokeColor || "",
-      textEnabled: ("textEnabled" in meta) ? Boolean(meta.textEnabled) : Boolean(textAuto[index]),
+      textEnabled: false,
       textColor: textAuto[index]?.onColor || meta.textColor || "",
-      backgroundEnabled: ("backgroundEnabled" in meta) ? Boolean(meta.backgroundEnabled) : Boolean(backgroundAuto[index]),
+      backgroundEnabled: false,
       backgroundColor: backgroundAuto[index]?.onColor || meta.backgroundColor || "",
       borderEnabled: ("borderEnabled" in meta) ? Boolean(meta.borderEnabled) : Boolean(borderAuto[index]),
       borderColor: borderAuto[index]?.onColor || meta.borderColor || ""
@@ -1135,8 +1133,8 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   const strokeTargetLabel = rectColorStrokeEnabledInput?.closest(".inline-check");
   const supportsFillTarget = !isLine;
   const supportsStrokeTarget = strokePresent;
-  const supportsTextTarget = isGroup;
-  const supportsBackgroundTarget = isGroup;
+  const supportsTextTarget = false;
+  const supportsBackgroundTarget = false;
   const supportsBorderTarget = isText || isGroup;
   if (fillTargetLabel) {
     fillTargetLabel.classList.toggle("is-hidden", !supportsFillTarget);
@@ -7081,9 +7079,17 @@ const applyGroupColorOverridesToObject = (sourceObj, overrides) => {
   const hasStrokeProp = Object.prototype.hasOwnProperty.call(obj, "stroke");
   const type = String(obj.type || "").trim();
 
-  if (overrides.fillColor && ["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type)) {
-    obj.fill = overrides.fillColor;
-    delete obj.fillAutomation;
+  if (overrides.fillColor) {
+    if (["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type)) {
+      obj.fill = overrides.fillColor;
+      delete obj.fillAutomation;
+    } else if (type === "text") {
+      obj.fill = overrides.fillColor;
+      delete obj.fillAutomation;
+    } else if (["number-input"].includes(type)) {
+      obj.textColor = overrides.fillColor;
+      delete obj.textColorAutomation;
+    }
   }
   if (overrides.lineColor) {
     if (["rect", "alarms-panel", "ellipse", "circle", "line", "curve", "polyline", "spline", "polygon", "button", "indicator"].includes(type) || hasStrokeProp) {
