@@ -1862,12 +1862,13 @@ const ensureAutomationNumericExpressionModal = () => {
   overlay.style.display = "none";
 
   const modal = document.createElement("div");
-  modal.className = "settings-modal";
+  modal.className = "settings-modal visibility-expression-modal";
 
   const header = document.createElement("div");
   header.className = "popup-header";
   const title = document.createElement("div");
   title.id = "automationNumericExpressionTitle";
+  title.className = "popup-title";
   title.textContent = "Automation Expression";
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
@@ -1886,12 +1887,14 @@ const ensureAutomationNumericExpressionModal = () => {
   const editorLabel = document.createElement("label");
   editorLabel.textContent = "Expression";
   const editor = document.createElement("textarea");
+  editor.id = "automationNumericExpressionEditor";
   editor.rows = 6;
   editorRow.append(editorLabel, editor);
   section.appendChild(editorRow);
 
   const helperBar = document.createElement("div");
-  helperBar.className = "toolbar";
+  helperBar.className = "prop-inline";
+  helperBar.id = "automationNumericExpressionHelperBar";
   const makeBtn = (text) => {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -1908,7 +1911,8 @@ const ensureAutomationNumericExpressionModal = () => {
   section.appendChild(helperBar);
 
   const insertMenu = document.createElement("div");
-  insertMenu.className = "toolbar is-hidden";
+  insertMenu.className = "menu-flyout is-hidden";
+  insertMenu.id = "automationNumericExpressionInsertMenu";
   section.appendChild(insertMenu);
 
   const tagSection = document.createElement("div");
@@ -1929,7 +1933,7 @@ const ensureAutomationNumericExpressionModal = () => {
   const insertRow = document.createElement("div");
   insertRow.className = "prop-row";
   const insertLabel = document.createElement("label");
-  insertLabel.textContent = "";
+  insertLabel.textContent = "Insert";
   const insertBtn = document.createElement("button");
   insertBtn.type = "button";
   insertBtn.className = "panel-btn";
@@ -1946,16 +1950,20 @@ const ensureAutomationNumericExpressionModal = () => {
   body.appendChild(section);
 
   const footer = document.createElement("div");
-  footer.className = "popup-actions";
-  const cancelBtn = document.createElement("button");
-  cancelBtn.type = "button";
-  cancelBtn.className = "panel-btn";
-  cancelBtn.textContent = "Cancel";
+  footer.className = "popup-footer";
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.className = "panel-btn";
   saveBtn.textContent = "Save";
-  footer.append(cancelBtn, saveBtn);
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "panel-btn";
+  cancelBtn.textContent = "Cancel";
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "panel-btn";
+  clearBtn.textContent = "Clear";
+  footer.append(saveBtn, cancelBtn, clearBtn);
 
   modal.append(header, body, footer);
   overlay.appendChild(modal);
@@ -1980,6 +1988,11 @@ const ensureAutomationNumericExpressionModal = () => {
 
   closeBtn.addEventListener("click", close);
   cancelBtn.addEventListener("click", close);
+  clearBtn.addEventListener("click", () => {
+    editor.value = "";
+    syncAutomationNumericExpressionValidationUi();
+    editor.focus();
+  });
   overlay.addEventListener("click", (event) => {
     if (event.target === overlay) close();
   });
@@ -5198,9 +5211,11 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   return true;
 };
 
+const isAuthTimeoutSuppressed = () => Boolean(isEditMode);
+
 const markAuthActivity = ({ force = false } = {}) => {
   if (!authSession) return;
-  if (isAuthSessionExpired()) {
+  if (!isAuthTimeoutSuppressed() && isAuthSessionExpired()) {
     recordAuthDiagnostic("local-session-expired-on-activity", {
       timeoutMinutes: getAuthTimeoutMinutes(),
       lastActivityMs: Number(authSession.lastActivityMs) || 0
@@ -5242,6 +5257,7 @@ const getAuthTimeoutMinutes = () => {
 
 const isAuthSessionExpired = () => {
   if (!authSession) return false;
+  if (isAuthTimeoutSuppressed()) return false;
   const timeoutMinutes = getAuthTimeoutMinutes();
   if (!timeoutMinutes) return false;
   const lastActivityMs = Number(authSession.lastActivityMs) || 0;
@@ -16097,6 +16113,10 @@ window.addEventListener("focus", () => markAuthActivity({ force: true }), { capt
 if (!authActivityTimer) {
   authActivityTimer = window.setInterval(() => {
     if (!authSession) return;
+    if (isAuthTimeoutSuppressed()) {
+      markAuthActivity();
+      return;
+    }
     if (!isAuthSessionExpired()) return;
     recordAuthDiagnostic("local-session-expired", {
       timeoutMinutes: getAuthTimeoutMinutes(),

@@ -589,7 +589,8 @@ body.runtime-mode .ws-badge {
 }
 
 #visibilityExpressionInsertMenu,
-#rectColorExpressionInsertMenu {
+#rectColorExpressionInsertMenu,
+#automationNumericExpressionInsertMenu {
     position: fixed;
     top: 0;
     left: 0;
@@ -608,14 +609,16 @@ body.runtime-mode .ws-badge {
 }
 
 #visibilityExpressionEditor,
-#rectColorExpressionEditor {
+#rectColorExpressionEditor,
+#automationNumericExpressionEditor {
     width: 100%;
     min-height: 160px;
     resize: vertical;
 }
 
 #visibilityExpressionHelperBar,
-#rectColorExpressionHelperBar {
+#rectColorExpressionHelperBar,
+#automationNumericExpressionHelperBar {
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
