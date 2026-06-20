@@ -732,8 +732,17 @@ const createApp = () => {
       }
       const text = await response.text();
       if (!response.ok) {
-        await appendAudit(req, { ...auditBase, result: "failure", error: `OPCBridge HTTP ${response.status}`, details: text });
-        return res.status(502).json({ error: `OPCBridge HTTP ${response.status}`, details: text });
+        let upstreamError = `OPCBridge HTTP ${response.status}`;
+        let details = text;
+        try {
+          const parsedText = JSON.parse(text);
+          details = parsedText;
+          if (parsedText?.error) upstreamError += ` - ${String(parsedText.error)}`;
+        } catch {
+          if (text) upstreamError += ` - ${text}`;
+        }
+        await appendAudit(req, { ...auditBase, result: "failure", error: upstreamError, details });
+        return res.status(502).json({ error: upstreamError, details });
       }
       await appendAudit(req, { ...auditBase, result: "success" });
       try {

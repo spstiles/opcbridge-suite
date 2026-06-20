@@ -5610,6 +5610,9 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     std::string parentArrayName;
     int parsedArrayIndex = -1;
     const bool nameLooksLikeArrayElement = parse_array_element_logical_name(logical_name, parentArrayName, parsedArrayIndex);
+    std::string directBitSourceName;
+    int directBitIndex = -1;
+    const bool nameLooksLikeBitQualified = parse_bit_qualified_source_name(logical_name, directBitSourceName, directBitIndex);
 
     {
         std::lock_guard<std::mutex> lock(driverMutex);
@@ -5629,6 +5632,16 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                     found = true;
                     break;
                 }
+            }
+            if (!found && nameLooksLikeBitQualified) {
+                cfg.logical_name = logical_name;
+                cfg.datatype = "bool";
+                cfg.writable = true;
+                cfg.enabled = true;
+                cfg.source_type = "derived";
+                cfg.source_tag = directBitSourceName;
+                cfg.bit = directBitIndex;
+                found = true;
             }
             if (nameLooksLikeArrayElement && parsedArrayIndex >= 0) {
                 for (auto &t : driver.tags) {
