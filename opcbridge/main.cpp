@@ -5427,34 +5427,35 @@ static bool plc_tag_get_word_u64(const std::string &datatype,
                                  int &outBits,
                                  std::string &outError,
                                  bool isModbus = false,
-                                 const std::string &word_order = std::string("hi_lo"))
+                                 const std::string &word_order = std::string("hi_lo"),
+                                 int byteOffset = 0)
 {
     outWord = 0;
     outBits = 0;
     outError.clear();
 
     if (datatype == "int16") {
-        int16_t v = plc_tag_get_int16(handle, 0);
+        int16_t v = plc_tag_get_int16(handle, byteOffset);
         outWord = static_cast<uint16_t>(v);
         outBits = 16;
         return true;
     }
     if (datatype == "uint16") {
-        uint16_t v = static_cast<uint16_t>(plc_tag_get_uint16(handle, 0));
+        uint16_t v = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset));
         outWord = v;
         outBits = 16;
         return true;
     }
     if (datatype == "int32") {
         if (isModbus) {
-            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, 0));
-            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, 2));
+            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset));
+            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 2));
             const bool swapWords = (word_order == "lo_hi");
             const uint32_t hi = swapWords ? static_cast<uint32_t>(w1) : static_cast<uint32_t>(w0);
             const uint32_t lo = swapWords ? static_cast<uint32_t>(w0) : static_cast<uint32_t>(w1);
             outWord = (hi << 16) | lo;
         } else {
-            int32_t v = plc_tag_get_int32(handle, 0);
+            int32_t v = plc_tag_get_int32(handle, byteOffset);
             outWord = static_cast<uint32_t>(v);
         }
         outBits = 32;
@@ -5462,14 +5463,14 @@ static bool plc_tag_get_word_u64(const std::string &datatype,
     }
     if (datatype == "uint32") {
         if (isModbus) {
-            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, 0));
-            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, 2));
+            const uint16_t w0 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset));
+            const uint16_t w1 = static_cast<uint16_t>(plc_tag_get_uint16(handle, byteOffset + 2));
             const bool swapWords = (word_order == "lo_hi");
             const uint32_t hi = swapWords ? static_cast<uint32_t>(w1) : static_cast<uint32_t>(w0);
             const uint32_t lo = swapWords ? static_cast<uint32_t>(w0) : static_cast<uint32_t>(w1);
             outWord = (hi << 16) | lo;
         } else {
-            uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, 0));
+            uint32_t v = static_cast<uint32_t>(plc_tag_get_uint32(handle, byteOffset));
             outWord = v;
         }
         outBits = 32;
@@ -5485,15 +5486,16 @@ static bool plc_tag_set_word_u64(const std::string &datatype,
                                  uint64_t word,
                                  std::string &outError,
                                  bool isModbus = false,
-                                 const std::string &word_order = std::string("hi_lo"))
+                                 const std::string &word_order = std::string("hi_lo"),
+                                 int byteOffset = 0)
 {
     outError.clear();
     int status = PLCTAG_STATUS_OK;
 
     if (datatype == "int16") {
-        status = plc_tag_set_int16(handle, 0, static_cast<int16_t>(static_cast<uint16_t>(word)));
+        status = plc_tag_set_int16(handle, byteOffset, static_cast<int16_t>(static_cast<uint16_t>(word)));
     } else if (datatype == "uint16") {
-        status = plc_tag_set_uint16(handle, 0, static_cast<uint16_t>(word));
+        status = plc_tag_set_uint16(handle, byteOffset, static_cast<uint16_t>(word));
     } else if (datatype == "int32") {
         const uint32_t u = static_cast<uint32_t>(word);
         if (isModbus) {
@@ -5502,10 +5504,10 @@ static bool plc_tag_set_word_u64(const std::string &datatype,
             const bool swapWords = (word_order == "lo_hi");
             const uint16_t w0 = swapWords ? lo : hi;
             const uint16_t w1 = swapWords ? hi : lo;
-            status = plc_tag_set_uint16(handle, 0, w0);
-            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+            status = plc_tag_set_uint16(handle, byteOffset, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, byteOffset + 2, w1);
         } else {
-            status = plc_tag_set_int32(handle, 0, static_cast<int32_t>(u));
+            status = plc_tag_set_int32(handle, byteOffset, static_cast<int32_t>(u));
         }
     } else if (datatype == "uint32") {
         const uint32_t u = static_cast<uint32_t>(word);
@@ -5515,10 +5517,10 @@ static bool plc_tag_set_word_u64(const std::string &datatype,
             const bool swapWords = (word_order == "lo_hi");
             const uint16_t w0 = swapWords ? lo : hi;
             const uint16_t w1 = swapWords ? hi : lo;
-            status = plc_tag_set_uint16(handle, 0, w0);
-            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, 2, w1);
+            status = plc_tag_set_uint16(handle, byteOffset, w0);
+            if (status == PLCTAG_STATUS_OK) status = plc_tag_set_uint16(handle, byteOffset + 2, w1);
         } else {
-            status = plc_tag_set_uint32(handle, 0, u);
+            status = plc_tag_set_uint32(handle, byteOffset, u);
         }
     } else {
         outError = "Unsupported source datatype for derived-bit write: '" + datatype + "'";
@@ -6049,6 +6051,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         const bool desiredUnderlying = cfg.invert ? (!desiredPublished) : desiredPublished;
 
         TagConfig srcCfg;
+        int32_t srcConfiguredHandle = PLCTAG_ERR_NOT_FOUND;
+        int srcElementIndex = -1;
 
         const std::string srcName = cfg.source_tag;
         const std::string srcKey = make_tag_key(conn_id, srcName);
@@ -6064,7 +6068,23 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                 for (auto &t : driver.tags) {
                     if (t.cfg.logical_name == srcName) {
                         srcCfg = t.cfg;
+                        srcConfiguredHandle = t.handle;
                         break;
+                    }
+                }
+                if (srcCfg.logical_name.empty()) {
+                    std::string sourceParentName;
+                    int sourceParentIndex = -1;
+                    if (parse_array_element_logical_name(srcName, sourceParentName, sourceParentIndex)) {
+                        for (auto &t : driver.tags) {
+                            if (t.cfg.logical_name == sourceParentName &&
+                                t.cfg.elem_count > sourceParentIndex) {
+                                srcCfg = t.cfg;
+                                srcConfiguredHandle = t.handle;
+                                srcElementIndex = sourceParentIndex;
+                                break;
+                            }
+                        }
                     }
                 }
                 break;
@@ -6103,17 +6123,25 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             return false;
         }
 
-        if (srcCfg.elem_count > 1) {
+        if (srcCfg.elem_count > 1 && srcElementIndex < 0) {
             std::cerr << "Derived tag '" << logical_name
                       << "' source tag '" << srcName
                       << "' has elem_count > 1; derived-bit writes require a scalar source (e.g. TagName[0]).\n";
             return false;
         }
 
-        // Use a temporary, scalar handle for strict read-modify-write so we don't risk
-        // overwriting other elements of an array handle's buffer.
+        if (srcElementIndex >= 0 && srcElementIndex >= srcCfg.elem_count) {
+            std::cerr << "Derived tag '" << logical_name
+                      << "' source tag '" << srcName
+                      << "' resolves outside parent array '" << srcCfg.logical_name
+                      << "' elem_count=" << srcCfg.elem_count << ".\n";
+            return false;
+        }
+
+        // Use a temporary handle for strict read-modify-write.
+        // For array element sources, read/write the parent array buffer at the element byte offset.
         TagConfig srcTmp = srcCfg;
-        srcTmp.elem_count = 1;
+        if (srcElementIndex < 0) srcTmp.elem_count = 1;
 
         std::string srcTagStr;
         try {
@@ -6124,12 +6152,19 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             return false;
         }
 
-        const int32_t srcHandle = plc_tag_create(srcTagStr.c_str(), conn.default_timeout_ms);
+        int32_t srcHandle = PLCTAG_ERR_NOT_FOUND;
+        bool destroySrcHandle = false;
+        if (srcElementIndex >= 0 && srcConfiguredHandle >= 0) {
+            srcHandle = srcConfiguredHandle;
+        } else {
+            srcHandle = plc_tag_create(srcTagStr.c_str(), conn.default_timeout_ms);
+            destroySrcHandle = true;
+        }
         std::string readyErr;
         if (!wait_for_tag_ready(srcHandle, conn.default_timeout_ms, readyErr)) {
             std::cerr << "Derived write failed creating source handle for ["
                       << conn_id << "]." << srcName << ": " << readyErr << "\n";
-            if (srcHandle >= 0) plc_tag_destroy(srcHandle);
+            if (destroySrcHandle && srcHandle >= 0) plc_tag_destroy(srcHandle);
             return false;
         }
 
@@ -6139,18 +6174,21 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             std::cerr << "Derived write read failed for source ["
                       << conn_id << "]." << srcName
                       << ": " << plc_tag_decode_error(rs) << "\n";
-            plc_tag_destroy(srcHandle);
+            if (destroySrcHandle) plc_tag_destroy(srcHandle);
             return false;
         }
 
+        const int srcByteOffset = srcElementIndex >= 0
+            ? srcElementIndex * static_cast<int>(datatype_size_bytes(srcCfg.datatype))
+            : 0;
         uint64_t curWord = 0;
         int wordBits = 0;
         std::string rwErr;
-        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, curWord, wordBits, rwErr, is_modbus_connection(conn), srcCfg.word_order)) {
+        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, curWord, wordBits, rwErr, is_modbus_connection(conn), srcCfg.word_order, srcByteOffset)) {
             std::cerr << "Derived write failed for ["
                       << conn_id << "]." << logical_name
                       << ": " << rwErr << "\n";
-            plc_tag_destroy(srcHandle);
+            if (destroySrcHandle) plc_tag_destroy(srcHandle);
             return false;
         }
         if (cfg.bit >= wordBits) {
@@ -6158,18 +6196,18 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                       << conn_id << "]." << logical_name
                       << ": bit " << cfg.bit << " out of range for " << srcCfg.datatype
                       << " (" << wordBits << " bits)\n";
-            plc_tag_destroy(srcHandle);
+            if (destroySrcHandle) plc_tag_destroy(srcHandle);
             return false;
         }
 
         const uint64_t mask = (1ULL << static_cast<uint64_t>(cfg.bit));
         uint64_t nextWord = desiredUnderlying ? (curWord | mask) : (curWord & ~mask);
 
-        if (!plc_tag_set_word_u64(srcCfg.datatype, srcHandle, nextWord, rwErr, is_modbus_connection(conn), srcCfg.word_order)) {
+        if (!plc_tag_set_word_u64(srcCfg.datatype, srcHandle, nextWord, rwErr, is_modbus_connection(conn), srcCfg.word_order, srcByteOffset)) {
             std::cerr << "Derived write set failed for source ["
                       << conn_id << "]." << srcName
                       << ": " << rwErr << "\n";
-            plc_tag_destroy(srcHandle);
+            if (destroySrcHandle) plc_tag_destroy(srcHandle);
             return false;
         }
 
@@ -6178,7 +6216,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             std::cerr << "Derived write plc_tag_write failed for source ["
                       << conn_id << "]." << srcName
                       << ": " << plc_tag_decode_error(ws) << "\n";
-            plc_tag_destroy(srcHandle);
+            if (destroySrcHandle) plc_tag_destroy(srcHandle);
             return false;
         }
 
@@ -6188,17 +6226,17 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             std::cerr << "Derived write verify read failed for source ["
                       << conn_id << "]." << srcName
                       << ": " << plc_tag_decode_error(vs) << "\n";
-            plc_tag_destroy(srcHandle);
+            if (destroySrcHandle) plc_tag_destroy(srcHandle);
             return false;
         }
 
         uint64_t verifyWord = 0;
         int verifyBits = 0;
-        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, verifyWord, verifyBits, rwErr, is_modbus_connection(conn), srcCfg.word_order)) {
+        if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, verifyWord, verifyBits, rwErr, is_modbus_connection(conn), srcCfg.word_order, srcByteOffset)) {
             std::cerr << "Derived write verify get failed for source ["
                       << conn_id << "]." << srcName
                       << ": " << rwErr << "\n";
-            plc_tag_destroy(srcHandle);
+            if (destroySrcHandle) plc_tag_destroy(srcHandle);
             return false;
         }
 
@@ -6208,7 +6246,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                       << conn_id << "]." << logical_name
                       << ": wrote bit=" << (desiredUnderlying ? "1" : "0")
                       << " but read back " << (verifyUnderlying ? "1" : "0") << "\n";
-            plc_tag_destroy(srcHandle);
+            if (destroySrcHandle) plc_tag_destroy(srcHandle);
             return false;
         }
 
@@ -6239,7 +6277,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             table[key] = dSnap;
         }
 
-        plc_tag_destroy(srcHandle);
+        if (destroySrcHandle) plc_tag_destroy(srcHandle);
 
         std::cout << "Write OK (derived): [" << conn.id << "] "
                   << logical_name << " := " << value_str
@@ -22103,11 +22141,12 @@ window.addEventListener("load", startAutoRefresh);
                     std::string tag_name= body.at("name").get<std::string>();
                     std::string value   = body.at("value").get<std::string>();
 
-                    bool ok = write_tag_by_name(drivers, conn_id, tag_name, value, tagTable, driverMutex);
+                    std::string writeErr;
+                    bool ok = write_tag_by_name(drivers, conn_id, tag_name, value, tagTable, driverMutex, &writeErr);
 
                     resp["ok"] = ok;
                     if (!ok) {
-                        resp["error"] = "Write failed (see server log for details).";
+                        resp["error"] = writeErr.empty() ? "Write failed (see server log for details)." : writeErr;
                         res.status = 400;
                     } else {
                         resp["message"] = "Write successful.";

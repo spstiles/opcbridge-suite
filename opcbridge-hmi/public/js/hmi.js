@@ -5163,6 +5163,17 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
 
   if (!serverLoggedIn) {
     if (authSession) {
+      if (isAuthTimeoutSuppressed()) {
+        if (!authServerLoggedOutSinceMs) {
+          authServerLoggedOutSinceMs = Date.now();
+          recordAuthDiagnostic("server-session-missing-edit-mode-suppressed", {
+            source,
+            status: authStatusSummary(authInfo)
+          });
+        }
+        markAuthActivity({ force: true });
+        return false;
+      }
       const now = Date.now();
       if (!authServerLoggedOutSinceMs) {
         authServerLoggedOutSinceMs = now;
@@ -15043,6 +15054,7 @@ const setMode = (next) => {
     };
   }
   isEditMode = next;
+  if (isEditMode) markAuthActivity({ force: true });
   document.body.classList.toggle("edit-mode", isEditMode);
   document.body.classList.toggle("runtime-mode", !isEditMode);
   if (toolbar) toolbar.classList.toggle("is-hidden", !isEditMode);
@@ -16114,7 +16126,7 @@ if (!authActivityTimer) {
   authActivityTimer = window.setInterval(() => {
     if (!authSession) return;
     if (isAuthTimeoutSuppressed()) {
-      markAuthActivity();
+      markAuthActivity({ force: true });
       return;
     }
     if (!isAuthSessionExpired()) return;
