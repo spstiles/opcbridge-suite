@@ -707,6 +707,9 @@ static bool sqlite_alarms_config_put(const json &cfg, int64_t updatedMs, std::st
 }
 bool sqlite_init(const std::string &configDir);
 static std::string trim_copy(const std::string &s);
+static bool parse_bit_qualified_source_name(const std::string &name,
+                                            std::string &sourceNameOut,
+                                            int &bitOut);
 
 using TagTable = std::map<std::string, TagSnapshot>; // key "conn:tag"
 
@@ -4222,8 +4225,16 @@ static std::string normalize_word_order(const std::string &raw) {
 	                sourceKind = "memory";
 	            }
 	            const bool isMemory = (sourceKind == "memory");
-	            const std::string source_tag = json_get_string_loose(jt, "source_tag", isMemory ? std::string{} : sourceCompat);
-	            const int bit = json_get_int_loose(jt, "bit", -1);
+	            std::string source_tag = json_get_string_loose(jt, "source_tag", isMemory ? std::string{} : sourceCompat);
+	            int bit = json_get_int_loose(jt, "bit", -1);
+	            if (!source_tag.empty()) {
+	                std::string bitQualifiedSource;
+	                int bitQualifiedIndex = -1;
+	                if (parse_bit_qualified_source_name(source_tag, bitQualifiedSource, bitQualifiedIndex)) {
+	                    source_tag = bitQualifiedSource;
+	                    bit = bitQualifiedIndex;
+	                }
+	            }
 	            const bool hasSource = (!source_tag.empty());
 	            const bool isDerivedBit = (hasSource && bit >= 0);
 	            const bool isDerivedAlias = (hasSource && bit < 0);
@@ -4472,6 +4483,33 @@ static bool parse_array_element_logical_name(const std::string &name,
         if (idx < 0) return false;
         baseNameOut = name.substr(0, open);
         elementIndexOut = idx;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static bool parse_bit_qualified_source_name(const std::string &name,
+                                            std::string &sourceNameOut,
+                                            int &bitOut) {
+    sourceNameOut.clear();
+    bitOut = -1;
+
+    const std::string trimmed = trim_copy(name);
+    const size_t dot = trimmed.rfind('.');
+    if (dot == std::string::npos || dot == 0 || dot + 1 >= trimmed.size()) return false;
+
+    const std::string bitText = trimmed.substr(dot + 1);
+    for (char ch : bitText) {
+        if (!std::isdigit(static_cast<unsigned char>(ch))) return false;
+    }
+
+    try {
+        const int bit = std::stoi(bitText);
+        if (bit < 0 || bit > 63) return false;
+        sourceNameOut = trimmed.substr(0, dot);
+        if (sourceNameOut.empty()) return false;
+        bitOut = bit;
         return true;
     } catch (...) {
         return false;
@@ -5709,7 +5747,10 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         return fail(msg);
     }
 
-    const bool isDerivedAlias = (!cfg.source_tag.empty() && cfg.bit < 0);
+    std::string cfgBitQualifiedSource;
+    int cfgBitQualifiedIndex = -1;
+    const bool cfgSourceHasBitQualifier = parse_bit_qualified_source_name(cfg.source_tag, cfgBitQualifiedSource, cfgBitQualifiedIndex);
+    const bool isDerivedAlias = (!cfg.source_tag.empty() && cfg.bit < 0 && !cfgSourceHasBitQualifier);
     if (isDerivedAlias) {
         const std::string sourceName = cfg.source_tag;
         if (sourceName.empty() || sourceName == logical_name) {
@@ -6033,19 +6074,31 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         return true;
     }
 
-    const bool isDerivedBit = (!cfg.source_tag.empty() && cfg.bit >= 0);
+    const bool isDerivedBit = (!cfg.source_tag.empty() && (cfg.bit >= 0 || cfgSourceHasBitQualifier));
     if (isDerivedBit) {
+        std::string srcName = cfg.source_tag;
+        int derivedBit = cfg.bit;
+        if (cfgSourceHasBitQualifier) {
+            srcName = cfgBitQualifiedSource;
+            derivedBit = cfgBitQualifiedIndex;
+        }
+
         if (cfg.datatype != "bool") {
-            std::cerr << "Derived tag '" << logical_name
-                      << "' must have datatype 'bool'.\n";
-            return false;
+            const std::string msg = "Derived tag '" + logical_name + "' must have datatype 'bool'.";
+            std::cerr << msg << "\n";
+            return fail(msg);
+        }
+        if (derivedBit < 0 || derivedBit > 63) {
+            const std::string msg = "Derived tag '" + logical_name + "' has invalid bit index " + std::to_string(derivedBit) + ".";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
         // Strict derived-bit write: read source tag immediately, modify the bit, write, then verify by re-reading.
         bool desiredPublished = false;
         if (!parse_bool(value_str, desiredPublished)) {
-            std::cerr << "Write parse failed for derived bool value '"
-                      << value_str << "' for [" << conn_id << "]." << logical_name << "\n";
-            return false;
+            const std::string msg = "Write parse failed for derived bool value '" + value_str + "' for [" + conn_id + "]." + logical_name;
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         const bool desiredUnderlying = cfg.invert ? (!desiredPublished) : desiredPublished;
@@ -6054,7 +6107,6 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         int32_t srcConfiguredHandle = PLCTAG_ERR_NOT_FOUND;
         int srcElementIndex = -1;
 
-        const std::string srcName = cfg.source_tag;
         const std::string srcKey = make_tag_key(conn_id, srcName);
         TagSnapshot prevDerived;
         bool hadPrevDerived = false;
@@ -6103,39 +6155,33 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
 
         if (srcCfg.logical_name.empty()) {
-            std::cerr << "Derived tag '" << logical_name
-                      << "' source tag '" << srcName
-                      << "' not found.\n";
-            return false;
+            const std::string msg = "Derived tag '" + logical_name + "' source tag '" + srcName + "' not found.";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         if (!srcCfg.writable) {
-            std::cerr << "Derived tag '" << logical_name
-                      << "' source tag '" << srcName
-                      << "' is not marked writable.\n";
-            return false;
+            const std::string msg = "Derived tag '" + logical_name + "' source tag '" + srcName + "' is not marked writable.";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         if (srcCfg.plc_tag_name.empty()) {
-            std::cerr << "Derived tag '" << logical_name
-                      << "' source tag '" << srcName
-                      << "' is missing plc_tag_name.\n";
-            return false;
+            const std::string msg = "Derived tag '" + logical_name + "' source tag '" + srcName + "' is missing plc_tag_name.";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         if (srcCfg.elem_count > 1 && srcElementIndex < 0) {
-            std::cerr << "Derived tag '" << logical_name
-                      << "' source tag '" << srcName
-                      << "' has elem_count > 1; derived-bit writes require a scalar source (e.g. TagName[0]).\n";
-            return false;
+            const std::string msg = "Derived tag '" + logical_name + "' source tag '" + srcName + "' has elem_count > 1; derived-bit writes require a scalar source (e.g. " + srcName + "[0]).";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         if (srcElementIndex >= 0 && srcElementIndex >= srcCfg.elem_count) {
-            std::cerr << "Derived tag '" << logical_name
-                      << "' source tag '" << srcName
-                      << "' resolves outside parent array '" << srcCfg.logical_name
-                      << "' elem_count=" << srcCfg.elem_count << ".\n";
-            return false;
+            const std::string msg = "Derived tag '" + logical_name + "' source tag '" + srcName + "' resolves outside parent array '" + srcCfg.logical_name + "' elem_count=" + std::to_string(srcCfg.elem_count) + ".";
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         // Use a temporary handle for strict read-modify-write.
@@ -6147,9 +6193,9 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         try {
             srcTagStr = build_tag_conn_str(conn, srcTmp);
         } catch (const std::exception &ex) {
-            std::cerr << "Derived write failed building source tag string for ["
-                      << conn_id << "]." << srcName << ": " << ex.what() << "\n";
-            return false;
+            const std::string msg = "Derived write failed building source tag string for [" + conn_id + "]." + srcName + ": " + ex.what();
+            std::cerr << msg << "\n";
+            return fail(msg);
         }
 
         int32_t srcHandle = PLCTAG_ERR_NOT_FOUND;
@@ -6162,20 +6208,19 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
         std::string readyErr;
         if (!wait_for_tag_ready(srcHandle, conn.default_timeout_ms, readyErr)) {
-            std::cerr << "Derived write failed creating source handle for ["
-                      << conn_id << "]." << srcName << ": " << readyErr << "\n";
+            const std::string msg = "Derived write failed creating source handle for [" + conn_id + "]." + srcName + ": " + readyErr;
+            std::cerr << msg << "\n";
             if (destroySrcHandle && srcHandle >= 0) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
 
         // Read source fresh
         int rs = plc_tag_read(srcHandle, conn.default_read_ms);
         if (rs != PLCTAG_STATUS_OK) {
-            std::cerr << "Derived write read failed for source ["
-                      << conn_id << "]." << srcName
-                      << ": " << plc_tag_decode_error(rs) << "\n";
+            const std::string msg = "Derived write read failed for source [" + conn_id + "]." + srcName + ": " + plc_tag_decode_error(rs);
+            std::cerr << msg << "\n";
             if (destroySrcHandle) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
 
         const int srcByteOffset = srcElementIndex >= 0
@@ -6185,69 +6230,60 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         int wordBits = 0;
         std::string rwErr;
         if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, curWord, wordBits, rwErr, is_modbus_connection(conn), srcCfg.word_order, srcByteOffset)) {
-            std::cerr << "Derived write failed for ["
-                      << conn_id << "]." << logical_name
-                      << ": " << rwErr << "\n";
+            const std::string msg = "Derived write failed for [" + conn_id + "]." + logical_name + ": " + rwErr;
+            std::cerr << msg << "\n";
             if (destroySrcHandle) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
-        if (cfg.bit >= wordBits) {
-            std::cerr << "Derived write failed for ["
-                      << conn_id << "]." << logical_name
-                      << ": bit " << cfg.bit << " out of range for " << srcCfg.datatype
-                      << " (" << wordBits << " bits)\n";
+        if (derivedBit >= wordBits) {
+            const std::string msg = "Derived write failed for [" + conn_id + "]." + logical_name + ": bit " + std::to_string(derivedBit) + " out of range for " + srcCfg.datatype + " (" + std::to_string(wordBits) + " bits)";
+            std::cerr << msg << "\n";
             if (destroySrcHandle) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
 
-        const uint64_t mask = (1ULL << static_cast<uint64_t>(cfg.bit));
+        const uint64_t mask = (1ULL << static_cast<uint64_t>(derivedBit));
         uint64_t nextWord = desiredUnderlying ? (curWord | mask) : (curWord & ~mask);
 
         if (!plc_tag_set_word_u64(srcCfg.datatype, srcHandle, nextWord, rwErr, is_modbus_connection(conn), srcCfg.word_order, srcByteOffset)) {
-            std::cerr << "Derived write set failed for source ["
-                      << conn_id << "]." << srcName
-                      << ": " << rwErr << "\n";
+            const std::string msg = "Derived write set failed for source [" + conn_id + "]." + srcName + ": " + rwErr;
+            std::cerr << msg << "\n";
             if (destroySrcHandle) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
 
         int ws = plc_tag_write(srcHandle, conn.default_write_ms);
         if (ws != PLCTAG_STATUS_OK) {
-            std::cerr << "Derived write plc_tag_write failed for source ["
-                      << conn_id << "]." << srcName
-                      << ": " << plc_tag_decode_error(ws) << "\n";
+            const std::string msg = "Derived write plc_tag_write failed for source [" + conn_id + "]." + srcName + ": " + plc_tag_decode_error(ws);
+            std::cerr << msg << "\n";
             if (destroySrcHandle) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
 
         // Verify by re-reading
         int vs = plc_tag_read(srcHandle, conn.default_read_ms);
         if (vs != PLCTAG_STATUS_OK) {
-            std::cerr << "Derived write verify read failed for source ["
-                      << conn_id << "]." << srcName
-                      << ": " << plc_tag_decode_error(vs) << "\n";
+            const std::string msg = "Derived write verify read failed for source [" + conn_id + "]." + srcName + ": " + plc_tag_decode_error(vs);
+            std::cerr << msg << "\n";
             if (destroySrcHandle) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
 
         uint64_t verifyWord = 0;
         int verifyBits = 0;
         if (!plc_tag_get_word_u64(srcCfg.datatype, srcHandle, verifyWord, verifyBits, rwErr, is_modbus_connection(conn), srcCfg.word_order, srcByteOffset)) {
-            std::cerr << "Derived write verify get failed for source ["
-                      << conn_id << "]." << srcName
-                      << ": " << rwErr << "\n";
+            const std::string msg = "Derived write verify get failed for source [" + conn_id + "]." + srcName + ": " + rwErr;
+            std::cerr << msg << "\n";
             if (destroySrcHandle) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
 
-        const bool verifyUnderlying = ((verifyWord >> static_cast<uint64_t>(cfg.bit)) & 1ULL) != 0ULL;
+        const bool verifyUnderlying = ((verifyWord >> static_cast<uint64_t>(derivedBit)) & 1ULL) != 0ULL;
         if (verifyUnderlying != desiredUnderlying) {
-            std::cerr << "Derived write verify mismatch for ["
-                      << conn_id << "]." << logical_name
-                      << ": wrote bit=" << (desiredUnderlying ? "1" : "0")
-                      << " but read back " << (verifyUnderlying ? "1" : "0") << "\n";
+            const std::string msg = "Derived write verify mismatch for [" + conn_id + "]." + logical_name + ": wrote bit=" + (desiredUnderlying ? std::string("1") : std::string("0")) + " but read back " + (verifyUnderlying ? std::string("1") : std::string("0"));
+            std::cerr << msg << "\n";
             if (destroySrcHandle) plc_tag_destroy(srcHandle);
-            return false;
+            return fail(msg);
         }
 
         const auto now = std::chrono::system_clock::now();
@@ -6281,7 +6317,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         std::cout << "Write OK (derived): [" << conn.id << "] "
                   << logical_name << " := " << value_str
-                  << " (source=" << srcName << " bit=" << cfg.bit << ")\n";
+                  << " (source=" << srcName << " bit=" << derivedBit << ")\n";
 
         if (cfg.log_event_on_change) {
             const bool valueChanged = !hadPrevDerived || !snapshot_values_equal(dSnap, prevDerived);
