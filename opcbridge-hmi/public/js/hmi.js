@@ -12489,12 +12489,19 @@ const renderMultiStateEditor = (obj) => {
   const tagRow = makeRow("Tag", tagInline);
   form.appendChild(tagRow);
 
-  const expressionInput = document.createElement("input");
-  expressionInput.type = "text";
-  expressionInput.className = "automation-tag-input";
-  expressionInput.value = automation.expression || "";
-  expressionInput.placeholder = 'tag("conn", "tag")';
-  const expressionRow = makeRow("Expression", expressionInput);
+  const expressionInline = document.createElement("div");
+  expressionInline.className = "prop-subgroup";
+  const expressionSummary = document.createElement("div");
+  expressionSummary.className = "expression-summary";
+  const expressionValue = String(automation.expression || "").trim();
+  expressionSummary.textContent = expressionValue || "(empty)";
+  expressionSummary.title = expressionValue;
+  const expressionEditBtn = document.createElement("button");
+  expressionEditBtn.type = "button";
+  expressionEditBtn.className = "panel-btn";
+  expressionEditBtn.textContent = "Edit…";
+  expressionInline.append(expressionSummary, expressionEditBtn);
+  const expressionRow = makeRow("Expression", expressionInline);
   form.appendChild(expressionRow);
 
   const modeSelect = document.createElement("select");
@@ -12682,12 +12689,16 @@ const renderMultiStateEditor = (obj) => {
       sourceType: sourceTypeSelect.value === "expression" ? "expression" : "tag",
       connection_id: connectionInput.value,
       tag: tagInput.value,
-      expression: expressionInput.value
+      expression: automation.expression || ""
     });
   });
   connectionInput.addEventListener("change", () => updateAutomation({ sourceType: "tag", connection_id: connectionInput.value, tag: tagInput.value }));
   tagInput.addEventListener("change", () => updateAutomation({ sourceType: "tag", connection_id: connectionInput.value, tag: tagInput.value }));
-  expressionInput.addEventListener("change", () => updateAutomation({ sourceType: "expression", expression: expressionInput.value }));
+  expressionEditBtn.addEventListener("click", () => openAutomationNumericExpressionModal({
+    title: "Multi-State Expression",
+    value: automation.expression || "",
+    apply: (expression) => updateAutomation({ sourceType: "expression", expression, enabled: true })
+  }));
   modeSelect.addEventListener("change", () => updateAutomation({ mode: modeSelect.value === "threshold" ? "threshold" : "equals" }));
   deleteAutomationBtn.addEventListener("click", () => {
     recordHistory();
