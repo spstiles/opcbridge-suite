@@ -5052,12 +5052,15 @@ let hmiUiConfig = {
 const AUTH_SESSION_KEY = "opcbridge-hmi.session";
 const AUTH_DIAGNOSTICS_KEY = "opcbridge-hmi.authDiagnostics";
 const AUTH_SERVER_LOGOUT_GRACE_MS = 10000;
+const AUTH_EDIT_EXIT_GRACE_MS = 15000;
 let authInfo = { initialized: false, timeoutMinutes: 0, users: [] };
 let authSession = null;
 let authActivityTimer = null;
 let authSyncTimer = null;
 let authActivityLastMarkMs = 0;
 let authActivityLastTouchMs = 0;
+let authActivityTouchInFlight = false;
+let authEditExitGraceUntilMs = 0;
 let authServerLoggedOutSinceMs = 0;
 let pendingEditModeAfterLogin = false;
 
@@ -5222,7 +5225,7 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   return true;
 };
 
-const isAuthTimeoutSuppressed = () => Boolean(isEditMode);
+const isAuthTimeoutSuppressed = () => Boolean(isEditMode) || Date.now() < authEditExitGraceUntilMs;
 
 const markAuthActivity = ({ force = false } = {}) => {
   if (!authSession) return;
@@ -5245,7 +5248,21 @@ const markAuthActivity = ({ force = false } = {}) => {
   const timeoutMinutes = getAuthTimeoutMinutes();
   if (timeoutMinutes > 0 && (force || now - authActivityLastTouchMs > 30000)) {
     authActivityLastTouchMs = now;
-    apiAuthTouch().catch(() => {});
+    authActivityTouchInFlight = true;
+    apiAuthTouch()
+      .then(() => {
+        authServerLoggedOutSinceMs = 0;
+      })
+      .catch((error) => {
+        recordAuthDiagnostic("auth-touch-failed", {
+          mode: isEditMode ? "edit" : "runtime",
+          suppressed: isAuthTimeoutSuppressed(),
+          message: error?.message || String(error || "unknown")
+        });
+      })
+      .finally(() => {
+        authActivityTouchInFlight = false;
+      });
   }
 };
 
@@ -5468,6 +5485,7 @@ const refreshAuthUi = async () => {
 
 const syncAuthFromServer = async () => {
   if (document?.hidden) return;
+  if (authActivityTouchInFlight || (authSession && isAuthTimeoutSuppressed())) return;
   try {
     const status = await apiAuthStatus();
     syncLocalAuthFromStatus(status, "syncAuthFromServer");
@@ -6685,7 +6703,7 @@ const normalizeTextBinding = (bind) => {
   const connection_id = String(bind.connection_id || "").trim();
   const tag = String(bind.tag || "").trim();
   const digits = Number.isFinite(Number(bind.digits)) ? Math.max(1, Math.trunc(Number(bind.digits))) : "";
-  const padZeros = Boolean(bind.padZeros);
+  const padZeros = bind.padZeros === true || String(bind.padZeros || "").trim().toLowerCase() === "true";
   const decimals = Number.isFinite(Number(bind.decimals)) ? Math.max(0, Math.trunc(Number(bind.decimals))) : 0;
   const multiplier = Number.isFinite(Number(bind.multiplier)) ? Number(bind.multiplier) : 1;
   const hasValue = Boolean(connection_id || tag || digits !== "" || padZeros || decimals !== 0 || multiplier !== 1);
@@ -6818,19 +6836,18 @@ const formatBoundNumber = (rawValue, bind) => {
   if (!Number.isFinite(numeric)) return null;
   const multiplier = Number.isFinite(Number(bind?.multiplier)) ? Number(bind.multiplier) : 1;
   const digits = Number.isFinite(Number(bind?.digits)) ? Math.trunc(Number(bind.digits)) : 0;
-  const padZeros = Boolean(bind?.padZeros);
+  const padZeros = bind?.padZeros === true || String(bind?.padZeros || "").trim().toLowerCase() === "true";
   const decimals = Number.isFinite(Number(bind?.decimals)) ? Math.max(0, Math.trunc(Number(bind.decimals))) : 0;
   const scaled = numeric * multiplier;
   const fixed = scaled.toFixed(decimals);
   if (digits <= 0) return fixed;
   const [intPart, decPart] = fixed.split(".");
   const intDigits = Math.max(1, digits - decimals);
-  const padChar = padZeros ? "0" : " ";
   const sign = intPart.startsWith("-") ? "-" : "";
   const unsignedInt = sign ? intPart.slice(1) : intPart;
   const fittedUnsignedInt = unsignedInt.length > intDigits
     ? unsignedInt.slice(unsignedInt.length - intDigits)
-    : unsignedInt.padStart(intDigits, padChar);
+    : (padZeros ? unsignedInt.padStart(intDigits, "0") : unsignedInt);
   const fittedDecPart = decPart !== undefined
     ? decPart.slice(0, decimals)
     : undefined;
@@ -8893,7 +8910,9 @@ const openTextBindingModal = (placeholderKey, objectType = "text") => {
   if (textBindingTitle) textBindingTitle.textContent = `${objectType === "button" ? "Button Label" : "Text"} Binding {${key}}`;
   setTagBindingFieldValues(textBindingConnectionInput, textBindingTagInput, binding);
   setInputValueSafe(textBindingDigitsInput, binding?.digits ?? "");
-  if (textBindingPadZerosInput) textBindingPadZerosInput.checked = Boolean(binding?.padZeros);
+  if (textBindingPadZerosInput) {
+    textBindingPadZerosInput.checked = binding?.padZeros === true || String(binding?.padZeros || "").trim().toLowerCase() === "true";
+  }
   setInputValueSafe(textBindingDecimalsInput, Number.isFinite(Number(binding?.decimals)) ? Number(binding.decimals) : 0);
   setInputValueSafe(textBindingMultiplierInput, Number.isFinite(Number(binding?.multiplier)) ? Number(binding.multiplier) : 1);
   textBindingOverlay.classList.remove("is-hidden");
@@ -15046,6 +15065,10 @@ const setMode = (next) => {
   if (!next && poseEditSession) cancelPoseEdit({ keepTool: true });
   if (!next && automationPanelOpen) closeAutomationPanel();
   const wasEditMode = isEditMode;
+  if (wasEditMode && !next && authSession) {
+    authEditExitGraceUntilMs = Date.now() + AUTH_EDIT_EXIT_GRACE_MS;
+    markAuthActivity({ force: true });
+  }
   if (wasEditMode && !next) {
     lastEditUiState = {
       selectedIndices: Array.isArray(selectedIndices) ? [...selectedIndices] : [],
