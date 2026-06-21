@@ -4603,6 +4603,38 @@ const screenHasAlarmsPanel = () => {
   return Boolean(currentScreenObj && walk(currentScreenObj.objects));
 };
 
+const findAlarmsPanelObjectByScrollKey = (scrollKey) => {
+  const walk = (objects) => {
+    if (!Array.isArray(objects)) return null;
+    for (const obj of objects) {
+      if (!obj) continue;
+      if (obj.type === "alarms-panel" && getAlarmsPanelScrollKey(obj) === scrollKey) return obj;
+      if (obj.type === "group") {
+        const found = walk(obj.children);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  return walk(currentScreenObj?.objects);
+};
+
+const refreshRenderedAlarmsPanels = () => {
+  if (!hmiSvg) return false;
+  const lists = Array.from(hmiSvg.querySelectorAll(".hmi-alarms-panel-list[data-alarms-panel-key]"));
+  if (!lists.length) return false;
+  lists.forEach((list) => {
+    const scrollKey = String(list.dataset?.alarmsPanelKey || "");
+    const obj = findAlarmsPanelObjectByScrollKey(scrollKey);
+    if (!obj) return;
+    const previousScrollTop = list.scrollTop;
+    populateAlarmsPanelList(list, obj);
+    list.scrollTop = Math.min(previousScrollTop, Math.max(0, list.scrollHeight - list.clientHeight));
+    alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
+  });
+  return true;
+};
+
 const scheduleAlarmsRender = () => {
   if (alarmsRenderRaf != null) return;
   alarmsRenderRaf = window.requestAnimationFrame(() => {
@@ -4610,7 +4642,7 @@ const scheduleAlarmsRender = () => {
     renderAlarmsBadge();
     renderAlarmsOverlay();
     if (!isEditMode && screenHasAlarmsPanel() && !isEditingGestureActive() && !isKeypadOpen) {
-      renderScreen();
+      if (!refreshRenderedAlarmsPanels()) renderScreen();
     }
   });
 };
@@ -4714,6 +4746,83 @@ const getAlarmsPanelScrollKey = (obj) => {
   const w = Math.round(Number(obj?.w ?? 0));
   const h = Math.round(Number(obj?.h ?? 0));
   return `${screenId}:${x},${y},${w},${h}`;
+};
+
+const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtml") => {
+  if (!list || !obj) return;
+  list.textContent = "";
+  const nowMs = Date.now();
+  const onlyUnacked = Boolean(obj.onlyUnacked);
+  const showSource = obj.showSource !== false;
+  const maxRows = Math.max(1, Math.min(50, Math.round(Number(obj.maxRows ?? 8) || 8)));
+  const items = getAlarmTimelineRows()
+    .filter((row) => {
+      if (row?.enabled === false) return false;
+      const alarmForShelve = alarmsStateById.get(String(row?.alarm_id || "")) || row;
+      if (isAlarmShelvedNow(alarmForShelve, nowMs)) return false;
+      if (onlyUnacked && row?.acked) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const ta = Number(a?.last_event_ts_ms) || Number(a?.active_since_ms) || 0;
+      const tb = Number(b?.last_event_ts_ms) || Number(b?.active_since_ms) || 0;
+      if (tb !== ta) return tb - ta;
+      const sa = Number(a?.severity) || 0;
+      const sb = Number(b?.severity) || 0;
+      return sb - sa;
+    });
+
+  if (!items.length) {
+    const empty = document.createElementNS(xhtml, "div");
+    empty.className = "hmi-alarms-panel-empty";
+    empty.textContent = "No alarms.";
+    list.appendChild(empty);
+    return;
+  }
+
+  items.slice(0, maxRows).forEach((alarm) => {
+    const src = alarm?.source || {};
+    const connectionId = String(src?.connection_id || "");
+    const tagName = String(src?.tag || "");
+    const sourceText = showSource ? `${connectionId}:${tagName}`.trim() : tagName.trim();
+    let areaText = String(alarm?.area || src?.area || "").trim();
+    if (!areaText) {
+      const groupText = String(alarm?.group || src?.group || "").trim();
+      const siteText = String(alarm?.site || src?.site || "").trim();
+      if (groupText && siteText) areaText = `${groupText}-${siteText}`;
+      else areaText = groupText || siteText;
+    }
+    const baseDescText = getAlarmDisplayDescription(alarm);
+    const activeTs = Number(alarm?.active_since_ms) || 0;
+    const clearedTs = Number(alarm?.cleared_ts_ms) || 0;
+    const activeText = activeTs ? formatAlarmTimeMs(activeTs) : "";
+    const clearedText = clearedTs ? formatAlarmTimeMs(clearedTs) : "";
+    const statusText = String(alarm?.last_event_type || (alarm?.active ? "active" : "return") || "").toUpperCase();
+    const rawQuality = tagQualityCache.get(normalizeTagCacheKey(connectionId, tagName));
+    const qualityText = rawQuality === 1 ? "GOOD" : rawQuality === 0 ? "BAD" : rawQuality == null ? "-" : String(rawQuality);
+
+    const row = document.createElementNS(xhtml, "div");
+    row.className = "hmi-alarms-panel-row";
+    if (alarm?.active && !alarm?.acked) row.classList.add("is-active-unacked");
+    else if (alarm?.active && alarm?.acked) row.classList.add("is-active-acked");
+    else row.classList.add("is-returned");
+    if (rawQuality === 0) row.classList.add("is-bad-quality");
+
+    const makeCell = (text) => {
+      const cell = document.createElementNS(xhtml, "div");
+      cell.className = "hmi-alarms-panel-cell";
+      cell.textContent = text;
+      return cell;
+    };
+    row.appendChild(makeCell(activeText));
+    row.appendChild(makeCell(clearedText));
+    row.appendChild(makeCell(sourceText));
+    row.appendChild(makeCell(areaText));
+    row.appendChild(makeCell(baseDescText));
+    row.appendChild(makeCell(statusText));
+    row.appendChild(makeCell(qualityText));
+    list.appendChild(row);
+  });
 };
 
 const upsertTimelineFromAlarmEvent = (event) => {
@@ -10359,81 +10468,12 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    const list = document.createElementNS(xhtml, "div");
 	    list.className = "hmi-alarms-panel-list";
 	    const scrollKey = getAlarmsPanelScrollKey(obj);
+	    list.dataset.alarmsPanelKey = scrollKey;
 	    const previousScrollTop = Number(alarmsPanelScrollByKey.get(scrollKey)) || 0;
 	    list.addEventListener("scroll", () => {
 	      alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
 	    }, { passive: true });
-
-	    const nowMs = Date.now();
-	    const onlyUnacked = Boolean(obj.onlyUnacked);
-	    const showSource = obj.showSource !== false;
-	    const maxRows = Math.max(1, Math.min(50, Math.round(Number(obj.maxRows ?? 8) || 8)));
-	    const items = getAlarmTimelineRows()
-	      .filter((row) => {
-	        if (row?.enabled === false) return false;
-	        const alarmForShelve = alarmsStateById.get(String(row?.alarm_id || "")) || row;
-	        if (isAlarmShelvedNow(alarmForShelve, nowMs)) return false;
-	        if (onlyUnacked && row?.acked) return false;
-	        return true;
-	      })
-	      .sort((a, b) => {
-	        const ta = Number(a?.last_event_ts_ms) || Number(a?.active_since_ms) || 0;
-	        const tb = Number(b?.last_event_ts_ms) || Number(b?.active_since_ms) || 0;
-	        if (tb !== ta) return tb - ta;
-	        const sa = Number(a?.severity) || 0;
-	        const sb = Number(b?.severity) || 0;
-	        return sb - sa;
-	      });
-
-	    if (!items.length) {
-	      const empty = document.createElementNS(xhtml, "div");
-	      empty.className = "hmi-alarms-panel-empty";
-	      empty.textContent = "No alarms.";
-	      list.appendChild(empty);
-		    } else {
-		      items.slice(0, maxRows).forEach((alarm) => {
-		        const src = alarm?.source || {};
-		        const connectionId = String(src?.connection_id || "");
-		        const tagName = String(src?.tag || "");
-			        const sourceText = showSource ? `${connectionId}:${tagName}`.trim() : tagName.trim();
-				        let areaText = String(alarm?.area || src?.area || "").trim();
-				        if (!areaText) {
-				          const groupText = String(alarm?.group || src?.group || "").trim();
-				          const siteText = String(alarm?.site || src?.site || "").trim();
-				          if (groupText && siteText) areaText = `${groupText}-${siteText}`;
-				          else areaText = groupText || siteText;
-				        }
-			        const baseDescText = getAlarmDisplayDescription(alarm);
-			        const activeTs = Number(alarm?.active_since_ms) || 0;
-			        const clearedTs = Number(alarm?.cleared_ts_ms) || 0;
-			        const activeText = activeTs ? formatAlarmTimeMs(activeTs) : "";
-			        const clearedText = clearedTs ? formatAlarmTimeMs(clearedTs) : "";
-		        const statusText = String(alarm?.last_event_type || (alarm?.active ? "active" : "return") || "").toUpperCase();
-		        const rawQuality = tagQualityCache.get(normalizeTagCacheKey(connectionId, tagName));
-		        const qualityText = rawQuality === 1 ? "GOOD" : rawQuality === 0 ? "BAD" : rawQuality == null ? "-" : String(rawQuality);
-
-		        const row = document.createElementNS(xhtml, "div");
-		        row.className = "hmi-alarms-panel-row";
-	        if (alarm?.active && !alarm?.acked) row.classList.add("is-active-unacked");
-	        else if (alarm?.active && alarm?.acked) row.classList.add("is-active-acked");
-	        else row.classList.add("is-returned");
-	        if (rawQuality === 0) row.classList.add("is-bad-quality");
-		        const makeCell = (text) => {
-		          const cell = document.createElementNS(xhtml, "div");
-		          cell.className = "hmi-alarms-panel-cell";
-		          cell.textContent = text;
-		          return cell;
-		        };
-		        row.appendChild(makeCell(activeText));
-		        row.appendChild(makeCell(clearedText));
-		        row.appendChild(makeCell(sourceText));
-		        row.appendChild(makeCell(areaText));
-		        row.appendChild(makeCell(baseDescText));
-		        row.appendChild(makeCell(statusText));
-		        row.appendChild(makeCell(qualityText));
-		        list.appendChild(row);
-		      });
-		    }
+	    populateAlarmsPanelList(list, obj, xhtml);
 
 	    panel.appendChild(list);
 	    fo.appendChild(panel);
