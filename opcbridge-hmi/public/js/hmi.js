@@ -10510,9 +10510,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    fo.appendChild(panel);
 	    containerParent.appendChild(fo);
 	    if (previousScrollTop > 0) {
-	      requestAnimationFrame(() => {
-	        list.scrollTop = Math.min(previousScrollTop, Math.max(0, list.scrollHeight - list.clientHeight));
-	      });
+	      list.scrollTop = Math.min(previousScrollTop, Math.max(0, list.scrollHeight - list.clientHeight));
 	    }
 	    return;
 	  }
@@ -11315,6 +11313,10 @@ const openPopup = (screenId) => {
 
 const renderScreen = () => {
   if (!hmiSvg || !currentScreenObj) return;
+  hmiSvg.querySelectorAll?.(".hmi-alarms-panel-list[data-alarms-panel-key]").forEach((list) => {
+    const scrollKey = String(list.dataset?.alarmsPanelKey || "");
+    if (scrollKey) alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
+  });
   const prevNodes = Array.from(hmiSvg.childNodes);
   const prevRenderedElements = renderedElements;
   const prevRenderedMeta = renderedElementMeta;
