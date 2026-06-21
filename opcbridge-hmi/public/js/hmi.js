@@ -4653,14 +4653,11 @@ const loadAlarmsStateFromHttp = async () => {
     const data = await apiGetAlarmsAll();
     const alarms = Array.isArray(data?.alarms) ? data.alarms : [];
     alarmsStateById = new Map();
-    const cutoffMs = Date.now() - ALARM_HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     alarms.forEach((alarm) => {
       const id = String(alarm?.alarm_id || "").trim();
       if (!id) return;
       alarmsStateById.set(id, alarm);
-      const lastChange = Number(alarm?.last_change_ms) || 0;
-      const isRecent = lastChange >= cutoffMs;
-      upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) || isRecent });
+      upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) });
     });
     scheduleAlarmsRender();
   } catch (error) {
@@ -4706,6 +4703,17 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
     next.last_event_ts_ms = next.active ? (next.active_since_ms || Date.now()) : (Number(next.cleared_ts_ms) || Date.now());
   }
   alarmTimelineById.set(id, next);
+};
+
+const getAlarmsPanelScrollKey = (obj) => {
+  const explicit = String(obj?.id || "").trim();
+  if (explicit) return explicit;
+  const screenId = String(currentScreenId || currentScreenFilename || "screen");
+  const x = Math.round(Number(obj?.x ?? 0));
+  const y = Math.round(Number(obj?.y ?? 0));
+  const w = Math.round(Number(obj?.w ?? 0));
+  const h = Math.round(Number(obj?.h ?? 0));
+  return `${screenId}:${x},${y},${w},${h}`;
 };
 
 const upsertTimelineFromAlarmEvent = (event) => {
@@ -5574,6 +5582,7 @@ let alarmTimelineById = new Map();
 let alarmHistoryLoaded = false;
 let alarmHistoryLoading = false;
 let alarmsRenderRaf = null;
+const alarmsPanelScrollByKey = new Map();
 let pendingScaleRaf = null;
 let wsRuntimeRenderRaf = null;
 const tagValueCache = new Map();
@@ -10335,6 +10344,11 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 
 	    const list = document.createElementNS(xhtml, "div");
 	    list.className = "hmi-alarms-panel-list";
+	    const scrollKey = getAlarmsPanelScrollKey(obj);
+	    const previousScrollTop = Number(alarmsPanelScrollByKey.get(scrollKey)) || 0;
+	    list.addEventListener("scroll", () => {
+	      alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
+	    }, { passive: true });
 
 	    const nowMs = Date.now();
 	    const onlyUnacked = Boolean(obj.onlyUnacked);
@@ -10410,6 +10424,11 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    panel.appendChild(list);
 	    fo.appendChild(panel);
 	    containerParent.appendChild(fo);
+	    if (previousScrollTop > 0) {
+	      requestAnimationFrame(() => {
+	        list.scrollTop = Math.min(previousScrollTop, Math.max(0, list.scrollHeight - list.clientHeight));
+	      });
+	    }
 	    return;
 	  }
 

@@ -54,6 +54,30 @@ Non-goals:
 - No automatic geometry changes to objects on the screen.
 - No separate editor experience for touchscreen mode in the first version.
 
+## XLSX Template Reports with HMI Access
+
+Idea:
+- Generate downloadable `.xlsx` reports from predefined report definitions and optional workbook templates.
+
+Why:
+- `.xlsx` is the standard spreadsheet format in most office environments and opens cleanly in Excel and LibreOffice.
+- CSV is useful for raw data, but formatted reports need headings, date ranges, totals, multiple sheets, charts, and controlled layouts.
+- Operators may need to download reports from HMI runtime without having access to SCADA configuration screens.
+
+Desired behavior:
+- Keep CSV export as the simple/raw data option.
+- Add `.xlsx` report generation without requiring Excel or LibreOffice to be installed on the server.
+- Allow an admin to upload/manage `.xlsx` templates and map report data into named cells, ranges, or tables.
+- Support report parameters such as date range, site/equipment, tag group, and summary interval.
+- Provide a simple HMI runtime Reports interface for authorized users to choose an available report, set parameters, and download the generated workbook.
+- Keep report/template design and permission management in SCADA/admin tools.
+- Record audit events for report generation/downloads.
+
+Non-goals:
+- No full report designer inside HMI runtime.
+- No dependency on desktop office applications for server-side generation.
+- No replacement of CSV where raw export is sufficient.
+
 ## HMI Property / Automation Clipboard
 
 Idea:
