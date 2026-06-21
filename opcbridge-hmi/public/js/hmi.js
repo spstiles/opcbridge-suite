@@ -4627,9 +4627,7 @@ const refreshRenderedAlarmsPanels = () => {
     const scrollKey = String(list.dataset?.alarmsPanelKey || "");
     const obj = findAlarmsPanelObjectByScrollKey(scrollKey);
     if (!obj) return;
-    const previousScrollTop = list.scrollTop;
     populateAlarmsPanelList(list, obj);
-    list.scrollTop = Math.min(previousScrollTop, Math.max(0, list.scrollHeight - list.clientHeight));
     alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
   });
   return true;
@@ -4750,11 +4748,9 @@ const getAlarmsPanelScrollKey = (obj) => {
 
 const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtml") => {
   if (!list || !obj) return;
-  list.textContent = "";
   const nowMs = Date.now();
   const onlyUnacked = Boolean(obj.onlyUnacked);
   const showSource = obj.showSource !== false;
-  const maxRows = Math.max(1, Math.min(50, Math.round(Number(obj.maxRows ?? 8) || 8)));
   const items = getAlarmTimelineRows()
     .filter((row) => {
       if (row?.enabled === false) return false;
@@ -4772,15 +4768,35 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
       return sb - sa;
     });
 
+  const existingEmpty = list.querySelector(".hmi-alarms-panel-empty");
   if (!items.length) {
-    const empty = document.createElementNS(xhtml, "div");
-    empty.className = "hmi-alarms-panel-empty";
-    empty.textContent = "No alarms.";
-    list.appendChild(empty);
+    list.querySelectorAll(".hmi-alarms-panel-row").forEach((row) => row.remove());
+    if (!existingEmpty) {
+      const empty = document.createElementNS(xhtml, "div");
+      empty.className = "hmi-alarms-panel-empty";
+      empty.textContent = "No alarms.";
+      list.appendChild(empty);
+    }
     return;
   }
+  if (existingEmpty) existingEmpty.remove();
 
-  items.slice(0, maxRows).forEach((alarm) => {
+  const rowsById = new Map();
+  list.querySelectorAll(".hmi-alarms-panel-row[data-alarm-id]").forEach((row) => {
+    rowsById.set(String(row.dataset.alarmId || ""), row);
+  });
+  const wantedIds = new Set();
+
+  const makeCell = (text) => {
+    const cell = document.createElementNS(xhtml, "div");
+    cell.className = "hmi-alarms-panel-cell";
+    cell.textContent = text;
+    return cell;
+  };
+
+  items.forEach((alarm, index) => {
+    const alarmId = normalizeAlarmTimelineId(alarm?.alarm_id) || `row-${index}`;
+    wantedIds.add(alarmId);
     const src = alarm?.source || {};
     const connectionId = String(src?.connection_id || "");
     const tagName = String(src?.tag || "");
@@ -4800,28 +4816,43 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
     const statusText = String(alarm?.last_event_type || (alarm?.active ? "active" : "return") || "").toUpperCase();
     const rawQuality = tagQualityCache.get(normalizeTagCacheKey(connectionId, tagName));
     const qualityText = rawQuality === 1 ? "GOOD" : rawQuality === 0 ? "BAD" : rawQuality == null ? "-" : String(rawQuality);
+    const cells = [activeText, clearedText, sourceText, areaText, baseDescText, statusText, qualityText].map(String);
+    const className = [
+      "hmi-alarms-panel-row",
+      alarm?.active && !alarm?.acked ? "is-active-unacked" : "",
+      alarm?.active && alarm?.acked ? "is-active-acked" : "",
+      !alarm?.active ? "is-returned" : "",
+      rawQuality === 0 ? "is-bad-quality" : ""
+    ].filter(Boolean).join(" ");
+    const signature = JSON.stringify({ cells, className });
 
-    const row = document.createElementNS(xhtml, "div");
-    row.className = "hmi-alarms-panel-row";
-    if (alarm?.active && !alarm?.acked) row.classList.add("is-active-unacked");
-    else if (alarm?.active && alarm?.acked) row.classList.add("is-active-acked");
-    else row.classList.add("is-returned");
-    if (rawQuality === 0) row.classList.add("is-bad-quality");
+    let row = rowsById.get(alarmId);
+    if (!row) {
+      row = document.createElementNS(xhtml, "div");
+      row.dataset.alarmId = alarmId;
+      cells.forEach((text) => row.appendChild(makeCell(text)));
+    } else if (row.dataset.signature !== signature) {
+      const cellEls = Array.from(row.querySelectorAll(".hmi-alarms-panel-cell"));
+      cells.forEach((text, cellIndex) => {
+        let cell = cellEls[cellIndex];
+        if (!cell) {
+          cell = makeCell(text);
+          row.appendChild(cell);
+        } else if (cell.textContent !== text) {
+          cell.textContent = text;
+        }
+      });
+      while (row.children.length > cells.length) row.lastElementChild?.remove();
+    }
 
-    const makeCell = (text) => {
-      const cell = document.createElementNS(xhtml, "div");
-      cell.className = "hmi-alarms-panel-cell";
-      cell.textContent = text;
-      return cell;
-    };
-    row.appendChild(makeCell(activeText));
-    row.appendChild(makeCell(clearedText));
-    row.appendChild(makeCell(sourceText));
-    row.appendChild(makeCell(areaText));
-    row.appendChild(makeCell(baseDescText));
-    row.appendChild(makeCell(statusText));
-    row.appendChild(makeCell(qualityText));
-    list.appendChild(row);
+    if (row.className !== className) row.className = className;
+    row.dataset.signature = signature;
+    const currentAtIndex = list.children[index];
+    if (currentAtIndex !== row) list.insertBefore(row, currentAtIndex || null);
+  });
+
+  list.querySelectorAll(".hmi-alarms-panel-row[data-alarm-id]").forEach((row) => {
+    if (!wantedIds.has(String(row.dataset.alarmId || ""))) row.remove();
   });
 };
 
