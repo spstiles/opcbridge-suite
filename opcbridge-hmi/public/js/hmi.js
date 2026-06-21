@@ -5174,18 +5174,25 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
 
   if (!serverLoggedIn) {
     if (authSession) {
+      const now = Date.now();
       if (isAuthTimeoutSuppressed()) {
         if (!authServerLoggedOutSinceMs) {
-          authServerLoggedOutSinceMs = Date.now();
+          authServerLoggedOutSinceMs = now;
           recordAuthDiagnostic("server-session-missing-edit-mode-suppressed", {
             source,
             status: authStatusSummary(authInfo)
           });
         }
+        if (now - authServerLoggedOutSinceMs >= AUTH_SERVER_LOGOUT_GRACE_MS) {
+          clearLocalAuthState("server session ended", {
+            source,
+            status: authStatusSummary(authInfo)
+          });
+          return false;
+        }
         markAuthActivity({ force: true });
         return false;
       }
-      const now = Date.now();
       if (!authServerLoggedOutSinceMs) {
         authServerLoggedOutSinceMs = now;
         recordAuthDiagnostic("server-session-missing-grace", {
@@ -5262,11 +5269,18 @@ const markAuthActivity = ({ force = false } = {}) => {
         authServerLoggedOutSinceMs = 0;
       })
       .catch((error) => {
+        const message = error?.message || String(error || "unknown");
         recordAuthDiagnostic("auth-touch-failed", {
           mode: isEditMode ? "edit" : "runtime",
           suppressed: isAuthTimeoutSuppressed(),
-          message: error?.message || String(error || "unknown")
+          message
         });
+        if (/HTTP\s+401\b|Login required/i.test(message)) {
+          clearLocalAuthState("server session ended", {
+            source: "auth-touch",
+            message
+          });
+        }
       })
       .finally(() => {
         authActivityTouchInFlight = false;
