@@ -4706,6 +4706,11 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   if (!id) return;
   if (!createIfMissing && !alarmTimelineById.has(id)) return;
   const prev = alarmTimelineById.get(id) || {};
+  const isActive = Boolean(alarm?.active);
+  const activeSinceMs = Number(alarm?.active_since_ms) || 0;
+  const lastChangeMs = Number(alarm?.last_change_ms) || 0;
+  const hasRealStateEventTime = isActive ? activeSinceMs > 0 : lastChangeMs > 0;
+  if (!isActive && !alarmTimelineById.has(id) && !hasRealStateEventTime) return;
   const next = { ...prev };
   next.alarm_id = id;
   next.source = alarm?.source || prev.source || {};
@@ -4718,19 +4723,31 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   next.group = alarm?.group ?? prev.group ?? null;
   next.site = alarm?.site ?? prev.site ?? null;
   next.enabled = alarm?.enabled ?? prev.enabled ?? true;
-  next.active = alarm?.active ?? prev.active ?? false;
+  if (isActive || hasRealStateEventTime || !prev.last_event_ts_ms) {
+    next.active = alarm?.active ?? prev.active ?? false;
+  } else {
+    next.active = prev.active ?? false;
+  }
   next.acked = alarm?.acked ?? prev.acked ?? false;
-  next.active_since_ms = alarm?.active_since_ms ?? prev.active_since_ms ?? 0;
-  const lastChange = alarm?.last_change_ms ?? prev.last_change_ms ?? 0;
-  next.last_change_ms = lastChange;
-  if (!next.active && Number.isFinite(Number(lastChange)) && Number(lastChange) > 0) {
-    next.cleared_ts_ms = Number(lastChange);
+  if (isActive && activeSinceMs > 0) {
+    next.active_since_ms = activeSinceMs;
+  } else if (prev.active_since_ms != null) {
+    next.active_since_ms = prev.active_since_ms;
+  } else {
+    next.active_since_ms = 0;
   }
-  if (!next.last_event_type) {
-    next.last_event_type = next.active ? "active" : (Number(next.cleared_ts_ms) > 0 ? "return" : "snapshot");
+  next.last_change_ms = lastChangeMs || prev.last_change_ms || 0;
+  if (!next.active && lastChangeMs > 0) {
+    next.cleared_ts_ms = lastChangeMs;
   }
-  if (!next.last_event_ts_ms) {
-    next.last_event_ts_ms = next.active ? (next.active_since_ms || Date.now()) : (Number(next.cleared_ts_ms) || Date.now());
+  if (isActive && activeSinceMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
+    next.last_event_type = "active";
+    next.last_event_ts_ms = activeSinceMs;
+  } else if (!isActive && lastChangeMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
+    next.last_event_type = "return";
+    next.last_event_ts_ms = lastChangeMs;
+  } else if (!next.last_event_type && hasRealStateEventTime) {
+    next.last_event_type = isActive ? "active" : "return";
   }
   alarmTimelineById.set(id, next);
 };
