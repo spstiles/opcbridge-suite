@@ -525,10 +525,11 @@
 		                <option value="load-viewport">Load Viewport</option>
 		                <option value="popup">Popup</option>
 		                <option value="momentary-write">Momentary Write</option>
-		                <option value="toggle-write">Maintained (Toggle)</option>
-		                <option value="set-write">Maintained (Set Value)</option>
-		                <option value="prompt-write">Setpoint (Prompt)</option>
-		              </select>
+			                <option value="toggle-write">Maintained (Toggle)</option>
+			                <option value="set-write">Maintained (Set Value)</option>
+			                <option value="prompt-write">Setpoint (Prompt)</option>
+			                <option value="alarm-filter">Alarm Panel Filter</option>
+			              </select>
 		            </div>
             <div class="prop-row" id="buttonTargetRow">
               <label for="buttonTarget">Target Screen</label>
@@ -569,14 +570,41 @@
 	                <label for="buttonPromptMax">Max</label>
 	                <input id="buttonPromptMax" type="number" step="any" />
 	              </div>
-	              <div class="prop-row is-hidden" id="buttonPromptStepRow">
-	                <label for="buttonPromptStep">Step</label>
-	                <input id="buttonPromptStep" type="number" step="any" placeholder="1" />
-	              </div>
-	            </div>
-	            <div class="prop-row">
-	              <label for="buttonX">X</label>
-	              <input id="buttonX" type="number" step="1" />
+		              <div class="prop-row is-hidden" id="buttonPromptStepRow">
+		                <label for="buttonPromptStep">Step</label>
+		                <input id="buttonPromptStep" type="number" step="any" placeholder="1" />
+		              </div>
+		            </div>
+		            <div class="prop-subgroup is-hidden" id="buttonAlarmFilterFields" hidden>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterTarget">Panel</label>
+		                <select id="buttonAlarmFilterTarget">
+		                  <option value="">All alarm panels</option>
+		                </select>
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterColumn">Column</label>
+		                <select id="buttonAlarmFilterColumn">
+		                  <option value="status">Status</option>
+		                  <option value="site">Site</option>
+		                  <option value="group">Group</option>
+		                  <option value="alarm">Alarm</option>
+		                  <option value="severity">Severity</option>
+		                  <option value="source">Source</option>
+		                </select>
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterValue">Value</label>
+		                <input id="buttonAlarmFilterValue" type="text" placeholder="active, returned, Plant, etc." />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterClear">Clear Runtime Filter</label>
+		                <input id="buttonAlarmFilterClear" type="checkbox" />
+		              </div>
+		            </div>
+		            <div class="prop-row">
+		              <label for="buttonX">X</label>
+		              <input id="buttonX" type="number" step="1" />
 	            </div>
 	            <div class="prop-row">
 	              <label for="buttonY">Y</label>
@@ -1073,10 +1101,14 @@
               </div>
             </div>
 
-              <div id="alarmsPanelPropsFields" class="prop-subgroup is-hidden" hidden>
-                <div class="prop-group-title">Alarms Panel</div>
-                <div class="prop-row">
-                  <label for="alarmsPanelMaxRows">Max Rows</label>
+	              <div id="alarmsPanelPropsFields" class="prop-subgroup is-hidden" hidden>
+	                <div class="prop-group-title">Alarms Panel</div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelId">ID</label>
+	                  <input id="alarmsPanelId" type="text" placeholder="alarmPanel1" />
+	                </div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelMaxRows">Max Rows</label>
                   <input id="alarmsPanelMaxRows" type="number" min="1" step="1" />
                 </div>
                 <div class="prop-row">
@@ -1087,12 +1119,38 @@
                   <label for="alarmsPanelShowSource">Show Source</label>
                   <input id="alarmsPanelShowSource" type="checkbox" />
                 </div>
-                <div class="prop-row">
-                  <label for="alarmsPanelFontSize">Font Size</label>
-                  <input id="alarmsPanelFontSize" type="number" min="6" step="1" />
-                </div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelFontSize">Font Size</label>
+	                  <input id="alarmsPanelFontSize" type="number" min="6" step="1" />
+	                </div>
+	                <div class="prop-group-title">Filters</div>
+	                <div class="prop-help">Comma-separated values. These are the base filters; button filters can only narrow this result.</div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelFilterSites">Site</label>
+	                  <input id="alarmsPanelFilterSites" type="text" placeholder="Plant, Field" />
+	                </div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelFilterGroups">Group</label>
+	                  <input id="alarmsPanelFilterGroups" type="text" placeholder="Lift Stations" />
+	                </div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelFilterAlarms">Alarm</label>
+	                  <input id="alarmsPanelFilterAlarms" type="text" placeholder="Alarm name or ID" />
+	                </div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelFilterSeverities">Severity</label>
+	                  <input id="alarmsPanelFilterSeverities" type="text" placeholder="1, 2, 3" />
+	                </div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelFilterStatuses">Status</label>
+	                  <input id="alarmsPanelFilterStatuses" type="text" placeholder="active, acked, unacked, returned, badquality" />
+	                </div>
+	                <div class="prop-row">
+	                  <label for="alarmsPanelFilterSources">Source</label>
+	                  <input id="alarmsPanelFilterSources" type="text" placeholder="Connection, tag, or connection:tag" />
+	                </div>
 
-                <div class="prop-group-title">Colors</div>
+	                <div class="prop-group-title">Colors</div>
                 <div class="prop-row">
                   <label for="alarmsPanelHeaderBg">Header BG</label>
                   <div class="prop-inline">

@@ -3780,6 +3780,11 @@ const buttonPromptMaxRow = document.getElementById("buttonPromptMaxRow");
 const buttonPromptMaxInput = document.getElementById("buttonPromptMax");
 const buttonPromptStepRow = document.getElementById("buttonPromptStepRow");
 const buttonPromptStepInput = document.getElementById("buttonPromptStep");
+const buttonAlarmFilterFields = document.getElementById("buttonAlarmFilterFields");
+const buttonAlarmFilterTargetSelect = document.getElementById("buttonAlarmFilterTarget");
+const buttonAlarmFilterColumnSelect = document.getElementById("buttonAlarmFilterColumn");
+const buttonAlarmFilterValueInput = document.getElementById("buttonAlarmFilterValue");
+const buttonAlarmFilterClearInput = document.getElementById("buttonAlarmFilterClear");
 const buttonWidthInput = document.getElementById("buttonWidth");
 const buttonXInput = document.getElementById("buttonX");
 const buttonYInput = document.getElementById("buttonY");
@@ -3885,10 +3890,17 @@ const paintPickerPalette = document.getElementById("paintPickerPalette");
 const paintPickerApplyBtn = document.getElementById("paintPickerApplyBtn");
 const paintPickerCancelBtn = document.getElementById("paintPickerCancelBtn");
 const alarmsPanelPropsFields = document.getElementById("alarmsPanelPropsFields");
+const alarmsPanelIdInput = document.getElementById("alarmsPanelId");
 const alarmsPanelMaxRowsInput = document.getElementById("alarmsPanelMaxRows");
 const alarmsPanelOnlyUnackedInput = document.getElementById("alarmsPanelOnlyUnacked");
 const alarmsPanelShowSourceInput = document.getElementById("alarmsPanelShowSource");
 const alarmsPanelFontSizeInput = document.getElementById("alarmsPanelFontSize");
+const alarmsPanelFilterSitesInput = document.getElementById("alarmsPanelFilterSites");
+const alarmsPanelFilterGroupsInput = document.getElementById("alarmsPanelFilterGroups");
+const alarmsPanelFilterAlarmsInput = document.getElementById("alarmsPanelFilterAlarms");
+const alarmsPanelFilterSeveritiesInput = document.getElementById("alarmsPanelFilterSeverities");
+const alarmsPanelFilterStatusesInput = document.getElementById("alarmsPanelFilterStatuses");
+const alarmsPanelFilterSourcesInput = document.getElementById("alarmsPanelFilterSources");
 const alarmsPanelHeaderBgInput = document.getElementById("alarmsPanelHeaderBg");
 const alarmsPanelHeaderBgTextInput = document.getElementById("alarmsPanelHeaderBgText");
 const alarmsPanelHeaderBgSwatches = document.getElementById("alarmsPanelHeaderBgSwatches");
@@ -4779,17 +4791,148 @@ const getAlarmsPanelScrollKey = (obj) => {
   return `${screenId}:${x},${y},${w},${h}`;
 };
 
+const splitAlarmFilterValues = (value) => String(value || "")
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+const joinAlarmFilterValues = (values) => Array.isArray(values) ? values.join(", ") : "";
+
+const normalizeAlarmPanelFilters = (filters) => {
+  const src = filters && typeof filters === "object" ? filters : {};
+  return {
+    sites: splitAlarmFilterValues(Array.isArray(src.sites) ? src.sites.join(",") : src.sites),
+    groups: splitAlarmFilterValues(Array.isArray(src.groups) ? src.groups.join(",") : src.groups),
+    alarms: splitAlarmFilterValues(Array.isArray(src.alarms) ? src.alarms.join(",") : src.alarms),
+    severities: splitAlarmFilterValues(Array.isArray(src.severities) ? src.severities.join(",") : src.severities),
+    statuses: splitAlarmFilterValues(Array.isArray(src.statuses) ? src.statuses.join(",") : src.statuses),
+    sources: splitAlarmFilterValues(Array.isArray(src.sources) ? src.sources.join(",") : src.sources)
+  };
+};
+
+const hasAlarmPanelFilters = (filters) => Object.values(normalizeAlarmPanelFilters(filters)).some((values) => values.length > 0);
+
+const getAlarmRuntimeStatusValues = (alarm) => {
+  const src = alarm?.source || {};
+  const connectionId = String(src?.connection_id || "");
+  const tagName = String(src?.tag || "");
+  const rawQuality = tagQualityCache.get(normalizeTagCacheKey(connectionId, tagName));
+  const values = [];
+  if (alarm?.active) values.push("active");
+  if (alarm?.active && alarm?.acked) values.push("acked");
+  if (alarm?.active && !alarm?.acked) values.push("unacked");
+  if (!alarm?.active) values.push("returned", "clear", "cleared");
+  if (rawQuality === 0) values.push("badquality", "bad-quality", "bad quality");
+  const eventType = String(alarm?.last_event_type || "").trim().toLowerCase();
+  if (eventType) values.push(eventType);
+  return values;
+};
+
+const valueMatchesAlarmFilter = (candidateValues, filters, mode = "equals") => {
+  const candidates = (Array.isArray(candidateValues) ? candidateValues : [candidateValues])
+    .map((value) => String(value ?? "").trim().toLowerCase())
+    .filter(Boolean);
+  const wanted = splitAlarmFilterValues(Array.isArray(filters) ? filters.join(",") : filters)
+    .map((value) => value.toLowerCase());
+  if (!wanted.length) return true;
+  if (!candidates.length) return false;
+  if (mode === "contains") {
+    return wanted.some((filterValue) => candidates.some((candidate) => candidate.includes(filterValue)));
+  }
+  return wanted.some((filterValue) => candidates.some((candidate) => candidate === filterValue));
+};
+
+const alarmMatchesFilterSet = (alarm, filters) => {
+  const normalized = normalizeAlarmPanelFilters(filters);
+  if (!hasAlarmPanelFilters(normalized)) return true;
+  const src = alarm?.source || {};
+  const connectionId = String(src?.connection_id || "");
+  const tagName = String(src?.tag || "");
+  const sourceText = `${connectionId}:${tagName}`.trim();
+  const alarmText = [
+    alarm?.alarm_id,
+    alarm?.name,
+    alarm?.message,
+    alarm?.message_on_active,
+    alarm?.message_on_return
+  ].map((value) => String(value || "")).filter(Boolean);
+  return valueMatchesAlarmFilter(alarm?.site, normalized.sites)
+    && valueMatchesAlarmFilter(alarm?.group, normalized.groups)
+    && valueMatchesAlarmFilter(alarmText, normalized.alarms, "contains")
+    && valueMatchesAlarmFilter(alarm?.severity, normalized.severities)
+    && valueMatchesAlarmFilter(getAlarmRuntimeStatusValues(alarm), normalized.statuses)
+    && valueMatchesAlarmFilter([sourceText, connectionId, tagName], normalized.sources, "contains");
+};
+
+const normalizeAlarmFilterAction = (action) => {
+  const column = String(action?.column || "status").trim().toLowerCase();
+  const value = String(action?.value || "").trim();
+  const clear = Boolean(action?.clear);
+  const allowed = new Set(["site", "group", "alarm", "severity", "status", "source"]);
+  return {
+    target: String(action?.target || "").trim(),
+    column: allowed.has(column) ? column : "status",
+    value,
+    clear
+  };
+};
+
+const alarmFilterActionToFilterSet = (action) => {
+  const normalized = normalizeAlarmFilterAction(action);
+  if (normalized.clear || !normalized.value) return {};
+  const keyByColumn = {
+    site: "sites",
+    group: "groups",
+    alarm: "alarms",
+    severity: "severities",
+    status: "statuses",
+    source: "sources"
+  };
+  return { [keyByColumn[normalized.column] || "statuses"]: splitAlarmFilterValues(normalized.value) };
+};
+
+const applyAlarmPanelRuntimeFilterAction = (action) => {
+  const normalized = normalizeAlarmFilterAction(action);
+  const target = normalized.target || "";
+  if (normalized.clear) {
+    alarmsPanelRuntimeFiltersByTarget.delete(target);
+  } else {
+    const filters = alarmFilterActionToFilterSet(normalized);
+    if (hasAlarmPanelFilters(filters)) alarmsPanelRuntimeFiltersByTarget.set(target, filters);
+    else alarmsPanelRuntimeFiltersByTarget.delete(target);
+  }
+  scheduleAlarmsRender();
+};
+
+const getRuntimeAlarmFilterForPanel = (obj) => {
+  const panelId = String(obj?.id || "").trim();
+  const allPanels = normalizeAlarmPanelFilters(alarmsPanelRuntimeFiltersByTarget.get(""));
+  const panel = normalizeAlarmPanelFilters(panelId ? alarmsPanelRuntimeFiltersByTarget.get(panelId) : null);
+  return {
+    sites: [...allPanels.sites, ...panel.sites],
+    groups: [...allPanels.groups, ...panel.groups],
+    alarms: [...allPanels.alarms, ...panel.alarms],
+    severities: [...allPanels.severities, ...panel.severities],
+    statuses: [...allPanels.statuses, ...panel.statuses],
+    sources: [...allPanels.sources, ...panel.sources]
+  };
+};
+
 const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtml") => {
   if (!list || !obj) return;
   const nowMs = Date.now();
   const onlyUnacked = Boolean(obj.onlyUnacked);
   const showSource = obj.showSource !== false;
+  const baseFilters = normalizeAlarmPanelFilters(obj.alarmFilters);
+  const runtimeFilters = getRuntimeAlarmFilterForPanel(obj);
   const items = getAlarmTimelineRows()
     .filter((row) => {
       if (!isDisplayableAlarmTimelineRow(row)) return false;
       const alarmForShelve = alarmsStateById.get(String(row?.alarm_id || "")) || row;
       if (isAlarmShelvedNow(alarmForShelve, nowMs)) return false;
       if (onlyUnacked && row?.acked) return false;
+      if (!alarmMatchesFilterSet(row, baseFilters)) return false;
+      if (!alarmMatchesFilterSet(row, runtimeFilters)) return false;
       return true;
     })
     .sort((a, b) => {
@@ -4799,7 +4942,8 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
       const sa = Number(a?.severity) || 0;
       const sb = Number(b?.severity) || 0;
       return sb - sa;
-    });
+    })
+    .slice(0, Math.max(1, Math.round(Number(obj.maxRows ?? 9999) || 9999)));
 
   const existingEmpty = list.querySelector(".hmi-alarms-panel-empty");
   if (!items.length) {
@@ -5837,6 +5981,7 @@ let alarmsWsCurrentUrl = "";
 let alarmsStateById = new Map();
 let alarmsEvents = [];
 let alarmTimelineById = new Map();
+let alarmsPanelRuntimeFiltersByTarget = new Map();
 let alarmHistoryLoaded = false;
 let alarmHistoryLoading = false;
 let alarmsRenderRaf = null;
@@ -8866,17 +9011,55 @@ const refreshViewportIdOptions = () => {
   fillSelect(groupActionViewportIdSelect);
 };
 
+const getAlarmPanelIds = () => {
+  if (!currentScreenObj || !Array.isArray(currentScreenObj.objects)) return [];
+  const ids = [];
+  const walk = (objects) => {
+    if (!Array.isArray(objects)) return;
+    objects.forEach((obj) => {
+      if (!obj) return;
+      if (obj.type === "alarms-panel" && obj.id) ids.push(String(obj.id));
+      if (obj.type === "group") walk(obj.children);
+    });
+  };
+  walk(currentScreenObj.objects);
+  return [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+};
+
+const refreshAlarmPanelTargetOptions = () => {
+  if (!buttonAlarmFilterTargetSelect) return;
+  const previous = buttonAlarmFilterTargetSelect.value;
+  buttonAlarmFilterTargetSelect.innerHTML = "";
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "All alarm panels";
+  buttonAlarmFilterTargetSelect.appendChild(all);
+  getAlarmPanelIds().forEach((id) => {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = id;
+    buttonAlarmFilterTargetSelect.appendChild(opt);
+  });
+  buttonAlarmFilterTargetSelect.value = getAlarmPanelIds().includes(previous) ? previous : "";
+};
+
 const updateButtonActionUI = (actionType) => {
   const isWriteAction = actionType === "momentary-write" || actionType === "toggle-write" || actionType === "set-write" || actionType === "prompt-write";
   const isHistoryAction = actionType === "history-back" || actionType === "history-forward";
+  const isAlarmFilterAction = actionType === "alarm-filter";
   const isPromptWrite = actionType === "prompt-write";
   const showOffValue = actionType === "momentary-write" || actionType === "toggle-write";
-  if (buttonTargetRow) buttonTargetRow.classList.toggle("is-hidden", isWriteAction || isHistoryAction);
+  if (buttonTargetRow) buttonTargetRow.classList.toggle("is-hidden", isWriteAction || isHistoryAction || isAlarmFilterAction);
   if (buttonViewportRow) buttonViewportRow.classList.toggle("is-hidden", actionType !== "load-viewport");
   if (buttonWriteFields) {
     const showWrite = isWriteAction;
     buttonWriteFields.classList.toggle("is-hidden", !showWrite);
     buttonWriteFields.hidden = !showWrite;
+  }
+  if (buttonAlarmFilterFields) {
+    buttonAlarmFilterFields.classList.toggle("is-hidden", !isAlarmFilterAction);
+    buttonAlarmFilterFields.hidden = !isAlarmFilterAction;
+    if (isAlarmFilterAction) refreshAlarmPanelTargetOptions();
   }
   if (buttonWriteOnRow) buttonWriteOnRow.classList.toggle("is-hidden", isPromptWrite);
   if (buttonWriteOffRow) buttonWriteOffRow.classList.toggle("is-hidden", isPromptWrite || (isWriteAction && !showOffValue));
@@ -8925,6 +9108,13 @@ const createViewportId = () => {
   let index = 1;
   while (ids.has(`vp_${index}`)) index += 1;
   return `vp_${index}`;
+};
+
+const createAlarmPanelId = () => {
+  const ids = new Set(getAlarmPanelIds());
+  let index = 1;
+  while (ids.has(`alarm_${index}`)) index += 1;
+  return `alarm_${index}`;
 };
 
 const createNumberInputId = () => {
@@ -12077,8 +12267,14 @@ const syncPropertiesFromSelection = () => {
     if (buttonTargetSelect) buttonTargetSelect.value = obj.action?.screenId || "";
     if (buttonActionSelect) buttonActionSelect.value = obj.action?.type || "navigate";
     refreshViewportIdOptions();
+    refreshAlarmPanelTargetOptions();
     if (buttonViewportSelect) buttonViewportSelect.value = obj.action?.viewportId || "";
     updateButtonActionUI(obj.action?.type || "navigate");
+    const alarmFilterAction = obj.action?.type === "alarm-filter" ? normalizeAlarmFilterAction(obj.action) : normalizeAlarmFilterAction({});
+    if (buttonAlarmFilterTargetSelect) buttonAlarmFilterTargetSelect.value = alarmFilterAction.target || "";
+    if (buttonAlarmFilterColumnSelect) buttonAlarmFilterColumnSelect.value = alarmFilterAction.column || "status";
+    if (buttonAlarmFilterValueInput) setInputValueSafe(buttonAlarmFilterValueInput, alarmFilterAction.value || "");
+    if (buttonAlarmFilterClearInput) buttonAlarmFilterClearInput.checked = Boolean(alarmFilterAction.clear);
 
     const writeAction = (obj.action?.type === "momentary-write" || obj.action?.type === "toggle-write" || obj.action?.type === "set-write" || obj.action?.type === "prompt-write") ? obj.action : null;
     if (buttonWriteConnectionInput) setInputValueSafe(buttonWriteConnectionInput, writeAction?.connection_id || "");
@@ -12247,10 +12443,18 @@ const syncPropertiesFromSelection = () => {
     if (rectRadiusInput) rectRadiusInput.value = Number(obj.rx ?? 0);
     if (rectShadowInput) rectShadowInput.checked = Boolean(obj.shadow);
     if (obj.type === "alarms-panel") {
+      if (alarmsPanelIdInput) setInputValueSafe(alarmsPanelIdInput, obj.id || "");
       if (alarmsPanelMaxRowsInput) setInputValueSafe(alarmsPanelMaxRowsInput, Number(obj.maxRows ?? 8));
       if (alarmsPanelOnlyUnackedInput) alarmsPanelOnlyUnackedInput.checked = Boolean(obj.onlyUnacked);
       if (alarmsPanelShowSourceInput) alarmsPanelShowSourceInput.checked = obj.showSource !== false;
       if (alarmsPanelFontSizeInput) setInputValueSafe(alarmsPanelFontSizeInput, Number(obj.fontSize ?? 14));
+      const filters = normalizeAlarmPanelFilters(obj.alarmFilters);
+      if (alarmsPanelFilterSitesInput) setInputValueSafe(alarmsPanelFilterSitesInput, joinAlarmFilterValues(filters.sites));
+      if (alarmsPanelFilterGroupsInput) setInputValueSafe(alarmsPanelFilterGroupsInput, joinAlarmFilterValues(filters.groups));
+      if (alarmsPanelFilterAlarmsInput) setInputValueSafe(alarmsPanelFilterAlarmsInput, joinAlarmFilterValues(filters.alarms));
+      if (alarmsPanelFilterSeveritiesInput) setInputValueSafe(alarmsPanelFilterSeveritiesInput, joinAlarmFilterValues(filters.severities));
+      if (alarmsPanelFilterStatusesInput) setInputValueSafe(alarmsPanelFilterStatusesInput, joinAlarmFilterValues(filters.statuses));
+      if (alarmsPanelFilterSourcesInput) setInputValueSafe(alarmsPanelFilterSourcesInput, joinAlarmFilterValues(filters.sources));
 
       const setPanelColor = (colorInput, textInput, value, fallback) => {
         const v = String(value || fallback || "").trim();
@@ -13074,7 +13278,7 @@ const updatePropertiesPanel = () => {
   const showBar = Boolean(obj && obj.type === "bar");
   const showNumberInput = Boolean(obj && obj.type === "number-input");
   const showIndicator = Boolean(obj && obj.type === "indicator");
-  const showAutomationLaunch = Boolean(obj && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !showBar);
+  const showAutomationLaunch = Boolean(obj && obj.type !== "alarms-panel" && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !showBar);
   if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showSpline || showPolygon || showBar || showNumberInput || showIndicator);
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
@@ -17161,6 +17365,19 @@ if (buttonLabelInput) {
   });
 }
 
+const getCurrentAlarmFilterButtonAction = () => ({
+  type: "alarm-filter",
+  target: String(buttonAlarmFilterTargetSelect?.value || "").trim(),
+  column: String(buttonAlarmFilterColumnSelect?.value || "status").trim(),
+  value: String(buttonAlarmFilterValueInput?.value || "").trim(),
+  clear: Boolean(buttonAlarmFilterClearInput?.checked)
+});
+
+const updateAlarmFilterButtonActionFromInputs = () => {
+  if (buttonActionSelect?.value !== "alarm-filter") return;
+  updateButtonProperty({ action: getCurrentAlarmFilterButtonAction() });
+};
+
 if (buttonLabelBindConnectionInput) {
   buttonLabelBindConnectionInput.addEventListener("change", () => {
     updateButtonLabelBindProperty({ connection_id: buttonLabelBindConnectionInput.value.trim() });
@@ -17220,6 +17437,8 @@ if (buttonActionSelect) {
 	          ? { type: "history-back" }
 	          : actionType === "history-forward"
 	            ? { type: "history-forward" }
+	        : actionType === "alarm-filter"
+	          ? getCurrentAlarmFilterButtonAction()
 	        : actionType === "prompt-write"
 	          ? {
 	            type: "prompt-write",
@@ -17261,6 +17480,7 @@ if (buttonTargetSelect) {
     const actionType = buttonActionSelect?.value || "navigate";
     if (actionType === "momentary-write" || actionType === "toggle-write" || actionType === "set-write" || actionType === "prompt-write") return;
     if (actionType === "history-back" || actionType === "history-forward") return;
+    if (actionType === "alarm-filter") return;
     const screenId = buttonTargetSelect.value;
     const viewportId = buttonViewportSelect?.value || "";
     const action = actionType === "load-viewport"
@@ -17281,6 +17501,11 @@ if (buttonViewportSelect) {
     updateButtonProperty({ action: { type: "load-viewport", viewportId, screenId } });
   });
 }
+
+[buttonAlarmFilterTargetSelect, buttonAlarmFilterColumnSelect, buttonAlarmFilterValueInput, buttonAlarmFilterClearInput].forEach((input) => {
+  if (!input) return;
+  input.addEventListener("change", updateAlarmFilterButtonActionFromInputs);
+});
 
 const updateSelectedGroupAction = (patch) => {
   const activeObjects = getActiveObjects();
@@ -17985,6 +18210,14 @@ if (alarmsPanelMaxRowsInput) {
   });
 }
 
+if (alarmsPanelIdInput) {
+  alarmsPanelIdInput.addEventListener("change", () => {
+    const id = String(alarmsPanelIdInput.value || "").trim();
+    updateRectProperty({ id: id || undefined });
+    refreshAlarmPanelTargetOptions();
+  });
+}
+
 if (alarmsPanelOnlyUnackedInput) {
   alarmsPanelOnlyUnackedInput.addEventListener("change", () => {
     updateRectProperty({ onlyUnacked: alarmsPanelOnlyUnackedInput.checked });
@@ -18003,6 +18236,28 @@ if (alarmsPanelFontSizeInput) {
     if (Number.isFinite(value) && value >= 6) updateRectProperty({ fontSize: Math.round(value) });
   });
 }
+
+const updateAlarmsPanelFilterProperty = (key, input) => {
+  if (!input) return;
+  const activeObjects = getActiveObjects();
+  const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+  if (!obj || obj.type !== "alarms-panel") return;
+  const next = normalizeAlarmPanelFilters(obj.alarmFilters);
+  next[key] = splitAlarmFilterValues(input.value);
+  updateRectProperty({ alarmFilters: hasAlarmPanelFilters(next) ? next : undefined });
+};
+
+[
+  ["sites", alarmsPanelFilterSitesInput],
+  ["groups", alarmsPanelFilterGroupsInput],
+  ["alarms", alarmsPanelFilterAlarmsInput],
+  ["severities", alarmsPanelFilterSeveritiesInput],
+  ["statuses", alarmsPanelFilterStatusesInput],
+  ["sources", alarmsPanelFilterSourcesInput]
+].forEach(([key, input]) => {
+  if (!input) return;
+  input.addEventListener("change", () => updateAlarmsPanelFilterProperty(key, input));
+});
 
 const bindAlarmsPanelColor = (colorInput, textInput, key, fallback) => {
   if (colorInput) {
@@ -20230,7 +20485,7 @@ const initializeRotationControls = () => {
     { id: "number-input", types: ["number-input"], form: numberInputProps, rotationInput: numberInputRotationInput, title: "Rotation Automation" },
     { id: "indicator", types: ["indicator"], form: indicatorProps, rotationInput: indicatorRotationInput, title: "Rotation Automation" },
     { id: "viewport", types: ["viewport"], form: viewportProps, rotationInput: viewportRotationInput, title: "Rotation Automation" },
-    { id: "rect", types: ["rect", "alarms-panel"], form: rectProps, rotationInput: rectRotationInput, title: "Rotation Automation" },
+    { id: "rect", types: ["rect"], form: rectProps, rotationInput: rectRotationInput, title: "Rotation Automation" },
     { id: "ellipse", types: ["ellipse"], form: ellipseProps, rotationInput: ellipseRotationInput, title: "Rotation Automation" },
     { id: "line", types: ["line"], form: lineProps, anchorInput: lineY2Input, title: "Rotation Automation" },
     { id: "bar", types: ["bar"], form: barProps, rotationInput: barRotationInput, title: "Rotation Automation" },
@@ -20806,7 +21061,7 @@ const initializeMotionControls = () => {
     { id: "number-input", types: ["number-input"], form: numberInputProps, title: "Motion" },
     { id: "indicator", types: ["indicator"], form: indicatorProps, title: "Motion" },
     { id: "viewport", types: ["viewport"], form: viewportProps, title: "Motion" },
-    { id: "rect", types: ["rect", "alarms-panel"], form: rectProps, title: "Motion" },
+    { id: "rect", types: ["rect"], form: rectProps, title: "Motion" },
     { id: "ellipse", types: ["ellipse"], form: ellipseProps, title: "Motion" },
     { id: "circle", types: ["circle"], form: circleProps, title: "Motion" },
     { id: "line", types: ["line"], form: lineProps, title: "Motion" },
@@ -26500,6 +26755,7 @@ const setTool = (nextTool) => {
       if (!activeObjects) return;
 	      const nextPanel = {
 	        type: "alarms-panel",
+	        id: createAlarmPanelId(),
 	        x: snapValue(Math.round(x)),
 	        y: snapValue(Math.round(y)),
 	        w: snapValue(Math.round(w)),
@@ -27615,7 +27871,11 @@ if (hmiSvg) {
 	          if (viewportId && viewportGoForward(viewportId)) return;
 	        }
 	        runtimeGoForward();
-	      }
+		      }
+		      if (obj?.type === "button" && obj?.action?.type === "alarm-filter") {
+		        applyAlarmPanelRuntimeFilterAction(obj.action);
+		        return;
+		      }
 		      if (obj?.type === "button" && obj?.action?.type === "toggle-write") {
 		        if (writesDisabled) return;
 			        runToggleWriteAction(obj.action, obj).catch((error) => {
