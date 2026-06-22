@@ -4894,6 +4894,9 @@ const upsertTimelineFromAlarmEvent = (event) => {
   if (!id) return;
   const eventTs = Number(event?.ts_ms) || 0;
   if (eventTs <= 0) return;
+  const type = String(event?.type || "").trim().toLowerCase();
+  const canCreateTimelineRow = type === "active";
+  if (!canCreateTimelineRow && !alarmTimelineById.has(id)) return;
   const prev = alarmTimelineById.get(id) || {};
   const next = { ...prev };
   next.alarm_id = id;
@@ -4901,10 +4904,9 @@ const upsertTimelineFromAlarmEvent = (event) => {
   if (event?.group != null) next.group = event.group;
   if (event?.site != null) next.site = event.site;
   if (event?.severity != null) next.severity = event.severity;
-  next.last_event_type = String(event?.type || "").trim() || "event";
+  next.last_event_type = type || "event";
   next.last_event_ts_ms = eventTs;
   next.last_event_value = event?.value;
-  const type = next.last_event_type;
   if (event?.message != null) {
     next.message = event.message;
     if (type === "active") next.message_on_active = event.message;
@@ -4921,6 +4923,12 @@ const upsertTimelineFromAlarmEvent = (event) => {
     next.acked = true;
   } else if (type === "unack") {
     next.acked = false;
+  } else if (type === "shelve" || type === "unshelve") {
+    if (type === "shelve" && event?.value && typeof event.value === "object") {
+      const untilMs = Number(event.value.until_ms) || 0;
+      if (untilMs > 0) next.shelved_until_ms = untilMs;
+    }
+    if (type === "unshelve") next.shelved_until_ms = null;
   }
   alarmTimelineById.set(id, next);
 };
