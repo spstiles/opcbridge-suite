@@ -4930,7 +4930,7 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
       if (!isDisplayableAlarmTimelineRow(row)) return false;
       const alarmForShelve = alarmsStateById.get(String(row?.alarm_id || "")) || row;
       if (isAlarmShelvedNow(alarmForShelve, nowMs)) return false;
-      if (onlyUnacked && (!row?.active || row?.acked)) return false;
+      if (onlyUnacked && row?.acked) return false;
       if (!alarmMatchesFilterSet(row, baseFilters)) return false;
       if (!alarmMatchesFilterSet(row, runtimeFilters)) return false;
       return true;
@@ -26768,7 +26768,7 @@ const setTool = (nextTool) => {
 	        textColor: "#000000",
 	        fontSize: 14,
 	        maxRows: 8,
-	        onlyUnacked: true,
+	        onlyUnacked: false,
 	        showSource: true
 	      };
       recordHistory();
