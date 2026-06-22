@@ -4930,7 +4930,7 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
       if (!isDisplayableAlarmTimelineRow(row)) return false;
       const alarmForShelve = alarmsStateById.get(String(row?.alarm_id || "")) || row;
       if (isAlarmShelvedNow(alarmForShelve, nowMs)) return false;
-      if (onlyUnacked && row?.acked) return false;
+      if (onlyUnacked && (!row?.active || row?.acked)) return false;
       if (!alarmMatchesFilterSet(row, baseFilters)) return false;
       if (!alarmMatchesFilterSet(row, runtimeFilters)) return false;
       return true;
@@ -4941,7 +4941,8 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
       if (tb !== ta) return tb - ta;
       const sa = Number(a?.severity) || 0;
       const sb = Number(b?.severity) || 0;
-      return sb - sa;
+      if (sb !== sa) return sb - sa;
+      return String(a?.alarm_id || "").localeCompare(String(b?.alarm_id || ""));
     })
     .slice(0, Math.max(1, Math.round(Number(obj.maxRows ?? 9999) || 9999)));
 
