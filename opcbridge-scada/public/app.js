@@ -12843,6 +12843,7 @@ function setNewTagStatus(msg) {
 function showNewTagModal(connectionId) {
   const cid = String(connectionId || '').trim();
   if (!cid) return;
+  touchOpcbridgeAuthActivity({ force: true });
   const memoryMode = cid === MEMORY_CONNECTION_ID;
 
   state.pendingNewTag = { connection_id: cid };
@@ -13422,6 +13423,7 @@ function openWorkspaceItemModal(node) {
   }
 
   if (type === 'tag') {
+    touchOpcbridgeAuthActivity({ force: true });
     if (els.workspaceItemTagEdit) els.workspaceItemTagEdit.style.display = 'block';
 
     const conn = String(node.meta?.connection_id || '');
@@ -21564,12 +21566,23 @@ function getOpcbridgeAuthTimeoutMinutes() {
   return Math.max(0, Math.floor(Number(state.opcbridgeAuthStatus?.timeoutMinutes) || 0));
 }
 
+function isScadaEditSessionOpen() {
+  return (
+    els.newTagModal?.style.display === 'flex'
+    || els.workspaceItemModal?.style.display === 'flex'
+    || els.usersDetailsFormPanel?.style.display === 'block'
+    || els.loginModal?.style.display === 'flex'
+  );
+}
+
 function touchOpcbridgeAuthActivity({ force = false } = {}) {
   const status = state.opcbridgeAuthStatus || null;
   if (!status?.user_logged_in) return;
-  if (getOpcbridgeAuthTimeoutMinutes() <= 0) return;
+  const timeoutMinutes = getOpcbridgeAuthTimeoutMinutes();
+  if (timeoutMinutes <= 0) return;
   const now = Date.now();
-  if (!force && now - state.authLastActivityTouchMs < 30000) return;
+  const touchIntervalMs = Math.max(5000, Math.min(30000, timeoutMinutes * 60 * 1000 * 0.25));
+  if (!force && now - state.authLastActivityTouchMs < touchIntervalMs) return;
   state.authLastActivityTouchMs = now;
   fetch('/api/opcbridge/auth/touch', {
     method: 'POST',
@@ -22109,6 +22122,7 @@ function wireUsersUi() {
 function startUserAuthPolling() {
   if (state.userAuthTimer) return;
   state.userAuthTimer = window.setInterval(() => {
+    if (isScadaEditSessionOpen()) touchOpcbridgeAuthActivity();
     refreshUserAuthLine().catch(() => {});
   }, 2000);
 }
