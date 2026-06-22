@@ -5241,6 +5241,7 @@ const hasPerm = (permId) => {
 const canWrite = () => hasPerm("opcbridge.write_tags");
 const canEdit = () => hasPerm("hmi.edit_screens");
 const canAdmin = () => hasPerm("auth.manage_users");
+const hasServerAuthSession = () => Boolean(authSession && authSession.serverValid !== false);
 
 const loadAuthSession = () => {
   try {
@@ -5252,8 +5253,10 @@ const loadAuthSession = () => {
     const permissions = Array.isArray(parsed?.permissions) ? parsed.permissions : [];
     const timeoutMinutes = Number(parsed?.timeoutMinutes) || 0;
     const lastActivityMs = Number(parsed?.lastActivityMs) || 0;
+    const adminToken = String(parsed?.adminToken || "").trim();
     if (!username) return null;
-    return { username, role, permissions, timeoutMinutes, lastActivityMs };
+    const serverValid = parsed?.serverValid !== false;
+    return { username, role, permissions, timeoutMinutes, lastActivityMs, serverValid, adminToken };
   } catch {
     return null;
   }
@@ -5316,6 +5319,8 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
     if (authSession) {
       const now = Date.now();
       if (isAuthTimeoutSuppressed()) {
+        authSession.serverValid = false;
+        saveAuthSession(authSession);
         const firstMissing = !authServerLoggedOutSinceMs;
         if (firstMissing) {
           authServerLoggedOutSinceMs = now;
@@ -5374,8 +5379,13 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
       role: serverRole,
       permissions: serverPerms,
       timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
-      lastActivityMs: Number(authSession?.lastActivityMs) || Date.now()
+      lastActivityMs: Number(authSession?.lastActivityMs) || Date.now(),
+      serverValid: true,
+      adminToken: String(authSession?.adminToken || "").trim()
     });
+  } else if (authSession?.serverValid === false) {
+    authSession.serverValid = true;
+    saveAuthSession(authSession);
   }
   return true;
 };
@@ -5420,6 +5430,11 @@ const markAuthActivity = ({ force = false } = {}) => {
     apiAuthTouch()
       .then(() => {
         authServerLoggedOutSinceMs = 0;
+        if (authSession?.serverValid === false) {
+          authSession.serverValid = true;
+          saveAuthSession(authSession);
+          updateAuthUiVisibility();
+        }
       })
       .catch((error) => {
         const message = error?.message || String(error || "unknown");
@@ -5430,6 +5445,11 @@ const markAuthActivity = ({ force = false } = {}) => {
         });
         if (/HTTP\s+401\b|Login required/i.test(message)) {
           if (isAuthTimeoutSuppressed()) {
+            if (authSession) {
+              authSession.serverValid = false;
+              saveAuthSession(authSession);
+              updateAuthUiVisibility();
+            }
             recordAuthDiagnostic("auth-touch-unauthorized-edit-mode-kept", {
               source: "auth-touch",
               message
@@ -5475,6 +5495,13 @@ const isAuthSessionExpired = () => {
   return Date.now() - lastActivityMs > timeoutMinutes * 60 * 1000;
 };
 
+const authFetchHeaders = (base = {}) => {
+  const headers = { ...base };
+  const token = String(authSession?.adminToken || "").trim();
+  if (token) headers["X-Admin-Token"] = token;
+  return headers;
+};
+
 window.opcbridgeHmiAuthDiagnostics = () => {
   try {
     return JSON.parse(sessionStorage.getItem(AUTH_DIAGNOSTICS_KEY) || "[]");
@@ -5484,7 +5511,11 @@ window.opcbridgeHmiAuthDiagnostics = () => {
 };
 
 const apiAuthStatus = async () => {
-  const response = await fetch("/api/auth/status", { cache: "no-store", credentials: "same-origin" });
+  const response = await fetch("/api/auth/status", {
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: authFetchHeaders({ Accept: "application/json" })
+  });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 };
@@ -5521,7 +5552,7 @@ const apiAuthLogout = async () => {
   const response = await fetch("/api/auth/logout", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: authFetchHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ explicit: true })
   });
   if (!response.ok) {
@@ -5535,7 +5566,7 @@ const apiAuthTouch = async () => {
   const response = await fetch("/api/auth/touch", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: authFetchHeaders({ "Content-Type": "application/json" }),
     body: "{}"
   });
   if (!response.ok) {
@@ -5628,12 +5659,17 @@ const renderUsersList = () => {
 
 const updateAuthUiVisibility = () => {
   const initialized = Boolean(authInfo?.initialized);
+  const serverSessionValid = hasServerAuthSession();
   if (authSetupSection) authSetupSection.classList.toggle("is-hidden", initialized);
-  if (authLoginSection) authLoginSection.classList.toggle("is-hidden", !initialized || Boolean(authSession));
-  if (authLogoutBtn) authLogoutBtn.classList.toggle("is-hidden", !authSession);
+  if (authLoginSection) authLoginSection.classList.toggle("is-hidden", !initialized || serverSessionValid);
+  if (authLogoutBtn) authLogoutBtn.classList.toggle("is-hidden", !serverSessionValid);
   if (authSessionSummary) {
     if (!authSession) {
       authSessionSummary.textContent = "Not logged in. (Viewer)";
+    } else if (!serverSessionValid) {
+      authSessionSummary.textContent = isEditMode
+        ? `Edit session retained for ${authSession.username}; server login expired. Log in again to sync with SCADA.`
+        : "Not logged in. (Viewer)";
     } else {
       authSessionSummary.textContent = `Logged in as ${authSession.username} (${authSession.role}).`;
     }
@@ -5667,7 +5703,7 @@ const refreshAuthUi = async () => {
 
 const syncAuthFromServer = async () => {
   if (document?.hidden) return;
-  if (authActivityTouchInFlight || (authSession && isAuthTimeoutSuppressed())) return;
+  if (authActivityTouchInFlight) return;
   try {
     const status = await apiAuthStatus();
     syncLocalAuthFromStatus(status, "syncAuthFromServer");
@@ -5696,7 +5732,7 @@ const openAuth = async () => {
   setMenuOpen(false);
   setOverlayOpen(authOverlay, true);
   await refreshAuthUi();
-  if (authSession) return;
+  if (hasServerAuthSession()) return;
   const initialized = Boolean(authInfo?.initialized);
   const target = initialized ? authUsername : authSetupUsername;
   try { target?.focus?.(); } catch {}
@@ -15305,7 +15341,7 @@ window.addEventListener("keydown", (evt) => {
       authInfo = status || authInfo;
       serverLoggedIn = Boolean(status?.user_logged_in);
     } catch {
-      serverLoggedIn = Boolean(authSession);
+      serverLoggedIn = hasServerAuthSession();
     }
 
     if (!serverLoggedIn) {
@@ -16214,7 +16250,9 @@ if (authLoginBtn) {
         username: String(result.username || username),
         role: String(result.role || "viewer"),
         timeoutMinutes: Number(result.timeoutMinutes) || 0,
-        lastActivityMs: Date.now()
+        lastActivityMs: Date.now(),
+        serverValid: true,
+        adminToken: String(result.admin_token || "").trim()
       };
       saveAuthSession(session);
       if (authPassword) authPassword.value = "";

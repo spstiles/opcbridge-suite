@@ -25138,6 +25138,10 @@ window.addEventListener("load", startAutoRefresh);
 		            // Extends the idle timeout only when the UI reports real user activity.
 		            svr.Post("/auth/touch", [&](const httplib::Request &req, httplib::Response &res) {
 		                json resp;
+		                std::string requestToken = req.get_header_value("X-Admin-Token");
+		                if (requestToken.empty()) {
+		                    requestToken = get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN");
+		                }
 		                AdminSessionInfo sess;
 		                if (!get_session_from_request(req, sess)) {
 		                    resp["ok"] = false;
@@ -25152,6 +25156,11 @@ window.addEventListener("load", startAutoRefresh);
 		                    res.status = 401;
 		                    res.set_content(resp.dump(2), "application/json");
 		                    return;
+		                }
+		                if (!requestToken.empty()) {
+		                    res.set_header("Set-Cookie",
+		                                   std::string("OPCBRIDGE_ADMIN_TOKEN=") + requestToken +
+		                                   "; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax");
 		                }
 		                resp["ok"] = true;
 		                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;

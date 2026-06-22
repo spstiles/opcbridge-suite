@@ -437,6 +437,7 @@ const createApp = () => {
       const headers = { Accept: req.headers["accept"] || "*/*" };
       if (req.method !== "GET" && req.method !== "HEAD") headers["Content-Type"] = "application/json";
       if (req.headers["cookie"]) headers["Cookie"] = String(req.headers["cookie"]);
+      if (req.headers["x-admin-token"]) headers["X-Admin-Token"] = String(req.headers["x-admin-token"]);
 
       const response = await fetch(url, {
         method: req.method,
