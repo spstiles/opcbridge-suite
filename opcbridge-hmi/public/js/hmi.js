@@ -4704,13 +4704,14 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   const createIfMissing = opts.createIfMissing !== false;
   const id = normalizeAlarmTimelineId(alarm?.alarm_id);
   if (!id) return;
-  if (!createIfMissing && !alarmTimelineById.has(id)) return;
+  const hasExistingRow = alarmTimelineById.has(id);
+  if (!createIfMissing && !hasExistingRow) return;
   const prev = alarmTimelineById.get(id) || {};
   const isActive = Boolean(alarm?.active);
   const activeSinceMs = Number(alarm?.active_since_ms) || 0;
   const lastChangeMs = Number(alarm?.last_change_ms) || 0;
-  const hasRealStateEventTime = isActive ? activeSinceMs > 0 : lastChangeMs > 0;
-  if (!isActive && !alarmTimelineById.has(id) && !hasRealStateEventTime) return;
+  if (!isActive && !hasExistingRow) return;
+  if (isActive && !hasExistingRow && activeSinceMs <= 0 && lastChangeMs <= 0) return;
   const next = { ...prev };
   next.alarm_id = id;
   next.source = alarm?.source || prev.source || {};
@@ -4723,8 +4724,10 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   next.group = alarm?.group ?? prev.group ?? null;
   next.site = alarm?.site ?? prev.site ?? null;
   next.enabled = alarm?.enabled ?? prev.enabled ?? true;
-  if (isActive || hasRealStateEventTime || !prev.last_event_ts_ms) {
+  if (isActive) {
     next.active = alarm?.active ?? prev.active ?? false;
+  } else if (prev.active === true && lastChangeMs > 0) {
+    next.active = false;
   } else {
     next.active = prev.active ?? false;
   }
@@ -4736,20 +4739,33 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   } else {
     next.active_since_ms = 0;
   }
-  next.last_change_ms = lastChangeMs || prev.last_change_ms || 0;
-  if (!next.active && lastChangeMs > 0) {
+  next.last_change_ms = (isActive || prev.active === true) ? (lastChangeMs || prev.last_change_ms || 0) : (prev.last_change_ms || 0);
+  if (prev.active === true && !isActive && lastChangeMs > 0) {
     next.cleared_ts_ms = lastChangeMs;
   }
   if (isActive && activeSinceMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
     next.last_event_type = "active";
     next.last_event_ts_ms = activeSinceMs;
-  } else if (!isActive && lastChangeMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
+  } else if (isActive && lastChangeMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
+    next.last_event_type = "active";
+    next.last_event_ts_ms = lastChangeMs;
+  } else if (prev.active === true && !isActive && lastChangeMs > 0) {
     next.last_event_type = "return";
     next.last_event_ts_ms = lastChangeMs;
-  } else if (!next.last_event_type && hasRealStateEventTime) {
-    next.last_event_type = isActive ? "active" : "return";
   }
   alarmTimelineById.set(id, next);
+};
+
+const isDisplayableAlarmTimelineRow = (row) => {
+  if (!row || row.enabled === false) return false;
+  const type = String(row.last_event_type || "").trim().toLowerCase();
+  const lastEventTs = Number(row.last_event_ts_ms) || 0;
+  const activeSinceMs = Number(row.active_since_ms) || 0;
+  const clearedTs = Number(row.cleared_ts_ms) || 0;
+  if (row.active === true) return activeSinceMs > 0 || lastEventTs > 0;
+  if (type === "return" || type === "reset" || type === "clear") return clearedTs > 0 || lastEventTs > 0;
+  if (type === "ack" || type === "unack") return lastEventTs > 0;
+  return false;
 };
 
 const getAlarmsPanelScrollKey = (obj) => {
@@ -4770,7 +4786,7 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
   const showSource = obj.showSource !== false;
   const items = getAlarmTimelineRows()
     .filter((row) => {
-      if (row?.enabled === false) return false;
+      if (!isDisplayableAlarmTimelineRow(row)) return false;
       const alarmForShelve = alarmsStateById.get(String(row?.alarm_id || "")) || row;
       if (isAlarmShelvedNow(alarmForShelve, nowMs)) return false;
       if (onlyUnacked && row?.acked) return false;
@@ -4876,6 +4892,8 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
 const upsertTimelineFromAlarmEvent = (event) => {
   const id = normalizeAlarmTimelineId(event?.alarm_id);
   if (!id) return;
+  const eventTs = Number(event?.ts_ms) || 0;
+  if (eventTs <= 0) return;
   const prev = alarmTimelineById.get(id) || {};
   const next = { ...prev };
   next.alarm_id = id;
@@ -4884,7 +4902,7 @@ const upsertTimelineFromAlarmEvent = (event) => {
   if (event?.site != null) next.site = event.site;
   if (event?.severity != null) next.severity = event.severity;
   next.last_event_type = String(event?.type || "").trim() || "event";
-  next.last_event_ts_ms = Number(event?.ts_ms) || Date.now();
+  next.last_event_ts_ms = eventTs;
   next.last_event_value = event?.value;
   const type = next.last_event_type;
   if (event?.message != null) {
@@ -4953,7 +4971,12 @@ const getAlarmTimelineRows = () => {
     if (!id) return;
     const state = alarmsStateById.get(id);
     if (state) upsertTimelineFromAlarmState(state, { createIfMissing: false });
-    rows.push(alarmTimelineById.get(id) || row);
+    const nextRow = alarmTimelineById.get(id) || row;
+    if (isDisplayableAlarmTimelineRow(nextRow)) {
+      rows.push(nextRow);
+    } else {
+      alarmTimelineById.delete(id);
+    }
   });
   return rows;
 };
