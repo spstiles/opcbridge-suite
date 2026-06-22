@@ -5316,19 +5316,19 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
     if (authSession) {
       const now = Date.now();
       if (isAuthTimeoutSuppressed()) {
-        if (!authServerLoggedOutSinceMs) {
+        const firstMissing = !authServerLoggedOutSinceMs;
+        if (firstMissing) {
           authServerLoggedOutSinceMs = now;
           recordAuthDiagnostic("server-session-missing-edit-mode-suppressed", {
             source,
             status: authStatusSummary(authInfo)
           });
         }
-        if (now - authServerLoggedOutSinceMs >= AUTH_SERVER_LOGOUT_GRACE_MS) {
-          clearLocalAuthState("server session ended", {
+        if (!firstMissing && now - authServerLoggedOutSinceMs >= AUTH_SERVER_LOGOUT_GRACE_MS) {
+          recordAuthDiagnostic("server-session-still-missing-edit-mode-kept", {
             source,
             status: authStatusSummary(authInfo)
           });
-          return false;
         }
         markAuthActivity({ force: true });
         return false;
@@ -5382,6 +5382,12 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
 
 const isAuthTimeoutSuppressed = () => Boolean(isEditMode) || Date.now() < authEditExitGraceUntilMs;
 
+const getAuthTouchIntervalMs = () => {
+  const timeoutMinutes = getAuthTimeoutMinutes();
+  if (timeoutMinutes <= 0) return 0;
+  return Math.max(5000, Math.min(30000, timeoutMinutes * 60 * 1000 * 0.25));
+};
+
 const markAuthActivity = ({ force = false } = {}) => {
   if (!authSession) return;
   if (!isAuthTimeoutSuppressed() && isAuthSessionExpired()) {
@@ -5401,7 +5407,8 @@ const markAuthActivity = ({ force = false } = {}) => {
     sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authSession));
   } catch {}
   const timeoutMinutes = getAuthTimeoutMinutes();
-  if (timeoutMinutes > 0 && (force || now - authActivityLastTouchMs > 30000)) {
+  const touchIntervalMs = getAuthTouchIntervalMs();
+  if (timeoutMinutes > 0 && (force || now - authActivityLastTouchMs > touchIntervalMs)) {
     authActivityLastTouchMs = now;
     authActivityTouchInFlight = true;
     apiAuthTouch()
@@ -5416,6 +5423,13 @@ const markAuthActivity = ({ force = false } = {}) => {
           message
         });
         if (/HTTP\s+401\b|Login required/i.test(message)) {
+          if (isAuthTimeoutSuppressed()) {
+            recordAuthDiagnostic("auth-touch-unauthorized-edit-mode-kept", {
+              source: "auth-touch",
+              message
+            });
+            return;
+          }
           clearLocalAuthState("server session ended", {
             source: "auth-touch",
             message
@@ -16255,7 +16269,7 @@ if (!authActivityTimer) {
   authActivityTimer = window.setInterval(() => {
     if (!authSession) return;
     if (isAuthTimeoutSuppressed()) {
-      markAuthActivity({ force: true });
+      markAuthActivity();
       return;
     }
     if (!isAuthSessionExpired()) return;
