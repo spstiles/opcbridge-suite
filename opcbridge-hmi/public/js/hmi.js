@@ -5388,6 +5388,12 @@ const getAuthTouchIntervalMs = () => {
   return Math.max(5000, Math.min(30000, timeoutMinutes * 60 * 1000 * 0.25));
 };
 
+const getAuthEditExitGraceMs = () => {
+  const timeoutMinutes = getAuthTimeoutMinutes();
+  if (timeoutMinutes <= 0) return AUTH_EDIT_EXIT_GRACE_MS;
+  return Math.max(AUTH_EDIT_EXIT_GRACE_MS, timeoutMinutes * 60 * 1000);
+};
+
 const markAuthActivity = ({ force = false } = {}) => {
   if (!authSession) return;
   if (!isAuthTimeoutSuppressed() && isAuthSessionExpired()) {
@@ -15186,7 +15192,9 @@ const setMode = (next) => {
   if (!next && automationPanelOpen) closeAutomationPanel();
   const wasEditMode = isEditMode;
   if (wasEditMode && !next && authSession) {
-    authEditExitGraceUntilMs = Date.now() + AUTH_EDIT_EXIT_GRACE_MS;
+    authServerLoggedOutSinceMs = 0;
+    authActivityLastTouchMs = 0;
+    authEditExitGraceUntilMs = Date.now() + getAuthEditExitGraceMs();
     markAuthActivity({ force: true });
   }
   if (wasEditMode && !next) {
