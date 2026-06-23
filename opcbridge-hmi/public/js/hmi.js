@@ -4737,6 +4737,10 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   const activeSinceMs = Number(alarm?.active_since_ms) || 0;
   const lastChangeMs = Number(alarm?.last_change_ms) || 0;
   if (!isActive && !hasExistingRow) return;
+  if (!isActive && prev.state_seeded && !prev.history_event) {
+    alarmTimelineById.delete(id);
+    return;
+  }
   if (isActive && !hasExistingRow && activeSinceMs <= 0 && lastChangeMs <= 0) return;
   const next = { ...prev };
   next.alarm_id = id;
@@ -4750,10 +4754,9 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   next.group = alarm?.group ?? prev.group ?? null;
   next.site = alarm?.site ?? prev.site ?? null;
   next.enabled = alarm?.enabled ?? prev.enabled ?? true;
+  if (isActive && !next.history_event) next.state_seeded = true;
   if (isActive) {
     next.active = alarm?.active ?? prev.active ?? false;
-  } else if (prev.active === true && lastChangeMs > 0) {
-    next.active = false;
   } else {
     next.active = prev.active ?? false;
   }
@@ -4765,18 +4768,12 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   } else {
     next.active_since_ms = 0;
   }
-  next.last_change_ms = (isActive || prev.active === true) ? (lastChangeMs || prev.last_change_ms || 0) : (prev.last_change_ms || 0);
-  if (prev.active === true && !isActive && lastChangeMs > 0) {
-    next.cleared_ts_ms = lastChangeMs;
-  }
+  next.last_change_ms = isActive ? (lastChangeMs || prev.last_change_ms || 0) : (prev.last_change_ms || 0);
   if (isActive && activeSinceMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
     next.last_event_type = "active";
     next.last_event_ts_ms = activeSinceMs;
   } else if (isActive && lastChangeMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
     next.last_event_type = "active";
-    next.last_event_ts_ms = lastChangeMs;
-  } else if (prev.active === true && !isActive && lastChangeMs > 0) {
-    next.last_event_type = "return";
     next.last_event_ts_ms = lastChangeMs;
   }
   alarmTimelineById.set(id, next);
@@ -5065,6 +5062,8 @@ const upsertTimelineFromAlarmEvent = (event) => {
   if (event?.site != null) next.site = event.site;
   if (event?.severity != null) next.severity = event.severity;
   next.synthetic = isSynthetic;
+  next.history_event = true;
+  next.state_seeded = false;
   next.last_event_type = type || "event";
   next.last_event_ts_ms = eventTs;
   next.last_event_value = event?.value;
