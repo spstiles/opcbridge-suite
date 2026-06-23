@@ -578,27 +578,35 @@
 		            <div class="prop-subgroup is-hidden" id="buttonAlarmFilterFields" hidden>
 		              <div class="prop-row">
 		                <label for="buttonAlarmFilterTarget">Panel</label>
-		                <select id="buttonAlarmFilterTarget">
-		                  <option value="">All alarm panels</option>
-		                </select>
+		                <input id="buttonAlarmFilterTarget" type="text" list="buttonAlarmFilterTargetList" placeholder="All alarm panels" />
+		                <datalist id="buttonAlarmFilterTargetList"></datalist>
 		              </div>
 		              <div class="prop-row">
-		                <label for="buttonAlarmFilterColumn">Column</label>
-		                <select id="buttonAlarmFilterColumn">
-		                  <option value="status">Status</option>
-		                  <option value="site">Site</option>
-		                  <option value="group">Group</option>
-		                  <option value="alarm">Alarm</option>
-		                  <option value="severity">Severity</option>
-		                  <option value="source">Source</option>
-		                </select>
+		                <label for="buttonAlarmFilterSites">Site</label>
+		                <input id="buttonAlarmFilterSites" type="text" placeholder="Plant, Field" />
 		              </div>
 		              <div class="prop-row">
-		                <label for="buttonAlarmFilterValue">Value</label>
-		                <input id="buttonAlarmFilterValue" type="text" placeholder="active, returned, Plant, etc." />
+		                <label for="buttonAlarmFilterGroups">Group</label>
+		                <input id="buttonAlarmFilterGroups" type="text" placeholder="Lift Stations" />
 		              </div>
 		              <div class="prop-row">
-		                <label for="buttonAlarmFilterClear">Clear Runtime Filter</label>
+		                <label for="buttonAlarmFilterAlarms">Alarm</label>
+		                <input id="buttonAlarmFilterAlarms" type="text" placeholder="Alarm name or ID" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterSeverities">Severity</label>
+		                <input id="buttonAlarmFilterSeverities" type="text" placeholder="1, 2, 3" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterStatuses">Status</label>
+		                <input id="buttonAlarmFilterStatuses" type="text" placeholder="active, acked, unacked, returned, badquality" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterSources">Source</label>
+		                <input id="buttonAlarmFilterSources" type="text" placeholder="Connection, tag, or connection:tag" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterClear">Clear Button Filter</label>
 		                <input id="buttonAlarmFilterClear" type="checkbox" />
 		              </div>
 		            </div>

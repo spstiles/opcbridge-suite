@@ -3781,9 +3781,14 @@ const buttonPromptMaxInput = document.getElementById("buttonPromptMax");
 const buttonPromptStepRow = document.getElementById("buttonPromptStepRow");
 const buttonPromptStepInput = document.getElementById("buttonPromptStep");
 const buttonAlarmFilterFields = document.getElementById("buttonAlarmFilterFields");
-const buttonAlarmFilterTargetSelect = document.getElementById("buttonAlarmFilterTarget");
-const buttonAlarmFilterColumnSelect = document.getElementById("buttonAlarmFilterColumn");
-const buttonAlarmFilterValueInput = document.getElementById("buttonAlarmFilterValue");
+const buttonAlarmFilterTargetInput = document.getElementById("buttonAlarmFilterTarget");
+const buttonAlarmFilterTargetList = document.getElementById("buttonAlarmFilterTargetList");
+const buttonAlarmFilterSitesInput = document.getElementById("buttonAlarmFilterSites");
+const buttonAlarmFilterGroupsInput = document.getElementById("buttonAlarmFilterGroups");
+const buttonAlarmFilterAlarmsInput = document.getElementById("buttonAlarmFilterAlarms");
+const buttonAlarmFilterSeveritiesInput = document.getElementById("buttonAlarmFilterSeverities");
+const buttonAlarmFilterStatusesInput = document.getElementById("buttonAlarmFilterStatuses");
+const buttonAlarmFilterSourcesInput = document.getElementById("buttonAlarmFilterSources");
 const buttonAlarmFilterClearInput = document.getElementById("buttonAlarmFilterClear");
 const buttonWidthInput = document.getElementById("buttonWidth");
 const buttonXInput = document.getElementById("buttonX");
@@ -4865,30 +4870,26 @@ const alarmMatchesFilterSet = (alarm, filters) => {
 };
 
 const normalizeAlarmFilterAction = (action) => {
-  const column = String(action?.column || "status").trim().toLowerCase();
-  const value = String(action?.value || "").trim();
-  const clear = Boolean(action?.clear);
-  const allowed = new Set(["site", "group", "alarm", "severity", "status", "source"]);
+  const filters = normalizeAlarmPanelFilters(action?.filters);
+  const legacyColumn = String(action?.column || "").trim().toLowerCase();
+  const legacyValue = String(action?.value || "").trim();
+  if (legacyColumn && legacyValue && !hasAlarmPanelFilters(filters)) {
+    const keyByColumn = {
+      site: "sites",
+      group: "groups",
+      alarm: "alarms",
+      severity: "severities",
+      status: "statuses",
+      source: "sources"
+    };
+    const key = keyByColumn[legacyColumn] || "statuses";
+    filters[key] = splitAlarmFilterValues(legacyValue);
+  }
   return {
     target: String(action?.target || "").trim(),
-    column: allowed.has(column) ? column : "status",
-    value,
-    clear
+    filters,
+    clear: Boolean(action?.clear)
   };
-};
-
-const alarmFilterActionToFilterSet = (action) => {
-  const normalized = normalizeAlarmFilterAction(action);
-  if (normalized.clear || !normalized.value) return {};
-  const keyByColumn = {
-    site: "sites",
-    group: "groups",
-    alarm: "alarms",
-    severity: "severities",
-    status: "statuses",
-    source: "sources"
-  };
-  return { [keyByColumn[normalized.column] || "statuses"]: splitAlarmFilterValues(normalized.value) };
 };
 
 const applyAlarmPanelRuntimeFilterAction = (action) => {
@@ -4897,7 +4898,7 @@ const applyAlarmPanelRuntimeFilterAction = (action) => {
   if (normalized.clear) {
     alarmsPanelRuntimeFiltersByTarget.delete(target);
   } else {
-    const filters = alarmFilterActionToFilterSet(normalized);
+    const filters = normalizeAlarmPanelFilters(normalized.filters);
     if (hasAlarmPanelFilters(filters)) alarmsPanelRuntimeFiltersByTarget.set(target, filters);
     else alarmsPanelRuntimeFiltersByTarget.delete(target);
   }
@@ -9028,20 +9029,13 @@ const getAlarmPanelIds = () => {
 };
 
 const refreshAlarmPanelTargetOptions = () => {
-  if (!buttonAlarmFilterTargetSelect) return;
-  const previous = buttonAlarmFilterTargetSelect.value;
-  buttonAlarmFilterTargetSelect.innerHTML = "";
-  const all = document.createElement("option");
-  all.value = "";
-  all.textContent = "All alarm panels";
-  buttonAlarmFilterTargetSelect.appendChild(all);
+  if (!buttonAlarmFilterTargetList) return;
+  buttonAlarmFilterTargetList.innerHTML = "";
   getAlarmPanelIds().forEach((id) => {
     const opt = document.createElement("option");
     opt.value = id;
-    opt.textContent = id;
-    buttonAlarmFilterTargetSelect.appendChild(opt);
+    buttonAlarmFilterTargetList.appendChild(opt);
   });
-  buttonAlarmFilterTargetSelect.value = getAlarmPanelIds().includes(previous) ? previous : "";
 };
 
 const updateButtonActionUI = (actionType) => {
@@ -12272,9 +12266,13 @@ const syncPropertiesFromSelection = () => {
     if (buttonViewportSelect) buttonViewportSelect.value = obj.action?.viewportId || "";
     updateButtonActionUI(obj.action?.type || "navigate");
     const alarmFilterAction = obj.action?.type === "alarm-filter" ? normalizeAlarmFilterAction(obj.action) : normalizeAlarmFilterAction({});
-    if (buttonAlarmFilterTargetSelect) buttonAlarmFilterTargetSelect.value = alarmFilterAction.target || "";
-    if (buttonAlarmFilterColumnSelect) buttonAlarmFilterColumnSelect.value = alarmFilterAction.column || "status";
-    if (buttonAlarmFilterValueInput) setInputValueSafe(buttonAlarmFilterValueInput, alarmFilterAction.value || "");
+    if (buttonAlarmFilterTargetInput) setInputValueSafe(buttonAlarmFilterTargetInput, alarmFilterAction.target || "");
+    if (buttonAlarmFilterSitesInput) setInputValueSafe(buttonAlarmFilterSitesInput, joinAlarmFilterValues(alarmFilterAction.filters.sites));
+    if (buttonAlarmFilterGroupsInput) setInputValueSafe(buttonAlarmFilterGroupsInput, joinAlarmFilterValues(alarmFilterAction.filters.groups));
+    if (buttonAlarmFilterAlarmsInput) setInputValueSafe(buttonAlarmFilterAlarmsInput, joinAlarmFilterValues(alarmFilterAction.filters.alarms));
+    if (buttonAlarmFilterSeveritiesInput) setInputValueSafe(buttonAlarmFilterSeveritiesInput, joinAlarmFilterValues(alarmFilterAction.filters.severities));
+    if (buttonAlarmFilterStatusesInput) setInputValueSafe(buttonAlarmFilterStatusesInput, joinAlarmFilterValues(alarmFilterAction.filters.statuses));
+    if (buttonAlarmFilterSourcesInput) setInputValueSafe(buttonAlarmFilterSourcesInput, joinAlarmFilterValues(alarmFilterAction.filters.sources));
     if (buttonAlarmFilterClearInput) buttonAlarmFilterClearInput.checked = Boolean(alarmFilterAction.clear);
 
     const writeAction = (obj.action?.type === "momentary-write" || obj.action?.type === "toggle-write" || obj.action?.type === "set-write" || obj.action?.type === "prompt-write") ? obj.action : null;
@@ -17368,9 +17366,15 @@ if (buttonLabelInput) {
 
 const getCurrentAlarmFilterButtonAction = () => ({
   type: "alarm-filter",
-  target: String(buttonAlarmFilterTargetSelect?.value || "").trim(),
-  column: String(buttonAlarmFilterColumnSelect?.value || "status").trim(),
-  value: String(buttonAlarmFilterValueInput?.value || "").trim(),
+  target: String(buttonAlarmFilterTargetInput?.value || "").trim(),
+  filters: normalizeAlarmPanelFilters({
+    sites: buttonAlarmFilterSitesInput?.value || "",
+    groups: buttonAlarmFilterGroupsInput?.value || "",
+    alarms: buttonAlarmFilterAlarmsInput?.value || "",
+    severities: buttonAlarmFilterSeveritiesInput?.value || "",
+    statuses: buttonAlarmFilterStatusesInput?.value || "",
+    sources: buttonAlarmFilterSourcesInput?.value || ""
+  }),
   clear: Boolean(buttonAlarmFilterClearInput?.checked)
 });
 
@@ -17503,7 +17507,7 @@ if (buttonViewportSelect) {
   });
 }
 
-[buttonAlarmFilterTargetSelect, buttonAlarmFilterColumnSelect, buttonAlarmFilterValueInput, buttonAlarmFilterClearInput].forEach((input) => {
+[buttonAlarmFilterTargetInput, buttonAlarmFilterSitesInput, buttonAlarmFilterGroupsInput, buttonAlarmFilterAlarmsInput, buttonAlarmFilterSeveritiesInput, buttonAlarmFilterStatusesInput, buttonAlarmFilterSourcesInput, buttonAlarmFilterClearInput].forEach((input) => {
   if (!input) return;
   input.addEventListener("change", updateAlarmFilterButtonActionFromInputs);
 });
