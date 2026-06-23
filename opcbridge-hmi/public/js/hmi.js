@@ -4427,8 +4427,15 @@ const formatAlarmValue = (value) => {
   }
 };
 
+const isReturnedAlarmEventType = (value) => {
+  const type = String(value || "").trim().toLowerCase();
+  return type === "return" || type === "reset" || type === "clear";
+};
+
+const isAlarmTimelineReturned = (alarm) => isReturnedAlarmEventType(alarm?.last_event_type);
+
 const getAlarmDisplayDescription = (alarm) => {
-  const isActive = Boolean(alarm?.active);
+  const isActive = Boolean(alarm?.active) && !isAlarmTimelineReturned(alarm);
   const messageOn = String(alarm?.message_on_active ?? "").trim();
   const messageOff = String(alarm?.message_on_return ?? "").trim();
   const lastMessage = String(alarm?.message ?? "").trim();
@@ -4736,16 +4743,13 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   const isActive = Boolean(alarm?.active);
   const activeSinceMs = Number(alarm?.active_since_ms) || 0;
   const lastChangeMs = Number(alarm?.last_change_ms) || 0;
-  const stateEventMs = activeSinceMs || lastChangeMs;
-  const prevEventMs = Number(prev.last_event_ts_ms) || 0;
-  const prevEventType = String(prev.last_event_type || "").trim().toLowerCase();
-  const prevIsReturned = prevEventType === "return" || prevEventType === "reset" || prevEventType === "clear";
+  const prevIsReturned = isReturnedAlarmEventType(prev.last_event_type);
   if (!isActive && !hasExistingRow) return;
   if (!isActive && prev.state_seeded && !prev.history_event) {
     alarmTimelineById.delete(id);
     return;
   }
-  if (isActive && prevIsReturned && prevEventMs > 0 && (stateEventMs <= 0 || stateEventMs <= prevEventMs)) {
+  if (isActive && prevIsReturned) {
     return;
   }
   if (isActive && !hasExistingRow && activeSinceMs <= 0 && lastChangeMs <= 0) return;
@@ -4836,10 +4840,12 @@ const getAlarmRuntimeStatusValues = (alarm) => {
   const tagName = String(src?.tag || "");
   const rawQuality = tagQualityCache.get(normalizeTagCacheKey(connectionId, tagName));
   const values = [];
-  if (alarm?.active) values.push("active");
-  if (alarm?.active && alarm?.acked) values.push("acked");
-  if (alarm?.active && !alarm?.acked) values.push("unacked");
-  if (!alarm?.active) values.push("returned", "clear", "cleared");
+  const isReturned = isAlarmTimelineReturned(alarm);
+  const isActive = Boolean(alarm?.active) && !isReturned;
+  if (isActive) values.push("active");
+  if (isActive && alarm?.acked) values.push("acked");
+  if (isActive && !alarm?.acked) values.push("unacked");
+  if (!isActive) values.push("returned", "clear", "cleared");
   if (rawQuality === 0) values.push("badquality", "bad-quality", "bad quality");
   const eventType = String(alarm?.last_event_type || "").trim().toLowerCase();
   if (eventType) values.push(eventType);
@@ -5009,11 +5015,13 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
     const rawQuality = tagQualityCache.get(normalizeTagCacheKey(connectionId, tagName));
     const qualityText = rawQuality === 1 ? "GOOD" : rawQuality === 0 ? "BAD" : rawQuality == null ? "-" : String(rawQuality);
     const cells = [activeText, clearedText, sourceText, areaText, baseDescText, statusText, qualityText].map(String);
+    const isReturned = isAlarmTimelineReturned(alarm);
+    const isActive = Boolean(alarm?.active) && !isReturned;
     const className = [
       "hmi-alarms-panel-row",
-      alarm?.active && !alarm?.acked ? "is-active-unacked" : "",
-      alarm?.active && alarm?.acked ? "is-active-acked" : "",
-      !alarm?.active ? "is-returned" : "",
+      isActive && !alarm?.acked ? "is-active-unacked" : "",
+      isActive && alarm?.acked ? "is-active-acked" : "",
+      !isActive ? "is-returned" : "",
       rawQuality === 0 ? "is-bad-quality" : ""
     ].filter(Boolean).join(" ");
     const signature = JSON.stringify({ cells, className });
