@@ -4736,9 +4736,16 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   const isActive = Boolean(alarm?.active);
   const activeSinceMs = Number(alarm?.active_since_ms) || 0;
   const lastChangeMs = Number(alarm?.last_change_ms) || 0;
+  const stateEventMs = activeSinceMs || lastChangeMs;
+  const prevEventMs = Number(prev.last_event_ts_ms) || 0;
+  const prevEventType = String(prev.last_event_type || "").trim().toLowerCase();
+  const prevIsReturned = prevEventType === "return" || prevEventType === "reset" || prevEventType === "clear";
   if (!isActive && !hasExistingRow) return;
   if (!isActive && prev.state_seeded && !prev.history_event) {
     alarmTimelineById.delete(id);
+    return;
+  }
+  if (isActive && prevIsReturned && prevEventMs > 0 && (stateEventMs <= 0 || stateEventMs <= prevEventMs)) {
     return;
   }
   if (isActive && !hasExistingRow && activeSinceMs <= 0 && lastChangeMs <= 0) return;
