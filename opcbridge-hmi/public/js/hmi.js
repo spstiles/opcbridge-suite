@@ -4695,7 +4695,15 @@ const apiGetAlarmsAll = async () => {
   return response.json();
 };
 
-const loadAlarmsStateFromHttp = async () => {
+const pruneSyntheticInactiveAlarmRows = () => {
+  alarmTimelineById.forEach((row, id) => {
+    if (!row?.synthetic) return;
+    const state = alarmsStateById.get(String(id || ""));
+    if (state && !state.active) alarmTimelineById.delete(id);
+  });
+};
+
+const loadAlarmsStateFromHttp = async (opts = {}) => {
   try {
     const data = await apiGetAlarmsAll();
     const alarms = Array.isArray(data?.alarms) ? data.alarms : [];
@@ -4706,7 +4714,8 @@ const loadAlarmsStateFromHttp = async () => {
       alarmsStateById.set(id, alarm);
       upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) });
     });
-    scheduleAlarmsRender();
+    pruneSyntheticInactiveAlarmRows();
+    if (opts.render !== false) scheduleAlarmsRender();
   } catch (error) {
     console.warn("[alarms] Failed to load current alarms snapshot:", error);
   }
@@ -5041,6 +5050,11 @@ const upsertTimelineFromAlarmEvent = (event) => {
   const eventTs = Number(event?.ts_ms) || 0;
   if (eventTs <= 0) return;
   const type = String(event?.type || "").trim().toLowerCase();
+  const isSynthetic = Boolean(event?.synthetic);
+  if (isSynthetic && type === "active") {
+    const state = alarmsStateById.get(id);
+    if (state && !state.active) return;
+  }
   const canCreateTimelineRow = type === "active";
   if (!canCreateTimelineRow && !alarmTimelineById.has(id)) return;
   const prev = alarmTimelineById.get(id) || {};
@@ -5050,6 +5064,7 @@ const upsertTimelineFromAlarmEvent = (event) => {
   if (event?.group != null) next.group = event.group;
   if (event?.site != null) next.site = event.site;
   if (event?.severity != null) next.severity = event.severity;
+  next.synthetic = isSynthetic;
   next.last_event_type = type || "event";
   next.last_event_ts_ms = eventTs;
   next.last_event_value = event?.value;
@@ -5088,6 +5103,7 @@ const loadAlarmTimelineFromHistory = async (opts = {}) => {
   alarmHistoryLoading = true;
   try {
     const cutoffMs = Date.now() - ALARM_HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    await loadAlarmsStateFromHttp({ render: false });
     const data = await apiGetAlarmsHistory(ALARM_HISTORY_MAX_EVENTS);
     const events = Array.isArray(data?.events) ? data.events : [];
     const filtered = events.filter((ev) => {
