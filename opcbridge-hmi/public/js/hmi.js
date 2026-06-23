@@ -5097,6 +5097,52 @@ const upsertTimelineFromAlarmEvent = (event) => {
 const ALARM_HISTORY_WINDOW_DAYS = 14;
 const ALARM_HISTORY_MAX_EVENTS = 5000;
 
+const shouldIngestAlarmHistoryEvent = (event, laterReturnByAlarmId) => {
+  const id = normalizeAlarmTimelineId(event?.alarm_id);
+  if (!id) return false;
+  const type = String(event?.type || "").trim().toLowerCase();
+  if (type !== "active") return true;
+  if (Boolean(event?.synthetic)) return true;
+  const state = alarmsStateById.get(id);
+  if (state?.active) return true;
+  return Boolean(laterReturnByAlarmId?.get(id));
+};
+
+const buildLaterReturnEventMap = (events) => {
+  const laterReturnByAlarmId = new Map();
+  const lastReturnTsByAlarmId = new Map();
+  const returnTypes = new Set(["return", "reset", "clear"]);
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const id = normalizeAlarmTimelineId(event?.alarm_id);
+    if (!id) return;
+    const type = String(event?.type || "").trim().toLowerCase();
+    if (!returnTypes.has(type)) return;
+    const ts = Number(event?.ts_ms) || 0;
+    if (ts > (lastReturnTsByAlarmId.get(id) || 0)) lastReturnTsByAlarmId.set(id, ts);
+  });
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const id = normalizeAlarmTimelineId(event?.alarm_id);
+    if (!id) return;
+    const type = String(event?.type || "").trim().toLowerCase();
+    if (type !== "active") return;
+    const ts = Number(event?.ts_ms) || 0;
+    if ((lastReturnTsByAlarmId.get(id) || 0) > ts) laterReturnByAlarmId.set(id, true);
+  });
+  return laterReturnByAlarmId;
+};
+
+const rebuildAlarmTimelineFromHistoryEvents = (events) => {
+  const ordered = (Array.isArray(events) ? events : [])
+    .slice()
+    .sort((a, b) => (Number(a?.ts_ms) || 0) - (Number(b?.ts_ms) || 0));
+  const laterReturnByAlarmId = buildLaterReturnEventMap(ordered);
+  alarmTimelineById = new Map();
+  ordered
+    .filter((event) => shouldIngestAlarmHistoryEvent(event, laterReturnByAlarmId))
+    .forEach((event) => upsertTimelineFromAlarmEvent(event));
+  pruneSyntheticInactiveAlarmRows();
+};
+
 const loadAlarmTimelineFromHistory = async (opts = {}) => {
   const force = Boolean(opts.force);
   if (!force && (alarmHistoryLoaded || alarmHistoryLoading)) return;
@@ -5111,11 +5157,7 @@ const loadAlarmTimelineFromHistory = async (opts = {}) => {
       return ts >= cutoffMs;
     });
 
-    alarmTimelineById = new Map();
-    filtered
-      .slice()
-      .sort((a, b) => (Number(a?.ts_ms) || 0) - (Number(b?.ts_ms) || 0))
-      .forEach((ev) => upsertTimelineFromAlarmEvent(ev));
+    rebuildAlarmTimelineFromHistoryEvents(filtered);
 
     alarmHistoryLoaded = true;
     scheduleAlarmsRender();
