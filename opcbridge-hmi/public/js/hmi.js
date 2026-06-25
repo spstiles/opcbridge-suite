@@ -3900,6 +3900,7 @@ const alarmsPanelMaxRowsInput = document.getElementById("alarmsPanelMaxRows");
 const alarmsPanelOnlyUnackedInput = document.getElementById("alarmsPanelOnlyUnacked");
 const alarmsPanelShowSourceInput = document.getElementById("alarmsPanelShowSource");
 const alarmsPanelFontSizeInput = document.getElementById("alarmsPanelFontSize");
+const alarmsPanelBoldInput = document.getElementById("alarmsPanelBold");
 const alarmsPanelFilterSitesInput = document.getElementById("alarmsPanelFilterSites");
 const alarmsPanelFilterGroupsInput = document.getElementById("alarmsPanelFilterGroups");
 const alarmsPanelFilterAlarmsInput = document.getElementById("alarmsPanelFilterAlarms");
@@ -4705,7 +4706,8 @@ const apiGetAlarmsAll = async () => {
 const pruneSyntheticInactiveAlarmRows = () => {
   alarmTimelineById.forEach((row, id) => {
     if (!row?.synthetic) return;
-    const state = alarmsStateById.get(String(id || ""));
+    const alarmId = normalizeAlarmTimelineId(row?.alarm_id);
+    const state = alarmId ? alarmsStateById.get(alarmId) : null;
     if (state && !state.active) alarmTimelineById.delete(id);
   });
 };
@@ -4733,20 +4735,25 @@ const normalizeAlarmTimelineId = (value) => {
   return id || null;
 };
 
+const getAlarmStateTimelineKey = (alarmId) => `state:${alarmId}`;
+
 const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   const createIfMissing = opts.createIfMissing !== false;
   const id = normalizeAlarmTimelineId(alarm?.alarm_id);
   if (!id) return;
-  const hasExistingRow = alarmTimelineById.has(id);
+  const openKey = alarmOpenTimelineKeyByAlarmId.get(id);
+  const key = openKey && alarmTimelineById.has(openKey) ? openKey : getAlarmStateTimelineKey(id);
+  const hasExistingRow = alarmTimelineById.has(key);
   if (!createIfMissing && !hasExistingRow) return;
-  const prev = alarmTimelineById.get(id) || {};
+  const prev = alarmTimelineById.get(key) || {};
   const isActive = Boolean(alarm?.active);
   const activeSinceMs = Number(alarm?.active_since_ms) || 0;
   const lastChangeMs = Number(alarm?.last_change_ms) || 0;
   const prevIsReturned = isReturnedAlarmEventType(prev.last_event_type);
   if (!isActive && !hasExistingRow) return;
   if (!isActive && prev.state_seeded && !prev.history_event) {
-    alarmTimelineById.delete(id);
+    alarmTimelineById.delete(key);
+    if (alarmOpenTimelineKeyByAlarmId.get(id) === key) alarmOpenTimelineKeyByAlarmId.delete(id);
     return;
   }
   if (isActive && prevIsReturned) {
@@ -4754,6 +4761,7 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
   }
   if (isActive && !hasExistingRow && activeSinceMs <= 0 && lastChangeMs <= 0) return;
   const next = { ...prev };
+  next.timeline_key = key;
   next.alarm_id = id;
   next.source = alarm?.source || prev.source || {};
   next.name = alarm?.name ?? prev.name ?? null;
@@ -4787,7 +4795,8 @@ const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
     next.last_event_type = "active";
     next.last_event_ts_ms = lastChangeMs;
   }
-  alarmTimelineById.set(id, next);
+  alarmTimelineById.set(key, next);
+  if (isActive) alarmOpenTimelineKeyByAlarmId.set(id, key);
 };
 
 const isDisplayableAlarmTimelineRow = (row) => {
@@ -4980,8 +4989,8 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
   if (existingEmpty) existingEmpty.remove();
 
   const rowsById = new Map();
-  list.querySelectorAll(".hmi-alarms-panel-row[data-alarm-id]").forEach((row) => {
-    rowsById.set(String(row.dataset.alarmId || ""), row);
+  list.querySelectorAll(".hmi-alarms-panel-row").forEach((row) => {
+    rowsById.set(String(row.dataset.alarmRowKey || row.dataset.alarmId || ""), row);
   });
   const wantedIds = new Set();
 
@@ -4994,7 +5003,8 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
 
   items.forEach((alarm, index) => {
     const alarmId = normalizeAlarmTimelineId(alarm?.alarm_id) || `row-${index}`;
-    wantedIds.add(alarmId);
+    const rowKey = String(alarm?.timeline_key || alarmId);
+    wantedIds.add(rowKey);
     const src = alarm?.source || {};
     const connectionId = String(src?.connection_id || "");
     const tagName = String(src?.tag || "");
@@ -5026,10 +5036,11 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
     ].filter(Boolean).join(" ");
     const signature = JSON.stringify({ cells, className });
 
-    let row = rowsById.get(alarmId);
+    let row = rowsById.get(rowKey);
     if (!row) {
       row = document.createElementNS(xhtml, "div");
       row.dataset.alarmId = alarmId;
+      row.dataset.alarmRowKey = rowKey;
       cells.forEach((text) => row.appendChild(makeCell(text)));
     } else if (row.dataset.signature !== signature) {
       const cellEls = Array.from(row.querySelectorAll(".hmi-alarms-panel-cell"));
@@ -5051,8 +5062,8 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
     if (currentAtIndex !== row) list.insertBefore(row, currentAtIndex || null);
   });
 
-  list.querySelectorAll(".hmi-alarms-panel-row[data-alarm-id]").forEach((row) => {
-    if (!wantedIds.has(String(row.dataset.alarmId || ""))) row.remove();
+  list.querySelectorAll(".hmi-alarms-panel-row").forEach((row) => {
+    if (!wantedIds.has(String(row.dataset.alarmRowKey || row.dataset.alarmId || ""))) row.remove();
   });
 };
 
@@ -5067,10 +5078,19 @@ const upsertTimelineFromAlarmEvent = (event) => {
     const state = alarmsStateById.get(id);
     if (state && !state.active) return;
   }
+  let key = null;
+  if (type === "active") {
+    key = `event:${id}:${eventTs}`;
+  } else if (isReturnedAlarmEventType(type)) {
+    key = alarmOpenTimelineKeyByAlarmId.get(id) || getAlarmStateTimelineKey(id);
+  } else {
+    key = alarmOpenTimelineKeyByAlarmId.get(id) || getAlarmStateTimelineKey(id);
+  }
   const canCreateTimelineRow = type === "active";
-  if (!canCreateTimelineRow && !alarmTimelineById.has(id)) return;
-  const prev = alarmTimelineById.get(id) || {};
+  if (!canCreateTimelineRow && !alarmTimelineById.has(key)) return;
+  const prev = alarmTimelineById.get(key) || {};
   const next = { ...prev };
+  next.timeline_key = key;
   next.alarm_id = id;
   next.source = event?.source || prev.source || {};
   if (event?.group != null) next.group = event.group;
@@ -5091,9 +5111,11 @@ const upsertTimelineFromAlarmEvent = (event) => {
     next.active = true;
     next.active_since_ms = next.last_event_ts_ms;
     next.cleared_ts_ms = 0;
+    alarmOpenTimelineKeyByAlarmId.set(id, key);
   } else if (type === "return" || type === "reset" || type === "clear") {
     next.active = false;
     next.cleared_ts_ms = next.last_event_ts_ms;
+    if (alarmOpenTimelineKeyByAlarmId.get(id) === key) alarmOpenTimelineKeyByAlarmId.delete(id);
   } else if (type === "ack") {
     next.acked = true;
   } else if (type === "unack") {
@@ -5105,7 +5127,7 @@ const upsertTimelineFromAlarmEvent = (event) => {
     }
     if (type === "unshelve") next.shelved_until_ms = null;
   }
-  alarmTimelineById.set(id, next);
+  alarmTimelineById.set(key, next);
 };
 
 const ALARM_HISTORY_WINDOW_DAYS = 14;
@@ -5151,6 +5173,7 @@ const rebuildAlarmTimelineFromHistoryEvents = (events) => {
     .sort((a, b) => (Number(a?.ts_ms) || 0) - (Number(b?.ts_ms) || 0));
   const laterReturnByAlarmId = buildLaterReturnEventMap(ordered);
   alarmTimelineById = new Map();
+  alarmOpenTimelineKeyByAlarmId = new Map();
   ordered
     .filter((event) => shouldIngestAlarmHistoryEvent(event, laterReturnByAlarmId))
     .forEach((event) => upsertTimelineFromAlarmEvent(event));
@@ -5192,16 +5215,16 @@ const refreshAlarmsForScreenLoad = async () => {
 
 const getAlarmTimelineRows = () => {
   const rows = [];
-  alarmTimelineById.forEach((row) => {
+  alarmTimelineById.forEach((row, key) => {
     const id = normalizeAlarmTimelineId(row?.alarm_id);
     if (!id) return;
     const state = alarmsStateById.get(id);
-    if (state) upsertTimelineFromAlarmState(state, { createIfMissing: false });
-    const nextRow = alarmTimelineById.get(id) || row;
+    if (state && !row?.history_event) upsertTimelineFromAlarmState(state, { createIfMissing: false });
+    const nextRow = alarmTimelineById.get(key) || row;
     if (isDisplayableAlarmTimelineRow(nextRow)) {
       rows.push(nextRow);
     } else {
-      alarmTimelineById.delete(id);
+      alarmTimelineById.delete(key);
     }
   });
   return rows;
@@ -6055,6 +6078,7 @@ let alarmsWsCurrentUrl = "";
 let alarmsStateById = new Map();
 let alarmsEvents = [];
 let alarmTimelineById = new Map();
+let alarmOpenTimelineKeyByAlarmId = new Map();
 let alarmsPanelRuntimeFiltersByTarget = new Map();
 let alarmHistoryLoaded = false;
 let alarmHistoryLoading = false;
@@ -10845,6 +10869,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 		    panel.style.boxSizing = "border-box";
 		    panel.style.padding = "0";
 		    panel.style.fontSize = `${Number(obj.fontSize ?? 14)}px`;
+		    panel.style.fontWeight = obj.bold ? "700" : "400";
 		    applyAlarmsPanelTheme(panel, obj);
 
 		    const cols = document.createElementNS(xhtml, "div");
@@ -12519,6 +12544,7 @@ const syncPropertiesFromSelection = () => {
       if (alarmsPanelOnlyUnackedInput) alarmsPanelOnlyUnackedInput.checked = Boolean(obj.onlyUnacked);
       if (alarmsPanelShowSourceInput) alarmsPanelShowSourceInput.checked = obj.showSource !== false;
       if (alarmsPanelFontSizeInput) setInputValueSafe(alarmsPanelFontSizeInput, Number(obj.fontSize ?? 14));
+      if (alarmsPanelBoldInput) alarmsPanelBoldInput.checked = Boolean(obj.bold);
       const filters = normalizeAlarmPanelFilters(obj.alarmFilters);
       if (alarmsPanelFilterSitesInput) setInputValueSafe(alarmsPanelFilterSitesInput, joinAlarmFilterValues(filters.sites));
       if (alarmsPanelFilterGroupsInput) setInputValueSafe(alarmsPanelFilterGroupsInput, joinAlarmFilterValues(filters.groups));
@@ -18311,6 +18337,12 @@ if (alarmsPanelFontSizeInput) {
   alarmsPanelFontSizeInput.addEventListener("change", () => {
     const value = Number(alarmsPanelFontSizeInput.value);
     if (Number.isFinite(value) && value >= 6) updateRectProperty({ fontSize: Math.round(value) });
+  });
+}
+
+if (alarmsPanelBoldInput) {
+  alarmsPanelBoldInput.addEventListener("change", () => {
+    updateRectProperty({ bold: alarmsPanelBoldInput.checked });
   });
 }
 
@@ -26843,6 +26875,7 @@ const setTool = (nextTool) => {
 	        strokeWidth: 1,
 	        textColor: "#000000",
 	        fontSize: 14,
+	        bold: false,
 	        maxRows: 8,
 	        onlyUnacked: false,
 	        showSource: true
