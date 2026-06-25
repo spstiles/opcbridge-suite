@@ -3896,7 +3896,7 @@ const paintPickerApplyBtn = document.getElementById("paintPickerApplyBtn");
 const paintPickerCancelBtn = document.getElementById("paintPickerCancelBtn");
 const alarmsPanelPropsFields = document.getElementById("alarmsPanelPropsFields");
 const alarmsPanelIdInput = document.getElementById("alarmsPanelId");
-const alarmsPanelMaxRowsInput = document.getElementById("alarmsPanelMaxRows");
+const alarmsPanelHistoryDaysInput = document.getElementById("alarmsPanelHistoryDays");
 const alarmsPanelOnlyUnackedInput = document.getElementById("alarmsPanelOnlyUnacked");
 const alarmsPanelShowSourceInput = document.getElementById("alarmsPanelShowSource");
 const alarmsPanelFontSizeInput = document.getElementById("alarmsPanelFontSize");
@@ -4628,6 +4628,23 @@ const screenHasAlarmsPanel = () => {
   return Boolean(currentScreenObj && walk(currentScreenObj.objects));
 };
 
+const getScreenAlarmHistoryDays = () => {
+  let maxDays = ALARM_HISTORY_WINDOW_DAYS;
+  const walk = (objects) => {
+    if (!Array.isArray(objects)) return;
+    objects.forEach((obj) => {
+      if (!obj) return;
+      if (obj.type === "alarms-panel") {
+        const days = Number(obj.historyDays ?? ALARM_HISTORY_WINDOW_DAYS);
+        if (Number.isFinite(days) && days > maxDays) maxDays = days;
+      }
+      if (obj.type === "group") walk(obj.children);
+    });
+  };
+  walk(currentScreenObj?.objects);
+  return Math.max(1, Math.round(maxDays));
+};
+
 const findAlarmsPanelObjectByScrollKey = (scrollKey) => {
   const walk = (objects) => {
     if (!Array.isArray(objects)) return null;
@@ -4679,8 +4696,11 @@ const openAlarms = () => {
   scheduleAlarmsRender();
 };
 
-const apiGetAlarmsHistory = async (limit) => {
-  const query = limit != null ? `?limit=${encodeURIComponent(String(limit))}` : "";
+const apiGetAlarmsHistory = async (limit, sinceMs = null) => {
+  const params = new URLSearchParams();
+  if (limit != null) params.set("limit", String(limit));
+  if (sinceMs != null) params.set("since_ms", String(sinceMs));
+  const query = params.toString() ? `?${params.toString()}` : "";
   const tryFetchJson = async (path) => {
     const response = await fetch(path, { cache: "no-store", headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -4954,9 +4974,13 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
   const showSource = obj.showSource !== false;
   const baseFilters = normalizeAlarmPanelFilters(obj.alarmFilters);
   const runtimeFilters = getRuntimeAlarmFilterForPanel(obj);
+  const historyDays = Math.max(1, Math.round(Number(obj.historyDays ?? ALARM_HISTORY_WINDOW_DAYS) || ALARM_HISTORY_WINDOW_DAYS));
+  const cutoffMs = nowMs - historyDays * 24 * 60 * 60 * 1000;
   const items = getAlarmTimelineRows()
     .filter((row) => {
       if (!isDisplayableAlarmTimelineRow(row)) return false;
+      const rowTs = Number(row?.last_event_ts_ms) || Number(row?.active_since_ms) || 0;
+      if (rowTs > 0 && rowTs < cutoffMs) return false;
       const alarmForShelve = alarmsStateById.get(String(row?.alarm_id || "")) || row;
       if (isAlarmShelvedNow(alarmForShelve, nowMs)) return false;
       if (onlyUnacked && row?.acked) return false;
@@ -4972,8 +4996,7 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
       const sb = Number(b?.severity) || 0;
       if (sb !== sa) return sb - sa;
       return String(a?.alarm_id || "").localeCompare(String(b?.alarm_id || ""));
-    })
-    .slice(0, Math.max(1, Math.round(Number(obj.maxRows ?? 9999) || 9999)));
+    });
 
   const existingEmpty = list.querySelector(".hmi-alarms-panel-empty");
   if (!items.length) {
@@ -5131,7 +5154,7 @@ const upsertTimelineFromAlarmEvent = (event) => {
 };
 
 const ALARM_HISTORY_WINDOW_DAYS = 14;
-const ALARM_HISTORY_MAX_EVENTS = 5000;
+const ALARM_HISTORY_MAX_EVENTS = 50000;
 
 const shouldIngestAlarmHistoryEvent = (event, laterReturnByAlarmId) => {
   const id = normalizeAlarmTimelineId(event?.alarm_id);
@@ -5185,9 +5208,10 @@ const loadAlarmTimelineFromHistory = async (opts = {}) => {
   if (!force && (alarmHistoryLoaded || alarmHistoryLoading)) return;
   alarmHistoryLoading = true;
   try {
-    const cutoffMs = Date.now() - ALARM_HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const historyDays = getScreenAlarmHistoryDays();
+    const cutoffMs = Date.now() - historyDays * 24 * 60 * 60 * 1000;
     await loadAlarmsStateFromHttp({ render: false });
-    const data = await apiGetAlarmsHistory(ALARM_HISTORY_MAX_EVENTS);
+    const data = await apiGetAlarmsHistory(ALARM_HISTORY_MAX_EVENTS, cutoffMs);
     const events = Array.isArray(data?.events) ? data.events : [];
     const filtered = events.filter((ev) => {
       const ts = Number(ev?.ts_ms) || 0;
@@ -12540,7 +12564,7 @@ const syncPropertiesFromSelection = () => {
     if (rectShadowInput) rectShadowInput.checked = Boolean(obj.shadow);
     if (obj.type === "alarms-panel") {
       if (alarmsPanelIdInput) setInputValueSafe(alarmsPanelIdInput, obj.id || "");
-      if (alarmsPanelMaxRowsInput) setInputValueSafe(alarmsPanelMaxRowsInput, Number(obj.maxRows ?? 8));
+      if (alarmsPanelHistoryDaysInput) setInputValueSafe(alarmsPanelHistoryDaysInput, Number(obj.historyDays ?? ALARM_HISTORY_WINDOW_DAYS));
       if (alarmsPanelOnlyUnackedInput) alarmsPanelOnlyUnackedInput.checked = Boolean(obj.onlyUnacked);
       if (alarmsPanelShowSourceInput) alarmsPanelShowSourceInput.checked = obj.showSource !== false;
       if (alarmsPanelFontSizeInput) setInputValueSafe(alarmsPanelFontSizeInput, Number(obj.fontSize ?? 14));
@@ -18306,10 +18330,14 @@ if (rectStrokeWidthInput) {
   });
 }
 
-if (alarmsPanelMaxRowsInput) {
-  alarmsPanelMaxRowsInput.addEventListener("change", () => {
-    const value = Number(alarmsPanelMaxRowsInput.value);
-    if (Number.isFinite(value) && value >= 1) updateRectProperty({ maxRows: Math.round(value) });
+if (alarmsPanelHistoryDaysInput) {
+  alarmsPanelHistoryDaysInput.addEventListener("change", () => {
+    const value = Number(alarmsPanelHistoryDaysInput.value);
+    if (Number.isFinite(value) && value >= 1) {
+      updateRectProperty({ historyDays: Math.round(value) });
+      alarmHistoryLoaded = false;
+      loadAlarmTimelineFromHistory({ force: true });
+    }
   });
 }
 
@@ -26876,7 +26904,7 @@ const setTool = (nextTool) => {
 	        textColor: "#000000",
 	        fontSize: 14,
 	        bold: false,
-	        maxRows: 8,
+	        historyDays: ALARM_HISTORY_WINDOW_DAYS,
 	        onlyUnacked: false,
 	        showSource: true
 	      };

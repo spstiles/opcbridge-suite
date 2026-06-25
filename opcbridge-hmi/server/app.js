@@ -764,8 +764,11 @@ const createApp = () => {
       const host = String(alarms.host || opcbridge.host || "127.0.0.1");
       const port = Number(alarms.httpPort) || 8085;
       const limitRaw = req.query?.limit;
-      const limit = Math.max(1, Math.min(5000, Number(limitRaw) || 500));
-      const url = `http://${host}:${port}/alarm/api/alarms/history?limit=${limit}`;
+      const limit = Math.max(1, Math.min(50000, Number(limitRaw) || 500));
+      const params = new URLSearchParams({ limit: String(limit) });
+      const sinceMs = Number(req.query?.since_ms);
+      if (Number.isFinite(sinceMs) && sinceMs > 0) params.set("since_ms", String(Math.round(sinceMs)));
+      const url = `http://${host}:${port}/alarm/api/alarms/history?${params.toString()}`;
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       const text = await response.text();
       if (!response.ok) {
@@ -814,8 +817,11 @@ const createApp = () => {
       const host = String(opcbridge.host || "127.0.0.1");
       const port = Number(opcbridge.httpPort) || 8080;
       const limitRaw = req.query?.limit;
-      const limit = Math.max(1, Math.min(5000, Number(limitRaw) || 500));
-      const url = `http://${host}:${port}/alarm-history?limit=${limit}`;
+      const limit = Math.max(1, Math.min(50000, Number(limitRaw) || 500));
+      const params = new URLSearchParams({ limit: String(limit) });
+      const sinceMs = Number(req.query?.since_ms);
+      if (Number.isFinite(sinceMs) && sinceMs > 0) params.set("since_ms", String(Math.round(sinceMs)));
+      const url = `http://${host}:${port}/alarm-history?${params.toString()}`;
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       const text = await response.text();
       if (!response.ok) {

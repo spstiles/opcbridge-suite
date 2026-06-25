@@ -2506,7 +2506,7 @@ struct AlarmDb
             try { limit = std::stoi(req.get_param_value("limit")); } catch (...) {}
         }
         if (limit < 1) limit = 1;
-        if (limit > 5000) limit = 5000;
+        if (limit > 50000) limit = 50000;
 
         auto parse_i64_param = [&](const char* name, int64_t& outVal) -> bool {
             if (!req.has_param(name)) return false;

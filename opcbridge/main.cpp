@@ -12406,7 +12406,7 @@ bool sqlite_fetch_recent_events(int limit, json &outArray) {
     if (!g_alarmDb) return false;
 
     if (limit < 1) limit = 1;
-    if (limit > 1000) limit = 1000;
+    if (limit > 50000) limit = 50000;
 
     std::string sql =
         "SELECT timestamp_ms, connection_id, tag_name,"
@@ -22772,7 +22772,7 @@ window.addEventListener("load", startAutoRefresh);
 		                res.set_content(resp.dump(), "application/json");
 		            });
             
-            // /alarm-history?limit=N  (default 50, max 1000)
+            // /alarm-history?limit=N  (default 50, max 50000)
             svr.Get("/alarm-history", [&](const httplib::Request &req, httplib::Response &res) {	    int limit = 50;
 				if (auto it = req.params.find("limit"); it != req.params.end()) {
 					try {
