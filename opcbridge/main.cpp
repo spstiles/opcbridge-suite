@@ -24667,14 +24667,17 @@ window.addEventListener("load", startAutoRefresh);
 
 							const std::string sourceRaw = trim_copy(csv_get(row, "source"));
 							const bool isMemory = (to_lower_copy(sourceRaw) == "memory");
-							const std::string sourceTag = trim_copy(!trim_copy(csv_get(row, "source_tag")).empty() ? csv_get(row, "source_tag") :
+							const std::string plcTagName = trim_copy(!trim_copy(csv_get(row, "plc_tag_name")).empty() ? csv_get(row, "plc_tag_name") :
+								(!trim_copy(csv_get(row, "plc_tag")).empty() ? csv_get(row, "plc_tag") : csv_get(row, "plc_tagname")));
+							std::string sourceTag = trim_copy(!trim_copy(csv_get(row, "source_tag")).empty() ? csv_get(row, "source_tag") :
 								(isMemory ? std::string{} : sourceRaw));
 							const int bit = parse_int_loose(csv_get(row, "bit"), -1);
+							if (sourceTag.empty() && bit >= 0 && !plcTagName.empty()) {
+								sourceTag = plcTagName;
+							}
 							const bool isDerivedBit = !sourceTag.empty() && bit >= 0;
 							const bool isDerivedAlias = !sourceTag.empty() && !isDerivedBit;
 
-							const std::string plcTagName = trim_copy(!trim_copy(csv_get(row, "plc_tag_name")).empty() ? csv_get(row, "plc_tag_name") :
-								(!trim_copy(csv_get(row, "plc_tag")).empty() ? csv_get(row, "plc_tag") : csv_get(row, "plc_tagname")));
 							const std::string tagPath = trim_copy(!trim_copy(csv_get(row, "path")).empty() ? csv_get(row, "path") :
 								(!trim_copy(csv_get(row, "cip_path")).empty() ? csv_get(row, "cip_path") : csv_get(row, "plc_path")));
 							const std::string registerType = trim_copy(!trim_copy(csv_get(row, "register_type")).empty() ? csv_get(row, "register_type") :

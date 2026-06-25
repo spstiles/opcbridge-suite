@@ -128,6 +128,27 @@ Non-goals:
 - No silent substitution of zero or false for bad data.
 - No masking a PLC/connection problem as a normal process state.
 
+## OPCBridge Tag Quality Reason Codes
+
+Idea:
+- Add explicit reason/status details alongside the current binary tag quality value.
+
+Why:
+- `quality` currently only indicates `good` or `bad`, which is not enough to explain what failed.
+- Operators and maintainers need to distinguish read failures, bad handles, missing snapshots, unsupported datatypes, stale data, source tag issues, and conversion failures.
+- Better reason details would improve SCADA live tags, HMI diagnostics, health panes, audit logs, and troubleshooting without requiring journal inspection.
+
+Desired behavior:
+- Keep the existing binary `quality` field for simple consumers.
+- Add a companion field such as `quality_reason` or `status_text`.
+- Use stable reason values such as `ok`, `read_failed`, `bad_handle`, `no_snapshot_yet`, `decode_failed`, `unsupported_datatype`, `source_missing`, `source_bad_quality`, `conversion_failed`, and `stale`.
+- Include the reason in `/tags`, websocket tag updates, connection health summaries, and relevant audit/history rows.
+- Show human-readable reason text in SCADA/HMI where useful, while preserving compact display by default.
+
+Non-goals:
+- No replacement of the existing `0/1` quality field in the first version.
+- No dependency on a full OPC UA status-code model before adding useful diagnostics.
+
 ## HMI Color Picker Favorite Swatches
 
 Idea:
