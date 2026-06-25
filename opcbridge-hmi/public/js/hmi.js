@@ -4430,7 +4430,7 @@ const formatAlarmValue = (value) => {
 
 const isReturnedAlarmEventType = (value) => {
   const type = String(value || "").trim().toLowerCase();
-  return type === "return" || type === "reset" || type === "clear";
+  return type === "return" || type === "reset" || type === "clear" || type === "missed-return";
 };
 
 const isAlarmTimelineReturned = (alarm) => isReturnedAlarmEventType(alarm?.last_event_type);
@@ -4826,7 +4826,7 @@ const isDisplayableAlarmTimelineRow = (row) => {
   const activeSinceMs = Number(row.active_since_ms) || 0;
   const clearedTs = Number(row.cleared_ts_ms) || 0;
   if (row.active === true) return activeSinceMs > 0 || lastEventTs > 0;
-  if (type === "return" || type === "reset" || type === "clear") return clearedTs > 0 || lastEventTs > 0;
+  if (isReturnedAlarmEventType(type)) return clearedTs > 0 || lastEventTs > 0;
   if (type === "ack" || type === "unack") return lastEventTs > 0;
   return false;
 };
@@ -5103,6 +5103,22 @@ const upsertTimelineFromAlarmEvent = (event) => {
   }
   let key = null;
   if (type === "active") {
+    const openKey = alarmOpenTimelineKeyByAlarmId.get(id);
+    if (openKey && alarmTimelineById.has(openKey)) {
+      const openRow = alarmTimelineById.get(openKey) || {};
+      const openActiveTs = Number(openRow.active_since_ms) || Number(openRow.last_event_ts_ms) || 0;
+      if (openActiveTs > 0 && eventTs > openActiveTs) {
+        alarmTimelineById.set(openKey, {
+          ...openRow,
+          active: false,
+          cleared_ts_ms: eventTs,
+          last_event_type: "missed-return",
+          last_event_ts_ms: eventTs,
+          inferred_return: true
+        });
+        alarmOpenTimelineKeyByAlarmId.delete(id);
+      }
+    }
     key = `event:${id}:${eventTs}`;
   } else if (isReturnedAlarmEventType(type)) {
     key = alarmOpenTimelineKeyByAlarmId.get(id) || getAlarmStateTimelineKey(id);

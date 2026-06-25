@@ -7713,6 +7713,7 @@ struct AlarmEngine
                 {
                     s.active = true;
                     s.acked = false;
+                    s.return_notification_armed = true;
                     s.active_since_ms = ts;
                 }
                 else if (type == "return" || type == "reset" || type == "clear")
@@ -8152,18 +8153,27 @@ struct AlarmEngine
                 else if (!should_be_active && s.active)
                 {
                     const bool notify_return = recordEvent && s.return_notification_armed;
+                    const bool inferred_return = !recordEvent && s.initialized && s.active_since_ms > 0;
                     s.active = false;
                     s.return_notification_armed = false;
                     s.last_change_ms = t;
                     s.message = r.message_on_return.empty() ? "" : r.message_on_return;
                     last_alarm_change_ms.store(t);
-                    if (notify_return)
+                    if (notify_return || inferred_return)
                     {
                         std::cout << "[alarms] RETURN " << s.alarm_id
                                   << " (" << s.connection_id << ":" << s.tag << ")"
-                                  << " value=" << s.last_value.dump() << "\n";
-                        log_event(s, "return", s.last_value);
-                        if (notifications) notifications->notify_event(s, "return");
+                                  << " value=" << s.last_value.dump()
+                                  << (inferred_return ? " inferred=startup_reconcile" : "")
+                                  << "\n";
+                        log_event(
+                            s,
+                            "return",
+                            s.last_value,
+                            inferred_return ? "opcbridge-alarms" : "",
+                            inferred_return ? "inferred from current tag state during startup/reconnect reconciliation" : ""
+                        );
+                        if (notify_return && notifications) notifications->notify_event(s, "return");
                     }
                     if (ws && ws->enabled.load()) {
                         json msg;
