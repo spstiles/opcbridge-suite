@@ -4723,15 +4723,6 @@ const apiGetAlarmsAll = async () => {
   return response.json();
 };
 
-const pruneSyntheticInactiveAlarmRows = () => {
-  alarmTimelineById.forEach((row, id) => {
-    if (!row?.synthetic) return;
-    const alarmId = normalizeAlarmTimelineId(row?.alarm_id);
-    const state = alarmId ? alarmsStateById.get(alarmId) : null;
-    if (state && !state.active) alarmTimelineById.delete(id);
-  });
-};
-
 const loadAlarmsStateFromHttp = async (opts = {}) => {
   try {
     const data = await apiGetAlarmsAll();
@@ -4741,9 +4732,7 @@ const loadAlarmsStateFromHttp = async (opts = {}) => {
       const id = String(alarm?.alarm_id || "").trim();
       if (!id) return;
       alarmsStateById.set(id, alarm);
-      upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) });
     });
-    pruneSyntheticInactiveAlarmRows();
     if (opts.render !== false) scheduleAlarmsRender();
   } catch (error) {
     console.warn("[alarms] Failed to load current alarms snapshot:", error);
@@ -4756,68 +4745,6 @@ const normalizeAlarmTimelineId = (value) => {
 };
 
 const getAlarmStateTimelineKey = (alarmId) => `state:${alarmId}`;
-
-const upsertTimelineFromAlarmState = (alarm, opts = {}) => {
-  const createIfMissing = opts.createIfMissing !== false;
-  const id = normalizeAlarmTimelineId(alarm?.alarm_id);
-  if (!id) return;
-  const openKey = alarmOpenTimelineKeyByAlarmId.get(id);
-  const key = openKey && alarmTimelineById.has(openKey) ? openKey : getAlarmStateTimelineKey(id);
-  const hasExistingRow = alarmTimelineById.has(key);
-  if (!createIfMissing && !hasExistingRow) return;
-  const prev = alarmTimelineById.get(key) || {};
-  const isActive = Boolean(alarm?.active);
-  const activeSinceMs = Number(alarm?.active_since_ms) || 0;
-  const lastChangeMs = Number(alarm?.last_change_ms) || 0;
-  const prevIsReturned = isReturnedAlarmEventType(prev.last_event_type);
-  if (!isActive && !hasExistingRow) return;
-  if (!isActive && prev.state_seeded && !prev.history_event) {
-    alarmTimelineById.delete(key);
-    if (alarmOpenTimelineKeyByAlarmId.get(id) === key) alarmOpenTimelineKeyByAlarmId.delete(id);
-    return;
-  }
-  if (isActive && prevIsReturned) {
-    return;
-  }
-  if (isActive && !hasExistingRow && activeSinceMs <= 0 && lastChangeMs <= 0) return;
-  const next = { ...prev };
-  next.timeline_key = key;
-  next.alarm_id = id;
-  next.source = alarm?.source || prev.source || {};
-  next.name = alarm?.name ?? prev.name ?? null;
-  next.message_on_active = alarm?.message_on_active ?? prev.message_on_active ?? null;
-  next.message_on_return = alarm?.message_on_return ?? prev.message_on_return ?? null;
-  next.message = alarm?.message ?? prev.message ?? null;
-  next.severity = alarm?.severity ?? prev.severity ?? null;
-  next.area = alarm?.area ?? prev.area ?? null;
-  next.group = alarm?.group ?? prev.group ?? null;
-  next.site = alarm?.site ?? prev.site ?? null;
-  next.enabled = alarm?.enabled ?? prev.enabled ?? true;
-  if (isActive && !next.history_event) next.state_seeded = true;
-  if (isActive) {
-    next.active = alarm?.active ?? prev.active ?? false;
-  } else {
-    next.active = prev.active ?? false;
-  }
-  next.acked = alarm?.acked ?? prev.acked ?? false;
-  if (isActive && activeSinceMs > 0) {
-    next.active_since_ms = activeSinceMs;
-  } else if (prev.active_since_ms != null) {
-    next.active_since_ms = prev.active_since_ms;
-  } else {
-    next.active_since_ms = 0;
-  }
-  next.last_change_ms = isActive ? (lastChangeMs || prev.last_change_ms || 0) : (prev.last_change_ms || 0);
-  if (isActive && activeSinceMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
-    next.last_event_type = "active";
-    next.last_event_ts_ms = activeSinceMs;
-  } else if (isActive && lastChangeMs > 0 && (!next.last_event_ts_ms || next.last_event_type === "snapshot")) {
-    next.last_event_type = "active";
-    next.last_event_ts_ms = lastChangeMs;
-  }
-  alarmTimelineById.set(key, next);
-  if (isActive) alarmOpenTimelineKeyByAlarmId.set(id, key);
-};
 
 const isDisplayableAlarmTimelineRow = (row) => {
   if (!row || row.enabled === false) return false;
@@ -5097,10 +5024,7 @@ const upsertTimelineFromAlarmEvent = (event) => {
   if (eventTs <= 0) return;
   const type = String(event?.type || "").trim().toLowerCase();
   const isSynthetic = Boolean(event?.synthetic);
-  if (isSynthetic && type === "active") {
-    const state = alarmsStateById.get(id);
-    if (state && !state.active) return;
-  }
+  if (isSynthetic) return;
   let key = null;
   if (type === "active") {
     const openKey = alarmOpenTimelineKeyByAlarmId.get(id);
@@ -5137,7 +5061,6 @@ const upsertTimelineFromAlarmEvent = (event) => {
   if (event?.severity != null) next.severity = event.severity;
   next.synthetic = isSynthetic;
   next.history_event = true;
-  next.state_seeded = false;
   next.last_event_type = type || "event";
   next.last_event_ts_ms = eventTs;
   next.last_event_value = event?.value;
@@ -5177,7 +5100,6 @@ const shouldIngestAlarmHistoryEvent = (event, laterReturnByAlarmId) => {
   if (!id) return false;
   const type = String(event?.type || "").trim().toLowerCase();
   if (type !== "active") return true;
-  if (Boolean(event?.synthetic)) return true;
   const state = alarmsStateById.get(id);
   if (state?.active) return true;
   return Boolean(laterReturnByAlarmId?.get(id));
@@ -5216,7 +5138,6 @@ const rebuildAlarmTimelineFromHistoryEvents = (events) => {
   ordered
     .filter((event) => shouldIngestAlarmHistoryEvent(event, laterReturnByAlarmId))
     .forEach((event) => upsertTimelineFromAlarmEvent(event));
-  pruneSyntheticInactiveAlarmRows();
 };
 
 const loadAlarmTimelineFromHistory = async (opts = {}) => {
@@ -5258,8 +5179,6 @@ const getAlarmTimelineRows = () => {
   alarmTimelineById.forEach((row, key) => {
     const id = normalizeAlarmTimelineId(row?.alarm_id);
     if (!id) return;
-    const state = alarmsStateById.get(id);
-    if (state && !row?.history_event) upsertTimelineFromAlarmState(state, { createIfMissing: false });
     const nextRow = alarmTimelineById.get(key) || row;
     if (isDisplayableAlarmTimelineRow(nextRow)) {
       rows.push(nextRow);
@@ -6800,10 +6719,6 @@ const connectAlarmsWebSocket = () => {
           const id = String(alarm?.alarm_id || "");
           if (!id) return;
           alarmsStateById.set(id, alarm);
-          // A snapshot may include many configured alarms, most of which will be inactive.
-          // Only "seed" the timeline for active alarms so the on-screen panel shows
-          // current actives immediately without flooding the list with every alarm.
-          upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) });
         });
         scheduleAlarmsRender();
         return;
@@ -6812,7 +6727,6 @@ const connectAlarmsWebSocket = () => {
         const alarm = payload.alarm;
         const id = String(alarm?.alarm_id || "");
         if (id) alarmsStateById.set(id, alarm);
-        upsertTimelineFromAlarmState(alarm, { createIfMissing: Boolean(alarm?.active) });
         scheduleAlarmsRender();
         return;
       }
