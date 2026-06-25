@@ -5632,8 +5632,6 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
     if (authSession) {
       const now = Date.now();
       if (isAuthTimeoutSuppressed()) {
-        authSession.serverValid = false;
-        saveAuthSession(authSession);
         const firstMissing = !authServerLoggedOutSinceMs;
         if (firstMissing) {
           authServerLoggedOutSinceMs = now;
