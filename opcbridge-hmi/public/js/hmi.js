@@ -5118,6 +5118,8 @@ const upsertTimelineFromAlarmEvent = (event) => {
 const ALARM_HISTORY_WINDOW_DAYS = 14;
 const ALARM_HISTORY_MAX_EVENTS = 50000;
 const ALARM_PANEL_MAX_RENDER_ROWS = 1000;
+const ALARM_PANEL_REFRESH_DEBOUNCE_MS = 500;
+const ALARM_PANEL_POLL_MS = 30000;
 
 const shouldIngestAlarmHistoryEvent = (event, laterReturnByAlarmId) => {
   const id = normalizeAlarmTimelineId(event?.alarm_id);
@@ -5178,6 +5180,51 @@ const setAlarmTimelineFromPanelRows = (rows) => {
   });
 };
 
+const getAlarmPanelRowsFingerprint = (rows) => JSON.stringify((Array.isArray(rows) ? rows : []).map((row) => ({
+  key: String(row?.timeline_key || ""),
+  id: String(row?.alarm_id || ""),
+  active: Boolean(row?.active),
+  acked: Boolean(row?.acked),
+  active_since_ms: Number(row?.active_since_ms) || 0,
+  cleared_ts_ms: Number(row?.cleared_ts_ms) || 0,
+  last_event_type: String(row?.last_event_type || ""),
+  last_event_ts_ms: Number(row?.last_event_ts_ms) || 0,
+  message: String(row?.message || ""),
+  severity: Number(row?.severity) || 0
+})));
+
+const loadAlarmPanelRowsFromServer = async ({ force = false, render = true } = {}) => {
+  if (!force && alarmPanelRowsRefreshInFlight) return { ok: false, changed: false };
+  alarmPanelRowsRefreshInFlight = true;
+  try {
+    const historyDays = getScreenAlarmHistoryDays();
+    const cutoffMs = Date.now() - historyDays * 24 * 60 * 60 * 1000;
+    const panelData = await apiGetAlarmsPanelRows(ALARM_PANEL_MAX_RENDER_ROWS, cutoffMs);
+    if (!Array.isArray(panelData?.rows)) return { ok: false, changed: false };
+    const nextFingerprint = getAlarmPanelRowsFingerprint(panelData.rows);
+    const changed = force || nextFingerprint !== alarmPanelRowsFingerprint;
+    alarmPanelRowsFingerprint = nextFingerprint;
+    if (changed) {
+      setAlarmTimelineFromPanelRows(panelData.rows);
+      if (render) scheduleAlarmsRender();
+    }
+    return { ok: true, changed };
+  } finally {
+    alarmPanelRowsRefreshInFlight = false;
+  }
+};
+
+const scheduleAlarmPanelRowsRefresh = (delayMs = ALARM_PANEL_REFRESH_DEBOUNCE_MS) => {
+  if (!screenHasAlarmsPanel()) return;
+  if (alarmPanelRowsRefreshTimer) window.clearTimeout(alarmPanelRowsRefreshTimer);
+  alarmPanelRowsRefreshTimer = window.setTimeout(() => {
+    alarmPanelRowsRefreshTimer = null;
+    loadAlarmPanelRowsFromServer().catch((error) => {
+      console.warn("[alarms] Failed to refresh server alarm panel rows:", error);
+    });
+  }, Math.max(0, Number(delayMs) || 0));
+};
+
 const mergeAlarmTimelineRowWithRuntimeState = (row, runtime) => {
   if (!runtime?.active) return row;
   const runtimeActiveSince = Number(runtime?.active_since_ms) || Number(runtime?.last_change_ms) || Date.now();
@@ -5205,11 +5252,10 @@ const loadAlarmTimelineFromHistory = async (opts = {}) => {
     const cutoffMs = Date.now() - historyDays * 24 * 60 * 60 * 1000;
     await loadAlarmsStateFromHttp({ render: false });
     try {
-      const panelData = await apiGetAlarmsPanelRows(ALARM_PANEL_MAX_RENDER_ROWS, cutoffMs);
-      if (Array.isArray(panelData?.rows)) {
-        setAlarmTimelineFromPanelRows(panelData.rows);
+      const panelResult = await loadAlarmPanelRowsFromServer({ force, render: false });
+      if (panelResult.ok) {
         alarmHistoryLoaded = true;
-        scheduleAlarmsRender();
+        if (panelResult.changed) scheduleAlarmsRender();
         return;
       }
     } catch (error) {
@@ -6121,8 +6167,14 @@ let alarmOpenTimelineKeyByAlarmId = new Map();
 let alarmsPanelRuntimeFiltersByTarget = new Map();
 let alarmHistoryLoaded = false;
 let alarmHistoryLoading = false;
+let alarmPanelRowsFingerprint = "";
+let alarmPanelRowsRefreshTimer = null;
+let alarmPanelRowsRefreshInFlight = false;
 let alarmsRenderRaf = null;
 const alarmsPanelScrollByKey = new Map();
+window.setInterval(() => {
+  if (!isEditMode && screenHasAlarmsPanel()) scheduleAlarmPanelRowsRefresh(0);
+}, ALARM_PANEL_POLL_MS);
 let pendingScaleRaf = null;
 let wsRuntimeRenderRaf = null;
 const tagValueCache = new Map();
@@ -6775,7 +6827,7 @@ const connectAlarmsWebSocket = () => {
 
   alarmsWsClient.onopen = () => {
     alarmsWsConnected = true;
-    loadAlarmTimelineFromHistory();
+    scheduleAlarmPanelRowsRefresh(0);
     loadAlarmsStateFromHttp();
     scheduleAlarmsRender();
   };
@@ -6802,21 +6854,20 @@ const connectAlarmsWebSocket = () => {
           if (!id) return;
           alarmsStateById.set(id, alarm);
         });
-        scheduleAlarmsRender();
+        scheduleAlarmPanelRowsRefresh();
         return;
       }
       if (type === "alarm_state" && payload?.alarm) {
         const alarm = payload.alarm;
         const id = String(alarm?.alarm_id || "");
         if (id) alarmsStateById.set(id, alarm);
-        scheduleAlarmsRender();
+        scheduleAlarmPanelRowsRefresh();
         return;
       }
       if (type === "alarm_event" && payload?.event) {
         alarmsEvents.push(payload.event);
         if (alarmsEvents.length > 400) alarmsEvents = alarmsEvents.slice(-300);
-        upsertTimelineFromAlarmEvent(payload.event);
-        scheduleAlarmsRender();
+        scheduleAlarmPanelRowsRefresh();
       }
     } catch {
       // ignore malformed payloads
