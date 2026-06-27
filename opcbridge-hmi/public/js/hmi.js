@@ -4725,6 +4725,15 @@ const apiGetAlarmsAll = async () => {
   return response.json();
 };
 
+const isIgnoredAlarmHistoryEvent = (event) => {
+  const note = String(event?.note || "").trim().toLowerCase();
+  const actor = String(event?.actor || "").trim().toLowerCase();
+  if (event?.synthetic) return true;
+  if (actor === "opcbridge-alarms" && note.includes("startup/reconnect reconciliation")) return true;
+  if (note.includes("inferred from current tag state")) return true;
+  return false;
+};
+
 const loadAlarmsStateFromHttp = async (opts = {}) => {
   try {
     const data = await apiGetAlarmsAll();
@@ -4925,7 +4934,8 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
       const sb = Number(b?.severity) || 0;
       if (sb !== sa) return sb - sa;
       return String(a?.alarm_id || "").localeCompare(String(b?.alarm_id || ""));
-    });
+    })
+    .slice(0, ALARM_PANEL_MAX_RENDER_ROWS);
 
   const existingEmpty = list.querySelector(".hmi-alarms-panel-empty");
   if (!items.length) {
@@ -5026,7 +5036,7 @@ const upsertTimelineFromAlarmEvent = (event) => {
   if (eventTs <= 0) return;
   const type = String(event?.type || "").trim().toLowerCase();
   const isSynthetic = Boolean(event?.synthetic);
-  if (isSynthetic) return;
+  if (isSynthetic || isIgnoredAlarmHistoryEvent(event)) return;
   const isReturnEvent = isReturnedAlarmEventType(type);
   let key = null;
   if (type === "active") {
@@ -5097,6 +5107,7 @@ const upsertTimelineFromAlarmEvent = (event) => {
 
 const ALARM_HISTORY_WINDOW_DAYS = 14;
 const ALARM_HISTORY_MAX_EVENTS = 50000;
+const ALARM_PANEL_MAX_RENDER_ROWS = 1000;
 
 const shouldIngestAlarmHistoryEvent = (event, laterReturnByAlarmId) => {
   const id = normalizeAlarmTimelineId(event?.alarm_id);
@@ -5133,6 +5144,7 @@ const buildLaterReturnEventMap = (events) => {
 
 const rebuildAlarmTimelineFromHistoryEvents = (events) => {
   const ordered = (Array.isArray(events) ? events : [])
+    .filter((event) => !isIgnoredAlarmHistoryEvent(event))
     .slice()
     .sort((a, b) => (Number(a?.ts_ms) || 0) - (Number(b?.ts_ms) || 0));
   const laterReturnByAlarmId = buildLaterReturnEventMap(ordered);
@@ -5172,6 +5184,7 @@ const loadAlarmTimelineFromHistory = async (opts = {}) => {
     const data = await apiGetAlarmsHistory(ALARM_HISTORY_MAX_EVENTS, cutoffMs);
     const events = Array.isArray(data?.events) ? data.events : [];
     const filtered = events.filter((ev) => {
+      if (isIgnoredAlarmHistoryEvent(ev)) return false;
       const ts = Number(ev?.ts_ms) || 0;
       return ts >= cutoffMs;
     });

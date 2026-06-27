@@ -9553,6 +9553,21 @@ int main(int argc, char **argv)
         json events;
         std::string err;
         bool ok = db.fetch_events(req, events, err);
+        if (ok && events.is_array())
+        {
+            json filtered = json::array();
+            for (const auto& ev : events)
+            {
+                std::string note = ev.value("note", "");
+                std::string actor = ev.value("actor", "");
+                std::transform(note.begin(), note.end(), note.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                std::transform(actor.begin(), actor.end(), actor.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                if (actor == "opcbridge-alarms" && note.find("startup/reconnect reconciliation") != std::string::npos) continue;
+                if (note.find("inferred from current tag state") != std::string::npos) continue;
+                filtered.push_back(ev);
+            }
+            events = std::move(filtered);
+        }
         json j;
         j["ok"] = ok;
         if (!ok) j["error"] = err;
