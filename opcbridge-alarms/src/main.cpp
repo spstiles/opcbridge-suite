@@ -7719,6 +7719,8 @@ struct AlarmEngine
                 else if (type == "return" || type == "reset" || type == "clear")
                 {
                     s.active = false;
+                    s.return_notification_armed = false;
+                    s.active_since_ms = 0;
                 }
                 else if (type == "ack")
                 {
@@ -8153,27 +8155,24 @@ struct AlarmEngine
                 else if (!should_be_active && s.active)
                 {
                     const bool notify_return = recordEvent && s.return_notification_armed;
-                    const bool inferred_return = !recordEvent && s.initialized && s.active_since_ms > 0;
                     s.active = false;
                     s.return_notification_armed = false;
+                    s.active_since_ms = 0;
                     s.last_change_ms = t;
                     s.message = r.message_on_return.empty() ? "" : r.message_on_return;
                     last_alarm_change_ms.store(t);
-                    if (notify_return || inferred_return)
+                    if (notify_return)
                     {
                         std::cout << "[alarms] RETURN " << s.alarm_id
                                   << " (" << s.connection_id << ":" << s.tag << ")"
                                   << " value=" << s.last_value.dump()
-                                  << (inferred_return ? " inferred=startup_reconcile" : "")
                                   << "\n";
                         log_event(
                             s,
                             "return",
-                            s.last_value,
-                            inferred_return ? "opcbridge-alarms" : "",
-                            inferred_return ? "inferred from current tag state during startup/reconnect reconciliation" : ""
+                            s.last_value
                         );
-                        if (notify_return && notifications) notifications->notify_event(s, "return");
+                        if (notifications) notifications->notify_event(s, "return");
                     }
                     if (ws && ws->enabled.load()) {
                         json msg;
@@ -9558,51 +9557,6 @@ int main(int argc, char **argv)
         j["ok"] = ok;
         if (!ok) j["error"] = err;
         j["events"] = events;
-        // Always include current active alarms as synthetic snapshot entries so an alarm
-        // that is already active at boot appears in UIs even if there has been no DB event yet.
-        {
-            json active = engine.get_active(false);
-            if (active.is_array() && !active.empty()) {
-                if (!j["events"].is_array()) j["events"] = json::array();
-
-                std::unordered_set<std::string> existing;
-                for (const auto &ev : j["events"]) {
-                    if (ev.is_object() && ev.contains("alarm_id") && ev["alarm_id"].is_string()) {
-                        existing.insert(ev["alarm_id"].get<std::string>());
-                    }
-                }
-
-                for (const auto &a : active) {
-                    const std::string alarm_id = a.value("alarm_id", a.value("id", ""));
-                    if (alarm_id.empty()) continue;
-                    if (existing.count(alarm_id)) continue;
-
-                    json ev;
-                    ev["synthetic"] = true;
-                    // Treat as an "active" event so UIs can show an alarm that is
-                    // already active at boot even if the DB has no transition yet.
-                    ev["type"] = "active";
-                    ev["event_id"] = std::string("snap_") + random_hex(16);
-                    ev["alarm_id"] = alarm_id;
-                    ev["severity"] = a.value("severity", 0);
-                    ev["group"] = a.value("group", "");
-                    ev["site"] = a.value("site", "");
-                    ev["actor"] = nullptr;
-                    ev["note"] = nullptr;
-                    ev["message"] = a.value("message", "");
-                    const int64_t ts =
-                        a.contains("active_since_ms") && a["active_since_ms"].is_number_integer()
-                            ? a["active_since_ms"].get<int64_t>()
-                            : (a.contains("last_change_ms") && a["last_change_ms"].is_number_integer()
-                                   ? a["last_change_ms"].get<int64_t>()
-                                   : now_ms());
-                    ev["ts_ms"] = ts;
-                    ev["source"] = (a.contains("source") && a["source"].is_object()) ? a["source"] : json::object();
-                    ev["value"] = a.contains("last_value") ? a["last_value"] : nullptr;
-                    j["events"].push_back(ev);
-                }
-            }
-        }
         if (ok && events.is_array() && !events.empty()) {
             // For paging backwards (older events), request again with until_ms=next_until_ms.
             try {
