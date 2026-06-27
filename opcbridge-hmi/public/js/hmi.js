@@ -16584,14 +16584,21 @@ const wireCapsLockIndicator = (inputs, indicator) => {
   };
   const detect = (event) => {
     if (!event) return lastKnown;
-    if (typeof event.getModifierState === "function" && event.getModifierState("CapsLock")) return true;
     const key = String(event.key || "");
+    if (key === "CapsLock") {
+      if (event.type === "keydown" && !event.repeat) {
+        if (typeof event.getModifierState === "function") {
+          const reported = event.getModifierState("CapsLock");
+          return reported || !lastKnown;
+        }
+        return !lastKnown;
+      }
+      return lastKnown;
+    }
+    if (typeof event.getModifierState === "function" && event.getModifierState("CapsLock")) return true;
     if (key.length === 1 && /^[a-z]$/i.test(key)) {
       const isUpper = key === key.toUpperCase() && key !== key.toLowerCase();
       return event.shiftKey ? !isUpper : isUpper;
-    }
-    if (key === "CapsLock" && typeof event.getModifierState === "function") {
-      return event.getModifierState("CapsLock");
     }
     return lastKnown;
   };
