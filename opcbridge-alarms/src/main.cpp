@@ -9558,8 +9558,8 @@ int main(int argc, char **argv)
             json filtered = json::array();
             for (const auto& ev : events)
             {
-                std::string note = ev.value("note", "");
-                std::string actor = ev.value("actor", "");
+                std::string note = json_string_or_empty(ev, "note");
+                std::string actor = json_string_or_empty(ev, "actor");
                 std::transform(note.begin(), note.end(), note.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
                 std::transform(actor.begin(), actor.end(), actor.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
                 if (actor == "opcbridge-alarms" && note.find("startup/reconnect reconciliation") != std::string::npos) continue;
@@ -9585,6 +9585,167 @@ int main(int argc, char **argv)
                 j["next_until_ms"] = oldest - 1;
             } catch (...) {}
         }
+        res.status = ok ? 200 : 500;
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    svr.Get("/alarm/api/alarms/panel", [&](const httplib::Request &req, httplib::Response &res) {
+        json events;
+        std::string err;
+        bool ok = db.fetch_events(req, events, err);
+        auto should_skip_event = [](const json& ev) {
+            std::string note = json_string_or_empty(ev, "note");
+            std::string actor = json_string_or_empty(ev, "actor");
+            std::transform(note.begin(), note.end(), note.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            std::transform(actor.begin(), actor.end(), actor.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (actor == "opcbridge-alarms" && note.find("startup/reconnect reconciliation") != std::string::npos) return true;
+            if (note.find("inferred from current tag state") != std::string::npos) return true;
+            return false;
+        };
+
+        int rowLimit = 500;
+        if (req.has_param("rows"))
+        {
+            try { rowLimit = std::stoi(req.get_param_value("rows")); } catch (...) {}
+        }
+        else if (req.has_param("limit"))
+        {
+            try { rowLimit = std::stoi(req.get_param_value("limit")); } catch (...) {}
+        }
+        rowLimit = std::max(1, std::min(2000, rowLimit));
+
+        json rows = json::array();
+        if (ok)
+        {
+            std::vector<json> ordered;
+            if (events.is_array())
+            {
+                for (const auto& ev : events)
+                {
+                    if (!ev.is_object() || should_skip_event(ev)) continue;
+                    ordered.push_back(ev);
+                }
+            }
+            std::sort(ordered.begin(), ordered.end(), [](const json& a, const json& b) {
+                return a.value("ts_ms", 0LL) < b.value("ts_ms", 0LL);
+            });
+
+            std::unordered_map<std::string, json> rowsByKey;
+            std::unordered_map<std::string, std::string> openKeyByAlarmId;
+            for (const auto& ev : ordered)
+            {
+                const std::string id = ev.value("alarm_id", "");
+                const std::string type = ev.value("type", "");
+                const int64_t ts = ev.value("ts_ms", 0LL);
+                if (id.empty() || ts <= 0) continue;
+
+                std::string loweredType = type;
+                std::transform(loweredType.begin(), loweredType.end(), loweredType.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                const bool isReturn = loweredType == "return" || loweredType == "reset" || loweredType == "clear";
+                std::string key;
+                if (loweredType == "active")
+                {
+                    const auto openIt = openKeyByAlarmId.find(id);
+                    if (openIt != openKeyByAlarmId.end())
+                    {
+                        auto rowIt = rowsByKey.find(openIt->second);
+                        if (rowIt != rowsByKey.end())
+                        {
+                            rowIt->second["active"] = false;
+                            rowIt->second["cleared_ts_ms"] = ts;
+                            rowIt->second["last_event_type"] = "missed-return";
+                            rowIt->second["last_event_ts_ms"] = ts;
+                            rowIt->second["inferred_return"] = true;
+                        }
+                        openKeyByAlarmId.erase(openIt);
+                    }
+                    key = "event:" + id + ":" + std::to_string(ts);
+                }
+                else if (isReturn)
+                {
+                    const auto openIt = openKeyByAlarmId.find(id);
+                    key = openIt == openKeyByAlarmId.end() ? ("event:" + id + ":return:" + std::to_string(ts)) : openIt->second;
+                }
+                else
+                {
+                    const auto openIt = openKeyByAlarmId.find(id);
+                    if (openIt == openKeyByAlarmId.end()) continue;
+                    key = openIt->second;
+                }
+
+                json row = rowsByKey.count(key) ? rowsByKey[key] : json::object();
+                row["timeline_key"] = key;
+                row["alarm_id"] = id;
+                row["source"] = ev.contains("source") ? ev["source"] : json::object();
+                if (ev.contains("group")) row["group"] = ev["group"];
+                if (ev.contains("site")) row["site"] = ev["site"];
+                if (ev.contains("severity")) row["severity"] = ev["severity"];
+                if (ev.contains("message")) row["message"] = ev["message"];
+                row["history_event"] = true;
+                row["last_event_type"] = loweredType.empty() ? "event" : loweredType;
+                row["last_event_ts_ms"] = ts;
+                if (ev.contains("value")) row["last_event_value"] = ev["value"];
+                if (loweredType == "active")
+                {
+                    row["active"] = true;
+                    row["active_since_ms"] = ts;
+                    row["cleared_ts_ms"] = 0;
+                    openKeyByAlarmId[id] = key;
+                }
+                else if (isReturn)
+                {
+                    row["active"] = false;
+                    row["cleared_ts_ms"] = ts;
+                    openKeyByAlarmId.erase(id);
+                }
+                rowsByKey[key] = std::move(row);
+            }
+
+            std::unordered_set<std::string> representedActiveIds;
+            for (const auto& kv : rowsByKey)
+            {
+                const json& row = kv.second;
+                if (row.value("active", false) && row.value("cleared_ts_ms", 0LL) <= 0)
+                {
+                    representedActiveIds.insert(row.value("alarm_id", ""));
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(engine.mu);
+                for (const auto& kv : engine.states)
+                {
+                    const AlarmState& s = kv.second;
+                    if (!s.active || representedActiveIds.count(s.alarm_id)) continue;
+                    json row = alarm_state_to_json(s);
+                    row["timeline_key"] = "state:" + s.alarm_id;
+                    row["last_event_type"] = "active";
+                    row["last_event_ts_ms"] = s.active_since_ms > 0 ? s.active_since_ms : (s.last_change_ms > 0 ? s.last_change_ms : now_ms());
+                    row["cleared_ts_ms"] = 0;
+                    rowsByKey[row["timeline_key"].get<std::string>()] = std::move(row);
+                }
+            }
+
+            std::vector<json> sortedRows;
+            sortedRows.reserve(rowsByKey.size());
+            for (auto& kv : rowsByKey) sortedRows.push_back(std::move(kv.second));
+            std::sort(sortedRows.begin(), sortedRows.end(), [](const json& a, const json& b) {
+                const int64_t ta = a.value("last_event_ts_ms", a.value("active_since_ms", 0LL));
+                const int64_t tb = b.value("last_event_ts_ms", b.value("active_since_ms", 0LL));
+                if (tb != ta) return tb < ta;
+                return a.value("alarm_id", std::string()) < b.value("alarm_id", std::string());
+            });
+            for (const auto& row : sortedRows)
+            {
+                if (static_cast<int>(rows.size()) >= rowLimit) break;
+                rows.push_back(row);
+            }
+        }
+
+        json j;
+        j["ok"] = ok;
+        if (!ok) j["error"] = err;
+        j["rows"] = rows;
         res.status = ok ? 200 : 500;
         res.set_content(j.dump(2), "application/json");
     });

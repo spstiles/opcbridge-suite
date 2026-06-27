@@ -4719,6 +4719,16 @@ const apiGetAlarmsHistory = async (limit, sinceMs = null) => {
   }
 };
 
+const apiGetAlarmsPanelRows = async (rows, sinceMs = null) => {
+  const params = new URLSearchParams();
+  if (rows != null) params.set("rows", String(rows));
+  if (sinceMs != null) params.set("since_ms", String(sinceMs));
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`/api/alarms/panel${query}`, { cache: "no-store", headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+};
+
 const apiGetAlarmsAll = async () => {
   const response = await fetch(`/api/alarms/all`, { cache: "no-store", headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -5155,6 +5165,19 @@ const rebuildAlarmTimelineFromHistoryEvents = (events) => {
     .forEach((event) => upsertTimelineFromAlarmEvent(event));
 };
 
+const setAlarmTimelineFromPanelRows = (rows) => {
+  alarmTimelineById = new Map();
+  alarmOpenTimelineKeyByAlarmId = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row, index) => {
+    const id = normalizeAlarmTimelineId(row?.alarm_id);
+    if (!id) return;
+    const key = String(row?.timeline_key || `panel:${id}:${Number(row?.last_event_ts_ms) || index}`);
+    const next = { ...row, timeline_key: key };
+    alarmTimelineById.set(key, next);
+    if (next.active && !(Number(next.cleared_ts_ms) > 0)) alarmOpenTimelineKeyByAlarmId.set(id, key);
+  });
+};
+
 const mergeAlarmTimelineRowWithRuntimeState = (row, runtime) => {
   if (!runtime?.active) return row;
   const runtimeActiveSince = Number(runtime?.active_since_ms) || Number(runtime?.last_change_ms) || Date.now();
@@ -5181,6 +5204,17 @@ const loadAlarmTimelineFromHistory = async (opts = {}) => {
     const historyDays = getScreenAlarmHistoryDays();
     const cutoffMs = Date.now() - historyDays * 24 * 60 * 60 * 1000;
     await loadAlarmsStateFromHttp({ render: false });
+    try {
+      const panelData = await apiGetAlarmsPanelRows(ALARM_PANEL_MAX_RENDER_ROWS, cutoffMs);
+      if (Array.isArray(panelData?.rows)) {
+        setAlarmTimelineFromPanelRows(panelData.rows);
+        alarmHistoryLoaded = true;
+        scheduleAlarmsRender();
+        return;
+      }
+    } catch (error) {
+      console.warn("[alarms] Failed to load server alarm panel rows:", error);
+    }
     const data = await apiGetAlarmsHistory(ALARM_HISTORY_MAX_EVENTS, cutoffMs);
     const events = Array.isArray(data?.events) ? data.events : [];
     const filtered = events.filter((ev) => {

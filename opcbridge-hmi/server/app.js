@@ -784,6 +784,34 @@ const createApp = () => {
     }
   });
 
+  app.get("/api/alarms/panel", async (req, res) => {
+    try {
+      const { config: parsed } = await readConfig();
+      const alarms = parsed?.alarms || {};
+      const opcbridge = parsed?.opcbridge || {};
+      const host = String(alarms.host || opcbridge.host || "127.0.0.1");
+      const port = Number(alarms.httpPort) || 8085;
+      const rowsRaw = req.query?.rows || req.query?.limit;
+      const rows = Math.max(1, Math.min(2000, Number(rowsRaw) || 500));
+      const params = new URLSearchParams({ rows: String(rows) });
+      const sinceMs = Number(req.query?.since_ms);
+      if (Number.isFinite(sinceMs) && sinceMs > 0) params.set("since_ms", String(Math.round(sinceMs)));
+      const url = `http://${host}:${port}/alarm/api/alarms/panel?${params.toString()}`;
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      const text = await response.text();
+      if (!response.ok) {
+        return res.status(502).json({ error: `OPCBridge Alarms HTTP ${response.status}`, details: text });
+      }
+      try {
+        res.json(JSON.parse(text));
+      } catch {
+        res.status(502).json({ error: "Invalid JSON from OPCBridge Alarms.", details: text });
+      }
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   // Current alarm state snapshot from opcbridge-alarms (not just event history).
   app.get("/api/alarms/all", async (req, res) => {
     try {
