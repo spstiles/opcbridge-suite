@@ -2305,6 +2305,12 @@ body:not(.edit-mode) #workspace {
   line-height: 1.35;
 }
 
+.caps-lock-indicator {
+  color: #f4b740;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
 .auth-users-list {
   display: flex;
   flex-direction: column;

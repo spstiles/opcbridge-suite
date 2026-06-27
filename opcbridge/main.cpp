@@ -13734,6 +13734,12 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	  color: #ff7b7b;
 	}
 
+	.caps-lock-indicator {
+	  color: #f4b740;
+	  font-size: 0.85rem;
+	  line-height: 1.25;
+	}
+
 	/* Form body */
 	.admin-modal-body {
 	  display: flex;
@@ -14871,7 +14877,10 @@ static bool apply_config_bundle_json(const std::string &configDir,
 						 class="admin-input" />
 				</div>
 			  </div>
-		</div>
+			  <div id="admin-caps-lock-indicator" class="caps-lock-indicator" role="status" aria-live="polite" hidden>
+				Caps Lock is on
+			  </div>
+			</div>
 
 		<div class="admin-modal-footer">
 		  <button id="admin-modal-cancel"
@@ -14988,6 +14997,7 @@ function persistAdminToken() {
 	    const conf  = document.getElementById("admin-confirm-container");
 	    const pw2   = document.getElementById("admin-password-confirm");
 	    const toggleBtn = document.getElementById("admin-toggle-password");
+	    const capsLockIndicator = document.getElementById("admin-caps-lock-indicator");
 
     if (!modal || !title || !err || !user || !pw || !conf || !pw2) {
         console.error("Admin modal elements missing");
@@ -15018,6 +15028,7 @@ function persistAdminToken() {
 	    if (legacyPw) legacyPw.type = "password";
 	    pw2.type = "password";
 	    if (toggleBtn) toggleBtn.textContent = "👁";
+	    if (capsLockIndicator) capsLockIndicator.hidden = true;
 
     modal.style.display = "flex";
     (user.value ? pw : user).focus();
@@ -15025,6 +15036,8 @@ function persistAdminToken() {
 
 	function closeAdminModal() {
 	    document.getElementById("admin-modal").style.display = "none";
+	    const capsLockIndicator = document.getElementById("admin-caps-lock-indicator");
+	    if (capsLockIndicator) capsLockIndicator.hidden = true;
 	}
 
 	async function submitAdminModal() {
@@ -15156,6 +15169,24 @@ function persistAdminToken() {
 	    if (btn) btn.textContent = g_adminPwVisible ? "🙈" : "👁";
 	}
 
+	function wireCapsLockIndicator(inputs, indicator) {
+	    if (!indicator) return;
+	    const inputList = Array.isArray(inputs) ? inputs : [inputs];
+	    const update = (event) => {
+	        if (event && typeof event.getModifierState === "function") {
+	            indicator.hidden = !event.getModifierState("CapsLock");
+	        }
+	    };
+	    inputList.forEach((input) => {
+	        if (!input || input.dataset.capsLockIndicatorWired === "1") return;
+	        input.dataset.capsLockIndicatorWired = "1";
+	        input.addEventListener("keydown", update);
+	        input.addEventListener("keyup", update);
+	        input.addEventListener("focus", update);
+	        input.addEventListener("blur", () => { indicator.hidden = true; });
+	    });
+	}
+
 function setupAdminModalKeys() {
     const modal = document.getElementById("admin-modal");
     if (!modal) return;
@@ -15166,6 +15197,14 @@ function setupAdminModalKeys() {
 
     const btn = document.getElementById("admin-toggle-password");
     if (btn) btn.addEventListener("click", toggleAdminPasswordVisibility);
+    wireCapsLockIndicator(
+        [
+            document.getElementById("admin-password"),
+            document.getElementById("admin-legacy-password"),
+            document.getElementById("admin-password-confirm")
+        ],
+        document.getElementById("admin-caps-lock-indicator")
+    );
 
     modal.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {

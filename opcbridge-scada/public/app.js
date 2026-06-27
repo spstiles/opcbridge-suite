@@ -725,9 +725,10 @@
   // Auth (opcbridge cookie-based login)
   loginModal: document.getElementById('loginModal'),
   loginCloseBtn: document.getElementById('loginCloseBtn'),
-  loginUsername: document.getElementById('loginUsername'),
-  loginPassword: document.getElementById('loginPassword'),
-  loginCancelBtn: document.getElementById('loginCancelBtn'),
+	  loginUsername: document.getElementById('loginUsername'),
+	  loginPassword: document.getElementById('loginPassword'),
+	  loginCapsLockIndicator: document.getElementById('loginCapsLockIndicator'),
+	  loginCancelBtn: document.getElementById('loginCancelBtn'),
   loginOkBtn: document.getElementById('loginOkBtn'),
   loginStatus: document.getElementById('loginStatus'),
 
@@ -22143,12 +22144,29 @@ function closeLoginModal() {
   if (!els.loginModal) return;
   els.loginModal.style.display = 'none';
   if (els.loginStatus) els.loginStatus.textContent = '';
+  if (els.loginCapsLockIndicator) els.loginCapsLockIndicator.hidden = true;
+}
+
+function wireCapsLockIndicator(input, indicator) {
+  if (!input || !indicator || input.dataset.capsLockIndicatorWired === '1') return;
+  input.dataset.capsLockIndicatorWired = '1';
+  const update = (event) => {
+    if (event && typeof event.getModifierState === 'function') {
+      indicator.hidden = !event.getModifierState('CapsLock');
+    }
+  };
+  input.addEventListener('keydown', update);
+  input.addEventListener('keyup', update);
+  input.addEventListener('focus', update);
+  input.addEventListener('blur', () => { indicator.hidden = true; });
 }
 
 function wireLoginModalUi() {
   if (!els.loginModal) return;
   if (els.loginModal.dataset.wired === '1') return;
   els.loginModal.dataset.wired = '1';
+
+  wireCapsLockIndicator(els.loginPassword, els.loginCapsLockIndicator);
 
   els.loginCloseBtn?.addEventListener('click', closeLoginModal);
   els.loginCancelBtn?.addEventListener('click', closeLoginModal);

@@ -3660,11 +3660,13 @@ const authSetupSection = document.getElementById("authSetupSection");
 const authSetupUsername = document.getElementById("authSetupUsername");
 const authSetupPassword = document.getElementById("authSetupPassword");
 const authSetupPasswordConfirm = document.getElementById("authSetupPasswordConfirm");
+const authSetupCapsLockIndicator = document.getElementById("authSetupCapsLockIndicator");
 const authSetupTimeout = document.getElementById("authSetupTimeout");
 const authSetupBtn = document.getElementById("authSetupBtn");
 const authLoginSection = document.getElementById("authLoginSection");
 const authUsername = document.getElementById("authUsername");
 const authPassword = document.getElementById("authPassword");
+const authLoginCapsLockIndicator = document.getElementById("authLoginCapsLockIndicator");
 const authLoginBtn = document.getElementById("authLoginBtn");
 const usersOverlay = document.getElementById("usersOverlay");
 const usersCloseBtn = document.getElementById("usersCloseBtn");
@@ -16571,6 +16573,27 @@ if (authLoginBtn) {
     }
   });
 }
+
+const wireCapsLockIndicator = (inputs, indicator) => {
+  if (!indicator) return;
+  const inputList = Array.isArray(inputs) ? inputs : [inputs];
+  const update = (event) => {
+    if (event && typeof event.getModifierState === "function") {
+      indicator.hidden = !event.getModifierState("CapsLock");
+    }
+  };
+  inputList.forEach((input) => {
+    if (!input || input.dataset.capsLockIndicatorWired === "1") return;
+    input.dataset.capsLockIndicatorWired = "1";
+    input.addEventListener("keydown", update);
+    input.addEventListener("keyup", update);
+    input.addEventListener("focus", update);
+    input.addEventListener("blur", () => { indicator.hidden = true; });
+  });
+};
+
+wireCapsLockIndicator([authSetupPassword, authSetupPasswordConfirm], authSetupCapsLockIndicator);
+wireCapsLockIndicator(authPassword, authLoginCapsLockIndicator);
 
 if (authPassword) {
   authPassword.addEventListener("keydown", (event) => {

@@ -840,6 +840,12 @@ input, textarea, select {
   border-radius: 6px;
 }
 
+.caps-lock-indicator {
+  color: var(--warn);
+  font-size: var(--font-small);
+  line-height: 1.25;
+}
+
 input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: rgba(79,140,255,.78);
