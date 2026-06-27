@@ -2307,8 +2307,13 @@ body:not(.edit-mode) #workspace {
 
 .caps-lock-indicator {
   color: #f4b740;
+  display: block;
   font-size: 12px;
   line-height: 1.25;
+}
+
+.caps-lock-indicator[hidden] {
+  display: none;
 }
 
 .auth-users-list {

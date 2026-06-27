@@ -13736,8 +13736,13 @@ static bool apply_config_bundle_json(const std::string &configDir,
 
 	.caps-lock-indicator {
 	  color: #f4b740;
+	  display: block;
 	  font-size: 0.85rem;
 	  line-height: 1.25;
+	}
+
+	.caps-lock-indicator[hidden] {
+	  display: none;
 	}
 
 	/* Form body */
@@ -15172,18 +15177,35 @@ function persistAdminToken() {
 	function wireCapsLockIndicator(inputs, indicator) {
 	    if (!indicator) return;
 	    const inputList = Array.isArray(inputs) ? inputs : [inputs];
-	    const update = (event) => {
-	        if (event && typeof event.getModifierState === "function") {
-	            indicator.hidden = !event.getModifierState("CapsLock");
+	    let lastKnown = false;
+	    const setVisible = (active) => {
+	        lastKnown = Boolean(active);
+	        indicator.hidden = !lastKnown;
+	    };
+	    const detect = (event) => {
+	        if (!event) return lastKnown;
+	        if (typeof event.getModifierState === "function" && event.getModifierState("CapsLock")) return true;
+	        const key = String(event.key || "");
+	        if (key.length === 1 && /^[a-z]$/i.test(key)) {
+	            const isUpper = key === key.toUpperCase() && key !== key.toLowerCase();
+	            return event.shiftKey ? !isUpper : isUpper;
 	        }
+	        if (key === "CapsLock" && typeof event.getModifierState === "function") {
+	            return event.getModifierState("CapsLock");
+	        }
+	        return lastKnown;
+	    };
+	    const update = (event) => {
+	        setVisible(detect(event));
 	    };
 	    inputList.forEach((input) => {
 	        if (!input || input.dataset.capsLockIndicatorWired === "1") return;
 	        input.dataset.capsLockIndicatorWired = "1";
 	        input.addEventListener("keydown", update);
 	        input.addEventListener("keyup", update);
+	        input.addEventListener("keypress", update);
 	        input.addEventListener("focus", update);
-	        input.addEventListener("blur", () => { indicator.hidden = true; });
+	        input.addEventListener("blur", () => { setVisible(false); });
 	    });
 	}
 

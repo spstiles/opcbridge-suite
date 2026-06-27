@@ -22150,15 +22150,32 @@ function closeLoginModal() {
 function wireCapsLockIndicator(input, indicator) {
   if (!input || !indicator || input.dataset.capsLockIndicatorWired === '1') return;
   input.dataset.capsLockIndicatorWired = '1';
-  const update = (event) => {
-    if (event && typeof event.getModifierState === 'function') {
-      indicator.hidden = !event.getModifierState('CapsLock');
+  let lastKnown = false;
+  const setVisible = (active) => {
+    lastKnown = Boolean(active);
+    indicator.hidden = !lastKnown;
+  };
+  const detect = (event) => {
+    if (!event) return lastKnown;
+    if (typeof event.getModifierState === 'function' && event.getModifierState('CapsLock')) return true;
+    const key = String(event.key || '');
+    if (key.length === 1 && /^[a-z]$/i.test(key)) {
+      const isUpper = key === key.toUpperCase() && key !== key.toLowerCase();
+      return event.shiftKey ? !isUpper : isUpper;
     }
+    if (key === 'CapsLock' && typeof event.getModifierState === 'function') {
+      return event.getModifierState('CapsLock');
+    }
+    return lastKnown;
+  };
+  const update = (event) => {
+    setVisible(detect(event));
   };
   input.addEventListener('keydown', update);
   input.addEventListener('keyup', update);
+  input.addEventListener('keypress', update);
   input.addEventListener('focus', update);
-  input.addEventListener('blur', () => { indicator.hidden = true; });
+  input.addEventListener('blur', () => { setVisible(false); });
 }
 
 function wireLoginModalUi() {
