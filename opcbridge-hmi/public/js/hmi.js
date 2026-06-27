@@ -5142,6 +5142,24 @@ const rebuildAlarmTimelineFromHistoryEvents = (events) => {
     .forEach((event) => upsertTimelineFromAlarmEvent(event));
 };
 
+const mergeAlarmTimelineRowWithRuntimeState = (row, runtime) => {
+  if (!runtime?.active) return row;
+  const runtimeActiveSince = Number(runtime?.active_since_ms) || Number(runtime?.last_change_ms) || Date.now();
+  const rowActiveSince = Number(row?.active_since_ms) || 0;
+  const rowClearedTs = Number(row?.cleared_ts_ms) || 0;
+  if (rowClearedTs > 0 && rowClearedTs > runtimeActiveSince) return row;
+  return {
+    ...row,
+    ...runtime,
+    timeline_key: row?.timeline_key || getAlarmStateTimelineKey(runtime.alarm_id),
+    active: true,
+    active_since_ms: runtimeActiveSince || rowActiveSince,
+    cleared_ts_ms: 0,
+    last_event_type: "active",
+    last_event_ts_ms: Math.max(runtimeActiveSince || 0, Number(row?.last_event_ts_ms) || 0)
+  };
+};
+
 const loadAlarmTimelineFromHistory = async (opts = {}) => {
   const force = Boolean(opts.force);
   if (!force && (alarmHistoryLoaded || alarmHistoryLoading)) return;
@@ -5178,15 +5196,29 @@ const refreshAlarmsForScreenLoad = async () => {
 
 const getAlarmTimelineRows = () => {
   const rows = [];
+  const representedActiveIds = new Set();
   alarmTimelineById.forEach((row, key) => {
     const id = normalizeAlarmTimelineId(row?.alarm_id);
     if (!id) return;
-    const nextRow = alarmTimelineById.get(key) || row;
+    const runtime = alarmsStateById.get(id);
+    const nextRow = mergeAlarmTimelineRowWithRuntimeState(alarmTimelineById.get(key) || row, runtime);
+    if (runtime?.active) representedActiveIds.add(id);
     if (isDisplayableAlarmTimelineRow(nextRow)) {
       rows.push(nextRow);
     } else {
       alarmTimelineById.delete(key);
     }
+  });
+  alarmsStateById.forEach((alarm, id) => {
+    if (!alarm?.active || representedActiveIds.has(id)) return;
+    const key = getAlarmStateTimelineKey(id);
+    rows.push(mergeAlarmTimelineRowWithRuntimeState({
+      ...alarm,
+      timeline_key: key,
+      last_event_type: "active",
+      last_event_ts_ms: Number(alarm?.active_since_ms) || Number(alarm?.last_change_ms) || Date.now(),
+      cleared_ts_ms: 0
+    }, alarm));
   });
   return rows;
 };
