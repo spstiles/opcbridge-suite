@@ -5027,6 +5027,7 @@ const upsertTimelineFromAlarmEvent = (event) => {
   const type = String(event?.type || "").trim().toLowerCase();
   const isSynthetic = Boolean(event?.synthetic);
   if (isSynthetic) return;
+  const isReturnEvent = isReturnedAlarmEventType(type);
   let key = null;
   if (type === "active") {
     const openKey = alarmOpenTimelineKeyByAlarmId.get(id);
@@ -5046,12 +5047,12 @@ const upsertTimelineFromAlarmEvent = (event) => {
       }
     }
     key = `event:${id}:${eventTs}`;
-  } else if (isReturnedAlarmEventType(type)) {
-    key = alarmOpenTimelineKeyByAlarmId.get(id) || getAlarmStateTimelineKey(id);
+  } else if (isReturnEvent) {
+    key = alarmOpenTimelineKeyByAlarmId.get(id) || `event:${id}:return:${eventTs}`;
   } else {
     key = alarmOpenTimelineKeyByAlarmId.get(id) || getAlarmStateTimelineKey(id);
   }
-  const canCreateTimelineRow = type === "active";
+  const canCreateTimelineRow = type === "active" || isReturnEvent;
   if (!canCreateTimelineRow && !alarmTimelineById.has(key)) return;
   const prev = alarmTimelineById.get(key) || {};
   const next = { ...prev };
