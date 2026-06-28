@@ -4764,6 +4764,7 @@ const apiGetAlarmsHistory = async (limit, sinceMs = null) => {
 const apiGetAlarmsPanelRows = async (rows, sinceMs = null) => {
   const params = new URLSearchParams();
   if (rows != null) params.set("rows", String(rows));
+  params.set("limit", String(ALARM_HISTORY_MAX_EVENTS));
   if (sinceMs != null) params.set("since_ms", String(sinceMs));
   const query = params.toString() ? `?${params.toString()}` : "";
   const response = await fetch(`/api/alarms/panel${query}`, { cache: "no-store", headers: { Accept: "application/json" } });
@@ -4970,7 +4971,7 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
     .filter((row) => {
       if (!isDisplayableAlarmTimelineRow(row)) return false;
       const rowTs = Number(row?.last_event_ts_ms) || Number(row?.active_since_ms) || 0;
-      if (rowTs > 0 && rowTs < cutoffMs) return false;
+      if (rowTs > 0 && rowTs < cutoffMs && !row?.active) return false;
       const alarmForShelve = alarmsStateById.get(String(row?.alarm_id || "")) || row;
       if (isAlarmShelvedNow(alarmForShelve, nowMs)) return false;
       if (onlyUnacked && row?.acked) return false;
@@ -5244,9 +5245,7 @@ const loadAlarmPanelRowsFromServer = async ({ force = false, render = true } = {
   if (!force && alarmPanelRowsRefreshInFlight) return { ok: false, changed: false };
   alarmPanelRowsRefreshInFlight = true;
   try {
-    const historyDays = getScreenAlarmHistoryDays();
-    const cutoffMs = Date.now() - historyDays * 24 * 60 * 60 * 1000;
-    const panelData = await apiGetAlarmsPanelRows(ALARM_PANEL_MAX_RENDER_ROWS, cutoffMs);
+    const panelData = await apiGetAlarmsPanelRows(ALARM_PANEL_MAX_RENDER_ROWS);
     if (!Array.isArray(panelData?.rows)) return { ok: false, changed: false };
     const nextFingerprint = getAlarmPanelRowsFingerprint(panelData.rows);
     const changed = force || nextFingerprint !== alarmPanelRowsFingerprint;

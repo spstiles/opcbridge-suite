@@ -9650,16 +9650,7 @@ int main(int argc, char **argv)
                     const auto openIt = openKeyByAlarmId.find(id);
                     if (openIt != openKeyByAlarmId.end())
                     {
-                        auto rowIt = rowsByKey.find(openIt->second);
-                        if (rowIt != rowsByKey.end())
-                        {
-                            rowIt->second["active"] = false;
-                            rowIt->second["cleared_ts_ms"] = ts;
-                            rowIt->second["last_event_type"] = "missed-return";
-                            rowIt->second["last_event_ts_ms"] = ts;
-                            rowIt->second["inferred_return"] = true;
-                        }
-                        openKeyByAlarmId.erase(openIt);
+                        continue;
                     }
                     key = "event:" + id + ":" + std::to_string(ts);
                 }
