@@ -4676,6 +4676,45 @@ const refreshRenderedAlarmsPanels = () => {
   return true;
 };
 
+const isAlarmPanelInteractionActive = () => Date.now() < alarmPanelInteractionUntilMs;
+
+const scheduleDeferredAlarmPanelRender = () => {
+  if (alarmPanelDeferredRenderTimer) window.clearTimeout(alarmPanelDeferredRenderTimer);
+  const delayMs = Math.max(50, alarmPanelInteractionUntilMs - Date.now() + 50);
+  alarmPanelDeferredRenderTimer = window.setTimeout(() => {
+    alarmPanelDeferredRenderTimer = null;
+    if (isAlarmPanelInteractionActive()) {
+      scheduleDeferredAlarmPanelRender();
+      return;
+    }
+    scheduleAlarmsRender();
+  }, delayMs);
+};
+
+const markAlarmPanelInteraction = () => {
+  alarmPanelInteractionUntilMs = Date.now() + ALARM_PANEL_INTERACTION_HOLD_MS;
+};
+
+const shouldDeferRuntimeScreenRender = () => (
+  !isEditMode
+  && screenHasAlarmsPanel()
+  && isAlarmPanelInteractionActive()
+);
+
+const scheduleDeferredRuntimeScreenRender = () => {
+  if (runtimeRenderDeferredTimer) window.clearTimeout(runtimeRenderDeferredTimer);
+  const delayMs = Math.max(50, alarmPanelInteractionUntilMs - Date.now() + 50);
+  runtimeRenderDeferredTimer = window.setTimeout(() => {
+    runtimeRenderDeferredTimer = null;
+    if (shouldDeferRuntimeScreenRender()) {
+      scheduleDeferredRuntimeScreenRender();
+      return;
+    }
+    renderScreen();
+    if (currentPopupScreenId) openPopup(currentPopupScreenId);
+  }, delayMs);
+};
+
 const scheduleAlarmsRender = () => {
   if (alarmsRenderRaf != null) return;
   alarmsRenderRaf = window.requestAnimationFrame(() => {
@@ -4683,6 +4722,10 @@ const scheduleAlarmsRender = () => {
     renderAlarmsBadge();
     renderAlarmsOverlay();
     if (!isEditMode && screenHasAlarmsPanel() && !isEditingGestureActive() && !isKeypadOpen) {
+      if (isAlarmPanelInteractionActive()) {
+        scheduleDeferredAlarmPanelRender();
+        return;
+      }
       if (!refreshRenderedAlarmsPanels()) renderScreen();
     }
   });
@@ -5121,6 +5164,7 @@ const ALARM_HISTORY_MAX_EVENTS = 50000;
 const ALARM_PANEL_MAX_RENDER_ROWS = 1000;
 const ALARM_PANEL_REFRESH_DEBOUNCE_MS = 500;
 const ALARM_PANEL_POLL_MS = 30000;
+const ALARM_PANEL_INTERACTION_HOLD_MS = 1200;
 
 const shouldIngestAlarmHistoryEvent = (event, laterReturnByAlarmId) => {
   const id = normalizeAlarmTimelineId(event?.alarm_id);
@@ -5209,7 +5253,10 @@ const loadAlarmPanelRowsFromServer = async ({ force = false, render = true } = {
     alarmPanelRowsFingerprint = nextFingerprint;
     if (changed) {
       setAlarmTimelineFromPanelRows(panelData.rows);
-      if (render) scheduleAlarmsRender();
+      if (render) {
+        if (isAlarmPanelInteractionActive()) scheduleDeferredAlarmPanelRender();
+        else scheduleAlarmsRender();
+      }
     }
     return { ok: true, changed };
   } finally {
@@ -6176,6 +6223,8 @@ let alarmHistoryLoading = false;
 let alarmPanelRowsFingerprint = "";
 let alarmPanelRowsRefreshTimer = null;
 let alarmPanelRowsRefreshInFlight = false;
+let alarmPanelInteractionUntilMs = 0;
+let alarmPanelDeferredRenderTimer = null;
 let alarmsRenderRaf = null;
 const alarmsPanelScrollByKey = new Map();
 window.setInterval(() => {
@@ -6183,6 +6232,7 @@ window.setInterval(() => {
 }, ALARM_PANEL_POLL_MS);
 let pendingScaleRaf = null;
 let wsRuntimeRenderRaf = null;
+let runtimeRenderDeferredTimer = null;
 const tagValueCache = new Map();
 const tagQualityCache = new Map();
 let tagsCache = [];
@@ -8852,6 +8902,10 @@ const scheduleRuntimeRender = () => {
   wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
     wsRuntimeRenderRaf = null;
     if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
+      if (shouldDeferRuntimeScreenRender()) {
+        scheduleDeferredRuntimeScreenRender();
+        return;
+      }
       renderScreen();
       if (currentPopupScreenId) openPopup(currentPopupScreenId);
     }
@@ -8988,6 +9042,10 @@ const seedActiveTagValues = async () => {
   try {
     const changed = await seedTagValuesForKeys(collectActiveWsSubscriptions());
     if (changed && !isEditingGestureActive() && !isKeypadOpen) {
+      if (shouldDeferRuntimeScreenRender()) {
+        scheduleDeferredRuntimeScreenRender();
+        return;
+      }
       renderScreen();
       if (currentPopupScreenId) openPopup(currentPopupScreenId);
     }
@@ -10993,8 +11051,15 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 		      "dblclick",
 		      "contextmenu"
 		    ].forEach((eventName) => {
-		      list.addEventListener(eventName, (event) => event.stopPropagation(), { passive: true });
+		      list.addEventListener(eventName, (event) => {
+		        markAlarmPanelInteraction();
+		        event.stopPropagation();
+		      }, { passive: true });
 		    });
+		    list.addEventListener("scroll", () => {
+		      markAlarmPanelInteraction();
+		      alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
+		    }, { passive: true });
 		    populateAlarmsPanelList(list, obj, xhtml);
 
 	    panel.appendChild(list);
