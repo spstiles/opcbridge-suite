@@ -401,6 +401,15 @@
   alarmActivityTableBody: document.querySelector('#alarmActivityTable tbody'),
   alarmActivityStatus: document.getElementById('alarmActivityStatus'),
   alarmActivityRefreshBtn: document.getElementById('alarmActivityRefreshBtn'),
+  tagEventsTableBody: document.querySelector('#tagEventsTable tbody'),
+  tagEventsStatus: document.getElementById('tagEventsStatus'),
+  tagEventsRefreshBtn: document.getElementById('tagEventsRefreshBtn'),
+  tagEventsDownloadCsvBtn: document.getElementById('tagEventsDownloadCsvBtn'),
+  tagEventsFromInput: document.getElementById('tagEventsFromInput'),
+  tagEventsToInput: document.getElementById('tagEventsToInput'),
+  tagEventsConnectionInput: document.getElementById('tagEventsConnectionInput'),
+  tagEventsTagInput: document.getElementById('tagEventsTagInput'),
+  tagEventsLimitInput: document.getElementById('tagEventsLimitInput'),
 
   // Logs
   logsSource: document.getElementById('logsSource'),
@@ -911,6 +920,7 @@ const state = {
   alarmsStatusLast: null,
   alarmHistoryLast: null,
   alarmActivityLast: null,
+  tagEventsLast: [],
   systemTagsForSelection: [],
   // alarms config (from opcbridge alarms.json via /config/alarms)
   alarmsConfigLast: null,
@@ -6136,6 +6146,7 @@ function setTab(id) {
     loadAlarmNotificationSettings().catch(() => {});
     renderAlarmsSchemaStatus(state.alarmsStatusLast);
     renderAlarmsEventsTree();
+    refreshTagEventsHistory().catch(() => {});
   }
   if (id === 'workspace') {
     refreshWorkspaceTab().catch((err) => {
@@ -6644,6 +6655,18 @@ function wireOverviewRuntimeUi() {
         if (els.alarmEventsStatus) els.alarmEventsStatus.textContent = `CSV download failed: ${err.message}`;
       });
     });
+  }
+  if (els.tagEventsRefreshBtn && els.tagEventsRefreshBtn.dataset.wired !== '1') {
+    els.tagEventsRefreshBtn.dataset.wired = '1';
+    els.tagEventsRefreshBtn.addEventListener('click', () => {
+      refreshTagEventsHistory().catch((err) => {
+        if (els.tagEventsStatus) els.tagEventsStatus.textContent = `Refresh failed: ${err.message}`;
+      });
+    });
+  }
+  if (els.tagEventsDownloadCsvBtn && els.tagEventsDownloadCsvBtn.dataset.wired !== '1') {
+    els.tagEventsDownloadCsvBtn.dataset.wired = '1';
+    els.tagEventsDownloadCsvBtn.addEventListener('click', downloadTagEventsHistoryCsv);
   }
 }
 
@@ -21239,6 +21262,77 @@ async function downloadAlarmEventsHistoryCsv() {
     filename: 'opcbridge-alarm-trigger-clear-history.csv',
     mime: 'text/csv',
     text: toCsv(rows, ['timestamp', 'event', 'alarm_id', 'severity', 'group', 'site', 'connection_id', 'tag', 'value', 'message', 'actor', 'note', 'event_id'])
+  });
+}
+
+function datetimeLocalToEpochMs(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function buildTagEventsParams() {
+  const params = new URLSearchParams();
+  const limitRaw = Number(els.tagEventsLimitInput?.value || 1000);
+  const limit = Math.max(1, Math.min(50000, Math.trunc(Number.isFinite(limitRaw) ? limitRaw : 1000)));
+  const sinceMs = datetimeLocalToEpochMs(els.tagEventsFromInput?.value);
+  const untilMs = datetimeLocalToEpochMs(els.tagEventsToInput?.value);
+  const connectionId = String(els.tagEventsConnectionInput?.value || '').trim();
+  const tag = String(els.tagEventsTagInput?.value || '').trim();
+  params.set('limit', String(limit));
+  if (sinceMs != null) params.set('since_ms', String(sinceMs));
+  if (untilMs != null) params.set('until_ms', String(untilMs));
+  if (connectionId) params.set('connection_id', connectionId);
+  if (tag) params.set('tag', tag);
+  return params;
+}
+
+function renderTagEventsRows(events) {
+  state.tagEventsLast = Array.isArray(events) ? events : [];
+  if (!els.tagEventsTableBody) return;
+  els.tagEventsTableBody.textContent = '';
+  state.tagEventsLast.forEach((ev) => {
+    const tr = document.createElement('tr');
+    appendTextCell(tr, fmtLogTime(ev?.timestamp_ms), { code: true });
+    appendTextCell(tr, ev?.connection_id || '', { code: true });
+    appendTextCell(tr, ev?.tag_name || '', { code: true });
+    appendTextCell(tr, ev?.old_value == null ? '' : ev.old_value, { code: true });
+    appendTextCell(tr, ev?.new_value == null ? '' : ev.new_value, { code: true });
+    appendTextCell(tr, ev?.old_quality == null ? '' : ev.old_quality, { code: true });
+    appendTextCell(tr, ev?.new_quality == null ? '' : ev.new_quality, { code: true });
+    els.tagEventsTableBody.appendChild(tr);
+  });
+}
+
+async function refreshTagEventsHistory() {
+  if (!els.tagEventsTableBody) return;
+  if (els.tagEventsStatus) els.tagEventsStatus.textContent = 'Loading tracked tag events…';
+  const params = buildTagEventsParams();
+  const resp = await apiGet(`/api/opcbridge/events?${params.toString()}`, { timeoutMs: 30000 });
+  const events = Array.isArray(resp?.events) ? resp.events : [];
+  renderTagEventsRows(events);
+  if (els.tagEventsStatus) {
+    const matched = Number(resp?.matched ?? events.length);
+    els.tagEventsStatus.textContent = events.length ? `${events.length} tracked tag event(s) shown · ${matched} matched` : 'No tracked tag events found.';
+  }
+}
+
+function downloadTagEventsHistoryCsv() {
+  const rows = (Array.isArray(state.tagEventsLast) ? state.tagEventsLast : []).map((ev) => ({
+    timestamp: fmtLogTime(ev?.timestamp_ms),
+    timestamp_ms: ev?.timestamp_ms ?? '',
+    connection_id: ev?.connection_id || '',
+    tag_name: ev?.tag_name || '',
+    old_value: ev?.old_value == null ? '' : ev.old_value,
+    new_value: ev?.new_value == null ? '' : ev.new_value,
+    old_quality: ev?.old_quality == null ? '' : ev.old_quality,
+    new_quality: ev?.new_quality == null ? '' : ev.new_quality
+  }));
+  downloadTextFile({
+    filename: 'opcbridge-tracked-tag-events.csv',
+    mime: 'text/csv',
+    text: toCsv(rows, ['timestamp', 'timestamp_ms', 'connection_id', 'tag_name', 'old_value', 'new_value', 'old_quality', 'new_quality'])
   });
 }
 

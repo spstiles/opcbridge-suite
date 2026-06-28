@@ -276,6 +276,7 @@ struct TagSnapshot {
 
 // Forward declaration so write_single_tag can use it
 bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b);
+bool should_log_tag_event_change(bool hadPrev, const TagSnapshot &snap, const TagSnapshot &prevSnap);
 
 // Forward declaration so we can call this from the poll loop
 bool sqlite_log_event(const std::string &connection_id,
@@ -5880,7 +5881,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                   << logical_name << " := " << value_str << "\n";
 
         if (cfg.log_event_on_change) {
-            bool valueChanged = !hadPrev || !snapshot_values_equal(snap, prevSnap);
+            bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     snap.timestamp.time_since_epoch()
@@ -6066,7 +6067,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
 
         if (cfg.log_event_on_change) {
-            bool valueChanged = !hadPrev || !snapshot_values_equal(snap, prevSnap);
+            bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     snap.timestamp.time_since_epoch()
@@ -6333,7 +6334,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                   << " (source=" << srcName << " bit=" << derivedBit << ")\n";
 
         if (cfg.log_event_on_change) {
-            const bool valueChanged = !hadPrevDerived || !snapshot_values_equal(dSnap, prevDerived);
+            const bool valueChanged = should_log_tag_event_change(hadPrevDerived, dSnap, prevDerived);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     now.time_since_epoch()
@@ -6353,7 +6354,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         // (Optional) event log for the source tag too if it is configured to log on change.
         if (srcCfg.log_event_on_change) {
-            const bool valueChanged = !hadPrevSrc || !snapshot_values_equal(srcSnap, prevSrc);
+            const bool valueChanged = should_log_tag_event_change(hadPrevSrc, srcSnap, prevSrc);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     now.time_since_epoch()
@@ -6498,7 +6499,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     }
 
     if (cfg.log_event_on_change) {
-        bool valueChanged = !hadPrev || !snapshot_values_equal(snap, prevSnap);
+        bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
         if (valueChanged) {
             int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 snap.timestamp.time_since_epoch()
@@ -11898,6 +11899,13 @@ bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b) {
     return a.value == b.value; // std::variant supports operator==
 }
 
+bool should_log_tag_event_change(bool hadPrev, const TagSnapshot &snap, const TagSnapshot &prevSnap) {
+    if (snap.quality != 1) return false;
+    if (!hadPrev) return true;
+    if (prevSnap.quality != 1) return false;
+    return !snapshot_values_equal(snap, prevSnap);
+}
+
 static std::string leaf_name_from_path(const std::string &path) {
     const size_t pos = path.find_last_of('/');
     return (pos == std::string::npos) ? path : path.substr(pos + 1);
@@ -12400,8 +12408,13 @@ void sqlite_shutdown() {
     }
 }
 
-// Fetch recent events for HTTP /alarm-history
-bool sqlite_fetch_recent_events(int limit, json &outArray) {
+// Fetch recent events for HTTP event/history views.
+bool sqlite_fetch_recent_events(int limit,
+                                int64_t since_ms,
+                                int64_t until_ms,
+                                const std::string &connection_id,
+                                const std::string &tag_name,
+                                json &outArray) {
     outArray = json::array();
     if (!g_alarmDb) return false;
 
@@ -12412,8 +12425,12 @@ bool sqlite_fetch_recent_events(int limit, json &outArray) {
         "SELECT timestamp_ms, connection_id, tag_name,"
         "       old_value, new_value, old_quality, new_quality"
         "  FROM events"
-        " ORDER BY timestamp_ms DESC"
-        " LIMIT " + std::to_string(limit) + ";";
+        " WHERE 1=1";
+    if (since_ms > 0) sql += " AND timestamp_ms >= ?";
+    if (until_ms > 0) sql += " AND timestamp_ms <= ?";
+    if (!connection_id.empty()) sql += " AND connection_id = ?";
+    if (!tag_name.empty()) sql += " AND tag_name LIKE ?";
+    sql += " ORDER BY timestamp_ms DESC LIMIT ?;";
 
     std::lock_guard<std::mutex> lock(g_alarmDbMutex);
 
@@ -12424,6 +12441,18 @@ bool sqlite_fetch_recent_events(int limit, json &outArray) {
                   << sqlite3_errmsg(g_alarmDb) << "\n";
         return false;
     }
+
+    int bindIndex = 1;
+    if (since_ms > 0) sqlite3_bind_int64(stmt, bindIndex++, since_ms);
+    if (until_ms > 0) sqlite3_bind_int64(stmt, bindIndex++, until_ms);
+    if (!connection_id.empty()) {
+        sqlite3_bind_text(stmt, bindIndex++, connection_id.c_str(), -1, SQLITE_TRANSIENT);
+    }
+    if (!tag_name.empty()) {
+        const std::string pattern = "%" + tag_name + "%";
+        sqlite3_bind_text(stmt, bindIndex++, pattern.c_str(), -1, SQLITE_TRANSIENT);
+    }
+    sqlite3_bind_int(stmt, bindIndex++, limit);
 
 	while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
 		json ev;
@@ -12489,6 +12518,10 @@ bool sqlite_fetch_recent_events(int limit, json &outArray) {
 
     sqlite3_finalize(stmt);
     return true;
+}
+
+bool sqlite_fetch_recent_events(int limit, json &outArray) {
+    return sqlite_fetch_recent_events(limit, 0, 0, "", "", outArray);
 }
 
 // Simple event-logging helper: one row per change
@@ -22925,8 +22958,8 @@ window.addEventListener("load", startAutoRefresh);
                 res.set_content(root.dump(2), "application/json");
             });
 
-			// GET /events  -> last N events from SQLite (e.g. N = 100)
-			svr.Get("/events", [&](const httplib::Request &, httplib::Response &res) {
+			// GET /events  -> filtered tracked tag events from SQLite
+			svr.Get("/events", [&](const httplib::Request &req, httplib::Response &res) {
 				json root;
 				root["ok"] = false;
 				root["events"] = json::array();
@@ -22939,10 +22972,29 @@ window.addEventListener("load", startAutoRefresh);
 				}
 
 				json arr = json::array();
-				// Adjust limit to taste: 50 / 100 / 500, etc.
-				const int LIMIT = 100;
+				auto parseQueryInt64 = [&](const char *name, int64_t def) -> int64_t {
+					if (!req.has_param(name)) return def;
+					try {
+						const std::string raw = trim_copy(req.get_param_value(name));
+						if (raw.empty()) return def;
+						size_t pos = 0;
+						const long long value = std::stoll(raw, &pos, 10);
+						(void)pos;
+						return static_cast<int64_t>(value);
+					} catch (...) {
+						return def;
+					}
+				};
+				int limit = req.has_param("limit") ? parse_int_loose(req.get_param_value("limit"), 1000) : 1000;
+				if (limit < 1) limit = 1;
+				if (limit > 50000) limit = 50000;
+				const int64_t sinceMs = parseQueryInt64("since_ms", 0);
+				const int64_t untilMs = parseQueryInt64("until_ms", 0);
+				const std::string filterConn = req.has_param("connection_id") ? trim_copy(req.get_param_value("connection_id")) : "";
+				std::string filterTag = req.has_param("tag_name") ? trim_copy(req.get_param_value("tag_name")) : "";
+				if (filterTag.empty() && req.has_param("tag")) filterTag = trim_copy(req.get_param_value("tag"));
 			
-				if (!sqlite_fetch_recent_events(LIMIT, arr)) {
+				if (!sqlite_fetch_recent_events(limit, sinceMs, untilMs, filterConn, filterTag, arr)) {
 					res.status = 500;
 					root["error"] = "SQLite error while fetching events";
 					res.set_content(root.dump(2), "application/json");
@@ -22950,6 +23002,8 @@ window.addEventListener("load", startAutoRefresh);
 				}
 
 				root["ok"] = true;
+				root["limit"] = limit;
+				root["matched"] = arr.size();
 				root["events"] = arr;
 				res.set_content(root.dump(2), "application/json");
 			});
@@ -26892,7 +26946,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                            }
 
 		                                            if (dcfg.log_event_on_change && a.hadPrev) {
-		                                                a.valueChangedForEvent = !snapshot_values_equal(a.snap, a.prev);
+		                                                a.valueChangedForEvent = should_log_tag_event_change(a.hadPrev, a.snap, a.prev);
 		                                                if (a.valueChangedForEvent) {
 		                                                    int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 		                                                        dsnap.timestamp.time_since_epoch()
@@ -27011,7 +27065,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                            }
 
 		                                            if (acfg.cfg.log_event_on_change && a.hadPrev) {
-		                                                a.valueChangedForEvent = !snapshot_values_equal(a.snap, a.prev);
+		                                                a.valueChangedForEvent = should_log_tag_event_change(a.hadPrev, a.snap, a.prev);
 		                                                if (a.valueChangedForEvent) {
 		                                                    int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 		                                                        dsnap.timestamp.time_since_epoch()
@@ -27078,7 +27132,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                        }
 
 	                                        if (t.cfg.log_event_on_change && a.hadPrev) {
-	                                            a.valueChangedForEvent = !snapshot_values_equal(a.snap, a.prev);
+	                                            a.valueChangedForEvent = should_log_tag_event_change(a.hadPrev, a.snap, a.prev);
 	                                            if (a.valueChangedForEvent) {
 	                                                int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 	                                                    a.snap.timestamp.time_since_epoch()
@@ -27144,7 +27198,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                                }
 
 	                                                if (dcfg.log_event_on_change && da.hadPrev) {
-	                                                    da.valueChangedForEvent = !snapshot_values_equal(da.snap, da.prev);
+	                                                    da.valueChangedForEvent = should_log_tag_event_change(da.hadPrev, da.snap, da.prev);
 	                                                    if (da.valueChangedForEvent) {
 	                                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 	                                                            dsnap.timestamp.time_since_epoch()
@@ -27262,7 +27316,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                                }
 
 	                                                if (acfg.cfg.log_event_on_change && da.hadPrev) {
-	                                                    da.valueChangedForEvent = !snapshot_values_equal(da.snap, da.prev);
+	                                                    da.valueChangedForEvent = should_log_tag_event_change(da.hadPrev, da.snap, da.prev);
 	                                                    if (da.valueChangedForEvent) {
 	                                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 	                                                            dsnap.timestamp.time_since_epoch()
@@ -27295,7 +27349,7 @@ window.addEventListener("load", startAutoRefresh);
 
 		                                if (!isArray) {
 		                                    if (t.cfg.log_event_on_change && hadPrev) {
-		                                        valueChangedForEvent = !snapshot_values_equal(snap, prevSnap);
+		                                        valueChangedForEvent = should_log_tag_event_change(hadPrev, snap, prevSnap);
 		                                        if (valueChangedForEvent) {
 			                                        int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 			                                            snap.timestamp.time_since_epoch()

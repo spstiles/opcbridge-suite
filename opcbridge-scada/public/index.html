@@ -807,6 +807,40 @@
             <div class="hint mono" id="alarmActivityStatus"></div>
           </div>
         </section>
+
+        <section class="card">
+          <div class="card-title ae-card-title-row">
+            <span>Tracked Tag Events</span>
+            <button class="btn" id="tagEventsRefreshBtn" type="button">Refresh</button>
+            <button class="btn" id="tagEventsDownloadCsvBtn" type="button">Download CSV</button>
+          </div>
+          <div class="card-body">
+            <div class="form-grid two">
+              <div class="form-row"><label for="tagEventsFromInput">From</label><input id="tagEventsFromInput" type="datetime-local" /></div>
+              <div class="form-row"><label for="tagEventsToInput">To</label><input id="tagEventsToInput" type="datetime-local" /></div>
+              <div class="form-row"><label for="tagEventsConnectionInput">Connection</label><input id="tagEventsConnectionInput" type="text" placeholder="optional exact connection" /></div>
+              <div class="form-row"><label for="tagEventsTagInput">Tag Contains</label><input id="tagEventsTagInput" type="text" placeholder="optional tag text" /></div>
+              <div class="form-row"><label for="tagEventsLimitInput">Limit</label><input id="tagEventsLimitInput" type="number" min="1" max="50000" step="100" value="1000" /></div>
+            </div>
+            <div class="table-wrap ae-runtime-table">
+              <table class="table" id="tagEventsTable">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Connection</th>
+                    <th>Tag</th>
+                    <th>Old Value</th>
+                    <th>New Value</th>
+                    <th>Old Q</th>
+                    <th>New Q</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="hint mono" id="tagEventsStatus"></div>
+          </div>
+        </section>
       </section>
 	    </section>
 	    <section id="tab-workspace" class="panel">
