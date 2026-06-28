@@ -337,11 +337,13 @@ body.edit-mode .left-toolbar {
     flex: 1;
     min-height: 0;
     overscroll-behavior: contain;
+    overflow-anchor: none;
 }
 
 .hmi-alarms-panel-row {
     background: var(--hmi-alarms-row-bg, #fff);
     color: var(--hmi-alarms-row-text, #000);
+    flex: 0 0 auto;
 }
 
 .hmi-alarms-panel-row.is-active-unacked {

@@ -4672,7 +4672,6 @@ const refreshRenderedAlarmsPanels = () => {
     const obj = findAlarmsPanelObjectByScrollKey(scrollKey);
     if (!obj) return;
     populateAlarmsPanelList(list, obj);
-    alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
   });
   return true;
 };
@@ -4964,6 +4963,7 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
   list.querySelectorAll(".hmi-alarms-panel-row").forEach((row) => {
     rowsById.set(String(row.dataset.alarmRowKey || row.dataset.alarmId || ""), row);
   });
+  const previousScrollTop = list.scrollTop;
   const wantedIds = new Set();
 
   const makeCell = (text) => {
@@ -5037,6 +5037,7 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
   list.querySelectorAll(".hmi-alarms-panel-row").forEach((row) => {
     if (!wantedIds.has(String(row.dataset.alarmRowKey || row.dataset.alarmId || ""))) row.remove();
   });
+  list.scrollTop = Math.min(previousScrollTop, Math.max(0, list.scrollHeight - list.clientHeight));
 };
 
 const upsertTimelineFromAlarmEvent = (event) => {
@@ -10967,14 +10968,11 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    panel.appendChild(cols);
 
 	    const list = document.createElementNS(xhtml, "div");
-	    list.className = "hmi-alarms-panel-list";
-	    const scrollKey = getAlarmsPanelScrollKey(obj);
-	    list.dataset.alarmsPanelKey = scrollKey;
-	    const previousScrollTop = Number(alarmsPanelScrollByKey.get(scrollKey)) || 0;
-	    list.addEventListener("scroll", () => {
-	      alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
-	    }, { passive: true });
-	    populateAlarmsPanelList(list, obj, xhtml);
+		    list.className = "hmi-alarms-panel-list";
+		    const scrollKey = getAlarmsPanelScrollKey(obj);
+		    list.dataset.alarmsPanelKey = scrollKey;
+		    const previousScrollTop = Number(alarmsPanelScrollByKey.get(scrollKey)) || 0;
+		    populateAlarmsPanelList(list, obj, xhtml);
 
 	    panel.appendChild(list);
 	    fo.appendChild(panel);
