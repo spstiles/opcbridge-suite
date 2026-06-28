@@ -2554,6 +2554,8 @@ auto make_sql = [&](bool withGroupSite) -> std::string {
     if (has_alarm) sql += "AND alarm_id = ? ";
     if (has_conn)  sql += "AND connection_id = ? ";
     if (has_tag)   sql += "AND tag = ? ";
+    sql += "AND NOT (COALESCE(actor, '') = 'opcbridge-alarms' AND COALESCE(note, '') LIKE '%startup/reconnect reconciliation%') ";
+    sql += "AND COALESCE(note, '') NOT LIKE '%inferred from current tag state%' ";
 
     if (!typeList.empty())
     {
