@@ -9719,6 +9719,7 @@ int main(int argc, char **argv)
                 {
                     const AlarmState& s = kv.second;
                     if (!s.active || representedActiveIds.count(s.alarm_id)) continue;
+                    if (!s.return_notification_armed) continue;
                     json row = alarm_state_to_json(s);
                     row["timeline_key"] = "state:" + s.alarm_id;
                     row["last_event_type"] = "active";
