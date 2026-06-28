@@ -8002,14 +8002,38 @@ struct AlarmEngine
         return keys;
     }
 
+    static std::optional<int> normalize_quality(const json& quality)
+    {
+        if (quality.is_null()) return std::nullopt;
+        if (quality.is_boolean()) return quality.get<bool>() ? 1 : 0;
+        if (quality.is_number_integer()) return quality.get<int>();
+        if (quality.is_number_float()) return static_cast<int>(quality.get<double>());
+        if (!quality.is_string()) return std::nullopt;
+        std::string text = quality.get<std::string>();
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (text.empty()) return std::nullopt;
+        if (text == "good" || text == "ok" || text == "true") return 1;
+        if (text == "bad" || text == "bad_handle" || text == "stale" || text == "false") return 0;
+        try { return std::stoi(text); } catch (...) {}
+        return std::nullopt;
+    }
+
     void apply_tag_update(const std::string &connection_id, const std::string &tag, const json &value)
     {
-        apply_tag_update(connection_id, tag, value, true);
+        apply_tag_update(connection_id, tag, value, json(), true);
     }
 
     void apply_tag_update(const std::string &connection_id, const std::string &tag, const json &value, bool recordEvent)
     {
+        apply_tag_update(connection_id, tag, value, json(), recordEvent);
+    }
+
+    void apply_tag_update(const std::string &connection_id, const std::string &tag, const json &value, const json &quality, bool recordEvent)
+    {
         last_tag_update_ms.store(now_ms());
+        const auto normalizedQuality = normalize_quality(quality);
+        if (normalizedQuality.has_value() && normalizedQuality.value() == 0) return;
+
         const std::string key = connection_id + ":" + tag;
 
         std::vector<AlarmState> changed;
@@ -8860,7 +8884,13 @@ static void ws_client_loop(std::atomic<bool> &stop,
             if (!t.contains("value")) continue;
             // Seed current values from HTTP as baseline (no event log/notifications).
             // This prevents callouts on reconnect for conditions that were already active.
-            engine.apply_tag_update(conn, name, t["value"], recordEvent);
+            engine.apply_tag_update(
+                conn,
+                name,
+                t["value"],
+                t.contains("quality") ? t["quality"] : json(),
+                recordEvent
+            );
         }
     };
 
@@ -8921,6 +8951,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
             conn,
             tag,
             payload.contains("value") ? payload["value"] : json(),
+            payload.contains("quality") ? payload["quality"] : json(),
             engine.should_record_events_now()
         );
     });
