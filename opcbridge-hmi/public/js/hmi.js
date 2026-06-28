@@ -7446,13 +7446,22 @@ const renderBoundTemplate = (rawText, bindings, previewOnly = false) => {
 
 const getTextBindingDisplayValue = (rawValue, bind, previewOnly = false) => {
   if (previewOnly) return getBindPlaceholder(bind);
-  if (rawValue === undefined || rawValue === null || rawValue === "") return getBindPlaceholder(bind);
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    if (bind && typeof bind === "object" && runtimeTextBindingDisplayCache.has(bind)) {
+      return runtimeTextBindingDisplayCache.get(bind);
+    }
+    return getBindPlaceholder(bind);
+  }
   const numericFormatted = formatBoundNumber(rawValue, bind);
-  if (numericFormatted !== null) return numericFormatted;
+  if (numericFormatted !== null) {
+    if (bind && typeof bind === "object") runtimeTextBindingDisplayCache.set(bind, numericFormatted);
+    return numericFormatted;
+  }
   const text = String(rawValue);
   const digits = Number.isFinite(Number(bind?.digits)) ? Math.max(1, Math.trunc(Number(bind.digits))) : 0;
-  if (digits <= 0) return text;
-  return text.slice(0, digits);
+  const display = digits <= 0 ? text : text.slice(0, digits);
+  if (bind && typeof bind === "object") runtimeTextBindingDisplayCache.set(bind, display);
+  return display;
 };
 
 const renderTextTemplate = (obj, previewOnly = false) => {
@@ -7606,16 +7615,22 @@ const shouldRenderObject = (obj) => {
   if (!vis || vis.enabled === false) return true;
   if (vis.sourceType === "expression") {
     const result = evaluateVisibilityExpression(vis.expression);
-    if (result === null || result === undefined) return true;
+    if (result === null || result === undefined) {
+      return runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false;
+    }
     const isOn = coerceTagBoolean(result);
-    return vis.invert ? !isOn : isOn;
+    const next = vis.invert ? !isOn : isOn;
+    runtimeAutomationStateCache.set(vis, next);
+    return next;
   }
   const connectionId = String(vis.connection_id || "");
   const tag = String(vis.tag || "");
   if (!connectionId || !tag) return true;
   const key = normalizeTagCacheKey(connectionId, tag);
   const value = key ? tagValueCache.get(key) : undefined;
-  if (value === undefined || value === null) return true;
+  if (value === undefined || value === null) {
+    return runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false;
+  }
   const thresholdRaw = (vis.threshold !== undefined && vis.threshold !== null && vis.threshold !== "")
     ? vis.threshold
     : vis.value; // legacy alias
@@ -7630,11 +7645,13 @@ const shouldRenderObject = (obj) => {
       threshold: hasThreshold ? thresholdRaw : vis.threshold
     };
     const state = getAutomationState(value, config);
-    if (state === null) return true;
-    return state;
+    if (state !== null) runtimeAutomationStateCache.set(vis, state);
+    return state !== null ? state : (runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false);
   }
   const isOn = coerceTagBoolean(value);
-  return vis.invert ? !isOn : isOn;
+  const next = vis.invert ? !isOn : isOn;
+  runtimeAutomationStateCache.set(vis, next);
+  return next;
 };
 
 const getAutomationState = (value, config) => {
@@ -7711,7 +7728,7 @@ const getAutomationColor = (config, baseColor) => {
     const tag = String(rule.tag || "");
     if (!connectionId || !tag) continue;
     const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-    const state = getAutomationState(rawValue, rule);
+    const state = getStableAutomationState(rawValue, rule, null);
     if (state && isColorRuleFlashActive(rule)) return rule.onColor || baseColor;
   }
   return baseColor;
@@ -7735,7 +7752,7 @@ const getActiveAutomationOverrideColor = (config) => {
     const tag = String(rule.tag || "");
     if (!connectionId || !tag) continue;
     const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-    const state = getAutomationState(rawValue, rule);
+    const state = getStableAutomationState(rawValue, rule, null);
     if (state && isColorRuleFlashActive(rule)) return onColor;
   }
   return null;
@@ -7816,7 +7833,7 @@ const getAutomationText = (config, baseText, bindings = {}, previewOnly = false)
   const tag = String(config.tag || "");
   if (!connectionId || !tag) return renderBoundTemplate(baseText, bindings, previewOnly);
   const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-  const state = getAutomationState(rawValue, config);
+  const state = getStableAutomationState(rawValue, config, null);
   if (state === null) return renderBoundTemplate(baseText, bindings, previewOnly);
   const nextText = state ? (config.onText || baseText) : (config.offText || baseText);
   return renderBoundTemplate(nextText, bindings, previewOnly);
@@ -7941,17 +7958,18 @@ const getRotationPivot = (obj, boundsOverride = null, offset = { x: 0, y: 0 }) =
 
 const getRotationAutomationValue = (obj) => {
   if (!obj || isEditMode) return 0;
-  const automation = normalizeRotationAutomationState(obj.rotationAutomation);
+  const sourceAutomation = obj.rotationAutomation;
+  const automation = normalizeRotationAutomationState(sourceAutomation);
   if (!automation || automation.enabled === false) return 0;
   let numeric = null;
   if (automation.sourceType === "expression") {
-    numeric = coerceTagNumber(evaluateAutomationExpression(automation.expression));
+    numeric = getStableAutomationNumber(automation, evaluateAutomationExpression(automation.expression), 0, sourceAutomation || automation);
   } else {
     const connectionId = String(automation.connection_id || "").trim();
     const tag = String(automation.tag || "").trim();
     if (!connectionId || !tag) return 0;
     const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-    numeric = coerceTagNumber(raw);
+    numeric = getStableAutomationNumber(automation, raw, 0, sourceAutomation || automation);
   }
   if (numeric === null) return 0;
   const inputMin = Number.isFinite(Number(automation.inputMin)) ? Number(automation.inputMin) : 0;
@@ -8079,13 +8097,13 @@ const getMotionTFromSource = (motion) => {
   if (!normalized || normalized.enabled === false) return null;
   let numeric = null;
   if (normalized.sourceType === "expression") {
-    numeric = coerceTagNumber(evaluateAutomationExpression(normalized.expression));
+    numeric = getStableAutomationNumber(normalized, evaluateAutomationExpression(normalized.expression), null, motion || normalized);
   } else {
     const connectionId = String(normalized.connection_id || "").trim();
     const tag = String(normalized.tag || "").trim();
     if (!connectionId || !tag) return null;
     const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-    numeric = coerceTagNumber(raw);
+    numeric = getStableAutomationNumber(normalized, raw, null, motion || normalized);
   }
   if (numeric === null) return null;
   const inputMin = Number.isFinite(Number(normalized.inputMin)) ? Number(normalized.inputMin) : 0;
@@ -8910,6 +8928,9 @@ const normalizeTagQuality = (quality) => {
 };
 
 const isExplicitBadQuality = (quality) => normalizeTagQuality(quality) === 0;
+const runtimeAutomationStateCache = new WeakMap();
+const runtimeAutomationNumberCache = new WeakMap();
+const runtimeTextBindingDisplayCache = new WeakMap();
 
 const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality) => {
   if (!key) return false;
@@ -8918,10 +8939,10 @@ const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality) => {
 
   if (hasQuality && tagQualityCache.get(key) !== normalizedQuality) {
     tagQualityCache.set(key, normalizedQuality);
-    changed = true;
   }
 
   if (hasValue && !isExplicitBadQuality(normalizedQuality)) {
+    if ((value === undefined || value === null) && tagValueCache.has(key)) return changed;
     if (!Object.is(tagValueCache.get(key), value)) {
       tagValueCache.set(key, value);
       changed = true;
@@ -8929,6 +8950,30 @@ const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality) => {
   }
 
   return changed;
+};
+
+const getStableAutomationState = (value, config, fallback = null) => {
+  const state = getAutomationState(value, config);
+  if (state !== null) {
+    if (config && typeof config === "object") runtimeAutomationStateCache.set(config, state);
+    return state;
+  }
+  if (config && typeof config === "object" && runtimeAutomationStateCache.has(config)) {
+    return runtimeAutomationStateCache.get(config);
+  }
+  return fallback;
+};
+
+const getStableAutomationNumber = (config, value, fallback = null, cacheKey = config) => {
+  const numeric = coerceTagNumber(value);
+  if (numeric !== null) {
+    if (cacheKey && typeof cacheKey === "object") runtimeAutomationNumberCache.set(cacheKey, numeric);
+    return numeric;
+  }
+  if (cacheKey && typeof cacheKey === "object" && runtimeAutomationNumberCache.has(cacheKey)) {
+    return runtimeAutomationNumberCache.get(cacheKey);
+  }
+  return fallback;
 };
 
 const scheduleRuntimeRender = () => {
