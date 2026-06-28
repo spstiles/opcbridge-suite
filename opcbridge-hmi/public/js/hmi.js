@@ -5163,6 +5163,7 @@ const rebuildAlarmTimelineFromHistoryEvents = (events) => {
   const laterReturnByAlarmId = buildLaterReturnEventMap(ordered);
   alarmTimelineById = new Map();
   alarmOpenTimelineKeyByAlarmId = new Map();
+  alarmTimelineSource = "history";
   ordered
     .filter((event) => shouldIngestAlarmHistoryEvent(event, laterReturnByAlarmId))
     .forEach((event) => upsertTimelineFromAlarmEvent(event));
@@ -5171,6 +5172,7 @@ const rebuildAlarmTimelineFromHistoryEvents = (events) => {
 const setAlarmTimelineFromPanelRows = (rows) => {
   alarmTimelineById = new Map();
   alarmOpenTimelineKeyByAlarmId = new Map();
+  alarmTimelineSource = "panel";
   (Array.isArray(rows) ? rows : []).forEach((row, index) => {
     const id = normalizeAlarmTimelineId(row?.alarm_id);
     if (!id) return;
@@ -5285,8 +5287,7 @@ const refreshAlarmsForScreenLoad = async () => {
   if (!screenHasAlarmsPanel()) return;
   alarmHistoryLoaded = false;
   await loadAlarmTimelineFromHistory({ force: true });
-  await loadAlarmsStateFromHttp();
-  scheduleAlarmsRender();
+  await loadAlarmsStateFromHttp({ render: false });
 };
 
 const getAlarmTimelineRows = () => {
@@ -5296,7 +5297,9 @@ const getAlarmTimelineRows = () => {
     const id = normalizeAlarmTimelineId(row?.alarm_id);
     if (!id) return;
     const runtime = alarmsStateById.get(id);
-    const nextRow = mergeAlarmTimelineRowWithRuntimeState(alarmTimelineById.get(key) || row, runtime);
+    const nextRow = alarmTimelineSource === "panel"
+      ? (alarmTimelineById.get(key) || row)
+      : mergeAlarmTimelineRowWithRuntimeState(alarmTimelineById.get(key) || row, runtime);
     if (runtime?.active) representedActiveIds.add(id);
     if (isDisplayableAlarmTimelineRow(nextRow)) {
       rows.push(nextRow);
@@ -5304,6 +5307,7 @@ const getAlarmTimelineRows = () => {
       alarmTimelineById.delete(key);
     }
   });
+  if (alarmTimelineSource === "panel") return rows;
   alarmsStateById.forEach((alarm, id) => {
     if (!alarm?.active || representedActiveIds.has(id)) return;
     const key = getAlarmStateTimelineKey(id);
@@ -6165,6 +6169,7 @@ let alarmsStateById = new Map();
 let alarmsEvents = [];
 let alarmTimelineById = new Map();
 let alarmOpenTimelineKeyByAlarmId = new Map();
+let alarmTimelineSource = "history";
 let alarmsPanelRuntimeFiltersByTarget = new Map();
 let alarmHistoryLoaded = false;
 let alarmHistoryLoading = false;
