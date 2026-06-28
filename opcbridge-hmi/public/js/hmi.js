@@ -8896,6 +8896,41 @@ const normalizeTagCacheKey = (connectionId, tagName) => {
   return `${conn}.${tag}`;
 };
 
+const normalizeTagQuality = (quality) => {
+  if (quality === undefined || quality === null || quality === "") return null;
+  if (quality === true) return 1;
+  if (quality === false) return 0;
+  if (typeof quality === "number") return Number.isFinite(quality) ? quality : null;
+  const text = String(quality || "").trim().toLowerCase();
+  if (!text) return null;
+  if (["good", "ok", "true"].includes(text)) return 1;
+  if (["bad", "bad_handle", "stale", "false"].includes(text)) return 0;
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const isExplicitBadQuality = (quality) => normalizeTagQuality(quality) === 0;
+
+const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality) => {
+  if (!key) return false;
+  let changed = false;
+  const normalizedQuality = hasQuality ? normalizeTagQuality(quality) : null;
+
+  if (hasQuality && tagQualityCache.get(key) !== normalizedQuality) {
+    tagQualityCache.set(key, normalizedQuality);
+    changed = true;
+  }
+
+  if (hasValue && !isExplicitBadQuality(normalizedQuality)) {
+    if (!Object.is(tagValueCache.get(key), value)) {
+      tagValueCache.set(key, value);
+      changed = true;
+    }
+  }
+
+  return changed;
+};
+
 const scheduleRuntimeRender = () => {
   if (wsRuntimeRenderRaf != null) return;
   wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
@@ -9003,13 +9038,13 @@ const applyTagRowsToCache = (rows) => {
     const name = String(tag?.name || "");
     const key = normalizeTagCacheKey(connectionId, name);
     if (!key) return;
-    if (Object.prototype.hasOwnProperty.call(tag, "value")) {
-      tagValueCache.set(key, tag.value);
-      changed = true;
-    }
-    if (Object.prototype.hasOwnProperty.call(tag, "quality")) {
-      tagQualityCache.set(key, tag.quality);
-    }
+    changed = applyTagSnapshotToCache(
+      key,
+      tag.value,
+      tag.quality,
+      Object.prototype.hasOwnProperty.call(tag, "value"),
+      Object.prototype.hasOwnProperty.call(tag, "quality")
+    ) || changed;
   });
   return changed;
 };
@@ -9139,11 +9174,14 @@ const connectWebSocket = () => {
       const payload = JSON.parse(event.data);
       if (payload?.type === "tag_update") {
         const key = normalizeTagCacheKey(payload.connection_id, payload.name);
-        tagValueCache.set(key, payload.value);
-        if (Object.prototype.hasOwnProperty.call(payload, "quality")) {
-          tagQualityCache.set(key, payload.quality);
-        }
-        scheduleRuntimeRender();
+        const changed = applyTagSnapshotToCache(
+          key,
+          payload.value,
+          payload.quality,
+          Object.prototype.hasOwnProperty.call(payload, "value"),
+          Object.prototype.hasOwnProperty.call(payload, "quality")
+        );
+        if (changed) scheduleRuntimeRender();
       }
     } catch {
       // ignore malformed payloads
@@ -9768,12 +9806,13 @@ const loadTags = async () => {
         if (!connectionId || !name) return;
         const key = normalizeTagCacheKey(connectionId, name);
         if (!key) return;
-        if (Object.prototype.hasOwnProperty.call(tag, "value")) {
-          tagValueCache.set(key, tag.value);
-        }
-        if (Object.prototype.hasOwnProperty.call(tag, "quality")) {
-          tagQualityCache.set(key, tag.quality);
-        }
+        applyTagSnapshotToCache(
+          key,
+          tag.value,
+          tag.quality,
+          Object.prototype.hasOwnProperty.call(tag, "value"),
+          Object.prototype.hasOwnProperty.call(tag, "quality")
+        );
       });
       if (!isEditMode) {
         renderScreen();
