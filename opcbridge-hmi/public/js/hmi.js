@@ -5188,7 +5188,7 @@ const getAlarmPanelRowsFingerprint = (rows) => JSON.stringify((Array.isArray(row
   active_since_ms: Number(row?.active_since_ms) || 0,
   cleared_ts_ms: Number(row?.cleared_ts_ms) || 0,
   last_event_type: String(row?.last_event_type || ""),
-  last_event_ts_ms: Number(row?.last_event_ts_ms) || 0,
+  last_event_ts_ms: Number(row?.active_since_ms) > 0 ? Number(row?.last_event_ts_ms) || 0 : 0,
   message: String(row?.message || ""),
   severity: Number(row?.severity) || 0
 })));
@@ -6173,7 +6173,7 @@ let alarmPanelRowsRefreshInFlight = false;
 let alarmsRenderRaf = null;
 const alarmsPanelScrollByKey = new Map();
 window.setInterval(() => {
-  if (!isEditMode && screenHasAlarmsPanel()) scheduleAlarmPanelRowsRefresh(0);
+  if (!isEditMode && !alarmsWsConnected && screenHasAlarmsPanel()) scheduleAlarmPanelRowsRefresh(0);
 }, ALARM_PANEL_POLL_MS);
 let pendingScaleRaf = null;
 let wsRuntimeRenderRaf = null;
@@ -6828,8 +6828,7 @@ const connectAlarmsWebSocket = () => {
   alarmsWsClient.onopen = () => {
     alarmsWsConnected = true;
     scheduleAlarmPanelRowsRefresh(0);
-    loadAlarmsStateFromHttp();
-    scheduleAlarmsRender();
+    loadAlarmsStateFromHttp({ render: false });
   };
 
   alarmsWsClient.onclose = () => {
