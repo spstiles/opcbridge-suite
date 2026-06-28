@@ -10977,7 +10977,22 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 		    const scrollKey = getAlarmsPanelScrollKey(obj);
 		    list.dataset.alarmsPanelKey = scrollKey;
 		    const previousScrollTop = Number(alarmsPanelScrollByKey.get(scrollKey)) || 0;
-		    ["wheel", "touchmove"].forEach((eventName) => {
+		    [
+		      "wheel",
+		      "touchstart",
+		      "touchmove",
+		      "touchend",
+		      "pointerdown",
+		      "pointermove",
+		      "pointerup",
+		      "pointercancel",
+		      "mousedown",
+		      "mousemove",
+		      "mouseup",
+		      "click",
+		      "dblclick",
+		      "contextmenu"
+		    ].forEach((eventName) => {
 		      list.addEventListener(eventName, (event) => event.stopPropagation(), { passive: true });
 		    });
 		    populateAlarmsPanelList(list, obj, xhtml);
