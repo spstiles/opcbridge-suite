@@ -12414,6 +12414,7 @@ bool sqlite_fetch_recent_events(int limit,
                                 int64_t until_ms,
                                 const std::string &connection_id,
                                 const std::string &tag_name,
+                                bool tracked_tag_only,
                                 json &outArray) {
     outArray = json::array();
     if (!g_alarmDb) return false;
@@ -12430,6 +12431,7 @@ bool sqlite_fetch_recent_events(int limit,
     if (until_ms > 0) sql += " AND timestamp_ms <= ?";
     if (!connection_id.empty()) sql += " AND connection_id = ?";
     if (!tag_name.empty()) sql += " AND tag_name LIKE ?";
+    if (tracked_tag_only) sql += R"( AND (extra_json IS NULL OR trim(extra_json) = '' OR extra_json NOT LIKE '%"alarm_id"%'))";
     sql += " ORDER BY timestamp_ms DESC LIMIT ?;";
 
     std::lock_guard<std::mutex> lock(g_alarmDbMutex);
@@ -12521,7 +12523,7 @@ bool sqlite_fetch_recent_events(int limit,
 }
 
 bool sqlite_fetch_recent_events(int limit, json &outArray) {
-    return sqlite_fetch_recent_events(limit, 0, 0, "", "", outArray);
+    return sqlite_fetch_recent_events(limit, 0, 0, "", "", false, outArray);
 }
 
 // Simple event-logging helper: one row per change
@@ -22990,11 +22992,12 @@ window.addEventListener("load", startAutoRefresh);
 				if (limit > 50000) limit = 50000;
 				const int64_t sinceMs = parseQueryInt64("since_ms", 0);
 				const int64_t untilMs = parseQueryInt64("until_ms", 0);
+				const bool includeAll = req.has_param("include_all") && parse_bool_loose(req.get_param_value("include_all"), false);
 				const std::string filterConn = req.has_param("connection_id") ? trim_copy(req.get_param_value("connection_id")) : "";
 				std::string filterTag = req.has_param("tag_name") ? trim_copy(req.get_param_value("tag_name")) : "";
 				if (filterTag.empty() && req.has_param("tag")) filterTag = trim_copy(req.get_param_value("tag"));
 			
-				if (!sqlite_fetch_recent_events(limit, sinceMs, untilMs, filterConn, filterTag, arr)) {
+				if (!sqlite_fetch_recent_events(limit, sinceMs, untilMs, filterConn, filterTag, !includeAll, arr)) {
 					res.status = 500;
 					root["error"] = "SQLite error while fetching events";
 					res.set_content(root.dump(2), "application/json");
@@ -23004,6 +23007,7 @@ window.addEventListener("load", startAutoRefresh);
 				root["ok"] = true;
 				root["limit"] = limit;
 				root["matched"] = arr.size();
+				root["tracked_tag_only"] = !includeAll;
 				root["events"] = arr;
 				res.set_content(root.dump(2), "application/json");
 			});
