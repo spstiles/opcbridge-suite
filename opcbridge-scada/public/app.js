@@ -410,6 +410,7 @@
   tagEventsConnectionInput: document.getElementById('tagEventsConnectionInput'),
   tagEventsTagInput: document.getElementById('tagEventsTagInput'),
   tagEventsLimitInput: document.getElementById('tagEventsLimitInput'),
+  tagEventsPresetBtns: Array.from(document.querySelectorAll('.tag-events-preset')),
 
   // Logs
   logsSource: document.getElementById('logsSource'),
@@ -6668,6 +6669,16 @@ function wireOverviewRuntimeUi() {
     els.tagEventsDownloadCsvBtn.dataset.wired = '1';
     els.tagEventsDownloadCsvBtn.addEventListener('click', downloadTagEventsHistoryCsv);
   }
+  (els.tagEventsPresetBtns || []).forEach((btn) => {
+    if (btn.dataset.wired === '1') return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => {
+      applyTagEventsPreset(btn.dataset.range || '');
+      refreshTagEventsHistory().catch((err) => {
+        if (els.tagEventsStatus) els.tagEventsStatus.textContent = `Refresh failed: ${err.message}`;
+      });
+    });
+  });
 }
 
 async function waitForOpcbridgeReloadDone({ gen, maxWaitMs = 180000, intervalMs = 750 } = {}) {
@@ -21272,6 +21283,34 @@ function datetimeLocalToEpochMs(value) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function epochMsToDatetimeLocal(ms) {
+  const d = new Date(Number(ms || 0));
+  if (!Number.isFinite(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function applyTagEventsPreset(range) {
+  const raw = String(range || '').trim().toLowerCase();
+  if (!els.tagEventsFromInput || !els.tagEventsToInput) return;
+  if (raw === 'clear') {
+    els.tagEventsFromInput.value = '';
+    els.tagEventsToInput.value = '';
+    return;
+  }
+  const now = Date.now();
+  const durations = {
+    '1h': 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+    '14d': 14 * 24 * 60 * 60 * 1000
+  };
+  const durationMs = durations[raw];
+  if (!durationMs) return;
+  els.tagEventsFromInput.value = epochMsToDatetimeLocal(now - durationMs);
+  els.tagEventsToInput.value = epochMsToDatetimeLocal(now);
+}
+
 function buildTagEventsParams() {
   const params = new URLSearchParams();
   const limitRaw = Number(els.tagEventsLimitInput?.value || 1000);
@@ -21288,6 +21327,22 @@ function buildTagEventsParams() {
   return params;
 }
 
+function eventDetailsText(ev) {
+  const raw = String(ev?.extra_json || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return raw;
+    const keys = ['source', 'reason', 'type', 'alarm_id', 'message', 'actor', 'write_source', 'script'];
+    const parts = keys
+      .filter((key) => parsed[key] != null && String(parsed[key]).trim() !== '')
+      .map((key) => `${key}=${parsed[key]}`);
+    return parts.length ? parts.join(' · ') : raw;
+  } catch {
+    return raw;
+  }
+}
+
 function renderTagEventsRows(events) {
   state.tagEventsLast = Array.isArray(events) ? events : [];
   if (!els.tagEventsTableBody) return;
@@ -21301,6 +21356,7 @@ function renderTagEventsRows(events) {
     appendTextCell(tr, ev?.new_value == null ? '' : ev.new_value, { code: true });
     appendTextCell(tr, ev?.old_quality == null ? '' : ev.old_quality, { code: true });
     appendTextCell(tr, ev?.new_quality == null ? '' : ev.new_quality, { code: true });
+    appendTextCell(tr, eventDetailsText(ev));
     els.tagEventsTableBody.appendChild(tr);
   });
 }
@@ -21327,12 +21383,14 @@ function downloadTagEventsHistoryCsv() {
     old_value: ev?.old_value == null ? '' : ev.old_value,
     new_value: ev?.new_value == null ? '' : ev.new_value,
     old_quality: ev?.old_quality == null ? '' : ev.old_quality,
-    new_quality: ev?.new_quality == null ? '' : ev.new_quality
+    new_quality: ev?.new_quality == null ? '' : ev.new_quality,
+    details: eventDetailsText(ev),
+    extra_json: ev?.extra_json == null ? '' : ev.extra_json
   }));
   downloadTextFile({
     filename: 'opcbridge-tracked-tag-events.csv',
     mime: 'text/csv',
-    text: toCsv(rows, ['timestamp', 'timestamp_ms', 'connection_id', 'tag_name', 'old_value', 'new_value', 'old_quality', 'new_quality'])
+    text: toCsv(rows, ['timestamp', 'timestamp_ms', 'connection_id', 'tag_name', 'old_value', 'new_value', 'old_quality', 'new_quality', 'details', 'extra_json'])
   });
 }
 

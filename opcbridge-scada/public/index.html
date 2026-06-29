@@ -815,6 +815,13 @@
             <button class="btn" id="tagEventsDownloadCsvBtn" type="button">Download CSV</button>
           </div>
           <div class="card-body">
+            <div class="row-actions" style="margin-bottom: 10px;">
+              <button class="btn tag-events-preset" type="button" data-range="1h">Last 1h</button>
+              <button class="btn tag-events-preset" type="button" data-range="24h">Last 24h</button>
+              <button class="btn tag-events-preset" type="button" data-range="7d">Last 7d</button>
+              <button class="btn tag-events-preset" type="button" data-range="14d">Last 14d</button>
+              <button class="btn tag-events-preset" type="button" data-range="clear">Clear Time Filter</button>
+            </div>
             <div class="form-grid two">
               <div class="form-row"><label for="tagEventsFromInput">From</label><input id="tagEventsFromInput" type="datetime-local" /></div>
               <div class="form-row"><label for="tagEventsToInput">To</label><input id="tagEventsToInput" type="datetime-local" /></div>
@@ -833,6 +840,7 @@
                     <th>New Value</th>
                     <th>Old Q</th>
                     <th>New Q</th>
+                    <th>Details</th>
                   </tr>
                 </thead>
                 <tbody></tbody>

@@ -12423,7 +12423,7 @@ bool sqlite_fetch_recent_events(int limit,
 
     std::string sql =
         "SELECT timestamp_ms, connection_id, tag_name,"
-        "       old_value, new_value, old_quality, new_quality"
+        "       old_value, new_value, old_quality, new_quality, extra_json"
         "  FROM events"
         " WHERE 1=1";
     if (since_ms > 0) sql += " AND timestamp_ms >= ?";
@@ -12498,13 +12498,13 @@ bool sqlite_fetch_recent_events(int limit,
 			ev["new_quality"] = sqlite3_column_int(stmt, 6);
 		}
 
-		// If/when you add an extra_json TEXT column as column 7 in the SELECT:
-		// if (sqlite3_column_type(stmt, 7) == SQLITE_NULL) {
-		//     ev["extra_json"] = nullptr;
-		// } else {
-		//     const unsigned char *ej = sqlite3_column_text(stmt, 7);
-		//     ev["extra_json"] = ej ? reinterpret_cast<const char*>(ej) : nullptr;
-		// }
+		// extra_json (column 7, may be NULL)
+		if (sqlite3_column_type(stmt, 7) == SQLITE_NULL) {
+			ev["extra_json"] = nullptr;
+		} else {
+			const unsigned char *ej = sqlite3_column_text(stmt, 7);
+			ev["extra_json"] = ej ? reinterpret_cast<const char*>(ej) : nullptr;
+		}
 
 		outArray.push_back(ev);
 	}
