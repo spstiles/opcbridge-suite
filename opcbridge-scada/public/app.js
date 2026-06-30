@@ -6070,6 +6070,11 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 [
+  'click',
+  'scroll',
+  'touchstart',
+  'touchmove',
+  'mousemove',
   'pointerdown',
   'pointermove',
   'keydown',
@@ -6079,9 +6084,9 @@ window.addEventListener('unhandledrejection', (e) => {
   'dragstart',
   'drop'
 ].forEach((eventName) => {
-  window.addEventListener(eventName, () => touchOpcbridgeAuthActivity(), { capture: true, passive: true });
+  window.addEventListener(eventName, () => touchOpcbridgeAuthActivity({ bypassLoginState: true }), { capture: true, passive: true });
 });
-window.addEventListener('focus', () => touchOpcbridgeAuthActivity({ force: true }), { capture: true });
+window.addEventListener('focus', () => touchOpcbridgeAuthActivity({ force: true, bypassLoginState: true }), { capture: true });
 
 function setTab(id) {
   const next = String(id || '').trim();
@@ -6337,7 +6342,7 @@ function serviceUnavailableMessage(url, detail = '') {
 }
 
 async function apiGet(url, { timeoutMs = 30000 } = {}) {
-  const res = await fetchWithTimeout(url, { cache: 'no-store', headers: { Accept: 'application/json' } }, timeoutMs);
+  const res = await fetchWithTimeout(url, { cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json' } }, timeoutMs);
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       refreshUserAuthLine().catch(() => {});
@@ -6400,7 +6405,7 @@ async function loadOpcbridgeMetrics({ allowCached = true } = {}) {
 }
 
 async function apiGetText(url, { timeoutMs = 30000 } = {}) {
-  const res = await fetchWithTimeout(url, { cache: 'no-store' }, timeoutMs);
+  const res = await fetchWithTimeout(url, { cache: 'no-store', credentials: 'same-origin' }, timeoutMs);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }
@@ -6408,6 +6413,7 @@ async function apiGetText(url, { timeoutMs = 30000 } = {}) {
 async function apiPostJson(url, bodyObj, { timeoutMs = 120000 } = {}) {
   const res = await fetchWithTimeout(url, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(bodyObj || {})
   }, timeoutMs);
@@ -6432,7 +6438,7 @@ async function apiPostJson(url, bodyObj, { timeoutMs = 120000 } = {}) {
 
 async function apiJson(url, { method, bodyObj, timeoutMs } = {}) {
   const m = String(method || 'GET').toUpperCase();
-  const init = { method: m, headers: { Accept: 'application/json' } };
+  const init = { method: m, credentials: 'same-origin', headers: { Accept: 'application/json' } };
   if (m !== 'GET' && m !== 'HEAD') {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(bodyObj || {});
@@ -21719,27 +21725,53 @@ function getOpcbridgeAuthTimeoutMinutes() {
   return Math.max(0, Math.floor(Number(state.opcbridgeAuthStatus?.timeoutMinutes) || 0));
 }
 
+function isEditableControl(el) {
+  if (!el) return false;
+  const nodeName = String(el.nodeName || '').toLowerCase();
+  return (
+    nodeName === 'input'
+    || nodeName === 'textarea'
+    || nodeName === 'select'
+    || el.isContentEditable === true
+  );
+}
+
 function isScadaEditSessionOpen() {
+  const active = document.activeElement;
+  const activeEditArea = active && isEditableControl(active) && (
+    active.closest?.('#tab-workspace')
+    || active.closest?.('#tab-alarms_events')
+    || active.closest?.('#tab-logic')
+    || active.closest?.('#tab-logger')
+    || active.closest?.('#tab-historian')
+    || active.closest?.('#tab-users')
+    || active.closest?.('#tab-configure')
+  );
   return (
     els.newTagModal?.style.display === 'flex'
     || els.workspaceItemModal?.style.display === 'flex'
     || els.usersDetailsFormPanel?.style.display === 'block'
     || els.loginModal?.style.display === 'flex'
+    || Boolean(activeEditArea)
   );
 }
 
-function touchOpcbridgeAuthActivity({ force = false } = {}) {
+function touchOpcbridgeAuthActivity({ force = false, bypassLoginState = false } = {}) {
   const status = state.opcbridgeAuthStatus || null;
-  if (!status?.user_logged_in) return;
+  const editSessionOpen = isScadaEditSessionOpen();
+  if (status && status.configured === false) return;
+  if (!status?.user_logged_in && !force && !bypassLoginState && !editSessionOpen) return;
   const timeoutMinutes = getOpcbridgeAuthTimeoutMinutes();
-  if (timeoutMinutes <= 0) return;
+  if (status && timeoutMinutes <= 0) return;
   const now = Date.now();
   const touchIntervalMs = Math.max(5000, Math.min(30000, timeoutMinutes * 60 * 1000 * 0.25));
-  if (!force && now - state.authLastActivityTouchMs < touchIntervalMs) return;
+  const minIntervalMs = force ? 1500 : touchIntervalMs;
+  if (now - state.authLastActivityTouchMs < minIntervalMs) return;
   state.authLastActivityTouchMs = now;
   fetch('/api/opcbridge/auth/touch', {
     method: 'POST',
     credentials: 'same-origin',
+    keepalive: true,
     headers: { 'Content-Type': 'application/json' },
     body: '{}'
   }).catch(() => {});
@@ -22275,7 +22307,7 @@ function wireUsersUi() {
 function startUserAuthPolling() {
   if (state.userAuthTimer) return;
   state.userAuthTimer = window.setInterval(() => {
-    if (isScadaEditSessionOpen()) touchOpcbridgeAuthActivity();
+    if (isScadaEditSessionOpen()) touchOpcbridgeAuthActivity({ force: true, bypassLoginState: true });
     refreshUserAuthLine().catch(() => {});
   }, 2000);
 }

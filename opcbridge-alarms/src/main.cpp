@@ -8848,16 +8848,79 @@ static void ws_client_loop(std::atomic<bool> &stop,
 
         std::unordered_set<std::string> want;
         want.reserve(keys.size());
+        std::vector<std::pair<std::string, std::string>> wantedTags;
+        wantedTags.reserve(keys.size());
         for (const auto& k : keys)
         {
             if (systemOnly && k.rfind("_system:", 0) != 0) continue;
             want.insert(k);
+            const size_t sep = k.find(':');
+            if (sep != std::string::npos && sep > 0 && sep + 1 < k.size())
+            {
+                wantedTags.push_back({k.substr(0, sep), k.substr(sep + 1)});
+            }
         }
         if (want.empty()) return;
 
         httplib::Client cli(opcbridgeHost, opcbridgeHttpPort);
         cli.set_read_timeout(5, 0);
         cli.set_connection_timeout(5, 0);
+
+        auto apply_rows = [&](const json& body) -> bool {
+            if (!body.is_object() || !body.contains("tags") || !body["tags"].is_array()) return false;
+            for (const auto& t : body["tags"])
+            {
+                if (!t.is_object()) continue;
+                const std::string conn = t.value("connection_id", "");
+                const std::string name = t.value("name", "");
+                if (conn.empty() || name.empty()) continue;
+                const std::string k = conn + ":" + name;
+                if (want.find(k) == want.end()) continue;
+                if (!t.contains("value")) continue;
+                engine.apply_tag_update(
+                    conn,
+                    name,
+                    t["value"],
+                    t.contains("quality") ? t["quality"] : json(),
+                    recordEvent
+                );
+            }
+            return true;
+        };
+
+        if (!systemOnly)
+        {
+            bool queryOk = false;
+            for (size_t offset = 0; offset < wantedTags.size(); offset += 500)
+            {
+                json req;
+                req["tags"] = json::array();
+                const size_t end = std::min(wantedTags.size(), offset + static_cast<size_t>(500));
+                for (size_t i = offset; i < end; ++i)
+                {
+                    req["tags"].push_back({
+                        {"connection_id", wantedTags[i].first},
+                        {"name", wantedTags[i].second}
+                    });
+                }
+                auto qres = cli.Post("/tags/query", req.dump(), "application/json");
+                if (!qres || qres->status != 200) {
+                    queryOk = false;
+                    break;
+                }
+                json qbody;
+                try { qbody = json::parse(qres->body); } catch (...) {
+                    queryOk = false;
+                    break;
+                }
+                if (!apply_rows(qbody)) {
+                    queryOk = false;
+                    break;
+                }
+                queryOk = true;
+            }
+            if (queryOk) return;
+        }
 
         auto res = cli.Get(systemOnly ? "/tags?connection_id=_system&limit=1000" : "/tags");
         if (!res || res->status != 200) return;
@@ -8872,26 +8935,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
             return;
         }
 
-        if (!body.is_object() || !body.contains("tags") || !body["tags"].is_array()) return;
-        for (const auto& t : body["tags"])
-        {
-            if (!t.is_object()) continue;
-            const std::string conn = t.value("connection_id", "");
-            const std::string name = t.value("name", "");
-            if (conn.empty() || name.empty()) continue;
-            const std::string k = conn + ":" + name;
-            if (want.find(k) == want.end()) continue;
-            if (!t.contains("value")) continue;
-            // Seed current values from HTTP as baseline (no event log/notifications).
-            // This prevents callouts on reconnect for conditions that were already active.
-            engine.apply_tag_update(
-                conn,
-                name,
-                t["value"],
-                t.contains("quality") ? t["quality"] : json(),
-                recordEvent
-            );
-        }
+        apply_rows(body);
     };
 
     ws.setOnMessageCallback([&](const ix::WebSocketMessagePtr &msg) {
@@ -8959,6 +9003,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
     ws.start();
 
     auto lastSystemRefresh = std::chrono::steady_clock::time_point{};
+    auto lastSubscriptionRefresh = std::chrono::steady_clock::time_point{};
     while (!stop.load())
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -8973,6 +9018,12 @@ static void ws_client_loop(std::atomic<bool> &stop,
             seed_subscriptions_from_http(false);
         }
         auto nowSteady = std::chrono::steady_clock::now();
+        if (lastSubscriptionRefresh.time_since_epoch().count() == 0 ||
+            nowSteady - lastSubscriptionRefresh >= std::chrono::seconds(2))
+        {
+            seed_subscriptions_from_http(engine.should_record_events_now(), false);
+            lastSubscriptionRefresh = nowSteady;
+        }
         if (lastSystemRefresh.time_since_epoch().count() == 0 ||
             nowSteady - lastSystemRefresh >= std::chrono::seconds(2))
         {
