@@ -8829,9 +8829,14 @@ static void ws_client_loop(std::atomic<bool> &stop,
 {
     ix::WebSocket ws;
     ws.setUrl(wsUrl);
+    ws.enablePong();
+    ws.enableAutomaticReconnection();
+    ws.setMinWaitBetweenReconnectionRetries(1000);
+    ws.setMaxWaitBetweenReconnectionRetries(10000);
     ws.disablePerMessageDeflate();
 
     std::atomic<bool> connected{false};
+    std::atomic<bool> baselineSeedRequested{false};
     uint64_t lastSentGeneration = 0;
 
     auto send_subscribe = [&]() {
@@ -8953,7 +8958,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
             std::cout << "[alarms] opcbridge baseline: suppress events for 2000ms\n";
             lastSentGeneration = subscriptionGeneration.load();
             send_subscribe();
-            seed_subscriptions_from_http(false);
+            baselineSeedRequested.store(true);
             return;
         }
         if (msg->type == ix::WebSocketMessageType::Close)
@@ -9015,9 +9020,14 @@ static void ws_client_loop(std::atomic<bool> &stop,
             engine.suppress_events_until_ms.store(now_ms() + 2000);
             std::cout << "[alarms] opcbridge baseline: suppress events for 2000ms (resubscribe)\n";
             send_subscribe();
-            seed_subscriptions_from_http(false);
+            baselineSeedRequested.store(true);
         }
         auto nowSteady = std::chrono::steady_clock::now();
+        if (baselineSeedRequested.exchange(false))
+        {
+            seed_subscriptions_from_http(false);
+            lastSubscriptionRefresh = nowSteady;
+        }
         if (lastSubscriptionRefresh.time_since_epoch().count() == 0 ||
             nowSteady - lastSubscriptionRefresh >= std::chrono::seconds(2))
         {

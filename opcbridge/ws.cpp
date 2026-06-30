@@ -69,7 +69,7 @@ bool ws_init(uint16_t port)
 
             auto webSocket = webSocketWeak.lock();
             if (!webSocket) return;
-            webSocket->setPingInterval(15);
+            webSocket->setPingInterval(60);
 
             {
                 std::lock_guard<std::mutex> lock(g_wsMutex);

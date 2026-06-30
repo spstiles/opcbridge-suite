@@ -6337,7 +6337,7 @@ function serviceUnavailableMessage(url, detail = '') {
   if (path.startsWith('/api/historian/')) return `historian service is unavailable${detail}`;
   if (path.startsWith('/api/reporter/')) return `reporter service is unavailable${detail}`;
   if (path.startsWith('/api/alarms/')) return `alarm service is unavailable${detail}`;
-  if (path.startsWith('/api/opcbridge/')) return `OPCBridge is starting or reconnecting${detail}`;
+  if (path.startsWith('/api/opcbridge/')) return `OPCBridge request failed${detail}`;
   return `service is unavailable${detail}`;
 }
 
