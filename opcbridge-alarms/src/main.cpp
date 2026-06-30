@@ -9502,7 +9502,7 @@ int main(int argc, char **argv)
         }
     }
 
-    const std::string wsUrl = "ws://" + opcbridgeHost + ":" + std::to_string(opcbridgeWsPort);
+    const std::string wsUrl = "ws://" + opcbridgeHost + ":" + std::to_string(opcbridgeWsPort) + "/?client=opcbridge-alarms";
     std::cout << "[alarms] opcbridge WS: " << wsUrl << "\n";
     std::cout << "[alarms] opcbridge HTTP: http://" << opcbridgeHost << ":" << opcbridgeHttpPort << "\n";
     {

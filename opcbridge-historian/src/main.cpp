@@ -1847,7 +1847,8 @@ int main(int argc, char* argv[])
 
     const std::string wsUrl =
         "ws://" + cfg.opcbridge_host + ":" + std::to_string(cfg.opcbridge_ws_port) +
-        (cfg.opcbridge_ws_path.empty() ? "/" : cfg.opcbridge_ws_path);
+        (cfg.opcbridge_ws_path.empty() ? "/" : cfg.opcbridge_ws_path) +
+        ((cfg.opcbridge_ws_path.find('?') == std::string::npos) ? "?client=opcbridge-historian" : "&client=opcbridge-historian");
 
     ix::WebSocket ws;
     ws.setUrl(wsUrl);

@@ -6811,7 +6811,7 @@ const getWsUrl = () => {
   if (!host) return "";
   if (/^wss?:\/\//i.test(host)) return host;
   const port = Number(opcbridgeConfig?.wsPort) || 9000;
-  return `ws://${host}:${port}`;
+  return `ws://${host}:${port}/?client=opcbridge-hmi`;
 };
 
 const updateWsStatus = () => {
@@ -6839,7 +6839,7 @@ const getAlarmsWsUrl = () => {
   if (!host) return "";
   if (/^wss?:\/\//i.test(host)) return host;
   const port = Number(alarmsConfig?.wsPort) || 8086;
-  return `ws://${host}:${port}`;
+  return `ws://${host}:${port}/?client=opcbridge-hmi-alarms`;
 };
 
 const scheduleAlarmsWsReconnect = () => {
@@ -6852,6 +6852,15 @@ const scheduleAlarmsWsReconnect = () => {
 
 const connectAlarmsWebSocket = () => {
   const nextUrl = getAlarmsWsUrl();
+  const existingState = alarmsWsClient?.readyState;
+  if (
+    nextUrl &&
+    alarmsWsCurrentUrl === nextUrl &&
+    alarmsWsClient &&
+    (existingState === WebSocket.OPEN || existingState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
   alarmsWsCurrentUrl = nextUrl;
 
   if (alarmsWsClient) {
@@ -9172,6 +9181,15 @@ const scheduleWsSubscribeRefresh = () => {
 
 const connectWebSocket = () => {
   const nextUrl = getWsUrl();
+  const existingState = wsClient?.readyState;
+  if (
+    nextUrl &&
+    wsCurrentUrl === nextUrl &&
+    wsClient &&
+    (existingState === WebSocket.OPEN || existingState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
   wsCurrentUrl = nextUrl;
 
   if (wsClient) {
