@@ -50,6 +50,50 @@ The full suite manual (screenshots + workflows) lives here:
 
 - `docs/manual/OPCBridge-Suite-Manual.md`
 
+## Local Development
+
+Install the native build dependencies once (Debian/Ubuntu/Linux Mint):
+
+```bash
+sudo ./install.sh --full --deps --no-pjsip --no-start --no-enable -y
+```
+
+`--no-pjsip` keeps the optional SIP/voice dependency out of the normal
+development setup. Omit it when developing SIP callouts.
+
+Build the native services and install the HMI packages:
+
+```bash
+./opcbridge/build.sh
+./opcbridge-alarms/build.sh
+./opcbridge-historian/build.sh
+make -B -C opcbridge-reporter
+npm ci --prefix opcbridge-hmi
+```
+
+Start the core and alarm services for development:
+
+```bash
+./opcbridge/scripts/dev_run.sh
+```
+
+In separate terminals, start the web applications:
+
+```bash
+node opcbridge-scada/server.js
+npm start --prefix opcbridge-hmi
+```
+
+Stop the native development services with
+`./opcbridge/scripts/dev_stop.sh`. Local configuration, tokens, logs, and
+runtime data are gitignored.
+
+### Versioning
+
+Every component release bumps that component's `VERSION` file and the suite's
+top-level `VERSION` file. Components not included in the change keep their
+current versions.
+
 ## Updating
 
 ```bash

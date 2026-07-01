@@ -21,7 +21,7 @@ Requires (system packages / local installs):
 ## Run (dev)
 
 ```bash
-./opcbridge-alarms \
+./build/opcbridge-alarms \
   --config ./config \
   --opcbridge-host 127.0.0.1 \
   --opcbridge-http-port 8080 \

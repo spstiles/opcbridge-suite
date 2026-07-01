@@ -19,7 +19,7 @@ ENV_FILE="$ROOT/_run/dev_env.sh"
 # Use relative paths from $ROOT so moving the repo doesn't bake in absolute paths.
 OPCBRIDGE_BIN="./opcbridge"
 ALARMS_ROOT="../opcbridge-alarms"
-ALARMS_BIN="$ALARMS_ROOT/opcbridge-alarms"
+ALARMS_BIN="$ALARMS_ROOT/build/opcbridge-alarms"
 
 if [[ ! -x "$OPCBRIDGE_BIN" ]]; then
   echo "Missing binary: $OPCBRIDGE_BIN"
