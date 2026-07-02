@@ -18739,18 +18739,18 @@ function renderAlarmsEventsProperties(item, parentNode) {
     hysteresisBox.value = cur?.hysteresis == null ? '' : String(cur.hysteresis);
     const hysteresisRow = addRow('Hysteresis', hysteresisBox).closest('.form-row');
 
+    const compareBox = document.createElement('input');
+    compareBox.type = 'text';
+    compareBox.placeholder = 'true, false, 1, or text';
+    compareBox.value = alarmCompareValueToText(cur);
+    const compareRow = addRow('Compare Value', compareBox).closest('.form-row');
+
     const delayBox = document.createElement('input');
     delayBox.type = 'number';
     delayBox.min = '0';
     delayBox.step = '0.1';
     delayBox.value = Number.isFinite(Number(cur?.delay_ms)) ? String(Number(cur.delay_ms) / 1000) : '0';
     addRow('Activation Delay (sec)', delayBox);
-
-    const compareBox = document.createElement('input');
-    compareBox.type = 'text';
-    compareBox.placeholder = 'true, false, 1, or text';
-    compareBox.value = alarmCompareValueToText(cur);
-    const compareRow = addRow('Compare Value', compareBox).closest('.form-row');
 
     const syncTypeUiLocal = () => {
       const type = String(typeSel.value || '').trim();
