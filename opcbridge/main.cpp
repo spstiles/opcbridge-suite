@@ -9017,7 +9017,9 @@ static LogicReferenceValidation apply_logic_memory_writes(
     TagTable &tagTable,
     std::mutex &driverMutex,
     std::deque<UaUpdate> &uaQueue,
-    std::deque<MqttPublishJob> &mqttQueue)
+    std::mutex &uaQueueMutex,
+    std::deque<MqttPublishJob> &mqttQueue,
+    std::mutex &mqttQueueMutex)
 {
     LogicReferenceValidation out;
     std::vector<std::string> errors;
@@ -9148,12 +9150,16 @@ static LogicReferenceValidation apply_logic_memory_writes(
             ws_notify_tag_update(snap, cfg);
         }
         evaluate_tag_alarms(conn, name, snap);
-        uaQueue.push_back(UaUpdate{conn, name, snap.value});
+        if (g_uaServer) {
+            std::lock_guard<std::mutex> lock(uaQueueMutex);
+            uaQueue.push_back(UaUpdate{conn, name, snap.value});
+        }
         if (g_mqtt && g_mqttCfg.enabled && is_memory_tag(cfg) && g_mqttCfg.publish_memory_tags) {
             MqttPublishJob j;
             j.snap = snap;
             j.hadPrev = hadPrev;
             if (hadPrev) j.prev = prev;
+            std::lock_guard<std::mutex> lock(mqttQueueMutex);
             mqttQueue.push_back(std::move(j));
         }
         if (out.memory_writes < 10) {
@@ -9393,7 +9399,9 @@ static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
                                        TagTable *tagTable,
                                        std::mutex *driverMutex,
                                        std::deque<UaUpdate> *uaQueue,
-                                       std::deque<MqttPublishJob> *mqttQueue) {
+                                       std::mutex *uaQueueMutex,
+                                       std::deque<MqttPublishJob> *mqttQueue,
+                                       std::mutex *mqttQueueMutex) {
     std::vector<size_t> due;
     {
         std::lock_guard<std::mutex> lock(g_logicMutex);
@@ -9495,8 +9503,8 @@ static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
                         ok = false;
                         err = vars.error;
                     }
-                    if (ok && drivers && tagTable && driverMutex && uaQueue && mqttQueue) {
-                        LogicReferenceValidation writes = apply_logic_memory_writes(topLevelSource, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, *drivers, *tagTable, *driverMutex, *uaQueue, *mqttQueue);
+                    if (ok && drivers && tagTable && driverMutex && uaQueue && uaQueueMutex && mqttQueue && mqttQueueMutex) {
+                        LogicReferenceValidation writes = apply_logic_memory_writes(topLevelSource, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, *drivers, *tagTable, *driverMutex, *uaQueue, *uaQueueMutex, *mqttQueue, *mqttQueueMutex);
                         refs.memory_writes = writes.memory_writes;
                         refs.write_preview = writes.write_preview;
                         if (!writes.error.empty()) {
@@ -9531,8 +9539,8 @@ static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
                                 err = blockVars.error;
                                 break;
                             }
-                            if (drivers && tagTable && driverMutex && uaQueue && mqttQueue) {
-                                LogicReferenceValidation blockWrites = apply_logic_memory_writes(*selectedBody, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, *drivers, *tagTable, *driverMutex, *uaQueue, *mqttQueue);
+                            if (drivers && tagTable && driverMutex && uaQueue && uaQueueMutex && mqttQueue && mqttQueueMutex) {
+                                LogicReferenceValidation blockWrites = apply_logic_memory_writes(*selectedBody, variables, tagKeys, systemTagNames, tagSnapshots, systemSnapshots, *drivers, *tagTable, *driverMutex, *uaQueue, *uaQueueMutex, *mqttQueue, *mqttQueueMutex);
                                 logic_merge_result(refs, blockWrites);
                                 if (!blockWrites.error.empty()) {
                                     ok = false;
@@ -27638,7 +27646,9 @@ window.addEventListener("load", startAutoRefresh);
 	                    &tagTable,
 	                    &driverMutex,
 	                    &uaQueue,
-	                    &mqttQueue
+	                    &uaQueueMutex,
+	                    &mqttQueue,
+	                    &mqttQueueMutex
 	                );
 	            }
 
