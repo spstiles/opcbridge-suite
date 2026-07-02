@@ -1,4 +1,5 @@
 {
+  "alarm_delay_ms": 0,
   "audio": {
     "default_file": "",
     "files": [
@@ -21,6 +22,7 @@
       "threshold": 1000.0,
       "hysteresis": 50.0,
       "severity": 700,
+      "delay_ms": 0,
       "message_on_active": "Tank level is HIGH - check inlet valve.",
       "message_on_return": "Tank level returned to normal.",
       "enabled": true

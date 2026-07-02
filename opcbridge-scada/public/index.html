@@ -511,6 +511,18 @@
 	      </div>
 
       <div class="card" style="margin-top: 14px;">
+        <div class="card-title">Alarm Activation Delay</div>
+        <div class="card-body">
+          <div class="form" style="max-width: 720px;">
+            <div class="form-row"><label>Global Delay (sec)</label><input id="globalAlarmDelaySec" type="number" min="0" step="0.1" placeholder="0" /></div>
+            <div class="hint">Every state-based alarm uses the longer of this delay and its individual activation delay.</div>
+            <div class="form-row"><label></label><div class="row-actions"><button class="btn" id="globalAlarmDelayReloadBtn" type="button">Reload</button><button class="btn primary" id="globalAlarmDelaySaveBtn" type="button">Save + Apply</button></div></div>
+            <div class="hint mono" id="globalAlarmDelayStatus"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 14px;">
         <div class="card-title">OPCBridge Service (systemd drop-in)</div>
         <div class="hint">Writes a drop-in override for <code>opcbridge.service</code> to enable/disable endpoints and ports, then restarts the service.</div>
         <div class="card-body">
@@ -1553,6 +1565,7 @@
             </select></div>
             <div class="form-row" id="editAlarmThresholdRow"><label>Threshold</label><input id="editAlarmThreshold" type="number" step="any" placeholder="1000" /></div>
             <div class="form-row" id="editAlarmHysteresisRow"><label>Hysteresis</label><input id="editAlarmHysteresis" type="number" step="any" placeholder="0" /></div>
+            <div class="form-row"><label>Activation Delay (sec)</label><input id="editAlarmDelaySec" type="number" min="0" step="0.1" placeholder="0" /></div>
             <div class="form-row" id="editAlarmValueRow" style="display:none;"><label>Compare Value</label><input id="editAlarmValue" type="text" placeholder="true, false, 1, or text" /></div>
             <div class="form-row">
               <label>Options</label>

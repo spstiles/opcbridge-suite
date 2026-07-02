@@ -140,6 +140,10 @@
 
   // opcbridge systemd service settings
   svcOpcbridgeBin: document.getElementById('svcOpcbridgeBin'),
+  globalAlarmDelaySec: document.getElementById('globalAlarmDelaySec'),
+  globalAlarmDelayReloadBtn: document.getElementById('globalAlarmDelayReloadBtn'),
+  globalAlarmDelaySaveBtn: document.getElementById('globalAlarmDelaySaveBtn'),
+  globalAlarmDelayStatus: document.getElementById('globalAlarmDelayStatus'),
   svcOpcbridgeConfigDir: document.getElementById('svcOpcbridgeConfigDir'),
   svcHttpEnabled: document.getElementById('svcHttpEnabled'),
   svcWsEnabled: document.getElementById('svcWsEnabled'),
@@ -629,6 +633,7 @@
   editAlarmThreshold: document.getElementById('editAlarmThreshold'),
   editAlarmHysteresisRow: document.getElementById('editAlarmHysteresisRow'),
   editAlarmHysteresis: document.getElementById('editAlarmHysteresis'),
+  editAlarmDelaySec: document.getElementById('editAlarmDelaySec'),
   editAlarmValueRow: document.getElementById('editAlarmValueRow'),
   editAlarmValue: document.getElementById('editAlarmValue'),
   editAlarmMsgOn: document.getElementById('editAlarmMsgOn'),
@@ -6950,6 +6955,7 @@ const ALARM_CSV_HEADERS = [
   'value',
   'threshold',
   'hysteresis',
+  'delay_sec',
   'severity',
   'enabled',
   'audible_enabled',
@@ -7024,6 +7030,7 @@ function downloadAlarmsCsv({ group = '', site = '' } = {}) {
     value: alarmCsvValueText(a),
     threshold: (a?.threshold == null) ? '' : String(a.threshold),
     hysteresis: (a?.hysteresis == null) ? '' : String(a.hysteresis),
+    delay_sec: Number.isFinite(Number(a?.delay_ms)) ? String(Number(a.delay_ms) / 1000) : '0',
     severity: (a?.severity == null) ? '500' : String(a.severity),
     enabled: (a?.enabled !== false) ? 'true' : 'false',
     audible_enabled: Object.prototype.hasOwnProperty.call(a || {}, 'audible_enabled') ? (a.audible_enabled ? 'true' : 'false') : '',
@@ -7653,6 +7660,8 @@ async function importAlarmsCsv() {
 
     alarm.message_on_active = String(csvGet(r, 'message_on_active') || '').trim();
     alarm.message_on_return = String(csvGet(r, 'message_on_return') || '').trim();
+    const delaySec = parseFloatLoose(csvGet(r, 'delay_sec'), 0);
+    alarm.delay_ms = Math.max(0, Math.round((delaySec || 0) * 1000));
 
     if (type === 'high' || type === 'low') {
       const threshold = parseFloatLoose(csvGet(r, 'threshold'), null);
@@ -8399,6 +8408,7 @@ function alarmRuleToUiAlarm(rule) {
     message_on_return: String(rule.message_on_return || '').trim()
   };
   if (Object.prototype.hasOwnProperty.call(rule, 'audible_enabled')) out.audible_enabled = Boolean(rule.audible_enabled);
+  if (Number.isFinite(Number(rule.delay_ms))) out.delay_ms = Math.max(0, Math.trunc(Number(rule.delay_ms)));
   if (String(rule.audio_mode || '').trim()) out.audio_mode = String(rule.audio_mode || '').trim();
   if (Number.isFinite(Number(rule.audio_gap_ms))) out.audio_gap_ms = Math.max(0, Math.trunc(Number(rule.audio_gap_ms)));
   if (String(rule.audio_file || '').trim()) out.audio_file = String(rule.audio_file || '').trim();
@@ -8433,6 +8443,7 @@ function uiAlarmToRule(alarm) {
     message_on_return: String(a.message_on_return || '').trim()
   };
   if (Object.prototype.hasOwnProperty.call(a, 'audible_enabled')) rule.audible_enabled = Boolean(a.audible_enabled);
+  if (Number.isFinite(Number(a.delay_ms))) rule.delay_ms = Math.max(0, Math.trunc(Number(a.delay_ms)));
   if (String(a.audio_mode || '').trim()) rule.audio_mode = String(a.audio_mode || '').trim();
   if (Number.isFinite(Number(a.audio_gap_ms))) rule.audio_gap_ms = Math.max(0, Math.trunc(Number(a.audio_gap_ms)));
   if (String(a.audio_file || '').trim()) rule.audio_file = String(a.audio_file || '').trim();
@@ -8775,6 +8786,9 @@ function updateAlarmPreview() {
   const threshold = String(els.editAlarmThreshold?.value ?? '').trim();
   const hysteresis = String(els.editAlarmHysteresis?.value ?? '').trim();
   const compareValue = String(els.editAlarmValue?.value ?? '').trim();
+  const alarmDelaySec = Math.max(0, Number(els.editAlarmDelaySec?.value || 0) || 0);
+  const globalDelaySec = Math.max(0, Number(state.alarmsConfig?.alarm_delay_ms || 0) || 0) / 1000;
+  const effectiveDelaySec = Math.max(alarmDelaySec, globalDelaySec);
   const enabled = Boolean(els.editAlarmEnabled?.checked);
 
   let condition = '';
@@ -8791,7 +8805,8 @@ function updateAlarmPreview() {
 
   const h = (type === 'high' || type === 'low') && hysteresis ? ` with ${hysteresis} hysteresis` : '';
   const disabled = enabled ? '' : ' Disabled rules do not evaluate.';
-  els.editAlarmPreview.textContent = `${name} triggers when ${conn}:${tag} ${condition}${h}. Severity: ${severityLabel(sev)} (${sev}).${disabled}`;
+  const delay = effectiveDelaySec > 0 ? ` Activation delay: ${effectiveDelaySec} sec.` : '';
+  els.editAlarmPreview.textContent = `${name} triggers when ${conn}:${tag} ${condition}${h}. Severity: ${severityLabel(sev)} (${sev}).${delay}${disabled}`;
 }
 
 function slugAlarmPart(value) {
@@ -9703,6 +9718,7 @@ function wireAlarmPreviewInputs() {
     els.editAlarmSeverity,
     els.editAlarmThreshold,
     els.editAlarmHysteresis,
+    els.editAlarmDelaySec,
     els.editAlarmValue
   ].filter(Boolean);
 
@@ -11369,6 +11385,38 @@ async function applySvcSettings() {
 function wireSvcUi() {
   els.svcReloadBtn?.addEventListener('click', loadSvcSettings);
   els.svcApplyBtn?.addEventListener('click', applySvcSettings);
+  els.globalAlarmDelayReloadBtn?.addEventListener('click', loadGlobalAlarmDelay);
+  els.globalAlarmDelaySaveBtn?.addEventListener('click', saveGlobalAlarmDelay);
+  loadGlobalAlarmDelay().catch(() => {});
+}
+
+async function loadGlobalAlarmDelay() {
+  if (els.globalAlarmDelayStatus) els.globalAlarmDelayStatus.textContent = 'Loading…';
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    const ms = Math.max(0, Number(cfg?.alarm_delay_ms || 0) || 0);
+    if (els.globalAlarmDelaySec) els.globalAlarmDelaySec.value = String(ms / 1000);
+    if (els.globalAlarmDelayStatus) els.globalAlarmDelayStatus.textContent = 'Loaded.';
+  } catch (err) {
+    if (els.globalAlarmDelayStatus) els.globalAlarmDelayStatus.textContent = `Failed: ${err.message}`;
+  }
+}
+
+async function saveGlobalAlarmDelay() {
+  const seconds = Number(els.globalAlarmDelaySec?.value || 0);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    if (els.globalAlarmDelayStatus) els.globalAlarmDelayStatus.textContent = 'Delay must be zero or greater.';
+    return;
+  }
+  try {
+    const cfg = await loadOpcbridgeAlarmsConfig();
+    cfg.alarm_delay_ms = Math.round(seconds * 1000);
+    await saveOpcbridgeAlarmsConfig(cfg);
+    await loadOpcbridgeAlarmsConfig();
+    if (els.globalAlarmDelayStatus) els.globalAlarmDelayStatus.textContent = `Saved ${seconds} second global delay.`;
+  } catch (err) {
+    if (els.globalAlarmDelayStatus) els.globalAlarmDelayStatus.textContent = `Save failed: ${err.message}`;
+  }
 }
 
 function fillMqttTabBrokerForm(payload) {
@@ -13692,6 +13740,7 @@ function openWorkspaceItemModal(node) {
     syncSeverityPresetFromValue();
     if (els.editAlarmThreshold) els.editAlarmThreshold.value = existing && existing.threshold != null ? String(existing.threshold) : '';
     if (els.editAlarmHysteresis) els.editAlarmHysteresis.value = existing && existing.hysteresis != null ? String(existing.hysteresis) : '';
+    if (els.editAlarmDelaySec) els.editAlarmDelaySec.value = existing && Number.isFinite(Number(existing.delay_ms)) ? String(Number(existing.delay_ms) / 1000) : '0';
     if (els.editAlarmValue) els.editAlarmValue.value = alarmCompareValueToText(existing);
     if (els.editAlarmMsgOn) els.editAlarmMsgOn.value = existing ? String(existing.message_on_active || '') : '';
     if (els.editAlarmMsgOff) els.editAlarmMsgOff.value = existing ? String(existing.message_on_return || '') : '';
@@ -13871,6 +13920,7 @@ function openNewAlarmModal({ group, site } = {}) {
   syncSeverityPresetFromValue();
   if (els.editAlarmThreshold) els.editAlarmThreshold.value = '';
   if (els.editAlarmHysteresis) els.editAlarmHysteresis.value = '';
+  if (els.editAlarmDelaySec) els.editAlarmDelaySec.value = '0';
   if (els.editAlarmValue) els.editAlarmValue.value = '';
   if (els.editAlarmMsgOn) els.editAlarmMsgOn.value = '';
   if (els.editAlarmMsgOff) els.editAlarmMsgOff.value = '';
@@ -14138,6 +14188,7 @@ async function saveEditedAlarmFromModal() {
   const severity = Math.trunc(Number(severityRaw || '500'));
   const thresholdRaw = String(els.editAlarmThreshold?.value ?? '').trim();
   const hysteresisRaw = String(els.editAlarmHysteresis?.value ?? '').trim();
+  const delaySecRaw = String(els.editAlarmDelaySec?.value ?? '').trim();
   const compareValueRaw = String(els.editAlarmValue?.value ?? '').trim();
   const message_on_active = String(els.editAlarmMsgOn?.value || '').trim();
   const message_on_return = String(els.editAlarmMsgOff?.value || '').trim();
@@ -14157,6 +14208,8 @@ async function saveEditedAlarmFromModal() {
   const allowedTypes = alarmTypeOptionsForDatatype(String(getAlarmSourceTag(connection_id, tag_name)?.datatype || '')).map((row) => row.value);
   if (!allowedTypes.includes(type)) { setEditAlarmStatus('Type is invalid for the selected tag datatype.'); return; }
   if (!Number.isFinite(severity) || severity < 0 || severity > 1000) { setEditAlarmStatus('Severity must be a number from 0 to 1000.'); return; }
+  const delaySec = Number(delaySecRaw || '0');
+  if (!Number.isFinite(delaySec) || delaySec < 0) { setEditAlarmStatus('Activation delay must be zero or greater.'); return; }
   const selectedTagExists = alarmSourceTagExists(connection_id, tag_name);
   if (!selectedTagExists) { setEditAlarmStatus(`Tag '${connection_id}:${tag_name}' was not found in the tag config.`); return; }
   if (audio_files.some((id) => !getAlarmAudioFiles(cfg).some((f) => f.id === id))) {
@@ -14196,6 +14249,7 @@ async function saveEditedAlarmFromModal() {
     type,
     enabled,
     severity,
+    delay_ms: Math.round(delaySec * 1000),
     message_on_active,
     message_on_return
   };
@@ -18685,6 +18739,13 @@ function renderAlarmsEventsProperties(item, parentNode) {
     hysteresisBox.value = cur?.hysteresis == null ? '' : String(cur.hysteresis);
     const hysteresisRow = addRow('Hysteresis', hysteresisBox).closest('.form-row');
 
+    const delayBox = document.createElement('input');
+    delayBox.type = 'number';
+    delayBox.min = '0';
+    delayBox.step = '0.1';
+    delayBox.value = Number.isFinite(Number(cur?.delay_ms)) ? String(Number(cur.delay_ms) / 1000) : '0';
+    addRow('Activation Delay (sec)', delayBox);
+
     const compareBox = document.createElement('input');
     compareBox.type = 'text';
     compareBox.placeholder = 'true, false, 1, or text';
@@ -18849,7 +18910,7 @@ function renderAlarmsEventsProperties(item, parentNode) {
     speechBox.placeholder = 'Optional text-to-speech for this alarm';
     speechBox.disabled = !canEditConfig();
     addRow('Speech Text', speechBox);
-    [idBox, nameBox, connSel, tagSel, typeSel, thresholdBox, hysteresisBox, compareBox, enabledBox, sevPreset, sevBox, groupSel, siteSel, modeSel, speechBox, gapBox, msgOnBox, msgOffBox].forEach((el) => {
+    [idBox, nameBox, connSel, tagSel, typeSel, thresholdBox, hysteresisBox, delayBox, compareBox, enabledBox, sevPreset, sevBox, groupSel, siteSel, modeSel, speechBox, gapBox, msgOnBox, msgOffBox].forEach((el) => {
       if (!el) return;
       el.addEventListener('input', markPropsDirty);
       el.addEventListener('change', markPropsDirty);
@@ -18910,6 +18971,9 @@ function renderAlarmsEventsProperties(item, parentNode) {
         next.type = String(typeSel.value || '').trim();
         next.enabled = Boolean(enabledBox.checked);
         next.severity = Math.trunc(Number(sevBox.value ?? 0) || 0);
+        const delaySec = Number(delayBox.value || 0);
+        if (!Number.isFinite(delaySec) || delaySec < 0) throw new Error('Activation delay must be zero or greater.');
+        next.delay_ms = Math.round(delaySec * 1000);
         next.message_on_active = String(msgOnBox.value || '').trim();
         next.message_on_return = String(msgOffBox.value || '').trim();
         next.group = String(groupSel.value || '').trim();

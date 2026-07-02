@@ -585,6 +585,7 @@ An alarm definition typically includes:
 - `id`, `name`, `enabled`
 - source (`connection_id` + `tag_name`)
 - condition (`equals`, thresholds, etc.)
+- activation delay (the longer of the per-alarm delay and global alarm delay)
 - `severity`
 - `site`, `group`
 - optional `audio_file` (WAV) and active/return messages

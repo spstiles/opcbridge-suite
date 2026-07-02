@@ -14,6 +14,7 @@
       "type": "string",
       "minLength": 1
     },
+    "alarm_delay_ms": { "type": "integer", "minimum": 0 },
     "defaults": {
       "type": "object",
       "additionalProperties": false,
@@ -199,6 +200,7 @@
         "site": { "type": "string" },
         "enabled": { "type": "boolean" },
         "severity": { "type": "integer", "minimum": 0 },
+        "delay_ms": { "type": "integer", "minimum": 0 },
         "source": {
           "type": "object",
           "additionalProperties": false,

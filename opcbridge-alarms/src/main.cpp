@@ -2952,6 +2952,7 @@ struct AlarmRule
     json condition_value;       // used for equals/not_equals
     double threshold = 0.0;     // used for high/low
     double hysteresis = 0.0;    // used for high/low
+    int64_t delay_ms = 0;       // activation persistence delay
     std::string message_on_active;
     std::string message_on_return;
     bool audible_enabled = false;
@@ -2986,6 +2987,10 @@ struct AlarmState
     bool acked = false;
     bool initialized = false;
     bool return_notification_armed = false;
+    bool pending = false;
+    bool pending_record_event = false;
+    int64_t pending_since_ms = 0;
+    int64_t effective_delay_ms = 0;
     std::optional<int64_t> shelved_until_ms;
 
     int64_t active_since_ms = 0;
@@ -3030,6 +3035,12 @@ static json alarm_state_to_json(const AlarmState &s)
     j["active"] = s.active;
     j["acked"] = s.acked;
     j["return_notification_armed"] = s.return_notification_armed;
+    j["pending"] = s.pending;
+    j["pending_since_ms"] = s.pending ? s.pending_since_ms : 0;
+    j["effective_delay_ms"] = s.effective_delay_ms;
+    j["pending_remaining_ms"] = s.pending
+        ? std::max<int64_t>(0, s.effective_delay_ms - (now_ms() - s.pending_since_ms))
+        : 0;
     if (s.shelved_until_ms.has_value())
         j["shelved_until_ms"] = s.shelved_until_ms.value();
     else
@@ -7605,6 +7616,7 @@ struct AlarmEngine
     std::unordered_map<std::string, AlarmRule> rules;      // by alarm_id
     std::unordered_map<std::string, AlarmState> states;    // by alarm_id
     std::unordered_map<std::string, std::vector<std::string>> rulesByTagKey; // "conn:tag" -> alarm_ids
+    int64_t global_delay_ms = 0;
 
     std::atomic<int64_t> last_tag_update_ms{0};
     std::atomic<int64_t> last_alarm_change_ms{0};
@@ -7807,6 +7819,7 @@ struct AlarmEngine
             throw std::runtime_error("Invalid alarms.json; expected a JSON object.");
         }
         const json schema2 = root;
+        const int64_t nextGlobalDelayMs = std::max<int64_t>(0, schema2.value("alarm_delay_ms", 0LL));
 
         std::string validationErr;
         if (!validate_supported_config(schema2, validationErr))
@@ -7844,6 +7857,7 @@ struct AlarmEngine
                 r["group"] = a.value("group", "");
                 r["site"] = a.value("site", "");
                 if (a.contains("repeat_ms")) r["repeat_ms"] = a["repeat_ms"];
+                if (a.contains("delay_ms")) r["delay_ms"] = a["delay_ms"];
                 if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
@@ -7897,6 +7911,7 @@ struct AlarmEngine
             r.enabled = it.value("enabled", true);
             r.site_enabled = resolve_alarm_site_enabled(schema2, it);
             r.severity = it.value("severity", 500);
+            r.delay_ms = std::max<int64_t>(0, it.value("delay_ms", 0LL));
             if (it.contains("source") && it["source"].is_object())
             {
                 r.connection_id = it["source"].value("connection_id", "");
@@ -7950,6 +7965,7 @@ struct AlarmEngine
             s.acked = false;
             s.initialized = false;
             s.return_notification_armed = false;
+            s.effective_delay_ms = std::max(nextGlobalDelayMs, r.delay_ms);
             s.active_since_ms = 0;
             s.last_change_ms = 0;
             s.last_value = nullptr;
@@ -7979,6 +7995,7 @@ struct AlarmEngine
             rules.swap(nextRules);
             states.swap(nextStates);
             rulesByTagKey.swap(nextByKey);
+            global_delay_ms = nextGlobalDelayMs;
         }
 
         if (ua)
@@ -8032,9 +8049,21 @@ struct AlarmEngine
     {
         last_tag_update_ms.store(now_ms());
         const auto normalizedQuality = normalize_quality(quality);
-        if (normalizedQuality.has_value() && normalizedQuality.value() == 0) return;
-
         const std::string key = connection_id + ":" + tag;
+        if (normalizedQuality.has_value() && normalizedQuality.value() == 0) {
+            std::lock_guard<std::mutex> lock(mu);
+            auto it = rulesByTagKey.find(key);
+            if (it != rulesByTagKey.end()) {
+                for (const auto &alarmId : it->second) {
+                    auto sit = states.find(alarmId);
+                    if (sit == states.end()) continue;
+                    sit->second.pending = false;
+                    sit->second.pending_record_event = false;
+                    sit->second.pending_since_ms = 0;
+                }
+            }
+            return;
+        }
 
         std::vector<AlarmState> changed;
         {
@@ -8060,6 +8089,8 @@ struct AlarmEngine
                     // sites uninitialized while they are suppressed.
                     s.initialized = false;
                     s.site_enabled = false;
+                    s.pending = false;
+                    s.pending_since_ms = 0;
                     if (s.active)
                     {
                         s.active = false;
@@ -8080,6 +8111,10 @@ struct AlarmEngine
                 }
                 s.site_enabled = true;
                 const bool can_eval = r.enabled && !shelved;
+                if (!can_eval) {
+                    s.pending = false;
+                    s.pending_since_ms = 0;
+                }
 
                 bool should_be_active = false;
                 if (can_eval)
@@ -8130,6 +8165,17 @@ struct AlarmEngine
 
                 if (should_be_active && !s.active)
                 {
+                    if (s.effective_delay_ms > 0)
+                    {
+                        if (!s.pending)
+                        {
+                            s.pending = true;
+                            s.pending_since_ms = t;
+                            s.pending_record_event = s.initialized && recordEvent;
+                        }
+                        s.initialized = true;
+                        continue;
+                    }
                     if (!s.initialized)
                     {
                         // First value after a new/reloaded alarm is a baseline, not a
@@ -8180,6 +8226,8 @@ struct AlarmEngine
                 }
                 else if (!should_be_active && s.active)
                 {
+                    s.pending = false;
+                    s.pending_since_ms = 0;
                     const bool notify_return = recordEvent && s.return_notification_armed;
                     s.active = false;
                     s.return_notification_armed = false;
@@ -8213,6 +8261,12 @@ struct AlarmEngine
                 {
                     s.initialized = true;
                 }
+                else if (!should_be_active && s.pending)
+                {
+                    s.pending = false;
+                    s.pending_since_ms = 0;
+                    s.pending_record_event = false;
+                }
             }
         }
 
@@ -8220,6 +8274,59 @@ struct AlarmEngine
         {
             for (const auto& s : changed) ua->upsert_alarm(s);
         }
+    }
+
+    void process_pending_activations()
+    {
+        std::vector<AlarmState> changed;
+        const int64_t t = now_ms();
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            for (auto &kv : states)
+            {
+                AlarmState &s = kv.second;
+                if (!s.pending || s.active || s.effective_delay_ms <= 0) continue;
+                auto rit = rules.find(s.alarm_id);
+                const bool shelved = s.shelved_until_ms.has_value() && t < s.shelved_until_ms.value();
+                if (rit == rules.end() || !rit->second.enabled || !rit->second.site_enabled || shelved) {
+                    s.pending = false;
+                    s.pending_record_event = false;
+                    s.pending_since_ms = 0;
+                    continue;
+                }
+                if ((t - s.pending_since_ms) < s.effective_delay_ms) continue;
+
+                const bool recordEvent = s.pending_record_event;
+                s.pending = false;
+                s.pending_record_event = false;
+                s.pending_since_ms = 0;
+                s.active = true;
+                s.acked = false;
+                s.return_notification_armed = recordEvent;
+                s.active_since_ms = t;
+                s.last_change_ms = t;
+                if (rit != rules.end()) {
+                    s.message = rit->second.message_on_active.empty() ? s.name : rit->second.message_on_active;
+                }
+                last_alarm_change_ms.store(t);
+                if (recordEvent)
+                {
+                    std::cout << "[alarms] ACTIVE " << s.alarm_id
+                              << " after " << s.effective_delay_ms << " ms delay\n";
+                    log_event(s, "active", s.last_value);
+                    if (notifications) notifications->notify_event(s, "active");
+                }
+                if (ws && ws->enabled.load()) {
+                    json msg;
+                    msg["type"] = "alarm_state";
+                    msg["ts_ms"] = t;
+                    msg["alarm"] = alarm_state_to_json(s);
+                    ws->broadcast(msg);
+                }
+                changed.push_back(s);
+            }
+        }
+        if (ua) for (const auto &s : changed) ua->upsert_alarm(s);
     }
 
     bool ack(const std::string &alarm_id, const std::string& actor = "", const std::string& note = "")
@@ -9145,6 +9252,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
     // Serialize to reuse existing loader/parser.
     const std::string tmp = runtimeRoot.dump(2);
     try {
+        const int64_t nextGlobalDelayMs = std::max<int64_t>(0, runtimeRoot.value("alarm_delay_ms", 0LL));
         std::unordered_map<std::string, AlarmRule> nextRules;
         std::unordered_map<std::string, AlarmState> nextStates;
         std::unordered_map<std::string, std::vector<std::string>> nextByKey;
@@ -9175,6 +9283,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 r["group"] = a.value("group", "");
                 r["site"] = a.value("site", "");
                 if (a.contains("repeat_ms")) r["repeat_ms"] = a["repeat_ms"];
+                if (a.contains("delay_ms")) r["delay_ms"] = a["delay_ms"];
                 if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
@@ -9219,6 +9328,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             r.enabled = it.value("enabled", true);
             r.site_enabled = resolve_alarm_site_enabled(runtimeRoot, it);
             r.severity = it.value("severity", 500);
+            r.delay_ms = std::max<int64_t>(0, it.value("delay_ms", 0LL));
             if (it.contains("source") && it["source"].is_object())
             {
                 r.connection_id = it["source"].value("connection_id", "");
@@ -9270,6 +9380,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.active = false;
             s.acked = false;
             s.initialized = false;
+            s.effective_delay_ms = std::max(nextGlobalDelayMs, r.delay_ms);
             s.active_since_ms = 0;
             s.last_change_ms = 0;
             s.last_value = nullptr;
@@ -9316,10 +9427,14 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.last_value = prev.last_value;
             s.message = prev.message;
             s.shelved_until_ms = prev.shelved_until_ms;
+            s.pending = prev.pending;
+            s.pending_record_event = prev.pending_record_event;
+            s.pending_since_ms = prev.pending_since_ms;
         }
         engine.rules.swap(nextRules);
         engine.states.swap(nextStates);
         engine.rulesByTagKey.swap(nextByKey);
+        engine.global_delay_ms = nextGlobalDelayMs;
         engine.last_config_mtime_ms.store(mtime);
         {
             std::lock_guard<std::mutex> lockHash(engine.config_hash_mu);
@@ -9537,6 +9652,13 @@ int main(int argc, char **argv)
                 const int64_t since = now_ms() - (14LL * 24LL * 60LL * 60LL * 1000LL);
                 engine.restore_state_from_db(since);
             }
+        }
+    });
+
+    std::thread pendingThread([&]() {
+        while (!stop.load()) {
+            engine.process_pending_activations();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     });
 
@@ -10328,6 +10450,7 @@ int main(int argc, char **argv)
     stop.store(true);
     if (wsThread.joinable()) wsThread.join();
     if (configThread.joinable()) configThread.join();
+    if (pendingThread.joinable()) pendingThread.join();
     notifications.stop();
     wsServer.stop();
     uaServer.stop();

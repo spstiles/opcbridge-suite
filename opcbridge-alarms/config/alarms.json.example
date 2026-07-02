@@ -1,4 +1,5 @@
 {
+  "alarm_delay_ms": 0,
   "audio": {
     "default_file": "",
     "files": [
@@ -33,6 +34,7 @@
       "site": "Building 30",
       "enabled": true,
       "severity": 800,
+      "delay_ms": 0,
       "audible_enabled": true,
       "audio_file": "default_alarm",
       "source": { "connection_id": "b030", "tag": "Pump1.Fail" },
