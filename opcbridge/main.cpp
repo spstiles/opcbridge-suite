@@ -3155,10 +3155,13 @@ static bool load_admin_sessions_store() {
                 session.role = normalize_auth_role_id(item.value("role", std::string{"admin"}));
                 session.expires_at = ms_to_timepoint(item.value("expires_ms", int64_t{0}));
                 session.last_activity_at = ms_to_timepoint(item.value("last_activity_ms", int64_t{0}));
-                if (token.empty() || session.username.empty() || session.expires_at <= now) {
+                if (token.empty() || session.username.empty()) {
                     skipped++;
                     continue;
                 }
+                // Session lifetime is governed by the configured idle timeout.
+                // Keep the legacy timestamp populated for diagnostics/store compatibility.
+                if (session.expires_at <= now) session.expires_at = now + std::chrono::hours(24 * 365 * 10);
                 if (g_authTimeoutMinutes > 0 &&
                     session.last_activity_at.time_since_epoch().count() > 0 &&
                     (now - session.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes)) {
@@ -3191,11 +3194,10 @@ static void cleanup_expired_admin_sessions() {
         std::lock_guard<std::mutex> lock(g_adminMutex);
         auto now = std::chrono::system_clock::now();
         for (auto it = g_adminSessions.begin(); it != g_adminSessions.end(); ) {
-            const bool expired = (it->second.expires_at <= now);
             const bool idleExpired = (g_authTimeoutMinutes > 0 &&
                                      it->second.last_activity_at.time_since_epoch().count() > 0 &&
                                      (now - it->second.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes));
-            if (expired || idleExpired) {
+            if (idleExpired) {
                 const int64_t nowMs = auth_now_ms();
                 const int64_t lastActivityMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     it->second.last_activity_at.time_since_epoch()
@@ -3204,7 +3206,7 @@ static void cleanup_expired_admin_sessions() {
                     it->second.expires_at.time_since_epoch()
                 ).count();
                 json detail = {
-                    {"reason", expired ? "hard_expired" : "idle_expired"},
+                    {"reason", "idle_expired"},
                     {"username", it->second.username},
                     {"role", normalize_auth_role_id(it->second.role)},
                     {"idle_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
@@ -3302,23 +3304,6 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
     }
 
     auto now = std::chrono::system_clock::now();
-    if (it->second.expires_at <= now) {
-        const int64_t nowMs = auth_now_ms();
-        const int64_t expiresMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            it->second.expires_at.time_since_epoch()
-        ).count();
-        record_auth_session_event("session_erased", {
-            {"reason", "hard_expired_on_lookup"},
-            {"remote", req.remote_addr},
-            {"username", it->second.username},
-            {"role", normalize_auth_role_id(it->second.role)},
-            {"expires_in_ms", expiresMs - nowMs},
-            {"active_count", static_cast<int>(g_adminSessions.size())}
-        });
-        g_adminSessions.erase(it);
-        return false;
-    }
-
     if (g_authTimeoutMinutes > 0 &&
         it->second.last_activity_at.time_since_epoch().count() > 0 &&
         (now - it->second.last_activity_at) > std::chrono::minutes(g_authTimeoutMinutes)) {
@@ -3344,7 +3329,7 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
         it->second.last_activity_at = now;
         // Rolling expiry: keep the session alive while the user is active.
         // (Idle timeout still applies if configured.)
-        it->second.expires_at = now + std::chrono::hours(8);
+        it->second.expires_at = now + std::chrono::hours(24 * 365 * 10);
     }
     out = it->second;
     return true;
@@ -22309,6 +22294,36 @@ window.addEventListener("load", startAutoRefresh);
                         resp["error"] = writeErr.empty() ? "Write failed (see server log for details)." : writeErr;
                         res.status = 400;
                     } else {
+                        TagSnapshot writtenSnapshot;
+                        TagConfig writtenConfig;
+                        bool haveWrittenSnapshot = false;
+                        {
+                            std::lock_guard<std::mutex> lock(driverMutex);
+                            const auto snapIt = tagTable.find(make_tag_key(conn_id, tag_name));
+                            if (snapIt != tagTable.end()) {
+                                writtenSnapshot = snapIt->second;
+                                haveWrittenSnapshot = true;
+                            }
+                            for (const auto &driver : drivers) {
+                                if (driver.conn.id != conn_id) continue;
+                                for (const auto &tag : driver.tags) {
+                                    if (tag.cfg.logical_name == tag_name) {
+                                        writtenConfig = tag.cfg;
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        if (haveWrittenSnapshot) {
+                            if (writtenConfig.logical_name.empty()) {
+                                writtenConfig.logical_name = tag_name;
+                                writtenConfig.datatype = writtenSnapshot.datatype;
+                                writtenConfig.enabled = true;
+                                writtenConfig.writable = true;
+                            }
+                            ws_notify_tag_update(writtenSnapshot, writtenConfig);
+                        }
                         resp["message"] = "Write successful.";
                     }
                 } catch (const std::exception &ex) {
@@ -25297,7 +25312,7 @@ window.addEventListener("load", startAutoRefresh);
 		                if (!requestToken.empty()) {
 		                    res.set_header("Set-Cookie",
 		                                   std::string("OPCBRIDGE_ADMIN_TOKEN=") + requestToken +
-		                                   "; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax");
+		                                   "; Path=/; Max-Age=315360000; HttpOnly; SameSite=Lax");
 		                }
 		                resp["ok"] = true;
 		                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
@@ -25345,6 +25360,15 @@ window.addEventListener("load", startAutoRefresh);
 	                try {
 	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
 	                    load_passwords_store(passwordsPath);
+	                    bool userStoreConfigured = false;
+	                    int authTimeoutMinutes = 0;
+	                    std::vector<AuthUserRecord> authUsers;
+	                    {
+	                        std::lock_guard<std::mutex> lock(g_userStoreMutex);
+	                        userStoreConfigured = g_userStoreConfigured;
+	                        authTimeoutMinutes = g_authTimeoutMinutes;
+	                        authUsers = g_authUsers;
+	                    }
 
 	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
 	                    std::string username = normalize_auth_username(body.value("username", std::string{}));
@@ -25359,9 +25383,9 @@ window.addEventListener("load", startAutoRefresh);
 
 	                    std::string role = "admin";
 
-	                    if (g_userStoreConfigured) {
+	                    if (userStoreConfigured) {
 	                        if (username.empty()) {
-	                            if (g_authUsers.size() == 1) username = g_authUsers[0].username;
+	                            if (authUsers.size() == 1) username = authUsers[0].username;
 	                            else {
 	                                resp["ok"] = false;
 	                                resp["error"] = "Username is required.";
@@ -25372,7 +25396,7 @@ window.addEventListener("load", startAutoRefresh);
 	                        }
 
 	                        const AuthUserRecord *record = nullptr;
-	                        for (const auto &u : g_authUsers) {
+	                        for (const auto &u : authUsers) {
 	                            if (u.username == username) { record = &u; break; }
 	                        }
 	                        if (!record) {
@@ -25426,7 +25450,9 @@ window.addEventListener("load", startAutoRefresh);
 
 	                    std::string token = random_token_hex(32);
 	                    auto now = std::chrono::system_clock::now();
-	                    auto expiry = now + std::chrono::hours(8); // 8h session
+	                    // The configured idle timeout is the session expiration policy.
+	                    // A zero timeout intentionally keeps the session until explicit logout.
+	                    auto expiry = now + std::chrono::hours(24 * 365 * 10);
 
 		                    {
 		                        std::lock_guard<std::mutex> lock(g_adminMutex);
@@ -25447,15 +25473,21 @@ window.addEventListener("load", startAutoRefresh);
 		                    resp["ok"] = true;
 	                    resp["admin_token"] = token;
 	                    resp["username"] = username;
+	                    for (const auto &u : authUsers) {
+	                        if (u.username == username) {
+	                            resp["name"] = u.name.empty() ? u.username : u.name;
+	                            break;
+	                        }
+	                    }
 	                    resp["role"] = role;
-	                    resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
+	                    resp["timeoutMinutes"] = userStoreConfigured ? authTimeoutMinutes : 0;
 	                    resp["expires_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
 	                        expiry.time_since_epoch()
 	                    ).count();
 
 	                    res.set_header("Set-Cookie",
 	                                   std::string("OPCBRIDGE_ADMIN_TOKEN=") + token +
-	                                   "; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax");
+	                                   "; Path=/; Max-Age=315360000; HttpOnly; SameSite=Lax");
 	                    res.set_content(resp.dump(2), "application/json");
 	                } catch (const std::exception &ex) {
 	                    resp["ok"] = false;

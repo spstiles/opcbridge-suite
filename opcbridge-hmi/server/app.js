@@ -381,6 +381,19 @@ const createApp = () => {
     });
   });
 
+  // Dedicated panel/tablet entry point. The browser enforces the forced
+  // touchscreen runtime mode based on this pathname; all assets and APIs are
+  // shared with the normal HMI application.
+  app.get(/^\/touch$/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(ROOT, "public", "index.html"));
+  });
+  app.get(/^\/touch\/$/, (req, res) => {
+    const queryIndex = req.originalUrl.indexOf("?");
+    const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : "";
+    res.redirect(302, `/touch${query}`);
+  });
+
   app.use(express.static(path.join(ROOT, "public"), {
     etag: true,
     maxAge: 0,

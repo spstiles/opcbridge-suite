@@ -3705,6 +3705,10 @@ const settingsStatus = document.getElementById("settingsStatus");
 const keypadOverlay = document.getElementById("keypadOverlay");
 const keypadCancelBtn = document.getElementById("keypadCancelBtn");
 const keypadDisplay = document.getElementById("keypadDisplay");
+const touchKeyboardOverlay = document.getElementById("touchKeyboardOverlay");
+const touchKeyboardTitle = document.getElementById("touchKeyboardTitle");
+const touchKeyboardDisplay = document.getElementById("touchKeyboardDisplay");
+const touchKeyboardCancelBtn = document.getElementById("touchKeyboardCancelBtn");
 const keypadTitle = document.getElementById("keypadTitle");
 const screenWidthInput = document.getElementById("screenWidth");
 const screenHeightInput = document.getElementById("screenHeight");
@@ -3769,6 +3773,7 @@ const buttonTargetRow = document.getElementById("buttonTargetRow");
 const buttonWriteFields = document.getElementById("buttonWriteFields");
 const buttonWriteConnectionInput = document.getElementById("buttonWriteConnection");
 const buttonWriteTagSelect = document.getElementById("buttonWriteTag");
+const buttonWriteTagPickBtn = document.getElementById("buttonWriteTagPickBtn");
 const buttonWriteOnRow = document.getElementById("buttonWriteOnRow");
 const buttonWriteOnValueInput = document.getElementById("buttonWriteOnValue");
 const buttonWriteOffValueInput = document.getElementById("buttonWriteOffValue");
@@ -5415,6 +5420,7 @@ const openAbout = async () => {
   await refreshAbout();
 };
 
+const isTouchRuntimeEndpoint = /^\/touch\/?$/i.test(window.location.pathname);
 let isEditMode = false;
 let defaultScreenId = DEFAULT_SCREEN_ID;
 let currentScreenId = DEFAULT_SCREEN_ID;
@@ -5638,6 +5644,34 @@ let authActivityTouchInFlight = false;
 let authEditExitGraceUntilMs = 0;
 let authServerLoggedOutSinceMs = 0;
 let pendingEditModeAfterLogin = false;
+let authStateRenderTimer = null;
+
+const getAuthStateValues = () => {
+  const loggedIn = hasServerAuthSession();
+  return {
+    "Auth.LoggedIn": loggedIn,
+    "Auth.Status": loggedIn ? "Logged In" : "Logged Out",
+    "Auth.Username": loggedIn ? String(authSession?.username || "") : "",
+    "Auth.Displayname": loggedIn ? String(authSession?.displayName || authSession?.username || "") : "",
+    "Auth.Role": loggedIn ? String(authSession?.role || "") : ""
+  };
+};
+
+const scheduleAuthStateRender = () => {
+  if (authStateRenderTimer) return;
+  authStateRenderTimer = window.setTimeout(() => {
+    authStateRenderTimer = null;
+    Object.entries(getAuthStateValues()).forEach(([tag, value]) => {
+      const key = normalizeTagCacheKey("_hmi", tag);
+      tagValueCache.set(key, value);
+      tagQualityCache.set(key, "GOOD");
+    });
+    if (!isEditMode) {
+      renderScreen();
+      if (currentPopupScreenId) openPopup(currentPopupScreenId);
+    }
+  }, 0);
+};
 
 const getAuthRole = () => String(authSession?.role || "").trim();
 
@@ -5676,6 +5710,7 @@ const loadAuthSession = () => {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     const username = String(parsed?.username || "").trim();
+    const displayName = String(parsed?.displayName || parsed?.name || username).trim() || username;
     const role = String(parsed?.role || "").trim();
     const permissions = Array.isArray(parsed?.permissions) ? parsed.permissions : [];
     const timeoutMinutes = Number(parsed?.timeoutMinutes) || 0;
@@ -5683,23 +5718,28 @@ const loadAuthSession = () => {
     const adminToken = String(parsed?.adminToken || "").trim();
     if (!username) return null;
     const serverValid = parsed?.serverValid !== false;
-    return { username, role, permissions, timeoutMinutes, lastActivityMs, serverValid, adminToken };
+    return { username, displayName, role, permissions, timeoutMinutes, lastActivityMs, serverValid, adminToken };
   } catch {
     return null;
   }
 };
 
 const saveAuthSession = (session) => {
+  const previousState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.role || ""]);
   authSession = session;
   if (session) authServerLoggedOutSinceMs = 0;
   try {
     if (!session) {
       authServerLoggedOutSinceMs = 0;
       sessionStorage.removeItem(AUTH_SESSION_KEY);
+      const nextState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.role || ""]);
+      if (nextState !== previousState) scheduleAuthStateRender();
       return;
     }
     sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
   } catch {}
+  const nextState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.role || ""]);
+  if (nextState !== previousState) scheduleAuthStateRender();
 };
 
 const clearAuthSession = () => {
@@ -5739,6 +5779,7 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   const serverLoggedIn = Boolean(authInfo?.user_logged_in);
   const serverUser = authInfo?.user;
   const serverUsername = String(serverUser?.username || "").trim();
+  const serverDisplayName = String(serverUser?.name || serverUser?.displayName || serverUser?.display_name || serverUsername).trim() || serverUsername;
   const serverRole = String(serverUser?.role || "").trim();
   const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
@@ -5794,6 +5835,7 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   const localPermsKey = JSON.stringify((Array.isArray(authSession?.permissions) ? authSession.permissions : []).slice().map(String).sort());
   const needsSync = !authSession ||
     String(authSession?.username || "").trim() !== serverUsername ||
+    String(authSession?.displayName || "").trim() !== serverDisplayName ||
     String(authSession?.role || "").trim() !== serverRole ||
     localPermsKey !== permsKey ||
     Number(authSession?.timeoutMinutes || 0) !== Number(authInfo?.timeoutMinutes || 0);
@@ -5801,6 +5843,7 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   if (needsSync) {
     saveAuthSession({
       username: serverUsername,
+      displayName: serverDisplayName,
       role: serverRole,
       permissions: serverPerms,
       timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
@@ -6096,7 +6139,7 @@ const updateAuthUiVisibility = () => {
         ? `Edit session retained for ${authSession.username}; server login expired. Log in again to sync with SCADA.`
         : "Not logged in. (Viewer)";
     } else {
-      authSessionSummary.textContent = `Logged in as ${authSession.username} (${authSession.role}).`;
+      authSessionSummary.textContent = `Logged in as ${authSession.displayName || authSession.username} (${authSession.role}).`;
     }
   }
   if (authSetupTimeout) authSetupTimeout.value = !initialized ? "0" : authSetupTimeout.value;
@@ -6164,6 +6207,7 @@ const openAuth = async () => {
 };
 
 const closeAuth = () => {
+  closeTouchKeyboard();
   setOverlayOpen(authOverlay, false);
   if (authStatusEl) authStatusEl.textContent = "Ready.";
 };
@@ -6239,6 +6283,10 @@ let tagsAllCache = [];
 let tagsCacheVersion = 0;
 let isKeypadOpen = false;
 let keypadTarget = null;
+let touchKeyboardTarget = null;
+let touchKeyboardShift = false;
+let touchKeyboardSymbols = false;
+let touchKeyboardInputReadyAt = 0;
 const undoStack = [];
 let historySuspended = false;
 let lastHistoryRecordedAt = 0;
@@ -6938,7 +6986,7 @@ const connectAlarmsWebSocket = () => {
   };
 };
 
-const isTouchscreenRuntime = () => (!isEditMode && Boolean(hmiUiConfig?.touchscreenMode));
+const isTouchscreenRuntime = () => (!isEditMode && (isTouchRuntimeEndpoint || Boolean(hmiUiConfig?.touchscreenMode)));
 const isViewOnlyRuntime = () => (!isEditMode && (Boolean(hmiUiConfig?.viewOnlyMode) || !canWrite()));
 
 const identityMatrix = () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
@@ -7482,6 +7530,7 @@ const renderTextTemplate = (obj, previewOnly = false) => {
 };
 
 const renderButtonLabelTemplate = (obj, previewOnly = false) => {
+  if (!previewOnly && obj?.action?.type === "auth") return hasServerAuthSession() ? "Log Out" : "Log In";
   return renderBoundTemplate(String(obj?.label || "Button"), getButtonLabelBindingsMap(obj), previewOnly);
 };
 
@@ -9385,10 +9434,11 @@ const refreshAlarmPanelTargetOptions = () => {
 const updateButtonActionUI = (actionType) => {
   const isWriteAction = actionType === "momentary-write" || actionType === "toggle-write" || actionType === "set-write" || actionType === "prompt-write";
   const isHistoryAction = actionType === "history-back" || actionType === "history-forward";
+  const isAuthAction = actionType === "auth";
   const isAlarmFilterAction = actionType === "alarm-filter";
   const isPromptWrite = actionType === "prompt-write";
   const showOffValue = actionType === "momentary-write" || actionType === "toggle-write";
-  if (buttonTargetRow) buttonTargetRow.classList.toggle("is-hidden", isWriteAction || isHistoryAction || isAlarmFilterAction);
+  if (buttonTargetRow) buttonTargetRow.classList.toggle("is-hidden", isWriteAction || isHistoryAction || isAuthAction || isAlarmFilterAction);
   if (buttonViewportRow) buttonViewportRow.classList.toggle("is-hidden", actionType !== "load-viewport");
   if (buttonWriteFields) {
     const showWrite = isWriteAction;
@@ -9738,7 +9788,6 @@ const refreshAutomationTagOptions = () => {
   populateTagSelect(buttonLabelBindTagSelect);
   populateTagSelect(polygonFillAutoTagSelect);
   populateTagSelect(polygonStrokeAutoTagSelect);
-  populateTagSelect(buttonWriteTagSelect);
 };
 
 const renderTagsList = (tags) => {
@@ -9855,7 +9904,13 @@ const loadTags = async () => {
     const response = await fetch("/api/opc/tags", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    const rawTags = data?.tags || [];
+    const authTags = Object.entries(getAuthStateValues()).map(([name, value]) => ({
+      connection_id: "_hmi",
+      name,
+      value,
+      quality: "GOOD"
+    }));
+    const rawTags = [...(data?.tags || []), ...authTags];
     const sortedAll = sortTagsForDisplay(rawTags);
     tagsAllCache = sortedAll;
     tagsCache = sortedAll;
@@ -11984,6 +12039,8 @@ const renderScreen = () => {
     ? {
       id: String(activeEl.dataset?.hmiInputId || ""),
       value: String(activeEl.value ?? ""),
+      renderedValue: String(activeEl.dataset?.hmiRenderedValue ?? ""),
+      dirty: String(activeEl.value ?? "") !== String(activeEl.dataset?.hmiRenderedValue ?? ""),
       selectionStart: activeEl.selectionStart,
       selectionEnd: activeEl.selectionEnd
     }
@@ -12108,10 +12165,10 @@ const renderScreen = () => {
         input.style.textAlign = "center";
         const bind = obj.bindValue || {};
         input.placeholder = getBindPlaceholder(bind);
-        const shouldRestore = Boolean(activeNumberInput && activeNumberInput.id && String(obj.id || "") === activeNumberInput.id);
+        const shouldRefocus = Boolean(activeNumberInput && activeNumberInput.id && String(obj.id || "") === activeNumberInput.id);
+        const shouldRestore = Boolean(shouldRefocus && activeNumberInput.dirty);
         if (shouldRestore) {
           input.value = activeNumberInput.value;
-          numberInputRestore = { input, selectionStart: activeNumberInput.selectionStart, selectionEnd: activeNumberInput.selectionEnd };
         }
 	        const connectionId = String(bind.connection_id || "");
 	        const tagName = String(bind.tag || "");
@@ -12120,6 +12177,10 @@ const renderScreen = () => {
 	          const raw = tagValueCache.get(key);
 	          const formatted = formatBoundNumber(raw, bind);
 	          if (formatted !== null) input.value = formatted.trimEnd();
+	        }
+	        input.dataset.hmiRenderedValue = shouldRestore ? activeNumberInput.renderedValue : input.value;
+	        if (shouldRefocus) {
+	          numberInputRestore = { input, selectionStart: activeNumberInput.selectionStart, selectionEnd: activeNumberInput.selectionEnd };
 	        }
 	        container.appendChild(input);
 	        fo.appendChild(container);
@@ -12646,9 +12707,8 @@ const syncPropertiesFromSelection = () => {
     const writeAction = (obj.action?.type === "momentary-write" || obj.action?.type === "toggle-write" || obj.action?.type === "set-write" || obj.action?.type === "prompt-write") ? obj.action : null;
     if (buttonWriteConnectionInput) setInputValueSafe(buttonWriteConnectionInput, writeAction?.connection_id || "");
     if (buttonWriteTagSelect) {
-      const connectionId = String(writeAction?.connection_id || "");
       const tagName = String(writeAction?.tag || "");
-      ensureCombinedTagSelectValue(buttonWriteTagSelect, connectionId, tagName);
+      setInputValueSafe(buttonWriteTagSelect, tagName);
     }
     if (buttonWriteOnValueInput) setInputValueSafe(buttonWriteOnValueInput, writeAction?.onValue ?? "1");
     if (buttonWriteOffValueInput) setInputValueSafe(buttonWriteOffValueInput, writeAction?.offValue ?? "0");
@@ -15844,6 +15904,7 @@ function bindScreenManager() {
 }
 
 const setMode = (next) => {
+  if (isTouchRuntimeEndpoint) next = false;
   if (!next && poseEditSession) cancelPoseEdit({ keepTool: true });
   if (!next && automationPanelOpen) closeAutomationPanel();
   const wasEditMode = isEditMode;
@@ -15864,6 +15925,7 @@ const setMode = (next) => {
   if (isEditMode) markAuthActivity({ force: true });
   document.body.classList.toggle("edit-mode", isEditMode);
   document.body.classList.toggle("runtime-mode", !isEditMode);
+  document.body.classList.toggle("touch-runtime-mode", isTouchRuntimeEndpoint);
   if (toolbar) toolbar.classList.toggle("is-hidden", !isEditMode);
   if (editorPane) editorPane.classList.toggle("is-hidden", !isEditMode);
   if (editorPane && isEditMode) applyEditorPaneState(getEditorPaneState() || { dock: "right" });
@@ -15905,6 +15967,10 @@ if (projectTitleEl) {
 window.addEventListener("keydown", (evt) => {
   const isToggle = (evt.ctrlKey || evt.metaKey) && (evt.key === "e" || evt.key === "E");
   if (!isToggle) return;
+  if (isTouchRuntimeEndpoint) {
+    evt.preventDefault();
+    return;
+  }
   const el = document.activeElement;
   const tag = el?.tagName?.toLowerCase?.() || "";
   const typing = (tag === "input" || tag === "textarea" || el?.isContentEditable);
@@ -16868,6 +16934,7 @@ if (authLoginBtn) {
       if (!result?.ok) throw new Error("Login failed.");
       const session = {
         username: String(result.username || username),
+        displayName: String(result.name || result.displayName || result.display_name || result.username || username),
         role: String(result.role || "viewer"),
         timeoutMinutes: Number(result.timeoutMinutes) || 0,
         lastActivityMs: Date.now(),
@@ -17005,6 +17072,120 @@ if (keypadOverlay) {
   });
 }
 
+const setTouchKeyboardValue = (value) => {
+  if (!touchKeyboardDisplay) return;
+  touchKeyboardDisplay.value = String(value ?? "");
+  try {
+    touchKeyboardDisplay.focus();
+    touchKeyboardDisplay.setSelectionRange(touchKeyboardDisplay.value.length, touchKeyboardDisplay.value.length);
+  } catch {
+    // ignore
+  }
+};
+
+const updateTouchKeyboardShift = () => {
+  const symbolKeys = ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "/", "\\", ":", ";", "'", "\"", "+", "=", "?", ",", "<", ">", "[", "]", "{", "}"];
+  let symbolIndex = 0;
+  touchKeyboardOverlay?.querySelectorAll("[data-touch-key]").forEach((button) => {
+    const key = String(button.dataset.touchKey || "");
+    if (/^[a-z]$/.test(key)) {
+      button.textContent = touchKeyboardSymbols ? symbolKeys[symbolIndex] : (touchKeyboardShift ? key.toUpperCase() : key);
+      symbolIndex += 1;
+    }
+  });
+  touchKeyboardOverlay?.querySelector('[data-touch-key="shift"]')?.classList.toggle("touch-keyboard-shift-active", touchKeyboardShift);
+  const symbolsButton = touchKeyboardOverlay?.querySelector('[data-touch-key="symbols"]');
+  if (symbolsButton) {
+    symbolsButton.textContent = touchKeyboardSymbols ? "ABC" : "Symbols";
+    symbolsButton.classList.toggle("touch-keyboard-shift-active", touchKeyboardSymbols);
+  }
+};
+
+const openTouchKeyboard = (input) => {
+  if (!isTouchRuntimeEndpoint || !touchKeyboardOverlay || !touchKeyboardDisplay || !(input instanceof HTMLInputElement)) return;
+  touchKeyboardTarget = input;
+  touchKeyboardShift = false;
+  touchKeyboardSymbols = false;
+  touchKeyboardInputReadyAt = Date.now() + 250;
+  touchKeyboardDisplay.type = input.type === "password" ? "password" : "text";
+  if (touchKeyboardTitle) touchKeyboardTitle.textContent = input.type === "password" ? "Enter password" : "Enter username";
+  updateTouchKeyboardShift();
+  setOverlayOpen(touchKeyboardOverlay, true);
+  setTouchKeyboardValue(input.value);
+};
+
+function closeTouchKeyboard() {
+  touchKeyboardTarget = null;
+  touchKeyboardShift = false;
+  touchKeyboardSymbols = false;
+  touchKeyboardInputReadyAt = 0;
+  setOverlayOpen(touchKeyboardOverlay, false);
+}
+
+if (touchKeyboardCancelBtn) touchKeyboardCancelBtn.addEventListener("click", closeTouchKeyboard);
+if (touchKeyboardOverlay) {
+  touchKeyboardOverlay.addEventListener("click", (event) => {
+    if (event.target === touchKeyboardOverlay) closeTouchKeyboard();
+  });
+}
+
+document.addEventListener("click", (event) => {
+  if (!touchKeyboardTarget || !touchKeyboardDisplay) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const button = target.closest("[data-touch-key]");
+  if (!(button instanceof HTMLElement)) return;
+  if (Date.now() < touchKeyboardInputReadyAt) return;
+  const action = String(button.dataset.touchKey || "");
+  const current = String(touchKeyboardDisplay.value || "");
+
+  if (action === "bksp") return setTouchKeyboardValue(current.slice(0, -1));
+  if (action === "clear") return setTouchKeyboardValue("");
+  if (action === "space") return setTouchKeyboardValue(`${current} `);
+  if (action === "shift") {
+    if (touchKeyboardSymbols) return;
+    touchKeyboardShift = !touchKeyboardShift;
+    updateTouchKeyboardShift();
+    return;
+  }
+  if (action === "symbols") {
+    touchKeyboardSymbols = !touchKeyboardSymbols;
+    touchKeyboardShift = false;
+    updateTouchKeyboardShift();
+    return;
+  }
+  if (action === "ok") {
+    const input = touchKeyboardTarget;
+    const value = String(touchKeyboardDisplay.value || "");
+    closeTouchKeyboard();
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+  if (/^[a-z]$/.test(action)) {
+    const symbolKeys = ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "/", "\\", ":", ";", "'", "\"", "+", "=", "?", ",", "<", ">", "[", "]", "{", "}"];
+    const letterKeys = "qwertyuiopasdfghjklzxcvbnm";
+    const symbol = symbolKeys[letterKeys.indexOf(action)];
+    const value = touchKeyboardSymbols ? symbol : (touchKeyboardShift ? action.toUpperCase() : action);
+    setTouchKeyboardValue(`${current}${value}`);
+    return;
+  }
+  if (/^[0-9@._-]$/.test(action)) setTouchKeyboardValue(`${current}${action}`);
+});
+
+if (isTouchRuntimeEndpoint) {
+  [authSetupUsername, authSetupPassword, authSetupPasswordConfirm, authUsername, authPassword].forEach((input) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    input.readOnly = true;
+    input.inputMode = "none";
+    input.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      openTouchKeyboard(input);
+    });
+  });
+}
+
 document.addEventListener("click", (event) => {
   if (!isKeypadOpen) return;
   const target = event.target;
@@ -17015,6 +17196,9 @@ document.addEventListener("click", (event) => {
 
   const action = String(btn.dataset.keypad || "");
   const current = String(keypadDisplay.value || "");
+  const selectionStart = Number.isInteger(keypadDisplay.selectionStart) ? keypadDisplay.selectionStart : current.length;
+  const selectionEnd = Number.isInteger(keypadDisplay.selectionEnd) ? keypadDisplay.selectionEnd : selectionStart;
+  const replaceSelection = (insert) => `${current.slice(0, selectionStart)}${insert}${current.slice(selectionEnd)}`;
   const setValue = (next) => {
     keypadDisplay.value = next;
     try {
@@ -17025,7 +17209,11 @@ document.addEventListener("click", (event) => {
     }
   };
 
-  if (action === "bksp") return setValue(current.slice(0, -1));
+  if (action === "bksp") {
+    if (selectionEnd > selectionStart) return setValue(replaceSelection(""));
+    if (selectionStart <= 0) return;
+    return setValue(`${current.slice(0, selectionStart - 1)}${current.slice(selectionEnd)}`);
+  }
   if (action === "clear") return setValue("");
   if (action === "sign") {
     const trimmed = current.trim();
@@ -17058,11 +17246,12 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (action === ".") {
-    if (current.includes(".")) return;
-    return setValue(current ? `${current}.` : "0.");
+    const next = replaceSelection(".");
+    if ((next.match(/\./g) || []).length > 1) return;
+    return setValue(next === "." ? "0." : next);
   }
   if (/^[0-9]$/.test(action)) {
-    setValue(`${current}${action}`);
+    setValue(replaceSelection(action));
   }
 });
 
@@ -17168,7 +17357,7 @@ const openKeypad = (opts) => {
   setOverlayOpen(keypadOverlay, true);
   try {
     keypadDisplay.focus();
-    keypadDisplay.setSelectionRange(keypadDisplay.value.length, keypadDisplay.value.length);
+    keypadDisplay.select();
   } catch {
     // ignore
   }
@@ -17178,6 +17367,7 @@ function closeKeypad() {
   isKeypadOpen = false;
   keypadTarget = null;
   setOverlayOpen(keypadOverlay, false);
+  scheduleRuntimeRender();
 }
 
 const wireNumberInputs = () => {
@@ -17449,6 +17639,9 @@ if (textValueInput) {
     });
     textValueInput.addEventListener("input", () => {
       updateTextProperty({ text: textValueInput.value });
+      const activeObjects = getActiveObjects();
+      const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+      if (obj?.type === "text") renderTextBindingRows(obj);
     });
 }
 
@@ -17597,6 +17790,10 @@ if (textBindingTagPickBtn) {
     if (!textBindingModalKey) return;
     openCompactTagBindingModal("textBindingModal");
   });
+}
+
+if (buttonWriteTagPickBtn) {
+  buttonWriteTagPickBtn.addEventListener("click", () => openCompactTagBindingModal("buttonWrite"));
 }
 
 if (textBindingSaveBtn) {
@@ -17775,6 +17972,9 @@ if (textPaddingInput) {
 if (buttonLabelInput) {
     buttonLabelInput.addEventListener("input", () => {
       updateButtonProperty({ label: buttonLabelInput.value });
+      const activeObjects = getActiveObjects();
+      const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+      if (obj?.type === "button") renderButtonLabelBindingRows(obj);
   });
 }
 
@@ -17858,25 +18058,27 @@ if (buttonActionSelect) {
 	            ? { type: "history-forward" }
 	        : actionType === "alarm-filter"
 	          ? getCurrentAlarmFilterButtonAction()
+	        : actionType === "auth"
+	          ? { type: "auth" }
 	        : actionType === "prompt-write"
 	          ? {
 	            type: "prompt-write",
 	            connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-            tag: (parseTagSelectValue(buttonWriteTagSelect?.value || "").tag) || "",
+	            tag: buttonWriteTagSelect?.value?.trim() || "",
             ...promptDefaults
           }
         : actionType === "set-write"
           ? {
             type: "set-write",
             connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-            tag: (parseTagSelectValue(buttonWriteTagSelect?.value || "").tag) || "",
+            tag: buttonWriteTagSelect?.value?.trim() || "",
             onValue: buttonWriteOnValueInput?.value ?? "1"
           }
         : actionType === "toggle-write"
           ? {
             type: "toggle-write",
             connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-            tag: (parseTagSelectValue(buttonWriteTagSelect?.value || "").tag) || "",
+            tag: buttonWriteTagSelect?.value?.trim() || "",
             onValue: buttonWriteOnValueInput?.value ?? "1",
             offValue: buttonWriteOffValueInput?.value ?? "0"
           }
@@ -17884,7 +18086,7 @@ if (buttonActionSelect) {
           ? {
             type: "momentary-write",
             connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-            tag: (parseTagSelectValue(buttonWriteTagSelect?.value || "").tag) || "",
+            tag: buttonWriteTagSelect?.value?.trim() || "",
             onValue: buttonWriteOnValueInput?.value ?? "1",
             offValue: buttonWriteOffValueInput?.value ?? "0"
           }
@@ -17899,6 +18101,7 @@ if (buttonTargetSelect) {
     const actionType = buttonActionSelect?.value || "navigate";
     if (actionType === "momentary-write" || actionType === "toggle-write" || actionType === "set-write" || actionType === "prompt-write") return;
     if (actionType === "history-back" || actionType === "history-forward") return;
+    if (actionType === "auth") return;
     if (actionType === "alarm-filter") return;
     const screenId = buttonTargetSelect.value;
     const viewportId = buttonViewportSelect?.value || "";
@@ -18020,11 +18223,10 @@ if (buttonWriteConnectionInput) {
   buttonWriteConnectionInput.addEventListener("change", () => {
     const actionType = buttonActionSelect.value;
     if (actionType !== "momentary-write" && actionType !== "toggle-write" && actionType !== "set-write" && actionType !== "prompt-write") return;
-    const active = parseTagSelectValue(buttonWriteTagSelect?.value || "");
     const base = {
       type: actionType,
       connection_id: buttonWriteConnectionInput.value.trim(),
-      tag: active.tag || ""
+      tag: buttonWriteTagSelect?.value?.trim() || ""
     };
     if (actionType === "prompt-write") {
       updateButtonProperty({
@@ -18057,12 +18259,10 @@ if (buttonWriteTagSelect) {
   buttonWriteTagSelect.addEventListener("change", () => {
     const actionType = buttonActionSelect.value;
     if (actionType !== "momentary-write" && actionType !== "toggle-write" && actionType !== "set-write" && actionType !== "prompt-write") return;
-    const { connection_id, tag } = parseTagSelectValue(buttonWriteTagSelect.value);
-    if (buttonWriteConnectionInput && connection_id) buttonWriteConnectionInput.value = connection_id;
     const base = {
       type: actionType,
-      connection_id: connection_id || (buttonWriteConnectionInput?.value?.trim() || ""),
-      tag
+      connection_id: buttonWriteConnectionInput?.value?.trim() || "",
+      tag: buttonWriteTagSelect.value.trim()
     };
     if (actionType === "prompt-write") {
       updateButtonProperty({
@@ -18095,19 +18295,18 @@ if (buttonWriteOnValueInput) {
   buttonWriteOnValueInput.addEventListener("change", () => {
     if (buttonActionSelect?.value !== "momentary-write" && buttonActionSelect?.value !== "toggle-write" && buttonActionSelect?.value !== "set-write") return;
     const actionType = buttonActionSelect.value;
-    const active = parseTagSelectValue(buttonWriteTagSelect?.value || "");
     updateButtonProperty({
       action: actionType === "set-write"
         ? {
           type: actionType,
-          connection_id: active.connection_id || (buttonWriteConnectionInput?.value?.trim() || ""),
-          tag: active.tag || "",
+          connection_id: buttonWriteConnectionInput?.value?.trim() || "",
+          tag: buttonWriteTagSelect?.value?.trim() || "",
           onValue: buttonWriteOnValueInput.value
         }
         : {
         type: actionType,
-        connection_id: active.connection_id || (buttonWriteConnectionInput?.value?.trim() || ""),
-        tag: active.tag || "",
+        connection_id: buttonWriteConnectionInput?.value?.trim() || "",
+        tag: buttonWriteTagSelect?.value?.trim() || "",
         onValue: buttonWriteOnValueInput.value,
         offValue: buttonWriteOffValueInput?.value ?? "0"
       }
@@ -18118,12 +18317,11 @@ if (buttonWriteOnValueInput) {
 if (buttonWriteOffValueInput) {
   buttonWriteOffValueInput.addEventListener("change", () => {
     if (buttonActionSelect?.value !== "momentary-write" && buttonActionSelect?.value !== "toggle-write") return;
-    const active = parseTagSelectValue(buttonWriteTagSelect?.value || "");
     updateButtonProperty({
       action: {
         type: buttonActionSelect.value,
-        connection_id: active.connection_id || (buttonWriteConnectionInput?.value?.trim() || ""),
-        tag: active.tag || "",
+        connection_id: buttonWriteConnectionInput?.value?.trim() || "",
+        tag: buttonWriteTagSelect?.value?.trim() || "",
         onValue: buttonWriteOnValueInput?.value ?? "1",
         offValue: buttonWriteOffValueInput.value
       }
@@ -18133,12 +18331,11 @@ if (buttonWriteOffValueInput) {
 
 const updatePromptWriteActionFromInputs = () => {
   if (buttonActionSelect?.value !== "prompt-write") return;
-  const active = parseTagSelectValue(buttonWriteTagSelect?.value || "");
   updateButtonProperty({
     action: {
       type: "prompt-write",
-      connection_id: active.connection_id || (buttonWriteConnectionInput?.value?.trim() || ""),
-      tag: active.tag || "",
+      connection_id: buttonWriteConnectionInput?.value?.trim() || "",
+      tag: buttonWriteTagSelect?.value?.trim() || "",
       defaultValue: parseOptionalNumber(buttonPromptDefaultInput?.value),
       min: parseOptionalNumber(buttonPromptMinInput?.value),
       max: parseOptionalNumber(buttonPromptMaxInput?.value),
@@ -20679,15 +20876,13 @@ function initializeCompactTagBindingRows() {
 
   registerCompactTagBinding({
     id: "buttonWrite",
-    container: buttonWriteFields,
-    beforeEl: buttonWriteOnRow,
     connectionInput: buttonWriteConnectionInput,
-    tagSelect: buttonWriteTagSelect,
-    buttonLabel: "Tag",
+    tagInput: buttonWriteTagSelect,
     modalTitle: "Button Write Tag",
+    inlineOnly: true,
     read: () => ({
       connection_id: String(buttonWriteConnectionInput?.value || "").trim(),
-      tag: parseTagSelectValue(buttonWriteTagSelect?.value || "").tag
+      tag: String(buttonWriteTagSelect?.value || "").trim()
     }),
     apply: ({ connection_id, tag }) => updateButtonWriteBinding({ connection_id, tag })
   });
@@ -28302,6 +28497,10 @@ if (hmiSvg) {
 	        }
 	        runtimeGoForward();
 		      }
+	      if (obj?.type === "button" && obj?.action?.type === "auth") {
+	        openAuth();
+	        return;
+	      }
 		      if (obj?.type === "button" && obj?.action?.type === "alarm-filter") {
 		        applyAlarmPanelRuntimeFilterAction(obj.action);
 		        return;

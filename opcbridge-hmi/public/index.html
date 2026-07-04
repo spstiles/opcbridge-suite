@@ -522,6 +522,7 @@
 		                <option value="navigate">Navigate</option>
 		                <option value="history-back">History Back</option>
 		                <option value="history-forward">History Forward</option>
+		                <option value="auth">Log In / Log Out</option>
 		                <option value="load-viewport">Load Viewport</option>
 		                <option value="popup">Popup</option>
 		                <option value="momentary-write">Momentary Write</option>
@@ -546,9 +547,10 @@
 	              </div>
 	              <div class="prop-row">
 	                <label for="buttonWriteTag">Tag</label>
-	                <select id="buttonWriteTag">
-	                  <option value="">Select tag…</option>
-	                </select>
+	                <div class="prop-inline automation-tag-inline">
+	                  <input id="buttonWriteTag" class="automation-tag-input" type="text" placeholder="tag" />
+	                  <button id="buttonWriteTagPickBtn" class="panel-btn" type="button">Pick…</button>
+	                </div>
 	              </div>
 	              <div class="prop-row" id="buttonWriteOnRow">
 	                <label id="buttonWriteOnLabel" for="buttonWriteOnValue">On Value</label>
@@ -2867,6 +2869,32 @@
 	          <button class="keypad-btn" type="button" data-keypad="0">0</button>
 	          <button class="keypad-btn" type="button" data-keypad=".">.</button>
 	          <button class="keypad-btn keypad-wide keypad-ok" type="button" data-keypad="ok">OK</button>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	  <div id="touchKeyboardOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
+	    <div class="touch-keyboard-modal">
+	      <div class="popup-header">
+	        <div id="touchKeyboardTitle" class="popup-title">Enter text</div>
+	        <button id="touchKeyboardCancelBtn" class="panel-btn" type="button">Cancel</button>
+	      </div>
+	      <div class="touch-keyboard-body">
+	        <input id="touchKeyboardDisplay" class="touch-keyboard-display" type="text" inputmode="none" autocomplete="off" spellcheck="false" />
+	        <div class="touch-keyboard-row">
+	          <button type="button" data-touch-key="1">1</button><button type="button" data-touch-key="2">2</button><button type="button" data-touch-key="3">3</button><button type="button" data-touch-key="4">4</button><button type="button" data-touch-key="5">5</button><button type="button" data-touch-key="6">6</button><button type="button" data-touch-key="7">7</button><button type="button" data-touch-key="8">8</button><button type="button" data-touch-key="9">9</button><button type="button" data-touch-key="0">0</button>
+	        </div>
+	        <div class="touch-keyboard-row">
+	          <button type="button" data-touch-key="q">q</button><button type="button" data-touch-key="w">w</button><button type="button" data-touch-key="e">e</button><button type="button" data-touch-key="r">r</button><button type="button" data-touch-key="t">t</button><button type="button" data-touch-key="y">y</button><button type="button" data-touch-key="u">u</button><button type="button" data-touch-key="i">i</button><button type="button" data-touch-key="o">o</button><button type="button" data-touch-key="p">p</button>
+	        </div>
+	        <div class="touch-keyboard-row">
+	          <button type="button" data-touch-key="a">a</button><button type="button" data-touch-key="s">s</button><button type="button" data-touch-key="d">d</button><button type="button" data-touch-key="f">f</button><button type="button" data-touch-key="g">g</button><button type="button" data-touch-key="h">h</button><button type="button" data-touch-key="j">j</button><button type="button" data-touch-key="k">k</button><button type="button" data-touch-key="l">l</button>
+	        </div>
+	        <div class="touch-keyboard-row">
+	          <button class="touch-keyboard-fn" type="button" data-touch-key="shift">Shift</button><button type="button" data-touch-key="z">z</button><button type="button" data-touch-key="x">x</button><button type="button" data-touch-key="c">c</button><button type="button" data-touch-key="v">v</button><button type="button" data-touch-key="b">b</button><button type="button" data-touch-key="n">n</button><button type="button" data-touch-key="m">m</button><button class="touch-keyboard-fn" type="button" data-touch-key="bksp">⌫</button>
+	        </div>
+	        <div class="touch-keyboard-row">
+	          <button class="touch-keyboard-fn" type="button" data-touch-key="symbols">Symbols</button><button type="button" data-touch-key="-">-</button><button type="button" data-touch-key="_">_</button><button type="button" data-touch-key="@">@</button><button type="button" data-touch-key=".">.</button><button class="touch-keyboard-space" type="button" data-touch-key="space">Space</button><button class="touch-keyboard-fn" type="button" data-touch-key="clear">Clear</button><button class="touch-keyboard-ok" type="button" data-touch-key="ok">OK</button>
 	        </div>
 	      </div>
 	    </div>

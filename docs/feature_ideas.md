@@ -31,6 +31,87 @@ Non-goals:
 - No indefinite support for multiple internal config formats.
 - No blind full-instance overwrite by default.
 
+## Federated Multi-Node Management
+
+Idea:
+- Support multiple autonomous `opcbridge-suite` installations that share selected administrative configuration without becoming a runtime-dependent cluster.
+
+Example:
+- A large treatment facility may have an OPCBridge computer at each end of the plant.
+- Each computer controls and monitors the equipment it can reach locally.
+- If the plant network is interrupted, both systems continue operating their respective areas.
+- Under normal conditions, shared administration such as users and roles is performed once instead of separately on every computer.
+
+Architecture:
+- Give every installation a unique node ID.
+- Designate one installation as the Management Node / Authoring Node initially.
+- Perform screen development, user and role management, report creation, alarm configuration, and other shared administration on that node.
+- Keep changes in a draft workspace until an authorized user explicitly publishes them.
+- Never allow remote nodes to retrieve or apply unpublished drafts.
+- Publish signed, versioned, target-specific configuration bundles only through an explicit user action.
+- Allow an offline node to retrieve an already-approved published release when it reconnects without requiring drafts to synchronize automatically.
+- Retain the last valid synchronized configuration locally so operation and authentication do not depend on continuous access to the authority node.
+- Use eventual synchronization when network connectivity returns.
+- Keep all process control, PLC polling, alarm evaluation, history collection, and writes local to the responsible node.
+- Prefer a dedicated Management Node that is separate from production control. If it also operates a plant area, isolate drafts from its live runtime until publication.
+
+Deployment profiles and content collections:
+- Assign every target a persistent deployment profile that controls which content it may receive.
+- Maintain named content collections such as `Shared Identity`, `Panel HMI Screens`, `Control Room Screens`, `Plant Reports`, `Site A Alarms`, and `Common Images`.
+- Let profiles subscribe to selected collections instead of forcing every node to receive a complete server image.
+- Generate a target-specific effective manifest during publication.
+- Support production, test, development, site, and device-class target groups.
+- Allow different HMI screen sets and default screens for panel-mounted devices, control rooms, and other clients.
+- Exclude reporting definitions, templates, services, and UI access from panel HMIs that do not need reporting.
+- Automatically include required dependencies, such as images and library assets referenced by selected screens.
+- Show precisely which files and configuration categories each target will receive before publishing.
+
+Example profiles:
+- `Panel HMI`: shared users/roles, panel-specific screens, required screen assets, selected alarms, no reports, and local PLC configuration.
+- `Plant Server`: shared users/roles, full HMI screen set, selected alarms, reports/templates, and local PLC/historian configuration.
+- `Development/Test`: selected pre-production content for validation before publishing to production targets.
+
+Suggested ownership:
+- Users, roles, and permissions: shared and centrally managed.
+- HMI screens and library assets: shared globally or assigned by site/node.
+- Alarm definitions: shared globally or assigned by site/node.
+- PLC connections and tags: normally node-specific.
+- Historian configuration: node-specific.
+- Report definitions: optionally shared, with data sources resolved locally.
+- Runtime state and control commands: never synchronized as configuration.
+
+Desired behavior:
+- Allow existing synchronized users to authenticate locally during a network partition.
+- Replicate password hashes and salts, never plaintext passwords.
+- Keep users, roles, and permissions in a shared identity collection so authentication remains consistent across selected nodes.
+- Keep a local emergency administrator account outside synchronized identity so a node cannot be permanently locked out by a publication error.
+- Show node health, connection state, software version, and applied configuration revision in SCADA.
+- Preview and validate configuration changes before publishing.
+- Require manual promotion from draft to published revision.
+- Let the publisher select target nodes, target groups, and content collections for each release.
+- Audit configuration publication, receipt, validation, and application on both the authority and receiving nodes.
+- Reject incompatible bundles based on suite version or declared capabilities.
+- Apply configuration atomically and retain the previous valid revision for rollback.
+- Prevent centrally managed content from being edited directly on receiving nodes.
+
+Phased implementation:
+1. Add stable node identities and node-health reporting.
+2. Synchronize users, roles, and permissions.
+3. Add versioned distribution of HMI screens and library assets.
+4. Add selectively owned alarm definitions and other configuration categories.
+5. Consider delegated administration or multi-authority workflows only if operational experience demonstrates a need.
+
+Non-goals:
+- No dependency on another node for local runtime operation or control.
+- No continuous synchronization of work in progress.
+- No automatic publication of saved drafts.
+- No automatic forwarding of PLC writes between nodes.
+- No forced installation or exposure of unused features on a target node.
+- No overwrite of node-local connections, tags, ports, secrets, historian settings, or other excluded categories.
+- No multi-master editing in the first implementation.
+- No automatic conflict merging for changes made independently during a partition.
+- No requirement for traditional cluster consensus, shared process memory, or shared runtime state.
+
 ## HMI Touchscreen Runtime Endpoint
 
 Idea:
