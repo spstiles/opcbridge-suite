@@ -7621,9 +7621,10 @@ struct AlarmEngine
     std::atomic<int64_t> last_tag_update_ms{0};
     std::atomic<int64_t> last_alarm_change_ms{0};
     // When opcbridge (re)connects, the first burst of tag updates may reflect
-    // already-active conditions. We treat that burst as baseline and suppress
-    // notifications/event logging until this time has passed.
+    // already-active conditions. Keep events suppressed until the HTTP seed has
+    // completed successfully; the time window is only a secondary safety net.
     std::atomic<int64_t> suppress_events_until_ms{0};
+    std::atomic<bool> opcbridge_baselining{true};
     std::atomic<bool> opcbridge_ws_connected{false};
     std::atomic<int64_t> opcbridge_ws_last_open_ms{0};
     std::atomic<int64_t> opcbridge_ws_last_close_ms{0};
@@ -7652,6 +7653,7 @@ struct AlarmEngine
 
     bool should_record_events_now() const
     {
+        if (opcbridge_baselining.load()) return false;
         return now_ms() >= suppress_events_until_ms.load();
     }
     void set_config_meta(std::string mode, bool downgraded, std::vector<std::string> notes)
@@ -8954,9 +8956,9 @@ static void ws_client_loop(std::atomic<bool> &stop,
         std::cout << "[alarms] Sent opcbridge subscribe (" << sub["tags"].size() << " tag(s))\n";
     };
 
-    auto seed_subscriptions_from_http = [&](bool recordEvent, bool systemOnly = false) {
+    auto seed_subscriptions_from_http = [&](bool recordEvent, bool systemOnly = false) -> bool {
         const auto keys = engine.subscription_keys();
-        if (keys.empty()) return;
+        if (keys.empty()) return true;
 
         std::unordered_set<std::string> want;
         want.reserve(keys.size());
@@ -8972,7 +8974,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
                 wantedTags.push_back({k.substr(0, sep), k.substr(sep + 1)});
             }
         }
-        if (want.empty()) return;
+        if (want.empty()) return true;
 
         httplib::Client cli(opcbridgeHost, opcbridgeHttpPort);
         cli.set_read_timeout(5, 0);
@@ -9031,11 +9033,11 @@ static void ws_client_loop(std::atomic<bool> &stop,
                 }
                 queryOk = true;
             }
-            if (queryOk) return;
+            if (queryOk) return true;
         }
 
         auto res = cli.Get(systemOnly ? "/tags?connection_id=_system&limit=1000" : "/tags");
-        if (!res || res->status != 200) return;
+        if (!res || res->status != 200) return false;
 
         json body;
         try
@@ -9044,10 +9046,10 @@ static void ws_client_loop(std::atomic<bool> &stop,
         }
         catch (...)
         {
-            return;
+            return false;
         }
 
-        apply_rows(body);
+        return apply_rows(body);
     };
 
     ws.setOnMessageCallback([&](const ix::WebSocketMessagePtr &msg) {
@@ -9059,10 +9061,11 @@ static void ws_client_loop(std::atomic<bool> &stop,
             engine.opcbridge_ws_connected.store(true);
             engine.opcbridge_ws_last_open_ms.store(now_ms());
             engine.opcbridge_ws_open_count.fetch_add(1);
-            // Suppress events briefly while we (re)subscribe + seed current values.
-            engine.suppress_events_until_ms.store(now_ms() + 2000);
+            // Suppress events until we have seeded current values from HTTP.
+            engine.opcbridge_baselining.store(true);
+            engine.suppress_events_until_ms.store(now_ms() + 30000);
             std::cout << "[alarms] opcbridge WS connected\n";
-            std::cout << "[alarms] opcbridge baseline: suppress events for 2000ms\n";
+            std::cout << "[alarms] opcbridge baseline: suppress events until HTTP seed completes\n";
             lastSentGeneration = subscriptionGeneration.load();
             send_subscribe();
             baselineSeedRequested.store(true);
@@ -9072,6 +9075,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
         {
             connected.store(false);
             engine.opcbridge_ws_connected.store(false);
+            engine.opcbridge_baselining.store(true);
             engine.opcbridge_ws_last_close_ms.store(now_ms());
             engine.opcbridge_ws_close_count.fetch_add(1);
             std::cout << "[alarms] opcbridge WS closed: "
@@ -9082,6 +9086,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
         {
             connected.store(false);
             engine.opcbridge_ws_connected.store(false);
+            engine.opcbridge_baselining.store(true);
             engine.opcbridge_ws_last_error_ms.store(now_ms());
             engine.opcbridge_ws_error_count.fetch_add(1);
             std::cerr << "[alarms] opcbridge WS error: " << msg->errorInfo.reason << "\n";
@@ -9124,22 +9129,48 @@ static void ws_client_loop(std::atomic<bool> &stop,
         if (gen != lastSentGeneration)
         {
             lastSentGeneration = gen;
-            engine.suppress_events_until_ms.store(now_ms() + 2000);
-            std::cout << "[alarms] opcbridge baseline: suppress events for 2000ms (resubscribe)\n";
+            engine.opcbridge_baselining.store(true);
+            engine.suppress_events_until_ms.store(now_ms() + 30000);
+            std::cout << "[alarms] opcbridge baseline: suppress events until HTTP seed completes (resubscribe)\n";
             send_subscribe();
             baselineSeedRequested.store(true);
         }
         auto nowSteady = std::chrono::steady_clock::now();
         if (baselineSeedRequested.exchange(false))
         {
-            seed_subscriptions_from_http(false);
-            lastSubscriptionRefresh = nowSteady;
+            if (seed_subscriptions_from_http(false))
+            {
+                engine.opcbridge_baselining.store(false);
+                engine.suppress_events_until_ms.store(now_ms() + 2000);
+                std::cout << "[alarms] opcbridge baseline complete; event logging resumes after 2000ms\n";
+                lastSubscriptionRefresh = nowSteady;
+            }
+            else
+            {
+                engine.opcbridge_baselining.store(true);
+                engine.suppress_events_until_ms.store(now_ms() + 30000);
+                lastSubscriptionRefresh = nowSteady;
+                std::cout << "[alarms] opcbridge baseline seed failed; retrying\n";
+            }
         }
         if (lastSubscriptionRefresh.time_since_epoch().count() == 0 ||
             nowSteady - lastSubscriptionRefresh >= std::chrono::seconds(2))
         {
-            seed_subscriptions_from_http(engine.should_record_events_now(), false);
-            lastSubscriptionRefresh = nowSteady;
+            const bool baselineActive = engine.opcbridge_baselining.load();
+            if (seed_subscriptions_from_http(!baselineActive && engine.should_record_events_now(), false))
+            {
+                if (baselineActive)
+                {
+                    engine.opcbridge_baselining.store(false);
+                    engine.suppress_events_until_ms.store(now_ms() + 2000);
+                    std::cout << "[alarms] opcbridge baseline complete; event logging resumes after 2000ms\n";
+                }
+                lastSubscriptionRefresh = nowSteady;
+            }
+            else if (baselineActive)
+            {
+                baselineSeedRequested.store(true);
+            }
         }
         if (lastSystemRefresh.time_since_epoch().count() == 0 ||
             nowSteady - lastSystemRefresh >= std::chrono::seconds(2))
@@ -9685,6 +9716,8 @@ int main(int argc, char **argv)
             {"connected", engine.opcbridge_ws_connected.load()},
             {"base_url", "http://" + opcbridgeHost + ":" + std::to_string(opcbridgeHttpPort)},
             {"ws_connected", engine.opcbridge_ws_connected.load()},
+            {"baselining", engine.opcbridge_baselining.load()},
+            {"suppress_events_until_ms", engine.suppress_events_until_ms.load()},
             {"last_tag_update_ms", lastTag},
             {"feed_stale", feedStale},
             {"feed_stale_threshold_ms", staleThresholdMs},

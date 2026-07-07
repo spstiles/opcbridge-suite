@@ -11902,7 +11902,7 @@ const openSetpointPrompt = (action, buttonLabel) => {
   const titleParts = [];
   if (buttonLabel) titleParts.push(buttonLabel);
   if (connectionId && tagName) titleParts.push(`${connectionId}.${tagName}`);
-  const title = titleParts.join(" • ") || "Setpoint";
+  const title = titleParts.join(" • ") || "Numeric Entry (Prompt)";
   if (setpointTitle) setpointTitle.textContent = title;
 
   const minValue = parseOptionalNumber(action?.min);
@@ -28519,7 +28519,7 @@ if (hmiSvg) {
 	      }
 	      if (obj?.type === "button" && obj?.action?.type === "prompt-write") {
 	        if (writesDisabled) return;
-	        openSetpointPrompt(obj.action, obj.label || "Setpoint");
+	        openSetpointPrompt(obj.action, obj.label || "Numeric Entry (Prompt)");
 	      }
 	      return;
 	    }
