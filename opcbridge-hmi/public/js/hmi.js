@@ -4282,6 +4282,7 @@ const tagsList = document.getElementById("tagsList");
 const EDITOR_WIDTH_KEY = "opcbridge-hmi.editorWidth";
 const DEFAULT_SCREEN_ID = "overview";
 const DEFAULT_SCREEN_FILE = `${DEFAULT_SCREEN_ID}.jsonc`;
+const BUILTIN_EMPTY_SCREEN_ID = "__builtin_startup_empty__";
 const HMI_BUILD = "2025-12-28-alarms-panel-v18";
 try { window.__HMI_BUILD = HMI_BUILD; } catch {}
 
@@ -5423,6 +5424,7 @@ const openAbout = async () => {
 const isTouchRuntimeEndpoint = /^\/touch\/?$/i.test(window.location.pathname);
 let isEditMode = false;
 let defaultScreenId = DEFAULT_SCREEN_ID;
+let defaultScreenConfigured = false;
 let currentScreenId = DEFAULT_SCREEN_ID;
 let currentScreenFilename = DEFAULT_SCREEN_FILE;
 let currentScreenPath = DEFAULT_SCREEN_FILE;
@@ -10356,6 +10358,7 @@ const loadClientConfig = async () => {
       const nextDefault = String(parsed.hmi.defaultScreen || "")
         .trim()
         .replace(/\.(jsonc|screen)$/i, "");
+      defaultScreenConfigured = Boolean(nextDefault);
       if (nextDefault) defaultScreenId = nextDefault;
     }
     return opcbridgeConfig;
@@ -15359,6 +15362,84 @@ function applyScreenSelection(ref, relPath) {
   loadJsonc();
 }
 
+const buildStartupEmptyScreen = (reason = "") => {
+  const touchMode = isTouchRuntimeEndpoint || Boolean(hmiUiConfig?.touchscreenMode);
+  const detail = isEditMode
+    ? "Create or open a screen, then set it as the startup screen."
+    : touchMode
+      ? "Open the HMI editor from a workstation to configure a startup screen."
+      : "Press Ctrl+E to enter edit mode.";
+  const reasonText = String(reason || "").trim();
+  return {
+    width: 1920,
+    height: 1080,
+    background: "#202533",
+    border: { enabled: false, color: "#ffffff", width: 1 },
+    objects: [
+      {
+        type: "text",
+        id: "startup-empty-title",
+        x: 960,
+        y: 460,
+        text: "No startup screen configured",
+        fill: "#ffffff",
+        fontSize: 54,
+        bold: true,
+        align: "center",
+        valign: "middle"
+      },
+      {
+        type: "text",
+        id: "startup-empty-detail",
+        x: 960,
+        y: 540,
+        text: detail,
+        fill: "#cbd5e1",
+        fontSize: 30,
+        align: "center",
+        valign: "middle"
+      },
+      ...(reasonText ? [{
+        type: "text",
+        id: "startup-empty-reason",
+        x: 960,
+        y: 620,
+        text: reasonText,
+        fill: "#94a3b8",
+        fontSize: 22,
+        align: "center",
+        valign: "middle"
+      }] : [])
+    ]
+  };
+};
+
+const showStartupEmptyScreen = (reason = "") => {
+  currentScreenId = BUILTIN_EMPTY_SCREEN_ID;
+  currentScreenPath = "";
+  currentScreenFilename = "";
+  lastLoadedFilename = "";
+  selectedIndices = [];
+  clearSelectedPolygonVertex();
+  groupEditStack.length = 0;
+  currentScreenObj = buildStartupEmptyScreen(reason);
+  screenCache.set(BUILTIN_EMPTY_SCREEN_ID, currentScreenObj);
+  if (jsoncEditor) {
+    jsoncEditor.value = "";
+    jsonEditorSyncPending = false;
+  }
+  if (screenTitle) screenTitle.textContent = "No startup screen";
+  if (editorFilename) editorFilename.textContent = "Built-in startup placeholder";
+  if (editorStatus) editorStatus.textContent = reason ? `No startup screen loaded: ${reason}` : "No startup screen configured.";
+  renderScreen();
+  refreshAlarmsForScreenLoad();
+  scheduleWsSubscribeRefresh();
+  updateGroupBreadcrumb();
+  refreshViewportIdOptions();
+  ensureRuntimeHistoryForCurrentScreen();
+  setDirty(false);
+};
+
 const loadScreenById = (id) => {
   if (!id) return;
   const target = String(id || "").trim();
@@ -15416,7 +15497,17 @@ async function refreshScreensList() {
     }
     refreshGroupActionScreenOptions();
 
-    const preferred = (data.screens || []).find((s) => s.ref === currentScreenId) || (data.screens || [])[0];
+    const startupScreen = defaultScreenConfigured
+      ? (availableScreens.find((s) =>
+        String(s?.ref || "") === String(defaultScreenId || "") ||
+        String(s?.id || "") === String(defaultScreenId || "")
+      ) || null)
+      : null;
+    const currentScreen = availableScreens.find((s) =>
+      String(s?.ref || "") === String(currentScreenId || "") ||
+      String(s?.id || "") === String(currentScreenId || "")
+    ) || null;
+    const preferred = startupScreen || (isEditMode ? (currentScreen || availableScreens[0]) : null);
     if (preferred) {
       screenList.value = preferred.ref;
       const sameScreenLoaded =
@@ -15427,11 +15518,20 @@ async function refreshScreensList() {
         applyScreenSelection(preferred.ref, preferred.path);
       }
     } else {
-      if (jsoncEditor) jsoncEditor.value = "";
-      if (editorStatus) editorStatus.textContent = "No screens found.";
+      const requested = String(defaultScreenId || "").trim();
+      const reason = !defaultScreenConfigured
+        ? "No startup screen is configured."
+        : requested
+          ? `Startup screen '${requested}' was not found.`
+        : "No startup screen is configured.";
+      showStartupEmptyScreen(reason);
     }
   } catch (error) {
-    if (editorStatus) editorStatus.textContent = `Failed to list screens: ${error.message}`;
+    if (isEditMode) {
+      if (editorStatus) editorStatus.textContent = `Failed to list screens: ${error.message}`;
+    } else {
+      showStartupEmptyScreen(`Failed to list screens: ${error.message}`);
+    }
   }
 }
 
