@@ -15521,9 +15521,7 @@ async function refreshScreensList() {
       const requested = String(defaultScreenId || "").trim();
       const reason = !defaultScreenConfigured
         ? "No startup screen is configured."
-        : requested
-          ? `Startup screen '${requested}' was not found.`
-        : "No startup screen is configured.";
+        : "Startup screen not found.";
       showStartupEmptyScreen(reason);
     }
   } catch (error) {
