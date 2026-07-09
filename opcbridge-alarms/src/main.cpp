@@ -4819,7 +4819,7 @@ public:
         return run_voice_modem_call(job, result);
     }
 
-	    bool test_audio_playback(const std::string& audio_file, const std::string& tts_text, std::string& result)
+	    bool test_audio_playback(const std::string& audio_file, const std::string& tts_text, const std::string& output_device, std::string& result)
 	    {
 	        Route route;
 	        AlarmState alarm;
@@ -4828,12 +4828,32 @@ public:
 	            std::lock_guard<std::mutex> lock(mu_);
 	            ttsVoice = tts_.voice;
 	            const Route* baseRoute = select_audio_route_for_policy_locked();
-	            if (!baseRoute)
+	            if (baseRoute)
 	            {
-	                result = "no enabled audio_command route configured";
-	                return false;
+	                route = *baseRoute;
 	            }
-	            route = *baseRoute;
+	            else
+	            {
+	                auto trim_ws = [](const std::string& in) -> std::string {
+	                    size_t a = 0;
+	                    while (a < in.size() && std::isspace(static_cast<unsigned char>(in[a]))) ++a;
+	                    size_t b = in.size();
+	                    while (b > a && std::isspace(static_cast<unsigned char>(in[b - 1]))) --b;
+	                    return in.substr(a, b - a);
+	                };
+	                const std::string outputRaw = trim_ws(output_device);
+	                const std::string output = outputRaw.empty() ? "default" : outputRaw;
+	                route.type = "audio_command";
+	                route.command = "/usr/bin/aplay";
+	                if (output == "default")
+	                {
+	                    route.args = {"{audio_path}"};
+	                }
+	                else
+	                {
+	                    route.args = {"-D", output, "{audio_path}"};
+	                }
+	            }
 	            route.name = "audio:test";
 	            route.repeat_ms = 0;
 	            route.repeat_initial_delay_ms = 0;
@@ -10026,10 +10046,11 @@ int main(int argc, char **argv)
         try { body = json::parse(req.body); } catch (...) { body = json::object(); }
         const std::string audio_file = body.value("audio_file", "");
         const std::string tts_text = body.value("tts_text", "");
+        const std::string output_device = body.value("output_device", "");
 
         json j;
         std::string result;
-        const bool ok = notifications.test_audio_playback(audio_file, tts_text, result);
+        const bool ok = notifications.test_audio_playback(audio_file, tts_text, output_device, result);
         res.status = ok ? 200 : 500;
         j["ok"] = ok;
         j["result"] = result;

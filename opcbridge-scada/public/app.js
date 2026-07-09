@@ -10752,6 +10752,7 @@ async function testSoundSettingsPlayback() {
     const body = {};
     if (audio_file) body.audio_file = audio_file;
     if (tts_text) body.tts_text = tts_text;
+    body.output_device = String(els.soundOutputDevice?.value || 'default').trim() || 'default';
     const resp = await apiPostJson('/api/alarms/alarm/api/audio/test', body);
     if (!resp?.ok) throw new Error(resp?.error || 'Audio test failed.');
     setSoundSettingsStatus(`Test OK. ${String(resp?.result || '').trim()}`);

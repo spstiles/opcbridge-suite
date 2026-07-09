@@ -16286,9 +16286,10 @@ const wsLabelForPlcType = (code) => {
 const wsDeepClone = (obj) => JSON.parse(JSON.stringify(obj || null));
 
 	let wsLoadedOnce = false;
-	let wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [], live_tags: [] };
-		let wsDraft = { connections: [], tags: [], alarms: [], alarm_groups: [], live_tags: [] };
+	let wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [], alarm_config: null, alarm_config_loaded: false, live_tags: [] };
+		let wsDraft = { connections: [], tags: [], alarms: [], alarm_groups: [], alarm_config: null, alarm_config_loaded: false, live_tags: [] };
 	let wsDirty = false;
+	let wsAlarmDirty = false;
 	let wsSelectedId = "ws:root";
 	let wsChildrenSelRoot = "";
 	let wsChildrenSel = new Set(); // keys like "connection_id::tag_name"
@@ -16398,6 +16399,11 @@ const wsSetDirty = (dirty) => {
     if (el.discardBtn) el.discardBtn.disabled = !wsDirty;
 };
 
+const wsSetAlarmDirty = () => {
+    wsAlarmDirty = true;
+    wsSetDirty(true);
+};
+
 const wsSetStatus = (msg, cls) => {
     const el = wsEls();
     if (!el.saveStatus) return;
@@ -16464,14 +16470,22 @@ const wsApiJson = async (url, opts = {}) => {
 
 			    let alarms = [];
 			    let alarm_groups = [];
+			    let alarm_config = null;
+			    let alarm_config_loaded = false;
 			    try {
 			        const ar = await wsApiJson("/config/alarms");
 			        const cfg = ar && typeof ar === "object" ? (ar.json || {}) : {};
+			        alarm_config = (cfg && typeof cfg === "object" && !Array.isArray(cfg)) ? cfg : {};
+			        alarm_config_loaded = true;
 			        if (Array.isArray(cfg?.alarms)) alarms = cfg.alarms;
 			        else if (Array.isArray(cfg?.rules)) alarms = cfg.rules; // legacy naming
 			        if (Array.isArray(cfg?.groups)) alarm_groups = cfg.groups;
-			    } catch (_) {
+			    } catch (e) {
+			        console.warn("Failed to load alarms config:", e);
 			        alarms = [];
+			        alarm_groups = [];
+			        alarm_config = null;
+			        alarm_config_loaded = false;
 			    }
 
 			    let live_tags = [];
@@ -16482,7 +16496,7 @@ const wsApiJson = async (url, opts = {}) => {
 			        live_tags = [];
 			    }
 			
-			    return { connections, tags, alarms, alarm_groups, live_tags };
+			    return { connections, tags, alarms, alarm_groups, alarm_config, alarm_config_loaded, live_tags };
 			};
 
 const wsBuildNodeIndex = (root) => {
@@ -17292,7 +17306,7 @@ const wsApplyTagWordOrderUi = () => {
 	    const want = name.toLowerCase();
 	    if (!wsDraft.alarm_groups.some((g) => String(g?.name || g?.label || g?.id || "").trim().toLowerCase() === want)) {
 	        wsDraft.alarm_groups.push({ name, sites: [] });
-	        wsSetDirty(true);
+	        wsSetAlarmDirty();
 	        wsRenderTree();
 	    }
 	    wsSelectNode(nodeId || "ws:alarms");
@@ -17316,7 +17330,7 @@ const wsApplyTagWordOrderUi = () => {
 	            g.sites.push({ name: siteName });
 	        }
 	    }
-	    wsSetDirty(true);
+	    wsSetAlarmDirty();
 	    wsRenderTree();
 	    wsSelectNode(nodeId);
 	};
@@ -17997,10 +18011,13 @@ const wsRenderTree = () => {
 	                if (String(t?.connection_id || "") !== oldId) return t;
 	                return Object.assign({}, t, { connection_id: id });
 	            });
+	            let alarmRefsChanged = false;
 	            wsDraft.alarms = (Array.isArray(wsDraft.alarms) ? wsDraft.alarms : []).map((a) => {
 	                if (String(a?.connection_id || "") !== oldId) return a;
+	                alarmRefsChanged = true;
 	                return Object.assign({}, a, { connection_id: id });
 	            });
+	            if (alarmRefsChanged) wsAlarmDirty = true;
 	        }
 	    }
 
@@ -18366,7 +18383,7 @@ const wsSetDeviceEnabled = (connection_id, enabled) => {
 	    }
 
 	    wsDraft.alarms = alarms;
-	    wsSetDirty(true);
+	    wsSetAlarmDirty();
 	    wsCloseModal(el.alarmModal);
 	    wsSelectNode("ws:alarm:" + encodeURIComponent(id));
 	};
@@ -18376,7 +18393,7 @@ const wsSetDeviceEnabled = (connection_id, enabled) => {
 	    if (!id) return;
 	    if (!confirm(`Delete alarm '${id}'? (Applied on Save.)`)) return;
 	    wsDraft.alarms = (Array.isArray(wsDraft.alarms) ? wsDraft.alarms : []).filter((a) => String(a?.id || "") !== id);
-	    wsSetDirty(true);
+	    wsSetAlarmDirty();
 	    wsSelectNode("ws:alarms");
 	};
 
@@ -18454,12 +18471,29 @@ const wsSetDeviceEnabled = (connection_id, enabled) => {
 	            });
 	        }
 
-	        // 3) Alarms: write alarms.json (root-level)
-	        {
+	        // 3) Alarms: write alarms.json only when alarm data changed.
+	        // Preserve the full alarm config document so notification contacts,
+	        // routes, schedules, policies, and other top-level settings survive
+	        // workspace edits that only touch groups/alarms.
+	        if (wsAlarmDirty) {
+	            if (!wsDraft.alarm_config_loaded || !wsDraft.alarm_config || typeof wsDraft.alarm_config !== "object" || Array.isArray(wsDraft.alarm_config)) {
+	                throw new Error("Alarm config was not loaded successfully; refusing to overwrite alarms with partial/empty data.");
+	            }
 	            const alarms = Array.isArray(wsDraft.alarms) ? wsDraft.alarms.slice() : [];
 	            alarms.sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { numeric: true, sensitivity: "base" }));
 	            const groups = Array.isArray(wsDraft.alarm_groups) ? wsDraft.alarm_groups : [];
-	            const out = { groups, alarms };
+	            const out = Object.assign({}, wsDraft.alarm_config, { groups });
+	            const usesRulesShape = Array.isArray(wsDraft.alarm_config?.rules) && (
+	                !Array.isArray(wsDraft.alarm_config?.alarms) ||
+	                (Array.isArray(wsDraft.alarm_config.rules) && wsDraft.alarm_config.rules.length > 0)
+	            );
+	            if (usesRulesShape) {
+	                out.rules = alarms;
+	                delete out.alarms;
+	            } else {
+	                out.alarms = alarms;
+	                delete out.rules;
+	            }
 	            const content = JSON.stringify(out, null, 2) + "\n";
 	            await wsApiJson("/config/file", {
 	                method: "POST",
@@ -18488,6 +18522,7 @@ const wsSetDeviceEnabled = (connection_id, enabled) => {
 
 	        wsPendingDeletes = [];
 	        wsBase = wsDeepClone(wsDraft);
+	        wsAlarmDirty = false;
 	        wsSetDirty(false);
 
 	        if (reloadAfter) {
@@ -18514,6 +18549,7 @@ const wsDiscardChanges = async () => {
     if (!confirm("Discard all unsaved changes?")) return;
     wsDraft = wsDeepClone(wsBase);
     wsPendingDeletes = [];
+    wsAlarmDirty = false;
     wsSetDirty(false);
     wsSetStatus("Discarded changes.", "");
     wsSelectNode("ws:root");
@@ -18597,9 +18633,10 @@ function filterLiveTagsByConnection(connectionId) {
 
 		    // If not logged in, keep the live tags panel but hide workspace config tree/details.
 		    if (!wsIsEditable()) {
-		        wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [], live_tags: [] };
-		        wsDraft = { connections: [], tags: [], alarms: [], alarm_groups: [], live_tags: [] };
+		        wsBase = { connections: [], tags: [], alarms: [], alarm_groups: [], alarm_config: null, alarm_config_loaded: false, live_tags: [] };
+		        wsDraft = { connections: [], tags: [], alarms: [], alarm_groups: [], alarm_config: null, alarm_config_loaded: false, live_tags: [] };
 		        wsPendingDeletes = [];
+		        wsAlarmDirty = false;
 		        wsNodeById = new Map();
 		        wsSetDirty(false);
 
@@ -18620,6 +18657,7 @@ function filterLiveTagsByConnection(connectionId) {
 	        wsBase = wsDeepClone(data);
 	        wsDraft = wsDeepClone(data);
 	        wsPendingDeletes = [];
+	        wsAlarmDirty = false;
 	        wsSetDirty(false);
 	        if (el.treeStatus) el.treeStatus.textContent = "";
 	        wsSelectNode(wsSelectedId || "ws:root");
