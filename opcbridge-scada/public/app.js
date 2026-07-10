@@ -618,7 +618,6 @@
   editAlarmTagPickBtn: document.getElementById('editAlarmTagPickBtn'),
   editAlarmType: document.getElementById('editAlarmType'),
   editAlarmEnabled: document.getElementById('editAlarmEnabled'),
-  editAlarmAudibleMode: document.getElementById('editAlarmAudibleMode'),
   editAlarmAudioMode: document.getElementById('editAlarmAudioMode'),
   editAlarmAudioSequenceMount: document.getElementById('editAlarmAudioSequenceMount'),
   editAlarmAudioGap: document.getElementById('editAlarmAudioGap'),
@@ -650,7 +649,6 @@
   newEventStatus: document.getElementById('newEventStatus'),
 
   editAudioScopeName: document.getElementById('editAudioScopeName'),
-  editAudioScopeAudibleMode: document.getElementById('editAudioScopeAudibleMode'),
   editAudioScopeAudioFile: document.getElementById('editAudioScopeAudioFile'),
   editAudioScopeSpeechText: document.getElementById('editAudioScopeSpeechText'),
   editAudioScopeHint: document.getElementById('editAudioScopeHint'),
@@ -6958,7 +6956,6 @@ const ALARM_CSV_HEADERS = [
   'delay_sec',
   'severity',
   'enabled',
-  'audible_enabled',
   'audio_file',
   'speech_text',
   'notification_policy',
@@ -7033,7 +7030,6 @@ function downloadAlarmsCsv({ group = '', site = '' } = {}) {
     delay_sec: Number.isFinite(Number(a?.delay_ms)) ? String(Number(a.delay_ms) / 1000) : '0',
     severity: (a?.severity == null) ? '500' : String(a.severity),
     enabled: (a?.enabled !== false) ? 'true' : 'false',
-    audible_enabled: Object.prototype.hasOwnProperty.call(a || {}, 'audible_enabled') ? (a.audible_enabled ? 'true' : 'false') : '',
     audio_file: String(a?.audio_file || '').trim(),
     speech_text: String(a?.speech_text || '').trim(),
     notification_policy: String(a?.notification_policy || '').trim(),
@@ -7642,10 +7638,6 @@ async function importAlarmsCsv() {
     const sev = parseIntLoose(csvGet(r, 'severity'), 500);
     alarm.severity = Math.max(0, sev == null ? 500 : sev);
 
-    const audibleRaw = csvGet(r, 'audible_enabled');
-    if (String(audibleRaw ?? '').trim() === '') delete alarm.audible_enabled;
-    else alarm.audible_enabled = parseBoolLoose(audibleRaw, false);
-
     const audioFile = String(csvGet(r, 'audio_file') || '').trim();
     if (audioFile) alarm.audio_file = validateAlarmAudioFileId(cfg, audioFile);
     else delete alarm.audio_file;
@@ -8236,7 +8228,6 @@ function resolveInheritedAlarmAudio(cfgObj, groupName, siteName) {
     arr.push(id);
   };
   const out = {
-    audible_enabled: cfg.audio && Object.prototype.hasOwnProperty.call(cfg.audio, 'audible_enabled') ? Boolean(cfg.audio.audible_enabled) : false,
     audio_mode: String(cfg.audio?.audio_mode || 'audio_then_speech'),
     audio_file: String(cfg.audio?.default_file || '').trim(),
     audio_files: [],
@@ -8248,10 +8239,6 @@ function resolveInheritedAlarmAudio(cfgObj, groupName, siteName) {
   if (out.speech_text) out.speech_texts.push(out.speech_text);
   const group = findAlarmGroupConfig(cfg, groupName);
   if (group) {
-    if (Object.prototype.hasOwnProperty.call(group, 'audible_enabled')) {
-      out.audible_enabled = Boolean(group.audible_enabled);
-      out.source = 'group';
-    }
     if (String(group.audio_mode || '').trim()) {
       out.audio_mode = String(group.audio_mode || '').trim();
       out.source = 'group';
@@ -8274,10 +8261,6 @@ function resolveInheritedAlarmAudio(cfgObj, groupName, siteName) {
   }
   const site = findAlarmSiteConfig(cfg, groupName, siteName);
   if (site) {
-    if (Object.prototype.hasOwnProperty.call(site, 'audible_enabled')) {
-      out.audible_enabled = Boolean(site.audible_enabled);
-      out.source = 'site';
-    }
     if (String(site.audio_mode || '').trim()) {
       out.audio_mode = String(site.audio_mode || '').trim();
       out.source = 'site';
@@ -8320,13 +8303,12 @@ function resolveAlarmAudio(cfgObj, alarm) {
   const mode = String(alarm?.audio_mode || inherited.audio_mode || 'audio_then_speech').trim();
   const normalizedMode = ['audio_only', 'speech_only', 'audio_then_speech', 'speech_then_audio'].includes(mode) ? mode : 'audio_then_speech';
   return {
-    audible_enabled: Object.prototype.hasOwnProperty.call(alarm || {}, 'audible_enabled') ? Boolean(alarm.audible_enabled) : inherited.audible_enabled,
     audio_file: String(effectiveFile).trim(),
     speech_text: String(ownSpeech || inherited.speech_text || '').trim(),
     audio_files: audioFiles,
     speech_texts: speechTexts,
     audio_mode: normalizedMode,
-    source: Object.prototype.hasOwnProperty.call(alarm || {}, 'audible_enabled') || ownFile || ownFiles.length || ownSpeech ? 'alarm' : inherited.source
+    source: ownFile || ownFiles.length || ownSpeech ? 'alarm' : inherited.source
   };
 }
 
@@ -8407,7 +8389,6 @@ function alarmRuleToUiAlarm(rule) {
     message_on_active: String(rule.message_on_active || '').trim(),
     message_on_return: String(rule.message_on_return || '').trim()
   };
-  if (Object.prototype.hasOwnProperty.call(rule, 'audible_enabled')) out.audible_enabled = Boolean(rule.audible_enabled);
   if (Number.isFinite(Number(rule.delay_ms))) out.delay_ms = Math.max(0, Math.trunc(Number(rule.delay_ms)));
   if (String(rule.audio_mode || '').trim()) out.audio_mode = String(rule.audio_mode || '').trim();
   if (Number.isFinite(Number(rule.audio_gap_ms))) out.audio_gap_ms = Math.max(0, Math.trunc(Number(rule.audio_gap_ms)));
@@ -8442,7 +8423,6 @@ function uiAlarmToRule(alarm) {
     message_on_active: String(a.message_on_active || '').trim(),
     message_on_return: String(a.message_on_return || '').trim()
   };
-  if (Object.prototype.hasOwnProperty.call(a, 'audible_enabled')) rule.audible_enabled = Boolean(a.audible_enabled);
   if (Number.isFinite(Number(a.delay_ms))) rule.delay_ms = Math.max(0, Math.trunc(Number(a.delay_ms)));
   if (String(a.audio_mode || '').trim()) rule.audio_mode = String(a.audio_mode || '').trim();
   if (Number.isFinite(Number(a.audio_gap_ms))) rule.audio_gap_ms = Math.max(0, Math.trunc(Number(a.audio_gap_ms)));
@@ -8569,12 +8549,10 @@ function normalizeAlarmsConfigInvariants(cfg) {
   const out = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? cfg : {};
   const fixes = [];
 
-  // v2-only: enforce one schema and remove any legacy subtree.
+  // v2 is the current editing model, but do not delete legacy/unknown subtrees
+  // during normalization. Older installs may still carry notification/audio
+  // settings there; dropping them during a load or unrelated save is data loss.
   out.schema_version = 2;
-  if (Object.prototype.hasOwnProperty.call(out, 'notifications')) {
-    delete out.notifications;
-    fixes.push('removed legacy notifications subtree');
-  }
   if (!Array.isArray(out.targets)) out.targets = [];
   if (!Array.isArray(out.routes)) out.routes = [];
   if (!Array.isArray(out.policies)) out.policies = [];
@@ -8613,27 +8591,13 @@ async function loadOpcbridgeAlarmsConfig() {
   state.alarmsConfig = parseOpcbridgeAlarmsConfig(resp);
   const leakedChanged = cleanupLeakedRouteGroupAssignments(state.alarmsConfig);
   const fixes = normalizeAlarmsConfigInvariants(state.alarmsConfig);
-  // Auto-fix should never clobber user edits. If we need to persist fixes,
-  // do it only when we can prove we're saving the latest server version.
+  // Loading config must be read-only. Previously this auto-saved normalization
+  // fixes, which could erase legacy notification/audio settings after install
+  // or reload. Report the cleanup, but persist only on an explicit user save.
   if (leakedChanged || fixes.length) {
-    try {
-      const live = await apiGet('/api/opcbridge/config/alarms');
-      const liveMs = Number(live?.mtime_ms || 0) || 0;
-      // Only persist fixes if the server version we just read matches what we're holding.
-      if (liveMs && state.alarmsConfigMtimeMs && liveMs !== state.alarmsConfigMtimeMs) {
-        // Skip persisting; show hint so user can reload rather than risk overwriting.
-        if (els.alarmsEventsPropsStatus) els.alarmsEventsPropsStatus.textContent = `Auto-fix available (not applied): config changed on server. Reload to apply: ${fixes.join('; ')}`;
-      } else {
-        await saveOpcbridgeAlarmsConfig(state.alarmsConfig);
-        if (els.alarmsEventsPropsStatus && fixes.length) {
-          els.alarmsEventsPropsStatus.textContent = `Auto-fixed config: ${fixes.join('; ')}`;
-        }
-      }
-    } catch {
-      // If we can't verify freshness, don't risk overwriting.
-      if (els.alarmsEventsPropsStatus && fixes.length) {
-        els.alarmsEventsPropsStatus.textContent = `Auto-fix available (not applied): ${fixes.join('; ')}`;
-      }
+    const notes = leakedChanged ? fixes.concat(['route/alarm group cleanup available']) : fixes;
+    if (els.alarmsEventsPropsStatus && notes.length) {
+      els.alarmsEventsPropsStatus.textContent = `Config cleanup available; save explicitly to apply: ${notes.join('; ')}`;
     }
   }
   return state.alarmsConfig;
@@ -8676,9 +8640,6 @@ async function saveOpcbridgeAlarmsConfig(nextCfg) {
   normalizeAlarmsConfigInvariants(obj);
   ensureAlarmGroupsTree(obj);
   syncAlarmRulesFromAlarms(obj);
-
-	  // v2-only: never persist legacy notification subtree.
-	  if (Object.prototype.hasOwnProperty.call(obj, 'notifications')) delete obj.notifications;
 
   const content = JSON.stringify(obj, null, 2) + '\n';
   await apiPostJson('/api/opcbridge/config/file', { path: 'alarms.json', content });
@@ -9061,7 +9022,6 @@ function refreshAlarmTagSelect(want = '') {
 }
 
 function readAlarmAudioFromUi() {
-  const mode = String(els.editAlarmAudibleMode?.value || 'inherit').trim();
   const seq = state.alarmModalAudioSequenceInput?.getValues?.() || [];
   const audioFile = seq.length ? String(seq[0] || '').trim() : '';
   const gapRaw = String(els.editAlarmAudioGap?.value ?? '').trim();
@@ -9075,8 +9035,6 @@ function readAlarmAudioFromUi() {
   const audioMode = String(els.editAlarmAudioMode?.value || 'inherit').trim();
   if (audioMode && audioMode !== 'inherit') out.audio_mode = audioMode;
   if (gapRaw !== '') out.audio_gap_ms = Math.trunc(Number(gapRaw) || 0);
-  if (mode === 'on') out.audible_enabled = true;
-  else if (mode === 'off') out.audible_enabled = false;
   return out;
 }
 
@@ -9492,14 +9450,7 @@ function refreshAlarmAudioUi(existingAlarm = null) {
   const alarm = existingAlarm || {};
   const inherited = resolveInheritedAlarmAudio(cfg, group, site);
   const effectiveAlarm = { ...alarm, group, site, audio_file: String(alarm.audio_file || '').trim(), speech_text: String(alarm.speech_text || '').trim() };
-  if (!Object.prototype.hasOwnProperty.call(alarm, 'audible_enabled')) delete effectiveAlarm.audible_enabled;
   const effective = resolveAlarmAudio(cfg, effectiveAlarm);
-
-  if (els.editAlarmAudibleMode) {
-    els.editAlarmAudibleMode.value = Object.prototype.hasOwnProperty.call(alarm, 'audible_enabled')
-      ? (alarm.audible_enabled === false ? 'off' : 'on')
-      : 'inherit';
-  }
 
   if (els.editAlarmAudioMode && document.activeElement !== els.editAlarmAudioMode) {
     const mode = String(alarm.audio_mode || '').trim();
@@ -9514,9 +9465,8 @@ function refreshAlarmAudioUi(existingAlarm = null) {
   }
 
   if (els.editAlarmAudioHint) {
-    const modeText = effective.audible_enabled ? 'enabled' : 'disabled';
     const sequenceText = alarmAudioSequenceText(effective.audio_files, cfg, effective.speech_texts, effective.audio_mode);
-    els.editAlarmAudioHint.textContent = `Effective audible notification is ${modeText}; audio sequence: ${sequenceText}; source: ${effective.source}.`;
+    els.editAlarmAudioHint.textContent = `Effective audio sequence: ${sequenceText}; source: ${effective.source}. Routing policies control whether and when this audio plays.`;
   }
 }
 
@@ -9532,14 +9482,13 @@ function getInheritedAudioForScope(cfg, scope, groupName, siteName) {
   if (scope === 'site') return resolveInheritedAlarmAudio(cfg, groupName, '');
   if (scope === 'group') {
     return {
-      audible_enabled: cfg.audio && Object.prototype.hasOwnProperty.call(cfg.audio, 'audible_enabled') ? Boolean(cfg.audio.audible_enabled) : false,
       audio_file: String(cfg.audio?.default_file || '').trim(),
       speech_text: String(cfg.audio?.speech_text || '').trim(),
       speech_texts: String(cfg.audio?.speech_text || '').trim() ? [String(cfg.audio?.speech_text || '').trim()] : [],
       source: 'global'
     };
   }
-  return { audible_enabled: false, audio_file: '', speech_text: '', speech_texts: [], source: 'system' };
+  return { audio_file: '', speech_text: '', speech_texts: [], source: 'system' };
 }
 
 	function notificationDefaultRepeatMs(cfg) {
@@ -9583,14 +9532,6 @@ function refreshAudioScopeUi() {
   if (els.editAudioScopeName) {
     els.editAudioScopeName.value = scope === 'global' ? 'Global alarm audio defaults' : (scope === 'site' ? `${group} / ${site}` : group);
   }
-  if (els.editAudioScopeAudibleMode) {
-    const inheritOpt = Array.from(els.editAudioScopeAudibleMode.options || []).find((opt) => opt.value === 'inherit');
-    if (inheritOpt) inheritOpt.disabled = scope === 'global';
-    els.editAudioScopeAudibleMode.value = scope === 'global'
-      ? (target.audible_enabled === true ? 'on' : 'off')
-      : (Object.prototype.hasOwnProperty.call(target, 'audible_enabled') ? (target.audible_enabled === false ? 'off' : 'on') : 'inherit');
-    els.editAudioScopeAudibleMode.disabled = !canEditConfig();
-  }
   if (els.editAudioScopeAudioFile) {
     els.editAudioScopeAudioFile.textContent = '';
     const base = document.createElement('option');
@@ -9613,13 +9554,11 @@ function refreshAudioScopeUi() {
     els.editAudioScopeSpeechText.disabled = !canEditConfig();
   }
   if (els.editAudioScopeHint) {
-    const mode = String(els.editAudioScopeAudibleMode?.value || '').trim();
-    const effectiveAudible = scope === 'global' ? mode === 'on' : (mode === 'inherit' ? inherited.audible_enabled : mode === 'on');
     const effectiveFile = selected || (scope === 'global' ? '' : inherited.audio_file);
     const effectiveSpeech = speechText || (scope === 'global' ? '' : inherited.speech_text);
-    const source = scope === 'global' ? 'global' : (mode === 'inherit' && !selected ? inherited.source : scope);
+    const source = scope === 'global' ? 'global' : (!selected ? inherited.source : scope);
     const sequence = alarmAudioSequenceText(effectiveFile ? [effectiveFile] : [], cfg, effectiveSpeech ? [effectiveSpeech] : []);
-    els.editAudioScopeHint.textContent = `Effective audible notification is ${effectiveAudible ? 'enabled' : 'disabled'}; audio sequence: ${sequence}; source: ${source}.`;
+    els.editAudioScopeHint.textContent = `Effective audio sequence: ${sequence}; source: ${source}. Routing policies control whether and when this audio plays.`;
   }
   if (els.editAudioScopeSaveBtn) els.editAudioScopeSaveBtn.disabled = !canEditConfig();
 }
@@ -9646,7 +9585,7 @@ function openAudioScopeModal({ scope, group = '', site = '' }) {
   setWorkspaceItemStatus('');
   setEditAudioScopeStatus('');
   refreshAudioScopeUi();
-  els.editAudioScopeAudibleMode?.focus?.();
+  els.editAudioScopeAudioFile?.focus?.();
 }
 
 async function saveAudioScopeFromModal() {
@@ -9655,19 +9594,16 @@ async function saveAudioScopeFromModal() {
   const scope = String(pending.scope || '').trim();
   const group = String(pending.group || '').trim();
   const site = String(pending.site || '').trim();
-  const mode = String(els.editAudioScopeAudibleMode?.value || '').trim();
   const audioFile = String(els.editAudioScopeAudioFile?.value || '').trim();
   const speechText = String(els.editAudioScopeSpeechText?.value || '').trim();
   const cfg = state.alarmsConfig || { alarms: [], groups: [], audio: { files: [] } };
   ensureAlarmGroupsTree(cfg);
   if (!['global', 'group', 'site'].includes(scope)) { setEditAudioScopeStatus('Audio scope is invalid.'); return; }
-  if (scope === 'global' && !['on', 'off'].includes(mode)) { setEditAudioScopeStatus('Global audible setting must be enabled or disabled.'); return; }
-  if (scope !== 'global' && !['inherit', 'on', 'off'].includes(mode)) { setEditAudioScopeStatus('Audible setting is invalid.'); return; }
   if (audioFile && !getAlarmAudioFiles(cfg).some((f) => f.id === audioFile)) { setEditAudioScopeStatus(`Audio file '${audioFile}' is not in the audio files list.`); return; }
 
   if (scope === 'global') {
     if (!cfg.audio || typeof cfg.audio !== 'object' || Array.isArray(cfg.audio)) cfg.audio = {};
-    cfg.audio.audible_enabled = mode === 'on';
+    delete cfg.audio.audible_enabled;
     if (audioFile) cfg.audio.default_file = audioFile;
     else delete cfg.audio.default_file;
     if (speechText) cfg.audio.speech_text = speechText;
@@ -9676,8 +9612,7 @@ async function saveAudioScopeFromModal() {
     upsertAlarmGroup(cfg, group);
     const target = findAlarmGroupConfig(cfg, group);
     if (!target) { setEditAudioScopeStatus('Group was not found.'); return; }
-    if (mode === 'inherit') delete target.audible_enabled;
-    else target.audible_enabled = mode === 'on';
+    delete target.audible_enabled;
     if (audioFile) target.audio_file = audioFile;
     else delete target.audio_file;
     if (speechText) target.speech_text = speechText;
@@ -9686,8 +9621,7 @@ async function saveAudioScopeFromModal() {
     ensureGroupSiteInConfig(cfg, group, site);
     const target = findAlarmSiteConfig(cfg, group, site);
     if (!target) { setEditAudioScopeStatus('Site was not found.'); return; }
-    if (mode === 'inherit') delete target.audible_enabled;
-    else target.audible_enabled = mode === 'on';
+    delete target.audible_enabled;
     if (audioFile) target.audio_file = audioFile;
     else delete target.audio_file;
     if (speechText) target.speech_text = speechText;
@@ -9711,7 +9645,6 @@ function wireAlarmPreviewInputs() {
     els.editAlarmTag,
     els.editAlarmType,
     els.editAlarmEnabled,
-    els.editAlarmAudibleMode,
     els.editAlarmAudioMode,
     els.editAlarmAudioGap,
     els.editAlarmSpeechText,
@@ -9733,7 +9666,7 @@ function wireAlarmPreviewInputs() {
         const g = String(els.editAlarmGroup?.value || '').trim();
         fillAlarmSiteSelect(g, g ? String(els.editAlarmSite?.value || '') : '');
       }
-      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioMode, els.editAlarmAudioGap, els.editAlarmSpeechText].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
+      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudioMode, els.editAlarmAudioGap, els.editAlarmSpeechText].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
       updateAlarmPreview();
     });
     el.addEventListener('change', () => {
@@ -9749,7 +9682,7 @@ function wireAlarmPreviewInputs() {
         const g = String(els.editAlarmGroup?.value || '').trim();
         fillAlarmSiteSelect(g, g ? String(els.editAlarmSite?.value || '') : '');
       }
-      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudibleMode, els.editAlarmAudioMode, els.editAlarmAudioGap, els.editAlarmSpeechText].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
+      if ([els.editAlarmGroup, els.editAlarmSite, els.editAlarmAudioMode, els.editAlarmAudioGap, els.editAlarmSpeechText].includes(el)) refreshAlarmAudioUi(readAlarmAudioFromUi());
       updateAlarmPreview();
     });
   });
@@ -10708,11 +10641,9 @@ async function loadSoundSettings() {
   }
 }
 
-	async function saveSoundSettings() {
-	  setSoundSettingsStatus('Saving...');
-	  try {
-	    const output = String(els.soundOutputDevice?.value || 'default').trim() || 'default';
-	    const cfg = await loadOpcbridgeAlarmsConfig();
+async function persistSoundSettingsSelection() {
+  const output = String(els.soundOutputDevice?.value || 'default').trim() || 'default';
+  const cfg = await loadOpcbridgeAlarmsConfig();
     const routes = getAlarmNotificationRoutes(cfg);
     let route = routes.find((r) => r && typeof r === 'object' && String(r.name || '') === 'default_audio')
       || routes.find((r) => r && typeof r === 'object' && String(r.type || '') === 'audio_command');
@@ -10736,23 +10667,31 @@ async function loadSoundSettings() {
     route.until = String(route.until || 'acked_or_returned');
 
     await saveOpcbridgeAlarmsConfig(cfg);
+  await apiPostJson('/api/alarms/alarm/api/reload', {}).catch(() => null);
     await loadOpcbridgeAlarmsConfig();
-    setSoundSettingsStatus('Saved. Alarm server will reload the setting automatically.');
+  return cfg;
+}
+
+	async function saveSoundSettings() {
+	  setSoundSettingsStatus('Saving...');
+	  try {
+    await persistSoundSettingsSelection();
+    setSoundSettingsStatus('Saved. Alarm server audio settings reloaded.');
   } catch (err) {
     setSoundSettingsStatus(`Save failed: ${err.message}`);
   }
 }
 
 async function testSoundSettingsPlayback() {
-  setSoundSettingsStatus('Testing audio playback...');
+  setSoundSettingsStatus('Saving selected output, then testing saved runtime audio route...');
   try {
     const audio_file = String(els.soundTestAudioFile?.value || '').trim();
     const tts_text = String(els.soundTestTtsText?.value || '').trim();
     if (!audio_file && !tts_text) throw new Error('Select a test audio file or enter speech text.');
+    await persistSoundSettingsSelection();
     const body = {};
     if (audio_file) body.audio_file = audio_file;
     if (tts_text) body.tts_text = tts_text;
-    body.output_device = String(els.soundOutputDevice?.value || 'default').trim() || 'default';
     const resp = await apiPostJson('/api/alarms/alarm/api/audio/test', body);
     if (!resp?.ok) throw new Error(resp?.error || 'Audio test failed.');
     setSoundSettingsStatus(`Test OK. ${String(resp?.result || '').trim()}`);
@@ -14743,7 +14682,6 @@ function wireWorkspaceItemModalUi() {
 
   els.editAudioScopeCancelBtn?.addEventListener('click', close);
   els.editAudioScopeSaveBtn?.addEventListener('click', () => saveAudioScopeFromModal().catch((err) => setEditAudioScopeStatus(`Save failed: ${err.message}`)));
-  els.editAudioScopeAudibleMode?.addEventListener('change', refreshAudioScopeUi);
   els.editAudioScopeAudioFile?.addEventListener('change', refreshAudioScopeUi);
   els.editAudioScopeSpeechText?.addEventListener('input', refreshAudioScopeUi);
   els.editMqttTopicCancelBtn?.addEventListener('click', close);
@@ -15628,20 +15566,6 @@ function alarmEventsSortValue(row, column, parentNode) {
   }
   if (col === 'Acked') return meta?.acked ? 1 : 0;
   if (col === 'Enabled') return meta?.enabled === false ? 0 : 1;
-  if (col === 'Audible') {
-    if (type === 'alarm') {
-      const alarmId = String(meta?.alarm_id || '').trim();
-      const alarmConfig = (Array.isArray(cfg?.alarms) ? cfg.alarms : []).find((a) => String(a?.id || '').trim() === alarmId) || {};
-      return resolveAlarmAudio(cfg, alarmConfig).audible_enabled ? 1 : 0;
-    }
-    const group = type === 'alarm_group' ? String(meta?.group || row?.label || '') : String(meta?.group || '');
-    const site = type === 'alarm_site' ? String(meta?.site || row?.label || '') : '';
-    const target = type === 'alarm_group' ? findAlarmGroupConfig(cfg, group) : findAlarmSiteConfig(cfg, group, site);
-    const effective = type === 'alarm_group'
-      ? { ...getInheritedAudioForScope(cfg, 'group', group, ''), ...(target || {}) }
-      : resolveInheritedAlarmAudio(cfg, group, site);
-    return effective?.audible_enabled ? 1 : 0;
-  }
   if (col === 'Policy') {
     const alarmId = String(meta?.alarm_id || '').trim();
     const alarmConfig = (Array.isArray(cfg?.alarms) ? cfg.alarms : []).find((a) => String(a?.id || '').trim() === alarmId) || {};
@@ -16374,9 +16298,9 @@ function renderAlarmsEventsDetails(node) {
     : (isSchedulesRoot || isSchedule)
     ? ['Name', 'Type', 'Days', 'Start', 'End', 'Enabled', 'Targets', 'ID']
     : (isAlarmGroupsRoot || isAlarmGroup)
-    ? ['Name', 'Processing', 'Audible', 'Audio Sequence']
+    ? ['Name', 'Processing', 'Audio Sequence']
     : (isAlarmSite || isAlarm)
-    ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Audible', 'Audio Sequence', 'Policy', 'Group', 'Site']
+    ? ['Name', 'Severity', 'Source', 'State', 'Acked', 'Enabled', 'Audio Sequence', 'Policy', 'Group', 'Site']
     : ['Name'];
 
   const colCount = columns.length;
@@ -16581,7 +16505,6 @@ function renderAlarmsEventsDetails(node) {
       addCell(tr, String(c?.label || c?.id || ''), false);
       if (type === 'alarm_site') addBadgeCell(tr, processingText, target?.alarms_enabled === false ? 'bad' : 'ok');
       else addCell(tr, '', true);
-      addBadgeCell(tr, effective?.audible_enabled ? 'ENABLED' : 'DISABLED', effective?.audible_enabled ? 'ok' : 'bad');
       addCell(tr, alarmAudioSequenceText(effective?.audio_files || (effective?.audio_file ? [effective.audio_file] : []), cfg, effective?.speech_texts || (effective?.speech_text ? [effective.speech_text] : [])), !(effective?.audio_files || []).length && !effective?.audio_file && !(effective?.speech_texts || []).length && !effective?.speech_text);
     } else if ((isAlarmSite || isAlarm) && type === 'alarm') {
       const cfg = state.alarmsConfig || {};
@@ -16598,7 +16521,6 @@ function renderAlarmsEventsDetails(node) {
       addBadgeCell(tr, stateStr, (meta?.enabled === false || !siteEnabled) ? 'bad' : (meta?.active ? 'warn' : 'ok'));
       addBadgeCell(tr, meta?.acked ? 'ACKED' : 'UNACKED', meta?.acked ? 'ok' : (meta?.active ? 'warn' : ''));
       addBadgeCell(tr, meta?.enabled === false ? 'DISABLED' : 'ENABLED', meta?.enabled === false ? 'bad' : 'ok');
-      addBadgeCell(tr, effectiveAudio.audible_enabled ? 'ENABLED' : 'DISABLED', effectiveAudio.audible_enabled ? 'ok' : 'bad');
       addCell(tr, alarmAudioSequenceText(effectiveAudio.audio_files || (effectiveAudio.audio_file ? [effectiveAudio.audio_file] : []), cfg, effectiveAudio.speech_texts || (effectiveAudio.speech_text ? [effectiveAudio.speech_text] : [])), !(effectiveAudio.audio_files || []).length && !effectiveAudio.audio_file && !(effectiveAudio.speech_texts || []).length && !effectiveAudio.speech_text);
       addCell(tr, String(alarmConfig?.notification_policy || ''), !String(alarmConfig?.notification_policy || '').trim());
       addCell(tr, String(meta?.group || ''), !String(meta?.group || '').trim());
@@ -16873,7 +16795,6 @@ function updateAlarmsEventsLiveCells() {
         if (!site) return;
         setBadge(td, target?.alarms_enabled === false ? 'DISABLED' : 'ENABLED', target?.alarms_enabled === false ? 'bad' : 'ok');
       });
-      put('Audible', (td) => setBadge(td, effective?.audible_enabled ? 'ENABLED' : 'DISABLED', effective?.audible_enabled ? 'ok' : 'bad'));
       put('Audio Sequence', (td) => setText(td, alarmAudioSequenceText(
         effective?.audio_files || (effective?.audio_file ? [effective.audio_file] : []),
         cfg,
@@ -17719,13 +17640,17 @@ function renderAlarmsEventsProperties(item, parentNode) {
         const validAlarmIds = new Set((Array.isArray(nextCfg?.alarms) ? nextCfg.alarms : []).map((a) => String(a?.id || '').trim()).filter(Boolean));
         const missing = alarmsNow.filter((id) => !validAlarmIds.has(id));
         const alarmsFiltered = alarmsNow.filter((id) => validAlarmIds.has(id));
+        const policyIdsNow = dedupeStringsInOrder(outputsWrap.getSelectedKeys());
+        if (enabledBox.checked && alarmsFiltered.length && !policyIdsNow.length) {
+          throw new Error('Select at least one output policy for this enabled alarm route. A route with alarms but no policies will not notify.');
+        }
         groups[idx] = {
           ...(groups[idx] || {}),
           id: nextId,
           name: String(nameBox.value || '').trim() || nextId,
           enabled: Boolean(enabledBox.checked),
           schedule_id: String(scheduleSel.value || 'always').trim() || 'always',
-          policy_ids: dedupeStringsInOrder(outputsWrap.getSelectedKeys()),
+          policy_ids: policyIdsNow,
           alarms: alarmsFiltered
         };
         syncAlarmGroupMembershipFromRoutingGroups(nextCfg);
@@ -18981,7 +18906,6 @@ function renderAlarmsEventsProperties(item, parentNode) {
         next.site = String(siteSel.value || '').trim();
         if (next.site && !next.group) next.site = '';
 
-        delete next.audible_enabled;
         if (!next.connection_id) throw new Error('Connection is required.');
         if (!next.tag_name) throw new Error('Tag is required.');
         if (!alarmSourceTagExists(next.connection_id, next.tag_name)) {

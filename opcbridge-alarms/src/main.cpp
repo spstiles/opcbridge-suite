@@ -2955,7 +2955,6 @@ struct AlarmRule
     int64_t delay_ms = 0;       // activation persistence delay
     std::string message_on_active;
     std::string message_on_return;
-    bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
     std::string speech_text;
@@ -2966,7 +2965,7 @@ struct AlarmRule
     std::string audio_mode = "audio_then_speech";
     std::string notification_policy;
 
-    // Repeat behavior for audible notifications.
+    // Repeat behavior for routed notifications.
     // If repeat_override is false, fall back to the notification route default repeat_ms.
     // If true, repeat_ms may be 0 (explicit off) or >0 (repeat interval).
     bool repeat_override = false;
@@ -3004,7 +3003,6 @@ struct AlarmState
     // Operator-facing configured messages (copied from rule)
     std::string message_on_active;
     std::string message_on_return;
-    bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
     std::string speech_text;
@@ -3015,7 +3013,7 @@ struct AlarmState
     std::string audio_mode = "audio_then_speech";
     std::string notification_policy;
 
-    // Repeat behavior for audible notifications.
+    // Repeat behavior for routed notifications.
     // If repeat_override is false, fall back to the notification route default repeat_ms.
     // If true, repeat_ms may be 0 (explicit off) or >0 (repeat interval).
     bool repeat_override = false;
@@ -3052,7 +3050,6 @@ static json alarm_state_to_json(const AlarmState &s)
     j["message"] = s.message;
     j["message_on_active"] = s.message_on_active;
     j["message_on_return"] = s.message_on_return;
-    j["audible_enabled"] = s.audible_enabled;
     j["audio_file"] = s.audio_file.empty() ? nullptr : json(s.audio_file);
     j["audio_path"] = s.audio_path.empty() ? nullptr : json(s.audio_path);
     j["speech_text"] = s.speech_text.empty() ? nullptr : json(s.speech_text);
@@ -3069,7 +3066,6 @@ static json alarm_state_to_json(const AlarmState &s)
 
 struct ResolvedAlarmAudio
 {
-    bool audible_enabled = false;
     std::string audio_file;
     std::string audio_path;
     std::string speech_text;
@@ -3104,13 +3100,9 @@ static void append_speech_text(std::vector<std::string>& texts, const std::strin
     texts.push_back(text);
 }
 
-static void apply_audio_scope(const json& scope, bool& audible, std::string& audioFile, std::vector<std::string>& audioFiles, std::string& speechText, std::vector<std::string>& speechTexts, int& audioGapMs, std::string& audioMode)
+static void apply_audio_scope(const json& scope, std::string& audioFile, std::vector<std::string>& audioFiles, std::string& speechText, std::vector<std::string>& speechTexts, int& audioGapMs, std::string& audioMode)
 {
     if (!scope.is_object()) return;
-    if (scope.contains("audible_enabled") && scope["audible_enabled"].is_boolean())
-    {
-        audible = scope["audible_enabled"].get<bool>();
-    }
     if (scope.contains("audio_gap_ms") && scope["audio_gap_ms"].is_number_integer())
     {
         audioGapMs = std::max(0, std::min(5000, scope["audio_gap_ms"].get<int>()));
@@ -3174,10 +3166,6 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
     std::unordered_map<std::string, std::string> audioPaths;
 
     const json audio = (root.contains("audio") && root["audio"].is_object()) ? root["audio"] : json::object();
-    if (audio.contains("audible_enabled") && audio["audible_enabled"].is_boolean())
-    {
-        out.audible_enabled = audio["audible_enabled"].get<bool>();
-    }
     if (audio.contains("default_file") && audio["default_file"].is_string())
     {
         out.audio_file = audio["default_file"].get<std::string>();
@@ -3208,13 +3196,13 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
         for (const auto& g : root["groups"])
         {
             if (!g.is_object() || json_string_or_empty(g, "name") != groupName) continue;
-            apply_audio_scope(g, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
+            apply_audio_scope(g, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
             if (!siteName.empty() && g.contains("sites") && g["sites"].is_array())
             {
                 for (const auto& s : g["sites"])
                 {
                     if (!s.is_object() || json_string_or_empty(s, "name") != siteName) continue;
-                    apply_audio_scope(s, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
+                    apply_audio_scope(s, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
                     break;
                 }
             }
@@ -3222,7 +3210,7 @@ static ResolvedAlarmAudio resolve_alarm_audio(const json& root, const json& rule
         }
     }
 
-    apply_audio_scope(rule, out.audible_enabled, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
+    apply_audio_scope(rule, out.audio_file, out.audio_files, out.speech_text, out.speech_texts, out.audio_gap_ms, out.audio_mode);
     if (out.audio_mode == "audio_only")
     {
         out.speech_text.clear();
@@ -4044,6 +4032,7 @@ public:
         alarm_route_bindings_.clear();
         schedules_.clear();
         audio_paths_.clear();
+        audio_output_device_.clear();
         audio_jobs_.clear();
         modem_jobs_.clear();
         if (!cfg.is_object())
@@ -4198,16 +4187,20 @@ public:
 	            sip_.ack_confirm_max_ms = std::max(0, std::min(30000, s.value("ack_confirm_max_ms", 4000)));
 	        }
 
-        if (cfg.contains("audio") && cfg["audio"].is_object() && cfg["audio"].contains("files") && cfg["audio"]["files"].is_array())
+        if (cfg.contains("audio") && cfg["audio"].is_object())
         {
-            for (const auto& f : cfg["audio"]["files"])
+            audio_output_device_ = cfg["audio"].value("output_device", std::string(""));
+            if (cfg["audio"].contains("files") && cfg["audio"]["files"].is_array())
             {
-                if (!f.is_object()) continue;
-                const std::string id = json_string_or_empty(f, "id");
-                if (id.empty()) continue;
-                std::string path = json_string_or_empty(f, "path");
-                if (path.empty()) path = id;
-                audio_paths_[id] = resolve_audio_path(config_dir_, path);
+                for (const auto& f : cfg["audio"]["files"])
+                {
+                    if (!f.is_object()) continue;
+                    const std::string id = json_string_or_empty(f, "id");
+                    if (id.empty()) continue;
+                    std::string path = json_string_or_empty(f, "path");
+                    if (path.empty()) path = id;
+                    audio_paths_[id] = resolve_audio_path(config_dir_, path);
+                }
             }
         }
 
@@ -4549,7 +4542,11 @@ public:
             }
 
             if (r.name.empty()) r.name = r.type.empty() ? "notification" : r.type;
-            if (r.type == "audio_command" && !r.command.empty()) routes_.push_back(std::move(r));
+            if (r.type == "audio_command" && !r.command.empty())
+            {
+                apply_configured_audio_output_locked(r);
+                routes_.push_back(std::move(r));
+            }
         }
 
         audio_cv_.notify_all();
@@ -4588,44 +4585,6 @@ public:
         AlarmState alarmWithAudio = alarm;
         add_tts_audio_paths_locked(alarmWithAudio);
         enqueue_policy_jobs_locked(alarmWithAudio, event_type);
-        if (!alarm_route_bindings_.empty())
-        {
-            audio_cv_.notify_all();
-            modem_cv_.notify_all();
-            return;
-        }
-        for (const auto& route : routes_)
-        {
-            if (!route.enabled) continue;
-            if (alarmWithAudio.severity < route.min_severity) continue;
-            bool eventMatch = false;
-            for (const auto& ev : route.on)
-            {
-                if (ev == event_type) { eventMatch = true; break; }
-            }
-            if (!eventMatch) continue;
-            if (!schedule_is_active_locked(route.schedule_id))
-            {
-                record_schedule_skip_locked("route", route.name, route.schedule_id, event_type, alarmWithAudio.alarm_id);
-                continue;
-            }
-            if (route.type == "audio_command")
-            {
-                if (route_needs_audio_path(route) && alarmWithAudio.audio_path.empty()) continue;
-            }
-
-            Job job;
-            job.route = route;
-            job.alarm = alarmWithAudio;
-            job.event_type = event_type;
-            const int64_t tNow = now_ms();
-            job.due_ms = tNow + ((job.event_type == "active") ? std::max<int64_t>(0, job.route.repeat_initial_delay_ms) : 0LL);
-            if (job.route.max_repeats <= 0) job.repeats_left = -1;
-            else job.repeats_left = std::max(0, job.route.max_repeats - 1);
-            // Repeat behavior is controlled by policies/routes only (not per-alarm properties).
-            apply_audio_default_arg(job);
-            audio_jobs_.push_back(std::move(job));
-        }
         audio_cv_.notify_all();
         modem_cv_.notify_all();
     }
@@ -4819,6 +4778,15 @@ public:
         return run_voice_modem_call(job, result);
     }
 
+    static std::string trim_ws(const std::string& in)
+    {
+        size_t a = 0;
+        while (a < in.size() && std::isspace(static_cast<unsigned char>(in[a]))) ++a;
+        size_t b = in.size();
+        while (b > a && std::isspace(static_cast<unsigned char>(in[b - 1]))) --b;
+        return in.substr(a, b - a);
+    }
+
 	    bool test_audio_playback(const std::string& audio_file, const std::string& tts_text, const std::string& output_device, std::string& result)
 	    {
 	        Route route;
@@ -4834,25 +4802,10 @@ public:
 	            }
 	            else
 	            {
-	                auto trim_ws = [](const std::string& in) -> std::string {
-	                    size_t a = 0;
-	                    while (a < in.size() && std::isspace(static_cast<unsigned char>(in[a]))) ++a;
-	                    size_t b = in.size();
-	                    while (b > a && std::isspace(static_cast<unsigned char>(in[b - 1]))) --b;
-	                    return in.substr(a, b - a);
-	                };
 	                const std::string outputRaw = trim_ws(output_device);
-	                const std::string output = outputRaw.empty() ? "default" : outputRaw;
 	                route.type = "audio_command";
 	                route.command = "/usr/bin/aplay";
-	                if (output == "default")
-	                {
-	                    route.args = {"{audio_path}"};
-	                }
-	                else
-	                {
-	                    route.args = {"-D", output, "{audio_path}"};
-	                }
+	                route.args = audio_args_for_output(outputRaw);
 	            }
 	            route.name = "audio:test";
 	            route.repeat_ms = 0;
@@ -5505,6 +5458,20 @@ private:
         return firstEnabledAudio;
     }
 
+    static std::vector<std::string> audio_args_for_output(const std::string& outputRaw)
+    {
+        const std::string output = trim_ws(outputRaw).empty() ? "default" : trim_ws(outputRaw);
+        if (output == "default") return {"{audio_path}"};
+        return {"-D", output, "{audio_path}"};
+    }
+
+    void apply_configured_audio_output_locked(Route& route) const
+    {
+        if (route.type != "audio_command") return;
+        if (trim_ws(audio_output_device_).empty()) return;
+        route.args = audio_args_for_output(audio_output_device_);
+    }
+
     bool enqueue_audio_policy_job_locked(const Policy& policy,
                                          const AlarmState& alarm,
                                          const std::string& event_type,
@@ -5517,7 +5484,7 @@ private:
             record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "no enabled audio_command route configured");
             return false;
         }
-        if (route_needs_audio_path(*baseRoute) && alarm.audio_path.empty())
+        if (route_needs_audio_path(*baseRoute) && alarm_audio_paths_empty(alarm))
         {
             record_policy_skip_locked(scope_name, policy.id, event_type, alarm.alarm_id, "audio route requires audio path but alarm has no audio");
             return false;
@@ -5540,6 +5507,8 @@ private:
         const int64_t tNow = now_ms();
         job.due_ms = tNow + ((event_type == "active") ? std::max<int64_t>(0, policy.repeat_initial_delay_ms) : 0LL);
         apply_audio_default_arg(job);
+        log_escalation_locked("queued_audio", job,
+            audio_job_detail(job) + " due_in_ms=" + std::to_string(std::max<int64_t>(0, job.due_ms - tNow)));
         audio_jobs_.push_back(std::move(job));
         return true;
     }
@@ -5605,6 +5574,11 @@ private:
 	                job.policy_id = policy.id;
 	                if (policy.max_repeats <= 0) job.repeats_left = -1;
 	                else job.repeats_left = std::max(0, policy.max_repeats - 1);
+	                log_escalation_locked("queued_email", job,
+	                    email_job_detail(job) + " due_in_ms=" + std::to_string(std::max<int64_t>(0, job.due_ms - now_ms())),
+	                    job.contact_id,
+	                    job.contact_name,
+	                    job.email);
 	                modem_jobs_.push_back(std::move(job));
 	                ++enqueued;
 	            };
@@ -5746,10 +5720,21 @@ private:
             if (!route.enabled) continue;
             if (!vector_contains(route.alarms, alarm.alarm_id)) continue;
             matchedAlarmRoute = true;
+            if (route.policy_ids.empty())
+            {
+                record_policy_skip_locked(route.name.empty() ? route.id : route.name, "", event_type, alarm.alarm_id,
+                    "alarm route matched but has no policies selected");
+                continue;
+            }
             for (const auto& policyId : route.policy_ids)
             {
                 const Policy* policy = find_policy_locked(policyId);
-                if (!policy) continue;
+                if (!policy)
+                {
+                    record_policy_skip_locked(route.name.empty() ? route.id : route.name, policyId, event_type, alarm.alarm_id,
+                        "alarm route references a missing policy");
+                    continue;
+                }
                 const std::string dedupeKey = policy->id + "\n" + route.schedule_id;
                 if (!enqueuedRoutePolicies.insert(dedupeKey).second) continue;
                 enqueue_policy_output_locked(*policy, route.schedule_id, alarm, event_type, route.name.empty() ? route.id : route.name);
@@ -6030,6 +6015,16 @@ private:
         return false;
     }
 
+    static bool alarm_audio_paths_empty(const AlarmState& alarm)
+    {
+        if (!alarm.audio_path.empty()) return false;
+        for (const auto& path : alarm.audio_paths)
+        {
+            if (!path.empty()) return false;
+        }
+        return true;
+    }
+
     static std::string command_string(const Job& job)
     {
         if (job.route.type == "voice_modem")
@@ -6047,6 +6042,37 @@ private:
             out += format_arg(arg, job.alarm);
         }
         return out;
+    }
+
+    static std::string audio_job_detail(const Job& job)
+    {
+        return "command=" + command_string(job)
+            + " audio=" + audio_sequence_summary(job.alarm)
+            + " files=" + std::to_string(job.alarm.audio_paths.size())
+            + " gap_ms=" + std::to_string(std::max(0, std::min(5000, job.audio_gap_ms)))
+            + " repeat_ms=" + std::to_string(job.route.repeat_ms)
+            + " repeats_left=" + std::to_string(job.repeats_left)
+            + " event_type=" + job.event_type;
+    }
+
+    static std::string email_job_detail(const Job& job)
+    {
+        std::string subject = job.email_subject;
+        if (subject.empty()) subject = email_subject_for_alarm(job.alarm, job.event_type);
+        std::string cleanSubject;
+        cleanSubject.reserve(subject.size());
+        for (const char ch : subject)
+        {
+            const unsigned char c = static_cast<unsigned char>(ch);
+            if (c < 32) continue;
+            cleanSubject.push_back(ch);
+            if (cleanSubject.size() >= 160) break;
+        }
+        return "to=" + job.email
+            + " subject=" + cleanSubject
+            + " repeat_ms=" + std::to_string(job.route.repeat_ms)
+            + " repeats_left=" + std::to_string(job.repeats_left)
+            + " event_type=" + job.event_type;
     }
 
     static int run_command(const Job& job)
@@ -7441,9 +7467,11 @@ private:
 	            }
             if (job.route.type == "audio_command")
             {
+                log_escalation("start_audio", job, audio_job_detail(job));
                 const int rc = run_audio_command_sequence(job);
                 ok = (rc == 0);
-                result = "exit_code=" + std::to_string(rc);
+                result = "exit_code=" + std::to_string(rc) + " " + audio_job_detail(job);
+                log_escalation(ok ? "audio_ok" : "audio_failed", job, result);
             }
 	            else if (job.route.type == "voice_modem")
 	            {
@@ -7456,8 +7484,13 @@ private:
 	            }
 	            else if (job.route.type == "email")
 	            {
-	                log_escalation("send_email", job, "to=" + job.email, job.contact_id, job.contact_name, job.email);
+	                log_escalation("send_email", job, email_job_detail(job), job.contact_id, job.contact_name, job.email);
 	                ok = run_email_job(job, result);
+	                log_escalation(ok ? "email_ok" : "email_failed", job,
+	                    result + " " + email_job_detail(job),
+	                    job.contact_id,
+	                    job.contact_name,
+	                    job.email);
 	            }
 	            else if (job.route.type == "call_sequence")
 	            {
@@ -7524,6 +7557,7 @@ private:
     std::vector<AlarmRouteBinding> alarm_route_bindings_;
     std::unordered_map<std::string, Schedule> schedules_;
     std::unordered_map<std::string, std::string> audio_paths_;
+    std::string audio_output_device_;
     AlarmDb* db_ = nullptr;
     std::function<bool(const std::string&, const std::string&)> should_continue_;
     std::function<bool(const std::string&, const std::string&, const std::string&)> ack_alarm_;
@@ -7880,7 +7914,6 @@ struct AlarmEngine
                 r["site"] = a.value("site", "");
                 if (a.contains("repeat_ms")) r["repeat_ms"] = a["repeat_ms"];
                 if (a.contains("delay_ms")) r["delay_ms"] = a["delay_ms"];
-                if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
                 if (a.contains("audio_mode")) r["audio_mode"] = a["audio_mode"];
@@ -7956,7 +7989,6 @@ struct AlarmEngine
             r.message_on_return = it.value("message_on_return", "");
             r.notification_policy = it.value("notification_policy", "");
             const ResolvedAlarmAudio audio = resolve_alarm_audio(schema2, it, dirname_of(path));
-            r.audible_enabled = audio.audible_enabled;
             r.audio_file = audio.audio_file;
             r.audio_path = audio.audio_path;
             r.speech_text = audio.speech_text;
@@ -7994,7 +8026,6 @@ struct AlarmEngine
             s.message = "";
             s.message_on_active = r.message_on_active;
             s.message_on_return = r.message_on_return;
-            s.audible_enabled = r.audible_enabled;
             s.audio_file = r.audio_file;
             s.audio_path = r.audio_path;
             s.speech_text = r.speech_text;
@@ -9335,7 +9366,6 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
                 r["site"] = a.value("site", "");
                 if (a.contains("repeat_ms")) r["repeat_ms"] = a["repeat_ms"];
                 if (a.contains("delay_ms")) r["delay_ms"] = a["delay_ms"];
-                if (a.contains("audible_enabled")) r["audible_enabled"] = a["audible_enabled"];
                 if (a.contains("audio_file")) r["audio_file"] = a["audio_file"];
                 if (a.contains("speech_text")) r["speech_text"] = a["speech_text"];
                 if (a.contains("audio_mode")) r["audio_mode"] = a["audio_mode"];
@@ -9402,7 +9432,6 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             r.message_on_return = it.value("message_on_return", "");
             r.notification_policy = it.value("notification_policy", "");
             const ResolvedAlarmAudio audio = resolve_alarm_audio(runtimeRoot, it, configDir);
-            r.audible_enabled = audio.audible_enabled;
             r.audio_file = audio.audio_file;
             r.audio_path = audio.audio_path;
             r.speech_text = audio.speech_text;
@@ -9438,7 +9467,6 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.message = "";
             s.message_on_active = r.message_on_active;
             s.message_on_return = r.message_on_return;
-            s.audible_enabled = r.audible_enabled;
             s.audio_file = r.audio_file;
             s.audio_path = r.audio_path;
             s.speech_text = r.speech_text;
@@ -9777,6 +9805,42 @@ int main(int argc, char **argv)
             {"shelved", shelved},
             {"disabled", disabled}
         };
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    svr.Post("/alarm/api/reload", [&](const httplib::Request &, httplib::Response &res) {
+        json j;
+        std::string err;
+        const int64_t prev = engine.last_config_mtime_ms.load();
+        bool ok = false;
+        if (!adminToken.empty())
+        {
+            ok = fetch_rules_from_opcbridge(engine, opcbridgeHost, opcbridgeHttpPort, adminToken, configDir, err);
+            if (ok) rulesFromOpcbridge.store(true);
+        }
+        if (!ok)
+        {
+            try {
+                engine.load_rules_from_file(alarmsPath);
+                ok = true;
+                err.clear();
+                rulesFromOpcbridge.store(false);
+            } catch (const std::exception& ex) {
+                err = ex.what();
+            }
+        }
+        if (ok)
+        {
+            subscriptionGeneration.fetch_add(1);
+            const int64_t since = now_ms() - (14LL * 24LL * 60LL * 60LL * 1000LL);
+            engine.restore_state_from_db(since);
+        }
+        j["ok"] = ok;
+        j["previous_mtime_ms"] = prev;
+        j["mtime_ms"] = engine.last_config_mtime_ms.load();
+        j["source"] = rulesFromOpcbridge.load() ? "opcbridge" : "local";
+        if (!ok) j["error"] = err.empty() ? "reload failed" : err;
+        res.status = ok ? 200 : 500;
         res.set_content(j.dump(2), "application/json");
     });
 
