@@ -150,6 +150,64 @@ code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
 
+.overview-grid {
+  align-items: start;
+}
+
+.overview-health-card {
+  grid-column: 1 / -1;
+}
+
+.overview-rebuild-strip {
+  grid-column: 1 / -1;
+}
+
+.overview-rebuild-strip .card-body {
+  padding: 8px 12px;
+}
+
+.overview-rebuild-strip-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.overview-strip-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-weight: 700;
+  font-size: 11px;
+  margin-right: 8px;
+}
+
+.overview-rebuild-strip-details {
+  margin-top: 4px;
+}
+
+.overview-health-card .card-body {
+  padding: 14px;
+}
+
+.overview-alarms-card {
+  min-height: 0;
+}
+
+.overview-raw-status {
+  margin-top: 0;
+}
+
+.overview-raw-status > summary {
+  cursor: pointer;
+  color: var(--muted-strong);
+}
+
+.overview-raw-status pre.mono {
+  margin-top: 8px;
+  max-height: 360px;
+}
+
 .card {
   border: 1px solid var(--border);
   border-radius: 8px;

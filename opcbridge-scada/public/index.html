@@ -43,9 +43,25 @@
   <main class="main">
     <section id="tab-overview" class="panel is-active">
       <h2>Overview</h2>
-      <div class="grid">
-        <div class="card">
+      <div class="grid overview-grid">
+	        <div class="card overview-rebuild-strip">
+	          <div class="card-body">
+              <div class="overview-rebuild-strip-main">
+                <div>
+	                <span class="overview-strip-label">Runtime Rebuild</span>
+	                <span class="status" id="overviewRebuildStatus">Checking…</span>
+                </div>
+                <div class="row-actions">
+	                <button class="btn" id="overviewRebuildBtn" type="button">Rebuild Full Runtime</button>
+                </div>
+              </div>
+	            <div class="small" id="overviewRebuildHint"></div>
+	            <div class="small overview-rebuild-strip-details" id="overviewRebuildDetails"></div>
+	          </div>
+	        </div>
+        <div class="card overview-health-card">
           <div class="card-title">OPCBridge /health</div>
+          <div class="card-body">
           <div id="overviewHealthOverall" class="status">Loading…</div>
           <div id="overviewHealthWatchdog" class="small"></div>
           <div class="small" id="overviewHealthMeta"></div>
@@ -54,24 +70,21 @@
             <summary class="small">Raw JSON</summary>
             <pre class="mono" id="healthJson">Loading…</pre>
           </details>
+          </div>
         </div>
-	        <div class="card">
+	        <div class="card overview-alarms-card">
 	          <div class="card-title">OPCBridge Alarms /alarm/api/status</div>
+            <div class="card-body">
             <div class="status status-degraded" id="overviewAlarmRuntimeWarning" style="display:none; margin:8px 0;"></div>
             <div class="row-actions" id="overviewAlarmRuntimeWarningActions" style="display:none; margin:6px 0 8px 0;">
               <button class="btn" id="alarmRuntimeRefreshBtn" type="button">Re-test Now</button>
               <button class="btn" id="alarmRuntimeRestartBtn" type="button">Restart Alarm Runtime</button>
             </div>
-	          <pre class="mono" id="alarmsStatusJson">Loading…</pre>
-	        </div>
-	        <div class="card">
-	          <div class="card-title">Runtime Rebuild</div>
-	          <div class="status" id="overviewRebuildStatus">Checking…</div>
-	          <div class="small" id="overviewRebuildHint"></div>
-	          <div class="small" id="overviewRebuildDetails" style="margin-top: 8px;"></div>
-	          <div class="form-actions" style="margin-top: 10px;">
-	            <button class="btn" id="overviewRebuildBtn" type="button">Rebuild Full Runtime</button>
-	          </div>
+            <details class="details overview-raw-status">
+              <summary class="small">Raw status JSON</summary>
+	            <pre class="mono" id="alarmsStatusJson">Loading…</pre>
+            </details>
+            </div>
 	        </div>
 	      </div>
     </section>
@@ -96,6 +109,11 @@
               <label>Refresh Interval (ms)</label>
               <input id="scadaRefreshMs" type="number" min="250" max="30000" step="250" />
             </div>
+            <div class="form-row">
+              <label>Session Timeout (min)</label>
+              <input id="scadaSessionTimeoutMinutes" type="number" min="0" step="1" placeholder="0 = no timeout" />
+            </div>
+            <div class="hint">This is the shared OPCBridge login session timeout used by SCADA and HMI. Set to 0 to disable automatic logout.</div>
 
             <div class="divider"></div>
 

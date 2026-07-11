@@ -26,6 +26,7 @@
   scadaListenHost: document.getElementById('scadaListenHost'),
   scadaListenPort: document.getElementById('scadaListenPort'),
   scadaRefreshMs: document.getElementById('scadaRefreshMs'),
+  scadaSessionTimeoutMinutes: document.getElementById('scadaSessionTimeoutMinutes'),
   scadaOpcbridgeScheme: document.getElementById('scadaOpcbridgeScheme'),
   scadaOpcbridgeHost: document.getElementById('scadaOpcbridgeHost'),
   scadaOpcbridgePort: document.getElementById('scadaOpcbridgePort'),
@@ -9999,6 +10000,13 @@ function fillScadaSettings(cfg) {
   refreshApiQuickRef();
 }
 
+function fillSharedSessionTimeout(timeoutMinutes) {
+  const value = String(Math.max(0, Math.floor(Number(timeoutMinutes) || 0)));
+  if (els.scadaSessionTimeoutMinutes) els.scadaSessionTimeoutMinutes.value = value;
+  if (els.usersInitTimeout) els.usersInitTimeout.value = value;
+  if (els.usersTimeoutMinutes) els.usersTimeoutMinutes.value = value;
+}
+
 function readScadaSettingsFromForm() {
   return {
     listen: {
@@ -10660,7 +10668,7 @@ async function persistSoundSettingsSelection() {
 	    route.enabled = true;
     route.min_severity = Number(route.min_severity ?? 0) || 0;
     route.on = Array.isArray(route.on) && route.on.length ? route.on : ['active'];
-    route.command = '/usr/bin/aplay';
+	    route.command = '/usr/bin/aplay';
     route.args = buildAudioRouteArgsForOutput(output);
     // Preserve the existing repeat_ms exactly (including 0 = disabled). Default to 0 if unset.
     route.repeat_ms = normalizeRepeatMs(route.repeat_ms, 0);
@@ -11111,13 +11119,21 @@ async function testVoiceModemCall() {
 async function loadScadaSettings() {
   setScadaSettingsStatus('Loading…');
   try {
-    const data = await apiGet('/api/scada/config');
+    const [data, authStatus] = await Promise.all([
+      apiGet('/api/scada/config'),
+      apiGet('/api/opcbridge/auth/status').catch((err) => ({ _load_error: err.message }))
+    ]);
     fillScadaSettings(data?.config);
+    if (authStatus && !authStatus._load_error) {
+      state.opcbridgeAuthStatus = authStatus;
+      fillSharedSessionTimeout(authStatus?.timeoutMinutes);
+    }
     state.scadaConfigFull = data?.config || null;
     renderWorkspaceTree();
     refreshTopLinks();
     refreshApiQuickRef();
-    setScadaSettingsStatus(data?.local_only ? 'Ready. (Config updates restricted to localhost)' : 'Ready.');
+    const authNote = authStatus?._load_error ? ` Session timeout unavailable: ${authStatus._load_error}` : '';
+    setScadaSettingsStatus(`${data?.local_only ? 'Ready. (Config updates restricted to localhost)' : 'Ready.'}${authNote}`);
   } catch (err) {
     setScadaSettingsStatus(`Failed: ${err.message}`);
   }
@@ -11175,15 +11191,30 @@ async function saveScadaSettings() {
   setScadaSettingsStatus('Saving…');
   try {
     const next = readScadaSettingsFromForm();
+    const timeoutInputPresent = Boolean(els.scadaSessionTimeoutMinutes);
+    const timeoutMinutes = Math.max(0, Math.floor(Number(els.scadaSessionTimeoutMinutes?.value) || 0));
+    const previousTimeout = Math.max(0, Math.floor(Number(state.opcbridgeAuthStatus?.timeoutMinutes) || 0));
     const resp = await apiPostJson('/api/scada/config', { config: next });
     fillScadaSettings(resp?.config);
     refreshTopLinks();
     refreshApiQuickRef();
 
+    let timeoutSaved = false;
+    if (timeoutInputPresent && timeoutMinutes !== previousTimeout) {
+      await apiJson('/api/opcbridge/auth/timeout', { method: 'PUT', bodyObj: { timeoutMinutes } });
+      timeoutSaved = true;
+      state.opcbridgeAuthStatus = {
+        ...(state.opcbridgeAuthStatus || {}),
+        timeoutMinutes
+      };
+      fillSharedSessionTimeout(timeoutMinutes);
+      await refreshUserAuthLine();
+    }
+
     if (resp?.restart_required) {
-    setScadaSettingsStatus('Saved. Restart OPCBridge SCADA for listen host/port changes to take effect.');
+      setScadaSettingsStatus(`Saved${timeoutSaved ? ' session timeout' : ''}. Restart OPCBridge SCADA for listen host/port changes to take effect.`);
     } else {
-      setScadaSettingsStatus('Saved.');
+      setScadaSettingsStatus(timeoutSaved ? 'Saved. Session timeout updated for SCADA and HMI.' : 'Saved.');
     }
 
     await loadBootstrapConfig();
@@ -22145,12 +22176,12 @@ async function refreshUsersPanel() {
 
 	    if (!initialized) {
 	      // Leave blank by default; user may not use "admin" as the initial username.
-	      if (els.usersInitTimeout) els.usersInitTimeout.value = String(timeoutMinutes || 0);
+	      fillSharedSessionTimeout(timeoutMinutes);
 	      setUsersInitStatus('');
 	      return;
 	    }
 
-    if (els.usersTimeoutMinutes) els.usersTimeoutMinutes.value = String(timeoutMinutes || 0);
+    fillSharedSessionTimeout(timeoutMinutes);
     setUsersTimeoutStatus('');
     const canAdmin = loggedIn && role === 'admin';
     if (els.usersTimeoutSaveBtn) els.usersTimeoutSaveBtn.disabled = !canAdmin;
