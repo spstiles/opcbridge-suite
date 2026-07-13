@@ -5421,7 +5421,26 @@ const openAbout = async () => {
   await refreshAbout();
 };
 
-const isTouchRuntimeEndpoint = /^\/touch\/?$/i.test(window.location.pathname);
+const isTouchRuntimeEndpoint = /^\/touch(?:\/|$)/i.test(window.location.pathname);
+const normalizeStartupScreenId = (value) => String(value || "")
+  .trim()
+  .replace(/^\/+|\/+$/g, "")
+  .replace(/\.(jsonc|screen)$/i, "");
+const getTouchStartupScreenOverride = () => {
+  if (!isTouchRuntimeEndpoint) return "";
+  const params = new URLSearchParams(window.location.search || "");
+  const queryScreen = normalizeStartupScreenId(params.get("screen") || params.get("startup") || "");
+  if (queryScreen) return queryScreen;
+  const path = String(window.location.pathname || "");
+  const match = path.match(/^\/touch\/(.+)$/i);
+  if (!match) return "";
+  try {
+    return normalizeStartupScreenId(decodeURIComponent(match[1] || ""));
+  } catch {
+    return normalizeStartupScreenId(match[1] || "");
+  }
+};
+const touchStartupScreenOverrideId = getTouchStartupScreenOverride();
 let isEditMode = false;
 let defaultScreenId = DEFAULT_SCREEN_ID;
 let defaultScreenConfigured = false;
@@ -15497,10 +15516,11 @@ async function refreshScreensList() {
     }
     refreshGroupActionScreenOptions();
 
-    const startupScreen = defaultScreenConfigured
+    const startupRequestedId = touchStartupScreenOverrideId || (defaultScreenConfigured ? defaultScreenId : "");
+    const startupScreen = startupRequestedId
       ? (availableScreens.find((s) =>
-        String(s?.ref || "") === String(defaultScreenId || "") ||
-        String(s?.id || "") === String(defaultScreenId || "")
+        String(s?.ref || "") === String(startupRequestedId || "") ||
+        String(s?.id || "") === String(startupRequestedId || "")
       ) || null)
       : null;
     const currentScreen = availableScreens.find((s) =>
@@ -15518,8 +15538,8 @@ async function refreshScreensList() {
         applyScreenSelection(preferred.ref, preferred.path);
       }
     } else {
-      const requested = String(defaultScreenId || "").trim();
-      const reason = !defaultScreenConfigured
+      const requested = String(startupRequestedId || "").trim();
+      const reason = !requested
         ? "No startup screen is configured."
         : "Startup screen not found.";
       showStartupEmptyScreen(reason);
@@ -16657,9 +16677,10 @@ bindEnterToApply();
 }
 loadClientConfig()
   .then(() => {
-    if (currentScreenId === DEFAULT_SCREEN_ID && defaultScreenId && defaultScreenId !== DEFAULT_SCREEN_ID) {
-      currentScreenId = defaultScreenId;
-      currentScreenFilename = `${defaultScreenId}.jsonc`;
+    const startupId = touchStartupScreenOverrideId || defaultScreenId;
+    if (currentScreenId === DEFAULT_SCREEN_ID && startupId && startupId !== DEFAULT_SCREEN_ID) {
+      currentScreenId = startupId;
+      currentScreenFilename = `${startupId}.jsonc`;
     }
     return refreshScreensList();
   })

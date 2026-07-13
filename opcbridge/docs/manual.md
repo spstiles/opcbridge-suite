@@ -309,6 +309,32 @@ Login/logout shortcuts:
 - Open login/account panel: `Ctrl+Shift+L` (Windows/Linux) or `Cmd+Shift+L` (macOS)
 - Logout: `Ctrl+L` (Windows/Linux) or `Cmd+L` (macOS)
 
+3.2.4 HMI touchscreen runtime URLs
+
+`opcbridge-hmi` provides a touchscreen-oriented runtime endpoint for panel-mount computers:
+
+- `/touch`
+- `/touch/<screenId>`
+- `/touch?screen=<screenId>`
+- `/touch?startup=<screenId>`
+
+`/touch` uses the configured HMI default startup screen.
+
+`/touch/<screenId>` starts the runtime on the requested screen without changing the configured default screen. For example:
+
+```
+http://192.168.100.10:3010/touch/Bldg30Overview
+```
+
+The query-string forms are equivalent and are useful for bookmarks or future station-specific options:
+
+```
+http://192.168.100.10:3010/touch?screen=Bldg30Overview
+http://192.168.100.10:3010/touch?startup=Bldg30Overview
+```
+
+If both a path screen and a query-string screen are provided, the query-string value wins. If the requested screen does not exist, the HMI shows the normal startup-screen-not-found placeholder. These URL overrides are runtime-only and do not modify `hmi.defaultScreen`.
+
 3.3 Alarms — config/alarms.json
 {
   "alarms": [

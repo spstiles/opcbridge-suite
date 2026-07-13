@@ -384,7 +384,7 @@ const createApp = () => {
   // Dedicated panel/tablet entry point. The browser enforces the forced
   // touchscreen runtime mode based on this pathname; all assets and APIs are
   // shared with the normal HMI application.
-  app.get(/^\/touch$/, (_req, res) => {
+  app.get(/^\/touch(?:\/[^?]*)?$/, (_req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.sendFile(path.join(ROOT, "public", "index.html"));
   });
