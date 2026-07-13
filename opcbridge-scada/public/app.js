@@ -6872,6 +6872,9 @@ function downloadDeviceTagsCsv(connectionId) {
 	    'name',
 	    'source',
 	    'plc_tag_name',
+	    'register_type',
+	    'address',
+	    'offset',
 	    'source_tag',
 	    'bit',
 	    'initial_value',
@@ -6901,15 +6904,25 @@ function downloadDeviceTagsCsv(connectionId) {
 	  const rows = tags.map((t) => {
 	    const historian = normalizeTagHistorianSettings(t);
 	    const scaling = getTagScalingCsvFields(t);
+	    const sourceTag = String(t?.source_tag || '').trim();
+	    const rawRegisterType = String(firstPresentTagValue(t?.register_type, t?.modbus_type, t?.register) ?? '').trim();
+	    const rawAddress = firstPresentTagValue(t?.address, t?.modbus_address);
+	    const rawOffset = firstPresentTagValue(t?.offset, t?.modbus_offset);
+	    const hasModbusFields = rawRegisterType !== '' ||
+	      (rawAddress != null && String(rawAddress).trim() !== '') ||
+	      (rawOffset != null && String(rawOffset).trim() !== '');
 	    return {
 	      // Derived tags: source_tag is set (bit optional) and no plc_tag_name
 	      // Direct tags: plc_tag_name and no source_tag/bit
 	      connection_id: cid,
 	      name: String(t?.name || '').trim(),
 	      source: String(t?.source || t?.source_type || '').trim(),
-	      plc_tag_name: (String(t?.source_tag || '').trim() !== '') ? '' : String(t?.plc_tag_name || '').trim(),
-	      source_tag: String(t?.source_tag || '').trim(),
-	      bit: (t?.bit == null || String(t?.source_tag || '').trim() === '') ? '' : String(t.bit),
+	      plc_tag_name: (sourceTag !== '') ? '' : String(t?.plc_tag_name || '').trim(),
+	      register_type: (sourceTag === '' && hasModbusFields) ? normalizeModbusRegisterType(rawRegisterType) : '',
+	      address: (sourceTag === '' && rawAddress != null) ? String(rawAddress).trim() : '',
+	      offset: (sourceTag === '' && rawOffset != null) ? String(rawOffset).trim() : '',
+	      source_tag: sourceTag,
+	      bit: (t?.bit == null || sourceTag === '') ? '' : String(t.bit),
 	      initial_value: String(t?.initial_value ?? ''),
 	      invert: (t?.invert === true) ? 'true' : 'false',
 	      datatype: String(t?.datatype || '').trim(),
