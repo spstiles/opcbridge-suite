@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <regex>
 #include <array>
+#include <functional>
 
 // Version info (wired in via build.sh)
 #ifndef OPCBRIDGE_VERSION
@@ -520,6 +521,10 @@ struct LogicRuntimeState {
 static std::mutex g_logicMutex;
 static LogicRuntimeState g_logicState;
 
+static std::function<bool(const std::string &,
+                          const std::string &,
+                          const std::string &,
+                          std::string *)> g_logicAsyncWriteEnqueue;
 
 struct UaTagBinding {
     int32_t handle;   // libplctag handle
@@ -9053,6 +9058,7 @@ static LogicReferenceValidation apply_logic_memory_writes(
 
         TagConfig cfg;
         bool found = false;
+        std::string driverName;
         const std::string key = make_tag_key(conn, name);
         TagSnapshot prev;
         bool hadPrev = false;
@@ -9060,6 +9066,7 @@ static LogicReferenceValidation apply_logic_memory_writes(
             std::lock_guard<std::mutex> lock(driverMutex);
             for (const auto &driver : drivers) {
                 if (driver.conn.id != conn) continue;
+                driverName = to_lower_copy(trim_copy(driver.conn.driver));
                 for (const auto &tag : driver.tags) {
                     if (tag.cfg.logical_name == name) {
                         cfg = tag.cfg;
@@ -9110,6 +9117,21 @@ static LogicReferenceValidation apply_logic_memory_writes(
         }
         if (!cfg.writable) {
             if (errors.size() < 5) errors.push_back("Tag is not writable: " + conn + ":" + name);
+            continue;
+        }
+
+        const bool immediateLogicWrite = is_memory_tag(cfg) || driverName == "mqtt";
+        if (!immediateLogicWrite && g_logicAsyncWriteEnqueue) {
+            std::string queueErr;
+            if (!g_logicAsyncWriteEnqueue(conn, name, valueText, &queueErr)) {
+                if (errors.size() < 5) errors.push_back("Queue write failed: " + conn + ":" + name + (queueErr.empty() ? "" : " - " + queueErr));
+                continue;
+            }
+            if (out.memory_writes < 10) {
+                if (!out.write_preview.empty()) out.write_preview += "; ";
+                out.write_preview += conn + ":" + name + "=" + valueText + " (queued)";
+            }
+            ++out.memory_writes;
             continue;
         }
 
@@ -27639,6 +27661,90 @@ window.addEventListener("load", startAutoRefresh);
 	        }
 	        startPollers(activeGen);
 	        g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
+
+	        struct LogicAsyncWriteEntry {
+	            std::string conn;
+	            std::string name;
+	            std::string value;
+	            bool queued = false;
+	            bool in_progress = false;
+	        };
+	        std::mutex logicAsyncWriteMutex;
+	        std::condition_variable logicAsyncWriteCv;
+	        std::unordered_map<std::string, LogicAsyncWriteEntry> logicAsyncWrites;
+	        std::deque<std::string> logicAsyncWriteReady;
+	        std::atomic<bool> logicAsyncWriteStop{false};
+	        g_logicAsyncWriteEnqueue = [&](const std::string &conn,
+	                                       const std::string &name,
+	                                       const std::string &value,
+	                                       std::string *errorOut) -> bool {
+	            const std::string c = trim_copy(conn);
+	            const std::string n = trim_copy(name);
+	            if (errorOut) errorOut->clear();
+	            if (c.empty() || n.empty()) {
+	                if (errorOut) *errorOut = "missing connection or tag name";
+	                return false;
+	            }
+	            const std::string key = make_tag_key(c, n);
+	            {
+	                std::lock_guard<std::mutex> lock(logicAsyncWriteMutex);
+	                auto &entry = logicAsyncWrites[key];
+	                entry.conn = c;
+	                entry.name = n;
+	                entry.value = value;
+	                if (!entry.queued && !entry.in_progress) {
+	                    entry.queued = true;
+	                    logicAsyncWriteReady.push_back(key);
+	                    logicAsyncWriteCv.notify_one();
+	                }
+	            }
+	            return true;
+	        };
+	        std::thread logicAsyncWriteThread([&]() {
+	            while (!logicAsyncWriteStop.load(std::memory_order_relaxed)) {
+	                std::string key;
+	                LogicAsyncWriteEntry job;
+	                {
+	                    std::unique_lock<std::mutex> lock(logicAsyncWriteMutex);
+	                    logicAsyncWriteCv.wait(lock, [&]() {
+	                        return logicAsyncWriteStop.load(std::memory_order_relaxed) || !logicAsyncWriteReady.empty();
+	                    });
+	                    if (logicAsyncWriteStop.load(std::memory_order_relaxed)) break;
+	                    key = logicAsyncWriteReady.front();
+	                    logicAsyncWriteReady.pop_front();
+	                    auto it = logicAsyncWrites.find(key);
+	                    if (it == logicAsyncWrites.end()) continue;
+	                    it->second.queued = false;
+	                    it->second.in_progress = true;
+	                    job = it->second;
+	                }
+
+	                std::string writeErr;
+	                const bool ok = write_tag_by_name(drivers, job.conn, job.name, job.value, tagTable, driverMutex, &writeErr);
+	                if (!ok) {
+	                    std::cerr << "[logic] Async write failed for ["
+	                              << job.conn << "]." << job.name
+	                              << ": " << writeErr << "\n";
+	                }
+
+	                {
+	                    std::lock_guard<std::mutex> lock(logicAsyncWriteMutex);
+	                    auto it = logicAsyncWrites.find(key);
+	                    if (it == logicAsyncWrites.end()) continue;
+	                    it->second.in_progress = false;
+	                    if (it->second.value != job.value) {
+	                        if (!it->second.queued) {
+	                            it->second.queued = true;
+	                            logicAsyncWriteReady.push_back(key);
+	                            logicAsyncWriteCv.notify_one();
+	                        }
+	                    } else {
+	                        logicAsyncWrites.erase(it);
+	                    }
+	                }
+	            }
+	        });
+	        logicAsyncWriteThread.detach();
 
 	        auto runLogicSchedulerCycle = [&]() {
 	            std::set<std::string> tagKeys;
