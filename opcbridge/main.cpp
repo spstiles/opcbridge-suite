@@ -9394,7 +9394,9 @@ static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
         for (size_t i = 0; i < g_logicState.scripts.size(); ++i) {
             auto &script = g_logicState.scripts[i];
             if (!script.enabled) continue;
-            const int interval = std::max(1000, script.interval_ms);
+            const int interval = (script.interval_ms > 0)
+                ? std::max(100, script.interval_ms)
+                : 1000;
             if (script.last_run_ms <= 0 || (nowMs - script.last_run_ms) >= interval) {
                 due.push_back(i);
             }
@@ -26488,7 +26490,6 @@ window.addEventListener("load", startAutoRefresh);
 	        auto lastSystemMqttPublish = std::chrono::steady_clock::time_point{};
 	        auto lastSystemWsPublish = std::chrono::steady_clock::time_point{};
 	        std::unordered_map<std::string, json> lastWsSystemValues;
-	        auto lastLogicConfigCheck = std::chrono::steady_clock::time_point{};
 
 	        struct PollTagItem {
 	            TagConfig cfg;
@@ -27639,89 +27640,72 @@ window.addEventListener("load", startAutoRefresh);
 	        startPollers(activeGen);
 	        g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
 
-	        while (true) {
-	            auto logicNow = std::chrono::steady_clock::now();
-	            if (lastLogicConfigCheck.time_since_epoch().count() == 0 ||
-	                logicNow - lastLogicConfigCheck >= std::chrono::seconds(2)) {
-	                load_logic_config(configDir, false);
-	                lastLogicConfigCheck = logicNow;
-	            }
+	        auto runLogicSchedulerCycle = [&]() {
+	            std::set<std::string> tagKeys;
+	            std::unordered_map<std::string, TagSnapshot> logicTagSnapshots;
 	            {
-	                std::set<std::string> tagKeys;
-	                std::unordered_map<std::string, TagSnapshot> logicTagSnapshots;
-	                {
-	                    std::unique_lock<std::mutex> logicDriverLock(driverMutex);
-	                    // Include all configured tags (even if they do not have a current snapshot yet).
-	                    for (const auto &driver : drivers) {
-	                        for (const auto &t : driver.tags) {
-	                            const std::string name = t.cfg.logical_name;
-	                            if (name.empty()) continue;
-	                            tagKeys.insert(make_tag_key(driver.conn.id, name));
-	                        }
-	                    }
-	                    // Include MQTT subscription payload tags (even if no message has been received yet).
-	                    for (const auto &m : g_mqttInputs) {
-	                        if (m.write_to_plc) continue;
-	                        if (m.connection_id.empty() || m.tag_name.empty()) continue;
-	                        tagKeys.insert(make_tag_key(m.connection_id, m.tag_name));
-	                    }
-	                    for (const auto &kv : tagTable) {
-	                        tagKeys.insert(kv.first);
-	                        logicTagSnapshots[kv.first] = kv.second;
+	                std::unique_lock<std::mutex> logicDriverLock(driverMutex);
+	                // Include all configured tags (even if they do not have a current snapshot yet).
+	                for (const auto &driver : drivers) {
+	                    for (const auto &t : driver.tags) {
+	                        const std::string name = t.cfg.logical_name;
+	                        if (name.empty()) continue;
+	                        tagKeys.insert(make_tag_key(driver.conn.id, name));
 	                    }
 	                }
-	                const auto systemRows = [&]() {
-	                    std::vector<SystemTagDef> rows;
-	                    auto appendRows = [&](std::vector<SystemTagDef> next) {
-	                        rows.insert(rows.end(), next.begin(), next.end());
-	                    };
-	                    const int64_t uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
-	                        std::chrono::system_clock::now() - processStartTime
-	                    ).count();
-	                    ReloadState reloadCopy;
-	                    {
-	                        std::lock_guard<std::mutex> rlock(g_reloadMutex);
-	                        reloadCopy = g_reloadState;
-	                    }
-	                    rows.push_back({"System/Bridge/UptimeSeconds", "int64", uptime_sec});
-	                    rows.push_back({"System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION)});
-	                    rows.push_back({"System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested});
-	                    rows.push_back({"System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen});
-	                    appendRows(collect_clock_system_tags());
-	                    appendRows(collect_host_system_tags());
-	                    appendRows(collect_alarm_system_tags());
-	                    appendRows(collect_reporter_system_tags());
-	                    appendRows(collect_historian_system_tags());
-	                    appendRows(collect_logic_system_tags());
-	                    appendRows(collect_mqtt_system_tags(mqttMode));
-	                    appendRows(collect_opcua_sync_system_tags(
-	                        reloadCopy,
-	                        g_full_rebuild_required.load(std::memory_order_relaxed)
-	                    ));
-	                    return rows;
-	                }();
-	                std::set<std::string> systemNames;
-	                std::unordered_map<std::string, SystemTagDef> systemSnapshots;
-	                for (const auto &row : systemRows) {
-	                    if (row.name.empty()) continue;
-	                    systemNames.insert(row.name);
-	                    systemSnapshots[row.name] = row;
+	                // Include MQTT subscription payload tags (even if no message has been received yet).
+	                for (const auto &m : g_mqttInputs) {
+	                    if (m.write_to_plc) continue;
+	                    if (m.connection_id.empty() || m.tag_name.empty()) continue;
+	                    tagKeys.insert(make_tag_key(m.connection_id, m.tag_name));
 	                }
-	                logic_run_validation_cycle(
-	                    tagKeys,
-	                    systemNames,
-	                    logicTagSnapshots,
-	                    systemSnapshots,
-	                    &drivers,
-	                    &tagTable,
-	                    &driverMutex,
-	                    &uaQueue,
-	                    &uaQueueMutex,
-	                    &mqttQueue,
-	                    &mqttQueueMutex
-	                );
+	                for (const auto &kv : tagTable) {
+	                    tagKeys.insert(kv.first);
+	                    logicTagSnapshots[kv.first] = kv.second;
+	                }
 	            }
 
+	            std::set<std::string> systemNames;
+	            std::unordered_map<std::string, SystemTagDef> systemSnapshots;
+	            for (const auto &row : collect_runtime_system_tags(processStartTime, mqttMode)) {
+	                if (row.name.empty()) continue;
+	                systemNames.insert(row.name);
+	                systemSnapshots[row.name] = row;
+	            }
+
+	            logic_run_validation_cycle(
+	                tagKeys,
+	                systemNames,
+	                logicTagSnapshots,
+	                systemSnapshots,
+	                &drivers,
+	                &tagTable,
+	                &driverMutex,
+	                &uaQueue,
+	                &uaQueueMutex,
+	                &mqttQueue,
+	                &mqttQueueMutex
+	            );
+	        };
+
+	        std::atomic<bool> logicSchedulerStop{false};
+	        std::thread logicSchedulerThread([&]() {
+	            auto lastCheck = std::chrono::steady_clock::time_point{};
+	            while (!logicSchedulerStop.load(std::memory_order_relaxed)) {
+	                const auto now = std::chrono::steady_clock::now();
+	                if (lastCheck.time_since_epoch().count() == 0 ||
+	                    now - lastCheck >= std::chrono::seconds(2)) {
+	                    load_logic_config(configDir, false);
+	                    lastCheck = now;
+	                }
+
+	                runLogicSchedulerCycle();
+	                std::this_thread::sleep_for(std::chrono::milliseconds(25));
+	            }
+	        });
+	        logicSchedulerThread.detach();
+
+	        while (true) {
 	            // Handle /reload requests (triggered by the HTTP thread) in the main thread.
 		            bool doReload = false;
 		            uint64_t requestedGen = 0;
