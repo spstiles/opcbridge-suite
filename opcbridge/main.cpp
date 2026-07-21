@@ -778,7 +778,19 @@ bool mqtt_publish_snapshot(const TagSnapshot &snap, const TagSnapshot *prevSnap)
 static std::vector<DriverContext> *g_mqttDrivers      = nullptr;
 static TagTable                   *g_mqttTagTable     = nullptr;
 static std::mutex                 *g_mqttDriverMutex  = nullptr;
-static WriterPrioritySharedMutex  *g_plcMutex         = nullptr;
+// Global lock protects handle lifecycle/config replacement. Normal reads and
+// writes hold it shared, then coordinate through a writer-priority gate scoped
+// to their own connection.
+static std::shared_mutex          *g_plcMutex         = nullptr;
+static std::mutex g_connectionPlcMutexesMutex;
+static std::unordered_map<std::string, std::shared_ptr<WriterPrioritySharedMutex>> g_connectionPlcMutexes;
+
+static std::shared_ptr<WriterPrioritySharedMutex> connection_plc_mutex(const std::string &connectionId) {
+    std::lock_guard<std::mutex> lock(g_connectionPlcMutexesMutex);
+    auto &gate = g_connectionPlcMutexes[connectionId];
+    if (!gate) gate = std::make_shared<WriterPrioritySharedMutex>();
+    return gate;
+}
 
 static std::atomic<uint64_t> g_logicWriteCompletedTotal{0};
 static std::atomic<uint64_t> g_logicWriteFailedTotal{0};
@@ -789,6 +801,9 @@ static std::atomic<uint64_t> g_logicWriteLockWaitMsLast{0};
 static std::atomic<uint64_t> g_logicWriteLockWaitMsMax{0};
 static std::atomic<uint64_t> g_logicWriteExecutionMsLast{0};
 static std::atomic<uint64_t> g_logicWriteExecutionMsMax{0};
+static std::mutex g_logicWriteLastTargetMutex;
+static std::string g_logicWriteLastConnection;
+static std::string g_logicWriteLastTag;
 
 static bool logic_lookup_live_snapshot(const std::string &key, TagSnapshot &out) {
     if (!g_mqttTagTable || !g_mqttDriverMutex) return false;
@@ -1443,6 +1458,14 @@ static std::vector<SystemTagDef> collect_logic_system_tags() {
         if (script.enabled) ++enabledCount;
     }
 
+    std::string lastWriteConnection;
+    std::string lastWriteTag;
+    {
+        std::lock_guard<std::mutex> lock(g_logicWriteLastTargetMutex);
+        lastWriteConnection = g_logicWriteLastConnection;
+        lastWriteTag = g_logicWriteLastTag;
+    }
+
     std::vector<SystemTagDef> rows = {
         {"System/Logic/RuntimeEnabled", "bool", false},
         {"System/Logic/ValidationOnly", "bool", copy.validation_only},
@@ -1460,6 +1483,8 @@ static std::vector<SystemTagDef> collect_logic_system_tags() {
         {"System/Logic/Writes/QueueDepth", "uint64", g_logicWriteQueueDepth.load(std::memory_order_relaxed)},
         {"System/Logic/Writes/CompletedTotal", "uint64", g_logicWriteCompletedTotal.load(std::memory_order_relaxed)},
         {"System/Logic/Writes/FailedTotal", "uint64", g_logicWriteFailedTotal.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/LastConnection", "string", lastWriteConnection},
+        {"System/Logic/Writes/LastTag", "string", lastWriteTag},
         {"System/Logic/Writes/QueueWaitMsLast", "uint64", g_logicWriteQueueWaitMsLast.load(std::memory_order_relaxed)},
         {"System/Logic/Writes/QueueWaitMsMax", "uint64", g_logicWriteQueueWaitMsMax.load(std::memory_order_relaxed)},
         {"System/Logic/Writes/LockWaitMsLast", "uint64", g_logicWriteLockWaitMsLast.load(std::memory_order_relaxed)},
@@ -5985,13 +6010,15 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         return true;
     }
 
-    // Serialize libplctag access across poll loop / HTTP / MQTT / OPC UA
-    // only for non-memory writes.
+    // Keep handles stable across the operation, then give this write priority
+    // over polling reads for its connection only.
     const auto plcLockWaitStarted = std::chrono::steady_clock::now();
-    std::unique_lock<WriterPrioritySharedMutex> plcLock;
+    std::shared_lock<std::shared_mutex> plcLifecycleLock;
     if (g_plcMutex) {
-        plcLock = std::unique_lock<WriterPrioritySharedMutex>(*g_plcMutex);
+        plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
     }
+    auto connectionGate = connection_plc_mutex(conn_id);
+    std::unique_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
     if (timingOut) {
         timingOut->lock_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - plcLockWaitStarted
@@ -6595,13 +6622,16 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 	bool read_all_tags_once(std::vector<DriverContext> &drivers, TagTable &tagTable) {
 	    bool all_ok = true;
 
-	    // Serialize libplctag access (read + get) with the poll loop / HTTP endpoints.
-	    std::shared_lock<WriterPrioritySharedMutex> plcLock;
+	    // Keep handles stable while reading; each connection coordinates with
+	    // only its own writes.
+	    std::shared_lock<std::shared_mutex> plcLifecycleLock;
 	    if (g_plcMutex) {
-	        plcLock = std::shared_lock<WriterPrioritySharedMutex>(*g_plcMutex);
+	        plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
 	    }
 
     for (auto &driver : drivers) {
+        auto connectionGate = connection_plc_mutex(driver.conn.id);
+        std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
         for (auto &t : driver.tags) {
             if (t.handle < 0) {
                 if (is_memory_tag(t.cfg) || !t.cfg.source_tag.empty()) {
@@ -6719,9 +6749,9 @@ void schedule_next_periodic(TagRuntime &tagRt);
 // -----------------------------
 
 		void destroy_all_handles(std::vector<DriverContext> &drivers, bool plcAlreadyLocked = false) {
-		    std::unique_lock<WriterPrioritySharedMutex> plcLock;
+		    std::unique_lock<std::shared_mutex> plcLock;
 		    if (!plcAlreadyLocked && g_plcMutex) {
-		        plcLock = std::unique_lock<WriterPrioritySharedMutex>(*g_plcMutex);
+		        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
 		    }
 
 	    for (auto &driver : drivers) {
@@ -6735,9 +6765,9 @@ void schedule_next_periodic(TagRuntime &tagRt);
 	}
 
 static void destroy_driver_handles(DriverContext &driver, bool plcAlreadyLocked = false) {
-    std::unique_lock<WriterPrioritySharedMutex> plcLock;
+    std::unique_lock<std::shared_mutex> plcLock;
     if (!plcAlreadyLocked && g_plcMutex) {
-        plcLock = std::unique_lock<WriterPrioritySharedMutex>(*g_plcMutex);
+        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
     }
     for (auto &t : driver.tags) {
         if (t.handle >= 0) {
@@ -13131,9 +13161,10 @@ static bool apply_config_bundle_json(const std::string &configDir,
         build_alarm_index(g_alarms);
 
 		        // Mutexes shared between poll loop and REST handlers
-		        // - `plcMutex` protects libplctag operations (shared for reads, exclusive for writes/handle lifecycle).
+		        // - `plcMutex` protects handle lifecycle/config replacement; ordinary PLC I/O holds it shared.
+		        // - per-connection gates coordinate reads and give writes priority without pausing unrelated connections.
 		        // - `driverMutex` protects in-memory state (drivers vector, tagTable, alarms, etc).
-		        WriterPrioritySharedMutex plcMutex;
+		        std::shared_mutex plcMutex;
 		        std::mutex driverMutex;
 		        httplib::Server svr;
 		        svr.new_task_queue = [] {
@@ -22331,10 +22362,12 @@ window.addEventListener("load", startAutoRefresh);
                 int32_t status = PLCTAG_STATUS_OK;
 
 	                {
-	                    std::shared_lock<WriterPrioritySharedMutex> plcLock;
+	                    std::shared_lock<std::shared_mutex> plcLifecycleLock;
 	                    if (g_plcMutex) {
-	                        plcLock = std::shared_lock<WriterPrioritySharedMutex>(*g_plcMutex);
+	                        plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
 	                    }
+	                    auto connectionGate = connection_plc_mutex(conn_id);
+	                    std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
 
                     status = plc_tag_read(handle, conn.default_read_ms);
                     if (status == PLCTAG_STATUS_OK) {
@@ -26866,11 +26899,13 @@ window.addEventListener("load", startAutoRefresh);
 			                            std::vector<TagSnapshot> elemSnaps;
 			                            bool metricsRecorded = false;
 
-			                            {
-		                                std::shared_lock<WriterPrioritySharedMutex> plcLock;
+		                            {
+		                                std::shared_lock<std::shared_mutex> plcLifecycleLock;
 		                                if (g_plcMutex) {
-		                                    plcLock = std::shared_lock<WriterPrioritySharedMutex>(*g_plcMutex);
+		                                    plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
 		                                }
+		                                auto connectionGate = connection_plc_mutex(spec.conn.id);
+		                                std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
 
 		                                    if (t.handle < 0 && t.handle_deferred) {
 		                                        std::string tagStr;
@@ -27754,6 +27789,11 @@ window.addEventListener("load", startAutoRefresh);
 	        g_logicWriteLockWaitMsMax.store(0, std::memory_order_relaxed);
 	        g_logicWriteExecutionMsLast.store(0, std::memory_order_relaxed);
 	        g_logicWriteExecutionMsMax.store(0, std::memory_order_relaxed);
+	        {
+	            std::lock_guard<std::mutex> lock(g_logicWriteLastTargetMutex);
+	            g_logicWriteLastConnection.clear();
+	            g_logicWriteLastTag.clear();
+	        }
 	        g_logicAsyncWriteEnqueue = [&](const std::string &conn,
 	                                       const std::string &name,
 	                                       const std::string &value,
@@ -27802,6 +27842,11 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 
 	                const auto writeStarted = std::chrono::steady_clock::now();
+	                {
+	                    std::lock_guard<std::mutex> lock(g_logicWriteLastTargetMutex);
+	                    g_logicWriteLastConnection = job.conn;
+	                    g_logicWriteLastTag = job.name;
+	                }
 	                const uint64_t queueWaitMs = job.enqueued_at.time_since_epoch().count() > 0
 	                    ? static_cast<uint64_t>(std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(
 	                        writeStarted - job.enqueued_at
@@ -27957,9 +28002,16 @@ window.addEventListener("load", startAutoRefresh);
 		                OpcUaSyncResult opcuaSync;
 
 			                try {
-			                    std::unique_lock<WriterPrioritySharedMutex> plcLock(plcMutex, std::defer_lock);
+			                    std::unique_lock<std::shared_mutex> plcLock(plcMutex, std::defer_lock);
+			                    std::shared_lock<std::shared_mutex> targetedLifecycleLock;
+			                    std::shared_ptr<WriterPrioritySharedMutex> targetedConnectionGate;
+			                    std::unique_lock<WriterPrioritySharedMutex> targetedConnectionLock;
 			                    if (!targetedReload) {
 			                        plcLock.lock();
+			                    } else {
+			                        targetedLifecycleLock = std::shared_lock<std::shared_mutex>(plcMutex);
+			                        targetedConnectionGate = connection_plc_mutex(requestedTargetConn);
+			                        targetedConnectionLock = std::unique_lock<WriterPrioritySharedMutex>(*targetedConnectionGate);
 			                    }
 			                    if (targetedReload) {
 			                        DriverContext newDriver;
