@@ -719,6 +719,49 @@ static bool parse_bit_qualified_source_name(const std::string &name,
 
 using TagTable = std::map<std::string, TagSnapshot>; // key "conn:tag"
 
+// std::shared_mutex does not promise writer fairness. With continuously active
+// polling lanes, a PLC write can otherwise wait indefinitely while new readers
+// keep acquiring the shared lock. This gate blocks new readers as soon as a
+// writer is waiting.
+class WriterPrioritySharedMutex {
+public:
+    void lock() {
+        std::unique_lock<std::mutex> lock(stateMutex_);
+        ++waitingWriters_;
+        stateCv_.wait(lock, [&]() { return !writerActive_ && activeReaders_ == 0; });
+        --waitingWriters_;
+        writerActive_ = true;
+    }
+
+    void unlock() {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        writerActive_ = false;
+        stateCv_.notify_all();
+    }
+
+    void lock_shared() {
+        std::unique_lock<std::mutex> lock(stateMutex_);
+        stateCv_.wait(lock, [&]() { return !writerActive_ && waitingWriters_ == 0; });
+        ++activeReaders_;
+    }
+
+    void unlock_shared() {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        if (--activeReaders_ == 0) stateCv_.notify_all();
+    }
+
+private:
+    std::mutex stateMutex_;
+    std::condition_variable stateCv_;
+    size_t activeReaders_ = 0;
+    size_t waitingWriters_ = 0;
+    bool writerActive_ = false;
+};
+
+struct PlcWriteTiming {
+    int64_t lock_wait_ms = 0;
+};
+
 // Forward declaration so MQTT callbacks can call this:
 bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &conn_id,
@@ -726,7 +769,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &value_str,
                        TagTable &table,
                        std::mutex &driverMutex,
-                       std::string *errorOut = nullptr);
+                       std::string *errorOut = nullptr,
+                       PlcWriteTiming *timingOut = nullptr);
 void mqtt_publish_raw(const std::string &topic, const std::string &payload);
 bool mqtt_publish_snapshot(const TagSnapshot &snap, const TagSnapshot *prevSnap);
 
@@ -734,7 +778,17 @@ bool mqtt_publish_snapshot(const TagSnapshot &snap, const TagSnapshot *prevSnap)
 static std::vector<DriverContext> *g_mqttDrivers      = nullptr;
 static TagTable                   *g_mqttTagTable     = nullptr;
 static std::mutex                 *g_mqttDriverMutex  = nullptr;
-static std::shared_mutex          *g_plcMutex         = nullptr;
+static WriterPrioritySharedMutex  *g_plcMutex         = nullptr;
+
+static std::atomic<uint64_t> g_logicWriteCompletedTotal{0};
+static std::atomic<uint64_t> g_logicWriteFailedTotal{0};
+static std::atomic<uint64_t> g_logicWriteQueueDepth{0};
+static std::atomic<uint64_t> g_logicWriteQueueWaitMsLast{0};
+static std::atomic<uint64_t> g_logicWriteQueueWaitMsMax{0};
+static std::atomic<uint64_t> g_logicWriteLockWaitMsLast{0};
+static std::atomic<uint64_t> g_logicWriteLockWaitMsMax{0};
+static std::atomic<uint64_t> g_logicWriteExecutionMsLast{0};
+static std::atomic<uint64_t> g_logicWriteExecutionMsMax{0};
 
 static bool logic_lookup_live_snapshot(const std::string &key, TagSnapshot &out) {
     if (!g_mqttTagTable || !g_mqttDriverMutex) return false;
@@ -1402,7 +1456,16 @@ static std::vector<SystemTagDef> collect_logic_system_tags() {
         {"System/Logic/RunsTotal", "uint64", copy.runs_total},
         {"System/Logic/FailuresTotal", "uint64", copy.failures_total},
         {"System/Logic/ConfigMtimeMs", "int64", copy.config_mtime_ms},
-        {"System/Logic/LastError", "string", copy.last_error}
+        {"System/Logic/LastError", "string", copy.last_error},
+        {"System/Logic/Writes/QueueDepth", "uint64", g_logicWriteQueueDepth.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/CompletedTotal", "uint64", g_logicWriteCompletedTotal.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/FailedTotal", "uint64", g_logicWriteFailedTotal.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/QueueWaitMsLast", "uint64", g_logicWriteQueueWaitMsLast.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/QueueWaitMsMax", "uint64", g_logicWriteQueueWaitMsMax.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/LockWaitMsLast", "uint64", g_logicWriteLockWaitMsLast.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/LockWaitMsMax", "uint64", g_logicWriteLockWaitMsMax.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/ExecutionMsLast", "uint64", g_logicWriteExecutionMsLast.load(std::memory_order_relaxed)},
+        {"System/Logic/Writes/ExecutionMsMax", "uint64", g_logicWriteExecutionMsMax.load(std::memory_order_relaxed)}
     };
 
     for (const auto &script : copy.scripts) {
@@ -5569,7 +5632,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &value_str,
                        TagTable &table,
                        std::mutex &driverMutex,
-                       std::string *errorOut)
+                       std::string *errorOut,
+                       PlcWriteTiming *timingOut)
 {
     auto fail = [&](const std::string &message) {
         if (errorOut) *errorOut = message;
@@ -5923,9 +5987,15 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
     // Serialize libplctag access across poll loop / HTTP / MQTT / OPC UA
     // only for non-memory writes.
-    std::unique_lock<std::shared_mutex> plcLock;
+    const auto plcLockWaitStarted = std::chrono::steady_clock::now();
+    std::unique_lock<WriterPrioritySharedMutex> plcLock;
     if (g_plcMutex) {
-        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
+        plcLock = std::unique_lock<WriterPrioritySharedMutex>(*g_plcMutex);
+    }
+    if (timingOut) {
+        timingOut->lock_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - plcLockWaitStarted
+        ).count();
     }
 
     if (hasParentArray && parentArrayIndex >= 0 && parentArrayCfg.elem_count > parentArrayIndex) {
@@ -6526,9 +6596,9 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 	    bool all_ok = true;
 
 	    // Serialize libplctag access (read + get) with the poll loop / HTTP endpoints.
-	    std::shared_lock<std::shared_mutex> plcLock;
+	    std::shared_lock<WriterPrioritySharedMutex> plcLock;
 	    if (g_plcMutex) {
-	        plcLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+	        plcLock = std::shared_lock<WriterPrioritySharedMutex>(*g_plcMutex);
 	    }
 
     for (auto &driver : drivers) {
@@ -6649,9 +6719,9 @@ void schedule_next_periodic(TagRuntime &tagRt);
 // -----------------------------
 
 		void destroy_all_handles(std::vector<DriverContext> &drivers, bool plcAlreadyLocked = false) {
-		    std::unique_lock<std::shared_mutex> plcLock;
+		    std::unique_lock<WriterPrioritySharedMutex> plcLock;
 		    if (!plcAlreadyLocked && g_plcMutex) {
-		        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
+		        plcLock = std::unique_lock<WriterPrioritySharedMutex>(*g_plcMutex);
 		    }
 
 	    for (auto &driver : drivers) {
@@ -6665,9 +6735,9 @@ void schedule_next_periodic(TagRuntime &tagRt);
 	}
 
 static void destroy_driver_handles(DriverContext &driver, bool plcAlreadyLocked = false) {
-    std::unique_lock<std::shared_mutex> plcLock;
+    std::unique_lock<WriterPrioritySharedMutex> plcLock;
     if (!plcAlreadyLocked && g_plcMutex) {
-        plcLock = std::unique_lock<std::shared_mutex>(*g_plcMutex);
+        plcLock = std::unique_lock<WriterPrioritySharedMutex>(*g_plcMutex);
     }
     for (auto &t : driver.tags) {
         if (t.handle >= 0) {
@@ -13063,7 +13133,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 		        // Mutexes shared between poll loop and REST handlers
 		        // - `plcMutex` protects libplctag operations (shared for reads, exclusive for writes/handle lifecycle).
 		        // - `driverMutex` protects in-memory state (drivers vector, tagTable, alarms, etc).
-		        std::shared_mutex plcMutex;
+		        WriterPrioritySharedMutex plcMutex;
 		        std::mutex driverMutex;
 		        httplib::Server svr;
 		        svr.new_task_queue = [] {
@@ -22261,9 +22331,9 @@ window.addEventListener("load", startAutoRefresh);
                 int32_t status = PLCTAG_STATUS_OK;
 
 	                {
-	                    std::shared_lock<std::shared_mutex> plcLock;
+	                    std::shared_lock<WriterPrioritySharedMutex> plcLock;
 	                    if (g_plcMutex) {
-	                        plcLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+	                        plcLock = std::shared_lock<WriterPrioritySharedMutex>(*g_plcMutex);
 	                    }
 
                     status = plc_tag_read(handle, conn.default_read_ms);
@@ -26797,9 +26867,9 @@ window.addEventListener("load", startAutoRefresh);
 			                            bool metricsRecorded = false;
 
 			                            {
-		                                std::shared_lock<std::shared_mutex> plcLock;
+		                                std::shared_lock<WriterPrioritySharedMutex> plcLock;
 		                                if (g_plcMutex) {
-		                                    plcLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+		                                    plcLock = std::shared_lock<WriterPrioritySharedMutex>(*g_plcMutex);
 		                                }
 
 		                                    if (t.handle < 0 && t.handle_deferred) {
@@ -27666,6 +27736,7 @@ window.addEventListener("load", startAutoRefresh);
 	            std::string conn;
 	            std::string name;
 	            std::string value;
+	            std::chrono::steady_clock::time_point enqueued_at;
 	            bool queued = false;
 	            bool in_progress = false;
 	        };
@@ -27674,6 +27745,15 @@ window.addEventListener("load", startAutoRefresh);
 	        std::unordered_map<std::string, LogicAsyncWriteEntry> logicAsyncWrites;
 	        std::deque<std::string> logicAsyncWriteReady;
 	        std::atomic<bool> logicAsyncWriteStop{false};
+	        g_logicWriteCompletedTotal.store(0, std::memory_order_relaxed);
+	        g_logicWriteFailedTotal.store(0, std::memory_order_relaxed);
+	        g_logicWriteQueueDepth.store(0, std::memory_order_relaxed);
+	        g_logicWriteQueueWaitMsLast.store(0, std::memory_order_relaxed);
+	        g_logicWriteQueueWaitMsMax.store(0, std::memory_order_relaxed);
+	        g_logicWriteLockWaitMsLast.store(0, std::memory_order_relaxed);
+	        g_logicWriteLockWaitMsMax.store(0, std::memory_order_relaxed);
+	        g_logicWriteExecutionMsLast.store(0, std::memory_order_relaxed);
+	        g_logicWriteExecutionMsMax.store(0, std::memory_order_relaxed);
 	        g_logicAsyncWriteEnqueue = [&](const std::string &conn,
 	                                       const std::string &name,
 	                                       const std::string &value,
@@ -27692,11 +27772,13 @@ window.addEventListener("load", startAutoRefresh);
 	                entry.conn = c;
 	                entry.name = n;
 	                entry.value = value;
+	                entry.enqueued_at = std::chrono::steady_clock::now();
 	                if (!entry.queued && !entry.in_progress) {
 	                    entry.queued = true;
 	                    logicAsyncWriteReady.push_back(key);
 	                    logicAsyncWriteCv.notify_one();
 	                }
+	                g_logicWriteQueueDepth.store(static_cast<uint64_t>(logicAsyncWrites.size()), std::memory_order_relaxed);
 	            }
 	            return true;
 	        };
@@ -27719,12 +27801,38 @@ window.addEventListener("load", startAutoRefresh);
 	                    job = it->second;
 	                }
 
+	                const auto writeStarted = std::chrono::steady_clock::now();
+	                const uint64_t queueWaitMs = job.enqueued_at.time_since_epoch().count() > 0
+	                    ? static_cast<uint64_t>(std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(
+	                        writeStarted - job.enqueued_at
+	                    ).count()))
+	                    : 0;
+	                g_logicWriteQueueWaitMsLast.store(queueWaitMs, std::memory_order_relaxed);
+	                atomic_update_max(g_logicWriteQueueWaitMsMax, queueWaitMs);
+
 	                std::string writeErr;
-	                const bool ok = write_tag_by_name(drivers, job.conn, job.name, job.value, tagTable, driverMutex, &writeErr);
+	                PlcWriteTiming timing;
+	                const bool ok = write_tag_by_name(
+	                    drivers, job.conn, job.name, job.value, tagTable, driverMutex, &writeErr, &timing
+	                );
+	                const uint64_t totalExecutionMs = static_cast<uint64_t>(std::max<int64_t>(0,
+	                    std::chrono::duration_cast<std::chrono::milliseconds>(
+	                        std::chrono::steady_clock::now() - writeStarted
+	                    ).count()
+	                ));
+	                const uint64_t lockWaitMs = static_cast<uint64_t>(std::max<int64_t>(0, timing.lock_wait_ms));
+	                const uint64_t plcExecutionMs = totalExecutionMs > lockWaitMs ? totalExecutionMs - lockWaitMs : 0;
+	                g_logicWriteLockWaitMsLast.store(lockWaitMs, std::memory_order_relaxed);
+	                atomic_update_max(g_logicWriteLockWaitMsMax, lockWaitMs);
+	                g_logicWriteExecutionMsLast.store(plcExecutionMs, std::memory_order_relaxed);
+	                atomic_update_max(g_logicWriteExecutionMsMax, plcExecutionMs);
 	                if (!ok) {
+	                    g_logicWriteFailedTotal.fetch_add(1, std::memory_order_relaxed);
 	                    std::cerr << "[logic] Async write failed for ["
 	                              << job.conn << "]." << job.name
 	                              << ": " << writeErr << "\n";
+	                } else {
+	                    g_logicWriteCompletedTotal.fetch_add(1, std::memory_order_relaxed);
 	                }
 
 	                {
@@ -27741,6 +27849,7 @@ window.addEventListener("load", startAutoRefresh);
 	                    } else {
 	                        logicAsyncWrites.erase(it);
 	                    }
+	                    g_logicWriteQueueDepth.store(static_cast<uint64_t>(logicAsyncWrites.size()), std::memory_order_relaxed);
 	                }
 	            }
 	        });
@@ -27848,7 +27957,7 @@ window.addEventListener("load", startAutoRefresh);
 		                OpcUaSyncResult opcuaSync;
 
 			                try {
-			                    std::unique_lock<std::shared_mutex> plcLock(plcMutex, std::defer_lock);
+			                    std::unique_lock<WriterPrioritySharedMutex> plcLock(plcMutex, std::defer_lock);
 			                    if (!targetedReload) {
 			                        plcLock.lock();
 			                    }
