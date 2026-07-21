@@ -26840,6 +26840,27 @@ window.addEventListener("load", startAutoRefresh);
 								}
 							} pollerHandleCleanup{&spec.tags};
 
+							auto publishReadyDeferredHandle = [&](PollTagItem &pollTag) {
+								if (!pollTag.poller_owns_handle || pollTag.handle < 0) return;
+								if (plc_tag_status(pollTag.handle) != PLCTAG_STATUS_OK) return;
+								std::lock_guard<std::mutex> lock(driverMutex);
+								if (g_configGeneration.load(std::memory_order_relaxed) != spec.gen) return;
+								for (auto &driver : drivers) {
+									if (driver.conn.id != spec.conn.id) continue;
+									for (auto &runtimeTag : driver.tags) {
+										if (runtimeTag.cfg.logical_name != pollTag.cfg.logical_name) continue;
+										if (runtimeTag.handle < 0 && runtimeTag.handle_deferred) {
+											runtimeTag.handle = pollTag.handle;
+											runtimeTag.handle_deferred = false;
+											pollTag.poller_owns_handle = false;
+											pollTag.handle_deferred = false;
+										}
+										return;
+									}
+									return;
+								}
+							};
+
 							const bool timeSliced = (spec.conn.polling_mode == "time_sliced");
 							const int autoBatchSize = (spec.conn.polling_pacing == "gentle")
 								? 25
@@ -26946,13 +26967,14 @@ window.addEventListener("load", startAutoRefresh);
 		                                                    spec.metrics->deferred_handle_open_us_last.store(openUs, std::memory_order_relaxed);
 		                                                    atomic_update_max(spec.metrics->deferred_handle_open_us_max, openUs);
 		                                                }
-		                                                t.handle = newHandle;
-		                                                t.poller_owns_handle = true;
-		                                                t.handle_pending_observed = false;
-		                                                if (pending) {
-		                                                    continue;
-		                                                }
-		                                            }
+			                                                t.handle = newHandle;
+			                                                t.poller_owns_handle = true;
+			                                                t.handle_pending_observed = false;
+			                                                if (pending) {
+			                                                    continue;
+			                                                }
+			                                                publishReadyDeferredHandle(t);
+			                                            }
 		                                        }
 		                                    }
 
@@ -26983,6 +27005,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                if (handleStatus != PLCTAG_STATUS_OK) {
 		                                    status = handleStatus;
 		                                } else {
+			                                publishReadyDeferredHandle(t);
 		                                auto t0 = std::chrono::steady_clock::now();
 		                                status = plc_tag_read(t.handle, spec.conn.default_read_ms);
 		                                auto t1 = std::chrono::steady_clock::now();
