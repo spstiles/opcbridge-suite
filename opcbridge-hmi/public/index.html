@@ -514,7 +514,7 @@
               <label for="buttonLabel">Label</label>
               <textarea id="buttonLabel" rows="3" placeholder="Button"></textarea>
             </div>
-            <div class="prop-help">Use placeholders like <code>{1}</code>, <code>{2}</code>, or <code>{state}</code> in the label.</div>
+            <div class="prop-help">Use placeholders like <code>{1}</code>, <code>{2}</code>, or <code>{state}</code> in the button text.</div>
             <div id="buttonLabelBindingRows" class="text-binding-rows"></div>
 	            <div class="prop-row">
 	              <label for="buttonActionType">Action</label>
@@ -532,6 +532,16 @@
 			                <option value="alarm-filter">Alarm Panel Filter</option>
 			              </select>
 		            </div>
+            <div class="prop-subgroup is-hidden" id="buttonAuthFields" hidden>
+              <div class="prop-row">
+                <label for="buttonAuthLoggedOutText">Logged out text</label>
+                <input id="buttonAuthLoggedOutText" type="text" placeholder="Log In" />
+              </div>
+              <div class="prop-row">
+                <label for="buttonAuthLoggedInText">Logged in text</label>
+                <input id="buttonAuthLoggedInText" type="text" placeholder="Log Out" />
+              </div>
+            </div>
             <div class="prop-row" id="buttonTargetRow">
               <label for="buttonTarget">Target Screen</label>
               <select id="buttonTarget"></select>

@@ -3770,6 +3770,9 @@ const buttonTargetSelect = document.getElementById("buttonTarget");
 const buttonViewportSelect = document.getElementById("buttonViewportTarget");
 const buttonViewportRow = document.getElementById("buttonViewportRow");
 const buttonTargetRow = document.getElementById("buttonTargetRow");
+const buttonAuthFields = document.getElementById("buttonAuthFields");
+const buttonAuthLoggedOutTextInput = document.getElementById("buttonAuthLoggedOutText");
+const buttonAuthLoggedInTextInput = document.getElementById("buttonAuthLoggedInText");
 const buttonWriteFields = document.getElementById("buttonWriteFields");
 const buttonWriteConnectionInput = document.getElementById("buttonWriteConnection");
 const buttonWriteTagSelect = document.getElementById("buttonWriteTag");
@@ -7550,8 +7553,29 @@ const renderTextTemplate = (obj, previewOnly = false) => {
   return getAutomationText(obj?.textStateAutomation, baseText, bindings, previewOnly);
 };
 
+const getAuthButtonTextConfig = (obj) => {
+  const action = obj?.action || {};
+  return {
+    loggedInText: String(action.loggedInText ?? obj?.authLoggedInText ?? "Log Out"),
+    loggedOutText: String(action.loggedOutText ?? obj?.authLoggedOutText ?? "Log In")
+  };
+};
+
+const getButtonLabelTextSources = (obj) => {
+  const sources = [String(obj?.label || "")];
+  if (obj?.action?.type === "auth") {
+    const authText = getAuthButtonTextConfig(obj);
+    sources.push(authText.loggedInText, authText.loggedOutText);
+  }
+  return sources;
+};
+
 const renderButtonLabelTemplate = (obj, previewOnly = false) => {
-  if (!previewOnly && obj?.action?.type === "auth") return hasServerAuthSession() ? "Log Out" : "Log In";
+  if (obj?.action?.type === "auth") {
+    const authText = getAuthButtonTextConfig(obj);
+    const text = hasServerAuthSession() ? authText.loggedInText : authText.loggedOutText;
+    return renderBoundTemplate(text, getButtonLabelBindingsMap(obj), previewOnly);
+  }
   return renderBoundTemplate(String(obj?.label || "Button"), getButtonLabelBindingsMap(obj), previewOnly);
 };
 
@@ -9461,6 +9485,10 @@ const updateButtonActionUI = (actionType) => {
   const showOffValue = actionType === "momentary-write" || actionType === "toggle-write";
   if (buttonTargetRow) buttonTargetRow.classList.toggle("is-hidden", isWriteAction || isHistoryAction || isAuthAction || isAlarmFilterAction);
   if (buttonViewportRow) buttonViewportRow.classList.toggle("is-hidden", actionType !== "load-viewport");
+  if (buttonAuthFields) {
+    buttonAuthFields.classList.toggle("is-hidden", !isAuthAction);
+    buttonAuthFields.hidden = !isAuthAction;
+  }
   if (buttonWriteFields) {
     const showWrite = isWriteAction;
     buttonWriteFields.classList.toggle("is-hidden", !showWrite);
@@ -9746,11 +9774,11 @@ const renderTextBindingRows = (obj) => {
 const renderButtonLabelBindingRows = (obj) => {
   if (!buttonLabelBindingRows) return;
   buttonLabelBindingRows.textContent = "";
-  const placeholderKeys = getTextPlaceholderKeys(obj?.label || "");
+  const placeholderKeys = Array.from(new Set(getButtonLabelTextSources(obj).flatMap((text) => getTextPlaceholderKeys(text))));
   if (!placeholderKeys.length) {
     const empty = document.createElement("div");
     empty.className = "text-binding-summary";
-    empty.textContent = "No placeholders in label.";
+    empty.textContent = "No placeholders in button text.";
     buttonLabelBindingRows.appendChild(empty);
     return;
   }
@@ -12715,6 +12743,9 @@ const syncPropertiesFromSelection = () => {
     refreshViewportIdOptions();
     refreshAlarmPanelTargetOptions();
     if (buttonViewportSelect) buttonViewportSelect.value = obj.action?.viewportId || "";
+    const authText = getAuthButtonTextConfig(obj);
+    if (buttonAuthLoggedOutTextInput) setInputValueSafe(buttonAuthLoggedOutTextInput, authText.loggedOutText);
+    if (buttonAuthLoggedInTextInput) setInputValueSafe(buttonAuthLoggedInTextInput, authText.loggedInText);
     updateButtonActionUI(obj.action?.type || "navigate");
     const alarmFilterAction = obj.action?.type === "alarm-filter" ? normalizeAlarmFilterAction(obj.action) : normalizeAlarmFilterAction({});
     if (buttonAlarmFilterTargetInput) setInputValueSafe(buttonAlarmFilterTargetInput, alarmFilterAction.target || "");
@@ -18097,6 +18128,20 @@ if (buttonLabelInput) {
   });
 }
 
+const getCurrentAuthButtonAction = () => ({
+  type: "auth",
+  loggedOutText: String(buttonAuthLoggedOutTextInput?.value || "").trim() || "Log In",
+  loggedInText: String(buttonAuthLoggedInTextInput?.value || "").trim() || "Log Out"
+});
+
+const updateAuthButtonActionFromInputs = () => {
+  if (buttonActionSelect?.value !== "auth") return;
+  updateButtonProperty({ action: getCurrentAuthButtonAction() });
+  const activeObjects = getActiveObjects();
+  const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+  if (obj?.type === "button") renderButtonLabelBindingRows(obj);
+};
+
 const getCurrentAlarmFilterButtonAction = () => ({
   type: "alarm-filter",
   target: String(buttonAlarmFilterTargetInput?.value || "").trim(),
@@ -18178,7 +18223,7 @@ if (buttonActionSelect) {
 	        : actionType === "alarm-filter"
 	          ? getCurrentAlarmFilterButtonAction()
 	        : actionType === "auth"
-	          ? { type: "auth" }
+	          ? getCurrentAuthButtonAction()
 	        : actionType === "prompt-write"
 	          ? {
 	            type: "prompt-write",
@@ -18214,6 +18259,10 @@ if (buttonActionSelect) {
     updateButtonActionUI(actionType);
   });
 }
+
+[buttonAuthLoggedOutTextInput, buttonAuthLoggedInTextInput].forEach((input) => {
+  input?.addEventListener("input", updateAuthButtonActionFromInputs);
+});
 
 if (buttonTargetSelect) {
   buttonTargetSelect.addEventListener("change", () => {
