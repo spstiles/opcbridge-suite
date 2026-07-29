@@ -134,20 +134,22 @@ becomes `false` and counts fall back to safe defaults.
 | `System/Alarms/NotificationFailures` | `uint64` | Failed notification attempt count. |
 | `System/Alarms/LastNotificationAgeMs` | `int64` | Age of last notification attempt, or `-1` if none. |
 
-## Reporter Tags
+## Data Logger Tags
 
-OPCBridge reads reporter runtime status from `opcbridge-reporter` with a short
-timeout and caches the result. If the reporter service is unavailable,
+OPCBridge reads data-logger runtime status from `opcbridge-logger` with a short
+timeout and caches the result. If the logger service is unavailable,
 `System/Reporter/RuntimeConnected` becomes `false` and counts fall back to safe
 defaults.
 
-Top-level reporter tags:
+The existing `System/Reporter` tag namespace is retained for project
+compatibility even though the service is now named `opcbridge-logger`.
+Top-level data-logger tags:
 
 | Tag | Type | Meaning |
 | --- | --- | --- |
-| `System/Reporter/RuntimeConnected` | `bool` | Reporter health API is reachable and healthy. |
-| `System/Reporter/DatabaseCount` | `int32` | Number of database monitor status rows reported by the reporter service. |
-| `System/Reporter/DataCheckCount` | `int32` | Number of data-check status rows reported by the reporter service. |
+| `System/Reporter/RuntimeConnected` | `bool` | Logger health API is reachable and healthy. |
+| `System/Reporter/DatabaseCount` | `int32` | Number of database monitor status rows reported by the logger service. |
+| `System/Reporter/DataCheckCount` | `int32` | Number of data-check status rows reported by the logger service. |
 
 Database monitor tags are published under:
 

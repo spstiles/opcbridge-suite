@@ -233,7 +233,43 @@
   logicQuickJsonObjBtn: document.getElementById('logicQuickJsonObjBtn'),
   logicScriptEditor: document.getElementById('logicScriptEditor'),
 
-  // Data Logger (opcbridge-reporter)
+  publishedReportSelect: document.getElementById('publishedReportSelect'),
+  publishedReportMonth: document.getElementById('publishedReportMonth'),
+  publishedReportFormat: document.getElementById('publishedReportFormat'),
+  publishedReportDescription: document.getElementById('publishedReportDescription'),
+  publishedReportsRefreshBtn: document.getElementById('publishedReportsRefreshBtn'),
+  publishedReportDownloadBtn: document.getElementById('publishedReportDownloadBtn'),
+  publishedReportsStatus: document.getElementById('publishedReportsStatus'),
+  reportsDownloadCard: document.getElementById('reportsDownloadCard'),
+  reportManagerCard: document.getElementById('reportManagerCard'),
+  reportManagerStatus: document.getElementById('reportManagerStatus'),
+  reportBuilderCard: document.getElementById('reportBuilderCard'),
+  reportBuilderList: document.getElementById('reportBuilderList'),
+  reportBuilderNewBtn: document.getElementById('reportBuilderNewBtn'),
+  reportBuilderEditBtn: document.getElementById('reportBuilderEditBtn'),
+  reportBuilderBackBtn: document.getElementById('reportBuilderBackBtn'),
+  reportBuilderTitle: document.getElementById('reportBuilderTitle'),
+  reportBuilderDuplicateBtn: document.getElementById('reportBuilderDuplicateBtn'),
+  reportBuilderDeleteBtn: document.getElementById('reportBuilderDeleteBtn'),
+  reportBuilderReloadBtn: document.getElementById('reportBuilderReloadBtn'),
+  reportBuilderId: document.getElementById('reportBuilderId'),
+  reportBuilderName: document.getElementById('reportBuilderName'),
+  reportBuilderDescription: document.getElementById('reportBuilderDescription'),
+  reportBuilderTimezone: document.getElementById('reportBuilderTimezone'),
+  reportBuilderXlsx: document.getElementById('reportBuilderXlsx'),
+  reportBuilderCsv: document.getElementById('reportBuilderCsv'),
+  reportBuilderPublished: document.getElementById('reportBuilderPublished'),
+  reportBuilderTagSelect: document.getElementById('reportBuilderTagSelect'),
+  reportBuilderAddTagBtn: document.getElementById('reportBuilderAddTagBtn'),
+  reportBuilderColumns: document.getElementById('reportBuilderColumns'),
+  reportBuilderSaveBtn: document.getElementById('reportBuilderSaveBtn'),
+  reportBuilderPreviewBtn: document.getElementById('reportBuilderPreviewBtn'),
+  reportBuilderStatus: document.getElementById('reportBuilderStatus'),
+  reportBuilderPreviewWrap: document.getElementById('reportBuilderPreviewWrap'),
+  reportBuilderPreviewHead: document.getElementById('reportBuilderPreviewHead'),
+  reportBuilderPreviewBody: document.getElementById('reportBuilderPreviewBody'),
+
+  // Data Logger (opcbridge-logger)
   loggerTreeView: document.getElementById('loggerTreeView'),
   loggerTreeNote: document.getElementById('loggerTreeNote'),
   loggerDbTbody: document.getElementById('loggerDbTbody'),
@@ -998,6 +1034,12 @@ const state = {
   authLastUser: null,
   authAdminLoaded: false,
   authAdminLoadInFlight: false,
+
+  publishedReports: [],
+  reportBuilderReports: [],
+  reportBuilderOriginalId: '',
+  reportBuilderColumns: [],
+  reportBuilderTags: [],
 
   // reporter (data logger)
   reporterDatabases: [],
@@ -2741,7 +2783,7 @@ async function saveLoggerReportHistorianFieldsFromPanel(report) {
   const save = await apiPostJson('/api/reporter/reports', { report: next });
   if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
-  loggerSetStatus('Reloading reporter service...');
+  loggerSetStatus('Reloading logger service...');
   const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
   if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
@@ -5209,7 +5251,7 @@ async function uploadLoggerTagCsvToReport(report) {
     const save = await apiPostJson('/api/reporter/reports', { report: next });
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
-    loggerSetStatus('Reloading reporter service...');
+    loggerSetStatus('Reloading logger service...');
     const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
     if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
@@ -5266,7 +5308,7 @@ async function saveLoggerReportTagsFromPanel(report) {
   const save = await apiPostJson('/api/reporter/reports', { report: next });
   if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
-  loggerSetStatus('Reloading reporter service...');
+  loggerSetStatus('Reloading logger service...');
   const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
   if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
@@ -5403,7 +5445,7 @@ async function saveAndApplyReporterReport() {
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
     const savedId = String(save?.report?.id || report.id).trim();
 
-    loggerReportModalSetStatus('Reloading reporter service…');
+    loggerReportModalSetStatus('Reloading logger service…');
     const apply = await apiPostJson('/api/reporter/reports/apply', { id: savedId });
     if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
@@ -6092,6 +6134,460 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 window.addEventListener('focus', () => touchOpcbridgeAuthActivity({ force: true, bypassLoginState: true }), { capture: true });
 
+function selectedPublishedReport() {
+  const id = String(els.publishedReportSelect?.value || '').trim();
+  return state.publishedReports.find((report) => String(report?.id || '') === id) || null;
+}
+
+function renderPublishedReportSelection() {
+  if (!els.publishedReportSelect || !els.publishedReportFormat) return;
+  const previousId = String(els.publishedReportSelect.value || '').trim();
+  els.publishedReportSelect.textContent = '';
+  state.publishedReports.forEach((report) => {
+    const option = document.createElement('option');
+    option.value = String(report.id || '');
+    option.textContent = String(report.name || report.id || '');
+    els.publishedReportSelect.appendChild(option);
+  });
+  if (state.publishedReports.some((report) => String(report.id || '') === previousId)) {
+    els.publishedReportSelect.value = previousId;
+  }
+
+  const report = selectedPublishedReport();
+  els.publishedReportFormat.textContent = '';
+  (Array.isArray(report?.formats) ? report.formats : []).forEach((format) => {
+    const option = document.createElement('option');
+    option.value = String(format);
+    option.textContent = format === 'xlsx' ? 'Excel Workbook (.xlsx)' : 'CSV (.csv)';
+    els.publishedReportFormat.appendChild(option);
+  });
+  if (els.publishedReportDescription) {
+    els.publishedReportDescription.textContent = report?.description || '';
+  }
+  if (els.publishedReportDownloadBtn) {
+    els.publishedReportDownloadBtn.disabled = !report;
+  }
+}
+
+async function refreshPublishedReports() {
+  if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Loading…';
+  try {
+    const response = await apiGet('/api/reports');
+    state.publishedReports = Array.isArray(response?.reports) ? response.reports : [];
+    renderPublishedReportSelection();
+    if (els.publishedReportsStatus) {
+      els.publishedReportsStatus.textContent = state.publishedReports.length
+        ? `${state.publishedReports.length} published report(s)`
+        : 'No reports are published.';
+    }
+  } catch (err) {
+    state.publishedReports = [];
+    renderPublishedReportSelection();
+    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = String(err.message || err);
+  }
+}
+
+async function downloadPublishedReport() {
+  const report = selectedPublishedReport();
+  const month = String(els.publishedReportMonth?.value || '').trim();
+  const format = String(els.publishedReportFormat?.value || '').trim();
+  if (!report || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !format) {
+    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Select a report, month, and format.';
+    return;
+  }
+  const query = new URLSearchParams({ id: report.id, month, format });
+  if (els.publishedReportDownloadBtn) els.publishedReportDownloadBtn.disabled = true;
+  if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Generating…';
+  try {
+    const response = await fetch(`/api/reports/download?${query.toString()}`, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      let message = `Download failed (${response.status})`;
+      try {
+        const body = await response.json();
+        message = String(body?.error || message);
+      } catch {
+        // Keep the HTTP status message.
+      }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const disposition = String(response.headers.get('content-disposition') || '');
+    const match = disposition.match(/filename="([^"]+)"/i);
+    const filename = match?.[1] || `${report.id}-${month}.${format}`;
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = `Downloaded ${filename}`;
+  } catch (err) {
+    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = String(err.message || err);
+  } finally {
+    if (els.publishedReportDownloadBtn) els.publishedReportDownloadBtn.disabled = !selectedPublishedReport();
+  }
+}
+
+function wirePublishedReportsUi() {
+  if (els.publishedReportMonth && !els.publishedReportMonth.value) {
+    const now = new Date();
+    els.publishedReportMonth.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
+  if (els.publishedReportSelect) {
+    els.publishedReportSelect.addEventListener('change', renderPublishedReportSelection);
+  }
+  if (els.publishedReportsRefreshBtn) {
+    els.publishedReportsRefreshBtn.addEventListener('click', () => refreshPublishedReports());
+  }
+  if (els.publishedReportDownloadBtn) {
+    els.publishedReportDownloadBtn.addEventListener('click', () => downloadPublishedReport());
+  }
+}
+
+function reportBuilderSetStatus(message) {
+  if (els.reportBuilderStatus) els.reportBuilderStatus.textContent = String(message || '');
+}
+
+function reportManagerSetStatus(message) {
+  if (els.reportManagerStatus) els.reportManagerStatus.textContent = String(message || '');
+}
+
+function showReportsLanding() {
+  if (els.reportsDownloadCard) els.reportsDownloadCard.style.display = '';
+  if (els.reportManagerCard) {
+    els.reportManagerCard.style.display = hasPerm('suite.manage_server') ? '' : 'none';
+  }
+  if (els.reportBuilderCard) els.reportBuilderCard.style.display = 'none';
+}
+
+function showReportBuilder(report) {
+  loadReportBuilderDefinition(report || null);
+  if (els.reportsDownloadCard) els.reportsDownloadCard.style.display = 'none';
+  if (els.reportManagerCard) els.reportManagerCard.style.display = 'none';
+  if (els.reportBuilderCard) els.reportBuilderCard.style.display = '';
+  if (els.reportBuilderTitle) {
+    els.reportBuilderTitle.textContent = report ? `Edit ${report.name || 'Report'}` : 'New Report';
+  }
+  if (els.reportBuilderDuplicateBtn) els.reportBuilderDuplicateBtn.disabled = !report;
+  if (els.reportBuilderDeleteBtn) els.reportBuilderDeleteBtn.disabled = !report;
+  if (els.reportBuilderPreviewWrap) els.reportBuilderPreviewWrap.style.display = 'none';
+  reportBuilderSetStatus('');
+}
+
+function reportIdFromName(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120);
+}
+
+function browserTimezone() {
+  try {
+    return String(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  } catch {
+    return 'UTC';
+  }
+}
+
+function reportBuilderTimezones() {
+  try {
+    if (typeof Intl.supportedValuesOf === 'function') {
+      return Intl.supportedValuesOf('timeZone');
+    }
+  } catch {
+    // Use the compatibility list below.
+  }
+  return [
+    'UTC',
+    'America/Anchorage', 'America/Chicago', 'America/Denver',
+    'America/Los_Angeles', 'America/New_York', 'America/Phoenix',
+    'America/Puerto_Rico', 'Pacific/Honolulu'
+  ];
+}
+
+function populateReportBuilderTimezones(selectedValue = '') {
+  if (!els.reportBuilderTimezone) return;
+  const selected = String(selectedValue || browserTimezone() || 'UTC');
+  const zones = Array.from(new Set(['UTC', ...reportBuilderTimezones(), selected])).sort();
+  els.reportBuilderTimezone.textContent = '';
+  zones.forEach((timezone) => {
+    const option = document.createElement('option');
+    option.value = timezone;
+    option.textContent = timezone.replaceAll('_', ' ');
+    els.reportBuilderTimezone.appendChild(option);
+  });
+  els.reportBuilderTimezone.value = selected;
+}
+
+function reportBuilderCurrentDefinition() {
+  const formats = [];
+  if (els.reportBuilderXlsx?.checked) formats.push('xlsx');
+  if (els.reportBuilderCsv?.checked) formats.push('csv');
+  return {
+    id: String(els.reportBuilderId?.value || '').trim(),
+    name: String(els.reportBuilderName?.value || '').trim(),
+    description: String(els.reportBuilderDescription?.value || '').trim(),
+    timezone: String(els.reportBuilderTimezone?.value || 'UTC').trim(),
+    period: 'month',
+    published: Boolean(els.reportBuilderPublished?.checked),
+    formats,
+    columns: state.reportBuilderColumns.map((column) => ({ ...column }))
+  };
+}
+
+function renderReportBuilderColumns() {
+  if (!els.reportBuilderColumns) return;
+  els.reportBuilderColumns.textContent = '';
+  state.reportBuilderColumns.forEach((column, index) => {
+    const tr = document.createElement('tr');
+    const order = document.createElement('td');
+    order.textContent = String(index + 1);
+    const headingCell = document.createElement('td');
+    const heading = document.createElement('input');
+    heading.value = String(column.heading || column.tag_name || '');
+    heading.addEventListener('input', () => { column.heading = heading.value; });
+    headingCell.appendChild(heading);
+    const connection = document.createElement('td');
+    connection.textContent = String(column.connection_id || '');
+    const tag = document.createElement('td');
+    tag.textContent = String(column.tag_name || '');
+    const precisionCell = document.createElement('td');
+    const precision = document.createElement('input');
+    precision.type = 'number';
+    precision.min = '0';
+    precision.max = '10';
+    precision.style.width = '72px';
+    precision.value = String(column.precision ?? 2);
+    precision.addEventListener('input', () => { column.precision = Math.max(0, Math.min(10, Number(precision.value) || 0)); });
+    precisionCell.appendChild(precision);
+    const actions = document.createElement('td');
+    const up = document.createElement('button');
+    up.className = 'btn';
+    up.type = 'button';
+    up.textContent = '↑';
+    up.disabled = index === 0;
+    up.addEventListener('click', () => {
+      [state.reportBuilderColumns[index - 1], state.reportBuilderColumns[index]] =
+        [state.reportBuilderColumns[index], state.reportBuilderColumns[index - 1]];
+      renderReportBuilderColumns();
+    });
+    const down = document.createElement('button');
+    down.className = 'btn';
+    down.type = 'button';
+    down.textContent = '↓';
+    down.disabled = index === state.reportBuilderColumns.length - 1;
+    down.addEventListener('click', () => {
+      [state.reportBuilderColumns[index], state.reportBuilderColumns[index + 1]] =
+        [state.reportBuilderColumns[index + 1], state.reportBuilderColumns[index]];
+      renderReportBuilderColumns();
+    });
+    const remove = document.createElement('button');
+    remove.className = 'btn danger';
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      state.reportBuilderColumns.splice(index, 1);
+      renderReportBuilderColumns();
+    });
+    actions.append(up, down, remove);
+    tr.append(order, headingCell, connection, tag, precisionCell, actions);
+    els.reportBuilderColumns.appendChild(tr);
+  });
+}
+
+function loadReportBuilderDefinition(report) {
+  const value = report || {
+    id: '', name: '', description: '', timezone: browserTimezone(),
+    published: false, formats: ['xlsx', 'csv'], columns: []
+  };
+  state.reportBuilderOriginalId = String(value.id || '');
+  state.reportBuilderColumns = Array.isArray(value.columns) ? value.columns.map((column) => ({ ...column })) : [];
+  if (els.reportBuilderId) els.reportBuilderId.value = String(value.id || '');
+  if (els.reportBuilderName) els.reportBuilderName.value = String(value.name || '');
+  if (els.reportBuilderDescription) els.reportBuilderDescription.value = String(value.description || '');
+  populateReportBuilderTimezones(String(value.timezone || browserTimezone()));
+  if (els.reportBuilderPublished) els.reportBuilderPublished.checked = Boolean(value.published);
+  if (els.reportBuilderXlsx) els.reportBuilderXlsx.checked = (value.formats || []).includes('xlsx');
+  if (els.reportBuilderCsv) els.reportBuilderCsv.checked = (value.formats || []).includes('csv');
+  renderReportBuilderColumns();
+}
+
+function renderReportBuilderList() {
+  if (!els.reportBuilderList) return;
+  const selected = state.reportBuilderOriginalId;
+  els.reportBuilderList.textContent = '';
+  if (!state.reportBuilderReports.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No reports yet';
+    els.reportBuilderList.appendChild(option);
+  }
+  state.reportBuilderReports.forEach((report) => {
+    const option = document.createElement('option');
+    option.value = String(report.id || '');
+    option.textContent = `${report.published ? '●' : '○'} ${report.name || report.id}`;
+    els.reportBuilderList.appendChild(option);
+  });
+  if (state.reportBuilderReports.some((report) => report.id === selected)) {
+    els.reportBuilderList.value = selected;
+  }
+}
+
+function renderReportBuilderTags() {
+  if (!els.reportBuilderTagSelect) return;
+  els.reportBuilderTagSelect.textContent = '';
+  state.reportBuilderTags
+    .slice()
+    .sort((a, b) => `${a.connection_id}:${a.tag_name}`.localeCompare(`${b.connection_id}:${b.tag_name}`))
+    .forEach((tag) => {
+      const option = document.createElement('option');
+      option.value = `${tag.connection_id}\u001f${tag.tag_name}`;
+      option.textContent = `${tag.connection_id} — ${tag.tag_name}`;
+      els.reportBuilderTagSelect.appendChild(option);
+    });
+}
+
+async function refreshReportBuilder() {
+  if (!hasPerm('suite.manage_server')) {
+    if (els.reportManagerCard) els.reportManagerCard.style.display = 'none';
+    if (els.reportBuilderCard) els.reportBuilderCard.style.display = 'none';
+    return;
+  }
+  reportManagerSetStatus('Loading…');
+  try {
+    const [definitions, tags] = await Promise.all([
+      apiGet('/api/reports/admin'),
+      apiGet('/api/historian/tags').catch(() => ({ tags: [] }))
+    ]);
+    state.reportBuilderReports = Array.isArray(definitions?.reports) ? definitions.reports : [];
+    state.reportBuilderTags = Array.isArray(tags?.tags) ? tags.tags.filter((tag) => tag?.connection_id && tag?.tag_name) : [];
+    renderReportBuilderList();
+    renderReportBuilderTags();
+    if (els.reportBuilderEditBtn) els.reportBuilderEditBtn.disabled = !state.reportBuilderReports.length;
+    reportManagerSetStatus(`${state.reportBuilderReports.length} saved report(s)`);
+  } catch (err) {
+    reportManagerSetStatus(err.message || err);
+  }
+}
+
+async function saveReportBuilderDefinition() {
+  const report = reportBuilderCurrentDefinition();
+  reportBuilderSetStatus('Saving…');
+  const response = await apiPostJson('/api/reports/admin', {
+    original_id: state.reportBuilderOriginalId,
+    report
+  });
+  state.reportBuilderOriginalId = response.report.id;
+  await refreshReportBuilder();
+  await refreshPublishedReports();
+  loadReportBuilderDefinition(response.report);
+  if (els.reportBuilderTitle) els.reportBuilderTitle.textContent = `Edit ${response.report.name || 'Report'}`;
+  if (els.reportBuilderDuplicateBtn) els.reportBuilderDuplicateBtn.disabled = false;
+  if (els.reportBuilderDeleteBtn) els.reportBuilderDeleteBtn.disabled = false;
+  reportBuilderSetStatus('Saved.');
+  return response.report;
+}
+
+function renderReportBuilderPreview(preview) {
+  if (!els.reportBuilderPreviewHead || !els.reportBuilderPreviewBody || !els.reportBuilderPreviewWrap) return;
+  els.reportBuilderPreviewHead.textContent = '';
+  els.reportBuilderPreviewBody.textContent = '';
+  const headerRow = document.createElement('tr');
+  ['Date', ...(preview.columns || []).map((column) => column.heading)].forEach((heading) => {
+    const th = document.createElement('th');
+    th.textContent = String(heading || '');
+    headerRow.appendChild(th);
+  });
+  els.reportBuilderPreviewHead.appendChild(headerRow);
+  (preview.rows || []).forEach((row) => {
+    const tr = document.createElement('tr');
+    const cells = [row.date, ...(row.values || [])];
+    cells.forEach((value, index) => {
+      const td = document.createElement('td');
+      if (value === null || value === undefined) td.textContent = '—';
+      else if (index > 0) td.textContent = Number(value).toLocaleString(undefined, {
+        minimumFractionDigits: preview.columns?.[index - 1]?.precision ?? 0,
+        maximumFractionDigits: preview.columns?.[index - 1]?.precision ?? 2
+      });
+      else td.textContent = String(value);
+      tr.appendChild(td);
+    });
+    els.reportBuilderPreviewBody.appendChild(tr);
+  });
+  els.reportBuilderPreviewWrap.style.display = '';
+}
+
+function wireReportBuilderUi() {
+  populateReportBuilderTimezones();
+  if (els.reportBuilderName) {
+    els.reportBuilderName.addEventListener('input', () => {
+      if (els.reportBuilderId) {
+        els.reportBuilderId.value = reportIdFromName(els.reportBuilderName.value);
+      }
+    });
+  }
+  if (els.reportBuilderNewBtn) els.reportBuilderNewBtn.addEventListener('click', () => showReportBuilder(null));
+  if (els.reportBuilderEditBtn) els.reportBuilderEditBtn.addEventListener('click', () => {
+    const report = state.reportBuilderReports.find((item) => item.id === els.reportBuilderList?.value);
+    if (report) showReportBuilder(report);
+  });
+  if (els.reportBuilderBackBtn) els.reportBuilderBackBtn.addEventListener('click', showReportsLanding);
+  if (els.reportBuilderReloadBtn) els.reportBuilderReloadBtn.addEventListener('click', () => refreshReportBuilder());
+  if (els.reportBuilderAddTagBtn) els.reportBuilderAddTagBtn.addEventListener('click', () => {
+    const [connectionId, tagName] = String(els.reportBuilderTagSelect?.value || '').split('\u001f');
+    if (!connectionId || !tagName) return;
+    state.reportBuilderColumns.push({
+      heading: tagName, source: 'historian', connection_id: connectionId,
+      tag_name: tagName, aggregation: 'last', precision: 2
+    });
+    renderReportBuilderColumns();
+  });
+  if (els.reportBuilderSaveBtn) els.reportBuilderSaveBtn.addEventListener('click', () => {
+    saveReportBuilderDefinition().catch((err) => reportBuilderSetStatus(err.message || err));
+  });
+  if (els.reportBuilderPreviewBtn) els.reportBuilderPreviewBtn.addEventListener('click', async () => {
+    try {
+      const report = await saveReportBuilderDefinition();
+      reportBuilderSetStatus('Generating preview…');
+      const preview = await apiPostJson('/api/reports/admin/preview', {
+        id: report.id,
+        month: els.publishedReportMonth?.value
+      }, { timeoutMs: 120000 });
+      renderReportBuilderPreview(preview);
+      reportBuilderSetStatus('Preview ready.');
+    } catch (err) {
+      reportBuilderSetStatus(err.message || err);
+    }
+  });
+  if (els.reportBuilderDuplicateBtn) els.reportBuilderDuplicateBtn.addEventListener('click', async () => {
+    try {
+      const response = await apiPostJson('/api/reports/admin/duplicate', { id: state.reportBuilderOriginalId });
+      state.reportBuilderOriginalId = response.report.id;
+      await refreshReportBuilder();
+      showReportBuilder(response.report);
+    } catch (err) { reportBuilderSetStatus(err.message || err); }
+  });
+  if (els.reportBuilderDeleteBtn) els.reportBuilderDeleteBtn.addEventListener('click', async () => {
+    if (!state.reportBuilderOriginalId || !window.confirm(`Delete report '${state.reportBuilderOriginalId}'?`)) return;
+    try {
+      await apiPostJson('/api/reports/admin/delete', { id: state.reportBuilderOriginalId });
+      state.reportBuilderOriginalId = '';
+      await refreshReportBuilder();
+      await refreshPublishedReports();
+      showReportsLanding();
+    } catch (err) { reportBuilderSetStatus(err.message || err); }
+  });
+}
+
 function setTab(id) {
   const next = String(id || '').trim();
   if (!next) return;
@@ -6142,6 +6638,11 @@ function setTab(id) {
   }
   if (id === 'historian') {
     refreshHistorianTab().catch(() => {});
+  }
+  if (id === 'reports') {
+    showReportsLanding();
+    refreshPublishedReports().catch(() => {});
+    refreshReportBuilder().catch(() => {});
   }
   if (id === 'logic') {
     refreshLogicTab().catch(() => {});
@@ -6339,7 +6840,7 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
 function serviceUnavailableMessage(url, detail = '') {
   const path = String(url || '');
   if (path.startsWith('/api/historian/')) return `historian service is unavailable${detail}`;
-  if (path.startsWith('/api/reporter/')) return `reporter service is unavailable${detail}`;
+  if (path.startsWith('/api/reporter/') || path.startsWith('/api/logger/')) return `logger service is unavailable${detail}`;
   if (path.startsWith('/api/alarms/')) return `alarm service is unavailable${detail}`;
   if (path.startsWith('/api/opcbridge/')) return `OPCBridge request failed${detail}`;
   return `service is unavailable${detail}`;
@@ -8861,7 +9362,7 @@ async function refreshReporterSystemTagsForScada() {
   try {
     await loadSystemTagsForSelection();
   } catch {
-    // Non-fatal; the reporter save/delete already completed.
+        // Non-fatal; the logger save/delete already completed.
   }
   if (isPanelActive('tab-workspace')) {
     await refreshVisible().catch(() => {});
@@ -22497,6 +22998,8 @@ async function main() {
   wireLogicTabUi();
   wireLoggerUi();
   wireHistorianUi();
+  wirePublishedReportsUi();
+  wireReportBuilderUi();
   wireOverviewRuntimeUi();
   wireConnectionsUi();
   wireTagsConfigUi();
@@ -22565,6 +23068,10 @@ async function main() {
   }
 
   restartRefreshLoop();
+
+  if (window.location.pathname === '/reports') {
+    setTab('reports');
+  }
 
   window.setTimeout(() => {
     loadTagsConfig()

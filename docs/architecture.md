@@ -58,7 +58,7 @@ Primary “single place configuration” app. It should be usable from a remote 
 - Presents a cohesive workspace view (tree/table/panels).
 - Manages connections/tags/alarms via existing HTTP APIs (no new config formats).
 - Provides system-level setup UI (service status, ports, install/update helpers).
-- Integrates other suite components (alarms, reporter) through their APIs.
+- Integrates other suite components (alarms, logger, historian) through their APIs.
 
 Owns:
 - Admin UX, bulk operations, validation, import/export tooling, and workflows.
@@ -83,7 +83,8 @@ Target feature buckets:
 - Alarms & Events (rule editing, workflow, history)
 - HMI configuration (screen deployment, defaults, operator settings)
 - Services & system configuration (systemd, ports, updates, backups)
-- Data Logger / reporter configuration (databases, scheduled log jobs, data checks)
+- Data Logger configuration (databases, scheduled log jobs, data checks)
+- Published report generation through `opcbridge-report` (initially monthly historian XLSX/CSV exports)
 
 ## Design Rules (to prevent overlap)
 

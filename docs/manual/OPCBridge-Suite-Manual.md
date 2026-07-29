@@ -31,7 +31,7 @@ Status: Draft (placeholders for screenshots)
 5. SCADA (Configuration UI)
 6. OPCBridge (Core)
 7. Alarms
-8. Reporter (Data Logger)
+8. Data Logger
 9. Historian
 10. HMI
 11. Backups / Export / Import
@@ -154,7 +154,7 @@ OPCBridge-Suite is a complete SCADA stack including:
 
 1. OPCBridge: communication layer (drivers, tags, OPC UA, REST).
 2. OPCBridge-SCADA: system configuration UI.
-3. OPCBridge-Reporter: data logger (configured from SCADA).
+3. OPCBridge-Logger: scheduled data logger and data checks (configured from SCADA).
 4. OPCBridge-Alarms: alarm server (alarm logic + notifications).
 5. OPCBridge-Historian: time-series historian.
 6. OPCBridge-HMI: HMI runtime + editor.
@@ -185,7 +185,7 @@ Screenshot placeholder: SCADA Configure Server tab showing URLs/ports.
 - `opcbridge-alarms`
 - `opcbridge-scada`
 - `opcbridge-hmi`
-- `opcbridge-reporter`
+- `opcbridge-logger`
 - `opcbridge-historian`
 
 ---
@@ -284,7 +284,7 @@ Purpose:
 
 Purpose:
 
-- Configure reporter database connections
+- Configure data-logger database connections
 - Configure logging jobs
 - Configure data checks
 
@@ -642,7 +642,7 @@ Notes:
 
 ---
 
-## 8. Reporter (Data Logger)
+## 8. Data Logger
 
 Configured via the SCADA Data Logger tab.
 

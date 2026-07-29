@@ -17,6 +17,7 @@
 **/build/
 **/dist/
 **/node_modules/
+opcbridge-report/vendor/
 /package-lock.json
 **/*.o
 **/*.a
@@ -31,10 +32,13 @@ opcbridge/opcbridge-alarms/opcbridge-alarms
 opcbridge-alarms/opcbridge-alarms
 opcbridge-alarms/opcbridge-alarms.new
 opcbridge-alarms/voice-modem-test
+opcbridge-logger/opcbridge-logger
+# Legacy build artifacts left by pre-rename worktrees.
 opcbridge-reporter/opcbridge-reporter
 opcbridge-historian/opcbridge-historian
 
 # HMI local-only artifacts
 opcbridge-hmi/passwords.jsonc
 opcbridge-hmi/audit.jsonl
+opcbridge-logger/opcbridge_logger
 opcbridge-reporter/opcbridge_reporter

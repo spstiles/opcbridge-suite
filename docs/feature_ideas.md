@@ -139,14 +139,14 @@ Non-goals:
 
 Idea:
 - Generate downloadable reports from predefined report definitions and optional `.xlsx` workbook templates.
-- Serve the report viewing/downloading UI from `opcbridge-scada`, while `opcbridge-reporter` remains the backend report generation engine.
+- Serve the report viewing/downloading UI from `opcbridge-scada`, while a future `opcbridge-report` service handles report generation.
 
 Why:
 - `.xlsx` is the standard spreadsheet format in most office environments and opens cleanly in Excel and LibreOffice.
 - CSV is useful for raw data, but formatted reports need headings, date ranges, totals, multiple sheets, charts, and controlled layouts.
 - HMI should stay focused on SVG-based runtime graphics, not become a widget-heavy reporting interface.
 - `opcbridge-scada` already runs as a service and already owns configuration, permissions, and admin workflows.
-- `opcbridge-reporter` currently has no web server, so keeping UI hosting in SCADA avoids adding unnecessary HTTP/UI surface to reporter.
+- Keeping UI hosting in SCADA avoids adding unnecessary public HTTP/UI surface to the report service.
 
 Desired behavior:
 - Keep CSV export as the simple/raw data option.
@@ -156,13 +156,13 @@ Desired behavior:
 - Provide a SCADA-served report portal, such as `/reports`, for authorized users to choose available reports, set parameters, and download generated workbooks.
 - Hide normal SCADA configuration tabs from report-only users and show only the report portal UI.
 - Keep report/template design, report definitions, schedules, and permission management in SCADA/admin tools.
-- Use `opcbridge-reporter` for the actual report rendering/generation work.
+- Use `opcbridge-report` for the actual report rendering/generation work.
 - Record audit events for report generation/downloads.
 
 Non-goals:
 - No report viewing/downloading UI inside HMI runtime.
 - No full report designer inside HMI runtime.
-- No new web server requirement for `opcbridge-reporter` in the first implementation.
+- No public web server requirement for `opcbridge-report` in the first implementation.
 - No dependency on desktop office applications for server-side generation.
 - No replacement of CSV where raw export is sufficient.
 

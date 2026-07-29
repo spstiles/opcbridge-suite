@@ -30,6 +30,7 @@
 		      <button data-tab="logic" class="tab">Automation</button>
 		      <button data-tab="logger" class="tab">Data Logger</button>
 		      <button data-tab="historian" class="tab">Historian</button>
+		      <button data-tab="reports" class="tab">Reports</button>
 		      <button data-tab="logs" class="tab">Logs</button>
 		      <button data-tab="hmi_audit" class="tab">HMI Audit</button>
 		      <button data-tab="users" class="tab">Users</button>
@@ -1103,9 +1104,89 @@
 		      </div>
 		    </section>
 
+		    <section id="tab-reports" class="panel">
+		      <h2>Reports</h2>
+		      <div class="hint">Download published reports generated from OPCBridge historical data.</div>
+		      <div class="card" id="reportsDownloadCard" style="max-width: 760px; margin-top: 16px;">
+		        <div class="grid2">
+		          <label>
+		            <span>Report</span>
+		            <select id="publishedReportSelect"></select>
+		          </label>
+		          <label>
+		            <span>Report month</span>
+		            <input id="publishedReportMonth" type="month">
+		          </label>
+		          <label>
+		            <span>Format</span>
+		            <select id="publishedReportFormat"></select>
+		          </label>
+		        </div>
+		        <div class="hint" id="publishedReportDescription" style="margin-top: 10px;"></div>
+		        <div class="row-actions" style="margin-top: 16px;">
+		          <button class="btn" id="publishedReportsRefreshBtn" type="button">Refresh</button>
+		          <button class="btn primary" id="publishedReportDownloadBtn" type="button">Download</button>
+		          <div class="hint mono" id="publishedReportsStatus"></div>
+		        </div>
+		      </div>
+
+		      <div class="card" id="reportManagerCard" style="max-width: 760px; margin-top: 18px; display:none;">
+		        <h3>Manage Reports</h3>
+		        <div class="hint">Select a saved report to edit, or create a new report.</div>
+		        <div class="row-actions">
+		          <select id="reportBuilderList" style="min-width: 280px;"></select>
+		          <button class="btn primary" id="reportBuilderNewBtn" type="button">New Report</button>
+		          <button class="btn" id="reportBuilderEditBtn" type="button">Edit</button>
+		          <button class="btn" id="reportBuilderReloadBtn" type="button">Refresh</button>
+		          <div class="hint mono" id="reportManagerStatus"></div>
+		        </div>
+		      </div>
+
+		      <div class="card" id="reportBuilderCard" style="margin-top: 18px; display:none;">
+		        <div class="row-actions">
+		          <button class="btn" id="reportBuilderBackBtn" type="button">← Back to Reports</button>
+		          <button class="btn" id="reportBuilderDuplicateBtn" type="button">Duplicate</button>
+		          <button class="btn danger" id="reportBuilderDeleteBtn" type="button">Delete</button>
+		        </div>
+		        <h3 id="reportBuilderTitle">Report Builder</h3>
+		        <div class="grid2" style="margin-top: 14px;">
+		          <input id="reportBuilderId" type="hidden">
+		          <label style="grid-column: 1 / -1;"><span>Name</span><input id="reportBuilderName" type="text" placeholder="Monthly Flow Report"></label>
+		          <label style="grid-column: 1 / -1;"><span>Description</span><textarea id="reportBuilderDescription" rows="2"></textarea></label>
+		          <label><span>Timezone</span><select id="reportBuilderTimezone"></select></label>
+		          <label><span><input id="reportBuilderXlsx" type="checkbox" checked> Excel (.xlsx)</span></label>
+		          <label><span><input id="reportBuilderCsv" type="checkbox" checked> CSV (.csv)</span></label>
+		          <label><span><input id="reportBuilderPublished" type="checkbox"> Published</span></label>
+		        </div>
+
+		        <h4 style="margin-top: 18px;">Columns</h4>
+		        <div class="row-actions">
+		          <select id="reportBuilderTagSelect" style="min-width: 420px;"></select>
+		          <button class="btn" id="reportBuilderAddTagBtn" type="button">Add Historian Tag</button>
+		        </div>
+		        <div class="table-wrap" style="margin-top: 10px;">
+		          <table class="table">
+		            <thead><tr><th>Order</th><th>Heading</th><th>Connection</th><th>Tag</th><th>Decimals</th><th>Actions</th></tr></thead>
+		            <tbody id="reportBuilderColumns"></tbody>
+		          </table>
+		        </div>
+		        <div class="row-actions" style="margin-top: 14px;">
+		          <button class="btn primary" id="reportBuilderSaveBtn" type="button">Save</button>
+		          <button class="btn" id="reportBuilderPreviewBtn" type="button">Save + Preview Selected Month</button>
+		          <div class="hint mono" id="reportBuilderStatus"></div>
+		        </div>
+		        <div class="table-wrap" id="reportBuilderPreviewWrap" style="display:none; margin-top: 14px;">
+		          <table class="table">
+		            <thead id="reportBuilderPreviewHead"></thead>
+		            <tbody id="reportBuilderPreviewBody"></tbody>
+		          </table>
+		        </div>
+		      </div>
+		    </section>
+
 		    <section id="tab-logger" class="panel">
 		      <h2>Data Logger</h2>
-		      <div class="hint">Configure OPCBridge Reporter connections. Settings are stored on the SCADA server.</div>
+		      <div class="hint">Configure OPCBridge Logger connections. Settings are stored on the SCADA server.</div>
 
 		      <div class="workspace" style="height: calc(100vh - 230px); min-height: 600px; grid-template-rows: minmax(0, 1fr);">
 		        <aside class="sidebar tree">

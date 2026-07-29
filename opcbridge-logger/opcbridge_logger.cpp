@@ -27,8 +27,8 @@
 
 using json = nlohmann::json;
 
-#ifndef OPCBRIDGE_REPORTER_VERSION
-#define OPCBRIDGE_REPORTER_VERSION "dev"
+#ifndef OPCBRIDGE_LOGGER_VERSION
+#define OPCBRIDGE_LOGGER_VERSION "dev"
 #endif
 #ifndef OPCBRIDGE_SUITE_VERSION
 #define OPCBRIDGE_SUITE_VERSION "dev"
@@ -342,7 +342,7 @@ static json read_json_or_object(const std::string& path) {
         json parsed = json::parse(text);
         return parsed.is_object() ? parsed : json::object();
     } catch (const std::exception& ex) {
-        std::cerr << "Reporter: " << ex.what() << "\n";
+        std::cerr << "Logger: " << ex.what() << "\n";
         return json::object();
     }
 }
@@ -849,9 +849,9 @@ static long long next_from_calendar(const std::string& cal, long long after_ms, 
     return 0;
 }
 
-class ReporterService {
+class LoggerService {
 public:
-    ReporterService(std::string config_path,
+    LoggerService(std::string config_path,
                     std::string databases_path,
                     std::string reports_path,
                     std::string data_checks_path,
@@ -1023,7 +1023,7 @@ public:
         std::lock_guard<std::mutex> lock(mu_);
         return {
             {"ok", true},
-            {"version", OPCBRIDGE_REPORTER_VERSION},
+            {"version", OPCBRIDGE_LOGGER_VERSION},
             {"suite_version", OPCBRIDGE_SUITE_VERSION},
             {"last_reload_ms", last_reload_ms_},
             {"last_state_load_ms", last_state_load_ms_},
@@ -1215,7 +1215,7 @@ private:
         DbTestResult result;
         const long long started = now_ms();
         if (db.type != "mysql") {
-            result.error = "Database type not supported by reporter service yet: " + db.type;
+            result.error = "Database type not supported by logger service yet: " + db.type;
             result.latency_ms = static_cast<int>(now_ms() - started);
             return result;
         }
@@ -1277,7 +1277,7 @@ private:
             std::ofstream f(state_path_, std::ios::trunc);
             if (f) f << root.dump(2) << "\n";
         } catch (const std::exception& ex) {
-            std::cerr << "Reporter: failed to save runtime state: " << ex.what() << "\n";
+            std::cerr << "Logger: failed to save runtime state: " << ex.what() << "\n";
         }
     }
 
@@ -1372,7 +1372,7 @@ private:
     RunResult run_job(const Job& job, const DbConfig& db, const ServiceConfig& svc) {
         RunResult result;
         if (db.type != "mysql") {
-            result.error = "Database type not supported by reporter service yet: " + db.type;
+            result.error = "Database type not supported by logger service yet: " + db.type;
             return result;
         }
 
@@ -1431,7 +1431,7 @@ private:
         DataCheckResult result;
         const long long started = now_ms();
         if (db.type != "mysql") {
-            result.error = "Database type not supported by reporter service yet: " + db.type;
+            result.error = "Database type not supported by logger service yet: " + db.type;
             result.latency_ms = static_cast<int>(now_ms() - started);
             return result;
         }
@@ -1714,16 +1714,16 @@ static void print_usage(const char* argv0) {
 }
 
 int main(int argc, char* argv[]) {
-    std::string config_path = "/etc/opcbridge/reporter/config.json";
-    std::string databases_path = "/etc/opcbridge/reporter/databases.json";
-    std::string reports_path = "/etc/opcbridge/reporter/reports.json";
-    std::string data_checks_path = "/etc/opcbridge/reporter/data_checks.json";
-    std::string state_path = "/var/lib/opcbridge/reporter/runtime_state.json";
+    std::string config_path = "/etc/opcbridge/logger/config.json";
+    std::string databases_path = "/etc/opcbridge/logger/databases.json";
+    std::string reports_path = "/etc/opcbridge/logger/reports.json";
+    std::string data_checks_path = "/etc/opcbridge/logger/data_checks.json";
+    std::string state_path = "/var/lib/opcbridge/logger/runtime_state.json";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--version" || arg == "-V") {
-            std::cout << "opcbridge-reporter version " << OPCBRIDGE_REPORTER_VERSION
+            std::cout << "opcbridge-logger version " << OPCBRIDGE_LOGGER_VERSION
                       << " (suite " << OPCBRIDGE_SUITE_VERSION << ")"
                       << " (" << __DATE__ << " " << __TIME__ << ")\n";
             return 0;
@@ -1746,7 +1746,7 @@ int main(int argc, char* argv[]) {
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    ReporterService service(config_path, databases_path, reports_path, data_checks_path, state_path);
+    LoggerService service(config_path, databases_path, reports_path, data_checks_path, state_path);
     std::string error;
     service.load_runtime_state();
     service.reload(error);
@@ -1816,7 +1816,7 @@ int main(int argc, char* argv[]) {
     });
 
     service.start_scheduler();
-    std::cout << "opcbridge-reporter listening on " << svc.listen_host << ":" << svc.listen_port << "\n";
+    std::cout << "opcbridge-logger listening on " << svc.listen_host << ":" << svc.listen_port << "\n";
     bool listened = server.listen(svc.listen_host.c_str(), svc.listen_port);
     service.request_stop();
     service.join_scheduler();

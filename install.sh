@@ -26,6 +26,8 @@ START_SERVICES=1
 ENABLE_SERVICES=1
 SCADA_SYSTEMD_SUDO=0
 INSTALL_HAD_ERRORS=0
+LOGGER_LEGACY_PRESENT=0
+LOGGER_LEGACY_WAS_ENABLED=0
 WITH_ODBC=0
 ODBC_DRIVER=""
 WITH_PJSIP=0
@@ -48,10 +50,12 @@ Profiles:
   --alarms-only           Install only opcbridge-alarms
   --scada-only            Install only opcbridge-scada
   --hmi-only              Install only opcbridge-hmi
-  --full                  Install opcbridge + alarms + scada + hmi + reporter + historian
+  --report-only           Install only opcbridge-report
+  --full                  Install opcbridge + alarms + scada + hmi + logger + historian + report
 
 Component selection (overrides profiles):
-  --components LIST       Comma-separated: opcbridge,alarms,scada,hmi,reporter,historian
+  --components LIST       Comma-separated: opcbridge,alarms,scada,hmi,logger,historian,report
+                          (legacy name "reporter" is accepted as an alias for "logger")
 
 Options:
   --prefix DIR            Install prefix (default: ${PREFIX})
@@ -62,7 +66,7 @@ Options:
   --group GROUP           Service group (default: ${SERVICE_GROUP})
   --no-build              Do not build; use existing binaries
   --deps                  Install dependencies via apt (includes Node deps for Node services)
-  --with-odbc             Install ODBC deps (SQL Server support for reporter)
+  --with-odbc             Install ODBC deps (SQL Server support for logger)
   --odbc-driver NAME      ODBC driver: freetds | ms (default: freetds)
   --with-node-deps        Run npm install for Node services (requires network; useful for --hmi-only/--scada-only)
   --with-pjsip            Build/install pjproject (pjsua) for SIP callouts
@@ -456,8 +460,8 @@ install_deps() {
     fi
   done
 
-  # Reporter deps
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
+  # Data logger deps
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
     pkgs+=(libcurl4-openssl-dev)
     if [[ "$WITH_ODBC" -eq 1 ]]; then
       pkgs+=(unixodbc unixodbc-dev odbcinst)
@@ -471,6 +475,11 @@ install_deps() {
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
     pkgs+=(postgresql postgresql-contrib)
     pkgs+=(libpq-dev)
+  fi
+
+  # Published report generator and spreadsheet/PDF renderers.
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'report'; then
+    pkgs+=(php-cli php-common php-curl php-gd php-intl php-mbstring php-xml php-zip composer)
   fi
 
   # De-dupe
@@ -490,13 +499,13 @@ install_deps() {
 
   apt_install "${uniq[@]}"
 
-  # Optional DB client headers for opcbridge-reporter.
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
+  # Optional DB client headers for opcbridge-logger.
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
     if ! apt_install_first_available default-libmysqlclient-dev libmariadb-dev libmariadb-dev-compat; then
-      echo "Warning: could not find a MySQL/MariaDB client dev package; opcbridge-reporter build may fail." >&2
+      echo "Warning: could not find a MySQL/MariaDB client dev package; opcbridge-logger build may fail." >&2
     fi
     if [[ ! -f /usr/include/mysql/mysql.h && ! -f /usr/include/mariadb/mysql.h ]]; then
-      echo "Warning: mysql headers not found after deps install; opcbridge-reporter build may fail." >&2
+      echo "Warning: mysql headers not found after deps install; opcbridge-logger build may fail." >&2
     fi
 
     if [[ "$WITH_ODBC" -eq 1 && "$ODBC_DRIVER" == "ms" ]]; then
@@ -608,7 +617,7 @@ split_csv() {
 choose_interactive() {
   echo "Select what to install:"
   echo "  1) opcbridge only"
-  echo "  2) full suite (opcbridge + alarms + scada + hmi + reporter + historian)"
+  echo "  2) full suite (opcbridge + alarms + scada + hmi + logger + historian + report)"
   echo "  3) custom"
 
   local choice
@@ -627,8 +636,9 @@ choose_interactive() {
       prompt_yn "Install alarms server?" y && COMPONENTS+=(alarms)
       prompt_yn "Install scada app?" y && COMPONENTS+=(scada)
       prompt_yn "Install hmi app?" y && COMPONENTS+=(hmi)
-      prompt_yn "Install reporter?" n && COMPONENTS+=(reporter)
+      prompt_yn "Install data logger?" n && COMPONENTS+=(logger)
       prompt_yn "Install historian?" n && COMPONENTS+=(historian)
+      prompt_yn "Install report generator?" n && COMPONENTS+=(report)
       ;;
     *)
       echo "Invalid choice." >&2
@@ -639,9 +649,16 @@ choose_interactive() {
 
 validate_components() {
   local ok=1
+  local i
+  for i in "${!COMPONENTS[@]}"; do
+    if [[ "${COMPONENTS[$i]}" == "reporter" ]]; then
+      echo "Note: component name 'reporter' is deprecated; using 'logger'."
+      COMPONENTS[$i]="logger"
+    fi
+  done
   for c in "${COMPONENTS[@]}"; do
     case "$c" in
-      opcbridge|alarms|scada|hmi|reporter|historian) : ;;
+      opcbridge|alarms|scada|hmi|logger|historian|report) : ;;
       *) echo "Unknown component: $c" >&2; ok=0;;
     esac
   done
@@ -840,7 +857,7 @@ ENV
 build_if_needed() {
   [[ "$BUILD" -eq 1 ]] || return 0
 
-  if ! printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(opcbridge|alarms|reporter|historian)'; then
+  if ! printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(opcbridge|alarms|logger|historian|report)'; then
     return 0
   fi
 
@@ -854,9 +871,9 @@ build_if_needed() {
     (cd "$ROOT_DIR/opcbridge-alarms" && ./build.sh)
   fi
 
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
-    if [[ -f "$ROOT_DIR/opcbridge-reporter/Makefile" ]]; then
-      (cd "$ROOT_DIR/opcbridge-reporter" && make)
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
+    if [[ -f "$ROOT_DIR/opcbridge-logger/Makefile" ]]; then
+      (cd "$ROOT_DIR/opcbridge-logger" && make)
     fi
   fi
 
@@ -864,6 +881,18 @@ build_if_needed() {
     if [[ -f "$ROOT_DIR/opcbridge-historian/build.sh" ]]; then
       (cd "$ROOT_DIR/opcbridge-historian" && ./build.sh)
     fi
+  fi
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'report'; then
+    have_cmd composer || {
+      echo "Composer is required to build opcbridge-report (re-run with --deps)." >&2
+      exit 1
+    }
+    composer install \
+      --working-dir "$ROOT_DIR/opcbridge-report" \
+      --no-dev \
+      --classmap-authoritative \
+      --no-interaction
   fi
 }
 
@@ -1083,58 +1112,100 @@ EOF
   fi
 }
 
-install_reporter() {
-  echo "Installing opcbridge-reporter..."
-  local src="$ROOT_DIR/opcbridge-reporter/opcbridge-reporter"
+install_logger() {
+  echo "Installing opcbridge-logger..."
+  local src="$ROOT_DIR/opcbridge-logger/opcbridge-logger"
   [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
-  install -m 0755 "$src" "$PREFIX/bin/opcbridge-reporter"
+  if [[ -x "$PREFIX/bin/opcbridge-reporter" ]] || systemctl cat opcbridge-reporter.service >/dev/null 2>&1; then
+    LOGGER_LEGACY_PRESENT=1
+    if systemctl is-enabled --quiet opcbridge-reporter.service 2>/dev/null; then
+      LOGGER_LEGACY_WAS_ENABLED=1
+    fi
+  fi
+  install -m 0755 "$src" "$PREFIX/bin/opcbridge-logger"
 
-  mkdir -p "$CONFIG_ROOT/reporter" "$DATA_ROOT/reporter"
-  chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/reporter" 2>/dev/null || true
-  chmod 750 "$DATA_ROOT/reporter" 2>/dev/null || true
-  install -m 0644 "$ROOT_DIR/opcbridge-reporter/config.json.example" "$CONFIG_ROOT/reporter/config.json.example" 2>/dev/null || true
-  if [[ ! -f "$CONFIG_ROOT/reporter/config.json" ]]; then
+  # Preserve an existing installation by copying its configuration and runtime
+  # state only when the new logger locations do not exist yet.
+  if [[ -d "$CONFIG_ROOT/reporter" && ! -e "$CONFIG_ROOT/logger" ]]; then
+    cp -a "$CONFIG_ROOT/reporter" "$CONFIG_ROOT/logger"
+    echo "Migrated $CONFIG_ROOT/reporter to $CONFIG_ROOT/logger"
+  fi
+  if [[ -d "$DATA_ROOT/reporter" && ! -e "$DATA_ROOT/logger" ]]; then
+    cp -a "$DATA_ROOT/reporter" "$DATA_ROOT/logger"
+    echo "Migrated $DATA_ROOT/reporter to $DATA_ROOT/logger"
+  fi
+
+  mkdir -p "$CONFIG_ROOT/logger" "$DATA_ROOT/logger"
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/logger" 2>/dev/null || true
+  chmod 750 "$DATA_ROOT/logger" 2>/dev/null || true
+  install -m 0644 "$ROOT_DIR/opcbridge-logger/config.json.example" "$CONFIG_ROOT/logger/config.json.example" 2>/dev/null || true
+  if [[ ! -f "$CONFIG_ROOT/logger/config.json" ]]; then
     umask 027
-    cat >"$CONFIG_ROOT/reporter/config.json" <<'JSON'
+    cat >"$CONFIG_ROOT/logger/config.json" <<'JSON'
 {
   "listen_host": "127.0.0.1",
   "listen_port": 8095,
   "opcbridge_base_url": "http://127.0.0.1:8080"
 }
 JSON
-    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/config.json" 2>/dev/null || true
-    chmod 660 "$CONFIG_ROOT/reporter/config.json" 2>/dev/null || true
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/logger/config.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/logger/config.json" 2>/dev/null || true
   fi
-  if [[ ! -f "$CONFIG_ROOT/reporter/databases.json" ]]; then
+  if [[ ! -f "$CONFIG_ROOT/logger/databases.json" ]]; then
     umask 027
-    cat >"$CONFIG_ROOT/reporter/databases.json" <<'JSON'
+    cat >"$CONFIG_ROOT/logger/databases.json" <<'JSON'
 {
   "databases": []
 }
 JSON
-    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/databases.json" 2>/dev/null || true
-    chmod 660 "$CONFIG_ROOT/reporter/databases.json" 2>/dev/null || true
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/logger/databases.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/logger/databases.json" 2>/dev/null || true
   fi
-  if [[ ! -f "$CONFIG_ROOT/reporter/reports.json" ]]; then
+  if [[ ! -f "$CONFIG_ROOT/logger/reports.json" ]]; then
     umask 027
-    cat >"$CONFIG_ROOT/reporter/reports.json" <<'JSON'
+    cat >"$CONFIG_ROOT/logger/reports.json" <<'JSON'
 {
   "reports": []
 }
 JSON
-    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/reports.json" 2>/dev/null || true
-    chmod 660 "$CONFIG_ROOT/reporter/reports.json" 2>/dev/null || true
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/logger/reports.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/logger/reports.json" 2>/dev/null || true
   fi
-  if [[ ! -f "$CONFIG_ROOT/reporter/data_checks.json" ]]; then
+  if [[ ! -f "$CONFIG_ROOT/logger/data_checks.json" ]]; then
     umask 027
-    cat >"$CONFIG_ROOT/reporter/data_checks.json" <<'JSON'
+    cat >"$CONFIG_ROOT/logger/data_checks.json" <<'JSON'
 {
   "data_checks": []
 }
 JSON
-    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/reporter/data_checks.json" 2>/dev/null || true
-    chmod 660 "$CONFIG_ROOT/reporter/data_checks.json" 2>/dev/null || true
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/logger/data_checks.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/logger/data_checks.json" 2>/dev/null || true
   fi
+}
+
+install_report() {
+  echo "Installing opcbridge-report..."
+  local src_dir="$ROOT_DIR/opcbridge-report"
+  [[ -f "$src_dir/opcbridge-report" ]] || { echo "Missing opcbridge-report source" >&2; exit 1; }
+  [[ -f "$src_dir/vendor/autoload.php" ]] || {
+    echo "Missing opcbridge-report Composer dependencies (build first or omit --no-build)." >&2
+    exit 1
+  }
+
+  mkdir -p "$PREFIX/report" "$CONFIG_ROOT/report" "$DATA_ROOT/report"
+  install -m 0755 "$src_dir/opcbridge-report" "$PREFIX/report/opcbridge-report"
+  install -m 0644 "$src_dir/VERSION" "$PREFIX/report/VERSION"
+  install -m 0644 "$src_dir/composer.json" "$PREFIX/report/composer.json"
+  [[ ! -f "$src_dir/composer.lock" ]] || install -m 0644 "$src_dir/composer.lock" "$PREFIX/report/composer.lock"
+  cp -a "$src_dir/vendor" "$PREFIX/report/"
+  ln -sfn ../report/opcbridge-report "$PREFIX/bin/opcbridge-report"
+
+  install -m 0644 "$src_dir/reports.json.example" "$CONFIG_ROOT/report/reports.json.example"
+  if [[ ! -f "$CONFIG_ROOT/report/reports.json" ]]; then
+    install -m 0660 "$src_dir/reports.json.example" "$CONFIG_ROOT/report/reports.json"
+  fi
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/report" "$DATA_ROOT/report" 2>/dev/null || true
+  chmod 750 "$DATA_ROOT/report" 2>/dev/null || true
 }
 
 install_historian() {
@@ -1267,6 +1338,75 @@ mark_install_error() {
   INSTALL_HAD_ERRORS=1
 }
 
+logger_health_ok() {
+  local host port
+  host="$(sed -nE 's/.*"listen_host"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$CONFIG_ROOT/logger/config.json" 2>/dev/null | head -n 1)"
+  [[ -n "$host" ]] || host="127.0.0.1"
+  if [[ "$host" == "0.0.0.0" || "$host" == "::" || "$host" == "[::]" ]]; then
+    host="127.0.0.1"
+  fi
+  port="$(sed -nE 's/.*"listen_port"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$CONFIG_ROOT/logger/config.json" 2>/dev/null | head -n 1)"
+  [[ -n "$port" ]] || port=8095
+  local url="http://${host}:${port}/health"
+
+  if have_cmd curl; then
+    curl -fsS --max-time 2 "$url" 2>/dev/null | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'
+    return
+  fi
+  if have_cmd wget; then
+    wget -qO- --timeout=2 "$url" 2>/dev/null | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'
+    return
+  fi
+
+  echo "Warning: curl/wget is unavailable; cannot verify opcbridge-logger health." >&2
+  return 1
+}
+
+wait_for_logger_health() {
+  local attempt
+  for attempt in {1..10}; do
+    if logger_health_ok; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+rollback_logger_migration() {
+  [[ "$LOGGER_LEGACY_PRESENT" -eq 1 ]] || return 0
+  echo "Rolling back to opcbridge-reporter..."
+  systemctl disable --now opcbridge-logger.service >/dev/null 2>&1 || true
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if [[ "$LOGGER_LEGACY_WAS_ENABLED" -eq 1 ]]; then
+    systemctl enable opcbridge-reporter.service >/dev/null 2>&1 || true
+  fi
+  if systemctl start opcbridge-reporter.service >/dev/null 2>&1; then
+    echo "  ✓ Restored opcbridge-reporter"
+  else
+    echo "  ✗ Could not restart opcbridge-reporter; inspect its journal immediately." >&2
+  fi
+}
+
+finalize_logger_migration() {
+  [[ "$LOGGER_LEGACY_PRESENT" -eq 1 ]] || return 0
+  echo "Removing superseded opcbridge-reporter executable and systemd units..."
+  rm -f "$PREFIX/bin/opcbridge-reporter"
+  rm -f /etc/systemd/system/opcbridge-reporter.service
+
+  local unit_file
+  for unit_file in \
+    /etc/systemd/system/opcbridge-reporter-*.timer \
+    /etc/systemd/system/opcbridge-reporter-*.service
+  do
+    [[ -e "$unit_file" ]] || continue
+    rm -f "$unit_file"
+  done
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl reset-failed opcbridge-reporter.service >/dev/null 2>&1 || true
+  echo "  Preserved legacy config/data as rollback copies."
+}
+
 write_unit() {
   local unit_name="$1"
   local content="$2"
@@ -1387,9 +1527,9 @@ WantedBy=multi-user.target
 "
   fi
 
-  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
-      write_unit "opcbridge-reporter.service" "[Unit]
-Description=opcbridge reporter
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
+      write_unit "opcbridge-logger.service" "[Unit]
+Description=OPCBridge data logger
 After=network.target opcbridge.service
 Wants=opcbridge.service
 
@@ -1397,7 +1537,7 @@ Wants=opcbridge.service
 Type=simple
 EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${PREFIX}
-ExecStart=${PREFIX}/bin/opcbridge-reporter --service --config ${CONFIG_ROOT}/reporter/config.json --databases ${CONFIG_ROOT}/reporter/databases.json --reports ${CONFIG_ROOT}/reporter/reports.json --data-checks ${CONFIG_ROOT}/reporter/data_checks.json --state ${DATA_ROOT}/reporter/runtime_state.json
+ExecStart=${PREFIX}/bin/opcbridge-logger --service --config ${CONFIG_ROOT}/logger/config.json --databases ${CONFIG_ROOT}/logger/databases.json --reports ${CONFIG_ROOT}/logger/reports.json --data-checks ${CONFIG_ROOT}/logger/data_checks.json --state ${DATA_ROOT}/logger/runtime_state.json
 User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 Restart=always
@@ -1407,8 +1547,9 @@ RestartSec=2
 WantedBy=multi-user.target
 "
 
-    # The reporter is now a single long-running service. Disable legacy per-report
-    # timers that older SCADA builds created so schedules do not run twice.
+    # Prevent the old unit from returning at boot. When services are being
+    # started now, it remains available for rollback until logger is healthy.
+    systemctl disable opcbridge-reporter.service >/dev/null 2>&1 || true
     while read -r unit _rest; do
       [[ -n "${unit:-}" ]] || continue
       systemctl disable --now "$unit" >/dev/null 2>&1 || true
@@ -1418,7 +1559,7 @@ WantedBy=multi-user.target
   systemctl daemon-reload
 
   if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
-    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi opcbridge-reporter opcbridge-historian; do
+    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi opcbridge-logger opcbridge-historian; do
       if systemctl cat "$svc" >/dev/null 2>&1; then
         if [[ "$svc" == "opcbridge-hmi" ]]; then
           if ! node_deps_installed "$PREFIX/hmi"; then
@@ -1461,6 +1602,7 @@ main() {
       --alarms-only) PROFILE="alarms-only"; shift;;
       --scada-only) PROFILE="scada-only"; shift;;
       --hmi-only) PROFILE="hmi-only"; shift;;
+      --report-only) PROFILE="report-only"; shift;;
       --full|--suite) PROFILE="full"; shift;;
       --components) split_csv "${2:-}"; shift 2;;
       --prefix) PREFIX="${2:-}"; shift 2;;
@@ -1505,7 +1647,8 @@ main() {
       alarms-only) COMPONENTS=(alarms);;
       scada-only) COMPONENTS=(scada);;
       hmi-only) COMPONENTS=(hmi);;
-      full|"") COMPONENTS=(opcbridge alarms scada hmi reporter historian);;
+      report-only) COMPONENTS=(report);;
+      full|"") COMPONENTS=(opcbridge alarms scada hmi logger historian report);;
       *) echo "Unknown profile: $PROFILE" >&2; exit 1;;
     esac
   fi
@@ -1527,10 +1670,10 @@ main() {
 
   maybe_prompt_install_deps
 
-  # Optional: SQL Server support for opcbridge-reporter via ODBC (wizard-style).
-  if [[ "$INSTALL_DEPS" -eq 1 ]] && printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'reporter'; then
+  # Optional: SQL Server support for opcbridge-logger via ODBC (wizard-style).
+  if [[ "$INSTALL_DEPS" -eq 1 ]] && printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
     if [[ "$WITH_ODBC" -eq 0 ]]; then
-      if prompt_yn "Enable SQL Server logging support (ODBC) for opcbridge-reporter?" n; then
+      if prompt_yn "Enable SQL Server logging support (ODBC) for opcbridge-logger?" n; then
         WITH_ODBC=1
       fi
     fi
@@ -1552,7 +1695,7 @@ main() {
         driver="freetds"
       fi
       ODBC_DRIVER="$driver"
-      echo "ODBC enabled for reporter (driver=${ODBC_DRIVER})."
+      echo "ODBC enabled for logger (driver=${ODBC_DRIVER})."
     fi
   fi
 
@@ -1606,8 +1749,9 @@ main() {
       alarms) install_alarms;;
       scada) install_scada;;
       hmi) install_hmi;;
-      reporter) install_reporter;;
+      logger) install_logger;;
       historian) install_historian;;
+      report) install_report;;
     esac
   done
   fix_config_permissions
@@ -1655,7 +1799,7 @@ main() {
         alarms) svc="opcbridge-alarms";;
         scada) svc="opcbridge-scada";;
         hmi) svc="opcbridge-hmi";;
-        reporter) svc="opcbridge-reporter";;
+        logger) svc="opcbridge-logger";;
         historian) svc="opcbridge-historian";;
       esac
 
@@ -1678,22 +1822,46 @@ main() {
           fi
         fi
 
+        if [[ "$svc" == "opcbridge-logger" && "$LOGGER_LEGACY_PRESENT" -eq 1 ]]; then
+          echo "Stopping opcbridge-reporter for logger migration..."
+          systemctl stop opcbridge-reporter.service >/dev/null 2>&1 || true
+        fi
+
+        local service_started=0
         if systemctl is-active --quiet "$svc"; then
           echo "Restarting $svc (currently running)..."
           if systemctl restart "$svc" 2>/dev/null; then
             echo "  ✓ $svc restarted successfully"
+            service_started=1
           else
             echo "  ✗ Failed to restart $svc (check: journalctl -u $svc -n 50)"
-            mark_install_error
           fi
         else
           echo "Starting $svc..."
           if systemctl start "$svc" 2>/dev/null; then
             echo "  ✓ $svc started successfully"
+            service_started=1
           else
             echo "  ✗ Failed to start $svc (check: journalctl -u $svc -n 50)"
-            mark_install_error
           fi
+        fi
+
+        if [[ "$svc" == "opcbridge-logger" && "$service_started" -eq 1 ]]; then
+          echo "Verifying opcbridge-logger health..."
+          if wait_for_logger_health; then
+            echo "  ✓ opcbridge-logger health check passed"
+            finalize_logger_migration
+          else
+            echo "  ✗ opcbridge-logger did not become healthy" >&2
+            service_started=0
+          fi
+        fi
+
+        if [[ "$service_started" -ne 1 ]]; then
+          if [[ "$svc" == "opcbridge-logger" ]]; then
+            rollback_logger_migration
+          fi
+          mark_install_error
         fi
       fi
     done
@@ -1711,6 +1879,7 @@ main() {
   echo "opcbridge: http://<host>:8080"
   echo "alarms:    http://<host>:8085/alarm/api/status"
   echo "scada:     http://<host>:3010"
+  echo "reports:   http://<host>:3010/reports"
   echo "hmi:       http://<host>:3000"
   echo ""
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
@@ -1721,6 +1890,9 @@ main() {
   echo "  journalctl -u opcbridge-alarms -f"
   echo "  journalctl -u opcbridge-scada -f"
   echo "  journalctl -u opcbridge-hmi -f"
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
+    echo "  journalctl -u opcbridge-logger -f"
+  fi
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
     echo "  journalctl -u opcbridge-historian -f"
   fi

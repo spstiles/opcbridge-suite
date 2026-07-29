@@ -81,15 +81,21 @@ const SYSTEMD_DROPIN_DIR = String(
 const SYSTEMD_DROPIN_NAME = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_DROPIN_NAME || '20-opcbridge-scada.conf').trim();
 const SYSTEMD_DROPIN_PATH = path.join(SYSTEMD_DROPIN_DIR, SYSTEMD_DROPIN_NAME);
 
+function preferLoggerPath(loggerPath, legacyReporterPath) {
+  return fs.existsSync(loggerPath) || !fs.existsSync(legacyReporterPath) ? loggerPath : legacyReporterPath;
+}
+
 const REPORTER_CONFIG_PATH = String(
+  process.env.OPCBRIDGE_LOGGER_CONFIG ||
   process.env.OPCBRIDGE_REPORTER_CONFIG ||
-  '/etc/opcbridge/reporter/config.json'
+  preferLoggerPath('/etc/opcbridge/logger/config.json', '/etc/opcbridge/reporter/config.json')
 ).trim();
 const REPORTER_CONFIG_EXAMPLE_PATH = `${REPORTER_CONFIG_PATH}.example`;
 
 const REPORTER_DATABASES_PATH = String(
+  process.env.OPCBRIDGE_LOGGER_DATABASES ||
   process.env.OPCBRIDGE_REPORTER_DATABASES ||
-  '/etc/opcbridge/reporter/databases.json'
+  preferLoggerPath('/etc/opcbridge/logger/databases.json', '/etc/opcbridge/reporter/databases.json')
 ).trim();
 
 function detectReporterCapabilities() {
@@ -153,27 +159,31 @@ function listNetworkInterfaces() {
 const REPORTER_CAPABILITIES = detectReporterCapabilities();
 
 const REPORTER_REPORTS_PATH = String(
+  process.env.OPCBRIDGE_LOGGER_REPORTS ||
   process.env.OPCBRIDGE_REPORTER_REPORTS ||
-  '/etc/opcbridge/reporter/reports.json'
+  preferLoggerPath('/etc/opcbridge/logger/reports.json', '/etc/opcbridge/reporter/reports.json')
 ).trim();
 
 const REPORTER_DATA_CHECKS_PATH = String(
+  process.env.OPCBRIDGE_LOGGER_DATA_CHECKS ||
   process.env.OPCBRIDGE_REPORTER_DATA_CHECKS ||
-  '/etc/opcbridge/reporter/data_checks.json'
+  preferLoggerPath('/etc/opcbridge/logger/data_checks.json', '/etc/opcbridge/reporter/data_checks.json')
 ).trim();
 
 const REPORTER_REPORTS_DIR = String(
+  process.env.OPCBRIDGE_LOGGER_REPORTS_DIR ||
   process.env.OPCBRIDGE_REPORTER_REPORTS_DIR ||
-  '/etc/opcbridge/reporter/reports'
+  preferLoggerPath('/etc/opcbridge/logger/reports', '/etc/opcbridge/reporter/reports')
 ).trim();
 
 const REPORTER_BIN = String(
+  process.env.OPCBRIDGE_LOGGER_BIN ||
   process.env.OPCBRIDGE_REPORTER_BIN ||
-  '/opt/opcbridge-suite/bin/opcbridge-reporter'
+  preferLoggerPath('/opt/opcbridge-suite/bin/opcbridge-logger', '/opt/opcbridge-suite/bin/opcbridge-reporter')
 ).trim();
 
-const REPORTER_API_HOST = String(process.env.OPCBRIDGE_REPORTER_API_HOST || '127.0.0.1').trim();
-const REPORTER_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_REPORTER_API_PORT || 8095) || 8095);
+const REPORTER_API_HOST = String(process.env.OPCBRIDGE_LOGGER_API_HOST || process.env.OPCBRIDGE_REPORTER_API_HOST || '127.0.0.1').trim();
+const REPORTER_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_LOGGER_API_PORT || process.env.OPCBRIDGE_REPORTER_API_PORT || 8095) || 8095);
 const HISTORIAN_API_HOST = String(process.env.OPCBRIDGE_HISTORIAN_API_HOST || '127.0.0.1').trim();
 const HISTORIAN_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_HISTORIAN_API_PORT || 8096) || 8096);
 const HISTORIAN_CONFIG_PATH = String(
@@ -182,6 +192,19 @@ const HISTORIAN_CONFIG_PATH = String(
 ).trim();
 const HISTORIAN_CONFIG_EXAMPLE_PATH = `${HISTORIAN_CONFIG_PATH}.example`;
 const HISTORIAN_SYSTEMD_UNIT = String(process.env.OPCBRIDGE_HISTORIAN_SYSTEMD_UNIT || 'opcbridge-historian.service').trim();
+
+const REPORT_DEFINITIONS_PATH = String(
+  process.env.OPCBRIDGE_REPORT_DEFINITIONS ||
+  preferLoggerPath('/etc/opcbridge/report/reports.json', path.join(ROOT, '..', 'opcbridge-report', 'reports.json.example'))
+).trim();
+const REPORT_BIN = String(
+  process.env.OPCBRIDGE_REPORT_BIN ||
+  preferLoggerPath('/opt/opcbridge-suite/bin/opcbridge-report', path.join(ROOT, '..', 'opcbridge-report', 'opcbridge-report'))
+).trim();
+const REPORT_HISTORIAN_URL = String(
+  process.env.OPCBRIDGE_REPORT_HISTORIAN_URL ||
+  `http://${HISTORIAN_API_HOST}:${HISTORIAN_API_PORT}`
+).trim();
 
 const SYSTEMD_UNITS_DIR = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNITS_DIR || '/etc/systemd/system').trim();
 
@@ -382,6 +405,80 @@ function authStatusHasPerm(status, permId) {
   return perms.map((p) => String(p || '').trim()).includes(want);
 }
 
+function authStatusIsLoggedIn(status) {
+  return Boolean(
+    status?.user_logged_in ||
+    status?.logged_in ||
+    status?.user?.username ||
+    status?.user?.id
+  );
+}
+
+function readPublishedReports() {
+  return readReportDefinitions()
+    .filter((report) => report && typeof report === 'object' && report.published === true)
+    .map((report) => ({
+      id: sanitizeId(report.id),
+      name: String(report.name || report.id || '').trim(),
+      description: String(report.description || '').trim(),
+      period: String(report.period || 'month').trim(),
+      timezone: String(report.timezone || 'UTC').trim(),
+      formats: (Array.isArray(report.formats) ? report.formats : ['xlsx'])
+        .map((format) => String(format || '').trim().toLowerCase())
+        .filter((format) => ['xlsx', 'csv'].includes(format))
+    }))
+    .filter((report) => report.id && report.name);
+}
+
+function readReportDefinitions() {
+  const root = readJsonFileOrNull(REPORT_DEFINITIONS_PATH) || { reports: [] };
+  return Array.isArray(root?.reports) ? root.reports.filter((report) => report && typeof report === 'object') : [];
+}
+
+function normalizeReportDefinition(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const id = sanitizeId(source.id);
+  const name = String(source.name || '').trim().slice(0, 191);
+  if (!id || !name) throw new Error('Report id and name are required.');
+  const timezone = String(source.timezone || 'UTC').trim().slice(0, 100) || 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+  } catch {
+    throw new Error(`Invalid timezone: ${timezone}`);
+  }
+  const formats = Array.from(new Set(
+    (Array.isArray(source.formats) ? source.formats : ['xlsx'])
+      .map((format) => String(format || '').trim().toLowerCase())
+      .filter((format) => ['xlsx', 'csv'].includes(format))
+  ));
+  if (!formats.length) throw new Error('Select at least one output format.');
+  const columns = (Array.isArray(source.columns) ? source.columns : []).slice(0, 100).map((column, index) => {
+    const item = column && typeof column === 'object' ? column : {};
+    const connectionId = String(item.connection_id || '').trim().slice(0, 255);
+    const tagName = String(item.tag_name || '').trim().slice(0, 500);
+    if (!connectionId || !tagName) throw new Error(`Column ${index + 1} requires a historian connection and tag.`);
+    return {
+      heading: String(item.heading || tagName).trim().slice(0, 191) || tagName,
+      source: 'historian',
+      connection_id: connectionId,
+      tag_name: tagName,
+      aggregation: 'last',
+      precision: normalizeIntRange(item.precision, 2, 0, 10)
+    };
+  });
+  if (!columns.length) throw new Error('Add at least one historian column.');
+  return {
+    id,
+    name,
+    description: String(source.description || '').trim().slice(0, 2000),
+    published: normalizeBool(source.published, false),
+    timezone,
+    period: 'month',
+    formats,
+    columns
+  };
+}
+
 async function fetchUpstreamJson(req, target, path, { timeoutMs = 8000 } = {}) {
   const { scheme, host, port } = target || {};
   const client = String(scheme || 'http') === 'https' ? https : http;
@@ -540,6 +637,23 @@ function sanitizeId(value) {
 function uniqueCopyId(sourceId, usedIds) {
   const src = sanitizeId(sourceId) || 'item';
   const root = `${src}_copy`;
+  let id = root;
+  let n = 2;
+  while (usedIds.has(id)) {
+    id = `${root}_${n}`;
+    n += 1;
+  }
+  return id;
+}
+
+function uniqueGeneratedId(sourceId, usedIds) {
+  const root = String(sourceId || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120) || 'report';
   let id = root;
   let n = 2;
   while (usedIds.has(id)) {
@@ -1564,6 +1678,7 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
   }
   projectBackupWalkFiles(REPORTER_REPORTS_DIR, '.', { includeExts: ['.json', '.jsonc', '.sql', '.txt', '.md'] })
     .forEach((rel) => add('reporter_reports', REPORTER_REPORTS_DIR, rel));
+  add('report_config', path.dirname(REPORT_DEFINITIONS_PATH), path.basename(REPORT_DEFINITIONS_PATH));
 
   if (includeHistory) {
     progress('Collecting alarm/event history database...', 60);
@@ -1606,6 +1721,7 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
       hmi_project: HMI_ROOT,
       reporter_config: path.dirname(REPORTER_CONFIG_PATH),
       reporter_reports: REPORTER_REPORTS_DIR,
+      report_config: path.dirname(REPORT_DEFINITIONS_PATH),
       runtime_history: path.dirname(OPCBRIDGE_ALARMS_DB_PATH),
       historian_data: os.tmpdir()
     },
@@ -1625,6 +1741,7 @@ function projectRestoreRootForSection(section) {
   if (s === 'hmi_project') return HMI_ROOT;
   if (s === 'reporter_config') return path.dirname(REPORTER_CONFIG_PATH);
   if (s === 'reporter_reports') return REPORTER_REPORTS_DIR;
+  if (s === 'report_config') return path.dirname(REPORT_DEFINITIONS_PATH);
   if (s === 'runtime_history') return path.dirname(OPCBRIDGE_ALARMS_DB_PATH);
   if (s === 'historian_data') return os.tmpdir();
   return '';
@@ -2068,6 +2185,11 @@ async function proxy(req, res, target, prefixName) {
 const server = http.createServer(async (req, res) => {
   const cfg = readConfig();
   const url = new URL(req.url, 'http://local');
+  // Logger is the canonical component name. Keep the former API prefix as an
+  // implementation-level compatibility alias for existing SCADA clients.
+  if (url.pathname === '/api/logger' || url.pathname.startsWith('/api/logger/')) {
+    url.pathname = url.pathname.replace(/^\/api\/logger/, '/api/reporter');
+  }
 
   if (!requireUiAuth(req, res)) return;
 
@@ -2111,6 +2233,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (!authStatusHasPerm(status, 'opcbridge.edit_config') && !authStatusHasPerm(status, 'suite.manage_server')) {
       sendJson(res, 403, { ok: false, error: 'Insufficient permissions (opcbridge.edit_config required).' });
+      return null;
+    }
+    return status;
+  }
+
+  async function requireReportsPerm() {
+    let status = null;
+    try {
+      status = await fetchOpcbridgeAuthStatus(req, cfg);
+    } catch (err) {
+      sendJson(res, 502, { ok: false, error: String(err.message || err) });
+      return null;
+    }
+    if (!authStatusIsLoggedIn(status) && !authStatusHasPerm(status, 'suite.manage_server')) {
+      sendJson(res, 403, { ok: false, error: 'Sign in to access published reports.' });
       return null;
     }
     return status;
@@ -2510,7 +2647,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Read/write opcbridge-reporter config on the SCADA server.
+  // Read/write opcbridge-logger config on the SCADA server.
   // NOTE: do not return mysql_password to the browser; indicate if it is set.
   if (url.pathname === '/api/reporter/config') {
     if (!await requireManageServerPerm()) return;
@@ -2560,7 +2697,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Capabilities for opcbridge-reporter integrations (used by SCADA UI).
+  // Capabilities for opcbridge-logger integrations (used by SCADA UI).
   // Permissions: suite.manage_server
   if (url.pathname === '/api/reporter/capabilities') {
     if (!await requireManageServerPerm()) return;
@@ -2572,7 +2709,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Read/write database connection profiles for opcbridge-reporter.
+  // Read/write database connection profiles for opcbridge-logger.
   // Permissions: suite.manage_server
   if (url.pathname === '/api/reporter/databases') {
     if (!await requireManageServerPerm()) return;
@@ -2795,7 +2932,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Read/write report definitions (metadata) for opcbridge-reporter.
+  // Read/write scheduled log-job definitions for opcbridge-logger.
   // Permissions: suite.manage_server
   if (url.pathname === '/api/reporter/reports') {
     if (!await requireManageServerPerm()) return;
@@ -2945,7 +3082,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Read/write data check definitions for opcbridge-reporter.
+  // Read/write data check definitions for opcbridge-logger.
   // Permissions: suite.manage_server
   if (url.pathname === '/api/reporter/data-checks') {
     if (!await requireManageServerPerm()) return;
@@ -3110,7 +3247,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Apply a report schedule by asking the long-running reporter service to reload.
+  // Apply a log-job schedule by asking the long-running logger service to reload.
   if (url.pathname === '/api/reporter/reports/apply') {
     if (!await requireManageServerPerm()) return;
     if (req.method !== 'POST') {
@@ -3757,6 +3894,194 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/reports/admin') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method === 'GET') {
+      sendJson(res, 200, { ok: true, path: REPORT_DEFINITIONS_PATH, reports: readReportDefinitions() });
+      return;
+    }
+    if (req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
+        const originalId = sanitizeId(body.original_id || '');
+        const reports = readReportDefinitions();
+        const source = body.report || body;
+        const usedIds = new Set(
+          reports
+            .map((item) => sanitizeId(item?.id))
+            .filter((id) => id && id !== originalId)
+        );
+        source.id = uniqueGeneratedId(source.name, usedIds);
+        const report = normalizeReportDefinition(source);
+        const lookupId = originalId || report.id;
+        const index = reports.findIndex((item) => sanitizeId(item?.id) === lookupId);
+        if (reports.some((item, itemIndex) => itemIndex !== index && sanitizeId(item?.id) === report.id)) {
+          throw new Error(`Report id already exists: ${report.id}`);
+        }
+        if (index >= 0) reports[index] = report;
+        else reports.push(report);
+        writeJsonFile(REPORT_DEFINITIONS_PATH, { reports });
+        sendJson(res, 200, { ok: true, path: REPORT_DEFINITIONS_PATH, report });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/reports/admin/delete' || url.pathname === '/api/reports/admin/duplicate') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(body.id);
+      const reports = readReportDefinitions();
+      const index = reports.findIndex((item) => sanitizeId(item?.id) === id);
+      if (!id || index < 0) {
+        sendJson(res, 404, { ok: false, error: `Report not found: ${id}` });
+        return;
+      }
+      if (url.pathname.endsWith('/delete')) {
+        reports.splice(index, 1);
+        writeJsonFile(REPORT_DEFINITIONS_PATH, { reports });
+        sendJson(res, 200, { ok: true, deleted: true, id });
+        return;
+      }
+      const copy = JSON.parse(JSON.stringify(reports[index]));
+      copy.id = uniqueCopyId(id, new Set(reports.map((item) => sanitizeId(item?.id)).filter(Boolean)));
+      copy.name = copyName(copy.name);
+      copy.published = false;
+      reports.push(copy);
+      writeJsonFile(REPORT_DEFINITIONS_PATH, { reports });
+      sendJson(res, 200, { ok: true, report: copy });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reports/admin/preview') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(body.id);
+      const month = String(body.month || '').trim();
+      if (!id || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        throw new Error('Valid id and month (YYYY-MM) are required.');
+      }
+      const result = await new Promise((resolve) => {
+        child_process.execFile(REPORT_BIN, [
+          'preview',
+          '--definitions', REPORT_DEFINITIONS_PATH,
+          '--id', id,
+          '--month', month,
+          '--historian-url', REPORT_HISTORIAN_URL,
+          '--allow-unpublished'
+        ], { encoding: 'utf8', timeout: 120000, maxBuffer: 20 * 1024 * 1024 },
+        (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+      });
+      if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
+      sendJson(res, 200, JSON.parse(result.stdout));
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reports') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireReportsPerm()) return;
+    sendJson(res, 200, {
+      ok: true,
+      reports: readPublishedReports()
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/reports/download') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!await requireReportsPerm()) return;
+
+    const id = sanitizeId(url.searchParams.get('id'));
+    const month = String(url.searchParams.get('month') || '').trim();
+    const format = String(url.searchParams.get('format') || 'xlsx').trim().toLowerCase();
+    if (!id || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !['xlsx', 'csv'].includes(format)) {
+      sendJson(res, 400, { ok: false, error: 'Valid id, month (YYYY-MM), and format are required.' });
+      return;
+    }
+    const report = readPublishedReports().find((item) => item.id === id);
+    if (!report) {
+      sendJson(res, 404, { ok: false, error: `Published report not found: ${id}` });
+      return;
+    }
+    if (!report.formats.includes(format)) {
+      sendJson(res, 400, { ok: false, error: `Report '${id}' does not publish ${format} output.` });
+      return;
+    }
+    if (!fs.existsSync(REPORT_BIN)) {
+      sendJson(res, 503, { ok: false, error: `Report generator is not installed: ${REPORT_BIN}` });
+      return;
+    }
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opcbridge-report-'));
+    const outputPath = path.join(tempDir, `${id}.${format}`);
+    try {
+      const result = await new Promise((resolve) => {
+        child_process.execFile(REPORT_BIN, [
+          'generate',
+          '--definitions', REPORT_DEFINITIONS_PATH,
+          '--id', id,
+          '--month', month,
+          '--format', format,
+          '--output', outputPath,
+          '--historian-url', REPORT_HISTORIAN_URL
+        ], {
+          encoding: 'utf8',
+          timeout: 120000,
+          maxBuffer: 2 * 1024 * 1024
+        }, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+      });
+      if (result.error) {
+        const detail = String(result.stderr || result.error.message || result.error).trim();
+        sendJson(res, 502, { ok: false, error: detail || 'Report generation failed.' });
+        return;
+      }
+      const body = fs.readFileSync(outputPath);
+      const safeBase = String(report.name || id)
+        .replace(/[^A-Za-z0-9._-]+/g, '-')
+        .replace(/^[-_.]+|[-_.]+$/g, '') || 'report';
+      const contentType = format === 'csv'
+        ? 'text/csv; charset=utf-8'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      send(res, 200, {
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${safeBase}-${month}.${format}"`,
+        'Cache-Control': 'no-store'
+      }, body);
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: String(err.message || err) });
+    } finally {
+      try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch { /* ignore */ }
+      try { fs.rmdirSync(tempDir); } catch { /* ignore */ }
+    }
+    return;
+  }
+
   if (url.pathname === '/api/system/network-interfaces') {
     if (req.method !== 'GET') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
@@ -3791,7 +4116,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const reqPath = url.pathname === '/' ? '/index.html' : url.pathname;
+  const reqPath = (url.pathname === '/' || url.pathname === '/reports') ? '/index.html' : url.pathname;
   const filePath = safeJoin(PUBLIC_DIR, reqPath);
   if (!filePath) {
     send(res, 400, { 'Content-Type': 'text/plain; charset=utf-8' }, 'Bad path');

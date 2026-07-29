@@ -1,0 +1,400 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+const OPCBRIDGE_REPORT_FORMATS = ['xlsx', 'csv'];
+
+function fail(string $message, int $code = 1): never
+{
+    fwrite(STDERR, "opcbridge-report: {$message}\n");
+    exit($code);
+}
+
+function parse_args(array $argv): array
+{
+    $command = $argv[1] ?? '';
+    $options = [];
+    for ($i = 2; $i < count($argv); $i++) {
+        $arg = (string)$argv[$i];
+        if (!str_starts_with($arg, '--')) {
+            fail("Unexpected argument: {$arg}", 2);
+        }
+        $name = substr($arg, 2);
+        if ($name === 'allow-unpublished') {
+            $options[$name] = true;
+            continue;
+        }
+        if ($i + 1 >= count($argv)) {
+            fail("Missing value for --{$name}", 2);
+        }
+        $options[$name] = (string)$argv[++$i];
+    }
+    return [$command, $options];
+}
+
+function option(array $options, string $name, ?string $default = null): string
+{
+    $value = isset($options[$name]) ? trim((string)$options[$name]) : '';
+    if ($value === '' && $default === null) {
+        fail("--{$name} is required", 2);
+    }
+    return $value !== '' ? $value : (string)$default;
+}
+
+function load_reports(string $path): array
+{
+    if (!is_file($path)) {
+        fail("Definitions file not found: {$path}");
+    }
+    $raw = file_get_contents($path);
+    if ($raw === false) {
+        fail("Unable to read definitions: {$path}");
+    }
+    try {
+        $root = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+    } catch (Throwable $e) {
+        fail("Invalid definitions JSON: {$e->getMessage()}");
+    }
+    $reports = is_array($root['reports'] ?? null) ? $root['reports'] : [];
+    return array_values(array_filter($reports, 'is_array'));
+}
+
+function public_report(array $report): array
+{
+    return [
+        'id' => (string)($report['id'] ?? ''),
+        'name' => (string)($report['name'] ?? $report['id'] ?? ''),
+        'description' => (string)($report['description'] ?? ''),
+        'period' => (string)($report['period'] ?? 'month'),
+        'timezone' => (string)($report['timezone'] ?? 'UTC'),
+        'formats' => array_values(array_intersect(
+            OPCBRIDGE_REPORT_FORMATS,
+            is_array($report['formats'] ?? null) ? $report['formats'] : ['xlsx']
+        )),
+    ];
+}
+
+function validate_report(array $report): array
+{
+    $id = trim((string)($report['id'] ?? ''));
+    if ($id === '' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]*$/', $id)) {
+        fail('Report id is missing or invalid');
+    }
+    if (($report['period'] ?? 'month') !== 'month') {
+        fail("Report '{$id}' uses an unsupported period");
+    }
+    $timezone = (string)($report['timezone'] ?? 'UTC');
+    try {
+        new DateTimeZone($timezone);
+    } catch (Throwable) {
+        fail("Report '{$id}' has invalid timezone '{$timezone}'");
+    }
+    $columns = $report['columns'] ?? null;
+    if (!is_array($columns) || count($columns) < 1) {
+        fail("Report '{$id}' must contain at least one column");
+    }
+    foreach ($columns as $index => $column) {
+        if (!is_array($column)) {
+            fail("Report '{$id}' column {$index} is invalid");
+        }
+        if (($column['source'] ?? 'historian') !== 'historian') {
+            fail("Report '{$id}' column {$index} uses an unsupported source");
+        }
+        if (($column['aggregation'] ?? 'last') !== 'last') {
+            fail("Report '{$id}' column {$index} uses an unsupported aggregation");
+        }
+        if (trim((string)($column['connection_id'] ?? '')) === '' ||
+            trim((string)($column['tag_name'] ?? '')) === '') {
+            fail("Report '{$id}' column {$index} requires connection_id and tag_name");
+        }
+    }
+    return $report;
+}
+
+function month_range(string $month, string $timezone): array
+{
+    if (!preg_match('/^(\d{4})-(\d{2})$/', $month, $matches)) {
+        fail("--month must use YYYY-MM", 2);
+    }
+    $year = (int)$matches[1];
+    $monthNumber = (int)$matches[2];
+    if ($year < 2000 || $year > 2100 || $monthNumber < 1 || $monthNumber > 12) {
+        fail("--month is outside the supported range", 2);
+    }
+    $tz = new DateTimeZone($timezone);
+    $start = new DateTimeImmutable(sprintf('%04d-%02d-01 00:00:00', $year, $monthNumber), $tz);
+    $end = $start->modify('first day of next month');
+    return [$start, $end];
+}
+
+function http_json(string $url): array
+{
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'GET',
+            'header' => "Accept: application/json\r\n",
+            'ignore_errors' => true,
+            'timeout' => 30,
+        ],
+    ]);
+    $raw = @file_get_contents($url, false, $context);
+    $status = 0;
+    foreach (($http_response_header ?? []) as $header) {
+        if (preg_match('#^HTTP/\S+\s+(\d+)#', $header, $match)) {
+            $status = (int)$match[1];
+        }
+    }
+    if ($raw === false) {
+        fail("Historian request failed: {$url}");
+    }
+    try {
+        $json = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+    } catch (Throwable $e) {
+        fail("Historian returned invalid JSON: {$e->getMessage()}");
+    }
+    if ($status < 200 || $status >= 300 || !($json['ok'] ?? false)) {
+        fail('Historian query failed: ' . (string)($json['error'] ?? "HTTP {$status}"));
+    }
+    return $json;
+}
+
+function historian_daily_last(
+    string $baseUrl,
+    array $column,
+    DateTimeImmutable $start,
+    DateTimeImmutable $end,
+    DateTimeZone $timezone
+): array {
+    $query = http_build_query([
+        'connection_id' => (string)$column['connection_id'],
+        'tag_name' => (string)$column['tag_name'],
+        'from_ms' => $start->getTimestamp() * 1000,
+        'to_ms' => ($end->getTimestamp() * 1000) - 1,
+        'limit' => 100000,
+    ], '', '&', PHP_QUERY_RFC3986);
+    $json = http_json(rtrim($baseUrl, '/') . '/query?' . $query);
+    $daily = [];
+    foreach (($json['points'] ?? []) as $point) {
+        if (!is_array($point) || !isset($point['ts_ms']) || !array_key_exists('value', $point)) {
+            continue;
+        }
+        $timestampMs = (int)$point['ts_ms'];
+        $date = (new DateTimeImmutable('@' . intdiv($timestampMs, 1000)))
+            ->setTimezone($timezone)
+            ->format('Y-m-d');
+        if (!isset($daily[$date]) || $timestampMs > $daily[$date]['ts_ms']) {
+            $daily[$date] = [
+                'ts_ms' => $timestampMs,
+                'value' => $point['value'],
+            ];
+        }
+    }
+    return $daily;
+}
+
+function build_rows(
+    array $report,
+    string $historianUrl,
+    DateTimeImmutable $start,
+    DateTimeImmutable $end
+): array {
+    $timezone = new DateTimeZone((string)($report['timezone'] ?? 'UTC'));
+    $series = [];
+    foreach ($report['columns'] as $column) {
+        $series[] = historian_daily_last($historianUrl, $column, $start, $end, $timezone);
+    }
+    $rows = [];
+    for ($day = $start; $day < $end; $day = $day->modify('+1 day')) {
+        $dateKey = $day->format('Y-m-d');
+        $values = [];
+        foreach ($series as $data) {
+            $values[] = $data[$dateKey]['value'] ?? null;
+        }
+        $rows[] = ['date' => $dateKey, 'values' => $values];
+    }
+    return $rows;
+}
+
+function safe_filename(string $value): string
+{
+    $safe = preg_replace('/[^A-Za-z0-9._-]+/', '-', trim($value));
+    return trim((string)$safe, '-_.') ?: 'report';
+}
+
+function write_csv(string $output, array $report, array $rows): void
+{
+    $handle = fopen($output, 'wb');
+    if ($handle === false) {
+        fail("Unable to create output: {$output}");
+    }
+    fputcsv($handle, array_merge(
+        ['Date'],
+        array_map(fn(array $column): string => (string)($column['heading'] ?? $column['tag_name']), $report['columns'])
+    ));
+    foreach ($rows as $row) {
+        fputcsv($handle, array_merge([$row['date']], $row['values']));
+    }
+    fclose($handle);
+}
+
+function write_xlsx(
+    string $output,
+    array $report,
+    string $month,
+    array $rows,
+    string $autoload
+): void {
+    if (!is_file($autoload)) {
+        fail("PhpSpreadsheet is not installed; missing {$autoload}");
+    }
+    require_once $autoload;
+
+    $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
+    $sheet->setTitle('Report');
+    $title = (string)($report['name'] ?? $report['id']);
+    $lastColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($report['columns']) + 1);
+    $sheet->setCellValue('A1', $title);
+    $sheet->mergeCells("A1:{$lastColumn}1");
+    $sheet->setCellValue('A2', 'Period');
+    $sheet->setCellValue('B2', $month);
+    $sheet->setCellValue('A3', 'Generated');
+    $sheet->setCellValue('B3', (new DateTimeImmutable('now'))->format(DateTimeInterface::ATOM));
+
+    $headers = ['Date'];
+    foreach ($report['columns'] as $column) {
+        $headers[] = (string)($column['heading'] ?? $column['tag_name']);
+    }
+    $sheet->fromArray($headers, null, 'A5');
+
+    $rowNumber = 6;
+    foreach ($rows as $row) {
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', $row['date']);
+        $sheet->setCellValue("A{$rowNumber}", \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($date));
+        $sheet->getStyle("A{$rowNumber}")->getNumberFormat()->setFormatCode('mm/dd/yyyy');
+        foreach ($row['values'] as $index => $value) {
+            if ($value === null) {
+                continue;
+            }
+            $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($index + 2) . $rowNumber;
+            $sheet->setCellValue($cell, $value);
+            $precision = max(0, min(10, (int)($report['columns'][$index]['precision'] ?? 2)));
+            $format = $precision > 0 ? '#,##0.' . str_repeat('0', $precision) : '#,##0';
+            $sheet->getStyle($cell)->getNumberFormat()->setFormatCode($format);
+        }
+        $rowNumber++;
+    }
+
+    $sheet->getStyle("A1:{$lastColumn}1")->getFont()->setBold(true)->setSize(16);
+    $sheet->getStyle("A5:{$lastColumn}5")->getFont()->setBold(true);
+    $sheet->getStyle("A5:{$lastColumn}5")->getFill()
+        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+        ->getStartColor()->setARGB('FFD9EAF7');
+    $sheet->freezePane('A6');
+    $sheet->setAutoFilter("A5:{$lastColumn}" . max(5, $rowNumber - 1));
+    $sheet->getColumnDimension('A')->setWidth(14);
+    for ($columnIndex = 2; $columnIndex <= count($report['columns']) + 1; $columnIndex++) {
+        $sheet->getColumnDimension(
+            \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndex)
+        )->setWidth(20);
+    }
+    $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE);
+    $sheet->getPageSetup()->setFitToWidth(1)->setFitToHeight(0);
+
+    $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+    $writer->save($output);
+    $spreadsheet->disconnectWorksheets();
+}
+
+[$command, $options] = parse_args($argv);
+$definitions = option($options, 'definitions', '/etc/opcbridge/report/reports.json');
+$reports = load_reports($definitions);
+
+if ($command === 'list') {
+    $publishedOnly = !isset($options['allow-unpublished']);
+    $items = [];
+    foreach ($reports as $report) {
+        if ($publishedOnly && !($report['published'] ?? false)) {
+            continue;
+        }
+        $items[] = public_report(validate_report($report));
+    }
+    echo json_encode(['ok' => true, 'reports' => $items], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+    exit(0);
+}
+
+if ($command !== 'generate' && $command !== 'preview') {
+    fail('Usage: opcbridge-report list|preview|generate [options]', 2);
+}
+
+$id = option($options, 'id');
+$month = option($options, 'month');
+$historianUrl = option($options, 'historian-url', 'http://127.0.0.1:8096');
+
+$report = null;
+foreach ($reports as $candidate) {
+    if ((string)($candidate['id'] ?? '') === $id) {
+        $report = validate_report($candidate);
+        break;
+    }
+}
+if ($report === null) {
+    fail("Report not found: {$id}");
+}
+if (!($report['published'] ?? false) && !isset($options['allow-unpublished'])) {
+    fail("Report is not published: {$id}");
+}
+[$start, $end] = month_range($month, (string)($report['timezone'] ?? 'UTC'));
+$rows = build_rows($report, $historianUrl, $start, $end);
+
+if ($command === 'preview') {
+    echo json_encode([
+        'ok' => true,
+        'id' => $id,
+        'name' => (string)($report['name'] ?? $id),
+        'month' => $month,
+        'timezone' => (string)($report['timezone'] ?? 'UTC'),
+        'columns' => array_map(
+            fn(array $column): array => [
+                'heading' => (string)($column['heading'] ?? $column['tag_name']),
+                'connection_id' => (string)$column['connection_id'],
+                'tag_name' => (string)$column['tag_name'],
+                'precision' => max(0, min(10, (int)($column['precision'] ?? 2))),
+            ],
+            $report['columns']
+        ),
+        'rows' => $rows,
+    ], JSON_UNESCAPED_SLASHES) . "\n";
+    exit(0);
+}
+
+$format = strtolower(option($options, 'format', 'xlsx'));
+$output = option($options, 'output');
+$autoload = option($options, 'autoload', __DIR__ . '/vendor/autoload.php');
+if (!in_array($format, OPCBRIDGE_REPORT_FORMATS, true)) {
+    fail("Unsupported format: {$format}", 2);
+}
+$formats = is_array($report['formats'] ?? null) ? $report['formats'] : ['xlsx'];
+if (!in_array($format, $formats, true)) {
+    fail("Report '{$id}' does not publish {$format} output");
+}
+
+$outputDir = dirname($output);
+if (!is_dir($outputDir) && !mkdir($outputDir, 0750, true) && !is_dir($outputDir)) {
+    fail("Unable to create output directory: {$outputDir}");
+}
+if ($format === 'csv') {
+    write_csv($output, $report, $rows);
+} else {
+    write_xlsx($output, $report, $month, $rows, $autoload);
+}
+
+echo json_encode([
+    'ok' => true,
+    'id' => $id,
+    'month' => $month,
+    'format' => $format,
+    'output' => $output,
+    'filename' => safe_filename((string)($report['name'] ?? $id)) . "-{$month}.{$format}",
+    'rows' => count($rows),
+], JSON_UNESCAPED_SLASHES) . "\n";

@@ -125,6 +125,7 @@ if have_cmd systemctl; then
     opcbridge-hmi.service \
     opcbridge-scada.service \
     opcbridge-historian.service \
+    opcbridge-logger.service \
     opcbridge-reporter.service \
     opcbridge-alarms.service \
     opcbridge.service
@@ -132,7 +133,7 @@ if have_cmd systemctl; then
     stop_disable_unit "$svc"
   done
 
-  # Legacy/per-report reporter units. These are runtime-generated and can keep
+  # Legacy per-job units and the superseded reporter units can keep
   # firing after the main install is gone if not explicitly disabled.
   while read -r unit _rest; do
     [[ -n "${unit:-}" ]] || continue
@@ -142,19 +143,33 @@ if have_cmd systemctl; then
     [[ -n "${unit:-}" ]] || continue
     stop_disable_unit "$unit"
   done < <(systemctl list-unit-files 'opcbridge-reporter-*.service' --no-legend 2>/dev/null || true)
+  while read -r unit _rest; do
+    [[ -n "${unit:-}" ]] || continue
+    stop_disable_unit "$unit"
+  done < <(systemctl list-unit-files 'opcbridge-logger-*.timer' --no-legend 2>/dev/null || true)
+  while read -r unit _rest; do
+    [[ -n "${unit:-}" ]] || continue
+    stop_disable_unit "$unit"
+  done < <(systemctl list-unit-files 'opcbridge-logger-*.service' --no-legend 2>/dev/null || true)
 
   for svc in \
     opcbridge.service \
     opcbridge-alarms.service \
     opcbridge-scada.service \
     opcbridge-hmi.service \
+    opcbridge-logger.service \
     opcbridge-reporter.service \
     opcbridge-historian.service
   do
     remove_unit_file_and_dropins "$svc"
   done
 
-  for unit_file in /etc/systemd/system/opcbridge-reporter-*.timer /etc/systemd/system/opcbridge-reporter-*.service; do
+  for unit_file in \
+    /etc/systemd/system/opcbridge-logger-*.timer \
+    /etc/systemd/system/opcbridge-logger-*.service \
+    /etc/systemd/system/opcbridge-reporter-*.timer \
+    /etc/systemd/system/opcbridge-reporter-*.service
+  do
     [[ -e "$unit_file" ]] || continue
     remove_file "$unit_file"
     remove_dir "${unit_file}.d"
