@@ -3252,7 +3252,9 @@ async function testReporterDatabase(id) {
   loggerSetStatus(`Testing database '${dbId}'…`);
   loggerModalSetStatus(`Testing database '${dbId}'…`);
   try {
-    const resp = await apiPostJson('/api/reporter/databases/test', { id: dbId });
+    const db = findDatabaseById(dbId);
+    const timeoutMs = reporterDatabaseTestTimeoutMs(db);
+    const resp = await apiPostJson('/api/reporter/databases/test', { id: dbId }, { timeoutMs });
     const result = resp?.reporter_test?.json || {};
     if (!resp?.ok) throw new Error(String(resp?.error || result?.error || 'Failed'));
     const latency = Number(result?.latency_ms || 0);
@@ -3289,7 +3291,9 @@ async function testReporterDatabaseFromModal() {
 
     const body = { database: db };
     if (state.loggerEditingMode === 'edit' && state.loggerEditingId) body.original_id = state.loggerEditingId;
-    const resp = await apiPostJson('/api/reporter/databases/test', body);
+    const resp = await apiPostJson('/api/reporter/databases/test', body, {
+      timeoutMs: reporterDatabaseTestTimeoutMs(db)
+    });
     const result = resp?.reporter_test?.json || {};
     if (!resp?.ok) throw new Error(String(resp?.error || result?.error || 'Failed'));
     const latency = Number(result?.latency_ms || 0);
@@ -3301,6 +3305,18 @@ async function testReporterDatabaseFromModal() {
     loggerSetStatus(msg);
     loggerModalSetStatus(msg);
   }
+}
+
+function reporterDatabaseTestTimeoutMs(database) {
+  const configured = Math.trunc(Number(database?.monitor_timeout_sec ?? 10) || 10);
+  const operationSeconds = Math.max(1, Math.min(300, configured));
+  return (operationSeconds * 3 + 15) * 1000;
+}
+
+function reporterDatabaseDiscoveryTimeoutMs(database) {
+  const configured = Math.trunc(Number(database?.monitor_timeout_sec ?? 10) || 10);
+  const operationSeconds = Math.max(1, Math.min(300, configured));
+  return (operationSeconds * 6 + 20) * 1000;
 }
 
 function getDatabaseFromModalUi() {
@@ -5826,7 +5842,9 @@ async function validateReporterReport(id) {
 
     if (dbId && db) {
       try {
-        const dbTest = await apiPostJson('/api/reporter/databases/test', { id: dbId });
+        const dbTest = await apiPostJson('/api/reporter/databases/test', { id: dbId }, {
+          timeoutMs: reporterDatabaseTestTimeoutMs(db)
+        });
         result.database_test = dbTest?.reporter_test?.json || dbTest;
         if (!dbTest?.ok) result.errors.push(`Database test failed: ${dbTest?.error || result.database_test?.error || 'unknown error'}`);
       } catch (err) {
@@ -6762,7 +6780,13 @@ async function loadReportBuilderDatabaseSchema(selection = {}) {
   }
   reportBuilderSourceSetStatus('Loading tables and columns…');
   try {
-    const response = await apiGet(`/api/reports/admin/schema?database=${encodeURIComponent(databaseId)}`);
+    const database = state.reportBuilderDatabases.find(
+      (candidate) => String(candidate?.id || '') === databaseId
+    ) || {};
+    const response = await apiGet(
+      `/api/reports/admin/schema?database=${encodeURIComponent(databaseId)}`,
+      { timeoutMs: reporterDatabaseDiscoveryTimeoutMs(database) }
+    );
     if (requestSeq !== state.reportBuilderSchemaRequestSeq ||
         databaseId !== String(els.reportBuilderDatabase?.value || '').trim()) {
       return;
@@ -7203,12 +7227,20 @@ function wireReportBuilderUi() {
     };
     reportBuilderSourceSetStatus('Finding available item names…');
     try {
-      const response = await apiPostJson('/api/reports/admin/distinct', payload);
+      const database = state.reportBuilderDatabases.find(
+        (candidate) => String(candidate?.id || '') === payload.database_id
+      ) || {};
+      const response = await apiPostJson('/api/reports/admin/distinct', payload, {
+        timeoutMs: reporterDatabaseDiscoveryTimeoutMs(database)
+      });
       fillSelect(els.reportBuilderCategoryValues, (response.values || []).map((value) => ({
         value: String(value), label: String(value)
       })));
       if (els.reportBuilderCategoryPicker) els.reportBuilderCategoryPicker.style.display = '';
-      reportBuilderSourceSetStatus(`${response.values?.length || 0} item name(s) available`);
+      const count = response.values?.length || 0;
+      reportBuilderSourceSetStatus(response.truncated
+        ? `${count} item name(s) loaded (limit reached)`
+        : `${count} item name(s) available`);
     } catch (err) {
       reportBuilderSourceSetStatus(err.message || err);
     }

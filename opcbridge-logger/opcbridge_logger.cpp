@@ -1220,10 +1220,11 @@ public:
             for (char ch : input) output += (ch == '`') ? "``" : std::string(1, ch);
             return output + "`";
         };
-        limit = std::max(1, std::min(500, limit));
+        limit = std::max(1, std::min(10000, limit));
+        const int query_limit = limit + 1;
         const std::string field = quote_identifier(column);
         const std::string sql = "SELECT DISTINCT " + field + " FROM " + quote_identifier(table) +
-            " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT " + std::to_string(limit);
+            " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT " + std::to_string(query_limit);
         if (mysql_query(conn, sql.c_str()) != 0) {
             std::string error = std::string("value discovery query failed: ") + mysql_error(conn);
             mysql_close(conn);
@@ -1236,14 +1237,25 @@ public:
             return {{"ok", false}, {"error", error}};
         }
         json values = json::array();
+        bool truncated = false;
         MYSQL_ROW row;
         while ((row = mysql_fetch_row(result)) != nullptr) {
+            if (static_cast<int>(values.size()) >= limit) {
+                truncated = true;
+                break;
+            }
             unsigned long* lengths = mysql_fetch_lengths(result);
             if (row[0]) values.push_back(std::string(row[0], lengths ? lengths[0] : std::strlen(row[0])));
         }
         mysql_free_result(result);
         mysql_close(conn);
-        return {{"ok", true}, {"database_id", id}, {"values", values}};
+        return {
+            {"ok", true},
+            {"database_id", id},
+            {"values", values},
+            {"limit", limit},
+            {"truncated", truncated}
+        };
     }
 
     json database_report_query(const std::string& id, const json& request) {
@@ -2050,7 +2062,7 @@ int main(int argc, char* argv[]) {
                 id,
                 body.value("table", ""),
                 body.value("column", ""),
-                std::max(1, std::min(500, body.value("limit", 200)))
+                std::max(1, std::min(10000, body.value("limit", 200)))
             );
             res.status = result.value("ok", false) ? 200 : 400;
             res.set_content(result.dump(2), "application/json");

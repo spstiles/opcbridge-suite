@@ -1129,6 +1129,22 @@ function readReporterDatabasesRaw() {
   return raw.filter((d) => d && typeof d === 'object' && !Array.isArray(d));
 }
 
+function reporterDatabaseTestTimeoutMs(database) {
+  const configured = Math.trunc(Number(database?.monitor_timeout_sec ?? 10) || 10);
+  const operationSeconds = Math.max(1, Math.min(300, configured));
+  // MySQL can apply the configured limit independently to connect, write, and
+  // read. Keep the outer API request alive long enough to receive that result.
+  return (operationSeconds * 3 + 5) * 1000;
+}
+
+function reporterDatabaseDiscoveryTimeoutMs(database) {
+  const configured = Math.trunc(Number(database?.monitor_timeout_sec ?? 10) || 10);
+  const operationSeconds = Math.max(1, Math.min(300, configured));
+  // Distinct discovery validates schema first, then performs the distinct
+  // query using a second connection.
+  return (operationSeconds * 6 + 10) * 1000;
+}
+
 function readReporterReportsRaw() {
   const root = readJsonFileOrNull(REPORTER_REPORTS_PATH) || { reports: [] };
   const raw = Array.isArray(root?.reports) ? root.reports : [];
@@ -3712,7 +3728,12 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        const test = await reporterApiRequest('POST', '/databases/test-config', { database: db }, 15000);
+        const test = await reporterApiRequest(
+          'POST',
+          '/databases/test-config',
+          { database: db },
+          reporterDatabaseTestTimeoutMs(db)
+        );
         sendJson(res, test.ok ? 200 : 502, {
           ok: test.ok,
           id,
@@ -3727,7 +3748,13 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, error: 'id or database is required.' });
         return;
       }
-      const test = await reporterApiRequest('POST', `/databases/${encodeURIComponent(id)}/test`, null, 15000);
+      const saved = readReporterDatabasesRaw().find((database) => sanitizeId(database?.id) === id) || {};
+      const test = await reporterApiRequest(
+        'POST',
+        `/databases/${encodeURIComponent(id)}/test`,
+        null,
+        reporterDatabaseTestTimeoutMs(saved)
+      );
       sendJson(res, test.ok ? 200 : 502, {
         ok: test.ok,
         id,
@@ -4119,7 +4146,8 @@ const server = http.createServer(async (req, res) => {
     const databases = (Array.isArray(root.databases) ? root.databases : []).map((database) => ({
       id: String(database?.id || '').trim(),
       name: String(database?.name || database?.id || '').trim(),
-      type: String(database?.type || 'mysql').trim().toLowerCase()
+      type: String(database?.type || 'mysql').trim().toLowerCase(),
+      monitor_timeout_sec: Math.max(1, Math.min(300, Math.trunc(Number(database?.monitor_timeout_sec ?? 10) || 10)))
     })).filter((database) => database.id);
     sendJson(res, 200, { ok: true, databases });
     return;
@@ -4136,11 +4164,14 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 400, { ok: false, error: 'database is required.' });
       return;
     }
+    const database = readReporterDatabasesRaw().find(
+      (candidate) => sanitizeId(candidate?.id) === databaseId
+    ) || {};
     const result = await reporterApiRequest(
       'GET',
       `/databases/${encodeURIComponent(databaseId)}/schema`,
       null,
-      30000
+      reporterDatabaseDiscoveryTimeoutMs(database)
     );
     sendJson(res, result.ok ? 200 : (result.status || 502), result.json || {
       ok: false,
@@ -4161,11 +4192,14 @@ const server = http.createServer(async (req, res) => {
       const table = String(body.table || '').trim();
       const column = String(body.column || '').trim();
       if (!databaseId || !table || !column) throw new Error('database_id, table, and column are required.');
+      const database = readReporterDatabasesRaw().find(
+        (candidate) => sanitizeId(candidate?.id) === databaseId
+      ) || {};
       const result = await reporterApiRequest(
         'POST',
         `/databases/${encodeURIComponent(databaseId)}/distinct`,
-        { table, column, limit: 200 },
-        30000
+        { table, column, limit: 10000 },
+        reporterDatabaseDiscoveryTimeoutMs(database)
       );
       sendJson(res, result.ok ? 200 : (result.status || 502), result.json || {
         ok: false,
