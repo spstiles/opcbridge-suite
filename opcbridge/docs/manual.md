@@ -649,10 +649,21 @@ X-Admin-Token: <token>
 
 The dashboard obtains and stores this token after login.
 
-Role-based permissions:
+Group-based permissions:
 
-- User and role management endpoints require the `auth.manage_users` permission.
-- If your user does not have that permission, `POST/PUT/DELETE /auth/roles/*` and `POST/PUT/DELETE /auth/users/*` will return `403`.
+- Users may belong to multiple groups. Their effective permissions are the
+  union of every assigned group.
+- User and group management endpoints require the `auth.manage_users`
+  permission.
+- If your user does not have that permission,
+  `POST/PUT/DELETE /auth/groups/*` and `POST/PUT/DELETE /auth/users/*` return
+  `403`.
+
+The active store uses top-level `groups` definitions and a `groups` array on
+each user. During an upgrade, OPCBridge reads existing top-level `roles` and
+each user's single `role` as migration inputs. Existing IDs, permissions,
+password hashes, and user assignments are preserved. The next save writes the
+store in the new group-based format.
 
 Service-to-service auth (optional):
 

@@ -116,7 +116,7 @@ static std::string g_adminAuthLoadError;
 static bool g_userStoreConfigured = false;
 static int g_authTimeoutMinutes = 0; // idle timeout; 0 disables
 struct AuthRoleRecord {
-    std::string id;          // machine id, used by users.role
+    std::string id;          // machine id, used by users.groups
     std::string label;       // human label
     std::string description; // optional
     std::vector<std::string> permissions; // permission ids (strings)
@@ -126,7 +126,7 @@ struct AuthUserRecord {
     std::string username;
     std::string name; // display name (human-readable); username remains immutable
     std::string description; // optional free-form note
-    std::string role; // role id
+    std::vector<std::string> groups; // group ids
     int iterations = 150000;
     std::string salt_b64;
     std::string hash_b64;
@@ -143,7 +143,7 @@ struct AdminSessionInfo {
     std::chrono::system_clock::time_point expires_at;
     std::chrono::system_clock::time_point last_activity_at;
     std::string username;
-    std::string role; // role id
+    std::vector<std::string> groups; // group ids
 };
 
 static std::unordered_map<std::string, AdminSessionInfo> g_adminSessions;
@@ -2752,6 +2752,21 @@ static bool pbkdf2_sha256_b64(const std::string &password,
     return !out_b64.empty();
 }
 
+static bool verify_auth_user_password(const AuthUserRecord &user, const std::string &password) {
+    if (password.empty()) return false;
+    std::string salt_bytes;
+    if (!b64_decode(user.salt_b64, salt_bytes) || salt_bytes.empty()) return false;
+    std::string actual_hash_b64;
+    if (!pbkdf2_sha256_b64(password, salt_bytes, user.iterations, actual_hash_b64)) return false;
+    std::string expected_bytes;
+    std::string actual_bytes;
+    return b64_decode(user.hash_b64, expected_bytes) &&
+           b64_decode(actual_hash_b64, actual_bytes) &&
+           !expected_bytes.empty() &&
+           expected_bytes.size() == actual_bytes.size() &&
+           CRYPTO_memcmp(expected_bytes.data(), actual_bytes.data(), expected_bytes.size()) == 0;
+}
+
 static std::string random_token_hex(size_t bytes = 32) {
     std::vector<uint8_t> buf(bytes);
     if (RAND_bytes(buf.data(), static_cast<int>(bytes)) != 1) {
@@ -2865,12 +2880,16 @@ static std::string normalize_auth_role_id(const std::string &raw) {
 // Permission ids (initial set).
 static const std::vector<std::string> &all_permission_ids() {
     static const std::vector<std::string> perms = {
+        "scada.access",
         "hmi.edit_screens",
         "opcbridge.write_tags",
         "opcbridge.edit_config",
         "suite.manage_server",
         "auth.manage_users",
-        "suite.view_logs"
+        "suite.view_logs",
+        "reports.access",
+        "reports.create",
+        "reports.administer"
     };
     return perms;
 }
@@ -2896,6 +2915,18 @@ static std::vector<std::string> parse_permission_list(const json &j) {
             if (existing == id) { dup = true; break; }
         }
         if (!dup) out.push_back(id);
+    }
+    return out;
+}
+
+static std::vector<std::string> parse_group_list(const json &j) {
+    std::vector<std::string> out;
+    if (!j.is_array()) return out;
+    for (const auto &value : j) {
+        if (!value.is_string()) continue;
+        const std::string id = normalize_auth_role_id(value.get<std::string>());
+        if (id.empty()) continue;
+        if (std::find(out.begin(), out.end(), id) == out.end()) out.push_back(id);
     }
     return out;
 }
@@ -2930,8 +2961,25 @@ static bool role_has_permission(const std::string &roleId, const std::string &pe
     return false;
 }
 
+static std::vector<std::string> group_permissions(const std::vector<std::string> &groupIds) {
+    std::vector<std::string> out;
+    for (const auto &groupId : groupIds) {
+        for (const auto &permission : role_permissions(groupId)) {
+            if (std::find(out.begin(), out.end(), permission) == out.end()) out.push_back(permission);
+        }
+    }
+    return out;
+}
+
+static bool groups_have_permission(const std::vector<std::string> &groupIds, const std::string &permId) {
+    for (const auto &groupId : groupIds) {
+        if (role_has_permission(groupId, permId)) return true;
+    }
+    return false;
+}
+
 static bool session_has_permission(const AdminSessionInfo &sess, const std::string &permId) {
-    return role_has_permission(sess.role, permId);
+    return groups_have_permission(sess.groups, permId);
 }
 
 static bool role_exists(const std::string &role) {
@@ -2941,6 +2989,14 @@ static bool role_exists(const std::string &role) {
         if (r.id == id) return true;
     }
     return false;
+}
+
+static bool group_list_valid(const std::vector<std::string> &groups) {
+    if (groups.empty()) return false;
+    for (const auto &group : groups) {
+        if (!role_exists(group)) return false;
+    }
+    return true;
 }
 
 static void ensure_default_roles() {
@@ -3000,9 +3056,13 @@ static bool load_passwords_store(const std::string &path) {
 
         int nextTimeout = std::max(0, j.value("timeoutMinutes", 0));
 
-        // roles (optional)
+        // Groups use the current `groups` key. Existing installations used
+        // `roles`; read that key only as an upgrade source and always save the
+        // resulting records back under `groups`.
         std::vector<AuthRoleRecord> nextRoles;
-        auto roles = j.value("roles", json::array());
+        auto roles = j.contains("groups")
+            ? j.value("groups", json::array())
+            : j.value("roles", json::array());
         if (roles.is_array()) {
             for (const auto &rj : roles) {
                 if (!rj.is_object()) continue;
@@ -3051,8 +3111,19 @@ static bool load_passwords_store(const std::string &path) {
             r.name = get_string_or_default(u, "name", r.username);
             if (r.name.empty()) r.name = r.username;
             r.description = get_string_or_empty(u, "description");
-            r.role = normalize_auth_role_id(get_string_or_empty(u, "role"));
-            if (r.role.empty()) r.role = "admin";
+            r.groups = parse_group_list(u.value("groups", json::array()));
+            if (r.groups.empty()) {
+                const std::string legacyRole = normalize_auth_role_id(get_string_or_empty(u, "role"));
+                if (!legacyRole.empty()) r.groups.push_back(legacyRole);
+            }
+            r.groups.erase(
+                std::remove_if(r.groups.begin(), r.groups.end(), [&](const std::string &groupId) {
+                    return std::none_of(nextRoles.begin(), nextRoles.end(), [&](const AuthRoleRecord &group) {
+                        return group.id == groupId;
+                    });
+                }),
+                r.groups.end()
+            );
 
             auto kdf = u.value("kdf", json::object());
             r.iterations = std::max(10'000, std::min(5'000'000, kdf.value("iterations", 150000)));
@@ -3061,6 +3132,7 @@ static bool load_passwords_store(const std::string &path) {
 
             if (r.username.empty()) continue;
             if (r.salt_b64.empty() || r.hash_b64.empty()) continue;
+            if (r.groups.empty()) continue;
             nextUsers.push_back(r);
         }
 
@@ -3114,7 +3186,7 @@ static bool save_passwords_store(const std::string &path) {
             roles.push_back(admin);
         }
 
-        out["roles"] = json::array();
+        out["groups"] = json::array();
         for (const auto &r : roles) {
             json rec;
             rec["id"] = r.id;
@@ -3125,7 +3197,7 @@ static bool save_passwords_store(const std::string &path) {
             } else {
                 rec["permissions"] = r.permissions;
             }
-            out["roles"].push_back(rec);
+            out["groups"].push_back(rec);
         }
         out["users"] = json::array();
         for (const auto &u : users) {
@@ -3133,7 +3205,7 @@ static bool save_passwords_store(const std::string &path) {
             rec["username"] = u.username;
             rec["name"] = u.name.empty() ? u.username : u.name;
             rec["description"] = u.description.empty() ? json(nullptr) : json(u.description);
-            rec["role"] = normalize_auth_role_id(u.role);
+            rec["groups"] = u.groups;
             rec["kdf"] = {
                 {"algo", "pbkdf2-sha256"},
                 {"iterations", u.iterations},
@@ -3211,7 +3283,7 @@ static bool save_admin_sessions_store() {
                 root["sessions"].push_back({
                     {"token", token},
                     {"username", session.username},
-                    {"role", normalize_auth_role_id(session.role)},
+                    {"groups", session.groups},
                     {"expires_ms", timepoint_to_ms(session.expires_at)},
                     {"last_activity_ms", timepoint_to_ms(session.last_activity_at)}
                 });
@@ -3245,7 +3317,11 @@ static bool load_admin_sessions_store() {
                 const std::string token = item.value("token", std::string{});
                 AdminSessionInfo session;
                 session.username = normalize_auth_username(item.value("username", std::string{}));
-                session.role = normalize_auth_role_id(item.value("role", std::string{"admin"}));
+                session.groups = parse_group_list(item.value("groups", json::array()));
+                if (session.groups.empty()) {
+                    const std::string legacyRole = normalize_auth_role_id(item.value("role", std::string{}));
+                    if (!legacyRole.empty()) session.groups.push_back(legacyRole);
+                }
                 session.expires_at = ms_to_timepoint(item.value("expires_ms", int64_t{0}));
                 session.last_activity_at = ms_to_timepoint(item.value("last_activity_ms", int64_t{0}));
                 if (token.empty() || session.username.empty()) {
@@ -3301,7 +3377,7 @@ static void cleanup_expired_admin_sessions() {
                 json detail = {
                     {"reason", "idle_expired"},
                     {"username", it->second.username},
-                    {"role", normalize_auth_role_id(it->second.role)},
+                    {"groups", it->second.groups},
                     {"idle_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
                     {"expires_in_ms", expiresMs - nowMs},
                     {"idle_timeout_ms", g_authTimeoutMinutes > 0 ? static_cast<int64_t>(g_authTimeoutMinutes) * 60 * 1000 : 0},
@@ -3377,7 +3453,7 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
     // Service token always maps to admin.
     if (!g_adminServiceToken.empty() && token == g_adminServiceToken) {
         out = AdminSessionInfo{};
-        out.role = "admin";
+        out.groups = {"admin"};
         out.username = "service";
         out.expires_at = std::chrono::system_clock::now() + std::chrono::hours(24 * 365 * 10);
         out.last_activity_at = std::chrono::system_clock::now();
@@ -3408,7 +3484,7 @@ static bool get_session_from_request(const httplib::Request &req, AdminSessionIn
             {"reason", "idle_expired_on_lookup"},
             {"remote", req.remote_addr},
             {"username", it->second.username},
-            {"role", normalize_auth_role_id(it->second.role)},
+            {"groups", it->second.groups},
             {"idle_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
             {"idle_timeout_ms", static_cast<int64_t>(g_authTimeoutMinutes) * 60 * 1000},
             {"active_count", static_cast<int>(g_adminSessions.size())}
@@ -3465,7 +3541,7 @@ static json admin_session_diagnostics_for_status(const AdminSessionInfo *session
         ).count();
         out["current"] = json::object({
             {"username", session->username},
-            {"role", normalize_auth_role_id(session->role)},
+            {"groups", session->groups},
             {"expires_in_ms", std::max<int64_t>(0, expiresMs - nowMs)},
             {"idle_for_ms", std::max<int64_t>(0, nowMs - lastActivityMs)},
             {"idle_timeout_ms", g_authTimeoutMinutes > 0 ? static_cast<int64_t>(g_authTimeoutMinutes) * 60 * 1000 : 0}
@@ -14885,9 +14961,9 @@ static bool apply_config_bundle_json(const std::string &configDir,
 				<div id="users-section" style="display:none;">
 					<div class="workspace-page">
 						<h2>Users</h2>
-						<div class="small">Manage users and roles in OPCBridge. Requires <code>auth.manage_users</code> for changes.</div>
+						<div class="small">Manage users and groups in OPCBridge. Requires <code>auth.manage_users</code> for changes.</div>
 						<div class="card card-full" style="margin-top:12px;">
-							<h2>Users & Roles</h2>
+							<h2>Users &amp; Groups</h2>
 							<div class="small" id="users-status">Loading…</div>
 
 							<div id="users-init-wrap" style="display:none; margin-top:10px;">
@@ -14950,7 +15026,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 													<div class="users-form-row"><label>Name</label><input id="users-form-label" type="text" /></div>
 													<div class="users-form-row"><label>Description</label><input id="users-form-description" type="text" /></div>
 													<div class="users-form-row" id="users-form-perms-row"><label>Permissions</label><div id="users-form-perms" class="users-perm-grid"></div></div>
-													<div class="users-form-row" id="users-form-role-row" style="display:none;"><label>Role</label><select id="users-form-role"></select></div>
+													<div class="users-form-row" id="users-form-role-row" style="display:none;"><label>Groups</label><select id="users-form-role" multiple size="6"></select></div>
 													<div class="users-form-row" id="users-form-password-row" style="display:none;"><label>New Password</label><input id="users-form-password" type="password" autocomplete="new-password" /></div>
 													<div class="users-form-row" id="users-form-confirm-row" style="display:none;"><label>Confirm</label><input id="users-form-confirm" type="password" autocomplete="new-password" /></div>
 													<div class="users-form-row"><label></label>
@@ -15066,7 +15142,7 @@ const WRITE_TOKEN = "WRITE_TOKEN_PLACEHOLDER";
 	let ADMIN_LOGGED_IN = false;
 		let USER_LOGGED_IN = false;
 		let USERNAME = "";
-		let USER_ROLE = "";
+		let USER_GROUPS = [];
 		let USER_PERMS = [];
 		let LEGACY_AUTH_PRESENT = false;
 		let LEGACY_AUTH_CONFIGURED = false;
@@ -15074,7 +15150,7 @@ const WRITE_TOKEN = "WRITE_TOKEN_PLACEHOLDER";
 	function userHasPerm(permId) {
 	    const want = String(permId || "").trim();
 	    if (!want) return false;
-	    if (String(USER_ROLE || "").trim().toLowerCase() === "admin") return true;
+	    if (Array.isArray(USER_GROUPS) && USER_GROUPS.includes("admin")) return true;
 	    if (Array.isArray(USER_PERMS) && USER_PERMS.includes(want)) return true;
 	    return false;
 	}
@@ -15426,12 +15502,16 @@ function escapeAttr(value) {
 }
 
 const USERS_PERMISSION_DEFS = [
+    { id: "scada.access", label: "Access SCADA portal and Overview" },
     { id: "hmi.edit_screens", label: "HMI screen editing" },
     { id: "opcbridge.write_tags", label: "Write tags" },
     { id: "opcbridge.edit_config", label: "Edit OPCBridge config" },
     { id: "suite.manage_server", label: "Manage suite server" },
-    { id: "auth.manage_users", label: "Manage users and roles" },
-    { id: "suite.view_logs", label: "View suite logs" }
+    { id: "auth.manage_users", label: "Manage users and groups" },
+    { id: "suite.view_logs", label: "View suite logs" },
+    { id: "reports.access", label: "Access Reports portal" },
+    { id: "reports.create", label: "Create reports" },
+    { id: "reports.administer", label: "Administer all reports" }
 ];
 
 let USERS_STATE = {
@@ -15823,7 +15903,7 @@ function usersBuildTree() {
         {
             id: "users_root_roles",
             type: "roles_root",
-            label: "Roles",
+            label: "Groups",
             children: roles.map((r) => ({
                 id: `role:${String(r?.id || "")}`,
                 type: "role",
@@ -15917,11 +15997,11 @@ function usersRenderTreeNode(node, container) {
         if (!usersCanManage()) return;
         const items = [];
         if (node.type === "roles_root") {
-            items.push({ label: "Add Role…", onClick: () => usersOpenRoleForm({ mode: "new" }) });
+            items.push({ label: "Add Group…", onClick: () => usersOpenRoleForm({ mode: "new" }) });
         } else if (node.type === "role") {
             const roleId = String(node?.meta?.id || "").trim();
-            items.push({ label: "Edit Role…", onClick: () => usersOpenRoleForm({ mode: "edit", roleId }) });
-            if (roleId !== "admin") items.push({ label: "Delete Role…", onClick: () => usersDeleteRole(roleId) });
+            items.push({ label: "Edit Group…", onClick: () => usersOpenRoleForm({ mode: "edit", roleId }) });
+            if (roleId !== "admin") items.push({ label: "Delete Group…", onClick: () => usersDeleteRole(roleId) });
         } else if (node.type === "users_root") {
             items.push({ label: "Add User…", onClick: () => usersOpenUserForm({ mode: "new" }) });
         } else if (node.type === "user") {
@@ -15950,7 +16030,7 @@ function usersRenderTree() {
         usersRenderTreeNode(root, tree);
     });
     const note = usersEl("users-tree-note");
-    if (note) note.textContent = `Roles: ${(USERS_STATE.roles || []).length} · Users: ${(USERS_STATE.users || []).length}`;
+    if (note) note.textContent = `Groups: ${(USERS_STATE.roles || []).length} · Users: ${(USERS_STATE.users || []).length}`;
     if (!usersUi.selectedNodeId && roots.length) usersUi.selectedNodeId = roots[0].id;
 }
 
@@ -15968,15 +16048,20 @@ function usersRenderDetails(node) {
             ],
             onDblClick: () => usersOpenRoleForm({ mode: "edit", roleId: String(role?.id || "") })
         }));
-        usersSetDetailsTable(["Role", "Label", "Description", "Permissions"], rows);
+        usersSetDetailsTable(["Group", "Label", "Description", "Permissions"], rows);
         return;
     }
     if (node.type === "users_root") {
         const rows = (USERS_STATE.users || []).slice().sort((a, b) => String(a?.username || "").localeCompare(String(b?.username || ""))).map((user) => ({
-            cells: [String(user?.username || ""), String(user?.name || user?.username || ""), String(user?.description || ""), String(user?.role || "")],
+            cells: [
+                String(user?.username || ""),
+                String(user?.name || user?.username || ""),
+                String(user?.description || ""),
+                (Array.isArray(user?.groups) ? user.groups : []).join(", ")
+            ],
             onDblClick: () => usersOpenUserForm({ mode: "edit", username: String(user?.username || "") })
         }));
-        usersSetDetailsTable(["Username", "Name", "Description", "Role"], rows);
+        usersSetDetailsTable(["Username", "Name", "Description", "Groups"], rows);
         return;
     }
     if (node.type === "role") {
@@ -15988,7 +16073,7 @@ function usersRenderDetails(node) {
     }
 }
 
-function usersFillRoleSelect(selectedValue) {
+function usersFillRoleSelect(selectedValues) {
     const sel = usersEl("users-form-role");
     if (!sel) return;
     sel.textContent = "";
@@ -15998,8 +16083,8 @@ function usersFillRoleSelect(selectedValue) {
         opt.textContent = String(role?.label || role?.id || "");
         sel.appendChild(opt);
     });
-    if (selectedValue) sel.value = String(selectedValue);
-    if (!String(sel.value || "").trim() && sel.options.length) sel.value = String(sel.options[0].value || "");
+    const selected = new Set((Array.isArray(selectedValues) ? selectedValues : []).map(String));
+    Array.from(sel.options).forEach((option) => { option.selected = selected.has(option.value); });
 }
 
 function usersOpenRoleForm({ mode, roleId }) {
@@ -16014,7 +16099,7 @@ function usersOpenRoleForm({ mode, roleId }) {
     const passRow = usersEl("users-form-password-row");
     const confirmRow = usersEl("users-form-confirm-row");
     const permsRow = usersEl("users-form-perms-row");
-    if (idLabel) idLabel.textContent = "Role ID";
+    if (idLabel) idLabel.textContent = "Group ID";
     if (roleRow) roleRow.style.display = "none";
     if (passRow) passRow.style.display = "none";
     if (confirmRow) confirmRow.style.display = "none";
@@ -16085,8 +16170,8 @@ function usersOpenUserForm({ mode, username }) {
     }
     if (labelEl) labelEl.value = user ? String(user.name || user.username || "") : "";
     if (descEl) descEl.value = user ? String(user.description || "") : "";
-    usersFillRoleSelect(user ? String(user.role || "") : "admin");
-    if (roleEl) roleEl.disabled = isSelfEdit || !usersCanManage();
+    usersFillRoleSelect(user && Array.isArray(user.groups) ? user.groups : []);
+    if (roleEl) roleEl.disabled = !usersCanManage();
     if (passEl) passEl.value = "";
     if (confirmEl) confirmEl.value = "";
 }
@@ -16094,13 +16179,13 @@ function usersOpenUserForm({ mode, username }) {
 async function usersDeleteRole(id) {
     const roleId = String(id || "").trim();
     if (!roleId || roleId === "admin") return;
-    if (!confirm("Delete role '" + roleId + "'?")) return;
-    usersSetLine("users-details-status", "Deleting role…");
+    if (!confirm("Delete group '" + roleId + "'?")) return;
+    usersSetLine("users-details-status", "Deleting group…");
     try {
-        await usersApi("/auth/roles/" + encodeURIComponent(roleId), { method: "DELETE" });
+        await usersApi("/auth/groups/" + encodeURIComponent(roleId), { method: "DELETE" });
         if (usersUi.selectedNodeId === `role:${roleId}`) usersUi.selectedNodeId = "users_root_roles";
         await usersLoad();
-        usersSetLine("users-details-status", "Role deleted.", "status-ok");
+        usersSetLine("users-details-status", "Group deleted.", "status-ok");
     } catch (e) {
         usersSetLine("users-details-status", "Delete failed: " + e.toString(), "status-error");
     }
@@ -16141,7 +16226,7 @@ async function usersLoad() {
         const data = await usersApi("/auth/status", { method: "GET", headers: {} });
         USERS_STATE.initialized = !!(data.initialized ?? data.configured);
         USERS_STATE.users = Array.isArray(data.users) ? data.users : [];
-        USERS_STATE.roles = Array.isArray(data.roles) ? data.roles : [];
+        USERS_STATE.roles = Array.isArray(data.groups) ? data.groups : [];
         USERS_STATE.timeoutMinutes = Number(data.timeoutMinutes || 0);
 
         if (initWrap) initWrap.style.display = USERS_STATE.initialized ? "none" : "block";
@@ -16151,7 +16236,7 @@ async function usersLoad() {
         if (initTimeout) initTimeout.value = String(USERS_STATE.timeoutMinutes || 0);
         if (timeout) timeout.value = String(USERS_STATE.timeoutMinutes || 0);
 
-        const who = USER_LOGGED_IN ? `${USERNAME || "?"} (${USER_ROLE || "?"})` : "not logged in";
+        const who = USER_LOGGED_IN ? `${USERNAME || "?"} (${USER_GROUPS.join(", ") || "no groups"})` : "not logged in";
         usersSetLine("users-status", `OPCBridge auth: configured=${ADMIN_CONFIGURED ? "yes" : "no"} initialized=${USERS_STATE.initialized ? "yes" : "no"} · ${who}`, USERS_STATE.initialized ? "status-ok" : "status-degraded");
 
         if (!USERS_STATE.initialized) return;
@@ -16232,18 +16317,18 @@ function usersWireUi() {
                 const label = String(usersEl("users-form-label")?.value || "").trim();
                 const description = String(usersEl("users-form-description")?.value || "").trim();
                 const permissions = Array.from(document.querySelectorAll("#users-form-perms input[type='checkbox'][data-perm-id]:checked")).map((cb) => String(cb.dataset.permId || "").trim()).filter(Boolean);
-                await usersApi("/auth/roles", { method: "POST", body: JSON.stringify({ id, label, description, permissions }) });
+                await usersApi("/auth/groups", { method: "POST", body: JSON.stringify({ id, label, description, permissions }) });
                 usersUi.selectedNodeId = `role:${id}`;
             } else if (mode === "role_edit") {
                 const id = String(usersUi.formTargetId || "").trim();
                 const label = String(usersEl("users-form-label")?.value || "").trim();
                 const description = String(usersEl("users-form-description")?.value || "").trim();
                 const permissions = Array.from(document.querySelectorAll("#users-form-perms input[type='checkbox'][data-perm-id]:checked")).map((cb) => String(cb.dataset.permId || "").trim()).filter(Boolean);
-                await usersApi("/auth/roles/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify({ label, description, permissions }) });
+                await usersApi("/auth/groups/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify({ label, description, permissions }) });
                 usersUi.selectedNodeId = `role:${id}`;
             } else if (mode === "user_new") {
                 const username = String(usersEl("users-form-id")?.value || "").trim();
-                const role = String(usersEl("users-form-role")?.value || "admin").trim();
+                const groups = Array.from(usersEl("users-form-role")?.selectedOptions || []).map((option) => option.value);
                 const name = String(usersEl("users-form-label")?.value || "").trim();
                 const description = String(usersEl("users-form-description")?.value || "").trim();
                 const password = String(usersEl("users-form-password")?.value || "");
@@ -16252,7 +16337,8 @@ function usersWireUi() {
                 if (!password) throw new Error("Password required.");
                 if (!confirm) throw new Error("Confirm required.");
                 if (password !== confirm) throw new Error("Passwords do not match.");
-                await usersApi("/auth/users", { method: "POST", body: JSON.stringify({ username, name, description, password, role }) });
+                if (!groups.length) throw new Error("Select at least one group.");
+                await usersApi("/auth/users", { method: "POST", body: JSON.stringify({ username, name, description, password, groups }) });
                 usersUi.selectedNodeId = `user:${username}`;
             } else if (mode === "user_edit") {
                 const username = String(usersUi.formTargetId || "").trim();
@@ -16261,7 +16347,10 @@ function usersWireUi() {
                 const password = String(usersEl("users-form-password")?.value || "");
                 const confirm = String(usersEl("users-form-confirm")?.value || "");
                 const body = { name, description };
-                if (usersCanManage() && !isSelfEdit) body.role = String(usersEl("users-form-role")?.value || "admin").trim();
+                if (usersCanManage()) {
+                    body.groups = Array.from(usersEl("users-form-role")?.selectedOptions || []).map((option) => option.value);
+                    if (!body.groups.length) throw new Error("Select at least one group.");
+                }
                 if (password) {
                     if (!confirm) throw new Error("Confirm required.");
                     if (password !== confirm) throw new Error("Passwords do not match.");
@@ -18842,7 +18931,7 @@ async function refreshAdminStatus() {
 		        LEGACY_AUTH_CONFIGURED = !!data.legacy_admin_auth_configured;
 		        USER_LOGGED_IN = !!(data.user_logged_in ?? data.logged_in);
 		        USERNAME = USER_LOGGED_IN ? String(data?.user?.username || "").trim() : "";
-		        USER_ROLE = USER_LOGGED_IN ? String(data?.user?.role || "").trim() : "";
+		        USER_GROUPS = USER_LOGGED_IN && Array.isArray(data?.user?.groups) ? data.user.groups.map(String) : [];
 		        USER_PERMS = USER_LOGGED_IN && Array.isArray(data?.user?.permissions) ? data.user.permissions : [];
 		        ADMIN_LOGGED_IN = !!(ADMIN_CONFIGURED && canEditWorkspace());
 
@@ -18930,12 +19019,12 @@ async function refreshAdminStatus() {
 	            connEditorSetEnabled(false);
 	        }
 	    } else if (USER_LOGGED_IN) {
-        statusEl.textContent = `Logged in as ${USERNAME || "?"} (${USER_ROLE}).`;
+        statusEl.textContent = `Logged in as ${USERNAME || "?"} (${USER_GROUPS.join(", ") || "no groups"}).`;
         if (loginBtn) loginBtn.style.display = "none";
         if (logoutBtn) logoutBtn.style.display = "";
         if (chip) {
             chip.style.display = "inline-block";
-            chip.textContent = `${USERNAME || "?"} (${USER_ROLE})`;
+            chip.textContent = `${USERNAME || "?"} (${USER_GROUPS.join(", ") || "no groups"})`;
         }
 
         if (canEditWorkspace()) {
@@ -19058,7 +19147,7 @@ async function adminLogout() {
 	    ADMIN_LOGGED_IN = false;
 	    USER_LOGGED_IN = false;
 	    USERNAME = "";
-	    USER_ROLE = "";
+	    USER_GROUPS = [];
 	    USER_PERMS = [];
 	    persistAdminToken();   // <-- clear localStorage
 	    await refreshAdminStatus();
@@ -25398,7 +25487,7 @@ window.addEventListener("load", startAutoRefresh);
 				                resp["legacy_admin_auth_present"] = g_adminAuthFilePresent;
 				                resp["legacy_admin_auth_configured"] = g_legacyAdminConfigured;
 				                resp["legacy_admin_auth_error"] = g_adminAuthLoadError.empty() ? json(nullptr) : json(g_adminAuthLoadError);
-			                // New unified auth status (any role).
+			                // New unified auth status (any group).
 			                const bool userLoggedIn = interactiveSession;
 				                resp["user_logged_in"] = userLoggedIn;
 				                    if (userLoggedIn) {
@@ -25415,8 +25504,8 @@ window.addEventListener("load", startAutoRefresh);
 				                        {"username", sess.username},
 				                        {"name", displayName},
 				                        {"description", description.empty() ? json(nullptr) : json(description)},
-				                        {"role", normalize_auth_role_id(sess.role)},
-				                        {"permissions", role_permissions(sess.role)}
+				                        {"groups", sess.groups},
+				                        {"permissions", group_permissions(sess.groups)}
 				                    });
 				                } else {
 				                    resp["user"] = json(nullptr);
@@ -25425,9 +25514,9 @@ window.addEventListener("load", startAutoRefresh);
 			                resp["timeoutMinutes"] = g_userStoreConfigured ? g_authTimeoutMinutes : 0;
 			                resp["auth_debug"] = admin_session_diagnostics_for_status(userLoggedIn ? &sess : nullptr);
 			                resp["auth_debug"]["cookie_present"] = !get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN").empty();
-			                resp["roles"] = json::array();
+			                resp["groups"] = json::array();
 				                for (const auto &r : g_authRoles) {
-				                    resp["roles"].push_back({
+				                    resp["groups"].push_back({
 				                        {"id", r.id},
 				                        {"label", r.label},
 				                        {"description", r.description.empty() ? json(nullptr) : json(r.description)},
@@ -25441,8 +25530,8 @@ window.addEventListener("load", startAutoRefresh);
 				                            {"username", u.username},
 				                            {"name", u.name.empty() ? u.username : u.name},
 				                            {"description", u.description.empty() ? json(nullptr) : json(u.description)},
-				                            {"role", normalize_auth_role_id(u.role)},
-				                            {"permissions", role_permissions(u.role)}
+				                            {"groups", u.groups},
+				                            {"permissions", group_permissions(u.groups)}
 				                        });
 			                    }
 			                }
@@ -25509,7 +25598,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    if (it != g_adminSessions.end() && it->second.expires_at > std::chrono::system_clock::now()) {
 		                        resp["admin_session_valid"] = true;
 		                        resp["session_username"] = it->second.username;
-			                        resp["session_role"] = normalize_auth_role_id(it->second.role);
+			                        resp["session_groups"] = it->second.groups;
 				                    }
 		                }
 		                resp["is_admin_request"] = is_admin_request(req);
@@ -25546,7 +25635,7 @@ window.addEventListener("load", startAutoRefresh);
 	                        return;
 	                    }
 
-	                    std::string role = "admin";
+	                    std::vector<std::string> groups;
 
 	                    if (userStoreConfigured) {
 	                        if (username.empty()) {
@@ -25604,7 +25693,7 @@ window.addEventListener("load", startAutoRefresh);
 	                            return;
 	                        }
 
-	                        role = normalize_auth_role_id(record->role);
+	                        groups = record->groups;
 		                    } else {
 		                        resp["ok"] = false;
 		                        resp["error"] = "Not initialized. Use /auth/init to create the first admin user.";
@@ -25625,13 +25714,13 @@ window.addEventListener("load", startAutoRefresh);
 		                        info.expires_at = expiry;
 	                        info.last_activity_at = now;
 	                        info.username = username;
-		                        info.role = role;
+		                        info.groups = groups;
 		                        g_adminSessions[token] = info;
 		                    }
 		                    record_auth_session_event("session_created", {
 		                        {"remote", req.remote_addr},
 		                        {"username", username},
-		                        {"role", normalize_auth_role_id(role)}
+		                        {"groups", groups}
 		                    });
 		                    save_admin_sessions_store();
 
@@ -25644,7 +25733,7 @@ window.addEventListener("load", startAutoRefresh);
 	                            break;
 	                        }
 	                    }
-	                    resp["role"] = role;
+	                    resp["groups"] = groups;
 	                    resp["timeoutMinutes"] = userStoreConfigured ? authTimeoutMinutes : 0;
 	                    resp["expires_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
 	                        expiry.time_since_epoch()
@@ -25748,7 +25837,7 @@ window.addEventListener("load", startAutoRefresh);
 				                    u.username = username;
 				                    u.name = username;
 				                    u.description = "";
-				                    u.role = "admin";
+				                    u.groups = {"admin"};
 	                    u.iterations = 150000;
 	                    u.salt_b64 = b64_encode(salt);
 	                    if (u.salt_b64.empty()) {
@@ -25835,18 +25924,18 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 			            });
 
-			            // ---------- ROLES (admin-only) ----------
-			            // GET /auth/roles
-				            svr.Get("/auth/roles", [&](const httplib::Request & /*req*/, httplib::Response &res) {
+			            // ---------- GROUPS (admin-only) ----------
+			            // GET /auth/groups
+				            svr.Get("/auth/groups", [&](const httplib::Request & /*req*/, httplib::Response &res) {
 				                json resp;
 				                try {
 				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
 				                    load_passwords_store(passwordsPath);
 				                    ensure_default_roles();
 			                    resp["ok"] = true;
-				                    resp["roles"] = json::array();
+				                    resp["groups"] = json::array();
 				                    for (const auto &r : g_authRoles) {
-				                        resp["roles"].push_back({
+				                        resp["groups"].push_back({
 				                            {"id", r.id},
 				                            {"label", r.label},
 				                            {"description", r.description.empty() ? json(nullptr) : json(r.description)},
@@ -25862,14 +25951,14 @@ window.addEventListener("load", startAutoRefresh);
 			                }
 			            });
 
-				            auto is_reserved_role = [](const std::string &id) {
-				                // Built-in role id reserved for the system.
+				            auto is_reserved_group = [](const std::string &id) {
+				                // Built-in group id reserved for the system.
 				                return (id == "admin");
 				            };
 
-				            // POST /auth/roles  (admin-only)
+				            // POST /auth/groups  (admin-only)
 				            // Body: { id, label, description, permissions }
-				            svr.Post("/auth/roles", [&](const httplib::Request &req, httplib::Response &res) {
+				            svr.Post("/auth/groups", [&](const httplib::Request &req, httplib::Response &res) {
 				                json resp;
 				                try {
 				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
@@ -25903,14 +25992,14 @@ window.addEventListener("load", startAutoRefresh);
 				                    const auto permissions = parse_permission_list(body.value("permissions", json::array()));
 			                    if (id.empty()) {
 			                        resp["ok"] = false;
-			                        resp["error"] = "Invalid role id.";
+			                        resp["error"] = "Invalid group id.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
 			                    }
-			                    if (is_reserved_role(id)) {
+			                    if (is_reserved_group(id)) {
 			                        resp["ok"] = false;
-			                        resp["error"] = "Cannot create reserved role id.";
+			                        resp["error"] = "Cannot create reserved group id.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
@@ -25918,7 +26007,7 @@ window.addEventListener("load", startAutoRefresh);
 			                    for (const auto &r : g_authRoles) {
 			                        if (r.id == id) {
 			                            resp["ok"] = false;
-			                            resp["error"] = "Role already exists.";
+			                            resp["error"] = "Group already exists.";
 			                            res.status = 409;
 			                            res.set_content(resp.dump(2), "application/json");
 			                            return;
@@ -25947,9 +26036,9 @@ window.addEventListener("load", startAutoRefresh);
 			                }
 			            });
 
-				            // PUT /auth/roles/<id>  (admin-only)
+				            // PUT /auth/groups/<id>  (admin-only)
 				            // Body: { label?, description?, permissions? }
-				            svr.Put(R"(/auth/roles/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+				            svr.Put(R"(/auth/groups/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
 				                json resp;
 				                try {
 				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
@@ -25979,7 +26068,7 @@ window.addEventListener("load", startAutoRefresh);
 			                    const std::string id = normalize_auth_role_id(req.matches[1]);
 			                    if (id.empty()) {
 			                        resp["ok"] = false;
-			                        resp["error"] = "Invalid role id.";
+			                        resp["error"] = "Invalid group id.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
@@ -25989,9 +26078,11 @@ window.addEventListener("load", startAutoRefresh);
 				                    const bool hasDesc = body.contains("description");
 				                    const bool hasPerms = body.contains("permissions");
 				                    bool found = false;
+				                    std::vector<std::string> previousPermissions;
 				                    for (auto &r : g_authRoles) {
 				                        if (r.id != id) continue;
 				                        found = true;
+				                        previousPermissions = r.permissions;
 				                        const bool isAdminRole = (r.id == "admin");
 				                        if (hasLabel) {
 				                            const std::string label = body.value("label", std::string{});
@@ -26011,7 +26102,7 @@ window.addEventListener("load", startAutoRefresh);
 				                    }
 			                    if (!found) {
 			                        resp["ok"] = false;
-			                        resp["error"] = "Role not found.";
+			                        resp["error"] = "Group not found.";
 			                        res.status = 404;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
@@ -26019,9 +26110,12 @@ window.addEventListener("load", startAutoRefresh);
 				                    // Ensure at least one user can manage users remains.
 				                    int managerCount = 0;
 				                    for (const auto &u : g_authUsers) {
-				                        if (role_has_permission(u.role, "auth.manage_users")) managerCount++;
+				                        if (groups_have_permission(u.groups, "auth.manage_users")) managerCount++;
 				                    }
 				                    if (managerCount < 1) {
+				                        for (auto &r : g_authRoles) {
+				                            if (r.id == id) { r.permissions = previousPermissions; break; }
+				                        }
 				                        resp["ok"] = false;
 				                        resp["error"] = "Cannot remove user-management access from all users.";
 				                        res.status = 400;
@@ -26045,8 +26139,8 @@ window.addEventListener("load", startAutoRefresh);
 			                }
 			            });
 
-			            // DELETE /auth/roles/<id>  (admin-only)
-				            svr.Delete(R"(/auth/roles/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
+			            // DELETE /auth/groups/<id>  (admin-only)
+				            svr.Delete(R"(/auth/groups/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
 				                json resp;
 				                try {
 				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
@@ -26076,22 +26170,22 @@ window.addEventListener("load", startAutoRefresh);
 			                    const std::string id = normalize_auth_role_id(req.matches[1]);
 			                    if (id.empty()) {
 			                        resp["ok"] = false;
-			                        resp["error"] = "Invalid role id.";
+			                        resp["error"] = "Invalid group id.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
 			                    }
-			                    if (is_reserved_role(id)) {
+			                    if (is_reserved_group(id)) {
 			                        resp["ok"] = false;
-			                        resp["error"] = "Cannot delete reserved roles.";
+			                        resp["error"] = "Cannot delete reserved groups.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
 			                    }
 			                    for (const auto &u : g_authUsers) {
-			                        if (normalize_auth_role_id(u.role) == id) {
+			                        if (std::find(u.groups.begin(), u.groups.end(), id) != u.groups.end()) {
 			                            resp["ok"] = false;
-			                            resp["error"] = "Cannot delete a role that is assigned to a user.";
+			                            resp["error"] = "Cannot delete a group that is assigned to a user.";
 			                            res.status = 400;
 			                            res.set_content(resp.dump(2), "application/json");
 			                            return;
@@ -26106,7 +26200,7 @@ window.addEventListener("load", startAutoRefresh);
 			                    }
 			                    if (!removed) {
 			                        resp["ok"] = false;
-			                        resp["error"] = "Role not found.";
+			                        resp["error"] = "Group not found.";
 			                        res.status = 404;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
@@ -26160,10 +26254,10 @@ window.addEventListener("load", startAutoRefresh);
 	                    json body = json::parse(req.body.empty() ? "{}" : req.body);
 	                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
 	                    const std::string password = body.value("password", std::string{});
-		                    const std::string role = normalize_auth_role_id(body.value("role", std::string{"admin"}));
-		                    if (!role_exists(role)) {
+		                    const auto groups = parse_group_list(body.value("groups", json::array()));
+		                    if (!group_list_valid(groups)) {
 		                        resp["ok"] = false;
-		                        resp["error"] = "Invalid role.";
+		                        resp["error"] = "Select at least one valid group.";
 		                        res.status = 400;
 		                        res.set_content(resp.dump(2), "application/json");
 		                        return;
@@ -26206,7 +26300,7 @@ window.addEventListener("load", startAutoRefresh);
 	                    u.name = body.value("name", std::string{});
 	                    if (u.name.empty()) u.name = username;
 	                    u.description = body.value("description", std::string{});
-	                    u.role = role;
+	                    u.groups = groups;
 	                    u.iterations = 150000;
 	                    u.salt_b64 = b64_encode(salt);
 	                    if (!pbkdf2_sha256_b64(password, salt, u.iterations, u.hash_b64)) {
@@ -26234,8 +26328,93 @@ window.addEventListener("load", startAutoRefresh);
 	                }
 		            });
 
+		            // POST /auth/change-password (authenticated self-service).
+		            svr.Post("/auth/change-password", [&](const httplib::Request &req, httplib::Response &res) {
+		                json resp;
+		                AdminSessionInfo sess;
+		                if (!is_user_logged_in(req, sess)) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Login required.";
+		                    res.status = 403;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
+		                }
+		                try {
+		                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		                    load_passwords_store(passwordsPath);
+		                    const json body = json::parse(req.body.empty() ? "{}" : req.body);
+		                    const std::string currentPassword = body.value("current_password", std::string{});
+		                    const std::string password = body.value("password", std::string{});
+		                    const std::string confirm = body.value("confirm", std::string{});
+
+		                    AuthUserRecord record;
+		                    bool found = false;
+		                    {
+		                        std::lock_guard<std::mutex> lock(g_userStoreMutex);
+		                        for (const auto &user : g_authUsers) {
+		                            if (user.username == sess.username) {
+		                                record = user;
+		                                found = true;
+		                                break;
+		                            }
+		                        }
+		                    }
+		                    if (!found) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "User not found.";
+		                        res.status = 404;
+		                    } else if (!verify_auth_user_password(record, currentPassword)) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Current password is incorrect.";
+		                        res.status = 403;
+		                    } else if (password.size() < 4) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Password too short.";
+		                        res.status = 400;
+		                    } else if (password != confirm) {
+		                        resp["ok"] = false;
+		                        resp["error"] = "Passwords do not match.";
+		                        res.status = 400;
+		                    } else {
+		                        std::string salt(16, '\0');
+		                        if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1) {
+		                            throw std::runtime_error("Failed to generate random salt.");
+		                        }
+		                        record.iterations = 150000;
+		                        record.salt_b64 = b64_encode(salt);
+		                        if (!pbkdf2_sha256_b64(password, salt, record.iterations, record.hash_b64)) {
+		                            throw std::runtime_error("PBKDF2 hashing failed.");
+		                        }
+		                        {
+		                            std::lock_guard<std::mutex> lock(g_userStoreMutex);
+		                            bool updated = false;
+		                            for (auto &user : g_authUsers) {
+		                                if (user.username != sess.username) continue;
+		                                user.iterations = record.iterations;
+		                                user.salt_b64 = record.salt_b64;
+		                                user.hash_b64 = record.hash_b64;
+		                                updated = true;
+		                                break;
+		                            }
+		                            if (!updated) throw std::runtime_error("User disappeared during password change.");
+		                        }
+		                        if (!save_passwords_store(passwordsPath)) {
+		                            throw std::runtime_error("Failed to save passwords.jsonc.");
+		                        }
+		                        record_auth_session_event("password_changed", {{"username", sess.username}});
+		                        resp["ok"] = true;
+		                    }
+		                    res.set_content(resp.dump(2), "application/json");
+		                } catch (const std::exception &ex) {
+		                    resp["ok"] = false;
+		                    resp["error"] = ex.what();
+		                    res.status = 500;
+		                    res.set_content(resp.dump(2), "application/json");
+		                }
+		            });
+
 		            // PUT /auth/users/<username>
-		            // Admin may update: role, password, name
+		            // Admin may update: groups, password, name
 		            // User may update self: password, name
 		            // Username is immutable (URL path).
 		            svr.Put(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
@@ -26269,7 +26448,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    }
 
 		                    json body = json::parse(req.body.empty() ? "{}" : req.body);
-		                    const bool hasRole = body.contains("role");
+		                    const bool hasGroups = body.contains("groups");
 		                    const bool hasPassword = body.contains("password");
 		                    const bool hasName = body.contains("name");
 		                    const bool hasDescription = body.contains("description");
@@ -26285,19 +26464,19 @@ window.addEventListener("load", startAutoRefresh);
 		                        return;
 		                    }
 
-		                    std::string nextRole;
-		                    if (hasRole) {
+		                    std::vector<std::string> nextGroups;
+		                    if (hasGroups) {
 		                        if (!canManageUsers) {
 		                            resp["ok"] = false;
-		                            resp["error"] = "Insufficient permissions to change role.";
+		                            resp["error"] = "Insufficient permissions to change groups.";
 		                            res.status = 403;
 		                            res.set_content(resp.dump(2), "application/json");
 		                            return;
 		                        }
-		                        nextRole = normalize_auth_role_id(body.value("role", std::string{"admin"}));
-		                        if (!role_exists(nextRole)) {
+		                        nextGroups = parse_group_list(body.value("groups", json::array()));
+		                        if (!group_list_valid(nextGroups)) {
 		                            resp["ok"] = false;
-		                            resp["error"] = "Invalid role.";
+		                            resp["error"] = "Select at least one valid group.";
 		                            res.status = 400;
 		                            res.set_content(resp.dump(2), "application/json");
 		                            return;
@@ -26334,19 +26513,13 @@ window.addEventListener("load", startAutoRefresh);
 		                    }
 
 		                    bool found = false;
+		                    std::vector<std::string> previousGroups;
 		                    for (auto &u : g_authUsers) {
 		                        if (u.username != username) continue;
 		                        found = true;
-		                        if (hasRole) {
-		                            const std::string currentRole = normalize_auth_role_id(u.role);
-		                            if (isSelf && currentRole != nextRole) {
-		                                resp["ok"] = false;
-		                                resp["error"] = "You cannot change your own role.";
-		                                res.status = 400;
-		                                res.set_content(resp.dump(2), "application/json");
-		                                return;
-		                            }
-		                            u.role = nextRole;
+		                        if (hasGroups) {
+		                            previousGroups = u.groups;
+		                            u.groups = nextGroups;
 		                        }
 		                        if (hasName) {
 		                            u.name = nextName;
@@ -26388,15 +26561,27 @@ window.addEventListener("load", startAutoRefresh);
 		                    if (canManageUsers) {
 			                    bool hasManager = false;
 			                    for (const auto &u : g_authUsers) {
-			                        if (role_has_permission(u.role, "auth.manage_users")) { hasManager = true; break; }
+			                        if (groups_have_permission(u.groups, "auth.manage_users")) { hasManager = true; break; }
 			                    }
 			                    if (!hasManager) {
+			                        if (hasGroups) {
+			                            for (auto &u : g_authUsers) {
+			                                if (u.username == username) { u.groups = previousGroups; break; }
+			                            }
+			                        }
 			                        resp["ok"] = false;
 			                        resp["error"] = "Cannot remove user-management access from all users.";
 			                        res.status = 400;
 			                        res.set_content(resp.dump(2), "application/json");
 			                        return;
 			                    }
+		                    }
+
+		                    if (hasGroups) {
+		                        std::lock_guard<std::mutex> lock(g_adminMutex);
+		                        for (auto &entry : g_adminSessions) {
+		                            if (entry.second.username == username) entry.second.groups = nextGroups;
+		                        }
 		                    }
 
 		                    if (!save_passwords_store(passwordsPath)) {
@@ -26406,6 +26591,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        res.set_content(resp.dump(2), "application/json");
 		                        return;
 		                    }
+		                    if (hasGroups) save_admin_sessions_store();
 		                    resp["ok"] = true;
 		                    res.set_content(resp.dump(2), "application/json");
 		                } catch (const std::exception &ex) {
@@ -26477,7 +26663,7 @@ window.addEventListener("load", startAutoRefresh);
 
 			                    bool hasManager = false;
 			                    for (const auto &u : remaining) {
-			                        if (role_has_permission(u.role, "auth.manage_users")) { hasManager = true; break; }
+			                        if (groups_have_permission(u.groups, "auth.manage_users")) { hasManager = true; break; }
 			                    }
 			                    if (!hasManager) {
 			                        resp["ok"] = false;
@@ -26544,7 +26730,7 @@ window.addEventListener("load", startAutoRefresh);
 
 		                bool erased = false;
 		                std::string erasedUsername;
-		                std::string erasedRole;
+		                std::vector<std::string> erasedGroups;
 		                int activeCount = 0;
 		                if (!token.empty()) {
 		                    std::lock_guard<std::mutex> lock(g_adminMutex);
@@ -26552,7 +26738,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    if (it != g_adminSessions.end()) {
 		                        erased = true;
 		                        erasedUsername = it->second.username;
-		                        erasedRole = normalize_auth_role_id(it->second.role);
+		                        erasedGroups = it->second.groups;
 		                        g_adminSessions.erase(it);
 		                    }
 		                    activeCount = static_cast<int>(g_adminSessions.size());
@@ -26561,7 +26747,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    {"remote", req.remote_addr},
 		                    {"erased", erased},
 		                    {"username", erasedUsername},
-		                    {"role", erasedRole},
+		                    {"groups", erasedGroups},
 		                    {"cookie_present", !get_cookie_value(req, "OPCBRIDGE_ADMIN_TOKEN").empty()},
 		                    {"header_present", !req.get_header_value("X-Admin-Token").empty()},
 		                    {"active_count", activeCount}

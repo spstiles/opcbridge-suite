@@ -205,6 +205,10 @@ const REPORT_HISTORIAN_URL = String(
   process.env.OPCBRIDGE_REPORT_HISTORIAN_URL ||
   `http://${HISTORIAN_API_HOST}:${HISTORIAN_API_PORT}`
 ).trim();
+const REPORT_LOGGER_URL = String(
+  process.env.OPCBRIDGE_REPORT_LOGGER_URL ||
+  `http://${REPORTER_API_HOST}:${REPORTER_API_PORT}`
+).trim();
 
 const SYSTEMD_UNITS_DIR = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNITS_DIR || '/etc/systemd/system').trim();
 
@@ -414,20 +418,58 @@ function authStatusIsLoggedIn(status) {
   );
 }
 
-function readPublishedReports() {
-  return readReportDefinitions()
-    .filter((report) => report && typeof report === 'object' && report.published === true)
-    .map((report) => ({
-      id: sanitizeId(report.id),
-      name: String(report.name || report.id || '').trim(),
-      description: String(report.description || '').trim(),
-      period: String(report.period || 'month').trim(),
-      timezone: String(report.timezone || 'UTC').trim(),
-      formats: (Array.isArray(report.formats) ? report.formats : ['xlsx'])
-        .map((format) => String(format || '').trim().toLowerCase())
-        .filter((format) => ['xlsx', 'csv'].includes(format))
-    }))
-    .filter((report) => report.id && report.name);
+function authStatusGroups(status) {
+  return Array.from(new Set(
+    (Array.isArray(status?.user?.groups) ? status.user.groups : [])
+      .map((group) => String(group || '').trim().toLowerCase())
+      .filter(Boolean)
+  ));
+}
+
+function authStatusUsername(status) {
+  return String(status?.user?.username || status?.user?.id || '').trim();
+}
+
+function reportGrant(report, status) {
+  if (authStatusHasPerm(status, 'reports.administer')) {
+    return { view: true, download: true, edit: true, manage: true };
+  }
+  const username = authStatusUsername(status);
+  if (username && username === String(report?.created_by || '').trim()) {
+    return { view: true, download: true, edit: true, manage: true };
+  }
+  const groups = new Set(authStatusGroups(status));
+  const grants = Array.isArray(report?.access) ? report.access : [];
+  const matching = grants.filter((item) => groups.has(String(item?.group_id || '').trim().toLowerCase()));
+  return {
+    view: matching.some((grant) => grant?.view || grant?.download || grant?.edit || grant?.manage),
+    download: matching.some((grant) => grant?.download || grant?.manage),
+    edit: matching.some((grant) => grant?.edit || grant?.manage),
+    manage: matching.some((grant) => grant?.manage)
+  };
+}
+
+function canAccessReport(report, status, action) {
+  if (!authStatusHasPerm(status, 'reports.access') &&
+      !authStatusHasPerm(status, 'reports.create') &&
+      !authStatusHasPerm(status, 'reports.administer')) return false;
+  return Boolean(reportGrant(report, status)[action]);
+}
+
+function publicReport(report) {
+  return {
+    id: sanitizeId(report.id),
+    name: String(report.name || report.id || '').trim(),
+    description: String(report.description || '').trim(),
+    published: report.published === true,
+    period: String(report.period || 'month').trim(),
+    group_by: String(report.group_by || 'day').trim(),
+    timezone: String(report.timezone || 'UTC').trim(),
+    published: report.published === true,
+    formats: (Array.isArray(report.formats) ? report.formats : ['xlsx'])
+      .map((format) => String(format || '').trim().toLowerCase())
+      .filter((format) => ['xlsx', 'csv'].includes(format))
+  };
 }
 
 function readReportDefinitions() {
@@ -452,8 +494,62 @@ function normalizeReportDefinition(value) {
       .filter((format) => ['xlsx', 'csv'].includes(format))
   ));
   if (!formats.length) throw new Error('Select at least one output format.');
+  const sourceInput = source.data_source && typeof source.data_source === 'object' ? source.data_source : { type: 'historian' };
+  const sourceType = String(sourceInput.type || 'historian').trim().toLowerCase();
+  if (!['historian', 'database'].includes(sourceType)) throw new Error(`Unsupported report data source: ${sourceType}`);
+  const dataSource = sourceType === 'database' ? {
+    type: 'database',
+    database_id: sanitizeId(sourceInput.database_id),
+    table: String(sourceInput.table || '').trim().slice(0, 255),
+    layout: String(sourceInput.layout || 'wide').trim() === 'category' ? 'category' : 'wide',
+    time_column: String(sourceInput.time_column || '').trim().slice(0, 255),
+    category_column: String(sourceInput.category_column || '').trim().slice(0, 255),
+    value_column: String(sourceInput.value_column || '').trim().slice(0, 255)
+  } : { type: 'historian' };
+  const aggregations = new Set(['last', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count']);
   const columns = (Array.isArray(source.columns) ? source.columns : []).slice(0, 100).map((column, index) => {
     const item = column && typeof column === 'object' ? column : {};
+    const itemSource = String(item.source || sourceType || 'historian').trim().toLowerCase();
+    if (itemSource === 'database') {
+      const databaseId = sanitizeId(item.database_id || dataSource.database_id);
+      const table = String(item.table || dataSource.table || '').trim().slice(0, 255);
+      const timeColumn = String(item.time_column || dataSource.time_column || '').trim().slice(0, 255);
+      const layout = String(item.layout || dataSource.layout || 'wide').trim() === 'category' ? 'category' : 'wide';
+      const categoryColumn = String(item.category_column || dataSource.category_column || '').trim().slice(0, 255);
+      const field = String(item.field || dataSource.value_column || '').trim().slice(0, 255);
+      const aggregation = String(item.aggregation || 'last').trim().toLowerCase();
+      const multiplierValue = Number(item.multiplier ?? 1);
+      const multiplier = Number.isFinite(multiplierValue) ? multiplierValue : 1;
+      const negativeChange = ['blank', 'reset', 'rollover'].includes(String(item.negative_change || 'blank'))
+        ? String(item.negative_change || 'blank') : 'blank';
+      const rolloverValue = Number(item.rollover_modulus ?? 65536);
+      if (!databaseId || !table || !timeColumn || !field) {
+        throw new Error(`Column ${index + 1} requires a database, table, date/time column, and value field.`);
+      }
+      if (layout === 'category' && !categoryColumn) {
+        throw new Error(`Column ${index + 1} requires the column containing item names.`);
+      }
+      if (!aggregations.has(aggregation)) throw new Error(`Column ${index + 1} has an unsupported aggregation.`);
+      return {
+        heading: String(item.heading || item.category_value || field).trim().slice(0, 191) || field,
+        source: 'database',
+        database_id: databaseId,
+        table,
+        time_column: timeColumn,
+        layout,
+        field,
+        ...(layout === 'category' ? {
+          category_column: categoryColumn,
+          category_value: String(item.category_value ?? '').slice(0, 500)
+        } : {}),
+        aggregation,
+        multiplier,
+        negative_change: negativeChange,
+        rollover_modulus: Number.isFinite(rolloverValue) && rolloverValue > 0 ? rolloverValue : 65536,
+        precision: normalizeIntRange(item.precision, 2, 0, 10)
+      };
+    }
+    if (itemSource !== 'historian') throw new Error(`Column ${index + 1} has an unsupported source.`);
     const connectionId = String(item.connection_id || '').trim().slice(0, 255);
     const tagName = String(item.tag_name || '').trim().slice(0, 500);
     if (!connectionId || !tagName) throw new Error(`Column ${index + 1} requires a historian connection and tag.`);
@@ -463,20 +559,58 @@ function normalizeReportDefinition(value) {
       connection_id: connectionId,
       tag_name: tagName,
       aggregation: 'last',
+      multiplier: Number.isFinite(Number(item.multiplier ?? 1)) ? Number(item.multiplier ?? 1) : 1,
       precision: normalizeIntRange(item.precision, 2, 0, 10)
     };
   });
-  if (!columns.length) throw new Error('Add at least one historian column.');
+  if (!columns.length) throw new Error('Add at least one report column.');
+  const accessByGroup = new Map();
+  (Array.isArray(source.access) ? source.access : []).forEach((entry) => {
+    const groupId = String(entry?.group_id || '').trim().toLowerCase();
+    if (!/^[a-z0-9_-]+$/.test(groupId)) return;
+    accessByGroup.set(groupId, {
+      group_id: groupId,
+      view: normalizeBool(entry.view, false),
+      download: normalizeBool(entry.download, false),
+      edit: normalizeBool(entry.edit, false),
+      manage: normalizeBool(entry.manage, false)
+    });
+  });
   return {
     id,
     name,
     description: String(source.description || '').trim().slice(0, 2000),
+    created_by: String(source.created_by || '').trim().slice(0, 191),
     published: normalizeBool(source.published, false),
     timezone,
-    period: 'month',
+    period: ['daily', 'month', 'yearly', 'custom'].includes(String(source.period || 'month')) ? String(source.period || 'month') : 'month',
+    group_by: ['hour', 'day', 'month'].includes(String(source.group_by || 'day')) ? String(source.group_by || 'day') : 'day',
     formats,
+    data_source: dataSource,
+    access: Array.from(accessByGroup.values()),
     columns
   };
+}
+
+function reportCliRangeArgs(report, values) {
+  const period = String(report?.period || 'month');
+  const read = (name) => String(
+    typeof values?.get === 'function' ? (values.get(name) || '') : (values?.[name] || '')
+  ).trim();
+  if (period === 'custom') {
+    const start = read('start_date');
+    const end = read('end_date');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start) {
+      throw new Error('Valid start_date and end_date are required.');
+    }
+    return { args: ['--start-date', start, '--end-date', end], label: `${start}-to-${end}` };
+  }
+  const value = read('period_value') || read('month');
+  const valid = period === 'daily' ? /^\d{4}-\d{2}-\d{2}$/.test(value)
+    : period === 'yearly' ? /^\d{4}$/.test(value)
+      : /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
+  if (!valid) throw new Error(`A valid ${period} report period is required.`);
+  return { args: ['--period-value', value], label: value };
 }
 
 async function fetchUpstreamJson(req, target, path, { timeoutMs = 8000 } = {}) {
@@ -2246,8 +2380,26 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 502, { ok: false, error: String(err.message || err) });
       return null;
     }
-    if (!authStatusIsLoggedIn(status) && !authStatusHasPerm(status, 'suite.manage_server')) {
-      sendJson(res, 403, { ok: false, error: 'Sign in to access published reports.' });
+    if (!authStatusHasPerm(status, 'reports.access') &&
+        !authStatusHasPerm(status, 'reports.create') &&
+        !authStatusHasPerm(status, 'reports.administer')) {
+      sendJson(res, 403, { ok: false, error: 'Insufficient report permissions.' });
+      return null;
+    }
+    return status;
+  }
+
+  async function requireReportDesignerPerm() {
+    const status = await requireReportsPerm();
+    if (!status) return null;
+    const canDesign = authStatusHasPerm(status, 'reports.create') ||
+      authStatusHasPerm(status, 'reports.administer') ||
+      readReportDefinitions().some((report) => {
+        const grant = reportGrant(report, status);
+        return grant.edit || grant.manage;
+      });
+    if (!canDesign) {
+      sendJson(res, 403, { ok: false, error: 'No report design permission is assigned.' });
       return null;
     }
     return status;
@@ -3895,9 +4047,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/reports/admin') {
-    if (!await requireManageServerPerm()) return;
+    const reportStatus = await requireReportsPerm();
+    if (!reportStatus) return;
     if (req.method === 'GET') {
-      sendJson(res, 200, { ok: true, path: REPORT_DEFINITIONS_PATH, reports: readReportDefinitions() });
+      const reports = readReportDefinitions().filter((report) => {
+        const grant = reportGrant(report, reportStatus);
+        return grant.edit || grant.manage;
+      });
+      sendJson(res, 200, { ok: true, path: REPORT_DEFINITIONS_PATH, reports });
       return;
     }
     if (req.method === 'POST') {
@@ -3906,6 +4063,27 @@ const server = http.createServer(async (req, res) => {
         const originalId = sanitizeId(body.original_id || '');
         const reports = readReportDefinitions();
         const source = body.report || body;
+        const existing = originalId
+          ? reports.find((item) => sanitizeId(item?.id) === originalId)
+          : null;
+        if (!existing && !authStatusHasPerm(reportStatus, 'reports.create') &&
+            !authStatusHasPerm(reportStatus, 'reports.administer')) {
+          sendJson(res, 403, { ok: false, error: 'Insufficient permissions (reports.create required).' });
+          return;
+        }
+        if (existing && !reportGrant(existing, reportStatus).edit) {
+          sendJson(res, 403, { ok: false, error: 'This role cannot edit the selected report.' });
+          return;
+        }
+        const canManage = !existing || reportGrant(existing, reportStatus).manage;
+        if (existing && !canManage) {
+          source.access = existing.access;
+          source.published = existing.published;
+        }
+        source.created_by = existing
+          ? (String(existing.created_by || '').trim() || authStatusUsername(reportStatus))
+          : authStatusUsername(reportStatus);
+        if (!source.created_by) throw new Error('An authenticated creator is required.');
         const usedIds = new Set(
           reports
             .map((item) => sanitizeId(item?.id))
@@ -3931,8 +4109,77 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/reports/admin/sources') {
+    if (!await requireReportDesignerPerm()) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const root = readJsonFileOrNull(REPORTER_DATABASES_PATH) || { databases: [] };
+    const databases = (Array.isArray(root.databases) ? root.databases : []).map((database) => ({
+      id: String(database?.id || '').trim(),
+      name: String(database?.name || database?.id || '').trim(),
+      type: String(database?.type || 'mysql').trim().toLowerCase()
+    })).filter((database) => database.id);
+    sendJson(res, 200, { ok: true, databases });
+    return;
+  }
+
+  if (url.pathname === '/api/reports/admin/schema') {
+    if (!await requireReportDesignerPerm()) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const databaseId = sanitizeId(url.searchParams.get('database'));
+    if (!databaseId) {
+      sendJson(res, 400, { ok: false, error: 'database is required.' });
+      return;
+    }
+    const result = await reporterApiRequest(
+      'GET',
+      `/databases/${encodeURIComponent(databaseId)}/schema`,
+      null,
+      30000
+    );
+    sendJson(res, result.ok ? 200 : (result.status || 502), result.json || {
+      ok: false,
+      error: result.error || 'Logger schema discovery failed.'
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/reports/admin/distinct') {
+    if (!await requireReportDesignerPerm()) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const databaseId = sanitizeId(body.database_id);
+      const table = String(body.table || '').trim();
+      const column = String(body.column || '').trim();
+      if (!databaseId || !table || !column) throw new Error('database_id, table, and column are required.');
+      const result = await reporterApiRequest(
+        'POST',
+        `/databases/${encodeURIComponent(databaseId)}/distinct`,
+        { table, column, limit: 200 },
+        30000
+      );
+      sendJson(res, result.ok ? 200 : (result.status || 502), result.json || {
+        ok: false,
+        error: result.error || 'Logger value discovery failed.'
+      });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
   if (url.pathname === '/api/reports/admin/delete' || url.pathname === '/api/reports/admin/duplicate') {
-    if (!await requireManageServerPerm()) return;
+    const reportStatus = await requireReportsPerm();
+    if (!reportStatus) return;
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -3946,6 +4193,10 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { ok: false, error: `Report not found: ${id}` });
         return;
       }
+      if (!reportGrant(reports[index], reportStatus).manage) {
+        sendJson(res, 403, { ok: false, error: 'This role cannot manage the selected report.' });
+        return;
+      }
       if (url.pathname.endsWith('/delete')) {
         reports.splice(index, 1);
         writeJsonFile(REPORT_DEFINITIONS_PATH, { reports });
@@ -3955,6 +4206,8 @@ const server = http.createServer(async (req, res) => {
       const copy = JSON.parse(JSON.stringify(reports[index]));
       copy.id = uniqueCopyId(id, new Set(reports.map((item) => sanitizeId(item?.id)).filter(Boolean)));
       copy.name = copyName(copy.name);
+      copy.created_by = authStatusUsername(reportStatus);
+      if (!copy.created_by) throw new Error('An authenticated creator is required.');
       copy.published = false;
       reports.push(copy);
       writeJsonFile(REPORT_DEFINITIONS_PATH, { reports });
@@ -3966,7 +4219,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/reports/admin/preview') {
-    if (!await requireManageServerPerm()) return;
+    const reportStatus = await requireReportsPerm();
+    if (!reportStatus) return;
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -3974,18 +4228,59 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const id = sanitizeId(body.id);
-      const month = String(body.month || '').trim();
-      if (!id || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-        throw new Error('Valid id and month (YYYY-MM) are required.');
+      const report = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
+      if (!id || !report) throw new Error(`Report not found: ${id}`);
+      if (!canAccessReport(report, reportStatus, 'edit')) {
+        sendJson(res, 403, { ok: false, error: 'This role cannot edit the selected report.' });
+        return;
       }
+      const range = reportCliRangeArgs(report, body);
       const result = await new Promise((resolve) => {
         child_process.execFile(REPORT_BIN, [
           'preview',
           '--definitions', REPORT_DEFINITIONS_PATH,
           '--id', id,
-          '--month', month,
+          ...range.args,
           '--historian-url', REPORT_HISTORIAN_URL,
+          '--logger-url', REPORT_LOGGER_URL,
           '--allow-unpublished'
+        ], { encoding: 'utf8', timeout: 120000, maxBuffer: 20 * 1024 * 1024 },
+        (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+      });
+      if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
+      sendJson(res, 200, JSON.parse(result.stdout));
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reports/preview') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const reportStatus = await requireReportsPerm();
+    if (!reportStatus) return;
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(body.id);
+      const report = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
+      const grant = report ? reportGrant(report, reportStatus) : null;
+      if (!report || !grant?.view || (report.published !== true && !grant.edit && !grant.manage)) {
+        sendJson(res, 404, { ok: false, error: `Accessible report not found: ${id}` });
+        return;
+      }
+      const range = reportCliRangeArgs(report, body);
+      const result = await new Promise((resolve) => {
+        child_process.execFile(REPORT_BIN, [
+          'preview',
+          '--definitions', REPORT_DEFINITIONS_PATH,
+          '--id', id,
+          ...range.args,
+          '--historian-url', REPORT_HISTORIAN_URL,
+          '--logger-url', REPORT_LOGGER_URL,
+          ...(report.published === true ? [] : ['--allow-unpublished'])
         ], { encoding: 'utf8', timeout: 120000, maxBuffer: 20 * 1024 * 1024 },
         (error, stdout, stderr) => resolve({ error, stdout, stderr }));
       });
@@ -4002,10 +4297,21 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    if (!await requireReportsPerm()) return;
+    const reportStatus = await requireReportsPerm();
+    if (!reportStatus) return;
+    const reports = readReportDefinitions()
+      .filter((report) => {
+        const grant = reportGrant(report, reportStatus);
+        return grant.view && (report.published === true || grant.edit || grant.manage);
+      })
+      .map((report) => ({
+        ...publicReport(report),
+        permissions: reportGrant(report, reportStatus)
+      }))
+      .filter((report) => report.id && report.name);
     sendJson(res, 200, {
       ok: true,
-      reports: readPublishedReports()
+      reports
     });
     return;
   }
@@ -4015,18 +4321,26 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    if (!await requireReportsPerm()) return;
+    const reportStatus = await requireReportsPerm();
+    if (!reportStatus) return;
 
     const id = sanitizeId(url.searchParams.get('id'));
-    const month = String(url.searchParams.get('month') || '').trim();
     const format = String(url.searchParams.get('format') || 'xlsx').trim().toLowerCase();
-    if (!id || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !['xlsx', 'csv'].includes(format)) {
-      sendJson(res, 400, { ok: false, error: 'Valid id, month (YYYY-MM), and format are required.' });
+    if (!id || !['xlsx', 'csv'].includes(format)) {
+      sendJson(res, 400, { ok: false, error: 'Valid id and format are required.' });
       return;
     }
-    const report = readPublishedReports().find((item) => item.id === id);
-    if (!report) {
+    const rawReport = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
+    if (!rawReport || rawReport.published !== true || !canAccessReport(rawReport, reportStatus, 'download')) {
       sendJson(res, 404, { ok: false, error: `Published report not found: ${id}` });
+      return;
+    }
+    const report = publicReport(rawReport);
+    let range;
+    try {
+      range = reportCliRangeArgs(report, url.searchParams);
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
       return;
     }
     if (!report.formats.includes(format)) {
@@ -4046,10 +4360,11 @@ const server = http.createServer(async (req, res) => {
           'generate',
           '--definitions', REPORT_DEFINITIONS_PATH,
           '--id', id,
-          '--month', month,
+          ...range.args,
           '--format', format,
           '--output', outputPath,
-          '--historian-url', REPORT_HISTORIAN_URL
+          '--historian-url', REPORT_HISTORIAN_URL,
+          '--logger-url', REPORT_LOGGER_URL
         ], {
           encoding: 'utf8',
           timeout: 120000,
@@ -4070,7 +4385,7 @@ const server = http.createServer(async (req, res) => {
         : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
       send(res, 200, {
         'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="${safeBase}-${month}.${format}"`,
+        'Content-Disposition': `attachment; filename="${safeBase}-${range.label}.${format}"`,
         'Cache-Control': 'no-store'
       }, body);
     } catch (err) {
@@ -4116,7 +4431,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const reqPath = (url.pathname === '/' || url.pathname === '/reports') ? '/index.html' : url.pathname;
+  if (req.method === 'GET' && url.pathname === '/reports/') {
+    send(res, 302, {
+      Location: '/reports',
+      'Cache-Control': 'no-store'
+    }, '');
+    return;
+  }
+
+  const reportsPage = url.pathname === '/reports';
+  const reqPath = (url.pathname === '/' || reportsPage) ? '/index.html' : url.pathname;
   const filePath = safeJoin(PUBLIC_DIR, reqPath);
   if (!filePath) {
     send(res, 400, { 'Content-Type': 'text/plain; charset=utf-8' }, 'Bad path');
@@ -4128,10 +4452,20 @@ const server = http.createServer(async (req, res) => {
       send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }, 'Not found');
       return;
     }
+    let body = data;
+    if (reportsPage && reqPath === '/index.html') {
+      body = Buffer.from(
+        data.toString('utf8')
+          .replace('<body>', '<body class="report-portal">')
+          .replace('<section id="tab-overview" class="panel is-active">', '<section id="tab-overview" class="panel">')
+          .replace('<section id="tab-reports" class="panel">', '<section id="tab-reports" class="panel is-active">'),
+        'utf8'
+      );
+    }
     send(res, 200, {
       'Content-Type': contentTypeFor(filePath),
       'Cache-Control': 'no-store'
-    }, data);
+    }, body);
   });
 });
 

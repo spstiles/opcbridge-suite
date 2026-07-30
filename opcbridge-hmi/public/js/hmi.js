@@ -4304,8 +4304,8 @@ const installAuditActorHeaders = () => {
   const getActor = () => {
     const session = authSession || loadAuthSession();
     const username = String(session?.username || "").trim();
-    const role = String(session?.role || "").trim();
-    return { username, role };
+    const groups = Array.isArray(session?.groups) ? session.groups.map(String) : [];
+    return { username, groups };
   };
 
   window.fetch = (input, init) => {
@@ -4313,12 +4313,12 @@ const installAuditActorHeaders = () => {
       const url = typeof input === "string" ? input : String(input?.url || "");
       const isApi = url.startsWith("/api/") || url.includes(`${window.location.origin}/api/`);
       if (!isApi) return originalFetch(input, init);
-      const { username, role } = getActor();
+      const { username, groups } = getActor();
       if (!username) return originalFetch(input, init);
       const nextInit = { ...(init || {}) };
       const headers = new Headers(nextInit.headers || (typeof input === "object" ? input.headers : undefined) || {});
       headers.set("X-OPCBRIDGE-HMI-User", username);
-      if (role) headers.set("X-OPCBRIDGE-HMI-Role", role);
+      if (groups.length) headers.set("X-OPCBRIDGE-HMI-Groups", groups.join(","));
       nextInit.headers = headers;
       return originalFetch(input, nextInit);
     } catch {
@@ -5677,7 +5677,7 @@ const getAuthStateValues = () => {
     "Auth.Status": loggedIn ? "Logged In" : "Logged Out",
     "Auth.Username": loggedIn ? String(authSession?.username || "") : "",
     "Auth.Displayname": loggedIn ? String(authSession?.displayName || authSession?.username || "") : "",
-    "Auth.Role": loggedIn ? String(authSession?.role || "") : ""
+    "Auth.Groups": loggedIn ? (Array.isArray(authSession?.groups) ? authSession.groups.join(",") : "") : ""
   };
 };
 
@@ -5697,8 +5697,6 @@ const scheduleAuthStateRender = () => {
   }, 0);
 };
 
-const getAuthRole = () => String(authSession?.role || "").trim();
-
 const getAuthPermissions = () => {
   const perms = authSession?.permissions;
   if (Array.isArray(perms)) return perms.map((p) => String(p || "").trim()).filter(Boolean);
@@ -5713,13 +5711,6 @@ const hasPerm = (permId) => {
   const perms = getAuthPermissions();
   if (perms.includes(want)) return true;
 
-  // Back-compat fallback for legacy role-name deployments.
-  const role = String(getAuthRole() || "").toLowerCase();
-  if (role === "admin") return true;
-  if (want === "hmi.edit_screens") return role === "editor";
-  if (want === "opcbridge.edit_config") return role === "editor";
-  if (want === "opcbridge.write_tags") return role === "operator";
-  if (want === "auth.manage_users") return false;
   return false;
 };
 
@@ -5735,34 +5726,34 @@ const loadAuthSession = () => {
     const parsed = JSON.parse(raw);
     const username = String(parsed?.username || "").trim();
     const displayName = String(parsed?.displayName || parsed?.name || username).trim() || username;
-    const role = String(parsed?.role || "").trim();
+    const groups = Array.isArray(parsed?.groups) ? parsed.groups.map(String) : [];
     const permissions = Array.isArray(parsed?.permissions) ? parsed.permissions : [];
     const timeoutMinutes = Number(parsed?.timeoutMinutes) || 0;
     const lastActivityMs = Number(parsed?.lastActivityMs) || 0;
     const adminToken = String(parsed?.adminToken || "").trim();
     if (!username) return null;
     const serverValid = parsed?.serverValid !== false;
-    return { username, displayName, role, permissions, timeoutMinutes, lastActivityMs, serverValid, adminToken };
+    return { username, displayName, groups, permissions, timeoutMinutes, lastActivityMs, serverValid, adminToken };
   } catch {
     return null;
   }
 };
 
 const saveAuthSession = (session) => {
-  const previousState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.role || ""]);
+  const previousState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.groups || []]);
   authSession = session;
   if (session) authServerLoggedOutSinceMs = 0;
   try {
     if (!session) {
       authServerLoggedOutSinceMs = 0;
       sessionStorage.removeItem(AUTH_SESSION_KEY);
-      const nextState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.role || ""]);
+      const nextState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.groups || []]);
       if (nextState !== previousState) scheduleAuthStateRender();
       return;
     }
     sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
   } catch {}
-  const nextState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.role || ""]);
+  const nextState = JSON.stringify([hasServerAuthSession(), authSession?.username || "", authSession?.displayName || "", authSession?.groups || []]);
   if (nextState !== previousState) scheduleAuthStateRender();
 };
 
@@ -5793,7 +5784,7 @@ const authStatusSummary = (status) => ({
   logged_in: Boolean(status?.logged_in),
   user_logged_in: Boolean(status?.user_logged_in),
   username: String(status?.user?.username || ""),
-  role: String(status?.user?.role || ""),
+  groups: Array.isArray(status?.user?.groups) ? status.user.groups.map(String) : [],
   timeoutMinutes: Number(status?.timeoutMinutes) || 0,
   auth_debug: status?.auth_debug || null
 });
@@ -5804,7 +5795,7 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   const serverUser = authInfo?.user;
   const serverUsername = String(serverUser?.username || "").trim();
   const serverDisplayName = String(serverUser?.name || serverUser?.displayName || serverUser?.display_name || serverUsername).trim() || serverUsername;
-  const serverRole = String(serverUser?.role || "").trim();
+  const serverGroups = Array.isArray(serverUser?.groups) ? serverUser.groups.map(String) : [];
   const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
   if (!serverLoggedIn) {
@@ -5860,7 +5851,7 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   const needsSync = !authSession ||
     String(authSession?.username || "").trim() !== serverUsername ||
     String(authSession?.displayName || "").trim() !== serverDisplayName ||
-    String(authSession?.role || "").trim() !== serverRole ||
+    JSON.stringify((authSession?.groups || []).slice().sort()) !== JSON.stringify(serverGroups.slice().sort()) ||
     localPermsKey !== permsKey ||
     Number(authSession?.timeoutMinutes || 0) !== Number(authInfo?.timeoutMinutes || 0);
 
@@ -5868,7 +5859,7 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
     saveAuthSession({
       username: serverUsername,
       displayName: serverDisplayName,
-      role: serverRole,
+      groups: serverGroups,
       permissions: serverPerms,
       timeoutMinutes: Number(authInfo?.timeoutMinutes) || 0,
       lastActivityMs: Number(authSession?.lastActivityMs) || Date.now(),
@@ -6068,12 +6059,12 @@ const apiAuthTouch = async () => {
   return response.json().catch(() => ({ ok: true }));
 };
 
-const apiAuthAddUser = async ({ username, password, role }) => {
+const apiAuthAddUser = async ({ username, password, groups }) => {
   const response = await fetch("/api/auth/users", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password, role })
+    body: JSON.stringify({ username, password, groups })
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -6122,9 +6113,9 @@ const renderUsersList = () => {
     const name = document.createElement("div");
     name.className = "auth-user-name";
     name.textContent = user.username || "?";
-    const role = document.createElement("div");
-    role.className = "auth-user-role";
-    role.textContent = user.role || "viewer";
+    const groups = document.createElement("div");
+    groups.className = "auth-user-role";
+    groups.textContent = (Array.isArray(user.groups) ? user.groups : []).join(", ") || "No groups";
     const del = document.createElement("button");
     del.className = "panel-btn auth-user-delete";
     del.type = "button";
@@ -6143,7 +6134,7 @@ const renderUsersList = () => {
       }
     });
     row.appendChild(name);
-    row.appendChild(role);
+    row.appendChild(groups);
     row.appendChild(del);
     usersList.appendChild(row);
   });
@@ -6163,7 +6154,7 @@ const updateAuthUiVisibility = () => {
         ? `Edit session retained for ${authSession.username}; server login expired. Log in again to sync with SCADA.`
         : "Not logged in. (Viewer)";
     } else {
-      authSessionSummary.textContent = `Logged in as ${authSession.displayName || authSession.username} (${authSession.role}).`;
+      authSessionSummary.textContent = `Logged in as ${authSession.displayName || authSession.username} (${(authSession.groups || []).join(", ") || "no groups"}).`;
     }
   }
   if (authSetupTimeout) authSetupTimeout.value = !initialized ? "0" : authSetupTimeout.value;
@@ -6212,6 +6203,15 @@ const refreshUsersUi = async () => {
     syncLocalAuthFromStatus(status, "refreshUsersUi");
     updateAuthUiVisibility();
     if (usersTimeoutMinutes) usersTimeoutMinutes.value = String(Number(authInfo?.timeoutMinutes) || 0);
+    if (usersAddRole) {
+      usersAddRole.textContent = "";
+      (Array.isArray(authInfo?.groups) ? authInfo.groups : []).forEach((group) => {
+        const option = document.createElement("option");
+        option.value = String(group?.id || "");
+        option.textContent = String(group?.label || group?.id || "");
+        usersAddRole.appendChild(option);
+      });
+    }
     renderUsersList();
     if (usersStatusEl) usersStatusEl.textContent = "Ready.";
   } catch (error) {
@@ -17021,8 +17021,9 @@ if (usersAddUserBtn) {
       if (!username) throw new Error("Username required.");
       if (!password) throw new Error("Password required.");
       if (password !== confirm) throw new Error("Passwords do not match.");
-      const role = String(usersAddRole?.value || "operator");
-      await apiAuthAddUser({ username, password, role });
+      const groups = Array.from(usersAddRole?.selectedOptions || []).map((option) => option.value);
+      if (!groups.length) throw new Error("Select at least one group.");
+      await apiAuthAddUser({ username, password, groups });
       if (usersAddPassword) usersAddPassword.value = "";
       if (usersAddPasswordConfirm) usersAddPasswordConfirm.value = "";
       if (usersAddUsername) usersAddUsername.value = "";
@@ -17085,7 +17086,7 @@ if (authLoginBtn) {
       const session = {
         username: String(result.username || username),
         displayName: String(result.name || result.displayName || result.display_name || result.username || username),
-        role: String(result.role || "viewer"),
+        groups: Array.isArray(result.groups) ? result.groups.map(String) : [],
         timeoutMinutes: Number(result.timeoutMinutes) || 0,
         lastActivityMs: Date.now(),
         serverValid: true,

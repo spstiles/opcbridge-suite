@@ -888,7 +888,7 @@ build_if_needed() {
       echo "Composer is required to build opcbridge-report (re-run with --deps)." >&2
       exit 1
     }
-    composer install \
+    COMPOSER_ALLOW_SUPERUSER=1 composer install \
       --working-dir "$ROOT_DIR/opcbridge-report" \
       --no-dev \
       --classmap-authoritative \

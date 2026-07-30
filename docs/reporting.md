@@ -1,11 +1,56 @@
 # OPCBridge Reports
 
 `opcbridge-report` generates files from report definitions stored at
-`/etc/opcbridge/report/reports.json`. Administrators can create, duplicate,
-reorder, preview, publish, and delete definitions visually on SCADA's
-**Reports** tab. Signed-in users can view published reports there and download
-the selected month. The tab opens on the report-selection page; **New Report**
-and **Edit** open the separate builder view.
+`/etc/opcbridge/report/reports.json`. Report availability is controlled by
+SCADA's custom groups. The first report available through any of the signed-in
+user's groups is displayed immediately in the viewer, and changing the
+selector loads another report. The report viewer keeps its calendar picker and
+provides previous/next buttons for moving one report period at a time.
+
+`/reports` is the focused reporting portal. It does not display SCADA health or
+configuration navigation. A user whose groups grant report access but no SCADA
+access is redirected there when opening the main SCADA URL. `scada.access`
+explicitly grants the main SCADA portal and Overview page; existing operational
+permissions also imply that access so established operator groups continue to
+work.
+
+Three global permission functions control entry and report creation:
+
+- `reports.access` opens the Reports portal.
+- `reports.create` allows the user to create reports through any group that
+  grants it.
+- `reports.administer` grants unrestricted access to every report and its
+  settings.
+
+Each report separately grants custom groups **View**, **Download**, **Edit**, or
+**Manage** access. Manage access includes viewing, downloading, editing,
+publishing, duplicating, deleting, and changing that report's access list.
+Edit access can change the report definition but cannot publish it or change
+its access list. Download access applies only to published reports.
+Administrators always retain full access.
+
+Every newly created report records the authenticated username in
+`created_by`. The creator always has View, Download, Edit, and Manage access to
+that report, even if their group memberships later change. Ownership does not
+replace general portal authorization: the creator must still have
+`reports.access`, `reports.create`, or `reports.administer` to enter the Reports
+portal. Duplicating a report makes the user who created the copy its owner.
+
+These rules are intentionally strict. Signing in does not grant report access,
+and older report definitions without a current `access` list are accessible
+only through `reports.administer`. Existing report ACL entries using `role_id`
+are not translated; report access must be reassigned using `group_id`.
+
+Report types determine the calendar range and default row grouping:
+
+- Daily reports use hourly rows.
+- Monthly reports use daily rows.
+- Yearly reports use monthly rows.
+- Custom date-range reports use inclusive start/end pickers and group rows by
+  hour, day, or month.
+
+For custom ranges, previous/next shifts by the inclusive length of the selected
+range.
 
 The first report type is a monthly historian table:
 
@@ -14,6 +59,23 @@ The first report type is a monthly historian table:
 - the last good sample that actually exists within each day;
 - a blank cell when no good sample exists that day;
 - XLSX and CSV output.
+
+The report editor can also discover MySQL connections defined in Logger. After
+selecting a connection, it lists tables/views and their columns without
+exposing credentials. When each measurement has its own database column, users
+select those fields directly. When item names and values are stored in rows,
+users select the columns containing the names and values, then choose which
+item names should appear in the report. Historian and database fields may be
+added to the same definition because source mapping is stored on each report
+column. Logger executes bounded, schema-validated time-range queries and the
+report generator combines those results with historian values in the same
+calendar-day rows.
+
+Database report columns can use **Change during period** for accumulating
+counters. Each row subtracts the last reading before that row began from the
+row's ending reading. A per-column multiplier is applied afterward. Counter
+decreases may be left blank, treated as a reset, or calculated using a
+configured rollover modulus such as `65536` for an unsigned 16-bit counter.
 
 Example:
 
@@ -25,6 +87,15 @@ Example:
       "name": "Monthly Flow Report",
       "description": "Daily flow values",
       "published": true,
+      "access": [
+        {
+          "group_id": "lab",
+          "view": true,
+          "download": true,
+          "edit": false,
+          "manage": false
+        }
+      ],
       "timezone": "America/Chicago",
       "period": "month",
       "formats": ["xlsx", "csv"],
@@ -46,10 +117,11 @@ Example:
 The builder obtains its tag choices from the historian. `timezone` controls
 calendar-day boundaries. `precision` controls spreadsheet and preview display
 formatting but does not round the stored historian value. Draft reports can be
-previewed by administrators; set `published` only when the report is ready for
-other signed-in users. Preview and download use the same report-month picker,
-which defaults to the current month. Internal report IDs are generated from the
-name and are not exposed in the builder.
+previewed through groups with Edit or Manage access. Set `published` only when
+the report is ready for groups with View access; only groups with Manage access
+can change this setting. Preview and download use the same report-period
+controls, which default to the current period. Internal report IDs are
+generated from the name and are not exposed in the builder.
 
 The CLI can list, preview, or generate reports directly:
 

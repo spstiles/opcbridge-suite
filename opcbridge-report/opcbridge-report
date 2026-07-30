@@ -66,6 +66,7 @@ function public_report(array $report): array
         'name' => (string)($report['name'] ?? $report['id'] ?? ''),
         'description' => (string)($report['description'] ?? ''),
         'period' => (string)($report['period'] ?? 'month'),
+        'group_by' => (string)($report['group_by'] ?? 'day'),
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
         'formats' => array_values(array_intersect(
             OPCBRIDGE_REPORT_FORMATS,
@@ -80,7 +81,7 @@ function validate_report(array $report): array
     if ($id === '' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]*$/', $id)) {
         fail('Report id is missing or invalid');
     }
-    if (($report['period'] ?? 'month') !== 'month') {
+    if (!in_array(($report['period'] ?? 'month'), ['daily', 'month', 'yearly', 'custom'], true)) {
         fail("Report '{$id}' uses an unsupported period");
     }
     $timezone = (string)($report['timezone'] ?? 'UTC');
@@ -93,38 +94,109 @@ function validate_report(array $report): array
     if (!is_array($columns) || count($columns) < 1) {
         fail("Report '{$id}' must contain at least one column");
     }
-    foreach ($columns as $index => $column) {
+    $dataSource = is_array($report['data_source'] ?? null) ? $report['data_source'] : [];
+    foreach ($columns as $index => &$column) {
         if (!is_array($column)) {
             fail("Report '{$id}' column {$index} is invalid");
         }
-        if (($column['source'] ?? 'historian') !== 'historian') {
+        $source = (string)($column['source'] ?? 'historian');
+        if ($source === 'historian') {
+            if (trim((string)($column['connection_id'] ?? '')) === '' ||
+                trim((string)($column['tag_name'] ?? '')) === '') {
+                fail("Report '{$id}' column {$index} requires connection_id and tag_name");
+            }
+        } elseif ($source === 'database') {
+            foreach (['database_id', 'table', 'time_column', 'field'] as $required) {
+                if (trim((string)($column[$required] ?? '')) === '' && isset($dataSource[$required])) {
+                    $column[$required] = $dataSource[$required];
+                }
+                if (trim((string)($column[$required] ?? '')) === '') {
+                    fail("Report '{$id}' database column {$index} requires {$required}");
+                }
+            }
+            $column['layout'] = (string)($column['layout'] ?? $dataSource['layout'] ?? 'wide');
+            if ($column['layout'] === 'category') {
+                $column['category_column'] = (string)($column['category_column'] ?? $dataSource['category_column'] ?? '');
+                if ($column['category_column'] === '') {
+                    fail("Report '{$id}' database column {$index} requires category_column");
+                }
+            }
+            $aggregation = (string)($column['aggregation'] ?? 'last');
+            if (!in_array($aggregation, ['last', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count'], true)) {
+                fail("Report '{$id}' column {$index} uses an unsupported aggregation");
+            }
+        } else {
             fail("Report '{$id}' column {$index} uses an unsupported source");
         }
-        if (($column['aggregation'] ?? 'last') !== 'last') {
-            fail("Report '{$id}' column {$index} uses an unsupported aggregation");
-        }
-        if (trim((string)($column['connection_id'] ?? '')) === '' ||
-            trim((string)($column['tag_name'] ?? '')) === '') {
-            fail("Report '{$id}' column {$index} requires connection_id and tag_name");
-        }
     }
+    unset($column);
+    $report['columns'] = $columns;
     return $report;
 }
 
-function month_range(string $month, string $timezone): array
+function report_range(array $report, array $options): array
 {
-    if (!preg_match('/^(\d{4})-(\d{2})$/', $month, $matches)) {
-        fail("--month must use YYYY-MM", 2);
+    $period = (string)($report['period'] ?? 'month');
+    $timezone = (string)($report['timezone'] ?? 'UTC');
+    $tz = new DateTimeZone($timezone);
+    $value = option($options, 'period-value', $options['month'] ?? '');
+    if ($period === 'daily') {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) fail('--period-value must use YYYY-MM-DD', 2);
+        $start = new DateTimeImmutable("{$value} 00:00:00", $tz);
+        return [$start, $start->modify('+1 day'), 'hour', $value];
     }
+    if ($period === 'yearly') {
+        if (!preg_match('/^\d{4}$/', $value)) fail('--period-value must use YYYY', 2);
+        $start = new DateTimeImmutable("{$value}-01-01 00:00:00", $tz);
+        return [$start, $start->modify('+1 year'), 'month', $value];
+    }
+    if ($period === 'custom') {
+        $startValue = option($options, 'start-date');
+        $endValue = option($options, 'end-date');
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startValue) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $endValue)) {
+            fail('--start-date and --end-date must use YYYY-MM-DD', 2);
+        }
+        $start = new DateTimeImmutable("{$startValue} 00:00:00", $tz);
+        $endDay = new DateTimeImmutable("{$endValue} 00:00:00", $tz);
+        if ($endDay < $start) fail('--end-date must not be earlier than --start-date', 2);
+        $group = in_array(($report['group_by'] ?? 'day'), ['hour', 'day', 'month'], true)
+            ? (string)$report['group_by'] : 'day';
+        return [$start, $endDay->modify('+1 day'), $group, "{$startValue}-to-{$endValue}"];
+    }
+    if (!preg_match('/^(\d{4})-(\d{2})$/', $value, $matches)) fail('--period-value must use YYYY-MM', 2);
     $year = (int)$matches[1];
     $monthNumber = (int)$matches[2];
-    if ($year < 2000 || $year > 2100 || $monthNumber < 1 || $monthNumber > 12) {
-        fail("--month is outside the supported range", 2);
-    }
-    $tz = new DateTimeZone($timezone);
+    if ($year < 2000 || $year > 2100 || $monthNumber < 1 || $monthNumber > 12) fail('Report month is outside the supported range', 2);
     $start = new DateTimeImmutable(sprintf('%04d-%02d-01 00:00:00', $year, $monthNumber), $tz);
-    $end = $start->modify('first day of next month');
-    return [$start, $end];
+    return [$start, $start->modify('first day of next month'), 'day', $value];
+}
+
+function bucket_key(int $timestampMs, DateTimeZone $timezone, string $group): string
+{
+    $date = (new DateTimeImmutable('@' . intdiv($timestampMs, 1000)))->setTimezone($timezone);
+    return match ($group) {
+        'hour' => $date->format('Y-m-d H:00'),
+        'month' => $date->format('Y-m'),
+        default => $date->format('Y-m-d'),
+    };
+}
+
+function bucket_step(string $group): string
+{
+    return match ($group) {
+        'hour' => '+1 hour',
+        'month' => '+1 month',
+        default => '+1 day',
+    };
+}
+
+function bucket_label(DateTimeImmutable $date, string $group): string
+{
+    return match ($group) {
+        'hour' => $date->format('Y-m-d H:00'),
+        'month' => $date->format('Y-m'),
+        default => $date->format('Y-m-d'),
+    };
 }
 
 function http_json(string $url): array
@@ -158,12 +230,41 @@ function http_json(string $url): array
     return $json;
 }
 
+function http_post_json(string $url, array $body): array
+{
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => "Accept: application/json\r\nContent-Type: application/json\r\n",
+            'content' => json_encode($body, JSON_UNESCAPED_SLASHES),
+            'ignore_errors' => true,
+            'timeout' => 30,
+        ],
+    ]);
+    $raw = @file_get_contents($url, false, $context);
+    $status = 0;
+    foreach (($http_response_header ?? []) as $header) {
+        if (preg_match('#^HTTP/\S+\s+(\d+)#', $header, $match)) $status = (int)$match[1];
+    }
+    if ($raw === false) fail("Logger request failed: {$url}");
+    try {
+        $json = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+    } catch (Throwable $e) {
+        fail("Logger returned invalid JSON: {$e->getMessage()}");
+    }
+    if ($status < 200 || $status >= 300 || !($json['ok'] ?? false)) {
+        fail('Logger query failed: ' . (string)($json['error'] ?? "HTTP {$status}"));
+    }
+    return $json;
+}
+
 function historian_daily_last(
     string $baseUrl,
     array $column,
     DateTimeImmutable $start,
     DateTimeImmutable $end,
-    DateTimeZone $timezone
+    DateTimeZone $timezone,
+    string $group
 ): array {
     $query = http_build_query([
         'connection_id' => (string)$column['connection_id'],
@@ -179,9 +280,7 @@ function historian_daily_last(
             continue;
         }
         $timestampMs = (int)$point['ts_ms'];
-        $date = (new DateTimeImmutable('@' . intdiv($timestampMs, 1000)))
-            ->setTimezone($timezone)
-            ->format('Y-m-d');
+        $date = bucket_key($timestampMs, $timezone, $group);
         if (!isset($daily[$date]) || $timestampMs > $daily[$date]['ts_ms']) {
             $daily[$date] = [
                 'ts_ms' => $timestampMs,
@@ -192,23 +291,125 @@ function historian_daily_last(
     return $daily;
 }
 
+function aggregate_values(array $points, string $aggregation): mixed
+{
+    $points = array_values(array_filter($points, fn(array $point): bool => $point['value'] !== null));
+    if ($aggregation === 'count') return count($points);
+    if (!$points) return null;
+    if ($aggregation === 'first') return $points[0]['value'];
+    if ($aggregation === 'last') return $points[count($points) - 1]['value'];
+    $values = array_values(array_filter(array_map(
+        fn(array $point): mixed => is_numeric($point['value']) ? (float)$point['value'] : null,
+        $points
+    ), fn(mixed $value): bool => $value !== null));
+    if (!$values) return null;
+    return match ($aggregation) {
+        'avg' => array_sum($values) / count($values),
+        'min' => min($values),
+        'max' => max($values),
+        'sum' => array_sum($values),
+        default => $values[count($values) - 1],
+    };
+}
+
+function database_daily_values(
+    string $loggerUrl,
+    array $column,
+    DateTimeImmutable $start,
+    DateTimeImmutable $end,
+    DateTimeZone $timezone,
+    string $group
+): array {
+    $body = [
+        'table' => (string)$column['table'],
+        'time_column' => (string)$column['time_column'],
+        'value_column' => (string)$column['field'],
+        'from_ms' => $start->getTimestamp() * 1000,
+        'to_ms' => $end->getTimestamp() * 1000,
+        'limit' => 250000,
+        'include_previous' => (string)($column['aggregation'] ?? 'last') === 'change',
+    ];
+    if (($column['layout'] ?? 'wide') === 'category') {
+        $body['category_column'] = (string)($column['category_column'] ?? '');
+        $body['category_value'] = $column['category_value'] ?? '';
+    }
+    $id = rawurlencode((string)$column['database_id']);
+    $json = http_post_json(rtrim($loggerUrl, '/') . "/databases/{$id}/report-query", $body);
+    $dailyPoints = [];
+    $baseline = null;
+    foreach (($json['points'] ?? []) as $point) {
+        if (!is_array($point) || !isset($point['ts_ms'])) continue;
+        $timestampMs = (int)$point['ts_ms'];
+        if ($timestampMs < $start->getTimestamp() * 1000) {
+            if ($point['value'] !== null) $baseline = $point['value'];
+            continue;
+        }
+        $date = bucket_key((int)$point['ts_ms'], $timezone, $group);
+        $dailyPoints[$date][] = ['ts_ms' => (int)$point['ts_ms'], 'value' => $point['value'] ?? null];
+    }
+    $daily = [];
+    $aggregation = (string)($column['aggregation'] ?? 'last');
+    if ($aggregation === 'change') {
+        for ($day = $start; $day < $end; $day = $day->modify(bucket_step($group))) {
+            $date = bucket_label($day, $group);
+            $points = $dailyPoints[$date] ?? [];
+            usort($points, fn(array $a, array $b): int => $a['ts_ms'] <=> $b['ts_ms']);
+            $values = array_values(array_filter(array_map(
+                fn(array $point): mixed => $point['value'],
+                $points
+            ), fn(mixed $value): bool => $value !== null));
+            if (!$values) continue;
+            $ending = $values[count($values) - 1];
+            $change = null;
+            if (is_numeric($baseline) && is_numeric($ending)) {
+                $change = (float)$ending - (float)$baseline;
+                if ($change < 0) {
+                    $handling = (string)($column['negative_change'] ?? 'blank');
+                    if ($handling === 'reset') {
+                        $change = (float)$ending;
+                    } elseif ($handling === 'rollover') {
+                        $modulus = max(1.0, (float)($column['rollover_modulus'] ?? 65536));
+                        $change = ($modulus - (float)$baseline) + (float)$ending;
+                    } else {
+                        $change = null;
+                    }
+                }
+            }
+            $daily[$date] = ['value' => $change];
+            $baseline = $ending;
+        }
+        return $daily;
+    }
+    foreach ($dailyPoints as $date => $points) {
+        usort($points, fn(array $a, array $b): int => $a['ts_ms'] <=> $b['ts_ms']);
+        $daily[$date] = ['value' => aggregate_values($points, $aggregation)];
+    }
+    return $daily;
+}
+
 function build_rows(
     array $report,
     string $historianUrl,
+    string $loggerUrl,
     DateTimeImmutable $start,
-    DateTimeImmutable $end
+    DateTimeImmutable $end,
+    string $group
 ): array {
     $timezone = new DateTimeZone((string)($report['timezone'] ?? 'UTC'));
     $series = [];
     foreach ($report['columns'] as $column) {
-        $series[] = historian_daily_last($historianUrl, $column, $start, $end, $timezone);
+        $series[] = ($column['source'] ?? 'historian') === 'database'
+            ? database_daily_values($loggerUrl, $column, $start, $end, $timezone, $group)
+            : historian_daily_last($historianUrl, $column, $start, $end, $timezone, $group);
     }
     $rows = [];
-    for ($day = $start; $day < $end; $day = $day->modify('+1 day')) {
-        $dateKey = $day->format('Y-m-d');
+    for ($day = $start; $day < $end; $day = $day->modify(bucket_step($group))) {
+        $dateKey = bucket_label($day, $group);
         $values = [];
-        foreach ($series as $data) {
-            $values[] = $data[$dateKey]['value'] ?? null;
+        foreach ($series as $index => $data) {
+            $value = $data[$dateKey]['value'] ?? null;
+            $multiplier = (float)($report['columns'][$index]['multiplier'] ?? 1);
+            $values[] = ($value !== null && is_numeric($value)) ? ((float)$value * $multiplier) : $value;
         }
         $rows[] = ['date' => $dateKey, 'values' => $values];
     }
@@ -269,9 +470,17 @@ function write_xlsx(
 
     $rowNumber = 6;
     foreach ($rows as $row) {
-        $date = DateTimeImmutable::createFromFormat('!Y-m-d', $row['date']);
-        $sheet->setCellValue("A{$rowNumber}", \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($date));
-        $sheet->getStyle("A{$rowNumber}")->getNumberFormat()->setFormatCode('mm/dd/yyyy');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$row['date'])) {
+            $date = DateTimeImmutable::createFromFormat('!Y-m-d', $row['date']);
+            $sheet->setCellValue("A{$rowNumber}", \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($date));
+            $sheet->getStyle("A{$rowNumber}")->getNumberFormat()->setFormatCode('mm/dd/yyyy');
+        } else {
+            $sheet->setCellValueExplicit(
+                "A{$rowNumber}",
+                (string)$row['date'],
+                \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
+            );
+        }
         foreach ($row['values'] as $index => $value) {
             if ($value === null) {
                 continue;
@@ -328,8 +537,8 @@ if ($command !== 'generate' && $command !== 'preview') {
 }
 
 $id = option($options, 'id');
-$month = option($options, 'month');
 $historianUrl = option($options, 'historian-url', 'http://127.0.0.1:8096');
+$loggerUrl = option($options, 'logger-url', 'http://127.0.0.1:8095');
 
 $report = null;
 foreach ($reports as $candidate) {
@@ -344,21 +553,24 @@ if ($report === null) {
 if (!($report['published'] ?? false) && !isset($options['allow-unpublished'])) {
     fail("Report is not published: {$id}");
 }
-[$start, $end] = month_range($month, (string)($report['timezone'] ?? 'UTC'));
-$rows = build_rows($report, $historianUrl, $start, $end);
+[$start, $end, $group, $periodLabel] = report_range($report, $options);
+$rows = build_rows($report, $historianUrl, $loggerUrl, $start, $end, $group);
 
 if ($command === 'preview') {
     echo json_encode([
         'ok' => true,
         'id' => $id,
         'name' => (string)($report['name'] ?? $id),
-        'month' => $month,
+        'period' => (string)($report['period'] ?? 'month'),
+        'period_label' => $periodLabel,
+        'group_by' => $group,
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
         'columns' => array_map(
             fn(array $column): array => [
-                'heading' => (string)($column['heading'] ?? $column['tag_name']),
-                'connection_id' => (string)$column['connection_id'],
-                'tag_name' => (string)$column['tag_name'],
+                'heading' => (string)($column['heading'] ?? $column['tag_name'] ?? $column['field'] ?? ''),
+                'source' => (string)($column['source'] ?? 'historian'),
+                'connection_id' => (string)($column['connection_id'] ?? $column['database_id'] ?? ''),
+                'tag_name' => (string)($column['tag_name'] ?? $column['field'] ?? ''),
                 'precision' => max(0, min(10, (int)($column['precision'] ?? 2))),
             ],
             $report['columns']
@@ -386,15 +598,16 @@ if (!is_dir($outputDir) && !mkdir($outputDir, 0750, true) && !is_dir($outputDir)
 if ($format === 'csv') {
     write_csv($output, $report, $rows);
 } else {
-    write_xlsx($output, $report, $month, $rows, $autoload);
+    write_xlsx($output, $report, $periodLabel, $rows, $autoload);
 }
 
 echo json_encode([
     'ok' => true,
     'id' => $id,
-    'month' => $month,
+    'period' => (string)($report['period'] ?? 'month'),
+    'period_label' => $periodLabel,
     'format' => $format,
     'output' => $output,
-    'filename' => safe_filename((string)($report['name'] ?? $id)) . "-{$month}.{$format}",
+    'filename' => safe_filename((string)($report['name'] ?? $id)) . "-{$periodLabel}.{$format}",
     'rows' => count($rows),
 ], JSON_UNESCAPED_SLASHES) . "\n";

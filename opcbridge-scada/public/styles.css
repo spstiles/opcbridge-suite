@@ -137,6 +137,36 @@ code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
   max-width: 1680px;
   margin: 0 auto;
 }
+
+body.report-portal .topbar-status,
+body.report-portal .tabs {
+  display: none;
+}
+
+body.report-portal .panel {
+  display: none !important;
+}
+
+body.report-portal #tab-reports {
+  display: block !important;
+}
+
+body.report-portal .topbar {
+  padding-block: 10px;
+}
+
+body.report-portal .main {
+  max-width: none;
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-top: 22px;
+}
+
+.report-portal-scada-link {
+  margin-left: auto;
+  text-decoration: none;
+}
+
 .panel { display: none; }
 .panel.is-active { display: block; }
 
@@ -309,6 +339,64 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 }
 .table th.sortable { cursor: pointer; user-select: none; }
 .table th.sortable:hover { text-decoration: underline; }
+
+/* Report headings are user-defined content, so preserve their exact casing. */
+#publishedReportPreviewHead th,
+#reportBuilderPreviewHead th {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.report-columns-table th:last-child,
+#reportBuilderColumns .report-column-actions {
+  width: 280px;
+  min-width: 280px;
+}
+
+.report-columns-table th:nth-child(8),
+#reportBuilderColumns .report-counter-decrease {
+  width: 270px;
+  min-width: 270px;
+}
+
+#reportBuilderColumns .report-counter-decrease-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+#reportBuilderColumns .report-counter-decrease-select {
+  width: 145px;
+  min-width: 145px;
+  flex: 0 0 145px;
+}
+
+#reportBuilderColumns .report-counter-rollover {
+  width: 105px;
+  min-width: 105px;
+  flex: 0 0 105px;
+}
+
+#reportBuilderColumns .report-column-action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-width: max-content;
+}
+
+#reportBuilderAccessSection th:not(:first-child),
+#reportBuilderAccess td:not(:first-child) {
+  text-align: center;
+}
+
+#reportBuilderAccess td:not(:first-child) > input[type="checkbox"] {
+  display: block;
+  margin: 0 auto;
+}
+
 .live-tags-virtual {
   position: relative;
   height: 340px;
@@ -753,6 +841,13 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   height: 16px;
 }
 
+.user-group-grid {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(15,21,29,.55);
+}
+
 @media (max-width: 1100px) {
   .users-workspace {
     grid-template-columns: 1fr;
@@ -919,6 +1014,28 @@ textarea { resize: vertical; min-height: 120px; }
 
 .row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .row-actions .spacer { flex: 1; }
+
+.report-view-toolbar { align-items: stretch; }
+.report-view-field { display: flex; flex-direction: column; gap: 8px; }
+.report-view-label {
+  color: var(--muted);
+  font-size: var(--font-small);
+  line-height: 1.2;
+  min-height: 14px;
+}
+.report-view-period-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.report-view-status {
+  display: flex;
+  align-items: center;
+  align-self: flex-end;
+  min-height: 27px;
+  margin: 0 0 0 4px;
+}
 
 .divider { height: 1px; background: rgba(232,238,252,.10); margin: 14px 0; border-radius: 999px; }
 

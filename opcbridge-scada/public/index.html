@@ -13,8 +13,9 @@
     <div class="topbar-main">
       <div class="brand">
         <img class="brand-icon" src="favicon.svg?v=20260510" alt="" aria-hidden="true" />
-        <span>OPCBridge SCADA</span>
+        <span id="brandTitle">OPCBridge SCADA</span>
       </div>
+      <a class="btn report-portal-scada-link" id="reportPortalScadaLink" href="/" style="display:none;">Open SCADA</a>
       <div class="status topbar-auth" id="authLine"></div>
     </div>
     <div class="topbar-status">
@@ -596,10 +597,10 @@
 
     <section id="tab-users" class="panel">
       <h2>Users</h2>
-        <div class="hint">Manage users and roles in OPCBridge (stored in <code>passwords.jsonc</code>). Requires admin role for changes.</div>
+        <div class="hint">Manage users and groups in OPCBridge (stored in <code>passwords.jsonc</code>). Requires user-management permission for changes.</div>
 
       <div class="card">
-        <div class="card-title">Users & Roles (OPCBridge)</div>
+        <div class="card-title">Users &amp; Groups (OPCBridge)</div>
         <div class="card-body">
           <div class="hint mono" id="usersStatusLine">Loading…</div>
 
@@ -664,7 +665,13 @@
                         <div class="form-row"><label>Name</label><input id="usersFormLabel" type="text" /></div>
 	                        <div class="form-row"><label>Description</label><input id="usersFormDescription" type="text" /></div>
 	                        <div class="form-row" id="usersFormPermsRow"><label>Permissions</label><div id="usersFormPerms" class="perm-grid"></div></div>
-	                        <div class="form-row" id="usersFormRoleRow" style="display:none;"><label>Role</label><select id="usersFormRole"></select></div>
+	                        <div class="form-row" id="usersFormRoleRow" style="display:none;">
+                            <label>Groups</label>
+                            <div>
+                              <div id="usersFormRole" class="perm-grid user-group-grid"></div>
+                              <div class="hint">Select every group this user should belong to.</div>
+                            </div>
+                          </div>
 	                        <div class="form-row" id="usersFormPasswordRow" style="display:none;"><label>New Password</label><input id="usersFormPassword" type="password" autocomplete="new-password" /></div>
 	                        <div class="form-row" id="usersFormConfirmRow" style="display:none;"><label>Confirm</label><input id="usersFormConfirm" type="password" autocomplete="new-password" /></div>
                         <div class="form-row"><label></label>
@@ -1106,39 +1113,52 @@
 
 		    <section id="tab-reports" class="panel">
 		      <h2>Reports</h2>
-		      <div class="hint">Download published reports generated from OPCBridge historical data.</div>
-		      <div class="card" id="reportsDownloadCard" style="max-width: 760px; margin-top: 16px;">
-		        <div class="grid2">
-		          <label>
-		            <span>Report</span>
-		            <select id="publishedReportSelect"></select>
-		          </label>
-		          <label>
-		            <span>Report month</span>
-		            <input id="publishedReportMonth" type="month">
-		          </label>
-		          <label>
-		            <span>Format</span>
-		            <select id="publishedReportFormat"></select>
-		          </label>
-		        </div>
-		        <div class="hint" id="publishedReportDescription" style="margin-top: 10px;"></div>
+		      <div id="reportsDownloadCard">
 		        <div class="row-actions" style="margin-top: 16px;">
+		          <select id="publishedReportSelect" style="min-width: 300px;"></select>
+		          <button class="btn" id="reportBuilderEditBtn" type="button" style="display:none;">Edit</button>
+		          <button class="btn primary" id="reportBuilderNewBtn" type="button" style="display:none;">New Report</button>
 		          <button class="btn" id="publishedReportsRefreshBtn" type="button">Refresh</button>
-		          <button class="btn primary" id="publishedReportDownloadBtn" type="button">Download</button>
-		          <div class="hint mono" id="publishedReportsStatus"></div>
 		        </div>
-		      </div>
-
-		      <div class="card" id="reportManagerCard" style="max-width: 760px; margin-top: 18px; display:none;">
-		        <h3>Manage Reports</h3>
-		        <div class="hint">Select a saved report to edit, or create a new report.</div>
-		        <div class="row-actions">
-		          <select id="reportBuilderList" style="min-width: 280px;"></select>
-		          <button class="btn primary" id="reportBuilderNewBtn" type="button">New Report</button>
-		          <button class="btn" id="reportBuilderEditBtn" type="button">Edit</button>
-		          <button class="btn" id="reportBuilderReloadBtn" type="button">Refresh</button>
-		          <div class="hint mono" id="reportManagerStatus"></div>
+		        <div class="card" style="margin-top: 16px;">
+		          <div class="row-actions report-view-toolbar">
+		            <div class="report-view-field" id="publishedReportSinglePeriod">
+		              <div class="report-view-label" id="publishedReportPeriodLabel">Report month</div>
+		              <div class="report-view-period-control">
+		                <button class="btn" id="publishedReportPreviousBtn" type="button" aria-label="Previous month" title="Previous month">←</button>
+		                <input id="publishedReportMonth" type="month">
+		                <button class="btn" id="publishedReportNextBtn" type="button" aria-label="Next month" title="Next month">→</button>
+		              </div>
+		            </div>
+		            <div class="report-view-field" id="publishedReportCustomPeriod" style="display:none;">
+		              <div class="report-view-label">Custom date range</div>
+		              <div class="report-view-period-control">
+		                <button class="btn" id="publishedReportCustomPreviousBtn" type="button" aria-label="Previous date range" title="Previous date range">←</button>
+		                <input id="publishedReportStartDate" type="date" aria-label="Start date">
+		                <span>to</span>
+		                <input id="publishedReportEndDate" type="date" aria-label="End date">
+		                <button class="btn" id="publishedReportCustomNextBtn" type="button" aria-label="Next date range" title="Next date range">→</button>
+		              </div>
+		            </div>
+		            <label class="report-view-field">
+		              <span class="report-view-label">Download format</span>
+		              <select id="publishedReportFormat"></select>
+		            </label>
+		            <div class="report-view-field">
+		              <span class="report-view-label" aria-hidden="true">&nbsp;</span>
+		              <button class="btn primary" id="publishedReportDownloadBtn" type="button">Download</button>
+		            </div>
+		            <div class="hint mono report-view-status" id="publishedReportsStatus"></div>
+		          </div>
+		          <h3 id="publishedReportTitle" style="margin-top: 18px;"></h3>
+		          <div class="hint" id="publishedReportDescription"></div>
+		          <div class="table-wrap" id="publishedReportPreviewWrap" style="display:none; margin-top: 14px;">
+		            <table class="table">
+		              <thead id="publishedReportPreviewHead"></thead>
+		              <tbody id="publishedReportPreviewBody"></tbody>
+		            </table>
+		          </div>
+		          <div class="hint" id="publishedReportEmpty" style="display:none; margin-top: 18px;"></div>
 		        </div>
 		      </div>
 
@@ -1153,26 +1173,94 @@
 		          <input id="reportBuilderId" type="hidden">
 		          <label style="grid-column: 1 / -1;"><span>Name</span><input id="reportBuilderName" type="text" placeholder="Monthly Flow Report"></label>
 		          <label style="grid-column: 1 / -1;"><span>Description</span><textarea id="reportBuilderDescription" rows="2"></textarea></label>
+		          <label><span>Report type</span>
+		            <select id="reportBuilderPeriod">
+		              <option value="daily">Daily (hourly rows)</option>
+		              <option value="month" selected>Monthly (daily rows)</option>
+		              <option value="yearly">Yearly (monthly rows)</option>
+		              <option value="custom">Custom date range</option>
+		            </select>
+		          </label>
+		          <label id="reportBuilderGroupByLabel" style="display:none;"><span>Group custom-range rows by</span>
+		            <select id="reportBuilderGroupBy">
+		              <option value="hour">Hour</option>
+		              <option value="day" selected>Day</option>
+		              <option value="month">Month</option>
+		            </select>
+		          </label>
 		          <label><span>Timezone</span><select id="reportBuilderTimezone"></select></label>
 		          <label><span><input id="reportBuilderXlsx" type="checkbox" checked> Excel (.xlsx)</span></label>
 		          <label><span><input id="reportBuilderCsv" type="checkbox" checked> CSV (.csv)</span></label>
 		          <label><span><input id="reportBuilderPublished" type="checkbox"> Published</span></label>
 		        </div>
 
-		        <h4 style="margin-top: 18px;">Columns</h4>
-		        <div class="row-actions">
+		        <h4 style="margin-top: 18px;">Data Source</h4>
+		        <div class="grid2">
+		          <label><span>Source</span>
+		            <select id="reportBuilderSourceType">
+		              <option value="historian">OPCBridge Historian</option>
+		              <option value="database">Logger Database</option>
+		            </select>
+		          </label>
+		          <label id="reportBuilderDatabaseLabel" style="display:none;"><span>Database connection</span><select id="reportBuilderDatabase"></select></label>
+		          <label id="reportBuilderTableLabel" style="display:none;"><span>Table or view</span><select id="reportBuilderTable"></select></label>
+		          <label id="reportBuilderLayoutLabel" style="display:none;"><span>How is the data stored?</span>
+		            <select id="reportBuilderLayout">
+		              <option value="wide">Each measurement has its own column</option>
+		              <option value="category">Item names and values are stored in rows</option>
+		            </select>
+		          </label>
+		          <label id="reportBuilderTimeColumnLabel" style="display:none;"><span>Date/time column</span><select id="reportBuilderTimeColumn"></select></label>
+		          <label id="reportBuilderValueColumnLabel" style="display:none;"><span>Column containing the values</span><select id="reportBuilderValueColumn"></select></label>
+		          <label id="reportBuilderCategoryColumnLabel" style="display:none;"><span>Column containing the item names</span><select id="reportBuilderCategoryColumn"></select></label>
+		          <label id="reportBuilderAggregationLabel" style="display:none;"><span>Aggregation</span>
+		            <select id="reportBuilderAggregation">
+		              <option value="last">Last available value</option>
+		              <option value="first">First value</option>
+		              <option value="avg">Average</option>
+		              <option value="min">Minimum</option>
+		              <option value="max">Maximum</option>
+		              <option value="sum">Total</option>
+		              <option value="count">Count</option>
+		            </select>
+		          </label>
+		        </div>
+		        <div class="row-actions" id="reportBuilderDatabaseActions" style="display:none; margin-top: 12px;">
+		          <select id="reportBuilderDatabaseField" style="min-width: 280px;"></select>
+		          <button class="btn" id="reportBuilderAddDatabaseFieldBtn" type="button">Add Field</button>
+		          <button class="btn" id="reportBuilderLoadCategoriesBtn" type="button" style="display:none;">Find Available Item Names</button>
+		        </div>
+		        <div id="reportBuilderCategoryPicker" style="display:none; margin-top: 10px;">
+		          <div class="hint">Select the item names you want to show as columns in the report.</div>
+		          <select id="reportBuilderCategoryValues" multiple size="8" style="min-width: 420px;"></select>
+		          <button class="btn" id="reportBuilderAddCategoriesBtn" type="button">Add Selected Items</button>
+		        </div>
+		        <div class="hint mono" id="reportBuilderSourceStatus" style="margin-top: 8px;"></div>
+
+		        <h4 style="margin-top: 18px;">Report Columns</h4>
+		        <div class="row-actions" id="reportBuilderHistorianActions">
 		          <select id="reportBuilderTagSelect" style="min-width: 420px;"></select>
 		          <button class="btn" id="reportBuilderAddTagBtn" type="button">Add Historian Tag</button>
 		        </div>
 		        <div class="table-wrap" style="margin-top: 10px;">
-		          <table class="table">
-		            <thead><tr><th>Order</th><th>Heading</th><th>Connection</th><th>Tag</th><th>Decimals</th><th>Actions</th></tr></thead>
+		          <table class="table report-columns-table">
+		            <thead><tr><th>Order</th><th>Heading</th><th>Source</th><th>Field</th><th>Calculation</th><th>Multiplier</th><th>Decimals</th><th>Counter decrease</th><th>Actions</th></tr></thead>
 		            <tbody id="reportBuilderColumns"></tbody>
 		          </table>
 		        </div>
+		        <div id="reportBuilderAccessSection">
+		          <h4 style="margin-top: 18px;">Report Access</h4>
+		          <div class="hint">Choose what each custom group can do with this report. Administrators always retain access.</div>
+		          <div class="table-wrap" style="margin-top: 10px;">
+		            <table class="table">
+		              <thead><tr><th>Group</th><th>View</th><th>Download</th><th>Edit</th><th>Manage</th></tr></thead>
+		              <tbody id="reportBuilderAccess"></tbody>
+		            </table>
+		          </div>
+		        </div>
 		        <div class="row-actions" style="margin-top: 14px;">
 		          <button class="btn primary" id="reportBuilderSaveBtn" type="button">Save</button>
-		          <button class="btn" id="reportBuilderPreviewBtn" type="button">Save + Preview Selected Month</button>
+		          <button class="btn" id="reportBuilderPreviewBtn" type="button">Save + Preview</button>
 		          <div class="hint mono" id="reportBuilderStatus"></div>
 		        </div>
 		        <div class="table-wrap" id="reportBuilderPreviewWrap" style="display:none; margin-top: 14px;">
@@ -2013,6 +2101,29 @@
             </div>
           </div>
           <div class="hint mono" id="loginStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="changePasswordModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="changePasswordModalTitle">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="changePasswordModalTitle">Change Password</div>
+        <button class="btn" id="changePasswordCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="form" style="max-width: 520px;">
+          <div class="form-row"><label>Current Password</label><input id="changePasswordCurrent" type="password" autocomplete="current-password" /></div>
+          <div class="form-row"><label>New Password</label><input id="changePasswordNew" type="password" autocomplete="new-password" /></div>
+          <div class="form-row"><label>Confirm Password</label><input id="changePasswordConfirm" type="password" autocomplete="new-password" /></div>
+          <div class="form-row"><label></label>
+            <div class="row-actions">
+              <button class="btn" id="changePasswordCancelBtn" type="button">Cancel</button>
+              <button class="btn primary" id="changePasswordSaveBtn" type="button">Change Password</button>
+            </div>
+          </div>
+          <div class="hint mono" id="changePasswordStatus"></div>
         </div>
       </div>
     </div>

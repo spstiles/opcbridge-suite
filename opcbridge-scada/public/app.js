@@ -4,6 +4,8 @@
   statusLine: document.getElementById('statusLine'),
   buildLine: document.getElementById('buildLine'),
   authLine: document.getElementById('authLine'),
+  brandTitle: document.getElementById('brandTitle'),
+  reportPortalScadaLink: document.getElementById('reportPortalScadaLink'),
   tabs: document.getElementById('tabs'),
 
   // Overview
@@ -235,33 +237,72 @@
 
   publishedReportSelect: document.getElementById('publishedReportSelect'),
   publishedReportMonth: document.getElementById('publishedReportMonth'),
+  publishedReportSinglePeriod: document.getElementById('publishedReportSinglePeriod'),
+  publishedReportCustomPeriod: document.getElementById('publishedReportCustomPeriod'),
+  publishedReportStartDate: document.getElementById('publishedReportStartDate'),
+  publishedReportEndDate: document.getElementById('publishedReportEndDate'),
+  publishedReportCustomPreviousBtn: document.getElementById('publishedReportCustomPreviousBtn'),
+  publishedReportCustomNextBtn: document.getElementById('publishedReportCustomNextBtn'),
+  publishedReportPeriodLabel: document.getElementById('publishedReportPeriodLabel'),
+  publishedReportPreviousBtn: document.getElementById('publishedReportPreviousBtn'),
+  publishedReportNextBtn: document.getElementById('publishedReportNextBtn'),
   publishedReportFormat: document.getElementById('publishedReportFormat'),
   publishedReportDescription: document.getElementById('publishedReportDescription'),
   publishedReportsRefreshBtn: document.getElementById('publishedReportsRefreshBtn'),
   publishedReportDownloadBtn: document.getElementById('publishedReportDownloadBtn'),
   publishedReportsStatus: document.getElementById('publishedReportsStatus'),
+  publishedReportTitle: document.getElementById('publishedReportTitle'),
+  publishedReportPreviewWrap: document.getElementById('publishedReportPreviewWrap'),
+  publishedReportPreviewHead: document.getElementById('publishedReportPreviewHead'),
+  publishedReportPreviewBody: document.getElementById('publishedReportPreviewBody'),
+  publishedReportEmpty: document.getElementById('publishedReportEmpty'),
   reportsDownloadCard: document.getElementById('reportsDownloadCard'),
-  reportManagerCard: document.getElementById('reportManagerCard'),
-  reportManagerStatus: document.getElementById('reportManagerStatus'),
   reportBuilderCard: document.getElementById('reportBuilderCard'),
-  reportBuilderList: document.getElementById('reportBuilderList'),
   reportBuilderNewBtn: document.getElementById('reportBuilderNewBtn'),
   reportBuilderEditBtn: document.getElementById('reportBuilderEditBtn'),
   reportBuilderBackBtn: document.getElementById('reportBuilderBackBtn'),
   reportBuilderTitle: document.getElementById('reportBuilderTitle'),
   reportBuilderDuplicateBtn: document.getElementById('reportBuilderDuplicateBtn'),
   reportBuilderDeleteBtn: document.getElementById('reportBuilderDeleteBtn'),
-  reportBuilderReloadBtn: document.getElementById('reportBuilderReloadBtn'),
   reportBuilderId: document.getElementById('reportBuilderId'),
   reportBuilderName: document.getElementById('reportBuilderName'),
   reportBuilderDescription: document.getElementById('reportBuilderDescription'),
+  reportBuilderPeriod: document.getElementById('reportBuilderPeriod'),
+  reportBuilderGroupByLabel: document.getElementById('reportBuilderGroupByLabel'),
+  reportBuilderGroupBy: document.getElementById('reportBuilderGroupBy'),
   reportBuilderTimezone: document.getElementById('reportBuilderTimezone'),
   reportBuilderXlsx: document.getElementById('reportBuilderXlsx'),
   reportBuilderCsv: document.getElementById('reportBuilderCsv'),
   reportBuilderPublished: document.getElementById('reportBuilderPublished'),
+  reportBuilderSourceType: document.getElementById('reportBuilderSourceType'),
+  reportBuilderDatabaseLabel: document.getElementById('reportBuilderDatabaseLabel'),
+  reportBuilderDatabase: document.getElementById('reportBuilderDatabase'),
+  reportBuilderTableLabel: document.getElementById('reportBuilderTableLabel'),
+  reportBuilderTable: document.getElementById('reportBuilderTable'),
+  reportBuilderLayoutLabel: document.getElementById('reportBuilderLayoutLabel'),
+  reportBuilderLayout: document.getElementById('reportBuilderLayout'),
+  reportBuilderTimeColumnLabel: document.getElementById('reportBuilderTimeColumnLabel'),
+  reportBuilderTimeColumn: document.getElementById('reportBuilderTimeColumn'),
+  reportBuilderValueColumnLabel: document.getElementById('reportBuilderValueColumnLabel'),
+  reportBuilderValueColumn: document.getElementById('reportBuilderValueColumn'),
+  reportBuilderCategoryColumnLabel: document.getElementById('reportBuilderCategoryColumnLabel'),
+  reportBuilderCategoryColumn: document.getElementById('reportBuilderCategoryColumn'),
+  reportBuilderAggregationLabel: document.getElementById('reportBuilderAggregationLabel'),
+  reportBuilderAggregation: document.getElementById('reportBuilderAggregation'),
+  reportBuilderDatabaseActions: document.getElementById('reportBuilderDatabaseActions'),
+  reportBuilderDatabaseField: document.getElementById('reportBuilderDatabaseField'),
+  reportBuilderAddDatabaseFieldBtn: document.getElementById('reportBuilderAddDatabaseFieldBtn'),
+  reportBuilderLoadCategoriesBtn: document.getElementById('reportBuilderLoadCategoriesBtn'),
+  reportBuilderCategoryPicker: document.getElementById('reportBuilderCategoryPicker'),
+  reportBuilderCategoryValues: document.getElementById('reportBuilderCategoryValues'),
+  reportBuilderAddCategoriesBtn: document.getElementById('reportBuilderAddCategoriesBtn'),
+  reportBuilderHistorianActions: document.getElementById('reportBuilderHistorianActions'),
+  reportBuilderSourceStatus: document.getElementById('reportBuilderSourceStatus'),
   reportBuilderTagSelect: document.getElementById('reportBuilderTagSelect'),
   reportBuilderAddTagBtn: document.getElementById('reportBuilderAddTagBtn'),
   reportBuilderColumns: document.getElementById('reportBuilderColumns'),
+  reportBuilderAccess: document.getElementById('reportBuilderAccess'),
+  reportBuilderAccessSection: document.getElementById('reportBuilderAccessSection'),
   reportBuilderSaveBtn: document.getElementById('reportBuilderSaveBtn'),
   reportBuilderPreviewBtn: document.getElementById('reportBuilderPreviewBtn'),
   reportBuilderStatus: document.getElementById('reportBuilderStatus'),
@@ -781,6 +822,14 @@
 	  loginCancelBtn: document.getElementById('loginCancelBtn'),
   loginOkBtn: document.getElementById('loginOkBtn'),
   loginStatus: document.getElementById('loginStatus'),
+  changePasswordModal: document.getElementById('changePasswordModal'),
+  changePasswordCloseBtn: document.getElementById('changePasswordCloseBtn'),
+  changePasswordCurrent: document.getElementById('changePasswordCurrent'),
+  changePasswordNew: document.getElementById('changePasswordNew'),
+  changePasswordConfirm: document.getElementById('changePasswordConfirm'),
+  changePasswordCancelBtn: document.getElementById('changePasswordCancelBtn'),
+  changePasswordSaveBtn: document.getElementById('changePasswordSaveBtn'),
+  changePasswordStatus: document.getElementById('changePasswordStatus'),
 
   // Users (opcbridge auth)
   usersStatusLine: document.getElementById('usersStatusLine'),
@@ -969,7 +1018,7 @@ const state = {
   alarmsConfigMtimeMs: 0,
   alarmsConfigDirty: false,
 
-  // users/roles ui (opcbridge auth store)
+  // users/groups ui (opcbridge auth store)
   usersRoles: [],
   usersUsers: [],
   usersTreeExpanded: new Set(),
@@ -1040,6 +1089,9 @@ const state = {
   reportBuilderOriginalId: '',
   reportBuilderColumns: [],
   reportBuilderTags: [],
+  reportBuilderDatabases: [],
+  reportBuilderSchema: [],
+  reportBuilderAccess: [],
 
   // reporter (data logger)
   reporterDatabases: [],
@@ -1112,12 +1164,16 @@ function isMemoryTagConfig(tag) {
 }
 
 const ROLE_PERMISSION_DEFS = [
+  { id: 'scada.access', label: 'Access SCADA portal and Overview' },
   { id: 'hmi.edit_screens', label: 'Edit screens (HMI editor)' },
   { id: 'opcbridge.write_tags', label: 'Write tags (runtime)' },
   { id: 'opcbridge.edit_config', label: 'Edit connections/tags (config)' },
   { id: 'suite.manage_server', label: 'Manage server (ports, endpoints, tokens)' },
-  { id: 'auth.manage_users', label: 'Manage users/roles' },
-  { id: 'suite.view_logs', label: 'View logs' }
+  { id: 'auth.manage_users', label: 'Manage users/groups' },
+  { id: 'suite.view_logs', label: 'View logs' },
+  { id: 'reports.access', label: 'Access Reports portal' },
+  { id: 'reports.create', label: 'Create reports' },
+  { id: 'reports.administer', label: 'Administer all reports' }
 ];
 
 function getUserPermissions() {
@@ -1129,6 +1185,30 @@ function hasPerm(permId) {
   const want = String(permId || '').trim();
   if (!want) return false;
   return getUserPermissions().includes(want);
+}
+
+const REPORTS_PORTAL_MODE = window.location.pathname.replace(/\/+$/, '') === '/reports';
+const SCADA_IMPLIED_PERMISSIONS = new Set([
+  'hmi.edit_screens',
+  'opcbridge.write_tags',
+  'opcbridge.edit_config',
+  'suite.manage_server',
+  'auth.manage_users',
+  'suite.view_logs'
+]);
+
+function canAccessScadaPortal() {
+  if (hasPerm('scada.access')) return true;
+  return getUserPermissions().some((permission) => SCADA_IMPLIED_PERMISSIONS.has(permission));
+}
+
+function applyPortalPresentation() {
+  document.body.classList.toggle('report-portal', REPORTS_PORTAL_MODE);
+  if (els.brandTitle) els.brandTitle.textContent = REPORTS_PORTAL_MODE ? 'OPCBridge Reports' : 'OPCBridge SCADA';
+  document.title = REPORTS_PORTAL_MODE ? 'OPCBridge Reports' : 'OPCBridge SCADA';
+  if (els.reportPortalScadaLink) {
+    els.reportPortalScadaLink.style.display = REPORTS_PORTAL_MODE && canAccessScadaPortal() ? '' : 'none';
+  }
 }
 
 function normalizeThemeMode(mode) {
@@ -1223,6 +1303,45 @@ function canAccessLoggerTab() {
 
 function canAccessHistorianTab() {
   return hasPerm('suite.manage_server');
+}
+
+function canAccessReportsTab() {
+  return hasPerm('reports.access') || hasPerm('reports.create') || hasPerm('reports.administer');
+}
+
+function canCreateReports() {
+  return hasPerm('reports.create') || hasPerm('reports.administer');
+}
+
+function reportPermissions(report) {
+  if (hasPerm('reports.administer')) {
+    return { view: true, download: true, edit: true, manage: true };
+  }
+  const username = String(state.opcbridgeAuthStatus?.user?.username || '').trim();
+  if (username && username === String(report?.created_by || '').trim()) {
+    return { view: true, download: true, edit: true, manage: true };
+  }
+  if (report?.permissions && typeof report.permissions === 'object') {
+    return {
+      view: Boolean(report.permissions.view),
+      download: Boolean(report.permissions.download),
+      edit: Boolean(report.permissions.edit),
+      manage: Boolean(report.permissions.manage)
+    };
+  }
+  const groups = new Set(
+    (Array.isArray(state.opcbridgeAuthStatus?.user?.groups) ? state.opcbridgeAuthStatus.user.groups : [])
+      .map((group) => String(group || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const grants = (Array.isArray(report?.access) ? report.access : [])
+    .filter((item) => groups.has(String(item?.group_id || '').trim().toLowerCase()));
+  return {
+    view: grants.some((grant) => grant?.view || grant?.download || grant?.edit || grant?.manage),
+    download: grants.some((grant) => grant?.download || grant?.manage),
+    edit: grants.some((grant) => grant?.edit || grant?.manage),
+    manage: grants.some((grant) => grant?.manage)
+  };
 }
 
 function canEditConfig() {
@@ -1360,6 +1479,17 @@ function updateHistorianTabVisibility() {
     if (activePanel && activePanel.id === 'tab-historian') {
       setTab('overview');
     }
+  }
+}
+
+function updateReportsTabVisibility() {
+  const reportsBtn = document.querySelector('.tabs .tab[data-tab="reports"]');
+  if (!reportsBtn) return;
+  const canSee = canAccessReportsTab();
+  reportsBtn.style.display = canSee ? '' : 'none';
+  if (!canSee && !REPORTS_PORTAL_MODE) {
+    const activePanel = document.querySelector('.panel.is-active');
+    if (activePanel?.id === 'tab-reports') setTab('overview');
   }
 }
 
@@ -6139,14 +6269,112 @@ function selectedPublishedReport() {
   return state.publishedReports.find((report) => String(report?.id || '') === id) || null;
 }
 
+function localIsoDate(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function configurePublishedReportPeriod(report) {
+  const period = String(report?.period || 'month');
+  const custom = period === 'custom';
+  if (els.publishedReportSinglePeriod) els.publishedReportSinglePeriod.style.display = custom ? 'none' : '';
+  if (els.publishedReportCustomPeriod) els.publishedReportCustomPeriod.style.display = custom ? '' : 'none';
+  const now = new Date();
+  if (custom) {
+    if (els.publishedReportStartDate && !els.publishedReportStartDate.value) {
+      els.publishedReportStartDate.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    }
+    if (els.publishedReportEndDate && !els.publishedReportEndDate.value) {
+      els.publishedReportEndDate.value = localIsoDate(now);
+    }
+    return;
+  }
+  if (!els.publishedReportMonth) return;
+  const labels = { daily: 'Report date', month: 'Report month', yearly: 'Report year' };
+  const units = { daily: 'day', month: 'month', yearly: 'year' };
+  els.publishedReportPeriodLabel.textContent = labels[period] || labels.month;
+  els.publishedReportMonth.type = period === 'daily' ? 'date' : (period === 'yearly' ? 'number' : 'month');
+  els.publishedReportMonth.removeAttribute('min');
+  els.publishedReportMonth.removeAttribute('max');
+  if (period === 'daily' && !/^\d{4}-\d{2}-\d{2}$/.test(els.publishedReportMonth.value)) {
+    els.publishedReportMonth.value = localIsoDate(now);
+  } else if (period === 'yearly') {
+    els.publishedReportMonth.min = '2000';
+    els.publishedReportMonth.max = '2100';
+    if (!/^\d{4}$/.test(els.publishedReportMonth.value)) els.publishedReportMonth.value = String(now.getFullYear());
+  } else if (period === 'month' && !/^\d{4}-\d{2}$/.test(els.publishedReportMonth.value)) {
+    els.publishedReportMonth.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const unit = units[period] || 'month';
+  [els.publishedReportPreviousBtn, els.publishedReportNextBtn].forEach((button, index) => {
+    if (!button) return;
+    const label = `${index === 0 ? 'Previous' : 'Next'} ${unit}`;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  });
+}
+
+function publishedReportRangePayload() {
+  const report = selectedPublishedReport();
+  const period = String(report?.period || 'month');
+  if (period === 'custom') {
+    const start_date = String(els.publishedReportStartDate?.value || '');
+    const end_date = String(els.publishedReportEndDate?.value || '');
+    return /^\d{4}-\d{2}-\d{2}$/.test(start_date) && /^\d{4}-\d{2}-\d{2}$/.test(end_date)
+      ? { start_date, end_date } : null;
+  }
+  const value = String(els.publishedReportMonth?.value || '').trim();
+  const valid = period === 'daily' ? /^\d{4}-\d{2}-\d{2}$/.test(value)
+    : period === 'yearly' ? /^\d{4}$/.test(value)
+      : /^\d{4}-\d{2}$/.test(value);
+  return valid ? { period_value: value } : null;
+}
+
+function shiftPublishedReportPeriod(direction) {
+  const period = String(selectedPublishedReport()?.period || 'month');
+  const value = String(els.publishedReportMonth?.value || '').trim();
+  let next = '';
+  if (period === 'daily' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const date = new Date(`${value}T12:00:00`);
+    date.setDate(date.getDate() + direction);
+    next = localIsoDate(date);
+  } else if (period === 'yearly' && /^\d{4}$/.test(value)) {
+    next = String(Number(value) + direction);
+  } else if (period === 'month' && /^(\d{4})-(\d{2})$/.test(value)) {
+    const match = value.match(/^(\d{4})-(\d{2})$/);
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + direction, 1));
+    next = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+  }
+  if (!next) return;
+  els.publishedReportMonth.value = next;
+  previewPublishedReport().catch(() => {});
+}
+
+function shiftPublishedCustomRange(direction) {
+  const start = new Date(`${els.publishedReportStartDate?.value || ''}T12:00:00`);
+  const end = new Date(`${els.publishedReportEndDate?.value || ''}T12:00:00`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) return;
+  const days = Math.round((end - start) / 86400000) + 1;
+  start.setDate(start.getDate() + direction * days);
+  end.setDate(end.getDate() + direction * days);
+  els.publishedReportStartDate.value = localIsoDate(start);
+  els.publishedReportEndDate.value = localIsoDate(end);
+  previewPublishedReport().catch(() => {});
+}
+
 function renderPublishedReportSelection() {
   if (!els.publishedReportSelect || !els.publishedReportFormat) return;
   const previousId = String(els.publishedReportSelect.value || '').trim();
   els.publishedReportSelect.textContent = '';
+  if (!state.publishedReports.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No reports available';
+    els.publishedReportSelect.appendChild(option);
+  }
   state.publishedReports.forEach((report) => {
     const option = document.createElement('option');
     option.value = String(report.id || '');
-    option.textContent = String(report.name || report.id || '');
+    option.textContent = `${report.published === false ? '[Draft] ' : ''}${report.name || report.id || ''}`;
     els.publishedReportSelect.appendChild(option);
   });
   if (state.publishedReports.some((report) => String(report.id || '') === previousId)) {
@@ -6154,6 +6382,7 @@ function renderPublishedReportSelection() {
   }
 
   const report = selectedPublishedReport();
+  configurePublishedReportPeriod(report);
   els.publishedReportFormat.textContent = '';
   (Array.isArray(report?.formats) ? report.formats : []).forEach((format) => {
     const option = document.createElement('option');
@@ -6164,22 +6393,62 @@ function renderPublishedReportSelection() {
   if (els.publishedReportDescription) {
     els.publishedReportDescription.textContent = report?.description || '';
   }
-  if (els.publishedReportDownloadBtn) {
-    els.publishedReportDownloadBtn.disabled = !report;
+  if (els.publishedReportTitle) {
+    els.publishedReportTitle.textContent = report?.name || '';
   }
+  if (els.publishedReportEmpty) {
+    els.publishedReportEmpty.style.display = report ? 'none' : '';
+  }
+  if (els.publishedReportPreviewWrap && !report) {
+    els.publishedReportPreviewWrap.style.display = 'none';
+  }
+  const permissions = reportPermissions(report);
+  if (els.publishedReportDownloadBtn) {
+    els.publishedReportDownloadBtn.disabled = !report || report.published === false || !permissions.download;
+  }
+  if (els.publishedReportPreviousBtn) els.publishedReportPreviousBtn.disabled = !report;
+  if (els.publishedReportNextBtn) els.publishedReportNextBtn.disabled = !report;
+  if (els.publishedReportCustomPreviousBtn) els.publishedReportCustomPreviousBtn.disabled = !report;
+  if (els.publishedReportCustomNextBtn) els.publishedReportCustomNextBtn.disabled = !report;
+  const canCreate = canCreateReports();
+  if (els.publishedReportEmpty && !report) {
+    els.publishedReportEmpty.textContent = canCreate
+      ? 'No reports are available. Select New Report to create the first one.'
+      : 'No reports are available through your groups.';
+  }
+  if (els.reportBuilderEditBtn) {
+    els.reportBuilderEditBtn.style.display = report && permissions.edit ? '' : 'none';
+    els.reportBuilderEditBtn.disabled = !report || !permissions.edit;
+  }
+  if (els.reportBuilderNewBtn) els.reportBuilderNewBtn.style.display = canCreate ? '' : 'none';
 }
 
-async function refreshPublishedReports() {
+async function refreshPublishedReports(loadPreview = true) {
   if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Loading…';
   try {
-    const response = await apiGet('/api/reports');
-    state.publishedReports = Array.isArray(response?.reports) ? response.reports : [];
+    const [response, editableResponse] = await Promise.all([
+      apiGet('/api/reports'),
+      canCreateReports()
+        ? apiGet('/api/reports/admin').catch(() => ({ reports: [] }))
+        : Promise.resolve({ reports: [] })
+    ]);
+    const reportsById = new Map();
+    (Array.isArray(response?.reports) ? response.reports : []).forEach((report) => {
+      const id = String(report?.id || '').trim();
+      if (id) reportsById.set(id, report);
+    });
+    (Array.isArray(editableResponse?.reports) ? editableResponse.reports : []).forEach((report) => {
+      const id = String(report?.id || '').trim();
+      if (id && !reportsById.has(id)) reportsById.set(id, report);
+    });
+    state.publishedReports = Array.from(reportsById.values());
     renderPublishedReportSelection();
     if (els.publishedReportsStatus) {
       els.publishedReportsStatus.textContent = state.publishedReports.length
-        ? `${state.publishedReports.length} published report(s)`
-        : 'No reports are published.';
+        ? `${state.publishedReports.length} report(s) available`
+        : 'No reports are available.';
     }
+    if (loadPreview && selectedPublishedReport()) await previewPublishedReport();
   } catch (err) {
     state.publishedReports = [];
     renderPublishedReportSelection();
@@ -6187,15 +6456,63 @@ async function refreshPublishedReports() {
   }
 }
 
+function renderPublishedReportPreview(preview) {
+  if (!els.publishedReportPreviewHead || !els.publishedReportPreviewBody || !els.publishedReportPreviewWrap) return;
+  els.publishedReportPreviewHead.textContent = '';
+  els.publishedReportPreviewBody.textContent = '';
+  const headerRow = document.createElement('tr');
+  const periodHeading = preview.group_by === 'hour' ? 'Hour' : (preview.group_by === 'month' ? 'Month' : 'Date');
+  [periodHeading, ...(preview.columns || []).map((column) => column.heading)].forEach((heading) => {
+    const th = document.createElement('th');
+    th.textContent = String(heading || '');
+    headerRow.appendChild(th);
+  });
+  els.publishedReportPreviewHead.appendChild(headerRow);
+  (preview.rows || []).forEach((row) => {
+    const tr = document.createElement('tr');
+    [row.date, ...(row.values || [])].forEach((value, index) => {
+      const td = document.createElement('td');
+      if (value === null || value === undefined) td.textContent = '—';
+      else if (index > 0) td.textContent = Number(value).toLocaleString(undefined, {
+        minimumFractionDigits: preview.columns?.[index - 1]?.precision ?? 0,
+        maximumFractionDigits: preview.columns?.[index - 1]?.precision ?? 2
+      });
+      else td.textContent = String(value);
+      tr.appendChild(td);
+    });
+    els.publishedReportPreviewBody.appendChild(tr);
+  });
+  els.publishedReportPreviewWrap.style.display = '';
+}
+
+async function previewPublishedReport() {
+  const report = selectedPublishedReport();
+  const range = publishedReportRangePayload();
+  if (!report || !range) return;
+  if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Loading report…';
+  try {
+    const preview = await apiPostJson('/api/reports/preview', { id: report.id, ...range }, { timeoutMs: 120000 });
+    renderPublishedReportPreview(preview);
+    if (els.publishedReportsStatus) {
+      els.publishedReportsStatus.textContent = report.published === false
+        ? 'Draft preview — publish this report to enable downloads.'
+        : 'Report ready.';
+    }
+  } catch (err) {
+    if (els.publishedReportPreviewWrap) els.publishedReportPreviewWrap.style.display = 'none';
+    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = String(err.message || err);
+  }
+}
+
 async function downloadPublishedReport() {
   const report = selectedPublishedReport();
-  const month = String(els.publishedReportMonth?.value || '').trim();
+  const range = publishedReportRangePayload();
   const format = String(els.publishedReportFormat?.value || '').trim();
-  if (!report || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !format) {
-    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Select a report, month, and format.';
+  if (!report || !range || !format) {
+    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Select a report period and download format.';
     return;
   }
-  const query = new URLSearchParams({ id: report.id, month, format });
+  const query = new URLSearchParams({ id: report.id, format, ...range });
   if (els.publishedReportDownloadBtn) els.publishedReportDownloadBtn.disabled = true;
   if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Generating…';
   try {
@@ -6217,7 +6534,8 @@ async function downloadPublishedReport() {
     const blob = await response.blob();
     const disposition = String(response.headers.get('content-disposition') || '');
     const match = disposition.match(/filename="([^"]+)"/i);
-    const filename = match?.[1] || `${report.id}-${month}.${format}`;
+    const rangeName = range.period_value || `${range.start_date}-to-${range.end_date}`;
+    const filename = match?.[1] || `${report.id}-${rangeName}.${format}`;
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = objectUrl;
@@ -6230,7 +6548,10 @@ async function downloadPublishedReport() {
   } catch (err) {
     if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = String(err.message || err);
   } finally {
-    if (els.publishedReportDownloadBtn) els.publishedReportDownloadBtn.disabled = !selectedPublishedReport();
+    const selected = selectedPublishedReport();
+    if (els.publishedReportDownloadBtn) {
+      els.publishedReportDownloadBtn.disabled = !selected || selected.published === false;
+    }
   }
 }
 
@@ -6240,7 +6561,28 @@ function wirePublishedReportsUi() {
     els.publishedReportMonth.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }
   if (els.publishedReportSelect) {
-    els.publishedReportSelect.addEventListener('change', renderPublishedReportSelection);
+    els.publishedReportSelect.addEventListener('change', () => {
+      renderPublishedReportSelection();
+      previewPublishedReport().catch(() => {});
+    });
+  }
+  if (els.publishedReportMonth) {
+    els.publishedReportMonth.addEventListener('change', () => previewPublishedReport().catch(() => {}));
+  }
+  [els.publishedReportStartDate, els.publishedReportEndDate].forEach((input) => {
+    if (input) input.addEventListener('change', () => previewPublishedReport().catch(() => {}));
+  });
+  if (els.publishedReportPreviousBtn) {
+    els.publishedReportPreviousBtn.addEventListener('click', () => shiftPublishedReportPeriod(-1));
+  }
+  if (els.publishedReportNextBtn) {
+    els.publishedReportNextBtn.addEventListener('click', () => shiftPublishedReportPeriod(1));
+  }
+  if (els.publishedReportCustomPreviousBtn) {
+    els.publishedReportCustomPreviousBtn.addEventListener('click', () => shiftPublishedCustomRange(-1));
+  }
+  if (els.publishedReportCustomNextBtn) {
+    els.publishedReportCustomNextBtn.addEventListener('click', () => shiftPublishedCustomRange(1));
   }
   if (els.publishedReportsRefreshBtn) {
     els.publishedReportsRefreshBtn.addEventListener('click', () => refreshPublishedReports());
@@ -6254,28 +6596,38 @@ function reportBuilderSetStatus(message) {
   if (els.reportBuilderStatus) els.reportBuilderStatus.textContent = String(message || '');
 }
 
-function reportManagerSetStatus(message) {
-  if (els.reportManagerStatus) els.reportManagerStatus.textContent = String(message || '');
-}
-
 function showReportsLanding() {
   if (els.reportsDownloadCard) els.reportsDownloadCard.style.display = '';
-  if (els.reportManagerCard) {
-    els.reportManagerCard.style.display = hasPerm('suite.manage_server') ? '' : 'none';
-  }
   if (els.reportBuilderCard) els.reportBuilderCard.style.display = 'none';
 }
 
 function showReportBuilder(report) {
+  const permissions = reportPermissions(report);
+  if (report && !permissions.edit) return;
+  if (!report && !canCreateReports()) return;
   loadReportBuilderDefinition(report || null);
   if (els.reportsDownloadCard) els.reportsDownloadCard.style.display = 'none';
-  if (els.reportManagerCard) els.reportManagerCard.style.display = 'none';
   if (els.reportBuilderCard) els.reportBuilderCard.style.display = '';
   if (els.reportBuilderTitle) {
     els.reportBuilderTitle.textContent = report ? `Edit ${report.name || 'Report'}` : 'New Report';
   }
-  if (els.reportBuilderDuplicateBtn) els.reportBuilderDuplicateBtn.disabled = !report;
-  if (els.reportBuilderDeleteBtn) els.reportBuilderDeleteBtn.disabled = !report;
+  if (els.reportBuilderDuplicateBtn) {
+    els.reportBuilderDuplicateBtn.style.display = report && permissions.manage ? '' : 'none';
+    els.reportBuilderDuplicateBtn.disabled = !report || !permissions.manage;
+  }
+  if (els.reportBuilderDeleteBtn) {
+    els.reportBuilderDeleteBtn.style.display = report && permissions.manage ? '' : 'none';
+    els.reportBuilderDeleteBtn.disabled = !report || !permissions.manage;
+  }
+  if (els.reportBuilderAccessSection) {
+    els.reportBuilderAccessSection.style.display = (!report || permissions.manage) ? '' : 'none';
+  }
+  if (els.reportBuilderPublished) {
+    els.reportBuilderPublished.disabled = Boolean(report) && !permissions.manage;
+    els.reportBuilderPublished.title = els.reportBuilderPublished.disabled
+      ? 'Manage access is required to publish or unpublish this report.'
+      : '';
+  }
   if (els.reportBuilderPreviewWrap) els.reportBuilderPreviewWrap.style.display = 'none';
   reportBuilderSetStatus('');
 }
@@ -6328,6 +6680,155 @@ function populateReportBuilderTimezones(selectedValue = '') {
   els.reportBuilderTimezone.value = selected;
 }
 
+function reportBuilderSourceSetStatus(message) {
+  if (els.reportBuilderSourceStatus) els.reportBuilderSourceStatus.textContent = String(message || '');
+}
+
+function reportBuilderSelectedTable() {
+  return state.reportBuilderSchema.find((table) => table.name === els.reportBuilderTable?.value) || null;
+}
+
+function fillSelect(select, values, selected = '') {
+  if (!select) return;
+  select.textContent = '';
+  values.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = String(value.value ?? value);
+    option.textContent = String(value.label ?? value.value ?? value);
+    select.appendChild(option);
+  });
+  if (Array.from(select.options).some((option) => option.value === selected)) select.value = selected;
+}
+
+function renderReportBuilderDatabaseSources(selected = '') {
+  fillSelect(els.reportBuilderDatabase, state.reportBuilderDatabases.map((database) => ({
+    value: database.id,
+    label: `${database.name || database.id} (${database.type || 'mysql'})`
+  })), selected);
+}
+
+function renderReportBuilderSchemaSelections(selection = {}) {
+  const table = reportBuilderSelectedTable();
+  const columns = Array.isArray(table?.columns) ? table.columns : [];
+  const choices = columns.map((column) => ({
+    value: column.name,
+    label: `${column.name} (${column.data_type})`
+  }));
+  fillSelect(els.reportBuilderTimeColumn, choices, selection.time_column || '');
+  fillSelect(els.reportBuilderDatabaseField, choices, selection.field || '');
+  fillSelect(els.reportBuilderValueColumn, choices, selection.value_column || '');
+  fillSelect(els.reportBuilderCategoryColumn, choices, selection.category_column || '');
+}
+
+function renderReportBuilderSourceUi() {
+  const databaseMode = String(els.reportBuilderSourceType?.value || 'historian') === 'database';
+  const categoryMode = databaseMode && String(els.reportBuilderLayout?.value || 'wide') === 'category';
+  [
+    els.reportBuilderDatabaseLabel, els.reportBuilderTableLabel, els.reportBuilderLayoutLabel,
+    els.reportBuilderTimeColumnLabel, els.reportBuilderAggregationLabel,
+    els.reportBuilderDatabaseActions
+  ].forEach((element) => { if (element) element.style.display = databaseMode ? '' : 'none'; });
+  if (els.reportBuilderHistorianActions) els.reportBuilderHistorianActions.style.display = databaseMode ? 'none' : '';
+  if (els.reportBuilderValueColumnLabel) els.reportBuilderValueColumnLabel.style.display = categoryMode ? '' : 'none';
+  if (els.reportBuilderCategoryColumnLabel) els.reportBuilderCategoryColumnLabel.style.display = categoryMode ? '' : 'none';
+  if (els.reportBuilderLoadCategoriesBtn) els.reportBuilderLoadCategoriesBtn.style.display = categoryMode ? '' : 'none';
+  if (els.reportBuilderAddDatabaseFieldBtn) els.reportBuilderAddDatabaseFieldBtn.style.display = categoryMode ? 'none' : '';
+  if (els.reportBuilderCategoryPicker && !categoryMode) els.reportBuilderCategoryPicker.style.display = 'none';
+  if (els.reportBuilderPreviewBtn) {
+    els.reportBuilderPreviewBtn.disabled = false;
+    els.reportBuilderPreviewBtn.title = '';
+  }
+  if (els.reportBuilderPublished) {
+    const current = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId) || null;
+    const canManage = !state.reportBuilderOriginalId || reportPermissions(current).manage;
+    els.reportBuilderPublished.disabled = !canManage;
+    els.reportBuilderPublished.title = canManage
+      ? ''
+      : 'Manage access is required to publish or unpublish this report.';
+  }
+}
+
+async function loadReportBuilderDatabaseSchema(selection = {}) {
+  const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
+  state.reportBuilderSchema = [];
+  if (!databaseId) {
+    fillSelect(els.reportBuilderTable, []);
+    renderReportBuilderSchemaSelections();
+    return;
+  }
+  reportBuilderSourceSetStatus('Loading tables and columns…');
+  try {
+    const response = await apiGet(`/api/reports/admin/schema?database=${encodeURIComponent(databaseId)}`);
+    state.reportBuilderSchema = Array.isArray(response?.tables) ? response.tables : [];
+    fillSelect(els.reportBuilderTable, state.reportBuilderSchema.map((table) => ({
+      value: table.name,
+      label: `${table.name}${table.type === 'VIEW' ? ' (view)' : ''}`
+    })), selection.table || '');
+    renderReportBuilderSchemaSelections(selection);
+    reportBuilderSourceSetStatus(`${state.reportBuilderSchema.length} table(s) available`);
+  } catch (err) {
+    reportBuilderSourceSetStatus(err.message || err);
+  }
+}
+
+function reportBuilderDataSourceDefinition() {
+  if (String(els.reportBuilderSourceType?.value || 'historian') !== 'database') {
+    return { type: 'historian' };
+  }
+  return {
+    type: 'database',
+    database_id: String(els.reportBuilderDatabase?.value || '').trim(),
+    table: String(els.reportBuilderTable?.value || '').trim(),
+    layout: String(els.reportBuilderLayout?.value || 'wide'),
+    time_column: String(els.reportBuilderTimeColumn?.value || '').trim(),
+    category_column: String(els.reportBuilderCategoryColumn?.value || '').trim(),
+    value_column: String(els.reportBuilderValueColumn?.value || '').trim()
+  };
+}
+
+function reportGroups() {
+  const groups = Array.isArray(state.opcbridgeAuthStatus?.groups) ? state.opcbridgeAuthStatus.groups : [];
+  return groups.filter((group) => String(group?.id || '').trim() && String(group.id) !== 'admin');
+}
+
+function renderReportBuilderAccess() {
+  if (!els.reportBuilderAccess) return;
+  els.reportBuilderAccess.textContent = '';
+  const byGroup = new Map(state.reportBuilderAccess.map((grant) => [String(grant.group_id), grant]));
+  const current = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId) || null;
+  const canManage = !state.reportBuilderOriginalId || reportPermissions(current).manage;
+  reportGroups().forEach((group) => {
+    const groupId = String(group.id);
+    const grant = byGroup.get(groupId) || {
+      group_id: groupId, view: false, download: false, edit: false, manage: false
+    };
+    if (!byGroup.has(groupId)) state.reportBuilderAccess.push(grant);
+    const tr = document.createElement('tr');
+    const name = document.createElement('td');
+    name.textContent = String(group.label || group.name || groupId);
+    tr.appendChild(name);
+    ['view', 'download', 'edit', 'manage'].forEach((action) => {
+      const td = document.createElement('td');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = Boolean(grant[action]);
+      checkbox.disabled = !canManage;
+      checkbox.addEventListener('change', () => {
+        grant[action] = checkbox.checked;
+        if (checkbox.checked && ['download', 'edit', 'manage'].includes(action)) grant.view = true;
+        if (checkbox.checked && action === 'manage') {
+          grant.download = true;
+          grant.edit = true;
+        }
+        renderReportBuilderAccess();
+      });
+      td.appendChild(checkbox);
+      tr.appendChild(td);
+    });
+    els.reportBuilderAccess.appendChild(tr);
+  });
+}
+
 function reportBuilderCurrentDefinition() {
   const formats = [];
   if (els.reportBuilderXlsx?.checked) formats.push('xlsx');
@@ -6337,7 +6838,12 @@ function reportBuilderCurrentDefinition() {
     name: String(els.reportBuilderName?.value || '').trim(),
     description: String(els.reportBuilderDescription?.value || '').trim(),
     timezone: String(els.reportBuilderTimezone?.value || 'UTC').trim(),
-    period: 'month',
+    period: String(els.reportBuilderPeriod?.value || 'month'),
+    group_by: String(els.reportBuilderGroupBy?.value || 'day'),
+    data_source: reportBuilderDataSourceDefinition(),
+    access: state.reportBuilderAccess
+      .filter((grant) => grant.view || grant.download || grant.edit || grant.manage)
+      .map((grant) => ({ ...grant })),
     published: Boolean(els.reportBuilderPublished?.checked),
     formats,
     columns: state.reportBuilderColumns.map((column) => ({ ...column }))
@@ -6357,9 +6863,45 @@ function renderReportBuilderColumns() {
     heading.addEventListener('input', () => { column.heading = heading.value; });
     headingCell.appendChild(heading);
     const connection = document.createElement('td');
-    connection.textContent = String(column.connection_id || '');
+    connection.textContent = column.source === 'database'
+      ? String(column.database_id || '')
+      : String(column.connection_id || '');
     const tag = document.createElement('td');
-    tag.textContent = String(column.tag_name || '');
+    tag.textContent = column.source === 'database'
+      ? String(column.category_value ?? column.field ?? '')
+      : String(column.tag_name || '');
+    const calculationCell = document.createElement('td');
+    const calculation = document.createElement('select');
+    const calculations = column.source === 'database'
+      ? [
+          ['last', 'Last available value'], ['change', 'Change during period'],
+          ['first', 'First value'], ['avg', 'Average'], ['min', 'Minimum'],
+          ['max', 'Maximum'], ['sum', 'Total'], ['count', 'Count']
+        ]
+      : [['last', 'Last available value']];
+    calculations.forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      calculation.appendChild(option);
+    });
+    calculation.value = String(column.aggregation || 'last');
+    calculation.addEventListener('change', () => {
+      column.aggregation = calculation.value;
+      renderReportBuilderColumns();
+    });
+    calculationCell.appendChild(calculation);
+    const multiplierCell = document.createElement('td');
+    const multiplier = document.createElement('input');
+    multiplier.type = 'number';
+    multiplier.step = 'any';
+    multiplier.style.width = '90px';
+    multiplier.value = String(column.multiplier ?? 1);
+    multiplier.addEventListener('input', () => {
+      const value = Number(multiplier.value);
+      column.multiplier = Number.isFinite(value) ? value : 1;
+    });
+    multiplierCell.appendChild(multiplier);
     const precisionCell = document.createElement('td');
     const precision = document.createElement('input');
     precision.type = 'number';
@@ -6369,11 +6911,52 @@ function renderReportBuilderColumns() {
     precision.value = String(column.precision ?? 2);
     precision.addEventListener('input', () => { column.precision = Math.max(0, Math.min(10, Number(precision.value) || 0)); });
     precisionCell.appendChild(precision);
+    const decreaseCell = document.createElement('td');
+    decreaseCell.className = 'report-counter-decrease';
+    if (column.source === 'database' && String(column.aggregation || 'last') === 'change') {
+      const decreaseControls = document.createElement('div');
+      decreaseControls.className = 'report-counter-decrease-controls';
+      const handling = document.createElement('select');
+      handling.className = 'report-counter-decrease-select';
+      [
+        ['blank', 'Leave blank'], ['reset', 'Counter reset'], ['rollover', 'Counter rollover']
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        handling.appendChild(option);
+      });
+      handling.value = String(column.negative_change || 'blank');
+      handling.addEventListener('change', () => {
+        column.negative_change = handling.value;
+        renderReportBuilderColumns();
+      });
+      decreaseControls.appendChild(handling);
+      if (handling.value === 'rollover') {
+        const modulus = document.createElement('input');
+        modulus.type = 'number';
+        modulus.className = 'report-counter-rollover';
+        modulus.min = '1';
+        modulus.step = '1';
+        modulus.title = 'Counter rollover value; use 65536 for an unsigned 16-bit counter.';
+        modulus.style.width = '105px';
+        modulus.value = String(column.rollover_modulus ?? 65536);
+        modulus.addEventListener('input', () => {
+          const value = Number(modulus.value);
+          column.rollover_modulus = Number.isFinite(value) && value > 0 ? value : 65536;
+        });
+        decreaseControls.appendChild(modulus);
+      }
+      decreaseCell.appendChild(decreaseControls);
+    } else {
+      decreaseCell.textContent = '—';
+    }
     const actions = document.createElement('td');
+    actions.className = 'report-column-actions';
     const up = document.createElement('button');
     up.className = 'btn';
     up.type = 'button';
-    up.textContent = '↑';
+    up.textContent = '↑ Move up';
     up.disabled = index === 0;
     up.addEventListener('click', () => {
       [state.reportBuilderColumns[index - 1], state.reportBuilderColumns[index]] =
@@ -6383,7 +6966,7 @@ function renderReportBuilderColumns() {
     const down = document.createElement('button');
     down.className = 'btn';
     down.type = 'button';
-    down.textContent = '↓';
+    down.textContent = '↓ Move down';
     down.disabled = index === state.reportBuilderColumns.length - 1;
     down.addEventListener('click', () => {
       [state.reportBuilderColumns[index], state.reportBuilderColumns[index + 1]] =
@@ -6398,10 +6981,14 @@ function renderReportBuilderColumns() {
       state.reportBuilderColumns.splice(index, 1);
       renderReportBuilderColumns();
     });
-    actions.append(up, down, remove);
-    tr.append(order, headingCell, connection, tag, precisionCell, actions);
+    const actionButtons = document.createElement('div');
+    actionButtons.className = 'report-column-action-buttons';
+    actionButtons.append(up, down, remove);
+    actions.appendChild(actionButtons);
+    tr.append(order, headingCell, connection, tag, calculationCell, multiplierCell, precisionCell, decreaseCell, actions);
     els.reportBuilderColumns.appendChild(tr);
   });
+  renderReportBuilderSourceUi();
 }
 
 function loadReportBuilderDefinition(report) {
@@ -6411,35 +6998,40 @@ function loadReportBuilderDefinition(report) {
   };
   state.reportBuilderOriginalId = String(value.id || '');
   state.reportBuilderColumns = Array.isArray(value.columns) ? value.columns.map((column) => ({ ...column })) : [];
+  state.reportBuilderAccess = Array.isArray(value.access) ? value.access.map((grant) => ({ ...grant })) : [];
+  if (!report) {
+    const ownGroups = (Array.isArray(state.opcbridgeAuthStatus?.user?.groups)
+      ? state.opcbridgeAuthStatus.user.groups : [])
+      .map((group) => String(group || '').trim())
+      .filter((group) => group && group !== 'admin');
+    if (ownGroups.length === 1) {
+      state.reportBuilderAccess.push({
+        group_id: ownGroups[0], view: true, download: true, edit: true, manage: true
+      });
+    }
+  }
   if (els.reportBuilderId) els.reportBuilderId.value = String(value.id || '');
   if (els.reportBuilderName) els.reportBuilderName.value = String(value.name || '');
   if (els.reportBuilderDescription) els.reportBuilderDescription.value = String(value.description || '');
+  if (els.reportBuilderPeriod) els.reportBuilderPeriod.value = String(value.period || 'month');
+  if (els.reportBuilderGroupBy) els.reportBuilderGroupBy.value = String(value.group_by || 'day');
+  if (els.reportBuilderGroupByLabel) {
+    els.reportBuilderGroupByLabel.style.display = String(value.period || 'month') === 'custom' ? '' : 'none';
+  }
   populateReportBuilderTimezones(String(value.timezone || browserTimezone()));
   if (els.reportBuilderPublished) els.reportBuilderPublished.checked = Boolean(value.published);
   if (els.reportBuilderXlsx) els.reportBuilderXlsx.checked = (value.formats || []).includes('xlsx');
   if (els.reportBuilderCsv) els.reportBuilderCsv.checked = (value.formats || []).includes('csv');
+  const source = value.data_source || { type: 'historian' };
+  if (els.reportBuilderSourceType) els.reportBuilderSourceType.value = String(source.type || 'historian');
+  if (els.reportBuilderLayout) els.reportBuilderLayout.value = String(source.layout || 'wide');
+  renderReportBuilderDatabaseSources(String(source.database_id || ''));
+  renderReportBuilderSourceUi();
+  if (source.type === 'database') {
+    loadReportBuilderDatabaseSchema(source).catch(() => {});
+  }
   renderReportBuilderColumns();
-}
-
-function renderReportBuilderList() {
-  if (!els.reportBuilderList) return;
-  const selected = state.reportBuilderOriginalId;
-  els.reportBuilderList.textContent = '';
-  if (!state.reportBuilderReports.length) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'No reports yet';
-    els.reportBuilderList.appendChild(option);
-  }
-  state.reportBuilderReports.forEach((report) => {
-    const option = document.createElement('option');
-    option.value = String(report.id || '');
-    option.textContent = `${report.published ? '●' : '○'} ${report.name || report.id}`;
-    els.reportBuilderList.appendChild(option);
-  });
-  if (state.reportBuilderReports.some((report) => report.id === selected)) {
-    els.reportBuilderList.value = selected;
-  }
+  renderReportBuilderAccess();
 }
 
 function renderReportBuilderTags() {
@@ -6457,25 +7049,23 @@ function renderReportBuilderTags() {
 }
 
 async function refreshReportBuilder() {
-  if (!hasPerm('suite.manage_server')) {
-    if (els.reportManagerCard) els.reportManagerCard.style.display = 'none';
+  if (!canAccessReportsTab()) {
     if (els.reportBuilderCard) els.reportBuilderCard.style.display = 'none';
     return;
   }
-  reportManagerSetStatus('Loading…');
   try {
-    const [definitions, tags] = await Promise.all([
+    const [definitions, tags, sources] = await Promise.all([
       apiGet('/api/reports/admin'),
-      apiGet('/api/historian/tags').catch(() => ({ tags: [] }))
+      apiGet('/api/historian/tags').catch(() => ({ tags: [] })),
+      apiGet('/api/reports/admin/sources').catch(() => ({ databases: [] }))
     ]);
     state.reportBuilderReports = Array.isArray(definitions?.reports) ? definitions.reports : [];
     state.reportBuilderTags = Array.isArray(tags?.tags) ? tags.tags.filter((tag) => tag?.connection_id && tag?.tag_name) : [];
-    renderReportBuilderList();
+    state.reportBuilderDatabases = Array.isArray(sources?.databases) ? sources.databases : [];
+    renderReportBuilderDatabaseSources(els.reportBuilderDatabase?.value || '');
     renderReportBuilderTags();
-    if (els.reportBuilderEditBtn) els.reportBuilderEditBtn.disabled = !state.reportBuilderReports.length;
-    reportManagerSetStatus(`${state.reportBuilderReports.length} saved report(s)`);
   } catch (err) {
-    reportManagerSetStatus(err.message || err);
+    reportBuilderSetStatus(err.message || err);
   }
 }
 
@@ -6488,11 +7078,22 @@ async function saveReportBuilderDefinition() {
   });
   state.reportBuilderOriginalId = response.report.id;
   await refreshReportBuilder();
-  await refreshPublishedReports();
+  await refreshPublishedReports(false);
+  if (els.publishedReportSelect) {
+    els.publishedReportSelect.value = response.report.id;
+    renderPublishedReportSelection();
+  }
   loadReportBuilderDefinition(response.report);
   if (els.reportBuilderTitle) els.reportBuilderTitle.textContent = `Edit ${response.report.name || 'Report'}`;
-  if (els.reportBuilderDuplicateBtn) els.reportBuilderDuplicateBtn.disabled = false;
-  if (els.reportBuilderDeleteBtn) els.reportBuilderDeleteBtn.disabled = false;
+  const savedPermissions = reportPermissions(response.report);
+  if (els.reportBuilderDuplicateBtn) {
+    els.reportBuilderDuplicateBtn.style.display = savedPermissions.manage ? '' : 'none';
+    els.reportBuilderDuplicateBtn.disabled = !savedPermissions.manage;
+  }
+  if (els.reportBuilderDeleteBtn) {
+    els.reportBuilderDeleteBtn.style.display = savedPermissions.manage ? '' : 'none';
+    els.reportBuilderDeleteBtn.disabled = !savedPermissions.manage;
+  }
   reportBuilderSetStatus('Saved.');
   return response.report;
 }
@@ -6502,7 +7103,8 @@ function renderReportBuilderPreview(preview) {
   els.reportBuilderPreviewHead.textContent = '';
   els.reportBuilderPreviewBody.textContent = '';
   const headerRow = document.createElement('tr');
-  ['Date', ...(preview.columns || []).map((column) => column.heading)].forEach((heading) => {
+  const periodHeading = preview.group_by === 'hour' ? 'Hour' : (preview.group_by === 'month' ? 'Month' : 'Date');
+  [periodHeading, ...(preview.columns || []).map((column) => column.heading)].forEach((heading) => {
     const th = document.createElement('th');
     th.textContent = String(heading || '');
     headerRow.appendChild(th);
@@ -6535,13 +7137,96 @@ function wireReportBuilderUi() {
       }
     });
   }
+  if (els.reportBuilderPeriod) els.reportBuilderPeriod.addEventListener('change', () => {
+    if (els.reportBuilderGroupByLabel) {
+      els.reportBuilderGroupByLabel.style.display = els.reportBuilderPeriod.value === 'custom' ? '' : 'none';
+    }
+  });
   if (els.reportBuilderNewBtn) els.reportBuilderNewBtn.addEventListener('click', () => showReportBuilder(null));
   if (els.reportBuilderEditBtn) els.reportBuilderEditBtn.addEventListener('click', () => {
-    const report = state.reportBuilderReports.find((item) => item.id === els.reportBuilderList?.value);
+    const selected = selectedPublishedReport();
+    const report = state.reportBuilderReports.find((item) => item.id === selected?.id) || selected;
     if (report) showReportBuilder(report);
   });
-  if (els.reportBuilderBackBtn) els.reportBuilderBackBtn.addEventListener('click', showReportsLanding);
-  if (els.reportBuilderReloadBtn) els.reportBuilderReloadBtn.addEventListener('click', () => refreshReportBuilder());
+  if (els.reportBuilderBackBtn) els.reportBuilderBackBtn.addEventListener('click', () => {
+    showReportsLanding();
+    previewPublishedReport().catch(() => {});
+  });
+  if (els.reportBuilderSourceType) els.reportBuilderSourceType.addEventListener('change', () => {
+    renderReportBuilderSourceUi();
+    if (els.reportBuilderSourceType.value === 'database' && !state.reportBuilderSchema.length) {
+      loadReportBuilderDatabaseSchema().catch(() => {});
+    }
+  });
+  if (els.reportBuilderLayout) els.reportBuilderLayout.addEventListener('change', renderReportBuilderSourceUi);
+  if (els.reportBuilderDatabase) els.reportBuilderDatabase.addEventListener('change', () => {
+    loadReportBuilderDatabaseSchema().catch(() => {});
+  });
+  if (els.reportBuilderTable) els.reportBuilderTable.addEventListener('change', () => {
+    renderReportBuilderSchemaSelections();
+    if (els.reportBuilderCategoryPicker) els.reportBuilderCategoryPicker.style.display = 'none';
+  });
+  if (els.reportBuilderAddDatabaseFieldBtn) els.reportBuilderAddDatabaseFieldBtn.addEventListener('click', () => {
+    const field = String(els.reportBuilderDatabaseField?.value || '').trim();
+    const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
+    if (!field || !databaseId) return;
+    state.reportBuilderColumns.push({
+      heading: field,
+      source: 'database',
+      database_id: databaseId,
+      table: String(els.reportBuilderTable?.value || '').trim(),
+      time_column: String(els.reportBuilderTimeColumn?.value || '').trim(),
+      layout: 'wide',
+      field,
+      aggregation: String(els.reportBuilderAggregation?.value || 'last'),
+      multiplier: 1,
+      negative_change: 'blank',
+      rollover_modulus: 65536,
+      precision: 2
+    });
+    renderReportBuilderColumns();
+  });
+  if (els.reportBuilderLoadCategoriesBtn) els.reportBuilderLoadCategoriesBtn.addEventListener('click', async () => {
+    const payload = {
+      database_id: String(els.reportBuilderDatabase?.value || '').trim(),
+      table: String(els.reportBuilderTable?.value || '').trim(),
+      column: String(els.reportBuilderCategoryColumn?.value || '').trim()
+    };
+    reportBuilderSourceSetStatus('Finding available item names…');
+    try {
+      const response = await apiPostJson('/api/reports/admin/distinct', payload);
+      fillSelect(els.reportBuilderCategoryValues, (response.values || []).map((value) => ({
+        value: String(value), label: String(value)
+      })));
+      if (els.reportBuilderCategoryPicker) els.reportBuilderCategoryPicker.style.display = '';
+      reportBuilderSourceSetStatus(`${response.values?.length || 0} item name(s) available`);
+    } catch (err) {
+      reportBuilderSourceSetStatus(err.message || err);
+    }
+  });
+  if (els.reportBuilderAddCategoriesBtn) els.reportBuilderAddCategoriesBtn.addEventListener('click', () => {
+    const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
+    const valueField = String(els.reportBuilderValueColumn?.value || '').trim();
+    Array.from(els.reportBuilderCategoryValues?.selectedOptions || []).forEach((option) => {
+      state.reportBuilderColumns.push({
+        heading: option.textContent || option.value,
+        source: 'database',
+        database_id: databaseId,
+        table: String(els.reportBuilderTable?.value || '').trim(),
+        time_column: String(els.reportBuilderTimeColumn?.value || '').trim(),
+        layout: 'category',
+        category_column: String(els.reportBuilderCategoryColumn?.value || '').trim(),
+        field: valueField,
+        category_value: option.value,
+        aggregation: String(els.reportBuilderAggregation?.value || 'last'),
+        multiplier: 1,
+        negative_change: 'blank',
+        rollover_modulus: 65536,
+        precision: 2
+      });
+    });
+    renderReportBuilderColumns();
+  });
   if (els.reportBuilderAddTagBtn) els.reportBuilderAddTagBtn.addEventListener('click', () => {
     const [connectionId, tagName] = String(els.reportBuilderTagSelect?.value || '').split('\u001f');
     if (!connectionId || !tagName) return;
@@ -6558,9 +7243,11 @@ function wireReportBuilderUi() {
     try {
       const report = await saveReportBuilderDefinition();
       reportBuilderSetStatus('Generating preview…');
+      const range = publishedReportRangePayload();
+      if (!range) throw new Error('Select a valid report period.');
       const preview = await apiPostJson('/api/reports/admin/preview', {
         id: report.id,
-        month: els.publishedReportMonth?.value
+        ...range
       }, { timeoutMs: 120000 });
       renderReportBuilderPreview(preview);
       reportBuilderSetStatus('Preview ready.');
@@ -6573,6 +7260,11 @@ function wireReportBuilderUi() {
       const response = await apiPostJson('/api/reports/admin/duplicate', { id: state.reportBuilderOriginalId });
       state.reportBuilderOriginalId = response.report.id;
       await refreshReportBuilder();
+      await refreshPublishedReports(false);
+      if (els.publishedReportSelect) {
+        els.publishedReportSelect.value = response.report.id;
+        renderPublishedReportSelection();
+      }
       showReportBuilder(response.report);
     } catch (err) { reportBuilderSetStatus(err.message || err); }
   });
@@ -6608,6 +7300,9 @@ function setTab(id) {
     id = 'overview';
   }
   if (next === 'historian' && !canAccessHistorianTab()) {
+    id = 'overview';
+  }
+  if (next === 'reports' && !canAccessReportsTab() && !REPORTS_PORTAL_MODE) {
     id = 'overview';
   }
   if (next === 'logic' && !canAccessLogicTab()) {
@@ -22194,11 +22889,21 @@ async function loadBootstrapConfig() {
   }
 }
 
-async function refreshUserAuthLine() {
+async function refreshUserAuthLine({ initial = false } = {}) {
   if (!els.authLine) return;
   try {
-    const s = await apiGet('/api/opcbridge/auth/status');
+    let s = await apiGet('/api/opcbridge/auth/status');
+    if (initial && Boolean(s?.configured) && !Boolean(s?.user_logged_in ?? s?.logged_in)) {
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+      s = await apiGet('/api/opcbridge/auth/status');
+    }
     state.opcbridgeAuthStatus = s || null;
+    applyPortalPresentation();
+    if (!REPORTS_PORTAL_MODE && Boolean(s?.user_logged_in) &&
+        !canAccessScadaPortal() && canAccessReportsTab()) {
+      window.location.replace('/reports');
+      return;
+    }
     updateConfigureTabVisibility();
     updateAuthAdminPanelVisibility();
     updateWorkspaceTabVisibility();
@@ -22208,22 +22913,23 @@ async function refreshUserAuthLine() {
     updateUsersTabVisibility();
     updateLoggerTabVisibility();
     updateHistorianTabVisibility();
+    updateReportsTabVisibility();
     ensureAuthAdminPanelLoaded();
     const configured = Boolean(s?.configured);
     const rawLoggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
     let loggedIn = rawLoggedIn;
     let username = String(s?.user?.username || '').trim();
-    let role = String(s?.user?.role || '').trim();
+    let groups = Array.isArray(s?.user?.groups) ? s.user.groups.map(String) : [];
     if (rawLoggedIn) {
       state.authLoggedOutSinceMs = 0;
-      state.authLastUser = { username, role };
+      state.authLastUser = { username, groups };
     } else if (state.authWasLoggedIn && configured) {
       const now = Date.now();
       if (!state.authLoggedOutSinceMs) state.authLoggedOutSinceMs = now;
       if (now - state.authLoggedOutSinceMs < 10000) {
         loggedIn = true;
         username = String(state.authLastUser?.username || '').trim();
-        role = String(state.authLastUser?.role || '').trim();
+        groups = Array.isArray(state.authLastUser?.groups) ? state.authLastUser.groups.map(String) : [];
       }
     }
 
@@ -22240,9 +22946,11 @@ async function refreshUserAuthLine() {
       return;
     }
     if (loggedIn) {
-      const who = username ? ` as ${escapeHtml(username)}${role ? ` (${escapeHtml(role)})` : ''}` : '';
+      const isAdmin = groups.some((groupId) => String(groupId || '').trim().toLowerCase() === 'admin');
+      const who = username ? ` as ${escapeHtml(username)}${isAdmin ? ' (Admin)' : ''}` : '';
       const pending = rawLoggedIn ? '' : ' · verifying session';
-      els.authLine.innerHTML = `<button class="btn" id="authLogoutBtn" type="button">Logout</button> <span class="badge ok">auth</span> logged in${who}${pending}`;
+      els.authLine.innerHTML = `<button class="btn" id="authLogoutBtn" type="button">Logout</button> <button class="btn" id="authChangePasswordBtn" type="button">Change Password</button> <span class="badge ok">auth</span> logged in${who}${pending}`;
+      document.getElementById('authChangePasswordBtn')?.addEventListener('click', openChangePasswordModal);
       document.getElementById('authLogoutBtn')?.addEventListener('click', logoutUser);
       return;
     }
@@ -22379,7 +23087,7 @@ function buildUsersTree() {
     {
       id: 'users_root_roles',
       type: 'roles_root',
-      label: 'Roles',
+      label: 'Groups',
       children: roles.map((r) => ({
         id: `role:${String(r?.id || '')}`,
         type: 'role',
@@ -22450,11 +23158,11 @@ function renderUsersTreeNode(node, container) {
 
     const items = [];
     if (node.type === 'roles_root') {
-      items.push({ label: 'Add Role…', onClick: () => openRoleForm({ mode: 'new' }) });
+      items.push({ label: 'Add Group…', onClick: () => openRoleForm({ mode: 'new' }) });
     } else if (node.type === 'role') {
       const roleId = String(node?.meta?.id || '').trim();
-      items.push({ label: 'Edit Role…', onClick: () => openRoleForm({ mode: 'edit', roleId }) });
-      items.push({ label: 'Delete Role…', onClick: () => deleteRole(roleId) });
+      items.push({ label: 'Edit Group…', onClick: () => openRoleForm({ mode: 'edit', roleId }) });
+      items.push({ label: 'Delete Group…', onClick: () => deleteRole(roleId) });
     } else if (node.type === 'users_root') {
       items.push({ label: 'Add User…', onClick: () => openUserForm({ mode: 'new' }) });
     } else if (node.type === 'user') {
@@ -22484,7 +23192,7 @@ function renderUsersTree() {
     renderUsersTreeNode(r, els.usersTreeView);
   });
   if (els.usersTreeNote) {
-    els.usersTreeNote.textContent = `Roles: ${(state.usersRoles || []).length} · Users: ${(state.usersUsers || []).length}`;
+    els.usersTreeNote.textContent = `Groups: ${(state.usersRoles || []).length} · Users: ${(state.usersUsers || []).length}`;
   }
   if (!state.usersSelectedNodeId && roots.length) state.usersSelectedNodeId = roots[0].id;
 }
@@ -22504,16 +23212,21 @@ function renderUsersDetails(node) {
       ],
       onDblClick: () => openRoleForm({ mode: 'edit', roleId: String(r?.id || '') })
     }));
-    usersSetDetailsTable(['Role', 'Label', 'Description', 'Permissions'], rows);
+    usersSetDetailsTable(['Group', 'Label', 'Description', 'Permissions'], rows);
     return;
   }
 
   if (node.type === 'users_root') {
     const rows = (state.usersUsers || []).slice().sort((a, b) => String(a?.username || '').localeCompare(String(b?.username || ''))).map((u) => ({
-      cells: [String(u?.username || ''), String(u?.name || u?.username || ''), String(u?.description || ''), String(u?.role || '')],
+      cells: [
+        String(u?.username || ''),
+        String(u?.name || u?.username || ''),
+        String(u?.description || ''),
+        (Array.isArray(u?.groups) ? u.groups : []).join(', ')
+      ],
       onDblClick: () => openUserForm({ mode: 'edit', username: String(u?.username || '') })
     }));
-    usersSetDetailsTable(['Username', 'Name', 'Description', 'Role'], rows);
+    usersSetDetailsTable(['Username', 'Name', 'Description', 'Groups'], rows);
     return;
   }
 
@@ -22527,19 +23240,32 @@ function renderUsersDetails(node) {
   }
 }
 
-function fillRoleSelectOptions(selectedValue) {
+function fillRoleSelectOptions(selectedValues) {
   if (!els.usersFormRole) return;
   els.usersFormRole.textContent = '';
+  const selected = new Set((Array.isArray(selectedValues) ? selectedValues : []).map(String));
   (state.usersRoles || []).slice().sort((a, b) => String(a?.id || '').localeCompare(String(b?.id || ''))).forEach((r) => {
-    const opt = document.createElement('option');
-    opt.value = String(r?.id || '');
-    opt.textContent = String(r?.label || r?.id || '');
-    els.usersFormRole.appendChild(opt);
+    const groupId = String(r?.id || '');
+    const wrap = document.createElement('label');
+    wrap.className = 'perm-item';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = groupId;
+    checkbox.dataset.groupId = groupId;
+    checkbox.checked = selected.has(groupId);
+    const text = document.createElement('span');
+    text.textContent = String(r?.label || groupId);
+    wrap.appendChild(checkbox);
+    wrap.appendChild(text);
+    els.usersFormRole.appendChild(wrap);
   });
-  if (selectedValue) els.usersFormRole.value = String(selectedValue);
-  if (!String(els.usersFormRole.value || '').trim() && els.usersFormRole.options.length) {
-    els.usersFormRole.value = String(els.usersFormRole.options[0].value || '');
-  }
+}
+
+function selectedUserGroups() {
+  if (!els.usersFormRole) return [];
+  return Array.from(els.usersFormRole.querySelectorAll('input[type="checkbox"][data-group-id]:checked'))
+    .map((checkbox) => String(checkbox.value || '').trim())
+    .filter(Boolean);
 }
 
 function openRoleForm({ mode, roleId }) {
@@ -22550,7 +23276,7 @@ function openRoleForm({ mode, roleId }) {
   state.usersFormMode = (mode === 'new') ? 'role_new' : 'role_edit';
   state.usersFormTargetId = roleId ? String(roleId) : '';
 
-  if (els.usersFormIdLabel) els.usersFormIdLabel.textContent = 'Role ID';
+  if (els.usersFormIdLabel) els.usersFormIdLabel.textContent = 'Group ID';
   if (els.usersFormRoleRow) els.usersFormRoleRow.style.display = 'none';
   if (els.usersFormPasswordRow) els.usersFormPasswordRow.style.display = 'none';
   if (els.usersFormConfirmRow) els.usersFormConfirmRow.style.display = 'none';
@@ -22626,8 +23352,10 @@ function openUserForm({ mode, username }) {
     els.usersFormDescription.value = user ? String(user.description || '') : '';
     els.usersFormDescription.disabled = false;
   }
-  fillRoleSelectOptions(user ? String(user.role || '') : '');
-  if (els.usersFormRole) els.usersFormRole.disabled = isSelfEdit ? true : (!canAdmin);
+  fillRoleSelectOptions(user && Array.isArray(user.groups) ? user.groups : []);
+  els.usersFormRole?.querySelectorAll('input[type="checkbox"][data-group-id]').forEach((checkbox) => {
+    checkbox.disabled = !canAdmin;
+  });
   if (els.usersFormPassword) els.usersFormPassword.value = '';
   if (els.usersFormConfirm) els.usersFormConfirm.value = '';
 }
@@ -22635,12 +23363,12 @@ function openUserForm({ mode, username }) {
 async function deleteRole(roleId) {
   const id = String(roleId || '').trim();
   if (!id) return;
-  if (!window.confirm(`Delete role '${id}'?`)) return;
-  setUsersDetailsStatus('Deleting role…');
+  if (!window.confirm(`Delete group '${id}'?`)) return;
+  setUsersDetailsStatus('Deleting group…');
   try {
-    await apiJson(`/api/opcbridge/auth/roles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await apiJson(`/api/opcbridge/auth/groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
     await refreshUsersPanel();
-    setUsersDetailsStatus('Role deleted.');
+    setUsersDetailsStatus('Group deleted.');
   } catch (err) {
     setUsersDetailsStatus(`Delete failed: ${err.message}`);
   }
@@ -22675,14 +23403,14 @@ async function refreshUsersPanel() {
     const initialized = Boolean(s?.initialized);
     const loggedIn = Boolean(s?.user_logged_in);
     const username = String(s?.user?.username || '').trim();
-    const role = String(s?.user?.role || 'viewer').trim().toLowerCase();
+    const groups = Array.isArray(s?.user?.groups) ? s.user.groups.map(String) : [];
     const timeoutMinutes = Number(s?.timeoutMinutes) || 0;
     const users = Array.isArray(s?.users) ? s.users : [];
-    const roles = Array.isArray(s?.roles) ? s.roles : [];
+    const roles = Array.isArray(s?.groups) ? s.groups : [];
     state.usersUsers = users;
     state.usersRoles = roles;
 
-    const who = loggedIn ? `${username || '?'} (${role || 'viewer'})` : 'not logged in';
+    const who = loggedIn ? `${username || '?'} (${groups.join(', ') || 'no groups'})` : 'not logged in';
     setUsersStatus(`OPCBridge auth: configured=${configured ? 'yes' : 'no'} initialized=${initialized ? 'yes' : 'no'} · ${who}`);
 
     if (els.usersInitWrap) els.usersInitWrap.style.display = (!initialized) ? 'block' : 'none';
@@ -22697,7 +23425,7 @@ async function refreshUsersPanel() {
 
     fillSharedSessionTimeout(timeoutMinutes);
     setUsersTimeoutStatus('');
-    const canAdmin = loggedIn && role === 'admin';
+    const canAdmin = loggedIn && hasPerm('auth.manage_users');
     if (els.usersTimeoutSaveBtn) els.usersTimeoutSaveBtn.disabled = !canAdmin;
 
     renderUsersTree();
@@ -22780,7 +23508,7 @@ function wireUsersUi() {
         els.usersFormPerms?.querySelectorAll('input[type="checkbox"][data-perm-id]')?.forEach((cb) => {
           if (cb.checked) permissions.push(String(cb.dataset.permId || '').trim());
         });
-        await apiPostJson('/api/opcbridge/auth/roles', { id, label, description, permissions });
+        await apiPostJson('/api/opcbridge/auth/groups', { id, label, description, permissions });
         state.usersSelectedNodeId = `role:${id}`;
       } else if (mode === 'role_edit') {
         const id = String(state.usersFormTargetId || '').trim();
@@ -22790,11 +23518,11 @@ function wireUsersUi() {
         els.usersFormPerms?.querySelectorAll('input[type="checkbox"][data-perm-id]')?.forEach((cb) => {
           if (cb.checked) permissions.push(String(cb.dataset.permId || '').trim());
         });
-        await apiJson(`/api/opcbridge/auth/roles/${encodeURIComponent(id)}`, { method: 'PUT', bodyObj: { label, description, permissions } });
+        await apiJson(`/api/opcbridge/auth/groups/${encodeURIComponent(id)}`, { method: 'PUT', bodyObj: { label, description, permissions } });
         state.usersSelectedNodeId = `role:${id}`;
       } else if (mode === 'user_new') {
         const username = String(els.usersFormId?.value || '').trim();
-        const role = String(els.usersFormRole?.value || 'viewer').trim();
+        const groups = selectedUserGroups();
         const name = String(els.usersFormLabel?.value || '').trim();
         const description = String(els.usersFormDescription?.value || '').trim();
         const password = String(els.usersFormPassword?.value || '');
@@ -22803,7 +23531,8 @@ function wireUsersUi() {
         if (!password) throw new Error('Password required.');
         if (!confirm) throw new Error('Confirm required.');
         if (password !== confirm) throw new Error('Passwords do not match.');
-        await apiPostJson('/api/opcbridge/auth/users', { username, name, description, password, role });
+        if (!groups.length) throw new Error('Select at least one group.');
+        await apiPostJson('/api/opcbridge/auth/users', { username, name, description, password, groups });
         state.usersSelectedNodeId = `user:${username}`;
       } else if (mode === 'user_edit') {
         const username = String(state.usersFormTargetId || '').trim();
@@ -22812,8 +23541,9 @@ function wireUsersUi() {
         const password = String(els.usersFormPassword?.value || '');
         const confirm = String(els.usersFormConfirm?.value || '');
         const bodyObj = { name, description };
-        if (isOpcbridgeAdmin() && !isSelfEdit) {
-          bodyObj.role = String(els.usersFormRole?.value || 'viewer').trim();
+        if (isOpcbridgeAdmin()) {
+          bodyObj.groups = selectedUserGroups();
+          if (!bodyObj.groups.length) throw new Error('Select at least one group.');
         }
         if (password) {
           if (!confirm) throw new Error('Confirm required.');
@@ -22863,6 +23593,25 @@ function closeLoginModal() {
   els.loginModal.style.display = 'none';
   if (els.loginStatus) els.loginStatus.textContent = '';
   if (els.loginCapsLockIndicator) els.loginCapsLockIndicator.hidden = true;
+}
+
+function openChangePasswordModal() {
+  if (!els.changePasswordModal || !state.opcbridgeAuthStatus?.user?.username) return;
+  if (els.changePasswordCurrent) els.changePasswordCurrent.value = '';
+  if (els.changePasswordNew) els.changePasswordNew.value = '';
+  if (els.changePasswordConfirm) els.changePasswordConfirm.value = '';
+  if (els.changePasswordStatus) els.changePasswordStatus.textContent = '';
+  els.changePasswordModal.style.display = 'flex';
+  els.changePasswordCurrent?.focus();
+}
+
+function closeChangePasswordModal() {
+  if (!els.changePasswordModal) return;
+  els.changePasswordModal.style.display = 'none';
+  if (els.changePasswordCurrent) els.changePasswordCurrent.value = '';
+  if (els.changePasswordNew) els.changePasswordNew.value = '';
+  if (els.changePasswordConfirm) els.changePasswordConfirm.value = '';
+  if (els.changePasswordStatus) els.changePasswordStatus.textContent = '';
 }
 
 function wireCapsLockIndicator(input, indicator) {
@@ -22952,6 +23701,56 @@ function wireLoginModalUi() {
   });
 }
 
+function wireChangePasswordUi() {
+  if (!els.changePasswordModal || els.changePasswordModal.dataset.wired === '1') return;
+  els.changePasswordModal.dataset.wired = '1';
+  els.changePasswordCloseBtn?.addEventListener('click', closeChangePasswordModal);
+  els.changePasswordCancelBtn?.addEventListener('click', closeChangePasswordModal);
+  els.changePasswordSaveBtn?.addEventListener('click', async () => {
+    const username = String(state.opcbridgeAuthStatus?.user?.username || '').trim();
+    const currentPassword = String(els.changePasswordCurrent?.value || '');
+    const password = String(els.changePasswordNew?.value || '');
+    const confirm = String(els.changePasswordConfirm?.value || '');
+    if (!username) {
+      if (els.changePasswordStatus) els.changePasswordStatus.textContent = 'Login required.';
+      return;
+    }
+    if (!currentPassword) {
+      if (els.changePasswordStatus) els.changePasswordStatus.textContent = 'Current password is required.';
+      return;
+    }
+    if (password.length < 4) {
+      if (els.changePasswordStatus) els.changePasswordStatus.textContent = 'Password must be at least 4 characters.';
+      return;
+    }
+    if (password !== confirm) {
+      if (els.changePasswordStatus) els.changePasswordStatus.textContent = 'Passwords do not match.';
+      return;
+    }
+    if (els.changePasswordStatus) els.changePasswordStatus.textContent = 'Changing password…';
+    if (els.changePasswordSaveBtn) els.changePasswordSaveBtn.disabled = true;
+    try {
+      await apiPostJson('/api/opcbridge/auth/change-password', {
+        current_password: currentPassword,
+        password,
+        confirm
+      });
+      closeChangePasswordModal();
+      window.alert('Your password has been changed.');
+    } catch (err) {
+      if (els.changePasswordStatus) els.changePasswordStatus.textContent = `Change failed: ${err.message}`;
+    } finally {
+      if (els.changePasswordSaveBtn) els.changePasswordSaveBtn.disabled = false;
+    }
+  });
+  els.changePasswordModal.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      els.changePasswordSaveBtn?.click();
+    }
+  });
+}
+
 async function loginUser() {
   openLoginModal();
 }
@@ -22977,7 +23776,9 @@ function restartRefreshLoop() {
 
 async function main() {
   wireThemeUi();
-  setTab('overview');
+  applyPortalPresentation();
+  if (!REPORTS_PORTAL_MODE) setTab('overview');
+  else if (els.authLine) els.authLine.innerHTML = '<span class="status">Checking session…</span>';
   updateConfigureTabVisibility();
   updateAuthAdminPanelVisibility();
   updateWorkspaceTabVisibility();
@@ -22985,10 +23786,9 @@ async function main() {
   updateLogicTabVisibility();
   updateLoggerTabVisibility();
   updateHistorianTabVisibility();
+  updateReportsTabVisibility();
   updateLogsTabVisibility();
   updateUsersTabVisibility();
-
-  startUserAuthPolling();
 
   wireScadaSettingsUi();
   wireAlarmNotificationUi();
@@ -23004,6 +23804,7 @@ async function main() {
   wireConnectionsUi();
   wireTagsConfigUi();
   wireLoginModalUi();
+  wireChangePasswordUi();
   wireUsersUi();
   wireLogsUi();
   wireHmiAuditUi();
@@ -23020,9 +23821,24 @@ async function main() {
   }
 
   try {
-    await refreshUserAuthLine();
+    await refreshUserAuthLine({ initial: true });
   } catch {
     // ignore
+  }
+  startUserAuthPolling();
+
+  if (REPORTS_PORTAL_MODE) {
+    document.querySelectorAll('.tab').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.tab === 'reports');
+    });
+    document.querySelectorAll('.panel').forEach((panel) => {
+      panel.classList.toggle('is-active', panel.id === 'tab-reports');
+    });
+    showReportsLanding();
+    await refreshPublishedReports(true);
+    await refreshReportBuilder();
+    state.uiRefreshReady = true;
+    return;
   }
 
   try {
@@ -23068,10 +23884,6 @@ async function main() {
   }
 
   restartRefreshLoop();
-
-  if (window.location.pathname === '/reports') {
-    setTab('reports');
-  }
 
   window.setTimeout(() => {
     loadTagsConfig()

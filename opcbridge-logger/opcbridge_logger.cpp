@@ -1106,6 +1106,255 @@ public:
         };
     }
 
+    json database_schema(const std::string& id) {
+        DbConfig db;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto it = dbs_.find(id);
+            if (it == dbs_.end()) {
+                return {{"ok", false}, {"error", "Database not found: " + id}};
+            }
+            db = it->second;
+        }
+        if (db.type != "mysql") {
+            return {{"ok", false}, {"error", "Schema discovery is not supported for database type: " + db.type}};
+        }
+
+        MYSQL* conn = mysql_init(nullptr);
+        if (!conn) return {{"ok", false}, {"error", "mysql_init failed"}};
+        unsigned int timeout = static_cast<unsigned int>(std::max(1, db.monitor_timeout_sec));
+        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+        if (!mysql_real_connect(conn, db.mysql_host.c_str(), db.mysql_user.c_str(), db.mysql_password.c_str(),
+                                db.mysql_database.c_str(), db.mysql_port, nullptr, 0)) {
+            std::string error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+
+        const char* sql =
+            "SELECT t.TABLE_NAME, t.TABLE_TYPE, c.COLUMN_NAME, c.DATA_TYPE, c.COLUMN_TYPE, c.IS_NULLABLE "
+            "FROM information_schema.TABLES t "
+            "LEFT JOIN information_schema.COLUMNS c "
+            "ON c.TABLE_SCHEMA=t.TABLE_SCHEMA AND c.TABLE_NAME=t.TABLE_NAME "
+            "WHERE t.TABLE_SCHEMA=DATABASE() AND t.TABLE_TYPE IN ('BASE TABLE','VIEW') "
+            "ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION";
+        if (mysql_query(conn, sql) != 0) {
+            std::string error = std::string("schema query failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+        MYSQL_RES* result = mysql_store_result(conn);
+        if (!result) {
+            std::string error = std::string("schema result failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+
+        json tables = json::array();
+        std::string current_table;
+        json current = json::object();
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(result)) != nullptr) {
+            const std::string table_name = row[0] ? row[0] : "";
+            if (table_name != current_table) {
+                if (!current_table.empty()) tables.push_back(current);
+                current_table = table_name;
+                current = {
+                    {"name", table_name},
+                    {"type", row[1] ? row[1] : ""},
+                    {"columns", json::array()}
+                };
+            }
+            if (row[2]) {
+                current["columns"].push_back({
+                    {"name", row[2]},
+                    {"data_type", row[3] ? row[3] : ""},
+                    {"column_type", row[4] ? row[4] : ""},
+                    {"nullable", row[5] && std::string(row[5]) == "YES"}
+                });
+            }
+        }
+        if (!current_table.empty()) tables.push_back(current);
+        mysql_free_result(result);
+        mysql_close(conn);
+        return {{"ok", true}, {"database_id", id}, {"tables", tables}};
+    }
+
+    json database_distinct(const std::string& id, const std::string& table, const std::string& column, int limit) {
+        DbConfig db;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto it = dbs_.find(id);
+            if (it == dbs_.end()) return {{"ok", false}, {"error", "Database not found: " + id}};
+            db = it->second;
+        }
+        if (db.type != "mysql") {
+            return {{"ok", false}, {"error", "Value discovery is not supported for database type: " + db.type}};
+        }
+
+        json schema = database_schema(id);
+        if (!schema.value("ok", false)) return schema;
+        bool valid = false;
+        for (const auto& candidate : schema["tables"]) {
+            if (candidate.value("name", "") != table) continue;
+            for (const auto& field : candidate["columns"]) {
+                if (field.value("name", "") == column) valid = true;
+            }
+        }
+        if (!valid) return {{"ok", false}, {"error", "Selected table or column does not exist"}};
+
+        MYSQL* conn = mysql_init(nullptr);
+        if (!conn) return {{"ok", false}, {"error", "mysql_init failed"}};
+        unsigned int timeout = static_cast<unsigned int>(std::max(1, db.monitor_timeout_sec));
+        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+        if (!mysql_real_connect(conn, db.mysql_host.c_str(), db.mysql_user.c_str(), db.mysql_password.c_str(),
+                                db.mysql_database.c_str(), db.mysql_port, nullptr, 0)) {
+            std::string error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+        auto quote_identifier = [](const std::string& input) {
+            std::string output = "`";
+            for (char ch : input) output += (ch == '`') ? "``" : std::string(1, ch);
+            return output + "`";
+        };
+        limit = std::max(1, std::min(500, limit));
+        const std::string field = quote_identifier(column);
+        const std::string sql = "SELECT DISTINCT " + field + " FROM " + quote_identifier(table) +
+            " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT " + std::to_string(limit);
+        if (mysql_query(conn, sql.c_str()) != 0) {
+            std::string error = std::string("value discovery query failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+        MYSQL_RES* result = mysql_store_result(conn);
+        if (!result) {
+            std::string error = std::string("value discovery result failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+        json values = json::array();
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(result)) != nullptr) {
+            unsigned long* lengths = mysql_fetch_lengths(result);
+            if (row[0]) values.push_back(std::string(row[0], lengths ? lengths[0] : std::strlen(row[0])));
+        }
+        mysql_free_result(result);
+        mysql_close(conn);
+        return {{"ok", true}, {"database_id", id}, {"values", values}};
+    }
+
+    json database_report_query(const std::string& id, const json& request) {
+        DbConfig db;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto it = dbs_.find(id);
+            if (it == dbs_.end()) return {{"ok", false}, {"error", "Database not found: " + id}};
+            db = it->second;
+        }
+        if (db.type != "mysql") {
+            return {{"ok", false}, {"error", "Report queries are not supported for database type: " + db.type}};
+        }
+        const std::string table = request.value("table", "");
+        const std::string time_column = request.value("time_column", "");
+        const std::string value_column = request.value("value_column", "");
+        const std::string category_column = request.value("category_column", "");
+        const bool has_category = !category_column.empty() && request.contains("category_value");
+        const long long from_ms = request.value("from_ms", 0LL);
+        const long long to_ms = request.value("to_ms", 0LL);
+        int limit = std::max(1, std::min(250000, request.value("limit", 100000)));
+        if (table.empty() || time_column.empty() || value_column.empty() || from_ms <= 0 || to_ms <= from_ms) {
+            return {{"ok", false}, {"error", "table, time_column, value_column, from_ms, and to_ms are required"}};
+        }
+
+        json schema = database_schema(id);
+        if (!schema.value("ok", false)) return schema;
+        bool table_valid = false;
+        std::unordered_set<std::string> fields;
+        for (const auto& candidate : schema["tables"]) {
+            if (candidate.value("name", "") != table) continue;
+            table_valid = true;
+            for (const auto& field : candidate["columns"]) fields.insert(field.value("name", ""));
+        }
+        if (!table_valid || !fields.count(time_column) || !fields.count(value_column) ||
+            (has_category && !fields.count(category_column))) {
+            return {{"ok", false}, {"error", "Selected table or column does not exist"}};
+        }
+
+        MYSQL* conn = mysql_init(nullptr);
+        if (!conn) return {{"ok", false}, {"error", "mysql_init failed"}};
+        unsigned int timeout = static_cast<unsigned int>(std::max(1, db.monitor_timeout_sec));
+        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+        if (!mysql_real_connect(conn, db.mysql_host.c_str(), db.mysql_user.c_str(), db.mysql_password.c_str(),
+                                db.mysql_database.c_str(), db.mysql_port, nullptr, 0)) {
+            std::string error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+        auto quote_identifier = [](const std::string& input) {
+            std::string output = "`";
+            for (char ch : input) output += (ch == '`') ? "``" : std::string(1, ch);
+            return output + "`";
+        };
+        const std::string time_field = quote_identifier(time_column);
+        const std::string select = "SELECT CAST(UNIX_TIMESTAMP(" + time_field + ") * 1000 AS SIGNED) AS ts_ms, " +
+            quote_identifier(value_column) + " AS value FROM " + quote_identifier(table);
+        std::string category_filter;
+        if (has_category) {
+            const std::string raw_value = request["category_value"].is_string()
+                ? request["category_value"].get<std::string>()
+                : request["category_value"].dump();
+            std::string escaped(raw_value.size() * 2 + 1, '\0');
+            unsigned long escaped_len = mysql_real_escape_string(
+                conn, escaped.data(), raw_value.data(), static_cast<unsigned long>(raw_value.size()));
+            escaped.resize(escaped_len);
+            category_filter = " AND " + quote_identifier(category_column) + " = '" + escaped + "'";
+        }
+        const std::string from = "FROM_UNIXTIME(" + std::to_string(from_ms / 1000LL) + ")";
+        const std::string to = "FROM_UNIXTIME(" + std::to_string(to_ms / 1000LL) + ")";
+        std::string range_query = select + " WHERE " + time_field + " >= " + from +
+            " AND " + time_field + " < " + to + category_filter +
+            " ORDER BY " + time_field + " ASC LIMIT " + std::to_string(limit);
+        std::string sql = range_query;
+        if (request.value("include_previous", false)) {
+            const std::string previous_query = select + " WHERE " + time_field + " < " + from +
+                category_filter + " ORDER BY " + time_field + " DESC LIMIT 1";
+            sql = "SELECT ts_ms, value FROM ((" + previous_query + ") UNION ALL (" + range_query +
+                ")) AS report_points ORDER BY ts_ms ASC";
+        }
+        if (mysql_query(conn, sql.c_str()) != 0) {
+            std::string error = std::string("report query failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+        MYSQL_RES* result = mysql_store_result(conn);
+        if (!result) {
+            std::string error = std::string("report query result failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return {{"ok", false}, {"error", error}};
+        }
+        json points = json::array();
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(result)) != nullptr) {
+            unsigned long* lengths = mysql_fetch_lengths(result);
+            if (!row[0]) continue;
+            json value = nullptr;
+            if (row[1]) {
+                const std::string raw(row[1], lengths ? lengths[1] : std::strlen(row[1]));
+                char* end = nullptr;
+                const double numeric = std::strtod(raw.c_str(), &end);
+                value = (end && end != raw.c_str() && *end == '\0') ? json(numeric) : json(raw);
+            }
+            points.push_back({{"ts_ms", std::stoll(row[0])}, {"value", value}});
+        }
+        mysql_free_result(result);
+        mysql_close(conn);
+        return {{"ok", true}, {"database_id", id}, {"points", points}};
+    }
+
     json test_database_config_json(const json& d) {
         if (!d.is_object()) {
             return {{"ok", false}, {"error", "Invalid JSON body; expected database object"}};
@@ -1786,6 +2035,41 @@ int main(int argc, char* argv[]) {
         json result = service.test_database(id);
         res.status = result.value("ok", false) ? 200 : 400;
         res.set_content(result.dump(2), "application/json");
+    });
+    server.Get(R"(/databases/([^/]+)/schema)", [&service](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        json result = service.database_schema(id);
+        res.status = result.value("ok", false) ? 200 : 400;
+        res.set_content(result.dump(2), "application/json");
+    });
+    server.Post(R"(/databases/([^/]+)/distinct)", [&service](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        try {
+            json body = json::parse(req.body.empty() ? "{}" : req.body);
+            json result = service.database_distinct(
+                id,
+                body.value("table", ""),
+                body.value("column", ""),
+                std::max(1, std::min(500, body.value("limit", 200)))
+            );
+            res.status = result.value("ok", false) ? 200 : 400;
+            res.set_content(result.dump(2), "application/json");
+        } catch (const std::exception& ex) {
+            res.status = 400;
+            res.set_content(json{{"ok", false}, {"error", std::string("Invalid request: ") + ex.what()}}.dump(2), "application/json");
+        }
+    });
+    server.Post(R"(/databases/([^/]+)/report-query)", [&service](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        try {
+            json body = json::parse(req.body.empty() ? "{}" : req.body);
+            json result = service.database_report_query(id, body);
+            res.status = result.value("ok", false) ? 200 : 400;
+            res.set_content(result.dump(2), "application/json");
+        } catch (const std::exception& ex) {
+            res.status = 400;
+            res.set_content(json{{"ok", false}, {"error", std::string("Invalid request: ") + ex.what()}}.dump(2), "application/json");
+        }
     });
     server.Post("/databases/test-config", [&service](const httplib::Request& req, httplib::Response& res) {
         json body = json::object();
