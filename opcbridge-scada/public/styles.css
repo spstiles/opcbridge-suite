@@ -387,6 +387,41 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   min-width: max-content;
 }
 
+#reportBuilderColumns .report-column-order {
+  width: 64px;
+  min-width: 64px;
+}
+
+#reportBuilderColumns .report-column-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  background: rgba(255,255,255,.04);
+  cursor: grab;
+  user-select: none;
+}
+
+#reportBuilderColumns .report-column-drag-handle:active {
+  cursor: grabbing;
+}
+
+#reportBuilderColumns .report-column-row.is-dragging {
+  opacity: .45;
+}
+
+#reportBuilderColumns .report-column-row.drag-before {
+  box-shadow: inset 0 3px 0 var(--tab-active-border);
+}
+
+#reportBuilderColumns .report-column-row.drag-after {
+  box-shadow: inset 0 -3px 0 var(--tab-active-border);
+}
+
 #reportBuilderAccessSection th:not(:first-child),
 #reportBuilderAccess td:not(:first-child) {
   text-align: center;

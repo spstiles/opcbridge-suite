@@ -1092,6 +1092,7 @@ const state = {
   reportBuilderDatabases: [],
   reportBuilderSchema: [],
   reportBuilderSchemaRequestSeq: 0,
+  reportBuilderDraggedColumnIndex: -1,
   reportBuilderAccess: [],
 
   // reporter (data logger)
@@ -6888,8 +6889,54 @@ function renderReportBuilderColumns() {
   els.reportBuilderColumns.textContent = '';
   state.reportBuilderColumns.forEach((column, index) => {
     const tr = document.createElement('tr');
+    tr.className = 'report-column-row';
     const order = document.createElement('td');
-    order.textContent = String(index + 1);
+    order.className = 'report-column-order';
+    const dragHandle = document.createElement('span');
+    dragHandle.className = 'report-column-drag-handle';
+    dragHandle.draggable = true;
+    dragHandle.title = `Drag to move column ${index + 1}`;
+    dragHandle.setAttribute('aria-label', `Drag to move column ${index + 1}`);
+    dragHandle.textContent = `⠿ ${index + 1}`;
+    dragHandle.addEventListener('dragstart', (event) => {
+      state.reportBuilderDraggedColumnIndex = index;
+      tr.classList.add('is-dragging');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(index));
+      }
+    });
+    dragHandle.addEventListener('dragend', () => {
+      state.reportBuilderDraggedColumnIndex = -1;
+      els.reportBuilderColumns?.querySelectorAll('.report-column-row').forEach((row) => {
+        row.classList.remove('is-dragging', 'drag-before', 'drag-after');
+      });
+    });
+    order.appendChild(dragHandle);
+    tr.addEventListener('dragover', (event) => {
+      const fromIndex = state.reportBuilderDraggedColumnIndex;
+      if (fromIndex < 0 || fromIndex === index) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      const after = event.clientY >= tr.getBoundingClientRect().top + tr.offsetHeight / 2;
+      tr.classList.toggle('drag-before', !after);
+      tr.classList.toggle('drag-after', after);
+    });
+    tr.addEventListener('dragleave', () => {
+      tr.classList.remove('drag-before', 'drag-after');
+    });
+    tr.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const fromIndex = state.reportBuilderDraggedColumnIndex;
+      if (fromIndex < 0 || fromIndex >= state.reportBuilderColumns.length || fromIndex === index) return;
+      const after = event.clientY >= tr.getBoundingClientRect().top + tr.offsetHeight / 2;
+      let insertIndex = index + (after ? 1 : 0);
+      const [moved] = state.reportBuilderColumns.splice(fromIndex, 1);
+      if (fromIndex < insertIndex) insertIndex -= 1;
+      state.reportBuilderColumns.splice(insertIndex, 0, moved);
+      state.reportBuilderDraggedColumnIndex = -1;
+      renderReportBuilderColumns();
+    });
     const headingCell = document.createElement('td');
     const heading = document.createElement('input');
     heading.value = String(column.heading || column.tag_name || '');
