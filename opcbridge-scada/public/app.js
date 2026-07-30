@@ -1091,6 +1091,7 @@ const state = {
   reportBuilderTags: [],
   reportBuilderDatabases: [],
   reportBuilderSchema: [],
+  reportBuilderSchemaRequestSeq: 0,
   reportBuilderAccess: [],
 
   // reporter (data logger)
@@ -6750,23 +6751,31 @@ function renderReportBuilderSourceUi() {
 
 async function loadReportBuilderDatabaseSchema(selection = {}) {
   const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
+  const requestSeq = ++state.reportBuilderSchemaRequestSeq;
   state.reportBuilderSchema = [];
+  fillSelect(els.reportBuilderTable, []);
+  renderReportBuilderSchemaSelections();
+  if (els.reportBuilderCategoryPicker) els.reportBuilderCategoryPicker.style.display = 'none';
   if (!databaseId) {
-    fillSelect(els.reportBuilderTable, []);
-    renderReportBuilderSchemaSelections();
+    reportBuilderSourceSetStatus('Select a database connection.');
     return;
   }
   reportBuilderSourceSetStatus('Loading tables and columns…');
   try {
     const response = await apiGet(`/api/reports/admin/schema?database=${encodeURIComponent(databaseId)}`);
+    if (requestSeq !== state.reportBuilderSchemaRequestSeq ||
+        databaseId !== String(els.reportBuilderDatabase?.value || '').trim()) {
+      return;
+    }
     state.reportBuilderSchema = Array.isArray(response?.tables) ? response.tables : [];
     fillSelect(els.reportBuilderTable, state.reportBuilderSchema.map((table) => ({
       value: table.name,
       label: `${table.name}${table.type === 'VIEW' ? ' (view)' : ''}`
     })), selection.table || '');
     renderReportBuilderSchemaSelections(selection);
-    reportBuilderSourceSetStatus(`${state.reportBuilderSchema.length} table(s) available`);
+    reportBuilderSourceSetStatus(`${state.reportBuilderSchema.length} table(s) available from ${databaseId}`);
   } catch (err) {
+    if (requestSeq !== state.reportBuilderSchemaRequestSeq) return;
     reportBuilderSourceSetStatus(err.message || err);
   }
 }
