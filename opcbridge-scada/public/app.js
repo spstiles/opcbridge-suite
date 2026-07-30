@@ -268,6 +268,8 @@
   reportBuilderName: document.getElementById('reportBuilderName'),
   reportBuilderDescription: document.getElementById('reportBuilderDescription'),
   reportBuilderPeriod: document.getElementById('reportBuilderPeriod'),
+  reportBuilderIntervalLabel: document.getElementById('reportBuilderIntervalLabel'),
+  reportBuilderInterval: document.getElementById('reportBuilderInterval'),
   reportBuilderGroupByLabel: document.getElementById('reportBuilderGroupByLabel'),
   reportBuilderGroupBy: document.getElementById('reportBuilderGroupBy'),
   reportBuilderTimezone: document.getElementById('reportBuilderTimezone'),
@@ -301,6 +303,10 @@
   reportBuilderTagSelect: document.getElementById('reportBuilderTagSelect'),
   reportBuilderAddTagBtn: document.getElementById('reportBuilderAddTagBtn'),
   reportBuilderColumns: document.getElementById('reportBuilderColumns'),
+  reportBuilderAddSummaryBtn: document.getElementById('reportBuilderAddSummaryBtn'),
+  reportBuilderSummariesWrap: document.getElementById('reportBuilderSummariesWrap'),
+  reportBuilderSummariesHead: document.getElementById('reportBuilderSummariesHead'),
+  reportBuilderSummaries: document.getElementById('reportBuilderSummaries'),
   reportBuilderAccess: document.getElementById('reportBuilderAccess'),
   reportBuilderAccessSection: document.getElementById('reportBuilderAccessSection'),
   reportBuilderSaveBtn: document.getElementById('reportBuilderSaveBtn'),
@@ -1088,6 +1094,7 @@ const state = {
   reportBuilderReports: [],
   reportBuilderOriginalId: '',
   reportBuilderColumns: [],
+  reportBuilderSummaries: [],
   reportBuilderTags: [],
   reportBuilderDatabases: [],
   reportBuilderSchema: [],
@@ -6481,7 +6488,9 @@ function renderPublishedReportPreview(preview) {
   els.publishedReportPreviewHead.textContent = '';
   els.publishedReportPreviewBody.textContent = '';
   const headerRow = document.createElement('tr');
-  const periodHeading = preview.group_by === 'hour' ? 'Hour' : (preview.group_by === 'month' ? 'Month' : 'Date');
+  const periodHeading = ['hour', 'raw'].includes(String(preview.group_by || '')) ||
+    String(preview.group_by || '').startsWith('minute:')
+    ? 'Time' : (preview.group_by === 'month' ? 'Month' : 'Date');
   [periodHeading, ...(preview.columns || []).map((column) => column.heading)].forEach((heading) => {
     const th = document.createElement('th');
     th.textContent = String(heading || '');
@@ -6502,6 +6511,7 @@ function renderPublishedReportPreview(preview) {
     });
     els.publishedReportPreviewBody.appendChild(tr);
   });
+  renderReportPreviewSummaryRows(els.publishedReportPreviewBody, preview);
   els.publishedReportPreviewWrap.style.display = '';
 }
 
@@ -6514,9 +6524,11 @@ async function previewPublishedReport() {
     const preview = await apiPostJson('/api/reports/preview', { id: report.id, ...range }, { timeoutMs: 120000 });
     renderPublishedReportPreview(preview);
     if (els.publishedReportsStatus) {
-      els.publishedReportsStatus.textContent = report.published === false
-        ? 'Draft preview — publish this report to enable downloads.'
-        : 'Report ready.';
+      els.publishedReportsStatus.textContent = preview.truncated
+        ? `Report preview reached the ${Number(preview.row_limit || 250000).toLocaleString()}-row limit; narrow the date range to inspect all samples.`
+        : (report.published === false
+            ? 'Draft preview — publish this report to enable downloads.'
+            : 'Report ready.');
     }
   } catch (err) {
     if (els.publishedReportPreviewWrap) els.publishedReportPreviewWrap.style.display = 'none';
@@ -6873,6 +6885,7 @@ function reportBuilderCurrentDefinition() {
     description: String(els.reportBuilderDescription?.value || '').trim(),
     timezone: String(els.reportBuilderTimezone?.value || 'UTC').trim(),
     period: String(els.reportBuilderPeriod?.value || 'month'),
+    interval_minutes: Math.trunc(Number(els.reportBuilderInterval?.value || 60) || 60),
     group_by: String(els.reportBuilderGroupBy?.value || 'day'),
     data_source: reportBuilderDataSourceDefinition(),
     access: state.reportBuilderAccess
@@ -6880,8 +6893,80 @@ function reportBuilderCurrentDefinition() {
       .map((grant) => ({ ...grant })),
     published: Boolean(els.reportBuilderPublished?.checked),
     formats,
-    columns: state.reportBuilderColumns.map((column) => ({ ...column }))
+    columns: state.reportBuilderColumns.map((column) => ({ ...column })),
+    summaries: state.reportBuilderSummaries.map((summary) => ({
+      label: String(summary.label || '').trim(),
+      calculations: state.reportBuilderColumns.map((_, index) =>
+        String(summary.calculations?.[index] || 'none'))
+    }))
   };
+}
+
+function reorderReportBuilderSummaryColumns(fromIndex, toIndex) {
+  state.reportBuilderSummaries.forEach((summary) => {
+    const calculations = Array.isArray(summary.calculations) ? summary.calculations : [];
+    const [moved] = calculations.splice(fromIndex, 1);
+    calculations.splice(toIndex, 0, moved || 'none');
+    summary.calculations = calculations;
+  });
+}
+
+function renderReportBuilderSummaries() {
+  if (!els.reportBuilderSummaries || !els.reportBuilderSummariesHead || !els.reportBuilderSummariesWrap) return;
+  els.reportBuilderSummariesHead.textContent = '';
+  els.reportBuilderSummaries.textContent = '';
+  els.reportBuilderSummariesWrap.style.display = state.reportBuilderSummaries.length ? '' : 'none';
+  if (!state.reportBuilderSummaries.length) return;
+  const header = document.createElement('tr');
+  ['Label', ...state.reportBuilderColumns.map((column) => String(column.heading || column.tag_name || column.field || 'Column')), 'Actions']
+    .forEach((text) => {
+      const th = document.createElement('th');
+      th.textContent = text;
+      header.appendChild(th);
+    });
+  els.reportBuilderSummariesHead.appendChild(header);
+  const choices = [
+    ['none', 'Blank'], ['sum', 'Total'], ['avg', 'Average'], ['min', 'Minimum'],
+    ['max', 'Maximum'], ['first', 'First'], ['last', 'Last'],
+    ['count', 'Sample count'], ['missing', 'Missing count']
+  ];
+  state.reportBuilderSummaries.forEach((summary, summaryIndex) => {
+    if (!Array.isArray(summary.calculations)) summary.calculations = [];
+    const tr = document.createElement('tr');
+    const labelCell = document.createElement('td');
+    const label = document.createElement('input');
+    label.value = String(summary.label || '');
+    label.placeholder = 'Summary';
+    label.addEventListener('input', () => { summary.label = label.value; });
+    labelCell.appendChild(label);
+    tr.appendChild(labelCell);
+    state.reportBuilderColumns.forEach((_, columnIndex) => {
+      const td = document.createElement('td');
+      const select = document.createElement('select');
+      choices.forEach(([value, text]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      });
+      select.value = String(summary.calculations[columnIndex] || 'none');
+      select.addEventListener('change', () => { summary.calculations[columnIndex] = select.value; });
+      td.appendChild(select);
+      tr.appendChild(td);
+    });
+    const actions = document.createElement('td');
+    const remove = document.createElement('button');
+    remove.className = 'btn danger';
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      state.reportBuilderSummaries.splice(summaryIndex, 1);
+      renderReportBuilderSummaries();
+    });
+    actions.appendChild(remove);
+    tr.appendChild(actions);
+    els.reportBuilderSummaries.appendChild(tr);
+  });
 }
 
 function renderReportBuilderColumns() {
@@ -6934,6 +7019,7 @@ function renderReportBuilderColumns() {
       const [moved] = state.reportBuilderColumns.splice(fromIndex, 1);
       if (fromIndex < insertIndex) insertIndex -= 1;
       state.reportBuilderColumns.splice(insertIndex, 0, moved);
+      reorderReportBuilderSummaryColumns(fromIndex, insertIndex);
       state.reportBuilderDraggedColumnIndex = -1;
       renderReportBuilderColumns();
     });
@@ -7041,6 +7127,7 @@ function renderReportBuilderColumns() {
     up.addEventListener('click', () => {
       [state.reportBuilderColumns[index - 1], state.reportBuilderColumns[index]] =
         [state.reportBuilderColumns[index], state.reportBuilderColumns[index - 1]];
+      reorderReportBuilderSummaryColumns(index, index - 1);
       renderReportBuilderColumns();
     });
     const down = document.createElement('button');
@@ -7051,6 +7138,7 @@ function renderReportBuilderColumns() {
     down.addEventListener('click', () => {
       [state.reportBuilderColumns[index], state.reportBuilderColumns[index + 1]] =
         [state.reportBuilderColumns[index + 1], state.reportBuilderColumns[index]];
+      reorderReportBuilderSummaryColumns(index, index + 1);
       renderReportBuilderColumns();
     });
     const remove = document.createElement('button');
@@ -7059,6 +7147,7 @@ function renderReportBuilderColumns() {
     remove.textContent = 'Remove';
     remove.addEventListener('click', () => {
       state.reportBuilderColumns.splice(index, 1);
+      state.reportBuilderSummaries.forEach((summary) => summary.calculations?.splice(index, 1));
       renderReportBuilderColumns();
     });
     const actionButtons = document.createElement('div');
@@ -7068,6 +7157,7 @@ function renderReportBuilderColumns() {
     tr.append(order, headingCell, connection, tag, calculationCell, multiplierCell, precisionCell, decreaseCell, actions);
     els.reportBuilderColumns.appendChild(tr);
   });
+  renderReportBuilderSummaries();
   renderReportBuilderSourceUi();
 }
 
@@ -7078,6 +7168,11 @@ function loadReportBuilderDefinition(report) {
   };
   state.reportBuilderOriginalId = String(value.id || '');
   state.reportBuilderColumns = Array.isArray(value.columns) ? value.columns.map((column) => ({ ...column })) : [];
+  state.reportBuilderSummaries = Array.isArray(value.summaries)
+    ? value.summaries.map((summary) => ({
+        label: String(summary?.label || ''),
+        calculations: Array.isArray(summary?.calculations) ? [...summary.calculations] : []
+      })) : [];
   state.reportBuilderAccess = Array.isArray(value.access) ? value.access.map((grant) => ({ ...grant })) : [];
   if (!report) {
     const ownGroups = (Array.isArray(state.opcbridgeAuthStatus?.user?.groups)
@@ -7094,6 +7189,10 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderName) els.reportBuilderName.value = String(value.name || '');
   if (els.reportBuilderDescription) els.reportBuilderDescription.value = String(value.description || '');
   if (els.reportBuilderPeriod) els.reportBuilderPeriod.value = String(value.period || 'month');
+  if (els.reportBuilderInterval) els.reportBuilderInterval.value = String(value.interval_minutes || 60);
+  if (els.reportBuilderIntervalLabel) {
+    els.reportBuilderIntervalLabel.style.display = String(value.period || 'month') === 'daily' ? '' : 'none';
+  }
   if (els.reportBuilderGroupBy) els.reportBuilderGroupBy.value = String(value.group_by || 'day');
   if (els.reportBuilderGroupByLabel) {
     els.reportBuilderGroupByLabel.style.display = String(value.period || 'month') === 'custom' ? '' : 'none';
@@ -7183,7 +7282,9 @@ function renderReportBuilderPreview(preview) {
   els.reportBuilderPreviewHead.textContent = '';
   els.reportBuilderPreviewBody.textContent = '';
   const headerRow = document.createElement('tr');
-  const periodHeading = preview.group_by === 'hour' ? 'Hour' : (preview.group_by === 'month' ? 'Month' : 'Date');
+  const periodHeading = ['hour', 'raw'].includes(String(preview.group_by || '')) ||
+    String(preview.group_by || '').startsWith('minute:')
+    ? 'Time' : (preview.group_by === 'month' ? 'Month' : 'Date');
   [periodHeading, ...(preview.columns || []).map((column) => column.heading)].forEach((heading) => {
     const th = document.createElement('th');
     th.textContent = String(heading || '');
@@ -7205,11 +7306,37 @@ function renderReportBuilderPreview(preview) {
     });
     els.reportBuilderPreviewBody.appendChild(tr);
   });
+  renderReportPreviewSummaryRows(els.reportBuilderPreviewBody, preview);
   els.reportBuilderPreviewWrap.style.display = '';
+}
+
+function renderReportPreviewSummaryRows(body, preview) {
+  (preview.summary_rows || []).forEach((row) => {
+    const tr = document.createElement('tr');
+    tr.className = 'report-summary-row';
+    [row.label, ...(row.values || [])].forEach((value, index) => {
+      const td = document.createElement('td');
+      if (value === null || value === undefined) td.textContent = '';
+      else if (index > 0 && typeof value === 'number') td.textContent = value.toLocaleString(undefined, {
+        minimumFractionDigits: preview.columns?.[index - 1]?.precision ?? 0,
+        maximumFractionDigits: preview.columns?.[index - 1]?.precision ?? 2
+      });
+      else td.textContent = String(value);
+      tr.appendChild(td);
+    });
+    body.appendChild(tr);
+  });
 }
 
 function wireReportBuilderUi() {
   populateReportBuilderTimezones();
+  if (els.reportBuilderAddSummaryBtn) els.reportBuilderAddSummaryBtn.addEventListener('click', () => {
+    state.reportBuilderSummaries.push({
+      label: 'Summary',
+      calculations: state.reportBuilderColumns.map(() => 'none')
+    });
+    renderReportBuilderSummaries();
+  });
   if (els.reportBuilderName) {
     els.reportBuilderName.addEventListener('input', () => {
       if (els.reportBuilderId) {
@@ -7218,6 +7345,9 @@ function wireReportBuilderUi() {
     });
   }
   if (els.reportBuilderPeriod) els.reportBuilderPeriod.addEventListener('change', () => {
+    if (els.reportBuilderIntervalLabel) {
+      els.reportBuilderIntervalLabel.style.display = els.reportBuilderPeriod.value === 'daily' ? '' : 'none';
+    }
     if (els.reportBuilderGroupByLabel) {
       els.reportBuilderGroupByLabel.style.display = els.reportBuilderPeriod.value === 'custom' ? '' : 'none';
     }
@@ -7338,7 +7468,9 @@ function wireReportBuilderUi() {
         ...range
       }, { timeoutMs: 120000 });
       renderReportBuilderPreview(preview);
-      reportBuilderSetStatus('Preview ready.');
+      reportBuilderSetStatus(preview.truncated
+        ? `Preview reached the ${Number(preview.row_limit || 250000).toLocaleString()}-row limit; narrow the date range to inspect all samples.`
+        : 'Preview ready.');
     } catch (err) {
       reportBuilderSetStatus(err.message || err);
     }

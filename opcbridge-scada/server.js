@@ -463,6 +463,7 @@ function publicReport(report) {
     description: String(report.description || '').trim(),
     published: report.published === true,
     period: String(report.period || 'month').trim(),
+    interval_minutes: normalizeIntRange(report.interval_minutes, 60, 1, 60),
     group_by: String(report.group_by || 'day').trim(),
     timezone: String(report.timezone || 'UTC').trim(),
     published: report.published === true,
@@ -564,6 +565,17 @@ function normalizeReportDefinition(value) {
     };
   });
   if (!columns.length) throw new Error('Add at least one report column.');
+  const summaryCalculations = new Set(['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing']);
+  const summaries = (Array.isArray(source.summaries) ? source.summaries : []).slice(0, 20).map((summary, index) => {
+    const item = summary && typeof summary === 'object' ? summary : {};
+    const label = String(item.label || '').trim().slice(0, 191);
+    if (!label) throw new Error(`Summary row ${index + 1} requires a label.`);
+    const calculations = columns.map((_, columnIndex) => {
+      const calculation = String(item.calculations?.[columnIndex] || 'none').trim().toLowerCase();
+      return summaryCalculations.has(calculation) ? calculation : 'none';
+    });
+    return { label, calculations };
+  });
   const accessByGroup = new Map();
   (Array.isArray(source.access) ? source.access : []).forEach((entry) => {
     const groupId = String(entry?.group_id || '').trim().toLowerCase();
@@ -584,11 +596,14 @@ function normalizeReportDefinition(value) {
     published: normalizeBool(source.published, false),
     timezone,
     period: ['daily', 'month', 'yearly', 'custom'].includes(String(source.period || 'month')) ? String(source.period || 'month') : 'month',
-    group_by: ['hour', 'day', 'month'].includes(String(source.group_by || 'day')) ? String(source.group_by || 'day') : 'day',
+    interval_minutes: [1, 5, 10, 15, 30, 60].includes(Math.trunc(Number(source.interval_minutes)))
+      ? Math.trunc(Number(source.interval_minutes)) : 60,
+    group_by: ['hour', 'day', 'month', 'raw'].includes(String(source.group_by || 'day')) ? String(source.group_by || 'day') : 'day',
     formats,
     data_source: dataSource,
     access: Array.from(accessByGroup.values()),
-    columns
+    columns,
+    summaries
   };
 }
 

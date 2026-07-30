@@ -66,6 +66,7 @@ function public_report(array $report): array
         'name' => (string)($report['name'] ?? $report['id'] ?? ''),
         'description' => (string)($report['description'] ?? ''),
         'period' => (string)($report['period'] ?? 'month'),
+        'interval_minutes' => (int)($report['interval_minutes'] ?? 60),
         'group_by' => (string)($report['group_by'] ?? 'day'),
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
         'formats' => array_values(array_intersect(
@@ -84,6 +85,11 @@ function validate_report(array $report): array
     if (!in_array(($report['period'] ?? 'month'), ['daily', 'month', 'yearly', 'custom'], true)) {
         fail("Report '{$id}' uses an unsupported period");
     }
+    $intervalMinutes = (int)($report['interval_minutes'] ?? 60);
+    if (!in_array($intervalMinutes, [1, 5, 10, 15, 30, 60], true)) {
+        fail("Report '{$id}' uses an unsupported daily row interval");
+    }
+    $report['interval_minutes'] = $intervalMinutes;
     $timezone = (string)($report['timezone'] ?? 'UTC');
     try {
         new DateTimeZone($timezone);
@@ -131,6 +137,23 @@ function validate_report(array $report): array
     }
     unset($column);
     $report['columns'] = $columns;
+    $summaryCalculations = ['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing'];
+    $summaries = is_array($report['summaries'] ?? null) ? array_slice($report['summaries'], 0, 20) : [];
+    foreach ($summaries as $index => &$summary) {
+        if (!is_array($summary) || trim((string)($summary['label'] ?? '')) === '') {
+            fail("Report '{$id}' summary row " . ($index + 1) . " requires a label");
+        }
+        $calculations = is_array($summary['calculations'] ?? null) ? $summary['calculations'] : [];
+        $summary['label'] = trim((string)$summary['label']);
+        $summary['calculations'] = [];
+        foreach ($columns as $columnIndex => $_column) {
+            $calculation = strtolower(trim((string)($calculations[$columnIndex] ?? 'none')));
+            $summary['calculations'][] = in_array($calculation, $summaryCalculations, true)
+                ? $calculation : 'none';
+        }
+    }
+    unset($summary);
+    $report['summaries'] = $summaries;
     return $report;
 }
 
@@ -143,7 +166,8 @@ function report_range(array $report, array $options): array
     if ($period === 'daily') {
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) fail('--period-value must use YYYY-MM-DD', 2);
         $start = new DateTimeImmutable("{$value} 00:00:00", $tz);
-        return [$start, $start->modify('+1 day'), 'hour', $value];
+        $intervalMinutes = (int)($report['interval_minutes'] ?? 60);
+        return [$start, $start->modify('+1 day'), "minute:{$intervalMinutes}", $value];
     }
     if ($period === 'yearly') {
         if (!preg_match('/^\d{4}$/', $value)) fail('--period-value must use YYYY', 2);
@@ -159,7 +183,7 @@ function report_range(array $report, array $options): array
         $start = new DateTimeImmutable("{$startValue} 00:00:00", $tz);
         $endDay = new DateTimeImmutable("{$endValue} 00:00:00", $tz);
         if ($endDay < $start) fail('--end-date must not be earlier than --start-date', 2);
-        $group = in_array(($report['group_by'] ?? 'day'), ['hour', 'day', 'month'], true)
+        $group = in_array(($report['group_by'] ?? 'day'), ['hour', 'day', 'month', 'raw'], true)
             ? (string)$report['group_by'] : 'day';
         return [$start, $endDay->modify('+1 day'), $group, "{$startValue}-to-{$endValue}"];
     }
@@ -174,6 +198,11 @@ function report_range(array $report, array $options): array
 function bucket_key(int $timestampMs, DateTimeZone $timezone, string $group): string
 {
     $date = (new DateTimeImmutable('@' . intdiv($timestampMs, 1000)))->setTimezone($timezone);
+    if (str_starts_with($group, 'minute:')) {
+        $interval = max(1, (int)substr($group, 7));
+        $minute = intdiv((int)$date->format('i'), $interval) * $interval;
+        return $date->format('Y-m-d H:') . str_pad((string)$minute, 2, '0', STR_PAD_LEFT);
+    }
     return match ($group) {
         'hour' => $date->format('Y-m-d H:00'),
         'month' => $date->format('Y-m'),
@@ -183,6 +212,9 @@ function bucket_key(int $timestampMs, DateTimeZone $timezone, string $group): st
 
 function bucket_step(string $group): string
 {
+    if (str_starts_with($group, 'minute:')) {
+        return '+' . max(1, (int)substr($group, 7)) . ' minutes';
+    }
     return match ($group) {
         'hour' => '+1 hour',
         'month' => '+1 month',
@@ -192,6 +224,9 @@ function bucket_step(string $group): string
 
 function bucket_label(DateTimeImmutable $date, string $group): string
 {
+    if (str_starts_with($group, 'minute:')) {
+        return $date->format('Y-m-d H:i');
+    }
     return match ($group) {
         'hour' => $date->format('Y-m-d H:00'),
         'month' => $date->format('Y-m'),
@@ -387,15 +422,112 @@ function database_daily_values(
     return $daily;
 }
 
+function historian_raw_values(
+    string $baseUrl,
+    array $column,
+    DateTimeImmutable $start,
+    DateTimeImmutable $end
+): array {
+    $limit = 100000;
+    $query = http_build_query([
+        'connection_id' => (string)$column['connection_id'],
+        'tag_name' => (string)$column['tag_name'],
+        'from_ms' => $start->getTimestamp() * 1000,
+        'to_ms' => ($end->getTimestamp() * 1000) - 1,
+        'limit' => $limit,
+    ], '', '&', PHP_QUERY_RFC3986);
+    $json = http_json(rtrim($baseUrl, '/') . '/query?' . $query);
+    $values = [];
+    $count = 0;
+    foreach (($json['points'] ?? []) as $point) {
+        if (!is_array($point) || !isset($point['ts_ms']) || !array_key_exists('value', $point)) continue;
+        $values[(int)$point['ts_ms']] = $point['value'];
+        $count++;
+    }
+    return ['values' => $values, 'truncated' => $count >= $limit];
+}
+
+function database_raw_values(
+    string $loggerUrl,
+    array $column,
+    DateTimeImmutable $start,
+    DateTimeImmutable $end
+): array {
+    $limit = 100000;
+    $body = [
+        'table' => (string)$column['table'],
+        'time_column' => (string)$column['time_column'],
+        'value_column' => (string)$column['field'],
+        'from_ms' => $start->getTimestamp() * 1000,
+        'to_ms' => $end->getTimestamp() * 1000,
+        'limit' => $limit,
+        'include_previous' => false,
+    ];
+    if (($column['layout'] ?? 'wide') === 'category') {
+        $body['category_column'] = (string)($column['category_column'] ?? '');
+        $body['category_value'] = $column['category_value'] ?? '';
+    }
+    $id = rawurlencode((string)$column['database_id']);
+    $json = http_post_json(rtrim($loggerUrl, '/') . "/databases/{$id}/report-query", $body);
+    $values = [];
+    $count = 0;
+    foreach (($json['points'] ?? []) as $point) {
+        if (!is_array($point) || !isset($point['ts_ms'])) continue;
+        $values[(int)$point['ts_ms']] = $point['value'] ?? null;
+        $count++;
+    }
+    return ['values' => $values, 'truncated' => $count >= $limit];
+}
+
+function raw_timestamp_label(int $timestampMs, DateTimeZone $timezone): string
+{
+    $seconds = intdiv($timestampMs, 1000);
+    $milliseconds = (($timestampMs % 1000) + 1000) % 1000;
+    $date = (new DateTimeImmutable('@' . $seconds))->setTimezone($timezone);
+    return $date->format('Y-m-d H:i:s') . '.' . str_pad((string)$milliseconds, 3, '0', STR_PAD_LEFT);
+}
+
 function build_rows(
     array $report,
     string $historianUrl,
     string $loggerUrl,
     DateTimeImmutable $start,
     DateTimeImmutable $end,
-    string $group
+    string $group,
+    int $rawRowLimit = 250000
 ): array {
     $timezone = new DateTimeZone((string)($report['timezone'] ?? 'UTC'));
+    if ($group === 'raw') {
+        $series = [];
+        $timestamps = [];
+        $truncated = false;
+        foreach ($report['columns'] as $column) {
+            $raw = ($column['source'] ?? 'historian') === 'database'
+                ? database_raw_values($loggerUrl, $column, $start, $end)
+                : historian_raw_values($historianUrl, $column, $start, $end);
+            $series[] = $raw['values'];
+            $truncated = $truncated || $raw['truncated'];
+            foreach (array_keys($raw['values']) as $timestampMs) $timestamps[(int)$timestampMs] = true;
+        }
+        $timestampList = array_keys($timestamps);
+        sort($timestampList, SORT_NUMERIC);
+        $rowLimit = max(1, $rawRowLimit);
+        if (count($timestampList) > $rowLimit) {
+            $timestampList = array_slice($timestampList, 0, $rowLimit);
+            $truncated = true;
+        }
+        $rows = [];
+        foreach ($timestampList as $timestampMs) {
+            $values = [];
+            foreach ($series as $index => $data) {
+                $value = array_key_exists($timestampMs, $data) ? $data[$timestampMs] : null;
+                $multiplier = (float)($report['columns'][$index]['multiplier'] ?? 1);
+                $values[] = ($value !== null && is_numeric($value)) ? ((float)$value * $multiplier) : $value;
+            }
+            $rows[] = ['date' => raw_timestamp_label((int)$timestampMs, $timezone), 'values' => $values];
+        }
+        return [$rows, $truncated];
+    }
     $series = [];
     foreach ($report['columns'] as $column) {
         $series[] = ($column['source'] ?? 'historian') === 'database'
@@ -413,7 +545,7 @@ function build_rows(
         }
         $rows[] = ['date' => $dateKey, 'values' => $values];
     }
-    return $rows;
+    return [$rows, false];
 }
 
 function safe_filename(string $value): string
@@ -422,18 +554,81 @@ function safe_filename(string $value): string
     return trim((string)$safe, '-_.') ?: 'report';
 }
 
-function write_csv(string $output, array $report, array $rows): void
+function calculate_summary_rows(array $report, array $rows): array
+{
+    $statistics = [];
+    foreach ($report['columns'] as $columnIndex => $_column) {
+        $stats = [
+            'count' => 0, 'missing' => 0, 'first' => null, 'last' => null,
+            'numeric_count' => 0, 'sum' => 0.0, 'min' => null, 'max' => null,
+        ];
+        foreach ($rows as $row) {
+            $value = $row['values'][$columnIndex] ?? null;
+            if ($value === null) {
+                $stats['missing']++;
+                continue;
+            }
+            if ($stats['count'] === 0) $stats['first'] = $value;
+            $stats['last'] = $value;
+            $stats['count']++;
+            if (is_numeric($value)) {
+                $number = (float)$value;
+                $stats['numeric_count']++;
+                $stats['sum'] += $number;
+                $stats['min'] = $stats['min'] === null ? $number : min($stats['min'], $number);
+                $stats['max'] = $stats['max'] === null ? $number : max($stats['max'], $number);
+            }
+        }
+        $statistics[] = $stats;
+    }
+    $summaryRows = [];
+    foreach (($report['summaries'] ?? []) as $summary) {
+        $values = [];
+        foreach ($report['columns'] as $columnIndex => $_column) {
+            $calculation = (string)($summary['calculations'][$columnIndex] ?? 'none');
+            $stats = $statistics[$columnIndex];
+            $value = null;
+            if ($calculation === 'count') {
+                $value = $stats['count'];
+            } elseif ($calculation === 'missing') {
+                $value = $stats['missing'];
+            } elseif ($calculation === 'first' && $stats['count']) {
+                $value = $stats['first'];
+            } elseif ($calculation === 'last' && $stats['count']) {
+                $value = $stats['last'];
+            } elseif ($calculation === 'sum' && $stats['numeric_count']) {
+                $value = $stats['sum'];
+            } elseif ($calculation === 'avg' && $stats['numeric_count']) {
+                $value = $stats['sum'] / $stats['numeric_count'];
+            } elseif ($calculation === 'min' && $stats['numeric_count']) {
+                $value = $stats['min'];
+            } elseif ($calculation === 'max' && $stats['numeric_count']) {
+                $value = $stats['max'];
+            }
+            $values[] = $value;
+        }
+        $summaryRows[] = ['label' => (string)$summary['label'], 'values' => $values];
+    }
+    return $summaryRows;
+}
+
+function write_csv(string $output, array $report, array $rows, array $summaryRows): void
 {
     $handle = fopen($output, 'wb');
     if ($handle === false) {
         fail("Unable to create output: {$output}");
     }
+    $timeHeading = ($report['group_by'] ?? 'day') === 'raw'
+        ? 'Timestamp' : (($report['period'] ?? 'month') === 'daily' ? 'Time' : 'Date');
     fputcsv($handle, array_merge(
-        ['Date'],
+        [$timeHeading],
         array_map(fn(array $column): string => (string)($column['heading'] ?? $column['tag_name']), $report['columns'])
     ));
     foreach ($rows as $row) {
         fputcsv($handle, array_merge([$row['date']], $row['values']));
+    }
+    foreach ($summaryRows as $row) {
+        fputcsv($handle, array_merge([$row['label']], $row['values']));
     }
     fclose($handle);
 }
@@ -443,6 +638,7 @@ function write_xlsx(
     array $report,
     string $month,
     array $rows,
+    array $summaryRows,
     string $autoload
 ): void {
     if (!is_file($autoload)) {
@@ -462,7 +658,9 @@ function write_xlsx(
     $sheet->setCellValue('A3', 'Generated');
     $sheet->setCellValue('B3', (new DateTimeImmutable('now'))->format(DateTimeInterface::ATOM));
 
-    $headers = ['Date'];
+    $timeHeading = ($report['group_by'] ?? 'day') === 'raw'
+        ? 'Timestamp' : (($report['period'] ?? 'month') === 'daily' ? 'Time' : 'Date');
+    $headers = [$timeHeading];
     foreach ($report['columns'] as $column) {
         $headers[] = (string)($column['heading'] ?? $column['tag_name']);
     }
@@ -493,6 +691,26 @@ function write_xlsx(
         }
         $rowNumber++;
     }
+    $dataEndRow = $rowNumber - 1;
+    $summaryStartRow = $rowNumber;
+    foreach ($summaryRows as $row) {
+        $sheet->setCellValue("A{$rowNumber}", (string)$row['label']);
+        foreach ($row['values'] as $index => $value) {
+            if ($value === null) continue;
+            $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($index + 2) . $rowNumber;
+            $sheet->setCellValue($cell, $value);
+            $precision = max(0, min(10, (int)($report['columns'][$index]['precision'] ?? 2)));
+            $format = $precision > 0 ? '#,##0.' . str_repeat('0', $precision) : '#,##0';
+            $sheet->getStyle($cell)->getNumberFormat()->setFormatCode($format);
+        }
+        $rowNumber++;
+    }
+    if ($summaryRows) {
+        $sheet->getStyle("A{$summaryStartRow}:{$lastColumn}" . ($rowNumber - 1))->getFont()->setBold(true);
+        $sheet->getStyle("A{$summaryStartRow}:{$lastColumn}" . ($rowNumber - 1))->getFill()
+            ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+            ->getStartColor()->setARGB('FFF2F2F2');
+    }
 
     $sheet->getStyle("A1:{$lastColumn}1")->getFont()->setBold(true)->setSize(16);
     $sheet->getStyle("A5:{$lastColumn}5")->getFont()->setBold(true);
@@ -500,7 +718,7 @@ function write_xlsx(
         ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
         ->getStartColor()->setARGB('FFD9EAF7');
     $sheet->freezePane('A6');
-    $sheet->setAutoFilter("A5:{$lastColumn}" . max(5, $rowNumber - 1));
+    $sheet->setAutoFilter("A5:{$lastColumn}" . max(5, $dataEndRow));
     $sheet->getColumnDimension('A')->setWidth(14);
     for ($columnIndex = 2; $columnIndex <= count($report['columns']) + 1; $columnIndex++) {
         $sheet->getColumnDimension(
@@ -554,7 +772,9 @@ if (!($report['published'] ?? false) && !isset($options['allow-unpublished'])) {
     fail("Report is not published: {$id}");
 }
 [$start, $end, $group, $periodLabel] = report_range($report, $options);
-$rows = build_rows($report, $historianUrl, $loggerUrl, $start, $end, $group);
+$rawRowLimit = $command === 'preview' ? 5000 : 250000;
+[$rows, $truncated] = build_rows($report, $historianUrl, $loggerUrl, $start, $end, $group, $rawRowLimit);
+$summaryRows = calculate_summary_rows($report, $rows);
 
 if ($command === 'preview') {
     echo json_encode([
@@ -562,9 +782,12 @@ if ($command === 'preview') {
         'id' => $id,
         'name' => (string)($report['name'] ?? $id),
         'period' => (string)($report['period'] ?? 'month'),
+        'interval_minutes' => (int)($report['interval_minutes'] ?? 60),
         'period_label' => $periodLabel,
         'group_by' => $group,
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
+        'truncated' => $truncated,
+        'row_limit' => $group === 'raw' ? $rawRowLimit : null,
         'columns' => array_map(
             fn(array $column): array => [
                 'heading' => (string)($column['heading'] ?? $column['tag_name'] ?? $column['field'] ?? ''),
@@ -576,6 +799,7 @@ if ($command === 'preview') {
             $report['columns']
         ),
         'rows' => $rows,
+        'summary_rows' => $summaryRows,
     ], JSON_UNESCAPED_SLASHES) . "\n";
     exit(0);
 }
@@ -596,9 +820,9 @@ if (!is_dir($outputDir) && !mkdir($outputDir, 0750, true) && !is_dir($outputDir)
     fail("Unable to create output directory: {$outputDir}");
 }
 if ($format === 'csv') {
-    write_csv($output, $report, $rows);
+    write_csv($output, $report, $rows, $summaryRows);
 } else {
-    write_xlsx($output, $report, $periodLabel, $rows, $autoload);
+    write_xlsx($output, $report, $periodLabel, $rows, $summaryRows, $autoload);
 }
 
 echo json_encode([
@@ -610,4 +834,5 @@ echo json_encode([
     'output' => $output,
     'filename' => safe_filename((string)($report['name'] ?? $id)) . "-{$periodLabel}.{$format}",
     'rows' => count($rows),
+    'truncated' => $truncated,
 ], JSON_UNESCAPED_SLASHES) . "\n";

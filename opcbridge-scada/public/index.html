@@ -1175,10 +1175,20 @@
 		          <label style="grid-column: 1 / -1;"><span>Description</span><textarea id="reportBuilderDescription" rows="2"></textarea></label>
 		          <label><span>Report type</span>
 		            <select id="reportBuilderPeriod">
-		              <option value="daily">Daily (hourly rows)</option>
+		              <option value="daily">Daily (configurable row interval)</option>
 		              <option value="month" selected>Monthly (daily rows)</option>
 		              <option value="yearly">Yearly (monthly rows)</option>
 		              <option value="custom">Custom date range</option>
+		            </select>
+		          </label>
+		          <label id="reportBuilderIntervalLabel" style="display:none;"><span>Row interval</span>
+		            <select id="reportBuilderInterval">
+		              <option value="1">1 minute</option>
+		              <option value="5">5 minutes</option>
+		              <option value="10">10 minutes</option>
+		              <option value="15">15 minutes</option>
+		              <option value="30">30 minutes</option>
+		              <option value="60" selected>60 minutes</option>
 		            </select>
 		          </label>
 		          <label id="reportBuilderGroupByLabel" style="display:none;"><span>Group custom-range rows by</span>
@@ -1186,6 +1196,7 @@
 		              <option value="hour">Hour</option>
 		              <option value="day" selected>Day</option>
 		              <option value="month">Month</option>
+		              <option value="raw">Raw samples (no aggregation)</option>
 		            </select>
 		          </label>
 		          <label><span>Timezone</span><select id="reportBuilderTimezone"></select></label>
@@ -1246,6 +1257,17 @@
 		          <table class="table report-columns-table">
 		            <thead><tr><th>Order</th><th>Heading</th><th>Source</th><th>Field</th><th>Calculation</th><th>Multiplier</th><th>Decimals</th><th>Counter decrease</th><th>Actions</th></tr></thead>
 		            <tbody id="reportBuilderColumns"></tbody>
+		          </table>
+		        </div>
+		        <h4 style="margin-top: 18px;">Report Summary</h4>
+		        <div class="hint">Add optional footer rows and choose what each report column should show.</div>
+		        <div class="row-actions" style="margin-top: 10px;">
+		          <button class="btn" id="reportBuilderAddSummaryBtn" type="button">Add Summary Row</button>
+		        </div>
+		        <div class="table-wrap" id="reportBuilderSummariesWrap" style="display:none; margin-top: 10px;">
+		          <table class="table">
+		            <thead id="reportBuilderSummariesHead"></thead>
+		            <tbody id="reportBuilderSummaries"></tbody>
 		          </table>
 		        </div>
 		        <div id="reportBuilderAccessSection">

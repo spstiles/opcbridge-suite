@@ -347,6 +347,12 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   letter-spacing: normal;
 }
 
+.report-summary-row td {
+  font-weight: 700;
+  border-top: 2px solid var(--border);
+  background: rgba(255,255,255,.035);
+}
+
 .report-columns-table th:last-child,
 #reportBuilderColumns .report-column-actions {
   width: 280px;

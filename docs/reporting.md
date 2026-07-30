@@ -71,6 +71,25 @@ column. Logger executes bounded, schema-validated time-range queries and the
 report generator combines those results with historian values in the same
 calendar-day rows.
 
+Daily reports support `interval_minutes` values of `1`, `5`, `10`, `15`, `30`,
+or `60` (the default). The selected interval creates timezone-aware rows across
+the chosen day, and each database aggregation is evaluated within those
+buckets. The source database or historian must already contain samples at the
+required frequency; report intervals do not increase collection frequency.
+
+Custom reports can use `group_by: "raw"` to show stored samples without
+aggregation. Raw output creates a row for every unique millisecond timestamp
+returned by the selected columns and leaves a cell blank when that column has
+no sample at that timestamp. Previews are limited to 5,000 rows to protect the
+browser; downloads are limited to 250,000 rows. The UI reports when either a
+source limit or the output row limit truncates the result.
+
+Reports may include optional summary footer rows. Each footer has a
+user-defined label and an independent calculation for every report column:
+total, average, minimum, maximum, first, last, sample count, missing count, or
+blank. Calculations use the displayed report rows. Consequently, summaries on
+a truncated raw report describe only the returned rows.
+
 Database report columns can use **Change during period** for accumulating
 counters. Each row subtracts the last reading before that row began from the
 row's ending reading. A per-column multiplier is applied afterward. Counter
