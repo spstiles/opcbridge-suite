@@ -161,9 +161,11 @@ function validate_report(array $report): array
         }
         $calculations = is_array($summary['calculations'] ?? null) ? $summary['calculations'] : [];
         $formulas = is_array($summary['formulas'] ?? null) ? $summary['formulas'] : [];
+        $precisions = is_array($summary['precisions'] ?? null) ? $summary['precisions'] : [];
         $summary['label'] = trim((string)$summary['label']);
         $summary['calculations'] = [];
         $summary['formulas'] = [];
+        $summary['precisions'] = [];
         foreach ($columns as $columnIndex => $_column) {
             $calculation = strtolower(trim((string)($calculations[$columnIndex] ?? 'none')));
             $calculation = in_array($calculation, $summaryCalculations, true) ? $calculation : 'none';
@@ -178,6 +180,9 @@ function validate_report(array $report): array
             }
             $summary['calculations'][] = $calculation;
             $summary['formulas'][] = $formula;
+            $precision = $precisions[$columnIndex] ?? null;
+            $summary['precisions'][] = $precision === null || $precision === ''
+                ? null : max(0, min(10, (int)$precision));
         }
     }
     unset($summary);
@@ -877,7 +882,14 @@ function calculate_summary_rows(array $report, array $rows): array
             }
             $values[] = $value;
         }
-        $summaryRows[] = ['label' => (string)$summary['label'], 'values' => $values];
+        $summaryRows[] = [
+            'label' => (string)$summary['label'],
+            'values' => $values,
+            'precisions' => array_map(
+                fn(mixed $precision): ?int => $precision === null ? null : (int)$precision,
+                $summary['precisions'] ?? []
+            ),
+        ];
     }
     return $summaryRows;
 }
@@ -940,10 +952,19 @@ function visible_column_indexes(array $report): array
 function project_report_rows(array $rows, array $indexes, string $labelKey = 'date'): array
 {
     return array_map(
-        fn(array $row): array => [
-            $labelKey => $row[$labelKey],
-            'values' => array_map(fn(int $index): mixed => $row['values'][$index] ?? null, $indexes),
-        ],
+        function(array $row) use ($labelKey, $indexes): array {
+            $projected = [
+                $labelKey => $row[$labelKey],
+                'values' => array_map(fn(int $index): mixed => $row['values'][$index] ?? null, $indexes),
+            ];
+            if (array_key_exists('precisions', $row)) {
+                $projected['precisions'] = array_map(
+                    fn(int $index): mixed => $row['precisions'][$index] ?? null,
+                    $indexes
+                );
+            }
+            return $projected;
+        },
         $rows
     );
 }
@@ -1021,7 +1042,10 @@ function write_xlsx(
             }
             $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($index + 2) . $rowNumber;
             $sheet->setCellValue($cell, $value);
-            $precision = max(0, min(10, (int)($report['columns'][$index]['precision'] ?? 2)));
+            $precision = $row['precisions'][$index] ?? null;
+            $precision = $precision === null
+                ? max(0, min(10, (int)($report['columns'][$index]['precision'] ?? 2)))
+                : max(0, min(10, (int)$precision));
             $format = $precision > 0 ? '#,##0.' . str_repeat('0', $precision) : '#,##0';
             $sheet->getStyle($cell)->getNumberFormat()->setFormatCode($format);
         }
@@ -1035,7 +1059,10 @@ function write_xlsx(
             if ($value === null) continue;
             $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($index + 2) . $rowNumber;
             $sheet->setCellValue($cell, $value);
-            $precision = max(0, min(10, (int)($report['columns'][$index]['precision'] ?? 2)));
+            $precision = $row['precisions'][$index] ?? null;
+            $precision = $precision === null
+                ? max(0, min(10, (int)($report['columns'][$index]['precision'] ?? 2)))
+                : max(0, min(10, (int)$precision));
             $format = $precision > 0 ? '#,##0.' . str_repeat('0', $precision) : '#,##0';
             $sheet->getStyle($cell)->getNumberFormat()->setFormatCode($format);
         }

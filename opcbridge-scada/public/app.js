@@ -322,6 +322,8 @@
   reportFormulaModal: document.getElementById('reportFormulaModal'),
   reportFormulaModalTitle: document.getElementById('reportFormulaModalTitle'),
   reportFormulaHelp: document.getElementById('reportFormulaHelp'),
+  reportFormulaPrecisionWrap: document.getElementById('reportFormulaPrecisionWrap'),
+  reportFormulaPrecision: document.getElementById('reportFormulaPrecision'),
   reportFormulaCloseBtn: document.getElementById('reportFormulaCloseBtn'),
   reportFormulaCancelBtn: document.getElementById('reportFormulaCancelBtn'),
   reportFormulaSaveBtn: document.getElementById('reportFormulaSaveBtn'),
@@ -6961,7 +6963,11 @@ function reportBuilderCurrentDefinition() {
       calculations: state.reportBuilderColumns.map((_, index) =>
         String(summary.calculations?.[index] || 'none')),
       formulas: state.reportBuilderColumns.map((_, index) =>
-        String(summary.formulas?.[index] || '').trim())
+        String(summary.formulas?.[index] || '').trim()),
+      precisions: state.reportBuilderColumns.map((_, index) => {
+        const value = summary.precisions?.[index];
+        return value === null || value === undefined || value === '' ? null : Math.max(0, Math.min(10, Math.trunc(Number(value))));
+      })
     }))
   };
 }
@@ -6993,6 +6999,7 @@ function openReportFormulaModal(index) {
   if (els.reportFormulaHelp) {
     els.reportFormulaHelp.textContent = 'Supported: +, −, ×, ÷, comparisons, and/or/not, if(), coalesce(), min(), max(), avg(), abs(), round(), and null.';
   }
+  if (els.reportFormulaPrecisionWrap) els.reportFormulaPrecisionWrap.style.display = 'none';
   if (els.reportFormulaExpression) {
     els.reportFormulaExpression.value = String(column.expression || '');
     els.reportFormulaExpression.placeholder = 'Example: if([pump_flow] > 3, [pump_temperature], null)';
@@ -7028,12 +7035,18 @@ function openReportSummaryFormulaModal(summaryIndex, columnIndex) {
   const column = state.reportBuilderColumns[columnIndex];
   if (!summary || !column) return;
   if (!Array.isArray(summary.formulas)) summary.formulas = [];
+  if (!Array.isArray(summary.precisions)) summary.precisions = [];
   state.reportFormulaColumnIndex = -1;
   state.reportFormulaSummaryIndex = summaryIndex;
   state.reportFormulaSummaryColumnIndex = columnIndex;
   if (els.reportFormulaModalTitle) els.reportFormulaModalTitle.textContent = `Summary Formula — ${String(column.heading || column.id || 'Column')}`;
   if (els.reportFormulaHelp) {
     els.reportFormulaHelp.textContent = 'Aggregate a column with sum(), avg(), min(), max(), first(), last(), count(), or missing(). You can combine results with arithmetic and other formula functions.';
+  }
+  if (els.reportFormulaPrecisionWrap) els.reportFormulaPrecisionWrap.style.display = '';
+  if (els.reportFormulaPrecision) {
+    const savedPrecision = summary.precisions[columnIndex];
+    els.reportFormulaPrecision.value = String(savedPrecision ?? column.precision ?? 2);
   }
   if (els.reportFormulaExpression) {
     els.reportFormulaExpression.value = String(summary.formulas[columnIndex] || '');
@@ -7074,6 +7087,10 @@ function reorderReportBuilderSummaryColumns(fromIndex, toIndex) {
     const [movedFormula] = formulas.splice(fromIndex, 1);
     formulas.splice(toIndex, 0, movedFormula || '');
     summary.formulas = formulas;
+    const precisions = Array.isArray(summary.precisions) ? summary.precisions : [];
+    const [movedPrecision] = precisions.splice(fromIndex, 1);
+    precisions.splice(toIndex, 0, movedPrecision ?? null);
+    summary.precisions = precisions;
   });
 }
 
@@ -7102,6 +7119,7 @@ function renderReportBuilderSummaries() {
   state.reportBuilderSummaries.forEach((summary, summaryIndex) => {
     if (!Array.isArray(summary.calculations)) summary.calculations = [];
     if (!Array.isArray(summary.formulas)) summary.formulas = [];
+    if (!Array.isArray(summary.precisions)) summary.precisions = [];
     const tr = document.createElement('tr');
     tr.className = 'report-summary-config-row';
     const orderCell = document.createElement('td');
@@ -7429,6 +7447,7 @@ function renderReportBuilderColumns() {
       state.reportBuilderColumns.splice(index, 1);
       state.reportBuilderSummaries.forEach((summary) => summary.calculations?.splice(index, 1));
       state.reportBuilderSummaries.forEach((summary) => summary.formulas?.splice(index, 1));
+      state.reportBuilderSummaries.forEach((summary) => summary.precisions?.splice(index, 1));
       renderReportBuilderColumns();
     });
     const actionButtons = document.createElement('div');
@@ -7457,7 +7476,8 @@ function loadReportBuilderDefinition(report) {
     ? value.summaries.map((summary) => ({
         label: String(summary?.label || ''),
         calculations: Array.isArray(summary?.calculations) ? [...summary.calculations] : [],
-        formulas: Array.isArray(summary?.formulas) ? [...summary.formulas] : []
+        formulas: Array.isArray(summary?.formulas) ? [...summary.formulas] : [],
+        precisions: Array.isArray(summary?.precisions) ? [...summary.precisions] : []
       })) : [];
   state.reportBuilderAccess = Array.isArray(value.access) ? value.access.map((grant) => ({ ...grant })) : [];
   if (!report) {
@@ -7614,10 +7634,13 @@ function renderReportPreviewSummaryRows(body, preview) {
     [row.label, ...(row.values || [])].forEach((value, index) => {
       const td = document.createElement('td');
       if (value === null || value === undefined) td.textContent = '';
-      else if (index > 0 && typeof value === 'number') td.textContent = value.toLocaleString(undefined, {
-        minimumFractionDigits: preview.columns?.[index - 1]?.precision ?? 0,
-        maximumFractionDigits: preview.columns?.[index - 1]?.precision ?? 2
-      });
+      else if (index > 0 && typeof value === 'number') {
+        const precision = row.precisions?.[index - 1] ?? preview.columns?.[index - 1]?.precision;
+        td.textContent = value.toLocaleString(undefined, {
+          minimumFractionDigits: precision ?? 0,
+          maximumFractionDigits: precision ?? 2
+        });
+      }
       else td.textContent = String(value);
       tr.appendChild(td);
     });
@@ -7631,7 +7654,8 @@ function wireReportBuilderUi() {
     state.reportBuilderSummaries.push({
       label: 'Summary',
       calculations: state.reportBuilderColumns.map(() => 'none'),
-      formulas: state.reportBuilderColumns.map(() => '')
+      formulas: state.reportBuilderColumns.map(() => ''),
+      precisions: state.reportBuilderColumns.map(() => null)
     });
     renderReportBuilderSummaries();
   });
@@ -7787,6 +7811,7 @@ function wireReportBuilderUi() {
     state.reportBuilderColumns.push(column);
     state.reportBuilderSummaries.forEach((summary) => summary.calculations?.push('none'));
     state.reportBuilderSummaries.forEach((summary) => summary.formulas?.push(''));
+    state.reportBuilderSummaries.forEach((summary) => summary.precisions?.push(null));
     renderReportBuilderColumns();
     openReportFormulaModal(state.reportBuilderColumns.length - 1);
   });
@@ -7805,8 +7830,12 @@ function wireReportBuilderUi() {
         return;
       }
       if (!Array.isArray(summary.formulas)) summary.formulas = [];
+      if (!Array.isArray(summary.precisions)) summary.precisions = [];
       summary.calculations[summaryColumnIndex] = 'formula';
       summary.formulas[summaryColumnIndex] = expression;
+      const precision = Math.trunc(Number(els.reportFormulaPrecision?.value));
+      summary.precisions[summaryColumnIndex] = Number.isFinite(precision)
+        ? Math.max(0, Math.min(10, precision)) : null;
       closeReportFormulaModal();
       renderReportBuilderSummaries();
       return;

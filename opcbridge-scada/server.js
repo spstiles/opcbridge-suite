@@ -601,12 +601,17 @@ function normalizeReportDefinition(value) {
     });
     const formulas = columns.map((_, columnIndex) =>
       String(item.formulas?.[columnIndex] || '').trim().slice(0, 4000));
+    const precisions = columns.map((_, columnIndex) => {
+      const value = item.precisions?.[columnIndex];
+      if (value === null || value === undefined || value === '') return null;
+      return normalizeIntRange(value, columns[columnIndex].precision, 0, 10);
+    });
     calculations.forEach((calculation, columnIndex) => {
       if (calculation === 'formula' && !formulas[columnIndex]) {
         throw new Error(`Summary row ${index + 1} requires a formula.`);
       }
     });
-    return { label, calculations, formulas };
+    return { label, calculations, formulas, precisions };
   });
   const accessByGroup = new Map();
   (Array.isArray(source.access) ? source.access : []).forEach((entry) => {
