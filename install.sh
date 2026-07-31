@@ -114,6 +114,68 @@ download_file() {
   fi
 }
 
+install_report_composer_dependencies() {
+  local report_dir="$ROOT_DIR/opcbridge-report"
+  local -a install_args=(
+    install
+    --working-dir "$report_dir"
+    --no-dev
+    --classmap-authoritative
+    --no-interaction
+  )
+
+  if have_cmd composer; then
+    echo "Installing report dependencies with system Composer..."
+    if COMPOSER_ALLOW_SUPERUSER=1 composer "${install_args[@]}"; then
+      return 0
+    fi
+    echo "System Composer failed; trying a verified current Composer PHAR." >&2
+  else
+    echo "System Composer is unavailable; downloading a verified current Composer PHAR."
+  fi
+
+  have_cmd php || {
+    echo "PHP CLI is required to install opcbridge-report dependencies." >&2
+    return 1
+  }
+
+  local workdir installer signature expected actual phar
+  workdir="$(mktemp -d -t opcbridge-composer.XXXXXX)"
+  installer="$workdir/composer-setup.php"
+  signature="$workdir/installer.sig"
+  phar="$workdir/composer.phar"
+
+  if ! download_file "https://composer.github.io/installer.sig" "$signature" ||
+     ! download_file "https://getcomposer.org/installer" "$installer"; then
+    rm -rf "$workdir" || true
+    echo "Failed to download the official Composer installer or signature." >&2
+    return 1
+  fi
+
+  expected="$(tr -d '[:space:]' < "$signature")"
+  actual="$(php -r 'echo hash_file("sha384", $argv[1]);' "$installer")"
+  if [[ ! "$expected" =~ ^[a-fA-F0-9]{96}$ || "$actual" != "$expected" ]]; then
+    rm -rf "$workdir" || true
+    echo "Composer installer checksum verification failed; refusing to execute it." >&2
+    return 1
+  fi
+
+  if ! php "$installer" --quiet --install-dir="$workdir" --filename="composer.phar" ||
+     [[ ! -f "$phar" ]]; then
+    rm -rf "$workdir" || true
+    echo "Official Composer installer failed." >&2
+    return 1
+  fi
+
+  echo "Installing report dependencies with verified temporary Composer..."
+  if ! COMPOSER_ALLOW_SUPERUSER=1 php "$phar" "${install_args[@]}"; then
+    rm -rf "$workdir" || true
+    echo "Temporary Composer failed to install opcbridge-report dependencies." >&2
+    return 1
+  fi
+  rm -rf "$workdir" || true
+}
+
 install_pjproject() {
   local ver="2.15.1"
   local prefix_dir="${PREFIX}/third_party/pjproject"
@@ -884,15 +946,7 @@ build_if_needed() {
   fi
 
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'report'; then
-    have_cmd composer || {
-      echo "Composer is required to build opcbridge-report (re-run with --deps)." >&2
-      exit 1
-    }
-    COMPOSER_ALLOW_SUPERUSER=1 composer install \
-      --working-dir "$ROOT_DIR/opcbridge-report" \
-      --no-dev \
-      --classmap-authoritative \
-      --no-interaction
+    install_report_composer_dependencies || exit 1
   fi
 }
 
