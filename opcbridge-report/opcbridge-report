@@ -153,19 +153,31 @@ function validate_report(array $report): array
     if (!array_filter($columns, fn(array $item): bool => ($item['visible'] ?? true) !== false)) {
         fail("Report '{$id}' must show at least one column");
     }
-    $summaryCalculations = ['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing'];
+    $summaryCalculations = ['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing', 'formula'];
     $summaries = is_array($report['summaries'] ?? null) ? array_slice($report['summaries'], 0, 20) : [];
     foreach ($summaries as $index => &$summary) {
         if (!is_array($summary) || trim((string)($summary['label'] ?? '')) === '') {
             fail("Report '{$id}' summary row " . ($index + 1) . " requires a label");
         }
         $calculations = is_array($summary['calculations'] ?? null) ? $summary['calculations'] : [];
+        $formulas = is_array($summary['formulas'] ?? null) ? $summary['formulas'] : [];
         $summary['label'] = trim((string)$summary['label']);
         $summary['calculations'] = [];
+        $summary['formulas'] = [];
         foreach ($columns as $columnIndex => $_column) {
             $calculation = strtolower(trim((string)($calculations[$columnIndex] ?? 'none')));
-            $summary['calculations'][] = in_array($calculation, $summaryCalculations, true)
-                ? $calculation : 'none';
+            $calculation = in_array($calculation, $summaryCalculations, true) ? $calculation : 'none';
+            $formula = trim((string)($formulas[$columnIndex] ?? ''));
+            if ($calculation === 'formula') {
+                if ($formula === '') fail("Report '{$id}' summary row " . ($index + 1) . " requires a formula");
+                try {
+                    (new ReportExpressionParser())->parse($formula);
+                } catch (Throwable $e) {
+                    fail("Report '{$id}' summary row " . ($index + 1) . " formula error: " . $e->getMessage());
+                }
+            }
+            $summary['calculations'][] = $calculation;
+            $summary['formulas'][] = $formula;
         }
     }
     unset($summary);
@@ -824,6 +836,11 @@ function calculate_summary_rows(array $report, array $rows): array
         }
         $statistics[] = $stats;
     }
+    $columnIndexes = [];
+    foreach ($report['columns'] as $columnIndex => $column) {
+        $columnIndexes[(string)$column['id']] = $columnIndex;
+    }
+    $parser = new ReportExpressionParser();
     $summaryRows = [];
     foreach (($report['summaries'] ?? []) as $summary) {
         $values = [];
@@ -847,12 +864,68 @@ function calculate_summary_rows(array $report, array $rows): array
                 $value = $stats['min'];
             } elseif ($calculation === 'max' && $stats['numeric_count']) {
                 $value = $stats['max'];
+            } elseif ($calculation === 'formula') {
+                $formula = (string)($summary['formulas'][$columnIndex] ?? '');
+                try {
+                    $node = resolve_summary_aggregates($parser->parse($formula), $statistics, $columnIndexes);
+                    $value = evaluate_expression($node, function(string $id): mixed {
+                        throw new RuntimeException("Use an aggregate such as sum([{$id}]) in a summary formula");
+                    });
+                } catch (Throwable $e) {
+                    fail("Summary formula error in '" . (string)$summary['label'] . "': " . $e->getMessage());
+                }
             }
             $values[] = $value;
         }
         $summaryRows[] = ['label' => (string)$summary['label'], 'values' => $values];
     }
     return $summaryRows;
+}
+
+function summary_statistic_value(string $name, array $stats): mixed
+{
+    return match ($name) {
+        'count' => $stats['count'],
+        'missing' => $stats['missing'],
+        'first' => $stats['count'] ? $stats['first'] : null,
+        'last' => $stats['count'] ? $stats['last'] : null,
+        'sum' => $stats['numeric_count'] ? $stats['sum'] : null,
+        'avg' => $stats['numeric_count'] ? $stats['sum'] / $stats['numeric_count'] : null,
+        'min' => $stats['numeric_count'] ? $stats['min'] : null,
+        'max' => $stats['numeric_count'] ? $stats['max'] : null,
+        default => null,
+    };
+}
+
+function resolve_summary_aggregates(array $node, array $statistics, array $columnIndexes): array
+{
+    if (($node['type'] ?? '') === 'call') {
+        $name = (string)$node['name'];
+        $arguments = $node['arguments'] ?? [];
+        $aggregateNames = ['sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing'];
+        if (in_array($name, $aggregateNames, true) && count($arguments) === 1 &&
+            ($arguments[0]['type'] ?? '') === 'reference') {
+            $id = (string)$arguments[0]['id'];
+            if (!array_key_exists($id, $columnIndexes)) {
+                throw new RuntimeException("Unknown column reference [{$id}]");
+            }
+            return ['type' => 'literal', 'value' => summary_statistic_value(
+                $name, $statistics[$columnIndexes[$id]]
+            )];
+        }
+        $node['arguments'] = array_map(
+            fn(array $argument): array => resolve_summary_aggregates($argument, $statistics, $columnIndexes),
+            $arguments
+        );
+        return $node;
+    }
+    if (($node['type'] ?? '') === 'binary') {
+        $node['left'] = resolve_summary_aggregates($node['left'], $statistics, $columnIndexes);
+        $node['right'] = resolve_summary_aggregates($node['right'], $statistics, $columnIndexes);
+    } elseif (($node['type'] ?? '') === 'unary') {
+        $node['value'] = resolve_summary_aggregates($node['value'], $statistics, $columnIndexes);
+    }
+    return $node;
 }
 
 function visible_column_indexes(array $report): array

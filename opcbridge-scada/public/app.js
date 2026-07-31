@@ -320,6 +320,8 @@
   reportBuilderPreviewHead: document.getElementById('reportBuilderPreviewHead'),
   reportBuilderPreviewBody: document.getElementById('reportBuilderPreviewBody'),
   reportFormulaModal: document.getElementById('reportFormulaModal'),
+  reportFormulaModalTitle: document.getElementById('reportFormulaModalTitle'),
+  reportFormulaHelp: document.getElementById('reportFormulaHelp'),
   reportFormulaCloseBtn: document.getElementById('reportFormulaCloseBtn'),
   reportFormulaCancelBtn: document.getElementById('reportFormulaCancelBtn'),
   reportFormulaSaveBtn: document.getElementById('reportFormulaSaveBtn'),
@@ -1113,7 +1115,10 @@ const state = {
   reportBuilderCategoryItems: [],
   reportBuilderSelectedCategoryItems: new Set(),
   reportBuilderDraggedColumnIndex: -1,
+  reportBuilderDraggedSummaryIndex: -1,
   reportFormulaColumnIndex: -1,
+  reportFormulaSummaryIndex: -1,
+  reportFormulaSummaryColumnIndex: -1,
   reportBuilderAccess: [],
 
   // reporter (data logger)
@@ -6954,7 +6959,9 @@ function reportBuilderCurrentDefinition() {
     summaries: state.reportBuilderSummaries.map((summary) => ({
       label: String(summary.label || '').trim(),
       calculations: state.reportBuilderColumns.map((_, index) =>
-        String(summary.calculations?.[index] || 'none'))
+        String(summary.calculations?.[index] || 'none')),
+      formulas: state.reportBuilderColumns.map((_, index) =>
+        String(summary.formulas?.[index] || '').trim())
     }))
   };
 }
@@ -6972,13 +6979,24 @@ function newReportColumnId(label = 'column') {
 function closeReportFormulaModal() {
   if (els.reportFormulaModal) els.reportFormulaModal.style.display = 'none';
   state.reportFormulaColumnIndex = -1;
+  state.reportFormulaSummaryIndex = -1;
+  state.reportFormulaSummaryColumnIndex = -1;
 }
 
 function openReportFormulaModal(index) {
   const column = state.reportBuilderColumns[index];
   if (!column || column.source !== 'calculated') return;
   state.reportFormulaColumnIndex = index;
-  if (els.reportFormulaExpression) els.reportFormulaExpression.value = String(column.expression || '');
+  state.reportFormulaSummaryIndex = -1;
+  state.reportFormulaSummaryColumnIndex = -1;
+  if (els.reportFormulaModalTitle) els.reportFormulaModalTitle.textContent = 'Calculated Column Formula';
+  if (els.reportFormulaHelp) {
+    els.reportFormulaHelp.textContent = 'Supported: +, −, ×, ÷, comparisons, and/or/not, if(), coalesce(), min(), max(), avg(), abs(), round(), and null.';
+  }
+  if (els.reportFormulaExpression) {
+    els.reportFormulaExpression.value = String(column.expression || '');
+    els.reportFormulaExpression.placeholder = 'Example: if([pump_flow] > 3, [pump_temperature], null)';
+  }
   if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = '';
   if (els.reportFormulaColumns) {
     els.reportFormulaColumns.textContent = '';
@@ -7005,12 +7023,57 @@ function openReportFormulaModal(index) {
   els.reportFormulaExpression?.focus();
 }
 
+function openReportSummaryFormulaModal(summaryIndex, columnIndex) {
+  const summary = state.reportBuilderSummaries[summaryIndex];
+  const column = state.reportBuilderColumns[columnIndex];
+  if (!summary || !column) return;
+  if (!Array.isArray(summary.formulas)) summary.formulas = [];
+  state.reportFormulaColumnIndex = -1;
+  state.reportFormulaSummaryIndex = summaryIndex;
+  state.reportFormulaSummaryColumnIndex = columnIndex;
+  if (els.reportFormulaModalTitle) els.reportFormulaModalTitle.textContent = `Summary Formula — ${String(column.heading || column.id || 'Column')}`;
+  if (els.reportFormulaHelp) {
+    els.reportFormulaHelp.textContent = 'Aggregate a column with sum(), avg(), min(), max(), first(), last(), count(), or missing(). You can combine results with arithmetic and other formula functions.';
+  }
+  if (els.reportFormulaExpression) {
+    els.reportFormulaExpression.value = String(summary.formulas[columnIndex] || '');
+    els.reportFormulaExpression.placeholder = 'Example: sum([flow]) / sum([runtime])';
+  }
+  if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = '';
+  if (els.reportFormulaColumns) {
+    els.reportFormulaColumns.textContent = '';
+    state.reportBuilderColumns.forEach((candidate, candidateIndex) => {
+      const button = document.createElement('button');
+      button.className = 'btn';
+      button.type = 'button';
+      button.textContent = String(candidate.heading || candidate.id || `Column ${candidateIndex + 1}`);
+      button.title = `sum([${String(candidate.id || '')}])`;
+      button.addEventListener('click', () => {
+        const textarea = els.reportFormulaExpression;
+        if (!textarea) return;
+        const reference = `sum([${String(candidate.id || '')}])`;
+        const start = textarea.selectionStart ?? textarea.value.length;
+        const end = textarea.selectionEnd ?? start;
+        textarea.setRangeText(reference, start, end, 'end');
+        textarea.focus();
+      });
+      els.reportFormulaColumns.appendChild(button);
+    });
+  }
+  if (els.reportFormulaModal) els.reportFormulaModal.style.display = 'flex';
+  els.reportFormulaExpression?.focus();
+}
+
 function reorderReportBuilderSummaryColumns(fromIndex, toIndex) {
   state.reportBuilderSummaries.forEach((summary) => {
     const calculations = Array.isArray(summary.calculations) ? summary.calculations : [];
     const [moved] = calculations.splice(fromIndex, 1);
     calculations.splice(toIndex, 0, moved || 'none');
     summary.calculations = calculations;
+    const formulas = Array.isArray(summary.formulas) ? summary.formulas : [];
+    const [movedFormula] = formulas.splice(fromIndex, 1);
+    formulas.splice(toIndex, 0, movedFormula || '');
+    summary.formulas = formulas;
   });
 }
 
@@ -7024,7 +7087,7 @@ function renderReportBuilderSummaries() {
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => column.visible !== false);
   const header = document.createElement('tr');
-  ['Label', ...visibleColumns.map(({ column }) => String(column.heading || column.tag_name || column.field || 'Column')), 'Actions']
+  ['Order', 'Label', ...visibleColumns.map(({ column }) => String(column.heading || column.tag_name || column.field || 'Column')), 'Actions']
     .forEach((text) => {
       const th = document.createElement('th');
       th.textContent = text;
@@ -7034,18 +7097,67 @@ function renderReportBuilderSummaries() {
   const choices = [
     ['none', 'Blank'], ['sum', 'Total'], ['avg', 'Average'], ['min', 'Minimum'],
     ['max', 'Maximum'], ['first', 'First'], ['last', 'Last'],
-    ['count', 'Sample count'], ['missing', 'Missing count']
+    ['count', 'Sample count'], ['missing', 'Missing count'], ['formula', 'Formula…']
   ];
   state.reportBuilderSummaries.forEach((summary, summaryIndex) => {
     if (!Array.isArray(summary.calculations)) summary.calculations = [];
+    if (!Array.isArray(summary.formulas)) summary.formulas = [];
     const tr = document.createElement('tr');
+    tr.className = 'report-summary-config-row';
+    const orderCell = document.createElement('td');
+    orderCell.className = 'report-summary-order';
+    const dragHandle = document.createElement('span');
+    dragHandle.className = 'report-summary-drag-handle';
+    dragHandle.draggable = true;
+    dragHandle.title = `Drag to move summary row ${summaryIndex + 1}`;
+    dragHandle.setAttribute('aria-label', `Drag to move summary row ${summaryIndex + 1}`);
+    dragHandle.textContent = `⠿ ${summaryIndex + 1}`;
+    dragHandle.addEventListener('dragstart', (event) => {
+      state.reportBuilderDraggedSummaryIndex = summaryIndex;
+      tr.classList.add('is-dragging');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(summaryIndex));
+      }
+    });
+    dragHandle.addEventListener('dragend', () => {
+      state.reportBuilderDraggedSummaryIndex = -1;
+      els.reportBuilderSummaries?.querySelectorAll('.report-summary-config-row').forEach((row) => {
+        row.classList.remove('is-dragging', 'drag-before', 'drag-after');
+      });
+    });
+    orderCell.appendChild(dragHandle);
+    tr.addEventListener('dragover', (event) => {
+      const fromIndex = state.reportBuilderDraggedSummaryIndex;
+      if (fromIndex < 0 || fromIndex === summaryIndex) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      const after = event.clientY >= tr.getBoundingClientRect().top + tr.offsetHeight / 2;
+      tr.classList.toggle('drag-before', !after);
+      tr.classList.toggle('drag-after', after);
+    });
+    tr.addEventListener('dragleave', () => {
+      tr.classList.remove('drag-before', 'drag-after');
+    });
+    tr.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const fromIndex = state.reportBuilderDraggedSummaryIndex;
+      if (fromIndex < 0 || fromIndex >= state.reportBuilderSummaries.length || fromIndex === summaryIndex) return;
+      const after = event.clientY >= tr.getBoundingClientRect().top + tr.offsetHeight / 2;
+      let insertIndex = summaryIndex + (after ? 1 : 0);
+      const [moved] = state.reportBuilderSummaries.splice(fromIndex, 1);
+      if (fromIndex < insertIndex) insertIndex -= 1;
+      state.reportBuilderSummaries.splice(insertIndex, 0, moved);
+      state.reportBuilderDraggedSummaryIndex = -1;
+      renderReportBuilderSummaries();
+    });
     const labelCell = document.createElement('td');
     const label = document.createElement('input');
     label.value = String(summary.label || '');
     label.placeholder = 'Summary';
     label.addEventListener('input', () => { summary.label = label.value; });
     labelCell.appendChild(label);
-    tr.appendChild(labelCell);
+    tr.append(orderCell, labelCell);
     visibleColumns.forEach(({ index: columnIndex }) => {
       const td = document.createElement('td');
       const select = document.createElement('select');
@@ -7056,11 +7168,46 @@ function renderReportBuilderSummaries() {
         select.appendChild(option);
       });
       select.value = String(summary.calculations[columnIndex] || 'none');
-      select.addEventListener('change', () => { summary.calculations[columnIndex] = select.value; });
-      td.appendChild(select);
+      const editFormula = document.createElement('button');
+      editFormula.className = 'btn report-summary-formula-button';
+      editFormula.type = 'button';
+      editFormula.textContent = summary.formulas[columnIndex] ? 'Edit Formula' : 'Set Formula';
+      editFormula.hidden = select.value !== 'formula';
+      editFormula.addEventListener('click', () => openReportSummaryFormulaModal(summaryIndex, columnIndex));
+      select.addEventListener('change', () => {
+        summary.calculations[columnIndex] = select.value;
+        if (select.value === 'formula') openReportSummaryFormulaModal(summaryIndex, columnIndex);
+        else renderReportBuilderSummaries();
+      });
+      const controls = document.createElement('div');
+      controls.className = 'report-summary-cell-controls';
+      controls.append(select, editFormula);
+      td.appendChild(controls);
       tr.appendChild(td);
     });
     const actions = document.createElement('td');
+    const actionButtons = document.createElement('div');
+    actionButtons.className = 'report-summary-action-buttons';
+    const up = document.createElement('button');
+    up.className = 'btn';
+    up.type = 'button';
+    up.textContent = '↑ Move up';
+    up.disabled = summaryIndex === 0;
+    up.addEventListener('click', () => {
+      [state.reportBuilderSummaries[summaryIndex - 1], state.reportBuilderSummaries[summaryIndex]] =
+        [state.reportBuilderSummaries[summaryIndex], state.reportBuilderSummaries[summaryIndex - 1]];
+      renderReportBuilderSummaries();
+    });
+    const down = document.createElement('button');
+    down.className = 'btn';
+    down.type = 'button';
+    down.textContent = '↓ Move down';
+    down.disabled = summaryIndex === state.reportBuilderSummaries.length - 1;
+    down.addEventListener('click', () => {
+      [state.reportBuilderSummaries[summaryIndex], state.reportBuilderSummaries[summaryIndex + 1]] =
+        [state.reportBuilderSummaries[summaryIndex + 1], state.reportBuilderSummaries[summaryIndex]];
+      renderReportBuilderSummaries();
+    });
     const remove = document.createElement('button');
     remove.className = 'btn danger';
     remove.type = 'button';
@@ -7069,7 +7216,8 @@ function renderReportBuilderSummaries() {
       state.reportBuilderSummaries.splice(summaryIndex, 1);
       renderReportBuilderSummaries();
     });
-    actions.appendChild(remove);
+    actionButtons.append(up, down, remove);
+    actions.appendChild(actionButtons);
     tr.appendChild(actions);
     els.reportBuilderSummaries.appendChild(tr);
   });
@@ -7280,6 +7428,7 @@ function renderReportBuilderColumns() {
     remove.addEventListener('click', () => {
       state.reportBuilderColumns.splice(index, 1);
       state.reportBuilderSummaries.forEach((summary) => summary.calculations?.splice(index, 1));
+      state.reportBuilderSummaries.forEach((summary) => summary.formulas?.splice(index, 1));
       renderReportBuilderColumns();
     });
     const actionButtons = document.createElement('div');
@@ -7307,7 +7456,8 @@ function loadReportBuilderDefinition(report) {
   state.reportBuilderSummaries = Array.isArray(value.summaries)
     ? value.summaries.map((summary) => ({
         label: String(summary?.label || ''),
-        calculations: Array.isArray(summary?.calculations) ? [...summary.calculations] : []
+        calculations: Array.isArray(summary?.calculations) ? [...summary.calculations] : [],
+        formulas: Array.isArray(summary?.formulas) ? [...summary.formulas] : []
       })) : [];
   state.reportBuilderAccess = Array.isArray(value.access) ? value.access.map((grant) => ({ ...grant })) : [];
   if (!report) {
@@ -7480,7 +7630,8 @@ function wireReportBuilderUi() {
   if (els.reportBuilderAddSummaryBtn) els.reportBuilderAddSummaryBtn.addEventListener('click', () => {
     state.reportBuilderSummaries.push({
       label: 'Summary',
-      calculations: state.reportBuilderColumns.map(() => 'none')
+      calculations: state.reportBuilderColumns.map(() => 'none'),
+      formulas: state.reportBuilderColumns.map(() => '')
     });
     renderReportBuilderSummaries();
   });
@@ -7635,6 +7786,7 @@ function wireReportBuilderUi() {
     };
     state.reportBuilderColumns.push(column);
     state.reportBuilderSummaries.forEach((summary) => summary.calculations?.push('none'));
+    state.reportBuilderSummaries.forEach((summary) => summary.formulas?.push(''));
     renderReportBuilderColumns();
     openReportFormulaModal(state.reportBuilderColumns.length - 1);
   });
@@ -7642,9 +7794,25 @@ function wireReportBuilderUi() {
     button?.addEventListener('click', closeReportFormulaModal);
   });
   if (els.reportFormulaSaveBtn) els.reportFormulaSaveBtn.addEventListener('click', () => {
+    const expression = String(els.reportFormulaExpression?.value || '').trim();
+    const summaryIndex = state.reportFormulaSummaryIndex;
+    const summaryColumnIndex = state.reportFormulaSummaryColumnIndex;
+    if (summaryIndex >= 0 && summaryColumnIndex >= 0) {
+      const summary = state.reportBuilderSummaries[summaryIndex];
+      if (!summary) return closeReportFormulaModal();
+      if (!expression) {
+        if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = 'Enter a formula.';
+        return;
+      }
+      if (!Array.isArray(summary.formulas)) summary.formulas = [];
+      summary.calculations[summaryColumnIndex] = 'formula';
+      summary.formulas[summaryColumnIndex] = expression;
+      closeReportFormulaModal();
+      renderReportBuilderSummaries();
+      return;
+    }
     const index = state.reportFormulaColumnIndex;
     const column = state.reportBuilderColumns[index];
-    const expression = String(els.reportFormulaExpression?.value || '').trim();
     if (!column || column.source !== 'calculated') return closeReportFormulaModal();
     if (!expression) {
       if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = 'Enter a formula.';
