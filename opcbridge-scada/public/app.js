@@ -296,6 +296,9 @@
   reportBuilderAddDatabaseFieldBtn: document.getElementById('reportBuilderAddDatabaseFieldBtn'),
   reportBuilderLoadCategoriesBtn: document.getElementById('reportBuilderLoadCategoriesBtn'),
   reportBuilderCategoryPicker: document.getElementById('reportBuilderCategoryPicker'),
+  reportBuilderCategoryFilter: document.getElementById('reportBuilderCategoryFilter'),
+  reportBuilderCategoryFilterClearBtn: document.getElementById('reportBuilderCategoryFilterClearBtn'),
+  reportBuilderCategoryFilterCount: document.getElementById('reportBuilderCategoryFilterCount'),
   reportBuilderCategoryValues: document.getElementById('reportBuilderCategoryValues'),
   reportBuilderAddCategoriesBtn: document.getElementById('reportBuilderAddCategoriesBtn'),
   reportBuilderHistorianActions: document.getElementById('reportBuilderHistorianActions'),
@@ -1107,6 +1110,8 @@ const state = {
   reportBuilderDatabases: [],
   reportBuilderSchema: [],
   reportBuilderSchemaRequestSeq: 0,
+  reportBuilderCategoryItems: [],
+  reportBuilderSelectedCategoryItems: new Set(),
   reportBuilderDraggedColumnIndex: -1,
   reportFormulaColumnIndex: -1,
   reportBuilderAccess: [],
@@ -6761,6 +6766,48 @@ function renderReportBuilderSchemaSelections(selection = {}) {
   fillSelect(els.reportBuilderCategoryColumn, choices, selection.category_column || '');
 }
 
+function syncReportBuilderCategorySelections() {
+  Array.from(els.reportBuilderCategoryValues?.options || []).forEach((option) => {
+    if (option.selected) state.reportBuilderSelectedCategoryItems.add(option.value);
+    else state.reportBuilderSelectedCategoryItems.delete(option.value);
+  });
+}
+
+function reportBuilderCategoryMatches(value, filter) {
+  const text = String(value || '').toLowerCase();
+  const alternatives = String(filter || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!alternatives.length) return true;
+  return alternatives.some((alternative) => {
+    const required = alternative.split('+').map((term) => term.trim()).filter(Boolean);
+    return required.length > 0 && required.every((term) => text.includes(term));
+  });
+}
+
+function updateReportBuilderCategoryCount(visibleCount) {
+  if (!els.reportBuilderCategoryFilterCount) return;
+  const selected = state.reportBuilderSelectedCategoryItems.size;
+  els.reportBuilderCategoryFilterCount.textContent =
+    `${visibleCount.toLocaleString()} of ${state.reportBuilderCategoryItems.length.toLocaleString()} item(s)` +
+    (selected ? `; ${selected.toLocaleString()} selected` : '');
+}
+
+function renderReportBuilderCategoryItems(preserveVisibleSelections = true) {
+  if (!els.reportBuilderCategoryValues) return;
+  if (preserveVisibleSelections) syncReportBuilderCategorySelections();
+  const filter = String(els.reportBuilderCategoryFilter?.value || '');
+  const visible = state.reportBuilderCategoryItems.filter((value) =>
+    reportBuilderCategoryMatches(value, filter));
+  els.reportBuilderCategoryValues.textContent = '';
+  visible.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    option.selected = state.reportBuilderSelectedCategoryItems.has(value);
+    els.reportBuilderCategoryValues.appendChild(option);
+  });
+  updateReportBuilderCategoryCount(visible.length);
+}
+
 function renderReportBuilderSourceUi() {
   const databaseMode = String(els.reportBuilderSourceType?.value || 'historian') === 'database';
   const categoryMode = databaseMode && String(els.reportBuilderLayout?.value || 'wide') === 'category';
@@ -7511,9 +7558,10 @@ function wireReportBuilderUi() {
       const response = await apiPostJson('/api/reports/admin/distinct', payload, {
         timeoutMs: reporterDatabaseDiscoveryTimeoutMs(database)
       });
-      fillSelect(els.reportBuilderCategoryValues, (response.values || []).map((value) => ({
-        value: String(value), label: String(value)
-      })));
+      state.reportBuilderCategoryItems = (response.values || []).map((value) => String(value));
+      state.reportBuilderSelectedCategoryItems = new Set();
+      if (els.reportBuilderCategoryFilter) els.reportBuilderCategoryFilter.value = '';
+      renderReportBuilderCategoryItems(false);
       if (els.reportBuilderCategoryPicker) els.reportBuilderCategoryPicker.style.display = '';
       const count = response.values?.length || 0;
       reportBuilderSourceSetStatus(response.truncated
@@ -7524,12 +7572,13 @@ function wireReportBuilderUi() {
     }
   });
   if (els.reportBuilderAddCategoriesBtn) els.reportBuilderAddCategoriesBtn.addEventListener('click', () => {
+    syncReportBuilderCategorySelections();
     const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
     const valueField = String(els.reportBuilderValueColumn?.value || '').trim();
-    Array.from(els.reportBuilderCategoryValues?.selectedOptions || []).forEach((option) => {
+    state.reportBuilderSelectedCategoryItems.forEach((itemName) => {
       state.reportBuilderColumns.push({
-        id: newReportColumnId(option.textContent || option.value),
-        heading: option.textContent || option.value,
+        id: newReportColumnId(itemName),
+        heading: itemName,
         source: 'database',
         database_id: databaseId,
         table: String(els.reportBuilderTable?.value || '').trim(),
@@ -7537,7 +7586,7 @@ function wireReportBuilderUi() {
         layout: 'category',
         category_column: String(els.reportBuilderCategoryColumn?.value || '').trim(),
         field: valueField,
-        category_value: option.value,
+        category_value: itemName,
         aggregation: String(els.reportBuilderAggregation?.value || 'last'),
         multiplier: 1,
         negative_change: 'blank',
@@ -7545,8 +7594,26 @@ function wireReportBuilderUi() {
         precision: 2
       });
     });
+    state.reportBuilderSelectedCategoryItems = new Set();
+    renderReportBuilderCategoryItems(false);
     renderReportBuilderColumns();
   });
+  if (els.reportBuilderCategoryValues) {
+    els.reportBuilderCategoryValues.addEventListener('change', () => {
+      syncReportBuilderCategorySelections();
+      updateReportBuilderCategoryCount(els.reportBuilderCategoryValues.options.length);
+    });
+  }
+  if (els.reportBuilderCategoryFilter) {
+    els.reportBuilderCategoryFilter.addEventListener('input', renderReportBuilderCategoryItems);
+  }
+  if (els.reportBuilderCategoryFilterClearBtn) {
+    els.reportBuilderCategoryFilterClearBtn.addEventListener('click', () => {
+      if (els.reportBuilderCategoryFilter) els.reportBuilderCategoryFilter.value = '';
+      renderReportBuilderCategoryItems();
+      els.reportBuilderCategoryFilter?.focus();
+    });
+  }
   if (els.reportBuilderAddTagBtn) els.reportBuilderAddTagBtn.addEventListener('click', () => {
     const [connectionId, tagName] = String(els.reportBuilderTagSelect?.value || '').split('\u001f');
     if (!connectionId || !tagName) return;

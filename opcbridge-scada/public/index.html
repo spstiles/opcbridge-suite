@@ -1244,6 +1244,12 @@
 		        </div>
 		        <div id="reportBuilderCategoryPicker" style="display:none; margin-top: 10px;">
 		          <div class="hint">Select the item names you want to show as columns in the report.</div>
+		          <div class="row-actions" style="margin-top:8px;">
+		            <input id="reportBuilderCategoryFilter" type="search" placeholder="Filter item names" style="min-width:420px;">
+		            <button class="btn" id="reportBuilderCategoryFilterClearBtn" type="button">Clear</button>
+		            <span class="hint mono" id="reportBuilderCategoryFilterCount"></span>
+		          </div>
+		          <div class="hint" style="margin-top:6px;">Separate alternatives with spaces; use + to require multiple terms. Example: <span class="mono">blower blwr blr</span> or <span class="mono">mt+lrv+mn</span>.</div>
 		          <select id="reportBuilderCategoryValues" multiple size="8" style="min-width: 420px;"></select>
 		          <button class="btn" id="reportBuilderAddCategoriesBtn" type="button">Add Selected Items</button>
 		        </div>
