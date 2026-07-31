@@ -590,7 +590,7 @@ function normalizeReportDefinition(value) {
   if (!columns.some((column) => column.visible !== false)) {
     throw new Error('At least one report column must be shown.');
   }
-  const summaryCalculations = new Set(['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing']);
+  const summaryCalculations = new Set(['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing', 'formula']);
   const summaries = (Array.isArray(source.summaries) ? source.summaries : []).slice(0, 20).map((summary, index) => {
     const item = summary && typeof summary === 'object' ? summary : {};
     const label = String(item.label || '').trim().slice(0, 191);
@@ -599,7 +599,14 @@ function normalizeReportDefinition(value) {
       const calculation = String(item.calculations?.[columnIndex] || 'none').trim().toLowerCase();
       return summaryCalculations.has(calculation) ? calculation : 'none';
     });
-    return { label, calculations };
+    const formulas = columns.map((_, columnIndex) =>
+      String(item.formulas?.[columnIndex] || '').trim().slice(0, 4000));
+    calculations.forEach((calculation, columnIndex) => {
+      if (calculation === 'formula' && !formulas[columnIndex]) {
+        throw new Error(`Summary row ${index + 1} requires a formula.`);
+      }
+    });
+    return { label, calculations, formulas };
   });
   const accessByGroup = new Map();
   (Array.isArray(source.access) ? source.access : []).forEach((entry) => {
