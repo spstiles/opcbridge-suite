@@ -1253,9 +1253,12 @@
 		          <select id="reportBuilderTagSelect" style="min-width: 420px;"></select>
 		          <button class="btn" id="reportBuilderAddTagBtn" type="button">Add Historian Tag</button>
 		        </div>
+		        <div class="row-actions" style="margin-top: 10px;">
+		          <button class="btn" id="reportBuilderAddCalculatedBtn" type="button">Add Calculated Column</button>
+		        </div>
 		        <div class="table-wrap" style="margin-top: 10px;">
 		          <table class="table report-columns-table">
-		            <thead><tr><th>Order</th><th>Heading</th><th>Source</th><th>Field</th><th>Calculation</th><th>Multiplier</th><th>Decimals</th><th>Counter decrease</th><th>Actions</th></tr></thead>
+		            <thead><tr><th>Order</th><th>Heading</th><th>Source</th><th>Field</th><th>Calculation</th><th>Multiplier</th><th>Decimals</th><th>Show</th><th>Counter decrease</th><th>Actions</th></tr></thead>
 		            <tbody id="reportBuilderColumns"></tbody>
 		          </table>
 		        </div>
@@ -2146,6 +2149,31 @@
             </div>
           </div>
           <div class="hint mono" id="changePasswordStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="reportFormulaModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reportFormulaModalTitle" style="max-width: 900px;">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="reportFormulaModalTitle">Calculated Column Formula</div>
+        <button class="btn" id="reportFormulaCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <label><span>Formula</span>
+          <textarea id="reportFormulaExpression" rows="8" class="mono" style="width:100%;" placeholder="Example: if([pump_flow] &gt; 3, [pump_temperature], null)"></textarea>
+        </label>
+        <div class="hint" style="margin-top:8px;">
+          Supported: +, −, ×, ÷, comparisons, and/or/not, if(), coalesce(), min(), max(), abs(), round(), and null.
+        </div>
+        <h4 style="margin-top:16px;">Available Columns</h4>
+        <div class="hint">Click a column to insert its stable reference into the formula.</div>
+        <div class="row-actions" id="reportFormulaColumns" style="margin-top:8px; flex-wrap:wrap;"></div>
+        <div class="hint mono" id="reportFormulaStatus" style="margin-top:10px;"></div>
+        <div class="row-actions" style="margin-top:14px;">
+          <button class="btn primary" id="reportFormulaSaveBtn" type="button">Use Formula</button>
+          <button class="btn" id="reportFormulaCancelBtn" type="button">Cancel</button>
         </div>
       </div>
     </div>

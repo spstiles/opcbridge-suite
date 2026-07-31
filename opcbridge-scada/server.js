@@ -508,9 +508,29 @@ function normalizeReportDefinition(value) {
     value_column: String(sourceInput.value_column || '').trim().slice(0, 255)
   } : { type: 'historian' };
   const aggregations = new Set(['last', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count']);
-  const columns = (Array.isArray(source.columns) ? source.columns : []).slice(0, 100).map((column, index) => {
+  const rawColumns = (Array.isArray(source.columns) ? source.columns : []).slice(0, 100);
+  const usedColumnIds = new Set();
+  const columnIds = rawColumns.map((column, index) => {
+    const requested = sanitizeId(column?.id || '').slice(0, 100);
+    let id = requested || `column_${index + 1}`;
+    while (usedColumnIds.has(id)) id = `${id}_${index + 1}`;
+    usedColumnIds.add(id);
+    return id;
+  });
+  const columns = rawColumns.map((column, index) => {
     const item = column && typeof column === 'object' ? column : {};
     const itemSource = String(item.source || sourceType || 'historian').trim().toLowerCase();
+    const common = {
+      id: columnIds[index],
+      heading: String(item.heading || `Column ${index + 1}`).trim().slice(0, 191) || `Column ${index + 1}`,
+      visible: normalizeBool(item.visible, true),
+      precision: normalizeIntRange(item.precision, 2, 0, 10)
+    };
+    if (itemSource === 'calculated') {
+      const expression = String(item.expression || '').trim().slice(0, 4000);
+      if (!expression) throw new Error(`Calculated column ${index + 1} requires a formula.`);
+      return { ...common, source: 'calculated', expression };
+    }
     if (itemSource === 'database') {
       const databaseId = sanitizeId(item.database_id || dataSource.database_id);
       const table = String(item.table || dataSource.table || '').trim().slice(0, 255);
@@ -532,6 +552,7 @@ function normalizeReportDefinition(value) {
       }
       if (!aggregations.has(aggregation)) throw new Error(`Column ${index + 1} has an unsupported aggregation.`);
       return {
+        ...common,
         heading: String(item.heading || item.category_value || field).trim().slice(0, 191) || field,
         source: 'database',
         database_id: databaseId,
@@ -547,7 +568,7 @@ function normalizeReportDefinition(value) {
         multiplier,
         negative_change: negativeChange,
         rollover_modulus: Number.isFinite(rolloverValue) && rolloverValue > 0 ? rolloverValue : 65536,
-        precision: normalizeIntRange(item.precision, 2, 0, 10)
+        precision: common.precision
       };
     }
     if (itemSource !== 'historian') throw new Error(`Column ${index + 1} has an unsupported source.`);
@@ -555,16 +576,20 @@ function normalizeReportDefinition(value) {
     const tagName = String(item.tag_name || '').trim().slice(0, 500);
     if (!connectionId || !tagName) throw new Error(`Column ${index + 1} requires a historian connection and tag.`);
     return {
+      ...common,
       heading: String(item.heading || tagName).trim().slice(0, 191) || tagName,
       source: 'historian',
       connection_id: connectionId,
       tag_name: tagName,
       aggregation: 'last',
       multiplier: Number.isFinite(Number(item.multiplier ?? 1)) ? Number(item.multiplier ?? 1) : 1,
-      precision: normalizeIntRange(item.precision, 2, 0, 10)
+      precision: common.precision
     };
   });
   if (!columns.length) throw new Error('Add at least one report column.');
+  if (!columns.some((column) => column.visible !== false)) {
+    throw new Error('At least one report column must be shown.');
+  }
   const summaryCalculations = new Set(['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing']);
   const summaries = (Array.isArray(source.summaries) ? source.summaries : []).slice(0, 20).map((summary, index) => {
     const item = summary && typeof summary === 'object' ? summary : {};

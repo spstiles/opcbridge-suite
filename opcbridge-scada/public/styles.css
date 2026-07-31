@@ -359,7 +359,7 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   min-width: 280px;
 }
 
-.report-columns-table th:nth-child(8),
+.report-columns-table th:nth-child(9),
 #reportBuilderColumns .report-counter-decrease {
   width: 270px;
   min-width: 270px;

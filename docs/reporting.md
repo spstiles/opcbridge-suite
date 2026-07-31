@@ -90,6 +90,13 @@ total, average, minimum, maximum, first, last, sample count, missing count, or
 blank. Calculations use the displayed report rows. Consequently, summaries on
 a truncated raw report describe only the returned rows.
 
+Report columns may also be calculated from other columns after source samples
+have been placed into their report-time buckets. Formula references use stable
+column IDs and support arithmetic, comparisons, `and`, `or`, `not`, `if()`,
+`coalesce()`, `min()`, `max()`, `abs()`, `round()`, and `null`. Source columns
+needed only by a formula may be hidden from previews and downloaded files while
+remaining available to the calculation.
+
 Database report columns can use **Change during period** for accumulating
 counters. Each row subtracts the last reading before that row began from the
 row's ending reading. A per-column multiplier is applied afterward. Counter

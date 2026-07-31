@@ -101,12 +101,25 @@ function validate_report(array $report): array
         fail("Report '{$id}' must contain at least one column");
     }
     $dataSource = is_array($report['data_source'] ?? null) ? $report['data_source'] : [];
+    $usedIds = [];
     foreach ($columns as $index => &$column) {
         if (!is_array($column)) {
             fail("Report '{$id}' column {$index} is invalid");
         }
+        $columnId = trim((string)($column['id'] ?? ''));
+        if ($columnId === '' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]*$/', $columnId)) {
+            $columnId = 'column_' . ($index + 1);
+        }
+        if (isset($usedIds[$columnId])) fail("Report '{$id}' contains duplicate column id '{$columnId}'");
+        $usedIds[$columnId] = true;
+        $column['id'] = $columnId;
+        $column['visible'] = ($column['visible'] ?? true) !== false;
         $source = (string)($column['source'] ?? 'historian');
-        if ($source === 'historian') {
+        if ($source === 'calculated') {
+            $expression = trim((string)($column['expression'] ?? ''));
+            if ($expression === '') fail("Report '{$id}' calculated column {$index} requires a formula");
+            $column['expression'] = $expression;
+        } elseif ($source === 'historian') {
             if (trim((string)($column['connection_id'] ?? '')) === '' ||
                 trim((string)($column['tag_name'] ?? '')) === '') {
                 fail("Report '{$id}' column {$index} requires connection_id and tag_name");
@@ -137,6 +150,9 @@ function validate_report(array $report): array
     }
     unset($column);
     $report['columns'] = $columns;
+    if (!array_filter($columns, fn(array $item): bool => ($item['visible'] ?? true) !== false)) {
+        fail("Report '{$id}' must show at least one column");
+    }
     $summaryCalculations = ['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing'];
     $summaries = is_array($report['summaries'] ?? null) ? array_slice($report['summaries'], 0, 20) : [];
     foreach ($summaries as $index => &$summary) {
@@ -347,6 +363,173 @@ function aggregate_values(array $points, string $aggregation): mixed
     };
 }
 
+final class ReportExpressionParser
+{
+    private array $tokens = [];
+    private int $position = 0;
+
+    public function parse(string $expression): array
+    {
+        $this->tokens = $this->tokenize($expression);
+        $this->position = 0;
+        $node = $this->parseOr();
+        if ($this->peek()['type'] !== 'eof') throw new RuntimeException('Unexpected token in formula');
+        return $node;
+    }
+
+    private function tokenize(string $expression): array
+    {
+        $tokens = [];
+        $offset = 0;
+        $length = strlen($expression);
+        while ($offset < $length) {
+            if (preg_match('/\G\s+/', $expression, $match, 0, $offset)) {
+                $offset += strlen($match[0]);
+                continue;
+            }
+            if (preg_match('/\G\[(?<ref>[A-Za-z0-9_.-]+)\]/', $expression, $match, 0, $offset)) {
+                $tokens[] = ['type' => 'ref', 'value' => $match['ref']];
+            } elseif (preg_match('/\G(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/', $expression, $match, 0, $offset)) {
+                $tokens[] = ['type' => 'number', 'value' => (float)$match[0]];
+            } elseif (preg_match('/\G[A-Za-z_][A-Za-z0-9_]*/', $expression, $match, 0, $offset)) {
+                $tokens[] = ['type' => 'word', 'value' => strtolower($match[0])];
+            } elseif (preg_match('/\G(>=|<=|!=|==|[=><+\-*\/(),])/', $expression, $match, 0, $offset)) {
+                $tokens[] = ['type' => 'symbol', 'value' => $match[1]];
+            } else {
+                throw new RuntimeException('Unsupported character in formula near: ' . substr($expression, $offset, 20));
+            }
+            $offset += strlen($match[0]);
+        }
+        $tokens[] = ['type' => 'eof', 'value' => null];
+        return $tokens;
+    }
+
+    private function peek(): array { return $this->tokens[$this->position]; }
+    private function take(): array { return $this->tokens[$this->position++]; }
+    private function accept(string $value): bool
+    {
+        if ($this->peek()['value'] !== $value) return false;
+        $this->position++;
+        return true;
+    }
+    private function expect(string $value): void
+    {
+        if (!$this->accept($value)) throw new RuntimeException("Expected '{$value}' in formula");
+    }
+    private function binary(callable $next, array $operators): array
+    {
+        $node = $next();
+        while (in_array($this->peek()['value'], $operators, true)) {
+            $operator = (string)$this->take()['value'];
+            $node = ['type' => 'binary', 'operator' => $operator, 'left' => $node, 'right' => $next()];
+        }
+        return $node;
+    }
+    private function parseOr(): array { return $this->binary(fn() => $this->parseAnd(), ['or']); }
+    private function parseAnd(): array { return $this->binary(fn() => $this->parseCompare(), ['and']); }
+    private function parseCompare(): array { return $this->binary(fn() => $this->parseAdd(), ['=', '==', '!=', '>', '<', '>=', '<=']); }
+    private function parseAdd(): array { return $this->binary(fn() => $this->parseMultiply(), ['+', '-']); }
+    private function parseMultiply(): array { return $this->binary(fn() => $this->parseUnary(), ['*', '/']); }
+    private function parseUnary(): array
+    {
+        if (in_array($this->peek()['value'], ['-', '+', 'not'], true)) {
+            return ['type' => 'unary', 'operator' => (string)$this->take()['value'], 'value' => $this->parseUnary()];
+        }
+        return $this->parsePrimary();
+    }
+    private function parsePrimary(): array
+    {
+        $token = $this->take();
+        if ($token['type'] === 'number') return ['type' => 'literal', 'value' => $token['value']];
+        if ($token['type'] === 'ref') return ['type' => 'reference', 'id' => $token['value']];
+        if ($token['value'] === 'null') return ['type' => 'literal', 'value' => null];
+        if ($token['value'] === '(') {
+            $node = $this->parseOr();
+            $this->expect(')');
+            return $node;
+        }
+        if ($token['type'] === 'word' && $this->accept('(')) {
+            $arguments = [];
+            if (!$this->accept(')')) {
+                do { $arguments[] = $this->parseOr(); } while ($this->accept(','));
+                $this->expect(')');
+            }
+            return ['type' => 'call', 'name' => $token['value'], 'arguments' => $arguments];
+        }
+        throw new RuntimeException('Expected a number, column reference, function, or parenthesized expression');
+    }
+}
+
+function expression_truthy(mixed $value): bool
+{
+    return $value !== null && (bool)$value;
+}
+
+function evaluate_expression(array $node, callable $reference): mixed
+{
+    if ($node['type'] === 'literal') return $node['value'];
+    if ($node['type'] === 'reference') return $reference((string)$node['id']);
+    if ($node['type'] === 'unary') {
+        $value = evaluate_expression($node['value'], $reference);
+        if ($node['operator'] === 'not') return !expression_truthy($value);
+        if ($value === null || !is_numeric($value)) return null;
+        return $node['operator'] === '-' ? -(float)$value : (float)$value;
+    }
+    if ($node['type'] === 'binary') {
+        $operator = $node['operator'];
+        if ($operator === 'and') {
+            return expression_truthy(evaluate_expression($node['left'], $reference)) &&
+                expression_truthy(evaluate_expression($node['right'], $reference));
+        }
+        if ($operator === 'or') {
+            return expression_truthy(evaluate_expression($node['left'], $reference)) ||
+                expression_truthy(evaluate_expression($node['right'], $reference));
+        }
+        $left = evaluate_expression($node['left'], $reference);
+        $right = evaluate_expression($node['right'], $reference);
+        if (in_array($operator, ['=', '==', '!=', '>', '<', '>=', '<='], true)) {
+            if ($left === null || $right === null) return false;
+            return match ($operator) {
+                '=', '==' => $left == $right, '!=' => $left != $right,
+                '>' => $left > $right, '<' => $left < $right,
+                '>=' => $left >= $right, '<=' => $left <= $right,
+            };
+        }
+        if ($left === null || $right === null || !is_numeric($left) || !is_numeric($right)) return null;
+        return match ($operator) {
+            '+' => (float)$left + (float)$right,
+            '-' => (float)$left - (float)$right,
+            '*' => (float)$left * (float)$right,
+            '/' => (float)$right == 0.0 ? null : (float)$left / (float)$right,
+        };
+    }
+    $name = (string)$node['name'];
+    $arguments = $node['arguments'];
+    if ($name === 'if') {
+        if (count($arguments) !== 3) throw new RuntimeException('if() requires three arguments');
+        return expression_truthy(evaluate_expression($arguments[0], $reference))
+            ? evaluate_expression($arguments[1], $reference)
+            : evaluate_expression($arguments[2], $reference);
+    }
+    if ($name === 'coalesce') {
+        foreach ($arguments as $argument) {
+            $value = evaluate_expression($argument, $reference);
+            if ($value !== null) return $value;
+        }
+        return null;
+    }
+    $values = array_map(fn(array $argument): mixed => evaluate_expression($argument, $reference), $arguments);
+    if ($name === 'abs') return count($values) === 1 && is_numeric($values[0]) ? abs((float)$values[0]) : null;
+    if ($name === 'round') {
+        if (!$values || !is_numeric($values[0])) return null;
+        return round((float)$values[0], isset($values[1]) && is_numeric($values[1]) ? (int)$values[1] : 0);
+    }
+    $numeric = array_values(array_filter($values, 'is_numeric'));
+    if ($name === 'min') return $numeric ? min(array_map('floatval', $numeric)) : null;
+    if ($name === 'max') return $numeric ? max(array_map('floatval', $numeric)) : null;
+    throw new RuntimeException("Unsupported formula function: {$name}");
+}
+
 function database_daily_values(
     string $loggerUrl,
     array $column,
@@ -487,6 +670,45 @@ function raw_timestamp_label(int $timestampMs, DateTimeZone $timezone): string
     return $date->format('Y-m-d H:i:s') . '.' . str_pad((string)$milliseconds, 3, '0', STR_PAD_LEFT);
 }
 
+function compile_report_expressions(array $report): array
+{
+    $parser = new ReportExpressionParser();
+    $compiled = [];
+    foreach ($report['columns'] as $index => $column) {
+        if (($column['source'] ?? '') !== 'calculated') continue;
+        try {
+            $compiled[$index] = $parser->parse((string)$column['expression']);
+        } catch (Throwable $e) {
+            fail("Formula error in '" . (string)$column['heading'] . "': " . $e->getMessage());
+        }
+    }
+    return $compiled;
+}
+
+function evaluate_report_row(array $report, array $baseValues, array $compiled): array
+{
+    $values = $baseValues;
+    $indexes = [];
+    foreach ($report['columns'] as $index => $column) $indexes[(string)$column['id']] = $index;
+    $evaluating = [];
+    $resolveIndex = function(int $index) use (&$resolveIndex, &$values, &$evaluating, $indexes, $report, $compiled): mixed {
+        if (($report['columns'][$index]['source'] ?? '') !== 'calculated') return $values[$index] ?? null;
+        if (array_key_exists($index, $values) && $values[$index] !== null) return $values[$index];
+        if (isset($evaluating[$index])) throw new RuntimeException('Calculated columns contain a circular reference');
+        $evaluating[$index] = true;
+        $reference = function(string $id) use (&$resolveIndex, $indexes): mixed {
+            if (!array_key_exists($id, $indexes)) throw new RuntimeException("Unknown column reference [{$id}]");
+            return $resolveIndex($indexes[$id]);
+        };
+        $values[$index] = evaluate_expression($compiled[$index], $reference);
+        unset($evaluating[$index]);
+        return $values[$index];
+    };
+    foreach ($report['columns'] as $index => $_column) $resolveIndex($index);
+    ksort($values);
+    return array_values($values);
+}
+
 function build_rows(
     array $report,
     string $historianUrl,
@@ -497,11 +719,16 @@ function build_rows(
     int $rawRowLimit = 250000
 ): array {
     $timezone = new DateTimeZone((string)($report['timezone'] ?? 'UTC'));
+    $compiled = compile_report_expressions($report);
     if ($group === 'raw') {
         $series = [];
         $timestamps = [];
         $truncated = false;
         foreach ($report['columns'] as $column) {
+            if (($column['source'] ?? '') === 'calculated') {
+                $series[] = [];
+                continue;
+            }
             $raw = ($column['source'] ?? 'historian') === 'database'
                 ? database_raw_values($loggerUrl, $column, $start, $end)
                 : historian_raw_values($historianUrl, $column, $start, $end);
@@ -524,15 +751,20 @@ function build_rows(
                 $multiplier = (float)($report['columns'][$index]['multiplier'] ?? 1);
                 $values[] = ($value !== null && is_numeric($value)) ? ((float)$value * $multiplier) : $value;
             }
-            $rows[] = ['date' => raw_timestamp_label((int)$timestampMs, $timezone), 'values' => $values];
+            $rows[] = [
+                'date' => raw_timestamp_label((int)$timestampMs, $timezone),
+                'values' => evaluate_report_row($report, $values, $compiled)
+            ];
         }
         return [$rows, $truncated];
     }
     $series = [];
     foreach ($report['columns'] as $column) {
-        $series[] = ($column['source'] ?? 'historian') === 'database'
+        $series[] = ($column['source'] ?? '') === 'calculated'
+            ? []
+            : (($column['source'] ?? 'historian') === 'database'
             ? database_daily_values($loggerUrl, $column, $start, $end, $timezone, $group)
-            : historian_daily_last($historianUrl, $column, $start, $end, $timezone, $group);
+            : historian_daily_last($historianUrl, $column, $start, $end, $timezone, $group));
     }
     $rows = [];
     for ($day = $start; $day < $end; $day = $day->modify(bucket_step($group))) {
@@ -543,7 +775,7 @@ function build_rows(
             $multiplier = (float)($report['columns'][$index]['multiplier'] ?? 1);
             $values[] = ($value !== null && is_numeric($value)) ? ((float)$value * $multiplier) : $value;
         }
-        $rows[] = ['date' => $dateKey, 'values' => $values];
+        $rows[] = ['date' => $dateKey, 'values' => evaluate_report_row($report, $values, $compiled)];
     }
     return [$rows, false];
 }
@@ -610,6 +842,26 @@ function calculate_summary_rows(array $report, array $rows): array
         $summaryRows[] = ['label' => (string)$summary['label'], 'values' => $values];
     }
     return $summaryRows;
+}
+
+function visible_column_indexes(array $report): array
+{
+    $indexes = [];
+    foreach ($report['columns'] as $index => $column) {
+        if (($column['visible'] ?? true) !== false) $indexes[] = $index;
+    }
+    return $indexes;
+}
+
+function project_report_rows(array $rows, array $indexes, string $labelKey = 'date'): array
+{
+    return array_map(
+        fn(array $row): array => [
+            $labelKey => $row[$labelKey],
+            'values' => array_map(fn(int $index): mixed => $row['values'][$index] ?? null, $indexes),
+        ],
+        $rows
+    );
 }
 
 function write_csv(string $output, array $report, array $rows, array $summaryRows): void
@@ -773,8 +1025,17 @@ if (!($report['published'] ?? false) && !isset($options['allow-unpublished'])) {
 }
 [$start, $end, $group, $periodLabel] = report_range($report, $options);
 $rawRowLimit = $command === 'preview' ? 5000 : 250000;
-[$rows, $truncated] = build_rows($report, $historianUrl, $loggerUrl, $start, $end, $group, $rawRowLimit);
+try {
+    [$rows, $truncated] = build_rows($report, $historianUrl, $loggerUrl, $start, $end, $group, $rawRowLimit);
+} catch (Throwable $e) {
+    fail('Report calculation failed: ' . $e->getMessage());
+}
 $summaryRows = calculate_summary_rows($report, $rows);
+$visibleIndexes = visible_column_indexes($report);
+$outputReport = $report;
+$outputReport['columns'] = array_map(fn(int $index): array => $report['columns'][$index], $visibleIndexes);
+$outputRows = project_report_rows($rows, $visibleIndexes);
+$outputSummaryRows = project_report_rows($summaryRows, $visibleIndexes, 'label');
 
 if ($command === 'preview') {
     echo json_encode([
@@ -796,10 +1057,10 @@ if ($command === 'preview') {
                 'tag_name' => (string)($column['tag_name'] ?? $column['field'] ?? ''),
                 'precision' => max(0, min(10, (int)($column['precision'] ?? 2))),
             ],
-            $report['columns']
+            $outputReport['columns']
         ),
-        'rows' => $rows,
-        'summary_rows' => $summaryRows,
+        'rows' => $outputRows,
+        'summary_rows' => $outputSummaryRows,
     ], JSON_UNESCAPED_SLASHES) . "\n";
     exit(0);
 }
@@ -820,9 +1081,9 @@ if (!is_dir($outputDir) && !mkdir($outputDir, 0750, true) && !is_dir($outputDir)
     fail("Unable to create output directory: {$outputDir}");
 }
 if ($format === 'csv') {
-    write_csv($output, $report, $rows, $summaryRows);
+    write_csv($output, $outputReport, $outputRows, $outputSummaryRows);
 } else {
-    write_xlsx($output, $report, $periodLabel, $rows, $summaryRows, $autoload);
+    write_xlsx($output, $outputReport, $periodLabel, $outputRows, $outputSummaryRows, $autoload);
 }
 
 echo json_encode([

@@ -302,6 +302,7 @@
   reportBuilderSourceStatus: document.getElementById('reportBuilderSourceStatus'),
   reportBuilderTagSelect: document.getElementById('reportBuilderTagSelect'),
   reportBuilderAddTagBtn: document.getElementById('reportBuilderAddTagBtn'),
+  reportBuilderAddCalculatedBtn: document.getElementById('reportBuilderAddCalculatedBtn'),
   reportBuilderColumns: document.getElementById('reportBuilderColumns'),
   reportBuilderAddSummaryBtn: document.getElementById('reportBuilderAddSummaryBtn'),
   reportBuilderSummariesWrap: document.getElementById('reportBuilderSummariesWrap'),
@@ -315,6 +316,13 @@
   reportBuilderPreviewWrap: document.getElementById('reportBuilderPreviewWrap'),
   reportBuilderPreviewHead: document.getElementById('reportBuilderPreviewHead'),
   reportBuilderPreviewBody: document.getElementById('reportBuilderPreviewBody'),
+  reportFormulaModal: document.getElementById('reportFormulaModal'),
+  reportFormulaCloseBtn: document.getElementById('reportFormulaCloseBtn'),
+  reportFormulaCancelBtn: document.getElementById('reportFormulaCancelBtn'),
+  reportFormulaSaveBtn: document.getElementById('reportFormulaSaveBtn'),
+  reportFormulaExpression: document.getElementById('reportFormulaExpression'),
+  reportFormulaColumns: document.getElementById('reportFormulaColumns'),
+  reportFormulaStatus: document.getElementById('reportFormulaStatus'),
 
   // Data Logger (opcbridge-logger)
   loggerTreeView: document.getElementById('loggerTreeView'),
@@ -1100,6 +1108,7 @@ const state = {
   reportBuilderSchema: [],
   reportBuilderSchemaRequestSeq: 0,
   reportBuilderDraggedColumnIndex: -1,
+  reportFormulaColumnIndex: -1,
   reportBuilderAccess: [],
 
   // reporter (data logger)
@@ -6903,6 +6912,52 @@ function reportBuilderCurrentDefinition() {
   };
 }
 
+function newReportColumnId(label = 'column') {
+  const used = new Set(state.reportBuilderColumns.map((column) => String(column.id || '')));
+  const base = String(label || 'column').trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 70) || 'column';
+  let id = base;
+  let suffix = 2;
+  while (used.has(id)) id = `${base}_${suffix++}`;
+  return id;
+}
+
+function closeReportFormulaModal() {
+  if (els.reportFormulaModal) els.reportFormulaModal.style.display = 'none';
+  state.reportFormulaColumnIndex = -1;
+}
+
+function openReportFormulaModal(index) {
+  const column = state.reportBuilderColumns[index];
+  if (!column || column.source !== 'calculated') return;
+  state.reportFormulaColumnIndex = index;
+  if (els.reportFormulaExpression) els.reportFormulaExpression.value = String(column.expression || '');
+  if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = '';
+  if (els.reportFormulaColumns) {
+    els.reportFormulaColumns.textContent = '';
+    state.reportBuilderColumns.forEach((candidate, candidateIndex) => {
+      if (candidateIndex === index) return;
+      const button = document.createElement('button');
+      button.className = 'btn';
+      button.type = 'button';
+      button.textContent = String(candidate.heading || candidate.id || `Column ${candidateIndex + 1}`);
+      button.title = `[${String(candidate.id || '')}]`;
+      button.addEventListener('click', () => {
+        const textarea = els.reportFormulaExpression;
+        if (!textarea) return;
+        const reference = `[${String(candidate.id || '')}]`;
+        const start = textarea.selectionStart ?? textarea.value.length;
+        const end = textarea.selectionEnd ?? start;
+        textarea.setRangeText(reference, start, end, 'end');
+        textarea.focus();
+      });
+      els.reportFormulaColumns.appendChild(button);
+    });
+  }
+  if (els.reportFormulaModal) els.reportFormulaModal.style.display = 'flex';
+  els.reportFormulaExpression?.focus();
+}
+
 function reorderReportBuilderSummaryColumns(fromIndex, toIndex) {
   state.reportBuilderSummaries.forEach((summary) => {
     const calculations = Array.isArray(summary.calculations) ? summary.calculations : [];
@@ -6918,8 +6973,11 @@ function renderReportBuilderSummaries() {
   els.reportBuilderSummaries.textContent = '';
   els.reportBuilderSummariesWrap.style.display = state.reportBuilderSummaries.length ? '' : 'none';
   if (!state.reportBuilderSummaries.length) return;
+  const visibleColumns = state.reportBuilderColumns
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => column.visible !== false);
   const header = document.createElement('tr');
-  ['Label', ...state.reportBuilderColumns.map((column) => String(column.heading || column.tag_name || column.field || 'Column')), 'Actions']
+  ['Label', ...visibleColumns.map(({ column }) => String(column.heading || column.tag_name || column.field || 'Column')), 'Actions']
     .forEach((text) => {
       const th = document.createElement('th');
       th.textContent = text;
@@ -6941,7 +6999,7 @@ function renderReportBuilderSummaries() {
     label.addEventListener('input', () => { summary.label = label.value; });
     labelCell.appendChild(label);
     tr.appendChild(labelCell);
-    state.reportBuilderColumns.forEach((_, columnIndex) => {
+    visibleColumns.forEach(({ index: columnIndex }) => {
       const td = document.createElement('td');
       const select = document.createElement('select');
       choices.forEach(([value, text]) => {
@@ -7030,11 +7088,18 @@ function renderReportBuilderColumns() {
     heading.addEventListener('input', () => { column.heading = heading.value; });
     headingCell.appendChild(heading);
     const connection = document.createElement('td');
-    connection.textContent = column.source === 'database'
+    connection.textContent = column.source === 'calculated' ? 'Calculated' : (column.source === 'database'
       ? String(column.database_id || '')
-      : String(column.connection_id || '');
+      : String(column.connection_id || ''));
     const tag = document.createElement('td');
-    if (column.source === 'database' && column.layout === 'category') {
+    if (column.source === 'calculated') {
+      const editFormula = document.createElement('button');
+      editFormula.className = 'btn';
+      editFormula.type = 'button';
+      editFormula.textContent = 'Edit Formula';
+      editFormula.addEventListener('click', () => openReportFormulaModal(index));
+      tag.appendChild(editFormula);
+    } else if (column.source === 'database' && column.layout === 'category') {
       tag.textContent = `${String(column.category_value ?? '')} (value: ${String(column.field || '')})`;
     } else {
       tag.textContent = column.source === 'database'
@@ -7050,6 +7115,7 @@ function renderReportBuilderColumns() {
           ['max', 'Maximum'], ['sum', 'Total'], ['count', 'Count']
         ]
       : [['last', 'Last available value']];
+    if (column.source === 'calculated') calculations.splice(0, calculations.length);
     calculations.forEach(([value, label]) => {
       const option = document.createElement('option');
       option.value = value;
@@ -7061,7 +7127,8 @@ function renderReportBuilderColumns() {
       column.aggregation = calculation.value;
       renderReportBuilderColumns();
     });
-    calculationCell.appendChild(calculation);
+    if (column.source === 'calculated') calculationCell.textContent = 'Formula';
+    else calculationCell.appendChild(calculation);
     const multiplierCell = document.createElement('td');
     const multiplier = document.createElement('input');
     multiplier.type = 'number';
@@ -7072,7 +7139,8 @@ function renderReportBuilderColumns() {
       const value = Number(multiplier.value);
       column.multiplier = Number.isFinite(value) ? value : 1;
     });
-    multiplierCell.appendChild(multiplier);
+    if (column.source === 'calculated') multiplierCell.textContent = '—';
+    else multiplierCell.appendChild(multiplier);
     const precisionCell = document.createElement('td');
     const precision = document.createElement('input');
     precision.type = 'number';
@@ -7082,6 +7150,17 @@ function renderReportBuilderColumns() {
     precision.value = String(column.precision ?? 2);
     precision.addEventListener('input', () => { column.precision = Math.max(0, Math.min(10, Number(precision.value) || 0)); });
     precisionCell.appendChild(precision);
+    const visibleCell = document.createElement('td');
+    visibleCell.style.textAlign = 'center';
+    const visible = document.createElement('input');
+    visible.type = 'checkbox';
+    visible.checked = column.visible !== false;
+    visible.title = 'Show this column in the report';
+    visible.addEventListener('change', () => {
+      column.visible = visible.checked;
+      renderReportBuilderSummaries();
+    });
+    visibleCell.appendChild(visible);
     const decreaseCell = document.createElement('td');
     decreaseCell.className = 'report-counter-decrease';
     if (column.source === 'database' && String(column.aggregation || 'last') === 'change') {
@@ -7159,7 +7238,7 @@ function renderReportBuilderColumns() {
     actionButtons.className = 'report-column-action-buttons';
     actionButtons.append(up, down, remove);
     actions.appendChild(actionButtons);
-    tr.append(order, headingCell, connection, tag, calculationCell, multiplierCell, precisionCell, decreaseCell, actions);
+    tr.append(order, headingCell, connection, tag, calculationCell, multiplierCell, precisionCell, visibleCell, decreaseCell, actions);
     els.reportBuilderColumns.appendChild(tr);
   });
   renderReportBuilderSummaries();
@@ -7172,7 +7251,11 @@ function loadReportBuilderDefinition(report) {
     published: false, formats: ['xlsx', 'csv'], columns: []
   };
   state.reportBuilderOriginalId = String(value.id || '');
-  state.reportBuilderColumns = Array.isArray(value.columns) ? value.columns.map((column) => ({ ...column })) : [];
+  state.reportBuilderColumns = Array.isArray(value.columns) ? value.columns.map((column, index) => ({
+    ...column,
+    id: String(column.id || `column_${index + 1}`),
+    visible: column.visible !== false
+  })) : [];
   state.reportBuilderSummaries = Array.isArray(value.summaries)
     ? value.summaries.map((summary) => ({
         label: String(summary?.label || ''),
@@ -7397,6 +7480,7 @@ function wireReportBuilderUi() {
     const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
     if (!field || !databaseId) return;
     state.reportBuilderColumns.push({
+      id: newReportColumnId(field),
       heading: field,
       source: 'database',
       database_id: databaseId,
@@ -7443,6 +7527,7 @@ function wireReportBuilderUi() {
     const valueField = String(els.reportBuilderValueColumn?.value || '').trim();
     Array.from(els.reportBuilderCategoryValues?.selectedOptions || []).forEach((option) => {
       state.reportBuilderColumns.push({
+        id: newReportColumnId(option.textContent || option.value),
         heading: option.textContent || option.value,
         source: 'database',
         database_id: databaseId,
@@ -7465,9 +7550,40 @@ function wireReportBuilderUi() {
     const [connectionId, tagName] = String(els.reportBuilderTagSelect?.value || '').split('\u001f');
     if (!connectionId || !tagName) return;
     state.reportBuilderColumns.push({
+      id: newReportColumnId(tagName),
       heading: tagName, source: 'historian', connection_id: connectionId,
       tag_name: tagName, aggregation: 'last', precision: 2
     });
+    renderReportBuilderColumns();
+  });
+  if (els.reportBuilderAddCalculatedBtn) els.reportBuilderAddCalculatedBtn.addEventListener('click', () => {
+    const column = {
+      id: newReportColumnId('calculated_value'),
+      heading: 'Calculated Value',
+      source: 'calculated',
+      expression: '',
+      precision: 2,
+      visible: true
+    };
+    state.reportBuilderColumns.push(column);
+    state.reportBuilderSummaries.forEach((summary) => summary.calculations?.push('none'));
+    renderReportBuilderColumns();
+    openReportFormulaModal(state.reportBuilderColumns.length - 1);
+  });
+  [els.reportFormulaCloseBtn, els.reportFormulaCancelBtn].forEach((button) => {
+    button?.addEventListener('click', closeReportFormulaModal);
+  });
+  if (els.reportFormulaSaveBtn) els.reportFormulaSaveBtn.addEventListener('click', () => {
+    const index = state.reportFormulaColumnIndex;
+    const column = state.reportBuilderColumns[index];
+    const expression = String(els.reportFormulaExpression?.value || '').trim();
+    if (!column || column.source !== 'calculated') return closeReportFormulaModal();
+    if (!expression) {
+      if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = 'Enter a formula.';
+      return;
+    }
+    column.expression = expression;
+    closeReportFormulaModal();
     renderReportBuilderColumns();
   });
   if (els.reportBuilderSaveBtn) els.reportBuilderSaveBtn.addEventListener('click', () => {
