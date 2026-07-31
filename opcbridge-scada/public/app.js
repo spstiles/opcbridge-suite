@@ -7033,9 +7033,13 @@ function renderReportBuilderColumns() {
       ? String(column.database_id || '')
       : String(column.connection_id || '');
     const tag = document.createElement('td');
-    tag.textContent = column.source === 'database'
-      ? String(column.category_value ?? column.field ?? '')
-      : String(column.tag_name || '');
+    if (column.source === 'database' && column.layout === 'category') {
+      tag.textContent = `${String(column.category_value ?? '')} (value: ${String(column.field || '')})`;
+    } else {
+      tag.textContent = column.source === 'database'
+        ? String(column.field || '')
+        : String(column.tag_name || '');
+    }
     const calculationCell = document.createElement('td');
     const calculation = document.createElement('select');
     const calculations = column.source === 'database'
@@ -7201,7 +7205,18 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderPublished) els.reportBuilderPublished.checked = Boolean(value.published);
   if (els.reportBuilderXlsx) els.reportBuilderXlsx.checked = (value.formats || []).includes('xlsx');
   if (els.reportBuilderCsv) els.reportBuilderCsv.checked = (value.formats || []).includes('csv');
-  const source = value.data_source || { type: 'historian' };
+  const source = { ...(value.data_source || { type: 'historian' }) };
+  const firstDatabaseColumn = state.reportBuilderColumns.find((column) => column?.source === 'database');
+  if (source.type === 'database' && firstDatabaseColumn) {
+    source.database_id = String(firstDatabaseColumn.database_id || source.database_id || '');
+    source.table = String(firstDatabaseColumn.table || source.table || '');
+    source.time_column = String(firstDatabaseColumn.time_column || source.time_column || '');
+    source.layout = String(firstDatabaseColumn.layout || source.layout || 'wide');
+    source.value_column = String(firstDatabaseColumn.field || source.value_column || '');
+    if (source.layout === 'category') {
+      source.category_column = String(firstDatabaseColumn.category_column || source.category_column || '');
+    }
+  }
   if (els.reportBuilderSourceType) els.reportBuilderSourceType.value = String(source.type || 'historian');
   if (els.reportBuilderLayout) els.reportBuilderLayout.value = String(source.layout || 'wide');
   renderReportBuilderDatabaseSources(String(source.database_id || ''));
