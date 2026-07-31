@@ -141,7 +141,7 @@ function validate_report(array $report): array
                 }
             }
             $aggregation = (string)($column['aggregation'] ?? 'last');
-            if (!in_array($aggregation, ['last', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count'], true)) {
+            if (!in_array($aggregation, ['last', 'last_nonzero', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count'], true)) {
                 fail("Report '{$id}' column {$index} uses an unsupported aggregation");
             }
         } else {
@@ -349,6 +349,16 @@ function aggregate_values(array $points, string $aggregation): mixed
     if (!$points) return null;
     if ($aggregation === 'first') return $points[0]['value'];
     if ($aggregation === 'last') return $points[count($points) - 1]['value'];
+    if ($aggregation === 'last_nonzero') {
+        $lastZero = null;
+        for ($index = count($points) - 1; $index >= 0; $index--) {
+            $value = $points[$index]['value'];
+            if (!is_numeric($value)) continue;
+            if ((float)$value != 0.0) return $value;
+            if ($lastZero === null) $lastZero = $value;
+        }
+        return $lastZero;
+    }
     $values = array_values(array_filter(array_map(
         fn(array $point): mixed => is_numeric($point['value']) ? (float)$point['value'] : null,
         $points
@@ -527,6 +537,7 @@ function evaluate_expression(array $node, callable $reference): mixed
     $numeric = array_values(array_filter($values, 'is_numeric'));
     if ($name === 'min') return $numeric ? min(array_map('floatval', $numeric)) : null;
     if ($name === 'max') return $numeric ? max(array_map('floatval', $numeric)) : null;
+    if ($name === 'avg') return $numeric ? array_sum(array_map('floatval', $numeric)) / count($numeric) : null;
     throw new RuntimeException("Unsupported formula function: {$name}");
 }
 

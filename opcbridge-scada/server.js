@@ -507,7 +507,7 @@ function normalizeReportDefinition(value) {
     category_column: String(sourceInput.category_column || '').trim().slice(0, 255),
     value_column: String(sourceInput.value_column || '').trim().slice(0, 255)
   } : { type: 'historian' };
-  const aggregations = new Set(['last', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count']);
+  const aggregations = new Set(['last', 'last_nonzero', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count']);
   const rawColumns = (Array.isArray(source.columns) ? source.columns : []).slice(0, 100);
   const usedColumnIds = new Set();
   const columnIds = rawColumns.map((column, index) => {

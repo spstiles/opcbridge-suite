@@ -1227,6 +1227,7 @@
 		          <label id="reportBuilderAggregationLabel" style="display:none;"><span>Aggregation</span>
 		            <select id="reportBuilderAggregation">
 		              <option value="last">Last available value</option>
+		              <option value="last_nonzero">Last non-zero value</option>
 		              <option value="first">First value</option>
 		              <option value="avg">Average</option>
 		              <option value="min">Minimum</option>
@@ -2165,7 +2166,7 @@
           <textarea id="reportFormulaExpression" rows="8" class="mono" style="width:100%;" placeholder="Example: if([pump_flow] &gt; 3, [pump_temperature], null)"></textarea>
         </label>
         <div class="hint" style="margin-top:8px;">
-          Supported: +, −, ×, ÷, comparisons, and/or/not, if(), coalesce(), min(), max(), abs(), round(), and null.
+          Supported: +, −, ×, ÷, comparisons, and/or/not, if(), coalesce(), min(), max(), avg(), abs(), round(), and null.
         </div>
         <h4 style="margin-top:16px;">Available Columns</h4>
         <div class="hint">Click a column to insert its stable reference into the formula.</div>

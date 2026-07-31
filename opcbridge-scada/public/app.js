@@ -7110,7 +7110,8 @@ function renderReportBuilderColumns() {
     const calculation = document.createElement('select');
     const calculations = column.source === 'database'
       ? [
-          ['last', 'Last available value'], ['change', 'Change during period'],
+          ['last', 'Last available value'], ['last_nonzero', 'Last non-zero value'],
+          ['change', 'Change during period'],
           ['first', 'First value'], ['avg', 'Average'], ['min', 'Minimum'],
           ['max', 'Maximum'], ['sum', 'Total'], ['count', 'Count']
         ]
