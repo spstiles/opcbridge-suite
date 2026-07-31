@@ -6764,6 +6764,7 @@ function renderReportBuilderSourceUi() {
   if (els.reportBuilderValueColumnLabel) els.reportBuilderValueColumnLabel.style.display = categoryMode ? '' : 'none';
   if (els.reportBuilderCategoryColumnLabel) els.reportBuilderCategoryColumnLabel.style.display = categoryMode ? '' : 'none';
   if (els.reportBuilderLoadCategoriesBtn) els.reportBuilderLoadCategoriesBtn.style.display = categoryMode ? '' : 'none';
+  if (els.reportBuilderDatabaseField) els.reportBuilderDatabaseField.style.display = categoryMode ? 'none' : '';
   if (els.reportBuilderAddDatabaseFieldBtn) els.reportBuilderAddDatabaseFieldBtn.style.display = categoryMode ? 'none' : '';
   if (els.reportBuilderCategoryPicker && !categoryMode) els.reportBuilderCategoryPicker.style.display = 'none';
   if (els.reportBuilderPreviewBtn) {
