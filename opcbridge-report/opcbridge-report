@@ -108,25 +108,80 @@ function validate_report(array $report): array
         if (!preg_match('/^([A-Z]{1,3})([1-9][0-9]{0,6})$/', $cell, $matches)) return $fallback;
         return $validColumn($matches[1]) !== '' && (int)$matches[2] <= 1048576 ? $cell : $fallback;
     };
+    $validRange = function(mixed $value, string $fallback = '') use ($validCell): string {
+        $parts = explode(':', strtoupper(trim((string)$value)));
+        if (count($parts) < 1 || count($parts) > 2) return $fallback;
+        $start = $validCell($parts[0]);
+        $end = $validCell($parts[1] ?? $parts[0]);
+        if ($start === '' || $end === '') return $fallback;
+        preg_match('/^([A-Z]+)(\d+)$/', $start, $a);
+        preg_match('/^([A-Z]+)(\d+)$/', $end, $b);
+        $number = static function(string $column): int { $n = 0; foreach (str_split($column) as $c) $n = $n * 26 + ord($c) - 64; return $n; };
+        if ($number($a[1]) > $number($b[1]) || (int)$a[2] > (int)$b[2]) return $fallback;
+        return $start === $end ? $start : "{$start}:{$end}";
+    };
     $layout = is_array($report['layout'] ?? null) ? $report['layout'] : [];
     $worksheet = trim((string)($layout['worksheet'] ?? 'Report')) ?: 'Report';
     if (strlen($worksheet) > 31 || preg_match('/[\\\\\/?*\[\]:]/', $worksheet)) {
         fail("Report '{$id}' has an invalid worksheet name");
     }
-    $fields = [];
-    foreach (array_slice(is_array($layout['fields'] ?? null) ? $layout['fields'] : [], 0, 50) as $fieldIndex => $field) {
-        $cell = $validCell($field['cell'] ?? '');
-        $text = trim((string)($field['text'] ?? ''));
-        if ($cell === '' || $text === '') fail("Report '{$id}' fixed text entry " . ($fieldIndex + 1) . " is invalid");
-        $fields[] = ['cell' => $cell, 'text' => substr($text, 0, 2000)];
+    $placedInput = is_array($layout['placed_cells'] ?? null) ? $layout['placed_cells'] : null;
+    if ($placedInput === null) {
+        $placedInput = [];
+        $addSystem = static function(mixed $target, string $value, string $dateFormat = '') use (&$placedInput): void {
+            if (trim((string)$target) !== '') $placedInput[] = ['target' => $target, 'type' => 'system', 'value' => $value, 'date_format' => $dateFormat];
+        };
+        $addSystem(array_key_exists('title_cell', $layout) ? $layout['title_cell'] : 'A1', 'report_name');
+        $addSystem(array_key_exists('description_cell', $layout) ? $layout['description_cell'] : 'A2', 'report_description');
+        $dateDisplay = (string)($layout['date_display'] ?? 'combined');
+        if ($dateDisplay === 'combined') $addSystem($layout['period_cell'] ?? 'A3', 'period_label');
+        if ($dateDisplay === 'separate') {
+            $addSystem($layout['start_date_cell'] ?? 'A3', 'start_date', 'mm/dd/yyyy');
+            $addSystem($layout['end_date_cell'] ?? 'B3', 'end_date', 'mm/dd/yyyy');
+        }
+        foreach (is_array($layout['fields'] ?? null) ? $layout['fields'] : [] as $field) {
+            $placedInput[] = ['target' => $field['cell'] ?? '', 'type' => 'text', 'text' => $field['text'] ?? ''];
+        }
     }
-    $optionalCell = function(mixed $value, string $label) use ($validCell, $id): string {
-        $raw = trim((string)$value);
-        if ($raw === '') return '';
-        $cell = $validCell($raw);
-        if ($cell === '') fail("Report '{$id}' {$label} must be a valid spreadsheet cell or blank");
-        return $cell;
+    $placedCells = [];
+    $systemValues = ['report_name', 'report_description', 'period_label', 'start_date', 'end_date', 'generated_at', 'timezone'];
+    foreach (array_slice($placedInput, 0, 100) as $index => $item) {
+        $target = $validRange($item['target'] ?? '');
+        $type = (string)($item['type'] ?? 'text');
+        if ($target === '' || !in_array($type, ['system', 'text', 'formula'], true)) fail("Report '{$id}' placed cell " . ($index + 1) . ' is invalid');
+        $placed = ['target' => $target, 'type' => $type];
+        if ($type === 'system') {
+            $placed['value'] = (string)($item['value'] ?? '');
+            if (!in_array($placed['value'], $systemValues, true)) fail("Report '{$id}' placed cell " . ($index + 1) . ' has an invalid standard value');
+            $placed['date_format'] = substr(trim((string)($item['date_format'] ?? '')), 0, 100);
+        } elseif ($type === 'text') {
+            $placed['text'] = substr((string)($item['text'] ?? ''), 0, 2000);
+            if (trim($placed['text']) === '') fail("Report '{$id}' placed cell " . ($index + 1) . ' requires text');
+        } else {
+            $placed['expression'] = substr(trim((string)($item['expression'] ?? '')), 0, 4000);
+            if ($placed['expression'] === '') fail("Report '{$id}' placed cell " . ($index + 1) . ' requires a formula');
+        }
+        $placedCells[] = $placed;
+    }
+    $rangeBounds = static function(string $target): array {
+        $parts = explode(':', $target); $end = $parts[1] ?? $parts[0];
+        $parse = static function(string $cell): array {
+            preg_match('/^([A-Z]+)(\d+)$/', $cell, $match); $column = 0;
+            foreach (str_split($match[1]) as $character) $column = $column * 26 + ord($character) - 64;
+            return ['column' => $column, 'row' => (int)$match[2]];
+        };
+        return ['start' => $parse($parts[0]), 'end' => $parse($end)];
     };
+    foreach ($placedCells as $index => $item) {
+        $a = $rangeBounds($item['target']);
+        for ($otherIndex = 0; $otherIndex < $index; $otherIndex++) {
+            $b = $rangeBounds($placedCells[$otherIndex]['target']);
+            if ($a['start']['row'] <= $b['end']['row'] && $a['end']['row'] >= $b['start']['row'] &&
+                $a['start']['column'] <= $b['end']['column'] && $a['end']['column'] >= $b['start']['column']) {
+                fail("Report '{$id}' placed cells " . ($otherIndex + 1) . ' and ' . ($index + 1) . ' overlap');
+            }
+        }
+    }
     $report['layout'] = [
         'worksheet' => $worksheet,
         'table_start_row' => max(1, min(10000, (int)($layout['table_start_row'] ?? 5))),
@@ -135,14 +190,7 @@ function validate_report(array $report): array
         'summary_gap_rows' => max(0, min(100, (int)($layout['summary_gap_rows'] ?? 0))),
         'summary_placement' => (string)($layout['summary_placement'] ?? 'after_data') === 'fixed' ? 'fixed' : 'after_data',
         'summary_start_row' => max(1, min(10000, (int)($layout['summary_start_row'] ?? 40))),
-        'title_cell' => array_key_exists('title_cell', $layout) ? $optionalCell($layout['title_cell'], 'title cell') : 'A1',
-        'description_cell' => array_key_exists('description_cell', $layout) ? $optionalCell($layout['description_cell'], 'description cell') : 'A2',
-        'period_cell' => $validCell($layout['period_cell'] ?? 'A3', 'A3'),
-        'date_display' => in_array((string)($layout['date_display'] ?? 'combined'), ['combined', 'separate', 'none'], true)
-            ? (string)($layout['date_display'] ?? 'combined') : 'combined',
-        'start_date_cell' => $validCell($layout['start_date_cell'] ?? 'A3', 'A3'),
-        'end_date_cell' => $validCell($layout['end_date_cell'] ?? 'B3', 'B3'),
-        'fields' => $fields,
+        'placed_cells' => $placedCells,
     ];
     $template = is_array($report['template'] ?? null) ? $report['template'] : null;
     if ($template !== null) {
@@ -900,6 +948,44 @@ function safe_filename(string $value): string
 
 function calculate_summary_rows(array $report, array $rows): array
 {
+    $statistics = calculate_column_statistics($report, $rows);
+    $columnIndexes = [];
+    foreach ($report['columns'] as $columnIndex => $column) {
+        $columnIndexes[(string)$column['id']] = $columnIndex;
+    }
+    $parser = new ReportExpressionParser();
+    $summaryRows = [];
+    foreach (($report['summaries'] ?? []) as $summary) {
+        $values = [];
+        foreach ($report['columns'] as $columnIndex => $_column) {
+            $calculation = (string)($summary['calculations'][$columnIndex] ?? 'none');
+            $stats = $statistics[$columnIndex];
+            $value = null;
+            if (in_array($calculation, ['count', 'missing', 'first', 'last', 'sum', 'avg', 'min', 'max'], true)) {
+                $value = summary_statistic_value($calculation, $stats);
+            } elseif ($calculation === 'formula') {
+                $formula = (string)($summary['formulas'][$columnIndex] ?? '');
+                try {
+                    $node = resolve_summary_aggregates($parser->parse($formula), $statistics, $columnIndexes);
+                    $value = evaluate_expression($node, function(string $id): mixed {
+                        throw new RuntimeException("Use an aggregate such as sum([{$id}]) in a summary formula");
+                    });
+                } catch (Throwable $e) {
+                    fail("Summary formula error in '" . (string)$summary['label'] . "': " . $e->getMessage());
+                }
+            }
+            $values[] = $value;
+        }
+        $summaryRows[] = [
+            'label' => (string)$summary['label'], 'values' => $values,
+            'precisions' => array_map(fn(mixed $precision): ?int => $precision === null ? null : (int)$precision, $summary['precisions'] ?? []),
+        ];
+    }
+    return $summaryRows;
+}
+
+function calculate_column_statistics(array $report, array $rows): array
+{
     $statistics = [];
     foreach ($report['columns'] as $columnIndex => $_column) {
         $stats = [
@@ -925,57 +1011,41 @@ function calculate_summary_rows(array $report, array $rows): array
         }
         $statistics[] = $stats;
     }
-    $columnIndexes = [];
-    foreach ($report['columns'] as $columnIndex => $column) {
-        $columnIndexes[(string)$column['id']] = $columnIndex;
-    }
+    return $statistics;
+}
+
+function calculate_placed_cells(array $report, array $rows, string $periodLabel, DateTimeImmutable $start, DateTimeImmutable $end): array
+{
+    $statistics = calculate_column_statistics($report, $rows);
+    $indexes = [];
+    foreach ($report['columns'] as $index => $column) $indexes[(string)$column['id']] = $index;
     $parser = new ReportExpressionParser();
-    $summaryRows = [];
-    foreach (($report['summaries'] ?? []) as $summary) {
-        $values = [];
-        foreach ($report['columns'] as $columnIndex => $_column) {
-            $calculation = (string)($summary['calculations'][$columnIndex] ?? 'none');
-            $stats = $statistics[$columnIndex];
-            $value = null;
-            if ($calculation === 'count') {
-                $value = $stats['count'];
-            } elseif ($calculation === 'missing') {
-                $value = $stats['missing'];
-            } elseif ($calculation === 'first' && $stats['count']) {
-                $value = $stats['first'];
-            } elseif ($calculation === 'last' && $stats['count']) {
-                $value = $stats['last'];
-            } elseif ($calculation === 'sum' && $stats['numeric_count']) {
-                $value = $stats['sum'];
-            } elseif ($calculation === 'avg' && $stats['numeric_count']) {
-                $value = $stats['sum'] / $stats['numeric_count'];
-            } elseif ($calculation === 'min' && $stats['numeric_count']) {
-                $value = $stats['min'];
-            } elseif ($calculation === 'max' && $stats['numeric_count']) {
-                $value = $stats['max'];
-            } elseif ($calculation === 'formula') {
-                $formula = (string)($summary['formulas'][$columnIndex] ?? '');
-                try {
-                    $node = resolve_summary_aggregates($parser->parse($formula), $statistics, $columnIndexes);
-                    $value = evaluate_expression($node, function(string $id): mixed {
-                        throw new RuntimeException("Use an aggregate such as sum([{$id}]) in a summary formula");
-                    });
-                } catch (Throwable $e) {
-                    fail("Summary formula error in '" . (string)$summary['label'] . "': " . $e->getMessage());
-                }
-            }
-            $values[] = $value;
+    $values = [
+        'report_name' => (string)($report['name'] ?? $report['id']),
+        'report_description' => (string)($report['description'] ?? ''), 'period_label' => $periodLabel,
+        'start_date' => $start, 'end_date' => $end->modify('-1 second'),
+        'generated_at' => new DateTimeImmutable('now', new DateTimeZone((string)($report['timezone'] ?? 'UTC'))),
+        'timezone' => (string)($report['timezone'] ?? 'UTC'),
+    ];
+    $result = [];
+    foreach (($report['layout']['placed_cells'] ?? []) as $index => $item) {
+        $entry = ['target' => $item['target'], 'type' => $item['type'], 'is_date' => false, 'date_format' => (string)($item['date_format'] ?? '')];
+        if ($item['type'] === 'system') {
+            $entry['value'] = $values[$item['value']] ?? null;
+            $entry['system_value'] = $item['value'];
+            $entry['is_date'] = $entry['value'] instanceof DateTimeInterface;
+        } elseif ($item['type'] === 'text') $entry['value'] = (string)$item['text'];
+        else {
+            try {
+                $node = resolve_summary_aggregates($parser->parse((string)$item['expression']), $statistics, $indexes);
+                $entry['value'] = evaluate_expression($node, function(string $id): mixed {
+                    throw new RuntimeException("Use an aggregate such as sum([{$id}]) in a placed-cell formula");
+                });
+            } catch (Throwable $e) { fail('Placed cell formula error at ' . $item['target'] . ': ' . $e->getMessage()); }
         }
-        $summaryRows[] = [
-            'label' => (string)$summary['label'],
-            'values' => $values,
-            'precisions' => array_map(
-                fn(mixed $precision): ?int => $precision === null ? null : (int)$precision,
-                $summary['precisions'] ?? []
-            ),
-        ];
+        $result[] = $entry;
     }
-    return $summaryRows;
+    return $result;
 }
 
 function summary_statistic_value(string $name, array $stats): mixed
@@ -1082,6 +1152,7 @@ function write_xlsx(
     DateTimeImmutable $rangeEnd,
     array $rows,
     array $summaryRows,
+    array $placedCells,
     string $autoload
 ): void {
     if (!is_file($autoload)) {
@@ -1106,12 +1177,6 @@ function write_xlsx(
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle((string)($layout['worksheet'] ?? 'Report'));
     }
-    $title = (string)($report['name'] ?? $report['id']);
-    $titleCell = (string)($layout['title_cell'] ?? 'A1');
-    $descriptionCell = (string)($layout['description_cell'] ?? 'A2');
-    $periodCell = (string)($layout['period_cell'] ?? 'A3');
-    $startDateCell = (string)($layout['start_date_cell'] ?? 'A3');
-    $endDateCell = (string)($layout['end_date_cell'] ?? 'B3');
     $tableStartRow = (int)($layout['table_start_row'] ?? 5);
     $tableStartColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString(
         (string)($layout['table_start_column'] ?? 'A')
@@ -1126,23 +1191,19 @@ function write_xlsx(
     $lastColumnIndex = max([$tableStartColumn, ...$columnIndexes]);
     $firstColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($tableStartColumn);
     $lastColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($lastColumnIndex);
-    if ($titleCell !== '') $sheet->setCellValue($titleCell, $title);
-    if ($descriptionCell !== '') $sheet->setCellValue($descriptionCell, (string)($report['description'] ?? ''));
-    $dateDisplay = (string)($layout['date_display'] ?? 'combined');
-    if ($dateDisplay === 'combined') {
-        $sheet->setCellValue($periodCell, $month);
-    } elseif ($dateDisplay === 'separate') {
-        $sheet->setCellValue($startDateCell, \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($rangeStart));
-        $sheet->setCellValue($endDateCell, \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($rangeEnd->modify('-1 day')));
-        $sheet->getStyle($startDateCell)->getNumberFormat()->setFormatCode('mm/dd/yyyy');
-        $sheet->getStyle($endDateCell)->getNumberFormat()->setFormatCode('mm/dd/yyyy');
-    }
-    foreach (($layout['fields'] ?? []) as $field) {
-        $sheet->setCellValueExplicit(
-            (string)$field['cell'],
-            (string)$field['text'],
-            \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
-        );
+    foreach ($placedCells as $placed) {
+        $target = (string)$placed['target'];
+        $parts = explode(':', $target);
+        $cell = $parts[0];
+        if (count($parts) === 2 && $parts[0] !== $parts[1]) $sheet->mergeCells($target);
+        if (($placed['is_date'] ?? false) && $placed['value'] instanceof DateTimeInterface) {
+            $sheet->setCellValue($cell, \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($placed['value']));
+            $sheet->getStyle($cell)->getNumberFormat()->setFormatCode((string)($placed['date_format'] ?: 'mm/dd/yyyy'));
+        } elseif (($placed['type'] ?? '') === 'text' || is_string($placed['value'] ?? null)) {
+            $sheet->setCellValueExplicit($cell, (string)($placed['value'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        } else {
+            $sheet->setCellValue($cell, $placed['value'] ?? null);
+        }
     }
 
     $timeHeading = ($report['group_by'] ?? 'day') === 'raw'
@@ -1213,7 +1274,13 @@ function write_xlsx(
             ->getStartColor()->setARGB('FFF2F2F2');
     }
 
-    if ($titleCell !== '') $sheet->getStyle($titleCell)->getFont()->setBold(true)->setSize(16);
+    if (($template['enabled'] ?? false) !== true) {
+        foreach ($placedCells as $placed) {
+            if (($placed['system_value'] ?? '') === 'report_name') {
+                $sheet->getStyle((string)$placed['target'])->getFont()->setBold(true)->setSize(16);
+            }
+        }
+    }
     if ($includeHeaderRow) {
         $sheet->getStyle("{$firstColumn}{$tableStartRow}:{$lastColumn}{$tableStartRow}")->getFont()->setBold(true);
         $sheet->getStyle("{$firstColumn}{$tableStartRow}:{$lastColumn}{$tableStartRow}")->getFill()
@@ -1370,6 +1437,7 @@ try {
     fail('Report calculation failed: ' . $e->getMessage());
 }
 $summaryRows = calculate_summary_rows($report, $rows);
+$placedCells = calculate_placed_cells($report, $rows, $periodLabel, $start, $end);
 $reportLayout = is_array($report['layout'] ?? null) ? $report['layout'] : [];
 if ($summaryRows && ($reportLayout['summary_placement'] ?? 'after_data') === 'fixed') {
     $headerRows = ($reportLayout['include_header_row'] ?? true) !== false ? 1 : 0;
@@ -1398,6 +1466,11 @@ if ($command === 'preview') {
         'group_by' => $group,
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
         'layout' => $report['layout'] ?? [],
+        'placed_cells' => array_map(static function(array $item): array {
+            $value = $item['value'] ?? null;
+            if ($value instanceof DateTimeInterface) $value = $value->format(($item['system_value'] ?? '') === 'generated_at' ? 'Y-m-d H:i:s' : 'Y-m-d');
+            return ['target' => $item['target'], 'value' => $value, 'type' => $item['type'], 'is_date' => $item['is_date'], 'date_format' => $item['date_format']];
+        }, $placedCells),
         'truncated' => $truncated,
         'row_limit' => $group === 'raw' ? $rawRowLimit : null,
         'columns' => array_map(
@@ -1434,7 +1507,7 @@ if (!is_dir($outputDir) && !mkdir($outputDir, 0750, true) && !is_dir($outputDir)
 if ($format === 'csv') {
     write_csv($output, $outputReport, $outputRows, $outputSummaryRows);
 } else {
-    write_xlsx($output, $outputReport, $periodLabel, $start, $end, $outputRows, $outputSummaryRows, $autoload);
+    write_xlsx($output, $outputReport, $periodLabel, $start, $end, $outputRows, $outputSummaryRows, $placedCells, $autoload);
 }
 
 echo json_encode([

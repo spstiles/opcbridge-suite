@@ -1310,12 +1310,6 @@
 		              </div>
 		              <div class="hint mono" id="reportBuilderTemplateStatus" style="margin-top:8px;"></div>
 		            </div>
-		            <label><span>Report title cell (optional)</span><input id="reportBuilderLayoutTitleCell" type="text" value="A1" placeholder="Leave blank to omit"></label>
-		            <label><span>Description cell (optional)</span><input id="reportBuilderLayoutDescriptionCell" type="text" value="A2" placeholder="Leave blank to omit"></label>
-		            <label><span>Reporting date fields</span><select id="reportBuilderLayoutDateDisplay"><option value="combined">Combined reporting period</option><option value="separate">Separate beginning and ending dates</option><option value="none">Do not add dates</option></select></label>
-		            <label id="reportBuilderLayoutPeriodCellLabel"><span>Reporting period cell</span><input id="reportBuilderLayoutPeriodCell" type="text" value="A3"></label>
-		            <label id="reportBuilderLayoutStartDateCellLabel" style="display:none;"><span>Beginning date cell</span><input id="reportBuilderLayoutStartDateCell" type="text" value="A3"></label>
-		            <label id="reportBuilderLayoutEndDateCellLabel" style="display:none;"><span>Ending date cell</span><input id="reportBuilderLayoutEndDateCell" type="text" value="B3"></label>
 		            <label><span>Table starting row</span><input id="reportBuilderLayoutTableRow" type="number" min="1" max="10000" value="5"></label>
 		            <label><span>Table starting column</span><input id="reportBuilderLayoutTableColumn" type="text" value="A" maxlength="3"></label>
 		            <label><span><input id="reportBuilderLayoutIncludeHeader" type="checkbox" checked> Include table header row</span></label>
@@ -1323,16 +1317,16 @@
 		            <label id="reportBuilderLayoutSummaryGapLabel"><span>Blank rows before summaries</span><input id="reportBuilderLayoutSummaryGap" type="number" min="0" max="100" value="0"></label>
 		            <label id="reportBuilderLayoutSummaryRowLabel" style="display:none;"><span>Summary starting row</span><input id="reportBuilderLayoutSummaryRow" type="number" min="1" max="10000" value="40"></label>
 		          </div>
+		          <h4 style="margin-top:18px;">Placed Cells</h4>
+		          <div class="hint">Place report properties, dates, custom text, or formulas in a cell or merged range such as A1:F1. Formulas use column IDs, for example <code>sum([flow_total])</code>.</div>
+		          <div class="row-actions" style="margin-top:10px;"><button class="btn" id="reportBuilderLayoutAddPlacedCellBtn" type="button">Add Placed Cell</button></div>
+		          <div class="table-wrap" id="reportBuilderLayoutPlacedCellsWrap" style="display:none; margin-top:10px;">
+		            <table class="table"><thead><tr><th>Cell or range</th><th>Content type</th><th>Value</th><th>Date format</th><th>Action</th></tr></thead><tbody id="reportBuilderLayoutPlacedCells"></tbody></table>
+		          </div>
 		          <h4 style="margin-top:18px;">Column Placement</h4>
 		          <div class="hint">Leave a spreadsheet column blank for automatic placement. Enter a letter such as C to create intentional gaps.</div>
 		          <div class="table-wrap" style="margin-top:10px;">
 		            <table class="table"><thead><tr><th>Report column</th><th>Spreadsheet column</th></tr></thead><tbody id="reportBuilderLayoutColumns"></tbody></table>
-		          </div>
-		          <h4 style="margin-top:18px;">Fixed Text</h4>
-		          <div class="hint">Add notes, headings, permit numbers, or other text that appears once in the workbook.</div>
-		          <div class="row-actions" style="margin-top:10px;"><button class="btn" id="reportBuilderLayoutAddFieldBtn" type="button">Add Fixed Text</button></div>
-		          <div class="table-wrap" id="reportBuilderLayoutFieldsWrap" style="display:none; margin-top:10px;">
-		            <table class="table"><thead><tr><th>Cell</th><th>Text</th><th>Action</th></tr></thead><tbody id="reportBuilderLayoutFields"></tbody></table>
 		          </div>
 		          <h4 style="margin-top:18px;">Design Preview</h4>
 		          <div class="hint">Representative values are used here. Actual report data remains on the Reports page.</div>

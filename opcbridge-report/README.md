@@ -26,6 +26,8 @@ opcbridge-report/opcbridge-report generate \
   --allow-unpublished
 ```
 
-The generated workbook contains a title, period, generation timestamp, frozen
-and filtered headers, one row per local calendar day, and one column per
-configured historian tag. Days without a good historian sample remain blank.
+Workbook layout is configured in the SCADA report builder. Placed cells can
+contain custom text, standard report values (including reporting dates and the
+report timezone), or aggregate formulas such as `sum([flow_total])`. A target
+may be one cell (`A1`) or a merged range (`A1:F1`). Spreadsheet templates are
+optional; the same placements work in newly generated workbooks.

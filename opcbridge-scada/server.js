@@ -500,6 +500,20 @@ function normalizeSpreadsheetCell(value, fallback = '') {
   return row <= 1048576 ? `${match[1]}${row}` : fallback;
 }
 
+function normalizeSpreadsheetRange(value, fallback = '') {
+  const pieces = String(value || '').trim().toUpperCase().split(':');
+  if (pieces.length < 1 || pieces.length > 2) return fallback;
+  const start = normalizeSpreadsheetCell(pieces[0]);
+  const end = normalizeSpreadsheetCell(pieces[1] || pieces[0]);
+  const parse = (cell) => {
+    const match = cell.match(/^([A-Z]+)(\d+)$/);
+    return match ? { column: spreadsheetColumnNumber(match[1]), row: Number(match[2]) } : null;
+  };
+  const a = parse(start); const b = parse(end);
+  if (!a || !b || a.column > b.column || a.row > b.row) return fallback;
+  return start === end ? start : `${start}:${end}`;
+}
+
 function normalizeReportDefinition(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const id = sanitizeId(source.id);
@@ -652,13 +666,53 @@ function normalizeReportDefinition(value) {
     ? source.layout : {};
   const worksheet = String(layoutInput.worksheet || 'Report').trim().slice(0, 31) || 'Report';
   if (/[\\\/?*\[\]:]/.test(worksheet)) throw new Error('Worksheet name contains an unsupported character.');
-  const optionalLayoutCell = (value, label) => {
-    const raw = String(value || '').trim();
-    if (!raw) return '';
-    const cell = normalizeSpreadsheetCell(raw);
-    if (!cell) throw new Error(`${label} must be a valid spreadsheet cell or blank.`);
-    return cell;
+  let placedInput = Array.isArray(layoutInput.placed_cells) ? layoutInput.placed_cells : null;
+  if (placedInput === null) {
+    placedInput = [];
+    const addSystem = (target, value, dateFormat = '') => { if (String(target || '').trim()) placedInput.push({ target, type: 'system', value, date_format: dateFormat }); };
+    addSystem(Object.prototype.hasOwnProperty.call(layoutInput, 'title_cell') ? layoutInput.title_cell : 'A1', 'report_name');
+    addSystem(Object.prototype.hasOwnProperty.call(layoutInput, 'description_cell') ? layoutInput.description_cell : 'A2', 'report_description');
+    const dateDisplay = String(layoutInput.date_display || 'combined');
+    if (dateDisplay === 'combined') addSystem(layoutInput.period_cell || 'A3', 'period_label');
+    if (dateDisplay === 'separate') {
+      addSystem(layoutInput.start_date_cell || 'A3', 'start_date', 'mm/dd/yyyy');
+      addSystem(layoutInput.end_date_cell || 'B3', 'end_date', 'mm/dd/yyyy');
+    }
+    (Array.isArray(layoutInput.fields) ? layoutInput.fields : []).forEach((field) => placedInput.push({ target: field?.cell, type: 'text', text: field?.text }));
+  }
+  const systemValues = new Set(['report_name', 'report_description', 'period_label', 'start_date', 'end_date', 'generated_at', 'timezone']);
+  const placedCells = placedInput.slice(0, 100).map((item, index) => {
+    const target = normalizeSpreadsheetRange(item?.target);
+    const type = String(item?.type || 'text');
+    if (!target) throw new Error(`Placed cell ${index + 1} requires a valid cell or range.`);
+    if (!['system', 'text', 'formula'].includes(type)) throw new Error(`Placed cell ${index + 1} has an invalid content type.`);
+    const result = { target, type };
+    if (type === 'system') {
+      result.value = String(item?.value || '');
+      if (!systemValues.has(result.value)) throw new Error(`Placed cell ${index + 1} has an invalid standard report value.`);
+      result.date_format = String(item?.date_format || '').trim().slice(0, 100);
+    } else if (type === 'text') {
+      result.text = String(item?.text || '').slice(0, 2000);
+      if (!result.text.trim()) throw new Error(`Placed cell ${index + 1} requires custom text.`);
+    } else {
+      result.expression = String(item?.expression || '').trim().slice(0, 4000);
+      if (!result.expression) throw new Error(`Placed cell ${index + 1} requires a formula.`);
+    }
+    return result;
+  });
+  const rangeBounds = (target) => {
+    const [start, end = start] = target.split(':');
+    const parse = (cell) => { const match = cell.match(/^([A-Z]+)(\d+)$/); return { column: spreadsheetColumnNumber(match[1]), row: Number(match[2]) }; };
+    return { start: parse(start), end: parse(end) };
   };
+  placedCells.forEach((item, index) => {
+    const a = rangeBounds(item.target);
+    placedCells.slice(0, index).forEach((other, otherIndex) => {
+      const b = rangeBounds(other.target);
+      const overlaps = a.start.row <= b.end.row && a.end.row >= b.start.row && a.start.column <= b.end.column && a.end.column >= b.start.column;
+      if (overlaps) throw new Error(`Placed cells ${otherIndex + 1} and ${index + 1} overlap.`);
+    });
+  });
   const layout = {
     worksheet,
     table_start_row: normalizeIntRange(layoutInput.table_start_row, 5, 1, 10000),
@@ -667,21 +721,7 @@ function normalizeReportDefinition(value) {
     summary_gap_rows: normalizeIntRange(layoutInput.summary_gap_rows, 0, 0, 100),
     summary_placement: String(layoutInput.summary_placement || 'after_data') === 'fixed' ? 'fixed' : 'after_data',
     summary_start_row: normalizeIntRange(layoutInput.summary_start_row, 40, 1, 10000),
-    title_cell: Object.prototype.hasOwnProperty.call(layoutInput, 'title_cell')
-      ? optionalLayoutCell(layoutInput.title_cell, 'Report title cell') : 'A1',
-    description_cell: Object.prototype.hasOwnProperty.call(layoutInput, 'description_cell')
-      ? optionalLayoutCell(layoutInput.description_cell, 'Description cell') : 'A2',
-    period_cell: normalizeSpreadsheetCell(layoutInput.period_cell, 'A3'),
-    date_display: ['combined', 'separate', 'none'].includes(String(layoutInput.date_display || 'combined'))
-      ? String(layoutInput.date_display || 'combined') : 'combined',
-    start_date_cell: normalizeSpreadsheetCell(layoutInput.start_date_cell, 'A3'),
-    end_date_cell: normalizeSpreadsheetCell(layoutInput.end_date_cell, 'B3'),
-    fields: (Array.isArray(layoutInput.fields) ? layoutInput.fields : []).slice(0, 50).map((field, index) => {
-      const cell = normalizeSpreadsheetCell(field?.cell);
-      const text = String(field?.text || '').trim().slice(0, 2000);
-      if (!cell || !text) throw new Error(`Fixed text entry ${index + 1} requires a valid cell and text.`);
-      return { cell, text };
-    })
+    placed_cells: placedCells
   };
   const occupiedColumns = new Set([spreadsheetColumnNumber(layout.table_start_column)]);
   const automaticStart = spreadsheetColumnNumber(layout.table_start_column) + 1;

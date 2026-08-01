@@ -323,19 +323,10 @@
   reportBuilderLayoutSummaryGapLabel: document.getElementById('reportBuilderLayoutSummaryGapLabel'),
   reportBuilderLayoutSummaryRowLabel: document.getElementById('reportBuilderLayoutSummaryRowLabel'),
   reportBuilderLayoutSummaryRow: document.getElementById('reportBuilderLayoutSummaryRow'),
-  reportBuilderLayoutTitleCell: document.getElementById('reportBuilderLayoutTitleCell'),
-  reportBuilderLayoutDescriptionCell: document.getElementById('reportBuilderLayoutDescriptionCell'),
-  reportBuilderLayoutPeriodCell: document.getElementById('reportBuilderLayoutPeriodCell'),
-  reportBuilderLayoutDateDisplay: document.getElementById('reportBuilderLayoutDateDisplay'),
-  reportBuilderLayoutPeriodCellLabel: document.getElementById('reportBuilderLayoutPeriodCellLabel'),
-  reportBuilderLayoutStartDateCellLabel: document.getElementById('reportBuilderLayoutStartDateCellLabel'),
-  reportBuilderLayoutEndDateCellLabel: document.getElementById('reportBuilderLayoutEndDateCellLabel'),
-  reportBuilderLayoutStartDateCell: document.getElementById('reportBuilderLayoutStartDateCell'),
-  reportBuilderLayoutEndDateCell: document.getElementById('reportBuilderLayoutEndDateCell'),
   reportBuilderLayoutColumns: document.getElementById('reportBuilderLayoutColumns'),
-  reportBuilderLayoutAddFieldBtn: document.getElementById('reportBuilderLayoutAddFieldBtn'),
-  reportBuilderLayoutFieldsWrap: document.getElementById('reportBuilderLayoutFieldsWrap'),
-  reportBuilderLayoutFields: document.getElementById('reportBuilderLayoutFields'),
+  reportBuilderLayoutAddPlacedCellBtn: document.getElementById('reportBuilderLayoutAddPlacedCellBtn'),
+  reportBuilderLayoutPlacedCellsWrap: document.getElementById('reportBuilderLayoutPlacedCellsWrap'),
+  reportBuilderLayoutPlacedCells: document.getElementById('reportBuilderLayoutPlacedCells'),
   reportBuilderLayoutPreview: document.getElementById('reportBuilderLayoutPreview'),
   reportBuilderTemplateEnabled: document.getElementById('reportBuilderTemplateEnabled'),
   reportBuilderTemplateInfo: document.getElementById('reportBuilderTemplateInfo'),
@@ -1153,7 +1144,7 @@ const state = {
   reportFormulaSummaryIndex: -1,
   reportFormulaSummaryColumnIndex: -1,
   reportBuilderAccess: [],
-  reportBuilderLayoutFields: [],
+  reportBuilderLayoutPlacedCells: [],
   reportBuilderTemplate: null,
   reportBuilderTemplatePreview: null,
   reportBuilderActiveTab: 'report',
@@ -6553,20 +6544,10 @@ function renderPublishedReportPreview(preview) {
   const put = (row, column, text, className = '') => {
     if (row > 0 && column > 0) cells.set(`${row}:${column}`, { text, className });
   };
-  const title = spreadsheetCellParts(layout.title_cell ?? 'A1');
-  const description = spreadsheetCellParts(layout.description_cell ?? 'A2');
-  const dateDisplay = String(layout.date_display || 'combined');
-  const period = dateDisplay === 'combined' ? spreadsheetCellParts(layout.period_cell || 'A3') : null;
-  const startDate = dateDisplay === 'separate' ? spreadsheetCellParts(layout.start_date_cell || 'A3') : null;
-  const endDate = dateDisplay === 'separate' ? spreadsheetCellParts(layout.end_date_cell || 'B3') : null;
-  if (title) put(title.row, title.column, String(preview.name || ''), 'layout-title');
-  if (description) put(description.row, description.column, String(preview.description || ''), 'layout-description');
-  if (period) put(period.row, period.column, String(preview.period_label || ''), 'layout-description');
-  if (startDate) put(startDate.row, startDate.column, String(preview.start_date || ''), 'layout-description');
-  if (endDate) put(endDate.row, endDate.column, String(preview.end_date || ''), 'layout-description');
-  (layout.fields || []).forEach((field) => {
-    const target = spreadsheetCellParts(field?.cell);
-    if (target) put(target.row, target.column, String(field?.text || ''), 'layout-fixed');
+  const placedRanges = (preview.placed_cells || []).map((item) => spreadsheetRangeParts(item?.target)).filter(Boolean);
+  (preview.placed_cells || []).forEach((item) => {
+    const target = spreadsheetRangeParts(item?.target)?.start;
+    if (target) put(target.row, target.column, String(item?.value ?? ''), item?.type === 'system' ? 'layout-description' : 'layout-fixed');
   });
   const periodHeading = ['hour', 'raw'].includes(String(preview.group_by || '')) ||
     String(preview.group_by || '').startsWith('minute:')
@@ -6603,12 +6584,22 @@ function renderPublishedReportPreview(preview) {
     });
   });
   const used = [...cells.keys()].map((key) => key.split(':').map(Number));
-  const maxRow = Math.max(tableRow, ...used.map(([row]) => row));
-  const maxColumn = Math.max(tableColumn, ...placements, ...used.map(([, column]) => column));
+  const maxRow = Math.max(tableRow, ...used.map(([row]) => row), ...placedRanges.map((range) => range.end.row));
+  const maxColumn = Math.max(tableColumn, ...placements, ...used.map(([, column]) => column), ...placedRanges.map((range) => range.end.column));
+  const mergeAnchors = new Map(); const mergedCells = new Set();
+  placedRanges.filter((range) => range.range.includes(':')).forEach((range) => {
+    mergeAnchors.set(`${range.start.row}:${range.start.column}`, { rowspan: range.end.row - range.start.row + 1, colspan: range.end.column - range.start.column + 1 });
+    for (let mergeRow = range.start.row; mergeRow <= range.end.row; mergeRow++) for (let mergeColumn = range.start.column; mergeColumn <= range.end.column; mergeColumn++) {
+      if (mergeRow !== range.start.row || mergeColumn !== range.start.column) mergedCells.add(`${mergeRow}:${mergeColumn}`);
+    }
+  });
   for (let row = 1; row <= maxRow; row++) {
     const tr = document.createElement('tr');
     for (let column = 1; column <= maxColumn; column++) {
+      if (mergedCells.has(`${row}:${column}`)) continue;
       const td = document.createElement('td');
+      const merge = mergeAnchors.get(`${row}:${column}`);
+      if (merge) { td.rowSpan = merge.rowspan; td.colSpan = merge.colspan; }
       const content = cells.get(`${row}:${column}`);
       if (content) {
         td.textContent = content.text;
@@ -7056,17 +7047,14 @@ function reportBuilderCurrentDefinition() {
       summary_gap_rows: Math.max(0, Math.min(100, Math.trunc(Number(els.reportBuilderLayoutSummaryGap?.value || 0)))),
       summary_placement: String(els.reportBuilderLayoutSummaryPlacement?.value || 'after_data'),
       summary_start_row: Math.max(1, Math.min(10000, Math.trunc(Number(els.reportBuilderLayoutSummaryRow?.value || 40)))),
-      title_cell: String(els.reportBuilderLayoutTitleCell?.value || '').trim().toUpperCase(),
-      description_cell: String(els.reportBuilderLayoutDescriptionCell?.value || '').trim().toUpperCase(),
-      period_cell: normalizeSpreadsheetCell(els.reportBuilderLayoutPeriodCell?.value || 'A3') || 'A3',
-      date_display: ['combined', 'separate', 'none'].includes(String(els.reportBuilderLayoutDateDisplay?.value || 'combined'))
-        ? String(els.reportBuilderLayoutDateDisplay.value) : 'combined',
-      start_date_cell: normalizeSpreadsheetCell(els.reportBuilderLayoutStartDateCell?.value || 'A3') || 'A3',
-      end_date_cell: normalizeSpreadsheetCell(els.reportBuilderLayoutEndDateCell?.value || 'B3') || 'B3',
-      fields: state.reportBuilderLayoutFields.map((field) => ({
-        cell: normalizeSpreadsheetCell(field.cell),
-        text: String(field.text || '').slice(0, 2000)
-      })).filter((field) => field.cell && field.text)
+      placed_cells: state.reportBuilderLayoutPlacedCells.map((item) => ({
+        target: normalizeSpreadsheetRange(item.target),
+        type: ['system', 'text', 'formula'].includes(item.type) ? item.type : 'text',
+        value: String(item.value || ''),
+        text: String(item.text || '').slice(0, 2000),
+        expression: String(item.expression || '').slice(0, 4000),
+        date_format: String(item.date_format || '').slice(0, 100)
+      }))
     },
     template: state.reportBuilderTemplate ? {
       ...state.reportBuilderTemplate,
@@ -7098,7 +7086,9 @@ function newReportColumnId(label = 'column') {
 
 function normalizeSpreadsheetColumn(value) {
   const column = String(value || '').trim().toUpperCase();
-  return /^[A-Z]{1,3}$/.test(column) ? column : '';
+  if (!/^[A-Z]{1,3}$/.test(column)) return '';
+  const index = [...column].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+  return index <= 16384 ? column : '';
 }
 
 function spreadsheetColumnIndex(value) {
@@ -7119,8 +7109,52 @@ function spreadsheetColumnLabel(index) {
 }
 
 function normalizeSpreadsheetCell(value) {
-  const match = String(value || '').trim().toUpperCase().match(/^([A-Z]{1,3})([1-9][0-9]{0,4})$/);
-  return match ? `${match[1]}${match[2]}` : '';
+  const match = String(value || '').trim().toUpperCase().match(/^([A-Z]{1,3})([1-9][0-9]{0,6})$/);
+  return match && normalizeSpreadsheetColumn(match[1]) && Number(match[2]) <= 1048576 ? `${match[1]}${match[2]}` : '';
+}
+
+function normalizeSpreadsheetRange(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  const [startRaw, endRaw = startRaw] = raw.split(':');
+  if (raw.split(':').length > 2) return '';
+  const start = normalizeSpreadsheetCell(startRaw);
+  const end = normalizeSpreadsheetCell(endRaw);
+  if (!start || !end) return '';
+  const a = spreadsheetCellParts(start);
+  const b = spreadsheetCellParts(end);
+  if (!a || !b || a.row > b.row || a.column > b.column || a.column > 16384 || b.column > 16384) return '';
+  return start === end ? start : `${start}:${end}`;
+}
+
+function spreadsheetRangeParts(value) {
+  const range = normalizeSpreadsheetRange(value);
+  if (!range) return null;
+  const [startRaw, endRaw = startRaw] = range.split(':');
+  return { range, start: spreadsheetCellParts(startRaw), end: spreadsheetCellParts(endRaw) };
+}
+
+function migrateLayoutPlacedCells(layout = {}, useDefaults = false) {
+  if (Array.isArray(layout.placed_cells)) return layout.placed_cells.map((item) => ({ ...item }));
+  const cells = [];
+  const addSystem = (target, value, dateFormat = '') => {
+    if (normalizeSpreadsheetRange(target)) cells.push({ target, type: 'system', value, date_format: dateFormat });
+  };
+  if (Object.prototype.hasOwnProperty.call(layout, 'title_cell') || !Object.keys(layout).length || useDefaults) {
+    addSystem(layout.title_cell ?? 'A1', 'report_name');
+    addSystem(layout.description_cell ?? 'A2', 'report_description');
+  }
+  const mode = String(layout.date_display || 'combined');
+  if (!Object.keys(layout).length || useDefaults || mode === 'combined') addSystem(layout.period_cell || 'A3', 'period_label');
+  else if (mode === 'separate') {
+    addSystem(layout.start_date_cell || 'A3', 'start_date', 'mm/dd/yyyy');
+    addSystem(layout.end_date_cell || 'B3', 'end_date', 'mm/dd/yyyy');
+  }
+  (Array.isArray(layout.fields) ? layout.fields : []).forEach((field) => {
+    if (normalizeSpreadsheetRange(field?.cell) && String(field?.text || '').trim()) {
+      cells.push({ target: field.cell, type: 'text', text: String(field.text), date_format: '' });
+    }
+  });
+  return cells;
 }
 
 function spreadsheetCellParts(value) {
@@ -7191,14 +7225,10 @@ async function refreshReportBuilderTemplatePreview() {
 }
 
 function renderReportBuilderLayout() {
-  if (!els.reportBuilderLayoutColumns || !els.reportBuilderLayoutFields || !els.reportBuilderLayoutPreview) return;
+  if (!els.reportBuilderLayoutColumns || !els.reportBuilderLayoutPlacedCells || !els.reportBuilderLayoutPreview) return;
   const fixedSummary = String(els.reportBuilderLayoutSummaryPlacement?.value || 'after_data') === 'fixed';
   if (els.reportBuilderLayoutSummaryGapLabel) els.reportBuilderLayoutSummaryGapLabel.style.display = fixedSummary ? 'none' : '';
   if (els.reportBuilderLayoutSummaryRowLabel) els.reportBuilderLayoutSummaryRowLabel.style.display = fixedSummary ? '' : 'none';
-  const dateDisplay = String(els.reportBuilderLayoutDateDisplay?.value || 'combined');
-  if (els.reportBuilderLayoutPeriodCellLabel) els.reportBuilderLayoutPeriodCellLabel.style.display = dateDisplay === 'combined' ? '' : 'none';
-  if (els.reportBuilderLayoutStartDateCellLabel) els.reportBuilderLayoutStartDateCellLabel.style.display = dateDisplay === 'separate' ? '' : 'none';
-  if (els.reportBuilderLayoutEndDateCellLabel) els.reportBuilderLayoutEndDateCellLabel.style.display = dateDisplay === 'separate' ? '' : 'none';
   renderReportBuilderTemplateControls();
   els.reportBuilderLayoutColumns.textContent = '';
   state.reportBuilderColumns.filter((column) => column.visible !== false).forEach((column, visibleIndex) => {
@@ -7220,34 +7250,66 @@ function renderReportBuilderLayout() {
     tr.append(heading, placement);
     els.reportBuilderLayoutColumns.appendChild(tr);
   });
-  els.reportBuilderLayoutFields.textContent = '';
-  els.reportBuilderLayoutFieldsWrap.style.display = state.reportBuilderLayoutFields.length ? '' : 'none';
-  state.reportBuilderLayoutFields.forEach((field, index) => {
+  els.reportBuilderLayoutPlacedCells.textContent = '';
+  els.reportBuilderLayoutPlacedCellsWrap.style.display = state.reportBuilderLayoutPlacedCells.length ? '' : 'none';
+  const systemOptions = [
+    ['report_name', 'Report name'], ['report_description', 'Report description'],
+    ['period_label', 'Reporting period'], ['start_date', 'Beginning date'],
+    ['end_date', 'Ending date'], ['generated_at', 'Generated date/time'], ['timezone', 'Report timezone']
+  ];
+  state.reportBuilderLayoutPlacedCells.forEach((item, index) => {
     const tr = document.createElement('tr');
     const cellTd = document.createElement('td');
     const cell = document.createElement('input');
     cell.type = 'text';
-    cell.value = String(field.cell || '');
-    cell.placeholder = 'A3';
-    cell.style.width = '100px';
-    cell.addEventListener('input', () => { field.cell = cell.value; renderReportBuilderLayoutPreview(); });
+    cell.value = String(item.target || '');
+    cell.placeholder = 'A1 or A1:F1';
+    cell.style.width = '130px';
+    cell.addEventListener('input', () => { item.target = cell.value; renderReportBuilderLayoutPreview(); });
     cellTd.appendChild(cell);
-    const textTd = document.createElement('td');
-    const value = document.createElement('input');
-    value.type = 'text';
-    value.value = String(field.text || '');
-    value.placeholder = 'Notes or other fixed text';
-    value.addEventListener('input', () => { field.text = value.value; renderReportBuilderLayoutPreview(); });
-    textTd.appendChild(value);
+    const typeTd = document.createElement('td');
+    const type = document.createElement('select');
+    [['system', 'Standard report value'], ['text', 'Custom text'], ['formula', 'Formula']].forEach(([key, label]) => {
+      const option = document.createElement('option'); option.value = key; option.textContent = label; type.appendChild(option);
+    });
+    type.value = String(item.type || 'text');
+    typeTd.appendChild(type);
+    const valueTd = document.createElement('td');
+    const renderValue = () => {
+      valueTd.textContent = '';
+      let control;
+      if (item.type === 'system') {
+        control = document.createElement('select');
+        systemOptions.forEach(([key, label]) => { const option = document.createElement('option'); option.value = key; option.textContent = label; control.appendChild(option); });
+        control.value = item.value || 'report_name';
+        control.addEventListener('change', () => { item.value = control.value; renderReportBuilderLayout(); });
+      } else {
+        control = document.createElement('input'); control.type = 'text';
+        const property = item.type === 'formula' ? 'expression' : 'text';
+        control.value = String(item[property] || '');
+        control.placeholder = item.type === 'formula' ? 'sum([column_id])' : 'Text to display';
+        control.addEventListener('input', () => { item[property] = control.value; renderReportBuilderLayoutPreview(); });
+      }
+      valueTd.appendChild(control);
+    };
+    type.addEventListener('change', () => { item.type = type.value; renderReportBuilderLayout(); });
+    renderValue();
+    const formatTd = document.createElement('td');
+    const format = document.createElement('input'); format.type = 'text'; format.placeholder = 'mm/dd/yyyy';
+    format.value = String(item.date_format || '');
+    const dateValue = item.type === 'system' && ['start_date', 'end_date', 'generated_at'].includes(item.value);
+    format.disabled = !dateValue;
+    format.addEventListener('input', () => { item.date_format = format.value; });
+    formatTd.appendChild(format);
     const actionTd = document.createElement('td');
     const remove = document.createElement('button');
     remove.className = 'btn danger';
     remove.type = 'button';
     remove.textContent = 'Remove';
-    remove.addEventListener('click', () => { state.reportBuilderLayoutFields.splice(index, 1); renderReportBuilderLayout(); });
+    remove.addEventListener('click', () => { state.reportBuilderLayoutPlacedCells.splice(index, 1); renderReportBuilderLayout(); });
     actionTd.appendChild(remove);
-    tr.append(cellTd, textTd, actionTd);
-    els.reportBuilderLayoutFields.appendChild(tr);
+    tr.append(cellTd, typeTd, valueTd, formatTd, actionTd);
+    els.reportBuilderLayoutPlacedCells.appendChild(tr);
   });
   renderReportBuilderLayoutPreview();
 }
@@ -7279,20 +7341,18 @@ function renderReportBuilderLayoutPreview() {
       });
     }
   });
-  const title = spreadsheetCellParts(els.reportBuilderLayoutTitleCell?.value || '');
-  const description = spreadsheetCellParts(els.reportBuilderLayoutDescriptionCell?.value || '');
-  const dateDisplay = String(els.reportBuilderLayoutDateDisplay?.value || 'combined');
-  const period = dateDisplay === 'combined' ? spreadsheetCellParts(els.reportBuilderLayoutPeriodCell?.value || 'A3') : null;
-  const startDate = dateDisplay === 'separate' ? spreadsheetCellParts(els.reportBuilderLayoutStartDateCell?.value || 'A3') : null;
-  const endDate = dateDisplay === 'separate' ? spreadsheetCellParts(els.reportBuilderLayoutEndDateCell?.value || 'B3') : null;
-  if (title) put(title.row, title.column, String(els.reportBuilderName?.value || 'Report Title'), 'layout-title');
-  if (description) put(description.row, description.column, String(els.reportBuilderDescription?.value || 'Report description'), 'layout-description');
-  if (period) put(period.row, period.column, 'Selected reporting period', 'layout-description');
-  if (startDate) put(startDate.row, startDate.column, 'Beginning date', 'layout-description');
-  if (endDate) put(endDate.row, endDate.column, 'Ending date', 'layout-description');
-  state.reportBuilderLayoutFields.forEach((field) => {
-    const target = spreadsheetCellParts(field.cell);
-    if (target) put(target.row, target.column, String(field.text || ''), 'layout-fixed');
+  const systemSamples = {
+    report_name: String(els.reportBuilderName?.value || 'Report Title'),
+    report_description: String(els.reportBuilderDescription?.value || 'Report description'),
+    period_label: 'Selected reporting period', start_date: 'Beginning date', end_date: 'Ending date',
+    generated_at: 'Generated date/time', timezone: String(els.reportBuilderTimezone?.value || browserTimezone())
+  };
+  state.reportBuilderLayoutPlacedCells.forEach((item) => {
+    const target = spreadsheetRangeParts(item.target)?.start;
+    if (!target) return;
+    const text = item.type === 'system' ? systemSamples[item.value]
+      : (item.type === 'formula' ? 'Formula result' : item.text);
+    put(target.row, target.column, String(text || ''), item.value === 'report_name' ? 'layout-title' : 'layout-fixed');
   });
   if (headerRows) {
     put(tableRow, tableColumn, 'Date', 'layout-heading');
@@ -7317,10 +7377,11 @@ function renderReportBuilderLayoutPreview() {
     });
   });
   const used = [...cells.keys()].map((key) => key.split(':').map(Number));
+  const placedRanges = state.reportBuilderLayoutPlacedCells.map((item) => spreadsheetRangeParts(item.target)).filter(Boolean);
   const maxRow = Math.min(500, Math.max(tableRow + sampleRows, summaryStart + state.reportBuilderSummaries.length - 1,
-    Number(templatePreview?.max_row || 0), ...used.map(([row]) => row)));
+    Number(templatePreview?.max_row || 0), ...used.map(([row]) => row), ...placedRanges.map((range) => range.end.row)));
   const maxColumn = Math.min(100, Math.max(tableColumn, ...placements, Number(templatePreview?.max_column || 0),
-    ...used.map(([, column]) => column)));
+    ...used.map(([, column]) => column), ...placedRanges.map((range) => range.end.column)));
   table.textContent = '';
   const colgroup = document.createElement('colgroup');
   const rowHeaderColumn = document.createElement('col');
@@ -7343,7 +7404,10 @@ function renderReportBuilderLayoutPreview() {
   table.appendChild(header);
   const mergeAnchors = new Map();
   const mergedCells = new Set();
-  (templatePreview?.merges || []).forEach((merge) => {
+  const previewMerges = [...(templatePreview?.merges || []), ...placedRanges.filter((range) => range.range.includes(':')).map((range) => ({
+    start_row: range.start.row, start_column: range.start.column, end_row: range.end.row, end_column: range.end.column
+  }))];
+  previewMerges.forEach((merge) => {
     const startRow = Number(merge.start_row);
     const startColumn = Number(merge.start_column);
     const endRow = Math.min(maxRow, Number(merge.end_row));
@@ -7892,9 +7956,7 @@ function loadReportBuilderDefinition(report) {
       })) : [];
   state.reportBuilderAccess = Array.isArray(value.access) ? value.access.map((grant) => ({ ...grant })) : [];
   const layout = value.layout && typeof value.layout === 'object' ? value.layout : {};
-  state.reportBuilderLayoutFields = Array.isArray(layout.fields)
-    ? layout.fields.map((field) => ({ cell: String(field?.cell || ''), text: String(field?.text || '') }))
-    : [];
+  state.reportBuilderLayoutPlacedCells = migrateLayoutPlacedCells(layout, !report);
   state.reportBuilderTemplate = value.template && typeof value.template === 'object'
     ? { ...value.template, enabled: value.template.enabled === true }
     : null;
@@ -7933,12 +7995,6 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderLayoutSummaryGap) els.reportBuilderLayoutSummaryGap.value = String(layout.summary_gap_rows || 0);
   if (els.reportBuilderLayoutSummaryPlacement) els.reportBuilderLayoutSummaryPlacement.value = String(layout.summary_placement || 'after_data');
   if (els.reportBuilderLayoutSummaryRow) els.reportBuilderLayoutSummaryRow.value = String(layout.summary_start_row || 40);
-  if (els.reportBuilderLayoutTitleCell) els.reportBuilderLayoutTitleCell.value = String(layout.title_cell ?? 'A1');
-  if (els.reportBuilderLayoutDescriptionCell) els.reportBuilderLayoutDescriptionCell.value = String(layout.description_cell ?? 'A2');
-  if (els.reportBuilderLayoutPeriodCell) els.reportBuilderLayoutPeriodCell.value = String(layout.period_cell || 'A3');
-  if (els.reportBuilderLayoutDateDisplay) els.reportBuilderLayoutDateDisplay.value = String(layout.date_display || 'combined');
-  if (els.reportBuilderLayoutStartDateCell) els.reportBuilderLayoutStartDateCell.value = String(layout.start_date_cell || 'A3');
-  if (els.reportBuilderLayoutEndDateCell) els.reportBuilderLayoutEndDateCell.value = String(layout.end_date_cell || 'B3');
   const source = { ...(value.data_source || { type: 'historian' }) };
   const firstDatabaseColumn = state.reportBuilderColumns.find((column) => column?.source === 'database');
   if (source.type === 'database' && firstDatabaseColumn) {
@@ -8089,9 +8145,6 @@ function wireReportBuilderUi() {
   });
   [els.reportBuilderLayoutWorksheet, els.reportBuilderLayoutTableRow, els.reportBuilderLayoutTableColumn,
     els.reportBuilderLayoutSummaryGap, els.reportBuilderLayoutSummaryPlacement, els.reportBuilderLayoutSummaryRow,
-    els.reportBuilderLayoutTitleCell, els.reportBuilderLayoutDescriptionCell,
-    els.reportBuilderLayoutPeriodCell, els.reportBuilderLayoutDateDisplay,
-    els.reportBuilderLayoutStartDateCell, els.reportBuilderLayoutEndDateCell,
     els.reportBuilderName, els.reportBuilderDescription].forEach((input) => {
     input?.addEventListener('input', () => {
       if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
@@ -8170,17 +8223,8 @@ function wireReportBuilderUi() {
   };
   els.reportBuilderLayoutSummaryPlacement?.addEventListener('change', updateSummaryPlacement);
   updateSummaryPlacement();
-  const updateDateDisplay = () => {
-    const mode = String(els.reportBuilderLayoutDateDisplay?.value || 'combined');
-    if (els.reportBuilderLayoutPeriodCellLabel) els.reportBuilderLayoutPeriodCellLabel.style.display = mode === 'combined' ? '' : 'none';
-    if (els.reportBuilderLayoutStartDateCellLabel) els.reportBuilderLayoutStartDateCellLabel.style.display = mode === 'separate' ? '' : 'none';
-    if (els.reportBuilderLayoutEndDateCellLabel) els.reportBuilderLayoutEndDateCellLabel.style.display = mode === 'separate' ? '' : 'none';
-    if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
-  };
-  els.reportBuilderLayoutDateDisplay?.addEventListener('change', updateDateDisplay);
-  updateDateDisplay();
-  els.reportBuilderLayoutAddFieldBtn?.addEventListener('click', () => {
-    state.reportBuilderLayoutFields.push({ cell: '', text: '' });
+  els.reportBuilderLayoutAddPlacedCellBtn?.addEventListener('click', () => {
+    state.reportBuilderLayoutPlacedCells.push({ target: '', type: 'system', value: 'report_name', text: '', expression: '', date_format: '' });
     renderReportBuilderLayout();
   });
   if (els.reportBuilderAddSummaryBtn) els.reportBuilderAddSummaryBtn.addEventListener('click', () => {
