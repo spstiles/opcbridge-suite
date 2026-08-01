@@ -6562,7 +6562,12 @@ function renderPublishedReportPreview(preview) {
   const placedRanges = (preview.placed_cells || []).map((item) => spreadsheetRangeParts(item?.target)).filter(Boolean);
   (preview.placed_cells || []).forEach((item) => {
     const target = spreadsheetRangeParts(item?.target)?.start;
-    if (target) put(target.row, target.column, String(item?.value ?? ''), previewClass(item?.type === 'system' ? 'layout-description' : 'layout-fixed'));
+    let value = item?.value ?? '';
+    if (item?.type === 'formula' && typeof value === 'number') {
+      const precision = Math.max(0, Math.min(10, Math.trunc(Number(item.precision ?? 2))));
+      value = value.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
+    }
+    if (target) put(target.row, target.column, String(value), previewClass(item?.type === 'system' ? 'layout-description' : 'layout-fixed'));
   });
   const periodHeading = ['hour', 'raw'].includes(String(preview.group_by || '')) ||
     String(preview.group_by || '').startsWith('minute:')
@@ -7097,6 +7102,8 @@ function reportBuilderCurrentDefinition() {
         value: String(item.value || ''),
         text: String(item.text || '').slice(0, 2000),
         expression: String(item.expression || '').slice(0, 4000),
+        precision: item.precision === null || item.precision === undefined || item.precision === ''
+          ? null : Math.max(0, Math.min(10, Math.trunc(Number(item.precision)))),
         date_format: String(item.date_format || '').slice(0, 100)
       }))
     },
@@ -7411,7 +7418,7 @@ function renderReportBuilderLayoutPreview() {
     const target = spreadsheetRangeParts(item.target)?.start;
     if (!target) return;
     const text = item.type === 'system' ? systemSamples[item.value]
-      : (item.type === 'formula' ? 'Formula result' : item.text);
+      : (item.type === 'formula' ? Number(123.456).toFixed(Math.max(0, Math.min(10, Math.trunc(Number(item.precision ?? 2)))) ) : item.text);
     put(target.row, target.column, String(text || ''), item.value === 'report_name' ? 'layout-title' : 'layout-fixed');
   });
   if (headerRows) {
@@ -7626,7 +7633,8 @@ function openReportPlacedCellFormulaModal(index) {
   if (els.reportFormulaHelp) {
     els.reportFormulaHelp.textContent = 'Aggregate a report column with sum(), avg(), min(), max(), first(), last(), count(), or missing(). You can combine aggregate results with arithmetic and other formula functions.';
   }
-  if (els.reportFormulaPrecisionWrap) els.reportFormulaPrecisionWrap.style.display = 'none';
+  if (els.reportFormulaPrecisionWrap) els.reportFormulaPrecisionWrap.style.display = '';
+  if (els.reportFormulaPrecision) els.reportFormulaPrecision.value = String(item.precision ?? 2);
   if (els.reportFormulaExpression) {
     els.reportFormulaExpression.value = String(item.expression || '');
     els.reportFormulaExpression.placeholder = 'Example: sum([flow]) / sum([runtime])';
@@ -8510,6 +8518,8 @@ function wireReportBuilderUi() {
         return;
       }
       item.expression = expression;
+      const precision = Math.trunc(Number(els.reportFormulaPrecision?.value));
+      item.precision = Number.isFinite(precision) ? Math.max(0, Math.min(10, precision)) : 2;
       closeReportFormulaModal();
       renderReportBuilderLayout();
       return;

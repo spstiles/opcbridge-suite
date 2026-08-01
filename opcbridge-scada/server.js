@@ -733,6 +733,7 @@ function normalizeReportDefinition(value) {
     } else {
       result.expression = String(item?.expression || '').trim().slice(0, 4000);
       if (!result.expression) throw new Error(`Placed cell ${index + 1} requires a formula.`);
+      result.precision = normalizeIntRange(item?.precision, 2, 0, 10);
     }
     return result;
   });

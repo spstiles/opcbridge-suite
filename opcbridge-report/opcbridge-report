@@ -160,6 +160,7 @@ function validate_report(array $report): array
         } else {
             $placed['expression'] = substr(trim((string)($item['expression'] ?? '')), 0, 4000);
             if ($placed['expression'] === '') fail("Report '{$id}' placed cell " . ($index + 1) . ' requires a formula');
+            $placed['precision'] = max(0, min(10, (int)($item['precision'] ?? 2)));
         }
         $placedCells[] = $placed;
     }
@@ -1029,7 +1030,8 @@ function calculate_placed_cells(array $report, array $rows, string $periodLabel,
     ];
     $result = [];
     foreach (($report['layout']['placed_cells'] ?? []) as $index => $item) {
-        $entry = ['target' => $item['target'], 'type' => $item['type'], 'is_date' => false, 'date_format' => (string)($item['date_format'] ?? '')];
+        $entry = ['target' => $item['target'], 'type' => $item['type'], 'is_date' => false,
+            'date_format' => (string)($item['date_format'] ?? ''), 'precision' => $item['type'] === 'formula' ? (int)($item['precision'] ?? 2) : null];
         if ($item['type'] === 'system') {
             $entry['value'] = $values[$item['value']] ?? null;
             $entry['system_value'] = $item['value'];
@@ -1203,6 +1205,11 @@ function write_xlsx(
             $sheet->setCellValueExplicit($cell, (string)($placed['value'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
         } else {
             $sheet->setCellValue($cell, $placed['value'] ?? null);
+            if (($placed['type'] ?? '') === 'formula' && is_numeric($placed['value'] ?? null)) {
+                $precision = max(0, min(10, (int)($placed['precision'] ?? 2)));
+                $format = $precision > 0 ? '#,##0.' . str_repeat('0', $precision) : '#,##0';
+                $sheet->getStyle($cell)->getNumberFormat()->setFormatCode($format);
+            }
         }
     }
 
@@ -1469,7 +1476,8 @@ if ($command === 'preview') {
         'placed_cells' => array_map(static function(array $item): array {
             $value = $item['value'] ?? null;
             if ($value instanceof DateTimeInterface) $value = $value->format(($item['system_value'] ?? '') === 'generated_at' ? 'Y-m-d H:i:s' : 'Y-m-d');
-            return ['target' => $item['target'], 'value' => $value, 'type' => $item['type'], 'is_date' => $item['is_date'], 'date_format' => $item['date_format']];
+            return ['target' => $item['target'], 'value' => $value, 'type' => $item['type'], 'is_date' => $item['is_date'],
+                'date_format' => $item['date_format'], 'precision' => $item['precision']];
         }, $placedCells),
         'truncated' => $truncated,
         'row_limit' => $group === 'raw' ? $rawRowLimit : null,
