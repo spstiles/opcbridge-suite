@@ -6518,7 +6518,12 @@ async function refreshPublishedReports(loadPreview = true) {
       const id = String(report?.id || '').trim();
       if (id && !reportsById.has(id)) reportsById.set(id, report);
     });
-    state.publishedReports = Array.from(reportsById.values());
+    state.publishedReports = Array.from(reportsById.values()).sort((left, right) => {
+      const leftName = String(left?.name || left?.id || '');
+      const rightName = String(right?.name || right?.id || '');
+      const byName = leftName.localeCompare(rightName, undefined, { sensitivity: 'base', numeric: true });
+      return byName || String(left?.id || '').localeCompare(String(right?.id || ''), undefined, { sensitivity: 'base', numeric: true });
+    });
     renderPublishedReportSelection();
     if (els.publishedReportsStatus) {
       els.publishedReportsStatus.textContent = state.publishedReports.length

@@ -1313,6 +1313,32 @@ function write_spreadsheet(
     $writer = $outputFormat === 'ods'
         ? new \PhpOffice\PhpSpreadsheet\Writer\Ods($spreadsheet)
         : new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+    if ($writer instanceof \PhpOffice\PhpSpreadsheet\Writer\Ods) {
+        $numberStyle = static function(
+            \PhpOffice\PhpSpreadsheet\Writer\Ods\Cell\Style $styleWriter,
+            string $name,
+            string $numberFormat
+        ): void {
+            $decimals = str_contains($numberFormat, '.')
+                ? strlen(substr($numberFormat, strrpos($numberFormat, '.') + 1)) : 0;
+            $xml = $styleWriter->getWriter();
+            $xml->startElement('number:number-style');
+            $xml->writeAttribute('style:name', $name);
+            $xml->startElement('number:number');
+            $xml->writeAttribute('number:decimal-places', (string)$decimals);
+            $xml->writeAttribute('number:min-decimal-places', (string)$decimals);
+            $xml->writeAttribute('number:min-integer-digits', '1');
+            $xml->writeAttribute('number:grouping', 'true');
+            $xml->endElement();
+            $xml->endElement();
+        };
+        $formats = [];
+        for ($precision = 0; $precision <= 10; $precision++) {
+            $formatCode = $precision > 0 ? '#,##0.' . str_repeat('0', $precision) : '#,##0';
+            $formats[$formatCode] = $numberStyle;
+        }
+        $writer->useAdditionalNumberFormats($formats);
+    }
     $writer->setPreCalculateFormulas(false);
     $writer->save($output);
     $spreadsheet->disconnectWorksheets();
