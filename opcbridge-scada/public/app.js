@@ -1143,6 +1143,7 @@ const state = {
   reportFormulaColumnIndex: -1,
   reportFormulaSummaryIndex: -1,
   reportFormulaSummaryColumnIndex: -1,
+  reportFormulaPlacedCellIndex: -1,
   reportBuilderAccess: [],
   reportBuilderLayoutPlacedCells: [],
   reportBuilderTemplate: null,
@@ -7332,10 +7333,26 @@ function renderReportBuilderLayout() {
         control.value = String(item[property] || '');
         control.placeholder = item.type === 'formula' ? 'sum([column_id])' : 'Text to display';
         control.addEventListener('input', () => { item[property] = control.value; renderReportBuilderLayoutPreview(); });
+        if (item.type === 'formula') {
+          const controls = document.createElement('div');
+          controls.className = 'row-actions';
+          controls.style.flexWrap = 'nowrap';
+          control.style.minWidth = '180px';
+          const edit = document.createElement('button');
+          edit.className = 'btn'; edit.type = 'button'; edit.textContent = 'Edit Formula';
+          edit.addEventListener('click', () => openReportPlacedCellFormulaModal(index));
+          controls.append(control, edit);
+          valueTd.appendChild(controls);
+          return;
+        }
       }
       valueTd.appendChild(control);
     };
-    type.addEventListener('change', () => { item.type = type.value; renderReportBuilderLayout(); });
+    type.addEventListener('change', () => {
+      item.type = type.value;
+      renderReportBuilderLayout();
+      if (item.type === 'formula') openReportPlacedCellFormulaModal(index);
+    });
     renderValue();
     const formatTd = document.createElement('td');
     const format = document.createElement('input'); format.type = 'text'; format.placeholder = 'mm/dd/yyyy';
@@ -7505,6 +7522,7 @@ function closeReportFormulaModal() {
   state.reportFormulaColumnIndex = -1;
   state.reportFormulaSummaryIndex = -1;
   state.reportFormulaSummaryColumnIndex = -1;
+  state.reportFormulaPlacedCellIndex = -1;
 }
 
 function openReportFormulaModal(index) {
@@ -7513,6 +7531,7 @@ function openReportFormulaModal(index) {
   state.reportFormulaColumnIndex = index;
   state.reportFormulaSummaryIndex = -1;
   state.reportFormulaSummaryColumnIndex = -1;
+  state.reportFormulaPlacedCellIndex = -1;
   if (els.reportFormulaModalTitle) els.reportFormulaModalTitle.textContent = 'Calculated Column Formula';
   if (els.reportFormulaHelp) {
     els.reportFormulaHelp.textContent = 'Supported: +, −, ×, ÷, comparisons, and/or/not, if(), coalesce(), min(), max(), avg(), abs(), round(), and null.';
@@ -7557,6 +7576,7 @@ function openReportSummaryFormulaModal(summaryIndex, columnIndex) {
   state.reportFormulaColumnIndex = -1;
   state.reportFormulaSummaryIndex = summaryIndex;
   state.reportFormulaSummaryColumnIndex = columnIndex;
+  state.reportFormulaPlacedCellIndex = -1;
   if (els.reportFormulaModalTitle) els.reportFormulaModalTitle.textContent = `Summary Formula — ${String(column.heading || column.id || 'Column')}`;
   if (els.reportFormulaHelp) {
     els.reportFormulaHelp.textContent = 'Aggregate a column with sum(), avg(), min(), max(), first(), last(), count(), or missing(). You can combine results with arithmetic and other formula functions.';
@@ -7583,6 +7603,47 @@ function openReportSummaryFormulaModal(summaryIndex, columnIndex) {
         const textarea = els.reportFormulaExpression;
         if (!textarea) return;
         const reference = `sum([${String(candidate.id || '')}])`;
+        const start = textarea.selectionStart ?? textarea.value.length;
+        const end = textarea.selectionEnd ?? start;
+        textarea.setRangeText(reference, start, end, 'end');
+        textarea.focus();
+      });
+      els.reportFormulaColumns.appendChild(button);
+    });
+  }
+  if (els.reportFormulaModal) els.reportFormulaModal.style.display = 'flex';
+  els.reportFormulaExpression?.focus();
+}
+
+function openReportPlacedCellFormulaModal(index) {
+  const item = state.reportBuilderLayoutPlacedCells[index];
+  if (!item || item.type !== 'formula') return;
+  state.reportFormulaColumnIndex = -1;
+  state.reportFormulaSummaryIndex = -1;
+  state.reportFormulaSummaryColumnIndex = -1;
+  state.reportFormulaPlacedCellIndex = index;
+  if (els.reportFormulaModalTitle) els.reportFormulaModalTitle.textContent = `Placed Cell Formula — ${String(item.target || 'Unplaced cell')}`;
+  if (els.reportFormulaHelp) {
+    els.reportFormulaHelp.textContent = 'Aggregate a report column with sum(), avg(), min(), max(), first(), last(), count(), or missing(). You can combine aggregate results with arithmetic and other formula functions.';
+  }
+  if (els.reportFormulaPrecisionWrap) els.reportFormulaPrecisionWrap.style.display = 'none';
+  if (els.reportFormulaExpression) {
+    els.reportFormulaExpression.value = String(item.expression || '');
+    els.reportFormulaExpression.placeholder = 'Example: sum([flow]) / sum([runtime])';
+  }
+  if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = '';
+  if (els.reportFormulaColumns) {
+    els.reportFormulaColumns.textContent = '';
+    state.reportBuilderColumns.forEach((column, columnIndex) => {
+      const button = document.createElement('button');
+      button.className = 'btn';
+      button.type = 'button';
+      button.textContent = String(column.heading || column.id || `Column ${columnIndex + 1}`);
+      button.title = `sum([${String(column.id || '')}])`;
+      button.addEventListener('click', () => {
+        const textarea = els.reportFormulaExpression;
+        if (!textarea) return;
+        const reference = `sum([${String(column.id || '')}])`;
         const start = textarea.selectionStart ?? textarea.value.length;
         const end = textarea.selectionEnd ?? start;
         textarea.setRangeText(reference, start, end, 'end');
@@ -8440,6 +8501,19 @@ function wireReportBuilderUi() {
   });
   if (els.reportFormulaSaveBtn) els.reportFormulaSaveBtn.addEventListener('click', () => {
     const expression = String(els.reportFormulaExpression?.value || '').trim();
+    const placedCellIndex = state.reportFormulaPlacedCellIndex;
+    if (placedCellIndex >= 0) {
+      const item = state.reportBuilderLayoutPlacedCells[placedCellIndex];
+      if (!item || item.type !== 'formula') return closeReportFormulaModal();
+      if (!expression) {
+        if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = 'Enter a formula.';
+        return;
+      }
+      item.expression = expression;
+      closeReportFormulaModal();
+      renderReportBuilderLayout();
+      return;
+    }
     const summaryIndex = state.reportFormulaSummaryIndex;
     const summaryColumnIndex = state.reportFormulaSummaryColumnIndex;
     if (summaryIndex >= 0 && summaryColumnIndex >= 0) {
