@@ -96,6 +96,67 @@ function validate_report(array $report): array
     } catch (Throwable) {
         fail("Report '{$id}' has invalid timezone '{$timezone}'");
     }
+    $validColumn = function(mixed $value, string $fallback = ''): string {
+        $column = strtoupper(trim((string)$value));
+        if (!preg_match('/^[A-Z]{1,3}$/', $column)) return $fallback;
+        $index = 0;
+        foreach (str_split($column) as $character) $index = $index * 26 + ord($character) - 64;
+        return $index >= 1 && $index <= 16384 ? $column : $fallback;
+    };
+    $validCell = function(mixed $value, string $fallback = '') use ($validColumn): string {
+        $cell = strtoupper(trim((string)$value));
+        if (!preg_match('/^([A-Z]{1,3})([1-9][0-9]{0,6})$/', $cell, $matches)) return $fallback;
+        return $validColumn($matches[1]) !== '' && (int)$matches[2] <= 1048576 ? $cell : $fallback;
+    };
+    $layout = is_array($report['layout'] ?? null) ? $report['layout'] : [];
+    $worksheet = trim((string)($layout['worksheet'] ?? 'Report')) ?: 'Report';
+    if (strlen($worksheet) > 31 || preg_match('/[\\\\\/?*\[\]:]/', $worksheet)) {
+        fail("Report '{$id}' has an invalid worksheet name");
+    }
+    $fields = [];
+    foreach (array_slice(is_array($layout['fields'] ?? null) ? $layout['fields'] : [], 0, 50) as $fieldIndex => $field) {
+        $cell = $validCell($field['cell'] ?? '');
+        $text = trim((string)($field['text'] ?? ''));
+        if ($cell === '' || $text === '') fail("Report '{$id}' fixed text entry " . ($fieldIndex + 1) . " is invalid");
+        $fields[] = ['cell' => $cell, 'text' => substr($text, 0, 2000)];
+    }
+    $optionalCell = function(mixed $value, string $label) use ($validCell, $id): string {
+        $raw = trim((string)$value);
+        if ($raw === '') return '';
+        $cell = $validCell($raw);
+        if ($cell === '') fail("Report '{$id}' {$label} must be a valid spreadsheet cell or blank");
+        return $cell;
+    };
+    $report['layout'] = [
+        'worksheet' => $worksheet,
+        'table_start_row' => max(1, min(10000, (int)($layout['table_start_row'] ?? 5))),
+        'table_start_column' => $validColumn($layout['table_start_column'] ?? 'A', 'A'),
+        'include_header_row' => ($layout['include_header_row'] ?? true) !== false,
+        'summary_gap_rows' => max(0, min(100, (int)($layout['summary_gap_rows'] ?? 0))),
+        'summary_placement' => (string)($layout['summary_placement'] ?? 'after_data') === 'fixed' ? 'fixed' : 'after_data',
+        'summary_start_row' => max(1, min(10000, (int)($layout['summary_start_row'] ?? 40))),
+        'title_cell' => array_key_exists('title_cell', $layout) ? $optionalCell($layout['title_cell'], 'title cell') : 'A1',
+        'description_cell' => array_key_exists('description_cell', $layout) ? $optionalCell($layout['description_cell'], 'description cell') : 'A2',
+        'period_cell' => $validCell($layout['period_cell'] ?? 'A3', 'A3'),
+        'fields' => $fields,
+    ];
+    $template = is_array($report['template'] ?? null) ? $report['template'] : null;
+    if ($template !== null) {
+        $storedId = strtolower(trim((string)($template['stored_id'] ?? '')));
+        if (!preg_match('/^[a-f0-9]{64}$/', $storedId)) fail("Report '{$id}' has an invalid template identifier");
+        $filename = basename((string)($template['filename'] ?? 'template.xlsx'));
+        if (!str_ends_with(strtolower($filename), '.xlsx')) fail("Report '{$id}' template must be an .xlsx file");
+        $report['template'] = [
+            'enabled' => ($template['enabled'] ?? false) === true,
+            'filename' => $filename,
+            'stored_id' => $storedId,
+            'checksum' => $storedId,
+            'size' => max(0, (int)($template['size'] ?? 0)),
+            'uploaded_at' => (string)($template['uploaded_at'] ?? ''),
+        ];
+    } else {
+        $report['template'] = null;
+    }
     $columns = $report['columns'] ?? null;
     if (!is_array($columns) || count($columns) < 1) {
         fail("Report '{$id}' must contain at least one column");
@@ -114,6 +175,7 @@ function validate_report(array $report): array
         $usedIds[$columnId] = true;
         $column['id'] = $columnId;
         $column['visible'] = ($column['visible'] ?? true) !== false;
+        $column['sheet_column'] = $validColumn($column['sheet_column'] ?? '');
         $source = (string)($column['source'] ?? 'historian');
         if ($source === 'calculated') {
             $expression = trim((string)($column['expression'] ?? ''));
@@ -152,6 +214,24 @@ function validate_report(array $report): array
     $report['columns'] = $columns;
     if (!array_filter($columns, fn(array $item): bool => ($item['visible'] ?? true) !== false)) {
         fail("Report '{$id}' must show at least one column");
+    }
+    $columnNumber = function(string $column): int {
+        $number = 0;
+        foreach (str_split($column) as $character) $number = $number * 26 + ord($character) - 64;
+        return $number;
+    };
+    $tableColumnNumber = $columnNumber($report['layout']['table_start_column']);
+    $occupiedColumns = [$tableColumnNumber => true];
+    $visibleIndex = 0;
+    foreach ($columns as $column) {
+        if (($column['visible'] ?? true) === false) continue;
+        $sheetColumnNumber = ($column['sheet_column'] ?? '') !== ''
+            ? $columnNumber($column['sheet_column']) : $tableColumnNumber + $visibleIndex + 1;
+        if ($sheetColumnNumber > 16384 || isset($occupiedColumns[$sheetColumnNumber])) {
+            fail("Report '{$id}' contains overlapping or invalid spreadsheet column placement");
+        }
+        $occupiedColumns[$sheetColumnNumber] = true;
+        $visibleIndex++;
     }
     $summaryCalculations = ['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing', 'formula'];
     $summaries = is_array($report['summaries'] ?? null) ? array_slice($report['summaries'], 0, 20) : [];
@@ -1003,35 +1083,71 @@ function write_xlsx(
     }
     require_once $autoload;
 
-    $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-    $sheet = $spreadsheet->getActiveSheet();
-    $sheet->setTitle('Report');
+    $layout = is_array($report['layout'] ?? null) ? $report['layout'] : [];
+    $template = is_array($report['template'] ?? null) ? $report['template'] : [];
+    if (($template['enabled'] ?? false) === true) {
+        $storedId = (string)($template['stored_id'] ?? '');
+        $templateDir = rtrim((string)(getenv('OPCBRIDGE_REPORT_TEMPLATE_DIR') ?: '/var/lib/opcbridge/report/templates'), '/');
+        $templatePath = $templateDir . '/' . $storedId . '.xlsx';
+        if (!preg_match('/^[a-f0-9]{64}$/', $storedId) || !is_file($templatePath)) {
+            fail('Enabled report template is missing or invalid');
+        }
+        $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($templatePath);
+        $sheet = $spreadsheet->getSheetByName((string)($layout['worksheet'] ?? 'Report'));
+        if ($sheet === null) fail("Template worksheet not found: " . (string)($layout['worksheet'] ?? 'Report'));
+    } else {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle((string)($layout['worksheet'] ?? 'Report'));
+    }
     $title = (string)($report['name'] ?? $report['id']);
-    $lastColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($report['columns']) + 1);
-    $sheet->setCellValue('A1', $title);
-    $sheet->mergeCells("A1:{$lastColumn}1");
-    $sheet->setCellValue('A2', 'Period');
-    $sheet->setCellValue('B2', $month);
-    $sheet->setCellValue('A3', 'Generated');
-    $sheet->setCellValue('B3', (new DateTimeImmutable('now'))->format(DateTimeInterface::ATOM));
+    $titleCell = (string)($layout['title_cell'] ?? 'A1');
+    $descriptionCell = (string)($layout['description_cell'] ?? 'A2');
+    $periodCell = (string)($layout['period_cell'] ?? 'A3');
+    $tableStartRow = (int)($layout['table_start_row'] ?? 5);
+    $tableStartColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString(
+        (string)($layout['table_start_column'] ?? 'A')
+    );
+    $includeHeaderRow = ($layout['include_header_row'] ?? true) !== false;
+    $columnIndexes = [];
+    foreach ($report['columns'] as $index => $column) {
+        $columnIndexes[] = trim((string)($column['sheet_column'] ?? '')) !== ''
+            ? \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString((string)$column['sheet_column'])
+            : $tableStartColumn + $index + 1;
+    }
+    $lastColumnIndex = max([$tableStartColumn, ...$columnIndexes]);
+    $firstColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($tableStartColumn);
+    $lastColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($lastColumnIndex);
+    if ($titleCell !== '') $sheet->setCellValue($titleCell, $title);
+    if ($descriptionCell !== '') $sheet->setCellValue($descriptionCell, (string)($report['description'] ?? ''));
+    $sheet->setCellValue($periodCell, $month);
+    foreach (($layout['fields'] ?? []) as $field) {
+        $sheet->setCellValueExplicit(
+            (string)$field['cell'],
+            (string)$field['text'],
+            \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
+        );
+    }
 
     $timeHeading = ($report['group_by'] ?? 'day') === 'raw'
         ? 'Timestamp' : (($report['period'] ?? 'month') === 'daily' ? 'Time' : 'Date');
-    $headers = [$timeHeading];
-    foreach ($report['columns'] as $column) {
-        $headers[] = (string)($column['heading'] ?? $column['tag_name']);
+    if ($includeHeaderRow) {
+        $sheet->setCellValue("{$firstColumn}{$tableStartRow}", $timeHeading);
+        foreach ($report['columns'] as $index => $column) {
+            $columnLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndexes[$index]);
+            $sheet->setCellValue("{$columnLetter}{$tableStartRow}", (string)($column['heading'] ?? $column['tag_name']));
+        }
     }
-    $sheet->fromArray($headers, null, 'A5');
 
-    $rowNumber = 6;
+    $rowNumber = $tableStartRow + ($includeHeaderRow ? 1 : 0);
     foreach ($rows as $row) {
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$row['date'])) {
             $date = DateTimeImmutable::createFromFormat('!Y-m-d', $row['date']);
-            $sheet->setCellValue("A{$rowNumber}", \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($date));
-            $sheet->getStyle("A{$rowNumber}")->getNumberFormat()->setFormatCode('mm/dd/yyyy');
+            $sheet->setCellValue("{$firstColumn}{$rowNumber}", \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($date));
+            $sheet->getStyle("{$firstColumn}{$rowNumber}")->getNumberFormat()->setFormatCode('mm/dd/yyyy');
         } else {
             $sheet->setCellValueExplicit(
-                "A{$rowNumber}",
+                "{$firstColumn}{$rowNumber}",
                 (string)$row['date'],
                 \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
             );
@@ -1040,7 +1156,7 @@ function write_xlsx(
             if ($value === null) {
                 continue;
             }
-            $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($index + 2) . $rowNumber;
+            $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndexes[$index]) . $rowNumber;
             $sheet->setCellValue($cell, $value);
             $precision = $row['precisions'][$index] ?? null;
             $precision = $precision === null
@@ -1052,12 +1168,18 @@ function write_xlsx(
         $rowNumber++;
     }
     $dataEndRow = $rowNumber - 1;
+    $rowNumber = ($layout['summary_placement'] ?? 'after_data') === 'fixed'
+        ? (int)($layout['summary_start_row'] ?? 40)
+        : $rowNumber + (int)($layout['summary_gap_rows'] ?? 0);
+    if ($summaryRows && $rowNumber <= $dataEndRow) {
+        fail('Fixed summary starting row overlaps report table data');
+    }
     $summaryStartRow = $rowNumber;
     foreach ($summaryRows as $row) {
-        $sheet->setCellValue("A{$rowNumber}", (string)$row['label']);
+        $sheet->setCellValue("{$firstColumn}{$rowNumber}", (string)$row['label']);
         foreach ($row['values'] as $index => $value) {
             if ($value === null) continue;
-            $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($index + 2) . $rowNumber;
+            $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndexes[$index]) . $rowNumber;
             $sheet->setCellValue($cell, $value);
             $precision = $row['precisions'][$index] ?? null;
             $precision = $precision === null
@@ -1069,34 +1191,124 @@ function write_xlsx(
         $rowNumber++;
     }
     if ($summaryRows) {
-        $sheet->getStyle("A{$summaryStartRow}:{$lastColumn}" . ($rowNumber - 1))->getFont()->setBold(true);
-        $sheet->getStyle("A{$summaryStartRow}:{$lastColumn}" . ($rowNumber - 1))->getFill()
+        $sheet->getStyle("{$firstColumn}{$summaryStartRow}:{$lastColumn}" . ($rowNumber - 1))->getFont()->setBold(true);
+        $sheet->getStyle("{$firstColumn}{$summaryStartRow}:{$lastColumn}" . ($rowNumber - 1))->getFill()
             ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
             ->getStartColor()->setARGB('FFF2F2F2');
     }
 
-    $sheet->getStyle("A1:{$lastColumn}1")->getFont()->setBold(true)->setSize(16);
-    $sheet->getStyle("A5:{$lastColumn}5")->getFont()->setBold(true);
-    $sheet->getStyle("A5:{$lastColumn}5")->getFill()
-        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
-        ->getStartColor()->setARGB('FFD9EAF7');
-    $sheet->freezePane('A6');
-    $sheet->setAutoFilter("A5:{$lastColumn}" . max(5, $dataEndRow));
-    $sheet->getColumnDimension('A')->setWidth(14);
-    for ($columnIndex = 2; $columnIndex <= count($report['columns']) + 1; $columnIndex++) {
-        $sheet->getColumnDimension(
-            \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndex)
-        )->setWidth(20);
+    if ($titleCell !== '') $sheet->getStyle($titleCell)->getFont()->setBold(true)->setSize(16);
+    if ($includeHeaderRow) {
+        $sheet->getStyle("{$firstColumn}{$tableStartRow}:{$lastColumn}{$tableStartRow}")->getFont()->setBold(true);
+        $sheet->getStyle("{$firstColumn}{$tableStartRow}:{$lastColumn}{$tableStartRow}")->getFill()
+            ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+            ->getStartColor()->setARGB('FFD9EAF7');
+        $sheet->freezePane("{$firstColumn}" . ($tableStartRow + 1));
+        $sheet->setAutoFilter("{$firstColumn}{$tableStartRow}:{$lastColumn}" . max($tableStartRow, $dataEndRow));
+    }
+    $sheet->getColumnDimension($firstColumn)->setWidth(14);
+    foreach ($columnIndexes as $columnIndex) {
+        $sheet->getColumnDimension(\PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndex))->setWidth(20);
     }
     $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE);
     $sheet->getPageSetup()->setFitToWidth(1)->setFitToHeight(0);
 
     $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+    $writer->setPreCalculateFormulas(false);
     $writer->save($output);
     $spreadsheet->disconnectWorksheets();
 }
 
+function template_preview(string $templatePath, string $worksheetName, string $autoload): array
+{
+    if (!is_file($autoload)) fail("PhpSpreadsheet is not installed; missing {$autoload}");
+    if (!is_file($templatePath)) fail('Template file was not found');
+    require_once $autoload;
+    $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($templatePath);
+    $worksheetNames = $spreadsheet->getSheetNames();
+    $sheet = $worksheetName !== '' ? $spreadsheet->getSheetByName($worksheetName) : null;
+    if ($sheet === null) $sheet = $spreadsheet->getActiveSheet();
+    $highestRow = min(500, max(1, $sheet->getHighestDataRow(), $sheet->getHighestRow()));
+    $highestColumn = min(100, \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($sheet->getHighestColumn()));
+    $cells = [];
+    for ($row = 1; $row <= $highestRow; $row++) {
+        for ($column = 1; $column <= $highestColumn; $column++) {
+            $coordinate = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($column) . $row;
+            $cell = $sheet->getCell($coordinate);
+            $style = $sheet->getStyle($coordinate);
+            $value = $cell->getValue();
+            $hasStyle = $cell->getXfIndex() !== 0;
+            if (($value === null || $value === '') && !$hasStyle) continue;
+            if ($cell->getDataType() === \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_FORMULA) {
+                $display = $cell->getOldCalculatedValue();
+                if ($display === null) $display = $value;
+            } else {
+                try { $display = $cell->getFormattedValue(); } catch (Throwable) { $display = $value; }
+            }
+            $fontColor = $style->getFont()->getColor()->getARGB();
+            $fillColor = $style->getFill()->getStartColor()->getARGB();
+            $cells[] = [
+                'row' => $row,
+                'column' => $column,
+                'value' => $display === null ? '' : (string)$display,
+                'style' => [
+                    'bold' => $style->getFont()->getBold(),
+                    'italic' => $style->getFont()->getItalic(),
+                    'size' => $style->getFont()->getSize(),
+                    'color' => $fontColor,
+                    'fill' => $style->getFill()->getFillType() === \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_NONE ? '' : $fillColor,
+                    'horizontal' => $style->getAlignment()->getHorizontal(),
+                    'vertical' => $style->getAlignment()->getVertical(),
+                    'wrap' => $style->getAlignment()->getWrapText(),
+                ],
+            ];
+        }
+    }
+    $columnWidths = [];
+    for ($column = 1; $column <= $highestColumn; $column++) {
+        $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($column);
+        $width = $sheet->getColumnDimension($letter)->getWidth();
+        if ($width > 0) $columnWidths[(string)$column] = $width;
+    }
+    $rowHeights = [];
+    for ($row = 1; $row <= $highestRow; $row++) {
+        $height = $sheet->getRowDimension($row)->getRowHeight();
+        if ($height > 0) $rowHeights[(string)$row] = $height;
+    }
+    $merges = [];
+    foreach ($sheet->getMergeCells() as $range) {
+        [$start, $end] = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::rangeBoundaries($range);
+        $merges[] = [
+            'start_row' => $start[1], 'start_column' => $start[0],
+            'end_row' => $end[1], 'end_column' => $end[0],
+        ];
+    }
+    $result = [
+        'worksheet' => $sheet->getTitle(),
+        'worksheets' => $worksheetNames,
+        'max_row' => $highestRow,
+        'max_column' => $highestColumn,
+        'cells' => $cells,
+        'merges' => $merges,
+        'column_widths' => $columnWidths,
+        'row_heights' => $rowHeights,
+        'truncated' => $sheet->getHighestRow() > 500 ||
+            \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($sheet->getHighestColumn()) > 100,
+    ];
+    $spreadsheet->disconnectWorksheets();
+    return $result;
+}
+
 [$command, $options] = parse_args($argv);
+$autoload = option($options, 'autoload', __DIR__ . '/vendor/autoload.php');
+if ($command === 'template-preview') {
+    echo json_encode(template_preview(
+        option($options, 'template'),
+        option($options, 'worksheet', ''),
+        $autoload
+    ), JSON_UNESCAPED_SLASHES) . "\n";
+    exit(0);
+}
 $definitions = option($options, 'definitions', '/etc/opcbridge/report/reports.json');
 $reports = load_reports($definitions);
 
@@ -1142,6 +1354,14 @@ try {
     fail('Report calculation failed: ' . $e->getMessage());
 }
 $summaryRows = calculate_summary_rows($report, $rows);
+$reportLayout = is_array($report['layout'] ?? null) ? $report['layout'] : [];
+if ($summaryRows && ($reportLayout['summary_placement'] ?? 'after_data') === 'fixed') {
+    $headerRows = ($reportLayout['include_header_row'] ?? true) !== false ? 1 : 0;
+    $lastDataRow = (int)($reportLayout['table_start_row'] ?? 5) + $headerRows + count($rows) - 1;
+    if ((int)($reportLayout['summary_start_row'] ?? 40) <= $lastDataRow) {
+        fail('Fixed summary starting row overlaps report table data');
+    }
+}
 $visibleIndexes = visible_column_indexes($report);
 $outputReport = $report;
 $outputReport['columns'] = array_map(fn(int $index): array => $report['columns'][$index], $visibleIndexes);
@@ -1153,11 +1373,13 @@ if ($command === 'preview') {
         'ok' => true,
         'id' => $id,
         'name' => (string)($report['name'] ?? $id),
+        'description' => (string)($report['description'] ?? ''),
         'period' => (string)($report['period'] ?? 'month'),
         'interval_minutes' => (int)($report['interval_minutes'] ?? 60),
         'period_label' => $periodLabel,
         'group_by' => $group,
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
+        'layout' => $report['layout'] ?? [],
         'truncated' => $truncated,
         'row_limit' => $group === 'raw' ? $rawRowLimit : null,
         'columns' => array_map(
@@ -1167,6 +1389,7 @@ if ($command === 'preview') {
                 'connection_id' => (string)($column['connection_id'] ?? $column['database_id'] ?? ''),
                 'tag_name' => (string)($column['tag_name'] ?? $column['field'] ?? ''),
                 'precision' => max(0, min(10, (int)($column['precision'] ?? 2))),
+                'sheet_column' => (string)($column['sheet_column'] ?? ''),
             ],
             $outputReport['columns']
         ),
@@ -1178,7 +1401,6 @@ if ($command === 'preview') {
 
 $format = strtolower(option($options, 'format', 'xlsx'));
 $output = option($options, 'output');
-$autoload = option($options, 'autoload', __DIR__ . '/vendor/autoload.php');
 if (!in_array($format, OPCBRIDGE_REPORT_FORMATS, true)) {
     fail("Unsupported format: {$format}", 2);
 }

@@ -1153,7 +1153,7 @@
 		          <h3 id="publishedReportTitle" style="margin-top: 18px;"></h3>
 		          <div class="hint" id="publishedReportDescription"></div>
 		          <div class="table-wrap" id="publishedReportPreviewWrap" style="display:none; margin-top: 14px;">
-		            <table class="table">
+		            <table class="table report-output-layout">
 		              <thead id="publishedReportPreviewHead"></thead>
 		              <tbody id="publishedReportPreviewBody"></tbody>
 		            </table>
@@ -1169,6 +1169,11 @@
 		          <button class="btn danger" id="reportBuilderDeleteBtn" type="button">Delete</button>
 		        </div>
 		        <h3 id="reportBuilderTitle">Report Builder</h3>
+		        <div class="report-builder-tabs" id="reportBuilderTabs" role="tablist" aria-label="Report editor sections">
+		          <button class="btn active" type="button" data-report-builder-tab="report">Report</button>
+		          <button class="btn" type="button" data-report-builder-tab="layout">Layout</button>
+		        </div>
+		        <div class="report-builder-tab-panel" data-report-builder-panel="report">
 		        <div class="grid2" style="margin-top: 14px;">
 		          <input id="reportBuilderId" type="hidden">
 		          <label style="grid-column: 1 / -1;"><span>Name</span><input id="reportBuilderName" type="text" placeholder="Monthly Flow Report"></label>
@@ -1204,7 +1209,6 @@
 		          <label><span><input id="reportBuilderCsv" type="checkbox" checked> CSV (.csv)</span></label>
 		          <label><span><input id="reportBuilderPublished" type="checkbox"> Published</span></label>
 		        </div>
-
 		        <h4 style="margin-top: 18px;">Data Source</h4>
 		        <div class="grid2">
 		          <label><span>Source</span>
@@ -1254,7 +1258,6 @@
 		          <button class="btn" id="reportBuilderAddCategoriesBtn" type="button">Add Selected Items</button>
 		        </div>
 		        <div class="hint mono" id="reportBuilderSourceStatus" style="margin-top: 8px;"></div>
-
 		        <h4 style="margin-top: 18px;">Report Columns</h4>
 		        <div class="row-actions" id="reportBuilderHistorianActions">
 		          <select id="reportBuilderTagSelect" style="min-width: 420px;"></select>
@@ -1289,6 +1292,48 @@
 		              <tbody id="reportBuilderAccess"></tbody>
 		            </table>
 		          </div>
+		        </div>
+		        </div>
+		        <div class="report-builder-tab-panel" data-report-builder-panel="layout" hidden>
+		          <h4 style="margin-top:18px;">Spreadsheet Layout</h4>
+		          <div class="hint">Arrange the generated workbook. A spreadsheet template can be added later without changing these placements.</div>
+		          <div class="grid2" style="margin-top:12px;">
+		            <label style="grid-column:1 / -1;"><span>Worksheet name</span><input id="reportBuilderLayoutWorksheet" type="text" value="Report"></label>
+		            <div style="grid-column:1 / -1; padding:10px 12px; border:1px solid var(--border); border-radius:7px;">
+		              <label><span><input id="reportBuilderTemplateEnabled" type="checkbox" disabled> Use spreadsheet template</span></label>
+		              <div class="hint" id="reportBuilderTemplateInfo" style="margin-top:6px;">No template uploaded.</div>
+		              <div class="row-actions" style="margin-top:10px; flex-wrap:wrap;">
+		                <input id="reportBuilderTemplateFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+		                <button class="btn" id="reportBuilderTemplateUploadBtn" type="button">Upload Template</button>
+		                <button class="btn" id="reportBuilderTemplateDownloadBtn" type="button" style="display:none;">Download Template</button>
+		                <button class="btn danger" id="reportBuilderTemplateRemoveBtn" type="button" style="display:none;">Remove Template</button>
+		              </div>
+		              <div class="hint mono" id="reportBuilderTemplateStatus" style="margin-top:8px;"></div>
+		            </div>
+		            <label><span>Report title cell (optional)</span><input id="reportBuilderLayoutTitleCell" type="text" value="A1" placeholder="Leave blank to omit"></label>
+		            <label><span>Description cell (optional)</span><input id="reportBuilderLayoutDescriptionCell" type="text" value="A2" placeholder="Leave blank to omit"></label>
+		            <label><span>Reporting period cell</span><input id="reportBuilderLayoutPeriodCell" type="text" value="A3"></label>
+		            <label><span>Table starting row</span><input id="reportBuilderLayoutTableRow" type="number" min="1" max="10000" value="5"></label>
+		            <label><span>Table starting column</span><input id="reportBuilderLayoutTableColumn" type="text" value="A" maxlength="3"></label>
+		            <label><span><input id="reportBuilderLayoutIncludeHeader" type="checkbox" checked> Include table header row</span></label>
+		            <label><span>Summary placement</span><select id="reportBuilderLayoutSummaryPlacement"><option value="after_data">At bottom of table</option><option value="fixed">Start at fixed row</option></select></label>
+		            <label id="reportBuilderLayoutSummaryGapLabel"><span>Blank rows before summaries</span><input id="reportBuilderLayoutSummaryGap" type="number" min="0" max="100" value="0"></label>
+		            <label id="reportBuilderLayoutSummaryRowLabel" style="display:none;"><span>Summary starting row</span><input id="reportBuilderLayoutSummaryRow" type="number" min="1" max="10000" value="40"></label>
+		          </div>
+		          <h4 style="margin-top:18px;">Column Placement</h4>
+		          <div class="hint">Leave a spreadsheet column blank for automatic placement. Enter a letter such as C to create intentional gaps.</div>
+		          <div class="table-wrap" style="margin-top:10px;">
+		            <table class="table"><thead><tr><th>Report column</th><th>Spreadsheet column</th></tr></thead><tbody id="reportBuilderLayoutColumns"></tbody></table>
+		          </div>
+		          <h4 style="margin-top:18px;">Fixed Text</h4>
+		          <div class="hint">Add notes, headings, permit numbers, or other text that appears once in the workbook.</div>
+		          <div class="row-actions" style="margin-top:10px;"><button class="btn" id="reportBuilderLayoutAddFieldBtn" type="button">Add Fixed Text</button></div>
+		          <div class="table-wrap" id="reportBuilderLayoutFieldsWrap" style="display:none; margin-top:10px;">
+		            <table class="table"><thead><tr><th>Cell</th><th>Text</th><th>Action</th></tr></thead><tbody id="reportBuilderLayoutFields"></tbody></table>
+		          </div>
+		          <h4 style="margin-top:18px;">Design Preview</h4>
+		          <div class="hint">Representative values are used here. Actual report data remains on the Reports page.</div>
+		          <div class="report-layout-preview-wrap" style="margin-top:10px;"><table class="report-layout-preview" id="reportBuilderLayoutPreview"></table></div>
 		        </div>
 		        <div class="row-actions" style="margin-top: 14px;">
 		          <button class="btn primary" id="reportBuilderSaveBtn" type="button">Save</button>

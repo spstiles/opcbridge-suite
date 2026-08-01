@@ -843,7 +843,7 @@ ensure_dialout_group_access() {
 }
 
 ensure_dirs() {
-  mkdir -p "$PREFIX/bin" "$CONFIG_ROOT" "$DATA_ROOT" "$LOG_ROOT"
+  mkdir -p "$PREFIX/bin" "$CONFIG_ROOT" "$DATA_ROOT" "$LOG_ROOT" "$DATA_ROOT/report/templates"
 
   # Core config layout
   mkdir -p "$CONFIG_ROOT/connections" "$CONFIG_ROOT/tags"
@@ -1246,7 +1246,7 @@ install_report() {
     exit 1
   }
 
-  mkdir -p "$PREFIX/report" "$CONFIG_ROOT/report" "$DATA_ROOT/report"
+  mkdir -p "$PREFIX/report" "$CONFIG_ROOT/report" "$DATA_ROOT/report/templates"
   install -m 0755 "$src_dir/opcbridge-report" "$PREFIX/report/opcbridge-report"
   install -m 0644 "$src_dir/VERSION" "$PREFIX/report/VERSION"
   install -m 0644 "$src_dir/composer.json" "$PREFIX/report/composer.json"

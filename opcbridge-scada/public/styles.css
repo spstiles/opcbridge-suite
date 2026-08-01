@@ -482,6 +482,120 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   width: 100%;
 }
 
+.report-builder-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.report-builder-tabs .btn.active {
+  border-color: var(--tab-active-border);
+  background: var(--tab-active-bg);
+  color: var(--text);
+}
+
+.report-builder-tab-panel[hidden] {
+  display: none !important;
+}
+
+.report-layout-preview-wrap {
+  max-height: 620px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.report-layout-preview {
+  border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 100%;
+  color: #1d2733;
+  background: #fff;
+  font-size: 12px;
+}
+
+.report-layout-preview th,
+.report-layout-preview td {
+  min-width: 92px;
+  height: 26px;
+  padding: 4px 6px;
+  border: 1px solid #d8dde3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-layout-preview th {
+  min-width: 42px;
+  background: #edf1f5;
+  color: #4b5968;
+  text-align: center;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.report-layout-preview tr > th:first-child {
+  left: 0;
+  z-index: 3;
+}
+
+.report-layout-preview .layout-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.report-layout-preview .layout-description {
+  color: #5f6c78;
+}
+
+.report-layout-preview .layout-heading {
+  background: #d9eaf7;
+  font-weight: 700;
+}
+
+.report-layout-preview .layout-summary {
+  background: #f2f2f2;
+  font-weight: 700;
+}
+
+.report-layout-preview .layout-fixed {
+  background: #fff5cc;
+}
+
+.report-output-layout td {
+  min-width: 110px;
+  height: 30px;
+}
+
+.report-output-layout .layout-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.report-output-layout .layout-description {
+  color: var(--muted);
+}
+
+.report-output-layout .layout-heading {
+  background: rgba(70, 145, 205, .2);
+  font-weight: 700;
+}
+
+.report-output-layout .layout-summary {
+  background: rgba(255,255,255,.07);
+  font-weight: 700;
+}
+
+.report-output-layout .layout-fixed {
+  font-weight: 600;
+}
+
 #reportBuilderAccessSection th:not(:first-child),
 #reportBuilderAccess td:not(:first-child) {
   text-align: center;

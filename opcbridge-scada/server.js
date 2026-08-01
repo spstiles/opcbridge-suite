@@ -197,6 +197,9 @@ const REPORT_DEFINITIONS_PATH = String(
   process.env.OPCBRIDGE_REPORT_DEFINITIONS ||
   preferLoggerPath('/etc/opcbridge/report/reports.json', path.join(ROOT, '..', 'opcbridge-report', 'reports.json.example'))
 ).trim();
+const REPORT_TEMPLATE_DIR = String(
+  process.env.OPCBRIDGE_REPORT_TEMPLATE_DIR || '/var/lib/opcbridge/report/templates'
+).trim();
 const REPORT_BIN = String(
   process.env.OPCBRIDGE_REPORT_BIN ||
   preferLoggerPath('/opt/opcbridge-suite/bin/opcbridge-report', path.join(ROOT, '..', 'opcbridge-report', 'opcbridge-report'))
@@ -478,6 +481,25 @@ function readReportDefinitions() {
   return Array.isArray(root?.reports) ? root.reports.filter((report) => report && typeof report === 'object') : [];
 }
 
+function normalizeSpreadsheetColumn(value, fallback = '') {
+  const column = String(value || '').trim().toUpperCase();
+  if (!/^[A-Z]{1,3}$/.test(column)) return fallback;
+  const index = [...column].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+  return index >= 1 && index <= 16384 ? column : fallback;
+}
+
+function spreadsheetColumnNumber(value) {
+  return [...normalizeSpreadsheetColumn(value)].reduce(
+    (total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+}
+
+function normalizeSpreadsheetCell(value, fallback = '') {
+  const match = String(value || '').trim().toUpperCase().match(/^([A-Z]{1,3})([1-9][0-9]{0,6})$/);
+  if (!match || !normalizeSpreadsheetColumn(match[1])) return fallback;
+  const row = Number(match[2]);
+  return row <= 1048576 ? `${match[1]}${row}` : fallback;
+}
+
 function normalizeReportDefinition(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const id = sanitizeId(source.id);
@@ -524,7 +546,8 @@ function normalizeReportDefinition(value) {
       id: columnIds[index],
       heading: String(item.heading || `Column ${index + 1}`).trim().slice(0, 191) || `Column ${index + 1}`,
       visible: normalizeBool(item.visible, true),
-      precision: normalizeIntRange(item.precision, 2, 0, 10)
+      precision: normalizeIntRange(item.precision, 2, 0, 10),
+      sheet_column: normalizeSpreadsheetColumn(item.sheet_column)
     };
     if (itemSource === 'calculated') {
       const expression = String(item.expression || '').trim().slice(0, 4000);
@@ -625,6 +648,63 @@ function normalizeReportDefinition(value) {
       manage: normalizeBool(entry.manage, false)
     });
   });
+  const layoutInput = source.layout && typeof source.layout === 'object' && !Array.isArray(source.layout)
+    ? source.layout : {};
+  const worksheet = String(layoutInput.worksheet || 'Report').trim().slice(0, 31) || 'Report';
+  if (/[\\\/?*\[\]:]/.test(worksheet)) throw new Error('Worksheet name contains an unsupported character.');
+  const optionalLayoutCell = (value, label) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const cell = normalizeSpreadsheetCell(raw);
+    if (!cell) throw new Error(`${label} must be a valid spreadsheet cell or blank.`);
+    return cell;
+  };
+  const layout = {
+    worksheet,
+    table_start_row: normalizeIntRange(layoutInput.table_start_row, 5, 1, 10000),
+    table_start_column: normalizeSpreadsheetColumn(layoutInput.table_start_column, 'A'),
+    include_header_row: normalizeBool(layoutInput.include_header_row, true),
+    summary_gap_rows: normalizeIntRange(layoutInput.summary_gap_rows, 0, 0, 100),
+    summary_placement: String(layoutInput.summary_placement || 'after_data') === 'fixed' ? 'fixed' : 'after_data',
+    summary_start_row: normalizeIntRange(layoutInput.summary_start_row, 40, 1, 10000),
+    title_cell: Object.prototype.hasOwnProperty.call(layoutInput, 'title_cell')
+      ? optionalLayoutCell(layoutInput.title_cell, 'Report title cell') : 'A1',
+    description_cell: Object.prototype.hasOwnProperty.call(layoutInput, 'description_cell')
+      ? optionalLayoutCell(layoutInput.description_cell, 'Description cell') : 'A2',
+    period_cell: normalizeSpreadsheetCell(layoutInput.period_cell, 'A3'),
+    fields: (Array.isArray(layoutInput.fields) ? layoutInput.fields : []).slice(0, 50).map((field, index) => {
+      const cell = normalizeSpreadsheetCell(field?.cell);
+      const text = String(field?.text || '').trim().slice(0, 2000);
+      if (!cell || !text) throw new Error(`Fixed text entry ${index + 1} requires a valid cell and text.`);
+      return { cell, text };
+    })
+  };
+  const occupiedColumns = new Set([spreadsheetColumnNumber(layout.table_start_column)]);
+  const automaticStart = spreadsheetColumnNumber(layout.table_start_column) + 1;
+  columns.filter((column) => column.visible !== false).forEach((column, visibleIndex) => {
+    const sheetColumn = column.sheet_column
+      ? spreadsheetColumnNumber(column.sheet_column) : automaticStart + visibleIndex;
+    if (sheetColumn > 16384) throw new Error('Report column placement exceeds the spreadsheet column limit.');
+    if (occupiedColumns.has(sheetColumn)) throw new Error('Visible report columns cannot share a spreadsheet column.');
+    occupiedColumns.add(sheetColumn);
+  });
+  let template = null;
+  if (source.template && typeof source.template === 'object' && !Array.isArray(source.template)) {
+    const storedId = String(source.template.stored_id || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(storedId)) throw new Error('Report template identifier is invalid.');
+    const filename = path.basename(String(source.template.filename || 'template.xlsx')).slice(0, 255);
+    if (!filename.toLowerCase().endsWith('.xlsx')) throw new Error('Report template filename must end in .xlsx.');
+    const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.xlsx`);
+    if (!fs.existsSync(templatePath)) throw new Error('Stored report template file is missing.');
+    template = {
+      enabled: normalizeBool(source.template.enabled, false),
+      filename,
+      stored_id: storedId,
+      checksum: storedId,
+      size: Math.max(0, Math.trunc(Number(source.template.size) || fs.statSync(templatePath).size)),
+      uploaded_at: String(source.template.uploaded_at || '').trim() || new Date(fs.statSync(templatePath).mtimeMs).toISOString()
+    };
+  }
   return {
     id,
     name,
@@ -640,7 +720,9 @@ function normalizeReportDefinition(value) {
     data_source: dataSource,
     access: Array.from(accessByGroup.values()),
     columns,
-    summaries
+    summaries,
+    layout,
+    template
   };
 }
 
@@ -1881,6 +1963,8 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
   projectBackupWalkFiles(REPORTER_REPORTS_DIR, '.', { includeExts: ['.json', '.jsonc', '.sql', '.txt', '.md'] })
     .forEach((rel) => add('reporter_reports', REPORTER_REPORTS_DIR, rel));
   add('report_config', path.dirname(REPORT_DEFINITIONS_PATH), path.basename(REPORT_DEFINITIONS_PATH));
+  projectBackupWalkFiles(REPORT_TEMPLATE_DIR, '.', { includeExts: ['.xlsx'] })
+    .forEach((rel) => add('report_templates', REPORT_TEMPLATE_DIR, rel));
 
   if (includeHistory) {
     progress('Collecting alarm/event history database...', 60);
@@ -1924,6 +2008,7 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
       reporter_config: path.dirname(REPORTER_CONFIG_PATH),
       reporter_reports: REPORTER_REPORTS_DIR,
       report_config: path.dirname(REPORT_DEFINITIONS_PATH),
+      report_templates: REPORT_TEMPLATE_DIR,
       runtime_history: path.dirname(OPCBRIDGE_ALARMS_DB_PATH),
       historian_data: os.tmpdir()
     },
@@ -1944,6 +2029,7 @@ function projectRestoreRootForSection(section) {
   if (s === 'reporter_config') return path.dirname(REPORTER_CONFIG_PATH);
   if (s === 'reporter_reports') return REPORTER_REPORTS_DIR;
   if (s === 'report_config') return path.dirname(REPORT_DEFINITIONS_PATH);
+  if (s === 'report_templates') return REPORT_TEMPLATE_DIR;
   if (s === 'runtime_history') return path.dirname(OPCBRIDGE_ALARMS_DB_PATH);
   if (s === 'historian_data') return os.tmpdir();
   return '';
@@ -4257,6 +4343,117 @@ const server = http.createServer(async (req, res) => {
         ok: false,
         error: result.error || 'Logger value discovery failed.'
       });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reports/admin/template/upload') {
+    const reportStatus = await requireReportsPerm();
+    if (!reportStatus) return;
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const id = sanitizeId(url.searchParams.get('id') || '');
+      if (!id) throw new Error('A report id is required.');
+      const existing = readReportDefinitions().find((report) => sanitizeId(report?.id) === id);
+      const allowed = existing
+        ? reportGrant(existing, reportStatus).manage
+        : (authStatusHasPerm(reportStatus, 'reports.create') || authStatusHasPerm(reportStatus, 'reports.administer'));
+      if (!allowed) {
+        sendJson(res, 403, { ok: false, error: 'Manage access is required to upload a report template.' });
+        return;
+      }
+      const rawFilename = decodeURIComponent(String(req.headers['x-file-name'] || 'template.xlsx'));
+      const filename = path.basename(rawFilename).slice(0, 255);
+      if (!filename.toLowerCase().endsWith('.xlsx')) throw new Error('Template must be an .xlsx file.');
+      const body = await readBody(req, 25 * 1024 * 1024);
+      if (body.length < 4 || body[0] !== 0x50 || body[1] !== 0x4b) throw new Error('Uploaded file is not a valid XLSX package.');
+      const storedId = crypto.createHash('sha256').update(body).digest('hex');
+      fs.mkdirSync(REPORT_TEMPLATE_DIR, { recursive: true, mode: 0o750 });
+      const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.xlsx`);
+      const existed = fs.existsSync(templatePath);
+      if (!existed) fs.writeFileSync(templatePath, body, { mode: 0o640 });
+      const validation = await new Promise((resolve) => {
+        child_process.execFile(REPORT_BIN, [
+          'template-preview', '--template', templatePath, '--worksheet', ''
+        ], { encoding: 'utf8', timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+        (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+      });
+      if (validation.error) {
+        if (!existed) {
+          try { fs.unlinkSync(templatePath); } catch { /* ignore */ }
+        }
+        throw new Error(String(validation.stderr || validation.error.message || 'Invalid XLSX template').trim());
+      }
+      const preview = JSON.parse(validation.stdout);
+      const template = {
+        enabled: false,
+        filename,
+        stored_id: storedId,
+        checksum: storedId,
+        size: body.length,
+        uploaded_at: new Date().toISOString()
+      };
+      sendJson(res, 200, { ok: true, template, preview });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/reports/admin/template/download' ||
+      url.pathname === '/api/reports/admin/template/preview') {
+    const reportStatus = await requireReportsPerm();
+    if (!reportStatus) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const id = sanitizeId(url.searchParams.get('id') || '');
+      const storedId = String(url.searchParams.get('stored_id') || '').trim().toLowerCase();
+      if (!id || !/^[a-f0-9]{64}$/.test(storedId)) throw new Error('A valid report and template are required.');
+      const existing = readReportDefinitions().find((report) => sanitizeId(report?.id) === id);
+      const grant = existing ? reportGrant(existing, reportStatus) : null;
+      const currentStoredId = String(existing?.template?.stored_id || '').trim().toLowerCase();
+      const allowed = existing
+        ? Boolean(grant?.manage || (grant?.edit && storedId === currentStoredId))
+        : (authStatusHasPerm(reportStatus, 'reports.create') || authStatusHasPerm(reportStatus, 'reports.administer'));
+      if (!allowed) {
+        sendJson(res, 403, { ok: false, error: 'This user cannot access the selected report template.' });
+        return;
+      }
+      const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.xlsx`);
+      if (!fs.existsSync(templatePath)) {
+        sendJson(res, 404, { ok: false, error: 'Stored report template was not found.' });
+        return;
+      }
+      if (url.pathname.endsWith('/download')) {
+        const requestedFilename = grant?.manage || !existing
+          ? String(url.searchParams.get('filename') || '') : '';
+        const filename = path.basename(String(requestedFilename || existing?.template?.filename || 'report-template.xlsx'))
+          .replace(/[^A-Za-z0-9._-]+/g, '-')
+          .replace(/^[-_.]+|[-_.]+$/g, '') || 'report-template.xlsx';
+        send(res, 200, {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Cache-Control': 'no-store'
+        }, fs.readFileSync(templatePath));
+        return;
+      }
+      const worksheet = String(url.searchParams.get('worksheet') || '').trim();
+      const result = await new Promise((resolve) => {
+        child_process.execFile(REPORT_BIN, [
+          'template-preview', '--template', templatePath, '--worksheet', worksheet
+        ], { encoding: 'utf8', timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+        (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+      });
+      if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
+      sendJson(res, 200, { ok: true, preview: JSON.parse(result.stdout) });
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }

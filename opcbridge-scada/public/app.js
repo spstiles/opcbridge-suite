@@ -313,6 +313,31 @@
   reportBuilderSummaries: document.getElementById('reportBuilderSummaries'),
   reportBuilderAccess: document.getElementById('reportBuilderAccess'),
   reportBuilderAccessSection: document.getElementById('reportBuilderAccessSection'),
+  reportBuilderTabs: document.getElementById('reportBuilderTabs'),
+  reportBuilderLayoutWorksheet: document.getElementById('reportBuilderLayoutWorksheet'),
+  reportBuilderLayoutTableRow: document.getElementById('reportBuilderLayoutTableRow'),
+  reportBuilderLayoutTableColumn: document.getElementById('reportBuilderLayoutTableColumn'),
+  reportBuilderLayoutIncludeHeader: document.getElementById('reportBuilderLayoutIncludeHeader'),
+  reportBuilderLayoutSummaryGap: document.getElementById('reportBuilderLayoutSummaryGap'),
+  reportBuilderLayoutSummaryPlacement: document.getElementById('reportBuilderLayoutSummaryPlacement'),
+  reportBuilderLayoutSummaryGapLabel: document.getElementById('reportBuilderLayoutSummaryGapLabel'),
+  reportBuilderLayoutSummaryRowLabel: document.getElementById('reportBuilderLayoutSummaryRowLabel'),
+  reportBuilderLayoutSummaryRow: document.getElementById('reportBuilderLayoutSummaryRow'),
+  reportBuilderLayoutTitleCell: document.getElementById('reportBuilderLayoutTitleCell'),
+  reportBuilderLayoutDescriptionCell: document.getElementById('reportBuilderLayoutDescriptionCell'),
+  reportBuilderLayoutPeriodCell: document.getElementById('reportBuilderLayoutPeriodCell'),
+  reportBuilderLayoutColumns: document.getElementById('reportBuilderLayoutColumns'),
+  reportBuilderLayoutAddFieldBtn: document.getElementById('reportBuilderLayoutAddFieldBtn'),
+  reportBuilderLayoutFieldsWrap: document.getElementById('reportBuilderLayoutFieldsWrap'),
+  reportBuilderLayoutFields: document.getElementById('reportBuilderLayoutFields'),
+  reportBuilderLayoutPreview: document.getElementById('reportBuilderLayoutPreview'),
+  reportBuilderTemplateEnabled: document.getElementById('reportBuilderTemplateEnabled'),
+  reportBuilderTemplateInfo: document.getElementById('reportBuilderTemplateInfo'),
+  reportBuilderTemplateFile: document.getElementById('reportBuilderTemplateFile'),
+  reportBuilderTemplateUploadBtn: document.getElementById('reportBuilderTemplateUploadBtn'),
+  reportBuilderTemplateDownloadBtn: document.getElementById('reportBuilderTemplateDownloadBtn'),
+  reportBuilderTemplateRemoveBtn: document.getElementById('reportBuilderTemplateRemoveBtn'),
+  reportBuilderTemplateStatus: document.getElementById('reportBuilderTemplateStatus'),
   reportBuilderSaveBtn: document.getElementById('reportBuilderSaveBtn'),
   reportBuilderPreviewBtn: document.getElementById('reportBuilderPreviewBtn'),
   reportBuilderStatus: document.getElementById('reportBuilderStatus'),
@@ -1122,6 +1147,10 @@ const state = {
   reportFormulaSummaryIndex: -1,
   reportFormulaSummaryColumnIndex: -1,
   reportBuilderAccess: [],
+  reportBuilderLayoutFields: [],
+  reportBuilderTemplate: null,
+  reportBuilderTemplatePreview: null,
+  reportBuilderActiveTab: 'report',
 
   // reporter (data logger)
   reporterDatabases: [],
@@ -6508,31 +6537,76 @@ function renderPublishedReportPreview(preview) {
   if (!els.publishedReportPreviewHead || !els.publishedReportPreviewBody || !els.publishedReportPreviewWrap) return;
   els.publishedReportPreviewHead.textContent = '';
   els.publishedReportPreviewBody.textContent = '';
-  const headerRow = document.createElement('tr');
+  const layout = preview.layout && typeof preview.layout === 'object' ? preview.layout : {};
+  const tableRow = Math.max(1, Math.trunc(Number(layout.table_start_row || 5)));
+  const headerRows = layout.include_header_row === false ? 0 : 1;
+  const tableColumn = spreadsheetColumnIndex(layout.table_start_column || 'A') || 1;
+  const columns = Array.isArray(preview.columns) ? preview.columns : [];
+  const placements = columns.map((column, index) => spreadsheetColumnIndex(column.sheet_column) || tableColumn + index + 1);
+  const cells = new Map();
+  const put = (row, column, text, className = '') => {
+    if (row > 0 && column > 0) cells.set(`${row}:${column}`, { text, className });
+  };
+  const title = spreadsheetCellParts(layout.title_cell ?? 'A1');
+  const description = spreadsheetCellParts(layout.description_cell ?? 'A2');
+  const period = spreadsheetCellParts(layout.period_cell || 'A3');
+  if (title) put(title.row, title.column, String(preview.name || ''), 'layout-title');
+  if (description) put(description.row, description.column, String(preview.description || ''), 'layout-description');
+  if (period) put(period.row, period.column, String(preview.period_label || ''), 'layout-description');
+  (layout.fields || []).forEach((field) => {
+    const target = spreadsheetCellParts(field?.cell);
+    if (target) put(target.row, target.column, String(field?.text || ''), 'layout-fixed');
+  });
   const periodHeading = ['hour', 'raw'].includes(String(preview.group_by || '')) ||
     String(preview.group_by || '').startsWith('minute:')
     ? 'Time' : (preview.group_by === 'month' ? 'Month' : 'Date');
-  [periodHeading, ...(preview.columns || []).map((column) => column.heading)].forEach((heading) => {
-    const th = document.createElement('th');
-    th.textContent = String(heading || '');
-    headerRow.appendChild(th);
-  });
-  els.publishedReportPreviewHead.appendChild(headerRow);
-  (preview.rows || []).forEach((row) => {
-    const tr = document.createElement('tr');
-    [row.date, ...(row.values || [])].forEach((value, index) => {
-      const td = document.createElement('td');
-      if (value === null || value === undefined) td.textContent = '—';
-      else if (index > 0) td.textContent = Number(value).toLocaleString(undefined, {
-        minimumFractionDigits: preview.columns?.[index - 1]?.precision ?? 0,
-        maximumFractionDigits: preview.columns?.[index - 1]?.precision ?? 2
+  if (headerRows) {
+    put(tableRow, tableColumn, periodHeading, 'layout-heading');
+    columns.forEach((column, index) => put(tableRow, placements[index], String(column.heading || ''), 'layout-heading'));
+  }
+  (preview.rows || []).forEach((row, rowIndex) => {
+    const outputRow = tableRow + headerRows + rowIndex;
+    put(outputRow, tableColumn, String(row.date || ''), 'layout-data');
+    (row.values || []).forEach((value, index) => {
+      const precision = columns[index]?.precision ?? 2;
+      const text = value === null || value === undefined ? '—' : Number(value).toLocaleString(undefined, {
+        minimumFractionDigits: precision,
+        maximumFractionDigits: precision
       });
-      else td.textContent = String(value);
-      tr.appendChild(td);
+      put(outputRow, placements[index], text, 'layout-data');
     });
-    els.publishedReportPreviewBody.appendChild(tr);
   });
-  renderReportPreviewSummaryRows(els.publishedReportPreviewBody, preview);
+  const summaryStart = String(layout.summary_placement || 'after_data') === 'fixed'
+    ? Math.max(1, Math.trunc(Number(layout.summary_start_row || 40)))
+    : tableRow + headerRows + (preview.rows || []).length + Math.max(0, Math.trunc(Number(layout.summary_gap_rows || 0)));
+  (preview.summary_rows || []).forEach((row, summaryIndex) => {
+    const outputRow = summaryStart + summaryIndex;
+    put(outputRow, tableColumn, String(row.label || ''), 'layout-summary');
+    (row.values || []).forEach((value, index) => {
+      if (value === null || value === undefined) return;
+      const precision = row.precisions?.[index] ?? columns[index]?.precision ?? 2;
+      put(outputRow, placements[index], Number(value).toLocaleString(undefined, {
+        minimumFractionDigits: precision,
+        maximumFractionDigits: precision
+      }), 'layout-summary');
+    });
+  });
+  const used = [...cells.keys()].map((key) => key.split(':').map(Number));
+  const maxRow = Math.max(tableRow, ...used.map(([row]) => row));
+  const maxColumn = Math.max(tableColumn, ...placements, ...used.map(([, column]) => column));
+  for (let row = 1; row <= maxRow; row++) {
+    const tr = document.createElement('tr');
+    for (let column = 1; column <= maxColumn; column++) {
+      const td = document.createElement('td');
+      const content = cells.get(`${row}:${column}`);
+      if (content) {
+        td.textContent = content.text;
+        if (content.className) td.classList.add(content.className);
+      }
+      tr.appendChild(td);
+    }
+    els.publishedReportPreviewBody.appendChild(tr);
+  }
   els.publishedReportPreviewWrap.style.display = '';
 }
 
@@ -6659,6 +6733,7 @@ function showReportBuilder(report) {
   if (report && !permissions.edit) return;
   if (!report && !canCreateReports()) return;
   loadReportBuilderDefinition(report || null);
+  setReportBuilderTab('report');
   if (els.reportsDownloadCard) els.reportsDownloadCard.style.display = 'none';
   if (els.reportBuilderCard) els.reportBuilderCard.style.display = '';
   if (els.reportBuilderTitle) {
@@ -6681,6 +6756,10 @@ function showReportBuilder(report) {
       ? 'Manage access is required to publish or unpublish this report.'
       : '';
   }
+  const canManageTemplate = !report || permissions.manage;
+  if (els.reportBuilderTemplateFile) els.reportBuilderTemplateFile.disabled = !canManageTemplate;
+  if (els.reportBuilderTemplateUploadBtn) els.reportBuilderTemplateUploadBtn.disabled = !canManageTemplate;
+  if (els.reportBuilderTemplateRemoveBtn) els.reportBuilderTemplateRemoveBtn.disabled = !canManageTemplate;
   if (els.reportBuilderPreviewWrap) els.reportBuilderPreviewWrap.style.display = 'none';
   reportBuilderSetStatus('');
 }
@@ -6958,6 +7037,26 @@ function reportBuilderCurrentDefinition() {
     published: Boolean(els.reportBuilderPublished?.checked),
     formats,
     columns: state.reportBuilderColumns.map((column) => ({ ...column })),
+    layout: {
+      worksheet: String(els.reportBuilderLayoutWorksheet?.value || 'Report').trim() || 'Report',
+      table_start_row: Math.max(1, Math.min(10000, Math.trunc(Number(els.reportBuilderLayoutTableRow?.value || 5)))),
+      table_start_column: normalizeSpreadsheetColumn(els.reportBuilderLayoutTableColumn?.value || 'A') || 'A',
+      include_header_row: Boolean(els.reportBuilderLayoutIncludeHeader?.checked),
+      summary_gap_rows: Math.max(0, Math.min(100, Math.trunc(Number(els.reportBuilderLayoutSummaryGap?.value || 0)))),
+      summary_placement: String(els.reportBuilderLayoutSummaryPlacement?.value || 'after_data'),
+      summary_start_row: Math.max(1, Math.min(10000, Math.trunc(Number(els.reportBuilderLayoutSummaryRow?.value || 40)))),
+      title_cell: String(els.reportBuilderLayoutTitleCell?.value || '').trim().toUpperCase(),
+      description_cell: String(els.reportBuilderLayoutDescriptionCell?.value || '').trim().toUpperCase(),
+      period_cell: normalizeSpreadsheetCell(els.reportBuilderLayoutPeriodCell?.value || 'A3') || 'A3',
+      fields: state.reportBuilderLayoutFields.map((field) => ({
+        cell: normalizeSpreadsheetCell(field.cell),
+        text: String(field.text || '').slice(0, 2000)
+      })).filter((field) => field.cell && field.text)
+    },
+    template: state.reportBuilderTemplate ? {
+      ...state.reportBuilderTemplate,
+      enabled: Boolean(els.reportBuilderTemplateEnabled?.checked)
+    } : null,
     summaries: state.reportBuilderSummaries.map((summary) => ({
       label: String(summary.label || '').trim(),
       calculations: state.reportBuilderColumns.map((_, index) =>
@@ -6980,6 +7079,294 @@ function newReportColumnId(label = 'column') {
   let suffix = 2;
   while (used.has(id)) id = `${base}_${suffix++}`;
   return id;
+}
+
+function normalizeSpreadsheetColumn(value) {
+  const column = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{1,3}$/.test(column) ? column : '';
+}
+
+function spreadsheetColumnIndex(value) {
+  const column = normalizeSpreadsheetColumn(value);
+  if (!column) return 0;
+  return [...column].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+}
+
+function spreadsheetColumnLabel(index) {
+  let value = Math.max(1, Math.trunc(Number(index) || 1));
+  let label = '';
+  while (value > 0) {
+    value -= 1;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+  return label;
+}
+
+function normalizeSpreadsheetCell(value) {
+  const match = String(value || '').trim().toUpperCase().match(/^([A-Z]{1,3})([1-9][0-9]{0,4})$/);
+  return match ? `${match[1]}${match[2]}` : '';
+}
+
+function spreadsheetCellParts(value) {
+  const cell = normalizeSpreadsheetCell(value);
+  const match = cell.match(/^([A-Z]+)(\d+)$/);
+  return match ? { column: spreadsheetColumnIndex(match[1]), row: Number(match[2]) } : null;
+}
+
+function setReportBuilderTab(name) {
+  state.reportBuilderActiveTab = name;
+  document.querySelectorAll('[data-report-builder-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.reportBuilderPanel !== name;
+  });
+  els.reportBuilderTabs?.querySelectorAll('[data-report-builder-tab]').forEach((button) => {
+    const active = button.dataset.reportBuilderTab === name;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  if (name === 'layout') renderReportBuilderLayout();
+}
+
+function reportBuilderLayoutColumnIndex(column, visibleIndex) {
+  const explicit = spreadsheetColumnIndex(column.sheet_column);
+  if (explicit) return explicit;
+  return spreadsheetColumnIndex(els.reportBuilderLayoutTableColumn?.value || 'A') + visibleIndex + 1;
+}
+
+function renderReportBuilderTemplateControls() {
+  const template = state.reportBuilderTemplate;
+  const hasTemplate = Boolean(template?.stored_id);
+  if (els.reportBuilderTemplateEnabled) {
+    els.reportBuilderTemplateEnabled.disabled = !hasTemplate;
+    els.reportBuilderTemplateEnabled.checked = hasTemplate && template.enabled === true;
+  }
+  if (els.reportBuilderTemplateInfo) {
+    els.reportBuilderTemplateInfo.textContent = hasTemplate
+      ? `${String(template.filename || 'template.xlsx')} · ${Number(template.size || 0).toLocaleString()} bytes${template.uploaded_at ? ` · uploaded ${new Date(template.uploaded_at).toLocaleString()}` : ''}`
+      : 'No template uploaded.';
+  }
+  if (els.reportBuilderTemplateDownloadBtn) els.reportBuilderTemplateDownloadBtn.style.display = hasTemplate ? '' : 'none';
+  if (els.reportBuilderTemplateRemoveBtn) els.reportBuilderTemplateRemoveBtn.style.display = hasTemplate ? '' : 'none';
+  if (els.reportBuilderTemplateUploadBtn) els.reportBuilderTemplateUploadBtn.textContent = hasTemplate ? 'Replace Template' : 'Upload Template';
+}
+
+async function refreshReportBuilderTemplatePreview() {
+  const template = state.reportBuilderTemplate;
+  if (!template?.stored_id) {
+    state.reportBuilderTemplatePreview = null;
+    renderReportBuilderLayoutPreview();
+    return;
+  }
+  const reportId = state.reportBuilderOriginalId || String(els.reportBuilderId?.value || '').trim();
+  const worksheet = String(els.reportBuilderLayoutWorksheet?.value || 'Report').trim();
+  const query = new URLSearchParams({ id: reportId, stored_id: template.stored_id, worksheet });
+  try {
+    const response = await apiGet(`/api/reports/admin/template/preview?${query.toString()}`);
+    state.reportBuilderTemplatePreview = response?.preview || null;
+    if (state.reportBuilderTemplatePreview?.worksheet &&
+        state.reportBuilderTemplatePreview.worksheet !== worksheet && els.reportBuilderLayoutWorksheet) {
+      els.reportBuilderLayoutWorksheet.value = state.reportBuilderTemplatePreview.worksheet;
+    }
+    if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = '';
+  } catch (err) {
+    state.reportBuilderTemplatePreview = null;
+    if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = `Template preview unavailable: ${err.message || err}`;
+  }
+  renderReportBuilderLayoutPreview();
+}
+
+function renderReportBuilderLayout() {
+  if (!els.reportBuilderLayoutColumns || !els.reportBuilderLayoutFields || !els.reportBuilderLayoutPreview) return;
+  const fixedSummary = String(els.reportBuilderLayoutSummaryPlacement?.value || 'after_data') === 'fixed';
+  if (els.reportBuilderLayoutSummaryGapLabel) els.reportBuilderLayoutSummaryGapLabel.style.display = fixedSummary ? 'none' : '';
+  if (els.reportBuilderLayoutSummaryRowLabel) els.reportBuilderLayoutSummaryRowLabel.style.display = fixedSummary ? '' : 'none';
+  renderReportBuilderTemplateControls();
+  els.reportBuilderLayoutColumns.textContent = '';
+  state.reportBuilderColumns.filter((column) => column.visible !== false).forEach((column, visibleIndex) => {
+    const tr = document.createElement('tr');
+    const heading = document.createElement('td');
+    heading.textContent = String(column.heading || column.id || `Column ${visibleIndex + 1}`);
+    const placement = document.createElement('td');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 3;
+    input.placeholder = spreadsheetColumnLabel(spreadsheetColumnIndex(els.reportBuilderLayoutTableColumn?.value || 'A') + visibleIndex + 1);
+    input.value = normalizeSpreadsheetColumn(column.sheet_column);
+    input.style.width = '90px';
+    input.addEventListener('input', () => {
+      column.sheet_column = normalizeSpreadsheetColumn(input.value);
+      renderReportBuilderLayoutPreview();
+    });
+    placement.appendChild(input);
+    tr.append(heading, placement);
+    els.reportBuilderLayoutColumns.appendChild(tr);
+  });
+  els.reportBuilderLayoutFields.textContent = '';
+  els.reportBuilderLayoutFieldsWrap.style.display = state.reportBuilderLayoutFields.length ? '' : 'none';
+  state.reportBuilderLayoutFields.forEach((field, index) => {
+    const tr = document.createElement('tr');
+    const cellTd = document.createElement('td');
+    const cell = document.createElement('input');
+    cell.type = 'text';
+    cell.value = String(field.cell || '');
+    cell.placeholder = 'A3';
+    cell.style.width = '100px';
+    cell.addEventListener('input', () => { field.cell = cell.value; renderReportBuilderLayoutPreview(); });
+    cellTd.appendChild(cell);
+    const textTd = document.createElement('td');
+    const value = document.createElement('input');
+    value.type = 'text';
+    value.value = String(field.text || '');
+    value.placeholder = 'Notes or other fixed text';
+    value.addEventListener('input', () => { field.text = value.value; renderReportBuilderLayoutPreview(); });
+    textTd.appendChild(value);
+    const actionTd = document.createElement('td');
+    const remove = document.createElement('button');
+    remove.className = 'btn danger';
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => { state.reportBuilderLayoutFields.splice(index, 1); renderReportBuilderLayout(); });
+    actionTd.appendChild(remove);
+    tr.append(cellTd, textTd, actionTd);
+    els.reportBuilderLayoutFields.appendChild(tr);
+  });
+  renderReportBuilderLayoutPreview();
+}
+
+function renderReportBuilderLayoutPreview() {
+  const table = els.reportBuilderLayoutPreview;
+  if (!table) return;
+  const tableRow = Math.max(1, Math.min(200, Math.trunc(Number(els.reportBuilderLayoutTableRow?.value || 5))));
+  const tableColumn = spreadsheetColumnIndex(els.reportBuilderLayoutTableColumn?.value || 'A') || 1;
+  const visibleColumns = state.reportBuilderColumns.filter((column) => column.visible !== false);
+  const placements = visibleColumns.map((column, index) => reportBuilderLayoutColumnIndex(column, index));
+  const sampleRows = 3;
+  const headerRows = els.reportBuilderLayoutIncludeHeader?.checked === false ? 0 : 1;
+  const summaryGap = Math.max(0, Math.min(20, Math.trunc(Number(els.reportBuilderLayoutSummaryGap?.value || 0))));
+  const summaryStart = String(els.reportBuilderLayoutSummaryPlacement?.value || 'after_data') === 'fixed'
+    ? Math.max(1, Math.min(200, Math.trunc(Number(els.reportBuilderLayoutSummaryRow?.value || 40))))
+    : tableRow + headerRows + sampleRows + summaryGap;
+  const cells = new Map();
+  const put = (row, column, text, className = '') => {
+    if (row > 0 && column > 0) cells.set(`${row}:${column}`, {
+      ...(cells.get(`${row}:${column}`) || {}), text, className
+    });
+  };
+  const templatePreview = state.reportBuilderTemplate?.enabled === true ? state.reportBuilderTemplatePreview : null;
+  (templatePreview?.cells || []).forEach((cell) => {
+    if (Number(cell?.row) > 0 && Number(cell?.column) > 0) {
+      cells.set(`${Number(cell.row)}:${Number(cell.column)}`, {
+        text: String(cell.value || ''), className: 'layout-template', style: cell.style || {}
+      });
+    }
+  });
+  const title = spreadsheetCellParts(els.reportBuilderLayoutTitleCell?.value || '');
+  const description = spreadsheetCellParts(els.reportBuilderLayoutDescriptionCell?.value || '');
+  const period = spreadsheetCellParts(els.reportBuilderLayoutPeriodCell?.value || 'A3');
+  if (title) put(title.row, title.column, String(els.reportBuilderName?.value || 'Report Title'), 'layout-title');
+  if (description) put(description.row, description.column, String(els.reportBuilderDescription?.value || 'Report description'), 'layout-description');
+  if (period) put(period.row, period.column, 'Selected reporting period', 'layout-description');
+  state.reportBuilderLayoutFields.forEach((field) => {
+    const target = spreadsheetCellParts(field.cell);
+    if (target) put(target.row, target.column, String(field.text || ''), 'layout-fixed');
+  });
+  if (headerRows) {
+    put(tableRow, tableColumn, 'Date', 'layout-heading');
+    visibleColumns.forEach((column, index) => put(tableRow, placements[index], String(column.heading || column.id || ''), 'layout-heading'));
+  }
+  for (let rowOffset = 1; rowOffset <= sampleRows; rowOffset++) {
+    const outputRow = tableRow + headerRows + rowOffset - 1;
+    put(outputRow, tableColumn, `Day ${rowOffset}`, 'layout-data');
+    visibleColumns.forEach((column, index) => {
+      const precision = Math.max(0, Math.min(10, Math.trunc(Number(column.precision ?? 2))));
+      put(outputRow, placements[index], (100 * rowOffset + index + 0.25).toFixed(precision), 'layout-data');
+    });
+  }
+  state.reportBuilderSummaries.forEach((summary, summaryIndex) => {
+    const row = summaryStart + summaryIndex;
+    put(row, tableColumn, String(summary.label || 'Summary'), 'layout-summary');
+    visibleColumns.forEach((column, visibleIndex) => {
+      const columnIndex = state.reportBuilderColumns.indexOf(column);
+      if (String(summary.calculations?.[columnIndex] || 'none') === 'none') return;
+      const precision = summary.precisions?.[columnIndex] ?? column.precision ?? 2;
+      put(row, placements[visibleIndex], (300 + visibleIndex + 0.5).toFixed(precision), 'layout-summary');
+    });
+  });
+  const used = [...cells.keys()].map((key) => key.split(':').map(Number));
+  const maxRow = Math.min(500, Math.max(tableRow + sampleRows, summaryStart + state.reportBuilderSummaries.length - 1,
+    Number(templatePreview?.max_row || 0), ...used.map(([row]) => row)));
+  const maxColumn = Math.min(100, Math.max(tableColumn, ...placements, Number(templatePreview?.max_column || 0),
+    ...used.map(([, column]) => column)));
+  table.textContent = '';
+  const colgroup = document.createElement('colgroup');
+  const rowHeaderColumn = document.createElement('col');
+  rowHeaderColumn.style.width = '46px';
+  colgroup.appendChild(rowHeaderColumn);
+  for (let column = 1; column <= maxColumn; column++) {
+    const col = document.createElement('col');
+    const templateWidth = Number(templatePreview?.column_widths?.[String(column)] || 0);
+    if (templateWidth > 0) col.style.width = `${Math.max(40, Math.min(420, templateWidth * 7))}px`;
+    colgroup.appendChild(col);
+  }
+  table.appendChild(colgroup);
+  const header = document.createElement('tr');
+  header.appendChild(document.createElement('th'));
+  for (let column = 1; column <= maxColumn; column++) {
+    const th = document.createElement('th');
+    th.textContent = spreadsheetColumnLabel(column);
+    header.appendChild(th);
+  }
+  table.appendChild(header);
+  const mergeAnchors = new Map();
+  const mergedCells = new Set();
+  (templatePreview?.merges || []).forEach((merge) => {
+    const startRow = Number(merge.start_row);
+    const startColumn = Number(merge.start_column);
+    const endRow = Math.min(maxRow, Number(merge.end_row));
+    const endColumn = Math.min(maxColumn, Number(merge.end_column));
+    if (startRow < 1 || startColumn < 1 || endRow < startRow || endColumn < startColumn) return;
+    mergeAnchors.set(`${startRow}:${startColumn}`, {
+      rowspan: endRow - startRow + 1, colspan: endColumn - startColumn + 1
+    });
+    for (let mergeRow = startRow; mergeRow <= endRow; mergeRow++) {
+      for (let mergeColumn = startColumn; mergeColumn <= endColumn; mergeColumn++) {
+        if (mergeRow !== startRow || mergeColumn !== startColumn) mergedCells.add(`${mergeRow}:${mergeColumn}`);
+      }
+    }
+  });
+  for (let row = 1; row <= maxRow; row++) {
+    const tr = document.createElement('tr');
+    const templateHeight = Number(templatePreview?.row_heights?.[String(row)] || 0);
+    if (templateHeight > 0) tr.style.height = `${Math.max(20, Math.min(240, templateHeight * 1.33))}px`;
+    const rowHeading = document.createElement('th');
+    rowHeading.textContent = String(row);
+    tr.appendChild(rowHeading);
+    for (let column = 1; column <= maxColumn; column++) {
+      if (mergedCells.has(`${row}:${column}`)) continue;
+      const td = document.createElement('td');
+      const merge = mergeAnchors.get(`${row}:${column}`);
+      if (merge) {
+        td.rowSpan = merge.rowspan;
+        td.colSpan = merge.colspan;
+      }
+      const content = cells.get(`${row}:${column}`);
+      if (content) {
+        td.textContent = content.text;
+        if (content.className) td.classList.add(content.className);
+        const style = content.style || {};
+        if (style.bold) td.style.fontWeight = '700';
+        if (style.italic) td.style.fontStyle = 'italic';
+        if (Number(style.size) > 0) td.style.fontSize = `${Math.min(36, Number(style.size))}px`;
+        if (/^[A-Fa-f0-9]{8}$/.test(String(style.color || ''))) td.style.color = `#${String(style.color).slice(2)}`;
+        if (/^[A-Fa-f0-9]{8}$/.test(String(style.fill || ''))) td.style.backgroundColor = `#${String(style.fill).slice(2)}`;
+        if (['left', 'center', 'right'].includes(style.horizontal)) td.style.textAlign = style.horizontal;
+        if (['top', 'center', 'bottom'].includes(style.vertical)) td.style.verticalAlign = style.vertical === 'center' ? 'middle' : style.vertical;
+        if (style.wrap) td.style.whiteSpace = 'normal';
+      }
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
 }
 
 function closeReportFormulaModal() {
@@ -7480,6 +7867,14 @@ function loadReportBuilderDefinition(report) {
         precisions: Array.isArray(summary?.precisions) ? [...summary.precisions] : []
       })) : [];
   state.reportBuilderAccess = Array.isArray(value.access) ? value.access.map((grant) => ({ ...grant })) : [];
+  const layout = value.layout && typeof value.layout === 'object' ? value.layout : {};
+  state.reportBuilderLayoutFields = Array.isArray(layout.fields)
+    ? layout.fields.map((field) => ({ cell: String(field?.cell || ''), text: String(field?.text || '') }))
+    : [];
+  state.reportBuilderTemplate = value.template && typeof value.template === 'object'
+    ? { ...value.template, enabled: value.template.enabled === true }
+    : null;
+  state.reportBuilderTemplatePreview = null;
   if (!report) {
     const ownGroups = (Array.isArray(state.opcbridgeAuthStatus?.user?.groups)
       ? state.opcbridgeAuthStatus.user.groups : [])
@@ -7507,6 +7902,16 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderPublished) els.reportBuilderPublished.checked = Boolean(value.published);
   if (els.reportBuilderXlsx) els.reportBuilderXlsx.checked = (value.formats || []).includes('xlsx');
   if (els.reportBuilderCsv) els.reportBuilderCsv.checked = (value.formats || []).includes('csv');
+  if (els.reportBuilderLayoutWorksheet) els.reportBuilderLayoutWorksheet.value = String(layout.worksheet || 'Report');
+  if (els.reportBuilderLayoutTableRow) els.reportBuilderLayoutTableRow.value = String(layout.table_start_row || 5);
+  if (els.reportBuilderLayoutTableColumn) els.reportBuilderLayoutTableColumn.value = String(layout.table_start_column || 'A');
+  if (els.reportBuilderLayoutIncludeHeader) els.reportBuilderLayoutIncludeHeader.checked = layout.include_header_row !== false;
+  if (els.reportBuilderLayoutSummaryGap) els.reportBuilderLayoutSummaryGap.value = String(layout.summary_gap_rows || 0);
+  if (els.reportBuilderLayoutSummaryPlacement) els.reportBuilderLayoutSummaryPlacement.value = String(layout.summary_placement || 'after_data');
+  if (els.reportBuilderLayoutSummaryRow) els.reportBuilderLayoutSummaryRow.value = String(layout.summary_start_row || 40);
+  if (els.reportBuilderLayoutTitleCell) els.reportBuilderLayoutTitleCell.value = String(layout.title_cell ?? 'A1');
+  if (els.reportBuilderLayoutDescriptionCell) els.reportBuilderLayoutDescriptionCell.value = String(layout.description_cell ?? 'A2');
+  if (els.reportBuilderLayoutPeriodCell) els.reportBuilderLayoutPeriodCell.value = String(layout.period_cell || 'A3');
   const source = { ...(value.data_source || { type: 'historian' }) };
   const firstDatabaseColumn = state.reportBuilderColumns.find((column) => column?.source === 'database');
   if (source.type === 'database' && firstDatabaseColumn) {
@@ -7528,6 +7933,8 @@ function loadReportBuilderDefinition(report) {
   }
   renderReportBuilderColumns();
   renderReportBuilderAccess();
+  renderReportBuilderLayout();
+  if (state.reportBuilderTemplate?.stored_id) refreshReportBuilderTemplatePreview().catch(() => {});
 }
 
 function renderReportBuilderTags() {
@@ -7650,6 +8057,95 @@ function renderReportPreviewSummaryRows(body, preview) {
 
 function wireReportBuilderUi() {
   populateReportBuilderTimezones();
+  els.reportBuilderTabs?.querySelectorAll('[data-report-builder-tab]').forEach((button) => {
+    button.addEventListener('click', () => setReportBuilderTab(button.dataset.reportBuilderTab));
+  });
+  [els.reportBuilderLayoutWorksheet, els.reportBuilderLayoutTableRow, els.reportBuilderLayoutTableColumn,
+    els.reportBuilderLayoutSummaryGap, els.reportBuilderLayoutSummaryPlacement, els.reportBuilderLayoutSummaryRow,
+    els.reportBuilderLayoutTitleCell, els.reportBuilderLayoutDescriptionCell,
+    els.reportBuilderLayoutPeriodCell,
+    els.reportBuilderName, els.reportBuilderDescription].forEach((input) => {
+    input?.addEventListener('input', () => {
+      if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
+    });
+  });
+  els.reportBuilderLayoutIncludeHeader?.addEventListener('change', () => {
+    if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
+  });
+  els.reportBuilderTemplateEnabled?.addEventListener('change', () => {
+    if (state.reportBuilderTemplate) state.reportBuilderTemplate.enabled = els.reportBuilderTemplateEnabled.checked;
+    renderReportBuilderLayoutPreview();
+  });
+  els.reportBuilderLayoutWorksheet?.addEventListener('change', () => {
+    if (state.reportBuilderTemplate?.stored_id) refreshReportBuilderTemplatePreview().catch(() => {});
+  });
+  els.reportBuilderTemplateUploadBtn?.addEventListener('click', async () => {
+    const file = els.reportBuilderTemplateFile?.files?.[0];
+    if (!file) {
+      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Choose an .xlsx template first.';
+      return;
+    }
+    const reportId = state.reportBuilderOriginalId || String(els.reportBuilderId?.value || '').trim();
+    if (!reportId) {
+      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Enter a report name before uploading a template.';
+      return;
+    }
+    els.reportBuilderTemplateUploadBtn.disabled = true;
+    if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Uploading template…';
+    try {
+      const response = await fetch(`/api/reports/admin/template/upload?id=${encodeURIComponent(reportId)}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'X-File-Name': encodeURIComponent(file.name) },
+        body: file
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body?.ok) throw new Error(body?.error || `Upload failed (${response.status})`);
+      state.reportBuilderTemplate = { ...body.template, enabled: true };
+      state.reportBuilderTemplatePreview = body.preview || null;
+      if (body.preview?.worksheet && els.reportBuilderLayoutWorksheet) {
+        els.reportBuilderLayoutWorksheet.value = body.preview.worksheet;
+      }
+      if (els.reportBuilderTemplateFile) els.reportBuilderTemplateFile.value = '';
+      renderReportBuilderTemplateControls();
+      if (!state.reportBuilderTemplatePreview) await refreshReportBuilderTemplatePreview();
+      else renderReportBuilderLayoutPreview();
+      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Template staged. Save the report to make it active.';
+    } catch (err) {
+      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = `Upload failed: ${err.message || err}`;
+    } finally {
+      els.reportBuilderTemplateUploadBtn.disabled = false;
+    }
+  });
+  els.reportBuilderTemplateDownloadBtn?.addEventListener('click', () => {
+    const template = state.reportBuilderTemplate;
+    if (!template?.stored_id) return;
+    const reportId = state.reportBuilderOriginalId || String(els.reportBuilderId?.value || '').trim();
+    const query = new URLSearchParams({ id: reportId, stored_id: template.stored_id, filename: template.filename || 'report-template.xlsx' });
+    window.location.href = `/api/reports/admin/template/download?${query.toString()}`;
+  });
+  els.reportBuilderTemplateRemoveBtn?.addEventListener('click', () => {
+    if (!state.reportBuilderTemplate?.stored_id) return;
+    if (!window.confirm('Remove this template from the report? The change takes effect when the report is saved.')) return;
+    state.reportBuilderTemplate = null;
+    state.reportBuilderTemplatePreview = null;
+    renderReportBuilderTemplateControls();
+    renderReportBuilderLayoutPreview();
+    if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Template removal staged. Save the report to apply it.';
+  });
+  const updateSummaryPlacement = () => {
+    const fixed = String(els.reportBuilderLayoutSummaryPlacement?.value || 'after_data') === 'fixed';
+    if (els.reportBuilderLayoutSummaryGapLabel) els.reportBuilderLayoutSummaryGapLabel.style.display = fixed ? 'none' : '';
+    if (els.reportBuilderLayoutSummaryRowLabel) els.reportBuilderLayoutSummaryRowLabel.style.display = fixed ? '' : 'none';
+    if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
+  };
+  els.reportBuilderLayoutSummaryPlacement?.addEventListener('change', updateSummaryPlacement);
+  updateSummaryPlacement();
+  els.reportBuilderLayoutAddFieldBtn?.addEventListener('click', () => {
+    state.reportBuilderLayoutFields.push({ cell: '', text: '' });
+    renderReportBuilderLayout();
+  });
   if (els.reportBuilderAddSummaryBtn) els.reportBuilderAddSummaryBtn.addEventListener('click', () => {
     state.reportBuilderSummaries.push({
       label: 'Summary',
@@ -23540,7 +24036,8 @@ async function refreshUserAuthLine({ initial = false } = {}) {
     if (rawLoggedIn) {
       state.authLoggedOutSinceMs = 0;
       state.authLastUser = { username, groups };
-    } else if (state.authWasLoggedIn && configured) {
+    } else if (state.authWasLoggedIn && configured &&
+        Date.now() - (Number(state.authLastLogoutAtMs) || 0) > 15000) {
       const now = Date.now();
       if (!state.authLoggedOutSinceMs) state.authLoggedOutSinceMs = now;
       if (now - state.authLoggedOutSinceMs < 10000) {
@@ -24373,11 +24870,27 @@ async function loginUser() {
 }
 
 async function logoutUser() {
+  const button = document.getElementById('authLogoutBtn');
   try {
     state.authLastLogoutAtMs = Date.now();
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Logging out…';
+    }
     await apiPostJson('/api/opcbridge/auth/logout', { explicit: true });
-    await refreshUserAuthLine();
+    state.authWasLoggedIn = false;
+    state.authLoggedOutSinceMs = 0;
+    state.authLastUser = null;
+    state.opcbridgeAuthStatus = null;
+    if (els.authLine) {
+      els.authLine.innerHTML = '<button class="btn primary" type="button" disabled>Login</button> <span class="badge warn">auth</span> logged out';
+    }
+    window.location.replace(REPORTS_PORTAL_MODE ? '/reports' : '/');
   } catch (err) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Logout';
+    }
     window.alert(`Logout failed: ${err.message}`);
   }
 }
