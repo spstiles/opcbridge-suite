@@ -573,6 +573,11 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   height: 30px;
 }
 
+#publishedReportPreviewWrap {
+  max-height: 70vh;
+  overflow: auto;
+}
+
 .report-output-layout.has-template-preview {
   table-layout: fixed;
   min-width: 100%;
