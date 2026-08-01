@@ -1206,6 +1206,7 @@
 		          </label>
 		          <label><span>Timezone</span><select id="reportBuilderTimezone"></select></label>
 		          <label><span><input id="reportBuilderXlsx" type="checkbox" checked> Excel (.xlsx)</span></label>
+		          <label><span><input id="reportBuilderOds" type="checkbox"> OpenDocument (.ods)</span></label>
 		          <label><span><input id="reportBuilderCsv" type="checkbox" checked> CSV (.csv)</span></label>
 		          <label><span><input id="reportBuilderPublished" type="checkbox"> Published</span></label>
 		        </div>
@@ -1303,7 +1304,7 @@
 		              <label><span><input id="reportBuilderTemplateEnabled" type="checkbox" disabled> Use spreadsheet template</span></label>
 		              <div class="hint" id="reportBuilderTemplateInfo" style="margin-top:6px;">No template uploaded.</div>
 		              <div class="row-actions" style="margin-top:10px; flex-wrap:wrap;">
-		                <input id="reportBuilderTemplateFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+		                <input id="reportBuilderTemplateFile" type="file" accept=".xlsx,.ods,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet">
 		                <button class="btn" id="reportBuilderTemplateUploadBtn" type="button">Upload Template</button>
 		                <button class="btn" id="reportBuilderTemplateDownloadBtn" type="button" style="display:none;">Download Template</button>
 		                <button class="btn danger" id="reportBuilderTemplateRemoveBtn" type="button" style="display:none;">Remove Template</button>

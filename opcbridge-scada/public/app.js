@@ -274,6 +274,7 @@
   reportBuilderGroupBy: document.getElementById('reportBuilderGroupBy'),
   reportBuilderTimezone: document.getElementById('reportBuilderTimezone'),
   reportBuilderXlsx: document.getElementById('reportBuilderXlsx'),
+  reportBuilderOds: document.getElementById('reportBuilderOds'),
   reportBuilderCsv: document.getElementById('reportBuilderCsv'),
   reportBuilderPublished: document.getElementById('reportBuilderPublished'),
   reportBuilderSourceType: document.getElementById('reportBuilderSourceType'),
@@ -6462,7 +6463,8 @@ function renderPublishedReportSelection() {
   (Array.isArray(report?.formats) ? report.formats : []).forEach((format) => {
     const option = document.createElement('option');
     option.value = String(format);
-    option.textContent = format === 'xlsx' ? 'Excel Workbook (.xlsx)' : 'CSV (.csv)';
+    option.textContent = format === 'xlsx' ? 'Excel Workbook (.xlsx)'
+      : (format === 'ods' ? 'OpenDocument Spreadsheet (.ods)' : 'CSV (.csv)');
     els.publishedReportFormat.appendChild(option);
   });
   if (els.publishedReportDescription) {
@@ -7072,6 +7074,7 @@ function renderReportBuilderAccess() {
 function reportBuilderCurrentDefinition() {
   const formats = [];
   if (els.reportBuilderXlsx?.checked) formats.push('xlsx');
+  if (els.reportBuilderOds?.checked) formats.push('ods');
   if (els.reportBuilderCsv?.checked) formats.push('csv');
   return {
     id: String(els.reportBuilderId?.value || '').trim(),
@@ -7259,7 +7262,7 @@ async function refreshReportBuilderTemplatePreview() {
   }
   const reportId = state.reportBuilderOriginalId || String(els.reportBuilderId?.value || '').trim();
   const worksheet = String(els.reportBuilderLayoutWorksheet?.value || 'Report').trim();
-  const query = new URLSearchParams({ id: reportId, stored_id: template.stored_id, worksheet });
+  const query = new URLSearchParams({ id: reportId, stored_id: template.stored_id, worksheet, format: template.format || 'xlsx' });
   try {
     const response = await apiGet(`/api/reports/admin/template/preview?${query.toString()}`);
     state.reportBuilderTemplatePreview = response?.preview || null;
@@ -8099,6 +8102,7 @@ function loadReportBuilderDefinition(report) {
   populateReportBuilderTimezones(String(value.timezone || browserTimezone()));
   if (els.reportBuilderPublished) els.reportBuilderPublished.checked = Boolean(value.published);
   if (els.reportBuilderXlsx) els.reportBuilderXlsx.checked = (value.formats || []).includes('xlsx');
+  if (els.reportBuilderOds) els.reportBuilderOds.checked = (value.formats || []).includes('ods');
   if (els.reportBuilderCsv) els.reportBuilderCsv.checked = (value.formats || []).includes('csv');
   if (els.reportBuilderLayoutWorksheet) els.reportBuilderLayoutWorksheet.value = String(layout.worksheet || 'Report');
   if (els.reportBuilderLayoutTableRow) els.reportBuilderLayoutTableRow.value = String(layout.table_start_row || 5);
@@ -8275,7 +8279,7 @@ function wireReportBuilderUi() {
   els.reportBuilderTemplateUploadBtn?.addEventListener('click', async () => {
     const file = els.reportBuilderTemplateFile?.files?.[0];
     if (!file) {
-      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Choose an .xlsx template first.';
+      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Choose an .xlsx or .ods template first.';
       return;
     }
     const reportId = state.reportBuilderOriginalId || String(els.reportBuilderId?.value || '').trim();
@@ -8290,7 +8294,7 @@ function wireReportBuilderUi() {
         method: 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
-        headers: { 'Content-Type': file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'X-File-Name': encodeURIComponent(file.name) },
+        headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
         body: file
       });
       const body = await response.json().catch(() => ({}));
@@ -8315,7 +8319,8 @@ function wireReportBuilderUi() {
     const template = state.reportBuilderTemplate;
     if (!template?.stored_id) return;
     const reportId = state.reportBuilderOriginalId || String(els.reportBuilderId?.value || '').trim();
-    const query = new URLSearchParams({ id: reportId, stored_id: template.stored_id, filename: template.filename || 'report-template.xlsx' });
+    const query = new URLSearchParams({ id: reportId, stored_id: template.stored_id,
+      format: template.format || 'xlsx', filename: template.filename || `report-template.${template.format || 'xlsx'}` });
     window.location.href = `/api/reports/admin/template/download?${query.toString()}`;
   });
   els.reportBuilderTemplateRemoveBtn?.addEventListener('click', () => {

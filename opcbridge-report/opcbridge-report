@@ -2,7 +2,7 @@
 <?php
 declare(strict_types=1);
 
-const OPCBRIDGE_REPORT_FORMATS = ['xlsx', 'csv'];
+const OPCBRIDGE_REPORT_FORMATS = ['xlsx', 'ods', 'csv'];
 
 function fail(string $message, int $code = 1): never
 {
@@ -198,10 +198,14 @@ function validate_report(array $report): array
         $storedId = strtolower(trim((string)($template['stored_id'] ?? '')));
         if (!preg_match('/^[a-f0-9]{64}$/', $storedId)) fail("Report '{$id}' has an invalid template identifier");
         $filename = basename((string)($template['filename'] ?? 'template.xlsx'));
-        if (!str_ends_with(strtolower($filename), '.xlsx')) fail("Report '{$id}' template must be an .xlsx file");
+        $format = strtolower(trim((string)($template['format'] ?? pathinfo($filename, PATHINFO_EXTENSION))));
+        if (!in_array($format, ['xlsx', 'ods'], true) || !str_ends_with(strtolower($filename), ".{$format}")) {
+            fail("Report '{$id}' template must be an .xlsx or .ods file");
+        }
         $report['template'] = [
             'enabled' => ($template['enabled'] ?? false) === true,
             'filename' => $filename,
+            'format' => $format,
             'stored_id' => $storedId,
             'checksum' => $storedId,
             'size' => max(0, (int)($template['size'] ?? 0)),
@@ -1146,7 +1150,7 @@ function write_csv(string $output, array $report, array $rows, array $summaryRow
     fclose($handle);
 }
 
-function write_xlsx(
+function write_spreadsheet(
     string $output,
     array $report,
     string $month,
@@ -1155,6 +1159,7 @@ function write_xlsx(
     array $rows,
     array $summaryRows,
     array $placedCells,
+    string $outputFormat,
     string $autoload
 ): void {
     if (!is_file($autoload)) {
@@ -1167,7 +1172,9 @@ function write_xlsx(
     if (($template['enabled'] ?? false) === true) {
         $storedId = (string)($template['stored_id'] ?? '');
         $templateDir = rtrim((string)(getenv('OPCBRIDGE_REPORT_TEMPLATE_DIR') ?: '/var/lib/opcbridge/report/templates'), '/');
-        $templatePath = $templateDir . '/' . $storedId . '.xlsx';
+        $templateFormat = strtolower((string)($template['format'] ?? pathinfo((string)($template['filename'] ?? 'template.xlsx'), PATHINFO_EXTENSION)));
+        if (!in_array($templateFormat, ['xlsx', 'ods'], true)) fail('Enabled report template format is invalid');
+        $templatePath = $templateDir . '/' . $storedId . '.' . $templateFormat;
         if (!preg_match('/^[a-f0-9]{64}$/', $storedId) || !is_file($templatePath)) {
             fail('Enabled report template is missing or invalid');
         }
@@ -1303,7 +1310,9 @@ function write_xlsx(
     $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE);
     $sheet->getPageSetup()->setFitToWidth(1)->setFitToHeight(0);
 
-    $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+    $writer = $outputFormat === 'ods'
+        ? new \PhpOffice\PhpSpreadsheet\Writer\Ods($spreadsheet)
+        : new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
     $writer->setPreCalculateFormulas(false);
     $writer->save($output);
     $spreadsheet->disconnectWorksheets();
@@ -1515,7 +1524,7 @@ if (!is_dir($outputDir) && !mkdir($outputDir, 0750, true) && !is_dir($outputDir)
 if ($format === 'csv') {
     write_csv($output, $outputReport, $outputRows, $outputSummaryRows);
 } else {
-    write_xlsx($output, $outputReport, $periodLabel, $start, $end, $outputRows, $outputSummaryRows, $placedCells, $autoload);
+    write_spreadsheet($output, $outputReport, $periodLabel, $start, $end, $outputRows, $outputSummaryRows, $placedCells, $format, $autoload);
 }
 
 echo json_encode([

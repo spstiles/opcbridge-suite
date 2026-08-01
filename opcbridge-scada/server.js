@@ -473,8 +473,25 @@ function publicReport(report) {
     published: report.published === true,
     formats: (Array.isArray(report.formats) ? report.formats : ['xlsx'])
       .map((format) => String(format || '').trim().toLowerCase())
-      .filter((format) => ['xlsx', 'csv'].includes(format))
+      .filter((format) => ['xlsx', 'ods', 'csv'].includes(format))
   };
+}
+
+function reportTemplateFormat(template) {
+  const explicit = String(template?.format || '').trim().toLowerCase();
+  if (['xlsx', 'ods'].includes(explicit)) return explicit;
+  const match = String(template?.filename || '').trim().toLowerCase().match(/\.(xlsx|ods)$/);
+  return match ? match[1] : 'xlsx';
+}
+
+function reportTemplatePath(template) {
+  return path.join(REPORT_TEMPLATE_DIR, `${String(template?.stored_id || '').trim().toLowerCase()}.${reportTemplateFormat(template)}`);
+}
+
+function reportTemplateContentType(template) {
+  return reportTemplateFormat(template) === 'ods'
+    ? 'application/vnd.oasis.opendocument.spreadsheet'
+    : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 }
 
 function readReportDefinitions() {
@@ -488,9 +505,10 @@ async function cachedReportTemplatePreview(report) {
   const storedId = String(template.stored_id || '').trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(storedId)) throw new Error('Enabled report template identifier is invalid.');
   const worksheet = String(report?.layout?.worksheet || 'Report').trim();
-  const cacheKey = `${storedId}\u001f${worksheet}`;
+  const format = reportTemplateFormat(template);
+  const cacheKey = `${storedId}\u001f${format}\u001f${worksheet}`;
   if (REPORT_TEMPLATE_PREVIEW_CACHE.has(cacheKey)) return REPORT_TEMPLATE_PREVIEW_CACHE.get(cacheKey);
-  const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.xlsx`);
+  const templatePath = reportTemplatePath(template);
   if (!fs.existsSync(templatePath)) throw new Error('Enabled report template file was not found.');
   const result = await new Promise((resolve) => {
     child_process.execFile(REPORT_BIN, [
@@ -564,7 +582,7 @@ function normalizeReportDefinition(value) {
   const formats = Array.from(new Set(
     (Array.isArray(source.formats) ? source.formats : ['xlsx'])
       .map((format) => String(format || '').trim().toLowerCase())
-      .filter((format) => ['xlsx', 'csv'].includes(format))
+      .filter((format) => ['xlsx', 'ods', 'csv'].includes(format))
   ));
   if (!formats.length) throw new Error('Select at least one output format.');
   const sourceInput = source.data_source && typeof source.data_source === 'object' ? source.data_source : { type: 'historian' };
@@ -774,12 +792,16 @@ function normalizeReportDefinition(value) {
     const storedId = String(source.template.stored_id || '').trim().toLowerCase();
     if (!/^[a-f0-9]{64}$/.test(storedId)) throw new Error('Report template identifier is invalid.');
     const filename = path.basename(String(source.template.filename || 'template.xlsx')).slice(0, 255);
-    if (!filename.toLowerCase().endsWith('.xlsx')) throw new Error('Report template filename must end in .xlsx.');
-    const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.xlsx`);
+    const format = reportTemplateFormat({ ...source.template, filename });
+    if (!filename.toLowerCase().endsWith(`.${format}`) || !['xlsx', 'ods'].includes(format)) {
+      throw new Error('Report template filename must end in .xlsx or .ods.');
+    }
+    const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.${format}`);
     if (!fs.existsSync(templatePath)) throw new Error('Stored report template file is missing.');
     template = {
       enabled: normalizeBool(source.template.enabled, false),
       filename,
+      format,
       stored_id: storedId,
       checksum: storedId,
       size: Math.max(0, Math.trunc(Number(source.template.size) || fs.statSync(templatePath).size)),
@@ -2044,7 +2066,7 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
   projectBackupWalkFiles(REPORTER_REPORTS_DIR, '.', { includeExts: ['.json', '.jsonc', '.sql', '.txt', '.md'] })
     .forEach((rel) => add('reporter_reports', REPORTER_REPORTS_DIR, rel));
   add('report_config', path.dirname(REPORT_DEFINITIONS_PATH), path.basename(REPORT_DEFINITIONS_PATH));
-  projectBackupWalkFiles(REPORT_TEMPLATE_DIR, '.', { includeExts: ['.xlsx'] })
+  projectBackupWalkFiles(REPORT_TEMPLATE_DIR, '.', { includeExts: ['.xlsx', '.ods'] })
     .forEach((rel) => add('report_templates', REPORT_TEMPLATE_DIR, rel));
 
   if (includeHistory) {
@@ -4450,12 +4472,14 @@ const server = http.createServer(async (req, res) => {
       }
       const rawFilename = decodeURIComponent(String(req.headers['x-file-name'] || 'template.xlsx'));
       const filename = path.basename(rawFilename).slice(0, 255);
-      if (!filename.toLowerCase().endsWith('.xlsx')) throw new Error('Template must be an .xlsx file.');
+      const extensionMatch = filename.toLowerCase().match(/\.(xlsx|ods)$/);
+      if (!extensionMatch) throw new Error('Template must be an .xlsx or .ods file.');
+      const format = extensionMatch[1];
       const body = await readBody(req, 25 * 1024 * 1024);
-      if (body.length < 4 || body[0] !== 0x50 || body[1] !== 0x4b) throw new Error('Uploaded file is not a valid XLSX package.');
+      if (body.length < 4 || body[0] !== 0x50 || body[1] !== 0x4b) throw new Error('Uploaded file is not a valid spreadsheet package.');
       const storedId = crypto.createHash('sha256').update(body).digest('hex');
       fs.mkdirSync(REPORT_TEMPLATE_DIR, { recursive: true, mode: 0o750 });
-      const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.xlsx`);
+      const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.${format}`);
       const existed = fs.existsSync(templatePath);
       if (!existed) fs.writeFileSync(templatePath, body, { mode: 0o640 });
       const validation = await new Promise((resolve) => {
@@ -4474,6 +4498,7 @@ const server = http.createServer(async (req, res) => {
       const template = {
         enabled: false,
         filename,
+        format,
         stored_id: storedId,
         checksum: storedId,
         size: body.length,
@@ -4508,7 +4533,10 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 403, { ok: false, error: 'This user cannot access the selected report template.' });
         return;
       }
-      const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.xlsx`);
+      const requestedFormat = reportTemplateFormat({ format: url.searchParams.get('format'), filename: url.searchParams.get('filename') });
+      const currentFormat = reportTemplateFormat(existing?.template);
+      const format = grant?.manage || !existing ? requestedFormat : currentFormat;
+      const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.${format}`);
       if (!fs.existsSync(templatePath)) {
         sendJson(res, 404, { ok: false, error: 'Stored report template was not found.' });
         return;
@@ -4516,11 +4544,11 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname.endsWith('/download')) {
         const requestedFilename = grant?.manage || !existing
           ? String(url.searchParams.get('filename') || '') : '';
-        const filename = path.basename(String(requestedFilename || existing?.template?.filename || 'report-template.xlsx'))
+        const filename = path.basename(String(requestedFilename || existing?.template?.filename || `report-template.${format}`))
           .replace(/[^A-Za-z0-9._-]+/g, '-')
-          .replace(/^[-_.]+|[-_.]+$/g, '') || 'report-template.xlsx';
+          .replace(/^[-_.]+|[-_.]+$/g, '') || `report-template.${format}`;
         send(res, 200, {
-          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Type': reportTemplateContentType({ format }),
           'Content-Disposition': `attachment; filename="${filename}"`,
           'Cache-Control': 'no-store'
         }, fs.readFileSync(templatePath));
@@ -4694,7 +4722,7 @@ const server = http.createServer(async (req, res) => {
 
     const id = sanitizeId(url.searchParams.get('id'));
     const format = String(url.searchParams.get('format') || 'xlsx').trim().toLowerCase();
-    if (!id || !['xlsx', 'csv'].includes(format)) {
+    if (!id || !['xlsx', 'ods', 'csv'].includes(format)) {
       sendJson(res, 400, { ok: false, error: 'Valid id and format are required.' });
       return;
     }
@@ -4750,7 +4778,9 @@ const server = http.createServer(async (req, res) => {
         .replace(/^[-_.]+|[-_.]+$/g, '') || 'report';
       const contentType = format === 'csv'
         ? 'text/csv; charset=utf-8'
-        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        : (format === 'ods'
+            ? 'application/vnd.oasis.opendocument.spreadsheet'
+            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       send(res, 200, {
         'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${safeBase}-${range.label}.${format}"`,
