@@ -6534,6 +6534,7 @@ function renderPublishedReportPreview(preview) {
   if (!els.publishedReportPreviewHead || !els.publishedReportPreviewBody || !els.publishedReportPreviewWrap) return;
   els.publishedReportPreviewHead.textContent = '';
   els.publishedReportPreviewBody.textContent = '';
+  els.publishedReportPreviewBody.parentElement?.querySelectorAll('colgroup').forEach((item) => item.remove());
   const layout = preview.layout && typeof preview.layout === 'object' ? preview.layout : {};
   const tableRow = Math.max(1, Math.trunc(Number(layout.table_start_row || 5)));
   const headerRows = layout.include_header_row === false ? 0 : 1;
@@ -6542,30 +6543,43 @@ function renderPublishedReportPreview(preview) {
   const placements = columns.map((column, index) => spreadsheetColumnIndex(column.sheet_column) || tableColumn + index + 1);
   const cells = new Map();
   const put = (row, column, text, className = '') => {
-    if (row > 0 && column > 0) cells.set(`${row}:${column}`, { text, className });
+    if (row > 0 && column > 0) cells.set(`${row}:${column}`, {
+      ...(cells.get(`${row}:${column}`) || {}), text, className
+    });
   };
+  const templatePreview = preview.template_preview && typeof preview.template_preview === 'object'
+    ? preview.template_preview : null;
+  els.publishedReportPreviewBody.parentElement?.classList.toggle('has-template-preview', Boolean(templatePreview));
+  const previewClass = (fallback) => templatePreview ? 'layout-template-value' : fallback;
+  (templatePreview?.cells || []).forEach((cell) => {
+    if (Number(cell?.row) > 0 && Number(cell?.column) > 0) {
+      cells.set(`${Number(cell.row)}:${Number(cell.column)}`, {
+        text: String(cell.value || ''), className: 'layout-template', style: cell.style || {}
+      });
+    }
+  });
   const placedRanges = (preview.placed_cells || []).map((item) => spreadsheetRangeParts(item?.target)).filter(Boolean);
   (preview.placed_cells || []).forEach((item) => {
     const target = spreadsheetRangeParts(item?.target)?.start;
-    if (target) put(target.row, target.column, String(item?.value ?? ''), item?.type === 'system' ? 'layout-description' : 'layout-fixed');
+    if (target) put(target.row, target.column, String(item?.value ?? ''), previewClass(item?.type === 'system' ? 'layout-description' : 'layout-fixed'));
   });
   const periodHeading = ['hour', 'raw'].includes(String(preview.group_by || '')) ||
     String(preview.group_by || '').startsWith('minute:')
     ? 'Time' : (preview.group_by === 'month' ? 'Month' : 'Date');
   if (headerRows) {
-    put(tableRow, tableColumn, periodHeading, 'layout-heading');
-    columns.forEach((column, index) => put(tableRow, placements[index], String(column.heading || ''), 'layout-heading'));
+    put(tableRow, tableColumn, periodHeading, previewClass('layout-heading'));
+    columns.forEach((column, index) => put(tableRow, placements[index], String(column.heading || ''), previewClass('layout-heading')));
   }
   (preview.rows || []).forEach((row, rowIndex) => {
     const outputRow = tableRow + headerRows + rowIndex;
-    put(outputRow, tableColumn, String(row.date || ''), 'layout-data');
+    put(outputRow, tableColumn, String(row.date || ''), previewClass('layout-data'));
     (row.values || []).forEach((value, index) => {
       const precision = columns[index]?.precision ?? 2;
       const text = value === null || value === undefined ? '—' : Number(value).toLocaleString(undefined, {
         minimumFractionDigits: precision,
         maximumFractionDigits: precision
       });
-      put(outputRow, placements[index], text, 'layout-data');
+      put(outputRow, placements[index], text, previewClass('layout-data'));
     });
   });
   const summaryStart = String(layout.summary_placement || 'after_data') === 'fixed'
@@ -6573,28 +6587,46 @@ function renderPublishedReportPreview(preview) {
     : tableRow + headerRows + (preview.rows || []).length + Math.max(0, Math.trunc(Number(layout.summary_gap_rows || 0)));
   (preview.summary_rows || []).forEach((row, summaryIndex) => {
     const outputRow = summaryStart + summaryIndex;
-    put(outputRow, tableColumn, String(row.label || ''), 'layout-summary');
+    put(outputRow, tableColumn, String(row.label || ''), previewClass('layout-summary'));
     (row.values || []).forEach((value, index) => {
       if (value === null || value === undefined) return;
       const precision = row.precisions?.[index] ?? columns[index]?.precision ?? 2;
       put(outputRow, placements[index], Number(value).toLocaleString(undefined, {
         minimumFractionDigits: precision,
         maximumFractionDigits: precision
-      }), 'layout-summary');
+      }), previewClass('layout-summary'));
     });
   });
   const used = [...cells.keys()].map((key) => key.split(':').map(Number));
-  const maxRow = Math.max(tableRow, ...used.map(([row]) => row), ...placedRanges.map((range) => range.end.row));
-  const maxColumn = Math.max(tableColumn, ...placements, ...used.map(([, column]) => column), ...placedRanges.map((range) => range.end.column));
+  const maxRow = Math.min(500, Math.max(tableRow, Number(templatePreview?.max_row || 0),
+    ...used.map(([row]) => row), ...placedRanges.map((range) => range.end.row)));
+  const maxColumn = Math.min(100, Math.max(tableColumn, Number(templatePreview?.max_column || 0),
+    ...placements, ...used.map(([, column]) => column), ...placedRanges.map((range) => range.end.column)));
+  const colgroup = document.createElement('colgroup');
+  for (let column = 1; column <= maxColumn; column++) {
+    const col = document.createElement('col');
+    const width = Number(templatePreview?.column_widths?.[String(column)] || 0);
+    if (width > 0) col.style.width = `${Math.max(40, Math.min(420, width * 7))}px`;
+    colgroup.appendChild(col);
+  }
+  els.publishedReportPreviewBody.parentElement?.prepend(colgroup);
   const mergeAnchors = new Map(); const mergedCells = new Set();
-  placedRanges.filter((range) => range.range.includes(':')).forEach((range) => {
-    mergeAnchors.set(`${range.start.row}:${range.start.column}`, { rowspan: range.end.row - range.start.row + 1, colspan: range.end.column - range.start.column + 1 });
-    for (let mergeRow = range.start.row; mergeRow <= range.end.row; mergeRow++) for (let mergeColumn = range.start.column; mergeColumn <= range.end.column; mergeColumn++) {
-      if (mergeRow !== range.start.row || mergeColumn !== range.start.column) mergedCells.add(`${mergeRow}:${mergeColumn}`);
+  const merges = [...(templatePreview?.merges || []), ...placedRanges.filter((range) => range.range.includes(':')).map((range) => ({
+    start_row: range.start.row, start_column: range.start.column, end_row: range.end.row, end_column: range.end.column
+  }))];
+  merges.forEach((mergeRange) => {
+    const startRow = Number(mergeRange.start_row); const startColumn = Number(mergeRange.start_column);
+    const endRow = Math.min(maxRow, Number(mergeRange.end_row)); const endColumn = Math.min(maxColumn, Number(mergeRange.end_column));
+    if (startRow < 1 || startColumn < 1 || endRow < startRow || endColumn < startColumn) return;
+    mergeAnchors.set(`${startRow}:${startColumn}`, { rowspan: endRow - startRow + 1, colspan: endColumn - startColumn + 1 });
+    for (let mergeRow = startRow; mergeRow <= endRow; mergeRow++) for (let mergeColumn = startColumn; mergeColumn <= endColumn; mergeColumn++) {
+      if (mergeRow !== startRow || mergeColumn !== startColumn) mergedCells.add(`${mergeRow}:${mergeColumn}`);
     }
   });
   for (let row = 1; row <= maxRow; row++) {
     const tr = document.createElement('tr');
+    const height = Number(templatePreview?.row_heights?.[String(row)] || 0);
+    if (height > 0) tr.style.height = `${Math.max(20, Math.min(240, height * 1.33))}px`;
     for (let column = 1; column <= maxColumn; column++) {
       if (mergedCells.has(`${row}:${column}`)) continue;
       const td = document.createElement('td');
@@ -6604,6 +6636,15 @@ function renderPublishedReportPreview(preview) {
       if (content) {
         td.textContent = content.text;
         if (content.className) td.classList.add(content.className);
+        const style = content.style || {};
+        if (style.bold) td.style.fontWeight = '700';
+        if (style.italic) td.style.fontStyle = 'italic';
+        if (Number(style.size) > 0) td.style.fontSize = `${Math.min(36, Number(style.size))}px`;
+        if (/^[A-Fa-f0-9]{8}$/.test(String(style.color || ''))) td.style.color = `#${String(style.color).slice(2)}`;
+        if (/^[A-Fa-f0-9]{8}$/.test(String(style.fill || ''))) td.style.backgroundColor = `#${String(style.fill).slice(2)}`;
+        if (['left', 'center', 'right'].includes(style.horizontal)) td.style.textAlign = style.horizontal;
+        if (['top', 'center', 'bottom'].includes(style.vertical)) td.style.verticalAlign = style.vertical === 'center' ? 'middle' : style.vertical;
+        if (style.wrap) td.style.whiteSpace = 'normal';
       }
       tr.appendChild(td);
     }
@@ -6621,7 +6662,9 @@ async function previewPublishedReport() {
     const preview = await apiPostJson('/api/reports/preview', { id: report.id, ...range }, { timeoutMs: 120000 });
     renderPublishedReportPreview(preview);
     if (els.publishedReportsStatus) {
-      els.publishedReportsStatus.textContent = preview.truncated
+      els.publishedReportsStatus.textContent = preview.template_preview_error
+        ? `Report ready, but the spreadsheet template preview is unavailable: ${preview.template_preview_error}`
+        : preview.truncated
         ? `Report preview reached the ${Number(preview.row_limit || 250000).toLocaleString()}-row limit; narrow the date range to inspect all samples.`
         : (report.published === false
             ? 'Draft preview — publish this report to enable downloads.'

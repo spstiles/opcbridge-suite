@@ -212,6 +212,7 @@ const REPORT_LOGGER_URL = String(
   process.env.OPCBRIDGE_REPORT_LOGGER_URL ||
   `http://${REPORTER_API_HOST}:${REPORTER_API_PORT}`
 ).trim();
+const REPORT_TEMPLATE_PREVIEW_CACHE = new Map();
 
 const SYSTEMD_UNITS_DIR = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNITS_DIR || '/etc/systemd/system').trim();
 
@@ -479,6 +480,41 @@ function publicReport(report) {
 function readReportDefinitions() {
   const root = readJsonFileOrNull(REPORT_DEFINITIONS_PATH) || { reports: [] };
   return Array.isArray(root?.reports) ? root.reports.filter((report) => report && typeof report === 'object') : [];
+}
+
+async function cachedReportTemplatePreview(report) {
+  const template = report?.template;
+  if (!template || template.enabled !== true) return null;
+  const storedId = String(template.stored_id || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(storedId)) throw new Error('Enabled report template identifier is invalid.');
+  const worksheet = String(report?.layout?.worksheet || 'Report').trim();
+  const cacheKey = `${storedId}\u001f${worksheet}`;
+  if (REPORT_TEMPLATE_PREVIEW_CACHE.has(cacheKey)) return REPORT_TEMPLATE_PREVIEW_CACHE.get(cacheKey);
+  const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.xlsx`);
+  if (!fs.existsSync(templatePath)) throw new Error('Enabled report template file was not found.');
+  const result = await new Promise((resolve) => {
+    child_process.execFile(REPORT_BIN, [
+      'template-preview', '--template', templatePath, '--worksheet', worksheet
+    ], { encoding: 'utf8', timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+    (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+  });
+  if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
+  const preview = JSON.parse(result.stdout);
+  REPORT_TEMPLATE_PREVIEW_CACHE.set(cacheKey, preview);
+  while (REPORT_TEMPLATE_PREVIEW_CACHE.size > 8) {
+    REPORT_TEMPLATE_PREVIEW_CACHE.delete(REPORT_TEMPLATE_PREVIEW_CACHE.keys().next().value);
+  }
+  return preview;
+}
+
+async function addReportTemplatePreview(payload, report) {
+  try {
+    const preview = await cachedReportTemplatePreview(report);
+    if (preview) payload.template_preview = preview;
+  } catch (err) {
+    payload.template_preview_error = String(err.message || err);
+  }
+  return payload;
 }
 
 function normalizeSpreadsheetColumn(value, fallback = '') {
@@ -4575,7 +4611,9 @@ const server = http.createServer(async (req, res) => {
         (error, stdout, stderr) => resolve({ error, stdout, stderr }));
       });
       if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
-      sendJson(res, 200, JSON.parse(result.stdout));
+      const preview = JSON.parse(result.stdout);
+      await addReportTemplatePreview(preview, report);
+      sendJson(res, 200, preview);
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
@@ -4612,7 +4650,9 @@ const server = http.createServer(async (req, res) => {
         (error, stdout, stderr) => resolve({ error, stdout, stderr }));
       });
       if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
-      sendJson(res, 200, JSON.parse(result.stdout));
+      const preview = JSON.parse(result.stdout);
+      await addReportTemplatePreview(preview, report);
+      sendJson(res, 200, preview);
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
