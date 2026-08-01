@@ -1267,7 +1267,7 @@ function write_xlsx(
         }
         $rowNumber++;
     }
-    if ($summaryRows) {
+    if ($summaryRows && ($template['enabled'] ?? false) !== true) {
         $sheet->getStyle("{$firstColumn}{$summaryStartRow}:{$lastColumn}" . ($rowNumber - 1))->getFont()->setBold(true);
         $sheet->getStyle("{$firstColumn}{$summaryStartRow}:{$lastColumn}" . ($rowNumber - 1))->getFill()
             ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
