@@ -326,6 +326,12 @@
   reportBuilderLayoutTitleCell: document.getElementById('reportBuilderLayoutTitleCell'),
   reportBuilderLayoutDescriptionCell: document.getElementById('reportBuilderLayoutDescriptionCell'),
   reportBuilderLayoutPeriodCell: document.getElementById('reportBuilderLayoutPeriodCell'),
+  reportBuilderLayoutDateDisplay: document.getElementById('reportBuilderLayoutDateDisplay'),
+  reportBuilderLayoutPeriodCellLabel: document.getElementById('reportBuilderLayoutPeriodCellLabel'),
+  reportBuilderLayoutStartDateCellLabel: document.getElementById('reportBuilderLayoutStartDateCellLabel'),
+  reportBuilderLayoutEndDateCellLabel: document.getElementById('reportBuilderLayoutEndDateCellLabel'),
+  reportBuilderLayoutStartDateCell: document.getElementById('reportBuilderLayoutStartDateCell'),
+  reportBuilderLayoutEndDateCell: document.getElementById('reportBuilderLayoutEndDateCell'),
   reportBuilderLayoutColumns: document.getElementById('reportBuilderLayoutColumns'),
   reportBuilderLayoutAddFieldBtn: document.getElementById('reportBuilderLayoutAddFieldBtn'),
   reportBuilderLayoutFieldsWrap: document.getElementById('reportBuilderLayoutFieldsWrap'),
@@ -6549,10 +6555,15 @@ function renderPublishedReportPreview(preview) {
   };
   const title = spreadsheetCellParts(layout.title_cell ?? 'A1');
   const description = spreadsheetCellParts(layout.description_cell ?? 'A2');
-  const period = spreadsheetCellParts(layout.period_cell || 'A3');
+  const dateDisplay = String(layout.date_display || 'combined');
+  const period = dateDisplay === 'combined' ? spreadsheetCellParts(layout.period_cell || 'A3') : null;
+  const startDate = dateDisplay === 'separate' ? spreadsheetCellParts(layout.start_date_cell || 'A3') : null;
+  const endDate = dateDisplay === 'separate' ? spreadsheetCellParts(layout.end_date_cell || 'B3') : null;
   if (title) put(title.row, title.column, String(preview.name || ''), 'layout-title');
   if (description) put(description.row, description.column, String(preview.description || ''), 'layout-description');
   if (period) put(period.row, period.column, String(preview.period_label || ''), 'layout-description');
+  if (startDate) put(startDate.row, startDate.column, String(preview.start_date || ''), 'layout-description');
+  if (endDate) put(endDate.row, endDate.column, String(preview.end_date || ''), 'layout-description');
   (layout.fields || []).forEach((field) => {
     const target = spreadsheetCellParts(field?.cell);
     if (target) put(target.row, target.column, String(field?.text || ''), 'layout-fixed');
@@ -7048,6 +7059,10 @@ function reportBuilderCurrentDefinition() {
       title_cell: String(els.reportBuilderLayoutTitleCell?.value || '').trim().toUpperCase(),
       description_cell: String(els.reportBuilderLayoutDescriptionCell?.value || '').trim().toUpperCase(),
       period_cell: normalizeSpreadsheetCell(els.reportBuilderLayoutPeriodCell?.value || 'A3') || 'A3',
+      date_display: ['combined', 'separate', 'none'].includes(String(els.reportBuilderLayoutDateDisplay?.value || 'combined'))
+        ? String(els.reportBuilderLayoutDateDisplay.value) : 'combined',
+      start_date_cell: normalizeSpreadsheetCell(els.reportBuilderLayoutStartDateCell?.value || 'A3') || 'A3',
+      end_date_cell: normalizeSpreadsheetCell(els.reportBuilderLayoutEndDateCell?.value || 'B3') || 'B3',
       fields: state.reportBuilderLayoutFields.map((field) => ({
         cell: normalizeSpreadsheetCell(field.cell),
         text: String(field.text || '').slice(0, 2000)
@@ -7180,6 +7195,10 @@ function renderReportBuilderLayout() {
   const fixedSummary = String(els.reportBuilderLayoutSummaryPlacement?.value || 'after_data') === 'fixed';
   if (els.reportBuilderLayoutSummaryGapLabel) els.reportBuilderLayoutSummaryGapLabel.style.display = fixedSummary ? 'none' : '';
   if (els.reportBuilderLayoutSummaryRowLabel) els.reportBuilderLayoutSummaryRowLabel.style.display = fixedSummary ? '' : 'none';
+  const dateDisplay = String(els.reportBuilderLayoutDateDisplay?.value || 'combined');
+  if (els.reportBuilderLayoutPeriodCellLabel) els.reportBuilderLayoutPeriodCellLabel.style.display = dateDisplay === 'combined' ? '' : 'none';
+  if (els.reportBuilderLayoutStartDateCellLabel) els.reportBuilderLayoutStartDateCellLabel.style.display = dateDisplay === 'separate' ? '' : 'none';
+  if (els.reportBuilderLayoutEndDateCellLabel) els.reportBuilderLayoutEndDateCellLabel.style.display = dateDisplay === 'separate' ? '' : 'none';
   renderReportBuilderTemplateControls();
   els.reportBuilderLayoutColumns.textContent = '';
   state.reportBuilderColumns.filter((column) => column.visible !== false).forEach((column, visibleIndex) => {
@@ -7262,10 +7281,15 @@ function renderReportBuilderLayoutPreview() {
   });
   const title = spreadsheetCellParts(els.reportBuilderLayoutTitleCell?.value || '');
   const description = spreadsheetCellParts(els.reportBuilderLayoutDescriptionCell?.value || '');
-  const period = spreadsheetCellParts(els.reportBuilderLayoutPeriodCell?.value || 'A3');
+  const dateDisplay = String(els.reportBuilderLayoutDateDisplay?.value || 'combined');
+  const period = dateDisplay === 'combined' ? spreadsheetCellParts(els.reportBuilderLayoutPeriodCell?.value || 'A3') : null;
+  const startDate = dateDisplay === 'separate' ? spreadsheetCellParts(els.reportBuilderLayoutStartDateCell?.value || 'A3') : null;
+  const endDate = dateDisplay === 'separate' ? spreadsheetCellParts(els.reportBuilderLayoutEndDateCell?.value || 'B3') : null;
   if (title) put(title.row, title.column, String(els.reportBuilderName?.value || 'Report Title'), 'layout-title');
   if (description) put(description.row, description.column, String(els.reportBuilderDescription?.value || 'Report description'), 'layout-description');
   if (period) put(period.row, period.column, 'Selected reporting period', 'layout-description');
+  if (startDate) put(startDate.row, startDate.column, 'Beginning date', 'layout-description');
+  if (endDate) put(endDate.row, endDate.column, 'Ending date', 'layout-description');
   state.reportBuilderLayoutFields.forEach((field) => {
     const target = spreadsheetCellParts(field.cell);
     if (target) put(target.row, target.column, String(field.text || ''), 'layout-fixed');
@@ -7912,6 +7936,9 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderLayoutTitleCell) els.reportBuilderLayoutTitleCell.value = String(layout.title_cell ?? 'A1');
   if (els.reportBuilderLayoutDescriptionCell) els.reportBuilderLayoutDescriptionCell.value = String(layout.description_cell ?? 'A2');
   if (els.reportBuilderLayoutPeriodCell) els.reportBuilderLayoutPeriodCell.value = String(layout.period_cell || 'A3');
+  if (els.reportBuilderLayoutDateDisplay) els.reportBuilderLayoutDateDisplay.value = String(layout.date_display || 'combined');
+  if (els.reportBuilderLayoutStartDateCell) els.reportBuilderLayoutStartDateCell.value = String(layout.start_date_cell || 'A3');
+  if (els.reportBuilderLayoutEndDateCell) els.reportBuilderLayoutEndDateCell.value = String(layout.end_date_cell || 'B3');
   const source = { ...(value.data_source || { type: 'historian' }) };
   const firstDatabaseColumn = state.reportBuilderColumns.find((column) => column?.source === 'database');
   if (source.type === 'database' && firstDatabaseColumn) {
@@ -8063,7 +8090,8 @@ function wireReportBuilderUi() {
   [els.reportBuilderLayoutWorksheet, els.reportBuilderLayoutTableRow, els.reportBuilderLayoutTableColumn,
     els.reportBuilderLayoutSummaryGap, els.reportBuilderLayoutSummaryPlacement, els.reportBuilderLayoutSummaryRow,
     els.reportBuilderLayoutTitleCell, els.reportBuilderLayoutDescriptionCell,
-    els.reportBuilderLayoutPeriodCell,
+    els.reportBuilderLayoutPeriodCell, els.reportBuilderLayoutDateDisplay,
+    els.reportBuilderLayoutStartDateCell, els.reportBuilderLayoutEndDateCell,
     els.reportBuilderName, els.reportBuilderDescription].forEach((input) => {
     input?.addEventListener('input', () => {
       if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
@@ -8142,6 +8170,15 @@ function wireReportBuilderUi() {
   };
   els.reportBuilderLayoutSummaryPlacement?.addEventListener('change', updateSummaryPlacement);
   updateSummaryPlacement();
+  const updateDateDisplay = () => {
+    const mode = String(els.reportBuilderLayoutDateDisplay?.value || 'combined');
+    if (els.reportBuilderLayoutPeriodCellLabel) els.reportBuilderLayoutPeriodCellLabel.style.display = mode === 'combined' ? '' : 'none';
+    if (els.reportBuilderLayoutStartDateCellLabel) els.reportBuilderLayoutStartDateCellLabel.style.display = mode === 'separate' ? '' : 'none';
+    if (els.reportBuilderLayoutEndDateCellLabel) els.reportBuilderLayoutEndDateCellLabel.style.display = mode === 'separate' ? '' : 'none';
+    if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
+  };
+  els.reportBuilderLayoutDateDisplay?.addEventListener('change', updateDateDisplay);
+  updateDateDisplay();
   els.reportBuilderLayoutAddFieldBtn?.addEventListener('click', () => {
     state.reportBuilderLayoutFields.push({ cell: '', text: '' });
     renderReportBuilderLayout();

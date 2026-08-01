@@ -672,6 +672,10 @@ function normalizeReportDefinition(value) {
     description_cell: Object.prototype.hasOwnProperty.call(layoutInput, 'description_cell')
       ? optionalLayoutCell(layoutInput.description_cell, 'Description cell') : 'A2',
     period_cell: normalizeSpreadsheetCell(layoutInput.period_cell, 'A3'),
+    date_display: ['combined', 'separate', 'none'].includes(String(layoutInput.date_display || 'combined'))
+      ? String(layoutInput.date_display || 'combined') : 'combined',
+    start_date_cell: normalizeSpreadsheetCell(layoutInput.start_date_cell, 'A3'),
+    end_date_cell: normalizeSpreadsheetCell(layoutInput.end_date_cell, 'B3'),
     fields: (Array.isArray(layoutInput.fields) ? layoutInput.fields : []).slice(0, 50).map((field, index) => {
       const cell = normalizeSpreadsheetCell(field?.cell);
       const text = String(field?.text || '').trim().slice(0, 2000);

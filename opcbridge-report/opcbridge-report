@@ -138,6 +138,10 @@ function validate_report(array $report): array
         'title_cell' => array_key_exists('title_cell', $layout) ? $optionalCell($layout['title_cell'], 'title cell') : 'A1',
         'description_cell' => array_key_exists('description_cell', $layout) ? $optionalCell($layout['description_cell'], 'description cell') : 'A2',
         'period_cell' => $validCell($layout['period_cell'] ?? 'A3', 'A3'),
+        'date_display' => in_array((string)($layout['date_display'] ?? 'combined'), ['combined', 'separate', 'none'], true)
+            ? (string)($layout['date_display'] ?? 'combined') : 'combined',
+        'start_date_cell' => $validCell($layout['start_date_cell'] ?? 'A3', 'A3'),
+        'end_date_cell' => $validCell($layout['end_date_cell'] ?? 'B3', 'B3'),
         'fields' => $fields,
     ];
     $template = is_array($report['template'] ?? null) ? $report['template'] : null;
@@ -1074,6 +1078,8 @@ function write_xlsx(
     string $output,
     array $report,
     string $month,
+    DateTimeImmutable $rangeStart,
+    DateTimeImmutable $rangeEnd,
     array $rows,
     array $summaryRows,
     string $autoload
@@ -1104,6 +1110,8 @@ function write_xlsx(
     $titleCell = (string)($layout['title_cell'] ?? 'A1');
     $descriptionCell = (string)($layout['description_cell'] ?? 'A2');
     $periodCell = (string)($layout['period_cell'] ?? 'A3');
+    $startDateCell = (string)($layout['start_date_cell'] ?? 'A3');
+    $endDateCell = (string)($layout['end_date_cell'] ?? 'B3');
     $tableStartRow = (int)($layout['table_start_row'] ?? 5);
     $tableStartColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString(
         (string)($layout['table_start_column'] ?? 'A')
@@ -1120,7 +1128,15 @@ function write_xlsx(
     $lastColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($lastColumnIndex);
     if ($titleCell !== '') $sheet->setCellValue($titleCell, $title);
     if ($descriptionCell !== '') $sheet->setCellValue($descriptionCell, (string)($report['description'] ?? ''));
-    $sheet->setCellValue($periodCell, $month);
+    $dateDisplay = (string)($layout['date_display'] ?? 'combined');
+    if ($dateDisplay === 'combined') {
+        $sheet->setCellValue($periodCell, $month);
+    } elseif ($dateDisplay === 'separate') {
+        $sheet->setCellValue($startDateCell, \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($rangeStart));
+        $sheet->setCellValue($endDateCell, \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($rangeEnd->modify('-1 day')));
+        $sheet->getStyle($startDateCell)->getNumberFormat()->setFormatCode('mm/dd/yyyy');
+        $sheet->getStyle($endDateCell)->getNumberFormat()->setFormatCode('mm/dd/yyyy');
+    }
     foreach (($layout['fields'] ?? []) as $field) {
         $sheet->setCellValueExplicit(
             (string)$field['cell'],
@@ -1377,6 +1393,8 @@ if ($command === 'preview') {
         'period' => (string)($report['period'] ?? 'month'),
         'interval_minutes' => (int)($report['interval_minutes'] ?? 60),
         'period_label' => $periodLabel,
+        'start_date' => $start->format('Y-m-d'),
+        'end_date' => $end->modify('-1 day')->format('Y-m-d'),
         'group_by' => $group,
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
         'layout' => $report['layout'] ?? [],
@@ -1416,7 +1434,7 @@ if (!is_dir($outputDir) && !mkdir($outputDir, 0750, true) && !is_dir($outputDir)
 if ($format === 'csv') {
     write_csv($output, $outputReport, $outputRows, $outputSummaryRows);
 } else {
-    write_xlsx($output, $outputReport, $periodLabel, $outputRows, $outputSummaryRows, $autoload);
+    write_xlsx($output, $outputReport, $periodLabel, $start, $end, $outputRows, $outputSummaryRows, $autoload);
 }
 
 echo json_encode([

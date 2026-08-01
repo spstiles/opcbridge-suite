@@ -1312,7 +1312,10 @@
 		            </div>
 		            <label><span>Report title cell (optional)</span><input id="reportBuilderLayoutTitleCell" type="text" value="A1" placeholder="Leave blank to omit"></label>
 		            <label><span>Description cell (optional)</span><input id="reportBuilderLayoutDescriptionCell" type="text" value="A2" placeholder="Leave blank to omit"></label>
-		            <label><span>Reporting period cell</span><input id="reportBuilderLayoutPeriodCell" type="text" value="A3"></label>
+		            <label><span>Reporting date fields</span><select id="reportBuilderLayoutDateDisplay"><option value="combined">Combined reporting period</option><option value="separate">Separate beginning and ending dates</option><option value="none">Do not add dates</option></select></label>
+		            <label id="reportBuilderLayoutPeriodCellLabel"><span>Reporting period cell</span><input id="reportBuilderLayoutPeriodCell" type="text" value="A3"></label>
+		            <label id="reportBuilderLayoutStartDateCellLabel" style="display:none;"><span>Beginning date cell</span><input id="reportBuilderLayoutStartDateCell" type="text" value="A3"></label>
+		            <label id="reportBuilderLayoutEndDateCellLabel" style="display:none;"><span>Ending date cell</span><input id="reportBuilderLayoutEndDateCell" type="text" value="B3"></label>
 		            <label><span>Table starting row</span><input id="reportBuilderLayoutTableRow" type="number" min="1" max="10000" value="5"></label>
 		            <label><span>Table starting column</span><input id="reportBuilderLayoutTableColumn" type="text" value="A" maxlength="3"></label>
 		            <label><span><input id="reportBuilderLayoutIncludeHeader" type="checkbox" checked> Include table header row</span></label>
