@@ -466,7 +466,9 @@ function publicReport(report) {
     name: String(report.name || report.id || '').trim(),
     description: String(report.description || '').trim(),
     published: report.published === true,
+    hmi_enabled: report.hmi_enabled === true,
     period: String(report.period || 'month').trim(),
+    week_start: String(report.week_start || 'sunday') === 'monday' ? 'monday' : 'sunday',
     interval_minutes: normalizeIntRange(report.interval_minutes, 60, 1, 60),
     group_by: String(report.group_by || 'day').trim(),
     timezone: String(report.timezone || 'UTC').trim(),
@@ -814,8 +816,10 @@ function normalizeReportDefinition(value) {
     description: String(source.description || '').trim().slice(0, 2000),
     created_by: String(source.created_by || '').trim().slice(0, 191),
     published: normalizeBool(source.published, false),
+    hmi_enabled: normalizeBool(source.hmi_enabled, false),
     timezone,
-    period: ['daily', 'month', 'yearly', 'custom'].includes(String(source.period || 'month')) ? String(source.period || 'month') : 'month',
+    period: ['daily', 'weekly', 'month', 'yearly', 'custom'].includes(String(source.period || 'month')) ? String(source.period || 'month') : 'month',
+    week_start: String(source.week_start || 'sunday') === 'monday' ? 'monday' : 'sunday',
     interval_minutes: [1, 5, 10, 15, 30, 60].includes(Math.trunc(Number(source.interval_minutes)))
       ? Math.trunc(Number(source.interval_minutes)) : 60,
     group_by: ['hour', 'day', 'month', 'raw'].includes(String(source.group_by || 'day')) ? String(source.group_by || 'day') : 'day',
@@ -834,6 +838,11 @@ function reportCliRangeArgs(report, values) {
   const read = (name) => String(
     typeof values?.get === 'function' ? (values.get(name) || '') : (values?.[name] || '')
   ).trim();
+  if (read('range_mode') === 'last7') {
+    const value = read('period_value');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('A valid last-seven-days ending date is required.');
+    return { args: ['--range-mode', 'last7', '--period-value', value], label: value };
+  }
   if (period === 'custom') {
     const start = read('start_date');
     const end = read('end_date');
@@ -843,7 +852,7 @@ function reportCliRangeArgs(report, values) {
     return { args: ['--start-date', start, '--end-date', end], label: `${start}-to-${end}` };
   }
   const value = read('period_value') || read('month');
-  const valid = period === 'daily' ? /^\d{4}-\d{2}-\d{2}$/.test(value)
+  const valid = ['daily', 'weekly'].includes(period) ? /^\d{4}-\d{2}-\d{2}$/.test(value)
     : period === 'yearly' ? /^\d{4}$/.test(value)
       : /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
   if (!valid) throw new Error(`A valid ${period} report period is required.`);
@@ -4347,6 +4356,7 @@ const server = http.createServer(async (req, res) => {
         if (existing && !canManage) {
           source.access = existing.access;
           source.published = existing.published;
+          source.hmi_enabled = existing.hmi_enabled;
         }
         source.created_by = existing
           ? (String(existing.created_by || '').trim() || authStatusUsername(reportStatus))
@@ -4688,6 +4698,35 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/reports/hmi/preview') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(body.id);
+      const report = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
+      if (!report || report.published !== true || report.hmi_enabled !== true) {
+        sendJson(res, 404, { ok: false, error: `HMI report not found: ${id}` });
+        return;
+      }
+      const range = reportCliRangeArgs(report, body);
+      const result = await new Promise((resolve) => {
+        child_process.execFile(REPORT_BIN, [
+          'preview', '--definitions', REPORT_DEFINITIONS_PATH, '--id', id,
+          ...range.args, '--historian-url', REPORT_HISTORIAN_URL, '--logger-url', REPORT_LOGGER_URL
+        ], { encoding: 'utf8', timeout: 120000, maxBuffer: 20 * 1024 * 1024 },
+        (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+      });
+      if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
+      sendJson(res, 200, JSON.parse(result.stdout));
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
+    return;
+  }
+
   if (url.pathname === '/api/reports') {
     if (req.method !== 'GET') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
@@ -4712,13 +4751,28 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === '/api/reports/download') {
+  if (url.pathname === '/api/reports/hmi') {
     if (req.method !== 'GET') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    const reportStatus = await requireReportsPerm();
-    if (!reportStatus) return;
+    const reports = readReportDefinitions()
+      .filter((report) => report.published === true && report.hmi_enabled === true)
+      .map((report) => publicReport(report))
+      .filter((report) => report.id && report.name)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    sendJson(res, 200, { ok: true, reports });
+    return;
+  }
+
+  if (url.pathname === '/api/reports/download' || url.pathname === '/api/reports/hmi/download') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const hmiRequest = url.pathname === '/api/reports/hmi/download';
+    const reportStatus = hmiRequest ? null : await requireReportsPerm();
+    if (!hmiRequest && !reportStatus) return;
 
     const id = sanitizeId(url.searchParams.get('id'));
     const format = String(url.searchParams.get('format') || 'xlsx').trim().toLowerCase();
@@ -4727,7 +4781,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const rawReport = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
-    if (!rawReport || rawReport.published !== true || !canAccessReport(rawReport, reportStatus, 'download')) {
+    const grant = rawReport && !hmiRequest ? reportGrant(rawReport, reportStatus) : null;
+    if (!rawReport || rawReport.published !== true || (hmiRequest ? rawReport.hmi_enabled !== true : !grant?.download)) {
       sendJson(res, 404, { ok: false, error: `Published report not found: ${id}` });
       return;
     }

@@ -1181,10 +1181,14 @@
 		          <label><span>Report type</span>
 		            <select id="reportBuilderPeriod">
 		              <option value="daily">Daily (configurable row interval)</option>
+		              <option value="weekly">Weekly (daily rows)</option>
 		              <option value="month" selected>Monthly (daily rows)</option>
 		              <option value="yearly">Yearly (monthly rows)</option>
 		              <option value="custom">Custom date range</option>
 		            </select>
+		          </label>
+		          <label id="reportBuilderWeekStartLabel" style="display:none;"><span>Week starts on</span>
+		            <select id="reportBuilderWeekStart"><option value="sunday">Sunday</option><option value="monday">Monday</option></select>
 		          </label>
 		          <label id="reportBuilderIntervalLabel" style="display:none;"><span>Row interval</span>
 		            <select id="reportBuilderInterval">
@@ -1209,6 +1213,7 @@
 		          <label><span><input id="reportBuilderOds" type="checkbox"> OpenDocument (.ods)</span></label>
 		          <label><span><input id="reportBuilderCsv" type="checkbox" checked> CSV (.csv)</span></label>
 		          <label><span><input id="reportBuilderPublished" type="checkbox"> Published</span></label>
+		          <label><span><input id="reportBuilderHmiEnabled" type="checkbox"> Allow HMI display</span></label>
 		        </div>
 		        <h4 style="margin-top: 18px;">Data Source</h4>
 		        <div class="grid2">

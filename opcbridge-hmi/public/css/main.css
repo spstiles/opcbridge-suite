@@ -400,6 +400,17 @@ body.edit-mode .left-toolbar {
     opacity: 0.7;
 }
 
+.hmi-report-table { display: flex; flex-direction: column; min-height: 0; user-select: none; }
+.hmi-report-table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .5em; padding: .4em .55em; background: rgba(0,0,0,.08); }
+.hmi-report-table-controls { display: inline-flex; gap: .3em; }
+.hmi-report-table-controls button { font: inherit; padding: .15em .55em; cursor: pointer; }
+.hmi-report-table-controls input { font: inherit; min-width: 7em; max-width: 10em; padding: .12em .3em; }
+.hmi-report-table-period { padding: .25em .55em; background: rgba(0,0,0,.04); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hmi-report-table-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.hmi-report-table table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+.hmi-report-table th, .hmi-report-table td { padding: .35em .55em; border: 1px solid rgba(0,0,0,.28); text-align: left; }
+.hmi-report-table tr.is-summary { font-weight: 700; }
+
 .alarms-badge {
     font-size: 12px;
     font-weight: 600;

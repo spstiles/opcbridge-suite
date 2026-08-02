@@ -268,6 +268,9 @@
   reportBuilderName: document.getElementById('reportBuilderName'),
   reportBuilderDescription: document.getElementById('reportBuilderDescription'),
   reportBuilderPeriod: document.getElementById('reportBuilderPeriod'),
+  reportBuilderHmiEnabled: document.getElementById('reportBuilderHmiEnabled'),
+  reportBuilderWeekStart: document.getElementById('reportBuilderWeekStart'),
+  reportBuilderWeekStartLabel: document.getElementById('reportBuilderWeekStartLabel'),
   reportBuilderIntervalLabel: document.getElementById('reportBuilderIntervalLabel'),
   reportBuilderInterval: document.getElementById('reportBuilderInterval'),
   reportBuilderGroupByLabel: document.getElementById('reportBuilderGroupByLabel'),
@@ -6365,13 +6368,13 @@ function configurePublishedReportPeriod(report) {
     return;
   }
   if (!els.publishedReportMonth) return;
-  const labels = { daily: 'Report date', month: 'Report month', yearly: 'Report year' };
-  const units = { daily: 'day', month: 'month', yearly: 'year' };
+  const labels = { daily: 'Report date', weekly: 'Week containing', month: 'Report month', yearly: 'Report year' };
+  const units = { daily: 'day', weekly: 'week', month: 'month', yearly: 'year' };
   els.publishedReportPeriodLabel.textContent = labels[period] || labels.month;
-  els.publishedReportMonth.type = period === 'daily' ? 'date' : (period === 'yearly' ? 'number' : 'month');
+  els.publishedReportMonth.type = ['daily', 'weekly'].includes(period) ? 'date' : (period === 'yearly' ? 'number' : 'month');
   els.publishedReportMonth.removeAttribute('min');
   els.publishedReportMonth.removeAttribute('max');
-  if (period === 'daily' && !/^\d{4}-\d{2}-\d{2}$/.test(els.publishedReportMonth.value)) {
+  if (['daily', 'weekly'].includes(period) && !/^\d{4}-\d{2}-\d{2}$/.test(els.publishedReportMonth.value)) {
     els.publishedReportMonth.value = localIsoDate(now);
   } else if (period === 'yearly') {
     els.publishedReportMonth.min = '2000';
@@ -6399,7 +6402,7 @@ function publishedReportRangePayload() {
       ? { start_date, end_date } : null;
   }
   const value = String(els.publishedReportMonth?.value || '').trim();
-  const valid = period === 'daily' ? /^\d{4}-\d{2}-\d{2}$/.test(value)
+  const valid = ['daily', 'weekly'].includes(period) ? /^\d{4}-\d{2}-\d{2}$/.test(value)
     : period === 'yearly' ? /^\d{4}$/.test(value)
       : /^\d{4}-\d{2}$/.test(value);
   return valid ? { period_value: value } : null;
@@ -6409,9 +6412,9 @@ function shiftPublishedReportPeriod(direction) {
   const period = String(selectedPublishedReport()?.period || 'month');
   const value = String(els.publishedReportMonth?.value || '').trim();
   let next = '';
-  if (period === 'daily' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  if (['daily', 'weekly'].includes(period) && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
     const date = new Date(`${value}T12:00:00`);
-    date.setDate(date.getDate() + direction);
+    date.setDate(date.getDate() + direction * (period === 'weekly' ? 7 : 1));
     next = localIsoDate(date);
   } else if (period === 'yearly' && /^\d{4}$/.test(value)) {
     next = String(Number(value) + direction);
@@ -6814,6 +6817,11 @@ function showReportBuilder(report) {
       ? 'Manage access is required to publish or unpublish this report.'
       : '';
   }
+  if (els.reportBuilderHmiEnabled) {
+    els.reportBuilderHmiEnabled.disabled = Boolean(report) && !permissions.manage;
+    els.reportBuilderHmiEnabled.title = els.reportBuilderHmiEnabled.disabled
+      ? 'Manage access is required to allow or prevent HMI display.' : '';
+  }
   const canManageTemplate = !report || permissions.manage;
   if (els.reportBuilderTemplateFile) els.reportBuilderTemplateFile.disabled = !canManageTemplate;
   if (els.reportBuilderTemplateUploadBtn) els.reportBuilderTemplateUploadBtn.disabled = !canManageTemplate;
@@ -6979,6 +6987,12 @@ function renderReportBuilderSourceUi() {
       ? ''
       : 'Manage access is required to publish or unpublish this report.';
   }
+  if (els.reportBuilderHmiEnabled) {
+    const current = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId) || null;
+    const canManage = !state.reportBuilderOriginalId || reportPermissions(current).manage;
+    els.reportBuilderHmiEnabled.disabled = !canManage;
+    els.reportBuilderHmiEnabled.title = canManage ? '' : 'Manage access is required to allow or prevent HMI display.';
+  }
 }
 
 async function loadReportBuilderDatabaseSchema(selection = {}) {
@@ -7087,6 +7101,8 @@ function reportBuilderCurrentDefinition() {
     description: String(els.reportBuilderDescription?.value || '').trim(),
     timezone: String(els.reportBuilderTimezone?.value || 'UTC').trim(),
     period: String(els.reportBuilderPeriod?.value || 'month'),
+    hmi_enabled: Boolean(els.reportBuilderHmiEnabled?.checked),
+    week_start: String(els.reportBuilderWeekStart?.value || 'sunday'),
     interval_minutes: Math.trunc(Number(els.reportBuilderInterval?.value || 60) || 60),
     group_by: String(els.reportBuilderGroupBy?.value || 'day'),
     data_source: reportBuilderDataSourceDefinition(),
@@ -8096,6 +8112,9 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderName) els.reportBuilderName.value = String(value.name || '');
   if (els.reportBuilderDescription) els.reportBuilderDescription.value = String(value.description || '');
   if (els.reportBuilderPeriod) els.reportBuilderPeriod.value = String(value.period || 'month');
+  if (els.reportBuilderHmiEnabled) els.reportBuilderHmiEnabled.checked = value.hmi_enabled === true;
+  if (els.reportBuilderWeekStart) els.reportBuilderWeekStart.value = String(value.week_start || 'sunday');
+  if (els.reportBuilderWeekStartLabel) els.reportBuilderWeekStartLabel.style.display = String(value.period || 'month') === 'weekly' ? '' : 'none';
   if (els.reportBuilderInterval) els.reportBuilderInterval.value = String(value.interval_minutes || 60);
   if (els.reportBuilderIntervalLabel) {
     els.reportBuilderIntervalLabel.style.display = String(value.period || 'month') === 'daily' ? '' : 'none';
@@ -8371,6 +8390,9 @@ function wireReportBuilderUi() {
     }
     if (els.reportBuilderGroupByLabel) {
       els.reportBuilderGroupByLabel.style.display = els.reportBuilderPeriod.value === 'custom' ? '' : 'none';
+    }
+    if (els.reportBuilderWeekStartLabel) {
+      els.reportBuilderWeekStartLabel.style.display = els.reportBuilderPeriod.value === 'weekly' ? '' : 'none';
     }
   });
   if (els.reportBuilderNewBtn) els.reportBuilderNewBtn.addEventListener('click', () => showReportBuilder(null));

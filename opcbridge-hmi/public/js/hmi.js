@@ -62,6 +62,7 @@ const leftEllipseToolBtn = document.getElementById("leftEllipseToolBtn");
 const leftTextToolBtn = document.getElementById("leftTextToolBtn");
 const leftButtonToolBtn = document.getElementById("leftButtonToolBtn");
 const leftAlarmsPanelToolBtn = document.getElementById("leftAlarmsPanelToolBtn");
+const leftReportTableToolBtn = document.getElementById("leftReportTableToolBtn");
 const editorFilename = document.getElementById("editor-filename");
 const jsoncEditor = document.getElementById("jsoncEditor");
 const editorStatus = document.getElementById("editorStatus");
@@ -84,6 +85,7 @@ const circleCenterToolBtn = document.getElementById("circleCenterToolBtn");
 const lineToolBtn = document.getElementById("lineToolBtn");
 const curveToolBtn = document.getElementById("curveToolBtn");
 const alarmsPanelToolBtn = document.getElementById("alarmsPanelToolBtn");
+const reportTableToolBtn = document.getElementById("reportTableToolBtn");
 const groupProps = document.getElementById("groupProps");
 const groupXInput = document.getElementById("groupX");
 const groupYInput = document.getElementById("groupY");
@@ -2452,7 +2454,7 @@ const getPropertiesPaneTitle = (obj) => {
     case "group": return "Group Properties";
     case "viewport": return "Viewport Properties";
     case "rect": return "Rectangle Properties";
-    case "alarms-panel": return "Alarm Panel Properties";
+    case "alarms-panel": return obj.panelMode === "report" ? "Report Table Properties" : "Alarm Panel Properties";
     case "ellipse": return "Ellipse Properties";
     case "circle": return "Circle Properties";
     case "line": return "Line Properties";
@@ -3905,6 +3907,23 @@ const paintPickerPalette = document.getElementById("paintPickerPalette");
 const paintPickerApplyBtn = document.getElementById("paintPickerApplyBtn");
 const paintPickerCancelBtn = document.getElementById("paintPickerCancelBtn");
 const alarmsPanelPropsFields = document.getElementById("alarmsPanelPropsFields");
+const reportTablePropsFields = document.getElementById("reportTablePropsFields");
+const reportTableReportInput = document.getElementById("reportTableReport");
+const reportTableTitleInput = document.getElementById("reportTableTitle");
+const reportTableDateFormatInput = document.getElementById("reportTableDateFormat");
+const reportTableRangeModeInput = document.getElementById("reportTableRangeMode");
+const reportTableShowNavigationInput = document.getElementById("reportTableShowNavigation");
+const reportTableShowDownloadInput = document.getElementById("reportTableShowDownload");
+const reportTableFontSizeInput = document.getElementById("reportTableFontSize");
+const reportTableBoldInput = document.getElementById("reportTableBold");
+const reportTableHeaderBgInput = document.getElementById("reportTableHeaderBg");
+const reportTableHeaderTextInput = document.getElementById("reportTableHeaderText");
+const reportTableRowBgInput = document.getElementById("reportTableRowBg");
+const reportTableAltRowBgInput = document.getElementById("reportTableAltRowBg");
+const reportTableRowTextInput = document.getElementById("reportTableRowText");
+const reportTableSummaryBgInput = document.getElementById("reportTableSummaryBg");
+const reportTableSummaryTextInput = document.getElementById("reportTableSummaryText");
+const reportTableMissingTextInput = document.getElementById("reportTableMissingText");
 const alarmsPanelIdInput = document.getElementById("alarmsPanelId");
 const alarmsPanelHistoryDaysInput = document.getElementById("alarmsPanelHistoryDays");
 const alarmsPanelOnlyUnackedInput = document.getElementById("alarmsPanelOnlyUnacked");
@@ -4631,7 +4650,7 @@ const screenHasAlarmsPanel = () => {
     if (!Array.isArray(objects)) return false;
     for (const obj of objects) {
       if (!obj) continue;
-      if (obj.type === "alarms-panel") return true;
+      if (obj.type === "alarms-panel" && obj.panelMode !== "report") return true;
       if (obj.type === "group" && Array.isArray(obj.children) && walk(obj.children)) return true;
     }
     return false;
@@ -4645,7 +4664,7 @@ const getScreenAlarmHistoryDays = () => {
     if (!Array.isArray(objects)) return;
     objects.forEach((obj) => {
       if (!obj) return;
-      if (obj.type === "alarms-panel") {
+      if (obj.type === "alarms-panel" && obj.panelMode !== "report") {
         const days = Number(obj.historyDays ?? ALARM_HISTORY_WINDOW_DAYS);
         if (Number.isFinite(days) && days > maxDays) maxDays = days;
       }
@@ -4661,7 +4680,7 @@ const findAlarmsPanelObjectByScrollKey = (scrollKey) => {
     if (!Array.isArray(objects)) return null;
     for (const obj of objects) {
       if (!obj) continue;
-      if (obj.type === "alarms-panel" && getAlarmsPanelScrollKey(obj) === scrollKey) return obj;
+      if (obj.type === "alarms-panel" && obj.panelMode !== "report" && getAlarmsPanelScrollKey(obj) === scrollKey) return obj;
       if (obj.type === "group") {
         const found = walk(obj.children);
         if (found) return found;
@@ -9458,7 +9477,7 @@ const getAlarmPanelIds = () => {
     if (!Array.isArray(objects)) return;
     objects.forEach((obj) => {
       if (!obj) return;
-      if (obj.type === "alarms-panel" && obj.id) ids.push(String(obj.id));
+      if (obj.type === "alarms-panel" && obj.panelMode !== "report" && obj.id) ids.push(String(obj.id));
       if (obj.type === "group") walk(obj.children);
     });
   };
@@ -10988,6 +11007,99 @@ const renderIndicatorInto = (parent, obj) => {
   return group;
 };
 
+const reportTableState = { reports: [], reportsPromise: null, cache: new Map() };
+
+const reportTableIsoDate = (date = new Date()) => {
+  const year = date.getFullYear();
+  return `${year}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+
+const loadHmiReports = async () => {
+  if (reportTableState.reports.length) return reportTableState.reports;
+  if (reportTableState.reportsPromise) return reportTableState.reportsPromise;
+  reportTableState.reportsPromise = fetch("/api/reports/hmi", { credentials: "same-origin" })
+    .then(async (response) => {
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `Report API HTTP ${response.status}`);
+      reportTableState.reports = Array.isArray(body.reports) ? body.reports : [];
+      return reportTableState.reports;
+    })
+    .finally(() => { reportTableState.reportsPromise = null; });
+  return reportTableState.reportsPromise;
+};
+
+const reportTableRangeBody = (obj, report) => {
+  const anchor = /^\d{4}-\d{2}-\d{2}$/.test(String(obj.reportAnchor || "")) ? String(obj.reportAnchor) : reportTableIsoDate();
+  if (obj.reportRangeMode === "last7") return { range_mode: "last7", period_value: anchor };
+  if (report?.period === "yearly") return { period_value: anchor.slice(0, 4) };
+  if (report?.period === "month") return { period_value: anchor.slice(0, 7) };
+  if (report?.period === "custom") return { start_date: anchor, end_date: anchor };
+  return { period_value: anchor };
+};
+
+const requestReportTableData = (obj) => {
+  const report = reportTableState.reports.find((item) => item.id === obj.reportId);
+  if (!report || !obj.reportId) return;
+  const range = reportTableRangeBody(obj, report);
+  const key = `${obj.reportId}|${obj.reportRangeMode || "report"}|${JSON.stringify(range)}`;
+  if (reportTableState.cache.has(key)) return;
+  const entry = { loading: true, data: null, error: "" };
+  reportTableState.cache.set(key, entry);
+  fetch("/api/reports/hmi/preview", {
+    method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: obj.reportId, ...range })
+  }).then(async (response) => {
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `Report API HTTP ${response.status}`);
+    entry.data = body;
+  }).catch((error) => { entry.error = String(error?.message || error); })
+    .finally(() => {
+      entry.loading = false;
+      renderScreen();
+      window.setTimeout(() => {
+        if (reportTableState.cache.get(key) === entry) reportTableState.cache.delete(key);
+        renderScreen();
+      }, entry.error ? 15000 : 60000);
+    });
+};
+
+const getReportTableEntry = (obj) => {
+  const report = reportTableState.reports.find((item) => item.id === obj.reportId);
+  const range = reportTableRangeBody(obj, report);
+  return reportTableState.cache.get(`${obj.reportId}|${obj.reportRangeMode || "report"}|${JSON.stringify(range)}`) || null;
+};
+
+const formatReportTableValue = (value, precision) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(Math.max(0, Math.min(10, Number(precision) || 0))) : String(value);
+};
+
+const formatReportTableDate = (value, mode = "date") => {
+  const raw = String(value ?? "").trim();
+  if (!raw || mode === "raw") return raw;
+  let normalized = raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) normalized = `${raw}T00:00:00`;
+  else if (/^\d{4}-\d{2}-\d{2} /.test(raw)) normalized = raw.replace(" ", "T");
+  else if (/^\d{4}-\d{2}$/.test(raw)) normalized = `${raw}-01T00:00:00`;
+  else if (/^\d{4}$/.test(raw)) normalized = `${raw}-01-01T00:00:00`;
+  const date = new Date(normalized);
+  if (!Number.isFinite(date.getTime())) return raw;
+  if (mode === "date") return date.toLocaleDateString();
+  if (mode === "month") return date.toLocaleDateString(undefined, { month: "numeric", year: "numeric" });
+  if (mode === "time") return date.toLocaleTimeString();
+  return date.toLocaleString();
+};
+
+const automaticReportTableDateFormat = (obj, report) => {
+  if (obj.reportRangeMode === "last7") return "date";
+  const period = String(report?.period || "month");
+  if (period === "daily") return "datetime";
+  if (period === "yearly") return "month";
+  if (period === "custom") return ["hour", "raw"].includes(String(report?.group_by || "day")) ? "datetime" : (report?.group_by === "month" ? "month" : "date");
+  return "date";
+};
+
 const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
   if (!parent || !obj) return;
   obj = getDisplayObject(obj);
@@ -11182,6 +11294,96 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	  }
 
 	  if (obj.type === "alarms-panel") {
+	    if (obj.panelMode === "report") {
+	      const x = Number(obj.x ?? 0), y = Number(obj.y ?? 0), w = Number(obj.w ?? 640), h = Number(obj.h ?? 320);
+	      const reportParent = hasRotation ? (() => { const wrapper = document.createElementNS(ns, "g"); applyRotationTransform(wrapper, obj); parent.appendChild(wrapper); return wrapper; })() : parent;
+	      const rect = document.createElementNS(ns, "rect");
+	      rect.setAttribute("x", x); rect.setAttribute("y", y); rect.setAttribute("width", w); rect.setAttribute("height", h);
+	      rect.setAttribute("rx", obj.rx ?? 0); rect.setAttribute("fill", obj.fill || "#ffffff");
+	      const reportStroke = obj.stroke || "#000000", reportStrokeWidth = Number(obj.strokeWidth ?? 1);
+	      setFlatBorderStroke(rect, reportStroke, reportStrokeWidth, obj.borderStyle);
+	      reportParent.appendChild(rect);
+	      if (reportStroke !== "none" && reportStrokeWidth > 0) appendBorderStylePaths(reportParent, x, y, w, h, obj.borderStyle, reportStrokeWidth);
+	      const fo = document.createElementNS(ns, "foreignObject");
+	      fo.setAttribute("x", x); fo.setAttribute("y", y); fo.setAttribute("width", w); fo.setAttribute("height", h);
+	      fo.style.pointerEvents = isEditMode ? "none" : "auto";
+	      const panel = document.createElementNS(xhtml, "div");
+	      panel.className = "hmi-report-table";
+	      Object.assign(panel.style, {
+	        width: "100%", height: "100%", boxSizing: "border-box", overflow: "hidden",
+	        fontSize: `${Number(obj.fontSize ?? 14)}px`, fontWeight: obj.bold ? "700" : "400",
+	        color: obj.rowText || "#111827"
+	      });
+	      if (!reportTableState.reports.length && !reportTableState.reportsPromise) {
+	        loadHmiReports().then(() => { requestReportTableData(obj); renderScreen(); }).catch(() => renderScreen());
+	      } else requestReportTableData(obj);
+	      const report = reportTableState.reports.find((item) => item.id === obj.reportId);
+	      const entry = getReportTableEntry(obj);
+	      const toolbar = document.createElementNS(xhtml, "div"); toolbar.className = "hmi-report-table-toolbar";
+	      const title = document.createElementNS(xhtml, "strong"); title.textContent = String(obj.reportTitle || "").trim() || entry?.data?.name || report?.name || "Report Table"; toolbar.appendChild(title);
+	      const controls = document.createElementNS(xhtml, "span"); controls.className = "hmi-report-table-controls";
+	      ["pointerdown", "mousedown", "touchstart", "click"].forEach((eventName) => controls.addEventListener(eventName, (event) => event.stopPropagation(), { passive: true }));
+	      const shift = (direction) => {
+	        const anchor = new Date(`${obj.reportAnchor || reportTableIsoDate()}T12:00:00`);
+	        const days = obj.reportRangeMode === "last7" || report?.period === "weekly" ? 7 : (report?.period === "daily" ? 1 : 0);
+	        if (report?.period === "yearly" && obj.reportRangeMode !== "last7") anchor.setFullYear(anchor.getFullYear() + direction);
+	        else if (report?.period === "month" && obj.reportRangeMode !== "last7") anchor.setMonth(anchor.getMonth() + direction);
+	        else anchor.setDate(anchor.getDate() + direction * (days || 1));
+	        obj.reportAnchor = reportTableIsoDate(anchor); renderScreen();
+	      };
+	      if (obj.showNavigation !== false) {
+	        const previous = document.createElementNS(xhtml, "button"); previous.textContent = "‹";
+	        previous.title = "Previous period";
+	        previous.addEventListener("click", (event) => { event.stopPropagation(); shift(-1); });
+	        controls.appendChild(previous);
+	        const picker = document.createElementNS(xhtml, "input");
+	        const anchorValue = /^\d{4}-\d{2}-\d{2}$/.test(String(obj.reportAnchor || "")) ? obj.reportAnchor : reportTableIsoDate();
+	        const pickerPeriod = obj.reportRangeMode === "last7" ? "daily" : String(report?.period || "daily");
+	        picker.type = pickerPeriod === "month" ? "month" : (pickerPeriod === "yearly" ? "number" : "date");
+	        if (pickerPeriod === "yearly") {
+	          picker.min = "2000"; picker.max = "2100"; picker.step = "1"; picker.value = anchorValue.slice(0, 4);
+	        } else picker.value = pickerPeriod === "month" ? anchorValue.slice(0, 7) : anchorValue;
+	        picker.title = pickerPeriod === "yearly" ? "Report year" : (pickerPeriod === "month" ? "Report month" : "Report date");
+	        picker.addEventListener("click", (event) => event.stopPropagation());
+	        picker.addEventListener("change", (event) => {
+	          event.stopPropagation();
+	          const selected = String(picker.value || "");
+	          const nextAnchor = pickerPeriod === "yearly" && /^\d{4}$/.test(selected)
+	            ? `${selected}-01-01`
+	            : (pickerPeriod === "month" && /^\d{4}-\d{2}$/.test(selected) ? `${selected}-01` : selected);
+	          if (/^\d{4}-\d{2}-\d{2}$/.test(nextAnchor)) { obj.reportAnchor = nextAnchor; renderScreen(); }
+	        });
+	        controls.appendChild(picker);
+	        const next = document.createElementNS(xhtml, "button"); next.textContent = "›";
+	        next.title = "Next period";
+	        next.addEventListener("click", (event) => { event.stopPropagation(); shift(1); });
+	        controls.appendChild(next);
+	      }
+	      if (obj.showDownload !== false && report) {
+	        const button = document.createElementNS(xhtml, "button"); button.textContent = "Download";
+	        button.addEventListener("click", (event) => { event.stopPropagation(); const range = reportTableRangeBody(obj, report); const query = new URLSearchParams({ id: obj.reportId, format: report.formats?.[0] || "xlsx", ...range }); window.location.href = `/api/reports/hmi/download?${query}`; }); controls.appendChild(button);
+	      }
+	      toolbar.appendChild(controls); panel.appendChild(toolbar);
+	      const configuredDateFormat = ["", "auto", "alarm"].includes(String(obj.reportDateFormat || "")) ? automaticReportTableDateFormat(obj, report) : obj.reportDateFormat;
+	      const status = document.createElementNS(xhtml, "div"); status.className = "hmi-report-table-period";
+	      if (entry?.data?.start_date && entry?.data?.end_date) {
+	        const formattedStart = formatReportTableDate(entry.data.start_date, configuredDateFormat);
+	        const formattedEnd = formatReportTableDate(entry.data.end_date, configuredDateFormat);
+	        status.textContent = formattedStart === formattedEnd ? formattedStart : `${formattedStart} – ${formattedEnd}`;
+	      } else status.textContent = entry?.data?.period_label || (entry?.loading ? "Loading…" : entry?.error || "Select an HMI-enabled report");
+	      panel.appendChild(status);
+	      if (entry?.data) {
+	        const scroll = document.createElementNS(xhtml, "div"); scroll.className = "hmi-report-table-scroll";
+	        const table = document.createElementNS(xhtml, "table");
+	        const head = document.createElementNS(xhtml, "thead"), hr = document.createElementNS(xhtml, "tr");
+	        ["Period", ...(entry.data.columns || []).map((column) => column.heading)].forEach((heading) => { const th = document.createElementNS(xhtml, "th"); th.textContent = heading; th.style.background = obj.headerBg || "#1f2937"; th.style.color = obj.headerText || "#ffffff"; hr.appendChild(th); }); head.appendChild(hr); table.appendChild(head);
+	        const body = document.createElementNS(xhtml, "tbody");
+	        (entry.data.rows || []).forEach((row, index) => { const tr = document.createElementNS(xhtml, "tr"); tr.style.background = index % 2 ? (obj.altRowBg || "#f3f4f6") : (obj.rowBg || "#ffffff"); const values = [formatReportTableDate(row.date || row.label || "", configuredDateFormat), ...((row.values || []).map((value, column) => formatReportTableValue(value, entry.data.columns?.[column]?.precision)))]; values.forEach((value) => { const td = document.createElementNS(xhtml, "td"); td.textContent = value; if (value === "—") td.style.color = obj.missingText || "#9ca3af"; tr.appendChild(td); }); body.appendChild(tr); });
+	        (entry.data.summary_rows || []).forEach((row) => { const tr = document.createElementNS(xhtml, "tr"); tr.className = "is-summary"; tr.style.background = obj.summaryBg || "#dbeafe"; tr.style.color = obj.summaryText || "#111827"; const values = [row.label || "Summary", ...((row.values || []).map((value, column) => formatReportTableValue(value, row.precisions?.[column] ?? entry.data.columns?.[column]?.precision)))]; values.forEach((value) => { const td = document.createElementNS(xhtml, "td"); td.textContent = value; tr.appendChild(td); }); body.appendChild(tr); });
+	        table.appendChild(body); scroll.appendChild(table); panel.appendChild(scroll);
+	      }
+	      fo.appendChild(panel); reportParent.appendChild(fo); return;
+	    }
 	    const x = Number(obj.x ?? 0);
 	    const y = Number(obj.y ?? 0);
 	    const w = Number(obj.w ?? 320);
@@ -12909,11 +13111,23 @@ const syncPropertiesFromSelection = () => {
     if (viewportBorderWidthInput) viewportBorderWidthInput.value = Number(borderCfg.width ?? 1);
   }
   if (obj.type === "rect" || obj.type === "alarms-panel") {
-    if (rectPropsTitle) rectPropsTitle.textContent = obj.type === "alarms-panel" ? "Alarms Panel" : "Rectangle";
+    const isReportTable = obj.type === "alarms-panel" && obj.panelMode === "report";
+    if (rectPropsTitle) rectPropsTitle.textContent = isReportTable ? "Report Table" : (obj.type === "alarms-panel" ? "Alarms Panel" : "Rectangle");
     if (alarmsPanelPropsFields) {
       const show = obj.type === "alarms-panel";
       alarmsPanelPropsFields.classList.toggle("is-hidden", !show);
       alarmsPanelPropsFields.hidden = !show;
+      if (show) {
+        Array.from(alarmsPanelPropsFields.children).forEach((child) => {
+          if (child === reportTablePropsFields) return;
+          child.classList.toggle("is-hidden", isReportTable);
+          child.hidden = isReportTable;
+        });
+      }
+      if (reportTablePropsFields) {
+        reportTablePropsFields.classList.toggle("is-hidden", !isReportTable);
+        reportTablePropsFields.hidden = !isReportTable;
+      }
     }
     if (rectXInput) rectXInput.value = Number(obj.x) || 0;
     if (rectYInput) rectYInput.value = Number(obj.y) || 0;
@@ -12923,6 +13137,23 @@ const syncPropertiesFromSelection = () => {
     if (rectRadiusInput) rectRadiusInput.value = Number(obj.rx ?? 0);
     if (rectShadowInput) rectShadowInput.checked = Boolean(obj.shadow);
     if (obj.type === "alarms-panel") {
+      if (isReportTable) {
+        loadHmiReports().then(() => {
+          if (!reportTableReportInput) return;
+          reportTableReportInput.replaceChildren(new Option("Select a report", ""));
+          reportTableState.reports.forEach((report) => reportTableReportInput.add(new Option(report.name, report.id)));
+          reportTableReportInput.value = obj.reportId || "";
+        }).catch(() => {});
+        if (reportTableRangeModeInput) reportTableRangeModeInput.value = obj.reportRangeMode || "report";
+        if (reportTableTitleInput) reportTableTitleInput.value = obj.reportTitle || "";
+        if (reportTableDateFormatInput) reportTableDateFormatInput.value = ["", "alarm"].includes(String(obj.reportDateFormat || "")) ? "auto" : obj.reportDateFormat;
+        if (reportTableShowNavigationInput) reportTableShowNavigationInput.checked = obj.showNavigation !== false;
+        if (reportTableShowDownloadInput) reportTableShowDownloadInput.checked = obj.showDownload !== false;
+        if (reportTableFontSizeInput) reportTableFontSizeInput.value = Number(obj.fontSize ?? 14);
+        if (reportTableBoldInput) reportTableBoldInput.checked = Boolean(obj.bold);
+        const colors = [[reportTableHeaderBgInput, obj.headerBg, "#1f2937"], [reportTableHeaderTextInput, obj.headerText, "#ffffff"], [reportTableRowBgInput, obj.rowBg, "#ffffff"], [reportTableAltRowBgInput, obj.altRowBg, "#f3f4f6"], [reportTableRowTextInput, obj.rowText, "#111827"], [reportTableSummaryBgInput, obj.summaryBg, "#dbeafe"], [reportTableSummaryTextInput, obj.summaryText, "#111827"], [reportTableMissingTextInput, obj.missingText, "#9ca3af"]];
+        colors.forEach(([input, value, fallback]) => { if (input) input.value = value || fallback; });
+      }
       if (alarmsPanelIdInput) setInputValueSafe(alarmsPanelIdInput, obj.id || "");
       if (alarmsPanelHistoryDaysInput) setInputValueSafe(alarmsPanelHistoryDaysInput, Number(obj.historyDays ?? ALARM_HISTORY_WINDOW_DAYS));
       if (alarmsPanelOnlyUnackedInput) alarmsPanelOnlyUnackedInput.checked = Boolean(obj.onlyUnacked);
@@ -19031,6 +19262,26 @@ if (alarmsPanelBoldInput) {
     updateRectProperty({ bold: alarmsPanelBoldInput.checked });
   });
 }
+
+const bindReportTableProperty = (input, key, read = (element) => element.value) => {
+  if (!input) return;
+  input.addEventListener("change", () => {
+    const activeObjects = getActiveObjects();
+    const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+    if (!obj || obj.type !== "alarms-panel" || obj.panelMode !== "report") return;
+    updateRectProperty({ [key]: read(input) });
+  });
+};
+bindReportTableProperty(reportTableReportInput, "reportId");
+bindReportTableProperty(reportTableTitleInput, "reportTitle");
+bindReportTableProperty(reportTableDateFormatInput, "reportDateFormat");
+bindReportTableProperty(reportTableRangeModeInput, "reportRangeMode");
+bindReportTableProperty(reportTableShowNavigationInput, "showNavigation", (input) => input.checked);
+bindReportTableProperty(reportTableShowDownloadInput, "showDownload", (input) => input.checked);
+bindReportTableProperty(reportTableFontSizeInput, "fontSize", (input) => Math.max(6, Number(input.value) || 14));
+bindReportTableProperty(reportTableBoldInput, "bold", (input) => input.checked);
+[[reportTableHeaderBgInput, "headerBg"], [reportTableHeaderTextInput, "headerText"], [reportTableRowBgInput, "rowBg"], [reportTableAltRowBgInput, "altRowBg"], [reportTableRowTextInput, "rowText"], [reportTableSummaryBgInput, "summaryBg"], [reportTableSummaryTextInput, "summaryText"], [reportTableMissingTextInput, "missingText"]]
+  .forEach(([input, key]) => bindReportTableProperty(input, key));
 
 const updateAlarmsPanelFilterProperty = (key, input) => {
   if (!input) return;
@@ -28359,6 +28610,25 @@ if (leftAlarmsPanelToolBtn) {
   });
 }
 
+const insertReportTable = () => {
+  if (!currentScreenObj) return;
+  const activeObjects = ensureActiveObjects();
+  if (!activeObjects) return;
+  recordHistory();
+  activeObjects.push({
+    type: "alarms-panel", panelMode: "report", id: `reportTable${Date.now()}`,
+    x: 20, y: 20, w: 720, h: 360, rx: 0, fill: "#ffffff", stroke: "#000000", strokeWidth: 1,
+    reportId: "", reportTitle: "", reportDateFormat: "auto", reportRangeMode: "report", reportAnchor: reportTableIsoDate(),
+    showNavigation: true, showDownload: true, fontSize: 14, bold: false,
+    headerBg: "#1f2937", headerText: "#ffffff", rowBg: "#ffffff", altRowBg: "#f3f4f6",
+    rowText: "#111827", summaryBg: "#dbeafe", summaryText: "#111827", missingText: "#9ca3af"
+  });
+  selectedIndices = [activeObjects.length - 1];
+  renderScreen(); syncEditorFromScreen(); setDirty(true); setEditorTab("properties");
+};
+
+if (leftReportTableToolBtn) leftReportTableToolBtn.addEventListener("click", insertReportTable);
+
 if (leftCircleToolBtn) {
   leftCircleToolBtn.addEventListener("click", () => {
     if (!leftCircleFlyout) {
@@ -28417,6 +28687,8 @@ if (alarmsPanelToolBtn) {
     setTool(currentTool === "alarms-panel" ? "select" : "alarms-panel");
   });
 }
+
+if (reportTableToolBtn) reportTableToolBtn.addEventListener("click", insertReportTable);
 
 if (barToolBtn) {
   barToolBtn.addEventListener("click", () => {

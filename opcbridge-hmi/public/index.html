@@ -238,6 +238,9 @@
           <path d="M8 14h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
       </button>
+      <button id="leftReportTableToolBtn" class="left-tool-btn" type="button" title="Report Table" aria-label="Insert report table">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M9 5v14" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
     </nav>
 
 		  <div id="wsBadge" class="ws-badge" aria-live="polite">ws://</div>
@@ -279,6 +282,9 @@
             </button>
             <button id="alarmsPanelToolBtn" class="tool-btn" type="button" title="Alarms panel tool">
               <span class="tool-icon">AL</span>
+            </button>
+            <button id="reportTableToolBtn" class="tool-btn" type="button" title="Insert report table">
+              <span class="tool-icon">RP</span>
             </button>
 	            <button id="polylineToolBtn" class="tool-btn" type="button" title="Polyline tool">
 	              <span class="tool-icon">〰</span>
@@ -1122,6 +1128,25 @@
             </div>
 
 	              <div id="alarmsPanelPropsFields" class="prop-subgroup is-hidden" hidden>
+	                <div id="reportTablePropsFields" class="prop-subgroup is-hidden" hidden>
+	                  <div class="prop-group-title">Report Table</div>
+	                  <div class="prop-row"><label for="reportTableReport">Report</label><select id="reportTableReport"><option value="">Select a report</option></select></div>
+	                  <div class="prop-row"><label for="reportTableTitle">Display Name</label><input id="reportTableTitle" type="text" placeholder="Use report name" /></div>
+	                  <div class="prop-row"><label for="reportTableDateFormat">Period Format</label><select id="reportTableDateFormat"><option value="auto">Automatic (recommended)</option><option value="date">Month/day/year</option><option value="month">Month/year</option><option value="datetime">Date and time</option><option value="time">Time only</option><option value="raw">As reported</option></select></div>
+	                  <div class="prop-row"><label for="reportTableRangeMode">Display Range</label><select id="reportTableRangeMode"><option value="report">Report period</option><option value="last7">Last 7 days</option></select></div>
+	                  <div class="prop-row"><label for="reportTableShowNavigation">Period Navigation</label><input id="reportTableShowNavigation" type="checkbox" checked /></div>
+	                  <div class="prop-row"><label for="reportTableShowDownload">Download Button</label><input id="reportTableShowDownload" type="checkbox" checked /></div>
+	                  <div class="prop-row"><label for="reportTableFontSize">Font Size</label><input id="reportTableFontSize" type="number" min="6" step="1" /></div>
+	                  <div class="prop-row"><label for="reportTableBold">Bold</label><input id="reportTableBold" type="checkbox" /></div>
+	                  <div class="prop-row"><label for="reportTableHeaderBg">Header BG</label><input id="reportTableHeaderBg" type="color" /></div>
+	                  <div class="prop-row"><label for="reportTableHeaderText">Header Text</label><input id="reportTableHeaderText" type="color" /></div>
+	                  <div class="prop-row"><label for="reportTableRowBg">Row BG</label><input id="reportTableRowBg" type="color" /></div>
+	                  <div class="prop-row"><label for="reportTableAltRowBg">Alternate Row BG</label><input id="reportTableAltRowBg" type="color" /></div>
+	                  <div class="prop-row"><label for="reportTableRowText">Row Text</label><input id="reportTableRowText" type="color" /></div>
+	                  <div class="prop-row"><label for="reportTableSummaryBg">Summary BG</label><input id="reportTableSummaryBg" type="color" /></div>
+	                  <div class="prop-row"><label for="reportTableSummaryText">Summary Text</label><input id="reportTableSummaryText" type="color" /></div>
+	                  <div class="prop-row"><label for="reportTableMissingText">Missing Value Text</label><input id="reportTableMissingText" type="color" /></div>
+	                </div>
 	                <div class="prop-group-title">Alarms Panel</div>
 	                <div class="prop-row">
 	                  <label for="alarmsPanelId">ID</label>

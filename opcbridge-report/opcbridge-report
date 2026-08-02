@@ -65,7 +65,9 @@ function public_report(array $report): array
         'id' => (string)($report['id'] ?? ''),
         'name' => (string)($report['name'] ?? $report['id'] ?? ''),
         'description' => (string)($report['description'] ?? ''),
+        'hmi_enabled' => ($report['hmi_enabled'] ?? false) === true,
         'period' => (string)($report['period'] ?? 'month'),
+        'week_start' => (string)($report['week_start'] ?? 'sunday'),
         'interval_minutes' => (int)($report['interval_minutes'] ?? 60),
         'group_by' => (string)($report['group_by'] ?? 'day'),
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
@@ -82,7 +84,7 @@ function validate_report(array $report): array
     if ($id === '' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]*$/', $id)) {
         fail('Report id is missing or invalid');
     }
-    if (!in_array(($report['period'] ?? 'month'), ['daily', 'month', 'yearly', 'custom'], true)) {
+    if (!in_array(($report['period'] ?? 'month'), ['daily', 'weekly', 'month', 'yearly', 'custom'], true)) {
         fail("Report '{$id}' uses an unsupported period");
     }
     $intervalMinutes = (int)($report['interval_minutes'] ?? 60);
@@ -90,6 +92,7 @@ function validate_report(array $report): array
         fail("Report '{$id}' uses an unsupported daily row interval");
     }
     $report['interval_minutes'] = $intervalMinutes;
+    $report['week_start'] = (string)($report['week_start'] ?? 'sunday') === 'monday' ? 'monday' : 'sunday';
     $timezone = (string)($report['timezone'] ?? 'UTC');
     try {
         new DateTimeZone($timezone);
@@ -333,11 +336,27 @@ function report_range(array $report, array $options): array
     $timezone = (string)($report['timezone'] ?? 'UTC');
     $tz = new DateTimeZone($timezone);
     $value = option($options, 'period-value', $options['month'] ?? '');
+    if (option($options, 'range-mode', '') === 'last7') {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) fail('--period-value must use YYYY-MM-DD', 2);
+        $endDay = new DateTimeImmutable("{$value} 00:00:00", $tz);
+        $start = $endDay->modify('-6 days');
+        return [$start, $endDay->modify('+1 day'), 'day', $start->format('Y-m-d') . '-to-' . $endDay->format('Y-m-d')];
+    }
     if ($period === 'daily') {
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) fail('--period-value must use YYYY-MM-DD', 2);
         $start = new DateTimeImmutable("{$value} 00:00:00", $tz);
         $intervalMinutes = (int)($report['interval_minutes'] ?? 60);
         return [$start, $start->modify('+1 day'), "minute:{$intervalMinutes}", $value];
+    }
+    if ($period === 'weekly') {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) fail('--period-value must use YYYY-MM-DD', 2);
+        $anchor = new DateTimeImmutable("{$value} 00:00:00", $tz);
+        $day = (int)$anchor->format('w');
+        $weekStart = (string)($report['week_start'] ?? 'sunday');
+        $offset = $weekStart === 'monday' ? (($day + 6) % 7) : $day;
+        $start = $anchor->modify("-{$offset} days");
+        $end = $start->modify('+7 days');
+        return [$start, $end, 'day', $start->format('Y-m-d') . '-to-' . $end->modify('-1 day')->format('Y-m-d')];
     }
     if ($period === 'yearly') {
         if (!preg_match('/^\d{4}$/', $value)) fail('--period-value must use YYYY', 2);

@@ -472,6 +472,34 @@ const createApp = () => {
     }
   });
 
+  // SCADA enforces each report's published/HMI-enabled settings. The HMI
+  // forwards cookies when present, but HMI-enabled report display is public.
+  app.use("/api/reports", async (req, res) => {
+    try {
+      const { config: parsed } = await readConfig();
+      const scada = parsed?.scada || {};
+      const host = String(scada.host || "127.0.0.1");
+      const port = Number(scada.httpPort) || 3010;
+      const upstreamPath = String(req.originalUrl || "/api/reports");
+      const headers = { Accept: req.headers["accept"] || "*/*" };
+      if (req.headers["cookie"]) headers.Cookie = String(req.headers["cookie"]);
+      if (req.method !== "GET" && req.method !== "HEAD") headers["Content-Type"] = "application/json";
+      const response = await fetch(`http://${host}:${port}${upstreamPath}`, {
+        method: req.method,
+        headers,
+        body: (req.method === "GET" || req.method === "HEAD") ? undefined : JSON.stringify(req.body || {})
+      });
+      ["content-type", "content-disposition", "set-cookie"].forEach((name) => {
+        const value = response.headers.get(name);
+        if (value) res.setHeader(name, value);
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.status(response.status).send(Buffer.from(await response.arrayBuffer()));
+    } catch (error) {
+      res.status(502).json({ ok: false, error: `Report API unavailable: ${String(error?.message || error)}` });
+    }
+  });
+
   app.get("/api/audit/status", async (req, res) => {
     try {
       let raw = "";
