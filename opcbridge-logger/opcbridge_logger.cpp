@@ -6,9 +6,11 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1133,7 +1135,8 @@ public:
         }
 
         const char* sql =
-            "SELECT t.TABLE_NAME, t.TABLE_TYPE, c.COLUMN_NAME, c.DATA_TYPE, c.COLUMN_TYPE, c.IS_NULLABLE "
+            "SELECT t.TABLE_NAME, t.TABLE_TYPE, c.COLUMN_NAME, c.DATA_TYPE, c.COLUMN_TYPE, c.IS_NULLABLE, "
+            "c.COLUMN_DEFAULT, c.EXTRA "
             "FROM information_schema.TABLES t "
             "LEFT JOIN information_schema.COLUMNS c "
             "ON c.TABLE_SCHEMA=t.TABLE_SCHEMA AND c.TABLE_NAME=t.TABLE_NAME "
@@ -1167,11 +1170,19 @@ public:
                 };
             }
             if (row[2]) {
+                const std::string extra = row[7] ? row[7] : "";
+                const bool nullable = row[5] && std::string(row[5]) == "YES";
+                const bool required_on_insert = !nullable && row[6] == nullptr &&
+                    extra.find("auto_increment") == std::string::npos && extra.find("GENERATED") == std::string::npos;
                 current["columns"].push_back({
                     {"name", row[2]},
                     {"data_type", row[3] ? row[3] : ""},
                     {"column_type", row[4] ? row[4] : ""},
-                    {"nullable", row[5] && std::string(row[5]) == "YES"}
+                    {"nullable", nullable},
+                    {"has_default", row[6] != nullptr},
+                    {"default", row[6] ? json(row[6]) : json(nullptr)},
+                    {"extra", extra},
+                    {"required_on_insert", required_on_insert}
                 });
             }
         }
@@ -1365,6 +1376,153 @@ public:
         mysql_free_result(result);
         mysql_close(conn);
         return {{"ok", true}, {"database_id", id}, {"points", points}};
+    }
+
+    json database_data_entry(const std::string& id, const json& request) {
+        DbConfig db;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto it = dbs_.find(id);
+            if (it == dbs_.end()) return {{"ok", false}, {"error", "Database not found: " + id}};
+            db = it->second;
+        }
+        if (db.type != "mysql") return {{"ok", false}, {"error", "Data entry is not supported for database type: " + db.type}};
+        const std::string operation = request.value("operation", "load");
+        const std::string table = request.value("table", "");
+        const std::string time_column = request.value("time_column", "");
+        const std::string time_storage = request.value("time_storage", "datetime");
+        const std::string item_column = request.value("item_column", "");
+        const std::string numeric_column = request.value("numeric_column", "");
+        const std::string text_column = request.value("text_column", "");
+        const std::string msec_column = request.value("msec_column", "");
+        const std::string record_date = request.value("record_date", "");
+        const std::string record_time = request.value("record_time", "08:00:00");
+        const json alternate_times = request.value("alternate_times", json::array());
+        const json fields = request.value("fields", json::array());
+        const json insert_values = request.value("insert_values", json::array());
+        if (table.empty() || time_column.empty() || item_column.empty() || (numeric_column.empty() && text_column.empty()) ||
+            !std::regex_match(record_date, std::regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) ||
+            !std::regex_match(record_time, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}$")) || !fields.is_array() || !insert_values.is_array()) {
+            return {{"ok", false}, {"error", "Valid table, column mapping, record_date, record_time, and fields are required"}};
+        }
+        json schema = database_schema(id);
+        if (!schema.value("ok", false)) return schema;
+        bool table_valid = false;
+        std::unordered_set<std::string> columns;
+        for (const auto& candidate : schema["tables"]) {
+            if (candidate.value("name", "") != table || candidate.value("type", "") == "VIEW") continue;
+            table_valid = true;
+            for (const auto& field : candidate["columns"]) columns.insert(field.value("name", ""));
+        }
+        if (!table_valid || !columns.count(time_column) || !columns.count(item_column) ||
+            (!numeric_column.empty() && !columns.count(numeric_column)) || (!text_column.empty() && !columns.count(text_column)) ||
+            (!msec_column.empty() && !columns.count(msec_column)) || (time_storage != "datetime" && time_storage != "epoch_ms")) {
+            return {{"ok", false}, {"error", "Selected writable table or column does not exist"}};
+        }
+        std::unordered_set<std::string> insert_columns;
+        for (const auto& entry : insert_values) {
+            const std::string column = entry.value("column", "");
+            if (column.empty() || !columns.count(column) || !insert_columns.insert(column).second ||
+                column == time_column || column == item_column || column == numeric_column || column == text_column || column == msec_column) {
+                return {{"ok", false}, {"error", "An additional insert column is invalid, duplicated, or already mapped"}};
+            }
+        }
+        MYSQL* conn = mysql_init(nullptr);
+        if (!conn) return {{"ok", false}, {"error", "mysql_init failed"}};
+        unsigned int timeout = static_cast<unsigned int>(std::max(1, db.monitor_timeout_sec));
+        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
+        if (!mysql_real_connect(conn, db.mysql_host.c_str(), db.mysql_user.c_str(), db.mysql_password.c_str(),
+                                db.mysql_database.c_str(), db.mysql_port, nullptr, 0)) {
+            std::string error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
+            mysql_close(conn); return {{"ok", false}, {"error", error}};
+        }
+        auto qi = [](const std::string& input) { std::string out = "`"; for (char ch : input) out += ch == '`' ? "``" : std::string(1, ch); return out + "`"; };
+        auto qs = [conn](const std::string& input) { std::string out(input.size() * 2 + 1, '\0'); unsigned long n = mysql_real_escape_string(conn, out.data(), input.data(), static_cast<unsigned long>(input.size())); out.resize(n); return "'" + out + "'"; };
+        std::vector<std::string> times{record_time};
+        for (const auto& value : alternate_times) {
+            const std::string candidate = value.is_string() ? value.get<std::string>() : "";
+            if (std::regex_match(candidate, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}$")) &&
+                std::find(times.begin(), times.end(), candidate) == times.end()) times.push_back(candidate);
+        }
+        std::string time_filter;
+        for (size_t i = 0; i < times.size(); ++i) {
+            if (i) time_filter += ",";
+            if (time_storage == "epoch_ms") {
+                std::tm parsed{}; std::istringstream stream(record_date + " " + times[i]); stream >> std::get_time(&parsed, "%Y-%m-%d %H:%M:%S");
+                if (stream.fail()) { mysql_close(conn); return {{"ok", false}, {"error", "Invalid operational date/time"}}; }
+                time_filter += std::to_string(static_cast<long long>(std::mktime(&parsed)) * 1000LL);
+            } else time_filter += qs(record_date + " " + times[i]);
+        }
+        if (operation == "load") {
+            std::string items;
+            for (const auto& field : fields) {
+                const std::string item = field.value("item", ""); if (item.empty()) continue;
+                if (!items.empty()) items += ",";
+                items += qs(item);
+            }
+            json values = json::object();
+            if (!items.empty()) {
+                const std::string numeric_select = numeric_column.empty() ? "NULL" : qi(numeric_column);
+                const std::string text_select = text_column.empty() ? "NULL" : qi(text_column);
+                const std::string time_select = time_storage == "epoch_ms" ? "CAST(" + qi(time_column) + " AS CHAR)" : "DATE_FORMAT(" + qi(time_column) + ", '%Y-%m-%d %H:%i:%s')";
+                const std::string sql = "SELECT " + qi(item_column) + "," + numeric_select + "," + text_select +
+                    "," + time_select + " FROM " + qi(table) +
+                    " WHERE " + qi(item_column) + " IN (" + items + ") AND " + qi(time_column) + " IN (" + time_filter +
+                    ") ORDER BY " + qi(time_column) + " DESC";
+                if (mysql_query(conn, sql.c_str()) != 0) { std::string error = mysql_error(conn); mysql_close(conn); return {{"ok", false}, {"error", error}}; }
+                MYSQL_RES* result = mysql_store_result(conn); MYSQL_ROW row;
+                while (result && (row = mysql_fetch_row(result)) != nullptr) {
+                    const std::string item = row[0] ? row[0] : ""; if (values.contains(item)) continue;
+                    values[item] = {{"numeric", row[1] ? json(std::strtod(row[1], nullptr)) : json(nullptr)},
+                                    {"text", row[2] ? json(row[2]) : json(nullptr)}, {"timestamp", row[3] ? row[3] : ""}};
+                }
+                if (result) mysql_free_result(result);
+            }
+            mysql_close(conn); return {{"ok", true}, {"database_id", id}, {"record_date", record_date}, {"values", values}};
+        }
+        if (operation != "save" || !request.value("changes", json::array()).is_array()) {
+            mysql_close(conn); return {{"ok", false}, {"error", "Unsupported data-entry operation"}};
+        }
+        if (mysql_query(conn, "START TRANSACTION") != 0) { std::string error = mysql_error(conn); mysql_close(conn); return {{"ok", false}, {"error", error}}; }
+        int inserted = 0, updated = 0, deleted = 0;
+        for (const auto& change : request["changes"]) {
+            const std::string item = change.value("item", "");
+            const std::string action = change.value("action", "set");
+            const std::string value_type = change.value("value_type", "numeric");
+            if (item.empty() || (value_type != "numeric" && value_type != "text")) continue;
+            if ((value_type == "numeric" && numeric_column.empty()) || (value_type == "text" && text_column.empty())) {
+                mysql_query(conn, "ROLLBACK"); mysql_close(conn); return {{"ok", false}, {"error", "The target does not support this form field value type"}};
+            }
+            const std::string where = qi(item_column) + "=" + qs(item) + " AND " + qi(time_column) + " IN (" + time_filter + ")";
+            const std::string exists_sql = "SELECT 1 FROM " + qi(table) + " WHERE " + where + " LIMIT 1";
+            if (mysql_query(conn, exists_sql.c_str()) != 0) goto data_entry_failure;
+            { MYSQL_RES* result = mysql_store_result(conn); const bool exists = result && mysql_num_rows(result) > 0; if (result) mysql_free_result(result);
+              std::string sql;
+              if (action == "delete") { if (!exists) continue; sql = "DELETE FROM " + qi(table) + " WHERE " + where; deleted++; }
+              else {
+                  std::string encoded = "NULL";
+                  if (change.contains("value") && !change["value"].is_null()) encoded = value_type == "numeric" ? std::to_string(change["value"].get<double>()) : qs(change["value"].get<std::string>());
+                  const std::string value_column = value_type == "numeric" ? numeric_column : text_column;
+                  if (exists) { sql = "UPDATE " + qi(table) + " SET " + qi(value_column) + "=" + encoded + " WHERE " + where; updated++; }
+                  else { sql = "INSERT INTO " + qi(table) + " (" + qi(item_column) + "," + qi(value_column) + "," + qi(time_column);
+                      std::string record_value = time_storage == "epoch_ms" ? time_filter.substr(0, time_filter.find(',')) : qs(record_date + " " + record_time);
+                      std::string vals = qs(item) + "," + encoded + "," + record_value;
+                      if (!msec_column.empty()) { sql += "," + qi(msec_column); vals += ",0"; }
+                      for (const auto& entry : insert_values) {
+                          sql += "," + qi(entry.value("column", ""));
+                          vals += "," + (entry.value("source", "fixed") == "save_datetime" ? std::string("CURRENT_TIMESTAMP") : qs(entry.value("value", "")));
+                      }
+                      sql += ") VALUES (" + vals + ")"; inserted++; }
+              }
+              if (mysql_query(conn, sql.c_str()) != 0) goto data_entry_failure;
+            }
+        }
+        if (mysql_query(conn, "COMMIT") != 0) goto data_entry_failure;
+        mysql_close(conn); return {{"ok", true}, {"inserted", inserted}, {"updated", updated}, {"deleted", deleted}};
+data_entry_failure:
+        { const std::string error = mysql_error(conn); mysql_query(conn, "ROLLBACK"); mysql_close(conn); return {{"ok", false}, {"error", error}}; }
     }
 
     json test_database_config_json(const json& d) {
@@ -2076,6 +2234,18 @@ int main(int argc, char* argv[]) {
         try {
             json body = json::parse(req.body.empty() ? "{}" : req.body);
             json result = service.database_report_query(id, body);
+            res.status = result.value("ok", false) ? 200 : 400;
+            res.set_content(result.dump(2), "application/json");
+        } catch (const std::exception& ex) {
+            res.status = 400;
+            res.set_content(json{{"ok", false}, {"error", std::string("Invalid request: ") + ex.what()}}.dump(2), "application/json");
+        }
+    });
+    server.Post(R"(/databases/([^/]+)/data-entry)", [&service](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        try {
+            json body = json::parse(req.body.empty() ? "{}" : req.body);
+            json result = service.database_data_entry(id, body);
             res.status = result.value("ok", false) ? 200 : 400;
             res.set_content(result.dump(2), "application/json");
         } catch (const std::exception& ex) {

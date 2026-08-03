@@ -32,6 +32,7 @@
 		      <button data-tab="logger" class="tab">Data Logger</button>
 		      <button data-tab="historian" class="tab">Historian</button>
 		      <button data-tab="reports" class="tab">Reports</button>
+		      <button data-tab="data_entry" class="tab">Data Entry</button>
 		      <button data-tab="logs" class="tab">Logs</button>
 		      <button data-tab="hmi_audit" class="tab">HMI Audit</button>
 		      <button data-tab="users" class="tab">Users</button>
@@ -1109,6 +1110,68 @@
 		          </div>
 		        </section>
 		      </div>
+		    </section>
+
+		    <section id="tab-data_entry" class="panel">
+		      <h2>Data Entry</h2>
+		      <div class="card"><div class="card-body">
+		        <div class="row-actions">
+		          <select id="dataEntryFormSelect" style="min-width:280px;"><option value="">No forms defined</option></select>
+		          <button class="btn" id="dataEntryRefreshBtn" type="button">Refresh</button>
+		          <button class="btn" id="dataEntryNewBtn" type="button">New Form</button>
+		          <button class="btn" id="dataEntryEditBtn" type="button">Edit Form</button>
+		          <button class="btn" id="dataEntryTargetsBtn" type="button">Manage Targets</button>
+		        </div>
+		        <div class="data-entry-preview-heading" id="dataEntryPreviewHeading" style="display:none;">
+		          <h3 id="dataEntryPreviewTitle"></h3>
+		          <div class="muted" id="dataEntryPreviewDescription"></div>
+		        </div>
+		        <div class="row-actions" style="margin-top:12px; align-items:end;">
+		          <button class="btn" id="dataEntryPreviousBtn" type="button" aria-label="Previous day">← Previous</button>
+		          <label><span>Operational date</span><input id="dataEntryDate" type="date"></label>
+		          <button class="btn" id="dataEntryNextBtn" type="button" aria-label="Next day">Next →</button>
+		          <button class="btn" id="dataEntryLoadBtn" type="button">Load</button>
+		          <button class="btn primary" id="dataEntrySaveValuesBtn" type="button">Save Changes</button>
+		          <button class="btn" id="dataEntryRevertBtn" type="button">Revert</button>
+		          <button class="btn" id="dataEntryDownloadBtn" type="button">Download CSV</button>
+		        </div>
+		        <div class="status" id="dataEntryStatus" style="margin-top:10px;"></div>
+		        <div id="dataEntryFields" class="data-entry-fields" style="margin-top:12px;"></div>
+		      </div></div>
+		      <div class="card" id="dataEntryBuilder" style="display:none; margin-top:14px;"><div class="card-title">Data Entry Form Builder</div><div class="card-body">
+		        <input id="dataEntryOriginalId" type="hidden">
+		        <div class="grid2">
+		          <label><span>Name</span><input id="dataEntryName" type="text"></label>
+		          <label><span>Description</span><input id="dataEntryDescription" type="text"></label>
+		          <label><span>Data entry target</span><select id="dataEntryTarget"></select></label>
+		          <label><span><input id="dataEntryAllowDelete" type="checkbox"> Allow record deletion</span></label>
+		          <label><span><input id="dataEntryHmiEnabled" type="checkbox"> Available to HMI</span></label>
+		          <label><span><input id="dataEntryRequireLogin" type="checkbox" checked> Require login</span></label>
+		        </div>
+		        <h4>Fields</h4>
+		        <div class="row-actions"><button class="btn" id="dataEntryAddFieldBtn" type="button">Add Field</button></div>
+		        <div class="table-wrap" style="margin-top:8px;"><table class="table"><thead><tr><th>Label</th><th>Item/tag</th><th>Type</th><th>Unit</th><th>Decimals</th><th>Required</th><th>Min</th><th>Max</th><th></th></tr></thead><tbody id="dataEntryBuilderFields"></tbody></table></div>
+		        <div class="row-actions" style="margin-top:12px;"><button class="btn primary" id="dataEntrySaveFormBtn" type="button">Save Form</button><button class="btn" id="dataEntryCancelBuilderBtn" type="button">Cancel</button><button class="btn danger" id="dataEntryDeleteFormBtn" type="button">Delete Form</button></div>
+		        <div class="status" id="dataEntryBuilderStatus"></div>
+		      </div></div>
+		      <div class="card" id="dataEntryTargetBuilder" style="display:none; margin-top:14px;"><div class="card-title">Data Entry Targets</div><div class="card-body">
+		        <div class="row-actions"><select id="dataEntryTargetSelect"><option value="">New target</option></select><button class="btn" id="dataEntryNewTargetBtn" type="button">New Target</button></div>
+		        <input id="dataEntryTargetOriginalId" type="hidden">
+		        <div class="grid2" style="margin-top:12px;">
+		          <label><span>Name</span><input id="dataEntryTargetName" type="text"></label>
+		          <label><span>Description</span><input id="dataEntryTargetDescription" type="text"></label>
+		          <label><span>Database connection</span><select id="dataEntryDatabase"></select></label>
+		          <label><span>Table</span><select id="dataEntryTable"></select></label>
+		          <label><span>Record time</span><input id="dataEntryRecordTime" type="time" step="1" value="08:00:00"></label>
+		          <label><span>Alternate lookup times</span><input id="dataEntryAlternateTimes" type="text" placeholder="07:55:00"></label>
+		        </div>
+		        <div id="dataEntryRequiredColumns" class="data-entry-required-columns" style="display:none;"></div>
+		        <h4>Database fields</h4>
+		        <p class="muted">Assign how OPCBridge supplies each field. Database-generated fields are hidden.</p>
+		        <div class="table-wrap"><table class="table"><thead><tr><th>Database field</th><th>Requirement</th><th>Supplied by</th><th>Fixed value</th></tr></thead><tbody id="dataEntryInsertValues"></tbody></table></div>
+		        <div class="row-actions" style="margin-top:12px;"><button class="btn primary" id="dataEntrySaveTargetBtn" type="button">Save Target</button><button class="btn" id="dataEntryCancelTargetBtn" type="button">Close</button><button class="btn danger" id="dataEntryDeleteTargetBtn" type="button">Delete Target</button></div>
+		        <div class="status" id="dataEntryTargetStatus"></div>
+		      </div></div>
 		    </section>
 
 		    <section id="tab-reports" class="panel">

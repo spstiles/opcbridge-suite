@@ -235,6 +235,34 @@
   logicQuickJsonObjBtn: document.getElementById('logicQuickJsonObjBtn'),
   logicScriptEditor: document.getElementById('logicScriptEditor'),
 
+  dataEntryFormSelect: document.getElementById('dataEntryFormSelect'), dataEntryRefreshBtn: document.getElementById('dataEntryRefreshBtn'),
+  dataEntryNewBtn: document.getElementById('dataEntryNewBtn'), dataEntryEditBtn: document.getElementById('dataEntryEditBtn'),
+  dataEntryTargetsBtn: document.getElementById('dataEntryTargetsBtn'), dataEntryTarget: document.getElementById('dataEntryTarget'),
+  dataEntryPreviewHeading: document.getElementById('dataEntryPreviewHeading'), dataEntryPreviewTitle: document.getElementById('dataEntryPreviewTitle'),
+  dataEntryPreviewDescription: document.getElementById('dataEntryPreviewDescription'), dataEntryPreviousBtn: document.getElementById('dataEntryPreviousBtn'),
+  dataEntryNextBtn: document.getElementById('dataEntryNextBtn'), dataEntryDownloadBtn: document.getElementById('dataEntryDownloadBtn'),
+  dataEntryDate: document.getElementById('dataEntryDate'), dataEntryLoadBtn: document.getElementById('dataEntryLoadBtn'),
+  dataEntrySaveValuesBtn: document.getElementById('dataEntrySaveValuesBtn'), dataEntryRevertBtn: document.getElementById('dataEntryRevertBtn'),
+  dataEntryStatus: document.getElementById('dataEntryStatus'), dataEntryFields: document.getElementById('dataEntryFields'),
+  dataEntryBuilder: document.getElementById('dataEntryBuilder'), dataEntryOriginalId: document.getElementById('dataEntryOriginalId'),
+  dataEntryName: document.getElementById('dataEntryName'), dataEntryDescription: document.getElementById('dataEntryDescription'),
+  dataEntryDatabase: document.getElementById('dataEntryDatabase'), dataEntryTable: document.getElementById('dataEntryTable'),
+  dataEntryTimeColumn: document.getElementById('dataEntryTimeColumn'), dataEntryItemColumn: document.getElementById('dataEntryItemColumn'),
+  dataEntryNumericColumn: document.getElementById('dataEntryNumericColumn'), dataEntryTextColumn: document.getElementById('dataEntryTextColumn'),
+  dataEntryMsecColumn: document.getElementById('dataEntryMsecColumn'), dataEntryRecordTime: document.getElementById('dataEntryRecordTime'),
+  dataEntryAlternateTimes: document.getElementById('dataEntryAlternateTimes'), dataEntryAllowDelete: document.getElementById('dataEntryAllowDelete'),
+  dataEntryHmiEnabled: document.getElementById('dataEntryHmiEnabled'), dataEntryRequireLogin: document.getElementById('dataEntryRequireLogin'),
+  dataEntryRequiredColumns: document.getElementById('dataEntryRequiredColumns'),
+  dataEntryAddFieldBtn: document.getElementById('dataEntryAddFieldBtn'), dataEntryBuilderFields: document.getElementById('dataEntryBuilderFields'),
+  dataEntryInsertValues: document.getElementById('dataEntryInsertValues'),
+  dataEntrySaveFormBtn: document.getElementById('dataEntrySaveFormBtn'), dataEntryCancelBuilderBtn: document.getElementById('dataEntryCancelBuilderBtn'),
+  dataEntryDeleteFormBtn: document.getElementById('dataEntryDeleteFormBtn'), dataEntryBuilderStatus: document.getElementById('dataEntryBuilderStatus'),
+  dataEntryTargetBuilder: document.getElementById('dataEntryTargetBuilder'), dataEntryTargetSelect: document.getElementById('dataEntryTargetSelect'),
+  dataEntryNewTargetBtn: document.getElementById('dataEntryNewTargetBtn'), dataEntryTargetOriginalId: document.getElementById('dataEntryTargetOriginalId'),
+  dataEntryTargetName: document.getElementById('dataEntryTargetName'), dataEntryTargetDescription: document.getElementById('dataEntryTargetDescription'),
+  dataEntrySaveTargetBtn: document.getElementById('dataEntrySaveTargetBtn'), dataEntryCancelTargetBtn: document.getElementById('dataEntryCancelTargetBtn'),
+  dataEntryDeleteTargetBtn: document.getElementById('dataEntryDeleteTargetBtn'), dataEntryTargetStatus: document.getElementById('dataEntryTargetStatus'),
+
   publishedReportSelect: document.getElementById('publishedReportSelect'),
   publishedReportMonth: document.getElementById('publishedReportMonth'),
   publishedReportSinglePeriod: document.getElementById('publishedReportSinglePeriod'),
@@ -1153,6 +1181,7 @@ const state = {
   reportBuilderTemplate: null,
   reportBuilderTemplatePreview: null,
   reportBuilderActiveTab: 'report',
+  dataEntryForms: [], dataEntryTargets: [], dataEntrySources: [], dataEntrySchema: [], dataEntryBuilderFields: [], dataEntryInsertValues: [], dataEntryLoadedValues: {}, dataEntryDeletedFields: new Set(),
 
   // reporter (data logger)
   reporterDatabases: [],
@@ -1235,6 +1264,8 @@ const ROLE_PERMISSION_DEFS = [
   { id: 'reports.access', label: 'Access Reports portal' },
   { id: 'reports.create', label: 'Create reports' },
   { id: 'reports.administer', label: 'Administer all reports' }
+  ,{ id: 'data_entry.access', label: 'Enter and edit operational data' }
+  ,{ id: 'data_entry.administer', label: 'Create and administer data-entry forms' }
 ];
 
 function getUserPermissions() {
@@ -1373,6 +1404,9 @@ function canAccessReportsTab() {
 function canCreateReports() {
   return hasPerm('reports.create') || hasPerm('reports.administer');
 }
+
+function canAccessDataEntryTab() { return hasPerm('data_entry.access') || hasPerm('data_entry.administer'); }
+function canAdministerDataEntry() { return hasPerm('data_entry.administer'); }
 
 function reportPermissions(report) {
   if (hasPerm('reports.administer')) {
@@ -1552,6 +1586,13 @@ function updateReportsTabVisibility() {
     const activePanel = document.querySelector('.panel.is-active');
     if (activePanel?.id === 'tab-reports') setTab('overview');
   }
+}
+
+function updateDataEntryTabVisibility() {
+  const button = document.querySelector('.tabs .tab[data-tab="data_entry"]');
+  if (!button) return;
+  const visible = canAccessDataEntryTab(); button.style.display = visible ? '' : 'none';
+  if (!visible && document.querySelector('.panel.is-active')?.id === 'tab-data_entry') setTab('overview');
 }
 
 function loggerSetStatus(msg) {
@@ -8633,6 +8674,286 @@ function wireReportBuilderUi() {
   });
 }
 
+function selectedDataEntryForm() {
+  const id = String(els.dataEntryFormSelect?.value || '');
+  return state.dataEntryForms.find((form) => form.id === id) || null;
+}
+
+function dataEntrySetStatus(message) { if (els.dataEntryStatus) els.dataEntryStatus.textContent = String(message || ''); }
+function dataEntryBuilderSetStatus(message) { if (els.dataEntryBuilderStatus) els.dataEntryBuilderStatus.textContent = String(message || ''); }
+
+function renderDataEntryPreviewHeading() {
+  const form = selectedDataEntryForm();
+  if (els.dataEntryPreviewHeading) els.dataEntryPreviewHeading.style.display = form ? '' : 'none';
+  if (els.dataEntryPreviewTitle) els.dataEntryPreviewTitle.textContent = form?.name || '';
+  if (els.dataEntryPreviewDescription) els.dataEntryPreviewDescription.textContent = form?.description || '';
+  [els.dataEntryPreviousBtn, els.dataEntryNextBtn, els.dataEntryLoadBtn, els.dataEntrySaveValuesBtn, els.dataEntryRevertBtn, els.dataEntryDownloadBtn, els.dataEntryDate]
+    .forEach((control) => { if (control) control.disabled = !form; });
+}
+
+function renderDataEntryFields() {
+  if (!els.dataEntryFields) return;
+  els.dataEntryFields.textContent = '';
+  const form = selectedDataEntryForm();
+  if (!form) { els.dataEntryFields.textContent = 'Select a data-entry form.'; return; }
+  (form.fields || []).forEach((field) => {
+    const loaded = state.dataEntryLoadedValues?.[field.item] || {};
+    const value = field.value_type === 'text' ? loaded.text : loaded.numeric;
+    const row = document.createElement('div'); row.className = 'data-entry-field'; row.dataset.fieldId = field.id;
+    const label = document.createElement('label'); label.textContent = field.label + (field.unit ? ` (${field.unit})` : '');
+    const input = document.createElement('input'); input.type = field.value_type === 'numeric' ? 'number' : 'text';
+    if (field.value_type === 'numeric') { input.step = String(1 / Math.pow(10, Number(field.precision ?? 2))); if (field.min != null) input.min = field.min; if (field.max != null) input.max = field.max; }
+    input.value = value == null ? '' : String(value); input.dataset.original = input.value; input.required = field.required === true;
+    row.append(label, input);
+    if (form.allow_delete && loaded.timestamp) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn data-entry-delete'; button.textContent = 'Delete';
+      button.addEventListener('click', () => { const marked = state.dataEntryDeletedFields.has(field.id); if (marked) state.dataEntryDeletedFields.delete(field.id); else state.dataEntryDeletedFields.add(field.id); row.classList.toggle('is-delete', !marked); input.disabled = !marked; button.textContent = marked ? 'Delete' : 'Undo Delete'; });
+      row.appendChild(button);
+    }
+    els.dataEntryFields.appendChild(row);
+  });
+}
+
+async function moveDataEntryDate(days) {
+  if (!els.dataEntryDate?.value) return;
+  const parts = els.dataEntryDate.value.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return;
+  const date = new Date(parts[0], parts[1] - 1, parts[2]);
+  date.setDate(date.getDate() + days);
+  els.dataEntryDate.value = localIsoDate(date);
+  await loadDataEntryValues();
+}
+
+function downloadDataEntryValues() {
+  const form = selectedDataEntryForm(); const recordDate = String(els.dataEntryDate?.value || '');
+  if (!form || !recordDate) return dataEntrySetStatus('Select a form and operational date.');
+  const rowsById = new Map(Array.from(els.dataEntryFields?.querySelectorAll('.data-entry-field') || []).map((row) => [row.dataset.fieldId, row]));
+  const rows = (form.fields || []).map((field) => {
+    const input = rowsById.get(field.id)?.querySelector('input');
+    const loaded = state.dataEntryLoadedValues?.[field.item] || {};
+    return {
+      Field: field.label || field.item,
+      Item: field.item,
+      Value: input?.value ?? '',
+      Unit: field.unit || '',
+      Timestamp: loaded.timestamp || '',
+      Status: state.dataEntryDeletedFields.has(field.id) ? 'Marked for deletion' : ''
+    };
+  });
+  downloadTextFile({ filename: `${form.id || 'data-entry'}-${recordDate}.csv`, mime: 'text/csv;charset=utf-8', text: toCsv(rows, ['Field', 'Item', 'Value', 'Unit', 'Timestamp', 'Status']) });
+  dataEntrySetStatus(`Downloaded values for ${recordDate}.`);
+}
+
+async function loadDataEntryValues() {
+  const form = selectedDataEntryForm(); const recordDate = String(els.dataEntryDate?.value || '');
+  if (!form || !recordDate) return dataEntrySetStatus('Select a form and operational date.');
+  dataEntrySetStatus('Loading…');
+  try {
+    const response = await apiPostJson('/api/data-entry/load', { form_id: form.id, record_date: recordDate }, { timeoutMs: 120000 });
+    state.dataEntryLoadedValues = response.values || {}; state.dataEntryDeletedFields = new Set(); renderDataEntryFields();
+    dataEntrySetStatus(`${Object.keys(state.dataEntryLoadedValues).length} existing value(s) loaded for ${recordDate}.`);
+  } catch (err) { dataEntrySetStatus(err.message || err); }
+}
+
+async function saveDataEntryValues() {
+  const form = selectedDataEntryForm(); const recordDate = String(els.dataEntryDate?.value || '');
+  if (!form || !recordDate) return dataEntrySetStatus('Select a form and operational date.');
+  const rows = Array.from(els.dataEntryFields?.querySelectorAll('.data-entry-field') || []);
+  const changes = [];
+  rows.forEach((row) => {
+    const field = (form.fields || []).find((item) => item.id === row.dataset.fieldId); const input = row.querySelector('input');
+    if (!field || !input) return;
+    if (state.dataEntryDeletedFields.has(field.id)) changes.push({ field_id: field.id, action: 'delete' });
+    else if (input.value !== input.dataset.original) changes.push({ field_id: field.id, action: 'set', value: input.value });
+  });
+  if (!changes.length) return dataEntrySetStatus('No changes to save.');
+  const deletions = changes.filter((change) => change.action === 'delete').length;
+  if (deletions && !window.confirm(`Save ${changes.length - deletions} change(s) and delete ${deletions} value(s) for ${recordDate}?`)) return;
+  dataEntrySetStatus('Saving…');
+  try {
+    const response = await apiPostJson('/api/data-entry/save', { form_id: form.id, record_date: recordDate, changes }, { timeoutMs: 120000 });
+    await loadDataEntryValues();
+    dataEntrySetStatus(`Saved: ${response.inserted || 0} inserted, ${response.updated || 0} updated, ${response.deleted || 0} deleted.`);
+  } catch (err) { dataEntrySetStatus(err.message || err); }
+}
+
+function dataEntryColumnOptions(select, columns, value = '', optional = false) {
+  if (!select) return; select.textContent = '';
+  if (optional) select.add(new Option('None', ''));
+  columns.forEach((column) => select.add(new Option(`${column.name} (${column.data_type || ''})`, column.name)));
+  select.value = value;
+}
+
+function renderDataEntryBuilderFields() {
+  if (!els.dataEntryBuilderFields) return; els.dataEntryBuilderFields.textContent = '';
+  const target = state.dataEntryTargets.find((item) => item.id === els.dataEntryTarget?.value);
+  const sources = new Set((target?.columns || []).map((entry) => entry.source));
+  const valueTypes = [];
+  if (sources.has('numeric_value')) valueTypes.push(['numeric','Numeric']);
+  if (sources.has('text_value')) valueTypes.push(['text','Text']);
+  if (!valueTypes.length) valueTypes.push(['numeric','Numeric']);
+  state.dataEntryBuilderFields.forEach((field, index) => {
+    const tr = document.createElement('tr');
+    const add = (type, key, options = null) => { const td = document.createElement('td'); let input;
+      if (options) { input = document.createElement('select'); options.forEach(([value, label]) => input.add(new Option(label, value))); }
+      else { input = document.createElement('input'); input.type = type; }
+      if (type === 'checkbox') input.checked = Boolean(field[key]); else input.value = field[key] ?? '';
+      input.addEventListener('change', () => { field[key] = type === 'checkbox' ? input.checked : input.value; }); td.appendChild(input); tr.appendChild(td); };
+    add('text', 'label'); add('text', 'item'); add('select', 'value_type', valueTypes); add('text', 'unit'); add('number', 'precision'); add('checkbox', 'required'); add('number', 'min'); add('number', 'max');
+    const td = document.createElement('td'); const remove = document.createElement('button'); remove.className = 'btn'; remove.textContent = 'Remove'; remove.addEventListener('click', () => { state.dataEntryBuilderFields.splice(index, 1); renderDataEntryBuilderFields(); }); td.appendChild(remove); tr.appendChild(td);
+    els.dataEntryBuilderFields.appendChild(tr);
+  });
+}
+
+function renderDataEntryInsertValues() {
+  if (!els.dataEntryInsertValues) return;
+  els.dataEntryInsertValues.textContent = '';
+  const table = state.dataEntrySchema.find((item) => item.name === els.dataEntryTable?.value);
+  const columns = (table?.columns || []).filter((column) => !String(column.extra || '').toLowerCase().includes('auto_increment') && !String(column.extra || '').toLowerCase().includes('generated'));
+  const previous = new Map(state.dataEntryInsertValues.map((entry) => [entry.column, entry]));
+  const suggestedSource = (name) => {
+    const key = String(name || '').toLowerCase();
+    if (key === 'timestamp_ms') return 'record_epoch_ms';
+    if (['timestamp', 'datetime', 'date_time', 'record_datetime', 'recorded_at'].includes(key)) return 'record_datetime';
+    if (['created_at', 'updated_at', 'save_time', 'modified_at'].includes(key)) return 'save_datetime';
+    if (['connection_id', 'database_id', 'source_connection'].includes(key)) return 'database_id';
+    if (['tag_name','item_name','point_name'].includes(key)) return 'item_name';
+    if (['value','numeric_value','float_value'].includes(key)) return 'numeric_value';
+    if (['text_value','alpha_value'].includes(key)) return 'text_value';
+    if (key === 'form_id') return 'form_id';
+    if (['job_name', 'form_name'].includes(key)) return 'form_name';
+    return 'unused';
+  };
+  state.dataEntryInsertValues = columns
+    .map((column) => ({ column: column.name, source: previous.get(column.name)?.source || suggestedSource(column.name), value: previous.get(column.name)?.value ?? '' }));
+  columns.forEach((column) => {
+    const required = column.required_on_insert === true;
+    const entry = state.dataEntryInsertValues.find((item) => item.column === column.name);
+    const tr = document.createElement('tr'); tr.className = required ? 'data-entry-required-field' : '';
+    const nameCell = document.createElement('td'); nameCell.textContent = column.name;
+    const requirementCell = document.createElement('td'); requirementCell.textContent = required ? 'Required' : 'Optional';
+    const sourceCell = document.createElement('td'); const source = document.createElement('select');
+    [['unused','Not used'],['record_datetime','Operational date and record time'],['record_epoch_ms','Operational timestamp (milliseconds)'],
+      ['save_datetime','Current save time'],['database_id','Database connection ID'],['target_name','Target name'],['target_id','Target ID'],
+      ['form_name','Form name'],['form_id','Form ID'],['item_name','Item/tag name'],['numeric_value','Entered numeric value'],
+      ['text_value','Entered text value'],['record_msec','Millisecond portion'],['fixed','Fixed value']].forEach(([optionValue, label]) => source.add(new Option(label, optionValue)));
+    source.value = entry?.source || suggestedSource(column.name); sourceCell.appendChild(source);
+    const valueCell = document.createElement('td'); const value = document.createElement('input'); value.type = 'text'; value.value = entry?.value ?? ''; value.disabled = source.value !== 'fixed';
+    source.addEventListener('change', () => { const selected = state.dataEntryInsertValues.find((item) => item.column === column.name); if (selected) selected.source = source.value; value.disabled = source.value !== 'fixed'; renderDataEntryRequiredColumns(); });
+    value.addEventListener('input', () => { const selected = state.dataEntryInsertValues.find((item) => item.column === column.name); if (selected) selected.value = value.value; });
+    valueCell.appendChild(value); tr.append(nameCell, requirementCell, sourceCell, valueCell); els.dataEntryInsertValues.appendChild(tr);
+  });
+  renderDataEntryRequiredColumns();
+}
+
+function renderDataEntryRequiredColumns() {
+  if (!els.dataEntryRequiredColumns) return;
+  const table = state.dataEntrySchema.find((item) => item.name === els.dataEntryTable?.value);
+  const required = (table?.columns || []).filter((column) => column.required_on_insert === true).map((column) => column.name);
+  const configured = new Set(state.dataEntryInsertValues.filter((entry) => entry.source !== 'unused').map((entry) => entry.column));
+  const missing = required.filter((column) => !configured.has(column));
+  els.dataEntryRequiredColumns.style.display = required.length ? '' : 'none';
+  els.dataEntryRequiredColumns.classList.toggle('is-complete', missing.length === 0);
+  els.dataEntryRequiredColumns.textContent = missing.length
+    ? `Required database fields still need a source: ${missing.join(', ')}`
+    : `All required database columns are supplied: ${required.join(', ')}`;
+}
+
+async function loadDataEntrySchema(selected = {}) {
+  const database = String(els.dataEntryDatabase?.value || selected.database_id || ''); if (!database) return;
+  if (els.dataEntryTargetStatus) els.dataEntryTargetStatus.textContent = 'Loading database schema…';
+  try {
+    const response = await apiGet(`/api/data-entry/schema?database=${encodeURIComponent(database)}`, { timeoutMs: 120000 }); state.dataEntrySchema = response.tables || [];
+    if (els.dataEntryTable) { els.dataEntryTable.textContent = ''; state.dataEntrySchema.forEach((table) => { if (table.type !== 'VIEW') els.dataEntryTable.add(new Option(table.name, table.name)); }); els.dataEntryTable.value = selected.table || els.dataEntryTable.value; }
+    renderDataEntryInsertValues(); if (els.dataEntryTargetStatus) els.dataEntryTargetStatus.textContent = 'Schema loaded.';
+  } catch (err) { if (els.dataEntryTargetStatus) els.dataEntryTargetStatus.textContent = String(err.message || err); }
+}
+
+async function showDataEntryBuilder(form = null) {
+  if (!canAdministerDataEntry()) return;
+  if (els.dataEntryBuilder) els.dataEntryBuilder.style.display = '';
+  const value = form || {};
+  els.dataEntryOriginalId.value = value.id || ''; els.dataEntryName.value = value.name || ''; els.dataEntryDescription.value = value.description || '';
+  els.dataEntryAllowDelete.checked = value.allow_delete === true; els.dataEntryHmiEnabled.checked = value.hmi_enabled === true; els.dataEntryRequireLogin.checked = value.require_login !== false;
+  els.dataEntryTarget.textContent = ''; state.dataEntryTargets.forEach((target) => els.dataEntryTarget.add(new Option(target.name, target.id))); els.dataEntryTarget.value = value.target_id || els.dataEntryTarget.value;
+  state.dataEntryBuilderFields = JSON.parse(JSON.stringify(value.fields || [])); renderDataEntryBuilderFields();
+}
+
+function currentDataEntryFormDefinition() {
+  return { name: els.dataEntryName.value, description: els.dataEntryDescription.value, target_id: els.dataEntryTarget.value,
+    allow_delete: els.dataEntryAllowDelete.checked, hmi_enabled: els.dataEntryHmiEnabled.checked,
+    require_login: els.dataEntryRequireLogin.checked, fields: state.dataEntryBuilderFields };
+}
+
+async function showDataEntryTargetBuilder(target = null) {
+  if (!canAdministerDataEntry()) return;
+  els.dataEntryTargetBuilder.style.display = '';
+  const value = target || {};
+  els.dataEntryTargetOriginalId.value = value.id || ''; els.dataEntryTargetName.value = value.name || ''; els.dataEntryTargetDescription.value = value.description || '';
+  els.dataEntryRecordTime.value = value.record_time || '08:00:00'; els.dataEntryAlternateTimes.value = (value.alternate_times || []).join(', ');
+  state.dataEntryInsertValues = JSON.parse(JSON.stringify(value.columns || []));
+  try {
+    const sources = await apiGet('/api/data-entry/sources'); state.dataEntrySources = sources.databases || [];
+    els.dataEntryDatabase.textContent = ''; state.dataEntrySources.forEach((database) => els.dataEntryDatabase.add(new Option(database.name, database.id)));
+    els.dataEntryDatabase.value = value.database_id || els.dataEntryDatabase.value; await loadDataEntrySchema(value);
+  } catch (err) { els.dataEntryTargetStatus.textContent = String(err.message || err); }
+}
+
+function currentDataEntryTargetDefinition() {
+  const time = String(els.dataEntryRecordTime.value || '08:00:00');
+  const table = state.dataEntrySchema.find((item) => item.name === els.dataEntryTable.value);
+  const configured = new Set(state.dataEntryInsertValues.filter((entry) => entry.source !== 'unused').map((entry) => entry.column));
+  const missing = (table?.columns || []).filter((column) => column.required_on_insert && !configured.has(column.name)).map((column) => column.name);
+  if (missing.length) throw new Error(`Required database fields still need a source: ${missing.join(', ')}`);
+  return { name: els.dataEntryTargetName.value, description: els.dataEntryTargetDescription.value,
+    database_id: els.dataEntryDatabase.value, table: els.dataEntryTable.value, record_time: `${time}${time.length === 5 ? ':00' : ''}`,
+    alternate_times: els.dataEntryAlternateTimes.value.split(/[ ,]+/).filter(Boolean), columns: state.dataEntryInsertValues };
+}
+
+function refreshDataEntryTargetSelectors() {
+  if (els.dataEntryTargetSelect) {
+    els.dataEntryTargetSelect.textContent = ''; els.dataEntryTargetSelect.add(new Option('New target', ''));
+    state.dataEntryTargets.forEach((target) => els.dataEntryTargetSelect.add(new Option(target.name, target.id)));
+  }
+}
+
+async function refreshDataEntryForms(loadValues = true) {
+  if (canAdministerDataEntry()) {
+    const targets = await apiGet('/api/data-entry/targets'); state.dataEntryTargets = targets.targets || []; state.dataEntryTargets.sort((a,b) => a.name.localeCompare(b.name)); refreshDataEntryTargetSelectors();
+  }
+  const response = await apiGet('/api/data-entry/forms'); state.dataEntryForms = response.forms || [];
+  const previous = els.dataEntryFormSelect.value; els.dataEntryFormSelect.textContent = '';
+  state.dataEntryForms.sort((a,b) => a.name.localeCompare(b.name)).forEach((form) => els.dataEntryFormSelect.add(new Option(form.name, form.id)));
+  if (!state.dataEntryForms.length) els.dataEntryFormSelect.add(new Option('No forms defined', ''));
+  els.dataEntryFormSelect.value = state.dataEntryForms.some((form) => form.id === previous) ? previous : (state.dataEntryForms[0]?.id || '');
+  els.dataEntryNewBtn.style.display = canAdministerDataEntry() ? '' : 'none'; els.dataEntryEditBtn.style.display = canAdministerDataEntry() && selectedDataEntryForm() ? '' : 'none'; els.dataEntryTargetsBtn.style.display = canAdministerDataEntry() ? '' : 'none';
+  renderDataEntryPreviewHeading(); renderDataEntryFields(); if (loadValues && selectedDataEntryForm()) await loadDataEntryValues();
+}
+
+function wireDataEntryUi() {
+  if (els.dataEntryDate) els.dataEntryDate.value = localIsoDate(new Date());
+  els.dataEntryRefreshBtn?.addEventListener('click', () => refreshDataEntryForms()); els.dataEntryFormSelect?.addEventListener('change', () => { renderDataEntryPreviewHeading(); loadDataEntryValues(); });
+  els.dataEntryDate?.addEventListener('change', () => loadDataEntryValues()); els.dataEntryLoadBtn?.addEventListener('click', loadDataEntryValues);
+  els.dataEntryPreviousBtn?.addEventListener('click', () => moveDataEntryDate(-1)); els.dataEntryNextBtn?.addEventListener('click', () => moveDataEntryDate(1));
+  els.dataEntryDownloadBtn?.addEventListener('click', downloadDataEntryValues);
+  els.dataEntrySaveValuesBtn?.addEventListener('click', saveDataEntryValues); els.dataEntryRevertBtn?.addEventListener('click', () => { state.dataEntryDeletedFields = new Set(); renderDataEntryFields(); dataEntrySetStatus('Unsaved changes reverted.'); });
+  els.dataEntryNewBtn?.addEventListener('click', () => showDataEntryBuilder()); els.dataEntryEditBtn?.addEventListener('click', () => showDataEntryBuilder(selectedDataEntryForm()));
+  els.dataEntryTarget?.addEventListener('change', renderDataEntryBuilderFields);
+  els.dataEntryTargetsBtn?.addEventListener('click', () => showDataEntryTargetBuilder());
+  els.dataEntryTargetSelect?.addEventListener('change', () => showDataEntryTargetBuilder(state.dataEntryTargets.find((target) => target.id === els.dataEntryTargetSelect.value) || null));
+  els.dataEntryNewTargetBtn?.addEventListener('click', () => showDataEntryTargetBuilder());
+  els.dataEntryDatabase?.addEventListener('change', () => loadDataEntrySchema({})); els.dataEntryTable?.addEventListener('change', () => loadDataEntrySchema({ table: els.dataEntryTable.value }));
+  [els.dataEntryTimeColumn, els.dataEntryItemColumn, els.dataEntryNumericColumn, els.dataEntryTextColumn, els.dataEntryMsecColumn]
+    .forEach((select) => select?.addEventListener('change', renderDataEntryInsertValues));
+  els.dataEntryAddFieldBtn?.addEventListener('click', () => { state.dataEntryBuilderFields.push({ label: '', item: '', value_type: 'numeric', unit: '', precision: 2, required: false, min: '', max: '' }); renderDataEntryBuilderFields(); });
+  els.dataEntryCancelBuilderBtn?.addEventListener('click', () => { els.dataEntryBuilder.style.display = 'none'; });
+  els.dataEntrySaveFormBtn?.addEventListener('click', async () => { try { dataEntryBuilderSetStatus('Saving…'); await apiPostJson('/api/data-entry/forms', { original_id: els.dataEntryOriginalId.value, form: currentDataEntryFormDefinition() }); els.dataEntryBuilder.style.display = 'none'; await refreshDataEntryForms(false); dataEntrySetStatus('Form saved.'); } catch (err) { dataEntryBuilderSetStatus(err.message || err); } });
+  els.dataEntryDeleteFormBtn?.addEventListener('click', async () => { const id = els.dataEntryOriginalId.value; if (!id || !confirm(`Delete data-entry form '${id}'?`)) return; try { await apiPostJson('/api/data-entry/forms/delete', { id }); els.dataEntryBuilder.style.display = 'none'; await refreshDataEntryForms(false); } catch (err) { dataEntryBuilderSetStatus(err.message || err); } });
+  els.dataEntryCancelTargetBtn?.addEventListener('click', () => { els.dataEntryTargetBuilder.style.display = 'none'; });
+  els.dataEntrySaveTargetBtn?.addEventListener('click', async () => { try { els.dataEntryTargetStatus.textContent = 'Saving…'; await apiPostJson('/api/data-entry/targets', { original_id: els.dataEntryTargetOriginalId.value, target: currentDataEntryTargetDefinition() }); els.dataEntryTargetBuilder.style.display = 'none'; await refreshDataEntryForms(false); dataEntrySetStatus('Data entry target saved.'); } catch (err) { els.dataEntryTargetStatus.textContent = String(err.message || err); } });
+  els.dataEntryDeleteTargetBtn?.addEventListener('click', async () => { const id = els.dataEntryTargetOriginalId.value; if (!id || !confirm(`Delete data entry target '${id}'?`)) return; try { await apiPostJson('/api/data-entry/targets/delete', { id }); els.dataEntryTargetBuilder.style.display = 'none'; await refreshDataEntryForms(false); } catch (err) { els.dataEntryTargetStatus.textContent = String(err.message || err); } });
+}
+
 function setTab(id) {
   const next = String(id || '').trim();
   if (!next) return;
@@ -8658,6 +8979,7 @@ function setTab(id) {
   if (next === 'reports' && !canAccessReportsTab() && !REPORTS_PORTAL_MODE) {
     id = 'overview';
   }
+  if (next === 'data_entry' && !canAccessDataEntryTab()) id = 'overview';
   if (next === 'logic' && !canAccessLogicTab()) {
     id = 'overview';
   }
@@ -8692,6 +9014,7 @@ function setTab(id) {
     refreshPublishedReports().catch(() => {});
     refreshReportBuilder().catch(() => {});
   }
+  if (id === 'data_entry') refreshDataEntryForms().catch(() => {});
   if (id === 'logic') {
     refreshLogicTab().catch(() => {});
   }
@@ -24267,6 +24590,7 @@ async function refreshUserAuthLine({ initial = false } = {}) {
     updateLoggerTabVisibility();
     updateHistorianTabVisibility();
     updateReportsTabVisibility();
+    updateDataEntryTabVisibility();
     ensureAuthAdminPanelLoaded();
     const configured = Boolean(s?.configured);
     const rawLoggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
@@ -25157,6 +25481,7 @@ async function main() {
   updateLoggerTabVisibility();
   updateHistorianTabVisibility();
   updateReportsTabVisibility();
+  updateDataEntryTabVisibility();
   updateLogsTabVisibility();
   updateUsersTabVisibility();
 
@@ -25170,6 +25495,7 @@ async function main() {
   wireHistorianUi();
   wirePublishedReportsUi();
   wireReportBuilderUi();
+  wireDataEntryUi();
   wireOverviewRuntimeUi();
   wireConnectionsUi();
   wireTagsConfigUi();

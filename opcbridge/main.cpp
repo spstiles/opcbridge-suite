@@ -2889,7 +2889,9 @@ static const std::vector<std::string> &all_permission_ids() {
         "suite.view_logs",
         "reports.access",
         "reports.create",
-        "reports.administer"
+        "reports.administer",
+        "data_entry.access",
+        "data_entry.administer"
     };
     return perms;
 }
@@ -15512,6 +15514,8 @@ const USERS_PERMISSION_DEFS = [
     { id: "reports.access", label: "Access Reports portal" },
     { id: "reports.create", label: "Create reports" },
     { id: "reports.administer", label: "Administer all reports" }
+    ,{ id: "data_entry.access", label: "Enter and edit operational data" }
+    ,{ id: "data_entry.administer", label: "Create and administer data-entry forms" }
 ];
 
 let USERS_STATE = {

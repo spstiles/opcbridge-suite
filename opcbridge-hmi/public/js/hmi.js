@@ -63,6 +63,7 @@ const leftTextToolBtn = document.getElementById("leftTextToolBtn");
 const leftButtonToolBtn = document.getElementById("leftButtonToolBtn");
 const leftAlarmsPanelToolBtn = document.getElementById("leftAlarmsPanelToolBtn");
 const leftReportTableToolBtn = document.getElementById("leftReportTableToolBtn");
+const leftDataEntryToolBtn = document.getElementById("leftDataEntryToolBtn");
 const editorFilename = document.getElementById("editor-filename");
 const jsoncEditor = document.getElementById("jsoncEditor");
 const editorStatus = document.getElementById("editorStatus");
@@ -86,6 +87,7 @@ const lineToolBtn = document.getElementById("lineToolBtn");
 const curveToolBtn = document.getElementById("curveToolBtn");
 const alarmsPanelToolBtn = document.getElementById("alarmsPanelToolBtn");
 const reportTableToolBtn = document.getElementById("reportTableToolBtn");
+const dataEntryToolBtn = document.getElementById("dataEntryToolBtn");
 const groupProps = document.getElementById("groupProps");
 const groupXInput = document.getElementById("groupX");
 const groupYInput = document.getElementById("groupY");
@@ -2454,7 +2456,7 @@ const getPropertiesPaneTitle = (obj) => {
     case "group": return "Group Properties";
     case "viewport": return "Viewport Properties";
     case "rect": return "Rectangle Properties";
-    case "alarms-panel": return obj.panelMode === "report" ? "Report Table Properties" : "Alarm Panel Properties";
+    case "alarms-panel": return obj.panelMode === "data-entry" ? "Data Entry Form Properties" : (obj.panelMode === "report" ? "Report Table Properties" : "Alarm Panel Properties");
     case "ellipse": return "Ellipse Properties";
     case "circle": return "Circle Properties";
     case "line": return "Line Properties";
@@ -3908,6 +3910,14 @@ const paintPickerApplyBtn = document.getElementById("paintPickerApplyBtn");
 const paintPickerCancelBtn = document.getElementById("paintPickerCancelBtn");
 const alarmsPanelPropsFields = document.getElementById("alarmsPanelPropsFields");
 const reportTablePropsFields = document.getElementById("reportTablePropsFields");
+const dataEntryPropsFields = document.getElementById("dataEntryPropsFields");
+const hmiDataEntryFormInput = document.getElementById("hmiDataEntryForm");
+const hmiDataEntryTitleInput = document.getElementById("hmiDataEntryTitle");
+const hmiDataEntryFontSizeInput = document.getElementById("hmiDataEntryFontSize");
+const hmiDataEntryHeaderBgInput = document.getElementById("hmiDataEntryHeaderBg");
+const hmiDataEntryHeaderTextInput = document.getElementById("hmiDataEntryHeaderText");
+const hmiDataEntryFieldBgInput = document.getElementById("hmiDataEntryFieldBg");
+const hmiDataEntryFieldTextInput = document.getElementById("hmiDataEntryFieldText");
 const reportTableReportInput = document.getElementById("reportTableReport");
 const reportTableTitleInput = document.getElementById("reportTableTitle");
 const reportTableDateFormatInput = document.getElementById("reportTableDateFormat");
@@ -4650,7 +4660,7 @@ const screenHasAlarmsPanel = () => {
     if (!Array.isArray(objects)) return false;
     for (const obj of objects) {
       if (!obj) continue;
-      if (obj.type === "alarms-panel" && obj.panelMode !== "report") return true;
+      if (obj.type === "alarms-panel" && !["report", "data-entry"].includes(obj.panelMode)) return true;
       if (obj.type === "group" && Array.isArray(obj.children) && walk(obj.children)) return true;
     }
     return false;
@@ -4664,7 +4674,7 @@ const getScreenAlarmHistoryDays = () => {
     if (!Array.isArray(objects)) return;
     objects.forEach((obj) => {
       if (!obj) return;
-      if (obj.type === "alarms-panel" && obj.panelMode !== "report") {
+      if (obj.type === "alarms-panel" && !["report", "data-entry"].includes(obj.panelMode)) {
         const days = Number(obj.historyDays ?? ALARM_HISTORY_WINDOW_DAYS);
         if (Number.isFinite(days) && days > maxDays) maxDays = days;
       }
@@ -4680,7 +4690,7 @@ const findAlarmsPanelObjectByScrollKey = (scrollKey) => {
     if (!Array.isArray(objects)) return null;
     for (const obj of objects) {
       if (!obj) continue;
-      if (obj.type === "alarms-panel" && obj.panelMode !== "report" && getAlarmsPanelScrollKey(obj) === scrollKey) return obj;
+      if (obj.type === "alarms-panel" && !["report", "data-entry"].includes(obj.panelMode) && getAlarmsPanelScrollKey(obj) === scrollKey) return obj;
       if (obj.type === "group") {
         const found = walk(obj.children);
         if (found) return found;
@@ -9477,7 +9487,7 @@ const getAlarmPanelIds = () => {
     if (!Array.isArray(objects)) return;
     objects.forEach((obj) => {
       if (!obj) return;
-      if (obj.type === "alarms-panel" && obj.panelMode !== "report" && obj.id) ids.push(String(obj.id));
+      if (obj.type === "alarms-panel" && !["report", "data-entry"].includes(obj.panelMode) && obj.id) ids.push(String(obj.id));
       if (obj.type === "group") walk(obj.children);
     });
   };
@@ -11008,6 +11018,17 @@ const renderIndicatorInto = (parent, obj) => {
 };
 
 const reportTableState = { reports: [], reportsPromise: null, cache: new Map() };
+const hmiDataEntryState = { forms: [], promise: null, values: new Map() };
+
+const loadHmiDataEntryForms = async () => {
+  if (hmiDataEntryState.forms.length) return hmiDataEntryState.forms;
+  if (hmiDataEntryState.promise) return hmiDataEntryState.promise;
+  hmiDataEntryState.promise = fetch('/api/data-entry/hmi/forms').then(async (response) => {
+    const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || `Data entry HTTP ${response.status}`);
+    hmiDataEntryState.forms = body.forms || []; return hmiDataEntryState.forms;
+  }).finally(() => { hmiDataEntryState.promise = null; });
+  return hmiDataEntryState.promise;
+};
 
 const reportTableIsoDate = (date = new Date()) => {
   const year = date.getFullYear();
@@ -11294,6 +11315,29 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	  }
 
 	  if (obj.type === "alarms-panel") {
+	    if (obj.panelMode === "data-entry") {
+	      const x = Number(obj.x ?? 0), y = Number(obj.y ?? 0), w = Number(obj.w ?? 560), h = Number(obj.h ?? 420);
+	      const rect = document.createElementNS(ns, "rect"); rect.setAttribute("x", x); rect.setAttribute("y", y); rect.setAttribute("width", w); rect.setAttribute("height", h); rect.setAttribute("rx", obj.rx ?? 0); rect.setAttribute("fill", obj.fill || "#ffffff"); setFlatBorderStroke(rect, obj.stroke || "#000000", Number(obj.strokeWidth ?? 1), obj.borderStyle); parent.appendChild(rect);
+	      const fo = document.createElementNS(ns, "foreignObject"); fo.setAttribute("x", x); fo.setAttribute("y", y); fo.setAttribute("width", w); fo.setAttribute("height", h); fo.style.pointerEvents = isEditMode ? "none" : "auto";
+	      const panel = document.createElementNS(xhtml, "div"); panel.className = "hmi-data-entry"; panel.style.fontSize = `${Number(obj.fontSize || 14)}px`;
+	      if (!hmiDataEntryState.forms.length && !hmiDataEntryState.promise) loadHmiDataEntryForms().then(() => renderScreen()).catch(() => renderScreen());
+	      const form = hmiDataEntryState.forms.find((item) => item.id === obj.dataEntryFormId);
+	      const stateKey = String(obj.id || obj.dataEntryFormId || 'data-entry');
+	      let runtime = hmiDataEntryState.values.get(stateKey);
+	      if (!runtime) { runtime = { date: reportTableIsoDate(), loaded: {}, loading: false, status: '' }; hmiDataEntryState.values.set(stateKey, runtime); }
+	      const header = document.createElementNS(xhtml, "div"); header.className = "hmi-data-entry-header"; header.style.background = obj.headerBg || "#1f2937"; header.style.color = obj.headerText || "#ffffff";
+	      const title = document.createElementNS(xhtml, "strong"); title.textContent = String(obj.dataEntryTitle || '').trim() || form?.name || 'Data Entry Form'; header.appendChild(title);
+	      const date = document.createElementNS(xhtml, "input"); date.type = 'date'; date.value = runtime.date; date.addEventListener('change', () => { runtime.date = date.value; loadValues(); }); header.appendChild(date); panel.appendChild(header);
+	      const status = document.createElementNS(xhtml, "div"); status.className = "hmi-data-entry-status"; status.textContent = runtime.status || (form ? 'Select a date or enter values.' : 'Select an HMI-enabled form.'); panel.appendChild(status);
+	      const fields = document.createElementNS(xhtml, "div"); fields.className = "hmi-data-entry-fields"; panel.appendChild(fields);
+	      const inputs = new Map();
+	      (form?.fields || []).forEach((field) => { const row = document.createElementNS(xhtml, "div"); row.className = 'hmi-data-entry-field'; const label = document.createElementNS(xhtml, 'label'); label.textContent = field.label + (field.unit ? ` (${field.unit})` : ''); const input = document.createElementNS(xhtml, 'input'); input.type = field.value_type === 'numeric' ? 'number' : 'text'; input.style.background = obj.fieldBg || '#ffffff'; input.style.color = obj.fieldText || '#111827'; const loaded = runtime.loaded[field.item] || {}; const value = field.value_type === 'text' ? loaded.text : loaded.numeric; input.value = value == null ? '' : String(value); input.dataset.original = input.value; inputs.set(field.id, input); row.append(label, input);
+	        if (form.allow_delete && loaded.timestamp) { const del = document.createElementNS(xhtml, 'button'); del.textContent = 'Delete'; del.addEventListener('click', () => { row.classList.toggle('is-delete'); input.disabled = row.classList.contains('is-delete'); del.textContent = input.disabled ? 'Undo' : 'Delete'; }); row.appendChild(del); } fields.appendChild(row); });
+	      async function loadValues() { if (!form || !runtime.date || runtime.loading) return; runtime.loading = true; runtime.status = 'Loading…'; renderScreen(); try { const response = await fetch('/api/data-entry/load', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({form_id:form.id,record_date:runtime.date}) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); runtime.loaded = body.values || {}; runtime.status = `${Object.keys(runtime.loaded).length} existing value(s) loaded.`; } catch(error) { runtime.status = String(error.message || error); } finally { runtime.loading = false; renderScreen(); } }
+	      if (form && !runtime.loadedOnce && !runtime.loading) { runtime.loadedOnce = true; window.setTimeout(loadValues, 0); }
+	      const actions = document.createElementNS(xhtml, 'div'); actions.className = 'hmi-data-entry-actions'; const load = document.createElementNS(xhtml, 'button'); load.textContent = 'Load'; load.addEventListener('click', loadValues); actions.appendChild(load); const save = document.createElementNS(xhtml, 'button'); save.textContent = 'Save'; save.addEventListener('click', async () => { if (!form) return; const changes = []; fields.querySelectorAll('.hmi-data-entry-field').forEach((row, index) => { const field = form.fields[index], input = row.querySelector('input'); if (row.classList.contains('is-delete')) changes.push({field_id:field.id,action:'delete'}); else if (input.value !== input.dataset.original) changes.push({field_id:field.id,action:'set',value:input.value}); }); if (!changes.length) { runtime.status = 'No changes to save.'; return renderScreen(); } const deletionCount = changes.filter((change) => change.action === 'delete').length; if (deletionCount && !window.confirm(`Save changes and delete ${deletionCount} value(s) for ${runtime.date}?`)) return; runtime.status='Saving…'; renderScreen(); try { const response=await fetch('/api/data-entry/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({form_id:form.id,record_date:runtime.date,changes})}); const body=await response.json(); if(!response.ok) throw new Error(body.error||`HTTP ${response.status}`); runtime.status=`Saved: ${body.inserted||0} inserted, ${body.updated||0} updated, ${body.deleted||0} deleted.`; runtime.loaded={}; await loadValues(); } catch(error){runtime.status=String(error.message||error);renderScreen();} }); actions.appendChild(save); panel.appendChild(actions);
+	      ['pointerdown','mousedown','touchstart','click'].forEach((name) => panel.addEventListener(name, (event) => event.stopPropagation(), { passive:true })); fo.appendChild(panel); parent.appendChild(fo); return;
+	    }
 	    if (obj.panelMode === "report") {
 	      const x = Number(obj.x ?? 0), y = Number(obj.y ?? 0), w = Number(obj.w ?? 640), h = Number(obj.h ?? 320);
 	      const reportParent = hasRotation ? (() => { const wrapper = document.createElementNS(ns, "g"); applyRotationTransform(wrapper, obj); parent.appendChild(wrapper); return wrapper; })() : parent;
@@ -13112,22 +13156,24 @@ const syncPropertiesFromSelection = () => {
   }
   if (obj.type === "rect" || obj.type === "alarms-panel") {
     const isReportTable = obj.type === "alarms-panel" && obj.panelMode === "report";
-    if (rectPropsTitle) rectPropsTitle.textContent = isReportTable ? "Report Table" : (obj.type === "alarms-panel" ? "Alarms Panel" : "Rectangle");
+    const isDataEntry = obj.type === "alarms-panel" && obj.panelMode === "data-entry";
+    if (rectPropsTitle) rectPropsTitle.textContent = isDataEntry ? "Data Entry Form" : (isReportTable ? "Report Table" : (obj.type === "alarms-panel" ? "Alarms Panel" : "Rectangle"));
     if (alarmsPanelPropsFields) {
       const show = obj.type === "alarms-panel";
       alarmsPanelPropsFields.classList.toggle("is-hidden", !show);
       alarmsPanelPropsFields.hidden = !show;
       if (show) {
         Array.from(alarmsPanelPropsFields.children).forEach((child) => {
-          if (child === reportTablePropsFields) return;
-          child.classList.toggle("is-hidden", isReportTable);
-          child.hidden = isReportTable;
+          if (child === reportTablePropsFields || child === dataEntryPropsFields) return;
+          child.classList.toggle("is-hidden", isReportTable || isDataEntry);
+          child.hidden = isReportTable || isDataEntry;
         });
       }
       if (reportTablePropsFields) {
         reportTablePropsFields.classList.toggle("is-hidden", !isReportTable);
         reportTablePropsFields.hidden = !isReportTable;
       }
+      if (dataEntryPropsFields) { dataEntryPropsFields.classList.toggle('is-hidden', !isDataEntry); dataEntryPropsFields.hidden = !isDataEntry; }
     }
     if (rectXInput) rectXInput.value = Number(obj.x) || 0;
     if (rectYInput) rectYInput.value = Number(obj.y) || 0;
@@ -13153,6 +13199,15 @@ const syncPropertiesFromSelection = () => {
         if (reportTableBoldInput) reportTableBoldInput.checked = Boolean(obj.bold);
         const colors = [[reportTableHeaderBgInput, obj.headerBg, "#1f2937"], [reportTableHeaderTextInput, obj.headerText, "#ffffff"], [reportTableRowBgInput, obj.rowBg, "#ffffff"], [reportTableAltRowBgInput, obj.altRowBg, "#f3f4f6"], [reportTableRowTextInput, obj.rowText, "#111827"], [reportTableSummaryBgInput, obj.summaryBg, "#dbeafe"], [reportTableSummaryTextInput, obj.summaryText, "#111827"], [reportTableMissingTextInput, obj.missingText, "#9ca3af"]];
         colors.forEach(([input, value, fallback]) => { if (input) input.value = value || fallback; });
+      }
+      if (isDataEntry) {
+        loadHmiDataEntryForms().then(() => { if (!hmiDataEntryFormInput) return; hmiDataEntryFormInput.replaceChildren(new Option('Select a form','')); hmiDataEntryState.forms.forEach((form) => hmiDataEntryFormInput.add(new Option(form.name, form.id))); hmiDataEntryFormInput.value = obj.dataEntryFormId || ''; }).catch(() => {});
+        if (hmiDataEntryTitleInput) hmiDataEntryTitleInput.value = obj.dataEntryTitle || '';
+        if (hmiDataEntryFontSizeInput) hmiDataEntryFontSizeInput.value = Number(obj.fontSize || 14);
+        if (hmiDataEntryHeaderBgInput) hmiDataEntryHeaderBgInput.value = obj.headerBg || '#1f2937';
+        if (hmiDataEntryHeaderTextInput) hmiDataEntryHeaderTextInput.value = obj.headerText || '#ffffff';
+        if (hmiDataEntryFieldBgInput) hmiDataEntryFieldBgInput.value = obj.fieldBg || '#ffffff';
+        if (hmiDataEntryFieldTextInput) hmiDataEntryFieldTextInput.value = obj.fieldText || '#111827';
       }
       if (alarmsPanelIdInput) setInputValueSafe(alarmsPanelIdInput, obj.id || "");
       if (alarmsPanelHistoryDaysInput) setInputValueSafe(alarmsPanelHistoryDaysInput, Number(obj.historyDays ?? ALARM_HISTORY_WINDOW_DAYS));
@@ -19268,7 +19323,8 @@ const bindReportTableProperty = (input, key, read = (element) => element.value) 
   input.addEventListener("change", () => {
     const activeObjects = getActiveObjects();
     const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-    if (!obj || obj.type !== "alarms-panel" || obj.panelMode !== "report") return;
+    if (!obj || obj.type !== "alarms-panel" || !["report", "data-entry"].includes(obj.panelMode)) return;
+    if (key === 'dataEntryFormId') hmiDataEntryState.values.delete(String(obj.id || obj.dataEntryFormId || 'data-entry'));
     updateRectProperty({ [key]: read(input) });
   });
 };
@@ -19282,6 +19338,9 @@ bindReportTableProperty(reportTableFontSizeInput, "fontSize", (input) => Math.ma
 bindReportTableProperty(reportTableBoldInput, "bold", (input) => input.checked);
 [[reportTableHeaderBgInput, "headerBg"], [reportTableHeaderTextInput, "headerText"], [reportTableRowBgInput, "rowBg"], [reportTableAltRowBgInput, "altRowBg"], [reportTableRowTextInput, "rowText"], [reportTableSummaryBgInput, "summaryBg"], [reportTableSummaryTextInput, "summaryText"], [reportTableMissingTextInput, "missingText"]]
   .forEach(([input, key]) => bindReportTableProperty(input, key));
+bindReportTableProperty(hmiDataEntryFormInput, 'dataEntryFormId'); bindReportTableProperty(hmiDataEntryTitleInput, 'dataEntryTitle');
+bindReportTableProperty(hmiDataEntryFontSizeInput, 'fontSize', (input) => Math.max(6, Number(input.value) || 14));
+[[hmiDataEntryHeaderBgInput,'headerBg'],[hmiDataEntryHeaderTextInput,'headerText'],[hmiDataEntryFieldBgInput,'fieldBg'],[hmiDataEntryFieldTextInput,'fieldText']].forEach(([input,key]) => bindReportTableProperty(input,key));
 
 const updateAlarmsPanelFilterProperty = (key, input) => {
   if (!input) return;
@@ -28629,6 +28688,14 @@ const insertReportTable = () => {
 
 if (leftReportTableToolBtn) leftReportTableToolBtn.addEventListener("click", insertReportTable);
 
+const insertDataEntryForm = () => {
+  if (!currentScreenObj) return; const activeObjects = ensureActiveObjects(); if (!activeObjects) return; recordHistory();
+  activeObjects.push({ type:'alarms-panel', panelMode:'data-entry', id:`dataEntry${Date.now()}`, x:20,y:20,w:560,h:420,rx:0,fill:'#ffffff',stroke:'#000000',strokeWidth:1,
+    dataEntryFormId:'',dataEntryTitle:'',fontSize:14,headerBg:'#1f2937',headerText:'#ffffff',fieldBg:'#ffffff',fieldText:'#111827' });
+  selectedIndices=[activeObjects.length-1]; renderScreen(); syncEditorFromScreen(); setDirty(true); setEditorTab('properties');
+};
+if (leftDataEntryToolBtn) leftDataEntryToolBtn.addEventListener('click', insertDataEntryForm);
+
 if (leftCircleToolBtn) {
   leftCircleToolBtn.addEventListener("click", () => {
     if (!leftCircleFlyout) {
@@ -28689,6 +28756,7 @@ if (alarmsPanelToolBtn) {
 }
 
 if (reportTableToolBtn) reportTableToolBtn.addEventListener("click", insertReportTable);
+if (dataEntryToolBtn) dataEntryToolBtn.addEventListener('click', insertDataEntryForm);
 
 if (barToolBtn) {
   barToolBtn.addEventListener("click", () => {

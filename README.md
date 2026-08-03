@@ -12,6 +12,64 @@ OPCBridge Suite is a complete SCADA stack for industrial automation:
 
 ![OPCBridge-SCADA landing page](docs/manual/screenshots/opcbridge-scada-landing-page.png)
 
+## Why OPCBridge Exists
+
+I have worked with SCADA and industrial control systems for a very long time,
+and I love Linux. But OPCBridge exists for a more important reason.
+
+Commercial SCADA platforms are built for the customers who can afford them.
+Licensing, tag-count tiers, and mandatory support contracts add up fast—and for
+a small utility or rural water district, that cost can be the difference
+between modernizing and limping along on whatever was installed twenty years
+ago. These systems are often monolithic and designed around the needs and
+budgets of large customers, leaving smaller users with limited choices.
+
+OPCBridge Suite exists because critical infrastructure should not be gated
+behind a price tag. It is a free and open-source alternative that can support a
+municipal water or wastewater system, a small industrial facility, a
+laboratory, or even a home automation project. There are no licensing fees,
+tag-count tiers, feature restrictions, or limits based on the size of the
+system. The only real cost of entry should be the hardware used to run it.
+
+This is not a theoretical concern. After a year and a half spent trying to get
+a commercial alarm server to do what we actually needed—configuring it,
+working with vendor support, and eventually hitting a wall—the answer turned
+out to be software that already existed, built for exactly this problem. It is
+now running in production, handling alarm callouts and data logging, and has
+since been proposed for other applications after proving itself in daily use.
+
+### A concrete example: data that quietly stops recording
+
+Commercial historian services can silently stop logging because of a dropped
+connection, crashed service, or stalled write. The first sign is often a gap
+discovered days later, when someone runs a report and notices missing hours.
+
+OPCBridge does more than log data; it watches the health of the process. It can
+raise an alarm when a database connection drops or when a configurable data
+check does not find the expected number of data points within a defined time
+window. The interval and query are user-defined. What once required someone to
+rerun a query after a report “looked off” can now run continuously in the
+background, with an email sent as soon as something is wrong—before it becomes
+a data gap that must be reconstructed later.
+
+If a task has to be done repeatedly, it should be automated. That principle
+runs throughout the suite.
+
+### Built for Linux, on purpose
+
+Most software in this industry is written for Windows, and that is a real
+adoption barrier for a project like this. But running on Linux is not just a
+preference. It means no forced operating-system reboots on a system that must
+run around the clock, no update nagging on a closed network, and no operating-
+system licensing cost stacked on top of everything else.
+
+Whether you are a utility running OPCBridge in production or a hobbyist
+experimenting with home automation, the barrier to trying it should be as
+close to zero as possible. Everything should remain open, accessible, and
+available without artificial limitation.
+
+**Small utilities deserve modern tools too.**
+
 ## Quick Start (Debian 12+)
 
 Requirements:

@@ -1022,6 +1022,17 @@ install_scada() {
   fi
 
   mkdir -p "$CONFIG_ROOT/scada"
+  mkdir -p "$CONFIG_ROOT/data-entry"
+  if [[ ! -f "$CONFIG_ROOT/data-entry/forms.json" ]]; then
+    install -m 0660 /dev/null "$CONFIG_ROOT/data-entry/forms.json"
+    echo '{"targets":[],"forms":[]}' >"$CONFIG_ROOT/data-entry/forms.json"
+  fi
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/data-entry" 2>/dev/null || true
+  chmod 750 "$CONFIG_ROOT/data-entry" 2>/dev/null || true
+  chmod 660 "$CONFIG_ROOT/data-entry/forms.json" 2>/dev/null || true
+  mkdir -p "$DATA_ROOT/data-entry"
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/data-entry" 2>/dev/null || true
+  chmod 750 "$DATA_ROOT/data-entry" 2>/dev/null || true
   install -m 0644 "$ROOT_DIR/opcbridge-scada/config.json.example" "$CONFIG_ROOT/scada/config.json.example" 2>/dev/null || true
   install -m 0644 "$ROOT_DIR/opcbridge-scada/config.secrets.json.example" "$CONFIG_ROOT/scada/config.secrets.json.example" 2>/dev/null || true
 }

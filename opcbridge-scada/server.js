@@ -213,6 +213,10 @@ const REPORT_LOGGER_URL = String(
   `http://${REPORTER_API_HOST}:${REPORTER_API_PORT}`
 ).trim();
 const REPORT_TEMPLATE_PREVIEW_CACHE = new Map();
+const DATA_ENTRY_DEFINITIONS_PATH = String(
+  process.env.OPCBRIDGE_DATA_ENTRY_DEFINITIONS || '/etc/opcbridge/data-entry/forms.json'
+).trim();
+const DATA_ENTRY_AUDIT_PATH = String(process.env.OPCBRIDGE_DATA_ENTRY_AUDIT || '/var/lib/opcbridge/data-entry/audit.jsonl').trim();
 
 const SYSTEMD_UNITS_DIR = String(process.env.OPCBRIDGE_SCADA_SYSTEMD_UNITS_DIR || '/etc/systemd/system').trim();
 
@@ -499,6 +503,100 @@ function reportTemplateContentType(template) {
 function readReportDefinitions() {
   const root = readJsonFileOrNull(REPORT_DEFINITIONS_PATH) || { reports: [] };
   return Array.isArray(root?.reports) ? root.reports.filter((report) => report && typeof report === 'object') : [];
+}
+
+function readDataEntryDefinitions() {
+  const root = readJsonFileOrNull(DATA_ENTRY_DEFINITIONS_PATH) || {};
+  return { targets: Array.isArray(root?.targets) ? root.targets : [], forms: Array.isArray(root?.forms) ? root.forms : [] };
+}
+
+function readDataEntryForms() {
+  const root = readDataEntryDefinitions();
+  return Array.isArray(root?.forms) ? root.forms.filter((form) => form && typeof form === 'object') : [];
+}
+
+function readDataEntryTargets() { return readDataEntryDefinitions().targets.filter((target) => target && typeof target === 'object'); }
+
+function normalizeDataEntryTarget(source) {
+  const value = source && typeof source === 'object' ? source : {};
+  const id = sanitizeId(value.id || value.name); const name = String(value.name || '').trim().slice(0, 200);
+  if (!id || !name) throw new Error('Target name is required.');
+  const required = (key, label) => { const result = String(value[key] || '').trim(); if (!result) throw new Error(`${label} is required.`); return result; };
+  const recordTime = String(value.record_time || '08:00:00').trim();
+  if (!/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(recordTime)) throw new Error('Record time must use HH:MM:SS.');
+  const allowed = new Set(['unused','record_datetime','record_epoch_ms','save_datetime','database_id','target_id','target_name','form_id','form_name','fixed','item_name','numeric_value','text_value','record_msec']);
+  const usedRoles = new Set();
+  const columns = (Array.isArray(value.columns) ? value.columns : []).map((entry) => {
+    const column = String(entry?.column || '').trim(); const source = String(entry?.source || 'unused');
+    if (!column || !allowed.has(source)) throw new Error('Every target field requires a valid source.');
+    if (['record_datetime','record_epoch_ms','item_name','numeric_value','text_value','record_msec'].includes(source)) {
+      if (usedRoles.has(source)) throw new Error(`Only one database field may use ${source}.`); usedRoles.add(source);
+    }
+    return { column, source, value: String(entry?.value ?? '').slice(0, 4000) };
+  });
+  if (!usedRoles.has('item_name')) throw new Error('One database field must be supplied by Item/tag name.');
+  if (!usedRoles.has('record_datetime') && !usedRoles.has('record_epoch_ms')) throw new Error('One database field must be supplied by the operational date/time.');
+  if (!usedRoles.has('numeric_value') && !usedRoles.has('text_value')) throw new Error('At least one entered-value database field is required.');
+  return { id, name, description: String(value.description || '').trim().slice(0, 2000),
+    database_id: required('database_id', 'Database connection'), table: required('table', 'Table'), record_time: recordTime,
+    alternate_times: (Array.isArray(value.alternate_times) ? value.alternate_times : []).map((item) => String(item || '').trim()).filter(Boolean).slice(0, 10), columns };
+}
+
+function normalizeDataEntryForm(source) {
+  const value = source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+  const id = sanitizeId(value.id || value.name);
+  const name = String(value.name || '').trim().slice(0, 200);
+  if (!id || !name) throw new Error('Form name is required.');
+  const required = (key, label) => {
+    const result = String(value[key] || '').trim();
+    if (!result) throw new Error(`${label} is required.`);
+    return result;
+  };
+  const targetId = sanitizeId(value.target_id); if (!targetId) throw new Error('Data entry target is required.');
+  const usedIds = new Set();
+  const fields = (Array.isArray(value.fields) ? value.fields : []).slice(0, 500).map((field, index) => {
+    const item = String(field?.item || '').trim().slice(0, 500);
+    const label = String(field?.label || item).trim().slice(0, 200);
+    if (!item || !label) throw new Error(`Field ${index + 1} requires a label and item name.`);
+    let fieldId = sanitizeId(field?.id || label) || `field_${index + 1}`;
+    while (usedIds.has(fieldId)) fieldId = `${fieldId}_${index + 1}`;
+    usedIds.add(fieldId);
+    const valueType = String(field?.value_type || 'numeric') === 'text' ? 'text' : 'numeric';
+    const min = field?.min === '' || field?.min == null ? null : Number(field.min);
+    const max = field?.max === '' || field?.max == null ? null : Number(field.max);
+    if ((min !== null && !Number.isFinite(min)) || (max !== null && !Number.isFinite(max)) || (min !== null && max !== null && max < min)) {
+      throw new Error(`Field '${label}' has an invalid numeric range.`);
+    }
+    return { id: fieldId, label, item, value_type: valueType, unit: String(field?.unit || '').trim().slice(0, 50),
+      precision: normalizeIntRange(field?.precision, 2, 0, 10), required: normalizeBool(field?.required, false), min, max };
+  });
+  return {
+    id, name, description: String(value.description || '').trim().slice(0, 2000),
+    target_id: targetId,
+    allow_delete: normalizeBool(value.allow_delete, false), hmi_enabled: normalizeBool(value.hmi_enabled, false),
+    require_login: normalizeBool(value.require_login, true), fields
+  };
+}
+
+function dataEntryLoggerPayload(form, target, operation, body = {}) {
+  const bySource = (source) => target.columns.find((entry) => entry.source === source)?.column || '';
+  const insertValues = target.columns.filter((entry) => !['unused','record_datetime','record_epoch_ms','item_name','numeric_value','text_value','record_msec'].includes(entry.source)).map((entry) => {
+    let value = entry.value || '';
+    if (entry.source === 'database_id') value = target.database_id;
+    else if (entry.source === 'target_id') value = target.id;
+    else if (entry.source === 'target_name') value = target.name;
+    else if (entry.source === 'form_id') value = form.id;
+    else if (entry.source === 'form_name') value = form.name;
+    return { column: entry.column, source: entry.source === 'save_datetime' ? 'save_datetime' : 'fixed', value };
+  });
+  return {
+    operation, table: target.table, time_column: bySource('record_datetime') || bySource('record_epoch_ms'), time_storage: bySource('record_epoch_ms') ? 'epoch_ms' : 'datetime',
+    item_column: bySource('item_name'), numeric_column: bySource('numeric_value'), text_column: bySource('text_value'), msec_column: bySource('record_msec'),
+    record_date: String(body.record_date || ''), record_time: target.record_time,
+    alternate_times: target.alternate_times || [], fields: form.fields.map((field) => ({ item: field.item })),
+    insert_values: insertValues,
+    ...(operation === 'save' ? { changes: body.changes || [] } : {})
+  };
 }
 
 async function cachedReportTemplatePreview(report) {
@@ -2671,6 +2769,16 @@ const server = http.createServer(async (req, res) => {
     return status;
   }
 
+  async function requireDataEntryPerm(administer = false, allowPublicForm = null) {
+    let status = null;
+    try { status = await fetchOpcbridgeAuthStatus(req, cfg); }
+    catch (err) { sendJson(res, 502, { ok: false, error: String(err.message || err) }); return null; }
+    if (allowPublicForm && allowPublicForm.hmi_enabled === true && allowPublicForm.require_login === false) return status || {};
+    const allowed = authStatusHasPerm(status, 'data_entry.administer') || (!administer && authStatusHasPerm(status, 'data_entry.access'));
+    if (!allowed) { sendJson(res, authStatusIsLoggedIn(status) ? 403 : 401, { ok: false, error: 'Insufficient data-entry permissions.' }); return null; }
+    return status;
+  }
+
   // Read system logs via journalctl (permission: suite.view_logs).
   if (url.pathname === '/api/logs') {
     if (req.method !== 'GET') {
@@ -4320,6 +4428,143 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
+    return;
+  }
+
+  if (url.pathname === '/api/data-entry/hmi/forms') {
+    if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    const forms = readDataEntryForms().filter((form) => form.hmi_enabled === true).map((form) => ({
+      id: form.id, name: form.name, description: form.description, require_login: form.require_login !== false,
+      allow_delete: form.allow_delete === true, fields: form.fields
+    }));
+    sendJson(res, 200, { ok: true, forms }); return;
+  }
+
+  if (url.pathname === '/api/data-entry/targets') {
+    const status = await requireDataEntryPerm(true); if (!status) return;
+    if (req.method === 'GET') { sendJson(res, 200, { ok: true, targets: readDataEntryTargets() }); return; }
+    if (req.method === 'POST') {
+      try {
+        const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
+        const root = readDataEntryDefinitions(); const originalId = sanitizeId(body.original_id || ''); const target = normalizeDataEntryTarget(body.target || body);
+        const index = root.targets.findIndex((item) => sanitizeId(item?.id) === originalId);
+        if (root.targets.some((item, itemIndex) => itemIndex !== index && sanitizeId(item?.id) === target.id)) throw new Error(`Target id already exists: ${target.id}`);
+        if (index >= 0) root.targets[index] = target; else root.targets.push(target);
+        if (originalId && originalId !== target.id) root.forms.forEach((form) => { if (sanitizeId(form.target_id) === originalId) form.target_id = target.id; });
+        writeJsonFile(DATA_ENTRY_DEFINITIONS_PATH, root); sendJson(res, 200, { ok: true, target });
+      } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return;
+  }
+
+  if (url.pathname === '/api/data-entry/targets/delete') {
+    const status = await requireDataEntryPerm(true); if (!status) return;
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); const id = sanitizeId(body.id); const root = readDataEntryDefinitions();
+      if (root.forms.some((form) => sanitizeId(form.target_id) === id)) throw new Error('This target is used by one or more forms.');
+      const index = root.targets.findIndex((item) => sanitizeId(item.id) === id); if (index < 0) throw new Error('Target not found.');
+      root.targets.splice(index, 1); writeJsonFile(DATA_ENTRY_DEFINITIONS_PATH, root); sendJson(res, 200, { ok: true, deleted: true });
+    } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
+    return;
+  }
+
+  if (url.pathname === '/api/data-entry/forms') {
+    if (req.method === 'GET') {
+      const status = await requireDataEntryPerm(false);
+      if (!status) return;
+      sendJson(res, 200, { ok: true, forms: readDataEntryForms() });
+      return;
+    }
+    if (req.method === 'POST') {
+      const status = await requireDataEntryPerm(true);
+      if (!status) return;
+      try {
+        const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
+        const originalId = sanitizeId(body.original_id || '');
+        const root = readDataEntryDefinitions(); const forms = root.forms;
+        const form = normalizeDataEntryForm(body.form || body);
+        if (!root.targets.some((target) => sanitizeId(target.id) === form.target_id)) throw new Error('Selected data entry target does not exist.');
+        const index = forms.findIndex((item) => sanitizeId(item?.id) === originalId);
+        if (forms.some((item, itemIndex) => itemIndex !== index && sanitizeId(item?.id) === form.id)) throw new Error(`Form id already exists: ${form.id}`);
+        if (index >= 0) forms[index] = form; else forms.push(form);
+        root.forms = forms; writeJsonFile(DATA_ENTRY_DEFINITIONS_PATH, root);
+        sendJson(res, 200, { ok: true, form });
+      } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return;
+  }
+
+  if (url.pathname === '/api/data-entry/forms/delete') {
+    const status = await requireDataEntryPerm(true); if (!status) return;
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(body.id); const root = readDataEntryDefinitions(); const forms = root.forms;
+      const index = forms.findIndex((item) => sanitizeId(item?.id) === id);
+      if (!id || index < 0) throw new Error(`Form not found: ${id}`);
+      forms.splice(index, 1); root.forms = forms; writeJsonFile(DATA_ENTRY_DEFINITIONS_PATH, root);
+      sendJson(res, 200, { ok: true, deleted: true, id });
+    } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
+    return;
+  }
+
+  if (url.pathname === '/api/data-entry/sources' || url.pathname === '/api/data-entry/schema') {
+    const status = await requireDataEntryPerm(true); if (!status) return;
+    if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    if (url.pathname.endsWith('/sources')) {
+      const root = readJsonFileOrNull(REPORTER_DATABASES_PATH) || { databases: [] };
+      const databases = (Array.isArray(root.databases) ? root.databases : []).map((database) => ({ id: String(database?.id || '').trim(), name: String(database?.name || database?.id || '').trim(), type: String(database?.type || 'mysql').trim().toLowerCase() })).filter((database) => database.id);
+      sendJson(res, 200, { ok: true, databases }); return;
+    }
+    const databaseId = sanitizeId(url.searchParams.get('database'));
+    const database = readReporterDatabasesRaw().find((candidate) => sanitizeId(candidate?.id) === databaseId) || {};
+    const result = await reporterApiRequest('GET', `/databases/${encodeURIComponent(databaseId)}/schema`, null, reporterDatabaseDiscoveryTimeoutMs(database));
+    sendJson(res, result.ok ? 200 : (result.status || 502), result.json || { ok: false, error: result.error || 'Logger schema discovery failed.' });
+    return;
+  }
+
+  if (url.pathname === '/api/data-entry/load' || url.pathname === '/api/data-entry/save') {
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    try {
+      const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
+      const form = readDataEntryForms().find((item) => sanitizeId(item?.id) === sanitizeId(body.form_id));
+      if (!form) { sendJson(res, 404, { ok: false, error: 'Data-entry form not found.' }); return; }
+      const target = readDataEntryTargets().find((item) => sanitizeId(item?.id) === sanitizeId(form.target_id));
+      if (!target) { sendJson(res, 400, { ok: false, error: 'The form data-entry target was not found.' }); return; }
+      const status = await requireDataEntryPerm(false, form); if (!status) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.record_date || ''))) throw new Error('A valid record_date is required.');
+      const operation = url.pathname.endsWith('/save') ? 'save' : 'load';
+      if (operation === 'save') {
+        const fields = new Map(form.fields.map((field) => [field.id, field]));
+        body.changes = (Array.isArray(body.changes) ? body.changes : []).slice(0, 500).map((change) => {
+          const field = fields.get(String(change?.field_id || '')); if (!field) throw new Error('A submitted field is not defined by this form.');
+          const action = String(change?.action || 'set');
+          if (action === 'delete') { if (!form.allow_delete) throw new Error('Deletion is not allowed for this form.'); return { item: field.item, value_type: field.value_type, action }; }
+          let value = change?.value;
+          if (field.value_type === 'numeric') {
+            if (value === '' || value == null) value = null; else { value = Number(value); if (!Number.isFinite(value)) throw new Error(`${field.label} requires a numeric value.`); }
+            if (value !== null && field.min !== null && value < field.min) throw new Error(`${field.label} is below its minimum.`);
+            if (value !== null && field.max !== null && value > field.max) throw new Error(`${field.label} is above its maximum.`);
+          } else value = value == null ? '' : String(value).slice(0, 4000);
+          if (field.required && (value === null || value === '')) throw new Error(`${field.label} is required.`);
+          return { item: field.item, value_type: field.value_type, action: 'set', value };
+        });
+      }
+      const database = readReporterDatabasesRaw().find((candidate) => sanitizeId(candidate?.id) === sanitizeId(target.database_id)) || {};
+      const result = await reporterApiRequest('POST', `/databases/${encodeURIComponent(target.database_id)}/data-entry`, dataEntryLoggerPayload(form, target, operation, body), reporterDatabaseDiscoveryTimeoutMs(database));
+      if (operation === 'save' && result.ok && result.json?.ok) {
+        try {
+          ensureDirForFile(DATA_ENTRY_AUDIT_PATH);
+          fs.appendFileSync(DATA_ENTRY_AUDIT_PATH, JSON.stringify({ timestamp: new Date().toISOString(), form_id: form.id,
+            record_date: body.record_date, username: authStatusUsername(status) || null,
+            remote_address: String(req.socket?.remoteAddress || ''), changes: body.changes,
+            inserted: result.json.inserted || 0, updated: result.json.updated || 0, deleted: result.json.deleted || 0 }) + '\n', 'utf8');
+        } catch { /* data save succeeded; audit failure must not duplicate the write on retry */ }
+      }
+      sendJson(res, result.ok ? 200 : (result.status || 502), result.json || { ok: false, error: result.error || 'Logger data-entry request failed.' });
+    } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
     return;
   }
 

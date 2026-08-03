@@ -1622,3 +1622,14 @@ details.advanced summary {
   max-height: min(70vh, 720px);
   overflow: auto;
 }
+.data-entry-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.data-entry-preview-heading { margin-top: 18px; }
+.data-entry-preview-heading h3 { margin: 0 0 4px; }
+.data-entry-required-columns { margin-top: 12px; padding: 9px 11px; border: 1px solid var(--warn); border-radius: 4px; color: var(--warn); font-weight: 650; }
+.data-entry-required-columns.is-complete { border-color: var(--ok); color: var(--ok); }
+.data-entry-required-field { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.data-entry-required-field td:nth-child(2), .data-entry-required-field td:nth-child(3) { color: var(--warn); font-weight: 700; }
+.data-entry-field { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr) auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
+.data-entry-field input { width: 100%; box-sizing: border-box; }
+.data-entry-field.is-delete { border-color: #ef4444; background: rgba(239, 68, 68, .13); }
+.data-entry-field.is-delete input { text-decoration: line-through; opacity: .65; }

@@ -500,6 +500,19 @@ const createApp = () => {
     }
   });
 
+  app.use("/api/data-entry", async (req, res) => {
+    try {
+      const { config: parsed } = await readConfig(); const scada = parsed?.scada || {};
+      const host = String(scada.host || "127.0.0.1"), port = Number(scada.httpPort) || 3010;
+      const headers = { Accept: req.headers["accept"] || "application/json" };
+      if (req.headers["cookie"]) headers.Cookie = String(req.headers["cookie"]);
+      if (req.method !== "GET" && req.method !== "HEAD") headers["Content-Type"] = "application/json";
+      const response = await fetch(`http://${host}:${port}${req.originalUrl}`, { method: req.method, headers,
+        body: (req.method === "GET" || req.method === "HEAD") ? undefined : JSON.stringify(req.body || {}) });
+      const text = await response.text(); res.status(response.status).set("Cache-Control", "no-store").type(response.headers.get("content-type") || "application/json").send(text);
+    } catch (error) { res.status(502).json({ ok: false, error: `Data-entry API unavailable: ${String(error?.message || error)}` }); }
+  });
+
   app.get("/api/audit/status", async (req, res) => {
     try {
       let raw = "";
