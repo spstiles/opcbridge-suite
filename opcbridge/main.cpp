@@ -1581,9 +1581,9 @@ static std::vector<SystemTagDef> collect_mqtt_system_tags(bool mqttMode) {
 
 static std::vector<SystemTagDef> reporter_default_system_tags(bool connected = false) {
     return {
-        {"System/Reporter/RuntimeConnected", "bool", connected},
-        {"System/Reporter/DatabaseCount", "int32", 0},
-        {"System/Reporter/DataCheckCount", "int32", 0}
+        {"System/Logger/RuntimeConnected", "bool", connected},
+        {"System/Logger/DatabaseCount", "int32", 0},
+        {"System/Logger/DataCheckCount", "int32", 0}
     };
 }
 
@@ -1615,9 +1615,9 @@ static std::vector<SystemTagDef> collect_reporter_system_tags() {
             const json statuses = j.value("database_statuses", json::array());
             const json checkStatuses = j.value("data_check_statuses", json::array());
             next = {
-                {"System/Reporter/RuntimeConnected", "bool", j.value("ok", false)},
-                {"System/Reporter/DatabaseCount", "int32", statuses.is_array() ? static_cast<int>(statuses.size()) : 0},
-                {"System/Reporter/DataCheckCount", "int32", checkStatuses.is_array() ? static_cast<int>(checkStatuses.size()) : 0}
+                {"System/Logger/RuntimeConnected", "bool", j.value("ok", false)},
+                {"System/Logger/DatabaseCount", "int32", statuses.is_array() ? static_cast<int>(statuses.size()) : 0},
+                {"System/Logger/DataCheckCount", "int32", checkStatuses.is_array() ? static_cast<int>(checkStatuses.size()) : 0}
             };
 
             if (statuses.is_array()) {
@@ -1625,7 +1625,7 @@ static std::vector<SystemTagDef> collect_reporter_system_tags() {
                     if (!status.is_object()) continue;
                     const std::string id = status.value("id", std::string{});
                     if (id.empty()) continue;
-                    const std::string prefix = "System/Reporter/Databases/" + system_tag_path_segment(id) + "/";
+                    const std::string prefix = "System/Logger/Databases/" + system_tag_path_segment(id) + "/";
                     const int64_t lastCheckMs = json_i64_at(status, {"last_check_ms"}, 0);
                     next.push_back({prefix + "Id", "string", id});
                     next.push_back({prefix + "Enabled", "bool", status.value("enabled", false)});
@@ -1645,7 +1645,7 @@ static std::vector<SystemTagDef> collect_reporter_system_tags() {
                     if (!status.is_object()) continue;
                     const std::string id = status.value("id", std::string{});
                     if (id.empty()) continue;
-                    const std::string prefix = "System/Reporter/DataChecks/" + system_tag_path_segment(id) + "/";
+                    const std::string prefix = "System/Logger/DataChecks/" + system_tag_path_segment(id) + "/";
                     const int64_t lastRunMs = json_i64_at(status, {"last_run_ms"}, 0);
                     next.push_back({prefix + "Id", "string", id});
                     next.push_back({prefix + "Enabled", "bool", status.value("enabled", false)});
@@ -1666,6 +1666,18 @@ static std::vector<SystemTagDef> collect_reporter_system_tags() {
         }
     } catch (...) {
         next = reporter_default_system_tags(false);
+    }
+
+    // Publish the former Reporter paths as temporary aliases so existing alarm,
+    // HMI, logic, and external OPC UA references continue to resolve while new
+    // configuration uses the canonical Logger namespace.
+    const size_t canonicalCount = next.size();
+    for (size_t i = 0; i < canonicalCount; ++i) {
+        SystemTagDef alias = next[i];
+        const std::string canonicalPrefix = "System/Logger/";
+        if (alias.name.rfind(canonicalPrefix, 0) != 0) continue;
+        alias.name = "System/Reporter/" + alias.name.substr(canonicalPrefix.size());
+        next.push_back(std::move(alias));
     }
 
     std::lock_guard<std::mutex> lock(cacheMutex);
@@ -11678,7 +11690,8 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             UA_NodeId clockSysId = ua_add_folder(server, systemId, "Clock");
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
             UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
-            UA_NodeId reporterSysId = ua_add_folder(server, systemId, "Reporter");
+            UA_NodeId reporterSysId = ua_add_folder(server, systemId, "Logger");
+            UA_NodeId legacyReporterSysId = ua_add_folder(server, systemId, "Reporter");
             UA_NodeId historianSysId = ua_add_folder(server, systemId, "Historian");
             UA_NodeId logicSysId = ua_add_folder(server, systemId, "Logic");
             UA_NodeId mqttSysId = ua_add_folder(server, systemId, "MQTT");
@@ -11728,14 +11741,16 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                 }
             }
 
-            if (!UA_NodeId_isNull(&reporterSysId)) {
-                UA_NodeId databasesSysId = ua_add_folder(server, reporterSysId, "Databases");
-                UA_NodeId dataChecksSysId = ua_add_folder(server, reporterSysId, "DataChecks");
+            auto addLoggerSystemTree = [&](UA_NodeId rootNode, const std::string &rootPrefix) {
+                if (UA_NodeId_isNull(&rootNode)) return;
+                UA_NodeId databasesSysId = ua_add_folder(server, rootNode, "Databases");
+                UA_NodeId dataChecksSysId = ua_add_folder(server, rootNode, "DataChecks");
                 std::unordered_map<std::string, UA_NodeId> databaseNodes;
                 std::unordered_map<std::string, UA_NodeId> dataCheckNodes;
                 for (const auto &reporterRow : collect_reporter_system_tags()) {
-                    const std::string dbPrefix = "System/Reporter/Databases/";
-                    const std::string checkPrefix = "System/Reporter/DataChecks/";
+                    if (reporterRow.name.rfind(rootPrefix, 0) != 0) continue;
+                    const std::string dbPrefix = rootPrefix + "Databases/";
+                    const std::string checkPrefix = rootPrefix + "DataChecks/";
                     if (reporterRow.name.rfind(dbPrefix, 0) == 0 && !UA_NodeId_isNull(&databasesSysId)) {
                         std::string rest = reporterRow.name.substr(dbPrefix.size());
                         size_t slash = rest.find('/');
@@ -11763,10 +11778,12 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                             ua_add_system_variable(server, it->second, systemBindings, reporterRow.name, reporterRow.datatype, reporterRow.value);
                         }
                     } else {
-                        ua_add_system_variable(server, reporterSysId, systemBindings, reporterRow.name, reporterRow.datatype, reporterRow.value);
+                        ua_add_system_variable(server, rootNode, systemBindings, reporterRow.name, reporterRow.datatype, reporterRow.value);
                     }
                 }
-            }
+            };
+            addLoggerSystemTree(reporterSysId, "System/Logger/");
+            addLoggerSystemTree(legacyReporterSysId, "System/Reporter/");
 
             if (!UA_NodeId_isNull(&historianSysId)) {
                 for (const auto &historianRow : collect_historian_system_tags()) {
@@ -16916,10 +16933,10 @@ const wsBuildNodeIndex = (root) => {
 	        .map((id) => wsMakeSystemGroup(`ws:system:connections:${encodeURIComponent(id)}`, id, `System/Connections/${id}/`));
 	    const networkIfaceChildren = wsSystemPathChildren("System/Host/Network/")
 	        .map((iface) => wsMakeSystemGroup(`ws:system:host:network:${encodeURIComponent(iface)}`, iface, `System/Host/Network/${iface}/`));
-	    const reporterDatabaseChildren = wsSystemPathChildren("System/Reporter/Databases/")
-	        .map((id) => wsMakeSystemGroup(`ws:system:reporter:database:${encodeURIComponent(id)}`, id, `System/Reporter/Databases/${id}/`));
-	    const reporterCheckChildren = wsSystemPathChildren("System/Reporter/DataChecks/")
-	        .map((id) => wsMakeSystemGroup(`ws:system:reporter:data_check:${encodeURIComponent(id)}`, id, `System/Reporter/DataChecks/${id}/`));
+	    const reporterDatabaseChildren = wsSystemPathChildren("System/Logger/Databases/")
+	        .map((id) => wsMakeSystemGroup(`ws:system:reporter:database:${encodeURIComponent(id)}`, id, `System/Logger/Databases/${id}/`));
+	    const reporterCheckChildren = wsSystemPathChildren("System/Logger/DataChecks/")
+	        .map((id) => wsMakeSystemGroup(`ws:system:reporter:data_check:${encodeURIComponent(id)}`, id, `System/Logger/DataChecks/${id}/`));
 	    const mqttBrokerChildren = wsSystemPathChildren("System/MQTT/Subscriptions/")
 	        .map((id) => {
 	            const subChildren = wsSystemPathChildren(`System/MQTT/Subscriptions/${id}/`)
@@ -16952,9 +16969,9 @@ const wsBuildNodeIndex = (root) => {
 	            wsMakeSystemGroup("ws:system:opcua", "OPC UA", "System/OpcUa/", [
 	                wsMakeSystemGroup("ws:system:opcua:sync", "Sync", "System/OpcUa/Sync/")
 	            ]),
-	            wsMakeSystemGroup("ws:system:reporter", "Reporter", "System/Reporter/", [
-	                wsMakeSystemGroup("ws:system:reporter:data_checks", "Data Checks", "System/Reporter/DataChecks/", reporterCheckChildren),
-	                wsMakeSystemGroup("ws:system:reporter:databases", "Databases", "System/Reporter/Databases/", reporterDatabaseChildren)
+	            wsMakeSystemGroup("ws:system:reporter", "Logger", "System/Logger/", [
+	                wsMakeSystemGroup("ws:system:reporter:data_checks", "Data Checks", "System/Logger/DataChecks/", reporterCheckChildren),
+	                wsMakeSystemGroup("ws:system:reporter:databases", "Databases", "System/Logger/Databases/", reporterDatabaseChildren)
 	            ])
 	        ]
 	    });

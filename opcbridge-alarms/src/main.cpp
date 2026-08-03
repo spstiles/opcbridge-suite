@@ -2525,6 +2525,9 @@ struct AlarmDb
         const bool has_conn  = req.has_param("connection_id");
         const bool has_tag   = req.has_param("tag");
         const bool has_types = req.has_param("types");
+        const bool has_group = req.has_param("group");
+        const bool has_site = req.has_param("site");
+        const bool has_severity = req.has_param("severity");
 
 
 std::vector<std::string> typeList;
@@ -2554,6 +2557,9 @@ auto make_sql = [&](bool withGroupSite) -> std::string {
     if (has_alarm) sql += "AND alarm_id = ? ";
     if (has_conn)  sql += "AND connection_id = ? ";
     if (has_tag)   sql += "AND tag = ? ";
+    if (withGroupSite && has_group) sql += "AND group_name = ? ";
+    if (withGroupSite && has_site) sql += "AND site = ? ";
+    if (has_severity) sql += "AND severity = ? ";
     sql += "AND NOT (COALESCE(actor, '') = 'opcbridge-alarms' AND COALESCE(note, '') LIKE '%startup/reconnect reconciliation%') ";
     sql += "AND COALESCE(note, '') NOT LIKE '%inferred from current tag state%' ";
 
@@ -2611,6 +2617,13 @@ auto make_sql = [&](bool withGroupSite) -> std::string {
         if (has_alarm) sqlite3_bind_text(stmt, idx++, req.get_param_value("alarm_id").c_str(), -1, SQLITE_TRANSIENT);
         if (has_conn)  sqlite3_bind_text(stmt, idx++, req.get_param_value("connection_id").c_str(), -1, SQLITE_TRANSIENT);
         if (has_tag)   sqlite3_bind_text(stmt, idx++, req.get_param_value("tag").c_str(), -1, SQLITE_TRANSIENT);
+        if (withGroupSite && has_group) sqlite3_bind_text(stmt, idx++, req.get_param_value("group").c_str(), -1, SQLITE_TRANSIENT);
+        if (withGroupSite && has_site) sqlite3_bind_text(stmt, idx++, req.get_param_value("site").c_str(), -1, SQLITE_TRANSIENT);
+        if (has_severity) {
+            int severity = 0;
+            try { severity = std::stoi(req.get_param_value("severity")); } catch (...) { sqlite3_finalize(stmt); err = "Invalid severity"; return false; }
+            sqlite3_bind_int(stmt, idx++, severity);
+        }
         for (const auto& t : typeList)
         {
             sqlite3_bind_text(stmt, idx++, t.c_str(), -1, SQLITE_TRANSIENT);

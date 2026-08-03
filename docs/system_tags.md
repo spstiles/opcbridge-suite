@@ -138,23 +138,25 @@ becomes `false` and counts fall back to safe defaults.
 
 OPCBridge reads data-logger runtime status from `opcbridge-logger` with a short
 timeout and caches the result. If the logger service is unavailable,
-`System/Reporter/RuntimeConnected` becomes `false` and counts fall back to safe
+`System/Logger/RuntimeConnected` becomes `false` and counts fall back to safe
 defaults.
 
-The existing `System/Reporter` tag namespace is retained for project
-compatibility even though the service is now named `opcbridge-logger`.
+`System/Logger` is the canonical namespace. The former `System/Reporter`
+paths are temporarily published as aliases with identical values so existing
+alarms, HMI screens, logic, and external integrations continue to work while
+their references are migrated.
 Top-level data-logger tags:
 
 | Tag | Type | Meaning |
 | --- | --- | --- |
-| `System/Reporter/RuntimeConnected` | `bool` | Logger health API is reachable and healthy. |
-| `System/Reporter/DatabaseCount` | `int32` | Number of database monitor status rows reported by the logger service. |
-| `System/Reporter/DataCheckCount` | `int32` | Number of data-check status rows reported by the logger service. |
+| `System/Logger/RuntimeConnected` | `bool` | Logger health API is reachable and healthy. |
+| `System/Logger/DatabaseCount` | `int32` | Number of database monitor status rows reported by the logger service. |
+| `System/Logger/DataCheckCount` | `int32` | Number of data-check status rows reported by the logger service. |
 
 Database monitor tags are published under:
 
 ```text
-System/Reporter/Databases/<database_id>/
+System/Logger/Databases/<database_id>/
 ```
 
 | Tag | Type | Meaning |
@@ -173,7 +175,7 @@ System/Reporter/Databases/<database_id>/
 Data-check tags are published under:
 
 ```text
-System/Reporter/DataChecks/<check_id>/
+System/Logger/DataChecks/<check_id>/
 ```
 
 A data check runs a configured SQL query on a schedule. The first column of the
@@ -230,7 +232,7 @@ Alarm when a database monitor fails:
 
 ```text
 connection_id: _system
-tag_name: System/Reporter/Databases/main/Ok
+tag_name: System/Logger/Databases/main/Ok
 type: equals
 value: false
 ```
@@ -239,7 +241,7 @@ Alarm when a daily record-count data check is below its threshold:
 
 ```text
 connection_id: _system
-tag_name: System/Reporter/DataChecks/daily_record_count/BelowLow
+tag_name: System/Logger/DataChecks/daily_record_count/BelowLow
 type: equals
 value: true
 ```

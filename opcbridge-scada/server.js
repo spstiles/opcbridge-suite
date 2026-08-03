@@ -1413,7 +1413,7 @@ function reporterApiRequest(method, apiPath, bodyObj = null, timeoutMs = 5000) {
       });
     });
     up.on('timeout', () => {
-      up.destroy(new Error('Reporter API timeout'));
+      up.destroy(new Error('Logger API timeout'));
     });
     up.on('error', (err) => {
       resolve({ ok: false, status: 0, error: String(err.message || err) });
@@ -2164,14 +2164,14 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
   ].forEach((absPath) => {
     const p = String(absPath || '').trim();
     if (!p) return;
-    add('reporter_config', path.dirname(p), path.basename(p));
+    add('logger_config', path.dirname(p), path.basename(p));
   });
   if (includeSecrets) {
     const p = String(REPORTER_DATABASES_PATH || '').trim();
-    if (p) add('reporter_config', path.dirname(p), path.basename(p));
+    if (p) add('logger_config', path.dirname(p), path.basename(p));
   }
   projectBackupWalkFiles(REPORTER_REPORTS_DIR, '.', { includeExts: ['.json', '.jsonc', '.sql', '.txt', '.md'] })
-    .forEach((rel) => add('reporter_reports', REPORTER_REPORTS_DIR, rel));
+    .forEach((rel) => add('logger_reports', REPORTER_REPORTS_DIR, rel));
   add('report_config', path.dirname(REPORT_DEFINITIONS_PATH), path.basename(REPORT_DEFINITIONS_PATH));
   projectBackupWalkFiles(REPORT_TEMPLATE_DIR, '.', { includeExts: ['.xlsx', '.ods'] })
     .forEach((rel) => add('report_templates', REPORT_TEMPLATE_DIR, rel));
@@ -2215,8 +2215,8 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
       opcbridge_config: DEFAULT_OPCBRIDGE_CONFIG_DIR,
       scada_config: path.dirname(CONFIG_PATH),
       hmi_project: HMI_ROOT,
-      reporter_config: path.dirname(REPORTER_CONFIG_PATH),
-      reporter_reports: REPORTER_REPORTS_DIR,
+      logger_config: path.dirname(REPORTER_CONFIG_PATH),
+      logger_reports: REPORTER_REPORTS_DIR,
       report_config: path.dirname(REPORT_DEFINITIONS_PATH),
       report_templates: REPORT_TEMPLATE_DIR,
       runtime_history: path.dirname(OPCBRIDGE_ALARMS_DB_PATH),
@@ -2236,8 +2236,8 @@ function projectRestoreRootForSection(section) {
   if (s === 'opcbridge_config') return DEFAULT_OPCBRIDGE_CONFIG_DIR;
   if (s === 'scada_config') return path.dirname(CONFIG_PATH);
   if (s === 'hmi_project') return HMI_ROOT;
-  if (s === 'reporter_config') return path.dirname(REPORTER_CONFIG_PATH);
-  if (s === 'reporter_reports') return REPORTER_REPORTS_DIR;
+  if (s === 'logger_config' || s === 'reporter_config') return path.dirname(REPORTER_CONFIG_PATH);
+  if (s === 'logger_reports' || s === 'reporter_reports') return REPORTER_REPORTS_DIR;
   if (s === 'report_config') return path.dirname(REPORT_DEFINITIONS_PATH);
   if (s === 'report_templates') return REPORT_TEMPLATE_DIR;
   if (s === 'runtime_history') return path.dirname(OPCBRIDGE_ALARMS_DB_PATH);
@@ -2777,6 +2777,69 @@ const server = http.createServer(async (req, res) => {
     const allowed = authStatusHasPerm(status, 'data_entry.administer') || (!administer && authStatusHasPerm(status, 'data_entry.access'));
     if (!allowed) { sendJson(res, authStatusIsLoggedIn(status) ? 403 : 401, { ok: false, error: 'Insufficient data-entry permissions.' }); return null; }
     return status;
+  }
+
+  if (url.pathname === '/api/logs/query') {
+    if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    if (!await requireViewLogsPerm()) return;
+    const source = String(url.searchParams.get('source') || 'systemd').trim();
+    const limit = Math.max(1, Math.min(5000, Math.trunc(Number(url.searchParams.get('limit') || 400) || 400)));
+    const sinceMs = Math.max(0, Math.trunc(Number(url.searchParams.get('since_ms') || 0) || 0));
+    const untilMs = Math.max(0, Math.trunc(Number(url.searchParams.get('until_ms') || 0) || 0));
+    const search = String(url.searchParams.get('q') || '').trim().toLowerCase();
+    const connection = String(url.searchParams.get('connection_id') || '').trim();
+    const tag = String(url.searchParams.get('tag') || '').trim();
+    const alarmId = String(url.searchParams.get('alarm_id') || '').trim();
+    const types = String(url.searchParams.get('types') || '').trim();
+    const group = String(url.searchParams.get('group') || '').trim(); const site = String(url.searchParams.get('site') || '').trim(); const severity = String(url.searchParams.get('severity') || '').trim();
+    const user = String(url.searchParams.get('user') || '').trim();
+    const resultFilter = String(url.searchParams.get('result') || '').trim();
+    const records = [];
+    const pushRecord = (record) => {
+      const next = { timestamp_ms: Number(record.timestamp_ms || 0), source, type: String(record.type || ''),
+        subject: String(record.subject || ''), message: String(record.message || ''), details: record.details || {}, raw: record.raw ?? record.details ?? null };
+      if (sinceMs && next.timestamp_ms < sinceMs) return;
+      if (untilMs && next.timestamp_ms > untilMs) return;
+      if (search && !JSON.stringify(next).toLowerCase().includes(search)) return;
+      records.push(next);
+    };
+    try {
+      if (source === 'systemd') {
+        if (!SYSTEMD_ENABLED) throw new Error('Systemd management is disabled.');
+        const allowedUnits = new Set(['opcbridge.service','opcbridge-alarms.service','opcbridge-logger.service','opcbridge-historian.service','opcbridge-report.service','opcbridge-hmi.service','opcbridge-scada.service']);
+        const unit = String(url.searchParams.get('unit') || 'opcbridge.service').trim(); if (!allowedUnits.has(unit)) throw new Error('Unsupported systemd unit.');
+        const args = ['-u', unit, '-n', String(limit), '--no-pager', '-o', 'json'];
+        if (sinceMs) args.push('--since', `@${Math.floor(sinceMs / 1000)}`);
+        if (untilMs) args.push('--until', `@${Math.ceil(untilMs / 1000)}`);
+        const result = child_process.spawnSync('journalctl', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+        if (result.error || result.status !== 0) throw new Error(String(result.error?.message || result.stderr || 'journalctl failed').trim());
+        String(result.stdout || '').split(/\r?\n/).filter(Boolean).forEach((line) => { try { const row = JSON.parse(line); const priority = Number(row.PRIORITY ?? 6);
+          pushRecord({ timestamp_ms: Math.trunc(Number(row.__REALTIME_TIMESTAMP || 0) / 1000), type: ['emergency','alert','critical','error','warning','notice','info','debug'][priority] || 'info',
+            subject: unit, message: row.MESSAGE || '', details: { unit, pid: row._PID || '', identifier: row.SYSLOG_IDENTIFIER || '' }, raw: row }); } catch { /* skip malformed journal row */ } });
+      } else if (source === 'opcbridge_runtime') {
+        const up = await fetchUpstreamJson(req, cfg.opcbridge, `/runtime/logs?limit=${encodeURIComponent(String(limit))}`, { timeoutMs: 8000 });
+        if (up.status < 200 || up.status >= 300) throw new Error(`OPCBridge HTTP ${up.status}`);
+        (Array.isArray(up.json?.entries) ? up.json.entries : []).forEach((row) => pushRecord({ timestamp_ms: row.timestamp_ms, type: row.level || 'info', subject: row.component || 'OPCBridge', message: row.message || '', details: row, raw: row }));
+      } else if (source === 'tracked_tag_events') {
+        const params = new URLSearchParams({ limit: String(limit) }); if (sinceMs) params.set('since_ms', String(sinceMs)); if (untilMs) params.set('until_ms', String(untilMs)); if (connection) params.set('connection_id', connection); if (tag) params.set('tag', tag);
+        const up = await fetchUpstreamJson(req, cfg.opcbridge, `/events?${params}`, { timeoutMs: 12000 }); if (up.status < 200 || up.status >= 300) throw new Error(`OPCBridge HTTP ${up.status}`);
+        (Array.isArray(up.json?.events) ? up.json.events : []).forEach((row) => pushRecord({ timestamp_ms: row.timestamp_ms, type: 'tag_change', subject: `${row.connection_id || ''}/${row.tag_name || ''}`,
+          message: `${row.old_value ?? ''} → ${row.new_value ?? ''}`, details: row, raw: row }));
+      } else if (source === 'alarm_history') {
+        const params = new URLSearchParams({ limit: String(limit) }); if (sinceMs) params.set('since_ms', String(sinceMs)); if (untilMs) params.set('until_ms', String(untilMs)); if (connection) params.set('connection_id', connection); if (tag) params.set('tag', tag); if (alarmId) params.set('alarm_id', alarmId); if (types) params.set('types', types); if (group) params.set('group', group); if (site) params.set('site', site); if (severity) params.set('severity', severity);
+        const up = await fetchUpstreamJson(req, cfg.alarms, `/alarm/api/alarms/history?${params}`, { timeoutMs: 12000 }); if (up.status < 200 || up.status >= 300) throw new Error(`Alarm server HTTP ${up.status}`);
+        (Array.isArray(up.json?.events) ? up.json.events : []).forEach((row) => { const alarmSource = row.source || {}; const fallback = [row.group, row.site, alarmSource.connection_id, alarmSource.tag].filter(Boolean).join(' / ');
+          pushRecord({ timestamp_ms: row.ts_ms, type: row.type || 'alarm', subject: row.alarm_id || '', message: row.message || fallback || `value=${JSON.stringify(row.value)}`, details: row, raw: row }); });
+      } else if (source === 'hmi_audit') {
+        const params = new URLSearchParams({ limit: String(limit) }); if (sinceMs) params.set('start', new Date(sinceMs).toISOString()); if (untilMs) params.set('end', new Date(untilMs).toISOString()); if (connection) params.set('connection_id', connection); if (tag) params.set('tag', tag); if (user) params.set('user', user); if (resultFilter) params.set('result', resultFilter); if (search) params.set('q', search);
+        const up = await fetchUpstreamJson(req, cfg.hmi, `/api/audit/query?${params}`, { timeoutMs: 12000 }); if (up.status < 200 || up.status >= 300) throw new Error(`HMI HTTP ${up.status}`);
+        (Array.isArray(up.json?.events) ? up.json.events : []).forEach((row) => pushRecord({ timestamp_ms: Date.parse(row.ts || '') || Number(row.timestamp_ms || 0), type: row.event_type || row.event || row.action || 'audit',
+          subject: row.user || row.object_label || row.tag || '', message: row.error || row.path || row.ref || `${row.connection_id || ''}${row.tag ? ` / ${row.tag}` : ''}`, details: row, raw: row }));
+      } else throw new Error(`Unsupported log source: ${source}`);
+      records.sort((a, b) => b.timestamp_ms - a.timestamp_ms);
+      sendJson(res, 200, { ok: true, source, matched: records.length, records: records.slice(0, limit) });
+    } catch (err) { sendJson(res, 200, { ok: false, source, error: String(err.message || err), records: [] }); }
+    return;
   }
 
   // Read system logs via journalctl (permission: suite.view_logs).
@@ -3826,7 +3889,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 502, {
           ok: false,
           id,
-          error: reload.error || reload.json?.error || `Reporter service reload failed with status ${reload.status}`,
+          error: reload.error || reload.json?.error || `Logger service reload failed with status ${reload.status}`,
           reporter_reload: reload
         });
         return;

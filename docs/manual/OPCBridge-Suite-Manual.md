@@ -307,12 +307,12 @@ WHERE your_timestamp_column >= CURDATE() - INTERVAL 1 DAY
 
 Useful system tags include:
 
-- `System/Reporter/DataChecks/<check_id>/Ok`
-- `System/Reporter/DataChecks/<check_id>/Value`
-- `System/Reporter/DataChecks/<check_id>/LastError`
-- `System/Reporter/Databases/<database_id>/Ok`
-- `System/Reporter/Databases/<database_id>/LatencyMs`
-- `System/Reporter/Databases/<database_id>/LastError`
+- `System/Logger/DataChecks/<check_id>/Ok`
+- `System/Logger/DataChecks/<check_id>/Value`
+- `System/Logger/DataChecks/<check_id>/LastError`
+- `System/Logger/Databases/<database_id>/Ok`
+- `System/Logger/Databases/<database_id>/LatencyMs`
+- `System/Logger/Databases/<database_id>/LastError`
 
 ### 5.5 Historian
 
@@ -339,6 +339,22 @@ Common helpers (as seen in the helper/reference panel):
 - `bit(...)`, `bits(...)`
 - `json(...)`, `jsonObj(...)`, `jsonArray(...)`
 - `str(...)`, `num(...)`, `bool(...)`, `concat(...)`, `lower(...)`, `upper(...)`, `trim(...)`
+
+### 5.7 Logs
+
+The Logs tab presents service journals and structured application history in a
+consistent table. Sources include system services, OPCBridge runtime
+diagnostics, alarm history, tracked tag events, and HMI audit records.
+
+- Changing the source refreshes the results automatically.
+- Results do not update continuously; use **Apply Filters** to refresh them.
+- Quick buttons select the last hour, 24 hours, 7 days, 14 days, or 30 days.
+- Source-specific filters appear for alarm, tag-event, and HMI-audit sources.
+- Select a row to inspect its complete structured details.
+- **Download CSV** exports the currently displayed records.
+
+The recent alarm table on **Alarms & Events** includes **View Full History**,
+which opens the Logs tab with Alarm History selected and a seven-day range.
 
 ---
 

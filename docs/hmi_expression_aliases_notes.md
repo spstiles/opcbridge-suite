@@ -12,8 +12,8 @@ Canonical tags should remain unchanged, for example:
 - `System/Clock/SlowBlink`
 - `System/Clock/OneSecondPulse`
 - `System/Clock/MinutePulse`
-- `System/Reporter/DataChecks/<check_id>/Ok`
-- `System/Reporter/Databases/<database_id>/Ok`
+- `System/Logger/DataChecks/<check_id>/Ok`
+- `System/Logger/Databases/<database_id>/Ok`
 
 Expressions should be able to use shorter aliases, for example:
 
@@ -39,8 +39,8 @@ Later, allow users to define aliases for longer system or process tags.
 
 Examples:
 
-- `$DailyRecordsOk` -> `System/Reporter/DataChecks/daily_record_count/Ok`
-- `$MainDbOk` -> `System/Reporter/Databases/main/Ok`
+- `$DailyRecordsOk` -> `System/Logger/DataChecks/daily_record_count/Ok`
+- `$MainDbOk` -> `System/Logger/Databases/main/Ok`
 - `$PumpRunning` -> `Connectivity/MainPLC/PumpRunning` or the canonical tag reference used by the expression engine
 
 ## UI Notes

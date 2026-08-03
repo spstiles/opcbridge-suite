@@ -112,6 +112,66 @@ Non-goals:
 - No automatic conflict merging for changes made independently during a partition.
 - No requirement for traditional cluster consensus, shared process memory, or shared runtime state.
 
+## Active / Standby Runtime Redundancy
+
+Idea:
+- Operate two OPCBridge Suite nodes as one active/standby control system with a shared virtual IP address.
+
+Why:
+- A server failure should not require HMIs, browsers, PLC integrations, or other clients to be manually redirected.
+- The standby should retain a recoverable local copy of acquired data without doubling the polling load on PLCs and RTUs.
+- Single-owner actions such as PLC writes, alarm callouts, and scheduled logging must never run concurrently on both nodes.
+
+Proposed architecture:
+- Give each node its own physical management address and assign the active node a shared virtual IP (VIP).
+- Use the VIP or a hostname resolving to it for HMI, SCADA, API, WebSocket, OPC UA, and other client access.
+- Require both nodes to be on a network where the VIP can safely move, normally the same subnet/VLAN.
+- Let OPCBridge leadership authorize VIP ownership; do not allow an independent VRRP health check alone to promote a node.
+- Use a lightweight third-party witness or lease service to prevent split brain. The witness does not need to run the full suite.
+- Remove the VIP and stop all single-owner duties immediately when a node loses its active lease.
+- Expect clients to reconnect after failover; moving the VIP does not preserve existing TCP sessions.
+
+Data acquisition and recovery:
+- Have the active node communicate directly with PLCs and RTUs during normal operation.
+- Stream acquired tag updates and committed logger/historian records to the standby.
+- Store data in a local database on each node and normally write an authoritative shared database for reporting.
+- Include stable sequence numbers, node identity, connection/item identity, value, quality, logical sample time, and actual acquisition time.
+- Maintain a durable replay journal so the standby can request records missed during a temporary disconnection.
+- Make synchronization idempotent so retries and backfills cannot create duplicate authoritative records.
+- Preserve provenance when reconciling data instead of silently overwriting conflicting observations.
+- Allow an isolated node to retain local observations while preventing it from performing PLC writes, notifications, or shared scheduled work without quorum.
+
+Active responsibilities:
+- PLC/RTU communications and writes
+- Alarm evaluation ownership and outbound notifications
+- Scheduled logger jobs
+- Shared historian/database publication
+- Shared VIP ownership
+- Streaming live and committed data to the standby
+
+Standby responsibilities:
+- Receive the active node's data stream
+- Maintain a current read-only tag cache
+- Store mirrored data locally
+- Detect sequence gaps and request replay
+- Maintain synchronized approved configuration
+- Remain ready to acquire the active lease and begin direct device communication
+
+Phased implementation:
+1. Add stable node identities, peer health, and redundancy status reporting.
+2. Add approved configuration synchronization and local data journals.
+3. Add active-to-standby data streaming with acknowledgements and replay.
+4. Add controlled manual switchover and strict single-owner service behavior.
+5. Add witness-backed automatic leader election and fencing.
+6. Add VIP management, client reconnection testing, and recovery/reconciliation tooling.
+
+Non-goals:
+- No unrestricted active/active PLC writes, alarm callouts, or scheduled logging.
+- No automatic promotion based only on loss of the peer heartbeat.
+- No assumption that direct bidirectional database replication resolves application-level conflicts.
+- No silent selection of conflicting observations without retaining their source and timestamps.
+- No requirement that the witness run a third complete OPCBridge Suite instance.
+
 ## HMI Touchscreen Runtime Endpoint
 
 Idea:

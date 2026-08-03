@@ -800,6 +800,7 @@
         <section class="card">
           <div class="card-title ae-card-title-row">
             <span>Alarm Trigger/Clear History</span>
+            <button class="btn" id="alarmHistoryOpenLogsBtn" type="button">View Full History</button>
             <button class="btn" id="alarmEventsDownloadCsvBtn" type="button">Download CSV</button>
           </div>
           <div class="card-body">
@@ -1626,30 +1627,29 @@
 	      <div class="card">
 	        <div class="card-title">Logs</div>
 	        <div class="card-body">
-	          <div class="form" style="max-width: 720px;">
-	            <div class="form-row">
-	              <label>Source</label>
-	              <select id="logsSource"></select>
-	            </div>
-	            <div class="form-row">
-	              <label>Service</label>
-	              <select id="logsUnit"></select>
-	            </div>
-	            <div class="form-row">
-	              <label>Lines / Limit</label>
-	              <input id="logsLines" type="number" min="10" max="5000" step="10" value="400" />
-	            </div>
-	            <div class="form-row">
-	              <label></label>
-	              <div class="row-actions">
-	                <button class="btn primary" id="logsRefreshBtn" type="button">Refresh</button>
-	              </div>
-	            </div>
-	            <div class="hint mono" id="logsStatus"></div>
+	          <div class="row-actions logs-range-actions">
+	            <button class="btn logs-range-preset" type="button" data-range="1h">Last 1h</button><button class="btn logs-range-preset" type="button" data-range="24h">Last 24h</button><button class="btn logs-range-preset" type="button" data-range="7d">Last 7d</button><button class="btn logs-range-preset" type="button" data-range="14d">Last 14d</button><button class="btn logs-range-preset" type="button" data-range="30d">Last 30d</button><button class="btn logs-range-preset" type="button" data-range="clear">Custom / Clear</button>
 	          </div>
-
-	          <div class="divider"></div>
-	          <pre class="mono" id="logsOutput" style="max-height: 520px; overflow:auto; white-space: pre; margin:0;">Select a service and click Refresh.</pre>
+	          <div class="form-grid two logs-filter-grid">
+	            <div class="form-row"><label>Source</label><select id="logsSource"></select></div>
+	            <div class="form-row" id="logsUnitRow"><label>Service</label><select id="logsUnit"></select></div>
+	            <div class="form-row"><label>From</label><input id="logsFrom" type="datetime-local" /></div>
+	            <div class="form-row"><label>To</label><input id="logsTo" type="datetime-local" /></div>
+	            <div class="form-row"><label>Text contains</label><input id="logsSearch" type="search" placeholder="optional text" /></div>
+	            <div class="form-row"><label>Limit</label><input id="logsLines" type="number" min="1" max="5000" step="100" value="400" /></div>
+	            <div class="form-row logs-source-filter" id="logsConnectionRow"><label>Connection</label><input id="logsConnection" type="text" placeholder="optional connection" /></div>
+	            <div class="form-row logs-source-filter" id="logsTagRow"><label>Tag</label><input id="logsTag" type="text" placeholder="optional tag" /></div>
+	            <div class="form-row logs-source-filter" id="logsAlarmRow"><label>Alarm</label><input id="logsAlarm" type="text" placeholder="optional alarm ID" /></div>
+	            <div class="form-row logs-source-filter" id="logsTypeRow"><label>Alarm event</label><select id="logsType"><option value="">All alarm events</option><option value="active">Active</option><option value="return">Returned</option><option value="ack">Acknowledged</option><option value="shelve">Shelved</option></select></div>
+	            <div class="form-row logs-source-filter" id="logsGroupRow"><label>Alarm group</label><input id="logsGroup" type="text" placeholder="optional exact group" /></div>
+	            <div class="form-row logs-source-filter" id="logsSiteRow"><label>Site</label><input id="logsSite" type="text" placeholder="optional exact site" /></div>
+	            <div class="form-row logs-source-filter" id="logsSeverityRow"><label>Severity</label><input id="logsSeverity" type="number" min="0" placeholder="optional severity" /></div>
+	            <div class="form-row logs-source-filter" id="logsUserRow"><label>User</label><input id="logsUser" type="text" placeholder="optional exact user" /></div>
+	            <div class="form-row logs-source-filter" id="logsResultRow"><label>Result</label><input id="logsResult" type="text" placeholder="optional result" /></div>
+	          </div>
+	          <div class="row-actions" style="margin-top:10px;"><button class="btn primary" id="logsRefreshBtn" type="button">Apply Filters</button><button class="btn" id="logsDownloadBtn" type="button">Download CSV</button><div class="hint mono" id="logsStatus"></div></div>
+	          <div class="table-wrap logs-table-wrap"><table class="table" id="logsTable"><thead><tr><th>Timestamp</th><th>Source</th><th>Type / Level</th><th>Subject</th><th>Message</th></tr></thead><tbody id="logsTbody"></tbody></table></div>
+	          <details id="logsDetails" style="margin-top:10px;"><summary>Selected record details</summary><pre class="mono" id="logsOutput" style="max-height:320px; overflow:auto; white-space:pre-wrap;">Select a log record to inspect its details.</pre></details>
 	        </div>
 	      </div>
 		    </section>

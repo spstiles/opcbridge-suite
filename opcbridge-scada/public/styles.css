@@ -1629,6 +1629,11 @@ details.advanced summary {
 .data-entry-required-columns.is-complete { border-color: var(--ok); color: var(--ok); }
 .data-entry-required-field { background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .data-entry-required-field td:nth-child(2), .data-entry-required-field td:nth-child(3) { color: var(--warn); font-weight: 700; }
+.logs-range-actions { margin-bottom: 12px; flex-wrap: wrap; }
+.logs-filter-grid { max-width: 1100px; }
+.logs-table-wrap { margin-top: 14px; max-height: 58vh; overflow: auto; }
+#logsTable tbody tr { cursor: pointer; }
+#logsTable tbody tr:hover { background: rgba(255,255,255,.05); }
 .data-entry-field { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr) auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
 .data-entry-field input { width: 100%; box-sizing: border-box; }
 .data-entry-field.is-delete { border-color: #ef4444; background: rgba(239, 68, 68, .13); }

@@ -75,19 +75,19 @@ WHERE your_timestamp_column >= CURDATE() - INTERVAL 1 DAY
 
 Useful data-check system tags:
 
-- `System/Reporter/DataChecks/<check_id>/Ok`
-- `System/Reporter/DataChecks/<check_id>/BelowLow`
-- `System/Reporter/DataChecks/<check_id>/AboveHigh`
-- `System/Reporter/DataChecks/<check_id>/Value`
-- `System/Reporter/DataChecks/<check_id>/NumericValue`
-- `System/Reporter/DataChecks/<check_id>/LastError`
+- `System/Logger/DataChecks/<check_id>/Ok`
+- `System/Logger/DataChecks/<check_id>/BelowLow`
+- `System/Logger/DataChecks/<check_id>/AboveHigh`
+- `System/Logger/DataChecks/<check_id>/Value`
+- `System/Logger/DataChecks/<check_id>/NumericValue`
+- `System/Logger/DataChecks/<check_id>/LastError`
 
 Useful database monitor system tags:
 
-- `System/Reporter/Databases/<database_id>/Ok`
-- `System/Reporter/Databases/<database_id>/ConsecutiveFailures`
-- `System/Reporter/Databases/<database_id>/LatencyMs`
-- `System/Reporter/Databases/<database_id>/LastError`
+- `System/Logger/Databases/<database_id>/Ok`
+- `System/Logger/Databases/<database_id>/ConsecutiveFailures`
+- `System/Logger/Databases/<database_id>/LatencyMs`
+- `System/Logger/Databases/<database_id>/LastError`
 
 ## Logic
 

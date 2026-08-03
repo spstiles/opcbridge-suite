@@ -555,6 +555,7 @@
   alarmEventsTableBody: document.querySelector('#alarmEventsTable tbody'),
   alarmEventsStatus: document.getElementById('alarmEventsStatus'),
   alarmEventsDownloadCsvBtn: document.getElementById('alarmEventsDownloadCsvBtn'),
+  alarmHistoryOpenLogsBtn: document.getElementById('alarmHistoryOpenLogsBtn'),
   alarmActivityTableBody: document.querySelector('#alarmActivityTable tbody'),
   alarmActivityStatus: document.getElementById('alarmActivityStatus'),
   alarmActivityRefreshBtn: document.getElementById('alarmActivityRefreshBtn'),
@@ -572,8 +573,17 @@
   // Logs
   logsSource: document.getElementById('logsSource'),
   logsUnit: document.getElementById('logsUnit'),
+  logsUnitRow: document.getElementById('logsUnitRow'), logsFrom: document.getElementById('logsFrom'), logsTo: document.getElementById('logsTo'),
+  logsSearch: document.getElementById('logsSearch'), logsConnection: document.getElementById('logsConnection'), logsTag: document.getElementById('logsTag'),
+  logsAlarm: document.getElementById('logsAlarm'), logsType: document.getElementById('logsType'), logsUser: document.getElementById('logsUser'), logsResult: document.getElementById('logsResult'),
+  logsGroup: document.getElementById('logsGroup'), logsSite: document.getElementById('logsSite'), logsSeverity: document.getElementById('logsSeverity'),
+  logsConnectionRow: document.getElementById('logsConnectionRow'), logsTagRow: document.getElementById('logsTagRow'), logsAlarmRow: document.getElementById('logsAlarmRow'),
+  logsTypeRow: document.getElementById('logsTypeRow'), logsUserRow: document.getElementById('logsUserRow'), logsResultRow: document.getElementById('logsResultRow'),
+  logsGroupRow: document.getElementById('logsGroupRow'), logsSiteRow: document.getElementById('logsSiteRow'), logsSeverityRow: document.getElementById('logsSeverityRow'),
   logsLines: document.getElementById('logsLines'),
   logsRefreshBtn: document.getElementById('logsRefreshBtn'),
+  logsDownloadBtn: document.getElementById('logsDownloadBtn'), logsTbody: document.getElementById('logsTbody'), logsDetails: document.getElementById('logsDetails'),
+  logsRangePresetBtns: Array.from(document.querySelectorAll('.logs-range-preset')),
   logsStatus: document.getElementById('logsStatus'),
   logsOutput: document.getElementById('logsOutput'),
 
@@ -1182,6 +1192,7 @@ const state = {
   reportBuilderTemplatePreview: null,
   reportBuilderActiveTab: 'report',
   dataEntryForms: [], dataEntryTargets: [], dataEntrySources: [], dataEntrySchema: [], dataEntryBuilderFields: [], dataEntryInsertValues: [], dataEntryLoadedValues: {}, dataEntryDeletedFields: new Set(),
+  logsLast: [], logsRequestSeq: 0,
 
   // reporter (data logger)
   reporterDatabases: [],
@@ -3012,11 +3023,11 @@ async function saveLoggerReportHistorianFieldsFromPanel(report) {
   const historianFields = collectLoggerReportHistorianPanelEntries();
   const next = { ...report, historian_fields: historianFields };
   loggerSetStatus(`Saving ${historianFields.length} historian field(s) for '${rid}'...`);
-  const save = await apiPostJson('/api/reporter/reports', { report: next });
+  const save = await apiPostJson('/api/logger/reports', { report: next });
   if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
   loggerSetStatus('Reloading logger service...');
-  const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
+  const apply = await apiPostJson('/api/logger/reports/apply', { id: rid });
   if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
   await refreshReporterAll();
@@ -3314,7 +3325,7 @@ async function duplicateReporterDatabase(id) {
   if (!dbId) return;
   loggerSetStatus(`Duplicating database '${dbId}'…`);
   try {
-    const resp = await apiPostJson('/api/reporter/databases/duplicate', { id: dbId });
+    const resp = await apiPostJson('/api/logger/databases/duplicate', { id: dbId });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     const newId = String(resp?.id || resp?.database?.id || '').trim();
     await refreshReporterAll();
@@ -3333,7 +3344,7 @@ async function deleteReporterDatabase(id) {
   if (!window.confirm(`Delete database '${dbId}'?`)) return;
   loggerSetStatus('Deleting…');
   try {
-    const resp = await apiPostJson('/api/reporter/databases/delete', { id: dbId });
+    const resp = await apiPostJson('/api/logger/databases/delete', { id: dbId });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     await refreshReporterAll();
     state.loggerSelectedNodeId = 'logger:databases';
@@ -3355,7 +3366,7 @@ async function testReporterDatabase(id) {
   try {
     const db = findDatabaseById(dbId);
     const timeoutMs = reporterDatabaseTestTimeoutMs(db);
-    const resp = await apiPostJson('/api/reporter/databases/test', { id: dbId }, { timeoutMs });
+    const resp = await apiPostJson('/api/logger/databases/test', { id: dbId }, { timeoutMs });
     const result = resp?.reporter_test?.json || {};
     if (!resp?.ok) throw new Error(String(resp?.error || result?.error || 'Failed'));
     const latency = Number(result?.latency_ms || 0);
@@ -3392,7 +3403,7 @@ async function testReporterDatabaseFromModal() {
 
     const body = { database: db };
     if (state.loggerEditingMode === 'edit' && state.loggerEditingId) body.original_id = state.loggerEditingId;
-    const resp = await apiPostJson('/api/reporter/databases/test', body, {
+    const resp = await apiPostJson('/api/logger/databases/test', body, {
       timeoutMs: reporterDatabaseTestTimeoutMs(db)
     });
     const result = resp?.reporter_test?.json || {};
@@ -3486,7 +3497,7 @@ async function saveReporterDatabase() {
 
     const body = { database: db };
     if (state.loggerEditingMode === 'edit' && state.loggerEditingId) body.original_id = state.loggerEditingId;
-    const resp = await apiPostJson('/api/reporter/databases', body);
+    const resp = await apiPostJson('/api/logger/databases', body);
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
 
     const savedId = String(resp?.database?.id || db.id).trim();
@@ -5496,11 +5507,11 @@ async function uploadLoggerTagCsvToReport(report) {
     const next = { ...report, tags: split.tags, historian_fields: split.historian_fields };
 
     loggerSetStatus(`Saving ${entries.length} logger field(s) for '${rid}'...`);
-    const save = await apiPostJson('/api/reporter/reports', { report: next });
+    const save = await apiPostJson('/api/logger/reports', { report: next });
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
     loggerSetStatus('Reloading logger service...');
-    const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
+    const apply = await apiPostJson('/api/logger/reports/apply', { id: rid });
     if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
     await refreshReporterAll();
@@ -5553,11 +5564,11 @@ async function saveLoggerReportTagsFromPanel(report) {
   const next = { ...report, tags: split.tags, historian_fields: split.historian_fields };
   const savedCount = split.tags.length + split.historian_fields.length;
   loggerSetStatus(`Saving ${savedCount} field(s) for '${rid}'...`);
-  const save = await apiPostJson('/api/reporter/reports', { report: next });
+  const save = await apiPostJson('/api/logger/reports', { report: next });
   if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
 
   loggerSetStatus('Reloading logger service...');
-  const apply = await apiPostJson('/api/reporter/reports/apply', { id: rid });
+  const apply = await apiPostJson('/api/logger/reports/apply', { id: rid });
   if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
   await refreshReporterAll();
@@ -5638,7 +5649,7 @@ async function duplicateReporterReport(id) {
   if (!rid) return;
   loggerSetStatus(`Duplicating log job '${rid}'…`);
   try {
-    const resp = await apiPostJson('/api/reporter/reports/duplicate', { id: rid });
+    const resp = await apiPostJson('/api/logger/reports/duplicate', { id: rid });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     const newId = String(resp?.id || resp?.report?.id || '').trim();
     await refreshReporterAll();
@@ -5689,12 +5700,12 @@ async function saveAndApplyReporterReport() {
 
     const body = { report };
     if (state.loggerReportEditingMode === 'edit' && state.loggerReportEditingId) body.original_id = state.loggerReportEditingId;
-    const save = await apiPostJson('/api/reporter/reports', body);
+    const save = await apiPostJson('/api/logger/reports', body);
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
     const savedId = String(save?.report?.id || report.id).trim();
 
     loggerReportModalSetStatus('Reloading logger service…');
-    const apply = await apiPostJson('/api/reporter/reports/apply', { id: savedId });
+    const apply = await apiPostJson('/api/logger/reports/apply', { id: savedId });
     if (!apply?.ok) throw new Error(String(apply?.error || 'Failed'));
 
     await refreshReporterAll();
@@ -5702,7 +5713,7 @@ async function saveAndApplyReporterReport() {
     renderLoggerTree();
     renderLoggerDetails();
     closeLoggerReportModal();
-    loggerSetStatus('Reporter reloaded.');
+    loggerSetStatus('Logger reloaded.');
   } catch (err) {
     loggerReportModalSetStatus(`Failed: ${err.message || err}`);
   }
@@ -5714,7 +5725,7 @@ async function deleteReporterReport(id) {
   if (!window.confirm(`Delete log job '${rid}'?`)) return;
   loggerSetStatus('Deleting…');
   try {
-    const resp = await apiPostJson('/api/reporter/reports/delete', { id: rid });
+    const resp = await apiPostJson('/api/logger/reports/delete', { id: rid });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     await refreshReporterAll();
     state.loggerSelectedNodeId = 'logger:reports';
@@ -5782,7 +5793,7 @@ async function duplicateReporterDataCheck(id) {
   if (!cid) return;
   loggerSetStatus(`Duplicating data check '${cid}'…`);
   try {
-    const resp = await apiPostJson('/api/reporter/data-checks/duplicate', { id: cid });
+    const resp = await apiPostJson('/api/logger/data-checks/duplicate', { id: cid });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     const newId = String(resp?.id || resp?.data_check?.id || '').trim();
     await refreshReporterAll();
@@ -5826,7 +5837,7 @@ async function saveReporterDataCheck() {
 
     const body = { data_check: check };
     if (state.loggerDataCheckEditingMode === 'edit' && state.loggerDataCheckEditingId) body.original_id = state.loggerDataCheckEditingId;
-    const resp = await apiPostJson('/api/reporter/data-checks', body);
+    const resp = await apiPostJson('/api/logger/data-checks', body);
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     const savedId = String(resp?.data_check?.id || check.id).trim();
     await refreshReporterAll();
@@ -5847,7 +5858,7 @@ async function deleteReporterDataCheck(id) {
   if (!window.confirm(`Delete data check '${cid}'?`)) return;
   loggerSetStatus('Deleting…');
   try {
-    const resp = await apiPostJson('/api/reporter/data-checks/delete', { id: cid });
+    const resp = await apiPostJson('/api/logger/data-checks/delete', { id: cid });
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
     await refreshReporterAll();
     await refreshReporterSystemTagsForScada();
@@ -5865,7 +5876,7 @@ async function runReporterDataCheckNow(id) {
   if (!cid) return;
   loggerSetStatus(`Starting live data check '${cid}'…`);
   try {
-    const resp = await apiPostJson('/api/reporter/data-checks/run', { id: cid });
+    const resp = await apiPostJson('/api/logger/data-checks/run', { id: cid });
     if (!resp?.ok) throw new Error(String(resp?.error || resp?.reporter_run?.json?.error || 'Failed'));
     loggerSetStatus(`Live data check '${cid}' started. Live system tags may change.`);
     window.setTimeout(() => refreshReporterRuntimeStatus().catch(() => {}), 1000);
@@ -5882,7 +5893,7 @@ async function testReporterDataCheck(id) {
     els.loggerDataCheckStatus.textContent = `Testing '${cid}'…`;
   }
   try {
-    const resp = await apiPostJson('/api/reporter/data-checks/test', { id: cid });
+    const resp = await apiPostJson('/api/logger/data-checks/test', { id: cid });
     const result = resp?.reporter_test?.json || resp;
     if (!resp?.ok) throw new Error(String(resp?.error || result?.error || 'Failed'));
     const value = String(result?.value ?? '');
@@ -5943,7 +5954,7 @@ async function validateReporterReport(id) {
 
     if (dbId && db) {
       try {
-        const dbTest = await apiPostJson('/api/reporter/databases/test', { id: dbId }, {
+        const dbTest = await apiPostJson('/api/logger/databases/test', { id: dbId }, {
           timeoutMs: reporterDatabaseTestTimeoutMs(db)
         });
         result.database_test = dbTest?.reporter_test?.json || dbTest;
@@ -6009,7 +6020,7 @@ async function runReporterReportNow(id) {
   const beforeRuns = Number(before?.runs_total || 0);
   loggerSetStatus(`Starting log job '${rid}'…`);
   try {
-    const resp = await apiPostJson('/api/reporter/reports/run', { id: rid });
+    const resp = await apiPostJson('/api/logger/reports/run', { id: rid });
     if (!resp?.ok) throw new Error(String(resp?.error || resp?.reporter_run?.json?.error || 'Failed'));
     loggerSetStatus(`Log job '${rid}' started.`);
     await refreshReporterRuntimeStatus();
@@ -6020,7 +6031,7 @@ async function runReporterReportNow(id) {
 }
 
 async function refreshReporterRuntimeStatus() {
-  const runtime = await apiGet('/api/reporter/runtime/status');
+  const runtime = await apiGet('/api/logger/runtime/status');
   state.reporterRuntime = runtime?.ok ? runtime : null;
   updateReporterDatabaseStatusMap(runtime);
   updateReporterDataCheckStatusMap(runtime);
@@ -6067,7 +6078,7 @@ async function refreshReporterAll() {
   const out = { ok: true };
 
   try {
-    const cfg = await apiGet('/api/reporter/config');
+    const cfg = await apiGet('/api/logger/config');
     if (cfg?.ok) state.reporterConfig = cfg.config || null;
     out.config = cfg;
   } catch (err) {
@@ -6077,7 +6088,7 @@ async function refreshReporterAll() {
   }
 
   try {
-    const caps = await apiGet('/api/reporter/capabilities');
+    const caps = await apiGet('/api/logger/capabilities');
     if (caps?.ok) state.reporterCapabilities = caps.capabilities || null;
     out.capabilities = caps;
   } catch (err) {
@@ -6087,7 +6098,7 @@ async function refreshReporterAll() {
   }
 
   try {
-    const db = await apiGet('/api/reporter/databases');
+    const db = await apiGet('/api/logger/databases');
     if (!db?.ok) throw new Error(String(db?.error || 'Failed'));
     state.reporterDatabases = Array.isArray(db?.databases) ? db.databases : [];
     out.databases = db;
@@ -6098,7 +6109,7 @@ async function refreshReporterAll() {
   }
 
   try {
-    const rep = await apiGet('/api/reporter/reports');
+    const rep = await apiGet('/api/logger/reports');
     if (!rep?.ok) throw new Error(String(rep?.error || 'Failed'));
     state.reporterReports = Array.isArray(rep?.reports) ? rep.reports : [];
     out.reports = rep;
@@ -6109,7 +6120,7 @@ async function refreshReporterAll() {
   }
 
   try {
-    const checks = await apiGet('/api/reporter/data-checks');
+    const checks = await apiGet('/api/logger/data-checks');
     if (!checks?.ok) throw new Error(String(checks?.error || 'Failed'));
     state.reporterDataChecks = Array.isArray(checks?.data_checks) ? checks.data_checks : [];
     out.data_checks = checks;
@@ -6284,57 +6295,77 @@ function wireHmiAuditUi() {
 }
 
 async function refreshLogs() {
-  if (!els.logsOutput) return;
+  if (!els.logsTbody) return;
+  const requestSeq = ++state.logsRequestSeq;
   const source = String(els.logsSource?.value || 'systemd').trim() || 'systemd';
   const unit = String(els.logsUnit?.value || '').trim();
-  const lines = Math.max(10, Math.min(5000, Math.trunc(Number(els.logsLines?.value ?? 400) || 400)));
+  const lines = Math.max(1, Math.min(5000, Math.trunc(Number(els.logsLines?.value ?? 400) || 400)));
+  const params = new URLSearchParams({ source, limit: String(lines) });
+  const sinceMs = datetimeLocalToEpochMs(els.logsFrom?.value); const untilMs = datetimeLocalToEpochMs(els.logsTo?.value);
+  if (source === 'systemd' && unit) params.set('unit', unit);
+  if (sinceMs != null) params.set('since_ms', String(sinceMs)); if (untilMs != null) params.set('until_ms', String(untilMs));
+  if (els.logsSearch?.value.trim()) params.set('q', els.logsSearch.value.trim());
+  if (['tracked_tag_events','alarm_history','hmi_audit'].includes(source) && els.logsConnection?.value.trim()) params.set('connection_id', els.logsConnection.value.trim());
+  if (['tracked_tag_events','alarm_history','hmi_audit'].includes(source) && els.logsTag?.value.trim()) params.set('tag', els.logsTag.value.trim());
+  if (source === 'alarm_history' && els.logsAlarm?.value.trim()) params.set('alarm_id', els.logsAlarm.value.trim());
+  if (source === 'alarm_history' && els.logsType?.value) params.set('types', els.logsType.value);
+  if (source === 'alarm_history' && els.logsGroup?.value.trim()) params.set('group', els.logsGroup.value.trim());
+  if (source === 'alarm_history' && els.logsSite?.value.trim()) params.set('site', els.logsSite.value.trim());
+  if (source === 'alarm_history' && els.logsSeverity?.value !== '') params.set('severity', els.logsSeverity.value);
+  if (source === 'hmi_audit' && els.logsUser?.value.trim()) params.set('user', els.logsUser.value.trim());
+  if (source === 'hmi_audit' && els.logsResult?.value.trim()) params.set('result', els.logsResult.value.trim());
   logsSetStatus('Loading…');
   try {
-    const u = source === 'systemd'
-      ? `/api/logs?unit=${encodeURIComponent(unit)}&lines=${encodeURIComponent(String(lines))}`
-      : `/api/logs/source?source=${encodeURIComponent(source)}&limit=${encodeURIComponent(String(lines))}`;
-    const resp = await apiGetText(u);
-    let data = null;
-    try { data = JSON.parse(resp); } catch { data = { ok: false, error: resp }; }
-    if (!data?.ok) {
-      const err = String(data?.error || 'unknown error');
-      const hint = data?.hint ? String(data.hint) : '';
-      const stderr = data?.stderr ? String(data.stderr) : '';
-      logsSetStatus(`Failed: ${err}`);
-      const extra = [
-        hint ? `Hint: ${hint}` : '',
-        stderr ? `stderr:\n${stderr}` : '',
-        (data?.details && typeof data.details === 'object') ? `details:\n${JSON.stringify(data.details, null, 2)}` : ''
-      ].filter(Boolean).join('\n\n');
-      logsSetOutput(extra);
-      return;
-    }
-    logsSetStatus(`OK · ${String(data.unit || data.source || unit || source)} · ${Number(data.lines || lines)} lines`);
-    logsSetOutput(String(data.text || ''));
+    const data = await apiGet(`/api/logs/query?${params}`, { timeoutMs: 30000 }); if (requestSeq !== state.logsRequestSeq) return; if (!data?.ok) throw new Error(data?.error || 'Log query failed.');
+    state.logsLast = Array.isArray(data.records) ? data.records : []; els.logsTbody.textContent = '';
+    state.logsLast.forEach((record) => {
+      const tr = document.createElement('tr'); appendTextCell(tr, fmtLogTime(record.timestamp_ms), { code: true }); appendTextCell(tr, record.source || source); appendTextCell(tr, record.type || '', { code: true }); appendTextCell(tr, record.subject || '', { code: true }); appendTextCell(tr, record.message || '');
+      tr.addEventListener('click', () => { logsSetOutput(JSON.stringify(record.raw ?? record.details ?? record, null, 2)); if (els.logsDetails) els.logsDetails.open = true; }); els.logsTbody.appendChild(tr);
+    });
+    logsSetStatus(state.logsLast.length ? `${state.logsLast.length} record(s) shown` : 'No matching log records found.');
+    logsSetOutput('Select a log record to inspect its details.'); if (els.logsDetails) els.logsDetails.open = false;
   } catch (err) {
-    logsSetStatus(`Failed: ${err.message}`);
-    logsSetOutput('');
+    if (requestSeq !== state.logsRequestSeq) return;
+    state.logsLast = []; els.logsTbody.textContent = ''; logsSetStatus(`Failed: ${err.message}`); logsSetOutput('');
   }
+}
+
+function applyLogsRange(range) {
+  const key = String(range || '').toLowerCase(); if (!els.logsFrom || !els.logsTo) return;
+  if (key === 'clear') { els.logsFrom.value = ''; els.logsTo.value = ''; refreshLogs(); return; }
+  const durations = { '1h':3600000, '24h':86400000, '7d':604800000, '14d':1209600000, '30d':2592000000 };
+  if (!durations[key]) return; const now = Date.now(); els.logsFrom.value = epochMsToDatetimeLocal(now - durations[key]); els.logsTo.value = epochMsToDatetimeLocal(now); refreshLogs();
+}
+
+function downloadLogsCsv() {
+  const rows = (state.logsLast || []).map((record) => ({ timestamp: fmtLogTime(record.timestamp_ms), timestamp_ms: record.timestamp_ms || '', source: record.source || '', type: record.type || '', subject: record.subject || '', message: record.message || '', details: JSON.stringify(record.details || {}) }));
+  downloadTextFile({ filename: `opcbridge-${els.logsSource?.value || 'logs'}.csv`, mime: 'text/csv;charset=utf-8', text: toCsv(rows, ['timestamp','timestamp_ms','source','type','subject','message','details']) });
 }
 
 function wireLogsUi() {
   if (!els.logsRefreshBtn) return;
   if (els.logsRefreshBtn.dataset.wired === '1') return;
   els.logsRefreshBtn.dataset.wired = '1';
+  if (els.logsFrom && els.logsTo && !els.logsFrom.value && !els.logsTo.value) {
+    const now = Date.now(); els.logsFrom.value = epochMsToDatetimeLocal(now - 86400000); els.logsTo.value = epochMsToDatetimeLocal(now);
+  }
 
 	  if (els.logsSource) {
 	    els.logsSource.innerHTML = [
+	      { value: 'systemd', label: 'System journal (services)' },
 	      { value: 'opcbridge_runtime', label: 'OPCBridge runtime diagnostics' },
-	      { value: 'systemd', label: 'System journal (journalctl)' },
-	      { value: 'opcbridge_events', label: 'OPCBridge alarms/events log' },
-	      { value: 'alarm_server_history', label: 'alarm server history' },
-      { value: 'hmi_audit', label: 'HMI audit log' }
+	      { value: 'alarm_history', label: 'Alarm history' },
+	      { value: 'tracked_tag_events', label: 'Tracked tag events' },
+      { value: 'hmi_audit', label: 'HMI audit' }
     ].map((s) => `<option value="${escapeHtml(s.value)}">${escapeHtml(s.label)}</option>`).join('');
   }
 
   const units = [
     { value: 'opcbridge.service', label: 'opcbridge.service' },
     { value: 'opcbridge-alarms.service', label: 'opcbridge-alarms.service' },
+    { value: 'opcbridge-logger.service', label: 'opcbridge-logger.service' },
+    { value: 'opcbridge-historian.service', label: 'opcbridge-historian.service' },
+    { value: 'opcbridge-report.service', label: 'opcbridge-report.service' },
     { value: 'opcbridge-hmi.service', label: 'opcbridge-hmi.service' },
     { value: 'opcbridge-scada.service', label: 'opcbridge-scada.service' }
   ];
@@ -6343,15 +6374,24 @@ function wireLogsUi() {
   }
 
   els.logsRefreshBtn.addEventListener('click', refreshLogs);
+  els.logsDownloadBtn?.addEventListener('click', downloadLogsCsv);
+  els.logsRangePresetBtns.forEach((button) => button.addEventListener('click', () => applyLogsRange(button.dataset.range)));
+  els.alarmHistoryOpenLogsBtn?.addEventListener('click', () => {
+    els.logsSource.value = 'alarm_history'; updateLogsControls(); const now = Date.now(); els.logsFrom.value = epochMsToDatetimeLocal(now - 604800000); els.logsTo.value = epochMsToDatetimeLocal(now); setTab('logs');
+  });
 
   const updateLogsControls = () => {
     const source = String(els.logsSource?.value || 'systemd').trim() || 'systemd';
-    const serviceRow = els.logsUnit?.closest('.form-row');
-    if (serviceRow) serviceRow.style.display = (source === 'systemd') ? '' : 'none';
+    if (els.logsUnitRow) els.logsUnitRow.style.display = source === 'systemd' ? '' : 'none';
+    const show = (row, visible) => { if (row) row.style.display = visible ? '' : 'none'; };
+    show(els.logsConnectionRow, ['tracked_tag_events','alarm_history','hmi_audit'].includes(source)); show(els.logsTagRow, ['tracked_tag_events','alarm_history','hmi_audit'].includes(source));
+    show(els.logsAlarmRow, source === 'alarm_history'); show(els.logsTypeRow, source === 'alarm_history'); show(els.logsUserRow, source === 'hmi_audit'); show(els.logsResultRow, source === 'hmi_audit');
+    show(els.logsGroupRow, source === 'alarm_history'); show(els.logsSiteRow, source === 'alarm_history'); show(els.logsSeverityRow, source === 'alarm_history');
   };
   if (els.logsSource) {
     els.logsSource.addEventListener('change', () => {
       updateLogsControls();
+      refreshLogs();
     });
   }
   updateLogsControls();
@@ -9211,7 +9251,7 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
 function serviceUnavailableMessage(url, detail = '') {
   const path = String(url || '');
   if (path.startsWith('/api/historian/')) return `historian service is unavailable${detail}`;
-  if (path.startsWith('/api/reporter/') || path.startsWith('/api/logger/')) return `logger service is unavailable${detail}`;
+  if (path.startsWith('/api/logger/') || path.startsWith('/api/logger/')) return `logger service is unavailable${detail}`;
   if (path.startsWith('/api/alarms/')) return `alarm service is unavailable${detail}`;
   if (path.startsWith('/api/opcbridge/')) return `OPCBridge request failed${detail}`;
   return `service is unavailable${detail}`;
@@ -22586,19 +22626,19 @@ function buildTree() {
     .map((iface) => makeSystemGroup(`system:host:network:${iface}`, iface, `System/Host/Network/${iface}/`));
 
   const reporterDatabaseIds = new Set([
-    ...systemPathChildren('System/Reporter/Databases/'),
+    ...systemPathChildren('System/Logger/Databases/'),
     ...(Array.isArray(state.reporterDatabases) ? state.reporterDatabases.map((d) => String(d?.id || '').trim()) : [])
   ].filter(Boolean));
   const reporterCheckIds = new Set([
-    ...systemPathChildren('System/Reporter/DataChecks/'),
+    ...systemPathChildren('System/Logger/DataChecks/'),
     ...(Array.isArray(state.reporterDataChecks) ? state.reporterDataChecks.map((c) => String(c?.id || '').trim()) : [])
   ].filter(Boolean));
   const reporterDatabaseChildren = Array.from(reporterDatabaseIds)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
-    .map((id) => makeSystemGroup(`system:reporter:database:${id}`, id, `System/Reporter/Databases/${id}/`));
+    .map((id) => makeSystemGroup(`system:reporter:database:${id}`, id, `System/Logger/Databases/${id}/`));
   const reporterCheckChildren = Array.from(reporterCheckIds)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
-    .map((id) => makeSystemGroup(`system:reporter:data_check:${id}`, id, `System/Reporter/DataChecks/${id}/`));
+    .map((id) => makeSystemGroup(`system:reporter:data_check:${id}`, id, `System/Logger/DataChecks/${id}/`));
   const mqttBrokerChildren = systemPathChildren('System/MQTT/Subscriptions/')
     .map((id) => {
       const subChildren = systemPathChildren(`System/MQTT/Subscriptions/${id}/`)
@@ -22631,9 +22671,9 @@ function buildTree() {
       makeSystemGroup('system:opcua', 'OPC UA', 'System/OpcUa/', [
         makeSystemGroup('system:opcua:sync', 'Sync', 'System/OpcUa/Sync/')
       ]),
-      makeSystemGroup('system:reporter', 'Reporter', 'System/Reporter/', [
-        makeSystemGroup('system:reporter:data_checks', 'Data Checks', 'System/Reporter/DataChecks/', reporterCheckChildren),
-        makeSystemGroup('system:reporter:databases', 'Databases', 'System/Reporter/Databases/', reporterDatabaseChildren)
+      makeSystemGroup('system:reporter', 'Logger', 'System/Logger/', [
+        makeSystemGroup('system:reporter:data_checks', 'Data Checks', 'System/Logger/DataChecks/', reporterCheckChildren),
+        makeSystemGroup('system:reporter:databases', 'Databases', 'System/Logger/Databases/', reporterDatabaseChildren)
       ])
     ]
   };

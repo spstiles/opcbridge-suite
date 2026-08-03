@@ -153,7 +153,7 @@ Expected apply behavior:
 
 - reload reporter service/runtime only
 - leave polling connections untouched
-- update System/Reporter tags after reload
+- update System/Logger tags after reload
 
 ### OPC UA Sync / Rebuild
 
