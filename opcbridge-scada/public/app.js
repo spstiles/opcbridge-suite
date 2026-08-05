@@ -24922,10 +24922,11 @@ async function refreshUserAuthLine({ initial = false } = {}) {
     const rawLoggedIn = Boolean(s?.user_logged_in ?? s?.logged_in);
     let loggedIn = rawLoggedIn;
     let username = String(s?.user?.username || '').trim();
+    let displayName = String(s?.user?.name || '').trim() || username;
     let groups = Array.isArray(s?.user?.groups) ? s.user.groups.map(String) : [];
     if (rawLoggedIn) {
       state.authLoggedOutSinceMs = 0;
-      state.authLastUser = { username, groups };
+      state.authLastUser = { username, displayName, groups };
     } else if (state.authWasLoggedIn && configured &&
         Date.now() - (Number(state.authLastLogoutAtMs) || 0) > 15000) {
       const now = Date.now();
@@ -24933,6 +24934,7 @@ async function refreshUserAuthLine({ initial = false } = {}) {
       if (now - state.authLoggedOutSinceMs < 10000) {
         loggedIn = true;
         username = String(state.authLastUser?.username || '').trim();
+        displayName = String(state.authLastUser?.displayName || '').trim() || username;
         groups = Array.isArray(state.authLastUser?.groups) ? state.authLastUser.groups.map(String) : [];
       }
     }
@@ -24951,7 +24953,7 @@ async function refreshUserAuthLine({ initial = false } = {}) {
     }
     if (loggedIn) {
       const isAdmin = groups.some((groupId) => String(groupId || '').trim().toLowerCase() === 'admin');
-      const who = username ? ` as ${escapeHtml(username)}${isAdmin ? ' (Admin)' : ''}` : '';
+      const who = displayName ? ` as ${escapeHtml(displayName)}${isAdmin ? ' (Admin)' : ''}` : '';
       const pending = rawLoggedIn ? '' : ' · verifying session';
       els.authLine.innerHTML = `<button class="btn" id="authLogoutBtn" type="button">Logout</button> <button class="btn" id="authChangePasswordBtn" type="button">Change Password</button> <span class="badge ok">auth</span> logged in${who}${pending}`;
       document.getElementById('authChangePasswordBtn')?.addEventListener('click', openChangePasswordModal);
