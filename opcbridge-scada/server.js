@@ -3761,18 +3761,14 @@ const server = http.createServer(async (req, res) => {
           'destination_database_id', 'destination_table', 'destination_time_column', 'destination_item_column'];
         required.forEach((field) => { if (!String(incoming?.[field] || '').trim()) throw new Error(`${field} is required.`); });
         const tags = Array.from(new Set((Array.isArray(incoming.tags) ? incoming.tags : []).map((v) => String(v || '').trim()).filter(Boolean)));
+        const specialSourceColumns = new Set([String(incoming.source_time_column || '').trim(), String(incoming.source_item_column || '').trim()]);
+        const specialDestinationColumns = new Set([String(incoming.destination_time_column || '').trim(), String(incoming.destination_item_column || '').trim()]);
         const mappings = (Array.isArray(incoming.mappings) ? incoming.mappings : [])
           .map((m) => ({ source: String(m?.source || '').trim(), destination: String(m?.destination || '').trim() }))
-          .filter((m) => m.source && m.destination);
+          .filter((m) => m.source && m.destination && !specialSourceColumns.has(m.source) && !specialDestinationColumns.has(m.destination));
         const allTags = incoming.all_tags !== false;
         if (!allTags && !tags.length) throw new Error('At least one tag is required when Selected tags is used.');
         if (!mappings.length) throw new Error('At least one value mapping is required.');
-        if (mappings.some((mapping) => mapping.source === String(incoming.source_time_column || '').trim() ||
-          mapping.source === String(incoming.source_item_column || '').trim() ||
-          mapping.destination === String(incoming.destination_time_column || '').trim() ||
-          mapping.destination === String(incoming.destination_item_column || '').trim())) {
-          throw new Error('Date/time and tag columns are matched automatically and must not also be value mappings.');
-        }
         const list = readReporterSyncJobsRaw().map((job) => ({ ...job }));
         const index = originalId ? list.findIndex((job) => sanitizeId(job?.id) === originalId) : -1;
         if (originalId && index < 0) throw new Error('The database sync job being edited no longer exists.');

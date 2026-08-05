@@ -6293,7 +6293,11 @@ function updateLoggerSyncColumns(side, tableName, selectedTime = '', selectedIte
 function suggestLoggerSyncMappings(showStatus = true) {
   const sourceTable = (state.loggerSyncSchemas.source || []).find((table) => String(table?.name || '') === els.loggerSyncSourceTable.value);
   const destinationTable = (state.loggerSyncSchemas.destination || []).find((table) => String(table?.name || '') === els.loggerSyncDestinationTable.value);
-  const destinationColumns = new Set((destinationTable?.columns || []).filter((column) => !/auto_increment|generated/i.test(String(column?.extra || ''))).map((column) => String(column?.name || '')));
+  const destinationExcluded = new Set([els.loggerSyncDestinationTime.value, els.loggerSyncDestinationItem.value]);
+  const destinationColumns = new Set((destinationTable?.columns || [])
+    .filter((column) => !/auto_increment|generated/i.test(String(column?.extra || '')))
+    .map((column) => String(column?.name || ''))
+    .filter((name) => !destinationExcluded.has(name)));
   const excluded = new Set([els.loggerSyncSourceTime.value, els.loggerSyncSourceItem.value]);
   const matches = (sourceTable?.columns || [])
     .filter((column) => !/auto_increment|generated/i.test(String(column?.extra || '')))
@@ -6301,6 +6305,16 @@ function suggestLoggerSyncMappings(showStatus = true) {
     .filter((name) => name && !excluded.has(name) && destinationColumns.has(name));
   els.loggerSyncMappings.value = matches.map((name) => `${name} = ${name}`).join('\n');
   if (showStatus) els.loggerSyncStatus.textContent = matches.length ? `Suggested ${matches.length} same-name mapping(s).` : 'No same-name value columns were found.';
+}
+
+function cleanLoggerSyncMappingText() {
+  const sourceExcluded = new Set([els.loggerSyncSourceTime.value, els.loggerSyncSourceItem.value]);
+  const destinationExcluded = new Set([els.loggerSyncDestinationTime.value, els.loggerSyncDestinationItem.value]);
+  const lines = String(els.loggerSyncMappings?.value || '').split(/\r?\n/).filter((line) => {
+    const parts = line.split('=').map((value) => value.trim());
+    return parts.length >= 2 && parts[0] && parts[1] && !sourceExcluded.has(parts[0]) && !destinationExcluded.has(parts[1]);
+  });
+  if (els.loggerSyncMappings) els.loggerSyncMappings.value = lines.join('\n');
 }
 
 async function openLoggerSyncModal(id = '') {
@@ -6324,6 +6338,7 @@ async function openLoggerSyncModal(id = '') {
       loadLoggerSyncSchema('source', job.source_database_id, job.source_table, job.source_time_column, job.source_item_column),
       loadLoggerSyncSchema('destination', job.destination_database_id, job.destination_table, job.destination_time_column, job.destination_item_column)
     ]);
+    cleanLoggerSyncMappingText();
     if (!job.mappings?.length && job.source_table && job.destination_table) suggestLoggerSyncMappings(false);
   } catch (err) { els.loggerSyncStatus.textContent = `Schema load failed: ${err.message || err}`; }
 }
@@ -6331,8 +6346,11 @@ async function openLoggerSyncModal(id = '') {
 function closeLoggerSyncModal() { if (els.loggerSyncModal) els.loggerSyncModal.style.display = 'none'; }
 
 function loggerSyncFromUi() {
+  const specialSourceColumns = new Set([els.loggerSyncSourceTime.value, els.loggerSyncSourceItem.value]);
+  const specialDestinationColumns = new Set([els.loggerSyncDestinationTime.value, els.loggerSyncDestinationItem.value]);
   const mappings = String(els.loggerSyncMappings?.value || '').split(/\r?\n/).map((line) => line.split('=').map((v) => v.trim()))
-    .filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map((parts) => ({ source: parts[0], destination: parts[1] }));
+    .filter((parts) => parts.length >= 2 && parts[0] && parts[1] && !specialSourceColumns.has(parts[0]) && !specialDestinationColumns.has(parts[1]))
+    .map((parts) => ({ source: parts[0], destination: parts[1] }));
   return { name: String(els.loggerSyncName.value || '').trim(), enabled: els.loggerSyncEnabled.checked,
     schedule: { on_calendar: String(els.loggerSyncSchedule.value || '').trim() }, lookback_days: Number(els.loggerSyncLookback.value || 7),
     direction: els.loggerSyncDirection.value, match_interval_minutes: Number(els.loggerSyncMatchInterval.value || 0), all_tags: els.loggerSyncAllTags.checked,
