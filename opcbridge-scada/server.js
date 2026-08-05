@@ -197,6 +197,9 @@ const REPORT_DEFINITIONS_PATH = String(
   process.env.OPCBRIDGE_REPORT_DEFINITIONS ||
   preferLoggerPath('/etc/opcbridge/report/reports.json', path.join(ROOT, '..', 'opcbridge-report', 'reports.json.example'))
 ).trim();
+const REPORT_DATA_SOURCES_PATH = String(
+  process.env.OPCBRIDGE_REPORT_DATA_SOURCES || '/etc/opcbridge/report/data_sources.json'
+).trim();
 const REPORT_TEMPLATE_DIR = String(
   process.env.OPCBRIDGE_REPORT_TEMPLATE_DIR || '/var/lib/opcbridge/report/templates'
 ).trim();
@@ -505,6 +508,45 @@ function readReportDefinitions() {
   return Array.isArray(root?.reports) ? root.reports.filter((report) => report && typeof report === 'object') : [];
 }
 
+function readReportDataSources() {
+  const root = readJsonFileOrNull(REPORT_DATA_SOURCES_PATH) || { sources: [] };
+  return Array.isArray(root?.sources)
+    ? root.sources.filter((source) => source && typeof source === 'object' && !Array.isArray(source)) : [];
+}
+
+function normalizeReportDataSource(source) {
+  const value = source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+  const id = sanitizeId(value.id || value.name);
+  const name = String(value.name || '').trim().slice(0, 191);
+  if (!id || !name) throw new Error('Data source name is required.');
+  const databaseId = sanitizeId(value.database_id);
+  const table = String(value.table || '').trim().slice(0, 255);
+  const layout = String(value.layout || 'wide').trim() === 'category' ? 'category' : 'wide';
+  const timeColumn = String(value.time_column || '').trim().slice(0, 255);
+  const categoryColumn = String(value.category_column || '').trim().slice(0, 255);
+  if (!databaseId || !table || !timeColumn) {
+    throw new Error('Database connection, table, and date/time column are required.');
+  }
+  if (layout === 'category' && !categoryColumn) throw new Error('The item-name column is required.');
+  const used = new Set();
+  const valueFields = (Array.isArray(value.value_fields) ? value.value_fields : []).slice(0, 50).map((field, index) => {
+    const column = String(field?.column || '').trim().slice(0, 255);
+    const label = String(field?.label || column).trim().slice(0, 191);
+    const type = String(field?.type || 'numeric').trim() === 'text' ? 'text' : 'numeric';
+    if (!column || !label) throw new Error(`Value field ${index + 1} requires a label and database column.`);
+    if (used.has(column)) throw new Error(`Value column '${column}' is listed more than once.`);
+    used.add(column);
+    return { column, label, type, default: normalizeBool(field?.default, false) };
+  });
+  if (!valueFields.length) throw new Error('At least one available value field is required.');
+  if (!valueFields.some((field) => field.default)) valueFields[0].default = true;
+  let foundDefault = false;
+  valueFields.forEach((field) => { if (field.default && !foundDefault) foundDefault = true; else if (field.default) field.default = false; });
+  return { id, name, description: String(value.description || '').trim().slice(0, 2000),
+    database_id: databaseId, table, layout, time_column: timeColumn,
+    category_column: layout === 'category' ? categoryColumn : '', value_fields: valueFields };
+}
+
 function readDataEntryDefinitions() {
   const root = readJsonFileOrNull(DATA_ENTRY_DEFINITIONS_PATH) || {};
   return { targets: Array.isArray(root?.targets) ? root.targets : [], forms: Array.isArray(root?.forms) ? root.forms : [] };
@@ -690,6 +732,7 @@ function normalizeReportDefinition(value) {
   if (!['historian', 'database'].includes(sourceType)) throw new Error(`Unsupported report data source: ${sourceType}`);
   const dataSource = sourceType === 'database' ? {
     type: 'database',
+    source_id: sanitizeId(sourceInput.source_id),
     database_id: sanitizeId(sourceInput.database_id),
     table: String(sourceInput.table || '').trim().slice(0, 255),
     layout: String(sourceInput.layout || 'wide').trim() === 'category' ? 'category' : 'wide',
@@ -729,6 +772,11 @@ function normalizeReportDefinition(value) {
       const layout = String(item.layout || dataSource.layout || 'wide').trim() === 'category' ? 'category' : 'wide';
       const categoryColumn = String(item.category_column || dataSource.category_column || '').trim().slice(0, 255);
       const field = String(item.field || dataSource.value_column || '').trim().slice(0, 255);
+      const fieldType = String(item.field_type || 'numeric').trim() === 'text' ? 'text' : 'numeric';
+      const companionField = String(item.companion_field || '').trim().slice(0, 255);
+      const companionPosition = ['none', 'before', 'after', 'text_only'].includes(String(item.companion_position || 'none'))
+        ? String(item.companion_position || 'none') : 'none';
+      const companionSeparator = String(item.companion_separator ?? ' ').slice(0, 20);
       const aggregation = String(item.aggregation || 'last').trim().toLowerCase();
       const multiplierValue = Number(item.multiplier ?? 1);
       const multiplier = Number.isFinite(multiplierValue) ? multiplierValue : 1;
@@ -751,6 +799,10 @@ function normalizeReportDefinition(value) {
         time_column: timeColumn,
         layout,
         field,
+        field_type: fieldType,
+        companion_field: companionField,
+        companion_position: companionField ? companionPosition : 'none',
+        companion_separator: companionSeparator,
         ...(layout === 'category' ? {
           category_column: categoryColumn,
           category_value: String(item.category_value ?? '').slice(0, 500)
@@ -2173,6 +2225,7 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
   projectBackupWalkFiles(REPORTER_REPORTS_DIR, '.', { includeExts: ['.json', '.jsonc', '.sql', '.txt', '.md'] })
     .forEach((rel) => add('logger_reports', REPORTER_REPORTS_DIR, rel));
   add('report_config', path.dirname(REPORT_DEFINITIONS_PATH), path.basename(REPORT_DEFINITIONS_PATH));
+  add('report_config', path.dirname(REPORT_DATA_SOURCES_PATH), path.basename(REPORT_DATA_SOURCES_PATH));
   projectBackupWalkFiles(REPORT_TEMPLATE_DIR, '.', { includeExts: ['.xlsx', '.ods'] })
     .forEach((rel) => add('report_templates', REPORT_TEMPLATE_DIR, rel));
 
@@ -4709,6 +4762,67 @@ const server = http.createServer(async (req, res) => {
       monitor_timeout_sec: Math.max(1, Math.min(300, Math.trunc(Number(database?.monitor_timeout_sec ?? 10) || 10)))
     })).filter((database) => database.id);
     sendJson(res, 200, { ok: true, databases });
+    return;
+  }
+
+  if (url.pathname === '/api/reports/data-sources') {
+    const sourceStatus = await requireReportDesignerPerm();
+    if (!sourceStatus) return;
+    if (req.method === 'GET') {
+      sendJson(res, 200, { ok: true, path: REPORT_DATA_SOURCES_PATH, sources: readReportDataSources() });
+      return;
+    }
+    if (req.method === 'POST') {
+      if (!authStatusHasPerm(sourceStatus, 'reports.administer')) {
+        sendJson(res, 403, { ok: false, error: 'Report administration permission is required to manage data sources.' });
+        return;
+      }
+      try {
+        const parsed = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+        const originalId = sanitizeId(parsed.original_id || '');
+        const incomingSource = parsed.source || parsed;
+        const source = normalizeReportDataSource(originalId ? { ...incomingSource, id: originalId } : incomingSource);
+        const sources = readReportDataSources().map((item) => ({ ...item }));
+        const index = sources.findIndex((item) => sanitizeId(item?.id) === (originalId || source.id));
+        if (sources.some((item, itemIndex) => itemIndex !== index && sanitizeId(item?.id) === source.id)) {
+          throw new Error(`Data source id already exists: ${source.id}`);
+        }
+        if (index >= 0) sources[index] = source; else sources.push(source);
+        sources.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+        writeJsonFile(REPORT_DATA_SOURCES_PATH, { sources });
+        sendJson(res, 200, { ok: true, path: REPORT_DATA_SOURCES_PATH, source });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/reports/data-sources/delete') {
+    const sourceStatus = await requireReportDesignerPerm();
+    if (!sourceStatus) return;
+    if (!authStatusHasPerm(sourceStatus, 'reports.administer')) {
+      sendJson(res, 403, { ok: false, error: 'Report administration permission is required to manage data sources.' });
+      return;
+    }
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const parsed = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(parsed.id || '');
+      const sources = readReportDataSources();
+      const index = sources.findIndex((item) => sanitizeId(item?.id) === id);
+      if (index < 0) throw new Error('Report data source was not found.');
+      sources.splice(index, 1);
+      writeJsonFile(REPORT_DATA_SOURCES_PATH, { sources });
+      sendJson(res, 200, { ok: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    }
     return;
   }
 

@@ -1182,6 +1182,7 @@
 		          <select id="publishedReportSelect" style="min-width: 300px;"></select>
 		          <button class="btn" id="reportBuilderEditBtn" type="button" style="display:none;">Edit</button>
 		          <button class="btn primary" id="reportBuilderNewBtn" type="button" style="display:none;">New Report</button>
+		          <button class="btn" id="reportBuilderManageDataSourcesBtn" type="button" style="display:none;">Manage Data Sources</button>
 		          <button class="btn" id="publishedReportsRefreshBtn" type="button">Refresh</button>
 		        </div>
 		        <div class="card" style="margin-top: 16px;">
@@ -1281,12 +1282,13 @@
 		        </div>
 		        <h4 style="margin-top: 18px;">Data Source</h4>
 		        <div class="grid2">
-		          <label><span>Source</span>
+		          <label><span>Data source type</span>
 		            <select id="reportBuilderSourceType">
 		              <option value="historian">OPCBridge Historian</option>
 		              <option value="database">Logger Database</option>
 		            </select>
 		          </label>
+		          <label id="reportBuilderDataSourceLabel" style="display:none;"><span>Report data source</span><select id="reportBuilderDataSource"><option value="">Advanced/manual database mapping</option></select></label>
 		          <label id="reportBuilderDatabaseLabel" style="display:none;"><span>Database connection</span><select id="reportBuilderDatabase"></select></label>
 		          <label id="reportBuilderTableLabel" style="display:none;"><span>Table or view</span><select id="reportBuilderTable"></select></label>
 		          <label id="reportBuilderLayoutLabel" style="display:none;"><span>How is the data stored?</span>
@@ -1296,7 +1298,7 @@
 		            </select>
 		          </label>
 		          <label id="reportBuilderTimeColumnLabel" style="display:none;"><span>Date/time column</span><select id="reportBuilderTimeColumn"></select></label>
-		          <label id="reportBuilderValueColumnLabel" style="display:none;"><span>Column containing the values</span><select id="reportBuilderValueColumn"></select></label>
+		          <label id="reportBuilderValueColumnLabel" style="display:none;"><span>Value field</span><select id="reportBuilderValueColumn"></select></label>
 		          <label id="reportBuilderCategoryColumnLabel" style="display:none;"><span>Column containing the item names</span><select id="reportBuilderCategoryColumn"></select></label>
 		          <label id="reportBuilderAggregationLabel" style="display:none;"><span>Aggregation</span>
 		            <select id="reportBuilderAggregation">
@@ -1338,7 +1340,7 @@
 		        </div>
 		        <div class="table-wrap" style="margin-top: 10px;">
 		          <table class="table report-columns-table">
-		            <thead><tr><th>Order</th><th>Heading</th><th>Source</th><th>Field</th><th>Calculation</th><th>Multiplier</th><th>Decimals</th><th>Show</th><th>Counter decrease</th><th>Actions</th></tr></thead>
+		            <thead><tr><th>Order</th><th>Heading</th><th>Source</th><th>Field</th><th>Text display</th><th>Calculation</th><th>Multiplier</th><th>Decimals</th><th>Show</th><th>Counter decrease</th><th>Actions</th></tr></thead>
 		            <tbody id="reportBuilderColumns"></tbody>
 		          </table>
 		        </div>
@@ -2300,6 +2302,36 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="reportDataSourceModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reportDataSourceModalTitle" style="max-width:900px;">
+      <div class="modal-titlebar">
+        <div class="modal-title" id="reportDataSourceModalTitle">Report Data Sources</div>
+        <button class="btn" id="reportDataSourceCloseBtn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="row-actions">
+          <select id="reportDataSourceExisting" style="min-width:300px;"></select>
+          <button class="btn" id="reportDataSourceNewBtn" type="button">New</button>
+          <button class="btn danger" id="reportDataSourceDeleteBtn" type="button">Delete</button>
+        </div>
+        <div class="grid2" style="margin-top:14px;">
+          <label><span>Name</span><input id="reportDataSourceName" type="text"></label>
+          <label><span>Description</span><input id="reportDataSourceDescription" type="text"></label>
+          <label><span>Database connection</span><select id="reportDataSourceDatabase"></select></label>
+          <label><span>Table or view</span><select id="reportDataSourceTable"></select></label>
+          <label><span>How is the data stored?</span><select id="reportDataSourceLayout"><option value="wide">Each measurement has its own column</option><option value="category">Item names and values are stored in rows</option></select></label>
+          <label><span>Date/time column</span><select id="reportDataSourceTimeColumn"></select></label>
+          <label id="reportDataSourceCategoryLabel"><span>Column containing item names</span><select id="reportDataSourceCategoryColumn"></select></label>
+        </div>
+        <h4 style="margin-top:16px;">Available Value Fields</h4>
+        <div class="hint">Select the fields report creators may use and give each one a friendly name.</div>
+        <div class="table-wrap" style="margin-top:8px;"><table class="table"><thead><tr><th>Available</th><th>Database column</th><th>Friendly name</th><th>Type</th><th>Default</th></tr></thead><tbody id="reportDataSourceValueFields"></tbody></table></div>
+        <div class="row-actions" style="margin-top:14px;"><button class="btn primary" id="reportDataSourceSaveBtn" type="button">Save Data Source</button></div>
+        <div class="hint mono" id="reportDataSourceStatus" style="margin-top:10px;"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="loggerDbModal" style="display:none;">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loggerDbModalTitle">
       <div class="modal-titlebar">
@@ -2349,7 +2381,7 @@
           </div>
 
           <div id="loggerDbOdbcFields" style="display:none;">
-            <div class="form-row"><label>ODBC Driver</label><input id="loggerDbModalOdbcDriver" type="text" placeholder="e.g. FreeTDS or ODBC Driver 18 for SQL Server" /></div>
+            <div class="form-row"><label>ODBC Driver</label><input id="loggerDbModalOdbcDriver" type="text" placeholder="FreeTDS" /></div>
             <div class="form-row"><label>SQL Server Host</label><input id="loggerDbModalOdbcHost" type="text" placeholder="127.0.0.1" /></div>
             <div class="form-row"><label>SQL Server Port</label><input id="loggerDbModalOdbcPort" type="number" min="1" max="65535" step="1" placeholder="1433" /></div>
             <div class="form-row"><label>Database</label><input id="loggerDbModalOdbcDatabase" type="text" placeholder="opcbridge" /></div>

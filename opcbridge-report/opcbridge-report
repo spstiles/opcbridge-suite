@@ -266,6 +266,11 @@ function validate_report(array $report): array
             if (!in_array($aggregation, ['last', 'last_nonzero', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count'], true)) {
                 fail("Report '{$id}' column {$index} uses an unsupported aggregation");
             }
+            $column['companion_field'] = trim((string)($column['companion_field'] ?? ''));
+            $position = (string)($column['companion_position'] ?? 'none');
+            $column['companion_position'] = in_array($position, ['none', 'before', 'after', 'text_only'], true)
+                ? $position : 'none';
+            $column['companion_separator'] = substr((string)($column['companion_separator'] ?? ' '), 0, 20);
         } else {
             fail("Report '{$id}' column {$index} uses an unsupported source");
         }
@@ -731,6 +736,9 @@ function database_daily_values(
         'limit' => 250000,
         'include_previous' => (string)($column['aggregation'] ?? 'last') === 'change',
     ];
+    if (trim((string)($column['companion_field'] ?? '')) !== '') {
+        $body['companion_column'] = (string)$column['companion_field'];
+    }
     if (($column['layout'] ?? 'wide') === 'category') {
         $body['category_column'] = (string)($column['category_column'] ?? '');
         $body['category_value'] = $column['category_value'] ?? '';
@@ -747,7 +755,8 @@ function database_daily_values(
             continue;
         }
         $date = bucket_key((int)$point['ts_ms'], $timezone, $group);
-        $dailyPoints[$date][] = ['ts_ms' => (int)$point['ts_ms'], 'value' => $point['value'] ?? null];
+        $dailyPoints[$date][] = ['ts_ms' => (int)$point['ts_ms'], 'value' => $point['value'] ?? null,
+            'companion' => $point['companion'] ?? null];
     }
     $daily = [];
     $aggregation = (string)($column['aggregation'] ?? 'last');
@@ -777,14 +786,32 @@ function database_daily_values(
                     }
                 }
             }
-            $daily[$date] = ['value' => $change];
+            $companion = null;
+            foreach (array_reverse($points) as $point) {
+                if (($point['companion'] ?? null) !== null && (string)$point['companion'] !== '') {
+                    $companion = (string)$point['companion']; break;
+                }
+            }
+            $daily[$date] = ['value' => $change, 'companion' => $companion];
             $baseline = $ending;
         }
         return $daily;
     }
     foreach ($dailyPoints as $date => $points) {
         usort($points, fn(array $a, array $b): int => $a['ts_ms'] <=> $b['ts_ms']);
-        $daily[$date] = ['value' => aggregate_values($points, $aggregation)];
+        $companion = null;
+        $ordered = $aggregation === 'first' ? $points : array_reverse($points);
+        foreach ($ordered as $point) {
+            $eligible = $aggregation === 'last_nonzero'
+                ? is_numeric($point['value'] ?? null) && (float)$point['value'] != 0.0
+                : (($aggregation === 'first' || $aggregation === 'last') ? ($point['value'] ?? null) !== null :
+                    (($point['companion'] ?? null) !== null && (string)$point['companion'] !== ''));
+            if ($eligible) {
+                $companion = ($point['companion'] ?? null) === null ? null : (string)$point['companion'];
+                break;
+            }
+        }
+        $daily[$date] = ['value' => aggregate_values($points, $aggregation), 'companion' => $companion];
     }
     return $daily;
 }
@@ -811,7 +838,7 @@ function historian_raw_values(
         $values[(int)$point['ts_ms']] = $point['value'];
         $count++;
     }
-    return ['values' => $values, 'truncated' => $count >= $limit];
+    return ['values' => $values, 'companions' => [], 'truncated' => $count >= $limit];
 }
 
 function database_raw_values(
@@ -830,6 +857,9 @@ function database_raw_values(
         'limit' => $limit,
         'include_previous' => false,
     ];
+    if (trim((string)($column['companion_field'] ?? '')) !== '') {
+        $body['companion_column'] = (string)$column['companion_field'];
+    }
     if (($column['layout'] ?? 'wide') === 'category') {
         $body['category_column'] = (string)($column['category_column'] ?? '');
         $body['category_value'] = $column['category_value'] ?? '';
@@ -837,13 +867,15 @@ function database_raw_values(
     $id = rawurlencode((string)$column['database_id']);
     $json = http_post_json(rtrim($loggerUrl, '/') . "/databases/{$id}/report-query", $body);
     $values = [];
+    $companions = [];
     $count = 0;
     foreach (($json['points'] ?? []) as $point) {
         if (!is_array($point) || !isset($point['ts_ms'])) continue;
         $values[(int)$point['ts_ms']] = $point['value'] ?? null;
+        $companions[(int)$point['ts_ms']] = $point['companion'] ?? null;
         $count++;
     }
-    return ['values' => $values, 'truncated' => $count >= $limit];
+    return ['values' => $values, 'companions' => $companions, 'truncated' => $count >= $limit];
 }
 
 function raw_timestamp_label(int $timestampMs, DateTimeZone $timezone): string
@@ -906,17 +938,20 @@ function build_rows(
     $compiled = compile_report_expressions($report);
     if ($group === 'raw') {
         $series = [];
+        $companionSeries = [];
         $timestamps = [];
         $truncated = false;
         foreach ($report['columns'] as $column) {
             if (($column['source'] ?? '') === 'calculated') {
                 $series[] = [];
+                $companionSeries[] = [];
                 continue;
             }
             $raw = ($column['source'] ?? 'historian') === 'database'
                 ? database_raw_values($loggerUrl, $column, $start, $end)
                 : historian_raw_values($historianUrl, $column, $start, $end);
             $series[] = $raw['values'];
+            $companionSeries[] = $raw['companions'] ?? [];
             $truncated = $truncated || $raw['truncated'];
             foreach (array_keys($raw['values']) as $timestampMs) $timestamps[(int)$timestampMs] = true;
         }
@@ -930,14 +965,17 @@ function build_rows(
         $rows = [];
         foreach ($timestampList as $timestampMs) {
             $values = [];
+            $companions = [];
             foreach ($series as $index => $data) {
                 $value = array_key_exists($timestampMs, $data) ? $data[$timestampMs] : null;
                 $multiplier = (float)($report['columns'][$index]['multiplier'] ?? 1);
                 $values[] = ($value !== null && is_numeric($value)) ? ((float)$value * $multiplier) : $value;
+                $companions[] = $companionSeries[$index][$timestampMs] ?? null;
             }
             $rows[] = [
                 'date' => raw_timestamp_label((int)$timestampMs, $timezone),
-                'values' => evaluate_report_row($report, $values, $compiled)
+                'values' => evaluate_report_row($report, $values, $compiled),
+                'companions' => $companions
             ];
         }
         return [$rows, $truncated];
@@ -954,12 +992,14 @@ function build_rows(
     for ($day = $start; $day < $end; $day = $day->modify(bucket_step($group))) {
         $dateKey = bucket_label($day, $group);
         $values = [];
+        $companions = [];
         foreach ($series as $index => $data) {
             $value = $data[$dateKey]['value'] ?? null;
             $multiplier = (float)($report['columns'][$index]['multiplier'] ?? 1);
             $values[] = ($value !== null && is_numeric($value)) ? ((float)$value * $multiplier) : $value;
+            $companions[] = $data[$dateKey]['companion'] ?? null;
         }
-        $rows[] = ['date' => $dateKey, 'values' => evaluate_report_row($report, $values, $compiled)];
+        $rows[] = ['date' => $dateKey, 'values' => evaluate_report_row($report, $values, $compiled), 'companions' => $companions];
     }
     return [$rows, false];
 }
@@ -1126,6 +1166,38 @@ function visible_column_indexes(array $report): array
         if (($column['visible'] ?? true) !== false) $indexes[] = $index;
     }
     return $indexes;
+}
+
+function apply_companion_display(array $report, array $rows): array
+{
+    foreach ($rows as &$row) {
+        foreach ($report['columns'] as $index => $column) {
+            $position = (string)($column['companion_position'] ?? 'none');
+            if (($column['source'] ?? '') !== 'database' || $position === 'none' ||
+                trim((string)($column['companion_field'] ?? '')) === '') continue;
+            $text = trim((string)($row['companions'][$index] ?? ''));
+            if ($position === 'text_only') {
+                $row['values'][$index] = $text === '' ? null : $text;
+                continue;
+            }
+            if ($text === '') continue;
+            $value = $row['values'][$index] ?? null;
+            if ($value === null || $value === '') {
+                $row['values'][$index] = $text;
+                continue;
+            }
+            $displayValue = is_numeric($value)
+                ? number_format((float)$value, max(0, min(10, (int)($column['precision'] ?? 2))), '.', '')
+                : (string)$value;
+            $separator = (string)($column['companion_separator'] ?? ' ');
+            $row['values'][$index] = $position === 'before'
+                ? $text . $separator . $displayValue
+                : $displayValue . $separator . $text;
+        }
+        unset($row['companions']);
+    }
+    unset($row);
+    return $rows;
 }
 
 function project_report_rows(array $rows, array $indexes, string $labelKey = 'date'): array
@@ -1510,7 +1582,7 @@ if ($summaryRows && ($reportLayout['summary_placement'] ?? 'after_data') === 'fi
 $visibleIndexes = visible_column_indexes($report);
 $outputReport = $report;
 $outputReport['columns'] = array_map(fn(int $index): array => $report['columns'][$index], $visibleIndexes);
-$outputRows = project_report_rows($rows, $visibleIndexes);
+$outputRows = project_report_rows(apply_companion_display($report, $rows), $visibleIndexes);
 $outputSummaryRows = project_report_rows($summaryRows, $visibleIndexes, 'label');
 
 if ($command === 'preview') {

@@ -296,6 +296,21 @@ Notes:
 - **Logger**: scheduled jobs that sample selected tags and write rows to a database table.
 - **Data Checks**: scheduled SQL checks for health/QA (first column of first row is the check value; optional low/high thresholds).
 
+SQL Server connection testing and database health monitoring are available
+through the open-source FreeTDS ODBC driver. Install or update Logger with:
+
+```bash
+sudo ./install.sh --components logger --with-odbc --odbc-driver freetds
+```
+
+In **Data Logger → Databases**, select **SQL Server (ODBC)** and leave the
+driver name as `FreeTDS`. Enter the SQL Server host, port (normally `1433`),
+database, username, and password. OPCBridge builds the ODBC connection string;
+a system DSN or manually edited `odbc.ini` file is not required. Use **Test
+Connection** before saving. SQL Server schema discovery, report queries, data
+checks, and scheduled logger writes are subsequent support phases and are not
+enabled by this initial connection milestone.
+
 Example “previous calendar day” data-check query:
 
 ```sql

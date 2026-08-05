@@ -2,6 +2,11 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -pthread -I../opcbridge
 LDFLAGS = -lcurl -lmysqlclient -pthread
 
+ifneq ($(wildcard /usr/include/sql.h),)
+CXXFLAGS += -DOPCBRIDGE_HAVE_ODBC
+LDFLAGS += -lodbc
+endif
+
 TARGET = opcbridge-logger
 SRCS = opcbridge_logger.cpp
 

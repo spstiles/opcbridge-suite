@@ -157,9 +157,15 @@ body.report-portal .topbar {
 
 body.report-portal .main {
   max-width: none;
-  padding-left: 10px;
-  padding-right: 10px;
+  padding-left: 8px;
+  padding-right: 8px;
   padding-top: 22px;
+}
+
+body.reports-active .main {
+  max-width: none;
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 .report-portal-scada-link {
@@ -359,10 +365,22 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   min-width: 280px;
 }
 
-.report-columns-table th:nth-child(9),
+.report-columns-table th:nth-child(10),
 #reportBuilderColumns .report-counter-decrease {
   width: 270px;
   min-width: 270px;
+}
+
+.report-columns-table th:nth-child(5) {
+  min-width: 300px;
+}
+
+#reportBuilderColumns .report-companion-controls {
+  display: grid;
+  grid-template-columns: minmax(145px, 1fr) minmax(115px, auto) 55px;
+  align-items: center;
+  gap: 6px;
+  min-width: 285px;
 }
 
 #reportBuilderColumns .report-counter-decrease-controls {

@@ -71,6 +71,28 @@ column. Logger executes bounded, schema-validated time-range queries and the
 report generator combines those results with historian values in the same
 calendar-day rows.
 
+Report administrators can define reusable **Report Data Sources** so report
+creators do not need to understand the physical database schema. A source
+stores the Logger database connection, table or view, row layout, date/time
+column, item-name column, and the database value fields that report creators
+may use. Each available value field has a friendly name, numeric/text type, and
+one default. Sources are stored in `/etc/opcbridge/report/data_sources.json`
+and are included in project backups.
+
+Non-administrator report creators select the database and one of its predefined
+sources. The table layout and internal column names are then applied without
+being exposed for manual configuration. Report administrators retain an
+advanced/manual mapping option for unusual and existing reports.
+
+A database report column may also select an optional companion text field and
+display that text before the value, after the value, or by itself. This supports
+results such as `< 0.50`, `72.3 °F`, and `Running`. The numeric component remains
+numeric while formulas, multipliers, placed cells, and summary rows are
+calculated; companion text is applied only to final detail-row display and
+downloads. For first, last, and last-nonzero aggregation, companion text comes
+from the same selected database record. Other aggregate calculations use the
+last nonblank companion text in the period.
+
 Daily reports support `interval_minutes` values of `1`, `5`, `10`, `15`, `30`,
 or `60` (the default). The selected interval creates timezone-aware rows across
 the chosen day, and each database aggregation is evaluated within those

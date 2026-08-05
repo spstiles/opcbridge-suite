@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <cctype>
 #include <cstring>
+#include <cstdint>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
@@ -23,6 +24,11 @@
 
 #include <curl/curl.h>
 #include <mysql/mysql.h>
+
+#ifdef OPCBRIDGE_HAVE_ODBC
+#include <sql.h>
+#include <sqlext.h>
+#endif
 
 #include <nlohmann/json.hpp>
 #include "httplib.h"
@@ -54,11 +60,130 @@ struct DbConfig {
     std::string mysql_user;
     std::string mysql_password;
     std::string mysql_database;
+    std::string odbc_driver = "FreeTDS";
+    std::string odbc_host = "localhost";
+    unsigned int odbc_port = 1433;
+    std::string odbc_database;
+    std::string odbc_user;
+    std::string odbc_password;
+    bool odbc_encrypt = true;
+    bool odbc_trust_cert = false;
     bool monitor_enabled = false;
     int monitor_interval_sec = 60;
     int monitor_timeout_sec = 10;
     std::string monitor_query = "SELECT 1";
 };
+
+#ifdef OPCBRIDGE_HAVE_ODBC
+static std::string odbc_diagnostics(SQLSMALLINT handle_type, SQLHANDLE handle) {
+    std::ostringstream out;
+    SQLCHAR state[7] = {0};
+    SQLCHAR message[1024] = {0};
+    SQLINTEGER native_error = 0;
+    SQLSMALLINT message_length = 0;
+    for (SQLSMALLINT record = 1;; ++record) {
+        SQLRETURN rc = SQLGetDiagRec(handle_type, handle, record, state, &native_error,
+                                     message, sizeof(message), &message_length);
+        if (rc == SQL_NO_DATA) break;
+        if (!SQL_SUCCEEDED(rc)) break;
+        if (out.tellp() > 0) out << "; ";
+        out << reinterpret_cast<const char*>(state) << " (" << native_error << "): "
+            << reinterpret_cast<const char*>(message);
+    }
+    return out.str();
+}
+
+static std::string odbc_connection_value(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    for (char ch : value) escaped += (ch == '}') ? "}}" : std::string(1, ch);
+    return "{" + escaped + "}";
+}
+
+static std::string odbc_connection_string(const DbConfig& db) {
+    std::string driver_lower = db.odbc_driver;
+    std::transform(driver_lower.begin(), driver_lower.end(), driver_lower.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    const bool freetds = driver_lower.find("freetds") != std::string::npos;
+    std::ostringstream value;
+    value << "DRIVER=" << odbc_connection_value(db.odbc_driver.empty() ? "FreeTDS" : db.odbc_driver)
+          << ";SERVER=" << odbc_connection_value(db.odbc_host)
+          << ";PORT=" << db.odbc_port
+          << ";DATABASE=" << odbc_connection_value(db.odbc_database)
+          << ";UID=" << odbc_connection_value(db.odbc_user)
+          << ";PWD=" << odbc_connection_value(db.odbc_password) << ";";
+    if (freetds) {
+        value << "TDS_Version=7.4;ClientCharset=UTF-8;Encryption="
+              << (db.odbc_encrypt ? "require" : "off") << ";";
+    } else {
+        value << "Encrypt=" << (db.odbc_encrypt ? "Yes" : "No") << ";"
+              << "TrustServerCertificate=" << (db.odbc_trust_cert ? "Yes" : "No") << ";";
+    }
+    return value.str();
+}
+
+static bool odbc_connect(const DbConfig& db, SQLHENV& env, SQLHDBC& dbc, std::string& error) {
+    env = SQL_NULL_HENV;
+    dbc = SQL_NULL_HDBC;
+    if (!SQL_SUCCEEDED(SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env))) {
+        error = "ODBC environment allocation failed";
+        return false;
+    }
+    if (!SQL_SUCCEEDED(SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION,
+                                     reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0))) {
+        error = "ODBC environment initialization failed: " + odbc_diagnostics(SQL_HANDLE_ENV, env);
+        SQLFreeHandle(SQL_HANDLE_ENV, env);
+        env = SQL_NULL_HENV;
+        return false;
+    }
+    if (!SQL_SUCCEEDED(SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc))) {
+        error = "ODBC connection allocation failed: " + odbc_diagnostics(SQL_HANDLE_ENV, env);
+        SQLFreeHandle(SQL_HANDLE_ENV, env);
+        env = SQL_NULL_HENV;
+        return false;
+    }
+    SQLSetConnectAttr(dbc, SQL_LOGIN_TIMEOUT,
+                      reinterpret_cast<SQLPOINTER>(static_cast<intptr_t>(std::max(1, db.monitor_timeout_sec))), 0);
+    const std::string connection = odbc_connection_string(db);
+    SQLCHAR output[1024] = {0};
+    SQLSMALLINT output_length = 0;
+    SQLRETURN rc = SQLDriverConnect(dbc, nullptr,
+                                    reinterpret_cast<SQLCHAR*>(const_cast<char*>(connection.c_str())), SQL_NTS,
+                                    output, sizeof(output), &output_length, SQL_DRIVER_NOPROMPT);
+    if (!SQL_SUCCEEDED(rc)) {
+        error = "ODBC connection failed: " + odbc_diagnostics(SQL_HANDLE_DBC, dbc);
+        SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+        SQLFreeHandle(SQL_HANDLE_ENV, env);
+        dbc = SQL_NULL_HDBC;
+        env = SQL_NULL_HENV;
+        return false;
+    }
+    return true;
+}
+
+static void odbc_disconnect(SQLHENV env, SQLHDBC dbc) {
+    if (dbc != SQL_NULL_HDBC) {
+        SQLDisconnect(dbc);
+        SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+    }
+    if (env != SQL_NULL_HENV) SQLFreeHandle(SQL_HANDLE_ENV, env);
+}
+
+static bool odbc_execute(SQLHDBC dbc, const std::string& query, int timeout_sec, std::string& error) {
+    SQLHSTMT statement = SQL_NULL_HSTMT;
+    if (!SQL_SUCCEEDED(SQLAllocHandle(SQL_HANDLE_STMT, dbc, &statement))) {
+        error = "ODBC statement allocation failed: " + odbc_diagnostics(SQL_HANDLE_DBC, dbc);
+        return false;
+    }
+    SQLSetStmtAttr(statement, SQL_ATTR_QUERY_TIMEOUT,
+                   reinterpret_cast<SQLPOINTER>(static_cast<intptr_t>(std::max(1, timeout_sec))), 0);
+    SQLRETURN rc = SQLExecDirect(statement,
+                                 reinterpret_cast<SQLCHAR*>(const_cast<char*>(query.c_str())), SQL_NTS);
+    if (!SQL_SUCCEEDED(rc)) error = "ODBC query failed: " + odbc_diagnostics(SQL_HANDLE_STMT, statement);
+    SQLFreeHandle(SQL_HANDLE_STMT, statement);
+    return SQL_SUCCEEDED(rc);
+}
+#endif
 
 struct HistorianField {
     std::string connection_id;
@@ -916,6 +1041,14 @@ public:
             db.mysql_user = d.value("mysql_user", "");
             db.mysql_password = d.value("mysql_password", "");
             db.mysql_database = d.value("mysql_database", "");
+            db.odbc_driver = d.value("odbc_driver", "FreeTDS");
+            db.odbc_host = d.value("odbc_host", "localhost");
+            db.odbc_port = d.value("odbc_port", 1433u);
+            db.odbc_database = d.value("odbc_database", "");
+            db.odbc_user = d.value("odbc_user", "");
+            db.odbc_password = d.value("odbc_password", "");
+            db.odbc_encrypt = d.value("odbc_encrypt", true);
+            db.odbc_trust_cert = d.value("odbc_trust_cert", false);
             db.monitor_enabled = d.value("monitor_enabled", false);
             db.monitor_interval_sec = std::max(5, d.value("monitor_interval_sec", 60));
             db.monitor_timeout_sec = std::max(1, d.value("monitor_timeout_sec", 10));
@@ -1283,6 +1416,7 @@ public:
         const std::string table = request.value("table", "");
         const std::string time_column = request.value("time_column", "");
         const std::string value_column = request.value("value_column", "");
+        const std::string companion_column = request.value("companion_column", "");
         const std::string category_column = request.value("category_column", "");
         const bool has_category = !category_column.empty() && request.contains("category_value");
         const long long from_ms = request.value("from_ms", 0LL);
@@ -1302,6 +1436,7 @@ public:
             for (const auto& field : candidate["columns"]) fields.insert(field.value("name", ""));
         }
         if (!table_valid || !fields.count(time_column) || !fields.count(value_column) ||
+            (!companion_column.empty() && !fields.count(companion_column)) ||
             (has_category && !fields.count(category_column))) {
             return {{"ok", false}, {"error", "Selected table or column does not exist"}};
         }
@@ -1323,8 +1458,10 @@ public:
             return output + "`";
         };
         const std::string time_field = quote_identifier(time_column);
+        const std::string companion_select = companion_column.empty()
+            ? "NULL AS companion" : quote_identifier(companion_column) + " AS companion";
         const std::string select = "SELECT CAST(UNIX_TIMESTAMP(" + time_field + ") * 1000 AS SIGNED) AS ts_ms, " +
-            quote_identifier(value_column) + " AS value FROM " + quote_identifier(table);
+            quote_identifier(value_column) + " AS value, " + companion_select + " FROM " + quote_identifier(table);
         std::string category_filter;
         if (has_category) {
             const std::string raw_value = request["category_value"].is_string()
@@ -1345,7 +1482,7 @@ public:
         if (request.value("include_previous", false)) {
             const std::string previous_query = select + " WHERE " + time_field + " < " + from +
                 category_filter + " ORDER BY " + time_field + " DESC LIMIT 1";
-            sql = "SELECT ts_ms, value FROM ((" + previous_query + ") UNION ALL (" + range_query +
+            sql = "SELECT ts_ms, value, companion FROM ((" + previous_query + ") UNION ALL (" + range_query +
                 ")) AS report_points ORDER BY ts_ms ASC";
         }
         if (mysql_query(conn, sql.c_str()) != 0) {
@@ -1371,7 +1508,9 @@ public:
                 const double numeric = std::strtod(raw.c_str(), &end);
                 value = (end && end != raw.c_str() && *end == '\0') ? json(numeric) : json(raw);
             }
-            points.push_back({{"ts_ms", std::stoll(row[0])}, {"value", value}});
+            json companion = nullptr;
+            if (row[2]) companion = std::string(row[2], lengths ? lengths[2] : std::strlen(row[2]));
+            points.push_back({{"ts_ms", std::stoll(row[0])}, {"value", value}, {"companion", companion}});
         }
         mysql_free_result(result);
         mysql_close(conn);
@@ -1538,6 +1677,14 @@ data_entry_failure:
         db.mysql_user = d.value("mysql_user", "");
         db.mysql_password = d.value("mysql_password", "");
         db.mysql_database = d.value("mysql_database", "");
+        db.odbc_driver = d.value("odbc_driver", "FreeTDS");
+        db.odbc_host = d.value("odbc_host", "localhost");
+        db.odbc_port = d.value("odbc_port", 1433u);
+        db.odbc_database = d.value("odbc_database", "");
+        db.odbc_user = d.value("odbc_user", "");
+        db.odbc_password = d.value("odbc_password", "");
+        db.odbc_encrypt = d.value("odbc_encrypt", true);
+        db.odbc_trust_cert = d.value("odbc_trust_cert", false);
         db.monitor_enabled = d.value("monitor_enabled", false);
         db.monitor_interval_sec = std::max(5, d.value("monitor_interval_sec", 60));
         db.monitor_timeout_sec = std::max(1, d.value("monitor_timeout_sec", 10));
@@ -1633,6 +1780,22 @@ private:
     DbTestResult test_database_config(const DbConfig& db) const {
         DbTestResult result;
         const long long started = now_ms();
+        if (db.type == "odbc") {
+#ifdef OPCBRIDGE_HAVE_ODBC
+            SQLHENV env = SQL_NULL_HENV;
+            SQLHDBC dbc = SQL_NULL_HDBC;
+            if (db.odbc_host.empty() || db.odbc_database.empty() || db.odbc_user.empty()) {
+                result.error = "SQL Server host, database, and user are required";
+            } else if (odbc_connect(db, env, dbc, result.error)) {
+                result.ok = odbc_execute(dbc, db.monitor_query, db.monitor_timeout_sec, result.error);
+                odbc_disconnect(env, dbc);
+            }
+#else
+            result.error = "ODBC support was not built into opcbridge-logger; reinstall the logger with --with-odbc";
+#endif
+            result.latency_ms = static_cast<int>(now_ms() - started);
+            return result;
+        }
         if (db.type != "mysql") {
             result.error = "Database type not supported by logger service yet: " + db.type;
             result.latency_ms = static_cast<int>(now_ms() - started);

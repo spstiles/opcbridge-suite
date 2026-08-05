@@ -311,6 +311,9 @@
   reportBuilderSourceType: document.getElementById('reportBuilderSourceType'),
   reportBuilderDatabaseLabel: document.getElementById('reportBuilderDatabaseLabel'),
   reportBuilderDatabase: document.getElementById('reportBuilderDatabase'),
+  reportBuilderDataSourceLabel: document.getElementById('reportBuilderDataSourceLabel'),
+  reportBuilderDataSource: document.getElementById('reportBuilderDataSource'),
+  reportBuilderManageDataSourcesBtn: document.getElementById('reportBuilderManageDataSourcesBtn'),
   reportBuilderTableLabel: document.getElementById('reportBuilderTableLabel'),
   reportBuilderTable: document.getElementById('reportBuilderTable'),
   reportBuilderLayoutLabel: document.getElementById('reportBuilderLayoutLabel'),
@@ -338,6 +341,22 @@
   reportBuilderTagSelect: document.getElementById('reportBuilderTagSelect'),
   reportBuilderAddTagBtn: document.getElementById('reportBuilderAddTagBtn'),
   reportBuilderAddCalculatedBtn: document.getElementById('reportBuilderAddCalculatedBtn'),
+  reportDataSourceModal: document.getElementById('reportDataSourceModal'),
+  reportDataSourceCloseBtn: document.getElementById('reportDataSourceCloseBtn'),
+  reportDataSourceExisting: document.getElementById('reportDataSourceExisting'),
+  reportDataSourceNewBtn: document.getElementById('reportDataSourceNewBtn'),
+  reportDataSourceDeleteBtn: document.getElementById('reportDataSourceDeleteBtn'),
+  reportDataSourceName: document.getElementById('reportDataSourceName'),
+  reportDataSourceDescription: document.getElementById('reportDataSourceDescription'),
+  reportDataSourceDatabase: document.getElementById('reportDataSourceDatabase'),
+  reportDataSourceTable: document.getElementById('reportDataSourceTable'),
+  reportDataSourceLayout: document.getElementById('reportDataSourceLayout'),
+  reportDataSourceTimeColumn: document.getElementById('reportDataSourceTimeColumn'),
+  reportDataSourceCategoryLabel: document.getElementById('reportDataSourceCategoryLabel'),
+  reportDataSourceCategoryColumn: document.getElementById('reportDataSourceCategoryColumn'),
+  reportDataSourceValueFields: document.getElementById('reportDataSourceValueFields'),
+  reportDataSourceSaveBtn: document.getElementById('reportDataSourceSaveBtn'),
+  reportDataSourceStatus: document.getElementById('reportDataSourceStatus'),
   reportBuilderColumns: document.getElementById('reportBuilderColumns'),
   reportBuilderAddSummaryBtn: document.getElementById('reportBuilderAddSummaryBtn'),
   reportBuilderSummariesWrap: document.getElementById('reportBuilderSummariesWrap'),
@@ -1176,6 +1195,10 @@ const state = {
   reportBuilderSummaries: [],
   reportBuilderTags: [],
   reportBuilderDatabases: [],
+  reportBuilderDataSources: [],
+  reportDataSourceOriginalId: '',
+  reportDataSourceSchema: [],
+  reportDataSourceFields: [],
   reportBuilderSchema: [],
   reportBuilderSchemaRequestSeq: 0,
   reportBuilderCategoryItems: [],
@@ -3291,7 +3314,7 @@ function openLoggerDbModal(opts = {}) {
   if (els.loggerDbModalMysqlPassword) els.loggerDbModalMysqlPassword.value = '';
   setLoggerModalPasswordHint(Boolean(db?.password_set || db?.mysql_password_set));
 
-  if (els.loggerDbModalOdbcDriver) els.loggerDbModalOdbcDriver.value = String(db?.odbc_driver || '');
+  if (els.loggerDbModalOdbcDriver) els.loggerDbModalOdbcDriver.value = String(db?.odbc_driver || 'FreeTDS');
   if (els.loggerDbModalOdbcHost) els.loggerDbModalOdbcHost.value = String(db?.odbc_host || '');
   if (els.loggerDbModalOdbcPort) els.loggerDbModalOdbcPort.value = String(db?.odbc_port ?? '');
   if (els.loggerDbModalOdbcDatabase) els.loggerDbModalOdbcDatabase.value = String(db?.odbc_database || '');
@@ -6582,6 +6605,9 @@ function renderPublishedReportSelection() {
     els.reportBuilderEditBtn.disabled = !report || !permissions.edit;
   }
   if (els.reportBuilderNewBtn) els.reportBuilderNewBtn.style.display = canCreate ? '' : 'none';
+  if (els.reportBuilderManageDataSourcesBtn) {
+    els.reportBuilderManageDataSourcesBtn.style.display = hasPerm('reports.administer') ? '' : 'none';
+  }
 }
 
 async function refreshPublishedReports(loadPreview = true) {
@@ -6986,6 +7012,171 @@ function renderReportBuilderDatabaseSources(selected = '') {
   })), selected);
 }
 
+function renderReportBuilderDataSources(selected = '') {
+  if (!els.reportBuilderDataSource) return;
+  const currentReport = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId);
+  const legacyManual = Boolean(state.reportBuilderOriginalId) && !String(currentReport?.data_source?.source_id || '');
+  const allowManual = hasPerm('reports.administer') || legacyManual;
+  const profiles = state.reportBuilderDataSources.map((source) => ({ value: source.id, label: source.name }));
+  const options = [
+    ...profiles,
+    ...(allowManual ? [{ value: '', label: 'Advanced/manual database mapping' }] : [])
+  ];
+  const desired = selected || (legacyManual ? '' : String(profiles[0]?.value || ''));
+  fillSelect(els.reportBuilderDataSource, options, desired);
+}
+
+function selectedReportDataSource() {
+  const id = String(els.reportBuilderDataSource?.value || '');
+  return state.reportBuilderDataSources.find((source) => String(source.id || '') === id) || null;
+}
+
+function applyReportDataSource(source) {
+  if (!source) return;
+  if (els.reportBuilderDatabase) els.reportBuilderDatabase.value = String(source.database_id || '');
+  if (els.reportBuilderLayout) els.reportBuilderLayout.value = source.layout || 'wide';
+  fillSelect(els.reportBuilderTable, [{ value: source.table, label: source.table }], source.table);
+  fillSelect(els.reportBuilderTimeColumn, [{ value: source.time_column, label: source.time_column }], source.time_column);
+  fillSelect(els.reportBuilderCategoryColumn, source.category_column
+    ? [{ value: source.category_column, label: source.category_column }] : [], source.category_column || '');
+  const fields = (source.value_fields || []).map((field) => ({ value: field.column, label: field.label }));
+  const defaultField = (source.value_fields || []).find((field) => field.default) || source.value_fields?.[0];
+  fillSelect(els.reportBuilderValueColumn, fields, defaultField?.column || '');
+  fillSelect(els.reportBuilderDatabaseField, fields, defaultField?.column || '');
+  reportBuilderSourceSetStatus(source.description || `Using predefined source ${source.name}`);
+  renderReportBuilderSourceUi();
+}
+
+function reportDataSourceSetStatus(message) {
+  if (els.reportDataSourceStatus) els.reportDataSourceStatus.textContent = String(message || '');
+}
+
+function renderReportDataSourceExisting(selected = '') {
+  fillSelect(els.reportDataSourceExisting, [
+    { value: '', label: 'New data source' },
+    ...state.reportBuilderDataSources.map((source) => ({ value: source.id, label: source.name }))
+  ], selected);
+  if (els.reportDataSourceDeleteBtn) els.reportDataSourceDeleteBtn.disabled = !selected;
+}
+
+function renderReportDataSourceValueFields(columns, selectedFields = []) {
+  if (!els.reportDataSourceValueFields) return;
+  const selected = new Map((selectedFields || []).map((field) => [String(field.column), field]));
+  state.reportDataSourceFields = columns.map((column, index) => {
+    const saved = selected.get(String(column.name));
+    return { column: String(column.name), selected: Boolean(saved), label: String(saved?.label || column.name),
+      type: String(saved?.type || (/char|text|enum|json/i.test(String(column.data_type || '')) ? 'text' : 'numeric')),
+      default: Boolean(saved?.default || (!selectedFields.length && index === 0)) };
+  });
+  els.reportDataSourceValueFields.textContent = '';
+  state.reportDataSourceFields.forEach((field) => {
+    const tr = document.createElement('tr');
+    const availableCell = document.createElement('td'); availableCell.style.textAlign = 'center';
+    const available = document.createElement('input'); available.type = 'checkbox'; available.checked = field.selected;
+    available.addEventListener('change', () => { field.selected = available.checked; }); availableCell.appendChild(available);
+    const columnCell = document.createElement('td'); columnCell.textContent = field.column;
+    const labelCell = document.createElement('td'); const label = document.createElement('input'); label.value = field.label;
+    label.addEventListener('input', () => { field.label = label.value; }); labelCell.appendChild(label);
+    const typeCell = document.createElement('td'); const type = document.createElement('select');
+    fillSelect(type, [{ value: 'numeric', label: 'Numeric' }, { value: 'text', label: 'Text' }], field.type);
+    type.addEventListener('change', () => { field.type = type.value; }); typeCell.appendChild(type);
+    const defaultCell = document.createElement('td'); defaultCell.style.textAlign = 'center';
+    const defaultInput = document.createElement('input'); defaultInput.type = 'radio'; defaultInput.name = 'reportDataSourceDefaultField';
+    defaultInput.checked = field.default; defaultInput.addEventListener('change', () => {
+      state.reportDataSourceFields.forEach((candidate) => { candidate.default = candidate === field; });
+    }); defaultCell.appendChild(defaultInput);
+    tr.append(availableCell, columnCell, labelCell, typeCell, defaultCell);
+    els.reportDataSourceValueFields.appendChild(tr);
+  });
+}
+
+function renderReportDataSourceSchema(selection = {}) {
+  const table = state.reportDataSourceSchema.find((item) => item.name === els.reportDataSourceTable?.value) || null;
+  const columns = Array.isArray(table?.columns) ? table.columns : [];
+  const choices = columns.map((column) => ({ value: column.name, label: `${column.name} (${column.data_type})` }));
+  fillSelect(els.reportDataSourceTimeColumn, choices, selection.time_column || '');
+  fillSelect(els.reportDataSourceCategoryColumn, choices, selection.category_column || '');
+  renderReportDataSourceValueFields(columns, selection.value_fields || []);
+}
+
+async function loadReportDataSourceSchema(selection = {}) {
+  const databaseId = String(els.reportDataSourceDatabase?.value || '');
+  state.reportDataSourceSchema = [];
+  if (!databaseId) return;
+  reportDataSourceSetStatus('Loading tables and columns…');
+  try {
+    const database = state.reportBuilderDatabases.find((item) => item.id === databaseId) || {};
+    const response = await apiGet(`/api/reports/admin/schema?database=${encodeURIComponent(databaseId)}`,
+      { timeoutMs: reporterDatabaseDiscoveryTimeoutMs(database) });
+    state.reportDataSourceSchema = Array.isArray(response?.tables) ? response.tables : [];
+    fillSelect(els.reportDataSourceTable, state.reportDataSourceSchema.map((table) => ({
+      value: table.name, label: `${table.name}${table.type === 'VIEW' ? ' (view)' : ''}`
+    })), selection.table || '');
+    renderReportDataSourceSchema(selection);
+    reportDataSourceSetStatus(`${state.reportDataSourceSchema.length} table(s) available`);
+  } catch (err) { reportDataSourceSetStatus(err.message || err); }
+}
+
+function loadReportDataSourceEditor(source = null) {
+  const value = source || {};
+  state.reportDataSourceOriginalId = String(value.id || '');
+  if (els.reportDataSourceName) els.reportDataSourceName.value = String(value.name || '');
+  if (els.reportDataSourceDescription) els.reportDataSourceDescription.value = String(value.description || '');
+  fillSelect(els.reportDataSourceDatabase, state.reportBuilderDatabases.map((database) => ({
+    value: database.id, label: `${database.name || database.id} (${database.type || 'mysql'})`
+  })), String(value.database_id || ''));
+  if (els.reportDataSourceLayout) els.reportDataSourceLayout.value = String(value.layout || 'category');
+  if (els.reportDataSourceCategoryLabel) els.reportDataSourceCategoryLabel.style.display = String(value.layout || 'category') === 'category' ? '' : 'none';
+  loadReportDataSourceSchema(value).catch(() => {});
+}
+
+async function openReportDataSourceModal() {
+  if (!hasPerm('reports.administer') || !els.reportDataSourceModal) return;
+  els.reportDataSourceModal.style.display = 'flex';
+  reportDataSourceSetStatus('Loading database connections…');
+  try {
+    const [databaseResponse, sourceResponse] = await Promise.all([
+      apiGet('/api/reports/admin/sources'),
+      apiGet('/api/reports/data-sources')
+    ]);
+    state.reportBuilderDatabases = Array.isArray(databaseResponse?.databases) ? databaseResponse.databases : [];
+    state.reportBuilderDataSources = Array.isArray(sourceResponse?.sources) ? sourceResponse.sources : [];
+    renderReportDataSourceExisting('');
+    loadReportDataSourceEditor(null);
+    reportDataSourceSetStatus(state.reportBuilderDatabases.length
+      ? `${state.reportBuilderDatabases.length} database connection(s) available`
+      : 'No Logger database connections are configured.');
+  } catch (err) {
+    renderReportDataSourceExisting('');
+    loadReportDataSourceEditor(null);
+    reportDataSourceSetStatus(err.message || err);
+  }
+}
+
+async function saveReportDataSource() {
+  const valueFields = state.reportDataSourceFields.filter((field) => field.selected).map((field) => ({
+    column: field.column, label: String(field.label || field.column).trim(), type: field.type,
+    default: Boolean(field.default)
+  }));
+  reportDataSourceSetStatus('Saving…');
+  try {
+    const response = await apiPostJson('/api/reports/data-sources', {
+      original_id: state.reportDataSourceOriginalId,
+      source: { name: String(els.reportDataSourceName?.value || '').trim(),
+        description: String(els.reportDataSourceDescription?.value || '').trim(),
+        database_id: String(els.reportDataSourceDatabase?.value || ''), table: String(els.reportDataSourceTable?.value || ''),
+        layout: String(els.reportDataSourceLayout?.value || 'category'),
+        time_column: String(els.reportDataSourceTimeColumn?.value || ''),
+        category_column: String(els.reportDataSourceCategoryColumn?.value || ''), value_fields: valueFields }
+    });
+    await refreshReportBuilder();
+    renderReportDataSourceExisting(response.source.id);
+    loadReportDataSourceEditor(response.source);
+    renderReportBuilderDataSources(els.reportBuilderDataSource?.value || '');
+    reportDataSourceSetStatus(`Saved ${response.source.name}`);
+  } catch (err) { reportDataSourceSetStatus(err.message || err); }
+}
+
 function renderReportBuilderSchemaSelections(selection = {}) {
   const table = reportBuilderSelectedTable();
   const columns = Array.isArray(table?.columns) ? table.columns : [];
@@ -7043,15 +7234,24 @@ function renderReportBuilderCategoryItems(preserveVisibleSelections = true) {
 
 function renderReportBuilderSourceUi() {
   const databaseMode = String(els.reportBuilderSourceType?.value || 'historian') === 'database';
+  const predefined = databaseMode && Boolean(selectedReportDataSource());
+  const legacyManual = Boolean(state.reportBuilderOriginalId) &&
+    !String((state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId)?.data_source?.source_id) || '');
+  const manualMode = databaseMode && !predefined && (hasPerm('reports.administer') || legacyManual);
   const categoryMode = databaseMode && String(els.reportBuilderLayout?.value || 'wide') === 'category';
   [
-    els.reportBuilderDatabaseLabel, els.reportBuilderTableLabel, els.reportBuilderLayoutLabel,
-    els.reportBuilderTimeColumnLabel, els.reportBuilderAggregationLabel,
-    els.reportBuilderDatabaseActions
+    els.reportBuilderDataSourceLabel, els.reportBuilderAggregationLabel
   ].forEach((element) => { if (element) element.style.display = databaseMode ? '' : 'none'; });
+  if (els.reportBuilderDatabaseLabel) els.reportBuilderDatabaseLabel.style.display = manualMode ? '' : 'none';
+  if (els.reportBuilderDatabaseActions) {
+    els.reportBuilderDatabaseActions.style.display = databaseMode && (predefined || manualMode) ? '' : 'none';
+  }
+  [els.reportBuilderTableLabel, els.reportBuilderLayoutLabel, els.reportBuilderTimeColumnLabel].forEach((element) => {
+    if (element) element.style.display = manualMode ? '' : 'none';
+  });
   if (els.reportBuilderHistorianActions) els.reportBuilderHistorianActions.style.display = databaseMode ? 'none' : '';
   if (els.reportBuilderValueColumnLabel) els.reportBuilderValueColumnLabel.style.display = categoryMode ? '' : 'none';
-  if (els.reportBuilderCategoryColumnLabel) els.reportBuilderCategoryColumnLabel.style.display = categoryMode ? '' : 'none';
+  if (els.reportBuilderCategoryColumnLabel) els.reportBuilderCategoryColumnLabel.style.display = categoryMode && manualMode ? '' : 'none';
   if (els.reportBuilderLoadCategoriesBtn) els.reportBuilderLoadCategoriesBtn.style.display = categoryMode ? '' : 'none';
   if (els.reportBuilderDatabaseField) els.reportBuilderDatabaseField.style.display = categoryMode ? 'none' : '';
   if (els.reportBuilderAddDatabaseFieldBtn) els.reportBuilderAddDatabaseFieldBtn.style.display = categoryMode ? 'none' : '';
@@ -7119,6 +7319,7 @@ function reportBuilderDataSourceDefinition() {
   }
   return {
     type: 'database',
+    source_id: String(els.reportBuilderDataSource?.value || '').trim(),
     database_id: String(els.reportBuilderDatabase?.value || '').trim(),
     table: String(els.reportBuilderTable?.value || '').trim(),
     layout: String(els.reportBuilderLayout?.value || 'wide'),
@@ -8011,9 +8212,41 @@ function renderReportBuilderColumns() {
         ? String(column.field || '')
         : String(column.tag_name || '');
     }
+    const companionCell = document.createElement('td');
+    if (column.source === 'database') {
+      const controls = document.createElement('div'); controls.className = 'report-companion-controls';
+      const companion = document.createElement('select'); companion.title = 'Optional text field';
+      const profile = selectedReportDataSource() || state.reportBuilderDataSources.find((source) =>
+        source.database_id === column.database_id && source.table === column.table);
+      const profileFields = (profile?.value_fields || []).filter((field) =>
+        field.column !== column.field && String(field.type || 'numeric') === 'text');
+      const schemaFields = (reportBuilderSelectedTable()?.columns || []).filter((field) => field.name !== column.field)
+        .map((field) => ({ column: field.name, label: field.name }));
+      const fields = profile ? profileFields : schemaFields;
+      fillSelect(companion, [{ value: '', label: 'No additional text' },
+        ...fields.map((field) => ({ value: field.column, label: field.label || field.column }))], String(column.companion_field || ''));
+      const placement = document.createElement('select'); placement.title = 'Text placement';
+      fillSelect(placement, [
+        { value: 'before', label: 'Before value' }, { value: 'after', label: 'After value' },
+        { value: 'text_only', label: 'Text only' }
+      ], String(column.companion_position || 'before'));
+      const separator = document.createElement('input'); separator.type = 'text'; separator.maxLength = 20;
+      separator.style.width = '55px'; separator.title = 'Separator between text and value';
+      separator.placeholder = 'space'; separator.value = String(column.companion_separator ?? ' ');
+      const sync = () => {
+        column.companion_field = companion.value;
+        column.companion_position = companion.value ? placement.value : 'none';
+        column.companion_separator = separator.value;
+        placement.disabled = !companion.value; separator.disabled = !companion.value || placement.value === 'text_only';
+      };
+      companion.addEventListener('change', sync); placement.addEventListener('change', sync);
+      separator.addEventListener('input', sync); sync(); controls.append(companion, placement, separator); companionCell.appendChild(controls);
+    } else companionCell.textContent = '—';
     const calculationCell = document.createElement('td');
     const calculation = document.createElement('select');
-    const calculations = column.source === 'database'
+    const calculations = column.source === 'database' && column.field_type === 'text'
+      ? [['last', 'Last available value'], ['first', 'First value'], ['count', 'Count']]
+      : column.source === 'database'
       ? [
           ['last', 'Last available value'], ['last_nonzero', 'Last non-zero value'],
           ['change', 'Change during period'],
@@ -8045,7 +8278,7 @@ function renderReportBuilderColumns() {
       const value = Number(multiplier.value);
       column.multiplier = Number.isFinite(value) ? value : 1;
     });
-    if (column.source === 'calculated') multiplierCell.textContent = '—';
+    if (column.source === 'calculated' || column.field_type === 'text') multiplierCell.textContent = '—';
     else multiplierCell.appendChild(multiplier);
     const precisionCell = document.createElement('td');
     const precision = document.createElement('input');
@@ -8055,7 +8288,8 @@ function renderReportBuilderColumns() {
     precision.style.width = '72px';
     precision.value = String(column.precision ?? 2);
     precision.addEventListener('input', () => { column.precision = Math.max(0, Math.min(10, Number(precision.value) || 0)); });
-    precisionCell.appendChild(precision);
+    if (column.source === 'database' && column.field_type === 'text') precisionCell.textContent = '—';
+    else precisionCell.appendChild(precision);
     const visibleCell = document.createElement('td');
     visibleCell.style.textAlign = 'center';
     const visible = document.createElement('input');
@@ -8146,7 +8380,7 @@ function renderReportBuilderColumns() {
     actionButtons.className = 'report-column-action-buttons';
     actionButtons.append(up, down, remove);
     actions.appendChild(actionButtons);
-    tr.append(order, headingCell, connection, tag, calculationCell, multiplierCell, precisionCell, visibleCell, decreaseCell, actions);
+    tr.append(order, headingCell, connection, tag, companionCell, calculationCell, multiplierCell, precisionCell, visibleCell, decreaseCell, actions);
     els.reportBuilderColumns.appendChild(tr);
   });
   renderReportBuilderSummaries();
@@ -8231,9 +8465,12 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderSourceType) els.reportBuilderSourceType.value = String(source.type || 'historian');
   if (els.reportBuilderLayout) els.reportBuilderLayout.value = String(source.layout || 'wide');
   renderReportBuilderDatabaseSources(String(source.database_id || ''));
+  renderReportBuilderDataSources(String(source.source_id || ''));
   renderReportBuilderSourceUi();
   if (source.type === 'database') {
-    loadReportBuilderDatabaseSchema(source).catch(() => {});
+    const predefined = state.reportBuilderDataSources.find((item) => item.id === source.source_id);
+    if (predefined) applyReportDataSource(predefined);
+    else loadReportBuilderDatabaseSchema(source).catch(() => {});
   }
   renderReportBuilderColumns();
   renderReportBuilderAccess();
@@ -8261,15 +8498,18 @@ async function refreshReportBuilder() {
     return;
   }
   try {
-    const [definitions, tags, sources] = await Promise.all([
+    const [definitions, tags, sources, dataSources] = await Promise.all([
       apiGet('/api/reports/admin'),
       apiGet('/api/historian/tags').catch(() => ({ tags: [] })),
-      apiGet('/api/reports/admin/sources').catch(() => ({ databases: [] }))
+      apiGet('/api/reports/admin/sources').catch(() => ({ databases: [] })),
+      apiGet('/api/reports/data-sources').catch(() => ({ sources: [] }))
     ]);
     state.reportBuilderReports = Array.isArray(definitions?.reports) ? definitions.reports : [];
     state.reportBuilderTags = Array.isArray(tags?.tags) ? tags.tags.filter((tag) => tag?.connection_id && tag?.tag_name) : [];
     state.reportBuilderDatabases = Array.isArray(sources?.databases) ? sources.databases : [];
+    state.reportBuilderDataSources = Array.isArray(dataSources?.sources) ? dataSources.sources : [];
     renderReportBuilderDatabaseSources(els.reportBuilderDatabase?.value || '');
+    renderReportBuilderDataSources(els.reportBuilderDataSource?.value || '');
     renderReportBuilderTags();
   } catch (err) {
     reportBuilderSetStatus(err.message || err);
@@ -8488,13 +8728,54 @@ function wireReportBuilderUi() {
   });
   if (els.reportBuilderSourceType) els.reportBuilderSourceType.addEventListener('change', () => {
     renderReportBuilderSourceUi();
-    if (els.reportBuilderSourceType.value === 'database' && !state.reportBuilderSchema.length) {
-      loadReportBuilderDatabaseSchema().catch(() => {});
+    if (els.reportBuilderSourceType.value === 'database') {
+      renderReportBuilderDataSources(els.reportBuilderDataSource?.value || '');
+      const source = selectedReportDataSource();
+      if (source) applyReportDataSource(source);
+      else if (hasPerm('reports.administer')) {
+        if (!state.reportBuilderSchema.length) loadReportBuilderDatabaseSchema().catch(() => {});
+        else reportBuilderSourceSetStatus('Using advanced/manual database mapping.');
+      } else reportBuilderSourceSetStatus('No predefined report data source is available for this database.');
     }
   });
   if (els.reportBuilderLayout) els.reportBuilderLayout.addEventListener('change', renderReportBuilderSourceUi);
   if (els.reportBuilderDatabase) els.reportBuilderDatabase.addEventListener('change', () => {
-    loadReportBuilderDatabaseSchema().catch(() => {});
+    renderReportBuilderDataSources('');
+    const source = selectedReportDataSource();
+    if (source) applyReportDataSource(source);
+    else if (hasPerm('reports.administer')) loadReportBuilderDatabaseSchema().catch(() => {});
+    else reportBuilderSourceSetStatus('No predefined report data source is available for this database.');
+  });
+  if (els.reportBuilderDataSource) els.reportBuilderDataSource.addEventListener('change', () => {
+    const source = selectedReportDataSource();
+    if (source) applyReportDataSource(source);
+    else loadReportBuilderDatabaseSchema().catch(() => {});
+    renderReportBuilderSourceUi();
+  });
+  if (els.reportBuilderManageDataSourcesBtn) els.reportBuilderManageDataSourcesBtn.addEventListener('click', openReportDataSourceModal);
+  if (els.reportDataSourceCloseBtn) els.reportDataSourceCloseBtn.addEventListener('click', () => { els.reportDataSourceModal.style.display = 'none'; });
+  if (els.reportDataSourceNewBtn) els.reportDataSourceNewBtn.addEventListener('click', () => {
+    renderReportDataSourceExisting(''); loadReportDataSourceEditor(null); reportDataSourceSetStatus('');
+  });
+  if (els.reportDataSourceExisting) els.reportDataSourceExisting.addEventListener('change', () => {
+    const source = state.reportBuilderDataSources.find((item) => item.id === els.reportDataSourceExisting.value) || null;
+    loadReportDataSourceEditor(source); if (els.reportDataSourceDeleteBtn) els.reportDataSourceDeleteBtn.disabled = !source;
+  });
+  if (els.reportDataSourceDatabase) els.reportDataSourceDatabase.addEventListener('change', () => loadReportDataSourceSchema().catch(() => {}));
+  if (els.reportDataSourceTable) els.reportDataSourceTable.addEventListener('change', () => renderReportDataSourceSchema());
+  if (els.reportDataSourceLayout) els.reportDataSourceLayout.addEventListener('change', () => {
+    if (els.reportDataSourceCategoryLabel) els.reportDataSourceCategoryLabel.style.display = els.reportDataSourceLayout.value === 'category' ? '' : 'none';
+  });
+  if (els.reportDataSourceSaveBtn) els.reportDataSourceSaveBtn.addEventListener('click', () => saveReportDataSource());
+  if (els.reportDataSourceDeleteBtn) els.reportDataSourceDeleteBtn.addEventListener('click', async () => {
+    const id = String(state.reportDataSourceOriginalId || '');
+    if (!id || !window.confirm('Delete this report data source? Existing reports will retain their saved database mapping.')) return;
+    reportDataSourceSetStatus('Deleting…');
+    try {
+      await apiPostJson('/api/reports/data-sources/delete', { id });
+      await refreshReportBuilder(); renderReportDataSourceExisting(''); loadReportDataSourceEditor(null);
+      renderReportBuilderDataSources(els.reportBuilderDataSource?.value || ''); reportDataSourceSetStatus('Data source deleted.');
+    } catch (err) { reportDataSourceSetStatus(err.message || err); }
   });
   if (els.reportBuilderTable) els.reportBuilderTable.addEventListener('change', () => {
     renderReportBuilderSchemaSelections();
@@ -8504,6 +8785,7 @@ function wireReportBuilderUi() {
     const field = String(els.reportBuilderDatabaseField?.value || '').trim();
     const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
     if (!field || !databaseId) return;
+    const sourceField = selectedReportDataSource()?.value_fields?.find((item) => item.column === field);
     state.reportBuilderColumns.push({
       id: newReportColumnId(field),
       heading: field,
@@ -8513,6 +8795,7 @@ function wireReportBuilderUi() {
       time_column: String(els.reportBuilderTimeColumn?.value || '').trim(),
       layout: 'wide',
       field,
+      field_type: String(sourceField?.type || 'numeric'),
       aggregation: String(els.reportBuilderAggregation?.value || 'last'),
       multiplier: 1,
       negative_change: 'blank',
@@ -8552,6 +8835,7 @@ function wireReportBuilderUi() {
     syncReportBuilderCategorySelections();
     const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
     const valueField = String(els.reportBuilderValueColumn?.value || '').trim();
+    const sourceField = selectedReportDataSource()?.value_fields?.find((field) => field.column === valueField);
     state.reportBuilderSelectedCategoryItems.forEach((itemName) => {
       state.reportBuilderColumns.push({
         id: newReportColumnId(itemName),
@@ -8563,6 +8847,7 @@ function wireReportBuilderUi() {
         layout: 'category',
         category_column: String(els.reportBuilderCategoryColumn?.value || '').trim(),
         field: valueField,
+        field_type: String(sourceField?.type || 'numeric'),
         category_value: itemName,
         aggregation: String(els.reportBuilderAggregation?.value || 'last'),
         multiplier: 1,
@@ -9032,6 +9317,7 @@ function setTab(id) {
 
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('is-active', b.dataset.tab === id));
   document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('is-active', p.id === `tab-${id}`));
+  document.body.classList.toggle('reports-active', id === 'reports');
 
   if (id === 'users') {
     refreshUsersPanel().catch(() => {});
