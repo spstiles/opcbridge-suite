@@ -3754,9 +3754,9 @@ const server = http.createServer(async (req, res) => {
       try {
         const parsed = JSON.parse((await readBody(req)).toString('utf8') || '{}');
         const incoming = parsed?.sync_job || parsed;
-        const id = sanitizeId(incoming?.id);
         const originalId = sanitizeId(parsed?.original_id || '');
-        if (!id) throw new Error('Sync job id is required.');
+        const name = String(incoming?.name || '').trim();
+        if (!name) throw new Error('Sync job name is required.');
         const required = ['source_database_id', 'source_table', 'source_time_column', 'source_item_column',
           'destination_database_id', 'destination_table', 'destination_time_column', 'destination_item_column'];
         required.forEach((field) => { if (!String(incoming?.[field] || '').trim()) throw new Error(`${field} is required.`); });
@@ -3767,13 +3767,15 @@ const server = http.createServer(async (req, res) => {
         if (!tags.length) throw new Error('At least one tag is required.');
         if (!mappings.length) throw new Error('At least one value mapping is required.');
         const list = readReporterSyncJobsRaw().map((job) => ({ ...job }));
-        const lookup = originalId || id;
-        const index = list.findIndex((job) => sanitizeId(job?.id) === lookup);
-        if (list.some((job, i) => i !== index && sanitizeId(job?.id) === id)) {
-          sendJson(res, 409, { ok: false, error: `Sync job id '${id}' already exists.` }); return;
+        const index = originalId ? list.findIndex((job) => sanitizeId(job?.id) === originalId) : -1;
+        if (originalId && index < 0) throw new Error('The database sync job being edited no longer exists.');
+        let id = index >= 0 ? sanitizeId(list[index]?.id) : '';
+        if (!id) {
+          const used = new Set(list.map((job) => sanitizeId(job?.id)).filter(Boolean));
+          do { id = `sync_${crypto.randomBytes(8).toString('hex')}`; } while (used.has(id));
         }
         const next = { ...(index >= 0 ? list[index] : {}), ...incoming, id, tags, mappings };
-        next.name = String(next.name || id).trim();
+        next.name = name;
         next.enabled = Boolean(next.enabled);
         next.lookback_days = Math.max(1, Math.min(3650, Math.trunc(Number(next.lookback_days || 7) || 7)));
         next.schedule = (next.schedule && typeof next.schedule === 'object' && !Array.isArray(next.schedule)) ? next.schedule : {};

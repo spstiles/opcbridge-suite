@@ -506,7 +506,7 @@
   loggerSyncTestBtn: document.getElementById('loggerSyncTestBtn'),
   loggerSyncFindTagsBtn: document.getElementById('loggerSyncFindTagsBtn'),
   loggerSyncSuggestMappingsBtn: document.getElementById('loggerSyncSuggestMappingsBtn'),
-  loggerSyncId: document.getElementById('loggerSyncId'), loggerSyncName: document.getElementById('loggerSyncName'),
+  loggerSyncName: document.getElementById('loggerSyncName'),
   loggerSyncEnabled: document.getElementById('loggerSyncEnabled'), loggerSyncSchedule: document.getElementById('loggerSyncSchedule'),
   loggerSyncLookback: document.getElementById('loggerSyncLookback'), loggerSyncSourceDatabase: document.getElementById('loggerSyncSourceDatabase'),
   loggerSyncSourceTable: document.getElementById('loggerSyncSourceTable'), loggerSyncSourceTime: document.getElementById('loggerSyncSourceTime'),
@@ -3327,14 +3327,14 @@ function renderLoggerSyncTable() {
   els.loggerSyncTbody.textContent = '';
   const jobs = Array.isArray(state.reporterSyncJobs) ? state.reporterSyncJobs : [];
   if (!jobs.length) {
-    const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 12;
+    const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 11;
     td.className = 'small'; td.textContent = 'No database sync jobs configured. Right-click “Database Sync” to add one.';
     tr.appendChild(td); els.loggerSyncTbody.appendChild(tr); return;
   }
   jobs.forEach((job) => {
     const st = statuses.get(String(job?.id || '')) || {};
     const tr = document.createElement('tr');
-    const values = [job.id, job.name, `${job.source_database_id}:${job.source_table}`, `${job.destination_database_id}:${job.destination_table}`,
+    const values = [job.name, `${job.source_database_id}:${job.source_table}`, `${job.destination_database_id}:${job.destination_table}`,
       job.schedule?.on_calendar, job.enabled ? 'yes' : 'no', st.running ? 'running' : (st.last_error ? 'error' : (st.next_run_ms ? 'scheduled' : 'idle')),
       st.last_selected ?? '', st.last_inserted ?? '', st.last_skipped ?? '', st.last_error || ''];
     values.forEach((value) => { const td = document.createElement('td'); td.textContent = String(value ?? ''); tr.appendChild(td); });
@@ -6287,7 +6287,7 @@ async function openLoggerSyncModal(id = '') {
   const options = mysqlDbs.map((db) => String(db?.id || '')).filter(Boolean);
   loggerSyncOptions(els.loggerSyncSourceDatabase, options, String(job.source_database_id || ''));
   loggerSyncOptions(els.loggerSyncDestinationDatabase, options, String(job.destination_database_id || ''));
-  els.loggerSyncId.value = String(job.id || ''); els.loggerSyncName.value = String(job.name || '');
+  els.loggerSyncName.value = String(job.name || '');
   els.loggerSyncEnabled.checked = Boolean(job.enabled); els.loggerSyncSchedule.value = String(job.schedule?.on_calendar || '*-*-* 01:00:00');
   els.loggerSyncLookback.value = String(job.lookback_days || 7); els.loggerSyncTags.value = (job.tags || []).join('\n');
   els.loggerSyncMappings.value = (job.mappings || []).map((m) => `${m.source} = ${m.destination}`).join('\n');
@@ -6304,7 +6304,7 @@ function closeLoggerSyncModal() { if (els.loggerSyncModal) els.loggerSyncModal.s
 function loggerSyncFromUi() {
   const mappings = String(els.loggerSyncMappings?.value || '').split(/\r?\n/).map((line) => line.split('=').map((v) => v.trim()))
     .filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map((parts) => ({ source: parts[0], destination: parts[1] }));
-  return { id: String(els.loggerSyncId.value || '').trim(), name: String(els.loggerSyncName.value || '').trim(), enabled: els.loggerSyncEnabled.checked,
+  return { name: String(els.loggerSyncName.value || '').trim(), enabled: els.loggerSyncEnabled.checked,
     schedule: { on_calendar: String(els.loggerSyncSchedule.value || '').trim() }, lookback_days: Number(els.loggerSyncLookback.value || 7),
     source_database_id: els.loggerSyncSourceDatabase.value, source_table: els.loggerSyncSourceTable.value,
     source_time_column: els.loggerSyncSourceTime.value, source_item_column: els.loggerSyncSourceItem.value,
@@ -6319,7 +6319,8 @@ async function saveReporterSync() {
     const job = loggerSyncFromUi();
     const response = await apiPostJson('/api/logger/sync-jobs', { sync_job: job, original_id: state.loggerSyncEditingId });
     if (!response?.ok) throw new Error(response?.error || 'Save failed.');
-    await refreshReporterAll(); closeLoggerSyncModal(); state.loggerSelectedNodeId = `logger:sync:${job.id}`; renderLoggerTree(); renderLoggerDetails(); loggerSetStatus('Database sync job saved.');
+    const savedId = String(response?.sync_job?.id || state.loggerSyncEditingId || '').trim();
+    await refreshReporterAll(); closeLoggerSyncModal(); state.loggerSelectedNodeId = savedId ? `logger:sync:${savedId}` : 'logger:sync_jobs'; renderLoggerTree(); renderLoggerDetails(); loggerSetStatus('Database sync job saved.');
   } catch (err) { els.loggerSyncStatus.textContent = `Save failed: ${err.message || err}`; }
 }
 
@@ -6375,9 +6376,8 @@ function wireLoggerUi() {
   if (els.loggerSyncCancelBtn) els.loggerSyncCancelBtn.addEventListener('click', closeLoggerSyncModal);
   if (els.loggerSyncSaveBtn) els.loggerSyncSaveBtn.addEventListener('click', saveReporterSync);
   if (els.loggerSyncTestBtn) els.loggerSyncTestBtn.addEventListener('click', () => {
-    const id = String(els.loggerSyncId?.value || '').trim();
-    if (!state.loggerSyncEditingId || id !== state.loggerSyncEditingId) els.loggerSyncStatus.textContent = 'Save the sync job before running a dry run.';
-    else testReporterSync(id);
+    if (!state.loggerSyncEditingId) els.loggerSyncStatus.textContent = 'Save the sync job before running a dry run.';
+    else testReporterSync(state.loggerSyncEditingId);
   });
   if (els.loggerSyncSourceDatabase) els.loggerSyncSourceDatabase.addEventListener('change', () => loadLoggerSyncSchema('source', els.loggerSyncSourceDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }));
   if (els.loggerSyncDestinationDatabase) els.loggerSyncDestinationDatabase.addEventListener('change', () => loadLoggerSyncSchema('destination', els.loggerSyncDestinationDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }));

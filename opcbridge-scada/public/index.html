@@ -1495,7 +1495,7 @@
 		                <tbody id="loggerDataChecksTbody"></tbody>
 		              </table>
 		              <table class="table" id="loggerSyncTable" style="display:none;">
-		                <thead><tr><th>ID</th><th>Name</th><th>Source</th><th>Destination</th><th>Schedule</th><th>Enabled</th><th>Status</th><th>Selected</th><th>Inserted</th><th>Skipped</th><th>Last Error</th><th>Actions</th></tr></thead>
+		                <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Schedule</th><th>Enabled</th><th>Status</th><th>Selected</th><th>Inserted</th><th>Skipped</th><th>Last Error</th><th>Actions</th></tr></thead>
 		                <tbody id="loggerSyncTbody"></tbody>
 		              </table>
 		            </div>
@@ -2571,7 +2571,6 @@
       <div class="modal-body">
         <div class="hint">Copy the last source record for each selected tag/hour when that tag/hour is missing at the destination. Tables are never created or changed.</div>
         <div class="form">
-          <div class="form-row"><label>ID</label><input id="loggerSyncId" type="text" placeholder="lab_data_daily" /></div>
           <div class="form-row"><label>Name</label><input id="loggerSyncName" type="text" placeholder="Lab data daily" /></div>
           <div class="form-row"><label>Enabled</label><label class="check-pill"><input id="loggerSyncEnabled" type="checkbox" class="inline-check" /> Enabled</label></div>
           <div class="form-row"><label>OnCalendar</label><input id="loggerSyncSchedule" type="text" value="*-*-* 01:00:00" /><div class="small">For example, daily at 1:00 AM: <code>*-*-* 01:00:00</code></div></div>
@@ -2653,6 +2652,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260805_database_sync_v1"></script>
+  <script src="app.js?v=20260805_database_sync_v2"></script>
 </body>
 </html>

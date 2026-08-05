@@ -690,6 +690,7 @@ Notes:
 - You select an item in the tree to edit it in the right pane (rather than a dedicated “jobs list” view).
 - A Database Sync job copies data one way between existing MySQL tables. For each selected tag and hour, it chooses the last source record and inserts it only when the destination has no record for that tag/hour. It never creates or alters schemas.
 - Sync jobs support scheduled and manual runs, a configurable lookback window for backdated entries, a non-writing Dry Run, and explicit source-to-destination value-column mappings.
+- Sync-job IDs are generated internally when a job is first saved. Operators work with the friendly name, which can be changed later without breaking references.
 
 ![OPCBridge-SCADA Data Logger tab](screenshots/opcbridge-scada-data-logger-tab.png)
 
