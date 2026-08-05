@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=20260522_force_dark" />
+  <link rel="stylesheet" href="styles.css?v=20260805_database_sync_sections_v1" />
 </head>
 <body>
   <header class="topbar">
@@ -2578,14 +2578,20 @@
           <div class="form-row"><label>Direction</label><select id="loggerSyncDirection"><option value="one_way">Database A → Database B</option><option value="bidirectional">Two way — fill gaps in both</option></select></div>
           <div class="form-row"><label>Match timestamps by</label><select id="loggerSyncMatchInterval"><option value="0">Same exact timestamp</option><option value="1">Same minute — date + hour + minute</option><option value="60">Same hour — date + hour</option><option value="1440">Same day — date only</option></select></div>
           <div class="divider"></div>
-          <div class="form-row"><label>Database A</label><select id="loggerSyncSourceDatabase"></select></div>
-          <div class="form-row"><label>Table A</label><select id="loggerSyncSourceTable"></select></div>
-          <div class="form-row"><label>Date/time column A</label><select id="loggerSyncSourceTime"></select></div>
-          <div class="form-row"><label>Tag column A</label><select id="loggerSyncSourceItem"></select></div>
-          <div class="form-row"><label>Database B</label><select id="loggerSyncDestinationDatabase"></select></div>
-          <div class="form-row"><label>Table B</label><select id="loggerSyncDestinationTable"></select></div>
-          <div class="form-row"><label>Date/time column B</label><select id="loggerSyncDestinationTime"></select></div>
-          <div class="form-row"><label>Tag column B</label><select id="loggerSyncDestinationItem"></select></div>
+          <section class="details sync-database-section sync-database-a">
+            <div class="sync-database-heading"><span class="sync-database-badge">A</span><div><h3>Database A</h3><div class="small">Primary source in one-way mode</div></div></div>
+            <div class="form-row"><label>Connection</label><select id="loggerSyncSourceDatabase"></select></div>
+            <div class="form-row"><label>Table</label><select id="loggerSyncSourceTable"></select></div>
+            <div class="form-row"><label>Date/time column</label><select id="loggerSyncSourceTime"></select></div>
+            <div class="form-row"><label>Tag column</label><select id="loggerSyncSourceItem"></select></div>
+          </section>
+          <section class="details sync-database-section sync-database-b">
+            <div class="sync-database-heading"><span class="sync-database-badge">B</span><div><h3>Database B</h3><div class="small">Destination in one-way mode</div></div></div>
+            <div class="form-row"><label>Connection</label><select id="loggerSyncDestinationDatabase"></select></div>
+            <div class="form-row"><label>Table</label><select id="loggerSyncDestinationTable"></select></div>
+            <div class="form-row"><label>Date/time column</label><select id="loggerSyncDestinationTime"></select></div>
+            <div class="form-row"><label>Tag column</label><select id="loggerSyncDestinationItem"></select></div>
+          </section>
           <div class="divider"></div>
           <div class="form-row"><label>Tags</label><div><label class="check-pill"><input id="loggerSyncAllTags" type="checkbox" class="inline-check" checked /> Sync all tags</label><div class="small">Turn this off only when the job should be limited to selected tags.</div></div></div>
           <div id="loggerSyncSelectedTagsWrap" style="display:none;"><div class="form-row"><label>Selected tags</label><textarea id="loggerSyncTags" rows="6" class="mono" placeholder="Tag_A&#10;Tag_B"></textarea></div><div class="form-row"><label></label><button class="btn" id="loggerSyncFindTagsBtn" type="button">Find available tags</button></div></div>
@@ -2667,6 +2673,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260805_database_sync_review_v2"></script>
+  <script src="app.js?v=20260805_database_sync_sections_v1"></script>
 </body>
 </html>

@@ -1304,6 +1304,14 @@ textarea { resize: vertical; min-height: 120px; }
 .divider { height: 1px; background: rgba(232,238,252,.10); margin: 14px 0; border-radius: 999px; }
 
 .details { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: rgba(15,21,29,.55); }
+.sync-database-section { margin-bottom: 12px; padding: 14px; }
+.sync-database-section.sync-database-a { border-left: 4px solid #4f8cff; }
+.sync-database-section.sync-database-b { border-left: 4px solid #38b886; }
+.sync-database-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.sync-database-heading h3 { margin: 0 0 2px; }
+.sync-database-badge { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; font-weight: 700; color: #fff; background: #4f8cff; }
+.sync-database-b .sync-database-badge { background: #38b886; }
+.sync-database-section .form-row:last-child { margin-bottom: 0; }
 
 details.advanced {
   border: 1px solid var(--border);
