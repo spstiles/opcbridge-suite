@@ -508,12 +508,20 @@
   loggerSyncSuggestMappingsBtn: document.getElementById('loggerSyncSuggestMappingsBtn'),
   loggerSyncName: document.getElementById('loggerSyncName'),
   loggerSyncEnabled: document.getElementById('loggerSyncEnabled'), loggerSyncSchedule: document.getElementById('loggerSyncSchedule'),
+  loggerSyncDirection: document.getElementById('loggerSyncDirection'), loggerSyncMatchInterval: document.getElementById('loggerSyncMatchInterval'),
+  loggerSyncAllTags: document.getElementById('loggerSyncAllTags'), loggerSyncSelectedTagsWrap: document.getElementById('loggerSyncSelectedTagsWrap'),
   loggerSyncLookback: document.getElementById('loggerSyncLookback'), loggerSyncSourceDatabase: document.getElementById('loggerSyncSourceDatabase'),
   loggerSyncSourceTable: document.getElementById('loggerSyncSourceTable'), loggerSyncSourceTime: document.getElementById('loggerSyncSourceTime'),
   loggerSyncSourceItem: document.getElementById('loggerSyncSourceItem'), loggerSyncDestinationDatabase: document.getElementById('loggerSyncDestinationDatabase'),
   loggerSyncDestinationTable: document.getElementById('loggerSyncDestinationTable'), loggerSyncDestinationTime: document.getElementById('loggerSyncDestinationTime'),
   loggerSyncDestinationItem: document.getElementById('loggerSyncDestinationItem'), loggerSyncTags: document.getElementById('loggerSyncTags'),
   loggerSyncMappings: document.getElementById('loggerSyncMappings'), loggerSyncStatus: document.getElementById('loggerSyncStatus'),
+  loggerSyncReviewModal: document.getElementById('loggerSyncReviewModal'), loggerSyncReviewTitle: document.getElementById('loggerSyncReviewTitle'),
+  loggerSyncReviewCloseBtn: document.getElementById('loggerSyncReviewCloseBtn'), loggerSyncExpandAllBtn: document.getElementById('loggerSyncExpandAllBtn'),
+  loggerSyncCollapseAllBtn: document.getElementById('loggerSyncCollapseAllBtn'), loggerSyncReviewFilter: document.getElementById('loggerSyncReviewFilter'),
+  loggerSyncReviewRunBtn: document.getElementById('loggerSyncReviewRunBtn'),
+  loggerSyncReviewSearch: document.getElementById('loggerSyncReviewSearch'), loggerSyncReviewSummary: document.getElementById('loggerSyncReviewSummary'),
+  loggerSyncReviewGroups: document.getElementById('loggerSyncReviewGroups'), loggerSyncReviewStatus: document.getElementById('loggerSyncReviewStatus'),
 
   historianRefreshBtn: document.getElementById('historianRefreshBtn'),
   historianAddTagBtn: document.getElementById('historianAddTagBtn'),
@@ -1264,6 +1272,7 @@ const state = {
   loggerDataCheckEditingMode: '', // '' | 'new' | 'edit'
   loggerSyncEditingId: '',
   loggerSyncSchemas: { source: [], destination: [] },
+  loggerSyncReview: null,
   loggerReportPanelTab: 'details',
   loggerReportTagDraftById: new Map(),
   loggerReportHistorianDraftById: new Map(),
@@ -6275,8 +6284,23 @@ function updateLoggerSyncColumns(side, tableName, selectedTime = '', selectedIte
   const prefix = side === 'source' ? 'Source' : 'Destination';
   const table = (state.loggerSyncSchemas[side] || []).find((entry) => String(entry?.name || '') === String(tableName || ''));
   const columns = (table?.columns || []).map((column) => String(column?.name || '')).filter(Boolean);
+  if (!selectedTime) selectedTime = columns.find((name) => /(^|_)(datetime|timestamp|recorded_at|date_time|time_stamp)($|_)/i.test(name)) || columns.find((name) => /(date|time)/i.test(name)) || '';
+  if (!selectedItem) selectedItem = columns.find((name) => /(^|_)(tag_name|tag|item_name|item|point_name|name)($|_)/i.test(name)) || '';
   loggerSyncOptions(els[`loggerSync${prefix}Time`], columns, selectedTime);
   loggerSyncOptions(els[`loggerSync${prefix}Item`], columns, selectedItem);
+}
+
+function suggestLoggerSyncMappings(showStatus = true) {
+  const sourceTable = (state.loggerSyncSchemas.source || []).find((table) => String(table?.name || '') === els.loggerSyncSourceTable.value);
+  const destinationTable = (state.loggerSyncSchemas.destination || []).find((table) => String(table?.name || '') === els.loggerSyncDestinationTable.value);
+  const destinationColumns = new Set((destinationTable?.columns || []).filter((column) => !/auto_increment|generated/i.test(String(column?.extra || ''))).map((column) => String(column?.name || '')));
+  const excluded = new Set([els.loggerSyncSourceTime.value, els.loggerSyncSourceItem.value]);
+  const matches = (sourceTable?.columns || [])
+    .filter((column) => !/auto_increment|generated/i.test(String(column?.extra || '')))
+    .map((column) => String(column?.name || ''))
+    .filter((name) => name && !excluded.has(name) && destinationColumns.has(name));
+  els.loggerSyncMappings.value = matches.map((name) => `${name} = ${name}`).join('\n');
+  if (showStatus) els.loggerSyncStatus.textContent = matches.length ? `Suggested ${matches.length} same-name mapping(s).` : 'No same-name value columns were found.';
 }
 
 async function openLoggerSyncModal(id = '') {
@@ -6289,6 +6313,10 @@ async function openLoggerSyncModal(id = '') {
   loggerSyncOptions(els.loggerSyncDestinationDatabase, options, String(job.destination_database_id || ''));
   els.loggerSyncName.value = String(job.name || '');
   els.loggerSyncEnabled.checked = Boolean(job.enabled); els.loggerSyncSchedule.value = String(job.schedule?.on_calendar || '*-*-* 01:00:00');
+  els.loggerSyncDirection.value = String(job.direction || 'one_way');
+  els.loggerSyncMatchInterval.value = String(job.match_interval_minutes ?? 60);
+  els.loggerSyncAllTags.checked = job.all_tags !== false;
+  els.loggerSyncSelectedTagsWrap.style.display = els.loggerSyncAllTags.checked ? 'none' : '';
   els.loggerSyncLookback.value = String(job.lookback_days || 7); els.loggerSyncTags.value = (job.tags || []).join('\n');
   els.loggerSyncMappings.value = (job.mappings || []).map((m) => `${m.source} = ${m.destination}`).join('\n');
   try {
@@ -6296,6 +6324,7 @@ async function openLoggerSyncModal(id = '') {
       loadLoggerSyncSchema('source', job.source_database_id, job.source_table, job.source_time_column, job.source_item_column),
       loadLoggerSyncSchema('destination', job.destination_database_id, job.destination_table, job.destination_time_column, job.destination_item_column)
     ]);
+    if (!job.mappings?.length && job.source_table && job.destination_table) suggestLoggerSyncMappings(false);
   } catch (err) { els.loggerSyncStatus.textContent = `Schema load failed: ${err.message || err}`; }
 }
 
@@ -6306,6 +6335,7 @@ function loggerSyncFromUi() {
     .filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map((parts) => ({ source: parts[0], destination: parts[1] }));
   return { name: String(els.loggerSyncName.value || '').trim(), enabled: els.loggerSyncEnabled.checked,
     schedule: { on_calendar: String(els.loggerSyncSchedule.value || '').trim() }, lookback_days: Number(els.loggerSyncLookback.value || 7),
+    direction: els.loggerSyncDirection.value, match_interval_minutes: Number(els.loggerSyncMatchInterval.value || 0), all_tags: els.loggerSyncAllTags.checked,
     source_database_id: els.loggerSyncSourceDatabase.value, source_table: els.loggerSyncSourceTable.value,
     source_time_column: els.loggerSyncSourceTime.value, source_item_column: els.loggerSyncSourceItem.value,
     destination_database_id: els.loggerSyncDestinationDatabase.value, destination_table: els.loggerSyncDestinationTable.value,
@@ -6316,7 +6346,12 @@ function loggerSyncFromUi() {
 async function saveReporterSync() {
   try {
     els.loggerSyncStatus.textContent = 'Saving…';
+    if (!String(els.loggerSyncMappings?.value || '').trim()) suggestLoggerSyncMappings(false);
     const job = loggerSyncFromUi();
+    if (!job.source_time_column || !job.source_item_column || !job.destination_time_column || !job.destination_item_column) {
+      throw new Error('OPCBridge could not identify the date/time or tag columns. Select them under Advanced column settings.');
+    }
+    if (!job.mappings.length) throw new Error('No matching value columns were found. Configure value mappings under Advanced column settings.');
     const response = await apiPostJson('/api/logger/sync-jobs', { sync_job: job, original_id: state.loggerSyncEditingId });
     if (!response?.ok) throw new Error(response?.error || 'Save failed.');
     const savedId = String(response?.sync_job?.id || state.loggerSyncEditingId || '').trim();
@@ -6329,19 +6364,71 @@ async function testReporterSync(id) {
     const response = await apiPostJson('/api/logger/sync-jobs/test', { id }, { timeoutMs: 300000 });
     const result = response?.reporter_result?.json || response;
     if (!response?.ok) throw new Error(response?.error || result?.error || 'Dry run failed.');
-    const message = `Dry run: examined ${result.examined}, selected ${result.selected}, would insert ${result.would_insert}, skipped ${result.skipped}.`;
+    state.loggerSyncReview = { id, result };
+    const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(id)) || {};
+    if (els.loggerSyncReviewTitle) els.loggerSyncReviewTitle.textContent = `Database Sync Review — ${job.name || 'Sync job'}`;
+    if (els.loggerSyncReviewModal) els.loggerSyncReviewModal.style.display = 'block';
+    renderLoggerSyncReview();
+    const message = `Compared ${result.selected} record periods: ${result.a_to_b || 0} A→B, ${result.b_to_a || 0} B→A, ${result.conflicts || 0} conflicts.`;
     loggerSetStatus(message); if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = message;
   } catch (err) { loggerSetStatus(`Dry run failed: ${err.message || err}`); }
 }
 
+function renderLoggerSyncReview() {
+  if (!els.loggerSyncReviewGroups) return;
+  const review = state.loggerSyncReview || {};
+  const result = review.result || {};
+  const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(review.id || '')) || {};
+  const filter = String(els.loggerSyncReviewFilter?.value || 'differences');
+  const search = String(els.loggerSyncReviewSearch?.value || '').trim().toLowerCase();
+  const mappings = Array.isArray(job.mappings) ? job.mappings : [];
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  const visible = rows.filter((row) => {
+    if (search && !String(row?.tag || '').toLowerCase().includes(search)) return false;
+    if (filter === 'all') return true;
+    if (filter === 'missing') return row.status === 'a_to_b' || row.status === 'b_to_a';
+    if (filter === 'conflict') return row.status === 'conflict';
+    return row.status !== 'matching' && row.status !== 'b_only';
+  });
+  const groups = new Map();
+  visible.forEach((row) => { const tag = String(row?.tag || '(unnamed)'); if (!groups.has(tag)) groups.set(tag, []); groups.get(tag).push(row); });
+  els.loggerSyncReviewGroups.textContent = '';
+  if (els.loggerSyncReviewSummary) els.loggerSyncReviewSummary.textContent = `A→B ${result.a_to_b || 0} · B→A ${result.b_to_a || 0} · Matching ${result.matching || 0} · Conflicts ${result.conflicts || 0}`;
+  if (els.loggerSyncReviewRunBtn) els.loggerSyncReviewRunBtn.disabled = (Number(result.a_to_b || 0) + Number(result.b_to_a || 0)) < 1;
+  Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' })).forEach(([tag, tagRows]) => {
+    const counts = { missing: 0, conflict: 0, matching: 0 };
+    tagRows.forEach((row) => { if (row.status === 'conflict') counts.conflict++; else if (row.status === 'matching') counts.matching++; else if (row.status === 'a_to_b' || row.status === 'b_to_a') counts.missing++; });
+    const details = document.createElement('details'); details.className = 'details'; details.style.marginBottom = '8px'; details.open = counts.missing > 0 || counts.conflict > 0;
+    const summary = document.createElement('summary'); summary.textContent = `${tag} — ${counts.missing} missing · ${counts.conflict} conflict${counts.conflict === 1 ? '' : 's'} · ${counts.matching} matching`; details.appendChild(summary);
+    const wrap = document.createElement('div'); wrap.className = 'table-wrap'; wrap.style.marginTop = '8px';
+    const table = document.createElement('table'); table.className = 'table';
+    const thead = document.createElement('thead'); const head = document.createElement('tr');
+    ['Period', 'Database A time', ...mappings.map((m) => `A: ${m.source}`), 'Status', 'Database B time', ...mappings.map((m) => `B: ${m.destination}`)].forEach((label) => { const th = document.createElement('th'); th.textContent = label; head.appendChild(th); });
+    thead.appendChild(head); table.appendChild(thead); const tbody = document.createElement('tbody');
+    tagRows.forEach((row) => {
+      const tr = document.createElement('tr');
+      if (row.status === 'conflict') tr.style.background = 'rgba(220, 53, 69, 0.18)';
+      else if (row.status === 'a_to_b' || row.status === 'b_to_a') tr.style.background = 'rgba(255, 193, 7, 0.16)';
+      const statusLabels = { a_to_b: 'A → B', b_to_a: 'B → A', matching: 'Matching', conflict: 'Conflict', b_only: 'B only (one-way)' };
+      const values = [row.bucket, row.a_timestamp || '—', ...(row.a_values || []).map((v) => v ?? '—'), statusLabels[row.status] || row.status, row.b_timestamp || '—', ...(row.b_values || []).map((v) => v ?? '—')];
+      values.forEach((value) => { const td = document.createElement('td'); td.textContent = String(value ?? ''); tr.appendChild(td); }); tbody.appendChild(tr);
+    });
+    table.appendChild(tbody); wrap.appendChild(table); details.appendChild(wrap); els.loggerSyncReviewGroups.appendChild(details);
+  });
+  if (!groups.size) { const empty = document.createElement('div'); empty.className = 'hint'; empty.textContent = 'No records match the current filter.'; els.loggerSyncReviewGroups.appendChild(empty); }
+  if (els.loggerSyncReviewStatus) els.loggerSyncReviewStatus.textContent = result.rows_truncated ? 'The detailed view is limited to 10,000 rows. Reduce the lookback period to review all rows.' : `${visible.length} row(s) shown.`;
+}
+
 async function runReporterSync(id) {
+  const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(id)) || {};
   const response = await apiPostJson('/api/logger/sync-jobs/run', { id });
   if (!response?.ok) { loggerSetStatus(`Run failed: ${response?.error || 'unknown error'}`); return; }
-  loggerSetStatus(`Database sync '${id}' started.`); window.setTimeout(() => refreshReporterRuntimeStatus().catch(() => {}), 1000);
+  loggerSetStatus(`Database sync '${job.name || 'job'}' started.`); window.setTimeout(() => refreshReporterRuntimeStatus().catch(() => {}), 1000);
 }
 
 async function deleteReporterSync(id) {
-  if (!window.confirm(`Delete database sync job '${id}'?`)) return;
+  const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(id)) || {};
+  if (!window.confirm(`Delete database sync job '${job.name || 'this job'}'?`)) return;
   const response = await apiPostJson('/api/logger/sync-jobs/delete', { id });
   if (!response?.ok) { loggerSetStatus(`Delete failed: ${response?.error || 'unknown error'}`); return; }
   state.loggerSelectedNodeId = 'logger:sync_jobs'; await refreshReporterAll();
@@ -6381,8 +6468,17 @@ function wireLoggerUi() {
   });
   if (els.loggerSyncSourceDatabase) els.loggerSyncSourceDatabase.addEventListener('change', () => loadLoggerSyncSchema('source', els.loggerSyncSourceDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }));
   if (els.loggerSyncDestinationDatabase) els.loggerSyncDestinationDatabase.addEventListener('change', () => loadLoggerSyncSchema('destination', els.loggerSyncDestinationDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }));
-  if (els.loggerSyncSourceTable) els.loggerSyncSourceTable.addEventListener('change', () => updateLoggerSyncColumns('source', els.loggerSyncSourceTable.value));
-  if (els.loggerSyncDestinationTable) els.loggerSyncDestinationTable.addEventListener('change', () => updateLoggerSyncColumns('destination', els.loggerSyncDestinationTable.value));
+  if (els.loggerSyncSourceTable) els.loggerSyncSourceTable.addEventListener('change', () => {
+    updateLoggerSyncColumns('source', els.loggerSyncSourceTable.value);
+    if (!String(els.loggerSyncMappings.value || '').trim() && els.loggerSyncDestinationTable.value) suggestLoggerSyncMappings(false);
+  });
+  if (els.loggerSyncDestinationTable) els.loggerSyncDestinationTable.addEventListener('change', () => {
+    updateLoggerSyncColumns('destination', els.loggerSyncDestinationTable.value);
+    if (!String(els.loggerSyncMappings.value || '').trim() && els.loggerSyncSourceTable.value) suggestLoggerSyncMappings(false);
+  });
+  if (els.loggerSyncAllTags) els.loggerSyncAllTags.addEventListener('change', () => {
+    if (els.loggerSyncSelectedTagsWrap) els.loggerSyncSelectedTagsWrap.style.display = els.loggerSyncAllTags.checked ? 'none' : '';
+  });
   if (els.loggerSyncFindTagsBtn) els.loggerSyncFindTagsBtn.addEventListener('click', async () => {
     try {
       els.loggerSyncStatus.textContent = 'Finding tags…';
@@ -6393,13 +6489,20 @@ function wireLoggerUi() {
     } catch (err) { els.loggerSyncStatus.textContent = `Find tags failed: ${err.message || err}`; }
   });
   if (els.loggerSyncSuggestMappingsBtn) els.loggerSyncSuggestMappingsBtn.addEventListener('click', () => {
-    const sourceTable = (state.loggerSyncSchemas.source || []).find((table) => String(table?.name || '') === els.loggerSyncSourceTable.value);
-    const destinationTable = (state.loggerSyncSchemas.destination || []).find((table) => String(table?.name || '') === els.loggerSyncDestinationTable.value);
-    const destinationColumns = new Set((destinationTable?.columns || []).map((column) => String(column?.name || '')));
-    const excluded = new Set([els.loggerSyncSourceTime.value, els.loggerSyncSourceItem.value]);
-    const matches = (sourceTable?.columns || []).map((column) => String(column?.name || '')).filter((name) => name && !excluded.has(name) && destinationColumns.has(name));
-    els.loggerSyncMappings.value = matches.map((name) => `${name} = ${name}`).join('\n');
-    els.loggerSyncStatus.textContent = matches.length ? `Suggested ${matches.length} same-name mapping(s).` : 'No same-name value columns were found.';
+    suggestLoggerSyncMappings(true);
+  });
+  if (els.loggerSyncReviewCloseBtn) els.loggerSyncReviewCloseBtn.addEventListener('click', () => { els.loggerSyncReviewModal.style.display = 'none'; });
+  if (els.loggerSyncReviewFilter) els.loggerSyncReviewFilter.addEventListener('change', renderLoggerSyncReview);
+  if (els.loggerSyncReviewSearch) els.loggerSyncReviewSearch.addEventListener('input', renderLoggerSyncReview);
+  if (els.loggerSyncExpandAllBtn) els.loggerSyncExpandAllBtn.addEventListener('click', () => els.loggerSyncReviewGroups?.querySelectorAll('details').forEach((details) => { details.open = true; }));
+  if (els.loggerSyncCollapseAllBtn) els.loggerSyncCollapseAllBtn.addEventListener('click', () => els.loggerSyncReviewGroups?.querySelectorAll('details').forEach((details) => { details.open = false; }));
+  if (els.loggerSyncReviewRunBtn) els.loggerSyncReviewRunBtn.addEventListener('click', async () => {
+    const id = String(state.loggerSyncReview?.id || '').trim();
+    const result = state.loggerSyncReview?.result || {};
+    const count = Number(result.a_to_b || 0) + Number(result.b_to_a || 0);
+    if (!id || count < 1) return;
+    if (!window.confirm(`Synchronize ${count} missing record(s)? Conflicts will not be changed.`)) return;
+    await runReporterSync(id); els.loggerSyncReviewModal.style.display = 'none';
   });
   if (els.loggerReportScheduleKind) els.loggerReportScheduleKind.addEventListener('change', renderLoggerReportScheduleUi);
   if (els.loggerReportEveryMinutes) els.loggerReportEveryMinutes.addEventListener('input', renderLoggerReportScheduleUi);

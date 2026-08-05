@@ -3764,8 +3764,15 @@ const server = http.createServer(async (req, res) => {
         const mappings = (Array.isArray(incoming.mappings) ? incoming.mappings : [])
           .map((m) => ({ source: String(m?.source || '').trim(), destination: String(m?.destination || '').trim() }))
           .filter((m) => m.source && m.destination);
-        if (!tags.length) throw new Error('At least one tag is required.');
+        const allTags = incoming.all_tags !== false;
+        if (!allTags && !tags.length) throw new Error('At least one tag is required when Selected tags is used.');
         if (!mappings.length) throw new Error('At least one value mapping is required.');
+        if (mappings.some((mapping) => mapping.source === String(incoming.source_time_column || '').trim() ||
+          mapping.source === String(incoming.source_item_column || '').trim() ||
+          mapping.destination === String(incoming.destination_time_column || '').trim() ||
+          mapping.destination === String(incoming.destination_item_column || '').trim())) {
+          throw new Error('Date/time and tag columns are matched automatically and must not also be value mappings.');
+        }
         const list = readReporterSyncJobsRaw().map((job) => ({ ...job }));
         const index = originalId ? list.findIndex((job) => sanitizeId(job?.id) === originalId) : -1;
         if (originalId && index < 0) throw new Error('The database sync job being edited no longer exists.');
@@ -3774,9 +3781,13 @@ const server = http.createServer(async (req, res) => {
           const used = new Set(list.map((job) => sanitizeId(job?.id)).filter(Boolean));
           do { id = `sync_${crypto.randomBytes(8).toString('hex')}`; } while (used.has(id));
         }
-        const next = { ...(index >= 0 ? list[index] : {}), ...incoming, id, tags, mappings };
+        const next = { ...(index >= 0 ? list[index] : {}), ...incoming, id, tags, mappings, all_tags: allTags };
         next.name = name;
         next.enabled = Boolean(next.enabled);
+        next.direction = String(next.direction || 'one_way') === 'bidirectional' ? 'bidirectional' : 'one_way';
+        const allowedIntervals = new Set([0, 1, 5, 15, 30, 60, 1440]);
+        next.match_interval_minutes = Math.trunc(Number(next.match_interval_minutes ?? 60));
+        if (!allowedIntervals.has(next.match_interval_minutes)) next.match_interval_minutes = 60;
         next.lookback_days = Math.max(1, Math.min(3650, Math.trunc(Number(next.lookback_days || 7) || 7)));
         next.schedule = (next.schedule && typeof next.schedule === 'object' && !Array.isArray(next.schedule)) ? next.schedule : {};
         next.schedule.on_calendar = normalizeOnCalendar(next.schedule.on_calendar || '');

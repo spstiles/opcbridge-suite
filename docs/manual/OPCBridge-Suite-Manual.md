@@ -688,8 +688,9 @@ Notes:
 
 - The Data Logger UI is organized as a **tree** (Databases / Logger / Database Sync / Data Checks).
 - You select an item in the tree to edit it in the right pane (rather than a dedicated “jobs list” view).
-- A Database Sync job copies data one way between existing MySQL tables. For each selected tag and hour, it chooses the last source record and inserts it only when the destination has no record for that tag/hour. It never creates or alters schemas.
-- Sync jobs support scheduled and manual runs, a configurable lookback window for backdated entries, a non-writing Dry Run, and explicit source-to-destination value-column mappings.
+- A Database Sync job fills missing data between existing MySQL tables. Jobs may run one way or bidirectionally, and can match records by tag plus exact timestamp, minute, common multi-minute periods, hour, or day. When several records occupy one configured period, the last available record is used. Sync never creates or alters schemas and never overwrites a conflict.
+- Sync jobs support all or selected tags, scheduled and manual runs, a configurable lookback window for backdated entries, automatic same-name value mappings, and advanced manual column mappings.
+- Dry Run opens a Database Sync Review grouped by collapsible tag. It aligns Database A and Database B records, highlights missing periods and conflicts, and allows reviewed missing records to be synchronized while leaving conflicts untouched.
 - Sync-job IDs are generated internally when a job is first saved. Operators work with the friendly name, which can be changed later without breaking references.
 
 ![OPCBridge-SCADA Data Logger tab](screenshots/opcbridge-scada-data-logger-tab.png)

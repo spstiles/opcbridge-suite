@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -275,6 +276,9 @@ struct SyncJob {
     std::string destination_time_column;
     std::string destination_item_column;
     int lookback_days = 7;
+    int match_interval_minutes = 60;
+    bool bidirectional = false;
+    bool all_tags = true;
     std::vector<std::string> tags;
     std::vector<SyncMapping> mappings;
 };
@@ -287,6 +291,12 @@ struct SyncResult {
     int inserted = 0;
     int skipped = 0;
     int failed = 0;
+    int a_to_b = 0;
+    int b_to_a = 0;
+    int matching = 0;
+    int conflicts = 0;
+    bool rows_truncated = false;
+    json rows = json::array();
     std::string error;
 };
 
@@ -1224,6 +1234,9 @@ public:
             job.destination_time_column = value.value("destination_time_column", "");
             job.destination_item_column = value.value("destination_item_column", "");
             job.lookback_days = std::max(1, std::min(3650, value.value("lookback_days", 7)));
+            job.match_interval_minutes = std::max(0, std::min(1440, value.value("match_interval_minutes", 60)));
+            job.bidirectional = value.value("direction", "one_way") == "bidirectional";
+            job.all_tags = value.value("all_tags", true);
             for (const auto& tag : value.value("tags", json::array())) {
                 if (tag.is_string() && !trim(tag.get<std::string>()).empty()) job.tags.push_back(trim(tag.get<std::string>()));
             }
@@ -2287,6 +2300,191 @@ private:
         return finish(true);
     }
 
+    SyncResult run_sync_job_v2(const SyncJob& job, const DbConfig& database_a,
+                               const DbConfig& database_b, bool dry_run, bool include_rows) {
+        SyncResult out;
+        out.dry_run = dry_run;
+        if (database_a.type != "mysql" || database_b.type != "mysql") {
+            out.error = "Database Sync currently supports MySQL databases only";
+            return out;
+        }
+        if ((!job.all_tags && job.tags.empty()) || job.mappings.empty()) {
+            out.error = job.mappings.empty() ? "At least one value mapping is required" : "Select all tags or at least one tag";
+            return out;
+        }
+        std::vector<std::string> identifiers = {job.source_table, job.source_time_column, job.source_item_column,
+            job.destination_table, job.destination_time_column, job.destination_item_column};
+        for (const auto& mapping : job.mappings) { identifiers.push_back(mapping.source); identifiers.push_back(mapping.destination); }
+        for (const auto& identifier : identifiers) {
+            if (!sync_identifier_valid(identifier)) { out.error = "Invalid or missing table/column identifier: " + identifier; return out; }
+        }
+
+        std::string error;
+        MYSQL* connection_a = sync_connect(database_a, error);
+        if (!connection_a) { out.error = "Database A " + error; return out; }
+        MYSQL* connection_b = sync_connect(database_b, error);
+        if (!connection_b) { mysql_close(connection_a); out.error = "Database B " + error; return out; }
+
+        const std::string lock_base = "opcbridge_sync_" + job.id.substr(0, 38);
+        auto acquire_lock = [&](MYSQL* connection, const std::string& suffix) {
+            const std::string name = lock_base + suffix;
+            const std::string sql = "SELECT GET_LOCK('" + sync_escape(connection, name) + "',0)";
+            if (mysql_query(connection, sql.c_str()) != 0) return false;
+            MYSQL_RES* result = mysql_store_result(connection);
+            MYSQL_ROW row = result ? mysql_fetch_row(result) : nullptr;
+            const bool acquired = row && row[0] && std::string(row[0]) == "1";
+            if (result) mysql_free_result(result);
+            return acquired;
+        };
+        const bool lock_a = acquire_lock(connection_a, "_a");
+        const bool lock_b = lock_a && acquire_lock(connection_b, "_b");
+        auto release_lock = [&](MYSQL* connection, const std::string& suffix) {
+            const std::string sql = "SELECT RELEASE_LOCK('" + sync_escape(connection, lock_base + suffix) + "')";
+            if (mysql_query(connection, sql.c_str()) == 0) { MYSQL_RES* result = mysql_store_result(connection); if (result) mysql_free_result(result); }
+        };
+        auto finish = [&](bool success, const std::string& message = "") {
+            if (lock_b) release_lock(connection_b, "_b");
+            if (lock_a) release_lock(connection_a, "_a");
+            mysql_close(connection_a); mysql_close(connection_b);
+            out.ok = success; out.error = message; return out;
+        };
+        if (!lock_a || !lock_b) return finish(false, "Another node is already comparing or running this sync job");
+
+        struct Candidate {
+            std::string tag;
+            std::string bucket;
+            std::vector<std::pair<bool, std::string>> values;
+        };
+        using CandidateMap = std::map<std::string, Candidate>;
+        auto load_side = [&](MYSQL* connection, const std::string& table, const std::string& time_column,
+                             const std::string& item_column, const std::vector<std::string>& columns,
+                             CandidateMap& candidates, const std::string& side) -> bool {
+            std::string bucket_expression;
+            if (job.match_interval_minutes == 0) {
+                bucket_expression = "DATE_FORMAT(" + sync_quote_identifier(time_column) + ", '%Y-%m-%d %H:%i:%s')";
+            } else {
+                const int seconds = job.match_interval_minutes * 60;
+                bucket_expression = "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(" + sync_quote_identifier(time_column) + ")/" +
+                    std::to_string(seconds) + ")*" + std::to_string(seconds) + ", '%Y-%m-%d %H:%i:%s')";
+            }
+            std::ostringstream sql;
+            sql << "SELECT " << bucket_expression << ',' << sync_quote_identifier(time_column) << ',' << sync_quote_identifier(item_column);
+            for (const auto& column : columns) sql << ',' << sync_quote_identifier(column);
+            sql << " FROM " << sync_quote_identifier(table) << " WHERE " << sync_quote_identifier(time_column)
+                << " >= NOW() - INTERVAL " << job.lookback_days << " DAY";
+            if (!job.all_tags) {
+                sql << " AND " << sync_quote_identifier(item_column) << " IN (";
+                for (size_t i = 0; i < job.tags.size(); ++i) { if (i) sql << ','; sql << '\'' << sync_escape(connection, job.tags[i]) << '\''; }
+                sql << ')';
+            }
+            sql << " ORDER BY " << sync_quote_identifier(item_column) << ',' << sync_quote_identifier(time_column) << " LIMIT 200001";
+            if (mysql_query(connection, sql.str().c_str()) != 0) { out.error = side + " query failed: " + mysql_error(connection); return false; }
+            MYSQL_RES* result = mysql_store_result(connection);
+            if (!result) { out.error = side + " result failed: " + mysql_error(connection); return false; }
+            MYSQL_ROW row;
+            int count = 0;
+            while ((row = mysql_fetch_row(result)) != nullptr) {
+                if (++count > 200000) { mysql_free_result(result); out.error = side + " comparison exceeds 200,000 source rows; reduce the lookback period"; return false; }
+                unsigned long* lengths = mysql_fetch_lengths(result);
+                if (!row[0] || !row[1] || !row[2]) continue;
+                Candidate candidate;
+                candidate.bucket.assign(row[0], lengths[0]);
+                candidate.tag.assign(row[2], lengths[2]);
+                for (unsigned int i = 1; i < 3 + columns.size(); ++i) {
+                    candidate.values.push_back({row[i] == nullptr, row[i] ? std::string(row[i], lengths[i]) : std::string()});
+                }
+                candidates[candidate.tag + TAG_KEY_SEP + candidate.bucket] = std::move(candidate);
+            }
+            mysql_free_result(result);
+            out.examined += count;
+            return true;
+        };
+
+        std::vector<std::string> columns_a, columns_b;
+        for (const auto& mapping : job.mappings) { columns_a.push_back(mapping.source); columns_b.push_back(mapping.destination); }
+        CandidateMap rows_a, rows_b;
+        if (!load_side(connection_a, job.source_table, job.source_time_column, job.source_item_column, columns_a, rows_a, "Database A")) return finish(false, out.error);
+        if (!load_side(connection_b, job.destination_table, job.destination_time_column, job.destination_item_column, columns_b, rows_b, "Database B")) return finish(false, out.error);
+
+        std::set<std::string> keys;
+        for (const auto& entry : rows_a) keys.insert(entry.first);
+        for (const auto& entry : rows_b) keys.insert(entry.first);
+        out.selected = static_cast<int>(keys.size());
+        if (!dry_run) {
+            if (mysql_query(connection_a, "START TRANSACTION") != 0 || mysql_query(connection_b, "START TRANSACTION") != 0) {
+                mysql_query(connection_a, "ROLLBACK"); mysql_query(connection_b, "ROLLBACK");
+                return finish(false, "Could not start database transactions");
+            }
+        }
+
+        auto values_equal = [](const Candidate& a, const Candidate& b) {
+            if (a.values.size() != b.values.size()) return false;
+            for (size_t i = 2; i < a.values.size(); ++i) if (a.values[i] != b.values[i]) return false;
+            return true;
+        };
+        auto display_values = [](const Candidate* candidate) {
+            json values = json::array();
+            if (!candidate) return values;
+            for (size_t i = 2; i < candidate->values.size(); ++i) values.push_back(candidate->values[i].first ? json(nullptr) : json(candidate->values[i].second));
+            return values;
+        };
+        auto insert_candidate = [&](MYSQL* target, const Candidate& candidate, const std::string& table,
+                                    const std::string& time_column, const std::string& item_column,
+                                    const std::vector<std::string>& columns) {
+            std::ostringstream sql;
+            sql << "INSERT INTO " << sync_quote_identifier(table) << " (" << sync_quote_identifier(time_column) << ',' << sync_quote_identifier(item_column);
+            for (const auto& column : columns) sql << ',' << sync_quote_identifier(column);
+            sql << ") VALUES (";
+            for (size_t i = 0; i < candidate.values.size(); ++i) {
+                if (i) sql << ',';
+                if (candidate.values[i].first) sql << "NULL";
+                else sql << '\'' << sync_escape(target, candidate.values[i].second) << '\'';
+            }
+            sql << ')';
+            return mysql_query(target, sql.str().c_str()) == 0;
+        };
+
+        for (const auto& key : keys) {
+            auto found_a = rows_a.find(key), found_b = rows_b.find(key);
+            const Candidate* a = found_a == rows_a.end() ? nullptr : &found_a->second;
+            const Candidate* b = found_b == rows_b.end() ? nullptr : &found_b->second;
+            std::string status;
+            if (a && !b) { status = "a_to_b"; ++out.a_to_b; }
+            else if (!a && b) { status = job.bidirectional ? "b_to_a" : "b_only"; if (job.bidirectional) ++out.b_to_a; else ++out.skipped; }
+            else if (a && b && values_equal(*a, *b)) { status = "matching"; ++out.matching; ++out.skipped; }
+            else { status = "conflict"; ++out.conflicts; ++out.skipped; }
+
+            if (include_rows) {
+                if (out.rows.size() < 10000) {
+                    const Candidate* basis = a ? a : b;
+                    out.rows.push_back({{"tag", basis ? basis->tag : ""}, {"bucket", basis ? basis->bucket : ""}, {"status", status},
+                        {"a_timestamp", a && !a->values[0].first ? json(a->values[0].second) : json(nullptr)},
+                        {"b_timestamp", b && !b->values[0].first ? json(b->values[0].second) : json(nullptr)},
+                        {"a_values", display_values(a)}, {"b_values", display_values(b)}});
+                } else out.rows_truncated = true;
+            }
+            if (dry_run) continue;
+            bool inserted = true;
+            if (status == "a_to_b") inserted = insert_candidate(connection_b, *a, job.destination_table, job.destination_time_column, job.destination_item_column, columns_b);
+            else if (status == "b_to_a") inserted = insert_candidate(connection_a, *b, job.source_table, job.source_time_column, job.source_item_column, columns_a);
+            else continue;
+            if (inserted) ++out.inserted;
+            else { ++out.failed; if (out.error.empty()) out.error = "A destination insert failed"; }
+        }
+        if (dry_run) {
+            out.inserted = out.a_to_b + out.b_to_a;
+            return finish(true);
+        }
+        if (out.failed) {
+            mysql_query(connection_a, "ROLLBACK"); mysql_query(connection_b, "ROLLBACK"); out.inserted = 0;
+            return finish(false, out.error);
+        }
+        if (mysql_query(connection_a, "COMMIT") != 0 || mysql_query(connection_b, "COMMIT") != 0) {
+            return finish(false, "A database commit failed; review both databases before retrying");
+        }
+        return finish(true);
+    }
+
     bool run_sync_async(const std::string& id, std::string& error) {
         SyncJob job;
         DbConfig source;
@@ -2308,7 +2506,7 @@ private:
             destination = dit->second;
         }
         std::thread([this, job, source, destination]() {
-            SyncResult result = run_sync_job(job, source, destination, false);
+            SyncResult result = run_sync_job_v2(job, source, destination, false, false);
             finish_sync(job.id, result);
             save_runtime_state();
         }).detach();
@@ -2328,9 +2526,11 @@ private:
             if (sit == dbs_.end() || dit == dbs_.end()) return {{"ok", false}, {"error", "Source or destination database not found"}};
             job = jit->second; source = sit->second; destination = dit->second;
         }
-        SyncResult result = run_sync_job(job, source, destination, true);
+        SyncResult result = run_sync_job_v2(job, source, destination, true, true);
         return {{"ok", result.ok}, {"id", id}, {"dry_run", true}, {"examined", result.examined},
                 {"selected", result.selected}, {"would_insert", result.inserted}, {"skipped", result.skipped},
+                {"a_to_b", result.a_to_b}, {"b_to_a", result.b_to_a}, {"matching", result.matching},
+                {"conflicts", result.conflicts}, {"rows", result.rows}, {"rows_truncated", result.rows_truncated},
                 {"failed", result.failed}, {"error", result.error}};
     }
 
