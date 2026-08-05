@@ -1494,6 +1494,10 @@
 		                </thead>
 		                <tbody id="loggerDataChecksTbody"></tbody>
 		              </table>
+		              <table class="table" id="loggerSyncTable" style="display:none;">
+		                <thead><tr><th>ID</th><th>Name</th><th>Source</th><th>Destination</th><th>Schedule</th><th>Enabled</th><th>Status</th><th>Selected</th><th>Inserted</th><th>Skipped</th><th>Last Error</th><th>Actions</th></tr></thead>
+		                <tbody id="loggerSyncTbody"></tbody>
+		              </table>
 		            </div>
 
 		            <section class="details" id="loggerReportDetails" style="display:none; margin-top: 10px;"></section>
@@ -2561,6 +2565,39 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="loggerSyncModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:900px;">
+      <div class="modal-titlebar"><div class="modal-title">Database Sync Job</div><button class="btn" id="loggerSyncCloseBtn" type="button">Close</button></div>
+      <div class="modal-body">
+        <div class="hint">Copy the last source record for each selected tag/hour when that tag/hour is missing at the destination. Tables are never created or changed.</div>
+        <div class="form">
+          <div class="form-row"><label>ID</label><input id="loggerSyncId" type="text" placeholder="lab_data_daily" /></div>
+          <div class="form-row"><label>Name</label><input id="loggerSyncName" type="text" placeholder="Lab data daily" /></div>
+          <div class="form-row"><label>Enabled</label><label class="check-pill"><input id="loggerSyncEnabled" type="checkbox" class="inline-check" /> Enabled</label></div>
+          <div class="form-row"><label>OnCalendar</label><input id="loggerSyncSchedule" type="text" value="*-*-* 01:00:00" /><div class="small">For example, daily at 1:00 AM: <code>*-*-* 01:00:00</code></div></div>
+          <div class="form-row"><label>Lookback (days)</label><input id="loggerSyncLookback" type="number" min="1" max="3650" value="7" /><div class="small">Backdated manual entries within this window are considered each run.</div></div>
+          <div class="divider"></div>
+          <div class="form-row"><label>Source database</label><select id="loggerSyncSourceDatabase"></select></div>
+          <div class="form-row"><label>Source table</label><select id="loggerSyncSourceTable"></select></div>
+          <div class="form-row"><label>Source date/time</label><select id="loggerSyncSourceTime"></select></div>
+          <div class="form-row"><label>Source tag</label><select id="loggerSyncSourceItem"></select></div>
+          <div class="divider"></div>
+          <div class="form-row"><label>Destination database</label><select id="loggerSyncDestinationDatabase"></select></div>
+          <div class="form-row"><label>Destination table</label><select id="loggerSyncDestinationTable"></select></div>
+          <div class="form-row"><label>Destination date/time</label><select id="loggerSyncDestinationTime"></select></div>
+          <div class="form-row"><label>Destination tag</label><select id="loggerSyncDestinationItem"></select></div>
+          <div class="divider"></div>
+          <div class="form-row"><label>Tags</label><textarea id="loggerSyncTags" rows="6" class="mono" placeholder="Tag_A&#10;Tag_B"></textarea><div class="small">One tag per line. Use “Find tags” after selecting the source table and tag column to populate all available names.</div></div>
+          <div class="form-row"><label></label><button class="btn" id="loggerSyncFindTagsBtn" type="button">Find tags</button></div>
+          <div class="form-row"><label>Value mappings</label><textarea id="loggerSyncMappings" rows="5" class="mono" placeholder="source_value = destination_value&#10;source_text = destination_text"></textarea><div class="small">One source = destination column mapping per line.</div></div>
+          <div class="form-row"><label></label><button class="btn" id="loggerSyncSuggestMappingsBtn" type="button">Suggest same-name mappings</button></div>
+          <div class="form-row"><label></label><div class="row-actions"><button class="btn" id="loggerSyncCancelBtn" type="button">Cancel</button><button class="btn" id="loggerSyncTestBtn" type="button">Dry Run</button><button class="btn primary" id="loggerSyncSaveBtn" type="button">Save + Apply</button></div></div>
+          <div class="hint mono" id="loggerSyncStatus"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="loggerTagPickerModal" style="display:none;">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loggerTagPickerTitle" style="max-width: 980px;">
       <div class="modal-titlebar">
@@ -2616,6 +2653,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260616_scada_explicit_logout_v3"></script>
+  <script src="app.js?v=20260805_database_sync_v1"></script>
 </body>
 </html>

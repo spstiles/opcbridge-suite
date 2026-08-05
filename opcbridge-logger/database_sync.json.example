@@ -1,0 +1,35 @@
+{
+  "sync_jobs": [
+    {
+      "id": "lab_data_daily",
+      "name": "Lab data daily",
+      "enabled": false,
+      "schedule": {
+        "on_calendar": "*-*-* 01:00:00"
+      },
+      "lookback_days": 7,
+      "source_database_id": "source_mysql",
+      "source_table": "lab_data",
+      "source_time_column": "recorded_at",
+      "source_item_column": "tag_name",
+      "destination_database_id": "destination_mysql",
+      "destination_table": "lab_data",
+      "destination_time_column": "recorded_at",
+      "destination_item_column": "tag_name",
+      "tags": [
+        "NH4",
+        "FOG"
+      ],
+      "mappings": [
+        {
+          "source": "numeric_value",
+          "destination": "numeric_value"
+        },
+        {
+          "source": "text_value",
+          "destination": "text_value"
+        }
+      ]
+    }
+  ]
+}

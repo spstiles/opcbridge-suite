@@ -413,6 +413,8 @@
   loggerReportsTbody: document.getElementById('loggerReportsTbody'),
   loggerDataChecksTable: document.getElementById('loggerDataChecksTable'),
   loggerDataChecksTbody: document.getElementById('loggerDataChecksTbody'),
+  loggerSyncTable: document.getElementById('loggerSyncTable'),
+  loggerSyncTbody: document.getElementById('loggerSyncTbody'),
   loggerReportDetails: document.getElementById('loggerReportDetails'),
   loggerRefreshBtn: document.getElementById('loggerRefreshBtn'),
   loggerStatus: document.getElementById('loggerStatus'),
@@ -497,6 +499,21 @@
   loggerDataCheckLowThreshold: document.getElementById('loggerDataCheckLowThreshold'),
   loggerDataCheckHighThreshold: document.getElementById('loggerDataCheckHighThreshold'),
   loggerDataCheckStatus: document.getElementById('loggerDataCheckStatus'),
+  loggerSyncModal: document.getElementById('loggerSyncModal'),
+  loggerSyncCloseBtn: document.getElementById('loggerSyncCloseBtn'),
+  loggerSyncCancelBtn: document.getElementById('loggerSyncCancelBtn'),
+  loggerSyncSaveBtn: document.getElementById('loggerSyncSaveBtn'),
+  loggerSyncTestBtn: document.getElementById('loggerSyncTestBtn'),
+  loggerSyncFindTagsBtn: document.getElementById('loggerSyncFindTagsBtn'),
+  loggerSyncSuggestMappingsBtn: document.getElementById('loggerSyncSuggestMappingsBtn'),
+  loggerSyncId: document.getElementById('loggerSyncId'), loggerSyncName: document.getElementById('loggerSyncName'),
+  loggerSyncEnabled: document.getElementById('loggerSyncEnabled'), loggerSyncSchedule: document.getElementById('loggerSyncSchedule'),
+  loggerSyncLookback: document.getElementById('loggerSyncLookback'), loggerSyncSourceDatabase: document.getElementById('loggerSyncSourceDatabase'),
+  loggerSyncSourceTable: document.getElementById('loggerSyncSourceTable'), loggerSyncSourceTime: document.getElementById('loggerSyncSourceTime'),
+  loggerSyncSourceItem: document.getElementById('loggerSyncSourceItem'), loggerSyncDestinationDatabase: document.getElementById('loggerSyncDestinationDatabase'),
+  loggerSyncDestinationTable: document.getElementById('loggerSyncDestinationTable'), loggerSyncDestinationTime: document.getElementById('loggerSyncDestinationTime'),
+  loggerSyncDestinationItem: document.getElementById('loggerSyncDestinationItem'), loggerSyncTags: document.getElementById('loggerSyncTags'),
+  loggerSyncMappings: document.getElementById('loggerSyncMappings'), loggerSyncStatus: document.getElementById('loggerSyncStatus'),
 
   historianRefreshBtn: document.getElementById('historianRefreshBtn'),
   historianAddTagBtn: document.getElementById('historianAddTagBtn'),
@@ -1221,6 +1238,7 @@ const state = {
   reporterDatabases: [],
   reporterReports: [],
   reporterDataChecks: [],
+  reporterSyncJobs: [],
   reporterConfig: null,
   reporterCapabilities: null,
   reporterRuntime: null,
@@ -1244,6 +1262,8 @@ const state = {
   loggerReportEditingMode: '', // '' | 'new' | 'edit'
   loggerDataCheckEditingId: '',
   loggerDataCheckEditingMode: '', // '' | 'new' | 'edit'
+  loggerSyncEditingId: '',
+  loggerSyncSchemas: { source: [], destination: [] },
   loggerReportPanelTab: 'details',
   loggerReportTagDraftById: new Map(),
   loggerReportHistorianDraftById: new Map(),
@@ -2039,6 +2059,7 @@ function buildLoggerTreeRoots() {
   const dbs = Array.isArray(state.reporterDatabases) ? state.reporterDatabases : [];
   const reports = Array.isArray(state.reporterReports) ? state.reporterReports : [];
   const checks = Array.isArray(state.reporterDataChecks) ? state.reporterDataChecks : [];
+  const syncJobs = Array.isArray(state.reporterSyncJobs) ? state.reporterSyncJobs : [];
 
   const dbRoot = {
     id: 'logger:databases',
@@ -2085,11 +2106,17 @@ function buildLoggerTreeRoots() {
       }))
   };
 
-  return [dbRoot, reportsRoot, checksRoot];
+  const syncRoot = {
+    id: 'logger:sync_jobs', type: 'logger_root_sync', label: 'Database Sync',
+    children: syncJobs.slice().sort((a, b) => String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, { sensitivity: 'base' }))
+      .map((job) => ({ id: `logger:sync:${String(job?.id || '').trim()}`, type: 'logger_sync', label: String(job?.name || job?.id || '').trim(), meta: { id: String(job?.id || '').trim() } }))
+  };
+
+  return [dbRoot, reportsRoot, syncRoot, checksRoot];
 }
 
 function renderLoggerTreeNode(node, container) {
-  const canExpand = node.type === 'logger_root_db' || node.type === 'logger_root_reports' || node.type === 'logger_root_data_checks';
+  const canExpand = node.type === 'logger_root_db' || node.type === 'logger_root_reports' || node.type === 'logger_root_data_checks' || node.type === 'logger_root_sync';
   const expanded = Boolean(state._loggerExpanded) ? state._loggerExpanded.has(node.id) : true;
 
   const btn = document.createElement('button');
@@ -2121,6 +2148,7 @@ function renderLoggerTreeNode(node, container) {
   if (node.type === 'logger_root_db') meta.textContent = `${(node.children || []).length} db(s)`;
   if (node.type === 'logger_root_reports') meta.textContent = `${(node.children || []).length} job(s)`;
   if (node.type === 'logger_root_data_checks') meta.textContent = `${(node.children || []).length} check(s)`;
+  if (node.type === 'logger_root_sync') meta.textContent = `${(node.children || []).length} job(s)`;
 
   btn.appendChild(twisty);
   btn.appendChild(label);
@@ -2152,6 +2180,17 @@ function renderLoggerTreeNode(node, container) {
     if (node.type === 'logger_root_data_checks') {
       items.push({ label: 'Add Data Check…', onClick: () => startNewDataCheck() });
       items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
+    }
+    if (node.type === 'logger_root_sync') {
+      items.push({ label: 'Add Sync Job…', onClick: () => openLoggerSyncModal() });
+      items.push({ label: 'Refresh', onClick: () => refreshReporterAll().catch(() => {}) });
+    }
+    if (node.type === 'logger_sync') {
+      const id = String(node.meta?.id || '').trim();
+      items.push({ label: 'Dry Run', onClick: () => testReporterSync(id) });
+      items.push({ label: 'Run Now', onClick: () => runReporterSync(id) });
+      items.push({ label: 'Properties…', onClick: () => openLoggerSyncModal(id) });
+      items.push({ label: 'Delete…', onClick: () => deleteReporterSync(id) });
     }
 	    if (node.type === 'logger_db') {
 	      const id = String(node.meta?.id || '').trim();
@@ -2200,13 +2239,14 @@ function renderLoggerTree() {
   if (!els.loggerTreeView) return;
   els.loggerTreeView.textContent = '';
   const roots = buildLoggerTreeRoots();
-  if (!state._loggerExpanded) state._loggerExpanded = new Set(['logger:databases', 'logger:reports', 'logger:data_checks']);
+  if (!state._loggerExpanded) state._loggerExpanded = new Set(['logger:databases', 'logger:reports', 'logger:sync_jobs', 'logger:data_checks']);
   roots.forEach((r) => renderLoggerTreeNode(r, els.loggerTreeView));
   if (els.loggerTreeNote) {
     const dbCount = Array.isArray(roots[0]?.children) ? roots[0].children.length : 0;
     const reportCount = Array.isArray(roots[1]?.children) ? roots[1].children.length : 0;
-    const checkCount = Array.isArray(roots[2]?.children) ? roots[2].children.length : 0;
-    els.loggerTreeNote.textContent = `Databases: ${dbCount} · Logger jobs: ${reportCount} · Data checks: ${checkCount}`;
+    const syncCount = Array.isArray(roots[2]?.children) ? roots[2].children.length : 0;
+    const checkCount = Array.isArray(roots[3]?.children) ? roots[3].children.length : 0;
+    els.loggerTreeNote.textContent = `Databases: ${dbCount} · Logger jobs: ${reportCount} · Sync jobs: ${syncCount} · Data checks: ${checkCount}`;
   }
   if (!state.loggerSelectedNodeId) state.loggerSelectedNodeId = 'logger:databases';
 }
@@ -3259,10 +3299,12 @@ function renderLoggerDetails() {
   const sid = String(state.loggerSelectedNodeId || '').trim();
   const showReports = sid === 'logger:reports' || sid.startsWith('logger:report:');
   const showDataChecks = sid === 'logger:data_checks' || sid.startsWith('logger:data_check:');
+  const showSync = sid === 'logger:sync_jobs' || sid.startsWith('logger:sync:');
 
-  if (els.loggerDbTable) els.loggerDbTable.style.display = (showReports || showDataChecks) ? 'none' : '';
+  if (els.loggerDbTable) els.loggerDbTable.style.display = (showReports || showDataChecks || showSync) ? 'none' : '';
   if (els.loggerReportsTable) els.loggerReportsTable.style.display = showReports ? '' : 'none';
   if (els.loggerDataChecksTable) els.loggerDataChecksTable.style.display = showDataChecks ? '' : 'none';
+  if (els.loggerSyncTable) els.loggerSyncTable.style.display = showSync ? '' : 'none';
 
   if (showReports) {
     renderLoggerReportsTable();
@@ -3270,10 +3312,39 @@ function renderLoggerDetails() {
   } else if (showDataChecks) {
     if (els.loggerReportDetails) els.loggerReportDetails.style.display = 'none';
     renderLoggerDataChecksTable();
+  } else if (showSync) {
+    if (els.loggerReportDetails) els.loggerReportDetails.style.display = 'none';
+    renderLoggerSyncTable();
   } else {
     if (els.loggerReportDetails) els.loggerReportDetails.style.display = 'none';
     renderLoggerTable();
   }
+}
+
+function renderLoggerSyncTable() {
+  if (!els.loggerSyncTbody) return;
+  const statuses = new Map((state.reporterRuntime?.reporter?.sync_statuses || []).map((s) => [String(s?.id || ''), s]));
+  els.loggerSyncTbody.textContent = '';
+  const jobs = Array.isArray(state.reporterSyncJobs) ? state.reporterSyncJobs : [];
+  if (!jobs.length) {
+    const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 12;
+    td.className = 'small'; td.textContent = 'No database sync jobs configured. Right-click “Database Sync” to add one.';
+    tr.appendChild(td); els.loggerSyncTbody.appendChild(tr); return;
+  }
+  jobs.forEach((job) => {
+    const st = statuses.get(String(job?.id || '')) || {};
+    const tr = document.createElement('tr');
+    const values = [job.id, job.name, `${job.source_database_id}:${job.source_table}`, `${job.destination_database_id}:${job.destination_table}`,
+      job.schedule?.on_calendar, job.enabled ? 'yes' : 'no', st.running ? 'running' : (st.last_error ? 'error' : (st.next_run_ms ? 'scheduled' : 'idle')),
+      st.last_selected ?? '', st.last_inserted ?? '', st.last_skipped ?? '', st.last_error || ''];
+    values.forEach((value) => { const td = document.createElement('td'); td.textContent = String(value ?? ''); tr.appendChild(td); });
+    const actions = document.createElement('td');
+    [['Dry Run', () => testReporterSync(job.id)], ['Run Now', () => runReporterSync(job.id)], ['Properties', () => openLoggerSyncModal(job.id)]].forEach(([label, action]) => {
+      const button = document.createElement('button'); button.className = 'btn'; button.type = 'button'; button.textContent = label;
+      button.addEventListener('click', (event) => { event.stopPropagation(); action(); }); actions.appendChild(button);
+    });
+    tr.appendChild(actions); tr.addEventListener('dblclick', () => openLoggerSyncModal(job.id)); els.loggerSyncTbody.appendChild(tr);
+  });
 }
 
 function openLoggerDbModal(opts = {}) {
@@ -6063,6 +6134,8 @@ async function refreshReporterRuntimeStatus() {
     if (state.loggerReportPanelTab === 'details') renderLoggerReportDetails();
   } else if (state.loggerSelectedNodeId === 'logger:data_checks' || String(state.loggerSelectedNodeId || '').startsWith('logger:data_check:')) {
     renderLoggerDataChecksTable();
+  } else if (state.loggerSelectedNodeId === 'logger:sync_jobs' || String(state.loggerSelectedNodeId || '').startsWith('logger:sync:')) {
+    renderLoggerSyncTable();
   } else if (state.loggerSelectedNodeId === 'logger:databases' || String(state.loggerSelectedNodeId || '').startsWith('logger:db:')) {
     renderLoggerTable();
   }
@@ -6154,6 +6227,15 @@ async function refreshReporterAll() {
   }
 
   try {
+    const sync = await apiGet('/api/logger/sync-jobs');
+    if (!sync?.ok) throw new Error(String(sync?.error || 'Failed'));
+    state.reporterSyncJobs = Array.isArray(sync?.sync_jobs) ? sync.sync_jobs : [];
+    out.sync_jobs = sync;
+  } catch (err) {
+    out.ok = false; state.reporterSyncJobs = []; out.sync_jobs = { ok: false, error: String(err.message || err) };
+  }
+
+  try {
     const runtime = await refreshReporterRuntimeStatus();
     out.runtime = runtime;
   } catch (err) {
@@ -6166,6 +6248,102 @@ async function refreshReporterAll() {
   renderLoggerTree();
   renderLoggerDetails();
   loggerSetStatus(out.ok ? 'Ready.' : 'Partial failure (see Raw JSON).');
+}
+
+function loggerSyncOptions(select, values, selected = '') {
+  if (!select) return;
+  select.innerHTML = ['<option value=""></option>'].concat(values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)).join('');
+  select.value = selected;
+}
+
+async function loadLoggerSyncSchema(side, databaseId, selectedTable = '', selectedTime = '', selectedItem = '') {
+  const prefix = side === 'source' ? 'Source' : 'Destination';
+  const tableSelect = els[`loggerSync${prefix}Table`];
+  const timeSelect = els[`loggerSync${prefix}Time`];
+  const itemSelect = els[`loggerSync${prefix}Item`];
+  if (!databaseId) { loggerSyncOptions(tableSelect, []); loggerSyncOptions(timeSelect, []); loggerSyncOptions(itemSelect, []); return; }
+  if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = `Loading ${side} schema…`;
+  const response = await apiGet(`/api/logger/databases/schema?database=${encodeURIComponent(databaseId)}`, { timeoutMs: 180000 });
+  if (!response?.ok) throw new Error(response?.error || `Could not load ${side} schema.`);
+  state.loggerSyncSchemas[side] = Array.isArray(response.tables) ? response.tables : [];
+  loggerSyncOptions(tableSelect, state.loggerSyncSchemas[side].map((table) => String(table?.name || '')).filter(Boolean), selectedTable);
+  updateLoggerSyncColumns(side, selectedTable, selectedTime, selectedItem);
+  if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = '';
+}
+
+function updateLoggerSyncColumns(side, tableName, selectedTime = '', selectedItem = '') {
+  const prefix = side === 'source' ? 'Source' : 'Destination';
+  const table = (state.loggerSyncSchemas[side] || []).find((entry) => String(entry?.name || '') === String(tableName || ''));
+  const columns = (table?.columns || []).map((column) => String(column?.name || '')).filter(Boolean);
+  loggerSyncOptions(els[`loggerSync${prefix}Time`], columns, selectedTime);
+  loggerSyncOptions(els[`loggerSync${prefix}Item`], columns, selectedItem);
+}
+
+async function openLoggerSyncModal(id = '') {
+  const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(id || '')) || {};
+  state.loggerSyncEditingId = String(id || '');
+  if (els.loggerSyncModal) els.loggerSyncModal.style.display = 'block';
+  const mysqlDbs = (state.reporterDatabases || []).filter((db) => String(db?.type || 'mysql') === 'mysql');
+  const options = mysqlDbs.map((db) => String(db?.id || '')).filter(Boolean);
+  loggerSyncOptions(els.loggerSyncSourceDatabase, options, String(job.source_database_id || ''));
+  loggerSyncOptions(els.loggerSyncDestinationDatabase, options, String(job.destination_database_id || ''));
+  els.loggerSyncId.value = String(job.id || ''); els.loggerSyncName.value = String(job.name || '');
+  els.loggerSyncEnabled.checked = Boolean(job.enabled); els.loggerSyncSchedule.value = String(job.schedule?.on_calendar || '*-*-* 01:00:00');
+  els.loggerSyncLookback.value = String(job.lookback_days || 7); els.loggerSyncTags.value = (job.tags || []).join('\n');
+  els.loggerSyncMappings.value = (job.mappings || []).map((m) => `${m.source} = ${m.destination}`).join('\n');
+  try {
+    await Promise.all([
+      loadLoggerSyncSchema('source', job.source_database_id, job.source_table, job.source_time_column, job.source_item_column),
+      loadLoggerSyncSchema('destination', job.destination_database_id, job.destination_table, job.destination_time_column, job.destination_item_column)
+    ]);
+  } catch (err) { els.loggerSyncStatus.textContent = `Schema load failed: ${err.message || err}`; }
+}
+
+function closeLoggerSyncModal() { if (els.loggerSyncModal) els.loggerSyncModal.style.display = 'none'; }
+
+function loggerSyncFromUi() {
+  const mappings = String(els.loggerSyncMappings?.value || '').split(/\r?\n/).map((line) => line.split('=').map((v) => v.trim()))
+    .filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map((parts) => ({ source: parts[0], destination: parts[1] }));
+  return { id: String(els.loggerSyncId.value || '').trim(), name: String(els.loggerSyncName.value || '').trim(), enabled: els.loggerSyncEnabled.checked,
+    schedule: { on_calendar: String(els.loggerSyncSchedule.value || '').trim() }, lookback_days: Number(els.loggerSyncLookback.value || 7),
+    source_database_id: els.loggerSyncSourceDatabase.value, source_table: els.loggerSyncSourceTable.value,
+    source_time_column: els.loggerSyncSourceTime.value, source_item_column: els.loggerSyncSourceItem.value,
+    destination_database_id: els.loggerSyncDestinationDatabase.value, destination_table: els.loggerSyncDestinationTable.value,
+    destination_time_column: els.loggerSyncDestinationTime.value, destination_item_column: els.loggerSyncDestinationItem.value,
+    tags: String(els.loggerSyncTags.value || '').split(/\r?\n|,/).map((v) => v.trim()).filter(Boolean), mappings };
+}
+
+async function saveReporterSync() {
+  try {
+    els.loggerSyncStatus.textContent = 'Saving…';
+    const job = loggerSyncFromUi();
+    const response = await apiPostJson('/api/logger/sync-jobs', { sync_job: job, original_id: state.loggerSyncEditingId });
+    if (!response?.ok) throw new Error(response?.error || 'Save failed.');
+    await refreshReporterAll(); closeLoggerSyncModal(); state.loggerSelectedNodeId = `logger:sync:${job.id}`; renderLoggerTree(); renderLoggerDetails(); loggerSetStatus('Database sync job saved.');
+  } catch (err) { els.loggerSyncStatus.textContent = `Save failed: ${err.message || err}`; }
+}
+
+async function testReporterSync(id) {
+  try {
+    const response = await apiPostJson('/api/logger/sync-jobs/test', { id }, { timeoutMs: 300000 });
+    const result = response?.reporter_result?.json || response;
+    if (!response?.ok) throw new Error(response?.error || result?.error || 'Dry run failed.');
+    const message = `Dry run: examined ${result.examined}, selected ${result.selected}, would insert ${result.would_insert}, skipped ${result.skipped}.`;
+    loggerSetStatus(message); if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = message;
+  } catch (err) { loggerSetStatus(`Dry run failed: ${err.message || err}`); }
+}
+
+async function runReporterSync(id) {
+  const response = await apiPostJson('/api/logger/sync-jobs/run', { id });
+  if (!response?.ok) { loggerSetStatus(`Run failed: ${response?.error || 'unknown error'}`); return; }
+  loggerSetStatus(`Database sync '${id}' started.`); window.setTimeout(() => refreshReporterRuntimeStatus().catch(() => {}), 1000);
+}
+
+async function deleteReporterSync(id) {
+  if (!window.confirm(`Delete database sync job '${id}'?`)) return;
+  const response = await apiPostJson('/api/logger/sync-jobs/delete', { id });
+  if (!response?.ok) { loggerSetStatus(`Delete failed: ${response?.error || 'unknown error'}`); return; }
+  state.loggerSelectedNodeId = 'logger:sync_jobs'; await refreshReporterAll();
 }
 
 function wireLoggerUi() {
@@ -6193,6 +6371,36 @@ function wireLoggerUi() {
     testReporterDataCheck(id).catch(() => {});
   });
   if (els.loggerDataCheckSaveBtn) els.loggerDataCheckSaveBtn.addEventListener('click', saveReporterDataCheck);
+  if (els.loggerSyncCloseBtn) els.loggerSyncCloseBtn.addEventListener('click', closeLoggerSyncModal);
+  if (els.loggerSyncCancelBtn) els.loggerSyncCancelBtn.addEventListener('click', closeLoggerSyncModal);
+  if (els.loggerSyncSaveBtn) els.loggerSyncSaveBtn.addEventListener('click', saveReporterSync);
+  if (els.loggerSyncTestBtn) els.loggerSyncTestBtn.addEventListener('click', () => {
+    const id = String(els.loggerSyncId?.value || '').trim();
+    if (!state.loggerSyncEditingId || id !== state.loggerSyncEditingId) els.loggerSyncStatus.textContent = 'Save the sync job before running a dry run.';
+    else testReporterSync(id);
+  });
+  if (els.loggerSyncSourceDatabase) els.loggerSyncSourceDatabase.addEventListener('change', () => loadLoggerSyncSchema('source', els.loggerSyncSourceDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }));
+  if (els.loggerSyncDestinationDatabase) els.loggerSyncDestinationDatabase.addEventListener('change', () => loadLoggerSyncSchema('destination', els.loggerSyncDestinationDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }));
+  if (els.loggerSyncSourceTable) els.loggerSyncSourceTable.addEventListener('change', () => updateLoggerSyncColumns('source', els.loggerSyncSourceTable.value));
+  if (els.loggerSyncDestinationTable) els.loggerSyncDestinationTable.addEventListener('change', () => updateLoggerSyncColumns('destination', els.loggerSyncDestinationTable.value));
+  if (els.loggerSyncFindTagsBtn) els.loggerSyncFindTagsBtn.addEventListener('click', async () => {
+    try {
+      els.loggerSyncStatus.textContent = 'Finding tags…';
+      const response = await apiPostJson('/api/logger/databases/distinct', { database_id: els.loggerSyncSourceDatabase.value, table: els.loggerSyncSourceTable.value, column: els.loggerSyncSourceItem.value }, { timeoutMs: 300000 });
+      if (!response?.ok) throw new Error(response?.error || 'Tag discovery failed.');
+      els.loggerSyncTags.value = (response.values || []).join('\n');
+      els.loggerSyncStatus.textContent = `Found ${(response.values || []).length} tag(s). Remove any that should not be synchronized.`;
+    } catch (err) { els.loggerSyncStatus.textContent = `Find tags failed: ${err.message || err}`; }
+  });
+  if (els.loggerSyncSuggestMappingsBtn) els.loggerSyncSuggestMappingsBtn.addEventListener('click', () => {
+    const sourceTable = (state.loggerSyncSchemas.source || []).find((table) => String(table?.name || '') === els.loggerSyncSourceTable.value);
+    const destinationTable = (state.loggerSyncSchemas.destination || []).find((table) => String(table?.name || '') === els.loggerSyncDestinationTable.value);
+    const destinationColumns = new Set((destinationTable?.columns || []).map((column) => String(column?.name || '')));
+    const excluded = new Set([els.loggerSyncSourceTime.value, els.loggerSyncSourceItem.value]);
+    const matches = (sourceTable?.columns || []).map((column) => String(column?.name || '')).filter((name) => name && !excluded.has(name) && destinationColumns.has(name));
+    els.loggerSyncMappings.value = matches.map((name) => `${name} = ${name}`).join('\n');
+    els.loggerSyncStatus.textContent = matches.length ? `Suggested ${matches.length} same-name mapping(s).` : 'No same-name value columns were found.';
+  });
   if (els.loggerReportScheduleKind) els.loggerReportScheduleKind.addEventListener('change', renderLoggerReportScheduleUi);
   if (els.loggerReportEveryMinutes) els.loggerReportEveryMinutes.addEventListener('input', renderLoggerReportScheduleUi);
   if (els.loggerReportHourlyMinute) els.loggerReportHourlyMinute.addEventListener('input', renderLoggerReportScheduleUi);

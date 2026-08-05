@@ -256,6 +256,57 @@ struct DataCheckStatus {
     std::string last_error;
 };
 
+struct SyncMapping {
+    std::string source;
+    std::string destination;
+};
+
+struct SyncJob {
+    std::string id;
+    std::string name;
+    bool enabled = false;
+    std::string on_calendar;
+    std::string source_database_id;
+    std::string source_table;
+    std::string source_time_column;
+    std::string source_item_column;
+    std::string destination_database_id;
+    std::string destination_table;
+    std::string destination_time_column;
+    std::string destination_item_column;
+    int lookback_days = 7;
+    std::vector<std::string> tags;
+    std::vector<SyncMapping> mappings;
+};
+
+struct SyncResult {
+    bool ok = false;
+    bool dry_run = false;
+    int examined = 0;
+    int selected = 0;
+    int inserted = 0;
+    int skipped = 0;
+    int failed = 0;
+    std::string error;
+};
+
+struct SyncStatus {
+    std::string id;
+    bool enabled = false;
+    bool running = false;
+    bool supported_schedule = false;
+    long long last_run_ms = 0;
+    long long next_run_ms = 0;
+    long long runs_total = 0;
+    long long failures_total = 0;
+    int last_examined = 0;
+    int last_selected = 0;
+    int last_inserted = 0;
+    int last_skipped = 0;
+    int last_failed = 0;
+    std::string last_error;
+};
+
 struct RunResult {
     bool ok = false;
     int inserted = 0;
@@ -982,11 +1033,13 @@ public:
                     std::string databases_path,
                     std::string reports_path,
                     std::string data_checks_path,
+                    std::string sync_jobs_path,
                     std::string state_path)
         : config_path_(std::move(config_path)),
           databases_path_(std::move(databases_path)),
           reports_path_(std::move(reports_path)),
           data_checks_path_(std::move(data_checks_path)),
+          sync_jobs_path_(std::move(sync_jobs_path)),
           state_path_(std::move(state_path)) {}
 
     void load_runtime_state() {
@@ -1009,8 +1062,28 @@ public:
             st.last_error = s.value("last_error", "");
             loaded[st.id] = st;
         }
+        std::map<std::string, SyncStatus> loaded_sync;
+        for (const auto& s : object_array_or_empty(root, "sync_statuses")) {
+            if (!s.is_object()) continue;
+            SyncStatus st;
+            st.id = s.value("id", "");
+            if (st.id.empty()) continue;
+            st.enabled = s.value("enabled", false);
+            st.supported_schedule = s.value("supported_schedule", false);
+            st.last_run_ms = s.value("last_run_ms", 0LL);
+            st.runs_total = s.value("runs_total", 0LL);
+            st.failures_total = s.value("failures_total", 0LL);
+            st.last_examined = s.value("last_examined", 0);
+            st.last_selected = s.value("last_selected", 0);
+            st.last_inserted = s.value("last_inserted", 0);
+            st.last_skipped = s.value("last_skipped", 0);
+            st.last_failed = s.value("last_failed", 0);
+            st.last_error = s.value("last_error", "");
+            loaded_sync[st.id] = st;
+        }
         std::lock_guard<std::mutex> lock(mu_);
         statuses_ = std::move(loaded);
+        sync_statuses_ = std::move(loaded_sync);
         last_state_load_ms_ = now_ms();
     }
 
@@ -1132,6 +1205,51 @@ public:
             next_check_status[check.id] = st;
         }
 
+        std::map<std::string, SyncJob> next_sync_jobs;
+        std::map<std::string, SyncStatus> next_sync_status;
+        json sync_root = read_json_or_object(sync_jobs_path_);
+        for (const auto& value : object_array_or_empty(sync_root, "sync_jobs")) {
+            if (!value.is_object()) continue;
+            SyncJob job;
+            job.id = value.value("id", "");
+            job.name = value.value("name", job.id);
+            job.enabled = value.value("enabled", false);
+            job.on_calendar = object_value_or_empty(value, "schedule").value("on_calendar", "");
+            job.source_database_id = value.value("source_database_id", "");
+            job.source_table = value.value("source_table", "");
+            job.source_time_column = value.value("source_time_column", "");
+            job.source_item_column = value.value("source_item_column", "");
+            job.destination_database_id = value.value("destination_database_id", "");
+            job.destination_table = value.value("destination_table", "");
+            job.destination_time_column = value.value("destination_time_column", "");
+            job.destination_item_column = value.value("destination_item_column", "");
+            job.lookback_days = std::max(1, std::min(3650, value.value("lookback_days", 7)));
+            for (const auto& tag : value.value("tags", json::array())) {
+                if (tag.is_string() && !trim(tag.get<std::string>()).empty()) job.tags.push_back(trim(tag.get<std::string>()));
+            }
+            for (const auto& mapping : value.value("mappings", json::array())) {
+                if (!mapping.is_object()) continue;
+                SyncMapping m{trim(mapping.value("source", "")), trim(mapping.value("destination", ""))};
+                if (!m.source.empty() && !m.destination.empty()) job.mappings.push_back(std::move(m));
+            }
+            if (job.id.empty()) continue;
+            bool supported = false;
+            long long next_run = next_from_calendar(job.on_calendar, now_ms(), supported);
+            next_sync_jobs[job.id] = job;
+            SyncStatus st;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                auto old = sync_statuses_.find(job.id);
+                if (old != sync_statuses_.end()) st = old->second;
+            }
+            st.id = job.id;
+            st.enabled = job.enabled;
+            st.supported_schedule = supported;
+            st.next_run_ms = (job.enabled && supported) ? next_run : 0;
+            if (job.enabled && !supported) st.last_error = "Unsupported schedule: " + job.on_calendar;
+            next_sync_status[job.id] = st;
+        }
+
         {
             std::lock_guard<std::mutex> lock(mu_);
             svc_ = next_svc;
@@ -1140,6 +1258,8 @@ public:
             statuses_ = std::move(next_status);
             data_checks_ = std::move(next_checks);
             data_check_statuses_ = std::move(next_check_status);
+            sync_jobs_ = std::move(next_sync_jobs);
+            sync_statuses_ = std::move(next_sync_status);
             reconcile_monitor_statuses_locked();
             last_reload_ms_ = now_ms();
         }
@@ -1166,9 +1286,11 @@ public:
             {"databases", dbs_.size()},
             {"jobs", jobs_.size()},
             {"data_checks", data_checks_.size()},
+            {"sync_jobs", sync_jobs_.size()},
             {"statuses", statuses_json_locked()},
             {"database_statuses", database_statuses_json_locked()},
-            {"data_check_statuses", data_check_statuses_json_locked()}
+            {"data_check_statuses", data_check_statuses_json_locked()},
+            {"sync_statuses", sync_statuses_json_locked()}
         };
     }
 
@@ -1755,6 +1877,14 @@ data_entry_failure:
         return data_check_result_json(id, result);
     }
 
+    bool start_sync_job(const std::string& id, std::string& error) {
+        return run_sync_async(id, error);
+    }
+
+    json dry_run_sync_job(const std::string& id) {
+        return test_sync(id);
+    }
+
 private:
     void reconcile_monitor_statuses_locked() {
         std::map<std::string, DbMonitorStatus> next;
@@ -1847,10 +1977,21 @@ private:
                     {"last_error", st.last_error}
                 });
             }
+            json sync_statuses = json::array();
+            for (const auto& kv : sync_statuses_) {
+                const SyncStatus& st = kv.second;
+                sync_statuses.push_back({{"id", st.id}, {"enabled", st.enabled},
+                    {"supported_schedule", st.supported_schedule}, {"last_run_ms", st.last_run_ms},
+                    {"runs_total", st.runs_total}, {"failures_total", st.failures_total},
+                    {"last_examined", st.last_examined}, {"last_selected", st.last_selected},
+                    {"last_inserted", st.last_inserted}, {"last_skipped", st.last_skipped},
+                    {"last_failed", st.last_failed}, {"last_error", st.last_error}});
+            }
             root = {
                 {"version", 1},
                 {"updated_ms", now_ms()},
-                {"statuses", statuses}
+                {"statuses", statuses},
+                {"sync_statuses", sync_statuses}
             };
         }
 
@@ -1930,6 +2071,21 @@ private:
         return arr;
     }
 
+    json sync_statuses_json_locked() const {
+        json arr = json::array();
+        for (const auto& kv : sync_statuses_) {
+            const auto& st = kv.second;
+            arr.push_back({{"id", st.id}, {"enabled", st.enabled}, {"running", st.running},
+                {"supported_schedule", st.supported_schedule}, {"last_run_ms", st.last_run_ms},
+                {"next_run_ms", st.next_run_ms}, {"runs_total", st.runs_total},
+                {"failures_total", st.failures_total}, {"last_examined", st.last_examined},
+                {"last_selected", st.last_selected}, {"last_inserted", st.last_inserted},
+                {"last_skipped", st.last_skipped}, {"last_failed", st.last_failed},
+                {"last_error", st.last_error}});
+        }
+        return arr;
+    }
+
     json data_check_result_json(const std::string& id, const DataCheckResult& result) const {
         const bool alarm = !result.ok || result.below_low || result.above_high;
         std::string error = result.error;
@@ -1949,6 +2105,233 @@ private:
             {"has_numeric_value", result.has_numeric_value},
             {"error", error}
         };
+    }
+
+    static bool sync_identifier_valid(const std::string& value) {
+        static const std::regex pattern("^[A-Za-z_][A-Za-z0-9_]*$");
+        return std::regex_match(value, pattern);
+    }
+
+    static std::string sync_quote_identifier(const std::string& value) {
+        return "`" + value + "`";
+    }
+
+    static std::string sync_escape(MYSQL* conn, const std::string& value) {
+        std::string output(value.size() * 2 + 1, '\0');
+        unsigned long length = mysql_real_escape_string(conn, output.data(), value.data(), value.size());
+        output.resize(length);
+        return output;
+    }
+
+    static MYSQL* sync_connect(const DbConfig& db, std::string& error) {
+        MYSQL* conn = mysql_init(nullptr);
+        if (!conn) { error = "mysql_init failed"; return nullptr; }
+        unsigned int timeout = static_cast<unsigned int>(std::max(1, db.monitor_timeout_sec));
+        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+        mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
+        if (!mysql_real_connect(conn, db.mysql_host.c_str(), db.mysql_user.c_str(), db.mysql_password.c_str(),
+                                db.mysql_database.c_str(), db.mysql_port, nullptr, 0)) {
+            error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
+            mysql_close(conn);
+            return nullptr;
+        }
+        return conn;
+    }
+
+    SyncResult run_sync_job(const SyncJob& job, const DbConfig& source_db,
+                            const DbConfig& destination_db, bool dry_run) {
+        SyncResult out;
+        out.dry_run = dry_run;
+        if (source_db.type != "mysql" || destination_db.type != "mysql") {
+            out.error = "Database Sync currently supports MySQL-to-MySQL jobs only";
+            return out;
+        }
+        std::vector<std::string> identifiers = {
+            job.source_table, job.source_time_column, job.source_item_column,
+            job.destination_table, job.destination_time_column, job.destination_item_column
+        };
+        for (const auto& mapping : job.mappings) {
+            identifiers.push_back(mapping.source);
+            identifiers.push_back(mapping.destination);
+        }
+        if (job.tags.empty() || job.mappings.empty()) {
+            out.error = "At least one tag and one value mapping are required";
+            return out;
+        }
+        for (const auto& identifier : identifiers) {
+            if (!sync_identifier_valid(identifier)) {
+                out.error = "Invalid or missing table/column identifier: " + identifier;
+                return out;
+            }
+        }
+
+        std::string error;
+        MYSQL* source = sync_connect(source_db, error);
+        if (!source) { out.error = "Source " + error; return out; }
+        MYSQL* destination = sync_connect(destination_db, error);
+        if (!destination) { mysql_close(source); out.error = "Destination " + error; return out; }
+
+        const std::string lock_name = "opcbridge_sync_" + job.id.substr(0, 45);
+        const std::string lock_sql = "SELECT GET_LOCK('" + sync_escape(destination, lock_name) + "',0)";
+        if (mysql_query(destination, lock_sql.c_str()) != 0) {
+            out.error = std::string("Could not request destination lock: ") + mysql_error(destination);
+            mysql_close(source); mysql_close(destination); return out;
+        }
+        MYSQL_RES* lock_result = mysql_store_result(destination);
+        MYSQL_ROW lock_row = lock_result ? mysql_fetch_row(lock_result) : nullptr;
+        const bool locked = lock_row && lock_row[0] && std::string(lock_row[0]) == "1";
+        if (lock_result) mysql_free_result(lock_result);
+        if (!locked) {
+            out.error = "Another node is already running this sync job";
+            mysql_close(source); mysql_close(destination); return out;
+        }
+
+        auto finish = [&](bool success, const std::string& message = "") {
+            const std::string release_sql = "SELECT RELEASE_LOCK('" + sync_escape(destination, lock_name) + "')";
+            mysql_query(destination, release_sql.c_str());
+            mysql_close(source);
+            mysql_close(destination);
+            out.ok = success;
+            out.error = message;
+            return out;
+        };
+
+        std::ostringstream sql;
+        sql << "SELECT DATE_FORMAT(" << sync_quote_identifier(job.source_time_column)
+            << ", '%Y-%m-%d %H:00:00'), " << sync_quote_identifier(job.source_time_column)
+            << ", " << sync_quote_identifier(job.source_item_column);
+        for (const auto& mapping : job.mappings) sql << ", " << sync_quote_identifier(mapping.source);
+        sql << " FROM " << sync_quote_identifier(job.source_table)
+            << " WHERE " << sync_quote_identifier(job.source_time_column) << " >= NOW() - INTERVAL "
+            << job.lookback_days << " DAY AND " << sync_quote_identifier(job.source_item_column) << " IN (";
+        for (size_t i = 0; i < job.tags.size(); ++i) {
+            if (i) sql << ',';
+            sql << "'" << sync_escape(source, job.tags[i]) << "'";
+        }
+        sql << ") ORDER BY " << sync_quote_identifier(job.source_item_column) << ", "
+            << sync_quote_identifier(job.source_time_column);
+        if (mysql_query(source, sql.str().c_str()) != 0) return finish(false, std::string("Source query failed: ") + mysql_error(source));
+        MYSQL_RES* rows = mysql_store_result(source);
+        if (!rows) return finish(false, std::string("Source result failed: ") + mysql_error(source));
+
+        struct Candidate { std::string bucket; std::vector<std::pair<bool, std::string>> values; };
+        std::map<std::string, Candidate> candidates;
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(rows)) != nullptr) {
+            ++out.examined;
+            unsigned long* lengths = mysql_fetch_lengths(rows);
+            if (!row[0] || !row[1] || !row[2]) continue;
+            const std::string bucket(row[0], lengths[0]);
+            const std::string item(row[2], lengths[2]);
+            Candidate candidate;
+            candidate.bucket = bucket;
+            for (unsigned int i = 1; i < 3 + job.mappings.size(); ++i) {
+                candidate.values.push_back({row[i] == nullptr, row[i] ? std::string(row[i], lengths[i]) : std::string()});
+            }
+            candidates[item + TAG_KEY_SEP + bucket] = std::move(candidate);
+        }
+        mysql_free_result(rows);
+        out.selected = static_cast<int>(candidates.size());
+        if (!dry_run && mysql_query(destination, "START TRANSACTION") != 0) {
+            return finish(false, std::string("Could not start destination transaction: ") + mysql_error(destination));
+        }
+
+        for (const auto& entry : candidates) {
+            const size_t split = entry.first.find(TAG_KEY_SEP);
+            const std::string item = entry.first.substr(0, split);
+            const Candidate& candidate = entry.second;
+            std::string exists_sql = "SELECT 1 FROM " + sync_quote_identifier(job.destination_table) +
+                " WHERE " + sync_quote_identifier(job.destination_item_column) + "='" + sync_escape(destination, item) +
+                "' AND " + sync_quote_identifier(job.destination_time_column) + ">='" + sync_escape(destination, candidate.bucket) +
+                "' AND " + sync_quote_identifier(job.destination_time_column) + "<DATE_ADD('" +
+                sync_escape(destination, candidate.bucket) + "', INTERVAL 1 HOUR) LIMIT 1";
+            if (mysql_query(destination, exists_sql.c_str()) != 0) {
+                ++out.failed;
+                if (out.error.empty()) out.error = std::string("Destination duplicate check failed: ") + mysql_error(destination);
+                continue;
+            }
+            MYSQL_RES* exists_result = mysql_store_result(destination);
+            const bool exists = exists_result && mysql_num_rows(exists_result) > 0;
+            if (exists_result) mysql_free_result(exists_result);
+            if (exists) { ++out.skipped; continue; }
+            if (dry_run) { ++out.inserted; continue; }
+
+            std::ostringstream insert;
+            insert << "INSERT INTO " << sync_quote_identifier(job.destination_table) << " ("
+                   << sync_quote_identifier(job.destination_time_column) << ','
+                   << sync_quote_identifier(job.destination_item_column);
+            for (const auto& mapping : job.mappings) insert << ',' << sync_quote_identifier(mapping.destination);
+            insert << ") VALUES (";
+            for (size_t i = 0; i < candidate.values.size(); ++i) {
+                if (i) insert << ',';
+                if (candidate.values[i].first) insert << "NULL";
+                else insert << "'" << sync_escape(destination, candidate.values[i].second) << "'";
+            }
+            insert << ')';
+            if (mysql_query(destination, insert.str().c_str()) != 0) {
+                ++out.failed;
+                if (out.error.empty()) out.error = std::string("Destination insert failed: ") + mysql_error(destination);
+            } else {
+                ++out.inserted;
+            }
+        }
+        if (!dry_run) {
+            if (out.failed > 0) {
+                mysql_query(destination, "ROLLBACK");
+                out.inserted = 0;
+            }
+            else if (mysql_query(destination, "COMMIT") != 0) return finish(false, std::string("Commit failed: ") + mysql_error(destination));
+        }
+        if (out.failed > 0) return finish(false, out.error.empty() ? "One or more rows failed" : out.error);
+        return finish(true);
+    }
+
+    bool run_sync_async(const std::string& id, std::string& error) {
+        SyncJob job;
+        DbConfig source;
+        DbConfig destination;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto jit = sync_jobs_.find(id);
+            if (jit == sync_jobs_.end()) { error = "Sync job not found: " + id; return false; }
+            auto sit = dbs_.find(jit->second.source_database_id);
+            auto dit = dbs_.find(jit->second.destination_database_id);
+            if (sit == dbs_.end()) { error = "Source database not found"; return false; }
+            if (dit == dbs_.end()) { error = "Destination database not found"; return false; }
+            auto& status = sync_statuses_[id];
+            if (status.running) { error = "Sync job is already running: " + id; return false; }
+            status.running = true;
+            status.last_error.clear();
+            job = jit->second;
+            source = sit->second;
+            destination = dit->second;
+        }
+        std::thread([this, job, source, destination]() {
+            SyncResult result = run_sync_job(job, source, destination, false);
+            finish_sync(job.id, result);
+            save_runtime_state();
+        }).detach();
+        return true;
+    }
+
+    json test_sync(const std::string& id) {
+        SyncJob job;
+        DbConfig source;
+        DbConfig destination;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto jit = sync_jobs_.find(id);
+            if (jit == sync_jobs_.end()) return {{"ok", false}, {"error", "Sync job not found: " + id}};
+            auto sit = dbs_.find(jit->second.source_database_id);
+            auto dit = dbs_.find(jit->second.destination_database_id);
+            if (sit == dbs_.end() || dit == dbs_.end()) return {{"ok", false}, {"error", "Source or destination database not found"}};
+            job = jit->second; source = sit->second; destination = dit->second;
+        }
+        SyncResult result = run_sync_job(job, source, destination, true);
+        return {{"ok", result.ok}, {"id", id}, {"dry_run", true}, {"examined", result.examined},
+                {"selected", result.selected}, {"would_insert", result.inserted}, {"skipped", result.skipped},
+                {"failed", result.failed}, {"error", result.error}};
     }
 
     RunResult run_job(const Job& job, const DbConfig& db, const ServiceConfig& svc) {
@@ -2121,6 +2504,30 @@ private:
         save_runtime_state();
     }
 
+    void finish_sync(const std::string& id, const SyncResult& result) {
+        std::lock_guard<std::mutex> lock(mu_);
+        auto& st = sync_statuses_[id];
+        st.id = id;
+        st.running = false;
+        st.last_run_ms = now_ms();
+        st.runs_total++;
+        st.last_examined = result.examined;
+        st.last_selected = result.selected;
+        st.last_inserted = result.inserted;
+        st.last_skipped = result.skipped;
+        st.last_failed = result.failed;
+        if (!result.ok) { st.failures_total++; st.last_error = result.error; }
+        else st.last_error.clear();
+        auto it = sync_jobs_.find(id);
+        if (it != sync_jobs_.end()) {
+            bool supported = false;
+            st.next_run_ms = next_from_calendar(it->second.on_calendar, st.last_run_ms, supported);
+            st.enabled = it->second.enabled;
+            st.supported_schedule = supported;
+            if (!st.enabled || !supported) st.next_run_ms = 0;
+        }
+    }
+
     void finish_data_check(const std::string& id, const DataCheckResult& result) {
         std::lock_guard<std::mutex> lock(mu_);
         auto& st = data_check_statuses_[id];
@@ -2213,6 +2620,7 @@ private:
             std::vector<std::string> due;
             std::vector<std::string> monitor_due;
             std::vector<std::string> data_check_due;
+            std::vector<std::string> sync_due;
             long long n = now_ms();
             {
                 std::lock_guard<std::mutex> lock(mu_);
@@ -2249,6 +2657,18 @@ private:
                     }
                     if (st.supported_schedule && st.next_run_ms > 0 && st.next_run_ms <= n) data_check_due.push_back(kv.first);
                 }
+                for (auto& kv : sync_jobs_) {
+                    auto& st = sync_statuses_[kv.first];
+                    st.id = kv.first;
+                    st.enabled = kv.second.enabled;
+                    if (!kv.second.enabled || st.running) continue;
+                    if (st.next_run_ms <= 0) {
+                        bool supported = false;
+                        st.next_run_ms = next_from_calendar(kv.second.on_calendar, n, supported);
+                        st.supported_schedule = supported;
+                    }
+                    if (st.supported_schedule && st.next_run_ms > 0 && st.next_run_ms <= n) sync_due.push_back(kv.first);
+                }
             }
 
             for (const auto& id : due) {
@@ -2262,6 +2682,10 @@ private:
                 std::string ignored;
                 run_data_check_async(id, ignored);
             }
+            for (const auto& id : sync_due) {
+                std::string ignored;
+                run_sync_async(id, ignored);
+            }
 
             std::unique_lock<std::mutex> lock(wait_mu_);
             cv_.wait_for(lock, std::chrono::milliseconds(500), [this]() { return stop_.load(); });
@@ -2272,6 +2696,7 @@ private:
     std::string databases_path_;
     std::string reports_path_;
     std::string data_checks_path_;
+    std::string sync_jobs_path_;
     std::string state_path_;
 
     mutable std::mutex mu_;
@@ -2281,6 +2706,8 @@ private:
     std::map<std::string, JobStatus> statuses_;
     std::map<std::string, DataCheck> data_checks_;
     std::map<std::string, DataCheckStatus> data_check_statuses_;
+    std::map<std::string, SyncJob> sync_jobs_;
+    std::map<std::string, SyncStatus> sync_statuses_;
     std::map<std::string, DbMonitorStatus> db_statuses_;
     long long last_reload_ms_ = 0;
     long long last_state_load_ms_ = 0;
@@ -2292,7 +2719,7 @@ private:
 };
 
 static void print_usage(const char* argv0) {
-    std::cout << "Usage: " << argv0 << " [--service] [--config path] [--databases path] [--reports path] [--data-checks path] [--state path] [--version]\n";
+    std::cout << "Usage: " << argv0 << " [--service] [--config path] [--databases path] [--reports path] [--data-checks path] [--sync-jobs path] [--state path] [--version]\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -2300,6 +2727,7 @@ int main(int argc, char* argv[]) {
     std::string databases_path = "/etc/opcbridge/logger/databases.json";
     std::string reports_path = "/etc/opcbridge/logger/reports.json";
     std::string data_checks_path = "/etc/opcbridge/logger/data_checks.json";
+    std::string sync_jobs_path = "/etc/opcbridge/logger/database_sync.json";
     std::string state_path = "/var/lib/opcbridge/logger/runtime_state.json";
 
     for (int i = 1; i < argc; ++i) {
@@ -2314,6 +2742,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "--databases" && i + 1 < argc) databases_path = argv[++i];
         else if (arg == "--reports" && i + 1 < argc) reports_path = argv[++i];
         else if (arg == "--data-checks" && i + 1 < argc) data_checks_path = argv[++i];
+        else if (arg == "--sync-jobs" && i + 1 < argc) sync_jobs_path = argv[++i];
         else if (arg == "--state" && i + 1 < argc) state_path = argv[++i];
         else if (arg == "--service") {}
         else if (arg == "--help" || arg == "-h") {
@@ -2328,7 +2757,7 @@ int main(int argc, char* argv[]) {
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    LoggerService service(config_path, databases_path, reports_path, data_checks_path, state_path);
+    LoggerService service(config_path, databases_path, reports_path, data_checks_path, sync_jobs_path, state_path);
     std::string error;
     service.load_runtime_state();
     service.reload(error);
@@ -2349,6 +2778,10 @@ int main(int argc, char* argv[]) {
     server.Get("/data-checks/status", [&service](const httplib::Request&, httplib::Response& res) {
         json h = service.health_json();
         res.set_content(json{{"ok", true}, {"data_checks", h["data_check_statuses"]}}.dump(2), "application/json");
+    });
+    server.Get("/sync-jobs/status", [&service](const httplib::Request&, httplib::Response& res) {
+        json h = service.health_json();
+        res.set_content(json{{"ok", true}, {"sync_jobs", h["sync_statuses"]}}.dump(2), "application/json");
     });
     server.Post("/reload", [&service](const httplib::Request&, httplib::Response& res) {
         std::string reload_error;
@@ -2441,6 +2874,18 @@ int main(int argc, char* argv[]) {
         std::string id = req.matches[1];
         json result = service.test_data_check(id);
         res.status = result.value("query_ok", false) ? 200 : 400;
+        res.set_content(result.dump(2), "application/json");
+    });
+    server.Post(R"(/sync-jobs/([^/]+)/run)", [&service](const httplib::Request& req, httplib::Response& res) {
+        std::string id = req.matches[1];
+        std::string run_error;
+        bool ok = service.start_sync_job(id, run_error);
+        res.status = ok ? 202 : 400;
+        res.set_content(json{{"ok", ok}, {"id", id}, {"error", run_error}}.dump(2), "application/json");
+    });
+    server.Post(R"(/sync-jobs/([^/]+)/test)", [&service](const httplib::Request& req, httplib::Response& res) {
+        json result = service.dry_run_sync_job(req.matches[1]);
+        res.status = result.value("ok", false) ? 200 : 400;
         res.set_content(result.dump(2), "application/json");
     });
 

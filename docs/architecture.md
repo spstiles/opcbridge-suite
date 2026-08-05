@@ -83,7 +83,7 @@ Target feature buckets:
 - Alarms & Events (rule editing, workflow, history)
 - HMI configuration (screen deployment, defaults, operator settings)
 - Services & system configuration (systemd, ports, updates, backups)
-- Data Logger configuration (databases, scheduled log jobs, data checks)
+- Data Logger configuration (databases, scheduled log jobs, one-way database sync jobs, data checks)
 - Published report generation through `opcbridge-report` (initially monthly historian XLSX/CSV exports)
 
 ## Design Rules (to prevent overlap)

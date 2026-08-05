@@ -1204,6 +1204,7 @@ install_logger() {
   chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT/logger" 2>/dev/null || true
   chmod 750 "$DATA_ROOT/logger" 2>/dev/null || true
   install -m 0644 "$ROOT_DIR/opcbridge-logger/config.json.example" "$CONFIG_ROOT/logger/config.json.example" 2>/dev/null || true
+  install -m 0644 "$ROOT_DIR/opcbridge-logger/database_sync.json.example" "$CONFIG_ROOT/logger/database_sync.json.example" 2>/dev/null || true
   if [[ ! -f "$CONFIG_ROOT/logger/config.json" ]]; then
     umask 027
     cat >"$CONFIG_ROOT/logger/config.json" <<'JSON'
@@ -1245,6 +1246,16 @@ JSON
 JSON
     chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/logger/data_checks.json" 2>/dev/null || true
     chmod 660 "$CONFIG_ROOT/logger/data_checks.json" 2>/dev/null || true
+  fi
+  if [[ ! -f "$CONFIG_ROOT/logger/database_sync.json" ]]; then
+    umask 027
+    cat >"$CONFIG_ROOT/logger/database_sync.json" <<'JSON'
+{
+  "sync_jobs": []
+}
+JSON
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/logger/database_sync.json" 2>/dev/null || true
+    chmod 660 "$CONFIG_ROOT/logger/database_sync.json" 2>/dev/null || true
   fi
 }
 
@@ -1602,7 +1613,7 @@ Wants=opcbridge.service
 Type=simple
 EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${PREFIX}
-ExecStart=${PREFIX}/bin/opcbridge-logger --service --config ${CONFIG_ROOT}/logger/config.json --databases ${CONFIG_ROOT}/logger/databases.json --reports ${CONFIG_ROOT}/logger/reports.json --data-checks ${CONFIG_ROOT}/logger/data_checks.json --state ${DATA_ROOT}/logger/runtime_state.json
+ExecStart=${PREFIX}/bin/opcbridge-logger --service --config ${CONFIG_ROOT}/logger/config.json --databases ${CONFIG_ROOT}/logger/databases.json --reports ${CONFIG_ROOT}/logger/reports.json --data-checks ${CONFIG_ROOT}/logger/data_checks.json --sync-jobs ${CONFIG_ROOT}/logger/database_sync.json --state ${DATA_ROOT}/logger/runtime_state.json
 User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 Restart=always

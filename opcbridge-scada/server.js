@@ -170,6 +170,11 @@ const REPORTER_DATA_CHECKS_PATH = String(
   preferLoggerPath('/etc/opcbridge/logger/data_checks.json', '/etc/opcbridge/reporter/data_checks.json')
 ).trim();
 
+const REPORTER_SYNC_JOBS_PATH = String(
+  process.env.OPCBRIDGE_LOGGER_SYNC_JOBS ||
+  preferLoggerPath('/etc/opcbridge/logger/database_sync.json', '/etc/opcbridge/reporter/database_sync.json')
+).trim();
+
 const REPORTER_REPORTS_DIR = String(
   process.env.OPCBRIDGE_LOGGER_REPORTS_DIR ||
   process.env.OPCBRIDGE_REPORTER_REPORTS_DIR ||
@@ -1551,6 +1556,12 @@ function readReporterDataChecksRaw() {
   const root = readJsonFileOrNull(REPORTER_DATA_CHECKS_PATH) || { data_checks: [] };
   const raw = Array.isArray(root?.data_checks) ? root.data_checks : [];
   return raw.filter((c) => c && typeof c === 'object' && !Array.isArray(c));
+}
+
+function readReporterSyncJobsRaw() {
+  const root = readJsonFileOrNull(REPORTER_SYNC_JOBS_PATH) || { sync_jobs: [] };
+  const raw = Array.isArray(root?.sync_jobs) ? root.sync_jobs : [];
+  return raw.filter((job) => job && typeof job === 'object' && !Array.isArray(job));
 }
 
 function parseCmdTokens(cmdline) {
@@ -3450,6 +3461,7 @@ const server = http.createServer(async (req, res) => {
 
         let reports_updated = 0;
         let data_checks_updated = 0;
+        let sync_jobs_updated = 0;
         if (originalId && originalId !== id && idx >= 0) {
           const reports = readReporterReportsRaw().map((r) => ({ ...r }));
           for (const r of reports) {
@@ -3468,6 +3480,13 @@ const server = http.createServer(async (req, res) => {
             }
           }
           if (data_checks_updated > 0) writeJsonFile(REPORTER_DATA_CHECKS_PATH, { data_checks: checks });
+
+          const syncJobs = readReporterSyncJobsRaw().map((job) => ({ ...job }));
+          for (const job of syncJobs) {
+            if (String(job.source_database_id || '').trim() === originalId) { job.source_database_id = id; sync_jobs_updated += 1; }
+            if (String(job.destination_database_id || '').trim() === originalId) { job.destination_database_id = id; sync_jobs_updated += 1; }
+          }
+          if (sync_jobs_updated > 0) writeJsonFile(REPORTER_SYNC_JOBS_PATH, { sync_jobs: syncJobs });
         }
 
         const safe = { ...next };
@@ -3483,7 +3502,7 @@ const server = http.createServer(async (req, res) => {
         safe.password_set = Boolean(pw);
         safe.mysql_password_set = safe.password_set; // backwards-compatible UI field
         const reload = await reporterApiRequest('POST', '/reload');
-        sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, database: safe, renamed_from: originalId && originalId !== id ? originalId : '', reports_updated, data_checks_updated, reporter_reload: reload });
+        sendJson(res, 200, { ok: true, path: REPORTER_DATABASES_PATH, database: safe, renamed_from: originalId && originalId !== id ? originalId : '', reports_updated, data_checks_updated, sync_jobs_updated, reporter_reload: reload });
       } catch (err) {
         sendJson(res, 400, { ok: false, error: String(err.message || err) });
       }
@@ -3721,6 +3740,93 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
+    return;
+  }
+
+  // Read/write one-way MySQL database synchronization jobs.
+  if (url.pathname === '/api/reporter/sync-jobs') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method === 'GET') {
+      sendJson(res, 200, { ok: true, path: REPORTER_SYNC_JOBS_PATH, sync_jobs: readReporterSyncJobsRaw().map((job) => ({ ...job })) });
+      return;
+    }
+    if (req.method === 'POST') {
+      try {
+        const parsed = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+        const incoming = parsed?.sync_job || parsed;
+        const id = sanitizeId(incoming?.id);
+        const originalId = sanitizeId(parsed?.original_id || '');
+        if (!id) throw new Error('Sync job id is required.');
+        const required = ['source_database_id', 'source_table', 'source_time_column', 'source_item_column',
+          'destination_database_id', 'destination_table', 'destination_time_column', 'destination_item_column'];
+        required.forEach((field) => { if (!String(incoming?.[field] || '').trim()) throw new Error(`${field} is required.`); });
+        const tags = Array.from(new Set((Array.isArray(incoming.tags) ? incoming.tags : []).map((v) => String(v || '').trim()).filter(Boolean)));
+        const mappings = (Array.isArray(incoming.mappings) ? incoming.mappings : [])
+          .map((m) => ({ source: String(m?.source || '').trim(), destination: String(m?.destination || '').trim() }))
+          .filter((m) => m.source && m.destination);
+        if (!tags.length) throw new Error('At least one tag is required.');
+        if (!mappings.length) throw new Error('At least one value mapping is required.');
+        const list = readReporterSyncJobsRaw().map((job) => ({ ...job }));
+        const lookup = originalId || id;
+        const index = list.findIndex((job) => sanitizeId(job?.id) === lookup);
+        if (list.some((job, i) => i !== index && sanitizeId(job?.id) === id)) {
+          sendJson(res, 409, { ok: false, error: `Sync job id '${id}' already exists.` }); return;
+        }
+        const next = { ...(index >= 0 ? list[index] : {}), ...incoming, id, tags, mappings };
+        next.name = String(next.name || id).trim();
+        next.enabled = Boolean(next.enabled);
+        next.lookback_days = Math.max(1, Math.min(3650, Math.trunc(Number(next.lookback_days || 7) || 7)));
+        next.schedule = (next.schedule && typeof next.schedule === 'object' && !Array.isArray(next.schedule)) ? next.schedule : {};
+        next.schedule.on_calendar = normalizeOnCalendar(next.schedule.on_calendar || '');
+        if (!next.schedule.on_calendar) throw new Error('Schedule is required.');
+        if (index >= 0) list[index] = next; else list.push(next);
+        writeJsonFile(REPORTER_SYNC_JOBS_PATH, { sync_jobs: list });
+        const reload = await reporterApiRequest('POST', '/reload');
+        sendJson(res, 200, { ok: true, sync_job: next, reporter_reload: reload });
+      } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return;
+  }
+
+  if (url.pathname === '/api/reporter/sync-jobs/delete') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    try {
+      const parsed = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) throw new Error('id is required.');
+      const before = readReporterSyncJobsRaw();
+      const after = before.filter((job) => sanitizeId(job?.id) !== id);
+      writeJsonFile(REPORTER_SYNC_JOBS_PATH, { sync_jobs: after });
+      const reload = await reporterApiRequest('POST', '/reload');
+      sendJson(res, 200, { ok: true, id, deleted: after.length !== before.length, reporter_reload: reload });
+    } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/databases/schema') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    const databaseId = sanitizeId(url.searchParams.get('database'));
+    const database = readReporterDatabasesRaw().find((candidate) => sanitizeId(candidate?.id) === databaseId) || {};
+    const result = await reporterApiRequest('GET', `/databases/${encodeURIComponent(databaseId)}/schema`, null, reporterDatabaseDiscoveryTimeoutMs(database));
+    sendJson(res, result.ok ? 200 : (result.status || 502), result.json || { ok: false, error: result.error || 'Schema discovery failed.' });
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/databases/distinct') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const databaseId = sanitizeId(body.database_id);
+      const database = readReporterDatabasesRaw().find((candidate) => sanitizeId(candidate?.id) === databaseId) || {};
+      const result = await reporterApiRequest('POST', `/databases/${encodeURIComponent(databaseId)}/distinct`, {
+        table: String(body.table || ''), column: String(body.column || ''), limit: 10000
+      }, reporterDatabaseDiscoveryTimeoutMs(database));
+      sendJson(res, result.ok ? 200 : (result.status || 502), result.json || { ok: false, error: result.error || 'Value discovery failed.' });
+    } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
     return;
   }
 
@@ -4143,6 +4249,23 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/sync-jobs/run' || url.pathname === '/api/reporter/sync-jobs/test') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    try {
+      const parsed = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(parsed?.id);
+      if (!id) throw new Error('id is required.');
+      const dryRun = url.pathname.endsWith('/test');
+      const upstream = await reporterApiRequest('POST', `/sync-jobs/${encodeURIComponent(id)}/${dryRun ? 'test' : 'run'}`, null, dryRun ? 300000 : 15000);
+      sendJson(res, upstream.ok ? (dryRun ? 200 : 202) : 502, {
+        ok: upstream.ok, id, dry_run: dryRun, reporter_result: upstream,
+        error: upstream.error || upstream.json?.error || null
+      });
+    } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
     return;
   }
 
