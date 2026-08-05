@@ -114,8 +114,10 @@ a truncated raw report describe only the returned rows.
 
 Report columns may also be calculated from other columns after source samples
 have been placed into their report-time buckets. Formula references use stable
-column IDs and support arithmetic, comparisons, `and`, `or`, `not`, `if()`,
-`coalesce()`, `min()`, `max()`, `avg()`, `abs()`, `round()`, and `null`. Source columns
+column IDs and support numeric and quoted-text literals, arithmetic, comparisons,
+`and`, `or`, `not`, `if()`, `coalesce()`, `min()`, `max()`, `avg()`, `abs()`,
+`round()`, and `null`. Single- or double-quoted text can be returned conditionally,
+for example `if([effluent_ph] <= 6.0, "No Limit", [numeric_limit])`. Source columns
 needed only by a formula may be hidden from previews and downloaded files while
 remaining available to the calculation.
 

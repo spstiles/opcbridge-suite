@@ -7847,12 +7847,12 @@ function openReportFormulaModal(index) {
   state.reportFormulaPlacedCellIndex = -1;
   if (els.reportFormulaModalTitle) els.reportFormulaModalTitle.textContent = 'Calculated Column Formula';
   if (els.reportFormulaHelp) {
-    els.reportFormulaHelp.textContent = 'Supported: +, −, ×, ÷, comparisons, and/or/not, if(), coalesce(), min(), max(), avg(), abs(), round(), and null.';
+    els.reportFormulaHelp.textContent = 'Supported: numbers, quoted text, +, −, ×, ÷, comparisons, and/or/not, if(), coalesce(), min(), max(), avg(), abs(), round(), and null.';
   }
   if (els.reportFormulaPrecisionWrap) els.reportFormulaPrecisionWrap.style.display = 'none';
   if (els.reportFormulaExpression) {
     els.reportFormulaExpression.value = String(column.expression || '');
-    els.reportFormulaExpression.placeholder = 'Example: if([pump_flow] > 3, [pump_temperature], null)';
+    els.reportFormulaExpression.placeholder = 'Example: if([effluent_ph] <= 6.0, "No Limit", [numeric_limit])';
   }
   if (els.reportFormulaStatus) els.reportFormulaStatus.textContent = '';
   if (els.reportFormulaColumns) {

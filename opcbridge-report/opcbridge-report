@@ -575,6 +575,32 @@ final class ReportExpressionParser
                 $offset += strlen($match[0]);
                 continue;
             }
+            if ($expression[$offset] === '"' || $expression[$offset] === "'") {
+                $quote = $expression[$offset++];
+                $value = '';
+                $closed = false;
+                while ($offset < $length) {
+                    $character = $expression[$offset++];
+                    if ($character === $quote) {
+                        $closed = true;
+                        break;
+                    }
+                    if ($character === '\\') {
+                        if ($offset >= $length) throw new RuntimeException('Unterminated escape sequence in formula string');
+                        $escaped = $expression[$offset++];
+                        $value .= match ($escaped) {
+                            'n' => "\n", 'r' => "\r", 't' => "\t",
+                            '\\' => '\\', '"' => '"', "'" => "'",
+                            default => $escaped,
+                        };
+                    } else {
+                        $value .= $character;
+                    }
+                }
+                if (!$closed) throw new RuntimeException('Unterminated string literal in formula');
+                $tokens[] = ['type' => 'string', 'value' => $value];
+                continue;
+            }
             if (preg_match('/\G\[(?<ref>[A-Za-z0-9_.-]+)\]/', $expression, $match, 0, $offset)) {
                 $tokens[] = ['type' => 'ref', 'value' => $match['ref']];
             } elseif (preg_match('/\G(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/', $expression, $match, 0, $offset)) {
@@ -629,6 +655,7 @@ final class ReportExpressionParser
     {
         $token = $this->take();
         if ($token['type'] === 'number') return ['type' => 'literal', 'value' => $token['value']];
+        if ($token['type'] === 'string') return ['type' => 'literal', 'value' => $token['value']];
         if ($token['type'] === 'ref') return ['type' => 'reference', 'id' => $token['value']];
         if ($token['value'] === 'null') return ['type' => 'literal', 'value' => null];
         if ($token['value'] === '(') {
@@ -644,7 +671,7 @@ final class ReportExpressionParser
             }
             return ['type' => 'call', 'name' => $token['value'], 'arguments' => $arguments];
         }
-        throw new RuntimeException('Expected a number, column reference, function, or parenthesized expression');
+        throw new RuntimeException('Expected a number, string, column reference, function, or parenthesized expression');
     }
 }
 
