@@ -25698,6 +25698,12 @@ function wireLoginModalUi() {
       if (username) payload.username = username;
       await apiPostJson('/api/opcbridge/auth/login', payload);
       await refreshUserAuthLine();
+      if (canAccessReportsTab()) {
+        await Promise.allSettled([
+          refreshPublishedReports(true),
+          refreshReportBuilder()
+        ]);
+      }
       closeLoginModal();
     } catch (err) {
       if (els.loginStatus) els.loginStatus.textContent = `Login failed: ${err.message}`;
