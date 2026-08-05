@@ -6328,7 +6328,8 @@ async function openLoggerSyncModal(id = '') {
   els.loggerSyncName.value = String(job.name || '');
   els.loggerSyncEnabled.checked = Boolean(job.enabled); els.loggerSyncSchedule.value = String(job.schedule?.on_calendar || '*-*-* 01:00:00');
   els.loggerSyncDirection.value = String(job.direction || 'one_way');
-  els.loggerSyncMatchInterval.value = String(job.match_interval_minutes ?? 60);
+  const configuredInterval = Number(job.match_interval_minutes ?? 60);
+  els.loggerSyncMatchInterval.value = String([0, 1, 60, 1440].includes(configuredInterval) ? configuredInterval : 1);
   els.loggerSyncAllTags.checked = job.all_tags !== false;
   els.loggerSyncSelectedTagsWrap.style.display = els.loggerSyncAllTags.checked ? 'none' : '';
   els.loggerSyncLookback.value = String(job.lookback_days || 7); els.loggerSyncTags.value = (job.tags || []).join('\n');

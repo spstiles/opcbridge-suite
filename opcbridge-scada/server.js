@@ -3781,9 +3781,9 @@ const server = http.createServer(async (req, res) => {
         next.name = name;
         next.enabled = Boolean(next.enabled);
         next.direction = String(next.direction || 'one_way') === 'bidirectional' ? 'bidirectional' : 'one_way';
-        const allowedIntervals = new Set([0, 1, 5, 15, 30, 60, 1440]);
+        const allowedIntervals = new Set([0, 1, 60, 1440]);
         next.match_interval_minutes = Math.trunc(Number(next.match_interval_minutes ?? 60));
-        if (!allowedIntervals.has(next.match_interval_minutes)) next.match_interval_minutes = 60;
+        if (!allowedIntervals.has(next.match_interval_minutes)) next.match_interval_minutes = 1;
         next.lookback_days = Math.max(1, Math.min(3650, Math.trunc(Number(next.lookback_days || 7) || 7)));
         next.schedule = (next.schedule && typeof next.schedule === 'object' && !Array.isArray(next.schedule)) ? next.schedule : {};
         next.schedule.on_calendar = normalizeOnCalendar(next.schedule.on_calendar || '');

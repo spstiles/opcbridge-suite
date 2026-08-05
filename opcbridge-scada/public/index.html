@@ -2576,21 +2576,21 @@
           <div class="form-row"><label>OnCalendar</label><input id="loggerSyncSchedule" type="text" value="*-*-* 01:00:00" /><div class="small">For example, daily at 1:00 AM: <code>*-*-* 01:00:00</code></div></div>
           <div class="form-row"><label>Lookback (days)</label><input id="loggerSyncLookback" type="number" min="1" max="3650" value="7" /><div class="small">Backdated manual entries within this window are considered each run.</div></div>
           <div class="form-row"><label>Direction</label><select id="loggerSyncDirection"><option value="one_way">Database A → Database B</option><option value="bidirectional">Two way — fill gaps in both</option></select></div>
-          <div class="form-row"><label>Match records by</label><select id="loggerSyncMatchInterval"><option value="0">Tag + exact timestamp</option><option value="1">Tag + minute</option><option value="5">Tag + 5-minute period</option><option value="15">Tag + 15-minute period</option><option value="30">Tag + 30-minute period</option><option value="60">Tag + hour</option><option value="1440">Tag + day</option></select></div>
+          <div class="form-row"><label>Match timestamps by</label><select id="loggerSyncMatchInterval"><option value="0">Same exact timestamp</option><option value="1">Same minute — date + hour + minute</option><option value="60">Same hour — date + hour</option><option value="1440">Same day — date only</option></select></div>
           <div class="divider"></div>
           <div class="form-row"><label>Database A</label><select id="loggerSyncSourceDatabase"></select></div>
           <div class="form-row"><label>Table A</label><select id="loggerSyncSourceTable"></select></div>
+          <div class="form-row"><label>Date/time column A</label><select id="loggerSyncSourceTime"></select></div>
+          <div class="form-row"><label>Tag column A</label><select id="loggerSyncSourceItem"></select></div>
           <div class="form-row"><label>Database B</label><select id="loggerSyncDestinationDatabase"></select></div>
           <div class="form-row"><label>Table B</label><select id="loggerSyncDestinationTable"></select></div>
+          <div class="form-row"><label>Date/time column B</label><select id="loggerSyncDestinationTime"></select></div>
+          <div class="form-row"><label>Tag column B</label><select id="loggerSyncDestinationItem"></select></div>
           <div class="divider"></div>
           <div class="form-row"><label>Tags</label><div><label class="check-pill"><input id="loggerSyncAllTags" type="checkbox" class="inline-check" checked /> Sync all tags</label><div class="small">Turn this off only when the job should be limited to selected tags.</div></div></div>
           <div id="loggerSyncSelectedTagsWrap" style="display:none;"><div class="form-row"><label>Selected tags</label><textarea id="loggerSyncTags" rows="6" class="mono" placeholder="Tag_A&#10;Tag_B"></textarea></div><div class="form-row"><label></label><button class="btn" id="loggerSyncFindTagsBtn" type="button">Find available tags</button></div></div>
-          <details class="details" style="margin-top:12px;"><summary>Advanced column settings</summary>
-            <div class="small" style="margin:10px 0;">OPCBridge attempts to identify matching columns automatically. Adjust these only for unusual table layouts.</div>
-            <div class="form-row"><label>Database A date/time</label><select id="loggerSyncSourceTime"></select></div>
-            <div class="form-row"><label>Database A tag</label><select id="loggerSyncSourceItem"></select></div>
-            <div class="form-row"><label>Database B date/time</label><select id="loggerSyncDestinationTime"></select></div>
-            <div class="form-row"><label>Database B tag</label><select id="loggerSyncDestinationItem"></select></div>
+          <details class="details" style="margin-top:12px;"><summary>Advanced value mappings</summary>
+            <div class="small" style="margin:10px 0;">OPCBridge matches same-name value columns automatically. Adjust these mappings only when the two tables use different column names or some values should not be copied.</div>
             <div class="form-row"><label>Value mappings</label><textarea id="loggerSyncMappings" rows="5" class="mono" placeholder="source_value = destination_value&#10;source_text = destination_text"></textarea><div class="small">One Database A = Database B column mapping per line.</div></div>
             <div class="form-row"><label></label><button class="btn" id="loggerSyncSuggestMappingsBtn" type="button">Suggest same-name mappings</button></div>
           </details>
@@ -2667,6 +2667,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260805_database_sync_review_v1"></script>
+  <script src="app.js?v=20260805_database_sync_review_v2"></script>
 </body>
 </html>

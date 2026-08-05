@@ -2451,7 +2451,7 @@ private:
             std::string status;
             if (a && !b) { status = "a_to_b"; ++out.a_to_b; }
             else if (!a && b) { status = job.bidirectional ? "b_to_a" : "b_only"; if (job.bidirectional) ++out.b_to_a; else ++out.skipped; }
-            else if (a && b && values_equal(*a, *b)) { status = "matching"; ++out.matching; ++out.skipped; }
+            else if (a && b && (job.match_interval_minutes > 0 || values_equal(*a, *b))) { status = "matching"; ++out.matching; ++out.skipped; }
             else { status = "conflict"; ++out.conflicts; ++out.skipped; }
 
             if (include_rows) {
