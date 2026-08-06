@@ -50,6 +50,7 @@ Profiles:
   --alarms-only           Install only opcbridge-alarms
   --scada-only            Install only opcbridge-scada
   --hmi-only              Install only opcbridge-hmi
+  --logger-only           Install only opcbridge-logger
   --report-only           Install only opcbridge-report
   --full                  Install opcbridge + alarms + scada + hmi + logger + historian + report
 
@@ -1678,6 +1679,7 @@ main() {
       --alarms-only) PROFILE="alarms-only"; shift;;
       --scada-only) PROFILE="scada-only"; shift;;
       --hmi-only) PROFILE="hmi-only"; shift;;
+      --logger-only) PROFILE="logger-only"; shift;;
       --report-only) PROFILE="report-only"; shift;;
       --full|--suite) PROFILE="full"; shift;;
       --components) split_csv "${2:-}"; shift 2;;
@@ -1723,6 +1725,7 @@ main() {
       alarms-only) COMPONENTS=(alarms);;
       scada-only) COMPONENTS=(scada);;
       hmi-only) COMPONENTS=(hmi);;
+      logger-only) COMPONENTS=(logger);;
       report-only) COMPONENTS=(report);;
       full|"") COMPONENTS=(opcbridge alarms scada hmi logger historian report);;
       *) echo "Unknown profile: $PROFILE" >&2; exit 1;;
