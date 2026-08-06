@@ -4268,6 +4268,34 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/reporter/sync-jobs/backfill') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(body.id);
+      if (!id) throw new Error('A sync job is required.');
+      const result = await reporterApiRequest('POST', `/sync-jobs/${encodeURIComponent(id)}/backfill`, {
+        start_time: String(body.start_time || ''), end_time: String(body.end_time || '')
+      }, 30000);
+      sendJson(res, result.ok ? 202 : (result.status || 502), result.json || { ok: false, error: result.error || 'Backfill could not be started.' });
+    } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
+    return;
+  }
+
+  if (url.pathname === '/api/reporter/sync-jobs/backfill/cancel') {
+    if (!await requireManageServerPerm()) return;
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const id = sanitizeId(body.id);
+      if (!id) throw new Error('A backfill task is required.');
+      const result = await reporterApiRequest('POST', `/backfills/${encodeURIComponent(id)}/cancel`, null, 15000);
+      sendJson(res, result.ok ? 202 : (result.status || 502), result.json || { ok: false, error: result.error || 'Backfill could not be cancelled.' });
+    } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
+    return;
+  }
+
   if (url.pathname === '/api/reporter/data-checks/test') {
     if (!await requireManageServerPerm()) return;
     if (req.method !== 'POST') {

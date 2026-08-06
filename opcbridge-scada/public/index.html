@@ -2601,6 +2601,27 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="loggerBackfillModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:760px;">
+      <div class="modal-titlebar"><div class="modal-title" id="loggerBackfillTitle">Historical Backfill</div><button class="btn" id="loggerBackfillCloseBtn" type="button">Close</button></div>
+      <div class="modal-body">
+        <div id="loggerBackfillSetup">
+          <div class="hint">Fill historical gaps using this sync job’s direction, matching rule, tags, and value mappings. Existing periods and conflicts are not overwritten.</div>
+          <div class="form" style="margin-top:12px;">
+            <div class="form-row"><label>Start date</label><input id="loggerBackfillStart" type="date" /></div>
+            <div class="form-row"><label>End date</label><input id="loggerBackfillEnd" type="date" /><div class="small">Optional. A blank end date is resolved to the current time when the backfill starts.</div></div>
+            <div class="form-row"><label></label><button class="btn primary" id="loggerBackfillStartBtn" type="button">Start Backfill</button></div>
+          </div>
+        </div>
+        <div id="loggerBackfillProgress" style="display:none;">
+          <div class="kv" id="loggerBackfillKv"></div>
+          <div class="row-actions" style="margin-top:12px;"><button class="btn" id="loggerBackfillCancelBtn" type="button">Cancel Backfill</button></div>
+        </div>
+        <div class="hint mono" id="loggerBackfillStatus"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="loggerSyncReviewModal" style="display:none;">
     <div class="modal" role="dialog" aria-modal="true" style="max-width:1200px; width:min(1200px,96vw);">
       <div class="modal-titlebar"><div class="modal-title" id="loggerSyncReviewTitle">Database Sync Review</div><button class="btn" id="loggerSyncReviewCloseBtn" type="button">Close</button></div>
@@ -2667,6 +2688,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260805_sync_connection_names_v1"></script>
+  <script src="app.js?v=20260805_historical_backfill_v1"></script>
 </body>
 </html>

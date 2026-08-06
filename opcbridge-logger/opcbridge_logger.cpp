@@ -317,6 +317,28 @@ struct SyncStatus {
     std::string last_error;
 };
 
+struct BackfillTask {
+    std::string id;
+    std::string sync_job_id;
+    std::string start_time;
+    std::string end_time;
+    std::string cursor_time;
+    std::string status = "running";
+    bool worker_running = false;
+    bool cancel_requested = false;
+    long long created_ms = 0;
+    long long updated_ms = 0;
+    long long chunks_completed = 0;
+    long long records_examined = 0;
+    long long records_selected = 0;
+    long long inserted = 0;
+    long long skipped = 0;
+    long long failed = 0;
+    long long a_to_b = 0;
+    long long b_to_a = 0;
+    std::string last_error;
+};
+
 struct RunResult {
     bool ok = false;
     int inserted = 0;
@@ -459,6 +481,28 @@ static std::string epoch_ms_to_datetime(long long ms) {
     char buf[20];
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
     return std::string(buf);
+}
+
+static bool datetime_to_epoch(const std::string& value, std::time_t& output) {
+    std::tm tm{};
+    std::istringstream input(value);
+    input >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    if (input.fail()) return false;
+    tm.tm_isdst = -1;
+    output = std::mktime(&tm);
+    return output != static_cast<std::time_t>(-1);
+}
+
+static std::string epoch_to_datetime(std::time_t value) {
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &value);
+#else
+    localtime_r(&value, &tm);
+#endif
+    char buffer[20];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
+    return buffer;
 }
 
 static std::string load_file_strip_comments(const std::string& path) {
@@ -1091,9 +1135,36 @@ public:
             st.last_error = s.value("last_error", "");
             loaded_sync[st.id] = st;
         }
+        std::map<std::string, BackfillTask> loaded_backfills;
+        for (const auto& value : object_array_or_empty(root, "backfills")) {
+            if (!value.is_object()) continue;
+            BackfillTask task;
+            task.id = value.value("id", "");
+            task.sync_job_id = value.value("sync_job_id", "");
+            if (task.id.empty() || task.sync_job_id.empty()) continue;
+            task.start_time = value.value("start_time", "");
+            task.end_time = value.value("end_time", "");
+            task.cursor_time = value.value("cursor_time", task.start_time);
+            task.status = value.value("status", "running");
+            if (task.status == "running") task.status = "running";
+            task.created_ms = value.value("created_ms", 0LL);
+            task.cancel_requested = value.value("cancel_requested", false);
+            task.updated_ms = value.value("updated_ms", 0LL);
+            task.chunks_completed = value.value("chunks_completed", 0LL);
+            task.records_examined = value.value("records_examined", 0LL);
+            task.records_selected = value.value("records_selected", 0LL);
+            task.inserted = value.value("inserted", 0LL);
+            task.skipped = value.value("skipped", 0LL);
+            task.failed = value.value("failed", 0LL);
+            task.a_to_b = value.value("a_to_b", 0LL);
+            task.b_to_a = value.value("b_to_a", 0LL);
+            task.last_error = value.value("last_error", "");
+            loaded_backfills[task.id] = task;
+        }
         std::lock_guard<std::mutex> lock(mu_);
         statuses_ = std::move(loaded);
         sync_statuses_ = std::move(loaded_sync);
+        backfills_ = std::move(loaded_backfills);
         last_state_load_ms_ = now_ms();
     }
 
@@ -1303,7 +1374,8 @@ public:
             {"statuses", statuses_json_locked()},
             {"database_statuses", database_statuses_json_locked()},
             {"data_check_statuses", data_check_statuses_json_locked()},
-            {"sync_statuses", sync_statuses_json_locked()}
+            {"sync_statuses", sync_statuses_json_locked()},
+            {"backfills", backfills_json_locked()}
         };
     }
 
@@ -1898,6 +1970,23 @@ data_entry_failure:
         return test_sync(id);
     }
 
+    json create_backfill(const std::string& sync_job_id, const std::string& start_time, const std::string& end_time) {
+        return start_backfill(sync_job_id, start_time, end_time);
+    }
+
+    bool cancel_backfill(const std::string& id, std::string& error) {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto it = backfills_.find(id);
+            if (it == backfills_.end()) { error = "Backfill not found"; return false; }
+            if (it->second.status != "running") { error = "Backfill is not running"; return false; }
+            it->second.cancel_requested = true;
+            it->second.updated_ms = now_ms();
+        }
+        save_runtime_state();
+        return true;
+    }
+
 private:
     void reconcile_monitor_statuses_locked() {
         std::map<std::string, DbMonitorStatus> next;
@@ -2000,11 +2089,23 @@ private:
                     {"last_inserted", st.last_inserted}, {"last_skipped", st.last_skipped},
                     {"last_failed", st.last_failed}, {"last_error", st.last_error}});
             }
+            json backfills = json::array();
+            for (const auto& kv : backfills_) {
+                const BackfillTask& task = kv.second;
+                backfills.push_back({{"id", task.id}, {"sync_job_id", task.sync_job_id},
+                    {"start_time", task.start_time}, {"end_time", task.end_time}, {"cursor_time", task.cursor_time},
+                    {"status", task.status}, {"cancel_requested", task.cancel_requested}, {"created_ms", task.created_ms}, {"updated_ms", task.updated_ms},
+                    {"chunks_completed", task.chunks_completed}, {"records_examined", task.records_examined},
+                    {"records_selected", task.records_selected}, {"inserted", task.inserted}, {"skipped", task.skipped},
+                    {"failed", task.failed}, {"a_to_b", task.a_to_b}, {"b_to_a", task.b_to_a},
+                    {"last_error", task.last_error}});
+            }
             root = {
                 {"version", 1},
                 {"updated_ms", now_ms()},
                 {"statuses", statuses},
-                {"sync_statuses", sync_statuses}
+                {"sync_statuses", sync_statuses},
+                {"backfills", backfills}
             };
         }
 
@@ -2095,6 +2196,21 @@ private:
                 {"last_selected", st.last_selected}, {"last_inserted", st.last_inserted},
                 {"last_skipped", st.last_skipped}, {"last_failed", st.last_failed},
                 {"last_error", st.last_error}});
+        }
+        return arr;
+    }
+
+    json backfills_json_locked() const {
+        json arr = json::array();
+        for (const auto& kv : backfills_) {
+            const auto& task = kv.second;
+            arr.push_back({{"id", task.id}, {"sync_job_id", task.sync_job_id}, {"start_time", task.start_time},
+                {"end_time", task.end_time}, {"cursor_time", task.cursor_time}, {"status", task.status},
+                {"worker_running", task.worker_running}, {"created_ms", task.created_ms}, {"updated_ms", task.updated_ms},
+                {"chunks_completed", task.chunks_completed}, {"records_examined", task.records_examined},
+                {"records_selected", task.records_selected}, {"inserted", task.inserted}, {"skipped", task.skipped},
+                {"failed", task.failed}, {"a_to_b", task.a_to_b}, {"b_to_a", task.b_to_a},
+                {"last_error", task.last_error}});
         }
         return arr;
     }
@@ -2301,7 +2417,8 @@ private:
     }
 
     SyncResult run_sync_job_v2(const SyncJob& job, const DbConfig& database_a,
-                               const DbConfig& database_b, bool dry_run, bool include_rows) {
+                               const DbConfig& database_b, bool dry_run, bool include_rows,
+                               const std::string& range_start = "", const std::string& range_end = "") {
         SyncResult out;
         out.dry_run = dry_run;
         if (database_a.type != "mysql" || database_b.type != "mysql") {
@@ -2376,8 +2493,13 @@ private:
             for (const auto& column : columns) sql << ',' << qualified("s0", column);
             sql << " FROM " << sync_quote_identifier(table) << " s0 JOIN (SELECT " << qualified("s1", item_column)
                 << " AS sync_item," << bucket_for("s1") << " AS sync_bucket,MAX(" << qualified("s1", time_column)
-                << ") AS sync_time FROM " << sync_quote_identifier(table) << " s1 WHERE " << qualified("s1", time_column)
-                << " >= NOW() - INTERVAL " << job.lookback_days << " DAY";
+                << ") AS sync_time FROM " << sync_quote_identifier(table) << " s1 WHERE ";
+            if (!range_start.empty() && !range_end.empty()) {
+                sql << qualified("s1", time_column) << ">='" << sync_escape(connection, range_start) << "' AND "
+                    << qualified("s1", time_column) << "<'" << sync_escape(connection, range_end) << '\'';
+            } else {
+                sql << qualified("s1", time_column) << " >= NOW() - INTERVAL " << job.lookback_days << " DAY";
+            }
             if (!job.all_tags) {
                 sql << " AND " << qualified("s1", item_column) << " IN (";
                 for (size_t i = 0; i < job.tags.size(); ++i) { if (i) sql << ','; sql << '\'' << sync_escape(connection, job.tags[i]) << '\''; }
@@ -2541,6 +2663,95 @@ private:
                 {"a_to_b", result.a_to_b}, {"b_to_a", result.b_to_a}, {"matching", result.matching},
                 {"conflicts", result.conflicts}, {"rows", result.rows}, {"rows_truncated", result.rows_truncated},
                 {"failed", result.failed}, {"error", result.error}};
+    }
+
+    json start_backfill(const std::string& sync_job_id, const std::string& start_time, const std::string& end_time) {
+        std::time_t start_epoch = 0, end_epoch = 0;
+        if (!datetime_to_epoch(start_time, start_epoch) || !datetime_to_epoch(end_time, end_epoch) || end_epoch <= start_epoch) {
+            return {{"ok", false}, {"error", "A valid start time before the end time is required"}};
+        }
+        BackfillTask task;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (sync_jobs_.find(sync_job_id) == sync_jobs_.end()) return {{"ok", false}, {"error", "Sync job not found"}};
+            for (const auto& kv : backfills_) {
+                if (kv.second.sync_job_id == sync_job_id && kv.second.status == "running") {
+                    return {{"ok", false}, {"error", "A historical backfill is already running for this sync job"}};
+                }
+            }
+            task.id = "backfill_" + std::to_string(now_ms());
+            task.sync_job_id = sync_job_id;
+            task.start_time = epoch_to_datetime(start_epoch);
+            task.end_time = epoch_to_datetime(end_epoch);
+            task.cursor_time = task.start_time;
+            task.created_ms = task.updated_ms = now_ms();
+            backfills_[task.id] = task;
+        }
+        save_runtime_state();
+        start_backfill_async(task.id);
+        return {{"ok", true}, {"backfill", {{"id", task.id}, {"sync_job_id", task.sync_job_id},
+            {"start_time", task.start_time}, {"end_time", task.end_time}, {"status", task.status}}}};
+    }
+
+    bool start_backfill_async(const std::string& task_id) {
+        SyncJob job;
+        DbConfig database_a, database_b;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto task_it = backfills_.find(task_id);
+            if (task_it == backfills_.end() || task_it->second.status != "running" || task_it->second.worker_running) return false;
+            auto job_it = sync_jobs_.find(task_it->second.sync_job_id);
+            if (job_it == sync_jobs_.end()) { task_it->second.status = "failed"; task_it->second.last_error = "Sync job no longer exists"; return false; }
+            auto a_it = dbs_.find(job_it->second.source_database_id);
+            auto b_it = dbs_.find(job_it->second.destination_database_id);
+            if (a_it == dbs_.end() || b_it == dbs_.end()) { task_it->second.status = "failed"; task_it->second.last_error = "Database connection no longer exists"; return false; }
+            task_it->second.worker_running = true;
+            job = job_it->second; database_a = a_it->second; database_b = b_it->second;
+        }
+        std::thread([this, task_id, job, database_a, database_b]() {
+            const std::time_t chunk_seconds = job.match_interval_minutes <= 1
+                ? 6 * 3600
+                : (job.match_interval_minutes == 60 ? 7 * 86400 : 31 * 86400);
+            while (true) {
+                std::string cursor, end;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto it = backfills_.find(task_id);
+                    if (it == backfills_.end()) return;
+                    if (it->second.cancel_requested) {
+                        it->second.status = "cancelled"; it->second.worker_running = false; it->second.updated_ms = now_ms();
+                        break;
+                    }
+                    cursor = it->second.cursor_time; end = it->second.end_time;
+                }
+                std::time_t cursor_epoch = 0, end_epoch = 0;
+                if (!datetime_to_epoch(cursor, cursor_epoch) || !datetime_to_epoch(end, end_epoch) || cursor_epoch >= end_epoch) {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& task = backfills_[task_id]; task.status = "complete"; task.worker_running = false; task.updated_ms = now_ms();
+                    break;
+                }
+                const std::time_t next_epoch = std::min(end_epoch, cursor_epoch + chunk_seconds);
+                const std::string next = epoch_to_datetime(next_epoch);
+                SyncResult result = run_sync_job_v2(job, database_a, database_b, false, false, cursor, next);
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& task = backfills_[task_id];
+                    task.updated_ms = now_ms();
+                    task.records_examined += result.examined; task.records_selected += result.selected;
+                    task.inserted += result.inserted; task.skipped += result.skipped; task.failed += result.failed;
+                    task.a_to_b += result.a_to_b; task.b_to_a += result.b_to_a;
+                    if (!result.ok) {
+                        task.status = "failed"; task.worker_running = false; task.last_error = result.error;
+                    } else {
+                        task.cursor_time = next; task.chunks_completed++;
+                    }
+                }
+                save_runtime_state();
+                if (!result.ok) break;
+            }
+            save_runtime_state();
+        }).detach();
+        return true;
     }
 
     RunResult run_job(const Job& job, const DbConfig& db, const ServiceConfig& svc) {
@@ -2830,6 +3041,7 @@ private:
             std::vector<std::string> monitor_due;
             std::vector<std::string> data_check_due;
             std::vector<std::string> sync_due;
+            std::vector<std::string> backfill_due;
             long long n = now_ms();
             {
                 std::lock_guard<std::mutex> lock(mu_);
@@ -2878,6 +3090,9 @@ private:
                     }
                     if (st.supported_schedule && st.next_run_ms > 0 && st.next_run_ms <= n) sync_due.push_back(kv.first);
                 }
+                for (const auto& kv : backfills_) {
+                    if (kv.second.status == "running" && !kv.second.worker_running) backfill_due.push_back(kv.first);
+                }
             }
 
             for (const auto& id : due) {
@@ -2895,6 +3110,7 @@ private:
                 std::string ignored;
                 run_sync_async(id, ignored);
             }
+            for (const auto& id : backfill_due) start_backfill_async(id);
 
             std::unique_lock<std::mutex> lock(wait_mu_);
             cv_.wait_for(lock, std::chrono::milliseconds(500), [this]() { return stop_.load(); });
@@ -2917,6 +3133,7 @@ private:
     std::map<std::string, DataCheckStatus> data_check_statuses_;
     std::map<std::string, SyncJob> sync_jobs_;
     std::map<std::string, SyncStatus> sync_statuses_;
+    std::map<std::string, BackfillTask> backfills_;
     std::map<std::string, DbMonitorStatus> db_statuses_;
     long long last_reload_ms_ = 0;
     long long last_state_load_ms_ = 0;
@@ -2991,6 +3208,10 @@ int main(int argc, char* argv[]) {
     server.Get("/sync-jobs/status", [&service](const httplib::Request&, httplib::Response& res) {
         json h = service.health_json();
         res.set_content(json{{"ok", true}, {"sync_jobs", h["sync_statuses"]}}.dump(2), "application/json");
+    });
+    server.Get("/backfills/status", [&service](const httplib::Request&, httplib::Response& res) {
+        json h = service.health_json();
+        res.set_content(json{{"ok", true}, {"backfills", h["backfills"]}}.dump(2), "application/json");
     });
     server.Post("/reload", [&service](const httplib::Request&, httplib::Response& res) {
         std::string reload_error;
@@ -3096,6 +3317,22 @@ int main(int argc, char* argv[]) {
         json result = service.dry_run_sync_job(req.matches[1]);
         res.status = result.value("ok", false) ? 200 : 400;
         res.set_content(result.dump(2), "application/json");
+    });
+    server.Post(R"(/sync-jobs/([^/]+)/backfill)", [&service](const httplib::Request& req, httplib::Response& res) {
+        try {
+            json body = json::parse(req.body.empty() ? "{}" : req.body);
+            json result = service.create_backfill(req.matches[1], body.value("start_time", ""), body.value("end_time", ""));
+            res.status = result.value("ok", false) ? 202 : 400;
+            res.set_content(result.dump(2), "application/json");
+        } catch (const std::exception& ex) {
+            res.status = 400; res.set_content(json{{"ok", false}, {"error", ex.what()}}.dump(2), "application/json");
+        }
+    });
+    server.Post(R"(/backfills/([^/]+)/cancel)", [&service](const httplib::Request& req, httplib::Response& res) {
+        std::string error;
+        bool ok = service.cancel_backfill(req.matches[1], error);
+        res.status = ok ? 202 : 400;
+        res.set_content(json{{"ok", ok}, {"id", req.matches[1].str()}, {"error", error}}.dump(2), "application/json");
     });
 
     service.start_scheduler();

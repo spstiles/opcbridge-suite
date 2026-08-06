@@ -519,6 +519,12 @@
   loggerSyncReviewRunBtn: document.getElementById('loggerSyncReviewRunBtn'),
   loggerSyncReviewSearch: document.getElementById('loggerSyncReviewSearch'), loggerSyncReviewSummary: document.getElementById('loggerSyncReviewSummary'),
   loggerSyncReviewGroups: document.getElementById('loggerSyncReviewGroups'), loggerSyncReviewStatus: document.getElementById('loggerSyncReviewStatus'),
+  loggerBackfillModal: document.getElementById('loggerBackfillModal'), loggerBackfillTitle: document.getElementById('loggerBackfillTitle'),
+  loggerBackfillCloseBtn: document.getElementById('loggerBackfillCloseBtn'), loggerBackfillSetup: document.getElementById('loggerBackfillSetup'),
+  loggerBackfillStart: document.getElementById('loggerBackfillStart'), loggerBackfillEnd: document.getElementById('loggerBackfillEnd'),
+  loggerBackfillStartBtn: document.getElementById('loggerBackfillStartBtn'), loggerBackfillProgress: document.getElementById('loggerBackfillProgress'),
+  loggerBackfillKv: document.getElementById('loggerBackfillKv'), loggerBackfillCancelBtn: document.getElementById('loggerBackfillCancelBtn'),
+  loggerBackfillStatus: document.getElementById('loggerBackfillStatus'),
 
   historianRefreshBtn: document.getElementById('historianRefreshBtn'),
   historianAddTagBtn: document.getElementById('historianAddTagBtn'),
@@ -1270,6 +1276,9 @@ const state = {
   loggerSyncEditingId: '',
   loggerSyncSchemas: { source: [], destination: [] },
   loggerSyncReview: null,
+  loggerBackfillJobId: '',
+  loggerBackfillTaskId: '',
+  loggerBackfillPollTimer: 0,
   loggerReportPanelTab: 'details',
   loggerReportTagDraftById: new Map(),
   loggerReportHistorianDraftById: new Map(),
@@ -2195,6 +2204,7 @@ function renderLoggerTreeNode(node, container) {
       const id = String(node.meta?.id || '').trim();
       items.push({ label: 'Dry Run', onClick: () => testReporterSync(id) });
       items.push({ label: 'Run Now', onClick: () => runReporterSync(id) });
+      items.push({ label: 'Historical Backfill…', onClick: () => openLoggerBackfillModal(id) });
       items.push({ label: 'Properties…', onClick: () => openLoggerSyncModal(id) });
       items.push({ label: 'Delete…', onClick: () => deleteReporterSync(id) });
     }
@@ -3342,7 +3352,7 @@ function renderLoggerSyncTable() {
       st.last_selected ?? '', st.last_inserted ?? '', st.last_skipped ?? '', st.last_error || ''];
     values.forEach((value) => { const td = document.createElement('td'); td.textContent = String(value ?? ''); tr.appendChild(td); });
     const actions = document.createElement('td');
-    [['Dry Run', () => testReporterSync(job.id)], ['Run Now', () => runReporterSync(job.id)], ['Properties', () => openLoggerSyncModal(job.id)]].forEach(([label, action]) => {
+    [['Dry Run', () => testReporterSync(job.id)], ['Run Now', () => runReporterSync(job.id)], ['Historical Backfill', () => openLoggerBackfillModal(job.id)], ['Properties', () => openLoggerSyncModal(job.id)]].forEach(([label, action]) => {
       const button = document.createElement('button'); button.className = 'btn'; button.type = 'button'; button.textContent = label;
       button.addEventListener('click', (event) => { event.stopPropagation(); action(); }); actions.appendChild(button);
     });
@@ -6441,6 +6451,105 @@ async function deleteReporterSync(id) {
   state.loggerSelectedNodeId = 'logger:sync_jobs'; await refreshReporterAll();
 }
 
+function loggerLocalDateTime(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function loggerBackfillTasks() {
+  return Array.isArray(state.reporterRuntime?.reporter?.backfills) ? state.reporterRuntime.reporter.backfills : [];
+}
+
+function openLoggerBackfillModal(jobId) {
+  const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(jobId || '')) || {};
+  state.loggerBackfillJobId = String(jobId || '');
+  state.loggerBackfillTaskId = '';
+  if (els.loggerBackfillTitle) els.loggerBackfillTitle.textContent = `Historical Backfill — ${job.name || 'Sync job'}`;
+  if (els.loggerBackfillModal) els.loggerBackfillModal.style.display = 'block';
+  if (els.loggerBackfillStatus) els.loggerBackfillStatus.textContent = '';
+  const running = loggerBackfillTasks().filter((task) => task.sync_job_id === state.loggerBackfillJobId && task.status === 'running').sort((a, b) => Number(b.created_ms || 0) - Number(a.created_ms || 0))[0];
+  if (running) {
+    state.loggerBackfillTaskId = String(running.id || '');
+    renderLoggerBackfillProgress(running);
+    scheduleLoggerBackfillPoll();
+  } else {
+    if (els.loggerBackfillSetup) els.loggerBackfillSetup.style.display = '';
+    if (els.loggerBackfillProgress) els.loggerBackfillProgress.style.display = 'none';
+    if (els.loggerBackfillStart) els.loggerBackfillStart.value = '';
+    if (els.loggerBackfillEnd) els.loggerBackfillEnd.value = '';
+  }
+}
+
+function closeLoggerBackfillModal() {
+  if (state.loggerBackfillPollTimer) window.clearTimeout(state.loggerBackfillPollTimer);
+  state.loggerBackfillPollTimer = 0;
+  if (els.loggerBackfillModal) els.loggerBackfillModal.style.display = 'none';
+}
+
+function renderLoggerBackfillProgress(task) {
+  if (!task) return;
+  if (els.loggerBackfillSetup) els.loggerBackfillSetup.style.display = 'none';
+  if (els.loggerBackfillProgress) els.loggerBackfillProgress.style.display = '';
+  const parseTime = (value) => new Date(String(value || '').replace(' ', 'T')).getTime();
+  const start = parseTime(task.start_time), end = parseTime(task.end_time), cursor = parseTime(task.cursor_time);
+  const percent = Number.isFinite(start) && Number.isFinite(end) && end > start && Number.isFinite(cursor)
+    ? Math.max(0, Math.min(100, Math.round(((cursor - start) / (end - start)) * 100))) : 0;
+  const rows = [
+    ['Status', task.status || ''], ['Progress', `${percent}%`], ['Completed through', task.cursor_time || ''],
+    ['Range', `${task.start_time || ''} → ${task.end_time || ''}`], ['Chunks completed', task.chunks_completed || 0],
+    ['A → B', task.a_to_b || 0], ['B → A', task.b_to_a || 0], ['Inserted', task.inserted || 0],
+    ['Skipped', task.skipped || 0], ['Failed', task.failed || 0]
+  ];
+  if (els.loggerBackfillKv) {
+    els.loggerBackfillKv.innerHTML = rows.map(([key, value]) => `<div class="k">${escapeHtml(String(key))}</div><div class="v mono">${escapeHtml(String(value))}</div>`).join('');
+  }
+  if (els.loggerBackfillCancelBtn) els.loggerBackfillCancelBtn.disabled = task.status !== 'running';
+  if (els.loggerBackfillStatus) els.loggerBackfillStatus.textContent = task.last_error ? `Error: ${task.last_error}` : (task.status === 'complete' ? 'Historical backfill completed.' : task.status === 'cancelled' ? 'Historical backfill cancelled.' : 'Progress is saved after every chunk.');
+}
+
+function scheduleLoggerBackfillPoll() {
+  if (state.loggerBackfillPollTimer) window.clearTimeout(state.loggerBackfillPollTimer);
+  state.loggerBackfillPollTimer = window.setTimeout(async () => {
+    state.loggerBackfillPollTimer = 0;
+    if (els.loggerBackfillModal?.style?.display === 'none') return;
+    try { await refreshReporterRuntimeStatus(); } catch {}
+    const task = loggerBackfillTasks().find((candidate) => String(candidate?.id || '') === state.loggerBackfillTaskId);
+    if (task) renderLoggerBackfillProgress(task);
+    if (task?.status === 'running') scheduleLoggerBackfillPoll();
+  }, 2000);
+}
+
+async function startLoggerBackfill() {
+  try {
+    const startDate = String(els.loggerBackfillStart?.value || '').trim();
+    const endDate = String(els.loggerBackfillEnd?.value || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new Error('Start date is required.');
+    const start = `${startDate} 00:00:00`;
+    let end = loggerLocalDateTime(new Date());
+    if (endDate) {
+      const date = new Date(`${endDate}T00:00:00`);
+      if (!Number.isFinite(date.getTime())) throw new Error('End date is invalid.');
+      date.setDate(date.getDate() + 1);
+      end = loggerLocalDateTime(date);
+    }
+    els.loggerBackfillStatus.textContent = 'Starting historical backfill…';
+    const response = await apiPostJson('/api/logger/sync-jobs/backfill', { id: state.loggerBackfillJobId, start_time: start, end_time: end }, { timeoutMs: 30000 });
+    if (!response?.ok) throw new Error(response?.error || 'Backfill could not be started.');
+    state.loggerBackfillTaskId = String(response?.backfill?.id || '');
+    await refreshReporterRuntimeStatus();
+    const task = loggerBackfillTasks().find((candidate) => String(candidate?.id || '') === state.loggerBackfillTaskId) || response.backfill;
+    renderLoggerBackfillProgress(task); scheduleLoggerBackfillPoll();
+  } catch (err) { els.loggerBackfillStatus.textContent = `Start failed: ${err.message || err}`; }
+}
+
+async function cancelLoggerBackfill() {
+  if (!state.loggerBackfillTaskId || !window.confirm('Cancel this historical backfill after its current chunk finishes?')) return;
+  const response = await apiPostJson('/api/logger/sync-jobs/backfill/cancel', { id: state.loggerBackfillTaskId });
+  if (!response?.ok) { els.loggerBackfillStatus.textContent = `Cancel failed: ${response?.error || 'unknown error'}`; return; }
+  els.loggerBackfillStatus.textContent = 'Cancellation requested. The current chunk will finish first.';
+  scheduleLoggerBackfillPoll();
+}
+
 function wireLoggerUi() {
   if (els.loggerRefreshBtn) els.loggerRefreshBtn.addEventListener('click', () => refreshReporterAll());
   if (els.loggerDbModalType) els.loggerDbModalType.addEventListener('change', () => {
@@ -6511,6 +6620,9 @@ function wireLoggerUi() {
     if (!window.confirm(`Synchronize ${count} missing record(s)? Conflicts will not be changed.`)) return;
     await runReporterSync(id); els.loggerSyncReviewModal.style.display = 'none';
   });
+  if (els.loggerBackfillCloseBtn) els.loggerBackfillCloseBtn.addEventListener('click', closeLoggerBackfillModal);
+  if (els.loggerBackfillStartBtn) els.loggerBackfillStartBtn.addEventListener('click', startLoggerBackfill);
+  if (els.loggerBackfillCancelBtn) els.loggerBackfillCancelBtn.addEventListener('click', cancelLoggerBackfill);
   if (els.loggerReportScheduleKind) els.loggerReportScheduleKind.addEventListener('change', renderLoggerReportScheduleUi);
   if (els.loggerReportEveryMinutes) els.loggerReportEveryMinutes.addEventListener('input', renderLoggerReportScheduleUi);
   if (els.loggerReportHourlyMinute) els.loggerReportHourlyMinute.addEventListener('input', renderLoggerReportScheduleUi);
