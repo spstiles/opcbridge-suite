@@ -75,6 +75,9 @@ struct DbConfig {
     std::string monitor_query = "SELECT 1";
 };
 
+using SyncCell = std::pair<bool, std::string>; // first=true means SQL NULL
+using SyncRow = std::vector<SyncCell>;
+
 #ifdef OPCBRIDGE_HAVE_ODBC
 static std::string odbc_diagnostics(SQLSMALLINT handle_type, SQLHANDLE handle) {
     std::ostringstream out;
@@ -184,7 +187,210 @@ static bool odbc_execute(SQLHDBC dbc, const std::string& query, int timeout_sec,
     SQLFreeHandle(SQL_HANDLE_STMT, statement);
     return SQL_SUCCEEDED(rc);
 }
+
+static bool odbc_query_rows(SQLHDBC dbc, const std::string& query, int timeout_sec,
+                            std::vector<SyncRow>& rows, std::string& error) {
+    SQLHSTMT statement = SQL_NULL_HSTMT;
+    if (!SQL_SUCCEEDED(SQLAllocHandle(SQL_HANDLE_STMT, dbc, &statement))) {
+        error = "ODBC statement allocation failed: " + odbc_diagnostics(SQL_HANDLE_DBC, dbc);
+        return false;
+    }
+    SQLSetStmtAttr(statement, SQL_ATTR_QUERY_TIMEOUT,
+                   reinterpret_cast<SQLPOINTER>(static_cast<intptr_t>(std::max(1, timeout_sec))), 0);
+    SQLRETURN rc = SQLExecDirect(statement,
+                                 reinterpret_cast<SQLCHAR*>(const_cast<char*>(query.c_str())), SQL_NTS);
+    if (!SQL_SUCCEEDED(rc)) {
+        error = "ODBC query failed: " + odbc_diagnostics(SQL_HANDLE_STMT, statement);
+        SQLFreeHandle(SQL_HANDLE_STMT, statement);
+        return false;
+    }
+    while (true) {
+        SQLSMALLINT column_count = 0;
+        SQLNumResultCols(statement, &column_count);
+        if (column_count > 0) {
+            while (SQL_SUCCEEDED(rc = SQLFetch(statement))) {
+                SyncRow row;
+                for (SQLUSMALLINT column = 1; column <= static_cast<SQLUSMALLINT>(column_count); ++column) {
+                    std::string value;
+                    bool is_null = false;
+                    while (true) {
+                        char buffer[4096] = {0};
+                        SQLLEN indicator = 0;
+                        rc = SQLGetData(statement, column, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+                        if (indicator == SQL_NULL_DATA) { is_null = true; break; }
+                        if (!SQL_SUCCEEDED(rc)) {
+                            error = "ODBC result read failed: " + odbc_diagnostics(SQL_HANDLE_STMT, statement);
+                            SQLFreeHandle(SQL_HANDLE_STMT, statement);
+                            return false;
+                        }
+                        value.append(buffer, std::strlen(buffer));
+                        if (rc == SQL_SUCCESS) break;
+                    }
+                    row.push_back({is_null, std::move(value)});
+                }
+                rows.push_back(std::move(row));
+            }
+            if (rc != SQL_NO_DATA) {
+                error = "ODBC row fetch failed: " + odbc_diagnostics(SQL_HANDLE_STMT, statement);
+                SQLFreeHandle(SQL_HANDLE_STMT, statement);
+                return false;
+            }
+        }
+        rc = SQLMoreResults(statement);
+        if (rc == SQL_NO_DATA) break;
+        if (!SQL_SUCCEEDED(rc)) {
+            error = "ODBC result advance failed: " + odbc_diagnostics(SQL_HANDLE_STMT, statement);
+            SQLFreeHandle(SQL_HANDLE_STMT, statement);
+            return false;
+        }
+    }
+    SQLFreeHandle(SQL_HANDLE_STMT, statement);
+    return true;
+}
+
+static std::string odbc_quote_identifier(const std::string& value) {
+    std::string output = "[";
+    for (char ch : value) output += ch == ']' ? "]]" : std::string(1, ch);
+    return output + "]";
+}
+
+static std::string odbc_quote_qualified_identifier(const std::string& value) {
+    const size_t dot = value.find('.');
+    if (dot == std::string::npos) return odbc_quote_identifier(value);
+    return odbc_quote_identifier(value.substr(0, dot)) + "." + odbc_quote_identifier(value.substr(dot + 1));
+}
+
+static std::string odbc_quote_string(const std::string& value) {
+    std::string output = "N'";
+    for (char ch : value) output += ch == '\'' ? "''" : std::string(1, ch);
+    return output + "'";
+}
 #endif
+
+struct SyncDatabaseConnection {
+    DbConfig config;
+    MYSQL* mysql = nullptr;
+#ifdef OPCBRIDGE_HAVE_ODBC
+    SQLHENV odbc_env = SQL_NULL_HENV;
+    SQLHDBC odbc_dbc = SQL_NULL_HDBC;
+#endif
+
+    bool is_mysql() const { return config.type == "mysql"; }
+    bool is_odbc() const { return config.type == "odbc"; }
+
+    bool connect(std::string& error) {
+        if (is_mysql()) {
+            mysql = mysql_init(nullptr);
+            if (!mysql) { error = "mysql_init failed"; return false; }
+            unsigned int connect_timeout = static_cast<unsigned int>(std::max(1, config.monitor_timeout_sec));
+            unsigned int operation_timeout = static_cast<unsigned int>(std::max(300, config.monitor_timeout_sec));
+            mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, &connect_timeout);
+            mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, &operation_timeout);
+            mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, &operation_timeout);
+            if (!mysql_real_connect(mysql, config.mysql_host.c_str(), config.mysql_user.c_str(), config.mysql_password.c_str(),
+                                    config.mysql_database.c_str(), config.mysql_port, nullptr, 0)) {
+                error = std::string("mysql_real_connect failed: ") + mysql_error(mysql);
+                mysql_close(mysql); mysql = nullptr; return false;
+            }
+            return true;
+        }
+        if (is_odbc()) {
+#ifdef OPCBRIDGE_HAVE_ODBC
+            return odbc_connect(config, odbc_env, odbc_dbc, error);
+#else
+            error = "ODBC support was not built into opcbridge-logger; reinstall with --with-odbc";
+            return false;
+#endif
+        }
+        error = "Unsupported database type: " + config.type;
+        return false;
+    }
+
+    void close() {
+        if (mysql) { mysql_close(mysql); mysql = nullptr; }
+#ifdef OPCBRIDGE_HAVE_ODBC
+        if (odbc_dbc != SQL_NULL_HDBC || odbc_env != SQL_NULL_HENV) {
+            odbc_disconnect(odbc_env, odbc_dbc); odbc_dbc = SQL_NULL_HDBC; odbc_env = SQL_NULL_HENV;
+        }
+#endif
+    }
+
+    std::string quote_identifier(const std::string& value) const {
+        auto quote_mysql_part = [](const std::string& part) {
+            std::string output = "`"; for (char ch : part) output += ch == '`' ? "``" : std::string(1, ch); return output + "`";
+        };
+        if (is_odbc()) {
+#ifdef OPCBRIDGE_HAVE_ODBC
+            return odbc_quote_qualified_identifier(value);
+#else
+            return value;
+#endif
+        }
+        const size_t dot = value.find('.');
+        return dot == std::string::npos ? quote_mysql_part(value)
+            : quote_mysql_part(value.substr(0, dot)) + "." + quote_mysql_part(value.substr(dot + 1));
+    }
+
+    std::string quote_string(const std::string& value) const {
+        if (is_odbc()) {
+#ifdef OPCBRIDGE_HAVE_ODBC
+            return odbc_quote_string(value);
+#else
+            return "''";
+#endif
+        }
+        std::string output(value.size() * 2 + 1, '\0');
+        const unsigned long length = mysql_real_escape_string(mysql, output.data(), value.data(), value.size());
+        output.resize(length); return "'" + output + "'";
+    }
+
+    bool query(const std::string& sql, std::vector<SyncRow>& rows, std::string& error) {
+        if (is_mysql()) {
+            if (mysql_query(mysql, sql.c_str()) != 0) { error = mysql_error(mysql); return false; }
+            MYSQL_RES* result = mysql_store_result(mysql);
+            if (!result) { error = mysql_error(mysql); return false; }
+            const unsigned int count = mysql_num_fields(result); MYSQL_ROW row;
+            while ((row = mysql_fetch_row(result)) != nullptr) {
+                unsigned long* lengths = mysql_fetch_lengths(result); SyncRow output;
+                for (unsigned int i = 0; i < count; ++i) output.push_back({row[i] == nullptr, row[i] ? std::string(row[i], lengths[i]) : std::string()});
+                rows.push_back(std::move(output));
+            }
+            mysql_free_result(result); return true;
+        }
+#ifdef OPCBRIDGE_HAVE_ODBC
+        if (is_odbc()) return odbc_query_rows(odbc_dbc, sql, 300, rows, error);
+#endif
+        error = "Unsupported database type: " + config.type; return false;
+    }
+
+    bool execute(const std::string& sql, std::string& error) {
+        if (is_mysql()) {
+            if (mysql_query(mysql, sql.c_str()) == 0) return true;
+            error = mysql_error(mysql); return false;
+        }
+#ifdef OPCBRIDGE_HAVE_ODBC
+        if (is_odbc()) return odbc_execute(odbc_dbc, sql, 300, error);
+#endif
+        error = "Unsupported database type: " + config.type; return false;
+    }
+
+    bool acquire_lock(const std::string& name, std::string& error) {
+        std::vector<SyncRow> rows;
+        const std::string sql = is_mysql() ? "SELECT GET_LOCK(" + quote_string(name) + ",0)"
+            : "DECLARE @r int; EXEC @r=sys.sp_getapplock @Resource=" + quote_string(name) +
+              ",@LockMode='Exclusive',@LockOwner='Session',@LockTimeout=0; SELECT @r";
+        if (!query(sql, rows, error)) return false;
+        if (rows.empty() || rows[0].empty() || rows[0][0].first) return false;
+        const long result = std::strtol(rows[0][0].second.c_str(), nullptr, 10);
+        return is_mysql() ? result == 1 : result >= 0;
+    }
+
+    void release_lock(const std::string& name) {
+        std::string ignored;
+        if (is_mysql()) { std::vector<SyncRow> rows; query("SELECT RELEASE_LOCK(" + quote_string(name) + ")", rows, ignored); }
+        else execute("EXEC sys.sp_releaseapplock @Resource=" + quote_string(name) + ",@LockOwner='Session'", ignored);
+    }
+};
 
 struct HistorianField {
     std::string connection_id;
@@ -1458,9 +1664,46 @@ public:
             }
             db = it->second;
         }
-        if (db.type != "mysql") {
-            return {{"ok", false}, {"error", "Schema discovery is not supported for database type: " + db.type}};
+        if (db.type == "odbc") {
+#ifdef OPCBRIDGE_HAVE_ODBC
+            SQLHENV env = SQL_NULL_HENV; SQLHDBC dbc = SQL_NULL_HDBC; std::string error;
+            if (!odbc_connect(db, env, dbc, error)) return {{"ok", false}, {"error", error}};
+            const std::string sql =
+                "SELECT c.TABLE_SCHEMA + '.' + c.TABLE_NAME,t.TABLE_TYPE,c.COLUMN_NAME,c.DATA_TYPE,"
+                "COALESCE(CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar(32)),''),c.IS_NULLABLE,c.COLUMN_DEFAULT,"
+                "COLUMNPROPERTY(OBJECT_ID(QUOTENAME(c.TABLE_SCHEMA)+'.'+QUOTENAME(c.TABLE_NAME)),c.COLUMN_NAME,'IsIdentity'),"
+                "COLUMNPROPERTY(OBJECT_ID(QUOTENAME(c.TABLE_SCHEMA)+'.'+QUOTENAME(c.TABLE_NAME)),c.COLUMN_NAME,'IsComputed') "
+                "FROM INFORMATION_SCHEMA.COLUMNS c JOIN INFORMATION_SCHEMA.TABLES t ON t.TABLE_SCHEMA=c.TABLE_SCHEMA AND t.TABLE_NAME=c.TABLE_NAME "
+                "WHERE t.TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY c.TABLE_SCHEMA,c.TABLE_NAME,c.ORDINAL_POSITION";
+            std::vector<SyncRow> rows;
+            if (!odbc_query_rows(dbc, sql, std::max(30, db.monitor_timeout_sec), rows, error)) {
+                odbc_disconnect(env, dbc); return {{"ok", false}, {"error", "schema query failed: " + error}};
+            }
+            json tables = json::array(); std::string current_table; json current = json::object();
+            for (const auto& row : rows) {
+                if (row.size() < 9 || row[0].first) continue;
+                const std::string table_name = row[0].second;
+                if (table_name != current_table) {
+                    if (!current_table.empty()) tables.push_back(current);
+                    current_table = table_name;
+                    current = {{"name", table_name}, {"type", row[1].first ? "" : row[1].second}, {"columns", json::array()}};
+                }
+                const bool nullable = !row[5].first && row[5].second == "YES";
+                const bool identity = !row[7].first && row[7].second == "1";
+                const bool computed = !row[8].first && row[8].second == "1";
+                current["columns"].push_back({{"name", row[2].second}, {"data_type", row[3].first ? "" : row[3].second},
+                    {"column_type", row[4].first ? "" : row[4].second}, {"nullable", nullable}, {"has_default", !row[6].first},
+                    {"default", row[6].first ? json(nullptr) : json(row[6].second)}, {"extra", identity ? "identity" : (computed ? "computed" : "")},
+                    {"required_on_insert", !nullable && row[6].first && !identity && !computed}});
+            }
+            if (!current_table.empty()) tables.push_back(current);
+            odbc_disconnect(env, dbc);
+            return {{"ok", true}, {"database_id", id}, {"tables", tables}};
+#else
+            return {{"ok", false}, {"error", "ODBC support was not built into opcbridge-logger; reinstall with --with-odbc"}};
+#endif
         }
+        if (db.type != "mysql") return {{"ok", false}, {"error", "Schema discovery is not supported for database type: " + db.type}};
 
         MYSQL* conn = mysql_init(nullptr);
         if (!conn) return {{"ok", false}, {"error", "mysql_init failed"}};
@@ -1540,10 +1783,6 @@ public:
             if (it == dbs_.end()) return {{"ok", false}, {"error", "Database not found: " + id}};
             db = it->second;
         }
-        if (db.type != "mysql") {
-            return {{"ok", false}, {"error", "Value discovery is not supported for database type: " + db.type}};
-        }
-
         json schema = database_schema(id);
         if (!schema.value("ok", false)) return schema;
         bool valid = false;
@@ -1554,6 +1793,32 @@ public:
             }
         }
         if (!valid) return {{"ok", false}, {"error", "Selected table or column does not exist"}};
+
+        limit = std::max(1, std::min(10000, limit));
+        const int query_limit = limit + 1;
+        if (db.type == "odbc") {
+#ifdef OPCBRIDGE_HAVE_ODBC
+            SQLHENV env = SQL_NULL_HENV; SQLHDBC dbc = SQL_NULL_HDBC; std::string error;
+            if (!odbc_connect(db, env, dbc, error)) return {{"ok", false}, {"error", error}};
+            const std::string field = odbc_quote_identifier(column);
+            const std::string sql = "SELECT DISTINCT TOP " + std::to_string(query_limit) + " " + field +
+                " FROM " + odbc_quote_qualified_identifier(table) + " WHERE " + field + " IS NOT NULL ORDER BY 1";
+            std::vector<SyncRow> rows;
+            if (!odbc_query_rows(dbc, sql, std::max(60, db.monitor_timeout_sec), rows, error)) {
+                odbc_disconnect(env, dbc); return {{"ok", false}, {"error", "value discovery query failed: " + error}};
+            }
+            json values = json::array(); bool truncated = false;
+            for (const auto& row : rows) {
+                if (static_cast<int>(values.size()) >= limit) { truncated = true; break; }
+                if (!row.empty() && !row[0].first) values.push_back(row[0].second);
+            }
+            odbc_disconnect(env, dbc);
+            return {{"ok", true}, {"database_id", id}, {"values", values}, {"limit", limit}, {"truncated", truncated}};
+#else
+            return {{"ok", false}, {"error", "ODBC support was not built into opcbridge-logger; reinstall with --with-odbc"}};
+#endif
+        }
+        if (db.type != "mysql") return {{"ok", false}, {"error", "Value discovery is not supported for database type: " + db.type}};
 
         MYSQL* conn = mysql_init(nullptr);
         if (!conn) return {{"ok", false}, {"error", "mysql_init failed"}};
@@ -1571,8 +1836,6 @@ public:
             for (char ch : input) output += (ch == '`') ? "``" : std::string(1, ch);
             return output + "`";
         };
-        limit = std::max(1, std::min(10000, limit));
-        const int query_limit = limit + 1;
         const std::string field = quote_identifier(column);
         const std::string sql = "SELECT DISTINCT " + field + " FROM " + quote_identifier(table) +
             " WHERE " + field + " IS NOT NULL ORDER BY 1 LIMIT " + std::to_string(query_limit);
@@ -2237,7 +2500,7 @@ private:
     }
 
     static bool sync_identifier_valid(const std::string& value) {
-        static const std::regex pattern("^[A-Za-z_][A-Za-z0-9_]*$");
+        static const std::regex pattern("^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$");
         return std::regex_match(value, pattern);
     }
 
@@ -2428,10 +2691,17 @@ private:
                                const std::string& range_start = "", const std::string& range_end = "") {
         SyncResult out;
         out.dry_run = dry_run;
-        if (database_a.type != "mysql" || database_b.type != "mysql") {
-            out.error = "Database Sync currently supports MySQL databases only";
+        const auto supported_type = [](const std::string& type) { return type == "mysql" || type == "odbc"; };
+        if (!supported_type(database_a.type) || !supported_type(database_b.type)) {
+            out.error = "Database Sync supports MySQL and SQL Server (ODBC) databases";
             return out;
         }
+#ifndef OPCBRIDGE_HAVE_ODBC
+        if (database_a.type == "odbc" || database_b.type == "odbc") {
+            out.error = "ODBC support was not built into opcbridge-logger; reinstall with --with-odbc";
+            return out;
+        }
+#endif
         if ((!job.all_tags && job.tags.empty()) || job.mappings.empty()) {
             out.error = job.mappings.empty() ? "At least one value mapping is required" : "Select all tags or at least one tag";
             return out;
@@ -2444,35 +2714,21 @@ private:
         }
 
         std::string error;
-        MYSQL* connection_a = sync_connect(database_a, error);
-        if (!connection_a) { out.error = "Database A " + error; return out; }
-        MYSQL* connection_b = sync_connect(database_b, error);
-        if (!connection_b) { mysql_close(connection_a); out.error = "Database B " + error; return out; }
+        SyncDatabaseConnection connection_a; connection_a.config = database_a;
+        if (!connection_a.connect(error)) { out.error = "Database A " + error; return out; }
+        SyncDatabaseConnection connection_b; connection_b.config = database_b;
+        if (!connection_b.connect(error)) { connection_a.close(); out.error = "Database B " + error; return out; }
 
         const std::string lock_base = "opcbridge_sync_" + job.id.substr(0, 38);
-        auto acquire_lock = [&](MYSQL* connection, const std::string& suffix) {
-            const std::string name = lock_base + suffix;
-            const std::string sql = "SELECT GET_LOCK('" + sync_escape(connection, name) + "',0)";
-            if (mysql_query(connection, sql.c_str()) != 0) return false;
-            MYSQL_RES* result = mysql_store_result(connection);
-            MYSQL_ROW row = result ? mysql_fetch_row(result) : nullptr;
-            const bool acquired = row && row[0] && std::string(row[0]) == "1";
-            if (result) mysql_free_result(result);
-            return acquired;
-        };
-        const bool lock_a = acquire_lock(connection_a, "_a");
-        const bool lock_b = lock_a && acquire_lock(connection_b, "_b");
-        auto release_lock = [&](MYSQL* connection, const std::string& suffix) {
-            const std::string sql = "SELECT RELEASE_LOCK('" + sync_escape(connection, lock_base + suffix) + "')";
-            if (mysql_query(connection, sql.c_str()) == 0) { MYSQL_RES* result = mysql_store_result(connection); if (result) mysql_free_result(result); }
-        };
+        const bool lock_a = connection_a.acquire_lock(lock_base + "_a", error);
+        const bool lock_b = lock_a && connection_b.acquire_lock(lock_base + "_b", error);
         auto finish = [&](bool success, const std::string& message = "") {
-            if (lock_b) release_lock(connection_b, "_b");
-            if (lock_a) release_lock(connection_a, "_a");
-            mysql_close(connection_a); mysql_close(connection_b);
+            if (lock_b) connection_b.release_lock(lock_base + "_b");
+            if (lock_a) connection_a.release_lock(lock_base + "_a");
+            connection_a.close(); connection_b.close();
             out.ok = success; out.error = message; return out;
         };
-        if (!lock_a || !lock_b) return finish(false, "Another node is already comparing or running this sync job");
+        if (!lock_a || !lock_b) return finish(false, error.empty() ? "Another node is already comparing or running this sync job" : error);
 
         struct Candidate {
             std::string tag;
@@ -2480,60 +2736,62 @@ private:
             std::vector<std::pair<bool, std::string>> values;
         };
         using CandidateMap = std::map<std::string, Candidate>;
-        auto load_side = [&](MYSQL* connection, const std::string& table, const std::string& time_column,
+        auto load_side = [&](SyncDatabaseConnection& connection, const std::string& table, const std::string& time_column,
                              const std::string& item_column, const std::vector<std::string>& columns,
                              CandidateMap& candidates, const std::string& side) -> bool {
             auto qualified = [&](const std::string& alias, const std::string& column) {
-                return alias + "." + sync_quote_identifier(column);
+                return alias + "." + connection.quote_identifier(column);
             };
             auto bucket_for = [&](const std::string& alias) {
                 const std::string time_field = qualified(alias, time_column);
-                if (job.match_interval_minutes == 0) {
-                    return "DATE_FORMAT(" + time_field + ", '%Y-%m-%d %H:%i:%s')";
+                if (connection.is_odbc()) {
+                    if (job.match_interval_minutes == 0) return "CONVERT(varchar(19)," + time_field + ",120)";
+                    const int seconds = job.match_interval_minutes * 60;
+                    return "CONVERT(varchar(19),DATEADD(second,(DATEDIFF_BIG(second,'1970-01-01'," + time_field + ")/" +
+                        std::to_string(seconds) + ")*" + std::to_string(seconds) + ",'1970-01-01'),120)";
                 }
+                if (job.match_interval_minutes == 0) return "DATE_FORMAT(" + time_field + ", '%Y-%m-%d %H:%i:%s')";
                 const int seconds = job.match_interval_minutes * 60;
                 return "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(" + time_field + ")/" + std::to_string(seconds) + ")*" +
                     std::to_string(seconds) + ", '%Y-%m-%d %H:%i:%s')";
             };
             std::ostringstream sql;
-            sql << "SELECT latest.sync_bucket," << qualified("s0", time_column) << ',' << qualified("s0", item_column);
+            if (connection.is_odbc()) sql << "SELECT TOP 1000001 "; else sql << "SELECT ";
+            sql << "latest.sync_bucket," << qualified("s0", time_column) << ',' << qualified("s0", item_column);
             for (const auto& column : columns) sql << ',' << qualified("s0", column);
-            sql << " FROM " << sync_quote_identifier(table) << " s0 JOIN (SELECT " << qualified("s1", item_column)
+            sql << " FROM " << connection.quote_identifier(table) << " s0 JOIN (SELECT " << qualified("s1", item_column)
                 << " AS sync_item," << bucket_for("s1") << " AS sync_bucket,MAX(" << qualified("s1", time_column)
-                << ") AS sync_time FROM " << sync_quote_identifier(table) << " s1 WHERE ";
+                << ") AS sync_time FROM " << connection.quote_identifier(table) << " s1 WHERE ";
             if (!range_start.empty() && !range_end.empty()) {
-                sql << qualified("s1", time_column) << ">='" << sync_escape(connection, range_start) << "' AND "
-                    << qualified("s1", time_column) << "<'" << sync_escape(connection, range_end) << '\'';
+                sql << qualified("s1", time_column) << ">=" << connection.quote_string(range_start) << " AND "
+                    << qualified("s1", time_column) << "<" << connection.quote_string(range_end);
             } else {
-                sql << qualified("s1", time_column) << " >= NOW() - INTERVAL " << job.lookback_days << " DAY";
+                if (connection.is_odbc()) sql << qualified("s1", time_column) << " >= DATEADD(day,-" << job.lookback_days << ",GETDATE())";
+                else sql << qualified("s1", time_column) << " >= NOW() - INTERVAL " << job.lookback_days << " DAY";
             }
             if (!job.all_tags) {
                 sql << " AND " << qualified("s1", item_column) << " IN (";
-                for (size_t i = 0; i < job.tags.size(); ++i) { if (i) sql << ','; sql << '\'' << sync_escape(connection, job.tags[i]) << '\''; }
+                for (size_t i = 0; i < job.tags.size(); ++i) { if (i) sql << ','; sql << connection.quote_string(job.tags[i]); }
                 sql << ')';
             }
-            sql << " GROUP BY " << qualified("s1", item_column) << ",sync_bucket) latest ON "
+            sql << " GROUP BY " << qualified("s1", item_column) << ',' << bucket_for("s1") << ") latest ON "
                 << qualified("s0", item_column) << "=latest.sync_item AND " << qualified("s0", time_column)
                 << "=latest.sync_time ORDER BY " << qualified("s0", item_column) << ',' << qualified("s0", time_column)
-                << " LIMIT 1000001";
-            if (mysql_query(connection, sql.str().c_str()) != 0) { out.error = side + " query failed: " + mysql_error(connection); return false; }
-            MYSQL_RES* result = mysql_store_result(connection);
-            if (!result) { out.error = side + " result failed: " + mysql_error(connection); return false; }
-            MYSQL_ROW row;
+                << (connection.is_mysql() ? " LIMIT 1000001" : "");
+            std::vector<SyncRow> rows; std::string query_error;
+            if (!connection.query(sql.str(), rows, query_error)) { out.error = side + " query failed: " + query_error; return false; }
             int count = 0;
-            while ((row = mysql_fetch_row(result)) != nullptr) {
-                if (++count > 1000000) { mysql_free_result(result); out.error = side + " comparison exceeds 1,000,000 tag/period records; reduce the lookback period"; return false; }
-                unsigned long* lengths = mysql_fetch_lengths(result);
-                if (!row[0] || !row[1] || !row[2]) continue;
+            for (const auto& row : rows) {
+                if (++count > 1000000) { out.error = side + " comparison exceeds 1,000,000 tag/period records; reduce the lookback period"; return false; }
+                if (row.size() < 3 + columns.size() || row[0].first || row[1].first || row[2].first) continue;
                 Candidate candidate;
-                candidate.bucket.assign(row[0], lengths[0]);
-                candidate.tag.assign(row[2], lengths[2]);
+                candidate.bucket = row[0].second;
+                candidate.tag = row[2].second;
                 for (unsigned int i = 1; i < 3 + columns.size(); ++i) {
-                    candidate.values.push_back({row[i] == nullptr, row[i] ? std::string(row[i], lengths[i]) : std::string()});
+                    candidate.values.push_back(row[i]);
                 }
                 candidates[candidate.tag + TAG_KEY_SEP + candidate.bucket] = std::move(candidate);
             }
-            mysql_free_result(result);
             out.examined += count;
             return true;
         };
@@ -2549,9 +2807,12 @@ private:
         for (const auto& entry : rows_b) keys.insert(entry.first);
         out.selected = static_cast<int>(keys.size());
         if (!dry_run) {
-            if (mysql_query(connection_a, "START TRANSACTION") != 0 || mysql_query(connection_b, "START TRANSACTION") != 0) {
-                mysql_query(connection_a, "ROLLBACK"); mysql_query(connection_b, "ROLLBACK");
-                return finish(false, "Could not start database transactions");
+            std::string transaction_error;
+            const std::string begin_a = connection_a.is_mysql() ? "START TRANSACTION" : "BEGIN TRANSACTION";
+            const std::string begin_b = connection_b.is_mysql() ? "START TRANSACTION" : "BEGIN TRANSACTION";
+            if (!connection_a.execute(begin_a, transaction_error) || !connection_b.execute(begin_b, transaction_error)) {
+                std::string ignored; connection_a.execute("ROLLBACK", ignored); connection_b.execute("ROLLBACK", ignored);
+                return finish(false, "Could not start database transactions: " + transaction_error);
             }
         }
 
@@ -2566,20 +2827,23 @@ private:
             for (size_t i = 2; i < candidate->values.size(); ++i) values.push_back(candidate->values[i].first ? json(nullptr) : json(candidate->values[i].second));
             return values;
         };
-        auto insert_candidate = [&](MYSQL* target, const Candidate& candidate, const std::string& table,
+        auto insert_candidate = [&](SyncDatabaseConnection& target, const Candidate& candidate, const std::string& table,
                                     const std::string& time_column, const std::string& item_column,
                                     const std::vector<std::string>& columns) {
             std::ostringstream sql;
-            sql << "INSERT INTO " << sync_quote_identifier(table) << " (" << sync_quote_identifier(time_column) << ',' << sync_quote_identifier(item_column);
-            for (const auto& column : columns) sql << ',' << sync_quote_identifier(column);
+            sql << "INSERT INTO " << target.quote_identifier(table) << " (" << target.quote_identifier(time_column) << ',' << target.quote_identifier(item_column);
+            for (const auto& column : columns) sql << ',' << target.quote_identifier(column);
             sql << ") VALUES (";
             for (size_t i = 0; i < candidate.values.size(); ++i) {
                 if (i) sql << ',';
                 if (candidate.values[i].first) sql << "NULL";
-                else sql << '\'' << sync_escape(target, candidate.values[i].second) << '\'';
+                else sql << target.quote_string(candidate.values[i].second);
             }
             sql << ')';
-            return mysql_query(target, sql.str().c_str()) == 0;
+            std::string insert_error;
+            const bool ok = target.execute(sql.str(), insert_error);
+            if (!ok && out.error.empty()) out.error = insert_error;
+            return ok;
         };
 
         for (const auto& key : keys) {
@@ -2614,11 +2878,12 @@ private:
             return finish(true);
         }
         if (out.failed) {
-            mysql_query(connection_a, "ROLLBACK"); mysql_query(connection_b, "ROLLBACK"); out.inserted = 0;
+            std::string ignored; connection_a.execute("ROLLBACK", ignored); connection_b.execute("ROLLBACK", ignored); out.inserted = 0;
             return finish(false, out.error);
         }
-        if (mysql_query(connection_a, "COMMIT") != 0 || mysql_query(connection_b, "COMMIT") != 0) {
-            return finish(false, "A database commit failed; review both databases before retrying");
+        std::string commit_error;
+        if (!connection_a.execute("COMMIT", commit_error) || !connection_b.execute("COMMIT", commit_error)) {
+            return finish(false, "A database commit failed; review both databases before retrying: " + commit_error);
         }
         return finish(true);
     }

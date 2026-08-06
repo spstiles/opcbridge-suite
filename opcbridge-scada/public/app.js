@@ -6397,9 +6397,9 @@ async function openLoggerSyncModal(id = '') {
   const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(id || '')) || {};
   state.loggerSyncEditingId = String(id || '');
   if (els.loggerSyncModal) els.loggerSyncModal.style.display = 'block';
-  const mysqlDbs = (state.reporterDatabases || []).filter((db) => String(db?.type || 'mysql') === 'mysql');
-  loggerSyncDatabaseOptions(els.loggerSyncSourceDatabase, mysqlDbs, String(job.source_database_id || ''));
-  loggerSyncDatabaseOptions(els.loggerSyncDestinationDatabase, mysqlDbs, String(job.destination_database_id || ''));
+  const syncDatabases = (state.reporterDatabases || []).filter((db) => ['mysql', 'odbc'].includes(String(db?.type || 'mysql')));
+  loggerSyncDatabaseOptions(els.loggerSyncSourceDatabase, syncDatabases, String(job.source_database_id || ''));
+  loggerSyncDatabaseOptions(els.loggerSyncDestinationDatabase, syncDatabases, String(job.destination_database_id || ''));
   els.loggerSyncName.value = String(job.name || '');
   els.loggerSyncEnabled.checked = Boolean(job.enabled); els.loggerSyncSchedule.value = String(job.schedule?.on_calendar || '*-*-* 01:00:00');
   els.loggerSyncDirection.value = String(job.direction || 'one_way');
