@@ -518,6 +518,8 @@
   loggerSyncSelectTagsABtn: document.getElementById('loggerSyncSelectTagsABtn'), loggerSyncSelectTagsBBtn: document.getElementById('loggerSyncSelectTagsBBtn'),
   loggerSyncTagListA: document.getElementById('loggerSyncTagListA'), loggerSyncTagListB: document.getElementById('loggerSyncTagListB'),
   loggerSyncTagCountA: document.getElementById('loggerSyncTagCountA'), loggerSyncTagCountB: document.getElementById('loggerSyncTagCountB'),
+  loggerSyncTagPrevA: document.getElementById('loggerSyncTagPrevA'), loggerSyncTagNextA: document.getElementById('loggerSyncTagNextA'), loggerSyncTagPageA: document.getElementById('loggerSyncTagPageA'),
+  loggerSyncTagPrevB: document.getElementById('loggerSyncTagPrevB'), loggerSyncTagNextB: document.getElementById('loggerSyncTagNextB'), loggerSyncTagPageB: document.getElementById('loggerSyncTagPageB'),
   loggerSyncMappings: document.getElementById('loggerSyncMappings'), loggerSyncStatus: document.getElementById('loggerSyncStatus'),
   loggerSyncReviewModal: document.getElementById('loggerSyncReviewModal'), loggerSyncReviewTitle: document.getElementById('loggerSyncReviewTitle'),
   loggerSyncReviewCloseBtn: document.getElementById('loggerSyncReviewCloseBtn'), loggerSyncExpandAllBtn: document.getElementById('loggerSyncExpandAllBtn'),
@@ -1217,6 +1219,7 @@ const state = {
   authWasLoggedIn: false,
   authLoggedOutSinceMs: 0,
   authLastLogoutAtMs: 0,
+  authLogoutInProgress: false,
   authLastActivityTouchMs: 0,
   authLastUser: null,
   authAdminLoaded: false,
@@ -1281,7 +1284,7 @@ const state = {
   loggerDataCheckEditingMode: '', // '' | 'new' | 'edit'
   loggerSyncEditingId: '',
   loggerSyncSchemas: { source: [], destination: [] },
-  loggerSyncTagsA: [], loggerSyncTagsB: [], loggerSyncSelectedTags: new Set(),
+  loggerSyncTagsA: [], loggerSyncTagsB: [], loggerSyncSelectedTags: new Set(), loggerSyncTagPages: { A: 0, B: 0 },
   loggerSyncReview: null,
   loggerBackfillJobId: '',
   loggerBackfillTaskId: '',
@@ -6285,7 +6288,11 @@ function renderLoggerSyncTagPanels() {
   const renderSide = (side, values, otherSet) => {
     const filter = String((side === 'A' ? els.loggerSyncTagFilterA : els.loggerSyncTagFilterB)?.value || '').trim().toLowerCase();
     const filtered = (values || []).filter((tag) => !filter || String(tag).toLowerCase().includes(filter));
-    const shown = filtered;
+    const pageSize = 100;
+    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const page = Math.max(0, Math.min(Number(state.loggerSyncTagPages?.[side] || 0), pageCount - 1));
+    state.loggerSyncTagPages[side] = page;
+    const shown = filtered.slice(page * pageSize, (page + 1) * pageSize);
     const container = side === 'A' ? els.loggerSyncTagListA : els.loggerSyncTagListB;
     if (container) {
       container.textContent = '';
@@ -6303,11 +6310,18 @@ function renderLoggerSyncTagPanels() {
         if (otherSet.has(tag)) { const meta = document.createElement('span'); meta.className = 'small'; meta.style.marginLeft = 'auto'; meta.textContent = `also in ${side === 'A' ? 'B' : 'A'}`; label.appendChild(meta); }
         fragment.appendChild(label);
       });
-      if (!shown.length) { const empty = document.createElement('div'); empty.className = 'small'; empty.textContent = values?.length ? 'No tags match this filter.' : 'Load available tags to populate this list.'; fragment.appendChild(empty); }
+      if (!shown.length) { const empty = document.createElement('div'); empty.className = 'small sync-tag-empty'; empty.textContent = values?.length ? 'No tags match this filter.' : 'Load available tags to populate this list.'; fragment.appendChild(empty); }
       container.appendChild(fragment);
+      container.scrollTop = 0;
     }
     const count = side === 'A' ? els.loggerSyncTagCountA : els.loggerSyncTagCountB;
-    if (count) count.textContent = `${values?.length || 0} available · ${filtered.length} shown`;
+    if (count) count.textContent = `${values?.length || 0} available · ${filtered.length} matching`;
+    const previous = side === 'A' ? els.loggerSyncTagPrevA : els.loggerSyncTagPrevB;
+    const next = side === 'A' ? els.loggerSyncTagNextA : els.loggerSyncTagNextB;
+    const pageLabel = side === 'A' ? els.loggerSyncTagPageA : els.loggerSyncTagPageB;
+    if (previous) previous.disabled = page <= 0;
+    if (next) next.disabled = page >= pageCount - 1;
+    if (pageLabel) pageLabel.textContent = filtered.length ? `${page + 1} / ${pageCount}` : '0 / 0';
   };
   renderSide('A', state.loggerSyncTagsA, setB); renderSide('B', state.loggerSyncTagsB, setA);
   if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${selected.size} selected`;
@@ -6328,6 +6342,7 @@ async function loadLoggerSyncTags() {
   if (!b?.ok) throw new Error(`Database B: ${b?.error || 'tag discovery failed'}`);
   state.loggerSyncTagsA = (a.values || []).map(String);
   state.loggerSyncTagsB = (b.values || []).map(String);
+  state.loggerSyncTagPages = { A: 0, B: 0 };
   renderLoggerSyncTagPanels();
   if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = `Loaded ${state.loggerSyncTagsA.length} Database A tag(s) and ${state.loggerSyncTagsB.length} Database B tag(s).`;
 }
@@ -6415,6 +6430,7 @@ async function openLoggerSyncModal(id = '') {
   els.loggerSyncLookback.value = String(job.lookback_days || 7);
   state.loggerSyncSelectedTags = new Set((job.tags || []).map(String));
   state.loggerSyncTagsA = []; state.loggerSyncTagsB = [];
+  state.loggerSyncTagPages = { A: 0, B: 0 };
   if (els.loggerSyncTagFilterA) els.loggerSyncTagFilterA.value = '';
   if (els.loggerSyncTagFilterB) els.loggerSyncTagFilterB.value = '';
   renderLoggerSyncTagPanels();
@@ -6689,8 +6705,12 @@ function wireLoggerUi() {
   if (els.loggerSyncSourceItem) els.loggerSyncSourceItem.addEventListener('change', () => clearLoggerSyncTags('source'));
   if (els.loggerSyncDestinationItem) els.loggerSyncDestinationItem.addEventListener('change', () => clearLoggerSyncTags('destination'));
   if (els.loggerSyncFindTagsBtn) els.loggerSyncFindTagsBtn.addEventListener('click', () => loadLoggerSyncTags().catch((err) => { els.loggerSyncStatus.textContent = `Load tags failed: ${err.message || err}`; }));
-  if (els.loggerSyncTagFilterA) els.loggerSyncTagFilterA.addEventListener('input', renderLoggerSyncTagPanels);
-  if (els.loggerSyncTagFilterB) els.loggerSyncTagFilterB.addEventListener('input', renderLoggerSyncTagPanels);
+  if (els.loggerSyncTagFilterA) els.loggerSyncTagFilterA.addEventListener('input', () => { state.loggerSyncTagPages.A = 0; renderLoggerSyncTagPanels(); });
+  if (els.loggerSyncTagFilterB) els.loggerSyncTagFilterB.addEventListener('input', () => { state.loggerSyncTagPages.B = 0; renderLoggerSyncTagPanels(); });
+  if (els.loggerSyncTagPrevA) els.loggerSyncTagPrevA.addEventListener('click', () => { state.loggerSyncTagPages.A = Math.max(0, state.loggerSyncTagPages.A - 1); renderLoggerSyncTagPanels(); });
+  if (els.loggerSyncTagNextA) els.loggerSyncTagNextA.addEventListener('click', () => { state.loggerSyncTagPages.A += 1; renderLoggerSyncTagPanels(); });
+  if (els.loggerSyncTagPrevB) els.loggerSyncTagPrevB.addEventListener('click', () => { state.loggerSyncTagPages.B = Math.max(0, state.loggerSyncTagPages.B - 1); renderLoggerSyncTagPanels(); });
+  if (els.loggerSyncTagNextB) els.loggerSyncTagNextB.addEventListener('click', () => { state.loggerSyncTagPages.B += 1; renderLoggerSyncTagPanels(); });
   if (els.loggerSyncSelectTagsABtn) els.loggerSyncSelectTagsABtn.addEventListener('click', () => selectFilteredLoggerSyncTags('A'));
   if (els.loggerSyncSelectTagsBBtn) els.loggerSyncSelectTagsBBtn.addEventListener('click', () => selectFilteredLoggerSyncTags('B'));
   if (els.loggerSyncSelectAllTagsBtn) els.loggerSyncSelectAllTagsBtn.addEventListener('click', () => {
@@ -6967,7 +6987,10 @@ window.addEventListener('unhandledrejection', (e) => {
   'dragstart',
   'drop'
 ].forEach((eventName) => {
-  window.addEventListener(eventName, () => touchOpcbridgeAuthActivity({ bypassLoginState: true }), { capture: true, passive: true });
+  window.addEventListener(eventName, (event) => {
+    if (event?.target?.closest?.('#authLogoutBtn')) return;
+    touchOpcbridgeAuthActivity({ bypassLoginState: true });
+  }, { capture: true, passive: true });
 });
 window.addEventListener('focus', () => touchOpcbridgeAuthActivity({ force: true, bypassLoginState: true }), { capture: true });
 
@@ -25529,6 +25552,7 @@ function isScadaEditSessionOpen() {
 }
 
 function touchOpcbridgeAuthActivity({ force = false, bypassLoginState = false } = {}) {
+  if (state.authLogoutInProgress || Date.now() - (Number(state.authLastLogoutAtMs) || 0) < 5000) return;
   const status = state.opcbridgeAuthStatus || null;
   const editSessionOpen = isScadaEditSessionOpen();
   if (status && status.configured === false) return;
@@ -26224,13 +26248,13 @@ function wireLoginModalUi() {
       if (username) payload.username = username;
       await apiPostJson('/api/opcbridge/auth/login', payload);
       await refreshUserAuthLine();
+      closeLoginModal();
       if (canAccessReportsTab()) {
-        await Promise.allSettled([
+        Promise.allSettled([
           refreshPublishedReports(true),
           refreshReportBuilder()
-        ]);
+        ]).catch(() => {});
       }
-      closeLoginModal();
     } catch (err) {
       if (els.loginStatus) els.loginStatus.textContent = `Login failed: ${err.message}`;
     }
@@ -26295,11 +26319,17 @@ async function logoutUser() {
   const button = document.getElementById('authLogoutBtn');
   try {
     state.authLastLogoutAtMs = Date.now();
+    state.authLogoutInProgress = true;
     if (button) {
       button.disabled = true;
       button.textContent = 'Logging out…';
     }
-    await apiPostJson('/api/opcbridge/auth/logout', { explicit: true });
+    if (els.authLine) {
+      els.authLine.innerHTML = '<button class="btn primary" type="button" disabled>Login</button> <span class="badge warn">auth</span> logging out…';
+    }
+    await apiPostJson('/api/opcbridge/auth/logout', { explicit: true }, { timeoutMs: 15000 });
+    const verified = await apiGet('/api/opcbridge/auth/status', { timeoutMs: 10000 });
+    if (Boolean(verified?.user_logged_in || verified?.logged_in || verified?.user?.username)) throw new Error('The server did not end the session.');
     state.authWasLoggedIn = false;
     state.authLoggedOutSinceMs = 0;
     state.authLastUser = null;
@@ -26307,12 +26337,14 @@ async function logoutUser() {
     if (els.authLine) {
       els.authLine.innerHTML = '<button class="btn primary" type="button" disabled>Login</button> <span class="badge warn">auth</span> logged out';
     }
-    window.location.replace(REPORTS_PORTAL_MODE ? '/reports' : '/');
+    window.location.reload();
   } catch (err) {
+    state.authLogoutInProgress = false;
     if (button) {
       button.disabled = false;
       button.textContent = 'Logout';
     }
+    await refreshUserAuthLine().catch(() => {});
     window.alert(`Logout failed: ${err.message}`);
   }
 }

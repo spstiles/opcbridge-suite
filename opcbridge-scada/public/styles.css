@@ -1315,10 +1315,12 @@ textarea { resize: vertical; min-height: 120px; }
 .sync-tag-panels { align-items: start; }
 .sync-tag-panel h3 { margin: 0 0 10px; }
 .sync-tag-panel .row-actions { margin: 8px 0; }
-.sync-tag-list { min-height: 180px; max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px; background: rgba(0,0,0,.15); }
-.sync-tag-option { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 4px; }
+.sync-tag-list { height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px; background: rgba(0,0,0,.15); }
+.sync-tag-option { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 4px; white-space: nowrap; overflow: hidden; }
 .sync-tag-option:hover { background: rgba(255,255,255,.05); }
 .sync-tag-option input { flex: 0 0 auto; }
+.sync-tag-option > span:not(.small) { overflow: hidden; text-overflow: ellipsis; }
+.sync-tag-empty { padding: 8px; }
 
 details.advanced {
   border: 1px solid var(--border);

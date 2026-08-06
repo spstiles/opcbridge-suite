@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=20260805_split_sync_tags_v1" />
+  <link rel="stylesheet" href="styles.css?v=20260805_paged_sync_tags_v1" />
 </head>
 <body>
   <header class="topbar">
@@ -2591,8 +2591,8 @@
           <div id="loggerSyncSelectedTagsWrap" style="display:none;">
             <div class="row-actions" style="margin-bottom:10px;"><button class="btn" id="loggerSyncFindTagsBtn" type="button">Load Available Tags</button><button class="btn" id="loggerSyncSelectAllTagsBtn" type="button">Select All from Both</button><button class="btn" id="loggerSyncClearTagsBtn" type="button">Clear Selection</button><div class="hint mono" id="loggerSyncTagSelectionSummary" style="margin-left:auto;"></div></div>
             <div class="grid2 sync-tag-panels">
-              <section class="details sync-tag-panel"><h3>Database A tags</h3><input id="loggerSyncTagFilterA" type="search" placeholder="Filter Database A tags" /><div class="row-actions"><button class="btn" id="loggerSyncSelectTagsABtn" type="button">Select All Filtered</button></div><div class="sync-tag-list" id="loggerSyncTagListA"></div><div class="small mono" id="loggerSyncTagCountA"></div></section>
-              <section class="details sync-tag-panel"><h3>Database B tags</h3><input id="loggerSyncTagFilterB" type="search" placeholder="Filter Database B tags" /><div class="row-actions"><button class="btn" id="loggerSyncSelectTagsBBtn" type="button">Select All Filtered</button></div><div class="sync-tag-list" id="loggerSyncTagListB"></div><div class="small mono" id="loggerSyncTagCountB"></div></section>
+              <section class="details sync-tag-panel"><h3>Database A tags</h3><input id="loggerSyncTagFilterA" type="search" placeholder="Filter Database A tags" /><div class="row-actions"><button class="btn" id="loggerSyncSelectTagsABtn" type="button">Select All Filtered</button><button class="btn" id="loggerSyncTagPrevA" type="button">Previous</button><span class="small mono" id="loggerSyncTagPageA"></span><button class="btn" id="loggerSyncTagNextA" type="button">Next</button></div><div class="sync-tag-list" id="loggerSyncTagListA"></div><div class="small mono" id="loggerSyncTagCountA"></div></section>
+              <section class="details sync-tag-panel"><h3>Database B tags</h3><input id="loggerSyncTagFilterB" type="search" placeholder="Filter Database B tags" /><div class="row-actions"><button class="btn" id="loggerSyncSelectTagsBBtn" type="button">Select All Filtered</button><button class="btn" id="loggerSyncTagPrevB" type="button">Previous</button><span class="small mono" id="loggerSyncTagPageB"></span><button class="btn" id="loggerSyncTagNextB" type="button">Next</button></div><div class="sync-tag-list" id="loggerSyncTagListB"></div><div class="small mono" id="loggerSyncTagCountB"></div></section>
             </div>
           </div>
           <details class="details" style="margin-top:12px;"><summary>Advanced value mappings</summary>
@@ -2694,6 +2694,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260805_split_sync_tags_v1"></script>
+  <script src="app.js?v=20260805_paged_sync_tags_v1"></script>
 </body>
 </html>
