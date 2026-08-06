@@ -1312,6 +1312,13 @@ textarea { resize: vertical; min-height: 120px; }
 .sync-database-badge { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; font-weight: 700; color: #fff; background: #4f8cff; }
 .sync-database-b .sync-database-badge { background: #38b886; }
 .sync-database-section .form-row:last-child { margin-bottom: 0; }
+.sync-tag-panels { align-items: start; }
+.sync-tag-panel h3 { margin: 0 0 10px; }
+.sync-tag-panel .row-actions { margin: 8px 0; }
+.sync-tag-list { min-height: 180px; max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px; background: rgba(0,0,0,.15); }
+.sync-tag-option { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 4px; }
+.sync-tag-option:hover { background: rgba(255,255,255,.05); }
+.sync-tag-option input { flex: 0 0 auto; }
 
 details.advanced {
   border: 1px solid var(--border);

@@ -511,7 +511,13 @@
   loggerSyncSourceTable: document.getElementById('loggerSyncSourceTable'), loggerSyncSourceTime: document.getElementById('loggerSyncSourceTime'),
   loggerSyncSourceItem: document.getElementById('loggerSyncSourceItem'), loggerSyncDestinationDatabase: document.getElementById('loggerSyncDestinationDatabase'),
   loggerSyncDestinationTable: document.getElementById('loggerSyncDestinationTable'), loggerSyncDestinationTime: document.getElementById('loggerSyncDestinationTime'),
-  loggerSyncDestinationItem: document.getElementById('loggerSyncDestinationItem'), loggerSyncTags: document.getElementById('loggerSyncTags'),
+  loggerSyncDestinationItem: document.getElementById('loggerSyncDestinationItem'),
+  loggerSyncSelectAllTagsBtn: document.getElementById('loggerSyncSelectAllTagsBtn'), loggerSyncClearTagsBtn: document.getElementById('loggerSyncClearTagsBtn'),
+  loggerSyncTagSelectionSummary: document.getElementById('loggerSyncTagSelectionSummary'),
+  loggerSyncTagFilterA: document.getElementById('loggerSyncTagFilterA'), loggerSyncTagFilterB: document.getElementById('loggerSyncTagFilterB'),
+  loggerSyncSelectTagsABtn: document.getElementById('loggerSyncSelectTagsABtn'), loggerSyncSelectTagsBBtn: document.getElementById('loggerSyncSelectTagsBBtn'),
+  loggerSyncTagListA: document.getElementById('loggerSyncTagListA'), loggerSyncTagListB: document.getElementById('loggerSyncTagListB'),
+  loggerSyncTagCountA: document.getElementById('loggerSyncTagCountA'), loggerSyncTagCountB: document.getElementById('loggerSyncTagCountB'),
   loggerSyncMappings: document.getElementById('loggerSyncMappings'), loggerSyncStatus: document.getElementById('loggerSyncStatus'),
   loggerSyncReviewModal: document.getElementById('loggerSyncReviewModal'), loggerSyncReviewTitle: document.getElementById('loggerSyncReviewTitle'),
   loggerSyncReviewCloseBtn: document.getElementById('loggerSyncReviewCloseBtn'), loggerSyncExpandAllBtn: document.getElementById('loggerSyncExpandAllBtn'),
@@ -1275,6 +1281,7 @@ const state = {
   loggerDataCheckEditingMode: '', // '' | 'new' | 'edit'
   loggerSyncEditingId: '',
   loggerSyncSchemas: { source: [], destination: [] },
+  loggerSyncTagsA: [], loggerSyncTagsB: [], loggerSyncSelectedTags: new Set(),
   loggerSyncReview: null,
   loggerBackfillJobId: '',
   loggerBackfillTaskId: '',
@@ -6264,6 +6271,67 @@ function loggerSyncDatabaseOptions(select, databases, selected = '') {
   select.value = selected;
 }
 
+function renderLoggerSyncTagPanels() {
+  const selected = state.loggerSyncSelectedTags instanceof Set ? state.loggerSyncSelectedTags : new Set();
+  const setA = new Set(state.loggerSyncTagsA || []), setB = new Set(state.loggerSyncTagsB || []);
+  const renderSide = (side, values, otherSet) => {
+    const filter = String((side === 'A' ? els.loggerSyncTagFilterA : els.loggerSyncTagFilterB)?.value || '').trim().toLowerCase();
+    const filtered = (values || []).filter((tag) => !filter || String(tag).toLowerCase().includes(filter));
+    const shown = filtered.slice(0, 2000);
+    const container = side === 'A' ? els.loggerSyncTagListA : els.loggerSyncTagListB;
+    if (container) {
+      container.textContent = '';
+      shown.forEach((tag) => {
+        const label = document.createElement('label'); label.className = 'sync-tag-option';
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(tag);
+        checkbox.addEventListener('change', () => { if (checkbox.checked) selected.add(tag); else selected.delete(tag); state.loggerSyncSelectedTags = selected; renderLoggerSyncTagPanels(); });
+        const textNode = document.createElement('span'); textNode.textContent = tag;
+        label.appendChild(checkbox); label.appendChild(textNode);
+        if (otherSet.has(tag)) { const meta = document.createElement('span'); meta.className = 'small'; meta.style.marginLeft = 'auto'; meta.textContent = `also in ${side === 'A' ? 'B' : 'A'}`; label.appendChild(meta); }
+        container.appendChild(label);
+      });
+      if (!shown.length) { const empty = document.createElement('div'); empty.className = 'small'; empty.textContent = values?.length ? 'No tags match this filter.' : 'Load available tags to populate this list.'; container.appendChild(empty); }
+    }
+    const count = side === 'A' ? els.loggerSyncTagCountA : els.loggerSyncTagCountB;
+    if (count) count.textContent = `${values?.length || 0} available · ${filtered.length} filtered${filtered.length > shown.length ? ` · showing first ${shown.length}` : ''}`;
+  };
+  renderSide('A', state.loggerSyncTagsA, setB); renderSide('B', state.loggerSyncTagsB, setA);
+  if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${selected.size} selected`;
+}
+
+async function loadLoggerSyncTags() {
+  const request = (database_id, table, column) => apiPostJson('/api/logger/databases/distinct', { database_id, table, column }, { timeoutMs: 300000 });
+  if (!els.loggerSyncSourceDatabase.value || !els.loggerSyncSourceTable.value || !els.loggerSyncSourceItem.value ||
+      !els.loggerSyncDestinationDatabase.value || !els.loggerSyncDestinationTable.value || !els.loggerSyncDestinationItem.value) {
+    throw new Error('Select both databases, tables, and tag columns first.');
+  }
+  if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = 'Loading tags from Database A and Database B…';
+  const [a, b] = await Promise.all([
+    request(els.loggerSyncSourceDatabase.value, els.loggerSyncSourceTable.value, els.loggerSyncSourceItem.value),
+    request(els.loggerSyncDestinationDatabase.value, els.loggerSyncDestinationTable.value, els.loggerSyncDestinationItem.value)
+  ]);
+  if (!a?.ok) throw new Error(`Database A: ${a?.error || 'tag discovery failed'}`);
+  if (!b?.ok) throw new Error(`Database B: ${b?.error || 'tag discovery failed'}`);
+  state.loggerSyncTagsA = (a.values || []).map(String);
+  state.loggerSyncTagsB = (b.values || []).map(String);
+  renderLoggerSyncTagPanels();
+  if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = `Loaded ${state.loggerSyncTagsA.length} Database A tag(s) and ${state.loggerSyncTagsB.length} Database B tag(s).`;
+}
+
+function clearLoggerSyncTags(side = '') {
+  if (!side || side === 'source') state.loggerSyncTagsA = [];
+  if (!side || side === 'destination') state.loggerSyncTagsB = [];
+  renderLoggerSyncTagPanels();
+}
+
+function selectFilteredLoggerSyncTags(side) {
+  const values = side === 'A' ? state.loggerSyncTagsA : state.loggerSyncTagsB;
+  const filter = String((side === 'A' ? els.loggerSyncTagFilterA : els.loggerSyncTagFilterB)?.value || '').trim().toLowerCase();
+  (values || []).filter((tag) => !filter || String(tag).toLowerCase().includes(filter))
+    .forEach((tag) => state.loggerSyncSelectedTags.add(tag));
+  renderLoggerSyncTagPanels();
+}
+
 async function loadLoggerSyncSchema(side, databaseId, selectedTable = '', selectedTime = '', selectedItem = '') {
   const prefix = side === 'source' ? 'Source' : 'Destination';
   const tableSelect = els[`loggerSync${prefix}Table`];
@@ -6330,7 +6398,12 @@ async function openLoggerSyncModal(id = '') {
   els.loggerSyncMatchInterval.value = String([0, 1, 60, 1440].includes(configuredInterval) ? configuredInterval : 1);
   els.loggerSyncAllTags.checked = job.all_tags !== false;
   els.loggerSyncSelectedTagsWrap.style.display = els.loggerSyncAllTags.checked ? 'none' : '';
-  els.loggerSyncLookback.value = String(job.lookback_days || 7); els.loggerSyncTags.value = (job.tags || []).join('\n');
+  els.loggerSyncLookback.value = String(job.lookback_days || 7);
+  state.loggerSyncSelectedTags = new Set((job.tags || []).map(String));
+  state.loggerSyncTagsA = []; state.loggerSyncTagsB = [];
+  if (els.loggerSyncTagFilterA) els.loggerSyncTagFilterA.value = '';
+  if (els.loggerSyncTagFilterB) els.loggerSyncTagFilterB.value = '';
+  renderLoggerSyncTagPanels();
   els.loggerSyncMappings.value = (job.mappings || []).map((m) => `${m.source} = ${m.destination}`).join('\n');
   try {
     await Promise.all([
@@ -6357,7 +6430,7 @@ function loggerSyncFromUi() {
     source_time_column: els.loggerSyncSourceTime.value, source_item_column: els.loggerSyncSourceItem.value,
     destination_database_id: els.loggerSyncDestinationDatabase.value, destination_table: els.loggerSyncDestinationTable.value,
     destination_time_column: els.loggerSyncDestinationTime.value, destination_item_column: els.loggerSyncDestinationItem.value,
-    tags: String(els.loggerSyncTags.value || '').split(/\r?\n|,/).map((v) => v.trim()).filter(Boolean), mappings };
+    tags: Array.from(state.loggerSyncSelectedTags || []).map(String).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })), mappings };
 }
 
 async function saveReporterSync() {
@@ -6368,6 +6441,7 @@ async function saveReporterSync() {
     if (!job.source_time_column || !job.source_item_column || !job.destination_time_column || !job.destination_item_column) {
       throw new Error('OPCBridge could not identify the date/time or tag columns. Select them under Advanced column settings.');
     }
+    if (!job.all_tags && !job.tags.length) throw new Error('Select at least one tag, or choose All tags.');
     if (!job.mappings.length) throw new Error('No matching value columns were found. Configure value mappings under Advanced column settings.');
     const response = await apiPostJson('/api/logger/sync-jobs', { sync_job: job, original_id: state.loggerSyncEditingId });
     if (!response?.ok) throw new Error(response?.error || 'Save failed.');
@@ -6582,28 +6656,34 @@ function wireLoggerUi() {
     if (!state.loggerSyncEditingId) els.loggerSyncStatus.textContent = 'Save the sync job before running a dry run.';
     else testReporterSync(state.loggerSyncEditingId);
   });
-  if (els.loggerSyncSourceDatabase) els.loggerSyncSourceDatabase.addEventListener('change', () => loadLoggerSyncSchema('source', els.loggerSyncSourceDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }));
-  if (els.loggerSyncDestinationDatabase) els.loggerSyncDestinationDatabase.addEventListener('change', () => loadLoggerSyncSchema('destination', els.loggerSyncDestinationDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }));
+  if (els.loggerSyncSourceDatabase) els.loggerSyncSourceDatabase.addEventListener('change', () => { clearLoggerSyncTags('source'); loadLoggerSyncSchema('source', els.loggerSyncSourceDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }); });
+  if (els.loggerSyncDestinationDatabase) els.loggerSyncDestinationDatabase.addEventListener('change', () => { clearLoggerSyncTags('destination'); loadLoggerSyncSchema('destination', els.loggerSyncDestinationDatabase.value).catch((err) => { els.loggerSyncStatus.textContent = err.message || err; }); });
   if (els.loggerSyncSourceTable) els.loggerSyncSourceTable.addEventListener('change', () => {
+    clearLoggerSyncTags('source');
     updateLoggerSyncColumns('source', els.loggerSyncSourceTable.value);
     if (!String(els.loggerSyncMappings.value || '').trim() && els.loggerSyncDestinationTable.value) suggestLoggerSyncMappings(false);
   });
   if (els.loggerSyncDestinationTable) els.loggerSyncDestinationTable.addEventListener('change', () => {
+    clearLoggerSyncTags('destination');
     updateLoggerSyncColumns('destination', els.loggerSyncDestinationTable.value);
     if (!String(els.loggerSyncMappings.value || '').trim() && els.loggerSyncSourceTable.value) suggestLoggerSyncMappings(false);
   });
   if (els.loggerSyncAllTags) els.loggerSyncAllTags.addEventListener('change', () => {
     if (els.loggerSyncSelectedTagsWrap) els.loggerSyncSelectedTagsWrap.style.display = els.loggerSyncAllTags.checked ? 'none' : '';
+    renderLoggerSyncTagPanels();
   });
-  if (els.loggerSyncFindTagsBtn) els.loggerSyncFindTagsBtn.addEventListener('click', async () => {
-    try {
-      els.loggerSyncStatus.textContent = 'Finding tags…';
-      const response = await apiPostJson('/api/logger/databases/distinct', { database_id: els.loggerSyncSourceDatabase.value, table: els.loggerSyncSourceTable.value, column: els.loggerSyncSourceItem.value }, { timeoutMs: 300000 });
-      if (!response?.ok) throw new Error(response?.error || 'Tag discovery failed.');
-      els.loggerSyncTags.value = (response.values || []).join('\n');
-      els.loggerSyncStatus.textContent = `Found ${(response.values || []).length} tag(s). Remove any that should not be synchronized.`;
-    } catch (err) { els.loggerSyncStatus.textContent = `Find tags failed: ${err.message || err}`; }
+  if (els.loggerSyncSourceItem) els.loggerSyncSourceItem.addEventListener('change', () => clearLoggerSyncTags('source'));
+  if (els.loggerSyncDestinationItem) els.loggerSyncDestinationItem.addEventListener('change', () => clearLoggerSyncTags('destination'));
+  if (els.loggerSyncFindTagsBtn) els.loggerSyncFindTagsBtn.addEventListener('click', () => loadLoggerSyncTags().catch((err) => { els.loggerSyncStatus.textContent = `Load tags failed: ${err.message || err}`; }));
+  if (els.loggerSyncTagFilterA) els.loggerSyncTagFilterA.addEventListener('input', renderLoggerSyncTagPanels);
+  if (els.loggerSyncTagFilterB) els.loggerSyncTagFilterB.addEventListener('input', renderLoggerSyncTagPanels);
+  if (els.loggerSyncSelectTagsABtn) els.loggerSyncSelectTagsABtn.addEventListener('click', () => selectFilteredLoggerSyncTags('A'));
+  if (els.loggerSyncSelectTagsBBtn) els.loggerSyncSelectTagsBBtn.addEventListener('click', () => selectFilteredLoggerSyncTags('B'));
+  if (els.loggerSyncSelectAllTagsBtn) els.loggerSyncSelectAllTagsBtn.addEventListener('click', () => {
+    [...state.loggerSyncTagsA, ...state.loggerSyncTagsB].forEach((tag) => state.loggerSyncSelectedTags.add(tag));
+    renderLoggerSyncTagPanels();
   });
+  if (els.loggerSyncClearTagsBtn) els.loggerSyncClearTagsBtn.addEventListener('click', () => { state.loggerSyncSelectedTags.clear(); renderLoggerSyncTagPanels(); });
   if (els.loggerSyncSuggestMappingsBtn) els.loggerSyncSuggestMappingsBtn.addEventListener('click', () => {
     suggestLoggerSyncMappings(true);
   });
