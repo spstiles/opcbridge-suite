@@ -2359,32 +2359,41 @@ private:
         auto load_side = [&](MYSQL* connection, const std::string& table, const std::string& time_column,
                              const std::string& item_column, const std::vector<std::string>& columns,
                              CandidateMap& candidates, const std::string& side) -> bool {
-            std::string bucket_expression;
-            if (job.match_interval_minutes == 0) {
-                bucket_expression = "DATE_FORMAT(" + sync_quote_identifier(time_column) + ", '%Y-%m-%d %H:%i:%s')";
-            } else {
+            auto qualified = [&](const std::string& alias, const std::string& column) {
+                return alias + "." + sync_quote_identifier(column);
+            };
+            auto bucket_for = [&](const std::string& alias) {
+                const std::string time_field = qualified(alias, time_column);
+                if (job.match_interval_minutes == 0) {
+                    return "DATE_FORMAT(" + time_field + ", '%Y-%m-%d %H:%i:%s')";
+                }
                 const int seconds = job.match_interval_minutes * 60;
-                bucket_expression = "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(" + sync_quote_identifier(time_column) + ")/" +
-                    std::to_string(seconds) + ")*" + std::to_string(seconds) + ", '%Y-%m-%d %H:%i:%s')";
-            }
+                return "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(" + time_field + ")/" + std::to_string(seconds) + ")*" +
+                    std::to_string(seconds) + ", '%Y-%m-%d %H:%i:%s')";
+            };
             std::ostringstream sql;
-            sql << "SELECT " << bucket_expression << ',' << sync_quote_identifier(time_column) << ',' << sync_quote_identifier(item_column);
-            for (const auto& column : columns) sql << ',' << sync_quote_identifier(column);
-            sql << " FROM " << sync_quote_identifier(table) << " WHERE " << sync_quote_identifier(time_column)
+            sql << "SELECT latest.sync_bucket," << qualified("s0", time_column) << ',' << qualified("s0", item_column);
+            for (const auto& column : columns) sql << ',' << qualified("s0", column);
+            sql << " FROM " << sync_quote_identifier(table) << " s0 JOIN (SELECT " << qualified("s1", item_column)
+                << " AS sync_item," << bucket_for("s1") << " AS sync_bucket,MAX(" << qualified("s1", time_column)
+                << ") AS sync_time FROM " << sync_quote_identifier(table) << " s1 WHERE " << qualified("s1", time_column)
                 << " >= NOW() - INTERVAL " << job.lookback_days << " DAY";
             if (!job.all_tags) {
-                sql << " AND " << sync_quote_identifier(item_column) << " IN (";
+                sql << " AND " << qualified("s1", item_column) << " IN (";
                 for (size_t i = 0; i < job.tags.size(); ++i) { if (i) sql << ','; sql << '\'' << sync_escape(connection, job.tags[i]) << '\''; }
                 sql << ')';
             }
-            sql << " ORDER BY " << sync_quote_identifier(item_column) << ',' << sync_quote_identifier(time_column) << " LIMIT 200001";
+            sql << " GROUP BY " << qualified("s1", item_column) << ",sync_bucket) latest ON "
+                << qualified("s0", item_column) << "=latest.sync_item AND " << qualified("s0", time_column)
+                << "=latest.sync_time ORDER BY " << qualified("s0", item_column) << ',' << qualified("s0", time_column)
+                << " LIMIT 1000001";
             if (mysql_query(connection, sql.str().c_str()) != 0) { out.error = side + " query failed: " + mysql_error(connection); return false; }
             MYSQL_RES* result = mysql_store_result(connection);
             if (!result) { out.error = side + " result failed: " + mysql_error(connection); return false; }
             MYSQL_ROW row;
             int count = 0;
             while ((row = mysql_fetch_row(result)) != nullptr) {
-                if (++count > 200000) { mysql_free_result(result); out.error = side + " comparison exceeds 200,000 source rows; reduce the lookback period"; return false; }
+                if (++count > 1000000) { mysql_free_result(result); out.error = side + " comparison exceeds 1,000,000 tag/period records; reduce the lookback period"; return false; }
                 unsigned long* lengths = mysql_fetch_lengths(result);
                 if (!row[0] || !row[1] || !row[2]) continue;
                 Candidate candidate;

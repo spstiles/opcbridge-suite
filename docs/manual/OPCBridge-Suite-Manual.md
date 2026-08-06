@@ -693,6 +693,7 @@ Notes:
 - Sync jobs support all or selected tags, scheduled and manual runs, a configurable lookback window for backdated entries, automatic same-name value mappings, and advanced manual column mappings.
 - Dry Run opens a Database Sync Review grouped by collapsible tag. It aligns Database A and Database B records, highlights missing periods and conflicts, and allows reviewed missing records to be synchronized while leaving conflicts untouched.
 - Minute/hour/day matching is presence-based: if both databases contain the tag anywhere in the configured period, the period is considered present on both even when sampling seconds and values differ. Value conflicts are evaluated only for exact-timestamp matching.
+- Logger asks MySQL to select the last record for each tag/period before returning comparison data. The one-million-row safety ceiling therefore applies to reduced tag/period candidates rather than every raw sample; the browser displays at most 10,000 detailed comparison rows.
 - Sync-job IDs are generated internally when a job is first saved. Operators work with the friendly name, which can be changed later without breaking references.
 
 ![OPCBridge-SCADA Data Logger tab](screenshots/opcbridge-scada-data-logger-tab.png)
