@@ -6244,6 +6244,16 @@ function loggerSyncOptions(select, values, selected = '') {
   select.value = selected;
 }
 
+function loggerSyncDatabaseOptions(select, databases, selected = '') {
+  if (!select) return;
+  select.innerHTML = ['<option value=""></option>'].concat((databases || []).map((database) => {
+    const id = String(database?.id || '').trim();
+    const label = String(database?.name || '').trim() || 'Unnamed connection';
+    return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
+  })).join('');
+  select.value = selected;
+}
+
 async function loadLoggerSyncSchema(side, databaseId, selectedTable = '', selectedTime = '', selectedItem = '') {
   const prefix = side === 'source' ? 'Source' : 'Destination';
   const tableSelect = els[`loggerSync${prefix}Table`];
@@ -6301,9 +6311,8 @@ async function openLoggerSyncModal(id = '') {
   state.loggerSyncEditingId = String(id || '');
   if (els.loggerSyncModal) els.loggerSyncModal.style.display = 'block';
   const mysqlDbs = (state.reporterDatabases || []).filter((db) => String(db?.type || 'mysql') === 'mysql');
-  const options = mysqlDbs.map((db) => String(db?.id || '')).filter(Boolean);
-  loggerSyncOptions(els.loggerSyncSourceDatabase, options, String(job.source_database_id || ''));
-  loggerSyncOptions(els.loggerSyncDestinationDatabase, options, String(job.destination_database_id || ''));
+  loggerSyncDatabaseOptions(els.loggerSyncSourceDatabase, mysqlDbs, String(job.source_database_id || ''));
+  loggerSyncDatabaseOptions(els.loggerSyncDestinationDatabase, mysqlDbs, String(job.destination_database_id || ''));
   els.loggerSyncName.value = String(job.name || '');
   els.loggerSyncEnabled.checked = Boolean(job.enabled); els.loggerSyncSchedule.value = String(job.schedule?.on_calendar || '*-*-* 01:00:00');
   els.loggerSyncDirection.value = String(job.direction || 'one_way');
