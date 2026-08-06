@@ -1198,6 +1198,13 @@ function uniqueGeneratedId(sourceId, usedIds) {
   return id;
 }
 
+function uniqueOpaqueId(prefix, usedIds) {
+  const safePrefix = sanitizeId(prefix) || 'item';
+  let id = '';
+  do { id = `${safePrefix}_${crypto.randomBytes(8).toString('hex')}`; } while (usedIds.has(id));
+  return id;
+}
+
 function copyName(value) {
   const name = String(value || '').trim();
   return name ? `${name} Copy` : 'Copy';
@@ -3401,30 +3408,25 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const id = String(incoming.id || '').trim();
-        const originalId = String(parsed?.original_id || incoming.original_id || '').trim();
-        if (!id) {
-          sendJson(res, 400, { ok: false, error: 'Database "id" is required.' });
-          return;
-        }
+        const requestedId = String(incoming.id || '').trim();
+        let originalId = String(parsed?.original_id || incoming.original_id || '').trim();
+        const name = String(incoming.name || '').trim();
+        if (!name) throw new Error('Database name is required.');
 
         const root = readJsonFileOrNull(REPORTER_DATABASES_PATH) || { databases: [] };
         const raw = Array.isArray(root?.databases) ? root.databases : [];
         const nextList = raw
           .filter((d) => d && typeof d === 'object' && !Array.isArray(d))
           .map((d) => ({ ...d }));
+        if (!originalId && requestedId && nextList.some((d) => String(d?.id || '').trim() === requestedId)) originalId = requestedId;
 
-        const lookupId = originalId || id;
-        const idx = nextList.findIndex((d) => String(d.id || '').trim() === lookupId);
-        if (originalId && originalId !== id) {
-          const conflict = nextList.some((d, i) => i !== idx && String(d.id || '').trim() === id);
-          if (conflict) {
-            sendJson(res, 409, { ok: false, error: `Database id '${id}' already exists.` });
-            return;
-          }
-        }
+        const idx = originalId ? nextList.findIndex((d) => String(d.id || '').trim() === originalId) : -1;
+        if (originalId && idx < 0) throw new Error('The database connection being edited no longer exists.');
+        const usedIds = new Set(nextList.map((d) => String(d?.id || '').trim()).filter(Boolean));
+        const id = idx >= 0 ? String(nextList[idx]?.id || '').trim() : uniqueOpaqueId('db', usedIds);
         const prev = idx >= 0 ? nextList[idx] : {};
         const next = { ...prev, ...incoming, id };
+        next.name = name;
         delete next.original_id;
 
         // Password behavior:
@@ -3572,7 +3574,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const used = new Set(nextList.map((d) => String(d?.id || '').trim()).filter(Boolean));
-      const newId = uniqueCopyId(id, used);
+      const newId = uniqueOpaqueId('db', used);
       const next = JSON.parse(JSON.stringify(source));
       next.id = newId;
       next.name = copyName(next.name || source.name || id);
@@ -3615,33 +3617,27 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const id = sanitizeId(incoming.id);
-        const originalId = sanitizeId(parsed?.original_id || incoming.original_id || '');
-        if (!id) {
-          sendJson(res, 400, { ok: false, error: 'Report "id" is required.' });
-          return;
-        }
+        const requestedId = sanitizeId(incoming.id);
+        let originalId = sanitizeId(parsed?.original_id || incoming.original_id || '');
+        const name = String(incoming.name || '').trim();
+        if (!name) throw new Error('Log job name is required.');
 
         const root = readJsonFileOrNull(REPORTER_REPORTS_PATH) || { reports: [] };
         const rawList = Array.isArray(root?.reports) ? root.reports : [];
         const nextList = rawList
           .filter((r) => r && typeof r === 'object' && !Array.isArray(r))
           .map((r) => ({ ...r }));
+        if (!originalId && requestedId && nextList.some((r) => sanitizeId(r?.id) === requestedId)) originalId = requestedId;
 
-        const lookupId = originalId || id;
-        const idx = nextList.findIndex((r) => sanitizeId(r.id) === lookupId);
-        if (originalId && originalId !== id) {
-          const conflict = nextList.some((r, i) => i !== idx && sanitizeId(r.id) === id);
-          if (conflict) {
-            sendJson(res, 409, { ok: false, error: `Log job id '${id}' already exists.` });
-            return;
-          }
-        }
+        const idx = originalId ? nextList.findIndex((r) => sanitizeId(r.id) === originalId) : -1;
+        if (originalId && idx < 0) throw new Error('The log job being edited no longer exists.');
+        const usedIds = new Set(nextList.map((r) => sanitizeId(r?.id)).filter(Boolean));
+        const id = idx >= 0 ? sanitizeId(nextList[idx]?.id) : uniqueOpaqueId('log', usedIds);
         const prev = idx >= 0 ? nextList[idx] : {};
 
         const next = { ...prev, ...incoming, id };
         delete next.original_id;
-        next.name = String(next.name || next.id || '').trim();
+        next.name = name;
         next.mode = String(next.mode || 'scheduled').trim() || 'scheduled';
         next.database_id = sanitizeId(next.database_id);
         next.table = String(next.table || 'tag_log').trim() || 'tag_log';
@@ -3728,7 +3724,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const used = new Set(nextList.map((r) => sanitizeId(r?.id)).filter(Boolean));
-      const newId = uniqueCopyId(id, used);
+      const newId = uniqueOpaqueId('log', used);
       const next = JSON.parse(JSON.stringify(source));
       next.id = newId;
       next.name = copyName(next.name || source.name || id);
@@ -3860,32 +3856,26 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const id = sanitizeId(incoming.id);
-        const originalId = sanitizeId(parsed?.original_id || incoming.original_id || '');
-        if (!id) {
-          sendJson(res, 400, { ok: false, error: 'Data check "id" is required.' });
-          return;
-        }
+        const requestedId = sanitizeId(incoming.id);
+        let originalId = sanitizeId(parsed?.original_id || incoming.original_id || '');
+        const name = String(incoming.name || '').trim();
+        if (!name) throw new Error('Data check name is required.');
 
         const root = readJsonFileOrNull(REPORTER_DATA_CHECKS_PATH) || { data_checks: [] };
         const rawList = Array.isArray(root?.data_checks) ? root.data_checks : [];
         const nextList = rawList
           .filter((c) => c && typeof c === 'object' && !Array.isArray(c))
           .map((c) => ({ ...c }));
+        if (!originalId && requestedId && nextList.some((c) => sanitizeId(c?.id) === requestedId)) originalId = requestedId;
 
-        const lookupId = originalId || id;
-        const idx = nextList.findIndex((c) => sanitizeId(c.id) === lookupId);
-        if (originalId && originalId !== id) {
-          const conflict = nextList.some((c, i) => i !== idx && sanitizeId(c.id) === id);
-          if (conflict) {
-            sendJson(res, 409, { ok: false, error: `Data check id '${id}' already exists.` });
-            return;
-          }
-        }
+        const idx = originalId ? nextList.findIndex((c) => sanitizeId(c.id) === originalId) : -1;
+        if (originalId && idx < 0) throw new Error('The data check being edited no longer exists.');
+        const usedIds = new Set(nextList.map((c) => sanitizeId(c?.id)).filter(Boolean));
+        const id = idx >= 0 ? sanitizeId(nextList[idx]?.id) : uniqueOpaqueId('check', usedIds);
         const prev = idx >= 0 ? nextList[idx] : {};
         const next = { ...prev, ...incoming, id };
         delete next.original_id;
-        next.name = String(next.name || next.id || '').trim();
+        next.name = name;
         next.database_id = sanitizeId(next.database_id);
         next.enabled = Boolean(next.enabled);
         next.query = String(next.query || '').trim();
@@ -3989,7 +3979,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const used = new Set(nextList.map((c) => sanitizeId(c?.id)).filter(Boolean));
-      const newId = uniqueCopyId(id, used);
+      const newId = uniqueOpaqueId('check', used);
       const next = JSON.parse(JSON.stringify(source));
       next.id = newId;
       next.name = copyName(next.name || source.name || id);

@@ -1440,7 +1440,6 @@
 		              <table class="table" id="loggerDbTable">
 		                <thead>
 		                  <tr>
-		                    <th>ID</th>
 		                    <th>Name</th>
 		                    <th>Type</th>
 		                    <th>MySQL Host</th>
@@ -1459,7 +1458,6 @@
 		              <table class="table" id="loggerReportsTable" style="display:none;">
 		                <thead>
 		                  <tr>
-		                    <th>ID</th>
 		                    <th>Name</th>
 		                    <th>Database</th>
 		                    <th>Mode</th>
@@ -1478,7 +1476,6 @@
 		              <table class="table" id="loggerDataChecksTable" style="display:none;">
 		                <thead>
 		                  <tr>
-		                    <th>ID</th>
 		                    <th>Name</th>
 		                    <th>Database</th>
 		                    <th>Schedule</th>
@@ -2345,7 +2342,6 @@
       <div class="modal-body">
         <div class="hint" id="loggerDbHint">Configure a database connection for the data logger.</div>
         <div class="form" style="max-width: 720px;">
-          <div class="form-row"><label>ID</label><input id="loggerDbModalId" type="text" placeholder="e.g. plant_mysql" /></div>
           <div class="form-row"><label>Name</label><input id="loggerDbModalName" type="text" placeholder="e.g. Plant Historian" /></div>
           <div class="form-row"><label>Type</label>
             <select id="loggerDbModalType">
@@ -2427,7 +2423,6 @@
       <div class="modal-body">
         <div class="hint" id="loggerReportHint">Configure a logging schedule and tag selection.</div>
         <div class="form" style="max-width: 720px;">
-          <div class="form-row"><label>ID</label><input id="loggerReportId" type="text" placeholder="e.g. hist_5m" /></div>
           <div class="form-row"><label>Name</label><input id="loggerReportName" type="text" placeholder="e.g. 5-minute Historian" /></div>
           <div class="form-row"><label>Database</label><select id="loggerReportDatabase"></select></div>
           <div class="form-row"><label>Table</label><input id="loggerReportTable" type="text" placeholder="tag_log" /></div>
@@ -2534,7 +2529,6 @@
       <div class="modal-body">
         <div class="hint">Run a SQL query on a schedule and expose the result for alarms.</div>
         <div class="form" style="max-width: 720px;">
-          <div class="form-row"><label>ID</label><input id="loggerDataCheckId" type="text" placeholder="e.g. daily_record_count" /></div>
           <div class="form-row"><label>Name</label><input id="loggerDataCheckName" type="text" placeholder="e.g. Daily record count" /></div>
           <div class="form-row"><label>Database</label><select id="loggerDataCheckDatabase"></select></div>
           <div class="form-row">
@@ -2673,6 +2667,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260805_database_sync_sections_v1"></script>
+  <script src="app.js?v=20260805_logger_hidden_ids_v1"></script>
 </body>
 </html>

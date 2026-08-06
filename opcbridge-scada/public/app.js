@@ -423,7 +423,6 @@
   loggerDbModal: document.getElementById('loggerDbModal'),
   loggerDbCloseBtn: document.getElementById('loggerDbCloseBtn'),
   loggerDbHint: document.getElementById('loggerDbHint'),
-  loggerDbModalId: document.getElementById('loggerDbModalId'),
   loggerDbModalName: document.getElementById('loggerDbModalName'),
   loggerDbModalType: document.getElementById('loggerDbModalType'),
   loggerDbModalOpcbridgeBaseUrl: document.getElementById('loggerDbModalOpcbridgeBaseUrl'),
@@ -457,7 +456,6 @@
   loggerReportCloseBtn: document.getElementById('loggerReportCloseBtn'),
   loggerReportCancelBtn: document.getElementById('loggerReportCancelBtn'),
   loggerReportSaveBtn: document.getElementById('loggerReportSaveBtn'),
-  loggerReportId: document.getElementById('loggerReportId'),
   loggerReportName: document.getElementById('loggerReportName'),
   loggerReportDatabase: document.getElementById('loggerReportDatabase'),
   loggerReportTable: document.getElementById('loggerReportTable'),
@@ -489,7 +487,6 @@
   loggerDataCheckCancelBtn: document.getElementById('loggerDataCheckCancelBtn'),
   loggerDataCheckTestBtn: document.getElementById('loggerDataCheckTestBtn'),
   loggerDataCheckSaveBtn: document.getElementById('loggerDataCheckSaveBtn'),
-  loggerDataCheckId: document.getElementById('loggerDataCheckId'),
   loggerDataCheckName: document.getElementById('loggerDataCheckName'),
   loggerDataCheckDatabase: document.getElementById('loggerDataCheckDatabase'),
   loggerDataCheckEnabled: document.getElementById('loggerDataCheckEnabled'),
@@ -2347,7 +2344,7 @@ function renderLoggerTable() {
   if (!dbs.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 12;
+    td.colSpan = 11;
     td.className = 'small';
     td.textContent = 'No databases configured. Right-click “Databases” to add one.';
     tr.appendChild(td);
@@ -2367,7 +2364,6 @@ function renderLoggerTable() {
     const mon = state.reporterDatabaseStatusById?.get?.(id) || null;
     const tr = document.createElement('tr');
     tr.classList.toggle('is-selected', id && id === selectedId);
-    tr.appendChild(mk(id, true));
     tr.appendChild(mk(String(d?.name || ''), false));
     tr.appendChild(mk(String(d?.type || 'mysql'), true));
     tr.appendChild(mk(String(d?.mysql_host || ''), true));
@@ -3121,7 +3117,7 @@ function renderLoggerReportsTable() {
   if (!reports.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 12;
+    td.colSpan = 11;
     td.className = 'small';
     td.textContent = 'No log jobs configured. Right-click “Logger” to add one.';
     tr.appendChild(td);
@@ -3146,7 +3142,6 @@ function renderLoggerReportsTable() {
     const cal = String(r?.schedule?.on_calendar || '').trim();
     const runtime = runtimeById.get(id) || null;
 
-    tr.appendChild(mk(id, true));
     tr.appendChild(mk(String(r?.name || ''), false));
     tr.appendChild(mk(reporterDatabaseLabel(r?.database_id), false));
     tr.appendChild(mk(mode, true));
@@ -3232,7 +3227,7 @@ function renderLoggerDataChecksTable() {
   if (!checks.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 12;
+    td.colSpan = 11;
     td.className = 'small';
     td.textContent = 'No data checks configured. Right-click “Data Checks” to add one.';
     tr.appendChild(td);
@@ -3252,7 +3247,6 @@ function renderLoggerDataChecksTable() {
     const st = state.reporterDataCheckStatusById?.get?.(id) || null;
     const tr = document.createElement('tr');
     tr.classList.toggle('is-selected', id && id === selectedId);
-    tr.appendChild(mk(id, true));
     tr.appendChild(mk(String(c?.name || ''), false));
     tr.appendChild(mk(reporterDatabaseLabel(c?.database_id), false));
     tr.appendChild(mk(String(c?.schedule?.on_calendar || ''), true));
@@ -3370,10 +3364,6 @@ function openLoggerDbModal(opts = {}) {
 
   renderLoggerDbModalTypeUi();
 
-  if (els.loggerDbModalId) {
-    els.loggerDbModalId.disabled = false;
-    els.loggerDbModalId.value = isNew ? '' : String(db?.id || id);
-  }
   if (els.loggerDbModalName) els.loggerDbModalName.value = String(db?.name || '');
   if (els.loggerDbModalType) els.loggerDbModalType.value = String(db?.type || 'mysql');
   if (els.loggerDbModalOpcbridgeBaseUrl) {
@@ -3435,7 +3425,7 @@ async function duplicateReporterDatabase(id) {
     if (newId) state.loggerSelectedNodeId = `logger:db:${newId}`;
     renderLoggerTree();
     renderLoggerDetails();
-    loggerSetStatus(newId ? `Duplicated database '${dbId}' as '${newId}'.` : 'Duplicated database.');
+    loggerSetStatus(`Duplicated database as '${String(resp?.database?.name || 'Copy').trim()}'.`);
   } catch (err) {
     loggerSetStatus(`Duplicate failed: ${err.message || err}`);
   }
@@ -3444,7 +3434,8 @@ async function duplicateReporterDatabase(id) {
 async function deleteReporterDatabase(id) {
   const dbId = String(id || '').trim();
   if (!dbId) return;
-  if (!window.confirm(`Delete database '${dbId}'?`)) return;
+  const database = findDatabaseById(dbId);
+  if (!window.confirm(`Delete database '${database?.name || 'this connection'}'?`)) return;
   loggerSetStatus('Deleting…');
   try {
     const resp = await apiPostJson('/api/logger/databases/delete', { id: dbId });
@@ -3487,7 +3478,6 @@ async function testReporterDatabaseFromModal() {
   loggerModalSetStatus('Testing database settings…');
   try {
     const db = getDatabaseFromModalUi();
-    if (!db.id) throw new Error('ID is required.');
     if (db.type === 'odbc') {
       if (!canUseOdbcInUi()) throw new Error('ODBC support is not installed on this server.');
       if (!db.odbc_driver) throw new Error('ODBC Driver is required.');
@@ -3535,10 +3525,8 @@ function reporterDatabaseDiscoveryTimeoutMs(database) {
 }
 
 function getDatabaseFromModalUi() {
-  const id = String(els.loggerDbModalId?.value || '').trim();
   const type = String(els.loggerDbModalType?.value || 'mysql').trim() || 'mysql';
   const base = {
-    id,
     name: String(els.loggerDbModalName?.value || '').trim(),
     type,
     opcbridge_base_url: String(els.loggerDbModalOpcbridgeBaseUrl?.value || '').trim(),
@@ -3580,7 +3568,7 @@ async function saveReporterDatabase() {
   loggerModalSetStatus('Saving…');
   try {
     const db = getDatabaseFromModalUi();
-    if (!db.id) throw new Error('ID is required.');
+    if (!db.name) throw new Error('Name is required.');
     if (db.type === 'odbc') {
       if (!canUseOdbcInUi()) throw new Error('ODBC support is not installed on this server.');
       if (!db.odbc_driver) throw new Error('ODBC Driver is required.');
@@ -3603,7 +3591,7 @@ async function saveReporterDatabase() {
     const resp = await apiPostJson('/api/logger/databases', body);
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
 
-    const savedId = String(resp?.database?.id || db.id).trim();
+    const savedId = String(resp?.database?.id || state.loggerEditingId || '').trim();
     state.loggerEditingMode = '';
     state.loggerEditingId = '';
     await refreshReporterAll();
@@ -5557,7 +5545,7 @@ function downloadLoggerTagCsvForReport(report) {
 }
 
 function downloadLoggerTagCsvFromModal() {
-  const id = String(els.loggerReportId?.value || state.loggerReportEditingId || 'logger').trim() || 'logger';
+  const id = String(els.loggerReportName?.value || 'logger').trim() || 'logger';
   const tags = String(els.loggerReportTags?.value || '')
     ? reportTagEntriesFromText(String(els.loggerReportTags?.value || ''))
     : [];
@@ -5698,10 +5686,6 @@ function openLoggerReportModal(opts = {}) {
   if (els.loggerReportModal) els.loggerReportModal.style.display = 'block';
   loggerReportModalSetStatus('');
 
-  if (els.loggerReportId) {
-    els.loggerReportId.disabled = false;
-    els.loggerReportId.value = isNew ? '' : String(report?.id || id);
-  }
   if (els.loggerReportName) els.loggerReportName.value = String(report?.name || '');
 
   // Database dropdown
@@ -5760,14 +5744,13 @@ async function duplicateReporterReport(id) {
     if (newId) state.loggerSelectedNodeId = `logger:report:${newId}`;
     renderLoggerTree();
     renderLoggerDetails();
-    loggerSetStatus(newId ? `Duplicated log job '${rid}' as '${newId}'. The copy is disabled.` : 'Duplicated log job. The copy is disabled.');
+    loggerSetStatus(`Duplicated log job as '${String(resp?.report?.name || 'Copy').trim()}'. The copy is disabled.`);
   } catch (err) {
     loggerSetStatus(`Duplicate failed: ${err.message || err}`);
   }
 }
 
 function getReportFromModalUi() {
-  const id = String(els.loggerReportId?.value || '').trim();
   const mode = String(els.loggerReportMode?.value || 'scheduled').trim() || 'scheduled';
   const enabled = Boolean(els.loggerReportEnabled?.checked);
   const persistent = Boolean(els.loggerReportPersistent?.checked);
@@ -5781,7 +5764,6 @@ function getReportFromModalUi() {
   const historianFields = normalizeHistorianFieldEntries(existingReport?.historian_fields);
 
   return {
-    id,
     name: String(els.loggerReportName?.value || '').trim(),
     database_id: String(els.loggerReportDatabase?.value || '').trim(),
     table: String(els.loggerReportTable?.value || 'tag_log').trim() || 'tag_log',
@@ -5797,7 +5779,7 @@ async function saveAndApplyReporterReport() {
   loggerReportModalSetStatus('Saving…');
   try {
     const report = getReportFromModalUi();
-    if (!report.id) throw new Error('ID is required.');
+    if (!report.name) throw new Error('Name is required.');
     if (!report.database_id) throw new Error('Database is required.');
     if (report.mode === 'scheduled' && !report.schedule.on_calendar) throw new Error('OnCalendar is required for scheduled log jobs.');
 
@@ -5805,7 +5787,7 @@ async function saveAndApplyReporterReport() {
     if (state.loggerReportEditingMode === 'edit' && state.loggerReportEditingId) body.original_id = state.loggerReportEditingId;
     const save = await apiPostJson('/api/logger/reports', body);
     if (!save?.ok) throw new Error(String(save?.error || 'Failed'));
-    const savedId = String(save?.report?.id || report.id).trim();
+    const savedId = String(save?.report?.id || state.loggerReportEditingId || '').trim();
 
     loggerReportModalSetStatus('Reloading logger service…');
     const apply = await apiPostJson('/api/logger/reports/apply', { id: savedId });
@@ -5825,7 +5807,8 @@ async function saveAndApplyReporterReport() {
 async function deleteReporterReport(id) {
   const rid = String(id || '').trim();
   if (!rid) return;
-  if (!window.confirm(`Delete log job '${rid}'?`)) return;
+  const report = findReportById(rid);
+  if (!window.confirm(`Delete log job '${report?.name || 'this job'}'?`)) return;
   loggerSetStatus('Deleting…');
   try {
     const resp = await apiPostJson('/api/logger/reports/delete', { id: rid });
@@ -5858,10 +5841,6 @@ function openLoggerDataCheckModal(opts = {}) {
 
   if (els.loggerDataCheckModal) els.loggerDataCheckModal.style.display = 'block';
   if (els.loggerDataCheckStatus) els.loggerDataCheckStatus.textContent = '';
-  if (els.loggerDataCheckId) {
-    els.loggerDataCheckId.disabled = false;
-    els.loggerDataCheckId.value = isNew ? '' : String(check?.id || id);
-  }
   if (els.loggerDataCheckTestBtn) els.loggerDataCheckTestBtn.disabled = isNew;
   if (els.loggerDataCheckName) els.loggerDataCheckName.value = String(check?.name || '');
   if (els.loggerDataCheckEnabled) els.loggerDataCheckEnabled.checked = Boolean(check?.enabled);
@@ -5904,7 +5883,7 @@ async function duplicateReporterDataCheck(id) {
     if (newId) state.loggerSelectedNodeId = `logger:data_check:${newId}`;
     renderLoggerTree();
     renderLoggerDetails();
-    loggerSetStatus(newId ? `Duplicated data check '${cid}' as '${newId}'. The copy is disabled.` : 'Duplicated data check. The copy is disabled.');
+    loggerSetStatus(`Duplicated data check as '${String(resp?.data_check?.name || 'Copy').trim()}'. The copy is disabled.`);
   } catch (err) {
     loggerSetStatus(`Duplicate failed: ${err.message || err}`);
   }
@@ -5914,7 +5893,6 @@ function getDataCheckFromModalUi() {
   const lowText = String(els.loggerDataCheckLowThreshold?.value || '').trim();
   const highText = String(els.loggerDataCheckHighThreshold?.value || '').trim();
   const out = {
-    id: String(els.loggerDataCheckId?.value || '').trim(),
     name: String(els.loggerDataCheckName?.value || '').trim(),
     database_id: String(els.loggerDataCheckDatabase?.value || '').trim(),
     enabled: Boolean(els.loggerDataCheckEnabled?.checked),
@@ -5931,7 +5909,7 @@ async function saveReporterDataCheck() {
   if (els.loggerDataCheckStatus) els.loggerDataCheckStatus.textContent = 'Saving…';
   try {
     const check = getDataCheckFromModalUi();
-    if (!check.id) throw new Error('ID is required.');
+    if (!check.name) throw new Error('Name is required.');
     if (!check.database_id) throw new Error('Database is required.');
     if (!check.schedule.on_calendar) throw new Error('Schedule is required.');
     if (!check.query) throw new Error('Query is required.');
@@ -5942,7 +5920,7 @@ async function saveReporterDataCheck() {
     if (state.loggerDataCheckEditingMode === 'edit' && state.loggerDataCheckEditingId) body.original_id = state.loggerDataCheckEditingId;
     const resp = await apiPostJson('/api/logger/data-checks', body);
     if (!resp?.ok) throw new Error(String(resp?.error || 'Failed'));
-    const savedId = String(resp?.data_check?.id || check.id).trim();
+    const savedId = String(resp?.data_check?.id || state.loggerDataCheckEditingId || '').trim();
     await refreshReporterAll();
     await refreshReporterSystemTagsForScada();
     state.loggerSelectedNodeId = `logger:data_check:${savedId}`;
@@ -5958,7 +5936,8 @@ async function saveReporterDataCheck() {
 async function deleteReporterDataCheck(id) {
   const cid = String(id || '').trim();
   if (!cid) return;
-  if (!window.confirm(`Delete data check '${cid}'?`)) return;
+  const check = findDataCheckById(cid);
+  if (!window.confirm(`Delete data check '${check?.name || 'this check'}'?`)) return;
   loggerSetStatus('Deleting…');
   try {
     const resp = await apiPostJson('/api/logger/data-checks/delete', { id: cid });
@@ -6474,7 +6453,7 @@ function wireLoggerUi() {
   if (els.loggerDataCheckCloseBtn) els.loggerDataCheckCloseBtn.addEventListener('click', closeLoggerDataCheckModal);
   if (els.loggerDataCheckCancelBtn) els.loggerDataCheckCancelBtn.addEventListener('click', closeLoggerDataCheckModal);
   if (els.loggerDataCheckTestBtn) els.loggerDataCheckTestBtn.addEventListener('click', () => {
-    const id = String(els.loggerDataCheckId?.value || state.loggerDataCheckEditingId || '').trim();
+    const id = String(state.loggerDataCheckEditingId || '').trim();
     testReporterDataCheck(id).catch(() => {});
   });
   if (els.loggerDataCheckSaveBtn) els.loggerDataCheckSaveBtn.addEventListener('click', saveReporterDataCheck);
