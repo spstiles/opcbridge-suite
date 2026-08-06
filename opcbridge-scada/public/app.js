@@ -6274,26 +6274,40 @@ function loggerSyncDatabaseOptions(select, databases, selected = '') {
 function renderLoggerSyncTagPanels() {
   const selected = state.loggerSyncSelectedTags instanceof Set ? state.loggerSyncSelectedTags : new Set();
   const setA = new Set(state.loggerSyncTagsA || []), setB = new Set(state.loggerSyncTagsB || []);
+  const updateSelectionDisplay = (tag, checked) => {
+    [els.loggerSyncTagListA, els.loggerSyncTagListB].forEach((container) => {
+      container?.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+        if (input.dataset.tag === tag) input.checked = checked;
+      });
+    });
+    if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${selected.size} selected`;
+  };
   const renderSide = (side, values, otherSet) => {
     const filter = String((side === 'A' ? els.loggerSyncTagFilterA : els.loggerSyncTagFilterB)?.value || '').trim().toLowerCase();
     const filtered = (values || []).filter((tag) => !filter || String(tag).toLowerCase().includes(filter));
-    const shown = filtered.slice(0, 2000);
+    const shown = filtered;
     const container = side === 'A' ? els.loggerSyncTagListA : els.loggerSyncTagListB;
     if (container) {
       container.textContent = '';
+      const fragment = document.createDocumentFragment();
       shown.forEach((tag) => {
         const label = document.createElement('label'); label.className = 'sync-tag-option';
-        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(tag);
-        checkbox.addEventListener('change', () => { if (checkbox.checked) selected.add(tag); else selected.delete(tag); state.loggerSyncSelectedTags = selected; renderLoggerSyncTagPanels(); });
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(tag); checkbox.dataset.tag = tag;
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) selected.add(tag); else selected.delete(tag);
+          state.loggerSyncSelectedTags = selected;
+          updateSelectionDisplay(tag, checkbox.checked);
+        });
         const textNode = document.createElement('span'); textNode.textContent = tag;
         label.appendChild(checkbox); label.appendChild(textNode);
         if (otherSet.has(tag)) { const meta = document.createElement('span'); meta.className = 'small'; meta.style.marginLeft = 'auto'; meta.textContent = `also in ${side === 'A' ? 'B' : 'A'}`; label.appendChild(meta); }
-        container.appendChild(label);
+        fragment.appendChild(label);
       });
-      if (!shown.length) { const empty = document.createElement('div'); empty.className = 'small'; empty.textContent = values?.length ? 'No tags match this filter.' : 'Load available tags to populate this list.'; container.appendChild(empty); }
+      if (!shown.length) { const empty = document.createElement('div'); empty.className = 'small'; empty.textContent = values?.length ? 'No tags match this filter.' : 'Load available tags to populate this list.'; fragment.appendChild(empty); }
+      container.appendChild(fragment);
     }
     const count = side === 'A' ? els.loggerSyncTagCountA : els.loggerSyncTagCountB;
-    if (count) count.textContent = `${values?.length || 0} available · ${filtered.length} filtered${filtered.length > shown.length ? ` · showing first ${shown.length}` : ''}`;
+    if (count) count.textContent = `${values?.length || 0} available · ${filtered.length} shown`;
   };
   renderSide('A', state.loggerSyncTagsA, setB); renderSide('B', state.loggerSyncTagsB, setA);
   if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${selected.size} selected`;
