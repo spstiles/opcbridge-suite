@@ -2867,11 +2867,24 @@ private:
             }
             if (dry_run) continue;
             bool inserted = true;
-            if (status == "a_to_b") inserted = insert_candidate(connection_b, *a, job.destination_table, job.destination_time_column, job.destination_item_column, columns_b);
-            else if (status == "b_to_a") inserted = insert_candidate(connection_a, *b, job.source_table, job.source_time_column, job.source_item_column, columns_a);
+            const Candidate* attempted = nullptr;
+            std::string target_name;
+            if (status == "a_to_b") {
+                attempted = a; target_name = "Database B";
+                inserted = insert_candidate(connection_b, *a, job.destination_table, job.destination_time_column, job.destination_item_column, columns_b);
+            } else if (status == "b_to_a") {
+                attempted = b; target_name = "Database A";
+                inserted = insert_candidate(connection_a, *b, job.source_table, job.source_time_column, job.source_item_column, columns_a);
+            }
             else continue;
             if (inserted) ++out.inserted;
-            else { ++out.failed; if (out.error.empty()) out.error = "A destination insert failed"; }
+            else {
+                ++out.failed;
+                const std::string database_error = out.error.empty() ? "database rejected the row" : out.error;
+                out.error = target_name + " insert failed for tag '" + (attempted ? attempted->tag : std::string()) +
+                    "' in period " + (attempted ? attempted->bucket : std::string()) + ": " + database_error;
+                break;
+            }
         }
         if (dry_run) {
             out.inserted = out.a_to_b + out.b_to_a;
