@@ -132,10 +132,9 @@ code, pre.mono, textarea.mono, .mono { font-family: var(--mono); }
 .tabs-right { margin-left: auto; display: flex; gap: 8px; }
 
 .main {
-  padding: 18px 22px 44px 22px;
+  padding: 18px 8px 44px;
   font-size: 12px;
-  max-width: 1680px;
-  margin: 0 auto;
+  max-width: none;
 }
 
 body.report-portal .topbar-status,
