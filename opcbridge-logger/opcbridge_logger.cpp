@@ -2255,10 +2255,17 @@ private:
     static MYSQL* sync_connect(const DbConfig& db, std::string& error) {
         MYSQL* conn = mysql_init(nullptr);
         if (!conn) { error = "mysql_init failed"; return nullptr; }
-        unsigned int timeout = static_cast<unsigned int>(std::max(1, db.monitor_timeout_sec));
-        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
-        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
-        mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
+        // The monitor timeout is appropriate for establishing a connection and
+        // running a lightweight health query, but database synchronization can
+        // legitimately spend much longer grouping a large historical window.
+        // Reusing a typical 10-second monitor timeout here causes MySQL to report
+        // "Lost connection to server during query" even though the server is
+        // still processing the comparison.
+        unsigned int connect_timeout = static_cast<unsigned int>(std::max(1, db.monitor_timeout_sec));
+        unsigned int operation_timeout = static_cast<unsigned int>(std::max(300, db.monitor_timeout_sec));
+        mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &connect_timeout);
+        mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &operation_timeout);
+        mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &operation_timeout);
         if (!mysql_real_connect(conn, db.mysql_host.c_str(), db.mysql_user.c_str(), db.mysql_password.c_str(),
                                 db.mysql_database.c_str(), db.mysql_port, nullptr, 0)) {
             error = std::string("mysql_real_connect failed: ") + mysql_error(conn);
