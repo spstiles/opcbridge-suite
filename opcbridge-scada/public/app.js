@@ -514,12 +514,8 @@
   loggerSyncDestinationItem: document.getElementById('loggerSyncDestinationItem'),
   loggerSyncSelectAllTagsBtn: document.getElementById('loggerSyncSelectAllTagsBtn'), loggerSyncClearTagsBtn: document.getElementById('loggerSyncClearTagsBtn'),
   loggerSyncTagSelectionSummary: document.getElementById('loggerSyncTagSelectionSummary'),
-  loggerSyncTagFilterA: document.getElementById('loggerSyncTagFilterA'), loggerSyncTagFilterB: document.getElementById('loggerSyncTagFilterB'),
-  loggerSyncSelectTagsABtn: document.getElementById('loggerSyncSelectTagsABtn'), loggerSyncSelectTagsBBtn: document.getElementById('loggerSyncSelectTagsBBtn'),
-  loggerSyncTagListA: document.getElementById('loggerSyncTagListA'), loggerSyncTagListB: document.getElementById('loggerSyncTagListB'),
-  loggerSyncTagCountA: document.getElementById('loggerSyncTagCountA'), loggerSyncTagCountB: document.getElementById('loggerSyncTagCountB'),
-  loggerSyncTagPrevA: document.getElementById('loggerSyncTagPrevA'), loggerSyncTagNextA: document.getElementById('loggerSyncTagNextA'), loggerSyncTagPageA: document.getElementById('loggerSyncTagPageA'),
-  loggerSyncTagPrevB: document.getElementById('loggerSyncTagPrevB'), loggerSyncTagNextB: document.getElementById('loggerSyncTagNextB'), loggerSyncTagPageB: document.getElementById('loggerSyncTagPageB'),
+  loggerSyncTagFilter: document.getElementById('loggerSyncTagFilter'), loggerSyncTagList: document.getElementById('loggerSyncTagList'),
+  loggerSyncTagCount: document.getElementById('loggerSyncTagCount'), loggerSyncTagListHeading: document.getElementById('loggerSyncTagListHeading'),
   loggerSyncMappings: document.getElementById('loggerSyncMappings'), loggerSyncStatus: document.getElementById('loggerSyncStatus'),
   loggerSyncReviewModal: document.getElementById('loggerSyncReviewModal'), loggerSyncReviewTitle: document.getElementById('loggerSyncReviewTitle'),
   loggerSyncReviewCloseBtn: document.getElementById('loggerSyncReviewCloseBtn'), loggerSyncExpandAllBtn: document.getElementById('loggerSyncExpandAllBtn'),
@@ -1284,7 +1280,7 @@ const state = {
   loggerDataCheckEditingMode: '', // '' | 'new' | 'edit'
   loggerSyncEditingId: '',
   loggerSyncSchemas: { source: [], destination: [] },
-  loggerSyncTagsA: [], loggerSyncTagsB: [], loggerSyncSelectedTags: new Set(), loggerSyncTagPages: { A: 0, B: 0 },
+  loggerSyncTagsA: [], loggerSyncTagsB: [], loggerSyncSelectedTags: new Set(),
   loggerSyncReview: null,
   loggerBackfillJobId: '',
   loggerBackfillTaskId: '',
@@ -6277,54 +6273,37 @@ function loggerSyncDatabaseOptions(select, databases, selected = '') {
 function renderLoggerSyncTagPanels() {
   const selected = state.loggerSyncSelectedTags instanceof Set ? state.loggerSyncSelectedTags : new Set();
   const setA = new Set(state.loggerSyncTagsA || []), setB = new Set(state.loggerSyncTagsB || []);
-  const updateSelectionDisplay = (tag, checked) => {
-    [els.loggerSyncTagListA, els.loggerSyncTagListB].forEach((container) => {
-      container?.querySelectorAll('input[type="checkbox"]').forEach((input) => {
-        if (input.dataset.tag === tag) input.checked = checked;
+  const bidirectional = els.loggerSyncDirection?.value === 'bidirectional';
+  const available = bidirectional
+    ? Array.from(new Set([...(state.loggerSyncTagsA || []), ...(state.loggerSyncTagsB || [])]))
+    : [...(state.loggerSyncTagsA || [])];
+  available.sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }));
+  const filter = String(els.loggerSyncTagFilter?.value || '').trim().toLowerCase();
+  const filtered = available.filter((tag) => !filter || String(tag).toLowerCase().includes(filter));
+  if (els.loggerSyncTagListHeading) els.loggerSyncTagListHeading.textContent = bidirectional ? 'Combined Database A and B tags' : 'Database A tags';
+  if (els.loggerSyncTagList) {
+    els.loggerSyncTagList.textContent = '';
+    const fragment = document.createDocumentFragment();
+    filtered.forEach((tag) => {
+      const label = document.createElement('label'); label.className = 'sync-tag-option';
+      const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(tag); checkbox.dataset.tag = tag;
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selected.add(tag); else selected.delete(tag);
+        state.loggerSyncSelectedTags = selected;
+        if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${available.filter((value) => selected.has(value)).length} selected`;
       });
+      const textNode = document.createElement('span'); textNode.textContent = tag;
+      label.appendChild(checkbox); label.appendChild(textNode);
+      if (bidirectional && setA.has(tag) !== setB.has(tag)) {
+        const meta = document.createElement('span'); meta.className = 'small'; meta.style.marginLeft = 'auto'; meta.textContent = setA.has(tag) ? 'A only' : 'B only'; label.appendChild(meta);
+      }
+      fragment.appendChild(label);
     });
-    if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${selected.size} selected`;
-  };
-  const renderSide = (side, values, otherSet) => {
-    const filter = String((side === 'A' ? els.loggerSyncTagFilterA : els.loggerSyncTagFilterB)?.value || '').trim().toLowerCase();
-    const filtered = (values || []).filter((tag) => !filter || String(tag).toLowerCase().includes(filter));
-    const pageSize = 100;
-    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-    const page = Math.max(0, Math.min(Number(state.loggerSyncTagPages?.[side] || 0), pageCount - 1));
-    state.loggerSyncTagPages[side] = page;
-    const shown = filtered.slice(page * pageSize, (page + 1) * pageSize);
-    const container = side === 'A' ? els.loggerSyncTagListA : els.loggerSyncTagListB;
-    if (container) {
-      container.textContent = '';
-      const fragment = document.createDocumentFragment();
-      shown.forEach((tag) => {
-        const label = document.createElement('label'); label.className = 'sync-tag-option';
-        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(tag); checkbox.dataset.tag = tag;
-        checkbox.addEventListener('change', () => {
-          if (checkbox.checked) selected.add(tag); else selected.delete(tag);
-          state.loggerSyncSelectedTags = selected;
-          updateSelectionDisplay(tag, checkbox.checked);
-        });
-        const textNode = document.createElement('span'); textNode.textContent = tag;
-        label.appendChild(checkbox); label.appendChild(textNode);
-        if (otherSet.has(tag)) { const meta = document.createElement('span'); meta.className = 'small'; meta.style.marginLeft = 'auto'; meta.textContent = `also in ${side === 'A' ? 'B' : 'A'}`; label.appendChild(meta); }
-        fragment.appendChild(label);
-      });
-      if (!shown.length) { const empty = document.createElement('div'); empty.className = 'small sync-tag-empty'; empty.textContent = values?.length ? 'No tags match this filter.' : 'Load available tags to populate this list.'; fragment.appendChild(empty); }
-      container.appendChild(fragment);
-      container.scrollTop = 0;
-    }
-    const count = side === 'A' ? els.loggerSyncTagCountA : els.loggerSyncTagCountB;
-    if (count) count.textContent = `${values?.length || 0} available · ${filtered.length} matching`;
-    const previous = side === 'A' ? els.loggerSyncTagPrevA : els.loggerSyncTagPrevB;
-    const next = side === 'A' ? els.loggerSyncTagNextA : els.loggerSyncTagNextB;
-    const pageLabel = side === 'A' ? els.loggerSyncTagPageA : els.loggerSyncTagPageB;
-    if (previous) previous.disabled = page <= 0;
-    if (next) next.disabled = page >= pageCount - 1;
-    if (pageLabel) pageLabel.textContent = filtered.length ? `${page + 1} / ${pageCount}` : '0 / 0';
-  };
-  renderSide('A', state.loggerSyncTagsA, setB); renderSide('B', state.loggerSyncTagsB, setA);
-  if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${selected.size} selected`;
+    if (!filtered.length) { const empty = document.createElement('div'); empty.className = 'small sync-tag-empty'; empty.textContent = available.length ? 'No tags match this filter.' : 'Load available tags to populate this list.'; fragment.appendChild(empty); }
+    els.loggerSyncTagList.appendChild(fragment);
+  }
+  if (els.loggerSyncTagCount) els.loggerSyncTagCount.textContent = `${available.length} available · ${filtered.length} shown`;
+  if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${available.filter((tag) => selected.has(tag)).length} selected`;
 }
 
 async function loadLoggerSyncTags() {
@@ -6342,7 +6321,6 @@ async function loadLoggerSyncTags() {
   if (!b?.ok) throw new Error(`Database B: ${b?.error || 'tag discovery failed'}`);
   state.loggerSyncTagsA = (a.values || []).map(String);
   state.loggerSyncTagsB = (b.values || []).map(String);
-  state.loggerSyncTagPages = { A: 0, B: 0 };
   renderLoggerSyncTagPanels();
   if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = `Loaded ${state.loggerSyncTagsA.length} Database A tag(s) and ${state.loggerSyncTagsB.length} Database B tag(s).`;
 }
@@ -6353,12 +6331,14 @@ function clearLoggerSyncTags(side = '') {
   renderLoggerSyncTagPanels();
 }
 
-function selectFilteredLoggerSyncTags(side) {
-  const values = side === 'A' ? state.loggerSyncTagsA : state.loggerSyncTagsB;
-  const filter = String((side === 'A' ? els.loggerSyncTagFilterA : els.loggerSyncTagFilterB)?.value || '').trim().toLowerCase();
+function selectFilteredLoggerSyncTags() {
+  const bidirectional = els.loggerSyncDirection?.value === 'bidirectional';
+  const values = bidirectional ? Array.from(new Set([...state.loggerSyncTagsA, ...state.loggerSyncTagsB])) : state.loggerSyncTagsA;
+  const filter = String(els.loggerSyncTagFilter?.value || '').trim().toLowerCase();
   (values || []).filter((tag) => !filter || String(tag).toLowerCase().includes(filter))
     .forEach((tag) => state.loggerSyncSelectedTags.add(tag));
-  renderLoggerSyncTagPanels();
+  els.loggerSyncTagList?.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = true; });
+  if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = `${(values || []).filter((tag) => state.loggerSyncSelectedTags.has(tag)).length} selected`;
 }
 
 async function loadLoggerSyncSchema(side, databaseId, selectedTable = '', selectedTime = '', selectedItem = '') {
@@ -6430,9 +6410,7 @@ async function openLoggerSyncModal(id = '') {
   els.loggerSyncLookback.value = String(job.lookback_days || 7);
   state.loggerSyncSelectedTags = new Set((job.tags || []).map(String));
   state.loggerSyncTagsA = []; state.loggerSyncTagsB = [];
-  state.loggerSyncTagPages = { A: 0, B: 0 };
-  if (els.loggerSyncTagFilterA) els.loggerSyncTagFilterA.value = '';
-  if (els.loggerSyncTagFilterB) els.loggerSyncTagFilterB.value = '';
+  if (els.loggerSyncTagFilter) els.loggerSyncTagFilter.value = '';
   renderLoggerSyncTagPanels();
   els.loggerSyncMappings.value = (job.mappings || []).map((m) => `${m.source} = ${m.destination}`).join('\n');
   try {
@@ -6453,6 +6431,9 @@ function loggerSyncFromUi() {
   const mappings = String(els.loggerSyncMappings?.value || '').split(/\r?\n/).map((line) => line.split('=').map((v) => v.trim()))
     .filter((parts) => parts.length >= 2 && parts[0] && parts[1] && !specialSourceColumns.has(parts[0]) && !specialDestinationColumns.has(parts[1]))
     .map((parts) => ({ source: parts[0], destination: parts[1] }));
+  const availableTags = new Set(els.loggerSyncDirection.value === 'bidirectional'
+    ? [...state.loggerSyncTagsA, ...state.loggerSyncTagsB]
+    : state.loggerSyncTagsA);
   return { name: String(els.loggerSyncName.value || '').trim(), enabled: els.loggerSyncEnabled.checked,
     schedule: { on_calendar: String(els.loggerSyncSchedule.value || '').trim() }, lookback_days: Number(els.loggerSyncLookback.value || 7),
     direction: els.loggerSyncDirection.value, match_interval_minutes: Number(els.loggerSyncMatchInterval.value || 0), all_tags: els.loggerSyncAllTags.checked,
@@ -6460,7 +6441,7 @@ function loggerSyncFromUi() {
     source_time_column: els.loggerSyncSourceTime.value, source_item_column: els.loggerSyncSourceItem.value,
     destination_database_id: els.loggerSyncDestinationDatabase.value, destination_table: els.loggerSyncDestinationTable.value,
     destination_time_column: els.loggerSyncDestinationTime.value, destination_item_column: els.loggerSyncDestinationItem.value,
-    tags: Array.from(state.loggerSyncSelectedTags || []).map(String).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })), mappings };
+    tags: Array.from(state.loggerSyncSelectedTags || []).map(String).filter((tag) => tag && (!availableTags.size || availableTags.has(tag))).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })), mappings };
 }
 
 async function saveReporterSync() {
@@ -6705,19 +6686,14 @@ function wireLoggerUi() {
   if (els.loggerSyncSourceItem) els.loggerSyncSourceItem.addEventListener('change', () => clearLoggerSyncTags('source'));
   if (els.loggerSyncDestinationItem) els.loggerSyncDestinationItem.addEventListener('change', () => clearLoggerSyncTags('destination'));
   if (els.loggerSyncFindTagsBtn) els.loggerSyncFindTagsBtn.addEventListener('click', () => loadLoggerSyncTags().catch((err) => { els.loggerSyncStatus.textContent = `Load tags failed: ${err.message || err}`; }));
-  if (els.loggerSyncTagFilterA) els.loggerSyncTagFilterA.addEventListener('input', () => { state.loggerSyncTagPages.A = 0; renderLoggerSyncTagPanels(); });
-  if (els.loggerSyncTagFilterB) els.loggerSyncTagFilterB.addEventListener('input', () => { state.loggerSyncTagPages.B = 0; renderLoggerSyncTagPanels(); });
-  if (els.loggerSyncTagPrevA) els.loggerSyncTagPrevA.addEventListener('click', () => { state.loggerSyncTagPages.A = Math.max(0, state.loggerSyncTagPages.A - 1); renderLoggerSyncTagPanels(); });
-  if (els.loggerSyncTagNextA) els.loggerSyncTagNextA.addEventListener('click', () => { state.loggerSyncTagPages.A += 1; renderLoggerSyncTagPanels(); });
-  if (els.loggerSyncTagPrevB) els.loggerSyncTagPrevB.addEventListener('click', () => { state.loggerSyncTagPages.B = Math.max(0, state.loggerSyncTagPages.B - 1); renderLoggerSyncTagPanels(); });
-  if (els.loggerSyncTagNextB) els.loggerSyncTagNextB.addEventListener('click', () => { state.loggerSyncTagPages.B += 1; renderLoggerSyncTagPanels(); });
-  if (els.loggerSyncSelectTagsABtn) els.loggerSyncSelectTagsABtn.addEventListener('click', () => selectFilteredLoggerSyncTags('A'));
-  if (els.loggerSyncSelectTagsBBtn) els.loggerSyncSelectTagsBBtn.addEventListener('click', () => selectFilteredLoggerSyncTags('B'));
-  if (els.loggerSyncSelectAllTagsBtn) els.loggerSyncSelectAllTagsBtn.addEventListener('click', () => {
-    [...state.loggerSyncTagsA, ...state.loggerSyncTagsB].forEach((tag) => state.loggerSyncSelectedTags.add(tag));
-    renderLoggerSyncTagPanels();
+  if (els.loggerSyncDirection) els.loggerSyncDirection.addEventListener('change', renderLoggerSyncTagPanels);
+  if (els.loggerSyncTagFilter) els.loggerSyncTagFilter.addEventListener('input', renderLoggerSyncTagPanels);
+  if (els.loggerSyncSelectAllTagsBtn) els.loggerSyncSelectAllTagsBtn.addEventListener('click', selectFilteredLoggerSyncTags);
+  if (els.loggerSyncClearTagsBtn) els.loggerSyncClearTagsBtn.addEventListener('click', () => {
+    state.loggerSyncSelectedTags.clear();
+    els.loggerSyncTagList?.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; });
+    if (els.loggerSyncTagSelectionSummary) els.loggerSyncTagSelectionSummary.textContent = '0 selected';
   });
-  if (els.loggerSyncClearTagsBtn) els.loggerSyncClearTagsBtn.addEventListener('click', () => { state.loggerSyncSelectedTags.clear(); renderLoggerSyncTagPanels(); });
   if (els.loggerSyncSuggestMappingsBtn) els.loggerSyncSuggestMappingsBtn.addEventListener('click', () => {
     suggestLoggerSyncMappings(true);
   });
