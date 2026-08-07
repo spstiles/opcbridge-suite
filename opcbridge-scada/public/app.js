@@ -3343,22 +3343,36 @@ function renderLoggerDetails() {
 function renderLoggerSyncTable() {
   if (!els.loggerSyncTbody) return;
   const statuses = new Map((state.reporterRuntime?.reporter?.sync_statuses || []).map((s) => [String(s?.id || ''), s]));
+  const activeBackfills = new Map();
+  loggerBackfillTasks().filter((task) => task?.status === 'running').forEach((task) => {
+    const jobId = String(task?.sync_job_id || '');
+    const existing = activeBackfills.get(jobId);
+    if (!existing || Number(task?.created_ms || 0) > Number(existing?.created_ms || 0)) activeBackfills.set(jobId, task);
+  });
   els.loggerSyncTbody.textContent = '';
   const jobs = Array.isArray(state.reporterSyncJobs) ? state.reporterSyncJobs : [];
   if (!jobs.length) {
-    const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 11;
+    const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 13;
     td.className = 'small'; td.textContent = 'No database sync jobs configured. Right-click “Database Sync” to add one.';
     tr.appendChild(td); els.loggerSyncTbody.appendChild(tr); return;
   }
   jobs.forEach((job) => {
     const st = statuses.get(String(job?.id || '')) || {};
+    const activeBackfill = activeBackfills.get(String(job?.id || '')) || null;
     const tr = document.createElement('tr');
-    const values = [job.name, `${job.source_database_id}:${job.source_table}`, `${job.destination_database_id}:${job.destination_table}`,
-      job.schedule?.on_calendar, job.enabled ? 'yes' : 'no', st.running ? 'running' : (st.last_error ? 'error' : (st.next_run_ms ? 'scheduled' : 'idle')),
+    const databaseLabel = (id) => {
+      const database = findDatabaseById(id);
+      return String(database?.name || database?.id || id || '').trim();
+    };
+    const syncStatus = activeBackfill ? `backfill ${loggerBackfillPercent(activeBackfill)}%`
+      : (st.running ? 'running' : (st.last_error ? 'error' : (st.next_run_ms ? 'scheduled' : 'idle')));
+    const values = [job.name, `${databaseLabel(job.source_database_id)}:${job.source_table}`, `${databaseLabel(job.destination_database_id)}:${job.destination_table}`,
+      job.schedule?.on_calendar, job.enabled ? 'yes' : 'no', syncStatus,
+      fmtLogTime(st.last_run_ms) || 'Never', fmtLogTime(st.next_run_ms) || (job.enabled ? 'Not scheduled' : 'Disabled'),
       st.last_selected ?? '', st.last_inserted ?? '', st.last_skipped ?? '', st.last_error || ''];
     values.forEach((value) => { const td = document.createElement('td'); td.textContent = String(value ?? ''); tr.appendChild(td); });
     const actions = document.createElement('td');
-    [['Dry Run', () => testReporterSync(job.id)], ['Run Now', () => runReporterSync(job.id)], ['Historical Backfill', () => openLoggerBackfillModal(job.id)], ['Properties', () => openLoggerSyncModal(job.id)]].forEach(([label, action]) => {
+    [['Dry Run', () => testReporterSync(job.id)], ['Run Now', () => runReporterSync(job.id)], [activeBackfill ? 'View Backfill' : 'Historical Backfill', () => openLoggerBackfillModal(job.id)], ['Properties', () => openLoggerSyncModal(job.id)]].forEach(([label, action]) => {
       const button = document.createElement('button'); button.className = 'btn'; button.type = 'button'; button.textContent = label;
       button.addEventListener('click', (event) => { event.stopPropagation(); action(); }); actions.appendChild(button);
     });
@@ -6545,13 +6559,27 @@ function loggerBackfillTasks() {
   return Array.isArray(state.reporterRuntime?.reporter?.backfills) ? state.reporterRuntime.reporter.backfills : [];
 }
 
-function openLoggerBackfillModal(jobId) {
+function loggerBackfillPercent(task) {
+  const parseTime = (value) => new Date(String(value || '').replace(' ', 'T')).getTime();
+  const start = parseTime(task?.start_time), end = parseTime(task?.end_time), cursor = parseTime(task?.cursor_time);
+  return Number.isFinite(start) && Number.isFinite(end) && end > start && Number.isFinite(cursor)
+    ? Math.max(0, Math.min(100, Math.round(((cursor - start) / (end - start)) * 100))) : 0;
+}
+
+async function openLoggerBackfillModal(jobId) {
   const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(jobId || '')) || {};
   state.loggerBackfillJobId = String(jobId || '');
   state.loggerBackfillTaskId = '';
   if (els.loggerBackfillTitle) els.loggerBackfillTitle.textContent = `Historical Backfill — ${job.name || 'Sync job'}`;
   if (els.loggerBackfillModal) els.loggerBackfillModal.style.display = 'block';
-  if (els.loggerBackfillStatus) els.loggerBackfillStatus.textContent = '';
+  if (els.loggerBackfillSetup) els.loggerBackfillSetup.style.display = 'none';
+  if (els.loggerBackfillProgress) els.loggerBackfillProgress.style.display = 'none';
+  if (els.loggerBackfillStatus) els.loggerBackfillStatus.textContent = 'Checking Logger for an existing backfill…';
+  try { await refreshReporterRuntimeStatus(); }
+  catch (err) {
+    if (els.loggerBackfillStatus) els.loggerBackfillStatus.textContent = `Could not check backfill status: ${err.message || err}`;
+    return;
+  }
   const running = loggerBackfillTasks().filter((task) => task.sync_job_id === state.loggerBackfillJobId && task.status === 'running').sort((a, b) => Number(b.created_ms || 0) - Number(a.created_ms || 0))[0];
   if (running) {
     state.loggerBackfillTaskId = String(running.id || '');
@@ -6560,6 +6588,9 @@ function openLoggerBackfillModal(jobId) {
   } else {
     if (els.loggerBackfillSetup) els.loggerBackfillSetup.style.display = '';
     if (els.loggerBackfillProgress) els.loggerBackfillProgress.style.display = 'none';
+    const latest = loggerBackfillTasks().filter((task) => task.sync_job_id === state.loggerBackfillJobId).sort((a, b) => Number(b.created_ms || 0) - Number(a.created_ms || 0))[0];
+    if (els.loggerBackfillStatus) els.loggerBackfillStatus.textContent = latest
+      ? `Previous backfill status: ${latest.status || 'unknown'}${latest.last_error ? ` — ${latest.last_error}` : ''}` : '';
     if (els.loggerBackfillStart) els.loggerBackfillStart.value = '';
     if (els.loggerBackfillEnd) els.loggerBackfillEnd.value = '';
   }
@@ -6575,10 +6606,7 @@ function renderLoggerBackfillProgress(task) {
   if (!task) return;
   if (els.loggerBackfillSetup) els.loggerBackfillSetup.style.display = 'none';
   if (els.loggerBackfillProgress) els.loggerBackfillProgress.style.display = '';
-  const parseTime = (value) => new Date(String(value || '').replace(' ', 'T')).getTime();
-  const start = parseTime(task.start_time), end = parseTime(task.end_time), cursor = parseTime(task.cursor_time);
-  const percent = Number.isFinite(start) && Number.isFinite(end) && end > start && Number.isFinite(cursor)
-    ? Math.max(0, Math.min(100, Math.round(((cursor - start) / (end - start)) * 100))) : 0;
+  const percent = loggerBackfillPercent(task);
   const rows = [
     ['Status', task.status || ''], ['Progress', `${percent}%`], ['Completed through', task.cursor_time || ''],
     ['Range', `${task.start_time || ''} → ${task.end_time || ''}`], ['Chunks completed', task.chunks_completed || 0],
@@ -6597,10 +6625,21 @@ function scheduleLoggerBackfillPoll() {
   state.loggerBackfillPollTimer = window.setTimeout(async () => {
     state.loggerBackfillPollTimer = 0;
     if (els.loggerBackfillModal?.style?.display === 'none') return;
-    try { await refreshReporterRuntimeStatus(); } catch {}
+    try {
+      await refreshReporterRuntimeStatus();
+    } catch {
+      if (els.loggerBackfillStatus) {
+        els.loggerBackfillStatus.textContent = 'Progress temporarily unavailable. The backfill continues in Logger; log in again to reconnect.';
+      }
+      scheduleLoggerBackfillPoll();
+      return;
+    }
     const task = loggerBackfillTasks().find((candidate) => String(candidate?.id || '') === state.loggerBackfillTaskId);
     if (task) renderLoggerBackfillProgress(task);
     if (task?.status === 'running') scheduleLoggerBackfillPoll();
+    else if (!task && els.loggerBackfillStatus) {
+      els.loggerBackfillStatus.textContent = 'Backfill status is not currently available. Close and reopen this window to reconnect.';
+    }
   }, 2000);
 }
 
@@ -26230,6 +26269,13 @@ function wireLoginModalUi() {
           refreshPublishedReports(true),
           refreshReportBuilder()
         ]).catch(() => {});
+      }
+      if (canAccessLoggerTab()) {
+        refreshReporterAll().then(() => {
+          if (els.loggerBackfillModal?.style?.display !== 'none' && state.loggerBackfillJobId) {
+            openLoggerBackfillModal(state.loggerBackfillJobId).catch(() => {});
+          }
+        }).catch(() => {});
       }
     } catch (err) {
       if (els.loginStatus) els.loginStatus.textContent = `Login failed: ${err.message}`;
