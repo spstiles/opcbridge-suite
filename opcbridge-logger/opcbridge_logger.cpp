@@ -2752,8 +2752,13 @@ private:
                 }
                 if (job.match_interval_minutes == 0) return "DATE_FORMAT(" + time_field + ", '%Y-%m-%d %H:%i:%s')";
                 const int seconds = job.match_interval_minutes * 60;
-                return "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(" + time_field + ")/" + std::to_string(seconds) + ")*" +
-                    std::to_string(seconds) + ", '%Y-%m-%d %H:%i:%s')";
+                // Bucket database-local wall-clock values without converting
+                // through Unix time. UNIX_TIMESTAMP/FROM_UNIXTIME is ambiguous
+                // during daylight-saving transitions and can place identical
+                // DATETIME values into different periods on two servers.
+                return "DATE_FORMAT(DATE_ADD('1970-01-01',INTERVAL FLOOR(TIMESTAMPDIFF(SECOND,'1970-01-01'," +
+                    time_field + ")/" + std::to_string(seconds) + ")*" + std::to_string(seconds) +
+                    " SECOND),'%Y-%m-%d %H:%i:%s')";
             };
             std::ostringstream sql;
             if (connection.is_odbc()) sql << "SELECT TOP 1000001 "; else sql << "SELECT ";
@@ -2827,6 +2832,29 @@ private:
             for (size_t i = 2; i < candidate->values.size(); ++i) values.push_back(candidate->values[i].first ? json(nullptr) : json(candidate->values[i].second));
             return values;
         };
+        enum class SyncInsertResult { inserted, already_exists, failed };
+        auto candidate_exists = [&](SyncDatabaseConnection& target, const Candidate& candidate, const std::string& table,
+                                    const std::string& time_column, const std::string& item_column,
+                                    const std::vector<std::string>& columns) {
+            std::vector<std::string> names = {time_column, item_column};
+            names.insert(names.end(), columns.begin(), columns.end());
+            if (names.size() != candidate.values.size()) return false;
+            std::ostringstream sql;
+            sql << "SELECT ";
+            if (target.is_odbc()) sql << "TOP 1 ";
+            sql << "1 FROM " << target.quote_identifier(table) << " WHERE ";
+            for (size_t i = 0; i < names.size(); ++i) {
+                if (i) sql << " AND ";
+                const std::string column = target.quote_identifier(names[i]);
+                if (candidate.values[i].first) sql << column << " IS NULL";
+                else if (target.is_mysql()) sql << column << "<=>" << target.quote_string(candidate.values[i].second);
+                else sql << column << '=' << target.quote_string(candidate.values[i].second);
+            }
+            if (target.is_mysql()) sql << " LIMIT 1";
+            std::vector<SyncRow> rows;
+            std::string query_error;
+            return target.query(sql.str(), rows, query_error) && !rows.empty();
+        };
         auto insert_candidate = [&](SyncDatabaseConnection& target, const Candidate& candidate, const std::string& table,
                                     const std::string& time_column, const std::string& item_column,
                                     const std::vector<std::string>& columns) {
@@ -2842,8 +2870,15 @@ private:
             sql << ')';
             std::string insert_error;
             const bool ok = target.execute(sql.str(), insert_error);
-            if (!ok && out.error.empty()) out.error = insert_error;
-            return ok;
+            if (ok) return SyncInsertResult::inserted;
+            // Period bucketing can differ across database sessions at a DST
+            // boundary. If the complete row is already present, the sync is
+            // idempotent and should continue rather than fail the backfill.
+            if (candidate_exists(target, candidate, table, time_column, item_column, columns)) {
+                return SyncInsertResult::already_exists;
+            }
+            if (out.error.empty()) out.error = insert_error;
+            return SyncInsertResult::failed;
         };
 
         for (const auto& key : keys) {
@@ -2866,18 +2901,19 @@ private:
                 } else out.rows_truncated = true;
             }
             if (dry_run) continue;
-            bool inserted = true;
+            SyncInsertResult insert_result = SyncInsertResult::inserted;
             const Candidate* attempted = nullptr;
             std::string target_name;
             if (status == "a_to_b") {
                 attempted = a; target_name = "Database B";
-                inserted = insert_candidate(connection_b, *a, job.destination_table, job.destination_time_column, job.destination_item_column, columns_b);
+                insert_result = insert_candidate(connection_b, *a, job.destination_table, job.destination_time_column, job.destination_item_column, columns_b);
             } else if (status == "b_to_a") {
                 attempted = b; target_name = "Database A";
-                inserted = insert_candidate(connection_a, *b, job.source_table, job.source_time_column, job.source_item_column, columns_a);
+                insert_result = insert_candidate(connection_a, *b, job.source_table, job.source_time_column, job.source_item_column, columns_a);
             }
             else continue;
-            if (inserted) ++out.inserted;
+            if (insert_result == SyncInsertResult::inserted) ++out.inserted;
+            else if (insert_result == SyncInsertResult::already_exists) ++out.skipped;
             else {
                 ++out.failed;
                 const std::string database_error = out.error.empty() ? "database rejected the row" : out.error;
