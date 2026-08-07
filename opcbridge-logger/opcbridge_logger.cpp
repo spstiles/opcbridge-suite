@@ -2832,7 +2832,28 @@ private:
             for (size_t i = 2; i < candidate->values.size(); ++i) values.push_back(candidate->values[i].first ? json(nullptr) : json(candidate->values[i].second));
             return values;
         };
-        enum class SyncInsertResult { inserted, already_exists, failed };
+        enum class SyncInsertResult { inserted, already_exists, identity_conflict, failed };
+        auto candidate_identity_exists = [&](SyncDatabaseConnection& target, const Candidate& candidate,
+                                             const std::string& table, const std::string& time_column,
+                                             const std::string& item_column) {
+            if (candidate.values.size() < 2) return false;
+            std::ostringstream sql;
+            sql << "SELECT ";
+            if (target.is_odbc()) sql << "TOP 1 ";
+            sql << "1 FROM " << target.quote_identifier(table) << " WHERE ";
+            const std::vector<std::string> names = {time_column, item_column};
+            for (size_t i = 0; i < names.size(); ++i) {
+                if (i) sql << " AND ";
+                const std::string column = target.quote_identifier(names[i]);
+                if (candidate.values[i].first) sql << column << " IS NULL";
+                else if (target.is_mysql()) sql << column << "<=>" << target.quote_string(candidate.values[i].second);
+                else sql << column << '=' << target.quote_string(candidate.values[i].second);
+            }
+            if (target.is_mysql()) sql << " LIMIT 1";
+            std::vector<SyncRow> rows;
+            std::string query_error;
+            return target.query(sql.str(), rows, query_error) && !rows.empty();
+        };
         auto candidate_exists = [&](SyncDatabaseConnection& target, const Candidate& candidate, const std::string& table,
                                     const std::string& time_column, const std::string& item_column,
                                     const std::vector<std::string>& columns) {
@@ -2877,6 +2898,12 @@ private:
             if (candidate_exists(target, candidate, table, time_column, item_column, columns)) {
                 return SyncInsertResult::already_exists;
             }
+            // A unique key may use only the timestamp and tag. If that identity
+            // already exists with different mapped values, preserve the target
+            // row and report a conflict instead of aborting the entire backfill.
+            if (candidate_identity_exists(target, candidate, table, time_column, item_column)) {
+                return SyncInsertResult::identity_conflict;
+            }
             if (out.error.empty()) out.error = insert_error;
             return SyncInsertResult::failed;
         };
@@ -2913,7 +2940,15 @@ private:
             }
             else continue;
             if (insert_result == SyncInsertResult::inserted) ++out.inserted;
-            else if (insert_result == SyncInsertResult::already_exists) ++out.skipped;
+            else if (insert_result == SyncInsertResult::already_exists) {
+                if (status == "a_to_b") --out.a_to_b; else if (status == "b_to_a") --out.b_to_a;
+                ++out.matching;
+                ++out.skipped;
+            } else if (insert_result == SyncInsertResult::identity_conflict) {
+                if (status == "a_to_b") --out.a_to_b; else if (status == "b_to_a") --out.b_to_a;
+                ++out.conflicts;
+                ++out.skipped;
+            }
             else {
                 ++out.failed;
                 const std::string database_error = out.error.empty() ? "database rejected the row" : out.error;
@@ -2937,6 +2972,13 @@ private:
         return finish(true);
     }
 
+    bool has_running_backfill_locked(const std::string& sync_job_id) const {
+        for (const auto& entry : backfills_) {
+            if (entry.second.sync_job_id == sync_job_id && entry.second.status == "running") return true;
+        }
+        return false;
+    }
+
     bool run_sync_async(const std::string& id, std::string& error) {
         SyncJob job;
         DbConfig source;
@@ -2949,6 +2991,10 @@ private:
             auto dit = dbs_.find(jit->second.destination_database_id);
             if (sit == dbs_.end()) { error = "Source database not found"; return false; }
             if (dit == dbs_.end()) { error = "Destination database not found"; return false; }
+            if (has_running_backfill_locked(id)) {
+                error = "A historical backfill is currently running for this sync job";
+                return false;
+            }
             auto& status = sync_statuses_[id];
             if (status.running) { error = "Sync job is already running: " + id; return false; }
             status.running = true;
@@ -3409,7 +3455,19 @@ private:
                         st.next_run_ms = next_from_calendar(kv.second.on_calendar, n, supported);
                         st.supported_schedule = supported;
                     }
-                    if (st.supported_schedule && st.next_run_ms > 0 && st.next_run_ms <= n) sync_due.push_back(kv.first);
+                    if (st.supported_schedule && st.next_run_ms > 0 && st.next_run_ms <= n) {
+                        if (has_running_backfill_locked(kv.first)) {
+                            // A scheduled occurrence covered by a historical
+                            // backfill is intentionally skipped. Advance to the
+                            // next occurrence without recording a failed run.
+                            bool supported = false;
+                            st.next_run_ms = next_from_calendar(kv.second.on_calendar, n, supported);
+                            st.supported_schedule = supported;
+                            if (!supported) st.next_run_ms = 0;
+                        } else {
+                            sync_due.push_back(kv.first);
+                        }
+                    }
                 }
                 for (const auto& kv : backfills_) {
                     if (kv.second.status == "running" && !kv.second.worker_running) backfill_due.push_back(kv.first);
