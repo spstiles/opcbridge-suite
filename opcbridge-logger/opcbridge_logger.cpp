@@ -1520,7 +1520,11 @@ public:
             for (const auto& mapping : value.value("mappings", json::array())) {
                 if (!mapping.is_object()) continue;
                 SyncMapping m{trim(mapping.value("source", "")), trim(mapping.value("destination", ""))};
-                if (!m.source.empty() && !m.destination.empty()) job.mappings.push_back(std::move(m));
+                const bool source_special = m.source == job.source_time_column || m.source == job.source_item_column;
+                const bool destination_special = m.destination == job.destination_time_column || m.destination == job.destination_item_column;
+                if (!m.source.empty() && !m.destination.empty() && !source_special && !destination_special) {
+                    job.mappings.push_back(std::move(m));
+                }
             }
             if (job.id.empty()) continue;
             bool supported = false;

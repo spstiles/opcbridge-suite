@@ -6524,6 +6524,13 @@ function renderLoggerSyncReview() {
   const filter = String(els.loggerSyncReviewFilter?.value || 'differences');
   const search = String(els.loggerSyncReviewSearch?.value || '').trim().toLowerCase();
   const mappings = Array.isArray(job.mappings) ? job.mappings : [];
+  const mappedValues = (values) => {
+    const raw = Array.isArray(values) ? values : [];
+    if (!mappings.length) return [];
+    const aligned = raw.slice(-mappings.length);
+    while (aligned.length < mappings.length) aligned.unshift(null);
+    return aligned;
+  };
   const rows = Array.isArray(result.rows) ? result.rows : [];
   const visible = rows.filter((row) => {
     if (search && !String(row?.tag || '').toLowerCase().includes(search)) return false;
@@ -6552,7 +6559,7 @@ function renderLoggerSyncReview() {
       if (row.status === 'conflict') tr.style.background = 'rgba(220, 53, 69, 0.18)';
       else if (row.status === 'a_to_b' || row.status === 'b_to_a') tr.style.background = 'rgba(255, 193, 7, 0.16)';
       const statusLabels = { a_to_b: 'A → B', b_to_a: 'B → A', matching: 'Matching', conflict: 'Conflict', b_only: 'B only (one-way)' };
-      const values = [row.bucket, row.a_timestamp || '—', ...(row.a_values || []).map((v) => v ?? '—'), statusLabels[row.status] || row.status, row.b_timestamp || '—', ...(row.b_values || []).map((v) => v ?? '—')];
+      const values = [row.bucket, row.a_timestamp || '—', ...mappedValues(row.a_values).map((v) => v ?? '—'), statusLabels[row.status] || row.status, row.b_timestamp || '—', ...mappedValues(row.b_values).map((v) => v ?? '—')];
       values.forEach((value) => { const td = document.createElement('td'); td.textContent = String(value ?? ''); tr.appendChild(td); }); tbody.appendChild(tr);
     });
     table.appendChild(tbody); wrap.appendChild(table); details.appendChild(wrap); els.loggerSyncReviewGroups.appendChild(details);
