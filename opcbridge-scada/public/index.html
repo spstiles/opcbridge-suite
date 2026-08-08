@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=20260806_compact_scada_gutters_v1" />
+  <link rel="stylesheet" href="styles.css?v=20260807_component_versions_v1" />
 </head>
 <body>
   <header class="topbar">
@@ -45,8 +45,22 @@
 
   <main class="main">
     <section id="tab-overview" class="panel is-active">
-      <h2>Overview</h2>
+      <div class="section-heading-row">
+        <h2>Overview</h2>
+        <span class="badge" id="overviewSuiteVersion">Suite —</span>
+      </div>
       <div class="grid overview-grid">
+	        <div class="card overview-components-card">
+	          <div class="card-title">Installed Components</div>
+	          <div class="card-body">
+              <div class="table-wrap">
+                <table class="table">
+                  <thead><tr><th>Component</th><th>Version</th><th>Suite</th><th>Status</th></tr></thead>
+                  <tbody id="overviewComponentsTbody"><tr><td colspan="4" class="small">Loading…</td></tr></tbody>
+                </table>
+              </div>
+	          </div>
+	        </div>
 	        <div class="card overview-rebuild-strip">
 	          <div class="card-body">
               <div class="overview-rebuild-strip-main">
@@ -2691,6 +2705,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260806_backfill_reconnect_v1"></script>
+  <script src="app.js?v=20260808_sync_dry_run_progress_v1"></script>
 </body>
 </html>

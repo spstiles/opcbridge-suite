@@ -182,11 +182,30 @@ body.reports-active .main {
   letter-spacing: 0;
 }
 
+.section-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.section-heading-row h2 {
+  margin-bottom: 0;
+}
+
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
 
 .overview-grid {
   align-items: start;
+}
+
+.overview-components-card {
+  grid-column: 1 / -1;
+}
+
+.overview-components-card .table-wrap {
+  max-height: 300px;
 }
 
 .overview-health-card {

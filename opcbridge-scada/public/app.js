@@ -13,6 +13,8 @@
   overviewHealthWatchdog: document.getElementById('overviewHealthWatchdog'),
   overviewHealthMeta: document.getElementById('overviewHealthMeta'),
   overviewHealthConnections: document.getElementById('overviewHealthConnections'),
+  overviewSuiteVersion: document.getElementById('overviewSuiteVersion'),
+  overviewComponentsTbody: document.getElementById('overviewComponentsTbody'),
   overviewRebuildStatus: document.getElementById('overviewRebuildStatus'),
   overviewRebuildHint: document.getElementById('overviewRebuildHint'),
   overviewRebuildDetails: document.getElementById('overviewRebuildDetails'),
@@ -6476,18 +6478,42 @@ async function saveReporterSync() {
 }
 
 async function testReporterSync(id) {
+  const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(id)) || {};
+  state.loggerSyncReview = { id, result: null, loading: true };
+  if (els.loggerSyncReviewTitle) els.loggerSyncReviewTitle.textContent = `Database Sync Review — ${job.name || 'Sync job'}`;
+  if (els.loggerSyncReviewModal) els.loggerSyncReviewModal.style.display = 'block';
+  if (els.loggerSyncReviewGroups) {
+    els.loggerSyncReviewGroups.innerHTML = '<div class="status status-degraded" role="status">Evaluating database records…</div><div class="hint" style="margin-top:8px;">Large data sets and slower database connections may take several minutes.</div>';
+    els.loggerSyncReviewGroups.setAttribute('aria-busy', 'true');
+  }
+  if (els.loggerSyncReviewSummary) els.loggerSyncReviewSummary.textContent = '';
+  if (els.loggerSyncReviewStatus) els.loggerSyncReviewStatus.textContent = 'Dry run is in progress. No records will be changed.';
+  [els.loggerSyncExpandAllBtn, els.loggerSyncCollapseAllBtn, els.loggerSyncReviewFilter,
+    els.loggerSyncReviewSearch, els.loggerSyncReviewRunBtn].forEach((control) => { if (control) control.disabled = true; });
   try {
     const response = await apiPostJson('/api/logger/sync-jobs/test', { id }, { timeoutMs: 300000 });
     const result = response?.reporter_result?.json || response;
     if (!response?.ok) throw new Error(response?.error || result?.error || 'Dry run failed.');
-    state.loggerSyncReview = { id, result };
-    const job = (state.reporterSyncJobs || []).find((candidate) => String(candidate?.id || '') === String(id)) || {};
-    if (els.loggerSyncReviewTitle) els.loggerSyncReviewTitle.textContent = `Database Sync Review — ${job.name || 'Sync job'}`;
-    if (els.loggerSyncReviewModal) els.loggerSyncReviewModal.style.display = 'block';
+    state.loggerSyncReview = { id, result, loading: false };
+    if (els.loggerSyncReviewGroups) els.loggerSyncReviewGroups.setAttribute('aria-busy', 'false');
+    [els.loggerSyncExpandAllBtn, els.loggerSyncCollapseAllBtn, els.loggerSyncReviewFilter,
+      els.loggerSyncReviewSearch].forEach((control) => { if (control) control.disabled = false; });
     renderLoggerSyncReview();
     const message = `Compared ${result.selected} record periods: ${result.a_to_b || 0} A→B, ${result.b_to_a || 0} B→A, ${result.conflicts || 0} conflicts.`;
     loggerSetStatus(message); if (els.loggerSyncStatus) els.loggerSyncStatus.textContent = message;
-  } catch (err) { loggerSetStatus(`Dry run failed: ${err.message || err}`); }
+  } catch (err) {
+    const message = `Dry run failed: ${err.message || err}`;
+    state.loggerSyncReview = { id, result: null, loading: false, error: message };
+    if (els.loggerSyncReviewGroups) {
+      els.loggerSyncReviewGroups.setAttribute('aria-busy', 'false');
+      els.loggerSyncReviewGroups.innerHTML = `<div class="status status-error" role="alert">${escapeHtml(message)}</div>`;
+    }
+    if (els.loggerSyncReviewStatus) els.loggerSyncReviewStatus.textContent = 'No records were changed.';
+    if (els.loggerSyncReviewSummary) els.loggerSyncReviewSummary.textContent = '';
+    [els.loggerSyncExpandAllBtn, els.loggerSyncCollapseAllBtn, els.loggerSyncReviewFilter,
+      els.loggerSyncReviewSearch, els.loggerSyncReviewRunBtn].forEach((control) => { if (control) control.disabled = true; });
+    loggerSetStatus(message);
+  }
 }
 
 function renderLoggerSyncReview() {
@@ -25309,6 +25335,42 @@ try {
 } catch {
   // ignore
 }
+
+function renderComponentVersions(payload) {
+  const suiteVersion = String(payload?.suite_version || state.versions?.suite_version || '').trim();
+  if (els.overviewSuiteVersion) els.overviewSuiteVersion.textContent = `Suite ${suiteVersion || '—'}`;
+  if (!els.overviewComponentsTbody) return;
+  const components = Array.isArray(payload?.components) ? payload.components : [];
+  if (!components.length) {
+    els.overviewComponentsTbody.innerHTML = '<tr><td colspan="4" class="small">Component information is unavailable.</td></tr>';
+    return;
+  }
+  els.overviewComponentsTbody.innerHTML = components.map((item) => {
+    const status = String(item?.status || 'unavailable');
+    const statusClass = status === 'running' || status === 'installed' ? 'ok' : 'bad';
+    return `<tr><td>${escapeHtml(String(item?.name || item?.id || ''))}</td>` +
+      `<td class="mono">${escapeHtml(String(item?.version || '—'))}</td>` +
+      `<td class="mono">${escapeHtml(String(item?.suite_version || '—'))}</td>` +
+      `<td><span class="badge ${statusClass}">${escapeHtml(status)}</span></td></tr>`;
+  }).join('');
+}
+
+async function refreshComponentVersions({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - Number(state.componentVersionsFetchedMs || 0) < 30000) return;
+  if (state.componentVersionsInFlight) return;
+  state.componentVersionsInFlight = true;
+  try {
+    const payload = await apiGet('/api/components/status', { timeoutMs: 10000 });
+    state.componentVersionsFetchedMs = Date.now();
+    state.componentVersions = payload;
+    renderComponentVersions(payload);
+  } catch {
+    renderComponentVersions(state.componentVersions || null);
+  } finally {
+    state.componentVersionsInFlight = false;
+  }
+}
 setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
 // If the user is browsing alarms/events in Workspace, refresh that view.
@@ -25367,6 +25429,7 @@ async function refreshVisible() {
     renderRuntimeRebuildStatus(reloadStatus);
     renderAlarmsSchemaStatus(alarmsStatus);
     renderOverviewHealth(health, metrics);
+    if (isPanelActive('tab-overview')) refreshComponentVersions().catch(() => {});
     setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
     const wantLiveTags = isPanelActive('tab-workspace') || isPanelActive('tab-tags');
@@ -25437,6 +25500,8 @@ async function loadBootstrapConfig() {
     suite_version: String(cfg?.suite_version || ''),
     component_version: String(cfg?.component_version || '')
   };
+  renderComponentVersions(state.componentVersions || null);
+  refreshComponentVersions({ force: true }).catch(() => {});
 
   if (els.buildLine) {
     const o = state.cfg?.opcbridge || {};

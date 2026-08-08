@@ -1443,6 +1443,31 @@ function normalizeOnCalendar(value) {
   return s;
 }
 
+function configuredServiceJsonRequest(target, apiPath, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    const transport = String(target?.scheme || 'http').toLowerCase() === 'https' ? https : http;
+    const req = transport.request({
+      hostname: target?.host || '127.0.0.1',
+      port: Number(target?.port || 80),
+      path: apiPath,
+      method: 'GET',
+      timeout: timeoutMs,
+      headers: { Accept: 'application/json' }
+    }, (upRes) => {
+      const chunks = [];
+      upRes.on('data', (chunk) => chunks.push(chunk));
+      upRes.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch {}
+        resolve({ ok: upRes.statusCode >= 200 && upRes.statusCode < 300, status: upRes.statusCode, json: parsed });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('request timed out')));
+    req.on('error', (err) => resolve({ ok: false, status: 0, error: String(err.message || err) }));
+    req.end();
+  });
+}
+
 function reporterApiRequest(method, apiPath, bodyObj = null, timeoutMs = 5000) {
   return new Promise((resolve) => {
     const body = bodyObj ? JSON.stringify(bodyObj) : '';
@@ -3152,6 +3177,41 @@ const server = http.createServer(async (req, res) => {
         ui_auth_enabled: UI_AUTH_ENABLED
       }
     });
+    return;
+  }
+
+  if (url.pathname === '/api/components/status') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const [opcbridge, alarms, logger, historian, hmi] = await Promise.all([
+      configuredServiceJsonRequest(cfg.opcbridge, '/health'),
+      configuredServiceJsonRequest(cfg.alarms, '/alarm/api/status'),
+      reporterApiRequest('GET', '/health', null, 3000),
+      historianApiRequest('GET', '/health', null, 3000),
+      configuredServiceJsonRequest(cfg.hmi, '/api/version')
+    ]);
+    const component = (id, name, response, versionKeys = ['component_version', 'version']) => {
+      const body = response?.json || {};
+      const version = versionKeys.map((key) => String(body?.[key] || '').trim()).find(Boolean) || '';
+      const suiteVersion = String(body?.suite_version || '').trim();
+      const reachable = Number(response?.status || 0) >= 200 && Number(response?.status || 0) < 300;
+      const healthy = body?.ok !== false && String(body?.status || '').toLowerCase() !== 'error';
+      return { id, name, version, suite_version: suiteVersion, status: reachable ? (healthy ? 'running' : 'degraded') : 'unavailable' };
+    };
+    const readInstalledVersion = (filePath) => fs.existsSync(filePath) ? readVersionFile(filePath) : '';
+    const components = [
+      component('opcbridge', 'OPCBridge', opcbridge),
+      component('alarms', 'Alarms', alarms),
+      { id: 'scada', name: 'SCADA', version: COMPONENT_VERSION, suite_version: SUITE_VERSION, status: 'running' },
+      component('hmi', 'HMI', hmi),
+      component('logger', 'Logger', logger),
+      component('historian', 'Historian', historian),
+      { id: 'report', name: 'Report', version: readInstalledVersion(path.join(SUITE_PREFIX, 'report', 'VERSION')),
+        suite_version: SUITE_VERSION, status: fs.existsSync(path.join(SUITE_PREFIX, 'report', 'opcbridge-report')) ? 'installed' : 'unavailable' }
+    ];
+    sendJson(res, 200, { ok: true, suite_version: SUITE_VERSION, components });
     return;
   }
 
