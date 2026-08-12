@@ -47,6 +47,12 @@
   scadaSettingsReloadBtn: document.getElementById('scadaSettingsReloadBtn'),
   scadaSettingsSaveBtn: document.getElementById('scadaSettingsSaveBtn'),
   scadaSettingsStatus: document.getElementById('scadaSettingsStatus'),
+  serverCertName: document.getElementById('serverCertName'),
+  serverCertUploadFile: document.getElementById('serverCertUploadFile'),
+  serverCertUploadBtn: document.getElementById('serverCertUploadBtn'),
+  serverCertRefreshBtn: document.getElementById('serverCertRefreshBtn'),
+  serverCertUploadStatus: document.getElementById('serverCertUploadStatus'),
+  serverCertLibraryTbody: document.getElementById('serverCertLibraryTbody'),
   authAdminCard: document.getElementById('authAdminCard'),
   authAdminTokenValue: document.getElementById('authAdminTokenValue'),
   authAdminTokenCopyBtn: document.getElementById('authAdminTokenCopyBtn'),
@@ -196,6 +202,28 @@
   mqttMappingDatatype: document.getElementById('mqttMappingDatatype'),
   mqttMappingAddBtn: document.getElementById('mqttMappingAddBtn'),
   mqttMessageMappingsJson: document.getElementById('mqttMessageMappingsJson'),
+
+  // Visual flows
+  flowServiceBadge: document.getElementById('flowServiceBadge'),
+  flowSelect: document.getElementById('flowSelect'),
+  flowNewBtn: document.getElementById('flowNewBtn'),
+  flowSaveBtn: document.getElementById('flowSaveBtn'),
+  flowDeployBtn: document.getElementById('flowDeployBtn'),
+  flowDisableBtn: document.getElementById('flowDisableBtn'),
+  flowDeleteBtn: document.getElementById('flowDeleteBtn'),
+  flowStatus: document.getElementById('flowStatus'),
+  flowName: document.getElementById('flowName'),
+  flowMode: document.getElementById('flowMode'),
+  flowEnabled: document.getElementById('flowEnabled'),
+  flowCanvas: document.getElementById('flowCanvas'),
+  flowWires: document.getElementById('flowWires'),
+  flowEmpty: document.getElementById('flowEmpty'),
+  flowInspector: document.getElementById('flowInspector'),
+  flowInspectorEmpty: document.getElementById('flowInspectorEmpty'),
+  flowInspectorFields: document.getElementById('flowInspectorFields'),
+  flowDeleteNodeBtn: document.getElementById('flowDeleteNodeBtn'),
+  flowTestNodeBtn: document.getElementById('flowTestNodeBtn'),
+  flowNodeRuntime: document.getElementById('flowNodeRuntime'),
 
   // Logic
   logicTreeView: document.getElementById('logicTreeView'),
@@ -724,6 +752,7 @@
   workspaceItemAudioScopeEdit: document.getElementById('workspaceItemAudioScopeEdit'),
   workspaceItemGeneric: document.getElementById('workspaceItemGeneric'),
   editDevId: document.getElementById('editDevId'),
+  editDevName: document.getElementById('editDevName'),
   editDevDriver: document.getElementById('editDevDriver'),
   editDevGatewayRow: document.getElementById('editDevGatewayRow'),
   editDevGateway: document.getElementById('editDevGateway'),
@@ -765,10 +794,23 @@
   editDevMqttTlsInsecure: document.getElementById('editDevMqttTlsInsecure'),
   editDevMqttCaFileRow: document.getElementById('editDevMqttCaFileRow'),
   editDevMqttCaFile: document.getElementById('editDevMqttCaFile'),
+  editDevMqttCaUpload: document.getElementById('editDevMqttCaUpload'),
+  editDevMqttCaRename: document.getElementById('editDevMqttCaRename'),
+  editDevMqttCaDownload: document.getElementById('editDevMqttCaDownload'),
+  editDevMqttCaRemove: document.getElementById('editDevMqttCaRemove'),
+  editDevMqttCaStatus: document.getElementById('editDevMqttCaStatus'),
+  editDevMqttClientAuthRow: document.getElementById('editDevMqttClientAuthRow'),
   editDevMqttCertFileRow: document.getElementById('editDevMqttCertFileRow'),
   editDevMqttCertFile: document.getElementById('editDevMqttCertFile'),
+  editDevMqttCertUpload: document.getElementById('editDevMqttCertUpload'),
+  editDevMqttCertDownload: document.getElementById('editDevMqttCertDownload'),
+  editDevMqttCertRemove: document.getElementById('editDevMqttCertRemove'),
+  editDevMqttCertStatus: document.getElementById('editDevMqttCertStatus'),
   editDevMqttKeyFileRow: document.getElementById('editDevMqttKeyFileRow'),
   editDevMqttKeyFile: document.getElementById('editDevMqttKeyFile'),
+  editDevMqttKeyUpload: document.getElementById('editDevMqttKeyUpload'),
+  editDevMqttKeyRemove: document.getElementById('editDevMqttKeyRemove'),
+  editDevMqttKeyStatus: document.getElementById('editDevMqttKeyStatus'),
   editDevMqttPublishPatternsRow: document.getElementById('editDevMqttPublishPatternsRow'),
   editDevMqttPublishPerField: document.getElementById('editDevMqttPublishPerField'),
   editDevMqttPublishTagJson: document.getElementById('editDevMqttPublishTagJson'),
@@ -929,6 +971,12 @@
   newDevMqttTlsInsecure: document.getElementById('newDevMqttTlsInsecure'),
   newDevMqttCaFileRow: document.getElementById('newDevMqttCaFileRow'),
   newDevMqttCaFile: document.getElementById('newDevMqttCaFile'),
+  newDevMqttCaUpload: document.getElementById('newDevMqttCaUpload'),
+  newDevMqttCaRename: document.getElementById('newDevMqttCaRename'),
+  newDevMqttCaDownload: document.getElementById('newDevMqttCaDownload'),
+  newDevMqttCaRemove: document.getElementById('newDevMqttCaRemove'),
+  newDevMqttCaStatus: document.getElementById('newDevMqttCaStatus'),
+  newDevMqttClientAuthRow: document.getElementById('newDevMqttClientAuthRow'),
   newDevMqttCertFileRow: document.getElementById('newDevMqttCertFileRow'),
   newDevMqttCertFile: document.getElementById('newDevMqttCertFile'),
   newDevMqttKeyFileRow: document.getElementById('newDevMqttKeyFileRow'),
@@ -1314,6 +1362,21 @@ const state = {
   logicCursorStart: 0,
   logicCursorEnd: 0,
   logicValidationTimer: null,
+
+  // Visual flow editor
+  flowDrafts: [],
+  flowDeployed: [],
+  flowRuntime: {},
+  flowSelectedId: '',
+  flowSelectedNodeId: '',
+  flowSelectedEdgeIndex: -1,
+  flowConnectingFrom: '',
+  flowDirty: false,
+  flowInteracting: false,
+  flowRefreshTimer: 0,
+  flowAvailableTags: [],
+  flowTagsLoadingPromise: null,
+  mqttTrustCertificates: [],
   themeMode: 'auto',
 };
 
@@ -1466,6 +1529,10 @@ function canAccessLogicTab() {
   return hasPerm('opcbridge.edit_config');
 }
 
+function canAccessFlowTab() {
+  return hasPerm('suite.manage_server');
+}
+
 function canAccessLoggerTab() {
   return hasPerm('suite.manage_server');
 }
@@ -1609,6 +1676,14 @@ function updateLogicTabVisibility() {
       setTab('overview');
     }
   }
+}
+
+function updateFlowTabVisibility() {
+  const button = document.querySelector('.tabs .tab[data-tab="flow"]');
+  if (!button) return;
+  const canSee = canAccessFlowTab();
+  button.style.display = canSee ? '' : 'none';
+  if (!canSee && document.querySelector('.panel.is-active')?.id === 'tab-flow') setTab('overview');
 }
 
 function updateLogsTabVisibility() {
@@ -3737,7 +3812,19 @@ function displayConnectionName(connectionId) {
   const cid = String(connectionId || '').trim();
   if (cid === MEMORY_CONNECTION_ID) return 'Memory';
   if (cid === '_system') return 'System';
-  return cid;
+  const match = (state.connFiles || []).find((file) => connectionIdForConnFilePath(String(file?.path || '')) === cid);
+  const obj = match ? state.connObjCache?.get?.(String(match.path || '')) : null;
+  return String(obj?.description || '').trim() || cid;
+}
+
+function generateWorkspaceConnectionId(name) {
+  const base = String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'connection';
+  const used = new Set((state.connFiles || []).map((file) => connectionIdForConnFilePath(String(file?.path || ''))).filter(Boolean));
+  if (!used.has(base)) return base;
+  let suffix = 2;
+  while (used.has(`${base}_${suffix}`)) suffix += 1;
+  return `${base}_${suffix}`;
 }
 
 function parseReportTagsTextToSet() {
@@ -3995,6 +4082,565 @@ async function ensureLoggerTagPickerCache({ force = false, source = 'live' } = {
 function preloadLoggerTagPickerCache() {
   if (state.loggerTagPickerLoadingPromise || (Array.isArray(state.loggerTagPickerAll) && state.loggerTagPickerAll.length > 0)) return;
   ensureLoggerTagPickerCache().catch(() => {});
+}
+
+const FLOW_NODE_TYPES = {
+  opc_tag_input: { label: 'Tag Input', kind: 'input', defaults: { connection_id: '', tag_name: '', poll_interval_ms: 500, only_on_change: true } },
+  mqtt_subscribe: { label: 'MQTT Subscribe', kind: 'input', defaults: { topic: '', payload_format: 'auto', json_path: '' } },
+  manual_input: { label: 'Manual Test', kind: 'input', defaults: {} },
+  linear_map: { label: 'Scale / Map', kind: 'process', defaults: { input_min: 0, input_max: 100, output_min: 0, output_max: 100, clamp: false } },
+  boolean_invert: { label: 'Invert Boolean', kind: 'process', defaults: {} },
+  datatype_convert: { label: 'Convert Type', kind: 'process', defaults: { datatype: 'float' } },
+  opc_tag_write: { label: 'Tag Output', kind: 'output', defaults: { connection_id: '', tag_name: '', stale_after_ms: 0 } },
+  mqtt_publish: { label: 'MQTT Publish', kind: 'output', defaults: { topic: '', qos: 0, retain: false, payload_format: 'scalar' } },
+  debug: { label: 'Debug', kind: 'output', defaults: {} }
+};
+const FLOW_NODE_WIDTH = 150;
+const FLOW_NODE_HEIGHT = 72;
+const FLOW_CANVAS_MIN_WIDTH = 2200;
+const FLOW_CANVAS_MIN_HEIGHT = 1400;
+
+function flowSetStatus(message, error = false) {
+  if (!els.flowStatus) return;
+  els.flowStatus.textContent = String(message || '');
+  els.flowStatus.className = `hint mono${error ? ' status-error' : ''}`;
+}
+
+function flowCurrentDraft() {
+  return state.flowDrafts.find((flow) => String(flow?.id || '') === String(state.flowSelectedId || '')) || null;
+}
+
+function flowRuntimeFor(id = state.flowSelectedId) {
+  return state.flowRuntime?.[String(id || '')] || null;
+}
+
+function flowMarkDirty() {
+  state.flowDirty = true;
+  flowSetStatus('Draft has unsaved changes.');
+}
+
+function flowSafeId(prefix = 'node') {
+  const used = new Set((flowCurrentDraft()?.nodes || []).map((node) => String(node.id || '')));
+  let id = '';
+  do { id = `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`; } while (used.has(id));
+  return id;
+}
+
+function flowNodeSummary(node) {
+  const cfg = node?.config || {};
+  if (node.type === 'opc_tag_input' || node.type === 'opc_tag_write') return [cfg.connection_id, cfg.tag_name].filter(Boolean).join(' / ') || 'Select a tag';
+  if (node.type === 'mqtt_subscribe' || node.type === 'mqtt_publish') return cfg.topic || 'Enter a topic';
+  if (node.type === 'linear_map') return `${cfg.input_min ?? 0}–${cfg.input_max ?? 100} → ${cfg.output_min ?? 0}–${cfg.output_max ?? 100}`;
+  if (node.type === 'datatype_convert') return `to ${cfg.datatype || 'string'}`;
+  return FLOW_NODE_TYPES[node?.type]?.label || node?.type || '';
+}
+
+function flowNodeRuntimeSummary(nodeId) {
+  const runtime = flowRuntimeFor()?.nodes?.[nodeId];
+  if (!runtime) return 'Value: —\nNot deployed';
+  let valueText = '—';
+  if (Object.prototype.hasOwnProperty.call(runtime, 'last_value') && runtime.last_value !== null) {
+    try { valueText = typeof runtime.last_value === 'string' ? runtime.last_value : JSON.stringify(runtime.last_value); }
+    catch { valueText = String(runtime.last_value); }
+    if (valueText.length > 80) valueText = `${valueText.slice(0, 77)}…`;
+  }
+  const statusText = runtime.last_error
+    ? `${runtime.status || 'error'}: ${runtime.last_error}`
+    : `${runtime.status || 'idle'} · in ${runtime.messages_in || 0} · out ${runtime.messages_out || 0} · rejected ${runtime.rejected || 0}`;
+  return `Value: ${valueText}\n${statusText}`;
+}
+
+function flowNodeCanvasValue(nodeId) {
+  const runtime = flowRuntimeFor()?.nodes?.[nodeId];
+  if (!runtime) return '—';
+  if (runtime.last_error) return `Error: ${runtime.last_error}`;
+  if (!Object.prototype.hasOwnProperty.call(runtime, 'last_value') || runtime.last_value === null) return '—';
+  let valueText = '';
+  try { valueText = typeof runtime.last_value === 'string' ? runtime.last_value : JSON.stringify(runtime.last_value); }
+  catch { valueText = String(runtime.last_value); }
+  return valueText || '—';
+}
+
+async function ensureFlowAvailableTags({ force = false } = {}) {
+  if (!force && state.flowAvailableTags.length) return state.flowAvailableTags;
+  if (!force && state.flowTagsLoadingPromise) return state.flowTagsLoadingPromise;
+  state.flowTagsLoadingPromise = apiGet('/api/opcbridge/tags', { timeoutMs: 30000 })
+    .then((response) => {
+      state.flowAvailableTags = normalizeLoggerTagPickerTags(response?.tags || []);
+      return state.flowAvailableTags;
+    })
+    .finally(() => { state.flowTagsLoadingPromise = null; });
+  return state.flowTagsLoadingPromise;
+}
+
+function flowOpcConnectionChoices(currentValue = '', writableOnly = false) {
+  const ids = Array.from(new Set(state.flowAvailableTags.filter((tag) => !writableOnly || tag?.writable)
+    .map((tag) => String(tag?.connection_id || '').trim()).filter(Boolean)))
+    .sort((a, b) => displayConnectionName(a).localeCompare(displayConnectionName(b), undefined, { sensitivity: 'base', numeric: true }));
+  const current = String(currentValue || '');
+  if (current && !ids.includes(current)) ids.unshift(current);
+  return [['', state.flowTagsLoadingPromise ? 'Loading connections…' : 'Select a connection…'], ...ids.map((id) => [id, displayConnectionName(id)])];
+}
+
+function flowOpcTagChoices(connectionId, currentValue = '', writableOnly = false) {
+  const wantedConnection = String(connectionId || '');
+  const names = Array.from(new Set(state.flowAvailableTags
+    .filter((tag) => String(tag?.connection_id || '') === wantedConnection && (!writableOnly || tag?.writable))
+    .map((tag) => String(tag?.name || '').trim()).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
+  const current = String(currentValue || '');
+  if (current && !names.includes(current)) names.unshift(current);
+  const prompt = wantedConnection ? (state.flowTagsLoadingPromise ? 'Loading tags…' : 'Select a tag…') : 'Select a connection first…';
+  return [['', prompt], ...names.map((name) => [name, name])];
+}
+
+function flowRenderWires() {
+  if (!els.flowWires || !els.flowCanvas) return;
+  const draft = flowCurrentDraft();
+  const nodes = new Map((draft?.nodes || []).map((node) => [String(node.id), node]));
+  els.flowWires.setAttribute('viewBox', `0 0 ${els.flowCanvas.scrollWidth || 1200} ${els.flowCanvas.scrollHeight || 800}`);
+  els.flowWires.innerHTML = (draft?.edges || []).map((edge, index) => {
+    const from = nodes.get(String(edge.from)), to = nodes.get(String(edge.to));
+    if (!from || !to) return '';
+    const x1 = Number(from.x || 0) + FLOW_NODE_WIDTH, y1 = Number(from.y || 0) + FLOW_NODE_HEIGHT / 2;
+    const x2 = Number(to.x || 0), y2 = Number(to.y || 0) + FLOW_NODE_HEIGHT / 2;
+    const bend = Math.max(45, Math.abs(x2 - x1) * .45);
+    return `<path class="flow-wire${state.flowSelectedEdgeIndex === index ? ' is-selected' : ''}" data-edge-index="${index}" d="M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}" />`;
+  }).join('');
+  els.flowWires.querySelectorAll('.flow-wire[data-edge-index]').forEach((wire) => {
+    wire.addEventListener('click', (event) => {
+      event.stopPropagation();
+      state.flowSelectedEdgeIndex = Number(wire.dataset.edgeIndex);
+      state.flowSelectedNodeId = '';
+      flowRenderWires();
+      renderFlowInspector();
+    });
+  });
+}
+
+function flowResizeCanvasToContent() {
+  if (!els.flowCanvas) return;
+  const draft = flowCurrentDraft();
+  const viewportHeight = els.flowCanvas.parentElement?.clientHeight || 0;
+  const nodeBottom = Math.max(...(draft?.nodes || []).map((node) => Number(node.y || 0) + FLOW_NODE_HEIGHT + 50), 0);
+  els.flowCanvas.style.width = `${Math.max(FLOW_CANVAS_MIN_WIDTH, ...(draft?.nodes || []).map((node) => Number(node.x || 0) + FLOW_NODE_WIDTH + 80), 0)}px`;
+  els.flowCanvas.style.height = `${Math.max(FLOW_CANVAS_MIN_HEIGHT, viewportHeight, nodeBottom)}px`;
+  flowRenderWires();
+}
+
+function flowSelectNode(nodeId) {
+  state.flowSelectedNodeId = String(nodeId || '');
+  state.flowSelectedEdgeIndex = -1;
+  renderFlowCanvas();
+  renderFlowInspector();
+}
+
+function flowConnectTo(nodeId) {
+  const draft = flowCurrentDraft();
+  const from = String(state.flowConnectingFrom || ''), to = String(nodeId || '');
+  if (!draft || !from || !to || from === to) return;
+  draft.edges = Array.isArray(draft.edges) ? draft.edges : [];
+  if (!draft.edges.some((edge) => edge.from === from && edge.to === to)) {
+    draft.edges.push({ from, to });
+    flowMarkDirty();
+  }
+  state.flowConnectingFrom = '';
+  renderFlowCanvas();
+  renderFlowInspector();
+}
+
+function flowBeginConnection(event, node) {
+  if (!els.flowCanvas || !els.flowWires) return;
+  event.preventDefault();
+  event.stopPropagation();
+  state.flowConnectingFrom = node.id;
+  state.flowInteracting = true;
+  const startX = Number(node.x || 0) + FLOW_NODE_WIDTH;
+  const startY = Number(node.y || 0) + FLOW_NODE_HEIGHT / 2;
+  const preview = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  preview.classList.add('flow-wire', 'is-preview');
+  els.flowWires.appendChild(preview);
+
+  const move = (moveEvent) => {
+    const bounds = els.flowCanvas.getBoundingClientRect();
+    const endX = moveEvent.clientX - bounds.left;
+    const endY = moveEvent.clientY - bounds.top;
+    const bend = Math.max(45, Math.abs(endX - startX) * .45);
+    preview.setAttribute('d', `M ${startX} ${startY} C ${startX + bend} ${startY}, ${endX - bend} ${endY}, ${endX} ${endY}`);
+    const hovered = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest('.flow-node');
+    els.flowCanvas.querySelectorAll('.flow-node.is-connect-target').forEach((element) => element.classList.remove('is-connect-target'));
+    if (hovered && hovered.dataset.nodeId !== node.id) {
+      const target = flowCurrentDraft()?.nodes?.find((candidate) => candidate.id === hovered.dataset.nodeId);
+      if (target && FLOW_NODE_TYPES[target.type]?.kind !== 'input') hovered.classList.add('is-connect-target');
+    }
+  };
+  const finish = (upEvent) => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', finish);
+    document.removeEventListener('pointercancel', cancel);
+    preview.remove();
+    els.flowCanvas.querySelectorAll('.flow-node.is-connect-target').forEach((element) => element.classList.remove('is-connect-target'));
+    state.flowInteracting = false;
+    const targetElement = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest('.flow-node');
+    const target = flowCurrentDraft()?.nodes?.find((candidate) => candidate.id === targetElement?.dataset.nodeId);
+    if (target && target.id !== node.id && FLOW_NODE_TYPES[target.type]?.kind !== 'input') flowConnectTo(target.id);
+    else { state.flowConnectingFrom = ''; renderFlowCanvas(); }
+  };
+  const cancel = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', finish);
+    document.removeEventListener('pointercancel', cancel);
+    preview.remove();
+    state.flowConnectingFrom = '';
+    state.flowInteracting = false;
+    renderFlowCanvas();
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', finish);
+  document.addEventListener('pointercancel', cancel);
+  move(event);
+}
+
+function renderFlowCanvas() {
+  if (!els.flowCanvas) return;
+  const draft = flowCurrentDraft();
+  els.flowCanvas.querySelectorAll('.flow-node').forEach((element) => element.remove());
+  if (els.flowEmpty) els.flowEmpty.style.display = draft?.nodes?.length ? 'none' : '';
+  flowResizeCanvasToContent();
+  for (const node of (draft?.nodes || [])) {
+    const definition = FLOW_NODE_TYPES[node.type] || { label: node.type, kind: 'process' };
+    const runtime = flowRuntimeFor()?.nodes?.[node.id] || {};
+    const element = document.createElement('div');
+    element.className = `flow-node${state.flowSelectedNodeId === node.id ? ' is-selected' : ''}${runtime.last_error ? ' has-error' : ''}`;
+    element.dataset.nodeId = node.id;
+    element.style.left = `${Math.max(10, Number(node.x || 20))}px`;
+    element.style.top = `${Math.max(10, Number(node.y || 20))}px`;
+    element.innerHTML = `<div class="flow-node-title">${escapeHtml(String(node.label || definition.label))}</div>` +
+      `<div class="flow-node-body">${escapeHtml(flowNodeSummary(node))}<div class="flow-node-runtime" title="${escapeHtml(flowNodeCanvasValue(node.id))}">${escapeHtml(flowNodeCanvasValue(node.id))}</div></div>`;
+    if (definition.kind !== 'input') {
+      const input = document.createElement('button'); input.type = 'button'; input.className = 'flow-port input'; input.title = 'Connect input';
+      input.addEventListener('click', (event) => { event.stopPropagation(); flowConnectTo(node.id); }); element.appendChild(input);
+    }
+    if (definition.kind !== 'output') {
+      const output = document.createElement('button'); output.type = 'button'; output.className = `flow-port output${state.flowConnectingFrom === node.id ? ' is-connecting' : ''}`; output.title = 'Drag to connect';
+      output.addEventListener('pointerdown', (event) => flowBeginConnection(event, node)); element.appendChild(output);
+    }
+    element.addEventListener('click', () => flowSelectNode(node.id));
+    element.addEventListener('pointerdown', (event) => {
+      if (event.target.closest('.flow-port')) return;
+      state.flowInteracting = true;
+      const startX = event.clientX, startY = event.clientY, originalX = Number(node.x || 20), originalY = Number(node.y || 20);
+      element.setPointerCapture(event.pointerId);
+      const move = (moveEvent) => {
+        node.x = Math.max(10, Math.round((originalX + moveEvent.clientX - startX) / 10) * 10);
+        node.y = Math.max(10, Math.round((originalY + moveEvent.clientY - startY) / 10) * 10);
+        element.style.left = `${node.x}px`; element.style.top = `${node.y}px`; flowRenderWires();
+        const neededHeight = node.y + FLOW_NODE_HEIGHT + 50;
+        if (neededHeight > els.flowCanvas.clientHeight) els.flowCanvas.style.height = `${neededHeight}px`;
+        const neededWidth = node.x + FLOW_NODE_WIDTH + 80;
+        if (neededWidth > els.flowCanvas.clientWidth) els.flowCanvas.style.width = `${neededWidth}px`;
+      };
+      const up = () => {
+        state.flowInteracting = false;
+        element.removeEventListener('pointermove', move);
+        element.removeEventListener('pointerup', up);
+        element.removeEventListener('pointercancel', up);
+        flowMarkDirty();
+      };
+      element.addEventListener('pointermove', move);
+      element.addEventListener('pointerup', up);
+      element.addEventListener('pointercancel', up);
+    });
+    els.flowCanvas.appendChild(element);
+  }
+  flowRenderWires();
+}
+
+function refreshFlowRuntimeDisplay() {
+  if (!els.flowCanvas) return;
+  els.flowCanvas.querySelectorAll('.flow-node[data-node-id]').forEach((element) => {
+    const nodeId = String(element.dataset.nodeId || '');
+    const runtime = flowRuntimeFor()?.nodes?.[nodeId] || {};
+    element.classList.toggle('has-error', Boolean(runtime.last_error));
+    const runtimeElement = element.querySelector('.flow-node-runtime');
+    if (runtimeElement) {
+      const value = flowNodeCanvasValue(nodeId);
+      runtimeElement.textContent = value;
+      runtimeElement.title = value;
+    }
+  });
+  if (els.flowNodeRuntime && state.flowSelectedNodeId) {
+    els.flowNodeRuntime.textContent = flowNodeRuntimeSummary(state.flowSelectedNodeId);
+  }
+  const draft = flowCurrentDraft();
+  if (els.flowDisableBtn) els.flowDisableBtn.disabled = !state.flowDeployed.some((flow) => flow.id === draft?.id);
+}
+
+function flowPropertyRow(label, key, value, options = {}) {
+  const row = document.createElement('div'); row.className = 'form-row';
+  const labelElement = document.createElement('label'); labelElement.textContent = label;
+  let input;
+  if (options.choices) {
+    input = document.createElement('select');
+    options.choices.forEach(([optionValue, optionLabel]) => input.add(new Option(optionLabel, optionValue)));
+    input.value = String(value ?? '');
+  } else {
+    input = document.createElement('input'); input.type = options.type || 'text';
+    if (input.type === 'checkbox') input.checked = Boolean(value);
+    else input.value = String(value ?? '');
+    if (options.step) input.step = options.step;
+    if (options.placeholder) input.placeholder = options.placeholder;
+  }
+  input.dataset.flowProperty = key;
+  row.append(labelElement, input);
+  return row;
+}
+
+function renderFlowInspector() {
+  const draft = flowCurrentDraft();
+  const node = (draft?.nodes || []).find((candidate) => candidate.id === state.flowSelectedNodeId);
+  const edge = state.flowSelectedEdgeIndex >= 0 ? draft?.edges?.[state.flowSelectedEdgeIndex] : null;
+  const hasSelection = Boolean(node || edge);
+  if (els.flowInspector) els.flowInspector.style.display = hasSelection ? '' : 'none';
+  if (els.flowInspectorEmpty) els.flowInspectorEmpty.style.display = hasSelection ? 'none' : '';
+  if (!hasSelection || !els.flowInspectorFields) return;
+  if (edge && !node) {
+    const from = draft.nodes.find((candidate) => candidate.id === edge.from);
+    const to = draft.nodes.find((candidate) => candidate.id === edge.to);
+    const details = document.createElement('div');
+    details.className = 'form-row';
+    const label = document.createElement('label'); label.textContent = 'Connection';
+    const value = document.createElement('div');
+    value.textContent = `${from?.label || FLOW_NODE_TYPES[from?.type]?.label || edge.from} → ${to?.label || FLOW_NODE_TYPES[to?.type]?.label || edge.to}`;
+    details.append(label, value);
+    els.flowInspectorFields.replaceChildren(details);
+    if (els.flowTestNodeBtn) els.flowTestNodeBtn.style.display = 'none';
+    if (els.flowDeleteNodeBtn) { els.flowDeleteNodeBtn.textContent = 'Delete Connection'; els.flowDeleteNodeBtn.style.display = ''; }
+    if (els.flowNodeRuntime) els.flowNodeRuntime.textContent = 'Select a node to view runtime values.';
+    return;
+  }
+  if (els.flowTestNodeBtn) els.flowTestNodeBtn.style.display = '';
+  if (els.flowDeleteNodeBtn) { els.flowDeleteNodeBtn.textContent = 'Delete Node'; els.flowDeleteNodeBtn.style.display = ''; }
+  const cfg = node.config || (node.config = {});
+  const rows = [flowPropertyRow('Label', '_label', node.label || FLOW_NODE_TYPES[node.type]?.label || node.type)];
+  if (node.type === 'opc_tag_input' || node.type === 'opc_tag_write') {
+    const writableOnly = node.type === 'opc_tag_write';
+    rows.push(flowPropertyRow('Connection', 'connection_id', cfg.connection_id || '', { choices: flowOpcConnectionChoices(cfg.connection_id, writableOnly) }));
+    rows.push(flowPropertyRow('Tag', 'tag_name', cfg.tag_name || '', { choices: flowOpcTagChoices(cfg.connection_id, cfg.tag_name, writableOnly) }));
+    if (!state.flowAvailableTags.length && !state.flowTagsLoadingPromise) {
+      ensureFlowAvailableTags().then(() => {
+        if (state.flowSelectedNodeId === node.id) renderFlowInspector();
+      }).catch((err) => flowSetStatus(`Could not load OPCBridge tags: ${err.message || err}`, true));
+    }
+  }
+  if (node.type === 'opc_tag_input') {
+    rows.push(flowPropertyRow('Only when changed', 'only_on_change', cfg.only_on_change !== false, { type: 'checkbox' }));
+  }
+  if (node.type === 'opc_tag_write') rows.push(flowPropertyRow('Reject if older than (ms)', 'stale_after_ms', cfg.stale_after_ms ?? 0, { type: 'number', step: '100' }));
+  if (node.type === 'mqtt_subscribe' || node.type === 'mqtt_publish') rows.push(flowPropertyRow('Topic', 'topic', cfg.topic || '', { placeholder: 'plant/value' }));
+  if (node.type === 'mqtt_subscribe') {
+    rows.push(flowPropertyRow('Payload', 'payload_format', cfg.payload_format || 'auto', { choices: [['auto','Automatic'],['json','JSON'],['string','Text']] }));
+    rows.push(flowPropertyRow('JSON path', 'json_path', cfg.json_path || '', { placeholder: 'data.value' }));
+  }
+  if (node.type === 'linear_map') {
+    [['Input minimum','input_min'],['Input maximum','input_max'],['Output minimum','output_min'],['Output maximum','output_max']].forEach(([label,key]) => rows.push(flowPropertyRow(label, key, cfg[key] ?? (key.includes('max') ? 100 : 0), { type: 'number', step: 'any' })));
+    rows.push(flowPropertyRow('Clamp output', 'clamp', Boolean(cfg.clamp), { type: 'checkbox' }));
+  }
+  if (node.type === 'datatype_convert') rows.push(flowPropertyRow('Convert to', 'datatype', cfg.datatype || 'float', { choices: [['float','Number'],['integer','Integer'],['bool','Boolean'],['string','Text']] }));
+  if (node.type === 'mqtt_publish') {
+    rows.push(flowPropertyRow('QoS', 'qos', cfg.qos ?? 0, { choices: [['0','0'],['1','1'],['2','2']] }));
+    rows.push(flowPropertyRow('Retain', 'retain', Boolean(cfg.retain), { type: 'checkbox' }));
+    rows.push(flowPropertyRow('Payload', 'payload_format', cfg.payload_format || 'scalar', { choices: [['scalar','Plain value'],['json','JSON']] }));
+  }
+  const outgoing = (draft.edges || []).filter((edge) => edge.from === node.id);
+  if (outgoing.length) {
+    const connections = document.createElement('div'); connections.className = 'form-row';
+    const label = document.createElement('label'); label.textContent = 'Connections'; connections.appendChild(label);
+    const list = document.createElement('div');
+    outgoing.forEach((edge) => {
+      const target = draft.nodes.find((candidate) => candidate.id === edge.to);
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.style.margin = '0 4px 4px 0';
+      button.textContent = `Remove → ${target?.label || FLOW_NODE_TYPES[target?.type]?.label || edge.to}`;
+      button.addEventListener('click', () => { draft.edges = draft.edges.filter((candidate) => candidate !== edge); flowMarkDirty(); renderFlowCanvas(); renderFlowInspector(); });
+      list.appendChild(button);
+    });
+    connections.appendChild(list); rows.push(connections);
+  }
+  els.flowInspectorFields.replaceChildren(...rows);
+  els.flowInspectorFields.querySelectorAll('[data-flow-property]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const key = input.dataset.flowProperty;
+      let value = input.type === 'checkbox' ? input.checked : input.value;
+      if (input.type === 'number') value = Number(value);
+      if (key === '_label') node.label = String(value);
+      else {
+        cfg[key] = value;
+        if (key === 'connection_id') cfg.tag_name = '';
+      }
+      flowMarkDirty(); renderFlowCanvas();
+      if (key === 'connection_id') renderFlowInspector();
+    });
+  });
+  if (els.flowNodeRuntime) els.flowNodeRuntime.textContent = flowNodeRuntimeSummary(node.id);
+}
+
+function addFlowNode(type, position = null) {
+  let draft = flowCurrentDraft();
+  const definition = FLOW_NODE_TYPES[type];
+  if (!definition) return;
+  if (!draft) {
+    newFlowDraft();
+    draft = flowCurrentDraft();
+  }
+  if (!draft) return;
+  const index = draft.nodes.length;
+  const node = { id: flowSafeId('node'), type, label: definition.label,
+    x: position ? Math.max(10, Math.round(Number(position.x || 10) / 10) * 10) : 40 + (index % 5) * 190,
+    y: position ? Math.max(10, Math.round(Number(position.y || 10) / 10) * 10) : 40 + Math.floor(index / 5) * 105,
+    config: JSON.parse(JSON.stringify(definition.defaults || {})) };
+  draft.nodes.push(node); state.flowSelectedNodeId = node.id; flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+}
+
+function newFlowDraft() {
+  const id = `flow_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+  const flow = { id, name: 'New Flow', enabled: true, mode: 'monitor', nodes: [], edges: [] };
+  state.flowDrafts.push(flow); state.flowSelectedId = id; state.flowSelectedNodeId = ''; state.flowSelectedEdgeIndex = -1; state.flowDirty = true;
+  renderFlowSelector(); renderFlowEditor(); flowSetStatus('New flow created in monitor mode. Save the draft when ready.');
+}
+
+function renderFlowSelector() {
+  if (!els.flowSelect) return;
+  els.flowSelect.textContent = '';
+  state.flowDrafts.slice().sort((a,b) => String(a.name).localeCompare(String(b.name))).forEach((flow) => els.flowSelect.add(new Option(flow.name, flow.id)));
+  if (!state.flowDrafts.length) els.flowSelect.add(new Option('No flows defined', ''));
+  els.flowSelect.value = state.flowSelectedId;
+}
+
+function renderFlowEditor() {
+  const draft = flowCurrentDraft();
+  if (els.flowName) { els.flowName.disabled = !draft; els.flowName.value = draft?.name || ''; }
+  if (els.flowMode) { els.flowMode.disabled = !draft; els.flowMode.value = draft?.mode || 'monitor'; }
+  if (els.flowEnabled) { els.flowEnabled.disabled = !draft; els.flowEnabled.checked = draft?.enabled !== false; }
+  [els.flowSaveBtn, els.flowDeployBtn, els.flowDeleteBtn].forEach((button) => { if (button) button.disabled = !draft; });
+  if (els.flowDisableBtn) els.flowDisableBtn.disabled = !state.flowDeployed.some((flow) => flow.id === draft?.id);
+  if (!draft) state.flowSelectedNodeId = '';
+  renderFlowCanvas(); renderFlowInspector();
+}
+
+async function refreshFlowTab({ preserveDraft = false } = {}) {
+  try {
+    const response = await apiGet('/api/flow/flows', { timeoutMs: 15000 });
+    const preserveEditor = preserveDraft && (state.flowDirty || state.flowInteracting);
+    if (!preserveEditor) state.flowDrafts = Array.isArray(response.drafts) ? response.drafts : [];
+    state.flowDeployed = Array.isArray(response.deployed) ? response.deployed : [];
+    state.flowRuntime = response.runtime || {};
+    if (!state.flowSelectedId || !state.flowDrafts.some((flow) => flow.id === state.flowSelectedId)) state.flowSelectedId = state.flowDrafts[0]?.id || '';
+    if (els.flowServiceBadge) { els.flowServiceBadge.textContent = 'Flow service online'; els.flowServiceBadge.className = 'badge ok'; }
+    if (preserveEditor) refreshFlowRuntimeDisplay();
+    else { renderFlowSelector(); renderFlowEditor(); }
+    if (!state.flowDrafts.length) flowSetStatus('No flows yet. Create one to begin.');
+  } catch (err) {
+    if (els.flowServiceBadge) { els.flowServiceBadge.textContent = 'Flow service unavailable'; els.flowServiceBadge.className = 'badge bad'; }
+    flowSetStatus(err.message || err, true);
+  }
+  if (isPanelActive('tab-flow')) {
+    if (state.flowRefreshTimer) window.clearTimeout(state.flowRefreshTimer);
+    state.flowRefreshTimer = window.setTimeout(() => refreshFlowTab({ preserveDraft: true }).catch(() => {}), 2000);
+  }
+}
+
+async function saveFlowDraft() {
+  const draft = flowCurrentDraft(); if (!draft) return;
+  draft.name = String(els.flowName?.value || '').trim(); draft.mode = els.flowMode?.value || 'monitor'; draft.enabled = Boolean(els.flowEnabled?.checked);
+  flowSetStatus('Saving draft…');
+  const response = await apiPostJson('/api/flow/flows', draft);
+  if (!response?.ok) throw new Error(response?.error || 'Save failed');
+  state.flowDirty = false; flowSetStatus('Draft saved. The deployed flow has not changed.');
+  await refreshFlowTab();
+}
+
+async function deployFlowDraft() {
+  const draft = flowCurrentDraft(); if (!draft) return;
+  await saveFlowDraft();
+  flowSetStatus('Validating and deploying…');
+  const response = await apiPostJson(`/api/flow/flows/${encodeURIComponent(draft.id)}/deploy`, {});
+  if (!response?.ok) throw new Error(response?.error || 'Deploy failed');
+  flowSetStatus('Flow deployed. Deployment emitted no data or output writes.');
+  await refreshFlowTab();
+}
+
+function deleteSelectedFlowNode() {
+  const draft = flowCurrentDraft(), id = state.flowSelectedNodeId; if (!draft || !id) return;
+  draft.nodes = draft.nodes.filter((node) => node.id !== id); draft.edges = draft.edges.filter((edge) => edge.from !== id && edge.to !== id);
+  state.flowSelectedNodeId = ''; state.flowSelectedEdgeIndex = -1; state.flowConnectingFrom = ''; flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+}
+
+function deleteSelectedFlowObject() {
+  const draft = flowCurrentDraft();
+  if (!draft) return;
+  if (state.flowSelectedEdgeIndex >= 0 && state.flowSelectedEdgeIndex < (draft.edges || []).length) {
+    draft.edges.splice(state.flowSelectedEdgeIndex, 1);
+    state.flowSelectedEdgeIndex = -1;
+    flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+    return;
+  }
+  deleteSelectedFlowNode();
+}
+
+async function injectFlowTestValue() {
+  const draft = flowCurrentDraft(), node = draft?.nodes?.find((candidate) => candidate.id === state.flowSelectedNodeId); if (!draft || !node) return;
+  const raw = window.prompt('Test value (JSON, number, true/false, or text):', '1'); if (raw === null) return;
+  let value; try { value = JSON.parse(raw); } catch { value = raw; }
+  const response = await apiPostJson(`/api/flow/flows/${encodeURIComponent(draft.id)}/inject/${encodeURIComponent(node.id)}`, { value });
+  if (!response?.ok) throw new Error(response?.error || 'Test injection failed');
+  flowSetStatus('Test value injected into the deployed flow.');
+}
+
+function wireFlowTabUi() {
+  document.querySelectorAll('[data-flow-node-type]').forEach((button) => {
+    button.draggable = true;
+    button.addEventListener('click', () => addFlowNode(button.dataset.flowNodeType));
+    button.addEventListener('dragstart', (event) => {
+      event.dataTransfer?.setData('application/x-opcbridge-flow-node', button.dataset.flowNodeType || '');
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+    });
+  });
+  els.flowCanvas?.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types.includes('application/x-opcbridge-flow-node')) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
+  });
+  els.flowCanvas?.addEventListener('drop', (event) => {
+    const type = event.dataTransfer?.getData('application/x-opcbridge-flow-node');
+    if (!type) return;
+    event.preventDefault();
+    const bounds = els.flowCanvas.getBoundingClientRect();
+    addFlowNode(type, {
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top
+    });
+  });
+  els.flowNewBtn?.addEventListener('click', newFlowDraft);
+  els.flowSelect?.addEventListener('change', () => {
+    if (state.flowDirty && !window.confirm('Discard unsaved changes to the current draft?')) { els.flowSelect.value = state.flowSelectedId; return; }
+    state.flowSelectedId = els.flowSelect.value; state.flowSelectedNodeId = ''; state.flowSelectedEdgeIndex = -1; state.flowConnectingFrom = ''; state.flowDirty = false; renderFlowEditor();
+  });
+  els.flowName?.addEventListener('input', () => { const draft = flowCurrentDraft(); if (draft) { draft.name = els.flowName.value; flowMarkDirty(); renderFlowSelector(); } });
+  els.flowMode?.addEventListener('change', () => { const draft = flowCurrentDraft(); if (draft) { draft.mode = els.flowMode.value; flowMarkDirty(); } });
+  els.flowEnabled?.addEventListener('change', () => { const draft = flowCurrentDraft(); if (draft) { draft.enabled = els.flowEnabled.checked; flowMarkDirty(); } });
+  els.flowSaveBtn?.addEventListener('click', () => saveFlowDraft().catch((err) => flowSetStatus(err.message || err, true)));
+  els.flowDeployBtn?.addEventListener('click', () => deployFlowDraft().catch((err) => flowSetStatus(err.message || err, true)));
+  els.flowDisableBtn?.addEventListener('click', async () => { try { const draft = flowCurrentDraft(); if (!draft) return; await apiPostJson(`/api/flow/flows/${encodeURIComponent(draft.id)}/disable`, {}); flowSetStatus('Deployed flow stopped.'); await refreshFlowTab(); } catch (err) { flowSetStatus(err.message || err, true); } });
+  els.flowDeleteBtn?.addEventListener('click', async () => { try { const draft = flowCurrentDraft(); if (!draft || !confirm(`Delete draft '${draft.name}'?`)) return; await apiPostJson(`/api/flow/flows/${encodeURIComponent(draft.id)}/delete`, {}); state.flowDirty = false; state.flowSelectedId = ''; await refreshFlowTab(); } catch (err) { flowSetStatus(err.message || err, true); } });
+  els.flowDeleteNodeBtn?.addEventListener('click', deleteSelectedFlowObject);
+  els.flowTestNodeBtn?.addEventListener('click', () => injectFlowTestValue().catch((err) => flowSetStatus(err.message || err, true)));
+  document.addEventListener('keydown', (event) => {
+    if (!isPanelActive('tab-flow') || !['Delete', 'Backspace'].includes(event.key)) return;
+    const active = document.activeElement;
+    if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return;
+    if (!state.flowSelectedNodeId && state.flowSelectedEdgeIndex < 0) return;
+    event.preventDefault(); deleteSelectedFlowObject();
+  });
+  window.addEventListener('resize', () => { if (isPanelActive('tab-flow')) flowResizeCanvasToContent(); });
 }
 
 function insertLogicSelectedTagName() {
@@ -7489,6 +8135,7 @@ function reportBuilderSetStatus(message) {
 function showReportsLanding() {
   if (els.reportsDownloadCard) els.reportsDownloadCard.style.display = '';
   if (els.reportBuilderCard) els.reportBuilderCard.style.display = 'none';
+  document.body.classList.remove('reports-builder-active');
 }
 
 function showReportBuilder(report) {
@@ -7499,6 +8146,7 @@ function showReportBuilder(report) {
   setReportBuilderTab('report');
   if (els.reportsDownloadCard) els.reportsDownloadCard.style.display = 'none';
   if (els.reportBuilderCard) els.reportBuilderCard.style.display = '';
+  document.body.classList.add('reports-builder-active');
   if (els.reportBuilderTitle) {
     els.reportBuilderTitle.textContent = report ? `Edit ${report.name || 'Report'}` : 'New Report';
   }
@@ -9903,6 +10551,9 @@ function setTab(id) {
   if (next === 'logic' && !canAccessLogicTab()) {
     id = 'overview';
   }
+  if (next === 'flow' && !canAccessFlowTab()) {
+    id = 'overview';
+  }
   if ((next === 'logs' || next === 'hmi_audit') && !canAccessLogsTab()) {
     id = 'overview';
   }
@@ -9913,6 +10564,9 @@ function setTab(id) {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('is-active', b.dataset.tab === id));
   document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('is-active', p.id === `tab-${id}`));
   document.body.classList.toggle('reports-active', id === 'reports');
+  document.body.classList.toggle('flow-active', id === 'flow');
+  document.body.classList.toggle('app-viewport', !REPORTS_PORTAL_MODE || id === 'reports');
+  if (id !== 'reports') document.body.classList.remove('reports-builder-active');
 
   if (id === 'users') {
     refreshUsersPanel().catch(() => {});
@@ -9939,11 +10593,18 @@ function setTab(id) {
   if (id === 'logic') {
     refreshLogicTab().catch(() => {});
   }
+  if (id === 'flow') {
+    refreshFlowTab().catch(() => {});
+  } else if (state.flowRefreshTimer) {
+    window.clearTimeout(state.flowRefreshTimer);
+    state.flowRefreshTimer = 0;
+  }
   if (id === 'configure') {
     ensureAuthAdminPanelLoaded();
     loadSoundSettings().catch(() => {});
     loadSmtpSettings().catch(() => {});
     loadVoiceModemSettings().catch(() => {});
+    refreshServerCertificateLibrary().catch(() => {});
   }
   if (id === 'alarms_events') {
     loadAlarmNotificationSettings().catch(() => {});
@@ -15891,7 +16552,7 @@ function mqttSettingsFromConnection(obj) {
     client_id: String(settings.client_id ?? obj?.client_id ?? '').trim(),
     username: String(settings.username ?? obj?.username ?? '').trim(),
     password_set: String(settings.password ?? obj?.password ?? '').length > 0,
-    cafile: String(settings.cafile ?? obj?.cafile ?? 'ca.crt').trim() || 'ca.crt',
+    cafile: String(settings.cafile ?? obj?.cafile ?? '').trim(),
     certfile: String(settings.certfile ?? obj?.certfile ?? '').trim(),
     keyfile: String(settings.keyfile ?? obj?.keyfile ?? '').trim(),
     publish_per_field: Boolean(settings.publish_per_field ?? settings.publish?.per_field ?? false),
@@ -15917,7 +16578,7 @@ function buildMqttConnectionConfig({ id, description = '', existing = {}, host, 
     tls_insecure: tlsInsecure === true,
     client_id: String(clientId || '').trim(),
     username: String(username || '').trim(),
-    cafile: String(cafile || 'ca.crt').trim() || 'ca.crt',
+    cafile: String(cafile || '').trim(),
     certfile: String(certfile || '').trim(),
     keyfile: String(keyfile || '').trim(),
     publish_per_field: Boolean(publishPerField),
@@ -15949,8 +16610,8 @@ function applyDeviceDriverUi(prefix) {
     ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevModbusAddressModeRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
     : [els.newDevGatewayRow, els.newDevPathRow, els.newDevModbusAddressModeRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
   const mqttRows = isEdit
-    ? [els.editDevMqttHostRow, els.editDevMqttPortRow, els.editDevMqttClientIdRow, els.editDevMqttUsernameRow, els.editDevMqttPasswordRow, els.editDevMqttTlsRow, els.editDevMqttTlsInsecureRow, els.editDevMqttCaFileRow, els.editDevMqttCertFileRow, els.editDevMqttKeyFileRow, els.editDevMqttPublishPatternsRow, els.editDevMqttPublishModeRow, els.editDevMqttPublishIntervalRow, els.editDevMqttPublishMinRow, els.editDevMqttTestRow]
-    : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttCertFileRow, els.newDevMqttKeyFileRow, els.newDevMqttPublishPatternsRow, els.newDevMqttPublishModeRow, els.newDevMqttPublishIntervalRow, els.newDevMqttPublishMinRow, els.newDevMqttTestRow];
+    ? [els.editDevMqttHostRow, els.editDevMqttPortRow, els.editDevMqttClientIdRow, els.editDevMqttUsernameRow, els.editDevMqttPasswordRow, els.editDevMqttTlsRow, els.editDevMqttTlsInsecureRow, els.editDevMqttCaFileRow, els.editDevMqttClientAuthRow, els.editDevMqttPublishPatternsRow, els.editDevMqttPublishModeRow, els.editDevMqttPublishIntervalRow, els.editDevMqttPublishMinRow, els.editDevMqttTestRow]
+    : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttClientAuthRow, els.newDevMqttPublishPatternsRow, els.newDevMqttPublishModeRow, els.newDevMqttPublishIntervalRow, els.newDevMqttPublishMinRow, els.newDevMqttTestRow];
 
   plcRows.forEach((row) => setRowVisible(row, !isMqtt));
   setRowVisible(isEdit ? els.editDevModbusAddressModeRow : els.newDevModbusAddressModeRow, !isMqtt && isModbus);
@@ -16679,7 +17340,7 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevMqttPassword) els.newDevMqttPassword.value = '';
   if (els.newDevMqttUseTls) els.newDevMqttUseTls.checked = false;
   if (els.newDevMqttTlsInsecure) els.newDevMqttTlsInsecure.checked = false;
-  if (els.newDevMqttCaFile) els.newDevMqttCaFile.value = 'ca.crt';
+  if (els.newDevMqttCaFile) els.newDevMqttCaFile.value = '';
   if (els.newDevMqttCertFile) els.newDevMqttCertFile.value = '';
   if (els.newDevMqttKeyFile) els.newDevMqttKeyFile.value = '';
   if (els.newDevMqttPublishPerField) els.newDevMqttPublishPerField.checked = false;
@@ -16690,6 +17351,7 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevMqttPublishIntervalMs) els.newDevMqttPublishIntervalMs.value = '30000';
   if (els.newDevMqttPublishMinMs) els.newDevMqttPublishMinMs.value = '0';
   applyDeviceDriverUi('new');
+  refreshMqttTrustCertificateLibrary('').catch((err) => setNewDevStatus(`Certificate library unavailable: ${err.message || err}`));
 
   setNewDevStatus('');
   els.newDevId?.focus?.();
@@ -17230,7 +17892,7 @@ function openWorkspaceItemModal(node) {
     const relPath = String(node.meta?.path || '').trim();
 
     if (els.editDevId) els.editDevId.value = connectionId;
-    if (els.editDevId) els.editDevId.disabled = !canEditConfig();
+    if (els.editDevName) els.editDevName.value = connectionId;
 
     state.pendingWorkspaceItem = { id: String(node.id || ''), type: 'device', connection_id: connectionId, path: relPath };
 
@@ -17239,6 +17901,7 @@ function openWorkspaceItemModal(node) {
     } else {
       setEditDevStatus('Loading…');
       getConnObjForPath(relPath).then((obj) => {
+        if (els.editDevName) els.editDevName.value = String(obj?.description || '').trim() || connectionId;
         const driver = String(obj?.driver || 'ab_eip') || 'ab_eip';
         if (els.editDevDriver) els.editDevDriver.value = driver;
         if (els.editDevGateway) els.editDevGateway.value = String(obj?.gateway || '');
@@ -17275,6 +17938,10 @@ function openWorkspaceItemModal(node) {
         if (els.editDevMqttPublishIntervalMs) els.editDevMqttPublishIntervalMs.value = String(mqtt.publish_interval_ms);
         if (els.editDevMqttPublishMinMs) els.editDevMqttPublishMinMs.value = String(mqtt.publish_min_update_ms);
         applyDeviceDriverUi('edit');
+        if (driver === 'mqtt') {
+          refreshMqttTrustCertificateLibrary(mqtt.cafile).catch(() => {});
+          refreshMqttConnectionCertificateStatus(connectionId).catch(() => {});
+        }
         setEditDevStatus('');
       }).catch((err) => {
         setEditDevStatus(`Load failed: ${err.message}`);
@@ -18118,12 +18785,9 @@ async function saveEditedDeviceFromModal() {
   if (!relPath) { setEditDevStatus('Missing device config path.'); return; }
 
   const oldId = String(state.pendingWorkspaceItem?.connection_id || node.meta?.connection_id || node.meta?.id || '').trim();
-  const newId = String(els.editDevId?.value || '').trim();
-  if (!newId) { setEditDevStatus('Device ID is required.'); return; }
-  if (!/^[A-Za-z0-9._-]+$/.test(newId)) {
-    setEditDevStatus('Device ID may only contain letters, digits, ".", "_", and "-".');
-    return;
-  }
+  const newId = oldId;
+  const friendlyName = String(els.editDevName?.value || '').trim();
+  if (!friendlyName) { setEditDevStatus('Connection name is required.'); return; }
   const driver = String(els.editDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.editDevGateway?.value || '').trim();
   const pathVal = String(els.editDevPath?.value || '').trim() || (isModbusDriver(driver) ? '1' : '1,0');
@@ -18132,7 +18796,7 @@ async function saveEditedDeviceFromModal() {
   const plc_type = isModbusDriver(driver) ? 'modbus_tcp' : (String(els.editDevPlcType?.value || '').trim() || 'lgx');
 
   const existing = state.connObjCache?.get?.(relPath) || {};
-  const description = String(existing?.description || '').trim();
+  const description = friendlyName;
   let obj;
   try {
     obj = driver === 'mqtt'
@@ -18259,6 +18923,229 @@ async function saveEditedDeviceFromModalReload() {
   }
 }
 
+function mqttManagedCertificatePath(connectionId, kind) {
+  const names = { ca: 'ca.crt', cert: 'client.crt', key: 'client.key' };
+  return `certs/mqtt/${String(connectionId || '').trim()}/${names[kind] || ''}`;
+}
+
+function mqttCertificateUrl(connectionId, kind, action = '') {
+  const params = new URLSearchParams({ connection_id: String(connectionId || ''), kind: String(kind || '') });
+  if (action) params.set('action', action);
+  return `/api/opcbridge/mqtt-connection-cert?${params}`;
+}
+
+async function uploadMqttConnectionCertificate(connectionId, kind, file) {
+  if (!file) return null;
+  const response = await fetchWithTimeout(mqttCertificateUrl(connectionId, kind), {
+    method: 'POST', headers: { 'Content-Type': file.type || 'application/x-pem-file' }, body: await file.arrayBuffer()
+  }, 120000);
+  const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+  if (!response.ok || !data?.ok) throw new Error(data?.error || `Certificate upload failed (HTTP ${response.status})`);
+  return data;
+}
+
+const MQTT_CERT_EDIT_CONTROLS = {
+  cert: () => ({ file: els.editDevMqttCertUpload, path: els.editDevMqttCertFile, status: els.editDevMqttCertStatus, download: els.editDevMqttCertDownload, remove: els.editDevMqttCertRemove }),
+  key: () => ({ file: els.editDevMqttKeyUpload, path: els.editDevMqttKeyFile, status: els.editDevMqttKeyStatus, download: null, remove: els.editDevMqttKeyRemove })
+};
+
+function mqttTrustLibraryUrl(action = '', certificatePath = '') {
+  const params = new URLSearchParams();
+  if (action) params.set('action', action);
+  if (certificatePath) params.set('path', certificatePath);
+  const query = params.toString();
+  return `/api/opcbridge/mqtt-trust-certificates${query ? `?${query}` : ''}`;
+}
+
+function renderMqttTrustCertificateSelectors(preferred = '') {
+  const selectors = [els.newDevMqttCaFile, els.editDevMqttCaFile].filter(Boolean);
+  selectors.forEach((select) => {
+    const selected = String(preferred || select.value || '');
+    select.textContent = '';
+    select.add(new Option('System trust store', ''));
+    state.mqttTrustCertificates.forEach((certificate) => {
+      const usage = Array.isArray(certificate.used_by) && certificate.used_by.length ? ` · used by ${certificate.used_by.join(', ')}` : '';
+      const label = certificate.display_name || certificate.name;
+      select.add(new Option(`${label}${certificate.legacy ? ' (existing)' : ''}${usage}`, certificate.path));
+    });
+    if (selected && !state.mqttTrustCertificates.some((certificate) => certificate.path === selected)) select.add(new Option(`${selected} (custom path)`, selected));
+    select.value = selected;
+  });
+  updateMqttTrustCertificateActions();
+}
+
+function updateMqttTrustCertificateActions() {
+  [[els.newDevMqttCaFile, els.newDevMqttCaRename, els.newDevMqttCaDownload, els.newDevMqttCaRemove, els.newDevMqttCaStatus],
+   [els.editDevMqttCaFile, els.editDevMqttCaRename, els.editDevMqttCaDownload, els.editDevMqttCaRemove, els.editDevMqttCaStatus]].forEach(([select, rename, download, remove, status]) => {
+    const value = String(select?.value || '');
+    const asset = state.mqttTrustCertificates.find((certificate) => certificate.path === value);
+    if (rename) rename.disabled = !asset;
+    if (download) download.disabled = !asset;
+    if (remove) remove.disabled = !asset || Boolean(asset?.used_by?.length);
+    if (status) status.textContent = asset?.used_by?.length ? `Used by ${asset.used_by.join(', ')}` : (asset ? 'Available' : '');
+  });
+}
+
+async function refreshMqttTrustCertificateLibrary(preferred = '') {
+  const response = await apiGet(mqttTrustLibraryUrl(), { timeoutMs: 15000 });
+  state.mqttTrustCertificates = Array.isArray(response?.certificates) ? response.certificates : [];
+  renderMqttTrustCertificateSelectors(preferred);
+}
+
+function certificatePrincipalLabel(value) {
+  const text = String(value || '').trim();
+  const commonName = text.match(/(?:^|\n|,\s*)CN\s*=\s*([^,\n]+)/i)?.[1];
+  return commonName?.trim() || text || '—';
+}
+
+function renderServerCertificateLibrary() {
+  if (!els.serverCertLibraryTbody) return;
+  const certificates = state.mqttTrustCertificates || [];
+  if (!certificates.length) {
+    els.serverCertLibraryTbody.innerHTML = '<tr><td colspan="7" class="hint">No certificates have been added.</td></tr>';
+    return;
+  }
+  els.serverCertLibraryTbody.innerHTML = certificates.map((certificate) => {
+    const expires = certificate.valid_to ? new Date(certificate.valid_to) : null;
+    const expired = expires && Number.isFinite(expires.getTime()) && expires.getTime() < Date.now();
+    const expiryLabel = expires && Number.isFinite(expires.getTime()) ? expires.toLocaleDateString() : 'Unknown';
+    const usedBy = certificate.used_by?.length ? certificate.used_by.join(', ') : 'Not in use';
+    const principal = `${certificatePrincipalLabel(certificate.issuer)} / ${certificatePrincipalLabel(certificate.subject)}`;
+    const displayName = certificate.display_name || certificate.name;
+    const encodedPath = encodeURIComponent(certificate.path);
+    return `<tr>
+      <td><strong>${escapeHtml(displayName)}</strong>${certificate.display_name ? `<div class="hint mono">${escapeHtml(certificate.name)}</div>` : ''}</td>
+      <td>${escapeHtml(certificate.certificate_type || 'trust')}</td>
+      <td class="${expired ? 'status-error' : ''}">${escapeHtml(expired ? `${expiryLabel} · expired` : expiryLabel)}</td>
+      <td>${escapeHtml(usedBy)}</td>
+      <td title="${escapeHtml(String(certificate.issuer || ''))}\n${escapeHtml(String(certificate.subject || ''))}">${escapeHtml(principal)}</td>
+      <td class="mono" title="${escapeHtml(certificate.fingerprint || '')}">${escapeHtml(String(certificate.fingerprint || '').slice(0, 16))}${certificate.fingerprint ? '…' : ''}</td>
+      <td><div class="row-actions"><button class="btn" type="button" data-cert-action="rename" data-cert-path="${encodedPath}">Rename</button><button class="btn" type="button" data-cert-action="download" data-cert-path="${encodedPath}">Download</button><button class="btn danger" type="button" data-cert-action="delete" data-cert-path="${encodedPath}" ${certificate.used_by?.length ? 'disabled' : ''}>Delete</button></div></td>
+    </tr>`;
+  }).join('');
+}
+
+async function refreshServerCertificateLibrary() {
+  if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = 'Loading…';
+  try {
+    await refreshMqttTrustCertificateLibrary();
+    renderServerCertificateLibrary();
+    if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = '';
+  } catch (err) {
+    if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = `Load failed: ${err.message || err}`;
+  }
+}
+
+async function uploadServerCertificate() {
+  const file = els.serverCertUploadFile?.files?.[0];
+  const displayName = String(els.serverCertName?.value || '').trim();
+  if (!file) { if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = 'Choose a certificate file.'; return; }
+  if (!displayName) { if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = 'Enter a friendly certificate name.'; return; }
+  if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = 'Uploading…';
+  const params = new URLSearchParams({ name: file.name || 'certificate.crt', display_name: displayName });
+  try {
+    const response = await fetchWithTimeout(`/api/opcbridge/mqtt-trust-certificates?${params}`, {
+      method: 'POST', headers: { 'Content-Type': file.type || 'application/x-pem-file' }, body: await file.arrayBuffer()
+    }, 120000);
+    const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+    if (!response.ok || !data?.ok) throw new Error(data?.error || `Upload failed (HTTP ${response.status})`);
+    els.serverCertUploadFile.value = '';
+    els.serverCertName.value = '';
+    await refreshServerCertificateLibrary();
+    if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = data.duplicate ? 'Certificate already existed; its name was updated.' : 'Certificate added.';
+  } catch (err) {
+    if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = `Upload failed: ${err.message || err}`;
+  }
+}
+
+async function uploadMqttTrustCertificate(file, targetSelect, statusElement) {
+  if (!file) return;
+  const suggestedName = String(file.name || 'MQTT broker certificate').replace(/\.(?:crt|pem)$/i, '').replace(/[_-]+/g, ' ').trim();
+  const displayName = window.prompt('Name this certificate so it is easy to recognize:', suggestedName);
+  if (displayName === null) return;
+  if (!displayName.trim()) throw new Error('Certificate name is required.');
+  if (statusElement) statusElement.textContent = 'Uploading…';
+  const params = new URLSearchParams({ name: file.name || 'mqtt-trust.crt', display_name: displayName.trim() });
+  const response = await fetchWithTimeout(`/api/opcbridge/mqtt-trust-certificates?${params}`, {
+    method: 'POST', headers: { 'Content-Type': file.type || 'application/x-pem-file' }, body: await file.arrayBuffer()
+  }, 120000);
+  const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+  if (!response.ok || !data?.ok) throw new Error(data?.error || `Upload failed (HTTP ${response.status})`);
+  await refreshMqttTrustCertificateLibrary(data.certificate?.path || '');
+  if (targetSelect) targetSelect.value = data.certificate?.path || '';
+  if (statusElement) statusElement.textContent = data.duplicate ? 'Already in certificate library' : 'Added to certificate library';
+}
+
+async function renameSelectedMqttTrustCertificate(select, statusElement) {
+  const certificatePath = String(select?.value || '');
+  const asset = state.mqttTrustCertificates.find((item) => item.path === certificatePath);
+  if (!asset) return;
+  const displayName = window.prompt('Certificate name:', asset.display_name || asset.name.replace(/\.(?:crt|pem)$/i, ''));
+  if (displayName === null) return;
+  if (!displayName.trim()) { if (statusElement) statusElement.textContent = 'Certificate name is required'; return; }
+  if (statusElement) statusElement.textContent = 'Renaming…';
+  const params = new URLSearchParams({ action: 'rename', path: certificatePath, display_name: displayName.trim() });
+  const response = await fetchWithTimeout(`/api/opcbridge/mqtt-trust-certificates?${params}`, { method: 'POST' }, 30000);
+  const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+  if (!response.ok || !data?.ok) { if (statusElement) statusElement.textContent = data?.error || 'Rename failed'; return; }
+  await refreshMqttTrustCertificateLibrary(certificatePath);
+  if (statusElement) statusElement.textContent = 'Certificate renamed';
+}
+
+async function deleteSelectedMqttTrustCertificate(select, statusElement) {
+  const certificatePath = String(select?.value || '');
+  const asset = state.mqttTrustCertificates.find((item) => item.path === certificatePath);
+  if (!asset || !window.confirm(`Delete certificate '${asset.display_name || asset.name}' from the shared library?`)) return;
+  const response = await fetchWithTimeout(mqttTrustLibraryUrl('', certificatePath), { method: 'DELETE' }, 30000);
+  const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+  if (!response.ok || !data?.ok) { if (statusElement) statusElement.textContent = data?.error || 'Delete failed'; return; }
+  await refreshMqttTrustCertificateLibrary('');
+}
+
+async function refreshMqttConnectionCertificateStatus(connectionId) {
+  if (!connectionId) return;
+  await Promise.all(Object.entries(MQTT_CERT_EDIT_CONTROLS).map(async ([kind, getControls]) => {
+    const controls = getControls();
+    try {
+      const data = await apiGet(mqttCertificateUrl(connectionId, kind), { timeoutMs: 10000 });
+      const configured = String(controls.path?.value || '').trim();
+      if (controls.status) controls.status.textContent = data.installed ? 'Installed' : (configured ? `Configured: ${configured}` : 'Not installed');
+      if (controls.download) controls.download.disabled = !data.installed;
+      if (controls.remove) controls.remove.disabled = !data.installed && !configured;
+    } catch (err) {
+      if (controls.status) controls.status.textContent = `Status unavailable: ${err.message || err}`;
+    }
+  }));
+}
+
+async function handleEditedMqttCertificateUpload(kind) {
+  const connectionId = String(state.pendingWorkspaceItem?.connection_id || '').trim();
+  const controls = MQTT_CERT_EDIT_CONTROLS[kind]?.();
+  const file = controls?.file?.files?.[0];
+  if (!connectionId || !controls || !file) return;
+  if (controls.status) controls.status.textContent = 'Uploading…';
+  try {
+    const result = await uploadMqttConnectionCertificate(connectionId, kind, file);
+    if (controls.path) controls.path.value = result.path || mqttManagedCertificatePath(connectionId, kind);
+    controls.file.value = '';
+    if (controls.status) controls.status.textContent = 'Installed · save the connection to use it';
+  } catch (err) {
+    if (controls.status) controls.status.textContent = `Upload failed: ${err.message || err}`;
+  }
+}
+
+async function removeEditedMqttCertificate(kind) {
+  const connectionId = String(state.pendingWorkspaceItem?.connection_id || '').trim();
+  const controls = MQTT_CERT_EDIT_CONTROLS[kind]?.();
+  if (!connectionId || !controls || !window.confirm(`Remove this MQTT ${kind === 'key' ? 'private key' : 'certificate'}?`)) return;
+  const response = await fetchWithTimeout(mqttCertificateUrl(connectionId, kind), { method: 'DELETE' }, 30000);
+  const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+  if (!response.ok || !data?.ok) { if (controls.status) controls.status.textContent = `Remove failed: ${data?.error || response.status}`; return; }
+  if (controls.path) controls.path.value = '';
+  await refreshMqttConnectionCertificateStatus(connectionId);
+  setEditDevStatus('Certificate removed. Save the connection to clear its configured path.');
+}
+
 function readMqttDeviceTestConfig(prefix) {
   const isEdit = prefix === 'edit';
   const cfg = {
@@ -18269,9 +19156,9 @@ function readMqttDeviceTestConfig(prefix) {
     password: String((isEdit ? els.editDevMqttPassword : els.newDevMqttPassword)?.value || ''),
     use_tls: Boolean((isEdit ? els.editDevMqttUseTls : els.newDevMqttUseTls)?.checked),
     tls_insecure: Boolean((isEdit ? els.editDevMqttTlsInsecure : els.newDevMqttTlsInsecure)?.checked),
-    cafile: String((isEdit ? els.editDevMqttCaFile : els.newDevMqttCaFile)?.value || 'ca.crt').trim() || 'ca.crt',
-    certfile: String((isEdit ? els.editDevMqttCertFile : els.newDevMqttCertFile)?.value || '').trim(),
-    keyfile: String((isEdit ? els.editDevMqttKeyFile : els.newDevMqttKeyFile)?.value || '').trim()
+    cafile: String((isEdit ? els.editDevMqttCaFile : els.newDevMqttCaFile)?.value || '').trim(),
+    certfile: isEdit ? String(els.editDevMqttCertFile?.value || '').trim() : '',
+    keyfile: isEdit ? String(els.editDevMqttKeyFile?.value || '').trim() : ''
   };
   if (isEdit && !cfg.password) {
     const relPath = String(state.pendingWorkspaceItem?.path || '').trim();
@@ -18291,6 +19178,12 @@ async function testMqttDeviceConnection(prefix) {
   try {
     const cfg = readMqttDeviceTestConfig(prefix);
     if (!cfg.host) throw new Error('MQTT host is required.');
+    if (!isEdit) {
+      const cert = els.newDevMqttCertFile?.files?.[0] || null;
+      const key = els.newDevMqttKeyFile?.files?.[0] || null;
+      if (cert) cfg.cert_pem = await cert.text();
+      if (key) cfg.key_pem = await key.text();
+    }
     const result = await apiPostJson('/api/opcbridge/mqtt/test', { config: cfg }, { timeoutMs: 20000 });
     const tlsText = result?.tls ? 'TLS' : 'TCP';
     setStatus(`MQTT test OK (${tlsText} ${result?.host || cfg.host}:${result?.port || cfg.port || (cfg.use_tls ? 8883 : 1883)}, ${Number(result?.elapsed_ms || 0)} ms).`);
@@ -18599,12 +19492,9 @@ function wireWorkspaceItemModalUi() {
 }
 
 async function createNewDeviceFromWorkspace() {
-  const connection_id = String(els.newDevId?.value || '').trim();
-  if (!connection_id) { setNewDevStatus('Device ID is required.'); return; }
-  if (!/^[A-Za-z0-9._-]+$/.test(connection_id)) {
-    setNewDevStatus('Device ID may only contain letters, digits, ".", "_", and "-".');
-    return;
-  }
+  const connectionName = String(els.newDevId?.value || '').trim();
+  if (!connectionName) { setNewDevStatus('Connection name is required.'); return; }
+  const connection_id = generateWorkspaceConnectionId(connectionName);
 
   const driver = String(els.newDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.newDevGateway?.value || '').trim();
@@ -18612,6 +19502,11 @@ async function createNewDeviceFromWorkspace() {
   const modbus_address_mode = normalizeModbusAddressMode(els.newDevModbusAddressMode?.value);
   const slot = Number(String(els.newDevSlot?.value || '0').trim() || '0') || 0;
   const plc_type = isModbusDriver(driver) ? 'modbus_tcp' : (String(els.newDevPlcType?.value || '').trim() || 'lgx');
+  const mqttFiles = driver === 'mqtt' ? {
+    ca: null,
+    cert: els.newDevMqttCertFile?.files?.[0] || null,
+    key: els.newDevMqttKeyFile?.files?.[0] || null
+  } : { ca: null, cert: null, key: null };
 
   // opcbridge connection config requires `id` (not `connection_id`).
   let obj;
@@ -18619,7 +19514,7 @@ async function createNewDeviceFromWorkspace() {
     obj = driver === 'mqtt'
       ? buildMqttConnectionConfig({
         id: connection_id,
-        description: '',
+        description: connectionName,
         host: els.newDevMqttHost?.value,
         port: els.newDevMqttPort?.value,
         useTls: !!els.newDevMqttUseTls?.checked,
@@ -18627,9 +19522,9 @@ async function createNewDeviceFromWorkspace() {
         clientId: els.newDevMqttClientId?.value,
         username: els.newDevMqttUsername?.value,
         password: els.newDevMqttPassword?.value,
-        cafile: els.newDevMqttCaFile?.value,
-        certfile: els.newDevMqttCertFile?.value,
-        keyfile: els.newDevMqttKeyFile?.value,
+        cafile: String(els.newDevMqttCaFile?.value || '').trim(),
+        certfile: mqttFiles.cert ? mqttManagedCertificatePath(connection_id, 'cert') : '',
+        keyfile: mqttFiles.key ? mqttManagedCertificatePath(connection_id, 'key') : '',
         publishPerField: !!els.newDevMqttPublishPerField?.checked,
         publishTagJson: !!els.newDevMqttPublishTagJson?.checked,
         publishMemoryTags: !!els.newDevMqttPublishMemoryTags?.checked,
@@ -18639,7 +19534,7 @@ async function createNewDeviceFromWorkspace() {
         publishMinUpdateMs: els.newDevMqttPublishMinMs?.value
       })
       : applyPollingConfigToConnection(
-        { id: connection_id, description: '', driver, gateway, path: pathVal, slot, plc_type },
+        { id: connection_id, description: connectionName, driver, gateway, path: pathVal, slot, plc_type },
         {
           mode: els.newDevPollingMode?.value,
           pacing: els.newDevPollingPacing?.value,
@@ -18655,6 +19550,17 @@ async function createNewDeviceFromWorkspace() {
   } catch (err) {
     setNewDevStatus(err.message || String(err));
     return;
+  }
+  if (driver === 'mqtt') {
+    setNewDevStatus('Uploading MQTT certificates…');
+    try {
+      for (const kind of ['ca', 'cert', 'key']) {
+        if (mqttFiles[kind]) await uploadMqttConnectionCertificate(connection_id, kind, mqttFiles[kind]);
+      }
+    } catch (err) {
+      setNewDevStatus(`Certificate upload failed: ${err.message || err}`);
+      return;
+    }
   }
   const relPath = `connections/${connection_id}.json`;
 
@@ -18691,6 +19597,56 @@ function wireNewDeviceFormUi() {
   els.newDevCreateBtn?.addEventListener('click', createNewDeviceFromWorkspace);
   els.newDevDriver?.addEventListener('change', () => applyDeviceDriverUi('new'));
   els.newDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('new'));
+  els.serverCertRefreshBtn?.addEventListener('click', () => refreshServerCertificateLibrary());
+  els.serverCertUploadBtn?.addEventListener('click', uploadServerCertificate);
+  els.serverCertUploadFile?.addEventListener('change', () => {
+    const file = els.serverCertUploadFile.files?.[0];
+    if (!file) return;
+    if (els.serverCertName && !els.serverCertName.value.trim()) {
+      els.serverCertName.value = String(file.name || '').replace(/\.(?:crt|pem)$/i, '').replace(/[_-]+/g, ' ').trim();
+    }
+    if (els.serverCertUploadStatus) els.serverCertUploadStatus.textContent = `Selected: ${file.name}`;
+  });
+  els.serverCertLibraryTbody?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-cert-action][data-cert-path]');
+    if (!button) return;
+    const certificatePath = decodeURIComponent(button.dataset.certPath || '');
+    const action = button.dataset.certAction;
+    if (action === 'download') {
+      window.open(mqttTrustLibraryUrl('download', certificatePath), '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (action === 'rename') await renameSelectedMqttTrustCertificate({ value: certificatePath }, els.serverCertUploadStatus);
+    if (action === 'delete') await deleteSelectedMqttTrustCertificate({ value: certificatePath }, els.serverCertUploadStatus);
+    await refreshServerCertificateLibrary();
+  });
+  els.editDevMqttCaUpload?.addEventListener('change', async () => {
+    try { await uploadMqttTrustCertificate(els.editDevMqttCaUpload.files?.[0], els.editDevMqttCaFile, els.editDevMqttCaStatus); els.editDevMqttCaUpload.value = ''; }
+    catch (err) { if (els.editDevMqttCaStatus) els.editDevMqttCaStatus.textContent = `Upload failed: ${err.message || err}`; }
+  });
+  els.newDevMqttCaUpload?.addEventListener('change', async () => {
+    try { await uploadMqttTrustCertificate(els.newDevMqttCaUpload.files?.[0], els.newDevMqttCaFile, els.newDevMqttCaStatus); els.newDevMqttCaUpload.value = ''; }
+    catch (err) { if (els.newDevMqttCaStatus) els.newDevMqttCaStatus.textContent = `Upload failed: ${err.message || err}`; }
+  });
+  els.editDevMqttCertUpload?.addEventListener('change', () => handleEditedMqttCertificateUpload('cert'));
+  els.editDevMqttKeyUpload?.addEventListener('change', () => handleEditedMqttCertificateUpload('key'));
+  els.editDevMqttCaRemove?.addEventListener('click', () => deleteSelectedMqttTrustCertificate(els.editDevMqttCaFile, els.editDevMqttCaStatus));
+  els.newDevMqttCaRemove?.addEventListener('click', () => deleteSelectedMqttTrustCertificate(els.newDevMqttCaFile, els.newDevMqttCaStatus));
+  els.editDevMqttCaRename?.addEventListener('click', () => renameSelectedMqttTrustCertificate(els.editDevMqttCaFile, els.editDevMqttCaStatus));
+  els.newDevMqttCaRename?.addEventListener('click', () => renameSelectedMqttTrustCertificate(els.newDevMqttCaFile, els.newDevMqttCaStatus));
+  els.editDevMqttCertRemove?.addEventListener('click', () => removeEditedMqttCertificate('cert'));
+  els.editDevMqttKeyRemove?.addEventListener('click', () => removeEditedMqttCertificate('key'));
+  els.editDevMqttCaDownload?.addEventListener('click', () => {
+    const selected = String(els.editDevMqttCaFile?.value || ''); if (selected) window.open(mqttTrustLibraryUrl('download', selected), '_blank', 'noopener,noreferrer');
+  });
+  els.newDevMqttCaDownload?.addEventListener('click', () => {
+    const selected = String(els.newDevMqttCaFile?.value || ''); if (selected) window.open(mqttTrustLibraryUrl('download', selected), '_blank', 'noopener,noreferrer');
+  });
+  els.editDevMqttCaFile?.addEventListener('change', updateMqttTrustCertificateActions);
+  els.newDevMqttCaFile?.addEventListener('change', updateMqttTrustCertificateActions);
+  els.editDevMqttCertDownload?.addEventListener('click', () => {
+    const id = String(state.pendingWorkspaceItem?.connection_id || ''); if (id) window.open(mqttCertificateUrl(id, 'cert', 'download'), '_blank', 'noopener,noreferrer');
+  });
 
   // Keep modal open unless explicitly closed via buttons.
   if (els.workspaceNewDevicePanel && els.workspaceNewDevicePanel.dataset.noOverlayClose !== '1') {
@@ -23472,7 +24428,7 @@ function buildTree() {
     const deviceNode = {
       id: deviceId,
       type: 'device',
-      label: connectionId,
+      label: String(connObj?.description || '').trim() || connectionId,
       meta: { path: pathRel, connection_id: connectionId, driver: String(connObj?.driver || ''), enabled: connObj?.enabled !== false },
       children: tagChildren
     };
@@ -25545,6 +26501,7 @@ async function refreshUserAuthLine({ initial = false } = {}) {
     updateWorkspaceTabVisibility();
     updateAlarmsEventsTabVisibility();
     updateLogicTabVisibility();
+    updateFlowTabVisibility();
     updateLogsTabVisibility();
     updateUsersTabVisibility();
     updateLoggerTabVisibility();
@@ -26055,7 +27012,7 @@ async function refreshUsersPanel() {
     setUsersStatus(`OPCBridge auth: configured=${configured ? 'yes' : 'no'} initialized=${initialized ? 'yes' : 'no'} · ${who}`);
 
     if (els.usersInitWrap) els.usersInitWrap.style.display = (!initialized) ? 'block' : 'none';
-    if (els.usersManageWrap) els.usersManageWrap.style.display = (initialized) ? 'block' : 'none';
+    if (els.usersManageWrap) els.usersManageWrap.style.display = (initialized) ? 'flex' : 'none';
 
 	    if (!initialized) {
 	      // Leave blank by default; user may not use "admin" as the initial username.
@@ -26462,6 +27419,7 @@ async function main() {
   updateWorkspaceTabVisibility();
   updateAlarmsEventsTabVisibility();
   updateLogicTabVisibility();
+  updateFlowTabVisibility();
   updateLoggerTabVisibility();
   updateHistorianTabVisibility();
   updateReportsTabVisibility();
@@ -26474,6 +27432,7 @@ async function main() {
   wireSvcUi();
   wireMqttTabUi();
   wireMqttCaUi();
+  wireFlowTabUi();
   wireLogicTabUi();
   wireLoggerUi();
   wireHistorianUi();

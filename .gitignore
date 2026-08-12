@@ -33,6 +33,7 @@ opcbridge-alarms/opcbridge-alarms
 opcbridge-alarms/opcbridge-alarms.new
 opcbridge-alarms/voice-modem-test
 opcbridge-logger/opcbridge-logger
+opcbridge-flow/opcbridge-flow
 # Legacy build artifacts left by pre-rename worktrees.
 opcbridge-reporter/opcbridge-reporter
 opcbridge-historian/opcbridge-historian

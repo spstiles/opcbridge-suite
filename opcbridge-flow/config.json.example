@@ -1,0 +1,8 @@
+{
+  "listen_host": "127.0.0.1",
+  "listen_port": 8098,
+  "opcbridge_base_url": "http://127.0.0.1:8080",
+  "poll_interval_ms": 500,
+  "max_event_hops": 64,
+  "mqtt_config": "/etc/opcbridge/mqtt.json"
+}

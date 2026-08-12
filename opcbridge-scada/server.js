@@ -191,6 +191,8 @@ const REPORTER_API_HOST = String(process.env.OPCBRIDGE_LOGGER_API_HOST || proces
 const REPORTER_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_LOGGER_API_PORT || process.env.OPCBRIDGE_REPORTER_API_PORT || 8095) || 8095);
 const HISTORIAN_API_HOST = String(process.env.OPCBRIDGE_HISTORIAN_API_HOST || '127.0.0.1').trim();
 const HISTORIAN_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_HISTORIAN_API_PORT || 8096) || 8096);
+const FLOW_API_HOST = String(process.env.OPCBRIDGE_FLOW_API_HOST || '127.0.0.1').trim();
+const FLOW_API_PORT = Math.trunc(Number(process.env.OPCBRIDGE_FLOW_API_PORT || 8098) || 8098);
 const HISTORIAN_CONFIG_PATH = String(
   process.env.OPCBRIDGE_HISTORIAN_CONFIG ||
   '/etc/opcbridge/historian/config.json'
@@ -1391,9 +1393,12 @@ function mqttTestConnection(config, timeoutMs = 12000) {
       const certPath = mqttResolveConfigPath(config.certfile);
       const keyPath = mqttResolveConfigPath(config.keyfile);
       try {
-        if (caPath && fs.existsSync(caPath)) tlsOpts.ca = fs.readFileSync(caPath);
-        if (certPath && fs.existsSync(certPath)) tlsOpts.cert = fs.readFileSync(certPath);
-        if (keyPath && fs.existsSync(keyPath)) tlsOpts.key = fs.readFileSync(keyPath);
+        if (config.ca_pem) tlsOpts.ca = String(config.ca_pem);
+        else if (caPath && fs.existsSync(caPath)) tlsOpts.ca = fs.readFileSync(caPath);
+        if (config.cert_pem) tlsOpts.cert = String(config.cert_pem);
+        else if (certPath && fs.existsSync(certPath)) tlsOpts.cert = fs.readFileSync(certPath);
+        if (config.key_pem) tlsOpts.key = String(config.key_pem);
+        else if (keyPath && fs.existsSync(keyPath)) tlsOpts.key = fs.readFileSync(keyPath);
       } catch (err) {
         reject(new Error(`Failed to read MQTT TLS certificate file: ${err.message}`));
         return;
@@ -1553,6 +1558,37 @@ function historianApiRequest(method, apiPath, bodyObj = null, timeoutMs = 10000)
     });
     if (body) up.write(body);
     up.end();
+  });
+}
+
+function flowApiRequest(method, apiPath, bodyObj = null, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const body = bodyObj === null ? '' : JSON.stringify(bodyObj);
+    const request = http.request({
+      hostname: FLOW_API_HOST,
+      port: FLOW_API_PORT,
+      path: apiPath,
+      method,
+      timeout: timeoutMs,
+      headers: {
+        Accept: 'application/json',
+        ...(body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {})
+      }
+    }, (upstream) => {
+      const chunks = [];
+      upstream.on('data', (chunk) => chunks.push(chunk));
+      upstream.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let parsed = null;
+        try { parsed = JSON.parse(text || '{}'); } catch {}
+        resolve({ ok: upstream.statusCode >= 200 && upstream.statusCode < 300 && parsed?.ok !== false,
+          status: upstream.statusCode || 0, json: parsed, text });
+      });
+    });
+    request.on('timeout', () => request.destroy(new Error('Flow API timeout')));
+    request.on('error', (err) => resolve({ ok: false, status: 0, error: String(err.message || err) }));
+    if (body) request.write(body);
+    request.end();
   });
 }
 
@@ -3185,12 +3221,13 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    const [opcbridge, alarms, logger, historian, hmi] = await Promise.all([
+    const [opcbridge, alarms, logger, historian, hmi, flow] = await Promise.all([
       configuredServiceJsonRequest(cfg.opcbridge, '/health'),
       configuredServiceJsonRequest(cfg.alarms, '/alarm/api/status'),
       reporterApiRequest('GET', '/health', null, 3000),
       historianApiRequest('GET', '/health', null, 3000),
-      configuredServiceJsonRequest(cfg.hmi, '/api/version')
+      configuredServiceJsonRequest(cfg.hmi, '/api/version'),
+      flowApiRequest('GET', '/health', null, 3000)
     ]);
     const component = (id, name, response, versionKeys = ['component_version', 'version']) => {
       const body = response?.json || {};
@@ -3208,10 +3245,35 @@ const server = http.createServer(async (req, res) => {
       component('hmi', 'HMI', hmi),
       component('logger', 'Logger', logger),
       component('historian', 'Historian', historian),
+      component('flow', 'Flow', flow),
       { id: 'report', name: 'Report', version: readInstalledVersion(path.join(SUITE_PREFIX, 'report', 'VERSION')),
         suite_version: SUITE_VERSION, status: fs.existsSync(path.join(SUITE_PREFIX, 'report', 'opcbridge-report')) ? 'installed' : 'unavailable' }
     ];
     sendJson(res, 200, { ok: true, suite_version: SUITE_VERSION, components });
+    return;
+  }
+
+  if (url.pathname === '/api/flow/status' || url.pathname === '/api/flow/flows' || url.pathname.startsWith('/api/flow/flows/')) {
+    if (!await requireManageServerPerm()) return;
+    let method = req.method;
+    let upstreamPath = url.pathname === '/api/flow/status' ? '/health' : url.pathname.slice('/api/flow'.length);
+    let body = null;
+    if (method === 'POST') {
+      try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+      catch (err) { sendJson(res, 400, { ok: false, error: `Invalid JSON: ${err.message}` }); return; }
+      if (/\/delete$/.test(upstreamPath)) {
+        upstreamPath = upstreamPath.replace(/\/delete$/, '');
+        method = 'DELETE';
+        body = null;
+      }
+    }
+    if (!['GET', 'POST', 'DELETE'].includes(method)) {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const result = await flowApiRequest(method, upstreamPath, body, 15000);
+    sendJson(res, result.ok ? 200 : (result.status >= 400 && result.status < 500 ? result.status : 502),
+      result.json || { ok: false, error: result.error || 'Flow service unavailable' });
     return;
   }
 
@@ -3319,6 +3381,12 @@ const server = http.createServer(async (req, res) => {
       }
       const prev = readJsoncFileOrNull(MQTT_CONFIG_PATH) || readJsoncFileOrNull(MQTT_CONFIG_EXAMPLE_PATH) || {};
       const cfg = normalizeMqttConfig(incoming, prev);
+      // Inline PEM values are accepted only by this transient connection test.
+      // They are intentionally excluded by normalizeMqttConfig so they can
+      // never be persisted in mqtt.json or returned to the browser.
+      for (const key of ['ca_pem', 'cert_pem', 'key_pem']) {
+        if (typeof incoming[key] === 'string' && incoming[key]) cfg[key] = incoming[key];
+      }
       const result = await mqttTestConnection(cfg);
       sendJson(res, 200, result);
     } catch (err) {
@@ -4511,6 +4579,194 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
+    return;
+  }
+
+  // Connection-specific MQTT TLS material. Existing global certificate
+  // endpoints remain available for legacy mqtt.json configurations.
+  if (url.pathname === '/api/opcbridge/mqtt-connection-cert') {
+    if (!await requireManageServerPerm()) return;
+    const connectionId = String(url.searchParams.get('connection_id') || '').trim();
+    const kind = String(url.searchParams.get('kind') || '').trim();
+    const action = String(url.searchParams.get('action') || 'status').trim();
+    const fileNames = { ca: 'ca.crt', cert: 'client.crt', key: 'client.key' };
+    if (!/^[A-Za-z0-9._-]+$/.test(connectionId) || connectionId === '.' || connectionId === '..' || !Object.prototype.hasOwnProperty.call(fileNames, kind)) {
+      sendJson(res, 400, { ok: false, error: 'A valid connection_id and certificate kind are required.' });
+      return;
+    }
+    const certDir = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'mqtt', connectionId);
+    const certPath = path.join(certDir, fileNames[kind]);
+    const relativePath = path.relative(DEFAULT_OPCBRIDGE_CONFIG_DIR, certPath).split(path.sep).join('/');
+    try {
+      if (req.method === 'GET' && action === 'download') {
+        if (kind === 'key') { sendJson(res, 403, { ok: false, error: 'Private keys cannot be downloaded.' }); return; }
+        if (!fs.existsSync(certPath)) { sendJson(res, 404, { ok: false, error: 'Certificate is not installed.' }); return; }
+        const body = fs.readFileSync(certPath);
+        res.writeHead(200, {
+          'Content-Type': 'application/x-pem-file',
+          'Content-Disposition': `attachment; filename="${fileNames[kind]}"`,
+          'Content-Length': String(body.length),
+          'Cache-Control': 'no-store'
+        });
+        res.end(body); return;
+      }
+      if (req.method === 'GET') {
+        const exists = fs.existsSync(certPath);
+        const stat = exists ? fs.statSync(certPath) : null;
+        sendJson(res, 200, { ok: true, connection_id: connectionId, kind, installed: exists,
+          path: relativePath, size: stat?.size || 0, modified_ms: stat ? Math.trunc(stat.mtimeMs) : 0 });
+        return;
+      }
+      if (req.method === 'DELETE') {
+        if (fs.existsSync(certPath)) fs.unlinkSync(certPath);
+        try { if (fs.existsSync(certDir) && fs.readdirSync(certDir).length === 0) fs.rmdirSync(certDir); } catch { /* leave directory */ }
+        sendJson(res, 200, { ok: true, installed: false, connection_id: connectionId, kind, path: relativePath });
+        return;
+      }
+      if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+      const body = await readBody(req, 2 * 1024 * 1024);
+      if (!body.length) { sendJson(res, 400, { ok: false, error: 'The uploaded file is empty.' }); return; }
+      const text = body.toString('utf8');
+      const expected = kind === 'key' ? /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/ : /-----BEGIN CERTIFICATE-----/;
+      if (!expected.test(text)) { sendJson(res, 400, { ok: false, error: kind === 'key' ? 'The file does not contain a PEM private key.' : 'The file does not contain a PEM certificate.' }); return; }
+      fs.mkdirSync(certDir, { recursive: true, mode: 0o750 });
+      const temporary = `${certPath}.tmp-${process.pid}-${Date.now()}`;
+      fs.writeFileSync(temporary, body, { mode: kind === 'key' ? 0o600 : 0o640 });
+      fs.renameSync(temporary, certPath);
+      fs.chmodSync(certPath, kind === 'key' ? 0o600 : 0o640);
+      sendJson(res, 200, { ok: true, installed: true, connection_id: connectionId, kind, path: relativePath, size: body.length });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: `MQTT certificate operation failed: ${err.message || err}` });
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/opcbridge/mqtt-trust-certificates') {
+    if (!await requireManageServerPerm()) return;
+    const mqttCertRoot = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'mqtt');
+    const trustRoot = path.join(mqttCertRoot, 'trust');
+    const trustMetadataPath = path.join(trustRoot, 'library.json');
+    const loadTrustMetadata = () => {
+      const value = readJsoncFileOrNull(trustMetadataPath);
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    };
+    const saveTrustMetadata = (metadata) => {
+      fs.mkdirSync(trustRoot, { recursive: true, mode: 0o750 });
+      const temporary = `${trustMetadataPath}.tmp-${process.pid}`;
+      fs.writeFileSync(temporary, `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o640 });
+      fs.renameSync(temporary, trustMetadataPath);
+      fs.chmodSync(trustMetadataPath, 0o640);
+    };
+    const safeAssetPath = (relative) => {
+      const normalized = String(relative || '').split(path.sep).join('/').replace(/^\/+/, '');
+      const absolute = path.resolve(DEFAULT_OPCBRIDGE_CONFIG_DIR, normalized);
+      const allowed = `${path.resolve(mqttCertRoot)}${path.sep}`;
+      if (!absolute.startsWith(allowed) || !/\.(?:crt|pem)$/i.test(absolute)) return null;
+      return { relative: normalized, absolute };
+    };
+    const usagesForPath = (relative) => {
+      const usages = [];
+      const connectionsDir = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'connections');
+      if (!fs.existsSync(connectionsDir)) return usages;
+      for (const file of fs.readdirSync(connectionsDir).filter((name) => name.endsWith('.json'))) {
+        const obj = readJsoncFileOrNull(path.join(connectionsDir, file)) || {};
+        const rawConfigured = String(obj?.settings?.cafile ?? obj?.cafile ?? '').trim();
+        const configured = path.isAbsolute(rawConfigured)
+          ? path.relative(DEFAULT_OPCBRIDGE_CONFIG_DIR, rawConfigured).split(path.sep).join('/')
+          : rawConfigured.replace(/^\/+/, '');
+        if (configured === relative) usages.push(String(obj.description || obj.id || path.basename(file, '.json')));
+      }
+      return usages;
+    };
+    const listAssets = () => {
+      const files = [];
+      const metadata = loadTrustMetadata();
+      const walk = (dir) => {
+        if (!fs.existsSync(dir)) return;
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const absolute = path.join(dir, entry.name);
+          if (entry.isDirectory()) walk(absolute);
+          else if (/\.(?:crt|pem)$/i.test(entry.name) && !entry.name.endsWith('.tmp') &&
+                   (absolute.startsWith(`${trustRoot}${path.sep}`) || /^ca\.(?:crt|pem)$/i.test(entry.name))) files.push(absolute);
+        }
+      };
+      walk(mqttCertRoot);
+      return files.map((absolute) => {
+        const body = fs.readFileSync(absolute);
+        const relative = path.relative(DEFAULT_OPCBRIDGE_CONFIG_DIR, absolute).split(path.sep).join('/');
+        const fingerprint = crypto.createHash('sha256').update(body).digest('hex');
+        let subject = '', issuer = '', validFrom = '', validTo = '';
+        try {
+          const certificate = new crypto.X509Certificate(body);
+          subject = certificate.subject; issuer = certificate.issuer;
+          validFrom = certificate.validFrom; validTo = certificate.validTo;
+        } catch { /* Preserve non-X509 legacy files in the library listing. */ }
+        return { path: relative, name: path.basename(absolute), display_name: String(metadata[fingerprint]?.display_name || '').trim(), fingerprint,
+          subject, issuer, valid_from: validFrom, valid_to: validTo, certificate_type: 'trust',
+          size: body.length, modified_ms: Math.trunc(fs.statSync(absolute).mtimeMs), used_by: usagesForPath(relative), legacy: !absolute.startsWith(`${trustRoot}${path.sep}`) };
+      }).sort((a, b) => (a.display_name || a.name).localeCompare(b.display_name || b.name, undefined, { sensitivity: 'base', numeric: true }));
+    };
+    try {
+      if (req.method === 'GET' && url.searchParams.get('action') === 'download') {
+        const asset = safeAssetPath(url.searchParams.get('path'));
+        if (!asset || !fs.existsSync(asset.absolute)) { sendJson(res, 404, { ok: false, error: 'Certificate not found.' }); return; }
+        const body = fs.readFileSync(asset.absolute);
+        res.writeHead(200, { 'Content-Type': 'application/x-pem-file', 'Content-Disposition': `attachment; filename="${path.basename(asset.absolute)}"`, 'Content-Length': String(body.length), 'Cache-Control': 'no-store' });
+        res.end(body); return;
+      }
+      if (req.method === 'GET') { sendJson(res, 200, { ok: true, certificates: listAssets() }); return; }
+      if (req.method === 'POST' && url.searchParams.get('action') === 'rename') {
+        const assetPath = safeAssetPath(url.searchParams.get('path'));
+        if (!assetPath || !fs.existsSync(assetPath.absolute)) { sendJson(res, 404, { ok: false, error: 'Certificate not found.' }); return; }
+        const displayName = String(url.searchParams.get('display_name') || '').trim().slice(0, 120);
+        if (!displayName) { sendJson(res, 400, { ok: false, error: 'Certificate name is required.' }); return; }
+        const body = fs.readFileSync(assetPath.absolute);
+        const fingerprint = crypto.createHash('sha256').update(body).digest('hex');
+        const metadata = loadTrustMetadata();
+        metadata[fingerprint] = { ...(metadata[fingerprint] || {}), display_name: displayName };
+        saveTrustMetadata(metadata);
+        sendJson(res, 200, { ok: true, path: assetPath.relative, display_name: displayName }); return;
+      }
+      if (req.method === 'DELETE') {
+        const asset = safeAssetPath(url.searchParams.get('path'));
+        if (!asset || !fs.existsSync(asset.absolute)) { sendJson(res, 404, { ok: false, error: 'Certificate not found.' }); return; }
+        const usedBy = usagesForPath(asset.relative);
+        if (usedBy.length) { sendJson(res, 409, { ok: false, error: `Certificate is used by: ${usedBy.join(', ')}`, used_by: usedBy }); return; }
+        const body = fs.readFileSync(asset.absolute);
+        const fingerprint = crypto.createHash('sha256').update(body).digest('hex');
+        fs.unlinkSync(asset.absolute);
+        const metadata = loadTrustMetadata();
+        if (metadata[fingerprint]) { delete metadata[fingerprint]; saveTrustMetadata(metadata); }
+        sendJson(res, 200, { ok: true, deleted: asset.relative }); return;
+      }
+      if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+      const body = await readBody(req, 2 * 1024 * 1024);
+      if (!/-----BEGIN CERTIFICATE-----/.test(body.toString('utf8'))) { sendJson(res, 400, { ok: false, error: 'The file does not contain a PEM certificate.' }); return; }
+      const fingerprint = crypto.createHash('sha256').update(body).digest('hex');
+      const existing = listAssets().find((asset) => asset.fingerprint === fingerprint);
+      const displayName = String(url.searchParams.get('display_name') || '').trim().slice(0, 120);
+      if (existing) {
+        if (displayName && displayName !== existing.display_name) {
+          const metadata = loadTrustMetadata();
+          metadata[fingerprint] = { ...(metadata[fingerprint] || {}), display_name: displayName };
+          saveTrustMetadata(metadata);
+          existing.display_name = displayName;
+        }
+        sendJson(res, 200, { ok: true, certificate: existing, duplicate: true }); return;
+      }
+      const requested = String(url.searchParams.get('name') || 'mqtt-trust').replace(/\.(?:crt|pem)$/i, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'mqtt_trust';
+      fs.mkdirSync(trustRoot, { recursive: true, mode: 0o750 });
+      const absolute = path.join(trustRoot, `${requested}_${fingerprint.slice(0, 10)}.crt`);
+      const temporary = `${absolute}.tmp-${process.pid}`;
+      fs.writeFileSync(temporary, body, { mode: 0o640 }); fs.renameSync(temporary, absolute); fs.chmodSync(absolute, 0o640);
+      if (displayName) {
+        const metadata = loadTrustMetadata();
+        metadata[fingerprint] = { ...(metadata[fingerprint] || {}), display_name: displayName };
+        saveTrustMetadata(metadata);
+      }
+      const relative = path.relative(DEFAULT_OPCBRIDGE_CONFIG_DIR, absolute).split(path.sep).join('/');
+      sendJson(res, 200, { ok: true, certificate: { path: relative, name: path.basename(absolute), display_name: displayName, fingerprint, size: body.length, used_by: [], legacy: false }, duplicate: false });
+    } catch (err) { sendJson(res, 500, { ok: false, error: `MQTT trust certificate operation failed: ${err.message || err}` }); }
     return;
   }
 

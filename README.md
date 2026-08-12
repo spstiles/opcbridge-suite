@@ -6,6 +6,7 @@ OPCBridge Suite is a complete SCADA stack for industrial automation:
 - **OPCBridge-SCADA**: configuration / control-center UI
 - **OPCBridge-Alarms**: alarm evaluation + routing + notifications (SIP/voice modem + email)
 - **OPCBridge-Logger**: scheduled data logging and data checks
+- **OPCBridge-Flow**: visual, deployable OPC and MQTT data flows
 - **OPCBridge-Report**: published historian reports and spreadsheet downloads
 - **OPCBridge-Historian**: time-series storage to Postgres/TimescaleDB
 - **OPCBridge-HMI**: HMI runtime + editor
@@ -127,6 +128,7 @@ Build the native services and install the HMI packages:
 ./opcbridge-alarms/build.sh
 ./opcbridge-historian/build.sh
 make -B -C opcbridge-logger
+make -B -C opcbridge-flow
 npm ci --prefix opcbridge-hmi
 ```
 

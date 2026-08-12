@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=20260807_component_versions_v1" />
+  <link rel="stylesheet" href="styles.css?v=20260811_flow_workspace_v4" />
 </head>
 <body>
   <header class="topbar">
@@ -28,6 +28,7 @@
 		      <button data-tab="configure" class="tab">Configure Server</button>
 		      <button data-tab="alarms_events" class="tab">Alarms &amp; Events</button>
 		      <button data-tab="workspace" class="tab">Workspace</button>
+		      <button data-tab="flow" class="tab">Flows</button>
 		      <button data-tab="logic" class="tab">Automation</button>
 		      <button data-tab="logger" class="tab">Data Logger</button>
 		      <button data-tab="historian" class="tab">Historian</button>
@@ -608,6 +609,27 @@
         </div>
       </div>
 
+      <div class="card" style="margin-top: 14px;">
+        <div class="card-title">Certificate Library</div>
+        <div class="hint">Manage reusable certificates for MQTT connections and future encrypted services. Certificates can still be uploaded while creating a connection.</div>
+        <div class="card-body">
+          <div class="row-actions" style="margin-bottom: 10px;">
+            <input id="serverCertName" type="text" placeholder="Friendly certificate name" style="max-width: 280px;" />
+            <label class="btn" for="serverCertUploadFile">Choose Certificate</label>
+            <input id="serverCertUploadFile" type="file" accept=".crt,.pem,application/x-pem-file" style="display:none;" />
+            <button class="btn primary" id="serverCertUploadBtn" type="button">Add to Library</button>
+            <button class="btn" id="serverCertRefreshBtn" type="button">Refresh</button>
+            <span class="hint" id="serverCertUploadStatus"></span>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Name</th><th>Type</th><th>Expires</th><th>Used by</th><th>Issuer / Subject</th><th>Fingerprint</th><th>Actions</th></tr></thead>
+              <tbody id="serverCertLibraryTbody"><tr><td colspan="7" class="hint">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </section>
 
     <section id="tab-users" class="panel">
@@ -652,7 +674,7 @@
 
             <div class="divider"></div>
 
-            <div class="users-workspace" style="min-height: 560px;">
+            <div class="users-workspace">
               <div class="sidebar">
                 <div class="sidebar-title">Directory</div>
                 <div class="tree-body" id="usersTreeView"></div>
@@ -917,7 +939,7 @@
         <div class="hint mono" id="workspaceSaveStatus" style="margin-left: auto;"></div>
       </div>
 
-      <div class="workspace" style="min-height: 560px;">
+      <div class="workspace">
         <aside class="sidebar tree">
           <div class="sidebar-title">Project</div>
           <div class="tree-body" id="treeView"></div>
@@ -971,6 +993,67 @@
           </div>
         </section>
 	      </div>
+		    </section>
+
+		    <section id="tab-flow" class="panel">
+          <div class="section-heading-row">
+            <h2>Flows</h2>
+            <span class="badge" id="flowServiceBadge">Checking service…</span>
+          </div>
+          <div class="flow-toolbar">
+            <select id="flowSelect" aria-label="Flow"></select>
+            <button class="btn" id="flowNewBtn" type="button">New Flow</button>
+            <button class="btn" id="flowSaveBtn" type="button">Save Draft</button>
+            <button class="btn primary" id="flowDeployBtn" type="button">Deploy</button>
+            <button class="btn" id="flowDisableBtn" type="button">Stop Deployed Flow</button>
+            <button class="btn danger" id="flowDeleteBtn" type="button">Delete Draft</button>
+            <div class="hint mono" id="flowStatus" style="margin-left:auto;"></div>
+          </div>
+          <div class="flow-definition-bar">
+            <label>Name <input id="flowName" type="text" placeholder="MQTT to PLC" /></label>
+            <label>Mode <select id="flowMode"><option value="active">Active</option><option value="monitor">Monitor only (outputs suppressed)</option></select></label>
+            <label class="check-pill"><input id="flowEnabled" type="checkbox" checked /> Enabled</label>
+            <span class="hint">Canvas edits affect only the draft. Deploy explicitly switches the running graph.</span>
+          </div>
+          <div class="flow-editor-layout">
+            <aside class="flow-palette">
+              <div class="sidebar-title">Nodes</div>
+              <div class="flow-palette-group"><strong>Inputs</strong>
+                <button class="flow-palette-node" data-flow-node-type="opc_tag_input" type="button">Tag Input</button>
+                <button class="flow-palette-node" data-flow-node-type="mqtt_subscribe" type="button">MQTT Subscribe</button>
+                <button class="flow-palette-node" data-flow-node-type="manual_input" type="button">Manual Test</button>
+              </div>
+              <div class="flow-palette-group"><strong>Processing</strong>
+                <button class="flow-palette-node" data-flow-node-type="linear_map" type="button">Scale / Map</button>
+                <button class="flow-palette-node" data-flow-node-type="boolean_invert" type="button">Invert Boolean</button>
+                <button class="flow-palette-node" data-flow-node-type="datatype_convert" type="button">Convert Type</button>
+              </div>
+              <div class="flow-palette-group"><strong>Outputs</strong>
+                <button class="flow-palette-node" data-flow-node-type="opc_tag_write" type="button">Tag Output</button>
+                <button class="flow-palette-node" data-flow-node-type="mqtt_publish" type="button">MQTT Publish</button>
+                <button class="flow-palette-node" data-flow-node-type="debug" type="button">Debug</button>
+              </div>
+              <div class="hint">Click a node or drag it onto the canvas. If no flow exists, a new draft is created automatically. Drag nodes to arrange them. Drag from an output dot and release over a target node to connect.</div>
+            </aside>
+            <div class="flow-canvas-wrap">
+              <div class="flow-canvas" id="flowCanvas">
+                <svg class="flow-wires" id="flowWires" aria-hidden="true"></svg>
+                <div class="flow-empty" id="flowEmpty">Add an input node to begin.</div>
+              </div>
+            </div>
+            <aside class="flow-inspector">
+              <div class="sidebar-title">Node Properties</div>
+              <div id="flowInspectorEmpty" class="hint">Select a node to edit its properties and view runtime status.</div>
+              <div id="flowInspector" style="display:none;">
+                <div class="form compact-form" id="flowInspectorFields"></div>
+                <div class="row-actions" style="margin-top:10px;">
+                  <button class="btn" id="flowTestNodeBtn" type="button">Inject Test Value</button>
+                  <button class="btn danger" id="flowDeleteNodeBtn" type="button">Delete Node</button>
+                </div>
+                <div class="hint mono" id="flowNodeRuntime" style="margin-top:10px;"></div>
+              </div>
+            </aside>
+          </div>
 		    </section>
 
 		    <section id="tab-logic" class="panel">
@@ -1716,7 +1799,8 @@
 
         <section id="workspaceItemDeviceEdit" style="display:none;">
           <div class="form" style="max-width: 720px;">
-            <div class="form-row"><label>Device ID</label><input id="editDevId" type="text" /></div>
+            <input id="editDevId" type="hidden" />
+            <div class="form-row"><label>Connection name</label><input id="editDevName" type="text" placeholder="Plant PLC" /></div>
             <div class="form-row"><label>Driver</label><select id="editDevDriver">
               <option value="ab_eip">Allen-Bradley Ethernet/IP</option>
               <option value="modbus_tcp">Modbus TCP</option>
@@ -1745,9 +1829,8 @@
             <div class="form-row" id="editDevMqttPasswordRow" style="display:none;"><label>Password</label><input id="editDevMqttPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" /></div>
             <div class="form-row" id="editDevMqttTlsRow" style="display:none;"><label>TLS</label><label style="display:flex; align-items:center; gap:8px;"><input id="editDevMqttUseTls" type="checkbox" /> Use TLS</label></div>
             <div class="form-row" id="editDevMqttTlsInsecureRow" style="display:none;"><label>TLS Verify</label><label style="display:flex; align-items:center; gap:8px;"><input id="editDevMqttTlsInsecure" type="checkbox" /> Allow insecure TLS</label></div>
-            <div class="form-row" id="editDevMqttCaFileRow" style="display:none;"><label>CA File</label><input id="editDevMqttCaFile" type="text" placeholder="ca.crt" /></div>
-            <div class="form-row" id="editDevMqttCertFileRow" style="display:none;"><label>Client Cert</label><input id="editDevMqttCertFile" type="text" placeholder="Optional" /></div>
-            <div class="form-row" id="editDevMqttKeyFileRow" style="display:none;"><label>Client Key</label><input id="editDevMqttKeyFile" type="text" placeholder="Optional" /></div>
+            <div class="form-row" id="editDevMqttCaFileRow" style="display:none;"><label>Broker trust certificate</label><div><div class="row-actions"><select id="editDevMqttCaFile"><option value="">System trust store</option></select><label class="btn" for="editDevMqttCaUpload">Upload New Certificate</label><input id="editDevMqttCaUpload" type="file" accept=".crt,.pem,application/x-pem-file" style="display:none;" /><button class="btn" id="editDevMqttCaRename" type="button">Rename Selected</button><button class="btn" id="editDevMqttCaDownload" type="button">Download Selected</button><button class="btn danger" id="editDevMqttCaRemove" type="button">Delete Unused</button><span class="hint" id="editDevMqttCaStatus"></span></div><div class="hint">Select a reusable trust certificate, or upload the broker CA/broker's own .crt when self-signed. Never upload the broker's private key.</div></div></div>
+            <div class="form-row" id="editDevMqttClientAuthRow" style="display:none;"><label>Client authentication</label><details><summary>Advanced: mutual TLS client certificate</summary><div class="hint" style="margin:8px 0;">Use these only when the broker requires OPCBridge to identify itself with a separate client certificate and matching private key.</div><div class="form-row" id="editDevMqttCertFileRow"><label>Client certificate</label><div class="row-actions"><input id="editDevMqttCertFile" type="hidden" /><input id="editDevMqttCertUpload" type="file" accept=".crt,.pem,application/x-pem-file" /><button class="btn" id="editDevMqttCertDownload" type="button">Download</button><button class="btn danger" id="editDevMqttCertRemove" type="button">Remove</button><span class="hint" id="editDevMqttCertStatus">Not installed</span></div></div><div class="form-row" id="editDevMqttKeyFileRow"><label>Client private key</label><div class="row-actions"><input id="editDevMqttKeyFile" type="hidden" /><input id="editDevMqttKeyUpload" type="file" accept=".key,.pem,application/x-pem-file" /><button class="btn danger" id="editDevMqttKeyRemove" type="button">Remove</button><span class="hint" id="editDevMqttKeyStatus">Not installed</span></div></div></details></div>
             <div class="form-row" id="editDevMqttPublishPatternsRow" style="display:none;"><label>Auto Publish</label><div class="check-row">
               <label class="check-pill"><input id="editDevMqttPublishPerField" type="checkbox" class="inline-check" /> Per-field topics</label>
               <label class="check-pill"><input id="editDevMqttPublishTagJson" type="checkbox" class="inline-check" /> Tag JSON</label>
@@ -2067,7 +2150,7 @@
       <div class="modal-body">
         <div class="hint" id="newDeviceHint"></div>
         <div class="form" style="max-width: 720px;">
-          <div class="form-row"><label>Device ID</label><input id="newDevId" type="text" placeholder="test01" /></div>
+          <div class="form-row"><label>Connection name</label><input id="newDevId" type="text" placeholder="Plant PLC" /></div>
           <div class="form-row"><label>Driver</label><select id="newDevDriver">
             <option value="ab_eip">Allen-Bradley Ethernet/IP</option>
             <option value="modbus_tcp">Modbus TCP</option>
@@ -2096,9 +2179,8 @@
           <div class="form-row" id="newDevMqttPasswordRow" style="display:none;"><label>Password</label><input id="newDevMqttPassword" type="password" autocomplete="new-password" /></div>
           <div class="form-row" id="newDevMqttTlsRow" style="display:none;"><label>TLS</label><label style="display:flex; align-items:center; gap:8px;"><input id="newDevMqttUseTls" type="checkbox" /> Use TLS</label></div>
           <div class="form-row" id="newDevMqttTlsInsecureRow" style="display:none;"><label>TLS Verify</label><label style="display:flex; align-items:center; gap:8px;"><input id="newDevMqttTlsInsecure" type="checkbox" /> Allow insecure TLS</label></div>
-          <div class="form-row" id="newDevMqttCaFileRow" style="display:none;"><label>CA File</label><input id="newDevMqttCaFile" type="text" placeholder="ca.crt" /></div>
-          <div class="form-row" id="newDevMqttCertFileRow" style="display:none;"><label>Client Cert</label><input id="newDevMqttCertFile" type="text" placeholder="Optional" /></div>
-          <div class="form-row" id="newDevMqttKeyFileRow" style="display:none;"><label>Client Key</label><input id="newDevMqttKeyFile" type="text" placeholder="Optional" /></div>
+          <div class="form-row" id="newDevMqttCaFileRow" style="display:none;"><label>Broker trust certificate</label><div><div class="row-actions"><select id="newDevMqttCaFile"><option value="">System trust store</option></select><label class="btn" for="newDevMqttCaUpload">Upload New Certificate</label><input id="newDevMqttCaUpload" type="file" accept=".crt,.pem,application/x-pem-file" style="display:none;" /><button class="btn" id="newDevMqttCaRename" type="button">Rename Selected</button><button class="btn" id="newDevMqttCaDownload" type="button">Download Selected</button><button class="btn danger" id="newDevMqttCaRemove" type="button">Delete Unused</button><span class="hint" id="newDevMqttCaStatus"></span></div><div class="hint">Uploaded certificates are saved in a shared library and remain available if creation is canceled. Never upload the broker's private key.</div></div></div>
+          <div class="form-row" id="newDevMqttClientAuthRow" style="display:none;"><label>Client authentication</label><details><summary>Advanced: mutual TLS client certificate</summary><div class="hint" style="margin:8px 0;">Use these only when the broker requires OPCBridge to identify itself with a separate client certificate and matching private key.</div><div class="form-row" id="newDevMqttCertFileRow"><label>Client certificate</label><input id="newDevMqttCertFile" type="file" accept=".crt,.pem,application/x-pem-file" /></div><div class="form-row" id="newDevMqttKeyFileRow"><label>Client private key</label><div><input id="newDevMqttKeyFile" type="file" accept=".key,.pem,application/x-pem-file" /><div class="hint">Stored with restricted permissions and never downloadable.</div></div></div></details></div>
           <div class="form-row" id="newDevMqttPublishPatternsRow" style="display:none;"><label>Auto Publish</label><div class="check-row">
             <label class="check-pill"><input id="newDevMqttPublishPerField" type="checkbox" class="inline-check" /> Per-field topics</label>
             <label class="check-pill"><input id="newDevMqttPublishTagJson" type="checkbox" class="inline-check" /> Tag JSON</label>
@@ -2705,6 +2787,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260808_sync_review_alignment_v1"></script>
+  <script src="app.js?v=20260811_certificate_manager_v19"></script>
 </body>
 </html>

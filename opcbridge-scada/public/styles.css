@@ -257,6 +257,284 @@ body.reports-active .main {
   color: var(--muted-strong);
 }
 
+/* Visual flow editor. Draft editing is deliberately visually separate from
+   the deployed runtime status shown on each node. */
+.flow-toolbar,
+.flow-definition-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.flow-toolbar select { min-width: 220px; }
+
+.flow-definition-bar {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.flow-definition-bar > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.flow-definition-bar input[type="text"] { width: 240px; }
+
+.flow-editor-layout {
+  display: grid;
+  grid-template-columns: 180px minmax(500px, 1fr) 300px;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.flow-palette,
+.flow-inspector {
+  padding: 10px;
+  overflow: auto;
+  background: var(--panel2);
+}
+
+.flow-palette { border-right: 1px solid var(--border); }
+.flow-inspector { border-left: 1px solid var(--border); }
+
+.flow-palette-group {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 16px;
+}
+
+.flow-palette-group strong {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.flow-palette-node {
+  border: 1px solid var(--border);
+  border-left: 4px solid #4f8cff;
+  border-radius: 5px;
+  padding: 8px;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.flow-palette-node:hover { border-color: #4f8cff; }
+
+.flow-canvas-wrap {
+  overflow: auto;
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--muted) 35%, transparent) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.flow-canvas {
+  position: relative;
+  min-width: 2200px;
+  min-height: 1400px;
+}
+
+body.app-viewport {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+body.app-viewport .topbar { flex: 0 0 auto; }
+body.app-viewport .main { flex: 1 1 auto; min-height: 0; padding-bottom: 8px; overflow: hidden; }
+body.app-viewport .panel.is-active { height: 100%; min-height: 0; overflow: auto; }
+body.flow-active #tab-flow.is-active { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+
+/* Desktop-style tabs: controls consume their natural height and data panes
+   receive the remaining viewport instead of extending the document. */
+body.app-viewport #tab-workspace.is-active {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body.app-viewport #tab-workspace > .workspace {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+body.app-viewport #tab-hmi_audit.is-active {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body.app-viewport #tab-hmi_audit > .card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+body.app-viewport #tab-hmi_audit > .card > .card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body.app-viewport #tab-hmi_audit .table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none !important;
+}
+
+body.app-viewport #tab-users.is-active {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body.app-viewport #tab-users > .card,
+body.app-viewport #tab-users > .card > .card-body,
+body.app-viewport #usersManageWrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+body.app-viewport #tab-users > .card { display: flex; flex-direction: column; }
+body.app-viewport #tab-users > .card > .card-body,
+body.app-viewport #usersManageWrap { display: flex; flex-direction: column; overflow: hidden; }
+body.app-viewport #usersManageWrap > .users-workspace { flex: 1 1 auto; height: auto; min-height: 0 !important; }
+body.app-viewport .users-right,
+body.app-viewport .users-right > .card,
+body.app-viewport .users-right > .card > .card-body,
+body.app-viewport #usersDetailsTablePanel,
+body.app-viewport #usersDetailsTablePanel > .table-wrap { min-height: 0; }
+body.app-viewport .users-right > .card { height: 100%; display: flex; flex-direction: column; }
+body.app-viewport .users-right > .card > .card-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+body.app-viewport #usersDetailsTablePanel { flex: 1; display: flex; overflow: hidden; }
+body.app-viewport #usersDetailsTablePanel > .table-wrap { flex: 1; }
+body.app-viewport #usersDetailsFormPanel { flex: 1; min-height: 0; overflow: auto; }
+
+body.app-viewport:not(.reports-builder-active) #tab-reports.is-active { display: flex; flex-direction: column; }
+body.app-viewport:not(.reports-builder-active) #reportsDownloadCard { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+body.app-viewport:not(.reports-builder-active) #reportsDownloadCard > .card { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+body.app-viewport:not(.reports-builder-active) #publishedReportPreviewWrap { flex: 1 1 auto; min-height: 0; max-height: none; }
+body.app-viewport.reports-builder-active #tab-reports.is-active { overflow: auto; }
+body.report-portal.app-viewport #tab-reports { display: flex !important; flex-direction: column; overflow: hidden; }
+
+@media (max-height: 650px) {
+  body.app-viewport .panel.is-active { overflow: auto; }
+  body.app-viewport #tab-workspace.is-active,
+  body.app-viewport #tab-hmi_audit.is-active,
+  body.app-viewport #tab-users.is-active { overflow: auto; }
+  body.app-viewport #tab-workspace > .workspace,
+  body.app-viewport #usersManageWrap > .users-workspace { min-height: 420px !important; }
+}
+
+.flow-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.flow-wire {
+  fill: none;
+  stroke: #4f8cff;
+  stroke-width: 3;
+  opacity: .8;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.flow-wire.is-selected { stroke: #ffd166; stroke-width: 5; opacity: 1; }
+
+.flow-wire.is-preview {
+  stroke-dasharray: 7 5;
+  opacity: 1;
+  pointer-events: none;
+}
+
+.flow-node.is-connect-target {
+  border-color: #4f8cff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #4f8cff 30%, transparent);
+}
+
+.flow-empty {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.flow-node {
+  position: absolute;
+  width: 150px;
+  height: 72px;
+  border: 2px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: 0 4px 12px rgba(0,0,0,.22);
+  user-select: none;
+  cursor: move;
+  z-index: 2;
+}
+
+.flow-node.is-selected { border-color: #4f8cff; box-shadow: 0 0 0 2px rgba(79,140,255,.24); }
+.flow-node.has-error { border-color: var(--bad); }
+
+.flow-node-title {
+  padding: 5px 7px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-node-body { padding: 5px 7px; font-size: 10px; color: var(--muted-strong); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.flow-node-runtime { margin-top: 3px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.25; }
+.flow-node.has-error .flow-node-runtime { color: var(--bad); }
+#flowNodeRuntime { white-space: pre-line; }
+
+.flow-port {
+  position: absolute;
+  top: 29px;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 2px solid var(--text);
+  border-radius: 50%;
+  background: #4f8cff;
+  cursor: crosshair;
+  z-index: 3;
+}
+
+.flow-port.input { left: -8px; }
+.flow-port.output { right: -8px; }
+.flow-port.is-connecting { box-shadow: 0 0 0 5px rgba(79,140,255,.30); }
+
+.compact-form .form-row { grid-template-columns: 1fr; gap: 4px; margin-bottom: 9px; }
+.compact-form .form-row label { text-align: left; }
+
+@media (max-width: 1100px) {
+  .flow-editor-layout { grid-template-columns: 160px minmax(500px, 1fr); }
+  .flow-inspector { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); max-height: 320px; }
+}
+
 .overview-raw-status pre.mono {
   margin-top: 8px;
   max-height: 360px;

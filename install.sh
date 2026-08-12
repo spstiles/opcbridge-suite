@@ -51,11 +51,12 @@ Profiles:
   --scada-only            Install only opcbridge-scada
   --hmi-only              Install only opcbridge-hmi
   --logger-only           Install only opcbridge-logger
+  --flow-only             Install only opcbridge-flow
   --report-only           Install only opcbridge-report
-  --full                  Install opcbridge + alarms + scada + hmi + logger + historian + report
+  --full                  Install opcbridge + alarms + scada + hmi + logger + historian + report + flow
 
 Component selection (overrides profiles):
-  --components LIST       Comma-separated: opcbridge,alarms,scada,hmi,logger,historian,report
+  --components LIST       Comma-separated: opcbridge,alarms,scada,hmi,logger,historian,report,flow
                           (legacy name "reporter" is accepted as an alias for "logger")
 
 Options:
@@ -680,7 +681,7 @@ split_csv() {
 choose_interactive() {
   echo "Select what to install:"
   echo "  1) opcbridge only"
-  echo "  2) full suite (opcbridge + alarms + scada + hmi + logger + historian + report)"
+  echo "  2) full suite (opcbridge + alarms + scada + hmi + logger + historian + report + flow)"
   echo "  3) custom"
 
   local choice
@@ -702,6 +703,7 @@ choose_interactive() {
       prompt_yn "Install data logger?" n && COMPONENTS+=(logger)
       prompt_yn "Install historian?" n && COMPONENTS+=(historian)
       prompt_yn "Install report generator?" n && COMPONENTS+=(report)
+      prompt_yn "Install visual flow service?" n && COMPONENTS+=(flow)
       ;;
     *)
       echo "Invalid choice." >&2
@@ -721,7 +723,7 @@ validate_components() {
   done
   for c in "${COMPONENTS[@]}"; do
     case "$c" in
-      opcbridge|alarms|scada|hmi|logger|historian|report) : ;;
+      opcbridge|alarms|scada|hmi|logger|historian|report|flow) : ;;
       *) echo "Unknown component: $c" >&2; ok=0;;
     esac
   done
@@ -920,7 +922,7 @@ ENV
 build_if_needed() {
   [[ "$BUILD" -eq 1 ]] || return 0
 
-  if ! printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(opcbridge|alarms|logger|historian|report)'; then
+  if ! printf '%s\n' "${COMPONENTS[@]}" | grep -Eqx '(opcbridge|alarms|logger|historian|report|flow)'; then
     return 0
   fi
 
@@ -937,6 +939,12 @@ build_if_needed() {
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
     if [[ -f "$ROOT_DIR/opcbridge-logger/Makefile" ]]; then
       (cd "$ROOT_DIR/opcbridge-logger" && make)
+    fi
+  fi
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'flow'; then
+    if [[ -f "$ROOT_DIR/opcbridge-flow/Makefile" ]]; then
+      (cd "$ROOT_DIR/opcbridge-flow" && make)
     fi
   fi
 
@@ -957,6 +965,12 @@ install_opcbridge() {
   [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
 
   install -m 0755 "$src" "$PREFIX/bin/opcbridge"
+
+  # Per-connection MQTT TLS material is managed by the SCADA service and read
+  # by OPCBridge. Private keys receive stricter permissions when uploaded.
+  mkdir -p "$CONFIG_ROOT/certs/mqtt"
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/certs" 2>/dev/null || true
+  chmod 0750 "$CONFIG_ROOT/certs" "$CONFIG_ROOT/certs/mqtt" 2>/dev/null || true
 
   # Install example configs (non-sensitive)
   install -m 0644 "$ROOT_DIR/opcbridge/config/admin_auth.json.example" "$CONFIG_ROOT/admin_auth.json.example" 2>/dev/null || true
@@ -1023,6 +1037,9 @@ install_scada() {
   fi
 
   mkdir -p "$CONFIG_ROOT/scada"
+  mkdir -p "$CONFIG_ROOT/certs/mqtt"
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/certs" 2>/dev/null || true
+  chmod 0750 "$CONFIG_ROOT/certs" "$CONFIG_ROOT/certs/mqtt" 2>/dev/null || true
   mkdir -p "$CONFIG_ROOT/data-entry"
   if [[ ! -f "$CONFIG_ROOT/data-entry/forms.json" ]]; then
     install -m 0660 /dev/null "$CONFIG_ROOT/data-entry/forms.json"
@@ -1283,6 +1300,29 @@ install_report() {
   fi
   chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/report" "$DATA_ROOT/report" 2>/dev/null || true
   chmod 750 "$DATA_ROOT/report" 2>/dev/null || true
+}
+
+install_flow() {
+  echo "Installing opcbridge-flow..."
+  local src="$ROOT_DIR/opcbridge-flow/opcbridge-flow"
+  [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
+  install -m 0755 "$src" "$PREFIX/bin/opcbridge-flow"
+
+  mkdir -p "$CONFIG_ROOT/flow" "$DATA_ROOT/flow"
+  install -m 0644 "$ROOT_DIR/opcbridge-flow/config.json.example" "$CONFIG_ROOT/flow/config.json.example"
+  install -m 0644 "$ROOT_DIR/opcbridge-flow/flows.json.example" "$CONFIG_ROOT/flow/flows.json.example"
+  if [[ ! -f "$CONFIG_ROOT/flow/config.json" ]]; then
+    install -m 0660 "$ROOT_DIR/opcbridge-flow/config.json.example" "$CONFIG_ROOT/flow/config.json"
+  fi
+  if [[ ! -f "$CONFIG_ROOT/flow/flows.json" ]]; then
+    install -m 0660 "$ROOT_DIR/opcbridge-flow/flows.json.example" "$CONFIG_ROOT/flow/flows.json"
+  fi
+  if [[ ! -f "$DATA_ROOT/flow/deployed.json" ]]; then
+    install -m 0660 "$ROOT_DIR/opcbridge-flow/flows.json.example" "$DATA_ROOT/flow/deployed.json"
+  fi
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/flow" "$DATA_ROOT/flow" 2>/dev/null || true
+  chmod 750 "$DATA_ROOT/flow" 2>/dev/null || true
+  chmod 660 "$CONFIG_ROOT/flow/config.json" "$CONFIG_ROOT/flow/flows.json" "$DATA_ROOT/flow/deployed.json" 2>/dev/null || true
 }
 
 install_historian() {
@@ -1633,10 +1673,31 @@ WantedBy=multi-user.target
     done < <(systemctl list-unit-files 'opcbridge-reporter-*.timer' --no-legend 2>/dev/null || true)
   fi
 
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'flow'; then
+      write_unit "opcbridge-flow.service" "[Unit]
+Description=OPCBridge visual flow runtime
+After=network.target opcbridge.service
+Wants=opcbridge.service
+
+[Service]
+Type=simple
+EnvironmentFile=${ENV_FILE}
+WorkingDirectory=${PREFIX}
+ExecStart=${PREFIX}/bin/opcbridge-flow --config ${CONFIG_ROOT}/flow/config.json --flows ${CONFIG_ROOT}/flow/flows.json --deployed ${DATA_ROOT}/flow/deployed.json --state ${DATA_ROOT}/flow/runtime_state.json
+User=${SERVICE_USER}
+Group=${SERVICE_GROUP}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+"
+  fi
+
   systemctl daemon-reload
 
   if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
-    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi opcbridge-logger opcbridge-historian; do
+    for svc in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi opcbridge-logger opcbridge-historian opcbridge-flow; do
       if systemctl cat "$svc" >/dev/null 2>&1; then
         if [[ "$svc" == "opcbridge-hmi" ]]; then
           if ! node_deps_installed "$PREFIX/hmi"; then
@@ -1680,6 +1741,7 @@ main() {
       --scada-only) PROFILE="scada-only"; shift;;
       --hmi-only) PROFILE="hmi-only"; shift;;
       --logger-only) PROFILE="logger-only"; shift;;
+      --flow-only) PROFILE="flow-only"; shift;;
       --report-only) PROFILE="report-only"; shift;;
       --full|--suite) PROFILE="full"; shift;;
       --components) split_csv "${2:-}"; shift 2;;
@@ -1726,8 +1788,9 @@ main() {
       scada-only) COMPONENTS=(scada);;
       hmi-only) COMPONENTS=(hmi);;
       logger-only) COMPONENTS=(logger);;
+      flow-only) COMPONENTS=(flow);;
       report-only) COMPONENTS=(report);;
-      full|"") COMPONENTS=(opcbridge alarms scada hmi logger historian report);;
+      full|"") COMPONENTS=(opcbridge alarms scada hmi logger historian report flow);;
       *) echo "Unknown profile: $PROFILE" >&2; exit 1;;
     esac
   fi
@@ -1831,6 +1894,7 @@ main() {
       logger) install_logger;;
       historian) install_historian;;
       report) install_report;;
+      flow) install_flow;;
     esac
   done
   fix_config_permissions
@@ -1880,6 +1944,7 @@ main() {
         hmi) svc="opcbridge-hmi";;
         logger) svc="opcbridge-logger";;
         historian) svc="opcbridge-historian";;
+        flow) svc="opcbridge-flow";;
       esac
 
       if [[ -n "$svc" ]] && systemctl cat "$svc" >/dev/null 2>&1; then
@@ -1960,6 +2025,7 @@ main() {
   echo "scada:     http://<host>:3010"
   echo "reports:   http://<host>:3010/reports"
   echo "hmi:       http://<host>:3000"
+  echo "flow API:  http://127.0.0.1:8098/health"
   echo ""
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'scada'; then
     echo "Note: SCADA Logs tab uses journalctl; installer grants access via systemd-journal group when available."
@@ -1974,6 +2040,9 @@ main() {
   fi
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
     echo "  journalctl -u opcbridge-historian -f"
+  fi
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'flow'; then
+    echo "  journalctl -u opcbridge-flow -f"
   fi
 }
 

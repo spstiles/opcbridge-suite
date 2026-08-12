@@ -125,6 +125,7 @@ if have_cmd systemctl; then
     opcbridge-hmi.service \
     opcbridge-scada.service \
     opcbridge-historian.service \
+    opcbridge-flow.service \
     opcbridge-logger.service \
     opcbridge-reporter.service \
     opcbridge-alarms.service \
@@ -159,7 +160,8 @@ if have_cmd systemctl; then
     opcbridge-hmi.service \
     opcbridge-logger.service \
     opcbridge-reporter.service \
-    opcbridge-historian.service
+    opcbridge-historian.service \
+    opcbridge-flow.service
   do
     remove_unit_file_and_dropins "$svc"
   done
