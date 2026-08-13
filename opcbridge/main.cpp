@@ -5293,6 +5293,20 @@ static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
 // WebSocket JSON notifiers
 // =========================
 
+void ws_notify_runtime_reload(const std::string &phase,
+                              uint64_t generation,
+                              const std::string &connectionId)
+{
+    if (!ws_is_enabled()) return;
+    json j;
+    j["type"] = "runtime_reload";
+    j["phase"] = phase;
+    j["generation"] = generation;
+    j["scope"] = connectionId.empty() ? "full" : "connection";
+    if (!connectionId.empty()) j["connection_id"] = connectionId;
+    ws_send_json(j);
+}
+
 void ws_notify_tag_update(const TagSnapshot &snap,
                           const TagConfig &cfg)
 {
@@ -13100,7 +13114,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
                 configDirOverride = argv[i + 1];
                 i += 1;
             } else if (arg == "--mqtt") {
-                mqttMode = true;
+                std::cerr << "[mqtt] Ignoring retired --mqtt flag; configure MQTT Subscribe/Publish nodes in OPCBridge Flow.\n";
             } else if (arg == "--http") {
                 httpMode = true;
             } else if (arg == "--opcua") {
@@ -13120,8 +13134,6 @@ static bool apply_config_bundle_json(const std::string &configDir,
                 i += 1;
             } else if (arg == "--version" || arg == "-V") {
                 versionMode = true;
-            } else if (arg == "--mqtt") {
-                mqttMode = true;
 			} else if (arg == "--ws") {
 				wsMode = true;
 			} else if (arg == "--ws-port") {
@@ -13172,12 +13184,6 @@ static bool apply_config_bundle_json(const std::string &configDir,
 		        std::string configDir = configDirOverride.empty() ? findConfigDir() : configDirOverride;
 	        std::string connDir = joinPath(configDir, "connections");
 	        std::string tagDir  = joinPath(configDir, "tags");
-
-	        if (!writeMode && !dumpMode && !dumpJsonMode && !selftestAlarmsConfigDb &&
-	            !mqttMode && config_has_enabled_mqtt_connection(configDir)) {
-	            mqttMode = true;
-	            std::cout << "[mqtt] Auto-enabled MQTT runtime because an MQTT connection is configured.\n";
-	        }
 
 	        std::string adminAuthPath = joinPath(configDir, "admin_auth.json");
 	        load_admin_auth(adminAuthPath);
@@ -13276,22 +13282,8 @@ static bool apply_config_bundle_json(const std::string &configDir,
         bool writeTokenFromEnv = false;
         std::string writeToken;
 
-        // NEW: load MQTT telemetry input mappings from config/mqtt_inputs.json
-        if (!load_mqtt_inputs(configDir)) {
-            std::cerr << "[mqtt-inputs] Failed to load MQTT telemetry inputs; "
-                         "continuing without them.\n";
-        }
-
         if (!load_logic_config(configDir, true)) {
             std::cerr << "[logic] Failed to load logic config; runtime scaffold will report the error.\n";
-        }
-
-        if (mqttMode) {
-            std::cout << "[mqtt] Initialising MQTT...\n";
-            if (!mqtt_init(configDir)) {
-                std::cerr << "[mqtt] Initialization failed. Disabling MQTT mode.\n";
-                mqttMode = false;
-            }
         }
 
 	        if (opcuaMode) {
@@ -22841,6 +22833,8 @@ window.addEventListener("load", startAutoRefresh);
 		            // /health
 	            svr.Get("/health", [&](const httplib::Request &, httplib::Response &res) {
 	                json resp;
+	                resp["component_version"] = OPCBRIDGE_VERSION;
+	                resp["suite_version"] = OPCBRIDGE_SUITE_VERSION;
 
 					auto now = std::chrono::system_clock::now();
 					const int64_t now_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -28210,9 +28204,10 @@ window.addEventListener("load", startAutoRefresh);
 		                }
 		            }
 
-			            if (doReload) {
-			                const bool targetedReload = !requestedTargetConn.empty();
-			                const auto reloadStarted = std::chrono::steady_clock::now();
+			    if (doReload) {
+			        const bool targetedReload = !requestedTargetConn.empty();
+			        ws_notify_runtime_reload("begin", requestedGen, requestedTargetConn);
+			        const auto reloadStarted = std::chrono::steady_clock::now();
 			                {
 			                    std::ostringstream msg;
 			                    msg << "Starting "
@@ -28376,6 +28371,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    startPollers(activeGen);
 		                    g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
 		                }
+		                ws_notify_runtime_reload("end", requestedGen, requestedTargetConn);
 
 	                {
 	                    std::lock_guard<std::mutex> lk(g_reloadMutex);

@@ -10,12 +10,14 @@
 #include <cmath>
 #include <condition_variable>
 #include <cctype>
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -141,7 +143,7 @@ struct ServiceConfig {
     std::string opcbridge_base_url = "http://127.0.0.1:8080";
     int poll_interval_ms = 500;
     int max_event_hops = 64;
-    std::string mqtt_config = "/etc/opcbridge/mqtt.json";
+    std::string connections_dir = "/etc/opcbridge/connections";
 };
 
 struct FlowEvent {
@@ -151,6 +153,7 @@ struct FlowEvent {
     long long timestamp_ms = 0;
     std::string source;
     std::string topic;
+    std::string key;
 };
 
 struct NodeRuntime {
@@ -162,6 +165,7 @@ struct NodeRuntime {
     long long messages_out = 0;
     long long rejected = 0;
     json last_value = nullptr;
+    std::string last_key;
 };
 
 struct FlowRuntime {
@@ -177,6 +181,7 @@ struct QueuedEvent {
     std::string node_id;
     FlowEvent event;
     int hops = 0;
+    std::string input_port;
 };
 
 static bool event_writable(const FlowEvent& event, std::string& reason) {
@@ -199,6 +204,106 @@ static std::optional<double> as_number(const json& value) {
     } catch (...) {}
     return std::nullopt;
 }
+
+static std::optional<uint64_t> parse_bit_integer(const json& value) {
+    try {
+        if (value.is_number_unsigned()) return value.get<uint64_t>();
+        if (value.is_number_integer()) return static_cast<uint64_t>(value.get<int64_t>());
+        if (value.is_number_float()) {
+            const double number = value.get<double>();
+            if (!std::isfinite(number) || std::trunc(number) != number) return std::nullopt;
+            return static_cast<uint64_t>(static_cast<int64_t>(number));
+        }
+        std::string text = trim(value.is_string() ? value.get<std::string>() : value.dump());
+        if (text.empty()) return std::nullopt;
+        int base = 10;
+        size_t prefix = 0;
+        if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) { base = 16; prefix = 2; }
+        else if (text.size() > 2 && text[0] == '0' && (text[1] == 'b' || text[1] == 'B')) { base = 2; prefix = 2; }
+        size_t used = 0;
+        const uint64_t result = std::stoull(text.substr(prefix), &used, base);
+        if (used != text.size() - prefix) return std::nullopt;
+        return result;
+    } catch (...) { return std::nullopt; }
+}
+
+static uint64_t bit_word_mask(int width) {
+    return width >= 64 ? UINT64_MAX : ((uint64_t{1} << width) - 1);
+}
+
+static json configured_flow_value(const json& value) {
+    if (!value.is_string()) return value;
+    const std::string text = trim(value.get<std::string>());
+    if (text.empty()) return "";
+    try { return json::parse(text); } catch (...) { return text; }
+}
+
+class MathExpression {
+public:
+    MathExpression(std::string expression, const std::map<std::string, double>& variables)
+        : text_(std::move(expression)), variables_(variables) {}
+    double evaluate() {
+        position_ = 0; const double result = expression(); whitespace();
+        if (position_ != text_.size()) fail("unexpected text");
+        if (!std::isfinite(result)) fail("result is not finite");
+        return result;
+    }
+private:
+    double expression() {
+        double value = term();
+        while (true) { whitespace(); if (take('+')) value += term(); else if (take('-')) value -= term(); else break; }
+        return value;
+    }
+    double term() {
+        double value = unary();
+        while (true) {
+            whitespace();
+            if (take('*')) value *= unary();
+            else if (take('/')) { const double divisor = unary(); if (divisor == 0) fail("division by zero"); value /= divisor; }
+            else if (take('%')) { const double divisor = unary(); if (divisor == 0) fail("division by zero"); value = std::fmod(value, divisor); }
+            else break;
+        }
+        return value;
+    }
+    double unary() { whitespace(); if (take('+')) return unary(); if (take('-')) return -unary(); return primary(); }
+    double primary() {
+        whitespace();
+        if (take('(')) { const double value = expression(); whitespace(); if (!take(')')) fail("missing )"); return value; }
+        if (position_ < text_.size() && (std::isdigit(static_cast<unsigned char>(text_[position_])) || text_[position_] == '.')) {
+            size_t used = 0; const double value = std::stod(text_.substr(position_), &used); position_ += used; return value;
+        }
+        const std::string name = identifier();
+        if (name.empty()) fail("expected a number, input, or function");
+        whitespace();
+        if (!take('(')) {
+            auto found = variables_.find(name); if (found == variables_.end()) fail("unknown input '" + name + "'"); return found->second;
+        }
+        std::vector<double> args;
+        whitespace();
+        if (!take(')')) {
+            do { args.push_back(expression()); whitespace(); } while (take(','));
+            if (!take(')')) fail("missing ) after function");
+        }
+        return function(name, args);
+    }
+    double function(const std::string& name, const std::vector<double>& a) {
+        if (name == "abs" && a.size() == 1) return std::abs(a[0]);
+        if (name == "sqrt" && a.size() == 1) { if (a[0] < 0) fail("sqrt requires a nonnegative value"); return std::sqrt(a[0]); }
+        if (name == "floor" && a.size() == 1) return std::floor(a[0]);
+        if (name == "ceil" && a.size() == 1) return std::ceil(a[0]);
+        if (name == "pow" && a.size() == 2) return std::pow(a[0], a[1]);
+        if (name == "clamp" && a.size() == 3) return std::max(a[1], std::min(a[2], a[0]));
+        if (name == "round" && (a.size() == 1 || a.size() == 2)) { const double scale = a.size() == 2 ? std::pow(10.0, a[1]) : 1.0; return std::round(a[0] * scale) / scale; }
+        if (name == "min" && !a.empty()) return *std::min_element(a.begin(), a.end());
+        if (name == "max" && !a.empty()) return *std::max_element(a.begin(), a.end());
+        fail("unknown function or wrong number of arguments for '" + name + "'"); return 0;
+    }
+    std::string identifier() { whitespace(); const size_t start = position_; while (position_ < text_.size() && (std::isalnum(static_cast<unsigned char>(text_[position_])) || text_[position_] == '_')) ++position_; return text_.substr(start, position_ - start); }
+    void whitespace() { while (position_ < text_.size() && std::isspace(static_cast<unsigned char>(text_[position_]))) ++position_; }
+    bool take(char ch) { if (position_ < text_.size() && text_[position_] == ch) { ++position_; return true; } return false; }
+    [[noreturn]] void fail(const std::string& message) const { throw std::runtime_error("Math expression: " + message + " at position " + std::to_string(position_ + 1)); }
+    std::string text_; const std::map<std::string, double>& variables_; size_t position_ = 0;
+};
 
 static std::optional<bool> as_bool(const json& value) {
     if (value.is_boolean()) return value.get<bool>();
@@ -250,6 +355,15 @@ static std::optional<json> json_path_value(const json& root, const std::string& 
 }
 
 class FlowService {
+    struct MqttBroker {
+        FlowService* owner = nullptr;
+        std::string id;
+        mosquitto* client = nullptr;
+        std::atomic<bool> connected{false};
+        std::string last_error;
+        int qos = 0;
+        std::set<std::string> subscriptions;
+    };
 public:
     FlowService(ServiceConfig config, std::string drafts_path, std::string deployed_path,
                 std::string state_path, std::string write_token)
@@ -270,12 +384,15 @@ public:
         if (stop_.exchange(true)) return;
         cv_.notify_all();
         if (worker_.joinable()) worker_.join();
-        if (mqtt_) {
-            mosquitto_disconnect(mqtt_);
-            mosquitto_loop_stop(mqtt_, true);
-            mosquitto_destroy(mqtt_);
-            mqtt_ = nullptr;
+        for (auto& entry : mqtt_brokers_) {
+            auto& broker = *entry.second;
+            if (!broker.client) continue;
+            mosquitto_disconnect(broker.client);
+            mosquitto_loop_stop(broker.client, true);
+            mosquitto_destroy(broker.client);
+            broker.client = nullptr;
         }
+        mqtt_brokers_.clear();
         save_state();
     }
 
@@ -286,12 +403,19 @@ public:
             if (entry.second.status == "running") ++running;
             if (entry.second.status == "error") ++failed;
         }
+        json broker_status = json::object();
+        int connected_brokers = 0;
+        for (const auto& entry : mqtt_brokers_) {
+            const auto& broker = *entry.second;
+            if (broker.connected.load()) ++connected_brokers;
+            broker_status[entry.first] = {{"connected", broker.connected.load()}, {"last_error", broker.last_error}};
+        }
         return {{"ok", true}, {"service", "opcbridge-flow"}, {"version", OPCBRIDGE_FLOW_VERSION},
             {"component_version", OPCBRIDGE_FLOW_VERSION}, {"suite_version", OPCBRIDGE_SUITE_VERSION},
             {"draft_flows", drafts_.size()}, {"deployed_flows", deployed_.size()},
             {"running_flows", running}, {"failed_flows", failed},
-            {"mqtt", {{"configured", mqtt_configured_}, {"connected", mqtt_connected_.load()},
-                      {"last_error", mqtt_last_error_}}}};
+            {"mqtt", {{"configured", !mqtt_brokers_.empty()}, {"connected", connected_brokers},
+                      {"brokers", broker_status}}}};
     }
 
     json flows() const {
@@ -354,8 +478,14 @@ public:
             state.nodes.clear();
             for (const auto& node : candidate.value("nodes", json::array())) state.nodes[node.value("id", "")];
             next_poll_ms_[id].clear();
-            if (candidate.value("mode", "active") == "monitor") last_input_values_[id].clear();
+            combine_inputs_[id].clear();
+            json_inputs_[id].clear();
+            compute_inputs_[id].clear();
+            rate_limit_state_[id].clear();
+            trigger_generation_[id].clear();
+            last_input_values_[id].clear();
         }
+        clear_queued_events(id);
         refresh_mqtt_subscriptions();
         return {{"ok", true}, {"flow", candidate}, {"message", "Flow deployed without emitting data"}};
     }
@@ -373,7 +503,13 @@ public:
             std::lock_guard<std::mutex> lock(mu_);
             deployed_ = std::move(next);
             runtime_[id].status = "stopped";
+            combine_inputs_[id].clear();
+            json_inputs_[id].clear();
+            compute_inputs_[id].clear();
+            rate_limit_state_[id].clear();
+            trigger_generation_[id].clear();
         }
+        clear_queued_events(id);
         refresh_mqtt_subscriptions();
         return {{"ok", true}};
     }
@@ -391,7 +527,7 @@ public:
         event.present = !value.is_null(); event.value = value;
         event.quality = value.is_null() ? "bad_null" : "good";
         event.timestamp_ms = now_ms(); event.source = "manual_test";
-        enqueue({id, node_id, event, 0});
+        enqueue({id, node_id, event, 0, ""});
         return {{"ok", true}, {"message", "Test event queued"}};
     }
 
@@ -409,7 +545,7 @@ private:
             nodes[entry.first] = {{"status", node.status}, {"last_error", node.last_error},
                 {"last_input_ms", node.last_input_ms}, {"last_output_ms", node.last_output_ms},
                 {"messages_in", node.messages_in}, {"messages_out", node.messages_out},
-                {"rejected", node.rejected}, {"last_value", node.last_value}};
+                {"rejected", node.rejected}, {"last_value", node.last_value}, {"last_key", node.last_key}};
         }
         return {{"status", runtime.status}, {"last_error", runtime.last_error},
             {"deployed_ms", runtime.deployed_ms}, {"events_total", runtime.events_total}, {"nodes", nodes}};
@@ -463,8 +599,8 @@ private:
         if (!flow.contains("mode")) flow["mode"] = "active";
         if (!flow.contains("nodes") || !flow["nodes"].is_array()) { error = "Flow nodes must be an array"; return false; }
         if (!flow.contains("edges") || !flow["edges"].is_array()) { error = "Flow edges must be an array"; return false; }
-        static const std::set<std::string> allowed = {"opc_tag_input", "mqtt_subscribe", "manual_input", "linear_map",
-            "boolean_invert", "datatype_convert", "debug", "opc_tag_write", "mqtt_publish"};
+        static const std::set<std::string> allowed = {"opc_tag_input", "mqtt_subscribe", "manual_input", "split", "switch", "linear_map",
+            "bit_operations", "combine", "build_json", "compute", "delay", "trigger", "boolean_invert", "datatype_convert", "debug", "opc_tag_write", "mqtt_publish"};
         std::unordered_set<std::string> node_ids;
         std::unordered_map<std::string, std::string> types;
         for (auto& node : flow["nodes"]) {
@@ -481,12 +617,75 @@ private:
                     error = type + " requires a connection and tag"; return false;
                 }
             }
-            if ((type == "mqtt_subscribe" || type == "mqtt_publish") && trim(cfg.value("topic", "")).empty()) {
-                error = type + " requires a topic"; return false;
+            if (type == "mqtt_subscribe" || type == "mqtt_publish") {
+                if (trim(cfg.value("connection_id", "")).empty()) { error = type + " requires an MQTT connection"; return false; }
+                if (trim(cfg.value("topic", "")).empty()) { error = type + " requires a topic"; return false; }
             }
             if (type == "linear_map") {
                 const double in_min = cfg.value("input_min", 0.0), in_max = cfg.value("input_max", 100.0);
                 if (in_min == in_max) { error = "Linear map input range cannot be zero"; return false; }
+            }
+            if (type == "bit_operations") {
+                static const std::set<std::string> operations = {"and", "or", "xor", "and_not", "not", "shift_left", "shift_right",
+                    "low_byte", "high_byte", "low_word", "high_word"};
+                static const std::set<std::string> tests = {"nonzero", "zero", "any", "all", "equals"};
+                const std::string operation = cfg.value("operation", "and");
+                const std::string output_mode = cfg.value("output_mode", "result");
+                const int width = cfg.value("word_size", 16);
+                if (!operations.count(operation)) { error = "Unsupported bit operation"; return false; }
+                if (width != 8 && width != 16 && width != 32 && width != 64) { error = "Bit operation word size must be 8, 16, 32, or 64"; return false; }
+                if (operation == "high_byte" && width < 16) { error = "High byte requires a word size of at least 16 bits"; return false; }
+                if (operation == "high_word" && width < 32) { error = "High word requires a word size of at least 32 bits"; return false; }
+                if (output_mode != "result" && output_mode != "boolean") { error = "Unsupported bit operation output type"; return false; }
+                if (output_mode == "boolean" && !tests.count(cfg.value("boolean_test", "nonzero"))) { error = "Unsupported bit operation Boolean test"; return false; }
+                const bool needs_operand = operation == "and" || operation == "or" || operation == "xor" || operation == "and_not" ||
+                    operation == "shift_left" || operation == "shift_right";
+                if (needs_operand && !parse_bit_integer(cfg.value("operand", json("0")))) { error = "Bit operation mask/operand is invalid"; return false; }
+                if (output_mode == "boolean" && cfg.value("boolean_test", "nonzero") == "equals" &&
+                    !parse_bit_integer(cfg.value("comparison", json("0")))) { error = "Bit operation comparison value is invalid"; return false; }
+            }
+            if (type == "combine") {
+                static const std::set<std::string> modes = {"two_bytes", "two_words", "four_bytes"};
+                if (!modes.count(cfg.value("mode", "two_bytes"))) { error = "Unsupported Combine mode"; return false; }
+            }
+            if (type == "build_json") {
+                if (!cfg.contains("fields") || !cfg["fields"].is_array() || cfg["fields"].empty()) {
+                    error = "Build JSON requires at least one field"; return false;
+                }
+                std::set<std::string> keys;
+                for (const auto& field : cfg["fields"]) {
+                    const std::string key = trim(field.value("key", ""));
+                    if (key.empty()) { error = "Every Build JSON field needs a JSON key"; return false; }
+                    if (!keys.insert(key).second) { error = "Build JSON keys must be unique"; return false; }
+                }
+            }
+            if (type == "compute") {
+                if (!cfg.contains("inputs") || !cfg["inputs"].is_array() || cfg["inputs"].empty()) { error = "Compute requires at least one input"; return false; }
+                std::map<std::string, double> sample;
+                for (const auto& input : cfg["inputs"]) {
+                    const std::string name = trim(input.value("name", ""));
+                    if (name.empty() || !std::isalpha(static_cast<unsigned char>(name[0])) ||
+                        !std::all_of(name.begin(), name.end(), [](unsigned char ch) { return std::isalnum(ch) || ch == '_'; })) {
+                        error = "Compute input names must start with a letter and contain only letters, numbers, or underscores"; return false;
+                    }
+                    if (!sample.emplace(name, 1.0).second) { error = "Compute input names must be unique"; return false; }
+                }
+                const std::string expression = trim(cfg.value("expression", ""));
+                if (expression.empty()) { error = "Compute expression is required"; return false; }
+                try { MathExpression(expression, sample).evaluate(); } catch (const std::exception& ex) { error = ex.what(); return false; }
+            }
+            if (type == "delay") {
+                const std::string action = cfg.value("action", "delay_each");
+                if (action != "delay_each" && action != "rate_limit") { error = "Unsupported Delay action"; return false; }
+                const long long delay_ms = cfg.value("delay_ms", 1000LL);
+                if (delay_ms < 0 || delay_ms > 86400000LL) { error = "Delay must be between 0 ms and 24 hours"; return false; }
+            }
+            if (type == "trigger") {
+                const long long duration_ms = cfg.value("duration_ms", 1000LL);
+                if (duration_ms < 1 || duration_ms > 86400000LL) { error = "Trigger duration must be between 1 ms and 24 hours"; return false; }
+            }
+            if (type == "switch" && (!cfg.contains("rules") || !cfg["rules"].is_array() || cfg["rules"].empty())) {
+                error = "Switch requires at least one rule"; return false;
             }
         }
         std::unordered_map<std::string, std::vector<std::string>> graph;
@@ -521,6 +720,40 @@ private:
         cv_.notify_one();
     }
 
+    bool enqueue_delayed(QueuedEvent event, long long due_ms) {
+        {
+            std::lock_guard<std::mutex> lock(queue_mu_);
+            if (delayed_queue_.size() >= 10000) return false;
+            delayed_queue_.emplace(due_ms, std::move(event));
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+    bool replace_trigger_timer(QueuedEvent event, long long due_ms) {
+        {
+            std::lock_guard<std::mutex> lock(queue_mu_);
+            for (auto item = delayed_queue_.begin(); item != delayed_queue_.end();) {
+                if (item->second.flow_id == event.flow_id && item->second.node_id == event.node_id &&
+                    item->second.input_port.rfind("__trigger_release:", 0) == 0) item = delayed_queue_.erase(item);
+                else ++item;
+            }
+            if (delayed_queue_.size() >= 10000) return false;
+            delayed_queue_.emplace(due_ms, std::move(event));
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+    void clear_queued_events(const std::string& flow_id) {
+        std::lock_guard<std::mutex> lock(queue_mu_);
+        queue_.erase(std::remove_if(queue_.begin(), queue_.end(), [&](const QueuedEvent& event) { return event.flow_id == flow_id; }), queue_.end());
+        for (auto item = delayed_queue_.begin(); item != delayed_queue_.end();) {
+            if (item->second.flow_id == flow_id) item = delayed_queue_.erase(item);
+            else ++item;
+        }
+    }
+
     void worker_loop() {
         long long last_state_save = 0;
         while (!stop_.load()) {
@@ -528,6 +761,12 @@ private:
             std::deque<QueuedEvent> events;
             {
                 std::lock_guard<std::mutex> lock(queue_mu_);
+                const long long current = now_ms();
+                auto delayed = delayed_queue_.begin();
+                while (delayed != delayed_queue_.end() && delayed->first <= current) {
+                    queue_.push_back(std::move(delayed->second));
+                    delayed = delayed_queue_.erase(delayed);
+                }
                 events.swap(queue_);
             }
             while (!events.empty()) {
@@ -587,7 +826,6 @@ private:
             event.timestamp_ms = row.value("timestamp_ms", now_ms());
             bool changed = false;
             bool had_baseline = false;
-            bool monitor_mode = false;
             {
                 std::lock_guard<std::mutex> lock(mu_);
                 NodeRuntime& observed = runtime_[flow_id].nodes[node_id];
@@ -599,15 +837,13 @@ private:
                 had_baseline = !last.is_null();
                 changed = had_baseline && last != event.value;
                 last = event.value;
-                const auto deployed = deployed_.find(flow_id);
-                monitor_mode = deployed != deployed_.end() && deployed->second.value("mode", "active") == "monitor";
             }
-            // Establishing a baseline is observational in active mode and must
-            // never cause a write merely because a flow was deployed. Monitor
-            // mode may propagate that baseline because all external outputs are
-            // suppressed, which makes the diagnostic canvas immediately useful.
-            if (changed || !cfg.value("only_on_change", true) || (!had_baseline && monitor_mode))
-                enqueue({flow_id, node_id, event, 0});
+            // The first valid value is real process state, not merely a baseline.
+            // Propagate it once after every deployment so stable modes and
+            // setpoints initialize downstream logic. Null and bad-quality values
+            // are rejected above. Subsequent events may be limited to changes.
+            if (!had_baseline || changed || !cfg.value("only_on_change", true))
+                enqueue({flow_id, node_id, event, 0, ""});
         } catch (const std::exception& ex) { set_node_error(flow_id, node_id, ex.what()); }
     }
 
@@ -624,7 +860,7 @@ private:
             }
             if (node.is_null() || node.empty()) return;
             NodeRuntime& state = runtime_[queued.flow_id].nodes[queued.node_id];
-            state.messages_in++; state.last_input_ms = now_ms(); state.last_value = queued.event.value; state.status = "running"; state.last_error.clear();
+            state.messages_in++; state.last_input_ms = now_ms(); state.last_value = queued.event.value; state.last_key = queued.event.key; state.status = "running"; state.last_error.clear();
             runtime_[queued.flow_id].events_total++;
         }
         const std::string type = node.value("type", "");
@@ -632,7 +868,48 @@ private:
         bool emit = true;
         std::string error;
         const json cfg = node.value("config", json::object());
-        if (type == "linear_map") {
+        if (type == "split") {
+            emit = false;
+            if (!event_writable(output, error)) {
+                // Rejected below.
+            } else if (!output.value.is_object() && !output.value.is_array()) {
+                error = "Split input must be a JSON object or array";
+            } else {
+                std::vector<std::pair<std::string, json>> parts;
+                if (output.value.is_object()) for (auto it = output.value.begin(); it != output.value.end(); ++it) parts.push_back({it.key(), it.value()});
+                else for (size_t i = 0; i < output.value.size(); ++i) parts.push_back({std::to_string(i), output.value[i]});
+                for (const auto& part : parts) {
+                    if (part.second.is_null()) continue;
+                    FlowEvent item = output; item.key = part.first; item.value = part.second;
+                    for (const auto& edge : flow.value("edges", json::array()))
+                        if (edge.value("from", "") == queued.node_id) enqueue({queued.flow_id, edge.value("to", ""), item, queued.hops + 1, edge.value("to_port", "")});
+                }
+                mark_node_output(queued.flow_id, queued.node_id, output, "split " + std::to_string(parts.size()) + " items");
+            }
+        } else if (type == "switch") {
+            emit = false;
+            bool matched = false;
+            int index = 0;
+            for (const auto& rule : cfg.value("rules", json::array())) {
+                const std::string expected = trim(rule.value("value", ""));
+                const bool rule_match = output.key == expected;
+                if (rule_match) {
+                    matched = true;
+                    const std::string port = "rule_" + std::to_string(index);
+                    for (const auto& edge : flow.value("edges", json::array()))
+                        if (edge.value("from", "") == queued.node_id && edge.value("from_port", "rule_0") == port)
+                            enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+                    if (!cfg.value("check_all", false)) break;
+                }
+                ++index;
+            }
+            if (!matched && cfg.value("otherwise", true)) {
+                for (const auto& edge : flow.value("edges", json::array()))
+                    if (edge.value("from", "") == queued.node_id && edge.value("from_port", "") == "otherwise")
+                        enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+            }
+            mark_node_output(queued.flow_id, queued.node_id, output, matched ? "matched" : "otherwise");
+        } else if (type == "linear_map") {
             const auto number = as_number(output.value);
             if (!event_writable(output, error) || !number) { if (error.empty()) error = "input is not numeric"; emit = false; }
             else {
@@ -641,6 +918,258 @@ private:
                 double mapped = out_min + ((*number - in_min) / (in_max - in_min)) * (out_max - out_min);
                 if (cfg.value("clamp", false)) mapped = std::max(std::min(out_min, out_max), std::min(std::max(out_min, out_max), mapped));
                 output.value = mapped;
+            }
+        } else if (type == "bit_operations") {
+            const auto input_value = parse_bit_integer(output.value);
+            if (!event_writable(output, error) || !input_value) {
+                if (error.empty()) error = "input must be an integer";
+                emit = false;
+            } else {
+                const int width = cfg.value("word_size", 16);
+                const uint64_t word_mask = bit_word_mask(width);
+                const uint64_t input = *input_value & word_mask;
+                const std::string operation = cfg.value("operation", "and");
+                const auto parsed_operand = parse_bit_integer(cfg.value("operand", json("0")));
+                const uint64_t operand = parsed_operand.value_or(0) & word_mask;
+                uint64_t result = input;
+                if (operation == "and") result = input & operand;
+                else if (operation == "or") result = input | operand;
+                else if (operation == "xor") result = input ^ operand;
+                else if (operation == "and_not") result = input & (~operand);
+                else if (operation == "not") result = ~input;
+                else if (operation == "low_byte") result = input & 0xffULL;
+                else if (operation == "high_byte") result = (input >> 8) & 0xffULL;
+                else if (operation == "low_word") result = input & 0xffffULL;
+                else if (operation == "high_word") result = (input >> 16) & 0xffffULL;
+                else if (operation == "shift_left") {
+                    if (operand >= static_cast<uint64_t>(width)) { error = "shift count must be smaller than the word size"; emit = false; }
+                    else result = input << operand;
+                } else if (operation == "shift_right") {
+                    if (operand >= static_cast<uint64_t>(width)) { error = "shift count must be smaller than the word size"; emit = false; }
+                    else result = input >> operand;
+                }
+                result &= word_mask;
+                if (emit && cfg.value("output_mode", "result") == "boolean") {
+                    const std::string test = cfg.value("boolean_test", "nonzero");
+                    bool boolean = false;
+                    if (test == "zero") boolean = result == 0;
+                    else if (test == "any") boolean = (input & operand) != 0;
+                    else if (test == "all") boolean = operand != 0 && (input & operand) == operand;
+                    else if (test == "equals") {
+                        const uint64_t comparison = parse_bit_integer(cfg.value("comparison", json("0"))).value_or(0) & word_mask;
+                        boolean = result == comparison;
+                    } else boolean = result != 0;
+                    if (cfg.value("invert_boolean", false)) boolean = !boolean;
+                    output.value = boolean;
+                } else if (emit) {
+                    output.value = result;
+                }
+            }
+        } else if (type == "combine") {
+            emit = false;
+            const std::string mode = cfg.value("mode", "two_bytes");
+            const std::vector<std::string> ports = mode == "four_bytes"
+                ? std::vector<std::string>{"byte_3", "byte_2", "byte_1", "byte_0"}
+                : (mode == "two_words" ? std::vector<std::string>{"high_word", "low_word"}
+                                        : std::vector<std::string>{"high_byte", "low_byte"});
+            if (!event_writable(output, error)) {
+                // Rejected below.
+            } else if (std::find(ports.begin(), ports.end(), queued.input_port) == ports.end()) {
+                error = "value must arrive through a labeled Combine input";
+            } else if (!parse_bit_integer(output.value)) {
+                error = "Combine input must be an integer";
+            } else {
+                std::map<std::string, FlowEvent> retained;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& inputs = combine_inputs_[queued.flow_id][queued.node_id];
+                    inputs[queued.input_port] = output;
+                    retained = inputs;
+                }
+                const bool ready = std::all_of(ports.begin(), ports.end(), [&](const std::string& port) { return retained.count(port) > 0; });
+                if (!ready) {
+                    set_node_status(queued.flow_id, queued.node_id, "waiting for all inputs");
+                } else {
+                    uint64_t result = 0;
+                    if (mode == "two_bytes") {
+                        result = ((parse_bit_integer(retained["high_byte"].value).value() & 0xffULL) << 8) |
+                                 (parse_bit_integer(retained["low_byte"].value).value() & 0xffULL);
+                    } else if (mode == "two_words") {
+                        result = ((parse_bit_integer(retained["high_word"].value).value() & 0xffffULL) << 16) |
+                                 (parse_bit_integer(retained["low_word"].value).value() & 0xffffULL);
+                    } else {
+                        result = ((parse_bit_integer(retained["byte_3"].value).value() & 0xffULL) << 24) |
+                                 ((parse_bit_integer(retained["byte_2"].value).value() & 0xffULL) << 16) |
+                                 ((parse_bit_integer(retained["byte_1"].value).value() & 0xffULL) << 8) |
+                                  (parse_bit_integer(retained["byte_0"].value).value() & 0xffULL);
+                    }
+                    const int bits = mode == "two_bytes" ? 16 : 32;
+                    if (cfg.value("signed_result", false) && (result & (uint64_t{1} << (bits - 1))))
+                        output.value = static_cast<int64_t>(result | ~bit_word_mask(bits));
+                    else output.value = result;
+                    emit = true;
+                }
+            }
+        } else if (type == "build_json") {
+            emit = false;
+            const json fields = cfg.value("fields", json::array());
+            int port_index = -1;
+            if (queued.input_port.rfind("field_", 0) == 0) {
+                try { port_index = std::stoi(queued.input_port.substr(6)); } catch (...) { port_index = -1; }
+            }
+            if (!event_writable(output, error)) {
+                // Rejected below.
+            } else if (port_index < 0 || port_index >= static_cast<int>(fields.size())) {
+                error = "value must arrive through a labeled Build JSON input";
+            } else {
+                std::map<std::string, FlowEvent> retained;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& inputs = json_inputs_[queued.flow_id][queued.node_id];
+                    inputs[queued.input_port] = output;
+                    retained = inputs;
+                }
+                bool ready = true;
+                json object = json::object();
+                for (size_t index = 0; index < fields.size(); ++index) {
+                    const std::string port = "field_" + std::to_string(index);
+                    auto value = retained.find(port);
+                    if (value == retained.end()) { ready = false; break; }
+                    object[fields[index].value("key", "")] = value->second.value;
+                }
+                if (!ready) set_node_status(queued.flow_id, queued.node_id, "waiting for all fields");
+                else { output.value = std::move(object); output.key.clear(); emit = true; }
+            }
+        } else if (type == "compute") {
+            emit = false;
+            const json inputs = cfg.value("inputs", json::array());
+            int port_index = -1;
+            if (queued.input_port.rfind("input_", 0) == 0) try { port_index = std::stoi(queued.input_port.substr(6)); } catch (...) {}
+            if (!event_writable(output, error)) {
+                // Rejected below.
+            } else if (port_index < 0 || port_index >= static_cast<int>(inputs.size())) {
+                error = "value must arrive through a labeled Compute input";
+            } else if (!as_number(output.value)) {
+                error = "Compute inputs must be numeric";
+            } else {
+                std::map<std::string, FlowEvent> retained;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& values = compute_inputs_[queued.flow_id][queued.node_id]; values[queued.input_port] = output; retained = values;
+                }
+                std::map<std::string, double> variables;
+                for (size_t index = 0; index < inputs.size(); ++index) {
+                    const std::string port = "input_" + std::to_string(index);
+                    auto found = retained.find(port); if (found == retained.end()) { variables.clear(); break; }
+                    const auto number = as_number(found->second.value); if (!number) { error = "Compute inputs must be numeric"; break; }
+                    variables[inputs[index].value("name", "")] = *number;
+                }
+                if (error.empty() && variables.empty()) set_node_status(queued.flow_id, queued.node_id, "waiting for all inputs");
+                else if (error.empty()) {
+                    try { output.value = MathExpression(cfg.value("expression", ""), variables).evaluate(); output.key.clear(); emit = true; }
+                    catch (const std::exception& ex) { error = ex.what(); }
+                }
+            }
+        } else if (type == "delay") {
+            emit = false;
+            const long long delay_ms = std::max(0LL, cfg.value("delay_ms", 1000LL));
+            const std::string action = cfg.value("action", "delay_each");
+            if (action == "rate_limit" && queued.input_port == "__rate_release") {
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& state = rate_limit_state_[queued.flow_id][queued.node_id];
+                    output = state.latest;
+                    state.scheduled = false;
+                    state.next_allowed_ms = now_ms() + delay_ms;
+                }
+                for (const auto& edge : flow.value("edges", json::array()))
+                    if (edge.value("from", "") == queued.node_id)
+                        enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+                mark_node_output(queued.flow_id, queued.node_id, output, "rate limit released latest value");
+            } else if (!event_writable(output, error)) {
+                // Rejected below.
+            } else if (action == "rate_limit") {
+                bool release_now = false, schedule = false;
+                long long due = 0;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& state = rate_limit_state_[queued.flow_id][queued.node_id];
+                    state.latest = output;
+                    const long long current = now_ms();
+                    if (!state.scheduled && current >= state.next_allowed_ms) {
+                        release_now = true;
+                        state.next_allowed_ms = current + delay_ms;
+                    } else if (!state.scheduled) {
+                        schedule = true; state.scheduled = true; due = state.next_allowed_ms;
+                    }
+                }
+                if (release_now) {
+                    for (const auto& edge : flow.value("edges", json::array()))
+                        if (edge.value("from", "") == queued.node_id)
+                            enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+                    mark_node_output(queued.flow_id, queued.node_id, output, "rate limit released value");
+                } else if (schedule) {
+                    if (!enqueue_delayed({queued.flow_id, queued.node_id, output, queued.hops + 1, "__rate_release"}, due))
+                        error = "delayed message safety limit reached";
+                    else set_node_status(queued.flow_id, queued.node_id, "waiting to release latest value");
+                } else set_node_status(queued.flow_id, queued.node_id, "updated pending latest value");
+            } else {
+                const long long due = now_ms() + delay_ms;
+                int queued_count = 0;
+                for (const auto& edge : flow.value("edges", json::array())) {
+                    if (edge.value("from", "") != queued.node_id) continue;
+                    if (!enqueue_delayed({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")}, due)) {
+                        error = "delayed message safety limit reached"; break;
+                    }
+                    ++queued_count;
+                }
+                set_node_status(queued.flow_id, queued.node_id, queued_count
+                    ? "delaying each message " + std::to_string(delay_ms) + " ms"
+                    : "no output connected");
+            }
+        } else if (type == "trigger") {
+            emit = false;
+            const long long duration_ms = std::max(1LL, cfg.value("duration_ms", 1000LL));
+            auto send_value = [&](const json& value, const std::string& status) {
+                FlowEvent sent = output; sent.present = !value.is_null(); sent.value = value; sent.quality = sent.present ? "good" : "bad_null"; sent.timestamp_ms = now_ms();
+                for (const auto& edge : flow.value("edges", json::array()))
+                    if (edge.value("from", "") == queued.node_id)
+                        enqueue({queued.flow_id, edge.value("to", ""), sent, queued.hops + 1, edge.value("to_port", "")});
+                mark_node_output(queued.flow_id, queued.node_id, sent, status);
+            };
+            if (queued.input_port.rfind("__trigger_release:", 0) == 0) {
+                uint64_t generation = 0;
+                try { generation = std::stoull(queued.input_port.substr(18)); } catch (...) {}
+                bool current = false;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    current = trigger_generation_[queued.flow_id][queued.node_id] == generation;
+                    if (current) trigger_generation_[queued.flow_id][queued.node_id] = 0;
+                }
+                if (current && cfg.value("send_delayed", true)) send_value(configured_flow_value(cfg.value("delayed_value", json("false"))), "trigger timeout");
+                else if (current) set_node_status(queued.flow_id, queued.node_id, "trigger completed");
+            } else if (!event_writable(output, error)) {
+                // Rejected below.
+            } else {
+                const bool has_reset = cfg.value("reset_enabled", false);
+                const json reset_value = configured_flow_value(cfg.value("reset_value", json("reset")));
+                if (has_reset && output.value == reset_value) {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    ++trigger_generation_[queued.flow_id][queued.node_id];
+                    runtime_[queued.flow_id].nodes[queued.node_id].status = "trigger reset";
+                    runtime_[queued.flow_id].nodes[queued.node_id].last_error.clear();
+                } else {
+                    uint64_t generation = 0;
+                    bool start_timer = false;
+                    {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        uint64_t& current = trigger_generation_[queued.flow_id][queued.node_id];
+                        if (cfg.value("extend_delay", true) || current == 0) { generation = ++current; start_timer = true; }
+                    }
+                    if (start_timer && cfg.value("send_initial", true)) send_value(configured_flow_value(cfg.value("initial_value", json("true"))), "trigger started");
+                    if (start_timer && !replace_trigger_timer({queued.flow_id, queued.node_id, output, queued.hops + 1, "__trigger_release:" + std::to_string(generation)}, now_ms() + duration_ms))
+                        error = "delayed message safety limit reached";
+                }
             }
         } else if (type == "boolean_invert") {
             const auto boolean = as_bool(output.value);
@@ -675,21 +1204,27 @@ private:
                 mark_node_output(queued.flow_id, queued.node_id, output, "monitor: publish suppressed");
             } else if (!event_writable(output, error)) {
                 // Rejected below.
-            } else if (!mqtt_ || !mqtt_connected_.load()) error = "MQTT is not connected";
-            else {
+            } else {
+                const std::string connection_id = cfg.value("connection_id", "");
+                auto broker_it = mqtt_brokers_.find(connection_id);
+                if (broker_it == mqtt_brokers_.end()) { error = "MQTT connection not found: " + connection_id; }
+                else if (!broker_it->second->connected.load()) { error = "MQTT connection is not connected: " + connection_id; }
+                else {
+                auto& broker = *broker_it->second;
                 const std::string topic = cfg.value("topic", "");
                 const std::string payload = cfg.value("payload_format", "scalar") == "json" ? output.value.dump() : scalar_text(output.value);
-                const int qos = std::max(0, std::min(2, cfg.value("qos", mqtt_qos_)));
-                const int rc = mosquitto_publish(mqtt_, nullptr, topic.c_str(), static_cast<int>(payload.size()), payload.data(), qos, cfg.value("retain", false));
+                const int qos = std::max(0, std::min(2, cfg.value("qos", broker.qos)));
+                const int rc = mosquitto_publish(broker.client, nullptr, topic.c_str(), static_cast<int>(payload.size()), payload.data(), qos, cfg.value("retain", false));
                 if (rc != MOSQ_ERR_SUCCESS) error = mosquitto_strerror(rc);
                 else mark_node_output(queued.flow_id, queued.node_id, output, "publish ok");
+                }
             }
         }
         if (!error.empty()) { reject_node(queued.flow_id, queued.node_id, error); return; }
         if (!emit) return;
         mark_node_output(queued.flow_id, queued.node_id, output, "ok");
         for (const auto& edge : flow.value("edges", json::array())) {
-            if (edge.value("from", "") == queued.node_id) enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1});
+            if (edge.value("from", "") == queued.node_id) enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
         }
     }
 
@@ -712,6 +1247,12 @@ private:
         node.messages_out++; node.last_output_ms = now_ms(); node.last_value = event.value; node.status = status; node.last_error.clear();
     }
 
+    void set_node_status(const std::string& flow_id, const std::string& node_id, const std::string& status) {
+        std::lock_guard<std::mutex> lock(mu_);
+        NodeRuntime& node = runtime_[flow_id].nodes[node_id];
+        node.status = status; node.last_error.clear();
+    }
+
     void reject_node(const std::string& flow_id, const std::string& node_id, const std::string& error) {
         std::lock_guard<std::mutex> lock(mu_);
         NodeRuntime& node = runtime_[flow_id].nodes[node_id];
@@ -728,65 +1269,96 @@ private:
         FlowRuntime& flow = runtime_[flow_id]; flow.status = "error"; flow.last_error = error;
     }
 
-    void start_mqtt() {
-        const json cfg = read_json(config_.mqtt_config, json::object());
-        if (!cfg.value("enabled", false)) return;
-        mqtt_configured_ = true;
-        mqtt_host_ = cfg.value("host", "127.0.0.1"); mqtt_port_ = cfg.value("port", 1883);
-        mqtt_qos_ = std::max(0, std::min(2, cfg.value("qos", 0)));
-        mosquitto_lib_init();
-        const std::string client_id = "opcbridge-flow-" + std::to_string(now_ms());
-        mqtt_ = mosquitto_new(client_id.c_str(), true, this);
-        if (!mqtt_) { mqtt_last_error_ = "mosquitto_new failed"; return; }
-        const std::string username = cfg.value("username", ""), password = cfg.value("password", "");
-        if (!username.empty()) mosquitto_username_pw_set(mqtt_, username.c_str(), password.empty() ? nullptr : password.c_str());
-        if (cfg.value("use_tls", false)) {
-            const std::string base = fs::path(config_.mqtt_config).parent_path().string();
-            auto resolved = [&](const std::string& value) { return value.empty() ? value : (fs::path(value).is_absolute() ? value : (fs::path(base) / value).string()); };
-            const std::string ca = resolved(cfg.value("cafile", "")), cert = resolved(cfg.value("certfile", "")), key = resolved(cfg.value("keyfile", ""));
-            if (mosquitto_tls_set(mqtt_, ca.empty() ? nullptr : ca.c_str(), nullptr, cert.empty() ? nullptr : cert.c_str(), key.empty() ? nullptr : key.c_str(), nullptr) != MOSQ_ERR_SUCCESS) {
-                mqtt_last_error_ = "MQTT TLS configuration failed";
+    void clear_mqtt_connection_errors(const std::string& connection_id) {
+        std::lock_guard<std::mutex> lock(mu_);
+        for (const auto& flow : deployed_) {
+            for (const auto& definition : flow.second.value("nodes", json::array())) {
+                const std::string type = definition.value("type", "");
+                if (type != "mqtt_subscribe" && type != "mqtt_publish") continue;
+                if (definition.value("config", json::object()).value("connection_id", "") != connection_id) continue;
+                NodeRuntime& node = runtime_[flow.first].nodes[definition.value("id", "")];
+                if (node.last_error.rfind("MQTT connection is not connected:", 0) == 0 ||
+                    node.last_error == "MQTT disconnected") {
+                    node.last_error.clear();
+                    node.status = "connected";
+                }
             }
-            mosquitto_tls_insecure_set(mqtt_, cfg.value("tls_insecure", false));
         }
-        mosquitto_connect_callback_set(mqtt_, [](mosquitto*, void* userdata, int rc) {
-            auto* self = static_cast<FlowService*>(userdata);
-            self->mqtt_connected_.store(rc == 0);
-            if (rc == 0) { self->mqtt_last_error_.clear(); self->refresh_mqtt_subscriptions(); }
-            else self->mqtt_last_error_ = mosquitto_connack_string(rc);
-        });
-        mosquitto_disconnect_callback_set(mqtt_, [](mosquitto*, void* userdata, int rc) {
-            auto* self = static_cast<FlowService*>(userdata); self->mqtt_connected_.store(false);
-            if (rc) self->mqtt_last_error_ = "MQTT disconnected";
-        });
-        mosquitto_message_callback_set(mqtt_, [](mosquitto*, void* userdata, const mosquitto_message* message) {
-            static_cast<FlowService*>(userdata)->on_mqtt_message(message);
-        });
-        const int rc = mosquitto_connect_async(mqtt_, mqtt_host_.c_str(), mqtt_port_, 30);
-        if (rc != MOSQ_ERR_SUCCESS) mqtt_last_error_ = mosquitto_strerror(rc);
-        mosquitto_loop_start(mqtt_);
     }
 
-    void refresh_mqtt_subscriptions() {
-        if (!mqtt_ || !mqtt_connected_.load()) return;
+    void start_mqtt() {
+        mosquitto_lib_init();
+        if (!fs::exists(config_.connections_dir)) return;
+        for (const auto& entry : fs::directory_iterator(config_.connections_dir)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
+            const json connection = read_json(entry.path().string(), json::object());
+            if (connection.value("driver", "") != "mqtt" || connection.value("enabled", true) == false) continue;
+            const std::string id = trim(connection.value("id", entry.path().stem().string()));
+            const json cfg = connection.contains("settings") && connection["settings"].is_object() ? connection["settings"] : connection;
+            const std::string host = trim(cfg.value("host", ""));
+            if (id.empty() || host.empty()) continue;
+            auto broker = std::make_unique<MqttBroker>();
+            broker->owner = this; broker->id = id; broker->qos = std::max(0, std::min(2, cfg.value("qos", 0)));
+            const std::string configured_client_id = trim(cfg.value("client_id", ""));
+            const std::string client_id = configured_client_id.empty() ? "opcbridge-flow-" + id + "-" + std::to_string(now_ms()) : configured_client_id + "-flow";
+            broker->client = mosquitto_new(client_id.c_str(), true, broker.get());
+            if (!broker->client) { broker->last_error = "mosquitto_new failed"; mqtt_brokers_[id] = std::move(broker); continue; }
+            const std::string username = cfg.value("username", ""), password = cfg.value("password", "");
+            if (!username.empty()) mosquitto_username_pw_set(broker->client, username.c_str(), password.empty() ? nullptr : password.c_str());
+            if (cfg.value("use_tls", false)) {
+                const std::string base = fs::path(config_.connections_dir).parent_path().string();
+                auto resolved = [&](const std::string& value) { return value.empty() ? value : (fs::path(value).is_absolute() ? value : (fs::path(base) / value).string()); };
+                const std::string ca = resolved(cfg.value("cafile", "")), cert = resolved(cfg.value("certfile", "")), key = resolved(cfg.value("keyfile", ""));
+                if (mosquitto_tls_set(broker->client, ca.empty() ? nullptr : ca.c_str(), nullptr, cert.empty() ? nullptr : cert.c_str(), key.empty() ? nullptr : key.c_str(), nullptr) != MOSQ_ERR_SUCCESS)
+                    broker->last_error = "MQTT TLS configuration failed";
+                mosquitto_tls_insecure_set(broker->client, cfg.value("tls_insecure", false));
+            }
+            mosquitto_connect_callback_set(broker->client, [](mosquitto*, void* userdata, int rc) {
+                auto* broker = static_cast<MqttBroker*>(userdata); broker->connected.store(rc == 0);
+                if (rc == 0) {
+                    broker->last_error.clear();
+                    broker->owner->clear_mqtt_connection_errors(broker->id);
+                    broker->owner->refresh_mqtt_subscriptions(broker->id);
+                }
+                else broker->last_error = mosquitto_connack_string(rc);
+            });
+            mosquitto_disconnect_callback_set(broker->client, [](mosquitto*, void* userdata, int rc) {
+                auto* broker = static_cast<MqttBroker*>(userdata); broker->connected.store(false); if (rc) broker->last_error = "MQTT disconnected";
+            });
+            mosquitto_message_callback_set(broker->client, [](mosquitto*, void* userdata, const mosquitto_message* message) {
+                auto* broker = static_cast<MqttBroker*>(userdata); broker->owner->on_mqtt_message(broker->id, message);
+            });
+            mqtt_brokers_[id] = std::move(broker);
+            auto& installed = *mqtt_brokers_[id];
+            const int rc = mosquitto_connect_async(installed.client, host.c_str(), std::max(1, cfg.value("port", cfg.value("use_tls", false) ? 8883 : 1883)), 30);
+            if (rc != MOSQ_ERR_SUCCESS) installed.last_error = mosquitto_strerror(rc);
+            mosquitto_loop_start(installed.client);
+        }
+    }
+
+    void refresh_mqtt_subscriptions(const std::string& connection_id = "") {
+        if (connection_id.empty()) { for (const auto& entry : mqtt_brokers_) refresh_mqtt_subscriptions(entry.first); return; }
+        auto broker_it = mqtt_brokers_.find(connection_id);
+        if (broker_it == mqtt_brokers_.end() || !broker_it->second->client || !broker_it->second->connected.load()) return;
+        auto& broker = *broker_it->second;
         std::set<std::string> desired;
         {
             std::lock_guard<std::mutex> lock(mu_);
             for (const auto& flow : deployed_) for (const auto& node : flow.second.value("nodes", json::array()))
-                if (node.value("type", "") == "mqtt_subscribe") desired.insert(node["config"].value("topic", ""));
+                if (node.value("type", "") == "mqtt_subscribe" && node["config"].value("connection_id", "") == connection_id) desired.insert(node["config"].value("topic", ""));
         }
         for (const auto& topic : desired) {
-            if (!topic.empty() && !mqtt_subscriptions_.count(topic)) {
-                if (mosquitto_subscribe(mqtt_, nullptr, topic.c_str(), mqtt_qos_) == MOSQ_ERR_SUCCESS) mqtt_subscriptions_.insert(topic);
+            if (!topic.empty() && !broker.subscriptions.count(topic)) {
+                if (mosquitto_subscribe(broker.client, nullptr, topic.c_str(), broker.qos) == MOSQ_ERR_SUCCESS) broker.subscriptions.insert(topic);
             }
         }
-        for (auto it = mqtt_subscriptions_.begin(); it != mqtt_subscriptions_.end();) {
-            if (!desired.count(*it)) { mosquitto_unsubscribe(mqtt_, nullptr, it->c_str()); it = mqtt_subscriptions_.erase(it); }
+        for (auto it = broker.subscriptions.begin(); it != broker.subscriptions.end();) {
+            if (!desired.count(*it)) { mosquitto_unsubscribe(broker.client, nullptr, it->c_str()); it = broker.subscriptions.erase(it); }
             else ++it;
         }
     }
 
-    void on_mqtt_message(const mosquitto_message* message) {
+    void on_mqtt_message(const std::string& connection_id, const mosquitto_message* message) {
         if (!message || !message->topic) return;
         std::vector<std::tuple<std::string, std::string, json>> targets;
         {
@@ -795,6 +1367,7 @@ private:
                 if (!flow.second.value("enabled", true)) continue;
                 for (const auto& node : flow.second.value("nodes", json::array())) {
                     if (node.value("type", "") != "mqtt_subscribe") continue;
+                    if (node["config"].value("connection_id", "") != connection_id) continue;
                     bool matches = false;
                     mosquitto_topic_matches_sub(node["config"].value("topic", "").c_str(), message->topic, &matches);
                     if (matches) targets.emplace_back(flow.first, node.value("id", ""), node["config"]);
@@ -825,7 +1398,7 @@ private:
                     continue;
                 }
                 event.present = true; event.value = *extracted; event.quality = "good";
-                enqueue({std::get<0>(target), std::get<1>(target), event, 0});
+                enqueue({std::get<0>(target), std::get<1>(target), event, 0, ""});
             } catch (const std::exception& ex) { reject_node(std::get<0>(target), std::get<1>(target), ex.what()); }
         }
     }
@@ -840,13 +1413,15 @@ private:
     std::map<std::string, FlowRuntime> runtime_;
     std::map<std::string, std::map<std::string, long long>> next_poll_ms_;
     std::map<std::string, std::map<std::string, json>> last_input_values_;
+    std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> combine_inputs_;
+    std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> json_inputs_;
+    std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> compute_inputs_;
+    struct RateLimitState { FlowEvent latest; bool scheduled = false; long long next_allowed_ms = 0; };
+    std::map<std::string, std::map<std::string, RateLimitState>> rate_limit_state_;
+    std::map<std::string, std::map<std::string, uint64_t>> trigger_generation_;
     std::deque<QueuedEvent> queue_;
-    mosquitto* mqtt_ = nullptr;
-    bool mqtt_configured_ = false;
-    std::atomic<bool> mqtt_connected_{false};
-    std::string mqtt_host_, mqtt_last_error_;
-    int mqtt_port_ = 1883, mqtt_qos_ = 0;
-    std::set<std::string> mqtt_subscriptions_;
+    std::multimap<long long, QueuedEvent> delayed_queue_;
+    std::map<std::string, std::unique_ptr<MqttBroker>> mqtt_brokers_;
 };
 
 static void send_json(httplib::Response& response, int status, const json& body) {
@@ -878,7 +1453,7 @@ int main(int argc, char** argv) {
     config.opcbridge_base_url = raw.value("opcbridge_base_url", config.opcbridge_base_url);
     config.poll_interval_ms = std::max(100, raw.value("poll_interval_ms", config.poll_interval_ms));
     config.max_event_hops = std::max(8, raw.value("max_event_hops", config.max_event_hops));
-    config.mqtt_config = raw.value("mqtt_config", config.mqtt_config);
+    config.connections_dir = raw.value("connections_dir", config.connections_dir);
     const char* token = std::getenv("OPCBRIDGE_WRITE_TOKEN");
     curl_global_init(CURL_GLOBAL_DEFAULT);
     FlowService service(config, drafts_path, deployed_path, state_path, token ? token : "");

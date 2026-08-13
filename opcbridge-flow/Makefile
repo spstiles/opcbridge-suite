@@ -10,7 +10,7 @@ COMPONENT_VERSION := $(shell (cat VERSION 2>/dev/null || echo dev) | tr -d '\r\n
 
 all: $(TARGET)
 
-$(TARGET): $(SRCS)
+$(TARGET): $(SRCS) VERSION ../VERSION
 	$(CXX) $(CXXFLAGS) -DOPCBRIDGE_SUITE_VERSION=\"$(SUITE_VERSION)\" -DOPCBRIDGE_FLOW_VERSION=\"$(COMPONENT_VERSION)\" -o $(TARGET) $(SRCS) $(LDFLAGS)
 
 clean:

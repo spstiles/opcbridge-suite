@@ -159,7 +159,6 @@
   svcHttpEnabled: document.getElementById('svcHttpEnabled'),
   svcWsEnabled: document.getElementById('svcWsEnabled'),
   svcOpcuaEnabled: document.getElementById('svcOpcuaEnabled'),
-  svcMqttEnabled: document.getElementById('svcMqttEnabled'),
   svcHttpPort: document.getElementById('svcHttpPort'),
   svcWsPort: document.getElementById('svcWsPort'),
   svcOpcuaPort: document.getElementById('svcOpcuaPort'),
@@ -208,6 +207,7 @@
   flowSelect: document.getElementById('flowSelect'),
   flowNewBtn: document.getElementById('flowNewBtn'),
   flowSaveBtn: document.getElementById('flowSaveBtn'),
+  flowRevertBtn: document.getElementById('flowRevertBtn'),
   flowDeployBtn: document.getElementById('flowDeployBtn'),
   flowDisableBtn: document.getElementById('flowDisableBtn'),
   flowDeleteBtn: document.getElementById('flowDeleteBtn'),
@@ -222,6 +222,8 @@
   flowInspectorEmpty: document.getElementById('flowInspectorEmpty'),
   flowInspectorFields: document.getElementById('flowInspectorFields'),
   flowDeleteNodeBtn: document.getElementById('flowDeleteNodeBtn'),
+  flowSelectAllBtn: document.getElementById('flowSelectAllBtn'),
+  flowClearSelectionBtn: document.getElementById('flowClearSelectionBtn'),
   flowTestNodeBtn: document.getElementById('flowTestNodeBtn'),
   flowNodeRuntime: document.getElementById('flowNodeRuntime'),
 
@@ -812,16 +814,6 @@
   editDevMqttKeyRemove: document.getElementById('editDevMqttKeyRemove'),
   editDevMqttKeyStatus: document.getElementById('editDevMqttKeyStatus'),
   editDevMqttPublishPatternsRow: document.getElementById('editDevMqttPublishPatternsRow'),
-  editDevMqttPublishPerField: document.getElementById('editDevMqttPublishPerField'),
-  editDevMqttPublishTagJson: document.getElementById('editDevMqttPublishTagJson'),
-  editDevMqttPublishMemoryTags: document.getElementById('editDevMqttPublishMemoryTags'),
-  editDevMqttPublishSystemTags: document.getElementById('editDevMqttPublishSystemTags'),
-  editDevMqttPublishModeRow: document.getElementById('editDevMqttPublishModeRow'),
-  editDevMqttPublishMode: document.getElementById('editDevMqttPublishMode'),
-  editDevMqttPublishIntervalRow: document.getElementById('editDevMqttPublishIntervalRow'),
-  editDevMqttPublishIntervalMs: document.getElementById('editDevMqttPublishIntervalMs'),
-  editDevMqttPublishMinRow: document.getElementById('editDevMqttPublishMinRow'),
-  editDevMqttPublishMinMs: document.getElementById('editDevMqttPublishMinMs'),
   editDevMqttTestRow: document.getElementById('editDevMqttTestRow'),
   editDevMqttTestBtn: document.getElementById('editDevMqttTestBtn'),
   editDevCancelBtn: document.getElementById('editDevCancelBtn'),
@@ -982,16 +974,6 @@
   newDevMqttKeyFileRow: document.getElementById('newDevMqttKeyFileRow'),
   newDevMqttKeyFile: document.getElementById('newDevMqttKeyFile'),
   newDevMqttPublishPatternsRow: document.getElementById('newDevMqttPublishPatternsRow'),
-  newDevMqttPublishPerField: document.getElementById('newDevMqttPublishPerField'),
-  newDevMqttPublishTagJson: document.getElementById('newDevMqttPublishTagJson'),
-  newDevMqttPublishMemoryTags: document.getElementById('newDevMqttPublishMemoryTags'),
-  newDevMqttPublishSystemTags: document.getElementById('newDevMqttPublishSystemTags'),
-  newDevMqttPublishModeRow: document.getElementById('newDevMqttPublishModeRow'),
-  newDevMqttPublishMode: document.getElementById('newDevMqttPublishMode'),
-  newDevMqttPublishIntervalRow: document.getElementById('newDevMqttPublishIntervalRow'),
-  newDevMqttPublishIntervalMs: document.getElementById('newDevMqttPublishIntervalMs'),
-  newDevMqttPublishMinRow: document.getElementById('newDevMqttPublishMinRow'),
-  newDevMqttPublishMinMs: document.getElementById('newDevMqttPublishMinMs'),
   newDevMqttTestRow: document.getElementById('newDevMqttTestRow'),
   newDevMqttTestBtn: document.getElementById('newDevMqttTestBtn'),
   newDevCancelBtn: document.getElementById('newDevCancelBtn'),
@@ -1369,8 +1351,10 @@ const state = {
   flowRuntime: {},
   flowSelectedId: '',
   flowSelectedNodeId: '',
+  flowSelectedNodeIds: new Set(),
   flowSelectedEdgeIndex: -1,
   flowConnectingFrom: '',
+  flowConnectingPort: '',
   flowDirty: false,
   flowInteracting: false,
   flowRefreshTimer: 0,
@@ -4086,13 +4070,21 @@ function preloadLoggerTagPickerCache() {
 
 const FLOW_NODE_TYPES = {
   opc_tag_input: { label: 'Tag Input', kind: 'input', defaults: { connection_id: '', tag_name: '', poll_interval_ms: 500, only_on_change: true } },
-  mqtt_subscribe: { label: 'MQTT Subscribe', kind: 'input', defaults: { topic: '', payload_format: 'auto', json_path: '' } },
+  mqtt_subscribe: { label: 'MQTT Subscribe', kind: 'input', defaults: { connection_id: '', topic: '', payload_format: 'auto', json_path: '' } },
   manual_input: { label: 'Manual Test', kind: 'input', defaults: {} },
+  split: { label: 'Split', kind: 'process', defaults: {} },
+  switch: { label: 'Switch', kind: 'process', defaults: { rules: [{ value: '0', label: '0' }], otherwise: true } },
   linear_map: { label: 'Scale / Map', kind: 'process', defaults: { input_min: 0, input_max: 100, output_min: 0, output_max: 100, clamp: false } },
+  bit_operations: { label: 'Bit Operations', kind: 'process', defaults: { operation: 'and', operand: '0x0001', word_size: 16, output_mode: 'result', boolean_test: 'nonzero', comparison: '0', invert_boolean: false } },
+  combine: { label: 'Combine Bytes / Words', kind: 'process', defaults: { mode: 'two_bytes', signed_result: false } },
+  build_json: { label: 'Build JSON', kind: 'process', defaults: { fields: [{ key: 'value', label: 'Value' }] } },
+  compute: { label: 'Compute', kind: 'process', defaults: { inputs: [{ name: 'value', label: 'Value' }], expression: 'value' } },
+  delay: { label: 'Delay / Rate Limit', kind: 'process', defaults: { action: 'delay_each', delay_ms: 1000, display_unit: 'seconds' } },
+  trigger: { label: 'Trigger', kind: 'process', defaults: { send_initial: true, initial_value: 'false', duration_ms: 60000, display_unit: 'seconds', send_delayed: true, delayed_value: 'true', extend_delay: true, reset_enabled: false, reset_value: 'reset' } },
   boolean_invert: { label: 'Invert Boolean', kind: 'process', defaults: {} },
   datatype_convert: { label: 'Convert Type', kind: 'process', defaults: { datatype: 'float' } },
   opc_tag_write: { label: 'Tag Output', kind: 'output', defaults: { connection_id: '', tag_name: '', stale_after_ms: 0 } },
-  mqtt_publish: { label: 'MQTT Publish', kind: 'output', defaults: { topic: '', qos: 0, retain: false, payload_format: 'scalar' } },
+  mqtt_publish: { label: 'MQTT Publish', kind: 'output', defaults: { connection_id: '', topic: '', qos: 0, retain: false, payload_format: 'scalar' } },
   debug: { label: 'Debug', kind: 'output', defaults: {} }
 };
 const FLOW_NODE_WIDTH = 150;
@@ -4129,10 +4121,31 @@ function flowSafeId(prefix = 'node') {
 function flowNodeSummary(node) {
   const cfg = node?.config || {};
   if (node.type === 'opc_tag_input' || node.type === 'opc_tag_write') return [cfg.connection_id, cfg.tag_name].filter(Boolean).join(' / ') || 'Select a tag';
-  if (node.type === 'mqtt_subscribe' || node.type === 'mqtt_publish') return cfg.topic || 'Enter a topic';
+  if (node.type === 'mqtt_subscribe' || node.type === 'mqtt_publish') return [cfg.connection_id ? displayConnectionName(cfg.connection_id) : '', cfg.topic].filter(Boolean).join(' / ') || 'Select a broker and topic';
+  if (node.type === 'split') return 'Object/array → keyed values';
+  if (node.type === 'switch') return `${Array.isArray(cfg.rules) ? cfg.rules.length : 0} key rule(s)`;
   if (node.type === 'linear_map') return `${cfg.input_min ?? 0}–${cfg.input_max ?? 100} → ${cfg.output_min ?? 0}–${cfg.output_max ?? 100}`;
+  if (node.type === 'bit_operations') {
+    const names = { and: 'AND', or: 'OR', xor: 'XOR', and_not: 'AND NOT', not: 'NOT', shift_left: 'Shift left', shift_right: 'Shift right', low_byte: 'Low byte', high_byte: 'High byte', low_word: 'Low word', high_word: 'High word' };
+    const usesOperand = ['and','or','xor','and_not','shift_left','shift_right'].includes(cfg.operation);
+    return `${names[cfg.operation] || 'AND'}${usesOperand ? ` ${cfg.operand || '0'}` : ''} → ${cfg.output_mode === 'boolean' ? 'True/False' : 'Result'}`;
+  }
+  if (node.type === 'combine') return ({ two_bytes: 'High + low byte → 16 bit', two_words: 'High + low word → 32 bit', four_bytes: 'Four bytes → 32 bit' })[cfg.mode] || 'Combine values';
+  if (node.type === 'build_json') return `${Array.isArray(cfg.fields) ? cfg.fields.length : 0} JSON field(s)`;
+  if (node.type === 'compute') return cfg.expression || 'Enter expression';
+  if (node.type === 'delay') {
+    const duration = cfg.display_unit === 'milliseconds' ? `${cfg.delay_ms ?? 1000} ms` : `${Number(cfg.delay_ms ?? 1000) / 1000} sec`;
+    return `${cfg.action === 'rate_limit' ? 'Rate limit' : 'Delay each'} · ${duration}`;
+  }
+  if (node.type === 'trigger') return `Then ${cfg.delayed_value ?? 'true'} after ${Number(cfg.duration_ms ?? 60000) / 1000} sec`;
   if (node.type === 'datatype_convert') return `to ${cfg.datatype || 'string'}`;
   return FLOW_NODE_TYPES[node?.type]?.label || node?.type || '';
+}
+
+function flowNodeDisplayLabel(node) {
+  const configured = String(node?.label || '');
+  if (node?.type === 'combine' && (!configured || configured === 'Combine')) return 'Combine Bytes / Words';
+  return configured || FLOW_NODE_TYPES[node?.type]?.label || node?.type || '';
 }
 
 function flowNodeRuntimeSummary(nodeId) {
@@ -4158,7 +4171,8 @@ function flowNodeCanvasValue(nodeId) {
   let valueText = '';
   try { valueText = typeof runtime.last_value === 'string' ? runtime.last_value : JSON.stringify(runtime.last_value); }
   catch { valueText = String(runtime.last_value); }
-  return valueText || '—';
+  const key = String(runtime.last_key || '');
+  return `${key ? `${key}: ` : ''}${valueText || '—'}`;
 }
 
 async function ensureFlowAvailableTags({ force = false } = {}) {
@@ -4194,6 +4208,262 @@ function flowOpcTagChoices(connectionId, currentValue = '', writableOnly = false
   return [['', prompt], ...names.map((name) => [name, name])];
 }
 
+function flowMqttConnectionChoices(currentValue = '') {
+  const choices = [];
+  for (const [pathRel, obj] of state.connObjCache || []) {
+    if (!isMqttConnectionObj(obj)) continue;
+    const id = String(obj?.id || connectionIdForConnFilePath(pathRel) || '').trim();
+    if (id) choices.push([id, String(obj?.description || id)]);
+  }
+  choices.sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base', numeric: true }));
+  const current = String(currentValue || '');
+  if (current && !choices.some(([id]) => id === current)) choices.unshift([current, `${current} (configured value)`]);
+  return [['', choices.length ? 'Select an MQTT connection…' : 'No MQTT connections configured'], ...choices];
+}
+
+function flowSwitchOutputChoices(node) {
+  const rules = Array.isArray(node?.config?.rules) ? node.config.rules : [];
+  const choices = rules.map((rule, index) => [`rule_${index}`, String(rule?.label || rule?.value || `Rule ${index + 1}`)]);
+  if (node?.config?.otherwise !== false) choices.push(['otherwise', 'No match']);
+  return choices.length ? choices : [['rule_0', 'Rule 1']];
+}
+
+function flowNodeHeight(node) {
+  if (node?.type === 'switch') return Math.max(FLOW_NODE_HEIGHT, flowSwitchOutputChoices(node).length * 24 + 40);
+  if (['combine','build_json','compute'].includes(node?.type)) return Math.max(FLOW_NODE_HEIGHT, flowMultiInputChoices(node).length * 24 + 40);
+  return FLOW_NODE_HEIGHT;
+}
+
+function flowNodePortY(node, port = '') {
+  const height = flowNodeHeight(node);
+  if (node?.type !== 'switch') return height / 2;
+  const choices = flowSwitchOutputChoices(node);
+  const index = Math.max(0, choices.findIndex(([value]) => value === port));
+  return 40 + index * 24;
+}
+
+function flowCombineInputChoices(node) {
+  const mode = node?.config?.mode || 'two_bytes';
+  if (mode === 'two_words') return [['high_word','High word'],['low_word','Low word']];
+  if (mode === 'four_bytes') return [['byte_3','Byte 3 (highest)'],['byte_2','Byte 2'],['byte_1','Byte 1'],['byte_0','Byte 0 (lowest)']];
+  return [['high_byte','High byte'],['low_byte','Low byte']];
+}
+
+function flowMultiInputChoices(node) {
+  if (node?.type === 'build_json') {
+    const fields = Array.isArray(node?.config?.fields) ? node.config.fields : [];
+    return fields.map((field, index) => [`field_${index}`, String(field?.label || field?.key || `Field ${index + 1}`)]);
+  }
+  if (node?.type === 'compute') {
+    const inputs = Array.isArray(node?.config?.inputs) ? node.config.inputs : [];
+    return inputs.map((input, index) => [`input_${index}`, String(input?.label || input?.name || `Input ${index + 1}`)]);
+  }
+  return flowCombineInputChoices(node);
+}
+
+function flowNodeInputPortY(node, port = '') {
+  const height = flowNodeHeight(node);
+  if (!['combine','build_json','compute'].includes(node?.type)) return height / 2;
+  const choices = flowMultiInputChoices(node);
+  const index = Math.max(0, choices.findIndex(([value]) => value === port));
+  return 40 + index * 24;
+}
+
+function flowSwitchOutputLabel(node, port) {
+  return flowSwitchOutputChoices(node).find(([value]) => value === port)?.[1] || port || 'Rule 1';
+}
+
+function flowSwitchRoutesEditor(node, draft) {
+  const cfg = node.config || (node.config = {});
+  cfg.check_all = false;
+  delete cfg.selected_output;
+  if (!Array.isArray(cfg.rules) || !cfg.rules.length) cfg.rules = [{ value: '0', label: '0' }];
+  const wrap = document.createElement('div'); wrap.className = 'flow-switch-editor';
+  const heading = document.createElement('div'); heading.className = 'flow-switch-heading';
+  heading.innerHTML = '<strong>Routes</strong><span class="hint">Send each Split key to a named output.</span>';
+  wrap.appendChild(heading);
+  const list = document.createElement('div'); list.className = 'flow-switch-routes';
+  const columns = document.createElement('div'); columns.className = 'flow-switch-route flow-switch-route-head';
+  columns.innerHTML = '<span>Incoming key</span><span>Output label</span><span></span>';
+  list.appendChild(columns);
+  cfg.rules.forEach((rule, index) => {
+    const row = document.createElement('div'); row.className = 'flow-switch-route';
+    const key = document.createElement('input'); key.type = 'text'; key.value = String(rule?.value || ''); key.placeholder = 'Key'; key.title = 'Split key to match';
+    const name = document.createElement('input'); name.type = 'text'; name.value = String(rule?.label || rule?.value || ''); name.placeholder = 'Output name'; name.title = 'Friendly name for this route';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn danger'; remove.textContent = '×'; remove.title = 'Remove route';
+    key.addEventListener('input', () => { rule.value = key.value; if (!name.value.trim()) rule.label = key.value; flowMarkDirty(); renderFlowCanvas(); });
+    name.addEventListener('input', () => { rule.label = name.value; flowMarkDirty(); renderFlowCanvas(); });
+    remove.addEventListener('click', () => {
+      if (cfg.rules.length <= 1) { flowSetStatus('A Switch must have at least one route.', true); return; }
+      draft.edges = (draft.edges || []).flatMap((edge) => {
+        if (edge.from !== node.id) return [edge];
+        const match = String(edge.from_port || '').match(/^rule_(\d+)$/);
+        if (!match) return [edge];
+        const oldIndex = Number(match[1]);
+        if (oldIndex === index) return [];
+        return [{ ...edge, from_port: oldIndex > index ? `rule_${oldIndex - 1}` : edge.from_port }];
+      });
+      cfg.rules.splice(index, 1); flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+    });
+    row.append(key, name, remove); list.appendChild(row);
+  });
+  wrap.appendChild(list);
+  const actions = document.createElement('div'); actions.className = 'row-actions';
+  const add = document.createElement('button'); add.type = 'button'; add.className = 'btn'; add.textContent = 'Add Route';
+  add.addEventListener('click', () => { cfg.rules.push({ value: '', label: `Route ${cfg.rules.length + 1}` }); flowMarkDirty(); renderFlowInspector(); renderFlowCanvas(); });
+  const generate = document.createElement('button'); generate.type = 'button'; generate.className = 'btn'; generate.textContent = 'Generate Numeric Routes';
+  generate.addEventListener('click', () => {
+    const startRaw = window.prompt('First numeric key:', '0'); if (startRaw === null) return;
+    const countRaw = window.prompt('How many routes?', '50'); if (countRaw === null) return;
+    const start = Math.trunc(Number(startRaw)), count = Math.trunc(Number(countRaw));
+    if (!Number.isFinite(start) || !Number.isFinite(count) || count < 1 || count > 500) { flowSetStatus('Enter a valid start and a route count from 1 to 500.', true); return; }
+    if ((draft.edges || []).some((edge) => edge.from === node.id) && !window.confirm('Generating routes will remove existing wires from this Switch. Continue?')) return;
+    draft.edges = (draft.edges || []).filter((edge) => edge.from !== node.id);
+    cfg.rules = Array.from({ length: count }, (_, offset) => ({ value: String(start + offset), label: String(start + offset) }));
+    flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+  });
+  actions.append(add, generate); wrap.appendChild(actions);
+  const options = document.createElement('div'); options.className = 'flow-switch-options';
+  const otherwise = document.createElement('label'); otherwise.className = 'check-pill';
+  const otherwiseInput = document.createElement('input'); otherwiseInput.type = 'checkbox'; otherwiseInput.checked = cfg.otherwise !== false;
+  otherwise.append(otherwiseInput, document.createTextNode(' Add “No match” output'));
+  otherwiseInput.addEventListener('change', () => {
+    cfg.otherwise = otherwiseInput.checked;
+    cfg.check_all = false;
+    if (!cfg.otherwise) draft.edges = (draft.edges || []).filter((edge) => edge.from !== node.id || edge.from_port !== 'otherwise');
+    flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+  });
+  options.append(otherwise); wrap.appendChild(options);
+  const help = document.createElement('div'); help.className = 'hint'; help.textContent = 'Each route has its own labeled connector on the Switch node. “No match” receives keys that are not listed above.'; wrap.appendChild(help);
+  return wrap;
+}
+
+function flowBuildJsonEditor(node, draft) {
+  const cfg = node.config || (node.config = {});
+  if (!Array.isArray(cfg.fields) || !cfg.fields.length) cfg.fields = [{ key: 'value', label: 'Value' }];
+  const wrap = document.createElement('div'); wrap.className = 'flow-switch-editor';
+  const heading = document.createElement('div'); heading.className = 'flow-switch-heading';
+  heading.innerHTML = '<strong>JSON fields</strong><span class="hint">One labeled input per field.</span>';
+  wrap.appendChild(heading);
+  const list = document.createElement('div'); list.className = 'flow-switch-routes';
+  const columns = document.createElement('div'); columns.className = 'flow-switch-route flow-switch-route-head';
+  columns.innerHTML = '<span>JSON key</span><span>Input label</span><span></span>'; list.appendChild(columns);
+  cfg.fields.forEach((field, index) => {
+    const row = document.createElement('div'); row.className = 'flow-switch-route';
+    const key = document.createElement('input'); key.type = 'text'; key.value = String(field?.key || ''); key.placeholder = 'temperature';
+    const label = document.createElement('input'); label.type = 'text'; label.value = String(field?.label || field?.key || ''); label.placeholder = 'Temperature';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn danger'; remove.textContent = '×'; remove.title = 'Remove field';
+    key.addEventListener('input', () => { field.key = key.value; if (!label.value.trim()) field.label = key.value; flowMarkDirty(); renderFlowCanvas(); });
+    label.addEventListener('input', () => { field.label = label.value; flowMarkDirty(); renderFlowCanvas(); });
+    remove.addEventListener('click', () => {
+      if (cfg.fields.length <= 1) { flowSetStatus('Build JSON must have at least one field.', true); return; }
+      draft.edges = (draft.edges || []).flatMap((edge) => {
+        if (edge.to !== node.id) return [edge];
+        const match = String(edge.to_port || '').match(/^field_(\d+)$/);
+        if (!match) return [edge];
+        const oldIndex = Number(match[1]);
+        if (oldIndex === index) return [];
+        return [{ ...edge, to_port: oldIndex > index ? `field_${oldIndex - 1}` : edge.to_port }];
+      });
+      cfg.fields.splice(index, 1); flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+    });
+    row.append(key, label, remove); list.appendChild(row);
+  });
+  wrap.appendChild(list);
+  const add = document.createElement('button'); add.type = 'button'; add.className = 'btn'; add.textContent = 'Add JSON Field';
+  add.addEventListener('click', () => { cfg.fields.push({ key: `field_${cfg.fields.length + 1}`, label: `Field ${cfg.fields.length + 1}` }); flowMarkDirty(); renderFlowCanvas(); renderFlowInspector(); });
+  wrap.appendChild(add);
+  const help = document.createElement('div'); help.className = 'hint';
+  help.textContent = 'The node waits for every input to have a valid value, then emits a complete JSON object whenever any input updates.';
+  wrap.appendChild(help);
+  return wrap;
+}
+
+function flowComputeEditor(node, draft) {
+  const cfg = node.config || (node.config = {});
+  if (!Array.isArray(cfg.inputs) || !cfg.inputs.length) cfg.inputs = [{ name: 'value', label: 'Value' }];
+  const wrap = document.createElement('div'); wrap.className = 'flow-switch-editor';
+  wrap.appendChild(flowPropertyRow('Expression', 'expression', cfg.expression || 'value', { type: 'textarea', rows: 3, placeholder: 'round((flow * pressure) / runtime, 2)' }));
+  const heading = document.createElement('div'); heading.className = 'flow-switch-heading'; heading.innerHTML = '<strong>Inputs</strong><span class="hint">Names are used in the expression.</span>'; wrap.appendChild(heading);
+  const list = document.createElement('div'); list.className = 'flow-switch-routes';
+  const columns = document.createElement('div'); columns.className = 'flow-switch-route flow-switch-route-head'; columns.innerHTML = '<span>Expression name</span><span>Input label</span><span></span>'; list.appendChild(columns);
+  cfg.inputs.forEach((input, index) => {
+    const row = document.createElement('div'); row.className = 'flow-switch-route';
+    const name = document.createElement('input'); name.type = 'text'; name.value = String(input?.name || ''); name.placeholder = 'flow';
+    const label = document.createElement('input'); label.type = 'text'; label.value = String(input?.label || input?.name || ''); label.placeholder = 'Flow';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn danger'; remove.textContent = '×';
+    name.addEventListener('input', () => { input.name = name.value; if (!label.value.trim()) input.label = name.value; flowMarkDirty(); renderFlowCanvas(); });
+    label.addEventListener('input', () => { input.label = label.value; flowMarkDirty(); renderFlowCanvas(); });
+    remove.addEventListener('click', () => {
+      if (cfg.inputs.length <= 1) { flowSetStatus('Compute must have at least one input.', true); return; }
+      draft.edges = (draft.edges || []).flatMap((edge) => {
+        if (edge.to !== node.id) return [edge]; const match = String(edge.to_port || '').match(/^input_(\d+)$/); if (!match) return [edge];
+        const oldIndex = Number(match[1]); if (oldIndex === index) return [];
+        return [{ ...edge, to_port: oldIndex > index ? `input_${oldIndex - 1}` : edge.to_port }];
+      });
+      cfg.inputs.splice(index, 1); flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+    });
+    row.append(name, label, remove); list.appendChild(row);
+  });
+  wrap.appendChild(list);
+  const add = document.createElement('button'); add.type = 'button'; add.className = 'btn'; add.textContent = 'Add Input';
+  add.addEventListener('click', () => { const number = cfg.inputs.length + 1; cfg.inputs.push({ name: `value${number}`, label: `Value ${number}` }); flowMarkDirty(); renderFlowCanvas(); renderFlowInspector(); });
+  wrap.appendChild(add);
+  const help = document.createElement('div'); help.className = 'hint'; help.textContent = 'Operators: + − × / %. Functions: abs, min, max, round, floor, ceil, sqrt, pow, clamp.'; wrap.appendChild(help);
+  return wrap;
+}
+
+function flowDelayEditor(node) {
+  const cfg = node.config || (node.config = {});
+  const unit = cfg.display_unit === 'milliseconds' ? 'milliseconds' : 'seconds';
+  const wrap = document.createElement('div'); wrap.className = 'flow-switch-editor';
+  wrap.appendChild(flowPropertyRow('Action', 'action', cfg.action || 'delay_each', { choices: [['delay_each','Delay each message'],['rate_limit','Rate limit messages']] }));
+  const row = document.createElement('div'); row.className = 'form-row';
+  const label = document.createElement('label'); label.textContent = 'Delay';
+  const controls = document.createElement('div'); controls.className = 'row-actions';
+  const duration = document.createElement('input'); duration.type = 'number'; duration.min = '0'; duration.step = unit === 'milliseconds' ? '1' : '0.1';
+  duration.value = String(unit === 'milliseconds' ? Number(cfg.delay_ms ?? 1000) : Number(cfg.delay_ms ?? 1000) / 1000);
+  const units = document.createElement('select'); units.add(new Option('Seconds', 'seconds')); units.add(new Option('Milliseconds', 'milliseconds')); units.value = unit;
+  const update = () => {
+    const value = Math.max(0, Number(duration.value || 0));
+    cfg.display_unit = units.value;
+    cfg.delay_ms = Math.round(units.value === 'milliseconds' ? value : value * 1000);
+    flowMarkDirty(); renderFlowCanvas();
+  };
+  duration.addEventListener('input', update);
+  units.addEventListener('change', () => { cfg.display_unit = units.value; renderFlowInspector(); });
+  controls.append(duration, units); row.append(label, controls); wrap.appendChild(row);
+  const explanation = document.createElement('div'); explanation.className = 'hint';
+  explanation.textContent = cfg.action === 'rate_limit'
+    ? 'Publishes at most once per interval. While waiting, older pending values are replaced so only the newest value is released.'
+    : 'Every message waits this long before continuing. Use this for event sequencing, not continuously updating process values.';
+  wrap.appendChild(explanation); return wrap;
+}
+
+function flowTriggerEditor(node) {
+  const cfg = node.config || (node.config = {});
+  const wrap = document.createElement('div'); wrap.className = 'flow-switch-editor';
+  wrap.appendChild(flowPropertyRow('Send immediately', 'send_initial', cfg.send_initial !== false, { type: 'checkbox' }));
+  if (cfg.send_initial !== false) wrap.appendChild(flowPropertyRow('Initial value', 'initial_value', cfg.initial_value ?? 'false', { placeholder: 'false, 0, text, or JSON' }));
+  const unit = cfg.display_unit === 'milliseconds' ? 'milliseconds' : 'seconds';
+  const row = document.createElement('div'); row.className = 'form-row';
+  const label = document.createElement('label'); label.textContent = 'Wait';
+  const controls = document.createElement('div'); controls.className = 'row-actions';
+  const duration = document.createElement('input'); duration.type = 'number'; duration.min = unit === 'milliseconds' ? '1' : '0.001'; duration.step = unit === 'milliseconds' ? '1' : '0.1';
+  duration.value = String(unit === 'milliseconds' ? Number(cfg.duration_ms ?? 60000) : Number(cfg.duration_ms ?? 60000) / 1000);
+  const units = document.createElement('select'); units.add(new Option('Seconds', 'seconds')); units.add(new Option('Milliseconds', 'milliseconds')); units.value = unit;
+  duration.addEventListener('input', () => { const value = Math.max(0, Number(duration.value || 0)); cfg.duration_ms = Math.max(1, Math.round(unit === 'milliseconds' ? value : value * 1000)); flowMarkDirty(); renderFlowCanvas(); });
+  units.addEventListener('change', () => { cfg.display_unit = units.value; flowMarkDirty(); renderFlowInspector(); });
+  controls.append(duration, units); row.append(label, controls); wrap.appendChild(row);
+  wrap.appendChild(flowPropertyRow('Send after waiting', 'send_delayed', cfg.send_delayed !== false, { type: 'checkbox' }));
+  if (cfg.send_delayed !== false) wrap.appendChild(flowPropertyRow('Delayed value', 'delayed_value', cfg.delayed_value ?? 'true', { placeholder: 'true, 1, text, or JSON' }));
+  wrap.appendChild(flowPropertyRow('Extend wait on each message', 'extend_delay', cfg.extend_delay !== false, { type: 'checkbox' }));
+  wrap.appendChild(flowPropertyRow('Reset when value matches', 'reset_enabled', Boolean(cfg.reset_enabled), { type: 'checkbox' }));
+  if (cfg.reset_enabled) wrap.appendChild(flowPropertyRow('Reset value', 'reset_value', cfg.reset_value ?? 'reset', { placeholder: 'reset, false, 0, or JSON' }));
+  const hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = 'Values accept true/false, numbers, JSON, or plain text. A reset cancels the pending delayed output.'; wrap.appendChild(hint);
+  return wrap;
+}
+
 function flowRenderWires() {
   if (!els.flowWires || !els.flowCanvas) return;
   const draft = flowCurrentDraft();
@@ -4202,8 +4472,8 @@ function flowRenderWires() {
   els.flowWires.innerHTML = (draft?.edges || []).map((edge, index) => {
     const from = nodes.get(String(edge.from)), to = nodes.get(String(edge.to));
     if (!from || !to) return '';
-    const x1 = Number(from.x || 0) + FLOW_NODE_WIDTH, y1 = Number(from.y || 0) + FLOW_NODE_HEIGHT / 2;
-    const x2 = Number(to.x || 0), y2 = Number(to.y || 0) + FLOW_NODE_HEIGHT / 2;
+    const x1 = Number(from.x || 0) + FLOW_NODE_WIDTH, y1 = Number(from.y || 0) + flowNodePortY(from, edge.from_port || '');
+    const x2 = Number(to.x || 0), y2 = Number(to.y || 0) + flowNodeInputPortY(to, edge.to_port || '');
     const bend = Math.max(45, Math.abs(x2 - x1) * .45);
     return `<path class="flow-wire${state.flowSelectedEdgeIndex === index ? ' is-selected' : ''}" data-edge-index="${index}" d="M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}" />`;
   }).join('');
@@ -4212,6 +4482,7 @@ function flowRenderWires() {
       event.stopPropagation();
       state.flowSelectedEdgeIndex = Number(wire.dataset.edgeIndex);
       state.flowSelectedNodeId = '';
+      state.flowSelectedNodeIds = new Set();
       flowRenderWires();
       renderFlowInspector();
     });
@@ -4222,41 +4493,103 @@ function flowResizeCanvasToContent() {
   if (!els.flowCanvas) return;
   const draft = flowCurrentDraft();
   const viewportHeight = els.flowCanvas.parentElement?.clientHeight || 0;
-  const nodeBottom = Math.max(...(draft?.nodes || []).map((node) => Number(node.y || 0) + FLOW_NODE_HEIGHT + 50), 0);
+  const nodeBottom = Math.max(...(draft?.nodes || []).map((node) => Number(node.y || 0) + flowNodeHeight(node) + 50), 0);
   els.flowCanvas.style.width = `${Math.max(FLOW_CANVAS_MIN_WIDTH, ...(draft?.nodes || []).map((node) => Number(node.x || 0) + FLOW_NODE_WIDTH + 80), 0)}px`;
   els.flowCanvas.style.height = `${Math.max(FLOW_CANVAS_MIN_HEIGHT, viewportHeight, nodeBottom)}px`;
   flowRenderWires();
 }
 
 function flowSelectNode(nodeId) {
-  state.flowSelectedNodeId = String(nodeId || '');
+  const id = String(nodeId || '');
+  state.flowSelectedNodeId = id;
+  state.flowSelectedNodeIds = new Set(id ? [id] : []);
   state.flowSelectedEdgeIndex = -1;
   renderFlowCanvas();
   renderFlowInspector();
 }
 
-function flowConnectTo(nodeId) {
+function flowApplySelectionClasses() {
+  els.flowCanvas?.querySelectorAll('.flow-node[data-node-id]').forEach((element) => {
+    element.classList.toggle('is-selected', state.flowSelectedNodeIds.has(String(element.dataset.nodeId || '')));
+  });
+}
+
+function flowClearNodeSelection() {
+  state.flowSelectedNodeId = '';
+  state.flowSelectedNodeIds = new Set();
+  state.flowSelectedEdgeIndex = -1;
+  flowApplySelectionClasses(); flowRenderWires(); renderFlowInspector();
+}
+
+function flowBeginBoxSelection(event) {
+  if (!els.flowCanvas || event.button !== 0 || event.target.closest('.flow-node') || event.target.closest('.flow-wire')) return;
+  event.preventDefault();
+  const bounds = els.flowCanvas.getBoundingClientRect();
+  const startX = event.clientX - bounds.left, startY = event.clientY - bounds.top;
+  const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+  const previous = additive ? new Set(state.flowSelectedNodeIds) : new Set();
+  if (!additive) {
+    state.flowSelectedNodeIds = new Set(); state.flowSelectedNodeId = ''; state.flowSelectedEdgeIndex = -1;
+    flowApplySelectionClasses(); flowRenderWires();
+  }
+  const box = document.createElement('div'); box.className = 'flow-selection-box';
+  box.style.left = `${startX}px`; box.style.top = `${startY}px`; els.flowCanvas.appendChild(box);
+  state.flowInteracting = true;
+  const move = (moveEvent) => {
+    const currentX = moveEvent.clientX - bounds.left, currentY = moveEvent.clientY - bounds.top;
+    const left = Math.min(startX, currentX), top = Math.min(startY, currentY);
+    const right = Math.max(startX, currentX), bottom = Math.max(startY, currentY);
+    box.style.left = `${left}px`; box.style.top = `${top}px`; box.style.width = `${right - left}px`; box.style.height = `${bottom - top}px`;
+    const selected = new Set(previous);
+    (flowCurrentDraft()?.nodes || []).forEach((node) => {
+      const nodeLeft = Number(node.x || 0), nodeTop = Number(node.y || 0);
+      const intersects = nodeLeft <= right && nodeLeft + FLOW_NODE_WIDTH >= left && nodeTop <= bottom && nodeTop + flowNodeHeight(node) >= top;
+      if (intersects) selected.add(String(node.id));
+    });
+    state.flowSelectedNodeIds = selected;
+    state.flowSelectedNodeId = Array.from(selected).at(-1) || '';
+    state.flowSelectedEdgeIndex = -1; flowApplySelectionClasses();
+  };
+  const finish = () => {
+    document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', finish); document.removeEventListener('pointercancel', cancel);
+    box.remove(); state.flowInteracting = false; renderFlowInspector();
+  };
+  const cancel = () => {
+    document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', finish); document.removeEventListener('pointercancel', cancel);
+    box.remove(); state.flowInteracting = false; state.flowSelectedNodeIds = previous; state.flowSelectedNodeId = Array.from(previous).at(-1) || '';
+    flowApplySelectionClasses(); renderFlowInspector();
+  };
+  document.addEventListener('pointermove', move); document.addEventListener('pointerup', finish); document.addEventListener('pointercancel', cancel);
+}
+
+function flowConnectTo(nodeId, toPort = '') {
   const draft = flowCurrentDraft();
   const from = String(state.flowConnectingFrom || ''), to = String(nodeId || '');
   if (!draft || !from || !to || from === to) return;
   draft.edges = Array.isArray(draft.edges) ? draft.edges : [];
-  if (!draft.edges.some((edge) => edge.from === from && edge.to === to)) {
-    draft.edges.push({ from, to });
+  if (toPort) draft.edges = draft.edges.filter((edge) => edge.to !== to || String(edge.to_port || '') !== String(toPort));
+  if (!draft.edges.some((edge) => edge.from === from && edge.to === to && String(edge.from_port || '') === String(state.flowConnectingPort || '') && String(edge.to_port || '') === String(toPort || ''))) {
+    const edge = { from, to };
+    if (state.flowConnectingPort) edge.from_port = state.flowConnectingPort;
+    if (toPort) edge.to_port = toPort;
+    draft.edges.push(edge);
     flowMarkDirty();
   }
   state.flowConnectingFrom = '';
+  state.flowConnectingPort = '';
   renderFlowCanvas();
   renderFlowInspector();
 }
 
-function flowBeginConnection(event, node) {
+function flowBeginConnection(event, node, port = '') {
   if (!els.flowCanvas || !els.flowWires) return;
   event.preventDefault();
   event.stopPropagation();
   state.flowConnectingFrom = node.id;
+  state.flowConnectingPort = String(port || '');
   state.flowInteracting = true;
   const startX = Number(node.x || 0) + FLOW_NODE_WIDTH;
-  const startY = Number(node.y || 0) + FLOW_NODE_HEIGHT / 2;
+  const startY = Number(node.y || 0) + flowNodePortY(node, port);
   const preview = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   preview.classList.add('flow-wire', 'is-preview');
   els.flowWires.appendChild(preview);
@@ -4281,9 +4614,12 @@ function flowBeginConnection(event, node) {
     preview.remove();
     els.flowCanvas.querySelectorAll('.flow-node.is-connect-target').forEach((element) => element.classList.remove('is-connect-target'));
     state.flowInteracting = false;
-    const targetElement = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest('.flow-node');
+    const hit = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
+    const inputPort = hit?.closest('.flow-port.input');
+    const targetElement = hit?.closest('.flow-node');
     const target = flowCurrentDraft()?.nodes?.find((candidate) => candidate.id === targetElement?.dataset.nodeId);
-    if (target && target.id !== node.id && FLOW_NODE_TYPES[target.type]?.kind !== 'input') flowConnectTo(target.id);
+    if (target && target.id !== node.id && FLOW_NODE_TYPES[target.type]?.kind !== 'input' && (!['combine','build_json','compute'].includes(target.type) || inputPort))
+      flowConnectTo(target.id, inputPort?.dataset.port || '');
     else { state.flowConnectingFrom = ''; renderFlowCanvas(); }
   };
   const cancel = () => {
@@ -4292,6 +4628,7 @@ function flowBeginConnection(event, node) {
     document.removeEventListener('pointercancel', cancel);
     preview.remove();
     state.flowConnectingFrom = '';
+    state.flowConnectingPort = '';
     state.flowInteracting = false;
     renderFlowCanvas();
   };
@@ -4311,33 +4648,76 @@ function renderFlowCanvas() {
     const definition = FLOW_NODE_TYPES[node.type] || { label: node.type, kind: 'process' };
     const runtime = flowRuntimeFor()?.nodes?.[node.id] || {};
     const element = document.createElement('div');
-    element.className = `flow-node${state.flowSelectedNodeId === node.id ? ' is-selected' : ''}${runtime.last_error ? ' has-error' : ''}`;
+    element.className = `flow-node${node.type === 'switch' ? ' flow-node-switch' : ''}${['combine','build_json','compute'].includes(node.type) ? ' flow-node-multi-input' : ''}${state.flowSelectedNodeIds.has(String(node.id)) || state.flowSelectedNodeId === node.id ? ' is-selected' : ''}${runtime.last_error ? ' has-error' : ''}`;
     element.dataset.nodeId = node.id;
     element.style.left = `${Math.max(10, Number(node.x || 20))}px`;
     element.style.top = `${Math.max(10, Number(node.y || 20))}px`;
-    element.innerHTML = `<div class="flow-node-title">${escapeHtml(String(node.label || definition.label))}</div>` +
+    element.style.height = `${flowNodeHeight(node)}px`;
+    element.innerHTML = `<div class="flow-node-title">${escapeHtml(flowNodeDisplayLabel(node) || definition.label)}</div>` +
       `<div class="flow-node-body">${escapeHtml(flowNodeSummary(node))}<div class="flow-node-runtime" title="${escapeHtml(flowNodeCanvasValue(node.id))}">${escapeHtml(flowNodeCanvasValue(node.id))}</div></div>`;
-    if (definition.kind !== 'input') {
+    if (definition.kind !== 'input' && ['combine','build_json','compute'].includes(node.type)) {
+      flowMultiInputChoices(node).forEach(([port, label]) => {
+        const input = document.createElement('button'); input.type = 'button'; input.className = 'flow-port input'; input.dataset.port = port;
+        input.style.top = `${flowNodeInputPortY(node, port) - 6.5}px`; input.title = `Connect: ${label}`;
+        input.addEventListener('click', (event) => { event.stopPropagation(); flowConnectTo(node.id, port); });
+        const portLabel = document.createElement('span'); portLabel.className = 'flow-multi-input-port-label';
+        portLabel.style.top = `${flowNodeInputPortY(node, port)}px`; portLabel.textContent = label; portLabel.title = label;
+        element.append(input, portLabel);
+      });
+    } else if (definition.kind !== 'input') {
       const input = document.createElement('button'); input.type = 'button'; input.className = 'flow-port input'; input.title = 'Connect input';
+      input.style.top = `${flowNodeHeight(node) / 2 - 6.5}px`;
       input.addEventListener('click', (event) => { event.stopPropagation(); flowConnectTo(node.id); }); element.appendChild(input);
     }
-    if (definition.kind !== 'output') {
-      const output = document.createElement('button'); output.type = 'button'; output.className = `flow-port output${state.flowConnectingFrom === node.id ? ' is-connecting' : ''}`; output.title = 'Drag to connect';
+    if (definition.kind !== 'output' && node.type === 'switch') {
+      flowSwitchOutputChoices(node).forEach(([port, label]) => {
+        const output = document.createElement('button'); output.type = 'button';
+        output.className = `flow-port output${state.flowConnectingFrom === node.id && state.flowConnectingPort === port ? ' is-connecting' : ''}`;
+        output.style.top = `${flowNodePortY(node, port) - 6.5}px`;
+        output.title = `Drag to connect: ${label}`;
+        output.addEventListener('pointerdown', (event) => flowBeginConnection(event, node, port));
+        const portLabel = document.createElement('span'); portLabel.className = 'flow-switch-port-label';
+        portLabel.style.top = `${flowNodePortY(node, port)}px`; portLabel.textContent = label; portLabel.title = label;
+        element.append(portLabel, output);
+      });
+    } else if (definition.kind !== 'output') {
+      const output = document.createElement('button'); output.type = 'button'; output.className = `flow-port output${state.flowConnectingFrom === node.id ? ' is-connecting' : ''}`;
+      output.title = 'Drag to connect';
       output.addEventListener('pointerdown', (event) => flowBeginConnection(event, node)); element.appendChild(output);
     }
-    element.addEventListener('click', () => flowSelectNode(node.id));
     element.addEventListener('pointerdown', (event) => {
       if (event.target.closest('.flow-port')) return;
+      const id = String(node.id);
+      if (event.shiftKey || event.ctrlKey || event.metaKey) {
+        if (state.flowSelectedNodeIds.has(id)) state.flowSelectedNodeIds.delete(id);
+        else state.flowSelectedNodeIds.add(id);
+        state.flowSelectedNodeId = state.flowSelectedNodeIds.has(id) ? id : Array.from(state.flowSelectedNodeIds).at(-1) || '';
+      } else if (!state.flowSelectedNodeIds.has(id)) {
+        state.flowSelectedNodeIds = new Set([id]); state.flowSelectedNodeId = id;
+      } else state.flowSelectedNodeId = id;
+      state.flowSelectedEdgeIndex = -1;
+      flowApplySelectionClasses(); renderFlowInspector();
+      if (!state.flowSelectedNodeIds.has(id)) return;
       state.flowInteracting = true;
-      const startX = event.clientX, startY = event.clientY, originalX = Number(node.x || 20), originalY = Number(node.y || 20);
+      const startX = event.clientX, startY = event.clientY;
+      const selectedNodes = (draft.nodes || []).filter((candidate) => state.flowSelectedNodeIds.has(String(candidate.id)));
+      const origins = new Map(selectedNodes.map((candidate) => [candidate.id, { x: Number(candidate.x || 20), y: Number(candidate.y || 20) }]));
+      let moved = false;
       element.setPointerCapture(event.pointerId);
       const move = (moveEvent) => {
-        node.x = Math.max(10, Math.round((originalX + moveEvent.clientX - startX) / 10) * 10);
-        node.y = Math.max(10, Math.round((originalY + moveEvent.clientY - startY) / 10) * 10);
-        element.style.left = `${node.x}px`; element.style.top = `${node.y}px`; flowRenderWires();
-        const neededHeight = node.y + FLOW_NODE_HEIGHT + 50;
+        const dx = moveEvent.clientX - startX, dy = moveEvent.clientY - startY;
+        if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+        selectedNodes.forEach((candidate) => {
+          const origin = origins.get(candidate.id);
+          candidate.x = Math.max(10, Math.round((origin.x + dx) / 10) * 10);
+          candidate.y = Math.max(10, Math.round((origin.y + dy) / 10) * 10);
+          const selectedElement = els.flowCanvas.querySelector(`.flow-node[data-node-id="${CSS.escape(String(candidate.id))}"]`);
+          if (selectedElement) { selectedElement.style.left = `${candidate.x}px`; selectedElement.style.top = `${candidate.y}px`; }
+        });
+        flowRenderWires();
+        const neededHeight = Math.max(...selectedNodes.map((candidate) => candidate.y + flowNodeHeight(candidate) + 50));
         if (neededHeight > els.flowCanvas.clientHeight) els.flowCanvas.style.height = `${neededHeight}px`;
-        const neededWidth = node.x + FLOW_NODE_WIDTH + 80;
+        const neededWidth = Math.max(...selectedNodes.map((candidate) => candidate.x + FLOW_NODE_WIDTH + 80));
         if (neededWidth > els.flowCanvas.clientWidth) els.flowCanvas.style.width = `${neededWidth}px`;
       };
       const up = () => {
@@ -4345,7 +4725,7 @@ function renderFlowCanvas() {
         element.removeEventListener('pointermove', move);
         element.removeEventListener('pointerup', up);
         element.removeEventListener('pointercancel', up);
-        flowMarkDirty();
+        if (moved) flowMarkDirty();
       };
       element.addEventListener('pointermove', move);
       element.addEventListener('pointerup', up);
@@ -4377,23 +4757,55 @@ function refreshFlowRuntimeDisplay() {
 }
 
 function flowPropertyRow(label, key, value, options = {}) {
-  const row = document.createElement('div'); row.className = 'form-row';
+  const row = document.createElement('div'); row.className = `form-row${options.type === 'checkbox' ? ' flow-checkbox-row' : ''}`;
+  if (options.type === 'checkbox') {
+    const control = document.createElement('label'); control.className = 'check-pill flow-checkbox-property';
+    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = Boolean(value); input.dataset.flowProperty = key;
+    control.append(input, document.createTextNode(label)); row.appendChild(control); return row;
+  }
   const labelElement = document.createElement('label'); labelElement.textContent = label;
   let input;
   if (options.choices) {
     input = document.createElement('select');
     options.choices.forEach(([optionValue, optionLabel]) => input.add(new Option(optionLabel, optionValue)));
     input.value = String(value ?? '');
+  } else if (options.type === 'textarea') {
+    input = document.createElement('textarea'); input.rows = options.rows || 6; input.value = String(value ?? '');
+    if (options.placeholder) input.placeholder = options.placeholder;
   } else {
     input = document.createElement('input'); input.type = options.type || 'text';
-    if (input.type === 'checkbox') input.checked = Boolean(value);
-    else input.value = String(value ?? '');
+    input.value = String(value ?? '');
     if (options.step) input.step = options.step;
     if (options.placeholder) input.placeholder = options.placeholder;
   }
   input.dataset.flowProperty = key;
   row.append(labelElement, input);
   return row;
+}
+
+function flowBitSelector(cfg) {
+  const wrap = document.createElement('div'); wrap.className = 'flow-bit-selector-wrap';
+  const label = document.createElement('label'); label.textContent = 'Select mask bits'; wrap.appendChild(label);
+  const grid = document.createElement('div'); grid.className = 'flow-bit-selector';
+  const width = Number(cfg.word_size || 16);
+  let mask = 0n;
+  try { mask = BigInt(String(cfg.operand || '0').trim()); } catch { mask = 0n; }
+  for (let bit = width - 1; bit >= 0; bit -= 1) {
+    const item = document.createElement('label'); item.className = 'flow-bit-choice'; item.title = `Bit ${bit}`;
+    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = Boolean(mask & (1n << BigInt(bit)));
+    const number = document.createElement('span'); number.textContent = String(bit);
+    input.addEventListener('change', () => {
+      const flag = 1n << BigInt(bit);
+      mask = input.checked ? (mask | flag) : (mask & ~flag);
+      const digits = Math.ceil(width / 4);
+      cfg.operand = `0x${mask.toString(16).toUpperCase().padStart(digits, '0')}`;
+      flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+    });
+    item.append(input, number); grid.appendChild(item);
+  }
+  wrap.appendChild(grid);
+  const hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = 'Bit 0 is the least-significant bit. Selecting bits updates the mask above.'; wrap.appendChild(hint);
+  return wrap;
 }
 
 function renderFlowInspector() {
@@ -4420,9 +4832,12 @@ function renderFlowInspector() {
     return;
   }
   if (els.flowTestNodeBtn) els.flowTestNodeBtn.style.display = '';
-  if (els.flowDeleteNodeBtn) { els.flowDeleteNodeBtn.textContent = 'Delete Node'; els.flowDeleteNodeBtn.style.display = ''; }
+  if (els.flowDeleteNodeBtn) {
+    const count = Math.max(1, state.flowSelectedNodeIds.size);
+    els.flowDeleteNodeBtn.textContent = count > 1 ? `Delete ${count} Nodes` : 'Delete Node'; els.flowDeleteNodeBtn.style.display = '';
+  }
   const cfg = node.config || (node.config = {});
-  const rows = [flowPropertyRow('Label', '_label', node.label || FLOW_NODE_TYPES[node.type]?.label || node.type)];
+  const rows = [flowPropertyRow('Label', '_label', flowNodeDisplayLabel(node))];
   if (node.type === 'opc_tag_input' || node.type === 'opc_tag_write') {
     const writableOnly = node.type === 'opc_tag_write';
     rows.push(flowPropertyRow('Connection', 'connection_id', cfg.connection_id || '', { choices: flowOpcConnectionChoices(cfg.connection_id, writableOnly) }));
@@ -4437,14 +4852,66 @@ function renderFlowInspector() {
     rows.push(flowPropertyRow('Only when changed', 'only_on_change', cfg.only_on_change !== false, { type: 'checkbox' }));
   }
   if (node.type === 'opc_tag_write') rows.push(flowPropertyRow('Reject if older than (ms)', 'stale_after_ms', cfg.stale_after_ms ?? 0, { type: 'number', step: '100' }));
-  if (node.type === 'mqtt_subscribe' || node.type === 'mqtt_publish') rows.push(flowPropertyRow('Topic', 'topic', cfg.topic || '', { placeholder: 'plant/value' }));
+  if (node.type === 'mqtt_subscribe' || node.type === 'mqtt_publish') {
+    rows.push(flowPropertyRow('MQTT connection', 'connection_id', cfg.connection_id || '', { choices: flowMqttConnectionChoices(cfg.connection_id) }));
+    rows.push(flowPropertyRow('Topic', 'topic', cfg.topic || '', { placeholder: 'plant/value' }));
+  }
   if (node.type === 'mqtt_subscribe') {
     rows.push(flowPropertyRow('Payload', 'payload_format', cfg.payload_format || 'auto', { choices: [['auto','Automatic'],['json','JSON'],['string','Text']] }));
     rows.push(flowPropertyRow('JSON path', 'json_path', cfg.json_path || '', { placeholder: 'data.value' }));
   }
+  if (node.type === 'split') {
+    const note = document.createElement('div'); note.className = 'hint'; note.textContent = 'Emits one message per object property or array item. Each message retains its key/index for Switch.'; rows.push(note);
+  }
+  if (node.type === 'switch') {
+    rows.push(flowSwitchRoutesEditor(node, draft));
+  }
+  if (node.type === 'build_json') rows.push(flowBuildJsonEditor(node, draft));
+  if (node.type === 'compute') rows.push(flowComputeEditor(node, draft));
+  if (node.type === 'delay') {
+    rows.push(flowDelayEditor(node));
+  }
+  if (node.type === 'trigger') rows.push(flowTriggerEditor(node));
   if (node.type === 'linear_map') {
     [['Input minimum','input_min'],['Input maximum','input_max'],['Output minimum','output_min'],['Output maximum','output_max']].forEach(([label,key]) => rows.push(flowPropertyRow(label, key, cfg[key] ?? (key.includes('max') ? 100 : 0), { type: 'number', step: 'any' })));
     rows.push(flowPropertyRow('Clamp output', 'clamp', Boolean(cfg.clamp), { type: 'checkbox' }));
+  }
+  if (node.type === 'bit_operations') {
+    const operation = cfg.operation || 'and';
+    rows.push(flowPropertyRow('Operation', 'operation', operation, { choices: [
+      ['and','AND'], ['or','OR'], ['xor','XOR (toggle selected bits)'], ['and_not','AND NOT (clear selected bits)'],
+      ['not','NOT (invert all bits)'], ['shift_left','Shift left'], ['shift_right','Shift right'],
+      ['low_byte','Low byte (bits 0–7)'], ['high_byte','High byte (bits 8–15)'],
+      ['low_word','Low word (bits 0–15)'], ['high_word','High word (bits 16–31)']
+    ] }));
+    const minimumWidth = operation === 'high_word' ? 32 : operation === 'high_byte' ? 16 : 8;
+    if (Number(cfg.word_size || 16) < minimumWidth) cfg.word_size = minimumWidth;
+    rows.push(flowPropertyRow('Input word size', 'word_size', cfg.word_size ?? 16, { choices: [['8','8 bit'],['16','16 bit'],['32','32 bit'],['64','64 bit']].filter(([width]) => Number(width) >= minimumWidth) }));
+    const usesOperand = ['and','or','xor','and_not','shift_left','shift_right'].includes(operation);
+    if (usesOperand) {
+      const operandLabel = operation.startsWith('shift_') ? 'Shift by' : 'Mask';
+      rows.push(flowPropertyRow(operandLabel, 'operand', cfg.operand ?? '0x0001', { placeholder: operation.startsWith('shift_') ? '1' : '0x0001, 0b0001, or 1' }));
+      if (!operation.startsWith('shift_')) rows.push(flowBitSelector(cfg));
+    }
+    rows.push(flowPropertyRow('Output', 'output_mode', cfg.output_mode || 'result', { choices: [['result','Result value'],['boolean','True / False']] }));
+    if ((cfg.output_mode || 'result') === 'boolean') {
+      const booleanChoices = [['nonzero','Result is not zero'], ['zero','Result is zero'], ['equals','Result equals value']];
+      if (['and','or','xor','and_not'].includes(operation)) booleanChoices.splice(2, 0,
+        ['any','Any selected bit is set'], ['all','All selected bits are set']);
+      if (!booleanChoices.some(([value]) => value === cfg.boolean_test)) cfg.boolean_test = 'nonzero';
+      rows.push(flowPropertyRow('True when', 'boolean_test', cfg.boolean_test || 'nonzero', { choices: booleanChoices }));
+      if ((cfg.boolean_test || 'nonzero') === 'equals') rows.push(flowPropertyRow('Comparison value', 'comparison', cfg.comparison ?? '0', { placeholder: '0x01, 0b01, or 1' }));
+      rows.push(flowPropertyRow('Invert True / False', 'invert_boolean', Boolean(cfg.invert_boolean), { type: 'checkbox' }));
+    }
+  }
+  if (node.type === 'combine') {
+    rows.push(flowPropertyRow('Parts to combine', 'mode', cfg.mode || 'two_bytes', { choices: [
+      ['two_bytes','Two bytes → 16-bit word'], ['two_words','Two words → 32-bit value'], ['four_bytes','Four bytes → 32-bit value']
+    ] }));
+    rows.push(flowPropertyRow('Result', 'signed_result', String(Boolean(cfg.signed_result)), { choices: [['false','Unsigned'],['true','Signed']] }));
+    const note = document.createElement('div'); note.className = 'hint';
+    note.textContent = 'Connect each source to its labeled input. Combine retains the latest valid values and emits only after every input has a value.';
+    rows.push(note);
   }
   if (node.type === 'datatype_convert') rows.push(flowPropertyRow('Convert to', 'datatype', cfg.datatype || 'float', { choices: [['float','Number'],['integer','Integer'],['bool','Boolean'],['string','Text']] }));
   if (node.type === 'mqtt_publish') {
@@ -4460,7 +4927,8 @@ function renderFlowInspector() {
     outgoing.forEach((edge) => {
       const target = draft.nodes.find((candidate) => candidate.id === edge.to);
       const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.style.margin = '0 4px 4px 0';
-      button.textContent = `Remove → ${target?.label || FLOW_NODE_TYPES[target?.type]?.label || edge.to}`;
+      const sourcePort = node.type === 'switch' ? `${flowSwitchOutputLabel(node, edge.from_port)} → ` : '→ ';
+      button.textContent = `Remove ${sourcePort}${target?.label || FLOW_NODE_TYPES[target?.type]?.label || edge.to}`;
       button.addEventListener('click', () => { draft.edges = draft.edges.filter((candidate) => candidate !== edge); flowMarkDirty(); renderFlowCanvas(); renderFlowInspector(); });
       list.appendChild(button);
     });
@@ -4472,13 +4940,19 @@ function renderFlowInspector() {
       const key = input.dataset.flowProperty;
       let value = input.type === 'checkbox' ? input.checked : input.value;
       if (input.type === 'number') value = Number(value);
+      if (key === 'word_size') value = Number(value);
       if (key === '_label') node.label = String(value);
       else {
+        if (key === 'signed_result') value = String(value) === 'true';
         cfg[key] = value;
         if (key === 'connection_id') cfg.tag_name = '';
+        if (node.type === 'combine' && key === 'mode') {
+          const validPorts = new Set(flowCombineInputChoices(node).map(([port]) => port));
+          draft.edges = (draft.edges || []).filter((edge) => edge.to !== node.id || validPorts.has(String(edge.to_port || '')));
+        }
       }
       flowMarkDirty(); renderFlowCanvas();
-      if (key === 'connection_id') renderFlowInspector();
+      if (key === 'connection_id' || (node.type === 'bit_operations' && ['operation','word_size','output_mode','boolean_test'].includes(key)) || (node.type === 'combine' && key === 'mode') || (node.type === 'delay' && key === 'action') || (node.type === 'trigger' && ['send_initial','send_delayed','reset_enabled'].includes(key))) renderFlowInspector();
     });
   });
   if (els.flowNodeRuntime) els.flowNodeRuntime.textContent = flowNodeRuntimeSummary(node.id);
@@ -4498,13 +4972,13 @@ function addFlowNode(type, position = null) {
     x: position ? Math.max(10, Math.round(Number(position.x || 10) / 10) * 10) : 40 + (index % 5) * 190,
     y: position ? Math.max(10, Math.round(Number(position.y || 10) / 10) * 10) : 40 + Math.floor(index / 5) * 105,
     config: JSON.parse(JSON.stringify(definition.defaults || {})) };
-  draft.nodes.push(node); state.flowSelectedNodeId = node.id; flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+  draft.nodes.push(node); state.flowSelectedNodeId = node.id; state.flowSelectedNodeIds = new Set([String(node.id)]); flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
 }
 
 function newFlowDraft() {
   const id = `flow_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   const flow = { id, name: 'New Flow', enabled: true, mode: 'monitor', nodes: [], edges: [] };
-  state.flowDrafts.push(flow); state.flowSelectedId = id; state.flowSelectedNodeId = ''; state.flowSelectedEdgeIndex = -1; state.flowDirty = true;
+  state.flowDrafts.push(flow); state.flowSelectedId = id; state.flowSelectedNodeId = ''; state.flowSelectedNodeIds = new Set(); state.flowSelectedEdgeIndex = -1; state.flowDirty = true;
   renderFlowSelector(); renderFlowEditor(); flowSetStatus('New flow created in monitor mode. Save the draft when ready.');
 }
 
@@ -4522,6 +4996,15 @@ function renderFlowEditor() {
   if (els.flowMode) { els.flowMode.disabled = !draft; els.flowMode.value = draft?.mode || 'monitor'; }
   if (els.flowEnabled) { els.flowEnabled.disabled = !draft; els.flowEnabled.checked = draft?.enabled !== false; }
   [els.flowSaveBtn, els.flowDeployBtn, els.flowDeleteBtn].forEach((button) => { if (button) button.disabled = !draft; });
+  if (els.flowRevertBtn) {
+    els.flowRevertBtn.disabled = !draft || !state.flowDeployed.some((flow) => flow.id === draft.id);
+    els.flowRevertBtn.title = els.flowRevertBtn.disabled ? 'This flow has no deployed version' : 'Replace the draft with the currently running definition';
+  }
+  if (els.flowDeployBtn) {
+    const active = (draft?.mode || 'monitor') === 'active';
+    els.flowDeployBtn.textContent = active ? 'Deploy Active' : 'Deploy Monitor';
+    els.flowDeployBtn.title = active ? 'Deploy with external outputs enabled' : 'Deploy with writes and publishes suppressed';
+  }
   if (els.flowDisableBtn) els.flowDisableBtn.disabled = !state.flowDeployed.some((flow) => flow.id === draft?.id);
   if (!draft) state.flowSelectedNodeId = '';
   renderFlowCanvas(); renderFlowInspector();
@@ -4529,8 +5012,13 @@ function renderFlowEditor() {
 
 async function refreshFlowTab({ preserveDraft = false } = {}) {
   try {
+    await loadConnectionsList();
+    await loadWorkspaceConnectionObjects();
     const response = await apiGet('/api/flow/flows', { timeoutMs: 15000 });
-    const preserveEditor = preserveDraft && (state.flowDirty || state.flowInteracting);
+    // Periodic refreshes are for runtime values only. Replacing a clean draft
+    // still destroys focused controls (and closes an open select menu), so the
+    // canvas/editor must remain intact for the entire background refresh.
+    const preserveEditor = preserveDraft && Boolean(flowCurrentDraft());
     if (!preserveEditor) state.flowDrafts = Array.isArray(response.drafts) ? response.drafts : [];
     state.flowDeployed = Array.isArray(response.deployed) ? response.deployed : [];
     state.flowRuntime = response.runtime || {};
@@ -4561,18 +5049,58 @@ async function saveFlowDraft() {
 
 async function deployFlowDraft() {
   const draft = flowCurrentDraft(); if (!draft) return;
+  draft.name = String(els.flowName?.value || '').trim();
+  draft.mode = els.flowMode?.value || 'monitor';
+  draft.enabled = Boolean(els.flowEnabled?.checked);
+  if (draft.mode === 'active') {
+    const outputCount = (draft.nodes || []).filter((node) => ['opc_tag_write','mqtt_publish'].includes(node.type)).length;
+    const message = outputCount
+      ? `Deploy “${draft.name || 'this flow'}” as Active?\n\n${outputCount} external output node${outputCount === 1 ? '' : 's'} will be enabled. Valid incoming values may write tags or publish MQTT messages.`
+      : `Deploy “${draft.name || 'this flow'}” as Active?\n\nNo external output nodes are currently configured.`;
+    if (!window.confirm(message)) { flowSetStatus('Active deployment canceled.'); return; }
+  }
   await saveFlowDraft();
-  flowSetStatus('Validating and deploying…');
+  flowSetStatus(draft.mode === 'active' ? 'Validating and enabling active outputs…' : 'Validating and deploying in monitor mode…');
   const response = await apiPostJson(`/api/flow/flows/${encodeURIComponent(draft.id)}/deploy`, {});
   if (!response?.ok) throw new Error(response?.error || 'Deploy failed');
-  flowSetStatus('Flow deployed. Deployment emitted no data or output writes.');
+  flowSetStatus(draft.mode === 'active'
+    ? 'Flow deployed active. Outputs are enabled; deployment itself emitted no data.'
+    : 'Flow deployed in monitor mode. External outputs remain suppressed.');
   await refreshFlowTab();
 }
 
+async function revertFlowToDeployed() {
+  const draft = flowCurrentDraft(); if (!draft) return;
+  const deployed = state.flowDeployed.find((flow) => String(flow.id) === String(draft.id));
+  if (!deployed) { flowSetStatus('This flow has no deployed version to restore.', true); return; }
+  if (!window.confirm(`Revert “${draft.name || 'this flow'}” to its currently deployed version?\n\nAll draft changes made since the last deployment will be discarded. The running flow will not be interrupted.`)) return;
+  const restored = JSON.parse(JSON.stringify(deployed));
+  delete restored.deployed_ms;
+  flowSetStatus('Restoring draft from the deployed flow…');
+  const response = await apiPostJson('/api/flow/flows', restored);
+  if (!response?.ok) throw new Error(response?.error || 'Revert failed');
+  const index = state.flowDrafts.findIndex((flow) => String(flow.id) === String(restored.id));
+  if (index >= 0) state.flowDrafts[index] = restored;
+  else state.flowDrafts.push(restored);
+  state.flowSelectedNodeId = '';
+  state.flowSelectedNodeIds = new Set();
+  state.flowSelectedEdgeIndex = -1;
+  state.flowConnectingFrom = '';
+  state.flowConnectingPort = '';
+  state.flowDirty = false;
+  renderFlowSelector(); renderFlowEditor();
+  flowSetStatus('Draft restored from the deployed version. The running flow was not changed.');
+}
+
 function deleteSelectedFlowNode() {
-  const draft = flowCurrentDraft(), id = state.flowSelectedNodeId; if (!draft || !id) return;
-  draft.nodes = draft.nodes.filter((node) => node.id !== id); draft.edges = draft.edges.filter((edge) => edge.from !== id && edge.to !== id);
-  state.flowSelectedNodeId = ''; state.flowSelectedEdgeIndex = -1; state.flowConnectingFrom = ''; flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
+  const draft = flowCurrentDraft(); if (!draft) return;
+  const selected = new Set(state.flowSelectedNodeIds);
+  if (!selected.size && state.flowSelectedNodeId) selected.add(String(state.flowSelectedNodeId));
+  if (!selected.size) return;
+  draft.nodes = draft.nodes.filter((node) => !selected.has(String(node.id)));
+  draft.edges = draft.edges.filter((edge) => !selected.has(String(edge.from)) && !selected.has(String(edge.to)));
+  state.flowSelectedNodeId = ''; state.flowSelectedNodeIds = new Set(); state.flowSelectedEdgeIndex = -1; state.flowConnectingFrom = '';
+  flowMarkDirty(); renderFlowCanvas(); renderFlowInspector();
 }
 
 function deleteSelectedFlowObject() {
@@ -4605,6 +5133,7 @@ function wireFlowTabUi() {
       if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
     });
   });
+  els.flowCanvas?.addEventListener('pointerdown', flowBeginBoxSelection);
   els.flowCanvas?.addEventListener('dragover', (event) => {
     if (!event.dataTransfer?.types.includes('application/x-opcbridge-flow-node')) return;
     event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
@@ -4622,22 +5151,36 @@ function wireFlowTabUi() {
   els.flowNewBtn?.addEventListener('click', newFlowDraft);
   els.flowSelect?.addEventListener('change', () => {
     if (state.flowDirty && !window.confirm('Discard unsaved changes to the current draft?')) { els.flowSelect.value = state.flowSelectedId; return; }
-    state.flowSelectedId = els.flowSelect.value; state.flowSelectedNodeId = ''; state.flowSelectedEdgeIndex = -1; state.flowConnectingFrom = ''; state.flowDirty = false; renderFlowEditor();
+    state.flowSelectedId = els.flowSelect.value; state.flowSelectedNodeId = ''; state.flowSelectedNodeIds = new Set(); state.flowSelectedEdgeIndex = -1; state.flowConnectingFrom = ''; state.flowDirty = false; renderFlowEditor();
   });
   els.flowName?.addEventListener('input', () => { const draft = flowCurrentDraft(); if (draft) { draft.name = els.flowName.value; flowMarkDirty(); renderFlowSelector(); } });
-  els.flowMode?.addEventListener('change', () => { const draft = flowCurrentDraft(); if (draft) { draft.mode = els.flowMode.value; flowMarkDirty(); } });
+  els.flowMode?.addEventListener('change', () => { const draft = flowCurrentDraft(); if (draft) { draft.mode = els.flowMode.value; flowMarkDirty(); renderFlowEditor(); } });
   els.flowEnabled?.addEventListener('change', () => { const draft = flowCurrentDraft(); if (draft) { draft.enabled = els.flowEnabled.checked; flowMarkDirty(); } });
   els.flowSaveBtn?.addEventListener('click', () => saveFlowDraft().catch((err) => flowSetStatus(err.message || err, true)));
+  els.flowRevertBtn?.addEventListener('click', () => revertFlowToDeployed().catch((err) => flowSetStatus(err.message || err, true)));
   els.flowDeployBtn?.addEventListener('click', () => deployFlowDraft().catch((err) => flowSetStatus(err.message || err, true)));
   els.flowDisableBtn?.addEventListener('click', async () => { try { const draft = flowCurrentDraft(); if (!draft) return; await apiPostJson(`/api/flow/flows/${encodeURIComponent(draft.id)}/disable`, {}); flowSetStatus('Deployed flow stopped.'); await refreshFlowTab(); } catch (err) { flowSetStatus(err.message || err, true); } });
   els.flowDeleteBtn?.addEventListener('click', async () => { try { const draft = flowCurrentDraft(); if (!draft || !confirm(`Delete draft '${draft.name}'?`)) return; await apiPostJson(`/api/flow/flows/${encodeURIComponent(draft.id)}/delete`, {}); state.flowDirty = false; state.flowSelectedId = ''; await refreshFlowTab(); } catch (err) { flowSetStatus(err.message || err, true); } });
   els.flowDeleteNodeBtn?.addEventListener('click', deleteSelectedFlowObject);
+  els.flowSelectAllBtn?.addEventListener('click', () => {
+    const draft = flowCurrentDraft(); if (!draft) return;
+    state.flowSelectedNodeIds = new Set((draft.nodes || []).map((node) => String(node.id)));
+    state.flowSelectedNodeId = String(draft.nodes?.[0]?.id || ''); state.flowSelectedEdgeIndex = -1;
+    renderFlowCanvas(); renderFlowInspector();
+  });
+  els.flowClearSelectionBtn?.addEventListener('click', flowClearNodeSelection);
   els.flowTestNodeBtn?.addEventListener('click', () => injectFlowTestValue().catch((err) => flowSetStatus(err.message || err, true)));
   document.addEventListener('keydown', (event) => {
+    if (isPanelActive('tab-flow') && event.key === 'Escape') {
+      if (state.flowSelectedNodeIds.size || state.flowSelectedNodeId || state.flowSelectedEdgeIndex >= 0) {
+        event.preventDefault(); flowClearNodeSelection();
+      }
+      return;
+    }
     if (!isPanelActive('tab-flow') || !['Delete', 'Backspace'].includes(event.key)) return;
     const active = document.activeElement;
     if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return;
-    if (!state.flowSelectedNodeId && state.flowSelectedEdgeIndex < 0) return;
+    if (!state.flowSelectedNodeIds.size && !state.flowSelectedNodeId && state.flowSelectedEdgeIndex < 0) return;
     event.preventDefault(); deleteSelectedFlowObject();
   });
   window.addEventListener('resize', () => { if (isPanelActive('tab-flow')) flowResizeCanvasToContent(); });
@@ -15771,7 +16314,6 @@ function fillSvcForm(s) {
   if (els.svcHttpEnabled) els.svcHttpEnabled.checked = Boolean(s.http_enabled);
   if (els.svcWsEnabled) els.svcWsEnabled.checked = Boolean(s.ws_enabled);
   if (els.svcOpcuaEnabled) els.svcOpcuaEnabled.checked = Boolean(s.opcua_enabled);
-  if (els.svcMqttEnabled) els.svcMqttEnabled.checked = Boolean(s.mqtt_enabled);
   if (els.svcHttpPort) els.svcHttpPort.value = String(s.http_port ?? '');
   if (els.svcWsPort) els.svcWsPort.value = String(s.ws_port ?? '');
   if (els.svcOpcuaPort) els.svcOpcuaPort.value = String(s.opcua_port ?? '');
@@ -15784,7 +16326,6 @@ function readSvcForm() {
     http_enabled: Boolean(els.svcHttpEnabled?.checked),
     ws_enabled: Boolean(els.svcWsEnabled?.checked),
     opcua_enabled: Boolean(els.svcOpcuaEnabled?.checked),
-    mqtt_enabled: Boolean(els.svcMqttEnabled?.checked),
     http_port: Number(els.svcHttpPort?.value ?? 0) || 0,
     ws_port: Number(els.svcWsPort?.value ?? 0) || 0,
     opcua_port: Number(els.svcOpcuaPort?.value ?? 0) || 0
@@ -16182,16 +16723,7 @@ async function refreshMqttTab() {
 }
 
 async function refreshMqttWorkspaceConfig() {
-  try {
-    const [cfg, inputs] = await Promise.all([
-      apiGet('/api/opcbridge/mqtt/config').catch(() => null),
-      apiGet('/api/opcbridge/mqtt/inputs').catch(() => null)
-    ]);
-    if (cfg) state.mqttConfigPayload = cfg;
-    if (inputs?.json) state.mqttInputsJson = inputs.json;
-  } catch {
-    // Workspace can still render PLC/memory/system items if MQTT config is unavailable.
-  }
+  await loadConnectionsList().catch(() => null);
 }
 
 async function testMqttBroker() {
@@ -16555,17 +17087,10 @@ function mqttSettingsFromConnection(obj) {
     cafile: String(settings.cafile ?? obj?.cafile ?? '').trim(),
     certfile: String(settings.certfile ?? obj?.certfile ?? '').trim(),
     keyfile: String(settings.keyfile ?? obj?.keyfile ?? '').trim(),
-    publish_per_field: Boolean(settings.publish_per_field ?? settings.publish?.per_field ?? false),
-    publish_tag_json: Boolean(settings.publish_tag_json ?? settings.publish?.tag_json ?? false),
-    publish_memory_tags: Boolean(settings.publish_memory_tags ?? settings.publish?.memory_tags ?? false),
-    publish_system_tags: Boolean(settings.publish_system_tags ?? settings.publish?.system_tags ?? false),
-    publish_mode: normalizeMqttPublishMode(settings.publish_mode ?? settings.publish?.mode ?? 'change'),
-    publish_interval_ms: Math.max(100, Number(settings.publish_interval_ms ?? settings.publish?.interval_ms ?? 30000) || 30000),
-    publish_min_update_ms: Math.max(0, Number(settings.publish_min_update_ms ?? settings.publish?.min_update_ms ?? 0) || 0)
   };
 }
 
-function buildMqttConnectionConfig({ id, description = '', existing = {}, host, port, useTls, tlsInsecure, clientId, username, password, cafile, certfile, keyfile, publishPerField = false, publishTagJson = false, publishMemoryTags = false, publishSystemTags = false, publishMode = 'change', publishIntervalMs = 30000, publishMinUpdateMs = 0 }) {
+function buildMqttConnectionConfig({ id, description = '', existing = {}, host, port, useTls, tlsInsecure, clientId, username, password, cafile, certfile, keyfile }) {
   const trimmedHost = String(host || '').trim();
   if (!trimmedHost) throw new Error('MQTT host is required.');
   const portNum = Math.trunc(Number(port || 0));
@@ -16580,15 +17105,19 @@ function buildMqttConnectionConfig({ id, description = '', existing = {}, host, 
     username: String(username || '').trim(),
     cafile: String(cafile || '').trim(),
     certfile: String(certfile || '').trim(),
-    keyfile: String(keyfile || '').trim(),
-    publish_per_field: Boolean(publishPerField),
-    publish_tag_json: Boolean(publishTagJson),
-    publish_memory_tags: Boolean(publishMemoryTags),
-    publish_system_tags: Boolean(publishSystemTags),
-    publish_mode: normalizeMqttPublishMode(publishMode),
-    publish_interval_ms: Math.max(100, Math.trunc(Number(publishIntervalMs || 30000)) || 30000),
-    publish_min_update_ms: Math.max(0, Math.trunc(Number(publishMinUpdateMs || 0)) || 0)
+    keyfile: String(keyfile || '').trim()
   };
+  delete settings.publish;
+  delete settings.publish_per_field;
+  delete settings.publish_tag_json;
+  delete settings.publish_memory_tags;
+  delete settings.publish_system_tags;
+  delete settings.publish_mode;
+  delete settings.publish_interval_ms;
+  delete settings.publish_min_update_ms;
+  delete settings.messages;
+  delete settings.inputs;
+  delete settings.publications;
   if (passwordRaw.length > 0) settings.password = passwordRaw;
   else if (existing?.settings && typeof existing.settings === 'object' && typeof existing.settings.password === 'string' && existing.settings.password.length > 0) settings.password = existing.settings.password;
   else delete settings.password;
@@ -16610,8 +17139,8 @@ function applyDeviceDriverUi(prefix) {
     ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevModbusAddressModeRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
     : [els.newDevGatewayRow, els.newDevPathRow, els.newDevModbusAddressModeRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
   const mqttRows = isEdit
-    ? [els.editDevMqttHostRow, els.editDevMqttPortRow, els.editDevMqttClientIdRow, els.editDevMqttUsernameRow, els.editDevMqttPasswordRow, els.editDevMqttTlsRow, els.editDevMqttTlsInsecureRow, els.editDevMqttCaFileRow, els.editDevMqttClientAuthRow, els.editDevMqttPublishPatternsRow, els.editDevMqttPublishModeRow, els.editDevMqttPublishIntervalRow, els.editDevMqttPublishMinRow, els.editDevMqttTestRow]
-    : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttClientAuthRow, els.newDevMqttPublishPatternsRow, els.newDevMqttPublishModeRow, els.newDevMqttPublishIntervalRow, els.newDevMqttPublishMinRow, els.newDevMqttTestRow];
+    ? [els.editDevMqttHostRow, els.editDevMqttPortRow, els.editDevMqttClientIdRow, els.editDevMqttUsernameRow, els.editDevMqttPasswordRow, els.editDevMqttTlsRow, els.editDevMqttTlsInsecureRow, els.editDevMqttCaFileRow, els.editDevMqttClientAuthRow, els.editDevMqttTestRow]
+    : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttClientAuthRow, els.newDevMqttTestRow];
 
   plcRows.forEach((row) => setRowVisible(row, !isMqtt));
   setRowVisible(isEdit ? els.editDevModbusAddressModeRow : els.newDevModbusAddressModeRow, !isMqtt && isModbus);
@@ -17343,13 +17872,6 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevMqttCaFile) els.newDevMqttCaFile.value = '';
   if (els.newDevMqttCertFile) els.newDevMqttCertFile.value = '';
   if (els.newDevMqttKeyFile) els.newDevMqttKeyFile.value = '';
-  if (els.newDevMqttPublishPerField) els.newDevMqttPublishPerField.checked = false;
-  if (els.newDevMqttPublishTagJson) els.newDevMqttPublishTagJson.checked = false;
-  if (els.newDevMqttPublishMemoryTags) els.newDevMqttPublishMemoryTags.checked = false;
-  if (els.newDevMqttPublishSystemTags) els.newDevMqttPublishSystemTags.checked = false;
-  if (els.newDevMqttPublishMode) els.newDevMqttPublishMode.value = 'change';
-  if (els.newDevMqttPublishIntervalMs) els.newDevMqttPublishIntervalMs.value = '30000';
-  if (els.newDevMqttPublishMinMs) els.newDevMqttPublishMinMs.value = '0';
   applyDeviceDriverUi('new');
   refreshMqttTrustCertificateLibrary('').catch((err) => setNewDevStatus(`Certificate library unavailable: ${err.message || err}`));
 
@@ -17930,13 +18452,6 @@ function openWorkspaceItemModal(node) {
         if (els.editDevMqttCaFile) els.editDevMqttCaFile.value = mqtt.cafile;
         if (els.editDevMqttCertFile) els.editDevMqttCertFile.value = mqtt.certfile;
         if (els.editDevMqttKeyFile) els.editDevMqttKeyFile.value = mqtt.keyfile;
-        if (els.editDevMqttPublishPerField) els.editDevMqttPublishPerField.checked = mqtt.publish_per_field;
-        if (els.editDevMqttPublishTagJson) els.editDevMqttPublishTagJson.checked = mqtt.publish_tag_json;
-        if (els.editDevMqttPublishMemoryTags) els.editDevMqttPublishMemoryTags.checked = mqtt.publish_memory_tags;
-        if (els.editDevMqttPublishSystemTags) els.editDevMqttPublishSystemTags.checked = mqtt.publish_system_tags;
-        if (els.editDevMqttPublishMode) els.editDevMqttPublishMode.value = mqtt.publish_mode;
-        if (els.editDevMqttPublishIntervalMs) els.editDevMqttPublishIntervalMs.value = String(mqtt.publish_interval_ms);
-        if (els.editDevMqttPublishMinMs) els.editDevMqttPublishMinMs.value = String(mqtt.publish_min_update_ms);
         applyDeviceDriverUi('edit');
         if (driver === 'mqtt') {
           refreshMqttTrustCertificateLibrary(mqtt.cafile).catch(() => {});
@@ -18813,14 +19328,7 @@ async function saveEditedDeviceFromModal() {
         password: els.editDevMqttPassword?.value,
         cafile: els.editDevMqttCaFile?.value,
         certfile: els.editDevMqttCertFile?.value,
-        keyfile: els.editDevMqttKeyFile?.value,
-        publishPerField: !!els.editDevMqttPublishPerField?.checked,
-        publishTagJson: !!els.editDevMqttPublishTagJson?.checked,
-        publishMemoryTags: !!els.editDevMqttPublishMemoryTags?.checked,
-        publishSystemTags: !!els.editDevMqttPublishSystemTags?.checked,
-        publishMode: els.editDevMqttPublishMode?.value,
-        publishIntervalMs: els.editDevMqttPublishIntervalMs?.value,
-        publishMinUpdateMs: els.editDevMqttPublishMinMs?.value
+        keyfile: els.editDevMqttKeyFile?.value
       })
       : applyPollingConfigToConnection(
         { id: newId, description, driver, gateway, path: pathVal, slot, plc_type },
@@ -19524,14 +20032,7 @@ async function createNewDeviceFromWorkspace() {
         password: els.newDevMqttPassword?.value,
         cafile: String(els.newDevMqttCaFile?.value || '').trim(),
         certfile: mqttFiles.cert ? mqttManagedCertificatePath(connection_id, 'cert') : '',
-        keyfile: mqttFiles.key ? mqttManagedCertificatePath(connection_id, 'key') : '',
-        publishPerField: !!els.newDevMqttPublishPerField?.checked,
-        publishTagJson: !!els.newDevMqttPublishTagJson?.checked,
-        publishMemoryTags: !!els.newDevMqttPublishMemoryTags?.checked,
-        publishSystemTags: !!els.newDevMqttPublishSystemTags?.checked,
-        publishMode: els.newDevMqttPublishMode?.value,
-        publishIntervalMs: els.newDevMqttPublishIntervalMs?.value,
-        publishMinUpdateMs: els.newDevMqttPublishMinMs?.value
+        keyfile: mqttFiles.key ? mqttManagedCertificatePath(connection_id, 'key') : ''
       })
       : applyPollingConfigToConnection(
         { id: connection_id, description: connectionName, driver, gateway, path: pathVal, slot, plc_type },
@@ -24229,74 +24730,7 @@ function getMqttWorkspaceMessages(connObj = null) {
 }
 
 function buildMqttWorkspaceChildren(connectionId, connObj = {}, pathRel = '') {
-  const messages = getMqttWorkspaceMessages(connObj);
-  const settings = mqttSettingsFromConnection(connObj);
-  const host = settings.host;
-  const brokerId = String(connectionId || connObj?.id || connObj?.connection_id || 'mqtt').trim() || 'mqtt';
-  const connPath = String(pathRel || '').trim();
-  const brokerMeta = {
-    broker_id: brokerId,
-    connection_id: brokerId,
-    path: connPath,
-    host,
-    enabled: connObj?.enabled !== false
-  };
-
-  const subscriptions = {
-    id: `mqtt:${brokerId}:subscriptions`,
-    type: 'mqtt_subscriptions_root',
-    label: 'Subscriptions',
-    meta: { ...brokerMeta },
-    children: []
-  };
-
-  messages.forEach((message, idx) => {
-    const topic = String(message?.topic || '').trim();
-    const topicLabel = topic || String(message?.id || `Subscription ${idx + 1}`);
-    const children = [{
-      id: `mqtt:${brokerId}:subscription:${idx}:raw`,
-      type: 'mqtt_field',
-      label: 'RawPayload',
-      meta: { ...brokerMeta, direction: 'subscribe', topic, field: 'RawPayload' },
-      children: []
-    }];
-    subscriptions.children.push({
-      id: `mqtt:${brokerId}:subscription:${idx}`,
-      type: 'mqtt_topic',
-      label: topicLabel,
-      meta: { ...brokerMeta, direction: 'subscribe', topic, mappings: 0 },
-      children
-    });
-  });
-
-  const publications = {
-    id: `mqtt:${brokerId}:publications`,
-    type: 'mqtt_publications_root',
-    label: 'Publications',
-    meta: { ...brokerMeta },
-    children: []
-  };
-  const pubRows = Array.isArray(connObj?.settings?.publications) ? connObj.settings.publications : [];
-  pubRows.forEach((pub, idx) => {
-    const topic = String(pub?.topic || '').trim();
-    publications.children.push({
-      id: `mqtt:${brokerId}:publication:${idx}`,
-      type: 'mqtt_topic',
-      label: topic || String(pub?.id || `Publication ${idx + 1}`),
-      meta: {
-        ...brokerMeta,
-        direction: 'publish',
-        topic,
-        update_mode: normalizeMqttPublishMode(pub?.update_mode || pub?.publish_mode),
-        interval_ms: Number(pub?.interval_ms ?? pub?.publish_interval_ms ?? 1000) || 1000,
-        min_update_ms: Number(pub?.min_update_ms ?? pub?.rate_limit_ms ?? 0) || 0,
-        mappings: 0
-      },
-      children: []
-    });
-  });
-
-  return [subscriptions, publications];
+  return [];
 }
 
 function inferConnectionIdFromPath(pathRel) {
@@ -24661,8 +25095,6 @@ function renderTreeNode(node, container) {
       const cid = String(node.meta?.connection_id || '').trim();
       const relPath = String(node.meta?.path || '').trim();
       if (String(node.meta?.driver || '') === 'mqtt') {
-        items.push({ label: 'Add Subscription…', onClick: () => openMqttTopicModal({ direction: 'subscribe', brokerId: cid, pathRel: relPath }) });
-        items.push({ label: 'Add Publication…', onClick: () => openMqttTopicModal({ direction: 'publish', brokerId: cid, pathRel: relPath }) });
         items.push({ label: 'Refresh MQTT', onClick: async () => { await refreshMqttWorkspaceConfig().catch(() => {}); renderWorkspaceTree(); } });
       } else {
         items.push({ label: 'Add Tag…', onClick: () => showNewTagModal(cid) });
@@ -24727,7 +25159,6 @@ function renderWorkspaceDetails(node) {
   const addCol = (key, label, sortable = false) => columns.push({ key, label, sortable });
   addCol('name', 'Name', true);
   if (showDeviceCols) {
-    addCol('description', 'Description', true);
     addCol('enabled', 'Enabled', true);
     addCol('driver', 'Driver', true);
     addCol('gateway', 'Gateway', true);
@@ -25108,8 +25539,6 @@ function renderWorkspaceDetails(node) {
       addCell(tr, writable, false);
     }
 
-    let tDesc = null;
-
     let tDriver = null;
     let tEnabled = null;
     let tGateway = null;
@@ -25119,7 +25548,6 @@ function renderWorkspaceDetails(node) {
 
     if (showDeviceCols) {
       // Only device rows get values; other child rows get blanks.
-      tDesc = addCell(tr, '', true);
       tEnabled = addCell(tr, '', true);
       tDriver = addCell(tr, '', true);
       tGateway = addCell(tr, '', true);
@@ -25133,9 +25561,8 @@ function renderWorkspaceDetails(node) {
           // async fill from cache / file
           getConnObjForPath(relPath).then((obj) => {
             if (seq !== state.workspaceRenderSeq) return;
-            if (!tDriver?.isConnected || !tDesc?.isConnected) return;
+            if (!tDriver?.isConnected) return;
 
-            const desc = String(obj?.description || '').trim();
             const driver = String(obj?.driver || '').trim();
             const enabled = obj?.enabled === false ? 'no' : 'yes';
             const mqtt = mqttSettingsFromConnection(obj);
@@ -25145,7 +25572,6 @@ function renderWorkspaceDetails(node) {
             const slotVal = isMqttRow ? '' : ((obj?.slot == null) ? '' : String(obj.slot));
             const plcType = isMqttRow ? 'MQTT' : String(obj?.plc_type || obj?.plcType || '').trim();
 
-            tDesc.textContent = desc;
             tEnabled.textContent = enabled;
             tDriver.textContent = labelForDriver(driver);
             tGateway.textContent = gateway;
@@ -25153,14 +25579,14 @@ function renderWorkspaceDetails(node) {
             tSlot.textContent = slotVal;
             tPlc.textContent = isMqttRow ? plcType : labelForPlcType(plcType);
 
-            [tDesc, tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+            [tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
               if (!td) return;
               const text = String(td.textContent || '').trim();
               td.classList.toggle('audit-cell-dim', !text);
             });
           }).catch(() => {
             if (seq !== state.workspaceRenderSeq) return;
-            [tDesc, tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+            [tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
               if (!td?.isConnected) return;
               td.textContent = '';
               td.classList.add('audit-cell-dim');
@@ -25168,14 +25594,13 @@ function renderWorkspaceDetails(node) {
           });
         }
       } else if (type === 'mqtt_broker') {
-        tDesc.textContent = 'MQTT broker';
         tEnabled.textContent = 'yes';
         tDriver.textContent = 'MQTT Broker';
         tGateway.textContent = String(c?.meta?.host || '').trim();
         tPath.textContent = '';
         tSlot.textContent = '';
         tPlc.textContent = '';
-        [tDesc, tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
+        [tEnabled, tDriver, tGateway, tPath, tSlot, tPlc].forEach((td) => {
           if (!td) return;
           td.classList.toggle('audit-cell-dim', !String(td.textContent || '').trim());
         });
@@ -26299,41 +26724,6 @@ try {
   // ignore
 }
 
-function renderComponentVersions(payload) {
-  const suiteVersion = String(payload?.suite_version || state.versions?.suite_version || '').trim();
-  if (els.overviewSuiteVersion) els.overviewSuiteVersion.textContent = `Suite ${suiteVersion || '—'}`;
-  if (!els.overviewComponentsTbody) return;
-  const components = Array.isArray(payload?.components) ? payload.components : [];
-  if (!components.length) {
-    els.overviewComponentsTbody.innerHTML = '<tr><td colspan="4" class="small">Component information is unavailable.</td></tr>';
-    return;
-  }
-  els.overviewComponentsTbody.innerHTML = components.map((item) => {
-    const status = String(item?.status || 'unavailable');
-    const statusClass = status === 'running' || status === 'installed' ? 'ok' : 'bad';
-    return `<tr><td>${escapeHtml(String(item?.name || item?.id || ''))}</td>` +
-      `<td class="mono">${escapeHtml(String(item?.version || '—'))}</td>` +
-      `<td class="mono">${escapeHtml(String(item?.suite_version || '—'))}</td>` +
-      `<td><span class="badge ${statusClass}">${escapeHtml(status)}</span></td></tr>`;
-  }).join('');
-}
-
-async function refreshComponentVersions({ force = false } = {}) {
-  const now = Date.now();
-  if (!force && now - Number(state.componentVersionsFetchedMs || 0) < 30000) return;
-  if (state.componentVersionsInFlight) return;
-  state.componentVersionsInFlight = true;
-  try {
-    const payload = await apiGet('/api/components/status', { timeoutMs: 10000 });
-    state.componentVersionsFetchedMs = Date.now();
-    state.componentVersions = payload;
-    renderComponentVersions(payload);
-  } catch {
-    renderComponentVersions(state.componentVersions || null);
-  } finally {
-    state.componentVersionsInFlight = false;
-  }
-}
 setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
 // If the user is browsing alarms/events in Workspace, refresh that view.
@@ -26360,6 +26750,41 @@ if (isPanelActive('tab-alarms_events') && !isAlarmsEventsPropertiesEditorOpen())
     }
   } catch (err) {
     if (els.statusLine) els.statusLine.textContent = `Refresh pending: ${err.message}`;
+  }
+}
+
+function renderComponentVersions(payload) {
+  const suiteVersion = String(payload?.suite_version || state.versions?.suite_version || '').trim();
+  if (els.overviewSuiteVersion) els.overviewSuiteVersion.textContent = `Suite ${suiteVersion || '—'}`;
+  if (!els.overviewComponentsTbody) return;
+  const components = Array.isArray(payload?.components) ? payload.components : [];
+  if (!components.length) {
+    els.overviewComponentsTbody.innerHTML = '<tr><td colspan="3" class="small">Component information is unavailable.</td></tr>';
+    return;
+  }
+  els.overviewComponentsTbody.innerHTML = components.map((item) => {
+    const status = String(item?.status || 'unavailable');
+    const statusClass = status === 'running' || status === 'installed' ? 'ok' : 'bad';
+    return `<tr><td>${escapeHtml(String(item?.name || item?.id || ''))}</td>` +
+      `<td class="mono">${escapeHtml(String(item?.version || '—'))}</td>` +
+      `<td><span class="badge ${statusClass}">${escapeHtml(status)}</span></td></tr>`;
+  }).join('');
+}
+
+async function refreshComponentVersions({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - Number(state.componentVersionsFetchedMs || 0) < 30000) return;
+  if (state.componentVersionsInFlight) return;
+  state.componentVersionsInFlight = true;
+  try {
+    const payload = await apiGet('/api/components/status', { timeoutMs: 10000 });
+    state.componentVersionsFetchedMs = Date.now();
+    state.componentVersions = payload;
+    renderComponentVersions(payload);
+  } catch {
+    renderComponentVersions(state.componentVersions || null);
+  } finally {
+    state.componentVersionsInFlight = false;
   }
 }
 

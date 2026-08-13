@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=20260811_flow_workspace_v4" />
+  <link rel="stylesheet" href="styles.css?v=20260812_flow_checkbox_alignment_v5" />
 </head>
 <body>
   <header class="topbar">
@@ -51,17 +51,6 @@
         <span class="badge" id="overviewSuiteVersion">Suite —</span>
       </div>
       <div class="grid overview-grid">
-	        <div class="card overview-components-card">
-	          <div class="card-title">Installed Components</div>
-	          <div class="card-body">
-              <div class="table-wrap">
-                <table class="table">
-                  <thead><tr><th>Component</th><th>Version</th><th>Suite</th><th>Status</th></tr></thead>
-                  <tbody id="overviewComponentsTbody"><tr><td colspan="4" class="small">Loading…</td></tr></tbody>
-                </table>
-              </div>
-	          </div>
-	        </div>
 	        <div class="card overview-rebuild-strip">
 	          <div class="card-body">
               <div class="overview-rebuild-strip-main">
@@ -90,6 +79,17 @@
           </details>
           </div>
         </div>
+	        <div class="card overview-components-card">
+	          <div class="card-title">Installed Components</div>
+	          <div class="card-body">
+              <div class="table-wrap">
+                <table class="table">
+                  <thead><tr><th>Component</th><th>Version</th><th>Status</th></tr></thead>
+                  <tbody id="overviewComponentsTbody"><tr><td colspan="3" class="small">Loading…</td></tr></tbody>
+                </table>
+              </div>
+	          </div>
+	        </div>
 	        <div class="card overview-alarms-card">
 	          <div class="card-title">OPCBridge Alarms /alarm/api/status</div>
             <div class="card-body">
@@ -580,7 +580,6 @@
                 <label style="display:flex; align-items:center; gap:6px;"><input id="svcHttpEnabled" type="checkbox" /> HTTP</label>
                 <label style="display:flex; align-items:center; gap:6px;"><input id="svcWsEnabled" type="checkbox" /> WebSocket</label>
                 <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaEnabled" type="checkbox" /> OPC UA</label>
-                <label style="display:flex; align-items:center; gap:6px;"><input id="svcMqttEnabled" type="checkbox" /> MQTT</label>
               </div>
             </div>
 
@@ -1004,6 +1003,7 @@
             <select id="flowSelect" aria-label="Flow"></select>
             <button class="btn" id="flowNewBtn" type="button">New Flow</button>
             <button class="btn" id="flowSaveBtn" type="button">Save Draft</button>
+            <button class="btn" id="flowRevertBtn" type="button">Revert to Deployed</button>
             <button class="btn primary" id="flowDeployBtn" type="button">Deploy</button>
             <button class="btn" id="flowDisableBtn" type="button">Stop Deployed Flow</button>
             <button class="btn danger" id="flowDeleteBtn" type="button">Delete Draft</button>
@@ -1011,7 +1011,7 @@
           </div>
           <div class="flow-definition-bar">
             <label>Name <input id="flowName" type="text" placeholder="MQTT to PLC" /></label>
-            <label>Mode <select id="flowMode"><option value="active">Active</option><option value="monitor">Monitor only (outputs suppressed)</option></select></label>
+            <label>Mode <select id="flowMode"><option value="active">Active (outputs enabled)</option><option value="monitor">Monitor only (outputs suppressed)</option></select></label>
             <label class="check-pill"><input id="flowEnabled" type="checkbox" checked /> Enabled</label>
             <span class="hint">Canvas edits affect only the draft. Deploy explicitly switches the running graph.</span>
           </div>
@@ -1023,17 +1023,33 @@
                 <button class="flow-palette-node" data-flow-node-type="mqtt_subscribe" type="button">MQTT Subscribe</button>
                 <button class="flow-palette-node" data-flow-node-type="manual_input" type="button">Manual Test</button>
               </div>
-              <div class="flow-palette-group"><strong>Processing</strong>
+              <div class="flow-palette-group"><strong>Routing</strong>
+                <button class="flow-palette-node" data-flow-node-type="split" type="button">Split</button>
+                <button class="flow-palette-node" data-flow-node-type="switch" type="button">Switch</button>
+              </div>
+              <div class="flow-palette-group"><strong>JSON</strong>
+                <button class="flow-palette-node" data-flow-node-type="build_json" type="button">Build JSON</button>
+              </div>
+              <div class="flow-palette-group"><strong>Timing</strong>
+                <button class="flow-palette-node" data-flow-node-type="delay" type="button">Delay / Rate Limit</button>
+                <button class="flow-palette-node" data-flow-node-type="trigger" type="button">Trigger</button>
+              </div>
+              <div class="flow-palette-group"><strong>Values</strong>
                 <button class="flow-palette-node" data-flow-node-type="linear_map" type="button">Scale / Map</button>
-                <button class="flow-palette-node" data-flow-node-type="boolean_invert" type="button">Invert Boolean</button>
+                <button class="flow-palette-node" data-flow-node-type="compute" type="button">Compute</button>
                 <button class="flow-palette-node" data-flow-node-type="datatype_convert" type="button">Convert Type</button>
+              </div>
+              <div class="flow-palette-group"><strong>Bit &amp; Word Operations</strong>
+                <button class="flow-palette-node" data-flow-node-type="bit_operations" type="button">Bit Operations</button>
+                <button class="flow-palette-node" data-flow-node-type="combine" type="button">Combine Bytes / Words</button>
+                <button class="flow-palette-node" data-flow-node-type="boolean_invert" type="button">Invert Boolean</button>
               </div>
               <div class="flow-palette-group"><strong>Outputs</strong>
                 <button class="flow-palette-node" data-flow-node-type="opc_tag_write" type="button">Tag Output</button>
                 <button class="flow-palette-node" data-flow-node-type="mqtt_publish" type="button">MQTT Publish</button>
                 <button class="flow-palette-node" data-flow-node-type="debug" type="button">Debug</button>
               </div>
-              <div class="hint">Click a node or drag it onto the canvas. If no flow exists, a new draft is created automatically. Drag nodes to arrange them. Drag from an output dot and release over a target node to connect.</div>
+              <div class="hint">Click a node or drag a box on empty canvas space to select. Shift/Ctrl adds to the selection. Drag a selected node to move the group. Delete removes it; Esc clears the selection. Drag from an output dot to connect.</div>
             </aside>
             <div class="flow-canvas-wrap">
               <div class="flow-canvas" id="flowCanvas">
@@ -1048,6 +1064,8 @@
                 <div class="form compact-form" id="flowInspectorFields"></div>
                 <div class="row-actions" style="margin-top:10px;">
                   <button class="btn" id="flowTestNodeBtn" type="button">Inject Test Value</button>
+                  <button class="btn" id="flowSelectAllBtn" type="button">Select All</button>
+                  <button class="btn" id="flowClearSelectionBtn" type="button">Clear Selection</button>
                   <button class="btn danger" id="flowDeleteNodeBtn" type="button">Delete Node</button>
                 </div>
                 <div class="hint mono" id="flowNodeRuntime" style="margin-top:10px;"></div>
@@ -1831,19 +1849,6 @@
             <div class="form-row" id="editDevMqttTlsInsecureRow" style="display:none;"><label>TLS Verify</label><label style="display:flex; align-items:center; gap:8px;"><input id="editDevMqttTlsInsecure" type="checkbox" /> Allow insecure TLS</label></div>
             <div class="form-row" id="editDevMqttCaFileRow" style="display:none;"><label>Broker trust certificate</label><div><div class="row-actions"><select id="editDevMqttCaFile"><option value="">System trust store</option></select><label class="btn" for="editDevMqttCaUpload">Upload New Certificate</label><input id="editDevMqttCaUpload" type="file" accept=".crt,.pem,application/x-pem-file" style="display:none;" /><button class="btn" id="editDevMqttCaRename" type="button">Rename Selected</button><button class="btn" id="editDevMqttCaDownload" type="button">Download Selected</button><button class="btn danger" id="editDevMqttCaRemove" type="button">Delete Unused</button><span class="hint" id="editDevMqttCaStatus"></span></div><div class="hint">Select a reusable trust certificate, or upload the broker CA/broker's own .crt when self-signed. Never upload the broker's private key.</div></div></div>
             <div class="form-row" id="editDevMqttClientAuthRow" style="display:none;"><label>Client authentication</label><details><summary>Advanced: mutual TLS client certificate</summary><div class="hint" style="margin:8px 0;">Use these only when the broker requires OPCBridge to identify itself with a separate client certificate and matching private key.</div><div class="form-row" id="editDevMqttCertFileRow"><label>Client certificate</label><div class="row-actions"><input id="editDevMqttCertFile" type="hidden" /><input id="editDevMqttCertUpload" type="file" accept=".crt,.pem,application/x-pem-file" /><button class="btn" id="editDevMqttCertDownload" type="button">Download</button><button class="btn danger" id="editDevMqttCertRemove" type="button">Remove</button><span class="hint" id="editDevMqttCertStatus">Not installed</span></div></div><div class="form-row" id="editDevMqttKeyFileRow"><label>Client private key</label><div class="row-actions"><input id="editDevMqttKeyFile" type="hidden" /><input id="editDevMqttKeyUpload" type="file" accept=".key,.pem,application/x-pem-file" /><button class="btn danger" id="editDevMqttKeyRemove" type="button">Remove</button><span class="hint" id="editDevMqttKeyStatus">Not installed</span></div></div></details></div>
-            <div class="form-row" id="editDevMqttPublishPatternsRow" style="display:none;"><label>Auto Publish</label><div class="check-row">
-              <label class="check-pill"><input id="editDevMqttPublishPerField" type="checkbox" class="inline-check" /> Per-field topics</label>
-              <label class="check-pill"><input id="editDevMqttPublishTagJson" type="checkbox" class="inline-check" /> Tag JSON</label>
-              <label class="check-pill"><input id="editDevMqttPublishMemoryTags" type="checkbox" class="inline-check" /> Memory tags</label>
-              <label class="check-pill"><input id="editDevMqttPublishSystemTags" type="checkbox" class="inline-check" /> System tags</label>
-            </div></div>
-            <div class="form-row" id="editDevMqttPublishModeRow" style="display:none;"><label>Publish Mode</label><select id="editDevMqttPublishMode">
-              <option value="change">On change</option>
-              <option value="interval">On interval</option>
-              <option value="change_or_interval">On change or interval</option>
-            </select></div>
-            <div class="form-row" id="editDevMqttPublishIntervalRow" style="display:none;"><label>Interval (ms)</label><input id="editDevMqttPublishIntervalMs" type="number" min="100" step="100" placeholder="30000" /></div>
-            <div class="form-row" id="editDevMqttPublishMinRow" style="display:none;"><label>Rate Limit (ms)</label><input id="editDevMqttPublishMinMs" type="number" min="0" step="100" placeholder="0" /></div>
             <div class="form-row" id="editDevMqttTestRow" style="display:none;"><label></label><button class="btn" id="editDevMqttTestBtn" type="button">Test Connect</button></div>
             <div class="form-row" id="editDevPollingModeRow"><label>Polling Mode</label><select id="editDevPollingMode">
               <option value="standard">Standard</option>
@@ -2181,19 +2186,6 @@
           <div class="form-row" id="newDevMqttTlsInsecureRow" style="display:none;"><label>TLS Verify</label><label style="display:flex; align-items:center; gap:8px;"><input id="newDevMqttTlsInsecure" type="checkbox" /> Allow insecure TLS</label></div>
           <div class="form-row" id="newDevMqttCaFileRow" style="display:none;"><label>Broker trust certificate</label><div><div class="row-actions"><select id="newDevMqttCaFile"><option value="">System trust store</option></select><label class="btn" for="newDevMqttCaUpload">Upload New Certificate</label><input id="newDevMqttCaUpload" type="file" accept=".crt,.pem,application/x-pem-file" style="display:none;" /><button class="btn" id="newDevMqttCaRename" type="button">Rename Selected</button><button class="btn" id="newDevMqttCaDownload" type="button">Download Selected</button><button class="btn danger" id="newDevMqttCaRemove" type="button">Delete Unused</button><span class="hint" id="newDevMqttCaStatus"></span></div><div class="hint">Uploaded certificates are saved in a shared library and remain available if creation is canceled. Never upload the broker's private key.</div></div></div>
           <div class="form-row" id="newDevMqttClientAuthRow" style="display:none;"><label>Client authentication</label><details><summary>Advanced: mutual TLS client certificate</summary><div class="hint" style="margin:8px 0;">Use these only when the broker requires OPCBridge to identify itself with a separate client certificate and matching private key.</div><div class="form-row" id="newDevMqttCertFileRow"><label>Client certificate</label><input id="newDevMqttCertFile" type="file" accept=".crt,.pem,application/x-pem-file" /></div><div class="form-row" id="newDevMqttKeyFileRow"><label>Client private key</label><div><input id="newDevMqttKeyFile" type="file" accept=".key,.pem,application/x-pem-file" /><div class="hint">Stored with restricted permissions and never downloadable.</div></div></div></details></div>
-          <div class="form-row" id="newDevMqttPublishPatternsRow" style="display:none;"><label>Auto Publish</label><div class="check-row">
-            <label class="check-pill"><input id="newDevMqttPublishPerField" type="checkbox" class="inline-check" /> Per-field topics</label>
-            <label class="check-pill"><input id="newDevMqttPublishTagJson" type="checkbox" class="inline-check" /> Tag JSON</label>
-            <label class="check-pill"><input id="newDevMqttPublishMemoryTags" type="checkbox" class="inline-check" /> Memory tags</label>
-            <label class="check-pill"><input id="newDevMqttPublishSystemTags" type="checkbox" class="inline-check" /> System tags</label>
-          </div></div>
-          <div class="form-row" id="newDevMqttPublishModeRow" style="display:none;"><label>Publish Mode</label><select id="newDevMqttPublishMode">
-            <option value="change">On change</option>
-            <option value="interval">On interval</option>
-            <option value="change_or_interval">On change or interval</option>
-          </select></div>
-          <div class="form-row" id="newDevMqttPublishIntervalRow" style="display:none;"><label>Interval (ms)</label><input id="newDevMqttPublishIntervalMs" type="number" min="100" step="100" placeholder="30000" /></div>
-          <div class="form-row" id="newDevMqttPublishMinRow" style="display:none;"><label>Rate Limit (ms)</label><input id="newDevMqttPublishMinMs" type="number" min="0" step="100" placeholder="0" /></div>
           <div class="form-row" id="newDevMqttTestRow" style="display:none;"><label></label><button class="btn" id="newDevMqttTestBtn" type="button">Test Connect</button></div>
           <div class="form-row" id="newDevPollingModeRow"><label>Polling Mode</label><select id="newDevPollingMode">
             <option value="standard">Standard</option>
@@ -2787,6 +2779,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260811_certificate_manager_v19"></script>
+  <script src="app.js?v=20260812_flow_box_select_v41"></script>
 </body>
 </html>

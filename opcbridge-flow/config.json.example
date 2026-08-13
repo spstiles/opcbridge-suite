@@ -4,5 +4,5 @@
   "opcbridge_base_url": "http://127.0.0.1:8080",
   "poll_interval_ms": 500,
   "max_event_hops": 64,
-  "mqtt_config": "/etc/opcbridge/mqtt.json"
+  "connections_dir": "/etc/opcbridge/connections"
 }

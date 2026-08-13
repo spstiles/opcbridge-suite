@@ -847,6 +847,7 @@ ensure_dialout_group_access() {
 
 ensure_dirs() {
   mkdir -p "$PREFIX/bin" "$CONFIG_ROOT" "$DATA_ROOT" "$LOG_ROOT" "$DATA_ROOT/report/templates"
+  install -m 0644 "$ROOT_DIR/VERSION" "$PREFIX/VERSION"
 
   # Core config layout
   mkdir -p "$CONFIG_ROOT/connections" "$CONFIG_ROOT/tags"
@@ -938,13 +939,15 @@ build_if_needed() {
 
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
     if [[ -f "$ROOT_DIR/opcbridge-logger/Makefile" ]]; then
-      (cd "$ROOT_DIR/opcbridge-logger" && make)
+      # Version values are compiled into the binary. Force the build so a suite
+      # version-only update cannot leave an otherwise unchanged binary stale.
+      (cd "$ROOT_DIR/opcbridge-logger" && make -B)
     fi
   fi
 
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'flow'; then
     if [[ -f "$ROOT_DIR/opcbridge-flow/Makefile" ]]; then
-      (cd "$ROOT_DIR/opcbridge-flow" && make)
+      (cd "$ROOT_DIR/opcbridge-flow" && make -B)
     fi
   fi
 
@@ -975,8 +978,6 @@ install_opcbridge() {
   # Install example configs (non-sensitive)
   install -m 0644 "$ROOT_DIR/opcbridge/config/admin_auth.json.example" "$CONFIG_ROOT/admin_auth.json.example" 2>/dev/null || true
   install -m 0644 "$ROOT_DIR/opcbridge/config/alarms.json.example" "$CONFIG_ROOT/alarms.json.example" 2>/dev/null || true
-  install -m 0644 "$ROOT_DIR/opcbridge/config/mqtt.json.example" "$CONFIG_ROOT/mqtt.json.example" 2>/dev/null || true
-  install -m 0644 "$ROOT_DIR/opcbridge/config/mqtt_inputs.json.example" "$CONFIG_ROOT/mqtt_inputs.json.example" 2>/dev/null || true
 
   if [[ -d "$ROOT_DIR/opcbridge/config/connections" ]]; then
     mkdir -p "$CONFIG_ROOT/connections"

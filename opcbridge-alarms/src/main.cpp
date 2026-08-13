@@ -9010,6 +9010,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
 
     std::atomic<bool> connected{false};
     std::atomic<bool> baselineSeedRequested{false};
+    std::atomic<bool> runtimeMaintenance{false};
     uint64_t lastSentGeneration = 0;
 
     auto send_subscribe = [&]() {
@@ -9167,7 +9168,30 @@ static void ws_client_loop(std::atomic<bool> &stop,
         }
 
         if (!payload.is_object()) return;
-        if (payload.value("type", "") != "tag_update") return;
+        const std::string messageType = payload.value("type", "");
+        if (messageType == "runtime_reload")
+        {
+            const std::string phase = payload.value("phase", "");
+            if (phase == "begin")
+            {
+                runtimeMaintenance.store(true);
+                baselineSeedRequested.store(false);
+                engine.opcbridge_baselining.store(true);
+                engine.suppress_events_until_ms.store(now_ms() + 30000);
+                std::cout << "[alarms] opcbridge runtime reload started; suppressing alarm events\n";
+            }
+            else if (phase == "end")
+            {
+                runtimeMaintenance.store(false);
+                engine.opcbridge_baselining.store(true);
+                engine.suppress_events_until_ms.store(now_ms() + 30000);
+                send_subscribe();
+                baselineSeedRequested.store(true);
+                std::cout << "[alarms] opcbridge runtime reload finished; reseeding alarm baseline\n";
+            }
+            return;
+        }
+        if (messageType != "tag_update") return;
 
         const std::string conn = payload.value("connection_id", "");
         const std::string tag = payload.value("name", "");
@@ -9189,6 +9213,7 @@ static void ws_client_loop(std::atomic<bool> &stop,
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
         if (!connected.load()) continue;
+        if (runtimeMaintenance.load()) continue;
         const uint64_t gen = subscriptionGeneration.load();
         if (gen != lastSentGeneration)
         {

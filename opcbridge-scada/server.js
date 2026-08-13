@@ -236,8 +236,6 @@ const SUITE_SERVICE_GROUP = String(process.env.OPCBRIDGE_SERVICE_GROUP || SUITE_
 
 const DEFAULT_OPCBRIDGE_BIN = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_BIN || '/opt/opcbridge-suite/bin/opcbridge').trim();
 const DEFAULT_OPCBRIDGE_CONFIG_DIR = String(process.env.OPCBRIDGE_SCADA_OPCBRIDGE_CONFIG_DIR || '/etc/opcbridge').trim();
-const MQTT_CONFIG_PATH = String(process.env.OPCBRIDGE_MQTT_CONFIG || path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'mqtt.json')).trim();
-const MQTT_CONFIG_EXAMPLE_PATH = String(process.env.OPCBRIDGE_MQTT_CONFIG_EXAMPLE || path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'mqtt.json.example')).trim();
 const HMI_ROOT = String(process.env.OPCBRIDGE_HMI_ROOT || path.join(SUITE_PREFIX, 'hmi')).trim();
 const PROJECT_BACKUP_MAX_FILE_BYTES = Number(process.env.OPCBRIDGE_PROJECT_BACKUP_MAX_FILE_BYTES || 80 * 1024 * 1024);
 const PROJECT_BACKUP_MAX_TOTAL_BYTES = Number(process.env.OPCBRIDGE_PROJECT_BACKUP_MAX_TOTAL_BYTES || 250 * 1024 * 1024);
@@ -1681,7 +1679,6 @@ function buildOpcbridgeExecStart(settings) {
   const enableHttp = Boolean(settings?.http_enabled);
   const enableWs = Boolean(settings?.ws_enabled);
   const enableOpcua = Boolean(settings?.opcua_enabled);
-  const enableMqtt = Boolean(settings?.mqtt_enabled);
 
   const httpPort = Number(settings?.http_port);
   const wsPort = Number(settings?.ws_port);
@@ -1702,10 +1699,6 @@ function buildOpcbridgeExecStart(settings) {
     args.push('--opcua');
     if (Number.isFinite(opcuaPort) && opcuaPort > 0) args.push('--opcua-port', String(Math.trunc(opcuaPort)));
   }
-  if (enableMqtt) {
-    args.push('--mqtt');
-  }
-
   // systemd ExecStart uses a single line; avoid quoting unless necessary.
   return args.join(' ');
 }
@@ -1721,8 +1714,7 @@ function loadOpcbridgeSystemdSettings() {
     ws_enabled: true,
     ws_port: 8090,
     opcua_enabled: true,
-    opcua_port: 4840,
-    mqtt_enabled: false
+    opcua_port: 4840
   };
 
   if (!SYSTEMD_ENABLED) return { ok: true, enabled: false, settings: defaults };
@@ -1755,14 +1747,12 @@ function loadOpcbridgeSystemdSettings() {
       if (t === '--ws-port') { s.ws_port = Number(tokens[i + 1] || s.ws_port); i += 1; continue; }
       if (t === '--opcua') { s.opcua_enabled = true; continue; }
       if (t === '--opcua-port') { s.opcua_port = Number(tokens[i + 1] || s.opcua_port); i += 1; continue; }
-      if (t === '--mqtt') { s.mqtt_enabled = true; continue; }
     }
 
     // If a flag isn't present in the drop-in, treat it as disabled.
     s.http_enabled = tokens.includes('--http');
     s.ws_enabled = tokens.includes('--ws');
     s.opcua_enabled = tokens.includes('--opcua');
-    s.mqtt_enabled = tokens.includes('--mqtt');
 
     return { ok: true, enabled: true, settings: s, exists: true };
   } catch (err) {
@@ -3321,50 +3311,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Read/write opcbridge MQTT broker settings on the SCADA server.
-  // Secrets are preserved on save unless a non-empty replacement is provided.
-  if (url.pathname === '/api/opcbridge/mqtt/config') {
-    if (!await requireManageServerPerm()) return;
-    if (req.method === 'GET') {
-      const onDisk = readJsoncFileOrNull(MQTT_CONFIG_PATH) || readJsoncFileOrNull(MQTT_CONFIG_EXAMPLE_PATH) || {};
-      const normalized = normalizeMqttConfig(onDisk, {});
-      const safe = safeMqttConfig(normalized);
-      sendJson(res, 200, {
-        ok: true,
-        config_path: MQTT_CONFIG_PATH,
-        exists: fs.existsSync(MQTT_CONFIG_PATH),
-        ...safe
-      });
-      return;
-    }
-    if (req.method === 'POST') {
-      try {
-        const bodyBuf = await readBody(req);
-        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
-        const incoming = parsed?.config || parsed;
-        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
-          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {config:{...}}.' });
-          return;
-        }
-        const prev = readJsoncFileOrNull(MQTT_CONFIG_PATH) || readJsoncFileOrNull(MQTT_CONFIG_EXAMPLE_PATH) || {};
-        const next = normalizeMqttConfig(incoming, prev);
-        writeJsonFile(MQTT_CONFIG_PATH, next);
-        const safe = safeMqttConfig(next);
-        sendJson(res, 200, {
-          ok: true,
-          config_path: MQTT_CONFIG_PATH,
-          exists: true,
-          ...safe
-        });
-      } catch (err) {
-        sendJson(res, 400, { ok: false, error: String(err.message || err) });
-      }
-      return;
-    }
-    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
-    return;
-  }
-
   if (url.pathname === '/api/opcbridge/mqtt/test') {
     if (!await requireManageServerPerm()) return;
     if (req.method !== 'POST') {
@@ -3379,8 +3325,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {config:{...}}.' });
         return;
       }
-      const prev = readJsoncFileOrNull(MQTT_CONFIG_PATH) || readJsoncFileOrNull(MQTT_CONFIG_EXAMPLE_PATH) || {};
-      const cfg = normalizeMqttConfig(incoming, prev);
+      const cfg = normalizeMqttConfig(incoming, {});
       // Inline PEM values are accepted only by this transient connection test.
       // They are intentionally excluded by normalizeMqttConfig so they can
       // never be persisted in mqtt.json or returned to the browser.
@@ -3392,46 +3337,6 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJson(res, 502, { ok: false, error: String(err.message || err) });
     }
-    return;
-  }
-
-  if (url.pathname === '/api/opcbridge/mqtt/inputs') {
-    if (!await requireManageServerPerm()) return;
-    const inputsPath = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'mqtt_inputs.json');
-    if (req.method === 'GET') {
-      const root = readJsoncFileOrNull(inputsPath) || { messages: [], inputs: [] };
-      const messages = Array.isArray(root.messages) ? root.messages : [];
-      const inputs = Array.isArray(root.inputs) ? root.inputs : [];
-      sendJson(res, 200, {
-        ok: true,
-        config_path: inputsPath,
-        exists: fs.existsSync(inputsPath),
-        json: { ...root, messages, inputs }
-      });
-      return;
-    }
-    if (req.method === 'POST') {
-      try {
-        const bodyBuf = await readBody(req);
-        const parsed = JSON.parse(bodyBuf.toString('utf8') || '{}');
-        const incoming = parsed?.json || parsed;
-        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
-          sendJson(res, 400, { ok: false, error: 'Invalid JSON body; expected {json:{...}}.' });
-          return;
-        }
-        const next = {
-          ...incoming,
-          messages: Array.isArray(incoming.messages) ? incoming.messages : [],
-          inputs: Array.isArray(incoming.inputs) ? incoming.inputs : []
-        };
-        writeJsonFile(inputsPath, next);
-        sendJson(res, 200, { ok: true, config_path: inputsPath, exists: true, json: next });
-      } catch (err) {
-        sendJson(res, 400, { ok: false, error: String(err.message || err) });
-      }
-      return;
-    }
-    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
     return;
   }
 
