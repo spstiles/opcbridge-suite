@@ -479,6 +479,7 @@ public:
             for (const auto& node : candidate.value("nodes", json::array())) state.nodes[node.value("id", "")];
             next_poll_ms_[id].clear();
             combine_inputs_[id].clear();
+            boolean_inputs_[id].clear();
             json_inputs_[id].clear();
             compute_inputs_[id].clear();
             rate_limit_state_[id].clear();
@@ -504,6 +505,7 @@ public:
             deployed_ = std::move(next);
             runtime_[id].status = "stopped";
             combine_inputs_[id].clear();
+            boolean_inputs_[id].clear();
             json_inputs_[id].clear();
             compute_inputs_[id].clear();
             rate_limit_state_[id].clear();
@@ -600,7 +602,7 @@ private:
         if (!flow.contains("nodes") || !flow["nodes"].is_array()) { error = "Flow nodes must be an array"; return false; }
         if (!flow.contains("edges") || !flow["edges"].is_array()) { error = "Flow edges must be an array"; return false; }
         static const std::set<std::string> allowed = {"opc_tag_input", "mqtt_subscribe", "manual_input", "split", "switch", "linear_map",
-            "bit_operations", "combine", "build_json", "compute", "delay", "trigger", "boolean_invert", "datatype_convert", "debug", "opc_tag_write", "mqtt_publish"};
+            "bit_operations", "combine", "boolean_logic", "build_json", "compute", "delay", "trigger", "boolean_invert", "datatype_convert", "debug", "opc_tag_write", "mqtt_publish"};
         std::unordered_set<std::string> node_ids;
         std::unordered_map<std::string, std::string> types;
         for (auto& node : flow["nodes"]) {
@@ -647,6 +649,10 @@ private:
             if (type == "combine") {
                 static const std::set<std::string> modes = {"two_bytes", "two_words", "four_bytes"};
                 if (!modes.count(cfg.value("mode", "two_bytes"))) { error = "Unsupported Combine mode"; return false; }
+            }
+            if (type == "boolean_logic") {
+                static const std::set<std::string> operations = {"and", "or", "xor", "and_not", "not_a_and_b"};
+                if (!operations.count(cfg.value("operation", "and"))) { error = "Unsupported Boolean Logic operation"; return false; }
             }
             if (type == "build_json") {
                 if (!cfg.contains("fields") || !cfg["fields"].is_array() || cfg["fields"].empty()) {
@@ -1007,6 +1013,37 @@ private:
                     if (cfg.value("signed_result", false) && (result & (uint64_t{1} << (bits - 1))))
                         output.value = static_cast<int64_t>(result | ~bit_word_mask(bits));
                     else output.value = result;
+                    emit = true;
+                }
+            }
+        } else if (type == "boolean_logic") {
+            emit = false;
+            if (!event_writable(output, error)) {
+                // Rejected below.
+            } else if (queued.input_port != "a" && queued.input_port != "b") {
+                error = "value must arrive through Boolean input A or B";
+            } else if (!as_bool(output.value)) {
+                error = "Boolean Logic input must be Boolean or 0/1";
+            } else {
+                std::map<std::string, FlowEvent> retained;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& inputs = boolean_inputs_[queued.flow_id][queued.node_id];
+                    inputs[queued.input_port] = output;
+                    retained = inputs;
+                }
+                if (!retained.count("a") || !retained.count("b")) {
+                    set_node_status(queued.flow_id, queued.node_id, "waiting for A and B");
+                } else {
+                    const bool a = *as_bool(retained["a"].value);
+                    const bool b = *as_bool(retained["b"].value);
+                    const std::string operation = cfg.value("operation", "and");
+                    if (operation == "or") output.value = a || b;
+                    else if (operation == "xor") output.value = a != b;
+                    else if (operation == "and_not") output.value = a && !b;
+                    else if (operation == "not_a_and_b") output.value = !a && b;
+                    else output.value = a && b;
+                    output.timestamp_ms = std::max(retained["a"].timestamp_ms, retained["b"].timestamp_ms);
                     emit = true;
                 }
             }
@@ -1414,6 +1451,7 @@ private:
     std::map<std::string, std::map<std::string, long long>> next_poll_ms_;
     std::map<std::string, std::map<std::string, json>> last_input_values_;
     std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> combine_inputs_;
+    std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> boolean_inputs_;
     std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> json_inputs_;
     std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> compute_inputs_;
     struct RateLimitState { FlowEvent latest; bool scheduled = false; long long next_allowed_ms = 0; };

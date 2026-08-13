@@ -4077,6 +4077,7 @@ const FLOW_NODE_TYPES = {
   linear_map: { label: 'Scale / Map', kind: 'process', defaults: { input_min: 0, input_max: 100, output_min: 0, output_max: 100, clamp: false } },
   bit_operations: { label: 'Bit Operations', kind: 'process', defaults: { operation: 'and', operand: '0x0001', word_size: 16, output_mode: 'result', boolean_test: 'nonzero', comparison: '0', invert_boolean: false } },
   combine: { label: 'Combine Bytes / Words', kind: 'process', defaults: { mode: 'two_bytes', signed_result: false } },
+  boolean_logic: { label: 'Boolean Logic', kind: 'process', defaults: { operation: 'and' } },
   build_json: { label: 'Build JSON', kind: 'process', defaults: { fields: [{ key: 'value', label: 'Value' }] } },
   compute: { label: 'Compute', kind: 'process', defaults: { inputs: [{ name: 'value', label: 'Value' }], expression: 'value' } },
   delay: { label: 'Delay / Rate Limit', kind: 'process', defaults: { action: 'delay_each', delay_ms: 1000, display_unit: 'seconds' } },
@@ -4131,6 +4132,7 @@ function flowNodeSummary(node) {
     return `${names[cfg.operation] || 'AND'}${usesOperand ? ` ${cfg.operand || '0'}` : ''} → ${cfg.output_mode === 'boolean' ? 'True/False' : 'Result'}`;
   }
   if (node.type === 'combine') return ({ two_bytes: 'High + low byte → 16 bit', two_words: 'High + low word → 32 bit', four_bytes: 'Four bytes → 32 bit' })[cfg.mode] || 'Combine values';
+  if (node.type === 'boolean_logic') return ({ and: 'A AND B', or: 'A OR B', xor: 'A XOR B', and_not: 'A AND NOT B', not_a_and_b: 'NOT A AND B' })[cfg.operation] || 'A AND B';
   if (node.type === 'build_json') return `${Array.isArray(cfg.fields) ? cfg.fields.length : 0} JSON field(s)`;
   if (node.type === 'compute') return cfg.expression || 'Enter expression';
   if (node.type === 'delay') {
@@ -4230,7 +4232,7 @@ function flowSwitchOutputChoices(node) {
 
 function flowNodeHeight(node) {
   if (node?.type === 'switch') return Math.max(FLOW_NODE_HEIGHT, flowSwitchOutputChoices(node).length * 24 + 40);
-  if (['combine','build_json','compute'].includes(node?.type)) return Math.max(FLOW_NODE_HEIGHT, flowMultiInputChoices(node).length * 24 + 40);
+  if (['combine','boolean_logic','build_json','compute'].includes(node?.type)) return Math.max(FLOW_NODE_HEIGHT, flowMultiInputChoices(node).length * 24 + 40);
   return FLOW_NODE_HEIGHT;
 }
 
@@ -4250,6 +4252,7 @@ function flowCombineInputChoices(node) {
 }
 
 function flowMultiInputChoices(node) {
+  if (node?.type === 'boolean_logic') return [['a','A'],['b','B']];
   if (node?.type === 'build_json') {
     const fields = Array.isArray(node?.config?.fields) ? node.config.fields : [];
     return fields.map((field, index) => [`field_${index}`, String(field?.label || field?.key || `Field ${index + 1}`)]);
@@ -4263,7 +4266,7 @@ function flowMultiInputChoices(node) {
 
 function flowNodeInputPortY(node, port = '') {
   const height = flowNodeHeight(node);
-  if (!['combine','build_json','compute'].includes(node?.type)) return height / 2;
+  if (!['combine','boolean_logic','build_json','compute'].includes(node?.type)) return height / 2;
   const choices = flowMultiInputChoices(node);
   const index = Math.max(0, choices.findIndex(([value]) => value === port));
   return 40 + index * 24;
@@ -4618,7 +4621,7 @@ function flowBeginConnection(event, node, port = '') {
     const inputPort = hit?.closest('.flow-port.input');
     const targetElement = hit?.closest('.flow-node');
     const target = flowCurrentDraft()?.nodes?.find((candidate) => candidate.id === targetElement?.dataset.nodeId);
-    if (target && target.id !== node.id && FLOW_NODE_TYPES[target.type]?.kind !== 'input' && (!['combine','build_json','compute'].includes(target.type) || inputPort))
+    if (target && target.id !== node.id && FLOW_NODE_TYPES[target.type]?.kind !== 'input' && (!['combine','boolean_logic','build_json','compute'].includes(target.type) || inputPort))
       flowConnectTo(target.id, inputPort?.dataset.port || '');
     else { state.flowConnectingFrom = ''; renderFlowCanvas(); }
   };
@@ -4648,14 +4651,14 @@ function renderFlowCanvas() {
     const definition = FLOW_NODE_TYPES[node.type] || { label: node.type, kind: 'process' };
     const runtime = flowRuntimeFor()?.nodes?.[node.id] || {};
     const element = document.createElement('div');
-    element.className = `flow-node${node.type === 'switch' ? ' flow-node-switch' : ''}${['combine','build_json','compute'].includes(node.type) ? ' flow-node-multi-input' : ''}${state.flowSelectedNodeIds.has(String(node.id)) || state.flowSelectedNodeId === node.id ? ' is-selected' : ''}${runtime.last_error ? ' has-error' : ''}`;
+    element.className = `flow-node${node.type === 'switch' ? ' flow-node-switch' : ''}${['combine','boolean_logic','build_json','compute'].includes(node.type) ? ' flow-node-multi-input' : ''}${state.flowSelectedNodeIds.has(String(node.id)) || state.flowSelectedNodeId === node.id ? ' is-selected' : ''}${runtime.last_error ? ' has-error' : ''}`;
     element.dataset.nodeId = node.id;
     element.style.left = `${Math.max(10, Number(node.x || 20))}px`;
     element.style.top = `${Math.max(10, Number(node.y || 20))}px`;
     element.style.height = `${flowNodeHeight(node)}px`;
     element.innerHTML = `<div class="flow-node-title">${escapeHtml(flowNodeDisplayLabel(node) || definition.label)}</div>` +
       `<div class="flow-node-body">${escapeHtml(flowNodeSummary(node))}<div class="flow-node-runtime" title="${escapeHtml(flowNodeCanvasValue(node.id))}">${escapeHtml(flowNodeCanvasValue(node.id))}</div></div>`;
-    if (definition.kind !== 'input' && ['combine','build_json','compute'].includes(node.type)) {
+    if (definition.kind !== 'input' && ['combine','boolean_logic','build_json','compute'].includes(node.type)) {
       flowMultiInputChoices(node).forEach(([port, label]) => {
         const input = document.createElement('button'); input.type = 'button'; input.className = 'flow-port input'; input.dataset.port = port;
         input.style.top = `${flowNodeInputPortY(node, port) - 6.5}px`; input.title = `Connect: ${label}`;
@@ -4911,6 +4914,14 @@ function renderFlowInspector() {
     rows.push(flowPropertyRow('Result', 'signed_result', String(Boolean(cfg.signed_result)), { choices: [['false','Unsigned'],['true','Signed']] }));
     const note = document.createElement('div'); note.className = 'hint';
     note.textContent = 'Connect each source to its labeled input. Combine retains the latest valid values and emits only after every input has a value.';
+    rows.push(note);
+  }
+  if (node.type === 'boolean_logic') {
+    rows.push(flowPropertyRow('Operation', 'operation', cfg.operation || 'and', { choices: [
+      ['and','A AND B'], ['or','A OR B'], ['xor','A XOR B'], ['and_not','A AND NOT B'], ['not_a_and_b','NOT A AND B']
+    ] }));
+    const note = document.createElement('div'); note.className = 'hint';
+    note.textContent = 'Connect Boolean tags to A and B. The latest values are retained, and the result updates whenever either input changes.';
     rows.push(note);
   }
   if (node.type === 'datatype_convert') rows.push(flowPropertyRow('Convert to', 'datatype', cfg.datatype || 'float', { choices: [['float','Number'],['integer','Integer'],['bool','Boolean'],['string','Text']] }));
