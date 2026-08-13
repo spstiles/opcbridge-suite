@@ -605,8 +605,8 @@ function normalizeDataEntryForm(source) {
     const item = String(field?.item || '').trim().slice(0, 500);
     const label = String(field?.label || item).trim().slice(0, 200);
     if (!item || !label) throw new Error(`Field ${index + 1} requires a label and item name.`);
-    let fieldId = sanitizeId(field?.id || label) || `field_${index + 1}`;
-    while (usedIds.has(fieldId)) fieldId = `${fieldId}_${index + 1}`;
+    let fieldId = sanitizeId(field?.id || '');
+    if (!fieldId || usedIds.has(fieldId)) fieldId = uniqueOpaqueId('field', usedIds);
     usedIds.add(fieldId);
     const valueType = String(field?.value_type || 'numeric') === 'text' ? 'text' : 'numeric';
     const min = field?.min === '' || field?.min == null ? null : Number(field.min);
@@ -748,10 +748,11 @@ function normalizeReportDefinition(value) {
   const aggregations = new Set(['last', 'last_nonzero', 'first', 'change', 'avg', 'min', 'max', 'sum', 'count']);
   const rawColumns = (Array.isArray(source.columns) ? source.columns : []).slice(0, 100);
   const usedColumnIds = new Set();
-  const columnIds = rawColumns.map((column, index) => {
+  const columnIds = rawColumns.map((column) => {
     const requested = sanitizeId(column?.id || '').slice(0, 100);
-    let id = requested || `column_${index + 1}`;
-    while (usedColumnIds.has(id)) id = `${id}_${index + 1}`;
+    const id = requested && !usedColumnIds.has(requested)
+      ? requested
+      : uniqueOpaqueId('column', usedColumnIds);
     usedColumnIds.add(id);
     return id;
   });
@@ -1167,35 +1168,6 @@ function sanitizeId(value) {
   return String(value || '')
     .trim()
     .replace(/[^A-Za-z0-9_.-]/g, '_');
-}
-
-function uniqueCopyId(sourceId, usedIds) {
-  const src = sanitizeId(sourceId) || 'item';
-  const root = `${src}_copy`;
-  let id = root;
-  let n = 2;
-  while (usedIds.has(id)) {
-    id = `${root}_${n}`;
-    n += 1;
-  }
-  return id;
-}
-
-function uniqueGeneratedId(sourceId, usedIds) {
-  const root = String(sourceId || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 120) || 'report';
-  let id = root;
-  let n = 2;
-  while (usedIds.has(id)) {
-    id = `${root}_${n}`;
-    n += 1;
-  }
-  return id;
 }
 
 function uniqueOpaqueId(prefix, usedIds) {
@@ -4933,7 +4905,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       try {
         const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
-        const root = readDataEntryDefinitions(); const originalId = sanitizeId(body.original_id || ''); const target = normalizeDataEntryTarget(body.target || body);
+        const root = readDataEntryDefinitions();
+        const originalId = sanitizeId(body.original_id || '');
+        const incoming = body.target || body;
+        const existing = originalId ? root.targets.find((item) => sanitizeId(item?.id) === originalId) : null;
+        const usedIds = new Set(root.targets.map((item) => sanitizeId(item?.id)).filter((id) => id && id !== originalId));
+        const target = normalizeDataEntryTarget({ ...incoming, id: existing ? existing.id : uniqueOpaqueId('data_target', usedIds) });
         const index = root.targets.findIndex((item) => sanitizeId(item?.id) === originalId);
         if (root.targets.some((item, itemIndex) => itemIndex !== index && sanitizeId(item?.id) === target.id)) throw new Error(`Target id already exists: ${target.id}`);
         if (index >= 0) root.targets[index] = target; else root.targets.push(target);
@@ -4970,7 +4947,10 @@ const server = http.createServer(async (req, res) => {
         const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
         const originalId = sanitizeId(body.original_id || '');
         const root = readDataEntryDefinitions(); const forms = root.forms;
-        const form = normalizeDataEntryForm(body.form || body);
+        const incoming = body.form || body;
+        const existing = originalId ? forms.find((item) => sanitizeId(item?.id) === originalId) : null;
+        const usedIds = new Set(forms.map((item) => sanitizeId(item?.id)).filter((id) => id && id !== originalId));
+        const form = normalizeDataEntryForm({ ...incoming, id: existing ? existing.id : uniqueOpaqueId('data_form', usedIds) });
         if (!root.targets.some((target) => sanitizeId(target.id) === form.target_id)) throw new Error('Selected data entry target does not exist.');
         const index = forms.findIndex((item) => sanitizeId(item?.id) === originalId);
         if (forms.some((item, itemIndex) => itemIndex !== index && sanitizeId(item?.id) === form.id)) throw new Error(`Form id already exists: ${form.id}`);
@@ -5099,7 +5079,7 @@ const server = http.createServer(async (req, res) => {
             .map((item) => sanitizeId(item?.id))
             .filter((id) => id && id !== originalId)
         );
-        source.id = uniqueGeneratedId(source.name, usedIds);
+        source.id = existing ? sanitizeId(existing.id) : uniqueOpaqueId('report', usedIds);
         const report = normalizeReportDefinition(source);
         const lookupId = originalId || report.id;
         const index = reports.findIndex((item) => sanitizeId(item?.id) === lookupId);
@@ -5151,9 +5131,11 @@ const server = http.createServer(async (req, res) => {
       try {
         const parsed = JSON.parse((await readBody(req)).toString('utf8') || '{}');
         const originalId = sanitizeId(parsed.original_id || '');
-        const incomingSource = parsed.source || parsed;
-        const source = normalizeReportDataSource(originalId ? { ...incomingSource, id: originalId } : incomingSource);
         const sources = readReportDataSources().map((item) => ({ ...item }));
+        const existing = originalId ? sources.find((item) => sanitizeId(item?.id) === originalId) : null;
+        const usedIds = new Set(sources.map((item) => sanitizeId(item?.id)).filter((id) => id && id !== originalId));
+        const incomingSource = parsed.source || parsed;
+        const source = normalizeReportDataSource({ ...incomingSource, id: existing ? existing.id : uniqueOpaqueId('report_source', usedIds) });
         const index = sources.findIndex((item) => sanitizeId(item?.id) === (originalId || source.id));
         if (sources.some((item, itemIndex) => itemIndex !== index && sanitizeId(item?.id) === source.id)) {
           throw new Error(`Data source id already exists: ${source.id}`);
@@ -5399,7 +5381,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const copy = JSON.parse(JSON.stringify(reports[index]));
-      copy.id = uniqueCopyId(id, new Set(reports.map((item) => sanitizeId(item?.id)).filter(Boolean)));
+      copy.id = uniqueOpaqueId('report', new Set(reports.map((item) => sanitizeId(item?.id)).filter(Boolean)));
       copy.name = copyName(copy.name);
       copy.created_by = authStatusUsername(reportStatus);
       if (!copy.created_by) throw new Error('An authenticated creator is required.');
