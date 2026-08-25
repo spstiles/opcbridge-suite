@@ -1301,6 +1301,13 @@ install_report() {
   fi
   chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/report" "$DATA_ROOT/report" 2>/dev/null || true
   chmod 750 "$DATA_ROOT/report" 2>/dev/null || true
+
+  # Report is invoked by SCADA on demand instead of running as a systemd
+  # service, so verify its installed runtime while this failure is actionable.
+  verify_component_installation report || {
+    echo "opcbridge-report installation did not produce a usable generator." >&2
+    exit 1
+  }
 }
 
 install_flow() {
@@ -1457,6 +1464,72 @@ print_node_deps_install_instructions() {
 
 mark_install_error() {
   INSTALL_HAD_ERRORS=1
+}
+
+verify_component_installation() {
+  local component="$1"
+  local -a required=()
+
+  case "$component" in
+    opcbridge) required=("$PREFIX/bin/opcbridge" "$PREFIX/VERSION");;
+    alarms) required=("$PREFIX/bin/opcbridge-alarms");;
+    scada) required=("$PREFIX/scada/server.js" "$PREFIX/scada/VERSION");;
+    hmi) required=("$PREFIX/hmi/server.js" "$PREFIX/hmi/VERSION");;
+    logger) required=("$PREFIX/bin/opcbridge-logger");;
+    historian) required=("$PREFIX/bin/opcbridge-historian");;
+    report) required=(
+      "$PREFIX/report/opcbridge-report"
+      "$PREFIX/report/VERSION"
+      "$PREFIX/report/vendor/autoload.php"
+      "$PREFIX/bin/opcbridge-report"
+    );;
+    flow) required=("$PREFIX/bin/opcbridge-flow");;
+    *)
+      echo "ERROR: Cannot verify unknown component: $component" >&2
+      return 1
+      ;;
+  esac
+
+  local missing=0
+  local artifact
+  for artifact in "${required[@]}"; do
+    if [[ ! -e "$artifact" ]]; then
+      echo "ERROR: $component installation is missing: $artifact" >&2
+      missing=1
+    fi
+  done
+
+  if [[ "$component" == "report" ]]; then
+    if [[ ! -x "$PREFIX/report/opcbridge-report" ]]; then
+      echo "ERROR: Report generator is not executable: $PREFIX/report/opcbridge-report" >&2
+      missing=1
+    fi
+    if [[ ! -x "$PREFIX/bin/opcbridge-report" ]]; then
+      echo "ERROR: Report launcher is missing or not executable: $PREFIX/bin/opcbridge-report" >&2
+      missing=1
+    fi
+  fi
+
+  [[ "$missing" -eq 0 ]]
+}
+
+verify_selected_installation() {
+  echo "Verifying installed components..."
+  local component
+  local failed=0
+  for component in "${COMPONENTS[@]}"; do
+    if verify_component_installation "$component"; then
+      echo "  ✓ $component artifacts verified"
+    else
+      echo "  ✗ $component installation is incomplete" >&2
+      failed=1
+    fi
+  done
+
+  if [[ "$failed" -ne 0 ]]; then
+    echo "ERROR: One or more selected components were not installed completely." >&2
+    return 1
+  fi
 }
 
 logger_health_ok() {
@@ -1901,6 +1974,7 @@ main() {
       flow) install_flow;;
     esac
   done
+  verify_selected_installation || mark_install_error
   fix_config_permissions
 
   # Option A: keep opcbridge-scada unprivileged but allow limited systemd control via sudoers.

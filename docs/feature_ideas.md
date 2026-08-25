@@ -1,5 +1,27 @@
 # Feature Ideas
 
+## Debian Package Distribution
+
+Idea:
+- Distribute OPCBridge Suite as installable Debian packages, with a suite metapackage and optional packages for individual components.
+
+Desired behavior:
+- Declare and install runtime dependencies automatically.
+- Install and manage systemd services consistently.
+- Preserve configuration and application data during upgrades.
+- Avoid requiring end users to run npm or remember installer dependency flags.
+- Keep `install.sh` available for development and source-based installations.
+- Validate clean installation, upgrade, rollback, and removal behavior before making packages the recommended installation method.
+
+Possible package structure:
+- `opcbridge-suite` metapackage
+- `opcbridge-core`
+- `opcbridge-hmi`
+- `opcbridge-scada`
+- `opcbridge-alarms`
+- `opcbridge-flow`
+- `opcbridge-logger`
+
 ## Configuration Publish / Peer Distribution
 
 Idea:
