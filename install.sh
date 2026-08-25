@@ -1295,6 +1295,15 @@ install_report() {
   cp -a "$src_dir/vendor" "$PREFIX/report/"
   ln -sfn ../report/opcbridge-report "$PREFIX/bin/opcbridge-report"
 
+  # SCADA invokes the report generator while running as SERVICE_USER. The
+  # installer's restrictive umask must not leave this runtime root-only.
+  chmod 0755 "$PREFIX/report"
+  find "$PREFIX/report/vendor" -type d -exec chmod 0755 {} +
+  find "$PREFIX/report/vendor" -type f -exec chmod 0644 {} +
+  chmod 0755 "$PREFIX/report/opcbridge-report"
+  chmod 0644 "$PREFIX/report/VERSION" "$PREFIX/report/composer.json"
+  [[ ! -f "$PREFIX/report/composer.lock" ]] || chmod 0644 "$PREFIX/report/composer.lock"
+
   install -m 0644 "$src_dir/reports.json.example" "$CONFIG_ROOT/report/reports.json.example"
   if [[ ! -f "$CONFIG_ROOT/report/reports.json" ]]; then
     install -m 0660 "$src_dir/reports.json.example" "$CONFIG_ROOT/report/reports.json"
@@ -1418,16 +1427,18 @@ init_historian_db() {
 
   if have_cmd runuser; then
     if ! "${as_pg[@]}" psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${user}'" | grep -q 1; then
-      "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE ROLE \"${user}\" LOGIN PASSWORD '${pass}';"
+      "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE ROLE \"${user}\" LOGIN PASSWORD '${pass}';" || return 1
     fi
     if ! "${as_pg[@]}" psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
-      "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${db}\" OWNER \"${user}\";"
+      "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${db}\" OWNER \"${user}\";" || return 1
     fi
-    "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" -f "${schema_path}"
+    # Open the schema as root and pass it over stdin. CONFIG_ROOT is normally
+    # not traversable by the postgres account, and psql -f would fail there.
+    "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" <"${schema_path}" || return 1
   else
-    "${as_pg[@]}" "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${user}'\" | grep -q 1 || psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE \\\"${user}\\\" LOGIN PASSWORD '${pass}';\""
-    "${as_pg[@]}" "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='${db}'\" | grep -q 1 || psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"${db}\\\" OWNER \\\"${user}\\\";\""
-    "${as_pg[@]}" "psql -v ON_ERROR_STOP=1 -d \"${db}\" -f \"${schema_path}\""
+    "${as_pg[@]}" "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${user}'\" | grep -q 1 || psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE \\\"${user}\\\" LOGIN PASSWORD '${pass}';\"" || return 1
+    "${as_pg[@]}" "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='${db}'\" | grep -q 1 || psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"${db}\\\" OWNER \\\"${user}\\\";\"" || return 1
+    "${as_pg[@]}" "psql -v ON_ERROR_STOP=1 -d \"${db}\"" <"${schema_path}" || return 1
   fi
 
   echo "Initialized Postgres for historian:"
@@ -1507,6 +1518,20 @@ verify_component_installation() {
     if [[ ! -x "$PREFIX/bin/opcbridge-report" ]]; then
       echo "ERROR: Report launcher is missing or not executable: $PREFIX/bin/opcbridge-report" >&2
       missing=1
+    fi
+    if have_cmd runuser; then
+      if ! runuser -u "$SERVICE_USER" -- test -r "$PREFIX/report/VERSION"; then
+        echo "ERROR: $SERVICE_USER cannot read the installed Report version." >&2
+        missing=1
+      fi
+      if ! runuser -u "$SERVICE_USER" -- test -r "$PREFIX/report/vendor/autoload.php"; then
+        echo "ERROR: $SERVICE_USER cannot read the installed Report dependencies." >&2
+        missing=1
+      fi
+      if ! runuser -u "$SERVICE_USER" -- test -x "$PREFIX/bin/opcbridge-report"; then
+        echo "ERROR: $SERVICE_USER cannot execute the installed Report generator." >&2
+        missing=1
+      fi
     fi
   fi
 
