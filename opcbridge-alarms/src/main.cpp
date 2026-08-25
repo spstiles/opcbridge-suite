@@ -4889,6 +4889,11 @@ public:
         return send_email_via_smtp(to, "OPC Bridge test email", email_body_for_alarm(alarm, "test"), result);
     }
 
+    bool send_email(const std::string& to, const std::string& subject, const std::string& body, std::string& result)
+    {
+        return send_email_via_smtp(to, subject, body, result);
+    }
+
 private:
     static bool vector_contains(const std::vector<std::string>& values, const std::string& needle)
     {
@@ -8237,15 +8242,18 @@ struct AlarmEngine
                         {
                             s.pending = true;
                             s.pending_since_ms = t;
-                            s.pending_record_event = s.initialized && recordEvent;
+                            // A live first value is still a real transition. Only
+                            // explicit baseline reads (recordEvent == false) are
+                            // allowed to establish state silently.
+                            s.pending_record_event = recordEvent;
                         }
                         s.initialized = true;
                         continue;
                     }
-                    if (!s.initialized)
+                    if (!s.initialized && !recordEvent)
                     {
-                        // First value after a new/reloaded alarm is a baseline, not a
-                        // new active transition. Update live state without notifications.
+                        // An explicit startup/reload baseline establishes existing
+                        // state without creating a new alarm event.
                         s.initialized = true;
                         s.active = true;
                         s.acked = false;
@@ -8265,6 +8273,7 @@ struct AlarmEngine
                         continue;
                     }
 
+                    s.initialized = true;
                     s.active = true;
                     s.acked = false;
                     s.return_notification_armed = recordEvent;
@@ -10179,6 +10188,46 @@ int main(int argc, char **argv)
         j["ok"] = ok;
         j["result"] = result;
         if (!ok) j["error"] = result.empty() ? "Email test failed." : result;
+        res.set_content(j.dump(2), "application/json");
+    });
+
+    svr.Post("/alarm/api/email/send", [&](const httplib::Request &req, httplib::Response &res) {
+        json body;
+        try { body = json::parse(req.body); } catch (...) { body = json::object(); }
+        json j;
+        if (adminToken.empty() || body.value("token", std::string{}) != adminToken) {
+            res.status = 403;
+            j["ok"] = false;
+            j["error"] = "Invalid or missing service token.";
+            res.set_content(j.dump(2), "application/json");
+            return;
+        }
+        std::string to = body.value("to", std::string{});
+        const auto first = to.find_first_not_of(" \t\r\n");
+        const auto last = to.find_last_not_of(" \t\r\n");
+        to = first == std::string::npos ? std::string{} : to.substr(first, last - first + 1);
+        const std::string subject = body.value("subject", std::string{});
+        const std::string message = body.value("body", std::string{});
+        if (to.empty() || subject.empty() || message.empty()) {
+            res.status = 400;
+            j["ok"] = false;
+            j["error"] = "Recipient, subject, and body are required.";
+            res.set_content(j.dump(2), "application/json");
+            return;
+        }
+        if (to.size() > 2000 || subject.size() > 500 || message.size() > 100000) {
+            res.status = 400;
+            j["ok"] = false;
+            j["error"] = "Email fields exceed the allowed size.";
+            res.set_content(j.dump(2), "application/json");
+            return;
+        }
+        std::string result;
+        const bool ok = notifications.send_email(to, subject, message, result);
+        res.status = ok ? 200 : 500;
+        j["ok"] = ok;
+        j["result"] = result;
+        if (!ok) j["error"] = result.empty() ? "Email send failed." : result;
         res.set_content(j.dump(2), "application/json");
     });
 

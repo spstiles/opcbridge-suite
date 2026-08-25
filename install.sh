@@ -1432,8 +1432,11 @@ init_historian_db() {
 node_deps_installed() {
   local dir="$1"
   [[ -d "$dir/node_modules" ]] || return 1
-  # express is a required runtime dep for both HMI and SCADA servers
-  [[ -d "$dir/node_modules/express" ]] || return 1
+  [[ -f "$dir/package.json" ]] || return 1
+  # Validate every declared production dependency. Checking only one known
+  # package lets an upgraded service start with stale node_modules.
+  have_cmd npm || return 1
+  (cd "$dir" && npm ls --omit=dev --depth=0 >/dev/null 2>&1) || return 1
   return 0
 }
 

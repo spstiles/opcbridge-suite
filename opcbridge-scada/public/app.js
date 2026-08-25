@@ -4093,6 +4093,11 @@ const FLOW_NODE_TYPES = {
   datatype_convert: { label: 'Convert Type', kind: 'process', defaults: { datatype: 'float' } },
   opc_tag_write: { label: 'Tag Output', kind: 'output', defaults: { connection_id: '', tag_name: '', stale_after_ms: 0 } },
   mqtt_publish: { label: 'MQTT Publish', kind: 'output', defaults: { connection_id: '', topic: '', qos: 0, retain: false, payload_format: 'scalar' } },
+  email_output: { label: 'Email', kind: 'output', defaults: {
+    send_mode: 'every', to: '', subject: 'OPCBridge Flow notification', body: 'Value: {{value}}',
+    send_true: true, true_subject: 'OPCBridge notification active', true_body: 'The input changed to true at {{timestamp}}.',
+    send_false: true, false_subject: 'OPCBridge notification cleared', false_body: 'The input changed to false at {{timestamp}}.'
+  } },
   debug: { label: 'Debug', kind: 'output', defaults: {} }
 };
 const FLOW_NODE_WIDTH = 150;
@@ -4108,6 +4113,16 @@ function flowSetStatus(message, error = false) {
 
 function flowCurrentDraft() {
   return state.flowDrafts.find((flow) => String(flow?.id || '') === String(state.flowSelectedId || '')) || null;
+}
+
+function flowSortedDrafts() {
+  return state.flowDrafts.slice().sort((a, b) => {
+    const byName = String(a?.name || '').localeCompare(String(b?.name || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base'
+    });
+    return byName || String(a?.id || '').localeCompare(String(b?.id || ''));
+  });
 }
 
 function flowRuntimeFor(id = state.flowSelectedId) {
@@ -4130,6 +4145,7 @@ function flowNodeSummary(node) {
   const cfg = node?.config || {};
   if (node.type === 'opc_tag_input' || node.type === 'opc_tag_write') return [cfg.connection_id, cfg.tag_name].filter(Boolean).join(' / ') || 'Select a tag';
   if (node.type === 'mqtt_subscribe' || node.type === 'mqtt_publish') return [cfg.connection_id ? displayConnectionName(cfg.connection_id) : '', cfg.topic].filter(Boolean).join(' / ') || 'Select a broker and topic';
+  if (node.type === 'email_output') return cfg.to || 'Configure recipients';
   if (node.type === 'split') return 'Object/array → keyed values';
   if (node.type === 'switch') return `${Array.isArray(cfg.rules) ? cfg.rules.length : 0} key rule(s)`;
   if (node.type === 'linear_map') return `${cfg.input_min ?? 0}–${cfg.input_max ?? 100} → ${cfg.output_min ?? 0}–${cfg.output_max ?? 100}`;
@@ -4937,6 +4953,31 @@ function renderFlowInspector() {
     rows.push(flowPropertyRow('Retain', 'retain', Boolean(cfg.retain), { type: 'checkbox' }));
     rows.push(flowPropertyRow('Payload', 'payload_format', cfg.payload_format || 'scalar', { choices: [['scalar','Plain value'],['json','JSON']] }));
   }
+  if (node.type === 'email_output') {
+    const sendMode = cfg.send_mode || 'every';
+    rows.push(flowPropertyRow('Send', 'send_mode', sendMode, { choices: [
+      ['every','Every message'], ['change','When the value changes'], ['boolean_transition','On True / False transitions']
+    ] }));
+    rows.push(flowPropertyRow('Recipients', 'to', cfg.to || '', { placeholder: 'operator@example.com, supervisor@example.com' }));
+    if (sendMode === 'boolean_transition') {
+      rows.push(flowPropertyRow('Send when input becomes True', 'send_true', cfg.send_true !== false, { type: 'checkbox' }));
+      if (cfg.send_true !== false) {
+        rows.push(flowPropertyRow('True subject', 'true_subject', cfg.true_subject || 'OPCBridge notification active'));
+        rows.push(flowPropertyRow('True message', 'true_body', cfg.true_body || 'The input changed to true at {{timestamp}}.', { type: 'textarea', rows: 4 }));
+      }
+      rows.push(flowPropertyRow('Send when input becomes False', 'send_false', cfg.send_false !== false, { type: 'checkbox' }));
+      if (cfg.send_false !== false) {
+        rows.push(flowPropertyRow('False subject', 'false_subject', cfg.false_subject || 'OPCBridge notification cleared'));
+        rows.push(flowPropertyRow('False message', 'false_body', cfg.false_body || 'The input changed to false at {{timestamp}}.', { type: 'textarea', rows: 4 }));
+      }
+    } else {
+      rows.push(flowPropertyRow('Subject', 'subject', cfg.subject || 'OPCBridge Flow notification'));
+      rows.push(flowPropertyRow('Message', 'body', cfg.body || 'Value: {{value}}', { type: 'textarea', rows: 5 }));
+    }
+    const note = document.createElement('div'); note.className = 'hint';
+    note.textContent = 'Uses the alarm service email settings. Available fields: {{value}}, {{timestamp}}, {{timestamp_ms}}, {{topic}}, {{source}}, and {{key}}. The first value establishes a baseline in change and transition modes; it does not send an email.';
+    rows.push(note);
+  }
   const outgoing = (draft.edges || []).filter((edge) => edge.from === node.id);
   if (outgoing.length) {
     const connections = document.createElement('div'); connections.className = 'form-row';
@@ -4970,7 +5011,7 @@ function renderFlowInspector() {
         }
       }
       flowMarkDirty(); renderFlowCanvas();
-      if (key === 'connection_id' || (node.type === 'bit_operations' && ['operation','word_size','output_mode','boolean_test'].includes(key)) || (node.type === 'combine' && key === 'mode') || (node.type === 'delay' && key === 'action') || (node.type === 'trigger' && ['send_initial','send_delayed','reset_enabled'].includes(key))) renderFlowInspector();
+      if (key === 'connection_id' || (node.type === 'bit_operations' && ['operation','word_size','output_mode','boolean_test'].includes(key)) || (node.type === 'combine' && key === 'mode') || (node.type === 'delay' && key === 'action') || (node.type === 'trigger' && ['send_initial','send_delayed','reset_enabled'].includes(key)) || (node.type === 'email_output' && ['send_mode','send_true','send_false'].includes(key))) renderFlowInspector();
     });
   });
   if (els.flowNodeRuntime) els.flowNodeRuntime.textContent = flowNodeRuntimeSummary(node.id);
@@ -5003,7 +5044,7 @@ function newFlowDraft() {
 function renderFlowSelector() {
   if (!els.flowSelect) return;
   els.flowSelect.textContent = '';
-  state.flowDrafts.slice().sort((a,b) => String(a.name).localeCompare(String(b.name))).forEach((flow) => els.flowSelect.add(new Option(flow.name, flow.id)));
+  flowSortedDrafts().forEach((flow) => els.flowSelect.add(new Option(flow.name, flow.id)));
   if (!state.flowDrafts.length) els.flowSelect.add(new Option('No flows defined', ''));
   els.flowSelect.value = state.flowSelectedId;
 }
@@ -5040,7 +5081,7 @@ async function refreshFlowTab({ preserveDraft = false } = {}) {
     if (!preserveEditor) state.flowDrafts = Array.isArray(response.drafts) ? response.drafts : [];
     state.flowDeployed = Array.isArray(response.deployed) ? response.deployed : [];
     state.flowRuntime = response.runtime || {};
-    if (!state.flowSelectedId || !state.flowDrafts.some((flow) => flow.id === state.flowSelectedId)) state.flowSelectedId = state.flowDrafts[0]?.id || '';
+    if (!state.flowSelectedId || !state.flowDrafts.some((flow) => flow.id === state.flowSelectedId)) state.flowSelectedId = flowSortedDrafts()[0]?.id || '';
     if (els.flowServiceBadge) { els.flowServiceBadge.textContent = 'Flow service online'; els.flowServiceBadge.className = 'badge ok'; }
     if (preserveEditor) refreshFlowRuntimeDisplay();
     else { renderFlowSelector(); renderFlowEditor(); }
@@ -5071,7 +5112,7 @@ async function deployFlowDraft() {
   draft.mode = els.flowMode?.value || 'monitor';
   draft.enabled = Boolean(els.flowEnabled?.checked);
   if (draft.mode === 'active') {
-    const outputCount = (draft.nodes || []).filter((node) => ['opc_tag_write','mqtt_publish'].includes(node.type)).length;
+    const outputCount = (draft.nodes || []).filter((node) => ['opc_tag_write','mqtt_publish','email_output'].includes(node.type)).length;
     const message = outputCount
       ? `Deploy “${draft.name || 'this flow'}” as Active?\n\n${outputCount} external output node${outputCount === 1 ? '' : 's'} will be enabled. Valid incoming values may write tags or publish MQTT messages.`
       : `Deploy “${draft.name || 'this flow'}” as Active?\n\nNo external output nodes are currently configured.`;
@@ -11133,7 +11174,9 @@ function setTab(id) {
     refreshLogicTab().catch(() => {});
   }
   if (id === 'flow') {
-    refreshFlowTab().catch(() => {});
+    // Returning to Flow should refresh runtime status without replacing the
+    // selected in-browser draft or discarding unsaved edits.
+    refreshFlowTab({ preserveDraft: state.flowDrafts.length > 0 }).catch(() => {});
   } else if (state.flowRefreshTimer) {
     window.clearTimeout(state.flowRefreshTimer);
     state.flowRefreshTimer = 0;
@@ -11152,9 +11195,15 @@ function setTab(id) {
     refreshTagEventsHistory().catch(() => {});
   }
   if (id === 'workspace') {
-    refreshWorkspaceTab().catch((err) => {
-      if (els.statusLine) els.statusLine.textContent = `Workspace refresh failed: ${err.message}`;
-    });
+    if (workspaceIsDirty()) {
+      // The current Workspace state is the authoritative editing copy until
+      // Save, Save & Apply, or Discard is chosen.
+      renderWorkspaceTree();
+    } else {
+      refreshWorkspaceTab().catch((err) => {
+        if (els.statusLine) els.statusLine.textContent = `Workspace refresh failed: ${err.message}`;
+      });
+    }
   }
   if (state.uiRefreshReady && (id === 'overview' || id === 'workspace' || id === 'alarms_events')) {
     refreshVisible().catch(() => {});
@@ -18047,7 +18096,7 @@ function stageDeleteTagById(connectionId, tagName) {
   const name = String(tagName || '').trim();
   if (!cid || !name) return;
 
-  if (!window.confirm(`Delete tag '${cid}:${name}'? (Applied on Save / Apply Polling Changes.)`)) return;
+  if (!window.confirm(`Delete tag '${cid}:${name}'? (Applied with Save & Apply Changes.)`)) return;
 
   const key = `${cid}::${name}`;
   const before = Array.isArray(state.tagConfigAll) ? state.tagConfigAll.length : 0;
@@ -18061,7 +18110,7 @@ function stageDeleteTagById(connectionId, tagName) {
   blockWorkspaceApplyPollingBriefly();
   if (state.workspaceChildrenSel) state.workspaceChildrenSel.delete(key);
   renderWorkspaceTree();
-  setWorkspaceSaveStatus(`Deleted tag '${cid}:${name}' locally. Apply polling changes to update runtime.`);
+  setWorkspaceSaveStatus(`Deleted tag '${cid}:${name}' locally. Use Save & Apply Changes to update runtime.`);
   renderWorkspaceSaveBar();
 }
 
@@ -19909,7 +19958,7 @@ function setWorkspaceDeviceEnabled(connectionId, relPath, enabled) {
   if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
   state.workspaceConnDirty.set(path, connObj);
   if (state.connObjCache) state.connObjCache.set(path, connObj);
-  setWorkspaceSaveStatus(`Device '${connectionId}' ${connObj.enabled ? 'enabled' : 'disabled'} locally. Click Save or Apply Polling Changes.`);
+  setWorkspaceSaveStatus(`Device '${connectionId}' ${connObj.enabled ? 'enabled' : 'disabled'} locally. Click Save or Save & Apply Changes.`);
   renderWorkspaceSaveBar();
   saveWorkspaceDraft();
   renderWorkspaceTree();
@@ -25663,7 +25712,7 @@ async function refreshWorkspaceConfigViews() {
 
 async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } = {}) {
   if (applyPolling && Date.now() < Number(state.workspaceApplyPollingBlockUntil || 0)) {
-    setWorkspaceSaveStatus('Tag delete staged. Click Apply Polling Changes when ready.');
+    setWorkspaceSaveStatus('Tag delete staged. Click Save & Apply Changes when ready.');
     renderWorkspaceSaveBar();
     return;
   }
@@ -25753,7 +25802,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
 	    } else if (applyPolling) {
 	      const ids = Array.from(changedConnectionIds).filter(Boolean);
 	      if (ids.length) {
-	        setWorkspaceSaveStatus(`Saved. Applying polling changes to ${ids.join(', ')}…`);
+	        setWorkspaceSaveStatus(`Saved. Applying runtime changes to ${ids.map(displayConnectionName).join(', ')}…`);
 	        renderWorkspaceSaveBar();
 	        pollingReloadResult = await opcbridgeReloadConnections(ids);
 	      }

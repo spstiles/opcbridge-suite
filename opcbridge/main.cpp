@@ -7079,6 +7079,39 @@ static bool load_single_driver_for_connection(DriverContext &out,
     const std::string connDir = joinPath(configDir, "connections");
     const std::string tagDir = joinPath(configDir, "tags");
 
+    // Memory tags intentionally have no physical connection file. Treat their
+    // canonical tag file as a virtual connection so the normal targeted reload
+    // path can apply additions and edits without restarting or rebuilding every
+    // configured PLC connection.
+    if (is_memory_connection_id(connId)) {
+        const std::string canonicalJson = joinPath(tagDir, connId + ".json");
+        const std::string canonicalJsonc = joinPath(tagDir, connId + ".jsonc");
+        const std::string tagPath = fs::exists(canonicalJson) ? canonicalJson
+            : (fs::exists(canonicalJsonc) ? canonicalJsonc : std::string{});
+        if (tagPath.empty()) {
+            hasDriver = false;
+            return true;
+        }
+        TagFile tf = load_tag_file(tagPath);
+        if (tf.connection_id != connId) {
+            err = "Memory tag file connection_id does not match _memory.";
+            return false;
+        }
+        if (!std::all_of(tf.tags.begin(), tf.tags.end(), [](const TagConfig &tag) { return is_memory_tag(tag); })) {
+            err = "The _memory tag file contains a non-memory tag.";
+            return false;
+        }
+        ConnectionConfig memoryConn;
+        memoryConn.id = connId;
+        memoryConn.driver = "memory";
+        memoryConn.plc_type = "memory";
+        memoryConn.polling_mode = "standard";
+        memoryConn.polling_pacing = "gentle";
+        if (!build_driver_context_for_connection(memoryConn, tf.tags, out, err)) return false;
+        hasDriver = true;
+        return true;
+    }
+
     bool foundConn = false;
     ConnectionConfig conn_cfg;
     if (!fs::exists(connDir)) {
@@ -28265,6 +28298,18 @@ window.addEventListener("load", startAutoRefresh);
 			                                    if (tt->first.rfind(prefix, 0) == 0) tt = tagTable.erase(tt);
 			                                    else ++tt;
 			                                }
+			                                if (hasDriver && is_memory_connection_id(requestedTargetConn)) {
+			                                    auto memoryIt = std::find_if(drivers.begin(), drivers.end(), [&](const DriverContext &d) {
+			                                        return d.conn.id == requestedTargetConn;
+			                                    });
+			                                    if (memoryIt != drivers.end()) {
+			                                        for (const auto &tag : memoryIt->tags) {
+			                                            if (!tag.cfg.enabled || !is_memory_tag(tag.cfg)) continue;
+			                                            tagTable[make_tag_key(memoryIt->conn.id, tag.cfg.logical_name)] =
+			                                                make_initial_snapshot_for_tag(memoryIt->conn, tag, 1);
+			                                        }
+			                                    }
+			                                }
 
 			                                if (g_uaServer) {
 			                                    if (hasDriver) {
@@ -28327,6 +28372,10 @@ window.addEventListener("load", startAutoRefresh);
 			                                destroy_all_handles(drivers, true /*plcAlreadyLocked*/);
 			                                drivers = std::move(newDrivers);
 			                                tagTable.clear();
+			                                // Memory tags have no poller to create their
+			                                // first snapshot. Seed them immediately after
+			                                // every full reload, just as startup does.
+			                                seed_memory_tag_table(drivers, tagTable);
 			                            }
 
 			                            // Rebuild OPC UA server to refresh node contexts / handles.

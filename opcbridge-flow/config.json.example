@@ -2,6 +2,7 @@
   "listen_host": "127.0.0.1",
   "listen_port": 8098,
   "opcbridge_base_url": "http://127.0.0.1:8080",
+  "alarms_base_url": "http://127.0.0.1:8085",
   "poll_interval_ms": 500,
   "max_event_hops": 64,
   "connections_dir": "/etc/opcbridge/connections"

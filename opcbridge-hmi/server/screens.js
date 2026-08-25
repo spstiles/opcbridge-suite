@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const stripJsonComments = require("strip-json-comments");
+const { convertGraphWorx } = require("./graphworx-import");
 
 const SCREEN_EXTS = [".screen", ".jsonc"];
 
@@ -188,6 +189,22 @@ const createScreensRouter = ({ rootDir, legacyScreensDir, audit }) => {
       res.json({ defaultRef, screens });
     } catch (err) {
       res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.post("/import/graphworx", async (req, res) => {
+    try {
+      const raw = req.body?.raw;
+      const filename = String(req.body?.filename || "Imported.gdfx");
+      if (typeof raw !== "string") return res.status(400).json({ error: "Body must include { raw: string }." });
+      if (Buffer.byteLength(raw, "utf8") > 10 * 1024 * 1024) return res.status(413).json({ error: "GDFX file exceeds the 10 MB import limit." });
+      const converted = convertGraphWorx(raw, { filename });
+      try {
+        await audit?.(req, { event: "screen.import.preview", format: "graphworx64", filename, ...converted.summary });
+      } catch {}
+      res.json(converted);
+    } catch (err) {
+      res.status(400).json({ error: String(err?.message || err) });
     }
   });
 

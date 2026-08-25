@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="/favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="/css/main.css?v=20260615-hmi-ui-v54" />
+  <link rel="stylesheet" href="/css/main.css?v=20260824-reference-health-wrap-v1" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -27,6 +27,7 @@
               <button id="fileOpenScreenMenuBtn" class="menu-item" type="button">File Manager…</button>
               <button id="screenSaveMenuBtn" class="menu-item" type="button">Save</button>
               <button id="fileSaveAsMenuBtn" class="menu-item" type="button">Save As…</button>
+              <button id="fileImportGraphWorxMenuBtn" class="menu-item" type="button">Import GraphWorX64…</button>
               <div class="menu-separator"></div>
               <button id="fileBackupScreensMenuBtn" class="menu-item" type="button">Backup Screens…</button>
             </div>
@@ -38,6 +39,7 @@
             </button>
             <div id="viewMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="View menu">
               <button id="viewTagsMenuBtn" class="menu-item" type="button">Tags</button>
+              <button id="viewReferenceHealthMenuBtn" class="menu-item" type="button">Reference Health…</button>
             </div>
           </div>
           <div id="insertMenuWrap" class="menu-flyout-wrap">
@@ -108,6 +110,7 @@
 	      <span id="toolHint" class="tool-hint is-hidden" aria-live="polite"></span>
 	      <span id="wsStatus" class="ws-status" aria-live="polite">ws://</span>
 	      <button id="alarmsBadge" class="alarms-badge" type="button" aria-live="polite" title="View alarms">Alarms: 0</button>
+	      <button id="referenceHealthBadge" class="reference-health-badge" type="button" aria-live="polite" title="View unresolved references and import issues" aria-label="Reference Health: 0 issues"><span aria-hidden="true">⚠</span> Issues: 0</button>
 	    </div>
     <div class="toolbar-right">
       <div class="toolbar-zoom" aria-label="Canvas zoom controls">
@@ -122,7 +125,8 @@
       <a id="svgLabBtn" class="toolbar-btn" href="svg-lab.html">SVG Lab</a>
       <button id="runtimeBtn" class="toolbar-btn" type="button">Switch to Runtime</button>
 	    </div>
-		  </header>
+  </header>
+  <input id="graphWorxImportInput" type="file" accept=".gdfx,.gdf,application/xml,text/xml" hidden />
 
     <nav id="leftToolbar" class="left-toolbar" aria-label="Edit tools">
       <button id="leftSelectToolBtn" class="left-tool-btn" type="button" title="Select (cursor)" aria-label="Select tool">
@@ -144,6 +148,13 @@
           <circle cx="10" cy="9" r="1.4" fill="currentColor"/>
           <circle cx="14" cy="14" r="1.4" fill="currentColor"/>
           <circle cx="19" cy="7" r="1.4" fill="currentColor"/>
+        </svg>
+      </button>
+      <button id="leftPipeToolBtn" class="left-tool-btn" type="button" title="Pipe" aria-label="Pipe tool">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <path d="M5 17V9h10V5" fill="none" stroke="#202020" stroke-width="7" stroke-linejoin="round"/>
+          <path d="M5 17V9h10V5" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+          <path d="M5 17V9h10V5" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1" stroke-linejoin="round"/>
         </svg>
       </button>
     <button id="leftRectToolBtn" class="left-tool-btn" type="button" title="Rectangle" aria-label="Rectangle tool">
@@ -291,6 +302,9 @@
 	            <button id="polylineToolBtn" class="tool-btn" type="button" title="Polyline tool">
 	              <span class="tool-icon">〰</span>
 	            </button>
+            <button id="pipeToolBtn" class="tool-btn" type="button" title="Pipe tool (click vertices, double-click to finish)">
+              <span class="tool-icon">▰</span>
+            </button>
             <button id="polygonToolBtn" class="tool-btn" type="button" title="Freeform polygon tool (click vertices)">
               <span class="tool-icon">✣</span>
             </button>
@@ -337,6 +351,7 @@
 	        </div>
 
         <div class="editor-panel is-active" data-panel="properties" role="tabpanel">
+          <div id="selectedReferenceHealthProps" class="properties-form reference-properties is-hidden"></div>
           <div id="objectDynamicTabs" class="editor-tabs is-hidden">
             <button id="objectDynamicTabPropertiesBtn" class="editor-tab is-active" type="button">Properties</button>
             <button id="objectDynamicTabVisibilityBtn" class="editor-tab is-hidden" type="button">Visibility</button>
@@ -558,6 +573,19 @@
               <label for="buttonViewportTarget">Viewport</label>
               <select id="buttonViewportTarget"></select>
             </div>
+            <div class="prop-subgroup is-hidden" id="buttonPopupFields" hidden>
+              <div class="prop-group-title">Popup Window</div>
+              <div class="prop-row"><label for="buttonPopupModal">Modal</label><input id="buttonPopupModal" type="checkbox" checked /></div>
+              <div class="prop-row"><label for="buttonPopupMovable">Movable</label><input id="buttonPopupMovable" type="checkbox" /></div>
+              <div class="prop-row"><label for="buttonPopupX">Window X</label><input id="buttonPopupX" type="number" step="1" placeholder="Centered" /></div>
+              <div class="prop-row"><label for="buttonPopupY">Window Y</label><input id="buttonPopupY" type="number" step="1" placeholder="Centered" /></div>
+              <div class="prop-row"><label for="buttonPopupSizeMode">Window Size</label><select id="buttonPopupSizeMode"><option value="screen">Referenced Screen</option><option value="fixed">Fixed</option></select></div>
+              <div id="buttonPopupFixedSizeFields" class="prop-subgroup is-hidden" hidden>
+                <div class="prop-row"><label for="buttonPopupWidth">Window Width</label><input id="buttonPopupWidth" type="number" min="100" step="1" placeholder="640" /></div>
+                <div class="prop-row"><label for="buttonPopupHeight">Window Height</label><input id="buttonPopupHeight" type="number" min="100" step="1" placeholder="480" /></div>
+              </div>
+              <div class="prop-row"><label for="buttonPopupScaleMode">Content Scaling</label><select id="buttonPopupScaleMode"><option value="fit">Scale to Fit</option><option value="crop">Actual Size / Scroll</option></select></div>
+            </div>
 	            <div class="prop-subgroup is-hidden" id="buttonWriteFields" hidden>
 	              <div class="prop-row">
 	                <label for="buttonWriteConnection">Connection</label>
@@ -630,6 +658,7 @@
 		                <input id="buttonAlarmFilterClear" type="checkbox" />
 		              </div>
 		            </div>
+		            <div class="prop-group-title">Object Position</div>
 		            <div class="prop-row">
 		              <label for="buttonX">X</label>
 		              <input id="buttonX" type="number" step="1" />
@@ -1119,6 +1148,10 @@
 	                <option value="inset">Inset</option>
 	              </select>
 	            </div>
+              <div class="prop-group-title">Inner Border</div>
+              <div class="prop-row"><label for="rectInnerBorderEnabled">Enabled</label><input id="rectInnerBorderEnabled" type="checkbox" /></div>
+              <div class="prop-row" id="rectInnerBorderColorRow"><label for="rectInnerBorderColor">Color</label><div class="prop-inline"><input id="rectInnerBorderColor" type="color" /><input id="rectInnerBorderColorText" type="text" placeholder="#000000" /></div></div>
+              <div class="prop-row" id="rectInnerBorderWidthRow"><label for="rectInnerBorderWidth">Width</label><input id="rectInnerBorderWidth" type="number" min="0" step="1" /></div>
 	            <div class="prop-row">
 	              <label for="rectFill">Fill</label>
 	              <div class="prop-inline">
@@ -1673,7 +1706,7 @@
           </div>
 
           <div id="polylineProps" class="properties-form is-hidden">
-            <div class="prop-group-title">Polyline</div>
+            <div id="polylinePropsTitle" class="prop-group-title">Polyline</div>
             <div class="prop-row">
               <label for="polylineStroke">Stroke</label>
 	              <div class="prop-inline">
@@ -1684,8 +1717,22 @@
 	              </div>
 	            </div>
 	            <div class="prop-row">
-	              <label for="polylineStrokeWidth">Stroke Width</label>
+	              <label id="polylineStrokeWidthLabel" for="polylineStrokeWidth">Stroke Width</label>
 	              <input id="polylineStrokeWidth" type="number" min="0" step="1" />
+	            </div>
+	            <div id="pipePropertyRows" class="is-hidden">
+	              <div class="prop-row"><label for="pipeX">X</label><input id="pipeX" type="number" step="1" /></div>
+	              <div class="prop-row"><label for="pipeY">Y</label><input id="pipeY" type="number" step="1" /></div>
+	              <div class="prop-row"><label for="pipeJointType">Joints</label><select id="pipeJointType"><option value="round">Rounded</option><option value="miter">Mitered</option><option value="bevel">Beveled</option></select></div>
+	              <div class="prop-row"><label for="pipeCurveRadius">Curve Radius</label><input id="pipeCurveRadius" type="number" min="0" step="1" /></div>
+	              <div class="prop-row"><label for="pipeOutlineThickness">Border Thickness</label><input id="pipeOutlineThickness" type="number" min="0" step="0.5" /></div>
+	              <div class="prop-row"><label for="pipeStartCap">Start Cap</label><select id="pipeStartCap"><option value="none">None (Open)</option><option value="flat">Flat</option><option value="square">Squared</option><option value="round">Rounded</option><option value="triangle">Triangle</option><option value="flange">Flange</option></select></div>
+	              <div class="prop-row"><label for="pipeStartCapWidth">Start Width (%)</label><input id="pipeStartCapWidth" type="number" min="1" step="5" /></div>
+	              <div class="prop-row"><label for="pipeStartCapLength">Start Length (%)</label><input id="pipeStartCapLength" type="number" min="1" step="5" /></div>
+	              <div class="prop-row"><label for="pipeEndCap">End Cap</label><select id="pipeEndCap"><option value="none">None (Open)</option><option value="flat">Flat</option><option value="square">Squared</option><option value="round">Rounded</option><option value="triangle">Triangle</option><option value="flange">Flange</option></select></div>
+	              <div class="prop-row"><label for="pipeEndCapWidth">End Width (%)</label><input id="pipeEndCapWidth" type="number" min="1" step="5" /></div>
+	              <div class="prop-row"><label for="pipeEndCapLength">End Length (%)</label><input id="pipeEndCapLength" type="number" min="1" step="5" /></div>
+	              <div class="prop-row"><label for="pipeGradientSmooth">Shading</label><select id="pipeGradientSmooth"><option value="rough">Rough</option><option value="medium">Medium</option><option value="smooth">Smooth</option><option value="extra-smooth">Extra Smooth</option></select></div>
 	            </div>
 	          </div>
 
@@ -2029,6 +2076,7 @@
 
 	          <div id="groupProps" class="properties-form is-hidden">
 	            <div class="prop-group-title">Group</div>
+	            <div class="prop-group-title">Object Position</div>
 	            <div class="prop-row">
 	              <label for="groupX">X</label>
 	              <input id="groupX" type="number" step="1" />
@@ -2049,7 +2097,9 @@
               <label for="groupRotation">Rotation</label>
               <input id="groupRotation" type="number" step="1" />
             </div>
+	          </div>
 
+	          <div id="objectActionProps" class="properties-form is-hidden">
 	            <div class="prop-group-title">Click Action</div>
 	            <div class="prop-row">
 	              <label for="groupActionType">Action</label>
@@ -2071,7 +2121,20 @@
 	              <select id="groupActionScreenId">
 	                <option value="">Select screen…</option>
 	              </select>
-	            </div>
+              </div>
+              <div class="prop-subgroup is-hidden" id="groupPopupFields" hidden>
+                <div class="prop-group-title">Popup Window</div>
+                <div class="prop-row"><label for="groupPopupModal">Modal</label><input id="groupPopupModal" type="checkbox" checked /></div>
+                <div class="prop-row"><label for="groupPopupMovable">Movable</label><input id="groupPopupMovable" type="checkbox" /></div>
+                <div class="prop-row"><label for="groupPopupX">Window X</label><input id="groupPopupX" type="number" step="1" placeholder="Centered" /></div>
+                <div class="prop-row"><label for="groupPopupY">Window Y</label><input id="groupPopupY" type="number" step="1" placeholder="Centered" /></div>
+                <div class="prop-row"><label for="groupPopupSizeMode">Window Size</label><select id="groupPopupSizeMode"><option value="screen">Referenced Screen</option><option value="fixed">Fixed</option></select></div>
+                <div id="groupPopupFixedSizeFields" class="prop-subgroup is-hidden" hidden>
+                  <div class="prop-row"><label for="groupPopupWidth">Window Width</label><input id="groupPopupWidth" type="number" min="100" step="1" placeholder="640" /></div>
+                  <div class="prop-row"><label for="groupPopupHeight">Window Height</label><input id="groupPopupHeight" type="number" min="100" step="1" placeholder="480" /></div>
+                </div>
+                <div class="prop-row"><label for="groupPopupScaleMode">Content Scaling</label><select id="groupPopupScaleMode"><option value="fit">Scale to Fit</option><option value="crop">Actual Size / Scroll</option></select></div>
+              </div>
 	          </div>
 
           <div id="visibilityProps" class="properties-form is-hidden">
@@ -2942,6 +3005,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="/js/hmi.js?v=20260616-hmi-explicit-logout-v64"></script>
+	  <script src="/js/hmi.js?v=20260824-native-inner-border-v1"></script>
 	</body>
 	</html>

@@ -116,6 +116,7 @@ Non-goals:
 
 Idea:
 - Operate two OPCBridge Suite nodes as one active/standby control system with a shared virtual IP address.
+- Prioritize redundancy for the core `opcbridge` service first, then extend the same ownership model to the rest of the suite.
 
 Why:
 - A server failure should not require HMIs, browsers, PLC integrations, or other clients to be manually redirected.
@@ -127,9 +128,37 @@ Proposed architecture:
 - Use the VIP or a hostname resolving to it for HMI, SCADA, API, WebSocket, OPC UA, and other client access.
 - Require both nodes to be on a network where the VIP can safely move, normally the same subnet/VLAN.
 - Let OPCBridge leadership authorize VIP ownership; do not allow an independent VRRP health check alone to promote a node.
-- Use a lightweight third-party witness or lease service to prevent split brain. The witness does not need to run the full suite.
+- Use a lightweight `opcbridge-witness` service to provide quorum and prevent split brain. The witness does not need to run the full suite.
+- Build one portable headless witness daemon with Windows service packaging first, Linux systemd packaging second, and macOS `launchd` packaging later if demand justifies it.
+- Allow one witness service to manage multiple independent redundant pairs. Isolate each pair by a generated cluster identity, credentials, lease state, election term, and history.
+- Support more than one witness, such as a witness on each redundant HMI computer. Treat the OPCBridge nodes and witnesses as voting members and require a true majority for promotion.
+- Present quorum health clearly. An even number of voters can improve maintenance and placement resilience, but does not increase simultaneous-failure tolerance compared with the preceding odd number.
 - Remove the VIP and stop all single-owner duties immediately when a node loses its active lease.
+- Never let an isolated former active node continue write authority beyond its lease unless an external fencing mechanism guarantees that another node cannot become active.
 - Expect clients to reconnect after failover; moving the VIP does not preserve existing TCP sessions.
+
+OPC UA continuity:
+- Publish the same namespace, NodeIds, application URI, and logical server identity from either node.
+- Manage the certificate and trust model so clients connecting through the VIP do not see a different untrusted server after switchover.
+- Test reconnect and subscription recovery with commercial HMI clients; failover cannot preserve an existing OPC UA TCP session.
+- Keep management-address access available for diagnostics without allowing it to bypass active-node write fencing.
+
+Configuration synchronization:
+- Treat the active node as the single configuration authority and automatically transfer approved changes to the standby.
+- Synchronize connections, tags, polling definitions, memory tags, OPC UA namespace settings, and other configuration needed for equivalent core operation.
+- Extend synchronization to alarms, logger, historian, Flow, HMI, reports, and other components as whole-suite redundancy is introduced.
+- Separate shared configuration from node-local settings such as node identity, management address, VIP network interface, witness addresses, maintenance state, and local paths.
+- Assign every approved configuration a monotonically increasing revision and retain enough history to diagnose, retry, or roll back a failed synchronization.
+- Validate a proposed revision on both nodes before activation. Do not silently leave the pair running incompatible revisions.
+- Make configuration on the standby read-only or transparently forward edits to the active node; do not support unrestricted multi-master editing.
+- Exchange database, MQTT, OPC UA, email, and other credentials through an authenticated encrypted channel rather than copying plaintext secrets.
+
+Standby qualification:
+- Promote only a standby that is explicitly qualified, not merely one whose peer stopped answering.
+- Require compatible software versions, matching approved configuration revisions, matching OPC UA namespace and identity, current tag state, healthy required connections, valid certificates, and working VIP configuration.
+- Show qualification failures and their exact causes in SCADA.
+- Disqualify the standby while it is stale, incompatible, undergoing maintenance, or unable to assume all required active responsibilities.
+- Provide controlled manual synchronization, switchover, promotion, and disqualification actions for maintenance and testing.
 
 Data acquisition and recovery:
 - Have the active node communicate directly with PLCs and RTUs during normal operation.
@@ -155,22 +184,30 @@ Standby responsibilities:
 - Store mirrored data locally
 - Detect sequence gaps and request replay
 - Maintain synchronized approved configuration
+- Continuously evaluate and report standby qualification
 - Remain ready to acquire the active lease and begin direct device communication
 
 Phased implementation:
-1. Add stable node identities, peer health, and redundancy status reporting.
-2. Add approved configuration synchronization and local data journals.
-3. Add active-to-standby data streaming with acknowledgements and replay.
-4. Add controlled manual switchover and strict single-owner service behavior.
-5. Add witness-backed automatic leader election and fencing.
-6. Add VIP management, client reconnection testing, and recovery/reconciliation tooling.
+1. Add stable node and cluster identities, operating modes, peer health, and redundancy status reporting to core `opcbridge`.
+2. Add strict write fencing and explicit active/standby qualification.
+3. Add revisioned, validated configuration synchronization with clear separation between shared and node-local settings.
+4. Add active-to-standby tag streaming and local data journals with acknowledgements and replay.
+5. Add controlled manual synchronization and switchover.
+6. Add `opcbridge-witness`, initially as a Windows service, with support for multiple independent pairs.
+7. Add witness-backed automatic election, lease expiration, quorum handling, and fencing.
+8. Add VIP management and consistent OPC UA identity, followed by client reconnection and subscription-recovery testing.
+9. Add Linux witness packaging, multiple-witness deployments, and recovery/reconciliation tooling.
+10. Extend qualified single-owner behavior and configuration synchronization across the remaining suite components.
 
 Non-goals:
 - No unrestricted active/active PLC writes, alarm callouts, or scheduled logging.
 - No automatic promotion based only on loss of the peer heartbeat.
+- No promotion without both a qualified standby and quorum authority.
 - No assumption that direct bidirectional database replication resolves application-level conflicts.
 - No silent selection of conflicting observations without retaining their source and timestamps.
 - No requirement that the witness run a third complete OPCBridge Suite instance.
+- No assumption that adding an even-numbered voter increases quorum failure tolerance.
+- No indefinite operation by an isolated active node after its lease expires without reliable external fencing.
 
 ## HMI Touchscreen Runtime Endpoint
 

@@ -1853,7 +1853,12 @@ function listAudioPlaybackDevices() {
   while ((match = re.exec(stdout)) !== null) {
     const card = Number(match[1]);
     const device = Number(match[4]);
-    const alsa = `plughw:${card},${device}`;
+    // ALSA's numeric card indexes can change after reboot or when another
+    // HDMI/USB device appears. Persist the stable card identifier instead.
+    const cardId = String(match[2] || '').trim();
+    const alsa = cardId
+      ? `plughw:CARD=${cardId},DEV=${device}`
+      : `plughw:${card},${device}`;
     if (seen.has(alsa)) continue;
     seen.add(alsa);
     const cardName = String(match[3] || match[2] || '').trim();
@@ -1862,6 +1867,7 @@ function listAudioPlaybackDevices() {
       id: alsa,
       alsa,
       card,
+      card_id: cardId,
       device,
       card_name: cardName,
       device_name: deviceName,

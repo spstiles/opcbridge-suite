@@ -282,6 +282,103 @@ body.edit-mode .left-toolbar {
     border: 1px solid rgba(137, 209, 133, 0.3);
 }
 
+.reference-health-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    justify-content: flex-end;
+    background: rgba(0, 0, 0, 0.42);
+}
+
+.reference-health-panel {
+    width: min(520px, 92vw);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary, #20242d);
+    color: var(--text-primary, #f4f5f7);
+    box-shadow: -10px 0 32px rgba(0, 0, 0, 0.35);
+}
+
+.reference-health-panel header {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.reference-health-panel h2,
+.reference-health-panel p {
+    margin: 0;
+}
+
+.reference-health-panel p {
+    margin-top: 6px;
+    color: var(--text-secondary, #b7bdc9);
+    font-size: 0.86rem;
+}
+
+.reference-health-panel header button {
+    align-self: flex-start;
+}
+
+.reference-health-list {
+    overflow: auto;
+    padding: 12px;
+}
+
+.reference-health-item {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 4px 10px;
+    margin-bottom: 8px;
+    padding: 11px 12px;
+    text-align: left;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 193, 7, 0.42);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.reference-health-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.reference-health-kind {
+    grid-row: 1 / span 2;
+    color: #ffd166;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.reference-health-message {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-weight: 600;
+}
+
+.reference-health-source {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    color: var(--text-secondary, #b7bdc9);
+    font-family: ui-monospace, monospace;
+    font-size: 0.75rem;
+}
+
+.reference-health-empty {
+    padding: 28px 18px;
+    color: var(--text-secondary, #b7bdc9);
+    text-align: center;
+}
+
 .hmi-alarms-panel {
     display: flex;
     flex-direction: column;
@@ -444,6 +541,29 @@ body.edit-mode .left-toolbar {
 }
 
 .alarms-badge:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-default);
+}
+
+.reference-health-badge {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 5px 12px;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.reference-health-badge.is-active {
+    color: #ffd166;
+    background: rgba(255, 193, 7, 0.12);
+    border-color: rgba(255, 193, 7, 0.55);
+}
+
+.reference-health-badge:hover {
     background: var(--bg-elevated);
     border-color: var(--border-default);
 }
@@ -2254,6 +2374,29 @@ body:not(.edit-mode) #workspace {
   display: none;
 }
 
+.popup-overlay.is-nonmodal {
+  background: transparent;
+  pointer-events: none;
+}
+
+.popup-overlay.is-nonmodal .popup-modal {
+  pointer-events: auto;
+}
+
+.popup-overlay.is-positioned {
+  display: block;
+  padding: 0;
+}
+
+.popup-overlay.is-positioned .popup-modal {
+  position: absolute;
+}
+
+.popup-overlay.is-movable .popup-header {
+  cursor: move;
+  user-select: none;
+}
+
 .popup-modal {
   background: var(--bg-secondary);
   border: 1px solid var(--border-default);
@@ -2286,6 +2429,20 @@ body:not(.edit-mode) #workspace {
   align-items: center;
   justify-content: center;
   padding: 12px;
+}
+
+#popupOverlay .popup-body.is-fixed-size {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+#popupOverlay .popup-body.is-cropped {
+  display: block;
+  overflow: auto;
+}
+
+#popupOverlay .popup-body.is-fit {
+  overflow: hidden;
 }
 
 .popup-svg {
@@ -3165,6 +3322,7 @@ body.runtime-mode #editor-pane {
 
 .editor-pane[data-dock="float"] {
   /* left/top set via JS */
+  min-height: min(520px, calc(100vh - var(--toolbar-height) - 20px));
 }
 
 .automation-panel {
@@ -3407,6 +3565,23 @@ body.automation-panel-open #editor-pane {
   gap: 0;
   padding: 6px 12px 12px;
   overflow: auto;
+}
+
+.editor-panel[data-panel="properties"] {
+  overflow-x: hidden;
+  overflow-y: auto;
+  align-content: flex-start;
+}
+
+.editor-panel[data-panel="properties"] > .editor-tabs,
+.editor-panel[data-panel="properties"] > .reference-properties,
+.editor-panel[data-panel="properties"] > [id^="objectDynamic"],
+.editor-panel[data-panel="properties"] > .properties-form {
+  flex: 0 0 auto;
+}
+
+.editor-panel[data-panel="properties"] .properties-form {
+  overflow: visible;
 }
 
 #screenProps > .prop-group-title:first-child,
@@ -3912,4 +4087,61 @@ body.automation-panel-open #editor-pane {
   background: transparent;
   color: inherit;
   font: inherit;
+}
+
+.reference-properties {
+  margin-bottom: 10px;
+  padding: 9px;
+  border: 1px solid rgba(255, 190, 60, 0.65);
+  border-radius: 4px;
+  background: rgba(143, 91, 0, 0.14);
+}
+
+.reference-properties .prop-group-title {
+  color: #ffd27a;
+}
+
+.reference-properties input.reference-error {
+  color: #2b210d;
+  background: #f3c86c;
+  border-color: #ffdf91;
+}
+
+.reference-properties .prop-row {
+  display: block;
+}
+
+.reference-properties textarea.reference-error {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px;
+  resize: vertical;
+  color: #2b210d;
+  background: #f3c86c;
+  border: 1px solid #ffdf91;
+  border-radius: 3px;
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.reference-properties .reference-property-kind {
+  font-size: 11px;
+  color: #ffd27a;
+  text-transform: capitalize;
+}
+
+.reference-properties .reference-property-hint {
+  margin: 2px 0 0;
+  color: #d7b977;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.properties-form input.reference-error,
+.properties-form .expression-summary.reference-error {
+  color: #2b210d;
+  background: #f3c86c;
+  border-color: #ffdf91;
 }

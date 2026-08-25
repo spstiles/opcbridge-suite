@@ -11,9 +11,11 @@
 #include <condition_variable>
 #include <cctype>
 #include <cstdint>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -40,6 +42,19 @@ namespace fs = std::filesystem;
 static long long now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+static std::string display_timestamp(long long timestamp_ms) {
+    const std::time_t seconds = static_cast<std::time_t>(timestamp_ms / 1000);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &seconds);
+#else
+    localtime_r(&seconds, &local);
+#endif
+    std::ostringstream out;
+    out << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
+    return out.str();
 }
 
 static std::string trim(std::string value) {
@@ -141,6 +156,7 @@ struct ServiceConfig {
     std::string listen_host = "127.0.0.1";
     int listen_port = 8098;
     std::string opcbridge_base_url = "http://127.0.0.1:8080";
+    std::string alarms_base_url = "http://127.0.0.1:8085";
     int poll_interval_ms = 500;
     int max_event_hops = 64;
     std::string connections_dir = "/etc/opcbridge/connections";
@@ -326,6 +342,16 @@ static std::string scalar_text(const json& value) {
     return value.dump();
 }
 
+static std::string replace_all(std::string text, const std::string& from, const std::string& to) {
+    if (from.empty()) return text;
+    size_t position = 0;
+    while ((position = text.find(from, position)) != std::string::npos) {
+        text.replace(position, from.size(), to);
+        position += to.size();
+    }
+    return text;
+}
+
 static std::optional<json> json_path_value(const json& root, const std::string& path) {
     if (path.empty()) return root;
     const json* current = &root;
@@ -366,10 +392,10 @@ class FlowService {
     };
 public:
     FlowService(ServiceConfig config, std::string drafts_path, std::string deployed_path,
-                std::string state_path, std::string write_token)
+                std::string state_path, std::string write_token, std::string admin_token)
         : config_(std::move(config)), drafts_path_(std::move(drafts_path)),
           deployed_path_(std::move(deployed_path)), state_path_(std::move(state_path)),
-          write_token_(std::move(write_token)) {}
+          write_token_(std::move(write_token)), admin_token_(std::move(admin_token)) {}
 
     ~FlowService() { stop(); }
 
@@ -384,7 +410,17 @@ public:
         if (stop_.exchange(true)) return;
         cv_.notify_all();
         if (worker_.joinable()) worker_.join();
-        for (auto& entry : mqtt_brokers_) {
+        stop_mqtt();
+        save_state();
+    }
+
+    void stop_mqtt() {
+        std::map<std::string, std::unique_ptr<MqttBroker>> brokers;
+        {
+            std::lock_guard<std::mutex> lock(mqtt_mu_);
+            brokers.swap(mqtt_brokers_);
+        }
+        for (auto& entry : brokers) {
             auto& broker = *entry.second;
             if (!broker.client) continue;
             mosquitto_disconnect(broker.client);
@@ -392,29 +428,37 @@ public:
             mosquitto_destroy(broker.client);
             broker.client = nullptr;
         }
-        mqtt_brokers_.clear();
-        save_state();
     }
 
     json health() const {
-        std::lock_guard<std::mutex> lock(mu_);
         int running = 0, failed = 0;
-        for (const auto& entry : runtime_) {
-            if (entry.second.status == "running") ++running;
-            if (entry.second.status == "error") ++failed;
+        size_t draft_count = 0, deployed_count = 0;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            draft_count = drafts_.size();
+            deployed_count = deployed_.size();
+            for (const auto& entry : runtime_) {
+                if (entry.second.status == "running") ++running;
+                if (entry.second.status == "error") ++failed;
+            }
         }
         json broker_status = json::object();
         int connected_brokers = 0;
-        for (const auto& entry : mqtt_brokers_) {
-            const auto& broker = *entry.second;
-            if (broker.connected.load()) ++connected_brokers;
-            broker_status[entry.first] = {{"connected", broker.connected.load()}, {"last_error", broker.last_error}};
+        int configured_brokers = 0;
+        {
+            std::lock_guard<std::mutex> mqtt_lock(mqtt_mu_);
+            configured_brokers = static_cast<int>(mqtt_brokers_.size());
+            for (const auto& entry : mqtt_brokers_) {
+                const auto& broker = *entry.second;
+                if (broker.connected.load()) ++connected_brokers;
+                broker_status[entry.first] = {{"connected", broker.connected.load()}, {"last_error", broker.last_error}};
+            }
         }
         return {{"ok", true}, {"service", "opcbridge-flow"}, {"version", OPCBRIDGE_FLOW_VERSION},
             {"component_version", OPCBRIDGE_FLOW_VERSION}, {"suite_version", OPCBRIDGE_SUITE_VERSION},
-            {"draft_flows", drafts_.size()}, {"deployed_flows", deployed_.size()},
+            {"draft_flows", draft_count}, {"deployed_flows", deployed_count},
             {"running_flows", running}, {"failed_flows", failed},
-            {"mqtt", {{"configured", !mqtt_brokers_.empty()}, {"connected", connected_brokers},
+            {"mqtt", {{"configured", configured_brokers > 0}, {"connected", connected_brokers},
                       {"brokers", broker_status}}}};
     }
 
@@ -485,8 +529,10 @@ public:
             rate_limit_state_[id].clear();
             trigger_generation_[id].clear();
             last_input_values_[id].clear();
+            email_state_[id].clear();
         }
         clear_queued_events(id);
+        reload_mqtt();
         refresh_mqtt_subscriptions();
         return {{"ok", true}, {"flow", candidate}, {"message", "Flow deployed without emitting data"}};
     }
@@ -510,6 +556,7 @@ public:
             compute_inputs_[id].clear();
             rate_limit_state_[id].clear();
             trigger_generation_[id].clear();
+            email_state_[id].clear();
         }
         clear_queued_events(id);
         refresh_mqtt_subscriptions();
@@ -602,7 +649,7 @@ private:
         if (!flow.contains("nodes") || !flow["nodes"].is_array()) { error = "Flow nodes must be an array"; return false; }
         if (!flow.contains("edges") || !flow["edges"].is_array()) { error = "Flow edges must be an array"; return false; }
         static const std::set<std::string> allowed = {"opc_tag_input", "mqtt_subscribe", "manual_input", "split", "switch", "linear_map",
-            "bit_operations", "combine", "boolean_logic", "build_json", "compute", "delay", "trigger", "boolean_invert", "datatype_convert", "debug", "opc_tag_write", "mqtt_publish"};
+            "bit_operations", "combine", "boolean_logic", "build_json", "compute", "delay", "trigger", "boolean_invert", "datatype_convert", "debug", "opc_tag_write", "mqtt_publish", "email_output"};
         std::unordered_set<std::string> node_ids;
         std::unordered_map<std::string, std::string> types;
         for (auto& node : flow["nodes"]) {
@@ -622,6 +669,11 @@ private:
             if (type == "mqtt_subscribe" || type == "mqtt_publish") {
                 if (trim(cfg.value("connection_id", "")).empty()) { error = type + " requires an MQTT connection"; return false; }
                 if (trim(cfg.value("topic", "")).empty()) { error = type + " requires a topic"; return false; }
+            }
+            if (type == "email_output") {
+                static const std::set<std::string> modes = {"every", "change", "boolean_transition"};
+                if (!modes.count(cfg.value("send_mode", "every"))) { error = "Unsupported Email sending mode"; return false; }
+                if (trim(cfg.value("to", "")).empty()) { error = "Email Output requires at least one recipient"; return false; }
             }
             if (type == "linear_map") {
                 const double in_min = cfg.value("input_min", 0.0), in_max = cfg.value("input_max", 100.0);
@@ -1235,6 +1287,48 @@ private:
                 if (stale_ms > 0 && now_ms() - output.timestamp_ms > stale_ms) error = "input is stale";
                 else if (write_opc_tag(cfg, output.value, error)) mark_node_output(queued.flow_id, queued.node_id, output, "write ok");
             }
+        } else if (type == "email_output") {
+            emit = false;
+            if (flow.value("mode", "active") == "monitor") {
+                mark_node_output(queued.flow_id, queued.node_id, output, "monitor: email suppressed");
+            } else if (!event_writable(output, error)) {
+                // Rejected below.
+            } else {
+                const std::string mode = cfg.value("send_mode", "every");
+                bool initialized = false;
+                json previous;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    auto& saved = email_state_[queued.flow_id][queued.node_id];
+                    initialized = saved.initialized;
+                    previous = saved.value;
+                    saved.initialized = true;
+                    saved.value = output.value;
+                }
+                bool send = mode == "every";
+                bool transition_value = false;
+                if (mode == "change") send = initialized && previous != output.value;
+                if (mode == "boolean_transition") {
+                    const auto boolean = as_bool(output.value);
+                    if (!boolean) error = "Email Boolean transition mode requires a Boolean-compatible input";
+                    else {
+                        transition_value = *boolean;
+                        send = initialized && previous.is_boolean() && previous.get<bool>() != transition_value &&
+                            cfg.value(transition_value ? "send_true" : "send_false", true);
+                        std::lock_guard<std::mutex> lock(mu_);
+                        email_state_[queued.flow_id][queued.node_id].value = transition_value;
+                    }
+                }
+                if (error.empty() && send) {
+                    const std::string subject_key = mode == "boolean_transition" ? (transition_value ? "true_subject" : "false_subject") : "subject";
+                    const std::string body_key = mode == "boolean_transition" ? (transition_value ? "true_body" : "false_body") : "body";
+                    const std::string subject = render_email_text(cfg.value(subject_key, std::string("OPCBridge Flow notification")), output);
+                    const std::string body = render_email_text(cfg.value(body_key, std::string("Value: {{value}}")), output);
+                    if (send_flow_email(cfg.value("to", ""), subject, body, error)) mark_node_output(queued.flow_id, queued.node_id, output, "email sent");
+                } else if (error.empty()) {
+                    set_node_status(queued.flow_id, queued.node_id, initialized ? "unchanged" : "baseline established");
+                }
+            }
         } else if (type == "mqtt_publish") {
             emit = false;
             if (flow.value("mode", "active") == "monitor") {
@@ -1243,6 +1337,7 @@ private:
                 // Rejected below.
             } else {
                 const std::string connection_id = cfg.value("connection_id", "");
+                std::lock_guard<std::mutex> mqtt_lock(mqtt_mu_);
                 auto broker_it = mqtt_brokers_.find(connection_id);
                 if (broker_it == mqtt_brokers_.end()) { error = "MQTT connection not found: " + connection_id; }
                 else if (!broker_it->second->connected.load()) { error = "MQTT connection is not connected: " + connection_id; }
@@ -1276,6 +1371,44 @@ private:
             error = parsed.value("error", "OPCBridge write failed");
         } catch (...) { error = "OPCBridge returned an invalid write response"; }
         return false;
+    }
+
+    std::string render_email_text(std::string text, const FlowEvent& event) const {
+        text = replace_all(std::move(text), "{{value}}", scalar_text(event.value));
+        text = replace_all(std::move(text), "{{timestamp}}", display_timestamp(event.timestamp_ms));
+        text = replace_all(std::move(text), "{{timestamp_ms}}", std::to_string(event.timestamp_ms));
+        text = replace_all(std::move(text), "{{topic}}", event.topic);
+        text = replace_all(std::move(text), "{{source}}", event.source);
+        text = replace_all(std::move(text), "{{key}}", event.key);
+        return text;
+    }
+
+    bool send_flow_email(const std::string& recipients, const std::string& subject,
+                         const std::string& body, std::string& error) const {
+        if (admin_token_.empty()) { error = "Flow email service token is not configured"; return false; }
+        std::vector<std::string> addresses;
+        std::string current;
+        for (size_t index = 0; index <= recipients.size(); ++index) {
+            const char ch = index < recipients.size() ? recipients[index] : ',';
+            if (ch == ',' || ch == ';') {
+                current = trim(current);
+                if (!current.empty()) addresses.push_back(current);
+                current.clear();
+            } else current += ch;
+        }
+        if (addresses.empty()) { error = "Email recipient is empty"; return false; }
+        for (const auto& address : addresses) {
+            const json request = {{"token", admin_token_}, {"to", address}, {"subject", subject}, {"body", body}};
+            const HttpResult response = http_request("POST", config_.alarms_base_url + "/alarm/api/email/send", request.dump(), 120000);
+            if (!response.transport_ok) { error = response.error; return false; }
+            try {
+                const json parsed = json::parse(response.body);
+                if (response.status < 200 || response.status >= 300 || !parsed.value("ok", false)) {
+                    error = parsed.value("error", "Email delivery failed"); return false;
+                }
+            } catch (...) { error = "Alarm service returned an invalid email response"; return false; }
+        }
+        return true;
     }
 
     void mark_node_output(const std::string& flow_id, const std::string& node_id, const FlowEvent& event, const std::string& status) {
@@ -1339,7 +1472,12 @@ private:
             const std::string configured_client_id = trim(cfg.value("client_id", ""));
             const std::string client_id = configured_client_id.empty() ? "opcbridge-flow-" + id + "-" + std::to_string(now_ms()) : configured_client_id + "-flow";
             broker->client = mosquitto_new(client_id.c_str(), true, broker.get());
-            if (!broker->client) { broker->last_error = "mosquitto_new failed"; mqtt_brokers_[id] = std::move(broker); continue; }
+            if (!broker->client) {
+                broker->last_error = "mosquitto_new failed";
+                std::lock_guard<std::mutex> lock(mqtt_mu_);
+                mqtt_brokers_[id] = std::move(broker);
+                continue;
+            }
             const std::string username = cfg.value("username", ""), password = cfg.value("password", "");
             if (!username.empty()) mosquitto_username_pw_set(broker->client, username.c_str(), password.empty() ? nullptr : password.c_str());
             if (cfg.value("use_tls", false)) {
@@ -1351,30 +1489,65 @@ private:
                 mosquitto_tls_insecure_set(broker->client, cfg.value("tls_insecure", false));
             }
             mosquitto_connect_callback_set(broker->client, [](mosquitto*, void* userdata, int rc) {
-                auto* broker = static_cast<MqttBroker*>(userdata); broker->connected.store(rc == 0);
+                auto* broker = static_cast<MqttBroker*>(userdata);
+                {
+                    std::lock_guard<std::mutex> lock(broker->owner->mqtt_mu_);
+                    broker->connected.store(rc == 0);
+                    // This client uses a clean MQTT session. The broker has no
+                    // subscriptions after every reconnect, so our local cache
+                    // must also start empty before rebuilding it below.
+                    broker->subscriptions.clear();
+                    if (rc == 0) broker->last_error.clear();
+                    else broker->last_error = mosquitto_connack_string(rc);
+                }
                 if (rc == 0) {
-                    broker->last_error.clear();
+                    std::cout << "[flow][mqtt] " << broker->id << " connected; restoring subscriptions\n";
                     broker->owner->clear_mqtt_connection_errors(broker->id);
                     broker->owner->refresh_mqtt_subscriptions(broker->id);
                 }
-                else broker->last_error = mosquitto_connack_string(rc);
+                else std::cerr << "[flow][mqtt] " << broker->id << " connection failed: "
+                               << mosquitto_connack_string(rc) << "\n";
             });
             mosquitto_disconnect_callback_set(broker->client, [](mosquitto*, void* userdata, int rc) {
-                auto* broker = static_cast<MqttBroker*>(userdata); broker->connected.store(false); if (rc) broker->last_error = "MQTT disconnected";
+                auto* broker = static_cast<MqttBroker*>(userdata);
+                {
+                    std::lock_guard<std::mutex> lock(broker->owner->mqtt_mu_);
+                    broker->connected.store(false);
+                    broker->subscriptions.clear();
+                    if (rc) broker->last_error = "MQTT disconnected";
+                }
+                if (rc) std::cerr << "[flow][mqtt] " << broker->id << " disconnected unexpectedly\n";
             });
             mosquitto_message_callback_set(broker->client, [](mosquitto*, void* userdata, const mosquitto_message* message) {
                 auto* broker = static_cast<MqttBroker*>(userdata); broker->owner->on_mqtt_message(broker->id, message);
             });
-            mqtt_brokers_[id] = std::move(broker);
-            auto& installed = *mqtt_brokers_[id];
-            const int rc = mosquitto_connect_async(installed.client, host.c_str(), std::max(1, cfg.value("port", cfg.value("use_tls", false) ? 8883 : 1883)), 30);
-            if (rc != MOSQ_ERR_SUCCESS) installed.last_error = mosquitto_strerror(rc);
-            mosquitto_loop_start(installed.client);
+            MqttBroker* installed = broker.get();
+            {
+                std::lock_guard<std::mutex> lock(mqtt_mu_);
+                mqtt_brokers_[id] = std::move(broker);
+            }
+            const int rc = mosquitto_connect_async(installed->client, host.c_str(), std::max(1, cfg.value("port", cfg.value("use_tls", false) ? 8883 : 1883)), 30);
+            if (rc != MOSQ_ERR_SUCCESS) installed->last_error = mosquitto_strerror(rc);
+            mosquitto_loop_start(installed->client);
         }
     }
 
+    void reload_mqtt() {
+        stop_mqtt();
+        start_mqtt();
+    }
+
     void refresh_mqtt_subscriptions(const std::string& connection_id = "") {
-        if (connection_id.empty()) { for (const auto& entry : mqtt_brokers_) refresh_mqtt_subscriptions(entry.first); return; }
+        if (connection_id.empty()) {
+            std::vector<std::string> ids;
+            {
+                std::lock_guard<std::mutex> lock(mqtt_mu_);
+                for (const auto& entry : mqtt_brokers_) ids.push_back(entry.first);
+            }
+            for (const auto& id : ids) refresh_mqtt_subscriptions(id);
+            return;
+        }
+        std::lock_guard<std::mutex> mqtt_lock(mqtt_mu_);
         auto broker_it = mqtt_brokers_.find(connection_id);
         if (broker_it == mqtt_brokers_.end() || !broker_it->second->client || !broker_it->second->connected.load()) return;
         auto& broker = *broker_it->second;
@@ -1386,7 +1559,14 @@ private:
         }
         for (const auto& topic : desired) {
             if (!topic.empty() && !broker.subscriptions.count(topic)) {
-                if (mosquitto_subscribe(broker.client, nullptr, topic.c_str(), broker.qos) == MOSQ_ERR_SUCCESS) broker.subscriptions.insert(topic);
+                const int rc = mosquitto_subscribe(broker.client, nullptr, topic.c_str(), broker.qos);
+                if (rc == MOSQ_ERR_SUCCESS) {
+                    broker.subscriptions.insert(topic);
+                    std::cout << "[flow][mqtt] " << connection_id << " subscribed: " << topic << "\n";
+                } else {
+                    broker.last_error = std::string("MQTT subscribe failed for ") + topic + ": " + mosquitto_strerror(rc);
+                    std::cerr << "[flow][mqtt] " << broker.last_error << "\n";
+                }
             }
         }
         for (auto it = broker.subscriptions.begin(); it != broker.subscriptions.end();) {
@@ -1441,8 +1621,8 @@ private:
     }
 
     ServiceConfig config_;
-    std::string drafts_path_, deployed_path_, state_path_, write_token_;
-    mutable std::mutex mu_, queue_mu_, wait_mu_;
+    std::string drafts_path_, deployed_path_, state_path_, write_token_, admin_token_;
+    mutable std::mutex mu_, queue_mu_, wait_mu_, mqtt_mu_;
     std::condition_variable cv_;
     std::atomic<bool> stop_{true};
     std::thread worker_;
@@ -1457,6 +1637,8 @@ private:
     struct RateLimitState { FlowEvent latest; bool scheduled = false; long long next_allowed_ms = 0; };
     std::map<std::string, std::map<std::string, RateLimitState>> rate_limit_state_;
     std::map<std::string, std::map<std::string, uint64_t>> trigger_generation_;
+    struct EmailState { bool initialized = false; json value = nullptr; };
+    std::map<std::string, std::map<std::string, EmailState>> email_state_;
     std::deque<QueuedEvent> queue_;
     std::multimap<long long, QueuedEvent> delayed_queue_;
     std::map<std::string, std::unique_ptr<MqttBroker>> mqtt_brokers_;
@@ -1489,12 +1671,14 @@ int main(int argc, char** argv) {
     config.listen_host = raw.value("listen_host", config.listen_host);
     config.listen_port = raw.value("listen_port", config.listen_port);
     config.opcbridge_base_url = raw.value("opcbridge_base_url", config.opcbridge_base_url);
+    config.alarms_base_url = raw.value("alarms_base_url", config.alarms_base_url);
     config.poll_interval_ms = std::max(100, raw.value("poll_interval_ms", config.poll_interval_ms));
     config.max_event_hops = std::max(8, raw.value("max_event_hops", config.max_event_hops));
     config.connections_dir = raw.value("connections_dir", config.connections_dir);
     const char* token = std::getenv("OPCBRIDGE_WRITE_TOKEN");
+    const char* admin_token = std::getenv("OPCBRIDGE_ADMIN_SERVICE_TOKEN");
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    FlowService service(config, drafts_path, deployed_path, state_path, token ? token : "");
+    FlowService service(config, drafts_path, deployed_path, state_path, token ? token : "", admin_token ? admin_token : "");
     service.start();
 
     httplib::Server server;

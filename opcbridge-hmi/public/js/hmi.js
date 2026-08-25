@@ -45,6 +45,7 @@ const leftToolbar = document.getElementById("leftToolbar");
 const leftSelectToolBtn = document.getElementById("leftSelectToolBtn");
 const leftLineToolBtn = document.getElementById("leftLineToolBtn");
 const leftPolylineToolBtn = document.getElementById("leftPolylineToolBtn");
+const leftPipeToolBtn = document.getElementById("leftPipeToolBtn");
 const leftRectToolBtn = document.getElementById("leftRectToolBtn");
 const leftBarToolBtn = document.getElementById("leftBarToolBtn");
 const leftPolygonToolBtn = document.getElementById("leftPolygonToolBtn");
@@ -76,6 +77,7 @@ const indicatorToolBtn = document.getElementById("indicatorToolBtn");
 const viewportToolBtn = document.getElementById("viewportToolBtn");
 const rectToolBtn = document.getElementById("rectToolBtn");
 const polylineToolBtn = document.getElementById("polylineToolBtn");
+const pipeToolBtn = document.getElementById("pipeToolBtn");
 const polygonToolBtn = document.getElementById("polygonToolBtn");
 const splineToolBtn = document.getElementById("splineToolBtn");
 const regularPolygonToolBtn = document.getElementById("regularPolygonToolBtn");
@@ -89,6 +91,7 @@ const alarmsPanelToolBtn = document.getElementById("alarmsPanelToolBtn");
 const reportTableToolBtn = document.getElementById("reportTableToolBtn");
 const dataEntryToolBtn = document.getElementById("dataEntryToolBtn");
 const groupProps = document.getElementById("groupProps");
+const objectActionProps = document.getElementById("objectActionProps");
 const groupXInput = document.getElementById("groupX");
 const groupYInput = document.getElementById("groupY");
 const groupWInput = document.getElementById("groupW");
@@ -99,6 +102,16 @@ const groupActionViewportRow = document.getElementById("groupActionViewportRow")
 const groupActionViewportIdSelect = document.getElementById("groupActionViewportId");
 const groupActionScreenRow = document.getElementById("groupActionScreenRow");
 const groupActionScreenIdSelect = document.getElementById("groupActionScreenId");
+const groupPopupFields = document.getElementById("groupPopupFields");
+const groupPopupModalInput = document.getElementById("groupPopupModal");
+const groupPopupMovableInput = document.getElementById("groupPopupMovable");
+const groupPopupXInput = document.getElementById("groupPopupX");
+const groupPopupYInput = document.getElementById("groupPopupY");
+const groupPopupSizeModeSelect = document.getElementById("groupPopupSizeMode");
+const groupPopupFixedSizeFields = document.getElementById("groupPopupFixedSizeFields");
+const groupPopupWidthInput = document.getElementById("groupPopupWidth");
+const groupPopupHeightInput = document.getElementById("groupPopupHeight");
+const groupPopupScaleModeSelect = document.getElementById("groupPopupScaleMode");
 const numberInputProps = document.getElementById("numberInputProps");
 const numberInputXInput = document.getElementById("numberInputX");
 const numberInputYInput = document.getElementById("numberInputY");
@@ -387,9 +400,10 @@ const applyEditorPaneState = (state) => {
 
   if (nextDock === "float") {
     const defaultW = Math.min(480, Math.max(320, Math.floor(vw * 0.32)));
-    const defaultH = Math.min(Math.floor(vh * 0.7), Math.max(340, vh - toolbarH - 40));
+    const defaultH = Math.min(Math.floor(vh * 0.82), Math.max(420, vh - toolbarH - 24));
+    const minimumFloatH = Math.min(520, Math.max(240, vh - toolbarH - 20));
     const w = clamp(Number(state?.w) || defaultW, 280, Math.floor(vw * 0.9));
-    const h = clamp(Number(state?.h) || defaultH, 240, Math.floor(vh * 0.9));
+    const h = clamp(Number(state?.h) || defaultH, minimumFloatH, Math.floor(vh * 0.94));
     const x = clamp(Number(state?.x) || (vw - w - 20), 10, vw - w - 10);
     const y = clamp(Number(state?.y) || (toolbarH + 10), toolbarH + 4, vh - h - 10);
     editorPane.style.width = `${w}px`;
@@ -525,12 +539,12 @@ const getSelectedPolygonObject = () => {
 
 const getSelectedVisibilityDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "group" || obj.type === "circle" || obj.type === "polygon") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "group" || obj.type === "circle" || obj.type === "polygon") ? obj : null;
 };
 
 const getSelectedColorDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") ? obj : null;
 };
 
 const getSelectedRotationDynamicObject = () => {
@@ -682,7 +696,7 @@ const hasGroupMotionDynamic = (obj) => {
   return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
 };
 
-const isLineColorDynamicTarget = (obj) => Boolean(obj && obj.type === "line");
+const isLineColorDynamicTarget = (obj) => Boolean(obj && (obj.type === "line" || obj.type === "pipe"));
 
 const cloneVisibilityState = (value) => {
   if (!value || typeof value !== "object") return { enabled: true };
@@ -700,8 +714,8 @@ const getDefaultColorRuleForObject = (obj) => ({
   flashEnabled: false,
   flashRate: "slow",
   flashWhen: true,
-  fillEnabled: Boolean(obj && obj.type !== "line"),
-  strokeEnabled: Boolean(obj && obj.type === "line"),
+  fillEnabled: Boolean(obj && obj.type !== "line" && obj.type !== "pipe"),
+  strokeEnabled: Boolean(obj && (obj.type === "line" || obj.type === "pipe")),
   textEnabled: false,
   backgroundEnabled: false,
   borderEnabled: false
@@ -770,7 +784,7 @@ const normalizeRectColorDraft = (obj, value) => {
 };
 
 const buildColorRulesFromObject = (obj) => {
-  if (!obj || !["rect", "line", "ellipse", "text", "button", "circle", "polygon", "group"].includes(String(obj.type || ""))) return [];
+  if (!obj || !["rect", "line", "pipe", "ellipse", "text", "button", "circle", "polygon", "group"].includes(String(obj.type || ""))) return [];
   const metaRules = Array.isArray(obj.colorAutomationRules)
     ? normalizeRectColorDraft(obj, { rules: obj.colorAutomationRules }).rules
     : [];
@@ -799,9 +813,12 @@ const buildColorRulesFromObject = (obj) => {
       mode: source.mode || "",
       threshold: source.threshold,
       match: source.match || "",
+      status: source.status || meta.status || "",
+      sourceReference: source.sourceReference || meta.sourceReference || "",
+      sourceTarget: source.sourceTarget || meta.sourceTarget || "",
       fillEnabled: ("fillEnabled" in meta) ? Boolean(meta.fillEnabled || meta.textEnabled) : Boolean(fillAuto[index] || textAuto[index]),
       fillColor: fillAuto[index]?.onColor || textAuto[index]?.onColor || meta.fillColor || meta.textColor || "",
-      strokeEnabled: obj.type === "line" ? true : (("strokeEnabled" in meta) ? Boolean(meta.strokeEnabled) : Boolean(strokeAuto[index])),
+      strokeEnabled: (obj.type === "line" || obj.type === "pipe") ? true : (("strokeEnabled" in meta) ? Boolean(meta.strokeEnabled) : Boolean(strokeAuto[index])),
       strokeColor: strokeAuto[index]?.onColor || meta.strokeColor || "",
       textEnabled: false,
       textColor: textAuto[index]?.onColor || meta.textColor || "",
@@ -1014,11 +1031,12 @@ const normalizeColorAutomationState = (value) => {
 };
 
 const syncRectColorUiFromDraft = (obj, draft) => {
-  const isLine = Boolean(obj && obj.type === "line");
+  const isLine = Boolean(obj && (obj.type === "line" || obj.type === "pipe"));
+  const isPipe = Boolean(obj && obj.type === "pipe");
   const isText = Boolean(obj && obj.type === "text");
   const isButton = Boolean(obj && obj.type === "button");
   const isGroup = Boolean(obj && obj.type === "group");
-  const strokePresent = isText || isButton || isGroup || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
+  const strokePresent = isLine || isText || isButton || isGroup || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
   const normalizedDraft = normalizeRectColorDraft(obj, draft);
   if (isColorDynamicTab()) normalizedDraft.selectedRuleIndex = Math.max(0, Math.min(getColorDynamicTabIndex(), normalizedDraft.rules.length - 1));
   const rules = normalizedDraft.rules;
@@ -1093,6 +1111,9 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   }
   setInputValueSafe(rectColorConnectionInput, next.connection_id || "");
   setInputValueSafe(rectColorTagInput, next.tag || "");
+  const unresolvedSource = next.status === "unresolved" || Boolean(next.sourceReference && !next.connection_id);
+  rectColorConnectionInput?.classList.toggle("reference-error", unresolvedSource);
+  rectColorTagInput?.classList.toggle("reference-error", unresolvedSource);
   if (rectColorModeSelect) rectColorModeSelect.value = mode;
   if (rectColorThresholdInput) setInputValueSafe(rectColorThresholdInput, next.threshold ?? "");
   if (rectColorMatchInput) setInputValueSafe(rectColorMatchInput, next.match ?? "");
@@ -1101,6 +1122,7 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     const summary = expression || "(empty)";
     rectColorExpressionSummary.textContent = summary;
     rectColorExpressionSummary.title = expression;
+    rectColorExpressionSummary.classList.toggle("reference-error", unresolvedSource);
   }
   if (rectColorFillEnabledInput) rectColorFillEnabledInput.checked = next.fillEnabled !== false;
   if (rectColorStrokeEnabledInput) {
@@ -1119,7 +1141,9 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     ? String(obj?.background || "#000000")
     : isButton
       ? String(obj?.textColor || "#ffffff")
-    : String((!obj?.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
+      : isPipe
+        ? String(obj?.color || "#808080")
+        : String((!obj?.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
   const borderFallback = String(obj?.borderColor || "#000000");
   const textFallback = String(obj?.textColor || "#ffffff");
   const backgroundFallback = String(obj?.background || "#000000");
@@ -1149,9 +1173,9 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     strokeTargetLabel.hidden = !supportsStrokeTarget;
   }
   const strokeTargetText = strokeTargetLabel?.querySelector("span");
-  if (strokeTargetText) strokeTargetText.textContent = isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : (isGroup ? "Line" : "Border")));
+  if (strokeTargetText) strokeTargetText.textContent = isPipe ? "Pipe" : (isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : (isGroup ? "Line" : "Border"))));
   const strokeColorLabel = rectColorStrokeRow?.querySelector('label[for="rectColorStroke"]');
-  if (strokeColorLabel) strokeColorLabel.textContent = isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : (isGroup ? "Line Color" : "Border Color")));
+  if (strokeColorLabel) strokeColorLabel.textContent = isPipe ? "Pipe Color" : (isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : (isGroup ? "Line Color" : "Border Color"))));
   const fillTargetText = rectColorFillEnabledInput?.closest(".inline-check")?.querySelector("span");
   if (fillTargetText) fillTargetText.textContent = isText ? "Text" : (isButton ? "Background" : "Fill");
   const fillColorLabel = rectColorFillRow?.querySelector('label[for="rectColorFill"]');
@@ -1171,8 +1195,8 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     rectColorBorderTargetLabel.hidden = !supportsBorderTarget;
   }
   if (rectColorTargetsRow) {
-    rectColorTargetsRow.classList.toggle("is-hidden", isLine);
-    rectColorTargetsRow.hidden = isLine;
+    rectColorTargetsRow.classList.remove("is-hidden");
+    rectColorTargetsRow.hidden = false;
   }
   if (rectColorFillRow) {
     const showFill = supportsFillTarget && Boolean(rectColorFillEnabledInput?.checked);
@@ -1307,7 +1331,7 @@ const applyRectColorDraftToObject = () => {
     if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") && rule?.fillEnabled && String(rule?.fillColor || "").trim()) {
       fillRules[index] = { ...shared, onColor: rule.fillColor };
     }
-    if ((obj.type === "line" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
+    if ((obj.type === "line" || obj.type === "pipe" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
       strokeRules[index] = { ...shared, onColor: rule.strokeColor };
     }
     if (obj.type === "text" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
@@ -1345,6 +1369,9 @@ const applyRectColorDraftToObject = () => {
       mode: rule?.mode || "",
       threshold: rule?.threshold,
       match: rule?.match || "",
+      status: rule?.status || "",
+      sourceReference: rule?.sourceReference || "",
+      sourceTarget: rule?.sourceTarget || "",
       fillEnabled: Boolean(rule?.fillEnabled),
       fillColor: rule?.fillColor || "",
       strokeEnabled: Boolean(rule?.strokeEnabled),
@@ -1435,6 +1462,9 @@ const syncVisibilityUiFromState = (state) => {
   if (visibilitySourceTypeSelect) setSelectValueSafe(visibilitySourceTypeSelect, sourceType);
   setInputValueSafe(visibilityConnectionInput, vis.connection_id || "");
   setInputValueSafe(visibilityTagInput, vis.tag || "");
+  const unresolvedSource = vis.status === "unresolved" || Boolean(vis.sourceReference && !vis.connection_id);
+  visibilityConnectionInput?.classList.toggle("reference-error", unresolvedSource);
+  visibilityTagInput?.classList.toggle("reference-error", unresolvedSource);
   const thresholdValue = (vis.threshold ?? vis.value);
   const hasMatch = String(vis.match ?? "").trim() !== "";
   const mode = (vis.mode === "equals" || vis.mode === "threshold")
@@ -2202,7 +2232,7 @@ const isEditingRectVisibilityDynamic = () => {
 
 const isEditingLineVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && (obj.type === "line" || obj.type === "pipe") && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
 };
 
 const isEditingEllipseVisibilityDynamic = () => {
@@ -2242,7 +2272,7 @@ const isEditingRectColorDynamic = () => {
 
 const isEditingLineColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "line" && isColorDynamicTab() && hasEditableColorDynamic(obj));
+  return Boolean(obj && (obj.type === "line" || obj.type === "pipe") && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingEllipseColorDynamic = () => {
@@ -2341,7 +2371,7 @@ const isEditingGroupMotionDynamic = () => {
 };
 
 const ensureRectVisibilityDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "group" && obj.type !== "circle" && obj.type !== "polygon")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "pipe" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "group" && obj.type !== "circle" && obj.type !== "polygon")) return;
   if (rectVisibilityDraftObject !== obj || !rectVisibilityDraft) {
     rectVisibilityDraftObject = obj;
     rectVisibilityDraft = cloneVisibilityState(obj.visibility || { enabled: true });
@@ -2349,7 +2379,7 @@ const ensureRectVisibilityDraft = (obj) => {
 };
 
 const ensureRectColorDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "polygon" && obj.type !== "group")) return;
+  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "pipe" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "polygon" && obj.type !== "group")) return;
   if (rectColorDraftObject !== obj || !rectColorDraft) {
     const rules = buildColorRulesFromObject(obj);
     rectColorDraftObject = obj;
@@ -2462,6 +2492,7 @@ const getPropertiesPaneTitle = (obj) => {
     case "line": return "Line Properties";
     case "curve": return "Curve Properties";
     case "polyline": return "Polyline Properties";
+    case "pipe": return "Pipe Properties";
     case "spline": return "Spline Properties";
     case "polygon": return "Polygon Properties";
     case "bar": return "Bar Properties";
@@ -3731,6 +3762,7 @@ const screenBorderSwatchBtn = document.getElementById("screenBorderSwatchBtn");
 const screenBgImageSelect = document.getElementById("screenBgImage");
 const screenBgImageClearBtn = document.getElementById("screenBgImageClear");
 const screenProps = document.getElementById("screenProps");
+const selectedReferenceHealthProps = document.getElementById("selectedReferenceHealthProps");
 const textProps = document.getElementById("textProps");
 const textValueInput = document.getElementById("textValue");
 const textXInput = document.getElementById("textX");
@@ -3774,6 +3806,16 @@ const buttonTargetSelect = document.getElementById("buttonTarget");
 const buttonViewportSelect = document.getElementById("buttonViewportTarget");
 const buttonViewportRow = document.getElementById("buttonViewportRow");
 const buttonTargetRow = document.getElementById("buttonTargetRow");
+const buttonPopupFields = document.getElementById("buttonPopupFields");
+const buttonPopupModalInput = document.getElementById("buttonPopupModal");
+const buttonPopupMovableInput = document.getElementById("buttonPopupMovable");
+const buttonPopupXInput = document.getElementById("buttonPopupX");
+const buttonPopupYInput = document.getElementById("buttonPopupY");
+const buttonPopupSizeModeSelect = document.getElementById("buttonPopupSizeMode");
+const buttonPopupFixedSizeFields = document.getElementById("buttonPopupFixedSizeFields");
+const buttonPopupWidthInput = document.getElementById("buttonPopupWidth");
+const buttonPopupHeightInput = document.getElementById("buttonPopupHeight");
+const buttonPopupScaleModeSelect = document.getElementById("buttonPopupScaleMode");
 const buttonAuthFields = document.getElementById("buttonAuthFields");
 const buttonAuthLoggedOutTextInput = document.getElementById("buttonAuthLoggedOutText");
 const buttonAuthLoggedInTextInput = document.getElementById("buttonAuthLoggedInText");
@@ -3880,6 +3922,12 @@ const rectStrokeSwatchBtn = document.getElementById("rectStrokeSwatchBtn");
 const rectStrokeWidthInput = document.getElementById("rectStrokeWidth");
 const rectStrokeRow = document.getElementById("rectStrokeRow");
 const rectStrokeWidthRow = document.getElementById("rectStrokeWidthRow");
+const rectInnerBorderEnabledInput = document.getElementById("rectInnerBorderEnabled");
+const rectInnerBorderColorInput = document.getElementById("rectInnerBorderColor");
+const rectInnerBorderColorTextInput = document.getElementById("rectInnerBorderColorText");
+const rectInnerBorderWidthInput = document.getElementById("rectInnerBorderWidth");
+const rectInnerBorderColorRow = document.getElementById("rectInnerBorderColorRow");
+const rectInnerBorderWidthRow = document.getElementById("rectInnerBorderWidthRow");
 const rectPropsTitle = document.getElementById("rectPropsTitle");
 const paintPickerOverlay = document.getElementById("paintPickerOverlay");
 const paintPickerTitle = document.getElementById("paintPickerTitle");
@@ -4134,6 +4182,24 @@ const curveStrokeSwatches = document.getElementById("curveStrokeSwatches");
 const curveStrokeSwatchBtn = document.getElementById("curveStrokeSwatchBtn");
 const curveStrokeWidthInput = document.getElementById("curveStrokeWidth");
 const polylineProps = document.getElementById("polylineProps");
+const polylinePropsTitle = document.getElementById("polylinePropsTitle");
+const polylineStrokeWidthLabel = document.getElementById("polylineStrokeWidthLabel");
+const pipePropertyRows = document.getElementById("pipePropertyRows");
+const pipeXInput = document.getElementById("pipeX");
+const pipeYInput = document.getElementById("pipeY");
+const pipeJointTypeSelect = document.getElementById("pipeJointType");
+const pipeCurveRadiusInput = document.getElementById("pipeCurveRadius");
+const pipeOutlineThicknessInput = document.getElementById("pipeOutlineThickness");
+const pipeStartCapSelect = document.getElementById("pipeStartCap");
+const pipeStartCapWidthInput = document.getElementById("pipeStartCapWidth");
+const pipeStartCapLengthInput = document.getElementById("pipeStartCapLength");
+const pipeEndCapSelect = document.getElementById("pipeEndCap");
+const pipeEndCapWidthInput = document.getElementById("pipeEndCapWidth");
+const pipeEndCapLengthInput = document.getElementById("pipeEndCapLength");
+const pipeGradientSmoothSelect = document.getElementById("pipeGradientSmooth");
+
+const getPipeCapDefaultWidth = (cap) => String(cap || "flat").toLowerCase() === "flange" ? 200 : 100;
+const getPipeCapDefaultLength = (cap) => ({ round: 50, triangle: 86.6, square: 50, flange: 50 })[String(cap || "flat").toLowerCase()] || 50;
 const polylineStrokeInput = document.getElementById("polylineStroke");
 const polylineStrokeTextInput = document.getElementById("polylineStrokeText");
 const polylineStrokeSwatches = document.getElementById("polylineStrokeSwatches");
@@ -5330,6 +5396,26 @@ const mergeAlarmTimelineRowWithRuntimeState = (row, runtime) => {
   };
 };
 
+const reconcilePanelRowWithRuntimeState = (row, runtime) => {
+  if (!row?.active) return row;
+  // The current snapshot is authoritative. A panel row is historical and can
+  // remain open when an alarm is disabled or a return event was missed.
+  if (!runtime) return { ...row, active: false, last_event_type: "reconciled" };
+  if (runtime.enabled === false) return { ...row, ...runtime, enabled: false, active: false };
+  if (runtime.active) return mergeAlarmTimelineRowWithRuntimeState(row, runtime);
+  const clearedTs = Number(runtime.last_change_ms) || Number(row.last_event_ts_ms) || Date.now();
+  return {
+    ...row,
+    ...runtime,
+    timeline_key: row.timeline_key,
+    active: false,
+    cleared_ts_ms: clearedTs,
+    last_event_type: "return",
+    last_event_ts_ms: Math.max(clearedTs, Number(row.last_event_ts_ms) || 0),
+    message: runtime.message_on_return || runtime.message || row.message
+  };
+};
+
 const loadAlarmTimelineFromHistory = async (opts = {}) => {
   const force = Boolean(opts.force);
   if (!force && (alarmHistoryLoaded || alarmHistoryLoading)) return;
@@ -5382,18 +5468,17 @@ const getAlarmTimelineRows = () => {
     if (!id) return;
     const runtime = alarmsStateById.get(id);
     const nextRow = alarmTimelineSource === "panel"
-      ? (alarmTimelineById.get(key) || row)
+      ? reconcilePanelRowWithRuntimeState(alarmTimelineById.get(key) || row, runtime)
       : mergeAlarmTimelineRowWithRuntimeState(alarmTimelineById.get(key) || row, runtime);
-    if (runtime?.active) representedActiveIds.add(id);
+    if (nextRow?.active && runtime?.active) representedActiveIds.add(id);
     if (isDisplayableAlarmTimelineRow(nextRow)) {
       rows.push(nextRow);
     } else {
       alarmTimelineById.delete(key);
     }
   });
-  if (alarmTimelineSource === "panel") return rows;
   alarmsStateById.forEach((alarm, id) => {
-    if (!alarm?.active || representedActiveIds.has(id)) return;
+    if (!alarm?.enabled || !alarm?.active || representedActiveIds.has(id)) return;
     const key = getAlarmStateTimelineKey(id);
     rows.push(mergeAlarmTimelineRowWithRuntimeState({
       ...alarm,
@@ -5587,6 +5672,22 @@ const getTextFixedSize = (obj) => {
     w: Number.isFinite(w) && w > 0 ? w : 160,
     h: Number.isFinite(h) && h > 0 ? h : 40
   };
+};
+
+const getTextAnchorFractions = (obj) => ({
+  x: obj?.align === "center" ? 0.5 : (obj?.align === "right" ? 1 : 0),
+  y: obj?.valign === "middle" ? 0.5 : (obj?.valign === "bottom" ? 1 : 0)
+});
+
+const ensureTextInsertionPoint = (obj) => {
+  if (!obj || obj.type !== "text" || obj.positionMode === "insertion-point") return;
+  if (!isTextAutoSize(obj)) {
+    const size = getTextFixedSize(obj);
+    const anchor = getTextAnchorFractions(obj);
+    obj.x = Number(obj.x ?? 0) + size.w * anchor.x;
+    obj.y = Number(obj.y ?? 0) + size.h * anchor.y;
+  }
+  obj.positionMode = "insertion-point";
 };
 
 const syncTextLayoutModeRows = (autoSize) => {
@@ -6291,6 +6392,187 @@ if (authSession && isAuthSessionExpired()) {
   });
   clearAuthSession();
 }
+
+// Loss-tolerant GraphWorX import and portable-screen reference diagnostics.
+// Kept near the application boundary so imported metadata remains independent
+// from the normal renderer and can evolve without making screens unloadable.
+const graphWorxImportInput = document.getElementById("graphWorxImportInput");
+const fileImportGraphWorxMenuBtn = document.getElementById("fileImportGraphWorxMenuBtn");
+const viewReferenceHealthMenuBtn = document.getElementById("viewReferenceHealthMenuBtn");
+const referenceHealthBadge = document.getElementById("referenceHealthBadge");
+let referenceHealthOverlay = null;
+
+const getReferenceHealthIssues = () => {
+  const stored = currentScreenObj?.referenceHealth?.issues;
+  const issues = Array.isArray(stored) ? [...stored] : [];
+  const known = new Set(issues.map((issue) => String(issue?.id || "")));
+  (currentScreenObj?.objects || []).forEach((obj, index) => {
+    (obj?.externalReferences || []).forEach((ref, refIndex) => {
+      if (ref?.target || ref?.status === "resolved") return;
+      const id = `native:${index}:${refIndex}`;
+      if (known.has(id)) return;
+      issues.push({ id, objectImportId: obj.importId, objectIndex: index, severity: "warning", category: ref.kind || "reference", status: "unresolved", source: ref.source, message: `Unresolved ${ref.kind || "reference"}: ${ref.source?.value || "unknown"}` });
+    });
+  });
+  return issues;
+};
+
+const renderReferenceHealthBadge = () => {
+  if (!referenceHealthBadge) return;
+  const count = getReferenceHealthIssues().length;
+  referenceHealthBadge.innerHTML = `<span aria-hidden="true">⚠</span> Issues: ${count}`;
+  referenceHealthBadge.classList.toggle("is-active", count > 0);
+  referenceHealthBadge.title = count > 0
+    ? `View ${count} unresolved reference${count === 1 ? "" : "s"} and import issue${count === 1 ? "" : "s"}`
+    : "No unresolved references or import issues";
+  referenceHealthBadge.setAttribute("aria-label", `Reference Health: ${count} issue${count === 1 ? "" : "s"}`);
+};
+
+const closeReferenceHealth = () => {
+  referenceHealthOverlay?.remove();
+  referenceHealthOverlay = null;
+};
+
+const selectReferenceIssueObject = (issue) => {
+  const objects = currentScreenObj?.objects || [];
+  const findImportedObjectPath = (items, importId, parents = []) => {
+    for (let index = 0; index < (items || []).length; index += 1) {
+      const obj = items[index];
+      if (obj?.importId === importId) return { parents, index, object: obj };
+      if (obj?.type === "group" && Array.isArray(obj.children)) {
+        const nested = findImportedObjectPath(obj.children, importId, [...parents, obj]);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  };
+  let match = issue?.objectImportId ? findImportedObjectPath(objects, issue.objectImportId) : null;
+  if (!match && Number.isInteger(issue?.objectIndex) && issue.objectIndex >= 0 && issue.objectIndex < objects.length) {
+    match = { parents: [], index: issue.objectIndex, object: objects[issue.objectIndex] };
+  }
+  if (!match) return;
+  groupEditStack.length = 0;
+  match.parents.forEach((group) => groupEditStack.push(group));
+  selectedIndices = [match.index];
+  selectionAnchorIndex = match.index;
+  const sourceValue = String(issue?.source?.value || "");
+  const matchingReference = (match.object?.externalReferences || []).find((ref) =>
+    String(ref?.source?.value || "") === sourceValue
+  );
+  const automation = String(issue?.automation || matchingReference?.automation || "").toLowerCase();
+  currentObjectDynamicTab = automation === "color"
+    ? "color"
+    : automation === "visibility"
+      ? "visibility"
+      : automation === "rotation"
+        ? "rotation"
+        : "properties";
+  rectVisibilityDraft = null;
+  rectVisibilityDraftObject = null;
+  rectColorDraft = null;
+  rectColorDraftObject = null;
+  rectRotationDraft = null;
+  rectRotationDraftObject = null;
+  clearSelectedPolygonVertex();
+  renderScreen();
+  updateSelectionOverlays();
+  updatePropertiesPanel();
+  updateGroupBreadcrumb();
+  closeReferenceHealth();
+};
+
+const openReferenceHealth = () => {
+  closeReferenceHealth();
+  renderReferenceHealthBadge();
+  const issues = getReferenceHealthIssues();
+  const overlay = document.createElement("div");
+  overlay.className = "reference-health-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.innerHTML = `<section class="reference-health-panel"><header><div><h2>Reference Health</h2><p>${issues.length} item${issues.length === 1 ? "" : "s"} need attention. The screen remains editable and can be saved.</p></div><button type="button" data-ref-close>Close</button></header><div class="reference-health-list"></div></section>`;
+  overlay.querySelector("[data-ref-close]")?.addEventListener("click", closeReferenceHealth);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) closeReferenceHealth(); });
+  const list = overlay.querySelector(".reference-health-list");
+  if (!issues.length) {
+    list.innerHTML = '<div class="reference-health-empty">No unresolved or partially converted references were recorded.</div>';
+  } else {
+    issues.forEach((issue) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = `reference-health-item is-${issue.severity || "warning"}`;
+      const kind = document.createElement("span");
+      kind.className = "reference-health-kind";
+      kind.textContent = issue.category || "reference";
+      const message = document.createElement("span");
+      message.className = "reference-health-message";
+      message.textContent = issue.message || "Reference needs attention";
+      const source = document.createElement("span");
+      source.className = "reference-health-source";
+      source.textContent = issue.source?.value || "";
+      row.append(kind, message, source);
+      row.addEventListener("click", () => selectReferenceIssueObject(issue));
+      list.appendChild(row);
+    });
+  }
+  document.body.appendChild(overlay);
+  referenceHealthOverlay = overlay;
+};
+
+const importGraphWorxFile = async (file) => {
+  if (!file) return;
+  if (isDirty && !confirmLoseUnsavedChanges("Import GraphWorX screen")) return;
+  setMenuOpen(false);
+  setEditorStatusSafe(`Importing ${file.name}…`);
+  try {
+    const raw = await file.text();
+    const response = await fetch("/api/screens/import/graphworx", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, raw })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    currentScreenObj = result.screen;
+    currentScreenPath = "";
+    currentScreenId = screenRefFromPath(String(file.name).replace(/\.gdfx?$/i, ".screen")) || "imported";
+    currentScreenFilename = `${currentScreenId}.screen`;
+    lastLoadedFilename = "";
+    selectedIndices = [];
+    clearSelectedPolygonVertex();
+    initViewportHistoriesForCurrentScreen();
+    if (screenTitle) screenTitle.textContent = `${file.name} (Imported)`;
+    if (editorFilename) editorFilename.textContent = currentScreenFilename;
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+    // A newly imported display can have very different dimensions from the
+    // prior screen. Start at its origin after layout establishes new extents.
+    window.requestAnimationFrame(() => {
+      applyScale();
+      screenWrapper?.scrollTo?.({ left: 0, top: 0 });
+    });
+    const summary = result.summary || {};
+    setEditorStatusSafe(`Imported ${summary.objects || 0} objects; ${summary.issues || 0} reference items need review.`);
+    showHmiToast(`GraphWorX import succeeded. ${summary.unresolved || 0} unresolved references were preserved.`, 8000);
+    openReferenceHealth();
+  } catch (error) {
+    setEditorStatusSafe(`Import failed: ${error.message}`);
+    showHmiToast(`GraphWorX import failed: ${error.message}`, 8000);
+  } finally {
+    graphWorxImportInput.value = "";
+  }
+};
+
+fileImportGraphWorxMenuBtn?.addEventListener("click", () => {
+  setMenuOpen(false);
+  graphWorxImportInput?.click();
+});
+graphWorxImportInput?.addEventListener("change", () => importGraphWorxFile(graphWorxImportInput.files?.[0]));
+viewReferenceHealthMenuBtn?.addEventListener("click", () => {
+  setMenuOpen(false);
+  openReferenceHealth();
+});
+referenceHealthBadge?.addEventListener("click", openReferenceHealth);
 updateAuthUiVisibility();
 installAuditActorHeaders();
 setTimeout(() => refreshAuthUi().catch(() => {}), 0);
@@ -6631,12 +6913,12 @@ const clearSelectedPolygonVertex = () => {
   selectedPolygonVertex = null;
 };
 
-const isEditablePathVertexObject = (obj) => Boolean(obj && ["polyline", "polygon", "spline"].includes(String(obj.type || "")));
+const isEditablePathVertexObject = (obj) => Boolean(obj && ["polyline", "pipe", "polygon", "spline"].includes(String(obj.type || "")));
 
 const getMinimumPathVertexCount = (obj) => {
   if (!obj) return 0;
   if (obj.type === "polygon") return 3;
-  if (obj.type === "polyline" || obj.type === "spline") return 2;
+  if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "spline") return 2;
   return 0;
 };
 
@@ -7373,7 +7655,7 @@ const translateObjectForExport = (obj, dx, dy) => {
     obj.y2 = Number(obj.y2 ?? 0) + dy;
     return;
   }
-  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+  if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
     const points = Array.isArray(obj.points) ? obj.points : [];
     obj.points = points.map((pt) => ({
       x: Number(pt?.x ?? 0) + dx,
@@ -8273,6 +8555,7 @@ const applyRotationTransform = (el, obj, boundsOverride = null, offset = { x: 0,
 
 const getObjectBounds = (obj) => {
   if (!obj) return null;
+  if (obj.type === "text") ensureTextInsertionPoint(obj);
   if (obj.type === "group") {
     const base = {
       x: Number(obj.x ?? 0),
@@ -8331,7 +8614,7 @@ const getObjectBounds = (obj) => {
     const pad = strokeWidth / 2;
     return { x: bx.min - pad, y: by.min - pad, width: (bx.max - bx.min) + pad * 2, height: (by.max - by.min) + pad * 2 };
   }
-  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+  if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
     const points = obj.type === "spline" ? getSplineSamplePoints(obj.points) : (Array.isArray(obj.points) ? obj.points : []);
     if (!points.length) return { x: 0, y: 0, width: 0, height: 0 };
     const xs = points.map((p) => Number(p?.x ?? 0));
@@ -8340,7 +8623,7 @@ const getObjectBounds = (obj) => {
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
-    const strokeWidth = Math.max(0, Number(obj.strokeWidth ?? (obj.type === "spline" ? 2 : 1)));
+    const strokeWidth = Math.max(0, Number(obj.type === "pipe" ? (obj.thickness ?? 20) : (obj.strokeWidth ?? (obj.type === "spline" ? 2 : 1))));
     const pad = strokeWidth / 2;
     return { x: minX - pad, y: minY - pad, width: (maxX - minX) + pad * 2, height: (maxY - minY) + pad * 2 };
   }
@@ -8352,7 +8635,8 @@ const getObjectBounds = (obj) => {
     const measured = measureTextBlock(sample, fontSize, Boolean(obj.bold));
     if (!isTextAutoSize(obj)) {
       const fixed = getTextFixedSize(obj);
-      return { x, y, width: fixed.w, height: fixed.h };
+      const anchor = getTextAnchorFractions(obj);
+      return { x: x - fixed.w * anchor.x, y: y - fixed.h * anchor.y, width: fixed.w, height: fixed.h };
     }
     const contentW = measured.width;
     const contentH = measured.height;
@@ -8483,7 +8767,7 @@ const translateObject = (obj, dx, dy) => {
     obj.y = Number(obj.y ?? 0) + dy;
     return;
   }
-  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+  if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
     if (!Array.isArray(obj.points)) return;
     obj.points = obj.points.map((pt) => ({
       x: Number(pt?.x ?? 0) + dx,
@@ -8719,7 +9003,7 @@ const flipObjectInBox = (obj, axis, box) => {
     return;
   }
 
-  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+  if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
     if (!Array.isArray(obj.points)) return;
     obj.points = obj.points.map((pt) => ({
       x: axis === "horizontal" ? 2 * centerX - Number(pt?.x ?? 0) : Number(pt?.x ?? 0),
@@ -8939,11 +9223,12 @@ const updateMenuState = () => {
   const canAddCircleDynamic = Boolean(getSelectedCircleObject());
   const canAddPolygonDynamic = Boolean(getSelectedPolygonObject());
   const canAddGroupDynamic = Boolean(getSelectedGroupObject());
-  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddPolygonDynamic || canAddGroupDynamic;
+  const canAddPipeDynamic = selectedIndices.length === 1 && activeObjects[selectedIndices[0]]?.type === "pipe";
+  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddPipeDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddPolygonDynamic || canAddGroupDynamic;
   const canAddStatesDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
   const canAddRotationDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic;
   const canAddMotionDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
-  const canOpenDynamics = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic || canAddCircleDynamic || canAddPolygonDynamic;
+  const canOpenDynamics = canAddRectDynamic || canAddLineDynamic || canAddPipeDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic || canAddCircleDynamic || canAddPolygonDynamic;
   const toggleItem = (el) => {
     if (!el) return;
     const disabled = el === groupMenuBtn ? !canGroup
@@ -9440,6 +9725,11 @@ const parseOptionalNumber = (value) => {
 };
 
 const getScreenSize = () => {
+  const modelWidth = Number(currentScreenObj?.width);
+  const modelHeight = Number(currentScreenObj?.height);
+  if (Number.isFinite(modelWidth) && modelWidth > 0 && Number.isFinite(modelHeight) && modelHeight > 0) {
+    return { width: modelWidth, height: modelHeight };
+  }
   const rootStyles = getComputedStyle(document.documentElement);
   const width = getCssNumber(rootStyles.getPropertyValue("--screen-width"));
   const height = getCssNumber(rootStyles.getPropertyValue("--screen-height"));
@@ -9514,6 +9804,11 @@ const updateButtonActionUI = (actionType) => {
   const showOffValue = actionType === "momentary-write" || actionType === "toggle-write";
   if (buttonTargetRow) buttonTargetRow.classList.toggle("is-hidden", isWriteAction || isHistoryAction || isAuthAction || isAlarmFilterAction);
   if (buttonViewportRow) buttonViewportRow.classList.toggle("is-hidden", actionType !== "load-viewport");
+  if (buttonPopupFields) {
+    const showPopup = actionType === "popup";
+    buttonPopupFields.classList.toggle("is-hidden", !showPopup);
+    buttonPopupFields.hidden = !showPopup;
+  }
   if (buttonAuthFields) {
     buttonAuthFields.classList.toggle("is-hidden", !isAuthAction);
     buttonAuthFields.hidden = !isAuthAction;
@@ -9568,7 +9863,42 @@ const setGroupActionRows = (actionType) => {
     groupActionScreenRow.classList.toggle("is-hidden", !hasAction);
     groupActionScreenRow.hidden = !hasAction;
   }
+  if (groupPopupFields) {
+    const showPopup = type === "popup";
+    groupPopupFields.classList.toggle("is-hidden", !showPopup);
+    groupPopupFields.hidden = !showPopup;
+  }
 };
+
+const setPopupFixedSizeFieldsVisible = (fields, sizeMode) => {
+  if (!fields) return;
+  const enabled = sizeMode === "fixed";
+  fields.classList.remove("is-hidden");
+  fields.hidden = false;
+  fields.querySelectorAll("input").forEach((input) => {
+    input.disabled = !enabled;
+  });
+};
+
+const popupActionSettingsFromInputs = ({ modalInput, movableInput, xInput, yInput, sizeModeSelect, widthInput, heightInput, scaleModeSelect }) => {
+  const x = parseOptionalNumber(xInput?.value);
+  const y = parseOptionalNumber(yInput?.value);
+  const sizeMode = sizeModeSelect?.value === "fixed" ? "fixed" : "screen";
+  const width = parseOptionalNumber(widthInput?.value);
+  const height = parseOptionalNumber(heightInput?.value);
+  return {
+    modal: modalInput?.checked !== false,
+    movable: Boolean(movableInput?.checked),
+    popupSizeMode: sizeMode,
+    popupScaleMode: scaleModeSelect?.value === "crop" ? "crop" : "fit",
+    ...(x == null ? {} : { popupX: x }),
+    ...(y == null ? {} : { popupY: y }),
+    ...(sizeMode !== "fixed" || width == null ? {} : { popupWidth: Math.max(100, width) }),
+    ...(sizeMode !== "fixed" || height == null ? {} : { popupHeight: Math.max(100, height) })
+  };
+};
+const buttonPopupSettingsFromInputs = () => popupActionSettingsFromInputs({ modalInput: buttonPopupModalInput, movableInput: buttonPopupMovableInput, xInput: buttonPopupXInput, yInput: buttonPopupYInput, sizeModeSelect: buttonPopupSizeModeSelect, widthInput: buttonPopupWidthInput, heightInput: buttonPopupHeightInput, scaleModeSelect: buttonPopupScaleModeSelect });
+const groupPopupSettingsFromInputs = () => popupActionSettingsFromInputs({ modalInput: groupPopupModalInput, movableInput: groupPopupMovableInput, xInput: groupPopupXInput, yInput: groupPopupYInput, sizeModeSelect: groupPopupSizeModeSelect, widthInput: groupPopupWidthInput, heightInput: groupPopupHeightInput, scaleModeSelect: groupPopupScaleModeSelect });
 
 const createViewportId = () => {
   const ids = new Set(getViewportIds());
@@ -10358,6 +10688,13 @@ const applyScale = () => {
   if (!screen || !screenWrapper) return;
   const { width, height } = getScreenSize();
   lastScreenSize = { width, height };
+  document.documentElement.style.setProperty("--screen-width", `${width}px`);
+  document.documentElement.style.setProperty("--screen-height", `${height}px`);
+  if (hmiSvg) {
+    hmiSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    hmiSvg.setAttribute("width", String(width));
+    hmiSvg.setAttribute("height", String(height));
+  }
 
   if (isEditMode) {
     screen.style.width = `${Math.round(width * editorScreenZoom)}px`;
@@ -11308,6 +11645,22 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	    const strokeWidth = Number(obj.strokeWidth ?? 1);
 	    setFlatBorderStroke(rect, strokeColor, strokeWidth, obj.borderStyle);
 	    containerParent.appendChild(rect);
+	    const innerBorder = obj.innerBorder || {};
+	    const innerBorderWidth = Math.max(0, Number(innerBorder.width ?? 1) || 0);
+	    if (innerBorder.enabled === true && innerBorderWidth > 0) {
+	      const inset = innerBorderWidth / 2;
+	      const innerRect = document.createElementNS(ns, "rect");
+	      innerRect.setAttribute("x", x + inset);
+	      innerRect.setAttribute("y", y + inset);
+	      innerRect.setAttribute("width", Math.max(0, w - innerBorderWidth));
+	      innerRect.setAttribute("height", Math.max(0, h - innerBorderWidth));
+	      innerRect.setAttribute("rx", Math.max(0, Number(obj.rx ?? 0) - inset));
+	      innerRect.setAttribute("fill", "none");
+	      innerRect.setAttribute("stroke", innerBorder.color || "#000000");
+	      innerRect.setAttribute("stroke-width", innerBorderWidth);
+	      innerRect.setAttribute("pointer-events", "none");
+	      containerParent.appendChild(innerRect);
+	    }
 	    if (strokeColor !== "none" && strokeWidth > 0) {
 	      appendBorderStylePaths(containerParent, x, y, w, h, obj.borderStyle, strokeWidth);
 	    }
@@ -11654,6 +12007,156 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     containerParent.appendChild(path);
     return;
   }
+  if (obj.type === "pipe") {
+    const points = Array.isArray(obj.points) ? obj.points : [];
+    if (points.length < 2) return;
+    const thickness = Math.max(1, Number(obj.thickness ?? 20));
+    const outlineThickness = Math.max(0, Math.min(thickness / 2, Number(obj.outlineThickness ?? 1)));
+    const color = getAutomationColor(obj.strokeAutomation, obj.color || obj.stroke || "#808080");
+    const join = ["miter", "bevel", "round"].includes(obj.jointType) ? obj.jointType : "round";
+    const curveRadius = join === "round" ? Math.max(0, Number(obj.curveRadius ?? 15)) : 0;
+    const pipePathData = (() => {
+      const p = points.map((point) => ({ x: Number(point?.x ?? 0), y: Number(point?.y ?? 0) }));
+      if (p.length < 3 || curveRadius <= 0) return `M ${p.map((point) => `${point.x} ${point.y}`).join(" L ")}`;
+      let d = `M ${p[0].x} ${p[0].y}`;
+      for (let index = 1; index < p.length - 1; index += 1) {
+        const previous = p[index - 1], current = p[index], next = p[index + 1];
+        const inLength = Math.hypot(current.x - previous.x, current.y - previous.y) || 1;
+        const outLength = Math.hypot(next.x - current.x, next.y - current.y) || 1;
+        const radius = Math.min(curveRadius, inLength / 2, outLength / 2);
+        const before = { x: current.x - ((current.x - previous.x) / inLength) * radius, y: current.y - ((current.y - previous.y) / inLength) * radius };
+        const after = { x: current.x + ((next.x - current.x) / outLength) * radius, y: current.y + ((next.y - current.y) / outLength) * radius };
+        d += ` L ${before.x} ${before.y} Q ${current.x} ${current.y} ${after.x} ${after.y}`;
+      }
+      return `${d} L ${p.at(-1).x} ${p.at(-1).y}`;
+    })();
+    const group = document.createElementNS(ns, "g");
+    const addBody = (stroke, width, opacity = 1) => {
+      const el = document.createElementNS(ns, "path");
+      el.setAttribute("d", pipePathData); el.setAttribute("fill", "none"); el.setAttribute("stroke", stroke);
+      el.setAttribute("stroke-width", width); el.setAttribute("stroke-linejoin", join); el.setAttribute("stroke-linecap", "butt");
+      el.setAttribute("stroke-opacity", opacity); el.setAttribute("vector-effect", "non-scaling-stroke"); group.appendChild(el);
+    };
+    const normalizeRenderedCap = (cap) => ({
+      none: "none", open: "none", flat: "flat", butt: "flat",
+      squared: "square", square: "square",
+      rounded: "round", round: "round",
+      triangular: "triangle", triangle: "triangle",
+      flange: "flange"
+    })[String(cap || "flat").toLowerCase()] || "flat";
+    const addCap = (cap, endpoint, neighbor, atStart) => {
+      const kind = normalizeRenderedCap(cap);
+      const dx = endpoint.x - neighbor.x, dy = endpoint.y - neighbor.y;
+      const length = Math.hypot(dx, dy) || 1, ux = dx / length, uy = dy / length, px = -uy, py = ux;
+      const widthKey = atStart ? "startCapWidth" : "endCapWidth";
+      const lengthKey = atStart ? "startCapLength" : "endCapLength";
+      const capWidth = thickness * Math.max(1, Number(obj[widthKey] ?? getPipeCapDefaultWidth(kind))) / 100;
+      const capLength = thickness * Math.max(1, Number(obj[lengthKey] ?? getPipeCapDefaultLength(kind))) / 100;
+      if (kind === "flat" && outlineThickness > 0) {
+        const edge = document.createElementNS(ns, "line");
+        const halfWidth = Math.max(0, (capWidth / 2) - (outlineThickness / 2));
+        edge.setAttribute("x1", endpoint.x + px * halfWidth); edge.setAttribute("y1", endpoint.y + py * halfWidth);
+        edge.setAttribute("x2", endpoint.x - px * halfWidth); edge.setAttribute("y2", endpoint.y - py * halfWidth);
+        edge.setAttribute("stroke", "#202020"); edge.setAttribute("stroke-width", outlineThickness);
+        edge.setAttribute("stroke-linecap", "butt"); group.appendChild(edge);
+      }
+      if (kind === "round") {
+        const c = document.createElementNS(ns, "ellipse");
+        c.setAttribute("cx", endpoint.x); c.setAttribute("cy", endpoint.y);
+        c.setAttribute("rx", capLength); c.setAttribute("ry", capWidth / 2);
+        c.setAttribute("fill", color); c.setAttribute("stroke", "#202020"); c.setAttribute("stroke-width", outlineThickness);
+        c.setAttribute("transform", `rotate(${Math.atan2(uy, ux) * 180 / Math.PI} ${endpoint.x} ${endpoint.y})`);
+        group.appendChild(c);
+      }
+      if (kind === "triangle") {
+        const tip = { x: endpoint.x + ux * capLength, y: endpoint.y + uy * capLength };
+        const edgeWidth = Math.min(outlineThickness, capWidth / 2);
+        const capHalfWidth = Math.max(0, (capWidth / 2) - (edgeWidth / 2));
+        const a = { x: endpoint.x + px * capHalfWidth, y: endpoint.y + py * capHalfWidth };
+        const b = { x: endpoint.x - px * capHalfWidth, y: endpoint.y - py * capHalfWidth };
+        const fill = document.createElementNS(ns, "polygon");
+        fill.setAttribute("points", `${a.x},${a.y} ${tip.x},${tip.y} ${b.x},${b.y}`);
+        fill.setAttribute("fill", color);
+        fill.setAttribute("stroke", "none");
+        group.appendChild(fill);
+        if (edgeWidth > 0) {
+          const sides = document.createElementNS(ns, "polyline");
+          sides.setAttribute("points", `${a.x},${a.y} ${tip.x},${tip.y} ${b.x},${b.y}`);
+          sides.setAttribute("fill", "none");
+          sides.setAttribute("stroke", "#202020");
+          sides.setAttribute("stroke-width", edgeWidth);
+          sides.setAttribute("stroke-linejoin", "round");
+          sides.setAttribute("stroke-linecap", "butt");
+          group.appendChild(sides);
+        }
+      }
+      if (kind === "flange") {
+        const halfWidth = capWidth / 2;
+        const halfLength = capLength / 2;
+        const corners = [
+          { x: endpoint.x + ux * halfLength + px * halfWidth, y: endpoint.y + uy * halfLength + py * halfWidth },
+          { x: endpoint.x + ux * halfLength - px * halfWidth, y: endpoint.y + uy * halfLength - py * halfWidth },
+          { x: endpoint.x - ux * halfLength - px * halfWidth, y: endpoint.y - uy * halfLength - py * halfWidth },
+          { x: endpoint.x - ux * halfLength + px * halfWidth, y: endpoint.y - uy * halfLength + py * halfWidth }
+        ];
+        const flange = document.createElementNS(ns, "polygon");
+        flange.setAttribute("points", corners.map((point) => `${point.x},${point.y}`).join(" "));
+        flange.setAttribute("fill", color);
+        flange.setAttribute("stroke", "#202020");
+        flange.setAttribute("stroke-width", outlineThickness);
+        flange.setAttribute("stroke-linejoin", "miter");
+        group.appendChild(flange);
+        if (obj.gradientSmooth !== "rough") {
+          const highlight = document.createElementNS(ns, "line");
+          const highlightOffset = -halfLength * 0.15;
+          highlight.setAttribute("x1", endpoint.x + ux * highlightOffset + px * (halfWidth - outlineThickness));
+          highlight.setAttribute("y1", endpoint.y + uy * highlightOffset + py * (halfWidth - outlineThickness));
+          highlight.setAttribute("x2", endpoint.x + ux * highlightOffset - px * (halfWidth - outlineThickness));
+          highlight.setAttribute("y2", endpoint.y + uy * highlightOffset - py * (halfWidth - outlineThickness));
+          highlight.setAttribute("stroke", "#ffffff");
+          highlight.setAttribute("stroke-width", Math.max(1, capLength * 0.2));
+          highlight.setAttribute("stroke-opacity", obj.gradientSmooth === "extra-smooth" ? "0.5" : "0.35");
+          group.appendChild(highlight);
+        }
+      }
+      if (kind === "square") {
+        const edgeWidth = Math.min(outlineThickness, capWidth / 2);
+        const halfWidth = Math.max(0, (capWidth / 2) - (edgeWidth / 2));
+        const rearA = { x: endpoint.x + px * halfWidth, y: endpoint.y + py * halfWidth };
+        const rearB = { x: endpoint.x - px * halfWidth, y: endpoint.y - py * halfWidth };
+        const frontA = { x: rearA.x + ux * capLength, y: rearA.y + uy * capLength };
+        const frontB = { x: rearB.x + ux * capLength, y: rearB.y + uy * capLength };
+        const fill = document.createElementNS(ns, "polygon");
+        fill.setAttribute("points", `${rearA.x},${rearA.y} ${frontA.x},${frontA.y} ${frontB.x},${frontB.y} ${rearB.x},${rearB.y}`);
+        fill.setAttribute("fill", color);
+        fill.setAttribute("stroke", edgeWidth > 0 ? "#202020" : "none");
+        fill.setAttribute("stroke-width", edgeWidth);
+        fill.setAttribute("stroke-linejoin", "miter");
+        group.appendChild(fill);
+      }
+    };
+    const renderedStartCap = normalizeRenderedCap(obj.startCap);
+    const renderedEndCap = normalizeRenderedCap(obj.endCap);
+    const startIsFlange = renderedStartCap === "flange";
+    const endIsFlange = renderedEndCap === "flange";
+    const startIsFlat = renderedStartCap === "flat";
+    const endIsFlat = renderedEndCap === "flat";
+    const startIsSquare = renderedStartCap === "square";
+    const endIsSquare = renderedEndCap === "square";
+    if (!startIsFlange && !startIsFlat && !startIsSquare) addCap(obj.startCap, points[0], points[1], true);
+    if (!endIsFlange && !endIsFlat && !endIsSquare) addCap(obj.endCap, points.at(-1), points.at(-2), false);
+    addBody("#202020", thickness);
+    addBody(color, Math.max(0.1, thickness - (outlineThickness * 2)));
+    if (obj.gradientSmooth !== "rough") addBody("#ffffff", Math.max(1, thickness * 0.18), obj.gradientSmooth === "extra-smooth" ? 0.5 : 0.35);
+    if (startIsFlange) addCap(obj.startCap, points[0], points[1], true);
+    if (endIsFlange) addCap(obj.endCap, points.at(-1), points.at(-2), false);
+    if (startIsFlat) addCap(obj.startCap, points[0], points[1], true);
+    if (endIsFlat) addCap(obj.endCap, points.at(-1), points.at(-2), false);
+    if (startIsSquare) addCap(obj.startCap, points[0], points[1], true);
+    if (endIsSquare) addCap(obj.endCap, points.at(-1), points.at(-2), false);
+    parent.appendChild(group);
+    return;
+  }
   if (obj.type === "polyline") {
     const points = Array.isArray(obj.points) ? obj.points : [];
     let minX = Infinity;
@@ -11937,7 +12440,9 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       const contentTop = Number(box.y ?? y) + textPadding.y;
       const contentWidth = Math.max(1, Number(box.width ?? 1) - textPadding.x * 2);
       const contentHeight = Math.max(1, Number(box.height ?? 1) - textPadding.y * 2);
-      const measured = wrapTextToWidth(decodedText, contentWidth, fontSize, Boolean(obj.bold));
+      const measured = obj.wrapMode === "explicit"
+        ? measureTextBlock(decodedText, fontSize, Boolean(obj.bold))
+        : wrapTextToWidth(decodedText, contentWidth, fontSize, Boolean(obj.bold));
       let textX = contentLeft;
       if (align === "center") textX = contentLeft + contentWidth / 2;
       if (align === "right") textX = contentLeft + contentWidth;
@@ -12068,6 +12573,7 @@ const SHARED_TOP_LEVEL_RENDER_TYPES = new Set([
   "line",
   "curve",
   "polyline",
+  "pipe",
   "spline",
   "polygon",
   "bar",
@@ -12079,7 +12585,13 @@ const renderSharedTopLevelObject = (parent, obj) => {
   if (!parent || !obj || !SHARED_TOP_LEVEL_RENDER_TYPES.has(String(obj.type || ""))) return null;
   const wrapper = document.createElementNS("http://www.w3.org/2000/svg", "g");
   parent.appendChild(wrapper);
-  renderObjectInto(wrapper, obj);
+  try {
+    renderObjectInto(wrapper, obj);
+  } catch (error) {
+    console.error("[renderScreen] skipped invalid object:", obj?.importId || obj?.type, error);
+    wrapper.remove();
+    return null;
+  }
   if (wrapper.childNodes.length > 0) return wrapper;
   wrapper.remove();
   return null;
@@ -12087,6 +12599,7 @@ const renderSharedTopLevelObject = (parent, obj) => {
 
 const pendingScreens = new Set();
 let currentPopupScreenId = null;
+let currentPopupOptions = null;
 
 const queueScreenLoad = (id) => {
   if (!id || pendingScreens.has(id)) return;
@@ -12174,9 +12687,25 @@ const viewportGoForward = (viewportId) => {
 const closePopup = () => {
   if (!popupOverlay) return;
   popupOverlay.classList.add("is-hidden");
+  popupOverlay.classList.remove("is-nonmodal", "is-positioned", "is-movable");
   popupOverlay.setAttribute("aria-hidden", "true");
+  popupOverlay.setAttribute("aria-modal", "true");
+  const modal = popupOverlay.querySelector(".popup-modal");
+  if (modal) {
+    modal.style.left = "";
+    modal.style.top = "";
+    modal.style.maxWidth = "";
+    modal.style.maxHeight = "";
+  }
+  const body = popupOverlay.querySelector(".popup-body");
+  if (body) {
+    body.classList.remove("is-fixed-size", "is-cropped", "is-fit");
+    body.style.width = "";
+    body.style.height = "";
+  }
   if (popupSvg) popupSvg.textContent = "";
   currentPopupScreenId = null;
+  currentPopupOptions = null;
   scheduleWsSubscribeRefresh();
 };
 
@@ -12270,9 +12799,20 @@ const submitSetpointPrompt = async () => {
   }
 };
 
-const openPopup = (screenId) => {
+const openPopup = (screenId, requestedOptions = null) => {
   if (!popupOverlay || !popupSvg) return;
+  const options = requestedOptions || (currentPopupScreenId === screenId ? currentPopupOptions : null) || {};
   currentPopupScreenId = screenId;
+  currentPopupOptions = {
+    modal: options.modal !== false,
+    movable: Boolean(options.movable),
+    popupX: parseOptionalNumber(options.popupX),
+    popupY: parseOptionalNumber(options.popupY),
+    popupSizeMode: options.popupSizeMode === "fixed" ? "fixed" : "screen",
+    popupWidth: parseOptionalNumber(options.popupWidth),
+    popupHeight: parseOptionalNumber(options.popupHeight),
+    popupScaleMode: options.popupScaleMode === "crop" ? "crop" : "fit"
+  };
   const child = screenCache.get(screenId);
   if (!child) {
     queueScreenLoad(screenId);
@@ -12282,9 +12822,23 @@ const openPopup = (screenId) => {
   const childH = Number(child.height) || 1080;
   const maxW = Math.floor(window.innerWidth * 0.8);
   const maxH = Math.floor(window.innerHeight * 0.8);
-  const scale = Math.min(1, maxW / childW, maxH / childH);
+  const fixedSize = currentPopupOptions.popupSizeMode === "fixed";
+  const viewportW = fixedSize ? clamp(currentPopupOptions.popupWidth || 640, 100, Math.floor(window.innerWidth * 0.92)) : Math.min(childW, maxW);
+  const viewportH = fixedSize ? clamp(currentPopupOptions.popupHeight || 480, 100, Math.floor(window.innerHeight * 0.86)) : Math.min(childH, maxH);
+  const contentW = Math.max(1, viewportW - 24);
+  const contentH = Math.max(1, viewportH - 24);
+  const scale = currentPopupOptions.popupScaleMode === "crop" ? 1 : Math.min(contentW / childW, contentH / childH);
   const scaledW = Math.round(childW * scale);
   const scaledH = Math.round(childH * scale);
+
+  const popupBody = popupOverlay.querySelector(".popup-body");
+  if (popupBody) {
+    popupBody.classList.toggle("is-fixed-size", fixedSize);
+    popupBody.classList.toggle("is-cropped", currentPopupOptions.popupScaleMode === "crop");
+    popupBody.classList.toggle("is-fit", currentPopupOptions.popupScaleMode === "fit");
+    popupBody.style.width = `${viewportW}px`;
+    popupBody.style.height = `${viewportH}px`;
+  }
 
   popupSvg.textContent = "";
   popupSvg.setAttribute("viewBox", `0 0 ${childW} ${childH}`);
@@ -12314,6 +12868,18 @@ const openPopup = (screenId) => {
   child.objects?.forEach((childObj) => renderObjectInto(popupSvg, childObj));
 
   if (popupTitle) popupTitle.textContent = screenId;
+  const popupModal = popupOverlay.querySelector(".popup-modal");
+  const positioned = currentPopupOptions.popupX != null || currentPopupOptions.popupY != null;
+  popupOverlay.classList.toggle("is-nonmodal", !currentPopupOptions.modal);
+  popupOverlay.classList.toggle("is-movable", currentPopupOptions.movable);
+  popupOverlay.classList.toggle("is-positioned", positioned);
+  popupOverlay.setAttribute("aria-modal", currentPopupOptions.modal ? "true" : "false");
+  if (popupModal) {
+    popupModal.style.maxWidth = "92vw";
+    popupModal.style.maxHeight = "92vh";
+    popupModal.style.left = positioned ? `${Math.max(0, currentPopupOptions.popupX ?? Math.round((window.innerWidth - scaledW) / 2))}px` : "";
+    popupModal.style.top = positioned ? `${Math.max(0, currentPopupOptions.popupY ?? Math.round((window.innerHeight - scaledH) / 2))}px` : "";
+  }
   popupOverlay.classList.remove("is-hidden");
   popupOverlay.setAttribute("aria-hidden", "false");
   scheduleWsSubscribeRefresh();
@@ -12321,6 +12887,7 @@ const openPopup = (screenId) => {
 
 const renderScreen = () => {
   if (!hmiSvg || !currentScreenObj) return;
+  renderReferenceHealthBadge();
   hmiSvg.querySelectorAll?.(".hmi-alarms-panel-list[data-alarms-panel-key]").forEach((list) => {
     const scrollKey = String(list.dataset?.alarmsPanelKey || "");
     if (scrollKey) alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
@@ -12636,31 +13203,6 @@ const renderScreen = () => {
   groupHotspotHoverRect.style.display = "none";
   hotspotLayer.appendChild(groupHotspotHoverRect);
 
-  if (isEditMode) {
-    const drawGroupOutlines = (list, offsetX, offsetY) => {
-      if (!Array.isArray(list)) return;
-      list.forEach((obj) => {
-        if (!obj || obj.type !== "group") return;
-        const bounds = getGroupHotspotBounds(obj);
-        if (bounds && obj.action && obj.action.type) {
-          const rectEl = document.createElementNS(ns, "rect");
-          rectEl.setAttribute("x", bounds.x + offsetX);
-          rectEl.setAttribute("y", bounds.y + offsetY);
-          rectEl.setAttribute("width", bounds.width);
-          rectEl.setAttribute("height", bounds.height);
-          rectEl.setAttribute("fill", "none");
-          rectEl.setAttribute("stroke", "#7CFF7C");
-          rectEl.setAttribute("stroke-width", "1");
-          rectEl.setAttribute("vector-effect", "non-scaling-stroke");
-          rectEl.setAttribute("stroke-dasharray", "4 3");
-          hotspotLayer.appendChild(rectEl);
-        }
-        drawGroupOutlines(obj.children, offsetX + Number(obj.x ?? 0), offsetY + Number(obj.y ?? 0));
-      });
-    };
-    drawGroupOutlines(objects, 0, 0);
-  }
-
   selectionLayer = document.createElementNS(ns, "g");
   selectionLayer.setAttribute("pointer-events", "none");
   selectionLayer.setAttribute("data-layer", "selection");
@@ -12891,20 +13433,24 @@ const syncPropertiesFromSelection = () => {
     setInputValueSafe(groupWInput, Number(obj.w ?? 0));
     setInputValueSafe(groupHInput, Number(obj.h ?? 0));
     setInputValueSafe(groupRotationInput, Number(obj.rotation ?? 0));
-
-    refreshViewportIdOptions();
-    refreshGroupActionScreenOptions();
-
-    const actionType = String(obj.action?.type || "");
-    if (groupActionTypeSelect) setSelectValueSafe(groupActionTypeSelect, actionType);
-    setGroupActionRows(actionType);
-
-    if (groupActionViewportIdSelect) {
-      setSelectValueSafe(groupActionViewportIdSelect, String(obj.action?.viewportId || ""));
-    }
-	    if (groupActionScreenIdSelect) {
-	      setSelectValueSafe(groupActionScreenIdSelect, String(obj.action?.screenId || ""));
-	    }
+	  }
+	  if (obj.type !== "button") {
+	    refreshViewportIdOptions();
+	    refreshGroupActionScreenOptions();
+	    const actionType = String(obj.action?.type || "");
+	    if (groupActionTypeSelect) setSelectValueSafe(groupActionTypeSelect, actionType);
+	    setGroupActionRows(actionType);
+	    if (groupActionViewportIdSelect) setSelectValueSafe(groupActionViewportIdSelect, String(obj.action?.viewportId || ""));
+	    if (groupActionScreenIdSelect) setSelectValueSafe(groupActionScreenIdSelect, String(obj.action?.screenId || ""));
+      if (groupPopupModalInput) groupPopupModalInput.checked = obj.action?.modal !== false;
+      if (groupPopupMovableInput) groupPopupMovableInput.checked = Boolean(obj.action?.movable);
+      setInputValueSafe(groupPopupXInput, obj.action?.popupX ?? "");
+      setInputValueSafe(groupPopupYInput, obj.action?.popupY ?? "");
+      setSelectValueSafe(groupPopupSizeModeSelect, obj.action?.popupSizeMode === "fixed" ? "fixed" : "screen");
+      setInputValueSafe(groupPopupWidthInput, obj.action?.popupWidth ?? "");
+      setInputValueSafe(groupPopupHeightInput, obj.action?.popupHeight ?? "");
+      setSelectValueSafe(groupPopupScaleModeSelect, obj.action?.popupScaleMode === "crop" ? "crop" : "fit");
+      setPopupFixedSizeFieldsVisible(groupPopupFixedSizeFields, groupPopupSizeModeSelect?.value);
 	  }
 	  if (obj.type === "text") {
 	    if (textXInput) textXInput.value = Number(obj.x) || 0;
@@ -12989,6 +13535,15 @@ const syncPropertiesFromSelection = () => {
     refreshViewportIdOptions();
     refreshAlarmPanelTargetOptions();
     if (buttonViewportSelect) buttonViewportSelect.value = obj.action?.viewportId || "";
+    if (buttonPopupModalInput) buttonPopupModalInput.checked = obj.action?.modal !== false;
+    if (buttonPopupMovableInput) buttonPopupMovableInput.checked = Boolean(obj.action?.movable);
+    setInputValueSafe(buttonPopupXInput, obj.action?.popupX ?? "");
+    setInputValueSafe(buttonPopupYInput, obj.action?.popupY ?? "");
+    setSelectValueSafe(buttonPopupSizeModeSelect, obj.action?.popupSizeMode === "fixed" ? "fixed" : "screen");
+    setInputValueSafe(buttonPopupWidthInput, obj.action?.popupWidth ?? "");
+    setInputValueSafe(buttonPopupHeightInput, obj.action?.popupHeight ?? "");
+    setSelectValueSafe(buttonPopupScaleModeSelect, obj.action?.popupScaleMode === "crop" ? "crop" : "fit");
+    setPopupFixedSizeFieldsVisible(buttonPopupFixedSizeFields, buttonPopupSizeModeSelect?.value);
     const authText = getAuthButtonTextConfig(obj);
     if (buttonAuthLoggedOutTextInput) setInputValueSafe(buttonAuthLoggedOutTextInput, authText.loggedOutText);
     if (buttonAuthLoggedInTextInput) setInputValueSafe(buttonAuthLoggedInTextInput, authText.loggedInText);
@@ -13268,6 +13823,17 @@ const syncPropertiesFromSelection = () => {
     if (rectStrokeInput) rectStrokeInput.value = strokeValue;
     if (rectStrokeTextInput) rectStrokeTextInput.value = strokeValue;
     if (rectStrokeWidthInput) rectStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
+    const innerBorder = obj.innerBorder || {};
+    const innerBorderEnabled = innerBorder.enabled === true && Number(innerBorder.width ?? 1) > 0;
+    if (rectInnerBorderEnabledInput) rectInnerBorderEnabledInput.checked = innerBorderEnabled;
+    [rectInnerBorderColorRow, rectInnerBorderWidthRow].forEach((row) => {
+      row?.classList.toggle("is-hidden", !innerBorderEnabled);
+      if (row) row.hidden = !innerBorderEnabled;
+    });
+    const innerColor = String(innerBorder.color || "#000000");
+    if (rectInnerBorderColorInput) rectInnerBorderColorInput.value = isHexColor(innerColor) ? innerColor : "#000000";
+    setInputValueSafe(rectInnerBorderColorTextInput, innerColor);
+    setInputValueSafe(rectInnerBorderWidthInput, Number(innerBorder.width ?? 1));
 
     if (isEditingRectColorDynamic() || isEditingEllipseColorDynamic() || isEditingGroupColorDynamic()) {
       ensureRectColorDraft(obj);
@@ -13336,12 +13902,28 @@ const syncPropertiesFromSelection = () => {
 	    if (curveStrokeTextInput) curveStrokeTextInput.value = strokeValue;
 	    if (curveStrokeWidthInput) curveStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
 	  }
-	  if (obj.type === "polyline") {
-	    const strokeValue = (!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke;
-	    if (polylineStrokeInput) polylineStrokeInput.value = strokeValue;
-	    if (polylineStrokeTextInput) polylineStrokeTextInput.value = strokeValue;
-	    if (polylineStrokeWidthInput) polylineStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
-	  }
+  if (obj.type === "polyline" || obj.type === "pipe") {
+    const strokeValue = obj.type === "pipe" ? (obj.color || "#d3d3d3") : ((!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
+    if (polylineStrokeInput) polylineStrokeInput.value = strokeValue;
+    if (polylineStrokeTextInput) polylineStrokeTextInput.value = strokeValue;
+    if (polylineStrokeWidthInput) polylineStrokeWidthInput.value = Number(obj.type === "pipe" ? (obj.thickness ?? 20) : (obj.strokeWidth ?? 2));
+    if (polylinePropsTitle) polylinePropsTitle.textContent = obj.type === "pipe" ? "Pipe" : "Polyline";
+    if (polylineStrokeWidthLabel) polylineStrokeWidthLabel.textContent = obj.type === "pipe" ? "Thickness" : "Stroke Width";
+    if (pipePropertyRows) pipePropertyRows.classList.toggle("is-hidden", obj.type !== "pipe");
+    const pipePoints = Array.isArray(obj.points) ? obj.points : [];
+    if (pipeXInput) pipeXInput.value = pipePoints.length ? Math.min(...pipePoints.map((point) => Number(point?.x ?? 0))) : 0;
+    if (pipeYInput) pipeYInput.value = pipePoints.length ? Math.min(...pipePoints.map((point) => Number(point?.y ?? 0))) : 0;
+    if (pipeJointTypeSelect) pipeJointTypeSelect.value = obj.jointType || "round";
+    if (pipeCurveRadiusInput) pipeCurveRadiusInput.value = Number(obj.curveRadius ?? 15);
+    if (pipeOutlineThicknessInput) pipeOutlineThicknessInput.value = Number(obj.outlineThickness ?? 1);
+    if (pipeStartCapSelect) pipeStartCapSelect.value = obj.startCap || "flat";
+    if (pipeEndCapSelect) pipeEndCapSelect.value = obj.endCap || "flat";
+    if (pipeStartCapWidthInput) pipeStartCapWidthInput.value = Number(obj.startCapWidth ?? getPipeCapDefaultWidth(obj.startCap));
+    if (pipeStartCapLengthInput) pipeStartCapLengthInput.value = Number(obj.startCapLength ?? getPipeCapDefaultLength(obj.startCap));
+    if (pipeEndCapWidthInput) pipeEndCapWidthInput.value = Number(obj.endCapWidth ?? getPipeCapDefaultWidth(obj.endCap));
+    if (pipeEndCapLengthInput) pipeEndCapLengthInput.value = Number(obj.endCapLength ?? getPipeCapDefaultLength(obj.endCap));
+    if (pipeGradientSmoothSelect) pipeGradientSmoothSelect.value = obj.gradientSmooth || "medium";
+  }
 	  if (obj.type === "spline") {
 	    const strokeValue = (!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke;
 	    if (splineStrokeInput) splineStrokeInput.value = strokeValue;
@@ -13599,7 +14181,7 @@ function applyMultiStateVisualOverridesToObject(sourceObj) {
     if (["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type)) {
       obj.fill = overrides.fillColor;
       delete obj.fillAutomation;
-    } else if (type === "line" || type === "curve" || type === "polyline" || type === "spline") {
+    } else if (type === "line" || type === "curve" || type === "polyline" || type === "pipe" || type === "spline") {
       obj.stroke = overrides.fillColor;
       delete obj.strokeAutomation;
     } else if (type === "text") {
@@ -14009,6 +14591,54 @@ const renderMultiStateEditor = (obj) => {
   renderCompactTagBindingRows();
 };
 
+const renderSelectedReferenceProperties = (obj) => {
+  if (!selectedReferenceHealthProps) return;
+  selectedReferenceHealthProps.textContent = "";
+  const references = [];
+  (obj?.externalReferences || []).forEach((ref) => {
+    if (ref?.status === "resolved" || ref?.target) return;
+    const value = String(ref?.source?.value || "").trim();
+    if (value) references.push({
+      kind: `${ref.automation || ref.kind || "reference"}${ref.supported === false || ref.status === "unsupported" ? " (unsupported)" : ""}`,
+      value
+    });
+  });
+  if (obj?.action?.status === "unresolved" && obj.action.sourceScreen) {
+    references.push({ kind: "screen", value: String(obj.action.sourceScreen) });
+  }
+  if (obj?.type === "viewport" && !obj.target && obj.sourceInitialScreen) {
+    references.push({ kind: "screen", value: String(obj.sourceInitialScreen) });
+  }
+  const unique = references.filter((ref, index, all) =>
+    all.findIndex((candidate) => candidate.kind === ref.kind && candidate.value === ref.value) === index
+  );
+  selectedReferenceHealthProps.classList.toggle("is-hidden", !obj || !unique.length);
+  if (!obj || !unique.length) return;
+  const title = document.createElement("div");
+  title.className = "prop-group-title";
+  title.textContent = "References Needing Attention";
+  selectedReferenceHealthProps.appendChild(title);
+  unique.forEach((ref) => {
+    const row = document.createElement("div");
+    row.className = "prop-row";
+    const label = document.createElement("label");
+    label.className = "reference-property-kind";
+    label.textContent = ref.kind;
+    const input = document.createElement("textarea");
+    input.readOnly = true;
+    input.className = "reference-error";
+    input.value = ref.value;
+    input.rows = Math.min(5, Math.max(2, String(ref.value).split(/\r?\n/).length));
+    input.title = `Unresolved ${ref.kind}: ${ref.value}`;
+    row.append(label, input);
+    selectedReferenceHealthProps.appendChild(row);
+  });
+  const hint = document.createElement("p");
+  hint.className = "reference-property-hint";
+  hint.textContent = "The original reference is preserved. Use the object's automation or action controls to select its OPCBridge replacement.";
+  selectedReferenceHealthProps.appendChild(hint);
+};
+
 const updatePropertiesPanel = () => {
   const isSingle = selectedIndices.length === 1;
   const isMulti = selectedIndices.length > 1;
@@ -14019,6 +14649,7 @@ const updatePropertiesPanel = () => {
   }
   const activeObjects = getActiveObjects();
   const obj = isSingle ? activeObjects?.[selectedIndices[0]] : null;
+  renderSelectedReferenceProperties(obj);
   if (editorPaneTitle) {
     editorPaneTitle.textContent = isMulti ? "Multiple Properties" : getPropertiesPaneTitle(obj);
   }
@@ -14028,7 +14659,7 @@ const updatePropertiesPanel = () => {
   const showViewport = Boolean(obj && obj.type === "viewport");
   const showRect = Boolean(obj && (obj.type === "rect" || obj.type === "alarms-panel"));
   const showDynamicRect = Boolean(obj && obj.type === "rect");
-  const showDynamicLine = Boolean(obj && obj.type === "line");
+  const showDynamicLine = Boolean(obj && (obj.type === "line" || obj.type === "pipe"));
   const showDynamicEllipse = Boolean(obj && obj.type === "ellipse");
   const showDynamicText = Boolean(obj && obj.type === "text");
   const showDynamicButton = Boolean(obj && obj.type === "button");
@@ -14039,7 +14670,7 @@ const updatePropertiesPanel = () => {
   const showCircle = Boolean(obj && obj.type === "circle");
   const showLine = Boolean(obj && obj.type === "line");
   const showCurve = Boolean(obj && obj.type === "curve");
-  const showPolyline = Boolean(obj && obj.type === "polyline");
+  const showPolyline = Boolean(obj && (obj.type === "polyline" || obj.type === "pipe"));
   const showSpline = Boolean(obj && obj.type === "spline");
   const showPolygon = Boolean(obj && obj.type === "polygon");
   const showBar = Boolean(obj && obj.type === "bar");
@@ -14050,6 +14681,7 @@ const updatePropertiesPanel = () => {
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
   if (groupProps) groupProps.classList.toggle("is-hidden", !showGroup);
+  if (objectActionProps) objectActionProps.classList.toggle("is-hidden", !obj || showButton);
   if (numberInputProps) numberInputProps.classList.toggle("is-hidden", !showNumberInput);
   if (indicatorProps) indicatorProps.classList.toggle("is-hidden", !showIndicator);
   if (viewportProps) viewportProps.classList.toggle("is-hidden", !showViewport);
@@ -14101,7 +14733,8 @@ const updatePropertiesPanel = () => {
   if (showRectRotationTab) ensureRectRotationDraft(obj);
   if (showRectMotionTab) ensureRectMotionDraft(obj);
   if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicLine && lineProps) lineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showLine && lineProps) lineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (obj?.type === "pipe" && polylineProps) polylineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab);
   if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicText && textProps) textProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicButton && buttonProps) buttonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
@@ -14231,7 +14864,7 @@ const updateGroupProperty = (patch) => {
   if (selectedIndices.length !== 1) return;
   const index = selectedIndices[0];
   const obj = activeObjects[index];
-  if (!obj || obj.type !== "group") return;
+  if (!obj || obj.type === "button") return;
   recordHistory();
   Object.assign(obj, patch);
   renderScreen();
@@ -14349,9 +14982,28 @@ const updatePolylineProperty = (patch) => {
   if (selectedIndices.length !== 1) return;
   const index = selectedIndices[0];
   const obj = activeObjects[index];
-  if (!obj || obj.type !== "polyline") return;
+  if (!obj || (obj.type !== "polyline" && obj.type !== "pipe")) return;
   recordHistory();
   Object.assign(obj, patch);
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+};
+
+const updatePipePosition = (axis, value) => {
+  const activeObjects = getActiveObjects();
+  if (!activeObjects || selectedIndices.length !== 1) return;
+  const obj = activeObjects[selectedIndices[0]];
+  if (!obj || obj.type !== "pipe" || !Array.isArray(obj.points) || !obj.points.length) return;
+  const coordinate = axis === "y" ? "y" : "x";
+  const current = Math.min(...obj.points.map((point) => Number(point?.[coordinate] ?? 0)));
+  const delta = Number(value) - current;
+  if (!Number.isFinite(delta) || delta === 0) return;
+  recordHistory();
+  obj.points = obj.points.map((point) => ({
+    ...point,
+    [coordinate]: Number(point?.[coordinate] ?? 0) + delta
+  }));
   renderScreen();
   syncEditorFromScreen();
   setDirty(true);
@@ -14652,11 +15304,11 @@ const applyVisibilityDraftToObject = () => {
 	    } else {
 	      delete next.value;
 	    }
-	    if (obj.type === "polyline") {
-	      const strokeValue = (!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke;
+	    if (obj.type === "polyline" || obj.type === "pipe") {
+	      const strokeValue = obj.type === "pipe" ? (obj.color || "#d3d3d3") : ((!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
 	      if (polylineStrokeInput) polylineStrokeInput.value = strokeValue;
 	      if (polylineStrokeTextInput) polylineStrokeTextInput.value = strokeValue;
-      if (polylineStrokeWidthInput) polylineStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
+	      if (polylineStrokeWidthInput) polylineStrokeWidthInput.value = Number(obj.type === "pipe" ? (obj.thickness ?? 20) : (obj.strokeWidth ?? 2));
     }
     if (obj.type === "polygon") {
       const fillValue = obj.fill ?? "#3a3f4b";
@@ -16726,7 +17378,7 @@ window.addEventListener("keydown", (evt) => {
 	      obj.y2 = snapValue(Math.round((obj.y2 ?? 0) + delta.y));
 	      return;
 	    }
-	    if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+	    if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
 	      const points = Array.isArray(obj.points) ? obj.points : [];
 	      obj.points = points.map((pt) => ({
 	        x: snapValue(Math.round(Number(pt?.x ?? 0) + delta.x)),
@@ -17040,7 +17692,33 @@ if (popupCloseBtn) {
 
 if (popupOverlay) {
   popupOverlay.addEventListener("click", (event) => {
-    if (event.target === popupOverlay) closePopup();
+    if (event.target === popupOverlay && currentPopupOptions?.modal !== false) closePopup();
+  });
+  const popupHeaderEl = popupOverlay.querySelector(".popup-header");
+  const popupModalEl = popupOverlay.querySelector(".popup-modal");
+  popupHeaderEl?.addEventListener("pointerdown", (event) => {
+    if (!currentPopupOptions?.movable || !popupModalEl || event.button !== 0 || event.target?.closest?.("button")) return;
+    event.preventDefault();
+    const rect = popupModalEl.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const originX = rect.left;
+    const originY = rect.top;
+    popupOverlay.classList.add("is-positioned");
+    const move = (moveEvent) => {
+      const maxX = Math.max(0, window.innerWidth - popupModalEl.offsetWidth);
+      const maxY = Math.max(0, window.innerHeight - popupModalEl.offsetHeight);
+      popupModalEl.style.left = `${clamp(originX + moveEvent.clientX - startX, 0, maxX)}px`;
+      popupModalEl.style.top = `${clamp(originY + moveEvent.clientY - startY, 0, maxY)}px`;
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("pointercancel", finish, true);
+    };
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("pointercancel", finish, true);
   });
 }
 
@@ -18111,37 +18789,19 @@ if (textAutoSizeInput) {
     const activeObjects = getActiveObjects();
     const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
     if (!obj || obj.type !== "text") return;
+    ensureTextInsertionPoint(obj);
     if (!autoSize) {
       const bounds = getObjectBounds(obj);
       const patch = {
         autoSize: false,
-        x: Math.round(Number(bounds?.x ?? obj.x ?? 0)),
-        y: Math.round(Number(bounds?.y ?? obj.y ?? 0)),
         w: Math.max(1, Math.round(Number(bounds?.width ?? obj.w ?? 160))),
-        h: Math.max(1, Math.round(Number(bounds?.height ?? obj.h ?? 40)))
+        h: Math.max(1, Math.round(Number(bounds?.height ?? obj.h ?? 40))),
+        positionMode: "insertion-point"
       };
       updateTextProperty(patch);
       return;
     }
-    const padding = getTextBoxPadding(obj);
-    const box = getObjectBounds(obj) || { x: Number(obj.x ?? 0), y: Number(obj.y ?? 0), width: Number(obj.w ?? 160), height: Number(obj.h ?? 40) };
-    const fontSize = Number(obj.fontSize || 18);
-    const sample = decodeNbspEntities(renderTextTemplate(obj, true));
-    const measured = measureTextBlock(sample, fontSize, Boolean(obj.bold));
-    const contentLeft = Number(box.x ?? 0) + padding.x;
-    const contentTop = Number(box.y ?? 0) + padding.y;
-    const contentWidth = Math.max(1, Number(box.width ?? 1) - padding.x * 2);
-    const contentHeight = Math.max(1, Number(box.height ?? 1) - padding.y * 2);
-    const align = obj.align || "left";
-    const valign = obj.valign || "top";
-    let nextX = contentLeft;
-    if (align === "center") nextX = contentLeft + contentWidth / 2;
-    if (align === "right") nextX = contentLeft + contentWidth;
-    let nextY = contentTop;
-    if (measured.lines.length <= 1 && valign === "top") nextY = contentTop + (measured.ascent ?? fontSize * 0.8);
-    else if (valign === "middle") nextY = contentTop + contentHeight / 2;
-    else if (valign === "bottom") nextY = contentTop + contentHeight;
-    updateTextProperty({ autoSize: true, x: Math.round(nextX), y: Math.round(nextY) });
+    updateTextProperty({ autoSize: true, positionMode: "insertion-point" });
   });
 }
 
@@ -18502,7 +19162,7 @@ if (buttonActionSelect) {
 	    const action = actionType === "load-viewport"
 	      ? { type: "load-viewport", viewportId, screenId }
 	      : actionType === "popup"
-	        ? { type: "popup", screenId }
+	        ? { type: "popup", screenId, ...buttonPopupSettingsFromInputs() }
 	        : actionType === "history-back"
 	          ? { type: "history-back" }
 	          : actionType === "history-forward"
@@ -18563,7 +19223,7 @@ if (buttonTargetSelect) {
     const action = actionType === "load-viewport"
       ? { type: "load-viewport", viewportId, screenId }
       : actionType === "popup"
-        ? { type: "popup", screenId }
+        ? { type: "popup", screenId, ...buttonPopupSettingsFromInputs() }
       : { type: "navigate", screenId };
     updateButtonProperty({ action });
   });
@@ -18647,7 +19307,9 @@ if (groupActionTypeSelect) {
       return;
     }
     const screenId = groupActionScreenIdSelect?.value || availableScreens[0]?.id || DEFAULT_SCREEN_ID;
-    updateSelectedGroupAction({ type: nextType, screenId });
+    updateSelectedGroupAction(nextType === "popup"
+      ? { type: nextType, screenId, ...groupPopupSettingsFromInputs() }
+      : { type: nextType, screenId });
   });
 }
 
@@ -18670,9 +19332,27 @@ if (groupActionScreenIdSelect) {
       updateSelectedGroupAction({ type: "load-viewport", viewportId, screenId });
       return;
     }
-    updateSelectedGroupAction({ type, screenId });
+    updateSelectedGroupAction(type === "popup"
+      ? { type, screenId, ...groupPopupSettingsFromInputs() }
+      : { type, screenId });
   });
 }
+
+const updateButtonPopupSettings = () => {
+  const obj = getAutomationObject();
+  if (!obj || obj.type !== "button" || obj.action?.type !== "popup") return;
+  updateButtonProperty({ action: { ...obj.action, ...buttonPopupSettingsFromInputs() } });
+};
+
+[buttonPopupModalInput, buttonPopupMovableInput, buttonPopupXInput, buttonPopupYInput, buttonPopupSizeModeSelect, buttonPopupWidthInput, buttonPopupHeightInput, buttonPopupScaleModeSelect].forEach((input) => input?.addEventListener("change", () => {
+  setPopupFixedSizeFieldsVisible(buttonPopupFixedSizeFields, buttonPopupSizeModeSelect?.value);
+  updateButtonPopupSettings();
+}));
+[groupPopupModalInput, groupPopupMovableInput, groupPopupXInput, groupPopupYInput, groupPopupSizeModeSelect, groupPopupWidthInput, groupPopupHeightInput, groupPopupScaleModeSelect].forEach((input) => input?.addEventListener("change", () => {
+  setPopupFixedSizeFieldsVisible(groupPopupFixedSizeFields, groupPopupSizeModeSelect?.value);
+  if (groupActionTypeSelect?.value !== "popup") return;
+  updateSelectedGroupAction(groupPopupSettingsFromInputs());
+}));
 
 if (buttonWriteConnectionInput) {
   buttonWriteConnectionInput.addEventListener("change", () => {
@@ -19274,6 +19954,31 @@ if (rectStrokeWidthInput) {
   });
 }
 
+if (rectInnerBorderEnabledInput) {
+  rectInnerBorderEnabledInput.addEventListener("change", () => {
+    const enabled = rectInnerBorderEnabledInput.checked;
+    [rectInnerBorderColorRow, rectInnerBorderWidthRow].forEach((row) => {
+      row?.classList.toggle("is-hidden", !enabled);
+      if (row) row.hidden = !enabled;
+    });
+    updateRectProperty({ innerBorder: { enabled, color: rectInnerBorderColorTextInput?.value?.trim() || rectInnerBorderColorInput?.value || "#000000", width: Math.max(0, Number(rectInnerBorderWidthInput?.value ?? 1) || 1) } });
+  });
+}
+rectInnerBorderColorInput?.addEventListener("input", () => {
+  if (rectInnerBorderColorTextInput) rectInnerBorderColorTextInput.value = rectInnerBorderColorInput.value;
+  updateRectProperty({ innerBorder: { ...(getSelectedRectObject()?.innerBorder || {}), enabled: true, color: rectInnerBorderColorInput.value } });
+});
+rectInnerBorderColorTextInput?.addEventListener("change", () => {
+  const color = rectInnerBorderColorTextInput.value.trim();
+  if (!color) return;
+  if (isHexColor(color) && rectInnerBorderColorInput) rectInnerBorderColorInput.value = color;
+  updateRectProperty({ innerBorder: { ...(getSelectedRectObject()?.innerBorder || {}), enabled: true, color } });
+});
+rectInnerBorderWidthInput?.addEventListener("change", () => {
+  const width = Math.max(0, Number(rectInnerBorderWidthInput.value) || 0);
+  updateRectProperty({ innerBorder: { ...(getSelectedRectObject()?.innerBorder || {}), enabled: width > 0, width } });
+});
+
 if (alarmsPanelHistoryDaysInput) {
   alarmsPanelHistoryDaysInput.addEventListener("change", () => {
     const value = Number(alarmsPanelHistoryDaysInput.value);
@@ -19638,9 +20343,20 @@ if (curveStrokeWidthInput) {
   });
 }
 
+if (pipeXInput) pipeXInput.addEventListener("change", () => {
+  const value = Number(pipeXInput.value);
+  if (Number.isFinite(value)) updatePipePosition("x", value);
+});
+
+if (pipeYInput) pipeYInput.addEventListener("change", () => {
+  const value = Number(pipeYInput.value);
+  if (Number.isFinite(value)) updatePipePosition("y", value);
+});
+
 if (polylineStrokeInput) {
   polylineStrokeInput.addEventListener("input", () => {
-    updatePolylineProperty({ stroke: polylineStrokeInput.value });
+    const obj = getActiveObjects()?.[selectedIndices[0]];
+    updatePolylineProperty(obj?.type === "pipe" ? { color: polylineStrokeInput.value } : { stroke: polylineStrokeInput.value });
     if (polylineStrokeTextInput) polylineStrokeTextInput.value = polylineStrokeInput.value;
   });
 }
@@ -19649,7 +20365,8 @@ if (polylineStrokeTextInput) {
   polylineStrokeTextInput.addEventListener("change", () => {
     const value = polylineStrokeTextInput.value.trim();
     if (value) {
-      updatePolylineProperty({ stroke: value });
+      const obj = getActiveObjects()?.[selectedIndices[0]];
+      updatePolylineProperty(obj?.type === "pipe" ? { color: value } : { stroke: value });
       if (polylineStrokeInput) polylineStrokeInput.value = value;
     }
   });
@@ -19658,9 +20375,38 @@ if (polylineStrokeTextInput) {
 if (polylineStrokeWidthInput) {
   polylineStrokeWidthInput.addEventListener("change", () => {
     const value = Number(polylineStrokeWidthInput.value);
-    if (Number.isFinite(value) && value >= 0) updatePolylineProperty({ strokeWidth: value });
+    if (Number.isFinite(value) && value >= 0) {
+      const obj = getActiveObjects()?.[selectedIndices[0]];
+      updatePolylineProperty(obj?.type === "pipe" ? { thickness: Math.max(1, value) } : { strokeWidth: value });
+    }
   });
 }
+
+[[pipeJointTypeSelect, "jointType"], [pipeGradientSmoothSelect, "gradientSmooth"]].forEach(([select, key]) => {
+  if (select) select.addEventListener("change", () => updatePolylineProperty({ [key]: select.value }));
+});
+if (pipeStartCapSelect) pipeStartCapSelect.addEventListener("change", () => {
+  const cap = pipeStartCapSelect.value;
+  updatePolylineProperty({ startCap: cap, startCapWidth: getPipeCapDefaultWidth(cap), startCapLength: getPipeCapDefaultLength(cap) });
+});
+if (pipeEndCapSelect) pipeEndCapSelect.addEventListener("change", () => {
+  const cap = pipeEndCapSelect.value;
+  updatePolylineProperty({ endCap: cap, endCapWidth: getPipeCapDefaultWidth(cap), endCapLength: getPipeCapDefaultLength(cap) });
+});
+if (pipeCurveRadiusInput) pipeCurveRadiusInput.addEventListener("change", () => {
+  const value = Number(pipeCurveRadiusInput.value);
+  if (Number.isFinite(value) && value >= 0) updatePolylineProperty({ curveRadius: value });
+});
+if (pipeOutlineThicknessInput) pipeOutlineThicknessInput.addEventListener("change", () => {
+  const value = Number(pipeOutlineThicknessInput.value);
+  if (Number.isFinite(value) && value >= 0) updatePolylineProperty({ outlineThickness: value });
+});
+[[pipeStartCapWidthInput, "startCapWidth"], [pipeStartCapLengthInput, "startCapLength"], [pipeEndCapWidthInput, "endCapWidth"], [pipeEndCapLengthInput, "endCapLength"]].forEach(([input, key]) => {
+  if (input) input.addEventListener("change", () => {
+    const value = Number(input.value);
+    if (Number.isFinite(value) && value > 0) updatePolylineProperty({ [key]: value });
+  });
+});
 
 if (splineStrokeInput) {
   splineStrokeInput.addEventListener("input", () => {
@@ -21502,10 +22248,15 @@ const updateSelectedObjectRotationConfig = (patch) => {
       else delete next.pivotY;
     }
     if ("rotationAutomation" in patch) {
+      const sourcePatch = patch.rotationAutomation || {};
       next.rotationAutomation = normalizeRotationAutomationState({
         ...(next.rotationAutomation || {}),
-        ...(patch.rotationAutomation || {})
+        ...sourcePatch
       });
+      if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in sourcePatch)) {
+        delete next.rotationAutomation.status;
+        delete next.rotationAutomation.sourceReference;
+      }
     }
     rectRotationDraft = next;
     syncRectRotationControlFromDraft(obj);
@@ -21533,7 +22284,12 @@ const updateSelectedObjectRotationConfig = (patch) => {
   }
   if ("rotationAutomation" in patch) {
     const current = obj.rotationAutomation || {};
-    const merged = normalizeRotationAutomationState({ ...current, ...(patch.rotationAutomation || {}) });
+    const sourcePatch = patch.rotationAutomation || {};
+    const merged = normalizeRotationAutomationState({ ...current, ...sourcePatch });
+    if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in sourcePatch)) {
+      delete merged.status;
+      delete merged.sourceReference;
+    }
     const hasSource = merged.sourceType === "expression"
       ? Boolean(String(merged.expression || "").trim())
       : (String(merged.connection_id || "").trim() && String(merged.tag || "").trim());
@@ -22005,6 +22761,9 @@ const syncRotationControls = (obj) => {
     control.autoFields.hidden = !enabled;
     setSelectValueSafe(control.sourceTypeSelect, automation.sourceType || "tag");
     setTagBindingFieldValues(control.connectionInput, control.tagInput, automation);
+    const unresolvedSource = automation.status === "unresolved" || Boolean(automation.sourceReference && !automation.connection_id);
+    control.connectionInput.classList.toggle("reference-error", unresolvedSource);
+    control.tagInput.classList.toggle("reference-error", unresolvedSource);
     control.connectionRow.classList.toggle("is-hidden", automation.sourceType === "expression");
     control.connectionRow.hidden = automation.sourceType === "expression";
     control.tagRow.classList.toggle("is-hidden", automation.sourceType === "expression");
@@ -22014,6 +22773,7 @@ const syncRotationControls = (obj) => {
     const expressionSummary = String(automation.expression || "").trim();
     control.expressionSummary.textContent = expressionSummary || "(empty)";
     control.expressionSummary.title = expressionSummary;
+    control.expressionSummary.classList.toggle("reference-error", unresolvedSource);
     setInputValueSafe(control.inputMinInput, Number.isFinite(Number(automation.inputMin)) ? Number(automation.inputMin) : 0);
     setInputValueSafe(control.inputMaxInput, Number.isFinite(Number(automation.inputMax)) ? Number(automation.inputMax) : 1);
     setInputValueSafe(control.angleStartInput, Number.isFinite(Number(automation.angleStart)) ? Number(automation.angleStart) : 0);
@@ -23319,7 +24079,7 @@ window.addEventListener("keydown", (event) => {
     setTool("select");
     return;
   }
-	  if (event.key === "Enter" && currentTool === "polyline" && isDrawingPolyline) {
+	  if (event.key === "Enter" && (currentTool === "polyline" || currentTool === "pipe") && isDrawingPolyline) {
 	    event.preventDefault();
 	    if (!currentScreenObj) return;
 	    const activeObjects = ensureActiveObjects();
@@ -23330,7 +24090,9 @@ window.addEventListener("keydown", (event) => {
     });
     if (points.length >= 2) {
       recordHistory();
-      activeObjects.push({ type: "polyline", points, stroke: "#ffffff", strokeWidth: 2 });
+      activeObjects.push(currentTool === "pipe"
+        ? { type: "pipe", points, color: "#d3d3d3", thickness: 20, outlineThickness: 1, jointType: "round", curveRadius: 15, startCap: "flat", endCap: "flat", gradientSmooth: "medium", autoScale: true }
+        : { type: "polyline", points, stroke: "#ffffff", strokeWidth: 2 });
       selectedIndices = [activeObjects.length - 1];
       renderScreen();
       syncEditorFromScreen();
@@ -24681,6 +25443,15 @@ function updateSelectionOverlays() {
       };
     } else if (!bbox && obj && item.type === "text") {
       bbox = getObjectBounds(obj);
+    } else if (!bbox && obj && ["polyline", "pipe", "polygon", "spline"].includes(item.type)) {
+      const pathBounds = getObjectBounds(obj);
+      const offset = getActiveOffset();
+      bbox = pathBounds ? {
+        x: pathBounds.x + Number(offset.x ?? 0),
+        y: pathBounds.y + Number(offset.y ?? 0),
+        width: pathBounds.width,
+        height: pathBounds.height
+      } : null;
     } else if (!bbox && obj && item.type === "circle") {
       const r = Number(obj.r ?? 0);
       bbox = {
@@ -24776,9 +25547,9 @@ function updateSelectionOverlays() {
 
     if (!isEditMode || selectedIndices.length !== 1) return;
     if (poseEditSession && baseObj === poseEditSession.object && obj.type !== "line") return;
-    if (!obj || !["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "circle", "line", "polyline", "spline", "polygon", "number-input", "indicator", "image", "group"].includes(obj.type)) return;
+    if (!obj || !["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "circle", "line", "polyline", "pipe", "spline", "polygon", "number-input", "indicator", "image", "group"].includes(obj.type)) return;
     if (!resizeLayer) return;
-		    if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+		    if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
 		      const points = Array.isArray(obj.points) ? obj.points : [];
 		      if (!points.length) return;
 	      const offset = getActiveOffset();
@@ -24791,7 +25562,7 @@ function updateSelectionOverlays() {
 		          activeSelectedVertex &&
 		          activeSelectedVertex.objectIndex === item.index &&
 		          activeSelectedVertex.vertexIndex === vertexIndex;
-            if (obj.type === "polyline" || obj.type === "polygon") {
+            if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon") {
               const nextIndex = vertexIndex + 1;
               const hasNext = nextIndex < points.length;
               const closesLoop = obj.type === "polygon" && points.length > 2;
@@ -25299,6 +26070,25 @@ const pointHitsSpline = (point, obj) => {
   return false;
 };
 
+const pointHitsPathObject = (point, obj, offset = { x: 0, y: 0 }) => {
+  if (!point || !obj || !["polyline", "pipe", "polygon"].includes(obj.type)) return false;
+  const points = Array.isArray(obj.points) ? obj.points : [];
+  if (points.length < 2) return false;
+  const strokeWidth = Math.max(1, Number(obj.type === "pipe" ? (obj.thickness ?? 20) : (obj.strokeWidth ?? 1)));
+  const tolerance = Math.max(6, (strokeWidth / 2) + 4);
+  const translated = points.map((pt) => ({
+    x: Number(pt?.x ?? 0) + Number(offset.x ?? 0),
+    y: Number(pt?.y ?? 0) + Number(offset.y ?? 0)
+  }));
+  const segmentCount = translated.length - 1 + (obj.type === "polygon" ? 1 : 0);
+  for (let i = 0; i < segmentCount; i += 1) {
+    const start = translated[i];
+    const end = translated[(i + 1) % translated.length];
+    if (pointToSegmentDistance(point, start, end) <= tolerance) return true;
+  }
+  return false;
+};
+
 const rotatePointAround = (point, center, angleRad) => {
   const x = Number(point?.x ?? 0) - Number(center?.x ?? 0);
   const y = Number(point?.y ?? 0) - Number(center?.y ?? 0);
@@ -25382,7 +26172,7 @@ const scaleObjectUniformFromBounds = (obj, startObj, scale, fromB, toB) => {
     const startChildren = Array.isArray(startObj.children) ? startObj.children : [];
     obj.children = startChildren.map((child) => {
       const next = JSON.parse(JSON.stringify(child));
-      if (child.type === "polyline" || child.type === "polygon") {
+      if (child.type === "polyline" || child.type === "pipe" || child.type === "polygon") {
         next.points = (Array.isArray(child.points) ? child.points : []).map((pt) => {
           const world = { x: startGX + n(pt?.x, 0), y: startGY + n(pt?.y, 0) };
           const scaled = scalePointFromBounds(world, fromB, scale, toB);
@@ -25448,7 +26238,7 @@ const scaleObjectUniformFromBounds = (obj, startObj, scale, fromB, toB) => {
     return;
   }
 
-  if (startObj.type === "polyline" || startObj.type === "polygon" || startObj.type === "spline") {
+  if (startObj.type === "polyline" || startObj.type === "pipe" || startObj.type === "polygon" || startObj.type === "spline") {
     obj.points = (Array.isArray(startObj.points) ? startObj.points : []).map((pt) => {
       const scaled = scalePointFromBounds({ x: n(pt?.x, 0), y: n(pt?.y, 0) }, fromB, scale, toB);
       return { x: Math.round(scaled.x), y: Math.round(scaled.y) };
@@ -25475,15 +26265,18 @@ const scaleObjectUniformFromBounds = (obj, startObj, scale, fromB, toB) => {
     return;
   }
   if (startObj.type === "text") {
+    ensureTextInsertionPoint(startObj);
     const bounds = getObjectBounds(startObj);
     if (bounds) {
       const p1 = scalePointFromBounds({ x: bounds.x, y: bounds.y }, fromB, scale, toB);
       const p2 = scalePointFromBounds({ x: bounds.x + bounds.width, y: bounds.y + bounds.height }, fromB, scale, toB);
-      obj.x = Math.round(Math.min(p1.x, p2.x));
-      obj.y = Math.round(Math.min(p1.y, p2.y));
       obj.w = Math.max(1, Math.round(Math.abs(p2.x - p1.x)));
       obj.h = Math.max(1, Math.round(Math.abs(p2.y - p1.y)));
       obj.autoSize = false;
+      obj.positionMode = "insertion-point";
+      const anchor = getTextAnchorFractions(obj);
+      obj.x = Math.round(Math.min(p1.x, p2.x) + obj.w * anchor.x);
+      obj.y = Math.round(Math.min(p1.y, p2.y) + obj.h * anchor.y);
     } else {
       const p = scalePointFromBounds({ x: n(startObj.x, 0), y: n(startObj.y, 0) }, fromB, scale, toB);
       obj.x = Math.round(p.x);
@@ -25526,13 +26319,17 @@ const getSelectionBoundsActive = () => {
 
 const getObjectCenter = (obj) => {
   if (!obj) return { x: 0, y: 0 };
+  if (obj.type === "text") {
+    const bounds = getObjectBounds(obj);
+    if (bounds) return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  }
   if (obj.type === "line") {
     return { x: (Number(obj.x1 ?? 0) + Number(obj.x2 ?? 0)) / 2, y: (Number(obj.y1 ?? 0) + Number(obj.y2 ?? 0)) / 2 };
   }
   if (obj.type === "circle") {
     return { x: Number(obj.cx ?? 0), y: Number(obj.cy ?? 0) };
   }
-  if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+  if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
     const b = getObjectBounds(obj);
     if (b) return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
   }
@@ -25545,7 +26342,7 @@ const getObjectCenter = (obj) => {
 
 const applyRotationToObject = (obj, startObj, deltaRad, center, deltaDeg) => {
   if (!obj || !startObj || !center) return;
-  if (startObj.type === "polyline" || startObj.type === "polygon" || startObj.type === "spline") {
+  if (startObj.type === "polyline" || startObj.type === "pipe" || startObj.type === "polygon" || startObj.type === "spline") {
     const pts = Array.isArray(startObj.points) ? startObj.points : [];
     obj.points = pts.map((pt) => {
       const p = rotatePointAround({ x: Number(pt?.x ?? 0), y: Number(pt?.y ?? 0) }, center, deltaRad);
@@ -25785,6 +26582,9 @@ const getMetaAtPoint = (point) => {
       return item;
     }
     if (obj?.type === "spline" && pointHitsSpline(point, obj)) {
+      return item;
+    }
+    if (obj && ["polyline", "pipe", "polygon"].includes(obj.type) && pointHitsPathObject(point, obj, offset)) {
       return item;
     }
     let bbox = null;
@@ -26631,7 +27431,7 @@ const setTool = (nextTool) => {
     curveDraftEnd = null;
     curveDraftControl = null;
   }
-  if (currentTool === "polyline" && nextTool !== "polyline" && isDrawingPolyline) {
+  if ((currentTool === "polyline" || currentTool === "pipe") && nextTool !== "polyline" && nextTool !== "pipe" && isDrawingPolyline) {
     finishPolylineDraft();
     isDrawingPolyline = false;
   }
@@ -26710,9 +27510,11 @@ const setTool = (nextTool) => {
   if (polylineToolBtn) {
     polylineToolBtn.classList.toggle("is-active", currentTool === "polyline");
   }
+  if (pipeToolBtn) pipeToolBtn.classList.toggle("is-active", currentTool === "pipe");
   if (leftPolylineToolBtn) {
     leftPolylineToolBtn.classList.toggle("is-active", currentTool === "polyline");
   }
+  if (leftPipeToolBtn) leftPipeToolBtn.classList.toggle("is-active", currentTool === "pipe");
   if (polygonToolBtn) {
     polygonToolBtn.classList.toggle("is-active", currentTool === "polygon");
   }
@@ -26845,7 +27647,7 @@ const setTool = (nextTool) => {
 		        resizeVertexIndex = vertexIndexAttr == null ? null : Number(vertexIndexAttr);
 		        if (!Number.isFinite(resizeVertexIndex)) resizeVertexIndex = null;
 	        const obj = getActiveObjects()?.[handleIndex];
-	        if (handleType === "segment-insert" && (obj?.type === "polyline" || obj?.type === "polygon") && Number.isInteger(segmentIndex)) {
+	        if (handleType === "segment-insert" && (obj?.type === "polyline" || obj?.type === "pipe" || obj?.type === "polygon") && Number.isInteger(segmentIndex)) {
 	          const point = getScreenPoint(event);
 	          if (!point) return;
 	          const activePoint = toActivePoint(point);
@@ -26888,7 +27690,7 @@ const setTool = (nextTool) => {
 	        } else if (handleType !== "vertex") {
 	          clearSelectedPolygonVertex();
 	        }
-	  if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
+	  if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
 	          const point = getScreenPoint(event);
 	          if (!point) return;
 	          recordHistory();
@@ -26896,7 +27698,7 @@ const setTool = (nextTool) => {
 	          resizeHandle = handleType;
 	          resizeIndex = handleIndex;
 	          resizeStart = point;
-	          if (obj.type === "polyline" || obj.type === "polygon" || obj.type === "spline") {
+	          if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
 	            resizeStartBounds = {
 	              type: obj.type,
 	              points: (Array.isArray(obj.points) ? obj.points : []).map((pt) => ({
@@ -27041,7 +27843,7 @@ const setTool = (nextTool) => {
 	      startLineDraft(point);
 	      return;
 	    }
-    if (currentTool === "polyline") {
+    if (currentTool === "polyline" || currentTool === "pipe") {
       if (!isDrawingPolyline) {
         isDrawingPolyline = true;
         startPolylineDraft(point);
@@ -27138,7 +27940,7 @@ const setTool = (nextTool) => {
 		      dragStart = point;
 	      dragOrigins = selectedIndices.map((index) => {
 	        const obj = getActiveObjects()?.[index];
-	        if (obj?.type === "polyline" || obj?.type === "polygon" || obj?.type === "spline") {
+	        if (obj?.type === "polyline" || obj?.type === "pipe" || obj?.type === "polygon" || obj?.type === "spline") {
 	          return {
 	            index,
 	            points: (Array.isArray(obj.points) ? obj.points : []).map((pt) => ({
@@ -27395,7 +28197,7 @@ const setTool = (nextTool) => {
 	      const obj = getActiveObjects()?.[resizeIndex];
 	      if (!obj || !resizeStartBounds) return;
 
-	      if (resizeStartBounds.type === "polyline" || resizeStartBounds.type === "polygon" || resizeStartBounds.type === "spline") {
+	      if (resizeStartBounds.type === "polyline" || resizeStartBounds.type === "pipe" || resizeStartBounds.type === "polygon" || resizeStartBounds.type === "spline") {
 	        const startPoints = resizeStartBounds.points;
 	        if (!Array.isArray(startPoints) || !startPoints.length) return;
 	        if (handle === "vertex") {
@@ -27674,7 +28476,7 @@ const setTool = (nextTool) => {
       }
       const hitMeta = getMetaAtPoint(point);
       const obj = hitMeta ? getObjectFromMeta(hitMeta) : null;
-      hmiSvg.style.cursor = obj?.type === "button" ? "pointer" : "default";
+      hmiSvg.style.cursor = obj?.action?.type ? "pointer" : "default";
       return;
     }
 
@@ -28155,7 +28957,7 @@ const setTool = (nextTool) => {
 
 	  hmiSvg.addEventListener("dblclick", (event) => {
 	    if (!isEditMode) return;
-	    if (currentTool === "polyline" && isDrawingPolyline) {
+	    if ((currentTool === "polyline" || currentTool === "pipe") && isDrawingPolyline) {
       if (!currentScreenObj) return;
       const activeObjects = ensureActiveObjects();
       if (!activeObjects) return;
@@ -28165,7 +28967,9 @@ const setTool = (nextTool) => {
       });
       if (points.length >= 2) {
         recordHistory();
-        activeObjects.push({ type: "polyline", points, stroke: "#ffffff", strokeWidth: 2 });
+        activeObjects.push(currentTool === "pipe"
+          ? { type: "pipe", points, color: "#d3d3d3", thickness: 20, outlineThickness: 1, jointType: "round", curveRadius: 15, startCap: "flat", endCap: "flat", gradientSmooth: "medium", autoScale: true }
+          : { type: "polyline", points, stroke: "#ffffff", strokeWidth: 2 });
         selectedIndices = [activeObjects.length - 1];
         renderScreen();
         syncEditorFromScreen();
@@ -28248,21 +29052,23 @@ const setTool = (nextTool) => {
 
 	  hmiSvg.addEventListener("contextmenu", (event) => {
 	    if (!isEditMode) return;
-	    if (currentTool === "polyline" || currentTool === "polygon") {
-	      if (currentTool === "polyline" && !isDrawingPolyline) return;
+	    if (currentTool === "polyline" || currentTool === "pipe" || currentTool === "polygon") {
+	      if ((currentTool === "polyline" || currentTool === "pipe") && !isDrawingPolyline) return;
 	      if (currentTool === "polygon" && !isDrawingPolygon) return;
 	      event.preventDefault();
 	      if (!currentScreenObj) return;
 	      const activeObjects = ensureActiveObjects();
 	      if (!activeObjects) return;
-	      if (currentTool === "polyline") {
+	      if (currentTool === "polyline" || currentTool === "pipe") {
 	        const points = polylineDraftPoints.map((pt) => {
 	          const local = toActivePoint(pt);
 	          return { x: snapValue(Math.round(local.x)), y: snapValue(Math.round(local.y)) };
 	        });
 	        if (points.length >= 2) {
 	          recordHistory();
-	          activeObjects.push({ type: "polyline", points, stroke: "#ffffff", strokeWidth: 2 });
+	          activeObjects.push(currentTool === "pipe"
+	            ? { type: "pipe", points, color: "#d3d3d3", thickness: 20, outlineThickness: 1, jointType: "round", curveRadius: 15, startCap: "flat", endCap: "flat", gradientSmooth: "medium", autoScale: true }
+	            : { type: "polyline", points, stroke: "#ffffff", strokeWidth: 2 });
 	          selectedIndices = [activeObjects.length - 1];
 	          renderScreen();
 	          syncEditorFromScreen();
@@ -28657,6 +29463,12 @@ if (leftPolylineToolBtn) {
   });
 }
 
+if (leftPipeToolBtn) {
+  leftPipeToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "pipe" ? "select" : "pipe");
+  });
+}
+
 if (leftViewportToolBtn) {
   leftViewportToolBtn.addEventListener("click", () => {
     setTool(currentTool === "viewport" ? "select" : "viewport");
@@ -28794,6 +29606,12 @@ if (polylineToolBtn) {
   });
 }
 
+if (pipeToolBtn) {
+  pipeToolBtn.addEventListener("click", () => {
+    setTool(currentTool === "pipe" ? "select" : "pipe");
+  });
+}
+
 if (polygonToolBtn) {
   polygonToolBtn.addEventListener("click", () => {
     setTool(currentTool === "polygon" ? "select" : "polygon");
@@ -28901,7 +29719,7 @@ if (hmiSvg) {
 	    const hitMeta = getMetaAtPoint(point);
 	    if (!hitMeta) return;
     const obj = getObjectFromMeta(hitMeta);
-    if (obj?.type !== "button" || obj?.action?.type !== "momentary-write") return;
+    if (obj?.action?.type !== "momentary-write") return;
     const action = obj.action || {};
 	    momentaryPress = { pointerId: event.pointerId, action, object: obj };
     try {
@@ -28949,7 +29767,7 @@ if (hmiSvg) {
 	              return;
 	            }
             if (action.type === "popup") {
-              openPopup(action.screenId);
+              openPopup(action.screenId, action);
               return;
             }
           }
@@ -28958,10 +29776,10 @@ if (hmiSvg) {
 		      if (!hitMeta) return;
 		      const obj = getObjectFromMeta(hitMeta);
 		      const writesDisabled = isViewOnlyRuntime();
-		      if (obj?.type === "button" && obj?.action?.type === "momentary-write") {
+		      if (obj?.action?.type === "momentary-write") {
 		        return;
 		      }
-      if (obj?.type === "button" && obj?.action?.type === "navigate") {
+      if (obj?.action?.type === "navigate") {
         const isViewportChildNavigate =
           hitMeta?.type === "viewport" &&
           Array.isArray(hitMeta?.viewportChildPath) &&
@@ -28976,13 +29794,13 @@ if (hmiSvg) {
 	        }
 	        runtimeNavigateTo(obj.action.screenId);
 	      }
-	      if (obj?.type === "button" && obj?.action?.type === "load-viewport") {
+	      if (obj?.action?.type === "load-viewport") {
 	        loadViewportTarget(obj.action.viewportId, obj.action.screenId);
 	      }
-	      if (obj?.type === "button" && obj?.action?.type === "popup") {
-	        openPopup(obj.action.screenId);
+	      if (obj?.action?.type === "popup") {
+	        openPopup(obj.action.screenId, obj.action);
 	      }
-	      if (obj?.type === "button" && obj?.action?.type === "history-back") {
+	      if (obj?.action?.type === "history-back") {
 	        const isViewportChild =
 	          hitMeta?.type === "viewport" &&
 	          Array.isArray(hitMeta?.viewportChildPath) &&
@@ -28994,7 +29812,7 @@ if (hmiSvg) {
 	        }
 	        runtimeGoBack();
 	      }
-	      if (obj?.type === "button" && obj?.action?.type === "history-forward") {
+	      if (obj?.action?.type === "history-forward") {
 	        const isViewportChild =
 	          hitMeta?.type === "viewport" &&
 	          Array.isArray(hitMeta?.viewportChildPath) &&
@@ -29006,27 +29824,27 @@ if (hmiSvg) {
 	        }
 	        runtimeGoForward();
 		      }
-	      if (obj?.type === "button" && obj?.action?.type === "auth") {
+	      if (obj?.action?.type === "auth") {
 	        openAuth();
 	        return;
 	      }
-		      if (obj?.type === "button" && obj?.action?.type === "alarm-filter") {
+		      if (obj?.action?.type === "alarm-filter") {
 		        applyAlarmPanelRuntimeFilterAction(obj.action);
 		        return;
 		      }
-		      if (obj?.type === "button" && obj?.action?.type === "toggle-write") {
+		      if (obj?.action?.type === "toggle-write") {
 		        if (writesDisabled) return;
 			        runToggleWriteAction(obj.action, obj).catch((error) => {
 		          console.error("[toggle-write] failed:", error);
 	        });
 	      }
-	      if (obj?.type === "button" && obj?.action?.type === "set-write") {
+	      if (obj?.action?.type === "set-write") {
 	        if (writesDisabled) return;
 		        runSetWriteAction(obj.action, obj).catch((error) => {
 	          console.error("[set-write] failed:", error);
 	        });
 	      }
-	      if (obj?.type === "button" && obj?.action?.type === "prompt-write") {
+	      if (obj?.action?.type === "prompt-write") {
 	        if (writesDisabled) return;
 	        openSetpointPrompt(obj.action, obj.label || "Numeric Entry (Prompt)");
 	      }
@@ -29047,6 +29865,7 @@ if (hmiSvg) {
       type: "text",
       x,
       y,
+      positionMode: "insertion-point",
       text: "New Text",
       fontSize: 18,
       fill: "#ffffff",
