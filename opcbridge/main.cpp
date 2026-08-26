@@ -15109,27 +15109,6 @@ static bool apply_config_bundle_json(const std::string &configDir,
 							</div>
 
 							<div class="divider"></div>
-							<div class="users-form-panel">
-								<div class="users-sidebar-title">User Directory Transfer</div>
-								<div class="small">Copy users, groups, password credentials, and the session-timeout policy between OPCBridge computers. Active sessions and service tokens are not included.</div>
-								<div class="users-form-row">
-									<label for="users-import-mode">Import behavior</label>
-									<select id="users-import-mode">
-										<option value="merge">Merge (incoming records win)</option>
-										<option value="replace">Replace destination directory</option>
-									</select>
-								</div>
-								<div class="users-form-row"><label></label>
-									<div class="row-actions">
-										<button class="btn-write" id="users-directory-export-btn" type="button">Export Users &amp; Groups</button>
-										<button class="btn-reload" id="users-directory-import-btn" type="button">Import Users &amp; Groups</button>
-										<input id="users-directory-file" type="file" accept=".opcusers,application/json" style="display:none;" />
-									</div>
-								</div>
-								<div class="small" id="users-directory-status"></div>
-							</div>
-
-							<div class="divider"></div>
 								<div class="users-workspace">
 									<div class="users-sidebar">
 										<div class="users-sidebar-title">Directory</div>
@@ -16346,65 +16325,6 @@ async function usersDeleteUser(username) {
     }
 }
 
-function usersDownloadDirectoryFile(file) {
-    const blob = new Blob([JSON.stringify(file, null, 2) + "\n"], { type: "application/json" });
-    const link = document.createElement("a");
-    const day = new Date().toISOString().slice(0, 10);
-    link.href = URL.createObjectURL(blob);
-    link.download = `opcbridge-users-${day}.opcusers`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-}
-
-async function usersExportDirectory() {
-    if (!usersCanManage()) return usersSetLine("users-directory-status", "Manage-users permission required.", "status-error");
-    const passphrase = prompt("Create a transfer password for this user-directory file (at least 8 characters):");
-    if (passphrase === null) return;
-    if (passphrase.length < 8) return usersSetLine("users-directory-status", "Transfer password must be at least 8 characters.", "status-error");
-    const confirmPassphrase = prompt("Enter the transfer password again:");
-    if (confirmPassphrase === null) return;
-    if (passphrase !== confirmPassphrase) return usersSetLine("users-directory-status", "Transfer passwords do not match.", "status-error");
-    usersSetLine("users-directory-status", "Encrypting user directory…");
-    try {
-        const result = await usersApi("/auth/directory/export", { method: "POST", body: JSON.stringify({ passphrase }) });
-        usersDownloadDirectoryFile(result.file);
-        usersSetLine("users-directory-status", `Exported ${result.users || 0} users and ${result.groups || 0} groups. Keep the file and transfer password secure.`, "status-ok");
-    } catch (e) {
-        usersSetLine("users-directory-status", "Export failed: " + e.toString(), "status-error");
-    }
-}
-
-async function usersImportDirectoryFile(file) {
-    if (!file) return;
-    const passphrase = prompt("Enter the transfer password for this user-directory file:");
-    if (passphrase === null) return;
-    const mode = String(usersEl("users-import-mode")?.value || "merge");
-    usersSetLine("users-directory-status", "Reading and validating directory…");
-    try {
-        const encryptedFile = JSON.parse(await file.text());
-        const request = { file: encryptedFile, passphrase, mode };
-        const preview = await usersApi("/auth/directory/import", { method: "POST", body: JSON.stringify({ ...request, preview: true }) });
-        const behavior = mode === "replace"
-            ? "REPLACE the destination user directory"
-            : "merge into the destination (incoming records replace matching names)";
-        const names = Array.isArray(preview.usernames) ? preview.usernames.join(", ") : "";
-        const message = `This will ${behavior}.\n\nUsers: ${preview.users}\nGroups: ${preview.groups}\nExisting user matches: ${preview.userConflicts}\nExisting group matches: ${preview.groupConflicts}\n\nUsers in file: ${names}\n\nContinue?`;
-        if (!confirm(message)) {
-            usersSetLine("users-directory-status", "Import canceled.");
-            return;
-        }
-        usersSetLine("users-directory-status", "Importing user directory…");
-        const result = await usersApi("/auth/directory/import", { method: "POST", body: JSON.stringify({ ...request, preview: false }) });
-        await refreshAdminStatus();
-        await usersLoad();
-        usersSetLine("users-directory-status", `Import complete: ${result.users || 0} users and ${result.groups || 0} groups on this computer.`, "status-ok");
-    } catch (e) {
-        usersSetLine("users-directory-status", "Import failed: " + e.toString(), "status-error");
-    }
-}
-
 async function usersLoad() {
     if (!isUsersPage()) return;
     const initWrap = usersEl("users-init-wrap");
@@ -16454,14 +16374,6 @@ function usersWireUi() {
     root.dataset.wired = "1";
 
     usersEl("users-refresh-btn")?.addEventListener("click", usersLoad);
-    usersEl("users-directory-export-btn")?.addEventListener("click", usersExportDirectory);
-    usersEl("users-directory-import-btn")?.addEventListener("click", () => usersEl("users-directory-file")?.click());
-    usersEl("users-directory-file")?.addEventListener("change", async (event) => {
-        const input = event.currentTarget;
-        const file = input?.files?.[0];
-        try { await usersImportDirectoryFile(file); }
-        finally { if (input) input.value = ""; }
-    });
     usersEl("users-init-btn")?.addEventListener("click", async () => {
         const username = String(usersEl("users-init-username")?.value || "").trim();
         const password = String(usersEl("users-init-password")?.value || "");

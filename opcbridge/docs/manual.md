@@ -665,13 +665,18 @@ each user's single `role` as migration inputs. Existing IDs, permissions,
 password hashes, and user assignments are preserved. The next save writes the
 store in the new group-based format.
 
-The Users page can transfer this directory to another OPCBridge computer.
+The SCADA Users page can transfer this directory to another OPCBridge computer.
 `Export Users & Groups` creates a password-protected `.opcusers` file containing
 the groups, user-to-group assignments, portable password hashes, and session
 timeout policy. `Import Users & Groups` validates and previews that file before
 either merging it or replacing the destination directory. Active sessions,
 service tokens, and machine-specific configuration are never transferred. The
 administrator performing an import cannot remove their own manage-users access.
+`Import from OPCBridge Computer` performs the same previewed import directly
+from another system. Enter the source IP address or hostname plus a source user
+that has `auth.manage_users`; SCADA detects the standard SCADA and OPCBridge
+ports, uses the credentials only for the transfer, and closes the temporary
+source session afterward.
 
 Service-to-service auth (optional):
 

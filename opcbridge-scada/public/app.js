@@ -1013,6 +1013,18 @@
   usersTimeoutMinutes: document.getElementById('usersTimeoutMinutes'),
   usersTimeoutSaveBtn: document.getElementById('usersTimeoutSaveBtn'),
   usersTimeoutStatus: document.getElementById('usersTimeoutStatus'),
+  usersImportMode: document.getElementById('usersImportMode'),
+  usersDirectoryExportBtn: document.getElementById('usersDirectoryExportBtn'),
+  usersDirectoryImportBtn: document.getElementById('usersDirectoryImportBtn'),
+  usersDirectoryRemoteBtn: document.getElementById('usersDirectoryRemoteBtn'),
+  usersDirectoryFile: document.getElementById('usersDirectoryFile'),
+  usersDirectoryStatus: document.getElementById('usersDirectoryStatus'),
+  usersDirectoryRemoteForm: document.getElementById('usersDirectoryRemoteForm'),
+  usersDirectoryRemoteAddress: document.getElementById('usersDirectoryRemoteAddress'),
+  usersDirectoryRemoteUsername: document.getElementById('usersDirectoryRemoteUsername'),
+  usersDirectoryRemotePassword: document.getElementById('usersDirectoryRemotePassword'),
+  usersDirectoryRemoteCancelBtn: document.getElementById('usersDirectoryRemoteCancelBtn'),
+  usersDirectoryRemoteStartBtn: document.getElementById('usersDirectoryRemoteStartBtn'),
 
   usersTreeView: document.getElementById('usersTreeView'),
   usersTreeNote: document.getElementById('usersTreeNote'),
@@ -27029,6 +27041,10 @@ function setUsersTimeoutStatus(msg) {
   if (els.usersTimeoutStatus) els.usersTimeoutStatus.textContent = String(msg || '');
 }
 
+function setUsersDirectoryStatus(msg) {
+  if (els.usersDirectoryStatus) els.usersDirectoryStatus.textContent = String(msg || '');
+}
+
 function setUsersDetailsStatus(msg) {
   if (els.usersDetailsStatus) els.usersDetailsStatus.textContent = String(msg || '');
 }
@@ -27389,6 +27405,109 @@ async function deleteUser(username) {
   }
 }
 
+function downloadUsersDirectoryFile(file) {
+  const blob = new Blob([`${JSON.stringify(file, null, 2)}\n`], { type: 'application/json' });
+  const link = document.createElement('a');
+  const day = new Date().toISOString().slice(0, 10);
+  link.href = URL.createObjectURL(blob);
+  link.download = `opcbridge-users-${day}.opcusers`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+async function exportUsersDirectory() {
+  if (!isOpcbridgeAdmin()) {
+    setUsersDirectoryStatus('User-management permission required.');
+    return;
+  }
+  const passphrase = window.prompt('Create a transfer password for this user-directory file (at least 8 characters):');
+  if (passphrase === null) return;
+  if (passphrase.length < 8) {
+    setUsersDirectoryStatus('Transfer password must be at least 8 characters.');
+    return;
+  }
+  const confirmation = window.prompt('Enter the transfer password again:');
+  if (confirmation === null) return;
+  if (passphrase !== confirmation) {
+    setUsersDirectoryStatus('Transfer passwords do not match.');
+    return;
+  }
+  setUsersDirectoryStatus('Encrypting user directory…');
+  try {
+    const result = await apiPostJson('/api/opcbridge/auth/directory/export', { passphrase });
+    downloadUsersDirectoryFile(result.file);
+    setUsersDirectoryStatus(`Downloaded ${result.users || 0} users and ${result.groups || 0} groups. Keep the file and transfer password secure.`);
+  } catch (err) {
+    setUsersDirectoryStatus(`Download failed: ${err.message}`);
+  }
+}
+
+async function previewAndImportUsersDirectory(encryptedFile, passphrase, sourceLabel = 'file') {
+  const mode = String(els.usersImportMode?.value || 'merge');
+  setUsersDirectoryStatus('Reading and validating directory…');
+  const request = { file: encryptedFile, passphrase, mode };
+  const preview = await apiPostJson('/api/opcbridge/auth/directory/import', { ...request, preview: true });
+  const behavior = mode === 'replace'
+    ? 'REPLACE the destination user directory'
+    : 'merge into the destination (incoming records replace matching names)';
+  const names = Array.isArray(preview.usernames) ? preview.usernames.join(', ') : '';
+  const message = `Source: ${sourceLabel}\n\nThis will ${behavior}.\n\nUsers: ${preview.users}\nGroups: ${preview.groups}\nExisting user matches: ${preview.userConflicts}\nExisting group matches: ${preview.groupConflicts}\n\nUsers in source: ${names}\n\nContinue?`;
+  if (!window.confirm(message)) {
+    setUsersDirectoryStatus('Import canceled.');
+    return false;
+  }
+  setUsersDirectoryStatus('Importing user directory…');
+  const result = await apiPostJson('/api/opcbridge/auth/directory/import', { ...request, preview: false });
+  await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+  setUsersDirectoryStatus(`Import complete: ${result.users || 0} users and ${result.groups || 0} groups on this system.`);
+  return true;
+}
+
+async function importUsersDirectoryFile(file) {
+  if (!file) return;
+  if (!isOpcbridgeAdmin()) {
+    setUsersDirectoryStatus('User-management permission required.');
+    return;
+  }
+  const passphrase = window.prompt('Enter the transfer password for this user-directory file:');
+  if (passphrase === null) return;
+  try {
+    await previewAndImportUsersDirectory(JSON.parse(await file.text()), passphrase, file.name || 'uploaded file');
+  } catch (err) {
+    setUsersDirectoryStatus(`Upload failed: ${err.message}`);
+  }
+}
+
+function setRemoteUsersDirectoryFormOpen(open) {
+  if (els.usersDirectoryRemoteForm) els.usersDirectoryRemoteForm.style.display = open ? 'block' : 'none';
+  if (open) els.usersDirectoryRemoteAddress?.focus();
+  if (!open && els.usersDirectoryRemotePassword) els.usersDirectoryRemotePassword.value = '';
+}
+
+async function importUsersDirectoryFromRemote() {
+  const address = String(els.usersDirectoryRemoteAddress?.value || '').trim();
+  const username = String(els.usersDirectoryRemoteUsername?.value || '').trim();
+  const password = String(els.usersDirectoryRemotePassword?.value || '');
+  if (!address || !username || !password) {
+    setUsersDirectoryStatus('Source computer, username, and password are required.');
+    return;
+  }
+  setUsersDirectoryStatus(`Connecting to ${address}…`);
+  if (els.usersDirectoryRemoteStartBtn) els.usersDirectoryRemoteStartBtn.disabled = true;
+  try {
+    const remote = await apiPostJson('/api/users/import-remote', { address, username, password }, { timeoutMs: 30000 });
+    if (els.usersDirectoryRemotePassword) els.usersDirectoryRemotePassword.value = '';
+    const imported = await previewAndImportUsersDirectory(remote.file, remote.passphrase, address);
+    if (imported) setRemoteUsersDirectoryFormOpen(false);
+  } catch (err) {
+    setUsersDirectoryStatus(`Remote import failed: ${err.message}`);
+  } finally {
+    if (els.usersDirectoryRemoteStartBtn) els.usersDirectoryRemoteStartBtn.disabled = false;
+  }
+}
+
 async function refreshUsersPanel() {
   if (!els.usersStatusLine) return;
   try {
@@ -27423,6 +27542,10 @@ async function refreshUsersPanel() {
     setUsersTimeoutStatus('');
     const canAdmin = loggedIn && hasPerm('auth.manage_users');
     if (els.usersTimeoutSaveBtn) els.usersTimeoutSaveBtn.disabled = !canAdmin;
+    if (els.usersDirectoryExportBtn) els.usersDirectoryExportBtn.disabled = !canAdmin;
+    if (els.usersDirectoryImportBtn) els.usersDirectoryImportBtn.disabled = !canAdmin;
+    if (els.usersDirectoryRemoteBtn) els.usersDirectoryRemoteBtn.disabled = !canAdmin;
+    if (els.usersImportMode) els.usersImportMode.disabled = !canAdmin;
 
     renderUsersTree();
     const roots = buildUsersTree();
@@ -27438,6 +27561,23 @@ async function refreshUsersPanel() {
 
 function wireUsersUi() {
   if (els.usersRefreshBtn) els.usersRefreshBtn.addEventListener('click', refreshUsersPanel);
+  els.usersDirectoryExportBtn?.addEventListener('click', exportUsersDirectory);
+  els.usersDirectoryImportBtn?.addEventListener('click', () => els.usersDirectoryFile?.click());
+  els.usersDirectoryRemoteBtn?.addEventListener('click', () => setRemoteUsersDirectoryFormOpen(true));
+  els.usersDirectoryRemoteCancelBtn?.addEventListener('click', () => setRemoteUsersDirectoryFormOpen(false));
+  els.usersDirectoryRemoteStartBtn?.addEventListener('click', importUsersDirectoryFromRemote);
+  els.usersDirectoryRemotePassword?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') importUsersDirectoryFromRemote();
+  });
+  els.usersDirectoryFile?.addEventListener('change', async (event) => {
+    const input = event.currentTarget;
+    const file = input?.files?.[0];
+    try {
+      await importUsersDirectoryFile(file);
+    } finally {
+      if (input) input.value = '';
+    }
+  });
 
   if (els.usersInitBtn) {
     els.usersInitBtn.addEventListener('click', async () => {

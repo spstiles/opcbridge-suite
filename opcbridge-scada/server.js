@@ -1443,6 +1443,117 @@ function configuredServiceJsonRequest(target, apiPath, timeoutMs = 3000) {
   });
 }
 
+function remoteUserDirectoryCandidates(rawAddress) {
+  const raw = String(rawAddress || '').trim();
+  if (!raw || raw.length > 255) throw new Error('Enter a source computer address.');
+  const hasScheme = /^https?:\/\//i.test(raw);
+  const base = new URL(hasScheme ? raw : `http://${raw}`);
+  if (!['http:', 'https:'].includes(base.protocol)) throw new Error('Source address must use http or https.');
+  if (base.username || base.password || base.search || base.hash) throw new Error('Source address must not contain credentials, a query, or a fragment.');
+  const explicitPort = Boolean(base.port);
+  const roots = [];
+  const add = (origin, prefix) => {
+    const key = `${origin}${prefix}`;
+    if (!roots.some((item) => `${item.origin}${item.prefix}` === key)) roots.push({ origin, prefix });
+  };
+  if (explicitPort) {
+    add(base.origin, '');
+    add(base.origin, '/api/opcbridge');
+  } else {
+    const host = base.hostname.includes(':') ? `[${base.hostname}]` : base.hostname;
+    add(`${base.protocol}//${host}:3010`, '/api/opcbridge');
+    add(`${base.protocol}//${host}:8080`, '');
+  }
+  return roots;
+}
+
+function remoteUserDirectoryJson(candidate, method, apiPath, bodyObj = null, cookie = '') {
+  return new Promise((resolve) => {
+    const url = new URL(`${candidate.origin}${candidate.prefix}${apiPath}`);
+    const transport = url.protocol === 'https:' ? https : http;
+    const body = bodyObj === null ? '' : JSON.stringify(bodyObj);
+    const headers = { Accept: 'application/json' };
+    if (cookie) headers.Cookie = cookie;
+    if (body) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = Buffer.byteLength(body);
+    }
+    const request = transport.request({
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: `${url.pathname}${url.search}`,
+      method,
+      headers,
+      timeout: 10000
+    }, (upstream) => {
+      const chunks = [];
+      let size = 0;
+      upstream.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > 8 * 1024 * 1024) {
+          upstream.destroy(new Error('Source response is too large.'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      upstream.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let parsed = null;
+        try { parsed = JSON.parse(text || '{}'); } catch {}
+        resolve({
+          ok: upstream.statusCode >= 200 && upstream.statusCode < 300 && parsed?.ok !== false,
+          status: upstream.statusCode || 0,
+          json: parsed,
+          cookie: Array.isArray(upstream.headers['set-cookie'])
+            ? String(upstream.headers['set-cookie'][0] || '').split(';')[0]
+            : String(upstream.headers['set-cookie'] || '').split(';')[0]
+        });
+      });
+    });
+    request.on('timeout', () => request.destroy(new Error('Source computer timed out.')));
+    request.on('error', (err) => resolve({ ok: false, status: 0, error: String(err.message || err) }));
+    if (body) request.write(body);
+    request.end();
+  });
+}
+
+async function exportRemoteUserDirectory({ address, username, password }) {
+  const candidates = remoteUserDirectoryCandidates(address);
+  let lastError = 'Source OPCBridge service was not found.';
+  for (const candidate of candidates) {
+    const login = await remoteUserDirectoryJson(candidate, 'POST', '/auth/login', { username, password });
+    if (!login.ok) {
+      lastError = login.json?.error || login.error || `Source login failed (HTTP ${login.status || 0}).`;
+      continue;
+    }
+    const cookie = login.cookie;
+    if (!cookie) {
+      lastError = 'Source login did not create an authentication session.';
+      continue;
+    }
+    const passphrase = crypto.randomBytes(32).toString('hex');
+    const exported = await remoteUserDirectoryJson(candidate, 'POST', '/auth/directory/export', { passphrase }, cookie);
+    remoteUserDirectoryJson(candidate, 'POST', '/auth/logout', {}, cookie).catch(() => {});
+    if (!exported.ok || !exported.json?.file) {
+      lastError = exported.json?.error || exported.error || `Source export failed (HTTP ${exported.status || 0}).`;
+      continue;
+    }
+    return { file: exported.json.file, passphrase, users: exported.json.users || 0, groups: exported.json.groups || 0 };
+  }
+  throw new Error(lastError);
+}
+
+async function localCallerCanManageUsers(cookie) {
+  if (!cookie) return false;
+  const scheme = String(cfg?.opcbridge?.scheme || 'http');
+  const host = String(cfg?.opcbridge?.host || '127.0.0.1');
+  const port = Number(cfg?.opcbridge?.port || (scheme === 'https' ? 443 : 8080));
+  const originHost = host.includes(':') ? `[${host}]` : host;
+  const status = await remoteUserDirectoryJson({ origin: `${scheme}://${originHost}:${port}`, prefix: '' }, 'GET', '/auth/status', null, cookie);
+  const permissions = Array.isArray(status.json?.user?.permissions) ? status.json.user.permissions.map(String) : [];
+  return Boolean(status.ok && status.json?.user_logged_in && permissions.includes('auth.manage_users'));
+}
+
 function reporterApiRequest(method, apiPath, bodyObj = null, timeoutMs = 5000) {
   return new Promise((resolve) => {
     const body = bodyObj ? JSON.stringify(bodyObj) : '';
@@ -5637,6 +5748,32 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, { ok: true, interfaces: listNetworkInterfaces() });
+    return;
+  }
+
+  if (url.pathname === '/api/users/import-remote') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      if (!(await localCallerCanManageUsers(String(req.headers.cookie || '')))) {
+        sendJson(res, 403, { ok: false, error: 'User-management permission required.' });
+        return;
+      }
+      const body = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8') || '{}');
+      const address = String(body.address || '').trim();
+      const username = String(body.username || '').trim();
+      const password = String(body.password || '');
+      if (!address || !username || !password) {
+        sendJson(res, 400, { ok: false, error: 'Source address, username, and password are required.' });
+        return;
+      }
+      const directory = await exportRemoteUserDirectory({ address, username, password });
+      sendJson(res, 200, { ok: true, ...directory });
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: String(err?.message || err) });
+    }
     return;
   }
 

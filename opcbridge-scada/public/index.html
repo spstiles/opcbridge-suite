@@ -673,6 +673,42 @@
 
             <div class="divider"></div>
 
+            <div class="form" style="max-width: 720px;">
+              <div class="card-title">User Directory Transfer</div>
+              <div class="hint">Copy users, groups, password credentials, and the session-timeout policy between OPCBridge systems. Active sessions and service tokens are not included.</div>
+              <div class="form-row" style="margin-top: 10px;">
+                <label for="usersImportMode">Import behavior</label>
+                <select id="usersImportMode">
+                  <option value="merge">Merge (incoming records win)</option>
+                  <option value="replace">Replace destination directory</option>
+                </select>
+              </div>
+              <div class="form-row"><label></label>
+                <div class="row-actions">
+                  <button class="btn" id="usersDirectoryExportBtn" type="button">Download Users &amp; Groups</button>
+                  <button class="btn primary" id="usersDirectoryImportBtn" type="button">Upload Users &amp; Groups</button>
+                  <button class="btn primary" id="usersDirectoryRemoteBtn" type="button">Import from OPCBridge Computer…</button>
+                  <input id="usersDirectoryFile" type="file" accept=".opcusers,application/json" style="display:none;" />
+                </div>
+              </div>
+              <div id="usersDirectoryRemoteForm" style="display:none; margin-top: 12px;">
+                <div class="form-row"><label for="usersDirectoryRemoteAddress">Source computer</label><input id="usersDirectoryRemoteAddress" type="text" placeholder="192.168.1.25" autocomplete="off" /></div>
+                <div class="hint" style="margin: -4px 0 10px 170px;">Enter an IP address or hostname. SCADA port 3010 and OPCBridge port 8080 are detected automatically.</div>
+                <div class="form-row"><label for="usersDirectoryRemoteUsername">Source OPCBridge username</label><input id="usersDirectoryRemoteUsername" type="text" autocomplete="username" /></div>
+                <div class="form-row"><label for="usersDirectoryRemotePassword">Source OPCBridge password</label><input id="usersDirectoryRemotePassword" type="password" autocomplete="current-password" /></div>
+                <div class="hint" style="margin: -4px 0 10px 170px;">The source account must have Manage users/groups permission.</div>
+                <div class="form-row"><label></label>
+                  <div class="row-actions">
+                    <button class="btn" id="usersDirectoryRemoteCancelBtn" type="button">Cancel</button>
+                    <button class="btn primary" id="usersDirectoryRemoteStartBtn" type="button">Preview Import</button>
+                  </div>
+                </div>
+              </div>
+              <div class="hint mono" id="usersDirectoryStatus"></div>
+            </div>
+
+            <div class="divider"></div>
+
             <div class="users-workspace">
               <div class="sidebar">
                 <div class="sidebar-title">Directory</div>
@@ -2780,6 +2816,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260817_flow_sort_v54"></script>
+  <script src="app.js?v=20260826_user_directory_transfer_v1"></script>
 </body>
 </html>
