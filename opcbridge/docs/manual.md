@@ -665,6 +665,14 @@ each user's single `role` as migration inputs. Existing IDs, permissions,
 password hashes, and user assignments are preserved. The next save writes the
 store in the new group-based format.
 
+The Users page can transfer this directory to another OPCBridge computer.
+`Export Users & Groups` creates a password-protected `.opcusers` file containing
+the groups, user-to-group assignments, portable password hashes, and session
+timeout policy. `Import Users & Groups` validates and previews that file before
+either merging it or replacing the destination directory. Active sessions,
+service tokens, and machine-specific configuration are never transferred. The
+administrator performing an import cannot remove their own manage-users access.
+
 Service-to-service auth (optional):
 
 If you run headless modules (e.g. opcbridge-alarms) that need to fetch config without an interactive login, set an environment variable on the opcbridge service:

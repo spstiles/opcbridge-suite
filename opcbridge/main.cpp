@@ -2764,6 +2764,74 @@ static bool pbkdf2_sha256_b64(const std::string &password,
     return !out_b64.empty();
 }
 
+static bool encrypt_user_directory(const std::string &plain, const std::string &passphrase, json &envelope) {
+    constexpr int iterations = 250000;
+    std::string salt(16, '\0');
+    std::string nonce(12, '\0');
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(&salt[0]), static_cast<int>(salt.size())) != 1 ||
+        RAND_bytes(reinterpret_cast<unsigned char*>(&nonce[0]), static_cast<int>(nonce.size())) != 1) return false;
+    std::string keyB64;
+    if (!pbkdf2_sha256_b64(passphrase, salt, iterations, keyB64)) return false;
+    std::string key;
+    if (!b64_decode(keyB64, key) || key.size() != 32) return false;
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return false;
+    std::string cipher(plain.size() + 16, '\0');
+    std::string tag(16, '\0');
+    int written = 0;
+    int finalWritten = 0;
+    bool ok = EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) == 1 &&
+              EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr) == 1 &&
+              EVP_EncryptInit_ex(ctx, nullptr, nullptr,
+                  reinterpret_cast<const unsigned char*>(key.data()),
+                  reinterpret_cast<const unsigned char*>(nonce.data())) == 1 &&
+              EVP_EncryptUpdate(ctx, reinterpret_cast<unsigned char*>(&cipher[0]), &written,
+                  reinterpret_cast<const unsigned char*>(plain.data()), static_cast<int>(plain.size())) == 1 &&
+              EVP_EncryptFinal_ex(ctx, reinterpret_cast<unsigned char*>(&cipher[0]) + written, &finalWritten) == 1 &&
+              EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, static_cast<int>(tag.size()), &tag[0]) == 1;
+    EVP_CIPHER_CTX_free(ctx);
+    if (!ok) return false;
+    cipher.resize(static_cast<size_t>(written + finalWritten));
+    envelope = {
+        {"format", "opcbridge-user-directory-encrypted"}, {"version", 1},
+        {"kdf", {{"algo", "pbkdf2-sha256"}, {"iterations", iterations}, {"saltB64", b64_encode(salt)}}},
+        {"cipher", {{"algo", "aes-256-gcm"}, {"nonceB64", b64_encode(nonce)}, {"tagB64", b64_encode(tag)}, {"dataB64", b64_encode(cipher)}}}
+    };
+    return true;
+}
+
+static bool decrypt_user_directory(const json &envelope, const std::string &passphrase, std::string &plain) {
+    if (!envelope.is_object() || envelope.value("format", std::string{}) != "opcbridge-user-directory-encrypted" || envelope.value("version", 0) != 1) return false;
+    const json kdf = envelope.value("kdf", json::object());
+    const json cipherInfo = envelope.value("cipher", json::object());
+    if (kdf.value("algo", std::string{}) != "pbkdf2-sha256" || cipherInfo.value("algo", std::string{}) != "aes-256-gcm") return false;
+    std::string salt, nonce, tag, cipher, keyB64, key;
+    if (!b64_decode(kdf.value("saltB64", std::string{}), salt) || salt.empty() ||
+        !b64_decode(cipherInfo.value("nonceB64", std::string{}), nonce) || nonce.size() != 12 ||
+        !b64_decode(cipherInfo.value("tagB64", std::string{}), tag) || tag.size() != 16 ||
+        !b64_decode(cipherInfo.value("dataB64", std::string{}), cipher) || cipher.empty()) return false;
+    const int iterations = std::max(10000, std::min(5000000, kdf.value("iterations", 0)));
+    if (!pbkdf2_sha256_b64(passphrase, salt, iterations, keyB64) || !b64_decode(keyB64, key) || key.size() != 32) return false;
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return false;
+    plain.assign(cipher.size() + 16, '\0');
+    int written = 0;
+    int finalWritten = 0;
+    bool ok = EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) == 1 &&
+              EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr) == 1 &&
+              EVP_DecryptInit_ex(ctx, nullptr, nullptr,
+                  reinterpret_cast<const unsigned char*>(key.data()),
+                  reinterpret_cast<const unsigned char*>(nonce.data())) == 1 &&
+              EVP_DecryptUpdate(ctx, reinterpret_cast<unsigned char*>(&plain[0]), &written,
+                  reinterpret_cast<const unsigned char*>(cipher.data()), static_cast<int>(cipher.size())) == 1 &&
+              EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, static_cast<int>(tag.size()), &tag[0]) == 1 &&
+              EVP_DecryptFinal_ex(ctx, reinterpret_cast<unsigned char*>(&plain[0]) + written, &finalWritten) == 1;
+    EVP_CIPHER_CTX_free(ctx);
+    if (!ok) { plain.clear(); return false; }
+    plain.resize(static_cast<size_t>(written + finalWritten));
+    return true;
+}
+
 static bool verify_auth_user_password(const AuthUserRecord &user, const std::string &password) {
     if (password.empty()) return false;
     std::string salt_bytes;
@@ -15037,10 +15105,31 @@ static bool apply_config_bundle_json(const std::string &configDir,
 											<button class="btn-reload" id="users-timeout-save-btn" type="button">Save Timeout</button>
 										</div>
 									</div>
-									<div class="small" id="users-timeout-status"></div>
-								</div>
+								<div class="small" id="users-timeout-status"></div>
+							</div>
 
-								<div class="divider"></div>
+							<div class="divider"></div>
+							<div class="users-form-panel">
+								<div class="users-sidebar-title">User Directory Transfer</div>
+								<div class="small">Copy users, groups, password credentials, and the session-timeout policy between OPCBridge computers. Active sessions and service tokens are not included.</div>
+								<div class="users-form-row">
+									<label for="users-import-mode">Import behavior</label>
+									<select id="users-import-mode">
+										<option value="merge">Merge (incoming records win)</option>
+										<option value="replace">Replace destination directory</option>
+									</select>
+								</div>
+								<div class="users-form-row"><label></label>
+									<div class="row-actions">
+										<button class="btn-write" id="users-directory-export-btn" type="button">Export Users &amp; Groups</button>
+										<button class="btn-reload" id="users-directory-import-btn" type="button">Import Users &amp; Groups</button>
+										<input id="users-directory-file" type="file" accept=".opcusers,application/json" style="display:none;" />
+									</div>
+								</div>
+								<div class="small" id="users-directory-status"></div>
+							</div>
+
+							<div class="divider"></div>
 								<div class="users-workspace">
 									<div class="users-sidebar">
 										<div class="users-sidebar-title">Directory</div>
@@ -16257,6 +16346,65 @@ async function usersDeleteUser(username) {
     }
 }
 
+function usersDownloadDirectoryFile(file) {
+    const blob = new Blob([JSON.stringify(file, null, 2) + "\n"], { type: "application/json" });
+    const link = document.createElement("a");
+    const day = new Date().toISOString().slice(0, 10);
+    link.href = URL.createObjectURL(blob);
+    link.download = `opcbridge-users-${day}.opcusers`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+async function usersExportDirectory() {
+    if (!usersCanManage()) return usersSetLine("users-directory-status", "Manage-users permission required.", "status-error");
+    const passphrase = prompt("Create a transfer password for this user-directory file (at least 8 characters):");
+    if (passphrase === null) return;
+    if (passphrase.length < 8) return usersSetLine("users-directory-status", "Transfer password must be at least 8 characters.", "status-error");
+    const confirmPassphrase = prompt("Enter the transfer password again:");
+    if (confirmPassphrase === null) return;
+    if (passphrase !== confirmPassphrase) return usersSetLine("users-directory-status", "Transfer passwords do not match.", "status-error");
+    usersSetLine("users-directory-status", "Encrypting user directory…");
+    try {
+        const result = await usersApi("/auth/directory/export", { method: "POST", body: JSON.stringify({ passphrase }) });
+        usersDownloadDirectoryFile(result.file);
+        usersSetLine("users-directory-status", `Exported ${result.users || 0} users and ${result.groups || 0} groups. Keep the file and transfer password secure.`, "status-ok");
+    } catch (e) {
+        usersSetLine("users-directory-status", "Export failed: " + e.toString(), "status-error");
+    }
+}
+
+async function usersImportDirectoryFile(file) {
+    if (!file) return;
+    const passphrase = prompt("Enter the transfer password for this user-directory file:");
+    if (passphrase === null) return;
+    const mode = String(usersEl("users-import-mode")?.value || "merge");
+    usersSetLine("users-directory-status", "Reading and validating directory…");
+    try {
+        const encryptedFile = JSON.parse(await file.text());
+        const request = { file: encryptedFile, passphrase, mode };
+        const preview = await usersApi("/auth/directory/import", { method: "POST", body: JSON.stringify({ ...request, preview: true }) });
+        const behavior = mode === "replace"
+            ? "REPLACE the destination user directory"
+            : "merge into the destination (incoming records replace matching names)";
+        const names = Array.isArray(preview.usernames) ? preview.usernames.join(", ") : "";
+        const message = `This will ${behavior}.\n\nUsers: ${preview.users}\nGroups: ${preview.groups}\nExisting user matches: ${preview.userConflicts}\nExisting group matches: ${preview.groupConflicts}\n\nUsers in file: ${names}\n\nContinue?`;
+        if (!confirm(message)) {
+            usersSetLine("users-directory-status", "Import canceled.");
+            return;
+        }
+        usersSetLine("users-directory-status", "Importing user directory…");
+        const result = await usersApi("/auth/directory/import", { method: "POST", body: JSON.stringify({ ...request, preview: false }) });
+        await refreshAdminStatus();
+        await usersLoad();
+        usersSetLine("users-directory-status", `Import complete: ${result.users || 0} users and ${result.groups || 0} groups on this computer.`, "status-ok");
+    } catch (e) {
+        usersSetLine("users-directory-status", "Import failed: " + e.toString(), "status-error");
+    }
+}
+
 async function usersLoad() {
     if (!isUsersPage()) return;
     const initWrap = usersEl("users-init-wrap");
@@ -16306,6 +16454,14 @@ function usersWireUi() {
     root.dataset.wired = "1";
 
     usersEl("users-refresh-btn")?.addEventListener("click", usersLoad);
+    usersEl("users-directory-export-btn")?.addEventListener("click", usersExportDirectory);
+    usersEl("users-directory-import-btn")?.addEventListener("click", () => usersEl("users-directory-file")?.click());
+    usersEl("users-directory-file")?.addEventListener("change", async (event) => {
+        const input = event.currentTarget;
+        const file = input?.files?.[0];
+        try { await usersImportDirectoryFile(file); }
+        finally { if (input) input.value = ""; }
+    });
     usersEl("users-init-btn")?.addEventListener("click", async () => {
         const username = String(usersEl("users-init-username")?.value || "").trim();
         const password = String(usersEl("users-init-password")?.value || "");
@@ -25583,12 +25739,246 @@ window.addEventListener("load", startAutoRefresh);
 				                        });
 			                    }
 			                }
-		                resp["service_token_enabled"] = !g_adminServiceToken.empty();
-		                resp["service_token_len"] = static_cast<int>(g_adminServiceToken.size());
-		                res.set_content(resp.dump(2), "application/json");
-		            });
+			                resp["service_token_enabled"] = !g_adminServiceToken.empty();
+			                resp["service_token_len"] = static_cast<int>(g_adminServiceToken.size());
+			                res.set_content(resp.dump(2), "application/json");
+			            });
 
-		            // POST /auth/touch
+			            // Export/import the portable user directory. Passwords remain PBKDF2 hashes;
+			            // browser-side encryption protects the downloaded transfer file.
+			            svr.Post("/auth/directory/export", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                if (!load_passwords_store(passwordsPath)) {
+			                    resp["ok"] = false;
+			                    resp["error"] = "Failed to load passwords.jsonc.";
+			                    res.status = 500;
+			                    res.set_content(resp.dump(2), "application/json");
+			                    return;
+			                }
+			                json requestBody;
+			                try { requestBody = json::parse(req.body.empty() ? "{}" : req.body); }
+			                catch (...) { requestBody = json::object(); }
+			                const std::string passphrase = requestBody.value("passphrase", std::string{});
+			                if (passphrase.size() < 8) {
+			                    resp["ok"] = false;
+			                    resp["error"] = "Transfer password must be at least 8 characters.";
+			                    res.status = 400;
+			                    res.set_content(resp.dump(2), "application/json");
+			                    return;
+			                }
+			                AdminSessionInfo sess;
+			                if (!is_admin_user_request(req, sess)) {
+			                    resp["ok"] = false;
+			                    resp["error"] = "Manage-users permission required.";
+			                    res.status = 403;
+			                    res.set_content(resp.dump(2), "application/json");
+			                    return;
+			                }
+			                json directory = {
+			                    {"format", "opcbridge-user-directory"},
+			                    {"version", 1},
+			                    {"exportedAtMs", auth_now_ms()},
+			                    {"timeoutMinutes", 0},
+			                    {"groups", json::array()},
+			                    {"users", json::array()}
+			                };
+			                {
+			                    std::lock_guard<std::mutex> lock(g_userStoreMutex);
+			                    directory["timeoutMinutes"] = g_authTimeoutMinutes;
+			                    for (const auto &group : g_authRoles) {
+			                        directory["groups"].push_back({
+			                            {"id", group.id},
+			                            {"label", group.label},
+			                            {"description", group.description.empty() ? json(nullptr) : json(group.description)},
+			                            {"permissions", group.id == "admin" ? all_permission_ids() : group.permissions}
+			                        });
+			                    }
+			                    for (const auto &user : g_authUsers) {
+			                        directory["users"].push_back({
+			                            {"username", user.username},
+			                            {"name", user.name.empty() ? user.username : user.name},
+			                            {"description", user.description.empty() ? json(nullptr) : json(user.description)},
+			                            {"groups", user.groups},
+			                            {"kdf", {
+			                                {"algo", "pbkdf2-sha256"},
+			                                {"iterations", user.iterations},
+			                                {"saltB64", user.salt_b64},
+			                                {"hashB64", user.hash_b64}
+			                            }}
+			                        });
+			                    }
+			                }
+			                json envelope;
+			                if (!encrypt_user_directory(directory.dump(), passphrase, envelope)) {
+			                    resp["ok"] = false;
+			                    resp["error"] = "Failed to encrypt the user directory.";
+			                    res.status = 500;
+			                    res.set_content(resp.dump(2), "application/json");
+			                    return;
+			                }
+			                resp["ok"] = true;
+			                resp["file"] = std::move(envelope);
+			                resp["groups"] = directory["groups"].size();
+			                resp["users"] = directory["users"].size();
+			                res.set_content(resp.dump(2), "application/json");
+			            });
+
+			            svr.Post("/auth/directory/import", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                try {
+			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    if (!load_passwords_store(passwordsPath)) throw std::runtime_error("Failed to load passwords.jsonc.");
+			                    AdminSessionInfo sess;
+			                    if (!is_admin_user_request(req, sess)) {
+			                        resp["ok"] = false;
+			                        resp["error"] = "Manage-users permission required.";
+			                        res.status = 403;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+
+			                    const json body = json::parse(req.body.empty() ? "{}" : req.body);
+			                    const std::string passphrase = body.value("passphrase", std::string{});
+			                    std::string directoryText;
+			                    if (!decrypt_user_directory(body.value("file", json::object()), passphrase, directoryText)) throw std::runtime_error("Unable to decrypt this file. Check the transfer password.");
+			                    const json directory = json::parse(directoryText);
+			                    const std::string mode = body.value("mode", std::string("merge"));
+			                    const bool preview = body.value("preview", false);
+			                    if (!directory.is_object() || directory.value("format", std::string{}) != "opcbridge-user-directory" || directory.value("version", 0) != 1) {
+			                        throw std::runtime_error("This is not a supported OPCBridge user-directory file.");
+			                    }
+			                    if (mode != "merge" && mode != "replace") throw std::runtime_error("Import mode must be merge or replace.");
+
+			                    std::vector<AuthRoleRecord> importedGroups;
+			                    std::vector<AuthUserRecord> importedUsers;
+			                    const json groupsJson = directory.value("groups", json::array());
+			                    const json usersJson = directory.value("users", json::array());
+			                    if (!groupsJson.is_array() || !usersJson.is_array()) throw std::runtime_error("Directory groups and users must be arrays.");
+			                    auto directoryString = [](const json &item, const char *key, const std::string &fallback = std::string{}) {
+			                        if (!item.is_object() || !item.contains(key) || !item.at(key).is_string()) return fallback;
+			                        return item.at(key).get<std::string>();
+			                    };
+			                    for (const auto &item : groupsJson) {
+			                        if (!item.is_object()) throw std::runtime_error("Invalid group record.");
+			                        AuthRoleRecord group;
+			                        group.id = normalize_auth_role_id(directoryString(item, "id"));
+			                        group.label = directoryString(item, "label", group.id);
+			                        group.description = directoryString(item, "description");
+			                        group.permissions = parse_permission_list(item.value("permissions", json::array()));
+			                        if (group.id.empty()) throw std::runtime_error("A group has an invalid ID.");
+			                        if (std::any_of(importedGroups.begin(), importedGroups.end(), [&](const auto &g) { return g.id == group.id; })) throw std::runtime_error("Duplicate group ID: " + group.id);
+			                        if (group.id == "admin") group.permissions = all_permission_ids();
+			                        importedGroups.push_back(std::move(group));
+			                    }
+			                    if (std::none_of(importedGroups.begin(), importedGroups.end(), [](const auto &g) { return g.id == "admin"; })) {
+			                        AuthRoleRecord admin;
+			                        admin.id = "admin";
+			                        admin.label = "Admin";
+			                        admin.description = "Full access.";
+			                        admin.permissions = all_permission_ids();
+			                        importedGroups.push_back(std::move(admin));
+			                    }
+			                    for (const auto &item : usersJson) {
+			                        if (!item.is_object()) throw std::runtime_error("Invalid user record.");
+			                        AuthUserRecord user;
+			                        user.username = normalize_auth_username(directoryString(item, "username"));
+			                        user.name = directoryString(item, "name", user.username);
+			                        user.description = directoryString(item, "description");
+			                        user.groups = parse_group_list(item.value("groups", json::array()));
+			                        const json kdf = item.value("kdf", json::object());
+			                        if (kdf.value("algo", std::string{}) != "pbkdf2-sha256") throw std::runtime_error("Unsupported password format for user: " + user.username);
+			                        user.iterations = std::max(10'000, std::min(5'000'000, kdf.value("iterations", 0)));
+			                        user.salt_b64 = kdf.value("saltB64", std::string{});
+			                        user.hash_b64 = kdf.value("hashB64", std::string{});
+			                        if (user.username.empty() || user.groups.empty() || user.salt_b64.empty() || user.hash_b64.empty()) throw std::runtime_error("Incomplete user record: " + user.username);
+			                        if (std::any_of(importedUsers.begin(), importedUsers.end(), [&](const auto &u) { return u.username == user.username; })) throw std::runtime_error("Duplicate username: " + user.username);
+			                        for (const auto &groupId : user.groups) {
+			                            if (std::none_of(importedGroups.begin(), importedGroups.end(), [&](const auto &g) { return g.id == groupId; })) throw std::runtime_error("User " + user.username + " references missing group " + groupId + ".");
+			                        }
+			                        importedUsers.push_back(std::move(user));
+			                    }
+			                    if (importedUsers.empty()) throw std::runtime_error("The imported directory has no users.");
+			                    if (preview) {
+			                        size_t groupConflicts = 0;
+			                        size_t userConflicts = 0;
+			                        {
+			                            std::lock_guard<std::mutex> lock(g_userStoreMutex);
+			                            for (const auto &group : importedGroups) if (std::any_of(g_authRoles.begin(), g_authRoles.end(), [&](const auto &g) { return g.id == group.id; })) groupConflicts++;
+			                            for (const auto &user : importedUsers) if (std::any_of(g_authUsers.begin(), g_authUsers.end(), [&](const auto &u) { return u.username == user.username; })) userConflicts++;
+			                        }
+			                        resp["ok"] = true;
+			                        resp["preview"] = true;
+			                        resp["mode"] = mode;
+			                        resp["groups"] = importedGroups.size();
+			                        resp["users"] = importedUsers.size();
+			                        resp["groupConflicts"] = groupConflicts;
+			                        resp["userConflicts"] = userConflicts;
+			                        resp["usernames"] = json::array();
+			                        for (const auto &user : importedUsers) resp["usernames"].push_back(user.username);
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+
+			                    std::vector<AuthRoleRecord> oldGroups;
+			                    std::vector<AuthUserRecord> oldUsers;
+			                    int oldTimeout = 0;
+			                    {
+			                        std::lock_guard<std::mutex> lock(g_userStoreMutex);
+			                        oldGroups = g_authRoles;
+			                        oldUsers = g_authUsers;
+			                        oldTimeout = g_authTimeoutMinutes;
+			                    }
+			                    std::vector<AuthRoleRecord> nextGroups = mode == "replace" ? std::vector<AuthRoleRecord>{} : oldGroups;
+			                    std::vector<AuthUserRecord> nextUsers = mode == "replace" ? std::vector<AuthUserRecord>{} : oldUsers;
+			                    for (const auto &group : importedGroups) {
+			                        auto it = std::find_if(nextGroups.begin(), nextGroups.end(), [&](const auto &g) { return g.id == group.id; });
+			                        if (it == nextGroups.end()) nextGroups.push_back(group); else *it = group;
+			                    }
+			                    for (const auto &user : importedUsers) {
+			                        auto it = std::find_if(nextUsers.begin(), nextUsers.end(), [&](const auto &u) { return u.username == user.username; });
+			                        if (it == nextUsers.end()) nextUsers.push_back(user); else *it = user;
+			                    }
+			                    const auto currentUser = std::find_if(nextUsers.begin(), nextUsers.end(), [&](const auto &u) { return u.username == sess.username; });
+			                    bool currentCanManage = false;
+			                    if (currentUser != nextUsers.end()) {
+			                        for (const auto &groupId : currentUser->groups) {
+			                            const auto group = std::find_if(nextGroups.begin(), nextGroups.end(), [&](const auto &g) { return g.id == groupId; });
+			                            if (group != nextGroups.end() && (group->id == "admin" || std::find(group->permissions.begin(), group->permissions.end(), "auth.manage_users") != group->permissions.end())) currentCanManage = true;
+			                        }
+			                    }
+			                    if (!currentCanManage) throw std::runtime_error("Import would remove manage-users access from the currently logged-in user.");
+
+			                    const int nextTimeout = std::max(0, directory.value("timeoutMinutes", oldTimeout));
+			                    {
+			                        std::lock_guard<std::mutex> lock(g_userStoreMutex);
+			                        g_authRoles = nextGroups;
+			                        g_authUsers = nextUsers;
+			                        g_authTimeoutMinutes = nextTimeout;
+			                        g_userStoreConfigured = !g_authUsers.empty();
+			                    }
+			                    if (!save_passwords_store(passwordsPath)) {
+			                        std::lock_guard<std::mutex> lock(g_userStoreMutex);
+			                        g_authRoles = oldGroups;
+			                        g_authUsers = oldUsers;
+			                        g_authTimeoutMinutes = oldTimeout;
+			                        g_userStoreConfigured = !g_authUsers.empty();
+			                        throw std::runtime_error("Failed to save imported directory.");
+			                    }
+			                    resp["ok"] = true;
+			                    resp["mode"] = mode;
+			                    resp["groups"] = nextGroups.size();
+			                    resp["users"] = nextUsers.size();
+			                    res.set_content(resp.dump(2), "application/json");
+			                } catch (const std::exception &ex) {
+			                    resp["ok"] = false;
+			                    resp["error"] = ex.what();
+			                    res.status = 400;
+			                    res.set_content(resp.dump(2), "application/json");
+			                }
+			            });
+
+			            // POST /auth/touch
 		            // Extends the idle timeout only when the UI reports real user activity.
 		            svr.Post("/auth/touch", [&](const httplib::Request &req, httplib::Response &res) {
 		                json resp;

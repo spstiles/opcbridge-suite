@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge HMI</title>
   <link rel="icon" href="/favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="/css/main.css?v=20260824-reference-health-wrap-v1" />
+  <link rel="stylesheet" href="/css/main.css?v=20260826-reference-mapping-v1" />
 </head>
 <body>
   <!-- Hidden select to maintain screen list state -->
@@ -39,7 +39,19 @@
             </button>
             <div id="viewMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="View menu">
               <button id="viewTagsMenuBtn" class="menu-item" type="button">Tags</button>
+            </div>
+          </div>
+          <div id="referencesMenuWrap" class="menu-flyout-wrap">
+            <button id="referencesMenuBtn" class="menu-item menu-item-flyout" type="button" aria-haspopup="true" aria-expanded="false">
+              <span>References</span>
+              <span class="menu-item-caret" aria-hidden="true">›</span>
+            </button>
+            <div id="referencesMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="References menu">
               <button id="viewReferenceHealthMenuBtn" class="menu-item" type="button">Reference Health…</button>
+              <div class="menu-separator"></div>
+              <button id="fileDownloadReferencesMenuBtn" class="menu-item" type="button">Download Reference Mappings…</button>
+              <button id="fileDownloadObjectReferencesMenuBtn" class="menu-item" type="button">Download Object Reference Mappings…</button>
+              <button id="fileUploadReferencesMenuBtn" class="menu-item" type="button">Upload Reference Mappings…</button>
             </div>
           </div>
           <div id="insertMenuWrap" class="menu-flyout-wrap">
@@ -127,6 +139,7 @@
 	    </div>
   </header>
   <input id="graphWorxImportInput" type="file" accept=".gdfx,.gdf,application/xml,text/xml" hidden />
+  <input id="referenceMappingInput" type="file" accept=".csv,text/csv" hidden />
 
     <nav id="leftToolbar" class="left-toolbar" aria-label="Edit tools">
       <button id="leftSelectToolBtn" class="left-tool-btn" type="button" title="Select (cursor)" aria-label="Select tool">
@@ -706,7 +719,7 @@
 	              <div class="prop-inline">
 	                <input id="buttonTextColor" type="color" />
 	                <input id="buttonTextColorText" type="text" placeholder="#ffffff" />
-	                <button id="buttonTextColorSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
+	                <button id="buttonTextColorSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
 	                <div id="buttonTextColorSwatches" class="swatch-popover" aria-label="Button text swatches"></div>
 	              </div>
 	            </div>
@@ -3005,6 +3018,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="/js/hmi.js?v=20260824-native-inner-border-v1"></script>
+	  <script src="/js/hmi.js?v=20260826-reference-mapping-v2"></script>
 	</body>
 	</html>

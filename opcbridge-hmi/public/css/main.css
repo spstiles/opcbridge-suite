@@ -379,6 +379,70 @@ body.edit-mode .left-toolbar {
     text-align: center;
 }
 
+.reference-mapping-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10040;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.66);
+}
+
+.reference-mapping-panel {
+    width: min(1100px, 96vw);
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--text-primary, #e8eef5);
+    background: #101923;
+    border: 1px solid #405164;
+    border-radius: 8px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+.reference-mapping-panel > header,
+.reference-mapping-panel > footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 14px 16px;
+    background: #172331;
+}
+
+.reference-mapping-panel > header {
+    align-items: flex-start;
+    border-bottom: 1px solid #34465a;
+}
+
+.reference-mapping-panel > footer { border-top: 1px solid #34465a; }
+.reference-mapping-panel h2,
+.reference-mapping-panel p { margin: 0; }
+.reference-mapping-panel p { margin-top: 5px; color: #b5c3d2; }
+.reference-mapping-table-wrap { min-height: 180px; overflow: auto; }
+.reference-mapping-panel table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+
+.reference-mapping-panel th,
+.reference-mapping-panel td {
+    padding: 9px 10px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid #29394a;
+    overflow-wrap: anywhere;
+}
+
+.reference-mapping-panel th:nth-child(1) { width: 9%; }
+.reference-mapping-panel th:nth-child(2),
+.reference-mapping-panel th:nth-child(3) { width: 29%; }
+.reference-mapping-panel th:nth-child(4) { width: 7%; }
+.reference-mapping-panel th:nth-child(5) { width: 26%; }
+.reference-mapping-panel tr.is-unresolved td:last-child { color: #ffc66d; }
+.reference-mapping-panel tr.is-resolved td:last-child { color: #75d59b; }
+.reference-mapping-panel tr.is-invalid td:last-child { color: #ff8181; }
+.reference-mapping-note { color: #b5c3d2; }
+
 .hmi-alarms-panel {
     display: flex;
     flex-direction: column;

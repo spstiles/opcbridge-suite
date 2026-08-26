@@ -205,6 +205,9 @@ const viewMenuWrap = document.getElementById("viewMenuWrap");
 const viewMenuBtn = document.getElementById("viewMenuBtn");
 const viewMenuFlyout = document.getElementById("viewMenuFlyout");
 const viewTagsMenuBtn = document.getElementById("viewTagsMenuBtn");
+const referencesMenuWrap = document.getElementById("referencesMenuWrap");
+const referencesMenuBtn = document.getElementById("referencesMenuBtn");
+const referencesMenuFlyout = document.getElementById("referencesMenuFlyout");
 const insertMenuWrap = document.getElementById("insertMenuWrap");
 const insertMenuBtn = document.getElementById("insertMenuBtn");
 const insertMenuFlyout = document.getElementById("insertMenuFlyout");
@@ -6398,22 +6401,30 @@ if (authSession && isAuthSessionExpired()) {
 // from the normal renderer and can evolve without making screens unloadable.
 const graphWorxImportInput = document.getElementById("graphWorxImportInput");
 const fileImportGraphWorxMenuBtn = document.getElementById("fileImportGraphWorxMenuBtn");
+const fileDownloadReferencesMenuBtn = document.getElementById("fileDownloadReferencesMenuBtn");
+const fileDownloadObjectReferencesMenuBtn = document.getElementById("fileDownloadObjectReferencesMenuBtn");
+const fileUploadReferencesMenuBtn = document.getElementById("fileUploadReferencesMenuBtn");
+const referenceMappingInput = document.getElementById("referenceMappingInput");
 const viewReferenceHealthMenuBtn = document.getElementById("viewReferenceHealthMenuBtn");
 const referenceHealthBadge = document.getElementById("referenceHealthBadge");
 let referenceHealthOverlay = null;
 
 const getReferenceHealthIssues = () => {
   const stored = currentScreenObj?.referenceHealth?.issues;
-  const issues = Array.isArray(stored) ? [...stored] : [];
+  const issues = Array.isArray(stored)
+    ? stored.filter((issue) => String(issue?.status || "").toLowerCase() !== "resolved")
+    : [];
   const known = new Set(issues.map((issue) => String(issue?.id || "")));
-  (currentScreenObj?.objects || []).forEach((obj, index) => {
+  const collectObjectIssues = (obj, index) => {
     (obj?.externalReferences || []).forEach((ref, refIndex) => {
       if (ref?.target || ref?.status === "resolved") return;
       const id = `native:${index}:${refIndex}`;
       if (known.has(id)) return;
       issues.push({ id, objectImportId: obj.importId, objectIndex: index, severity: "warning", category: ref.kind || "reference", status: "unresolved", source: ref.source, message: `Unresolved ${ref.kind || "reference"}: ${ref.source?.value || "unknown"}` });
     });
-  });
+    (obj?.children || []).forEach((child, childIndex) => collectObjectIssues(child, `${index}.${childIndex}`));
+  };
+  (currentScreenObj?.objects || []).forEach(collectObjectIssues);
   return issues;
 };
 
@@ -6518,6 +6529,336 @@ const openReferenceHealth = () => {
   referenceHealthOverlay = overlay;
 };
 
+const referenceCsvEscape = (value) => {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const parseReferenceCsv = (text) => {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const raw = String(text || "").replace(/^\uFEFF/, "");
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (quoted) {
+      if (char === '"' && raw[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') quoted = false;
+      else cell += char;
+    } else if (char === '"') quoted = true;
+    else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell.replace(/\r$/, ""));
+      if (row.some((value) => value !== "")) rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += char;
+  }
+  row.push(cell.replace(/\r$/, ""));
+  if (row.some((value) => value !== "")) rows.push(row);
+  if (!rows.length) return [];
+  const headers = rows.shift().map((value) => String(value || "").trim().toLowerCase());
+  return rows.map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""])));
+};
+
+const parseMappedTagReference = (value) => {
+  const raw = String(value || "").trim();
+  let separator = raw.indexOf("::");
+  let width = 2;
+  if (separator < 0) {
+    separator = raw.indexOf(":");
+    width = 1;
+  }
+  if (separator <= 0) return null;
+  const connection_id = raw.slice(0, separator).trim();
+  const tag = raw.slice(separator + width).trim();
+  return connection_id && tag ? { connection_id, tag } : null;
+};
+
+const formatMappedTagReference = (connectionId, tagName) => {
+  const connection = String(connectionId || "").trim();
+  const tag = String(tagName || "").trim();
+  return connection && tag ? `${connection}::${tag}` : "";
+};
+
+const referenceAutomationLabel = (pathParts) => {
+  const joined = pathParts.join(".").toLowerCase();
+  if (joined.includes("color")) return "color";
+  if (joined.includes("visibility") || joined.includes("visible")) return "visibility";
+  if (joined.includes("rotation")) return "rotation";
+  if (joined.includes("motion") || joined.includes("position")) return "motion";
+  if (joined.includes("size")) return "size";
+  if (joined.includes("action")) return "action";
+  if (joined.includes("bind")) return "value";
+  return "data";
+};
+
+const collectScreenReferenceMappings = () => {
+  const occurrences = [];
+  const visit = (value, pathParts = [], owner = null) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, [...pathParts, String(index)], owner));
+      return;
+    }
+    const nextOwner = value.type ? value : owner;
+    const pathText = pathParts.join(".");
+    const connection = String(value.connection_id || "").trim();
+    const tag = String(value.tag || "").trim();
+    const sourceReference = String(value.sourceReference || "").trim();
+    const looksLikeTagBinding = Object.prototype.hasOwnProperty.call(value, "tag")
+      && (Object.prototype.hasOwnProperty.call(value, "connection_id") || value.sourceType === "tag" || sourceReference);
+    if (looksLikeTagBinding && (tag || sourceReference)) {
+      const current = formatMappedTagReference(connection, tag) || sourceReference || tag;
+      occurrences.push({
+        type: "tag",
+        current,
+        original: sourceReference || current,
+        automation: referenceAutomationLabel(pathParts),
+        objectId: String(nextOwner?.id || nextOwner?.importId || ""),
+        path: pathText,
+        status: String(value.status || (connection && tag ? "resolved" : "unresolved")),
+        apply(replacement, resolved) {
+          const parsed = parseMappedTagReference(replacement);
+          if (!parsed) return false;
+          value.sourceType = "tag";
+          value.connection_id = parsed.connection_id;
+          value.tag = parsed.tag;
+          value.status = resolved ? "resolved" : "unresolved";
+          value.mappedReference = replacement;
+          if (!value.sourceReference) value.sourceReference = current;
+          return true;
+        }
+      });
+    }
+
+    if (typeof value.screenId === "string" && value.screenId.trim()) {
+      const current = value.screenId.trim();
+      occurrences.push({ type: "screen", current, original: String(value.sourceScreen || current), automation: "action", objectId: String(nextOwner?.id || nextOwner?.importId || ""), path: `${pathText}.screenId`, status: String(value.status || "resolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+    } else if (typeof value.sourceScreen === "string" && value.sourceScreen.trim()) {
+      const current = value.sourceScreen.trim();
+      occurrences.push({ type: "screen", current, original: current, automation: "action", objectId: String(nextOwner?.id || nextOwner?.importId || ""), path: `${pathText}.sourceScreen`, status: String(value.status || "unresolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+    }
+    if (value.type === "viewport" && typeof value.target === "string" && value.target.trim()) {
+      const current = value.target.trim();
+      occurrences.push({ type: "screen", current, original: current, automation: "viewport", objectId: String(value.id || value.importId || ""), path: `${pathText}.target`, status: "resolved", apply(replacement, resolved) { value.target = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+    }
+
+    Object.entries(value).forEach(([key, child]) => {
+      if (key === "externalReferences" || key === "referenceHealth" || key === "importInfo") return;
+      if (key === "connection_id" || key === "tag" || key === "sourceReference" || key === "screenId" || key === "sourceScreen") return;
+      if (value.type === "viewport" && key === "target") return;
+      visit(child, [...pathParts, key], nextOwner);
+    });
+  };
+  visit(currentScreenObj, []);
+  const groups = new Map();
+  occurrences.forEach((occurrence) => {
+    if (!occurrence.current) return;
+    const key = `${occurrence.type}\u0000${occurrence.current}`;
+    if (!groups.has(key)) groups.set(key, { type: occurrence.type, current: occurrence.current, originals: new Set(), automations: new Set(), statuses: new Set(), occurrences: [] });
+    const group = groups.get(key);
+    group.originals.add(occurrence.original || occurrence.current);
+    group.automations.add(occurrence.automation || "data");
+    group.statuses.add(occurrence.status || "unknown");
+    group.occurrences.push(occurrence);
+  });
+  return Array.from(groups.values()).sort((a, b) => a.type.localeCompare(b.type) || a.current.localeCompare(b.current, undefined, { numeric: true, sensitivity: "base" }));
+};
+
+const downloadScreenReferenceMappings = () => {
+  setMenuOpen(false);
+  const groups = collectScreenReferenceMappings();
+  if (!groups.length) {
+    showHmiToast("This screen does not contain any tag or screen references.", 5000);
+    return;
+  }
+  const columns = ["mapping_scope", "reference_type", "original_reference", "current_reference", "replacement_reference", "uses", "status", "automations", "object_id", "object_path", "screen_id"];
+  const lines = [columns.join(",")];
+  groups.forEach((group) => {
+    const statuses = Array.from(group.statuses);
+    const row = ["reference", group.type, Array.from(group.originals).join(" | "), group.current, "", group.occurrences.length, statuses.length === 1 ? statuses[0] : "mixed", Array.from(group.automations).sort().join(" | "), "", "", currentScreenId || currentScreenFilename || ""];
+    lines.push(row.map(referenceCsvEscape).join(","));
+  });
+  const blob = new Blob([`${lines.join("\r\n")}\r\n`], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  const base = String(currentScreenId || currentScreenFilename || "screen").replace(/[^A-Za-z0-9._-]+/g, "-");
+  link.download = `${base}-references.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+  showHmiToast(`Downloaded ${groups.length} unique screen references.`, 5000);
+};
+
+const downloadObjectReferenceMappings = () => {
+  setMenuOpen(false);
+  const occurrences = collectScreenReferenceMappings().flatMap((group) => group.occurrences.map((occurrence) => ({ ...occurrence, type: group.type, current: group.current })));
+  if (!occurrences.length) {
+    showHmiToast("This screen does not contain any object references.", 5000);
+    return;
+  }
+  const columns = ["mapping_scope", "reference_type", "original_reference", "current_reference", "replacement_reference", "uses", "status", "automations", "object_id", "object_path", "screen_id"];
+  const lines = [columns.join(",")];
+  occurrences
+    .sort((a, b) => a.type.localeCompare(b.type) || a.current.localeCompare(b.current, undefined, { numeric: true, sensitivity: "base" }) || a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: "base" }))
+    .forEach((occurrence) => {
+      const row = ["object", occurrence.type, occurrence.original || occurrence.current, occurrence.current, "", 1, occurrence.status || "unknown", occurrence.automation || "data", occurrence.objectId || "", occurrence.path || "", currentScreenId || currentScreenFilename || ""];
+      lines.push(row.map(referenceCsvEscape).join(","));
+    });
+  const blob = new Blob([`${lines.join("\r\n")}\r\n`], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  const base = String(currentScreenId || currentScreenFilename || "screen").replace(/[^A-Za-z0-9._-]+/g, "-");
+  link.download = `${base}-object-references.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+  showHmiToast(`Downloaded ${occurrences.length} object reference occurrences.`, 5000);
+};
+
+const knownMappedTag = (replacement) => {
+  const parsed = parseMappedTagReference(replacement);
+  if (!parsed) return false;
+  return tagsCache.some((tag) => String(tag?.connection_id || "") === parsed.connection_id && String(tag?.name || "") === parsed.tag);
+};
+
+const knownMappedScreen = (replacement) => {
+  const target = String(replacement || "").replace(/\.(screen|jsonc)$/i, "");
+  return Array.from(document.querySelectorAll("#screenList option")).some((option) => String(option.value || "").replace(/\.(screen|jsonc)$/i, "") === target);
+};
+
+const syncMappedReferenceMetadata = (type, current, replacement, resolved) => {
+  const updateObject = (obj) => {
+    (obj?.externalReferences || []).forEach((ref) => {
+      const source = String(ref?.target?.value || ref?.source?.value || "");
+      if (String(ref?.kind || "reference") !== type || source !== current) return;
+      ref.target = type === "tag" ? { ...parseMappedTagReference(replacement), value: replacement } : { value: replacement };
+      ref.status = resolved ? "resolved" : "unresolved";
+    });
+    (obj?.children || []).forEach(updateObject);
+  };
+  (currentScreenObj?.objects || []).forEach(updateObject);
+  (currentScreenObj?.referenceHealth?.issues || []).forEach((issue) => {
+    if (String(issue?.category || "reference") !== type || String(issue?.source?.value || "") !== current) return;
+    issue.target = { value: replacement };
+    issue.status = resolved ? "resolved" : "unresolved";
+    issue.message = resolved ? `${type === "tag" ? "Tag" : "Screen"} mapped to ${replacement}` : `${type === "tag" ? "Tag" : "Screen"} mapped but not found: ${replacement}`;
+  });
+};
+
+const syncObjectMappedReferenceMetadata = (occurrence, replacement, resolved) => {
+  const type = occurrence.type;
+  const current = occurrence.current;
+  const objectId = String(occurrence.objectId || "");
+  const updateObject = (obj) => {
+    const matchesObject = objectId && (String(obj?.id || "") === objectId || String(obj?.importId || "") === objectId);
+    if (matchesObject) {
+      (obj?.externalReferences || []).forEach((ref) => {
+        const source = String(ref?.target?.value || ref?.source?.value || "");
+        if (String(ref?.kind || "reference") !== type || source !== current) return;
+        ref.target = type === "tag" ? { ...parseMappedTagReference(replacement), value: replacement } : { value: replacement };
+        ref.status = resolved ? "resolved" : "unresolved";
+      });
+    }
+    (obj?.children || []).forEach(updateObject);
+  };
+  (currentScreenObj?.objects || []).forEach(updateObject);
+  (currentScreenObj?.referenceHealth?.issues || []).forEach((issue) => {
+    if (objectId && String(issue?.objectImportId || "") !== objectId) return;
+    if (String(issue?.category || "reference") !== type || String(issue?.source?.value || "") !== current) return;
+    issue.target = { value: replacement };
+    issue.status = resolved ? "resolved" : "unresolved";
+    issue.message = resolved ? `${type === "tag" ? "Tag" : "Screen"} mapped to ${replacement}` : `${type === "tag" ? "Tag" : "Screen"} mapped but not found: ${replacement}`;
+  });
+};
+
+const closeReferenceMappingPreview = () => document.querySelector(".reference-mapping-overlay")?.remove();
+
+const openReferenceMappingPreview = (rows) => {
+  closeReferenceMappingPreview();
+  const groups = collectScreenReferenceMappings();
+  const byKey = new Map(groups.map((group) => [`${group.type}\u0000${group.current}`, group]));
+  const proposed = [];
+  rows.forEach((row) => {
+    const type = String(row.reference_type || "").trim().toLowerCase();
+    const current = String(row.current_reference || "").trim();
+    const replacement = String(row.replacement_reference || "").trim();
+    if (!replacement || replacement === current) return;
+    const sourceGroup = byKey.get(`${type}\u0000${current}`);
+    const scope = String(row.mapping_scope || "reference").trim().toLowerCase();
+    const objectPath = String(row.object_path || "").trim();
+    const objectId = String(row.object_id || "").trim();
+    let group = sourceGroup;
+    if (scope === "object" || objectPath) {
+      const matches = (sourceGroup?.occurrences || []).filter((occurrence) =>
+        (objectPath && occurrence.path === objectPath)
+        || (!objectPath && objectId && occurrence.objectId === objectId)
+      );
+      group = matches.length ? { ...sourceGroup, occurrences: matches } : null;
+    }
+    const validFormat = type === "tag" ? Boolean(parseMappedTagReference(replacement)) : type === "screen";
+    proposed.push({ type, current, replacement, group, scope, objectId, objectPath, validFormat, resolved: type === "tag" ? knownMappedTag(replacement) : type === "screen" ? knownMappedScreen(replacement) : false });
+  });
+  const applicable = proposed.filter((item) => item.group && item.validFormat);
+  const affected = applicable.reduce((sum, item) => sum + item.group.occurrences.length, 0);
+  const unresolved = applicable.filter((item) => !item.resolved).length;
+  const overlay = document.createElement("div");
+  overlay.className = "reference-mapping-overlay";
+  overlay.innerHTML = `<section class="reference-mapping-panel"><header><div><h2>Import Screen References</h2><p>${applicable.length} mapping${applicable.length === 1 ? "" : "s"} will update ${affected} object reference${affected === 1 ? "" : "s"}. ${unresolved} replacement${unresolved === 1 ? " is" : "s are"} not currently available and will remain amber.</p></div><button type="button" data-reference-mapping-close>Close</button></header><div class="reference-mapping-table-wrap"><table><thead><tr><th>Type</th><th>Current</th><th>Replacement</th><th>Uses</th><th>Result</th></tr></thead><tbody></tbody></table></div><footer><span class="reference-mapping-note"></span><button type="button" data-reference-mapping-apply ${applicable.length ? "" : "disabled"}>Apply Mappings</button></footer></section>`;
+  const tbody = overlay.querySelector("tbody");
+  proposed.forEach((item) => {
+    const row = document.createElement("tr");
+    const result = !item.group ? "Not used by this screen" : !item.validFormat ? "Invalid reference format" : item.resolved ? "Available" : "Unresolved (allowed)";
+    row.className = item.group && item.validFormat ? (item.resolved ? "is-resolved" : "is-unresolved") : "is-invalid";
+    const typeLabel = item.scope === "object" ? `${item.type || "?"} · object` : (item.type || "?");
+    [typeLabel, item.current, item.replacement, item.group?.occurrences?.length || 0, result].forEach((value) => { const cell = document.createElement("td"); cell.textContent = String(value); row.appendChild(cell); });
+    tbody.appendChild(row);
+  });
+  if (!proposed.length) overlay.querySelector(".reference-mapping-note").textContent = "No replacement_reference values were provided.";
+  overlay.querySelector("[data-reference-mapping-close]")?.addEventListener("click", closeReferenceMappingPreview);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) closeReferenceMappingPreview(); });
+  overlay.querySelector("[data-reference-mapping-apply]")?.addEventListener("click", () => {
+    recordHistory();
+    applicable.forEach((item) => {
+      item.group.occurrences.forEach((occurrence) => {
+        occurrence.apply(item.replacement, item.resolved);
+        if (item.scope === "object") syncObjectMappedReferenceMetadata(occurrence, item.replacement, item.resolved);
+      });
+      if (item.scope !== "object") syncMappedReferenceMetadata(item.type, item.current, item.replacement, item.resolved);
+    });
+    setDirty(true);
+    renderScreen();
+    updateSelectionOverlays();
+    updatePropertiesPanel();
+    renderReferenceHealthBadge();
+    closeReferenceMappingPreview();
+    showHmiToast(`Applied ${applicable.length} mappings to ${affected} references.`, 7000);
+    setEditorStatusSafe(`Reference import updated ${affected} object references; ${unresolved} mappings remain unresolved.`);
+  });
+  document.body.appendChild(overlay);
+};
+
+const uploadScreenReferenceMappings = async (file) => {
+  if (!file) return;
+  try {
+    const rows = parseReferenceCsv(await file.text());
+    if (!rows.length || !("reference_type" in rows[0]) || !("current_reference" in rows[0]) || !("replacement_reference" in rows[0])) throw new Error("CSV must contain reference_type, current_reference, and replacement_reference columns.");
+    openReferenceMappingPreview(rows);
+  } catch (error) {
+    showHmiToast(`Reference import failed: ${error.message}`, 8000);
+  } finally {
+    referenceMappingInput.value = "";
+  }
+};
+
 const importGraphWorxFile = async (file) => {
   if (!file) return;
   if (isDirty && !confirmLoseUnsavedChanges("Import GraphWorX screen")) return;
@@ -6568,6 +6909,13 @@ fileImportGraphWorxMenuBtn?.addEventListener("click", () => {
   graphWorxImportInput?.click();
 });
 graphWorxImportInput?.addEventListener("change", () => importGraphWorxFile(graphWorxImportInput.files?.[0]));
+fileDownloadReferencesMenuBtn?.addEventListener("click", downloadScreenReferenceMappings);
+fileDownloadObjectReferencesMenuBtn?.addEventListener("click", downloadObjectReferenceMappings);
+fileUploadReferencesMenuBtn?.addEventListener("click", () => {
+  setMenuOpen(false);
+  referenceMappingInput?.click();
+});
+referenceMappingInput?.addEventListener("change", () => uploadScreenReferenceMappings(referenceMappingInput.files?.[0]));
 viewReferenceHealthMenuBtn?.addEventListener("click", () => {
   setMenuOpen(false);
   openReferenceHealth();
@@ -9305,6 +9653,10 @@ const setMenuOpen = (isOpen) => {
   if (!isOpen && viewMenuFlyout && viewMenuBtn) {
     viewMenuFlyout.classList.add("is-hidden");
     viewMenuBtn.setAttribute("aria-expanded", "false");
+  }
+  if (!isOpen && referencesMenuFlyout && referencesMenuBtn) {
+    referencesMenuFlyout.classList.add("is-hidden");
+    referencesMenuBtn.setAttribute("aria-expanded", "false");
   }
   if (!isOpen && insertMenuFlyout && insertMenuBtn) {
     insertMenuFlyout.classList.add("is-hidden");
@@ -16098,6 +16450,12 @@ const applyButtonFillColor = (color) => {
   if (buttonFillTextInput) buttonFillTextInput.value = color;
 };
 
+const applyButtonTextColor = (color) => {
+  updateButtonProperty({ textColor: color });
+  if (buttonTextColorInput && isHexColor(color)) buttonTextColorInput.value = color;
+  if (buttonTextColorTextInput) buttonTextColorTextInput.value = color;
+};
+
 const applyEllipseFillColor = (color) => {
   updateEllipseProperty({ fill: color });
   if (ellipseFillInput && isHexColor(color)) ellipseFillInput.value = color;
@@ -16535,6 +16893,12 @@ function bindScreenManager() {
     viewMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
   };
 
+  const setReferencesFlyoutOpen = (isOpen) => {
+    if (!referencesMenuFlyout || !referencesMenuBtn) return;
+    referencesMenuFlyout.classList.toggle("is-hidden", !isOpen);
+    referencesMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  };
+
   const setInsertFlyoutOpen = (isOpen) => {
     if (!insertMenuFlyout || !insertMenuBtn) return;
     insertMenuFlyout.classList.toggle("is-hidden", !isOpen);
@@ -16573,6 +16937,20 @@ function bindScreenManager() {
     if (!viewFlyoutCloseTimer) return;
     window.clearTimeout(viewFlyoutCloseTimer);
     viewFlyoutCloseTimer = null;
+  };
+
+  let referencesFlyoutCloseTimer = null;
+  const scheduleReferencesFlyoutClose = () => {
+    if (referencesFlyoutCloseTimer) window.clearTimeout(referencesFlyoutCloseTimer);
+    referencesFlyoutCloseTimer = window.setTimeout(() => {
+      referencesFlyoutCloseTimer = null;
+      setReferencesFlyoutOpen(false);
+    }, 150);
+  };
+  const cancelReferencesFlyoutClose = () => {
+    if (!referencesFlyoutCloseTimer) return;
+    window.clearTimeout(referencesFlyoutCloseTimer);
+    referencesFlyoutCloseTimer = null;
   };
 
   let insertFlyoutCloseTimer = null;
@@ -16616,6 +16994,14 @@ function bindScreenManager() {
       cancelViewFlyoutClose();
       const isOpen = !viewMenuFlyout?.classList.contains("is-hidden");
       setViewFlyoutOpen(!isOpen);
+    });
+  }
+
+  if (referencesMenuBtn) {
+    referencesMenuBtn.addEventListener("click", () => {
+      cancelReferencesFlyoutClose();
+      const isOpen = !referencesMenuFlyout?.classList.contains("is-hidden");
+      setReferencesFlyoutOpen(!isOpen);
     });
   }
 
@@ -16664,6 +17050,18 @@ function bindScreenManager() {
     });
   }
 
+  if (referencesMenuWrap && referencesMenuBtn && referencesMenuFlyout) {
+    referencesMenuWrap.addEventListener("pointerenter", () => {
+      cancelReferencesFlyoutClose();
+      setReferencesFlyoutOpen(true);
+    });
+    referencesMenuWrap.addEventListener("pointerleave", scheduleReferencesFlyoutClose);
+    referencesMenuBtn.addEventListener("focus", () => {
+      cancelReferencesFlyoutClose();
+      setReferencesFlyoutOpen(true);
+    });
+  }
+
   if (insertMenuWrap && insertMenuBtn && insertMenuFlyout) {
     insertMenuWrap.addEventListener("pointerenter", () => {
       cancelInsertFlyoutClose();
@@ -16693,15 +17091,17 @@ function bindScreenManager() {
   }
 
   document.addEventListener("click", (e) => {
-    if (!fileMenuBtn && !viewMenuBtn && !insertMenuBtn) return;
+    if (!fileMenuBtn && !viewMenuBtn && !referencesMenuBtn && !insertMenuBtn) return;
     const target = e.target;
     if (!(target instanceof Element)) return;
     if (fileMenuFlyout && fileMenuBtn && (fileMenuFlyout.contains(target) || fileMenuBtn.contains(target))) return;
     if (viewMenuFlyout && viewMenuBtn && (viewMenuFlyout.contains(target) || viewMenuBtn.contains(target))) return;
+    if (referencesMenuFlyout && referencesMenuBtn && (referencesMenuFlyout.contains(target) || referencesMenuBtn.contains(target))) return;
     if (insertMenuFlyout && insertMenuBtn && (insertMenuFlyout.contains(target) || insertMenuBtn.contains(target))) return;
     if (dynamicsMenuFlyout && dynamicsMenuBtn && (dynamicsMenuFlyout.contains(target) || dynamicsMenuBtn.contains(target))) return;
     setFileFlyoutOpen(false);
     setViewFlyoutOpen(false);
+    setReferencesFlyoutOpen(false);
     setInsertFlyoutOpen(false);
     setDynamicsFlyoutOpen(false);
   });
@@ -16710,6 +17110,7 @@ function bindScreenManager() {
     if (e.key !== "Escape") return;
     setFileFlyoutOpen(false);
     setViewFlyoutOpen(false);
+    setReferencesFlyoutOpen(false);
     setInsertFlyoutOpen(false);
     setDynamicsFlyoutOpen(false);
     closeTagsModal();
@@ -24734,7 +25135,12 @@ if (buttonFillSwatchBtn && buttonFillSwatches) {
 if (buttonTextColorSwatchBtn && buttonTextColorSwatches) {
   buttonTextColorSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleSwatches(buttonTextColorSwatches, buttonTextColorSwatchBtn);
+    openPaintPicker({
+      title: "Button Text Color",
+      value: buttonTextColorTextInput?.value || buttonTextColorInput?.value || "#ffffff",
+      fallback: "#ffffff",
+      onApply: applyButtonTextColor
+    });
   });
 }
 
