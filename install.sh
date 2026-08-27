@@ -1038,6 +1038,12 @@ install_scada() {
   fi
 
   mkdir -p "$CONFIG_ROOT/scada"
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/scada" 2>/dev/null || true
+  chmod 0750 "$CONFIG_ROOT/scada" 2>/dev/null || true
+  if [[ -f "$CONFIG_ROOT/scada/identity-sync.json" ]]; then
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/scada/identity-sync.json" 2>/dev/null || true
+    chmod 0600 "$CONFIG_ROOT/scada/identity-sync.json" 2>/dev/null || true
+  fi
   mkdir -p "$CONFIG_ROOT/certs/mqtt"
   chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/certs" 2>/dev/null || true
   chmod 0750 "$CONFIG_ROOT/certs" "$CONFIG_ROOT/certs/mqtt" 2>/dev/null || true

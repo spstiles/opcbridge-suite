@@ -23,6 +23,7 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const CONFIG_PATH = process.env.OPCBRIDGE_SCADA_CONFIG || path.join(ROOT, 'config.json');
 
 const SECRETS_PATH = process.env.OPCBRIDGE_SCADA_SECRETS || path.join(ROOT, 'config.secrets.json');
+const IDENTITY_SYNC_PATH = process.env.OPCBRIDGE_IDENTITY_SYNC_CONFIG || '/etc/opcbridge/scada/identity-sync.json';
 
 function readVersionFile(filePath) {
   try {
@@ -1467,12 +1468,12 @@ function remoteUserDirectoryCandidates(rawAddress) {
   return roots;
 }
 
-function remoteUserDirectoryJson(candidate, method, apiPath, bodyObj = null, cookie = '') {
+function remoteUserDirectoryJson(candidate, method, apiPath, bodyObj = null, cookie = '', extraHeaders = {}) {
   return new Promise((resolve) => {
     const url = new URL(`${candidate.origin}${candidate.prefix}${apiPath}`);
     const transport = url.protocol === 'https:' ? https : http;
     const body = bodyObj === null ? '' : JSON.stringify(bodyObj);
-    const headers = { Accept: 'application/json' };
+    const headers = { Accept: 'application/json', ...extraHeaders };
     if (cookie) headers.Cookie = cookie;
     if (body) {
       headers['Content-Type'] = 'application/json';
@@ -1552,6 +1553,65 @@ async function localCallerCanManageUsers(cookie) {
   const status = await remoteUserDirectoryJson({ origin: `${scheme}://${originHost}:${port}`, prefix: '' }, 'GET', '/auth/status', null, cookie);
   const permissions = Array.isArray(status.json?.user?.permissions) ? status.json.user.permissions.map(String) : [];
   return Boolean(status.ok && status.json?.user_logged_in && permissions.includes('auth.manage_users'));
+}
+
+function readIdentitySyncConfig() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(IDENTITY_SYNC_PATH, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeIdentitySyncConfig(config) {
+  fs.mkdirSync(path.dirname(IDENTITY_SYNC_PATH), { recursive: true });
+  fs.writeFileSync(IDENTITY_SYNC_PATH, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  fs.chmodSync(IDENTITY_SYNC_PATH, 0o600);
+}
+
+function localOpcbridgeCandidate() {
+  const scheme = String(cfg?.opcbridge?.scheme || 'http');
+  const host = String(cfg?.opcbridge?.host || '127.0.0.1');
+  const port = Number(cfg?.opcbridge?.port || (scheme === 'https' ? 443 : 8080));
+  const originHost = host.includes(':') ? `[${host}]` : host;
+  return { origin: `${scheme}://${originHost}:${port}`, prefix: '' };
+}
+
+let identitySyncRunning = false;
+async function synchronizeCentralIdentity({ force = false } = {}) {
+  if (identitySyncRunning) return { ok: false, skipped: true, error: 'Synchronization is already running.' };
+  const sync = readIdentitySyncConfig();
+  if (sync.mode !== 'central') return { ok: true, skipped: true, mode: 'local' };
+  const intervalMs = Math.max(15000, Number(sync.interval_ms) || 60000);
+  if (!force && Number(sync.last_attempt_ms || 0) + intervalMs > Date.now()) return { ok: true, skipped: true, mode: 'central' };
+  identitySyncRunning = true;
+  sync.last_attempt_ms = Date.now();
+  try {
+    const remote = await exportRemoteUserDirectory({ address: sync.central_url, username: sync.username, password: sync.password });
+    const imported = await remoteUserDirectoryJson(localOpcbridgeCandidate(), 'POST', '/auth/directory/import', {
+      file: remote.file, passphrase: remote.passphrase, mode: 'replace', preview: false
+    }, '', { 'X-Admin-Token': ADMIN_TOKEN });
+    if (!imported.ok) throw new Error(imported.json?.error || imported.error || 'Local directory cache update failed.');
+    const now = Date.now();
+    const status = await remoteUserDirectoryJson(localOpcbridgeCandidate(), 'PUT', '/auth/identity/sync-status', {
+      last_sync_ms: now, revision: now, last_error: ''
+    }, '', { 'X-Admin-Token': ADMIN_TOKEN });
+    if (!status.ok) throw new Error(status.json?.error || status.error || 'Failed to record synchronization status.');
+    sync.last_sync_ms = now;
+    sync.last_error = '';
+    writeIdentitySyncConfig(sync);
+    return { ok: true, users: imported.json?.users || 0, groups: imported.json?.groups || 0, last_sync_ms: now };
+  } catch (err) {
+    sync.last_error = String(err?.message || err);
+    writeIdentitySyncConfig(sync);
+    await remoteUserDirectoryJson(localOpcbridgeCandidate(), 'PUT', '/auth/identity/sync-status', {
+      last_sync_ms: Number(sync.last_sync_ms || 0), revision: Number(sync.last_sync_ms || 0), last_error: sync.last_error
+    }, '', { 'X-Admin-Token': ADMIN_TOKEN }).catch(() => {});
+    return { ok: false, error: sync.last_error };
+  } finally {
+    identitySyncRunning = false;
+  }
 }
 
 function reporterApiRequest(method, apiPath, bodyObj = null, timeoutMs = 5000) {
@@ -5777,6 +5837,70 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/users/identity-settings') {
+    if (req.method === 'GET') {
+      if (!(await localCallerCanManageUsers(String(req.headers.cookie || '')))) {
+        sendJson(res, 403, { ok: false, error: 'User-management permission required.' });
+        return;
+      }
+      const sync = readIdentitySyncConfig();
+      sendJson(res, 200, { ok: true, settings: {
+        mode: sync.mode === 'central' ? 'central' : 'local',
+        central_name: String(sync.central_name || ''), central_url: String(sync.central_url || ''),
+        username: String(sync.username || ''), password_set: Boolean(sync.password),
+        interval_ms: Math.max(15000, Number(sync.interval_ms) || 60000),
+        last_sync_ms: Number(sync.last_sync_ms || 0), last_error: String(sync.last_error || '')
+      }});
+      return;
+    }
+    if (req.method === 'PUT') {
+      try {
+        if (!(await localCallerCanManageUsers(String(req.headers.cookie || '')))) {
+          sendJson(res, 403, { ok: false, error: 'User-management permission required.' });
+          return;
+        }
+        const body = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8') || '{}');
+        const previous = readIdentitySyncConfig();
+        const mode = body.mode === 'central' ? 'central' : 'local';
+        const next = {
+          mode,
+          central_name: String(body.central_name || '').trim(),
+          central_url: String(body.central_url || '').trim(),
+          username: String(body.username || '').trim(),
+          password: String(body.password || '') || String(previous.password || ''),
+          interval_ms: Math.max(15000, Number(body.interval_ms) || 60000),
+          last_sync_ms: mode === 'central' ? Number(previous.last_sync_ms || 0) : 0,
+          last_error: ''
+        };
+        if (mode === 'central' && (!next.central_name || !next.central_url || !next.username || !next.password)) throw new Error('Central system name, address, username, and password are required.');
+        const switched = await remoteUserDirectoryJson(localOpcbridgeCandidate(), 'PUT', '/auth/identity', {
+          mode, central_name: next.central_name, central_url: next.central_url,
+          last_sync_ms: next.last_sync_ms, revision: next.last_sync_ms
+        }, String(req.headers.cookie || ''));
+        if (!switched.ok) throw new Error(switched.json?.error || switched.error || 'Failed to change identity mode.');
+        writeIdentitySyncConfig(next);
+        const syncResult = mode === 'central' ? await synchronizeCentralIdentity({ force: true }) : { ok: true, mode: 'local' };
+        sendJson(res, 200, { ok: true, settings: { ...next, password: undefined, password_set: Boolean(next.password) }, sync: syncResult });
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String(err?.message || err) });
+      }
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname === '/api/users/identity-sync') {
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    if (!(await localCallerCanManageUsers(String(req.headers.cookie || '')))) {
+      sendJson(res, 403, { ok: false, error: 'User-management permission required.' });
+      return;
+    }
+    const result = await synchronizeCentralIdentity({ force: true });
+    sendJson(res, result.ok ? 200 : 502, result);
+    return;
+  }
+
   if (url.pathname.startsWith('/api/opcbridge/')) {
     await proxy(req, res, cfg.opcbridge, 'opcbridge');
     return;
@@ -5841,6 +5965,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const cfg = readConfig();
+setInterval(() => { synchronizeCentralIdentity().catch(() => {}); }, 10000).unref();
 server.listen(cfg.listen.port, cfg.listen.host, () => {
   console.log(`[opcbridge-scada] Listening on http://${cfg.listen.host}:${cfg.listen.port}`);
   console.log(`[opcbridge-scada] refresh: ${cfg.refresh_ms}ms`);

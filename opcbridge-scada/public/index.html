@@ -659,6 +659,25 @@
 
           <div id="usersManageWrap" style="display:none; margin-top: 10px;">
             <div class="divider"></div>
+            <div class="form" style="max-width: 720px;">
+              <div class="card-title">Identity Source</div>
+              <div class="form-row"><label for="usersIdentityMode">Directory mode</label><select id="usersIdentityMode"><option value="local">Local Directory</option><option value="central">Central Directory</option></select></div>
+              <div id="usersIdentityCentralFields" style="display:none;">
+                <div class="form-row"><label for="usersIdentityCentralName">Central system name</label><input id="usersIdentityCentralName" type="text" placeholder="Plant Operations Cluster" /></div>
+                <div class="form-row"><label for="usersIdentityCentralUrl">Central address</label><input id="usersIdentityCentralUrl" type="text" placeholder="192.168.1.20" /></div>
+                <div class="form-row"><label for="usersIdentityUsername">Central OPCBridge username</label><input id="usersIdentityUsername" type="text" autocomplete="username" /></div>
+                <div class="form-row"><label for="usersIdentityPassword">Central OPCBridge password</label><input id="usersIdentityPassword" type="password" autocomplete="current-password" placeholder="Unchanged when blank" /></div>
+                <div class="form-row"><label for="usersIdentityInterval">Sync interval (seconds)</label><input id="usersIdentityInterval" type="number" min="15" step="1" value="60" /></div>
+              </div>
+              <div class="form-row"><label></label><div class="row-actions"><button class="btn primary" id="usersIdentitySaveBtn" type="button">Save Identity Source</button><button class="btn" id="usersIdentitySyncBtn" type="button">Sync Now</button></div></div>
+              <div class="hint mono" id="usersIdentityStatus"></div>
+            </div>
+            <div id="usersCentralDirectoryNotice" class="status status-degraded" style="display:none; margin:12px 0;">
+              <span id="usersCentralDirectoryNoticeText"></span>
+              <button class="btn" id="usersCentralDirectoryOpenBtn" type="button">Open Central Users Page</button>
+            </div>
+            <div id="usersLocalDirectoryControls">
+            <div class="divider"></div>
             <div class="form" style="max-width: 520px;">
               <div class="form-row"><label>Session Timeout (min)</label><input id="usersTimeoutMinutes" type="number" min="0" step="1" placeholder="0 = no timeout" /></div>
               <div class="form-row"><label></label>
@@ -758,6 +777,7 @@
                   </div>
                 </div>
               </section>
+            </div>
             </div>
           </div>
         </div>
@@ -2816,6 +2836,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260826_user_directory_transfer_v1"></script>
+  <script src="app.js?v=20260826_central_identity_v1"></script>
 </body>
 </html>

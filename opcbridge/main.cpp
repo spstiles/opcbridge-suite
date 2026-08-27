@@ -132,6 +132,12 @@ struct AuthUserRecord {
     std::string hash_b64;
 };
 static std::vector<AuthUserRecord> g_authUsers;
+static bool g_identityCentralMode = false;
+static std::string g_identityCentralName;
+static std::string g_identityCentralUrl;
+static int64_t g_identityLastSyncMs = 0;
+static int64_t g_identityRevision = 0;
+static std::string g_identityLastError;
 
 // Diagnostics for passwords.jsonc loading (helps debug "first-time setup" after restart/install).
 static bool g_passwordsStoreLastExists = false;
@@ -3095,6 +3101,22 @@ static void ensure_default_roles() {
     g_authRoles.push_back(admin);
 }
 
+static std::string active_passwords_store_path(const std::string &configDir) {
+    try {
+        const std::string settingsPath = joinPath(configDir, "identity.json");
+        json settings = fs::exists(settingsPath) ? json::parse(read_file_to_string(settingsPath)) : json::object();
+        g_identityCentralMode = settings.value("mode", std::string("local")) == "central";
+        g_identityCentralName = settings.value("central_name", std::string{});
+        g_identityCentralUrl = settings.value("central_url", std::string{});
+        g_identityLastSyncMs = settings.value("last_sync_ms", int64_t{0});
+        g_identityRevision = settings.value("revision", int64_t{0});
+        g_identityLastError = settings.value("last_error", std::string{});
+    } catch (const std::exception &ex) {
+        std::cerr << "[auth] Failed to load identity.json: " << ex.what() << "\n";
+    }
+    return joinPath(configDir, g_identityCentralMode ? "passwords.central.jsonc" : "passwords.jsonc");
+}
+
 static bool load_passwords_store(const std::string &path) {
     try {
         {
@@ -3639,6 +3661,7 @@ static bool is_admin_user_request(const httplib::Request &req, AdminSessionInfo 
     AdminSessionInfo s;
     if (!get_session_from_request(req, s)) return false;
     if (!session_has_permission(s, "auth.manage_users")) return false;
+    if (g_identityCentralMode && s.username != "service") return false;
     out = s;
     return true;
 }
@@ -13289,7 +13312,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	        std::string adminAuthPath = joinPath(configDir, "admin_auth.json");
 	        load_admin_auth(adminAuthPath);
 		        init_admin_service_token_from_env();
-		        std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		        std::string passwordsPath = active_passwords_store_path(configDir);
 		        load_passwords_store(passwordsPath);
 		        g_adminSessionStorePath = joinPath(configDir, "admin_sessions.json");
 		        load_admin_sessions_store();
@@ -25573,7 +25596,7 @@ window.addEventListener("load", startAutoRefresh);
 				            svr.Get("/auth/status", [&](const httplib::Request &req, httplib::Response &res) {
 				                // Ensure auth store is loaded so UIs don't show "first-time setup" after a restart
 				                // just because no other /auth/* endpoint has been hit yet.
-				                const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                const std::string passwordsPath = active_passwords_store_path(configDir);
 				                load_passwords_store(passwordsPath);
 				                ensure_default_roles();
 
@@ -25593,7 +25616,7 @@ window.addEventListener("load", startAutoRefresh);
 				                {
 				                    std::lock_guard<std::mutex> lock(g_userStoreMutex);
 				                    resp["passwords_store"] = json::object({
-				                        {"path", "passwords.jsonc"},
+			                        {"path", g_identityCentralMode ? "passwords.central.jsonc" : "passwords.jsonc"},
 				                        {"exists", g_passwordsStoreLastExists},
 				                        {"load_ok", g_passwordsStoreLastLoadOk},
 				                        {"mtime_ms", (g_passwordsStoreLastMtimeMs < 0 ? json(nullptr) : json(g_passwordsStoreLastMtimeMs))},
@@ -25653,14 +25676,89 @@ window.addEventListener("load", startAutoRefresh);
 			                }
 			                resp["service_token_enabled"] = !g_adminServiceToken.empty();
 			                resp["service_token_len"] = static_cast<int>(g_adminServiceToken.size());
+			                resp["identity"] = {
+			                    {"mode", g_identityCentralMode ? "central" : "local"},
+			                    {"central_name", g_identityCentralName},
+			                    {"central_url", g_identityCentralUrl},
+			                    {"last_sync_ms", g_identityLastSyncMs},
+			                    {"revision", g_identityRevision},
+			                    {"last_error", g_identityLastError}
+			                };
 			                res.set_content(resp.dump(2), "application/json");
+			            });
+
+			            svr.Put("/auth/identity", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                try {
+			                    AdminSessionInfo sess;
+			                    if (!get_session_from_request(req, sess) || sess.username == "service" || !session_has_permission(sess, "auth.manage_users")) {
+			                        resp = {{"ok", false}, {"error", "User-management permission required."}};
+			                        res.status = 403;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    const json body = json::parse(req.body.empty() ? "{}" : req.body);
+			                    const std::string mode = body.value("mode", std::string("local"));
+			                    if (mode != "local" && mode != "central") throw std::runtime_error("Identity mode must be local or central.");
+			                    const std::string localPath = joinPath(configDir, "passwords.jsonc");
+			                    const std::string centralPath = joinPath(configDir, "passwords.central.jsonc");
+			                    if (mode == "central" && !fs::exists(centralPath)) {
+			                        if (!fs::exists(localPath)) throw std::runtime_error("The local user directory is not initialized.");
+			                        fs::copy_file(localPath, centralPath, fs::copy_options::overwrite_existing);
+			                        fs::permissions(centralPath, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+			                    }
+			                    json settings = {
+			                        {"mode", mode},
+			                        {"central_name", body.value("central_name", std::string{})},
+			                        {"central_url", body.value("central_url", std::string{})},
+			                        {"last_sync_ms", mode == "central" ? body.value("last_sync_ms", int64_t{0}) : int64_t{0}},
+			                        {"revision", mode == "central" ? body.value("revision", int64_t{0}) : int64_t{0}}
+			                    };
+			                    write_string_to_file_atomic(joinPath(configDir, "identity.json"), settings.dump(2));
+			                    fs::permissions(joinPath(configDir, "identity.json"), fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+			                    load_passwords_store(active_passwords_store_path(configDir));
+			                    resp = {{"ok", true}, {"identity", settings}};
+			                    res.set_content(resp.dump(2), "application/json");
+			                } catch (const std::exception &ex) {
+			                    resp = {{"ok", false}, {"error", ex.what()}};
+			                    res.status = 400;
+			                    res.set_content(resp.dump(2), "application/json");
+			                }
+			            });
+
+			            svr.Put("/auth/identity/sync-status", [&](const httplib::Request &req, httplib::Response &res) {
+			                json resp;
+			                try {
+			                    AdminSessionInfo sess;
+			                    if (!get_session_from_request(req, sess) || sess.username != "service") {
+			                        resp = {{"ok", false}, {"error", "Service authentication required."}};
+			                        res.status = 403;
+			                        res.set_content(resp.dump(2), "application/json");
+			                        return;
+			                    }
+			                    json settings = json::parse(read_file_to_string(joinPath(configDir, "identity.json")));
+			                    if (settings.value("mode", std::string("local")) != "central") throw std::runtime_error("Central directory mode is not enabled.");
+			                    const json body = json::parse(req.body.empty() ? "{}" : req.body);
+			                    settings["last_sync_ms"] = std::max<int64_t>(0, body.value("last_sync_ms", int64_t{0}));
+			                    settings["revision"] = std::max<int64_t>(0, body.value("revision", int64_t{0}));
+			                    settings["last_error"] = body.value("last_error", std::string{});
+			                    write_string_to_file_atomic(joinPath(configDir, "identity.json"), settings.dump(2));
+			                    fs::permissions(joinPath(configDir, "identity.json"), fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+			                    active_passwords_store_path(configDir);
+			                    resp = {{"ok", true}, {"identity", settings}};
+			                    res.set_content(resp.dump(2), "application/json");
+			                } catch (const std::exception &ex) {
+			                    resp = {{"ok", false}, {"error", ex.what()}};
+			                    res.status = 400;
+			                    res.set_content(resp.dump(2), "application/json");
+			                }
 			            });
 
 			            // Export/import the portable user directory. Passwords remain PBKDF2 hashes;
 			            // browser-side encryption protects the downloaded transfer file.
 			            svr.Post("/auth/directory/export", [&](const httplib::Request &req, httplib::Response &res) {
 			                json resp;
-			                const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                const std::string passwordsPath = active_passwords_store_path(configDir);
 			                if (!load_passwords_store(passwordsPath)) {
 			                    resp["ok"] = false;
 			                    resp["error"] = "Failed to load passwords.jsonc.";
@@ -25739,7 +25837,7 @@ window.addEventListener("load", startAutoRefresh);
 			            svr.Post("/auth/directory/import", [&](const httplib::Request &req, httplib::Response &res) {
 			                json resp;
 			                try {
-			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    const std::string passwordsPath = active_passwords_store_path(configDir);
 			                    if (!load_passwords_store(passwordsPath)) throw std::runtime_error("Failed to load passwords.jsonc.");
 			                    AdminSessionInfo sess;
 			                    if (!is_admin_user_request(req, sess)) {
@@ -25859,7 +25957,7 @@ window.addEventListener("load", startAutoRefresh);
 			                            if (group != nextGroups.end() && (group->id == "admin" || std::find(group->permissions.begin(), group->permissions.end(), "auth.manage_users") != group->permissions.end())) currentCanManage = true;
 			                        }
 			                    }
-			                    if (!currentCanManage) throw std::runtime_error("Import would remove manage-users access from the currently logged-in user.");
+			                    if (sess.username != "service" && !currentCanManage) throw std::runtime_error("Import would remove manage-users access from the currently logged-in user.");
 
 			                    const int nextTimeout = std::max(0, directory.value("timeoutMinutes", oldTimeout));
 			                    {
@@ -25927,7 +26025,7 @@ window.addEventListener("load", startAutoRefresh);
 			            // Debug helper to verify whether the caller's X-Admin-Token header
 			            // matches the service token (does not reveal token value).
 			            svr.Get("/auth/debug", [&](const httplib::Request &req, httplib::Response &res) {
-			                const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                const std::string passwordsPath = active_passwords_store_path(configDir);
 			                load_passwords_store(passwordsPath);
 			                ensure_default_roles();
 
@@ -25962,7 +26060,7 @@ window.addEventListener("load", startAutoRefresh);
 		            svr.Post("/auth/login", [&](const httplib::Request &req, httplib::Response &res) {
 	                json resp;
 	                try {
-	                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+	                    const std::string passwordsPath = active_passwords_store_path(configDir);
 	                    load_passwords_store(passwordsPath);
 	                    bool userStoreConfigured = false;
 	                    int authTimeoutMinutes = 0;
@@ -26106,7 +26204,7 @@ window.addEventListener("load", startAutoRefresh);
 			            svr.Post("/auth/init", [&](const httplib::Request &req, httplib::Response &res) {
 			                json resp;
 			                try {
-			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    const std::string passwordsPath = active_passwords_store_path(configDir);
 			                    load_passwords_store(passwordsPath);
 			                    if (g_userStoreConfigured) {
 			                        resp["ok"] = false;
@@ -26232,7 +26330,7 @@ window.addEventListener("load", startAutoRefresh);
 				            svr.Put("/auth/timeout", [&](const httplib::Request &req, httplib::Response &res) {
 			                json resp;
 			                try {
-			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    const std::string passwordsPath = active_passwords_store_path(configDir);
 			                    if (!load_passwords_store(passwordsPath)) {
 			                        resp["ok"] = false;
 			                        resp["error"] = "Failed to load passwords.jsonc.";
@@ -26279,7 +26377,7 @@ window.addEventListener("load", startAutoRefresh);
 				            svr.Get("/auth/groups", [&](const httplib::Request & /*req*/, httplib::Response &res) {
 				                json resp;
 				                try {
-				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                    const std::string passwordsPath = active_passwords_store_path(configDir);
 				                    load_passwords_store(passwordsPath);
 				                    ensure_default_roles();
 			                    resp["ok"] = true;
@@ -26311,7 +26409,7 @@ window.addEventListener("load", startAutoRefresh);
 				            svr.Post("/auth/groups", [&](const httplib::Request &req, httplib::Response &res) {
 				                json resp;
 				                try {
-				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                    const std::string passwordsPath = active_passwords_store_path(configDir);
 				                    if (!load_passwords_store(passwordsPath)) {
 				                        resp["ok"] = false;
 				                        resp["error"] = "Failed to load passwords.jsonc.";
@@ -26391,7 +26489,7 @@ window.addEventListener("load", startAutoRefresh);
 				            svr.Put(R"(/auth/groups/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
 				                json resp;
 				                try {
-				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                    const std::string passwordsPath = active_passwords_store_path(configDir);
 				                    if (!load_passwords_store(passwordsPath)) {
 				                        resp["ok"] = false;
 				                        resp["error"] = "Failed to load passwords.jsonc.";
@@ -26493,7 +26591,7 @@ window.addEventListener("load", startAutoRefresh);
 				            svr.Delete(R"(/auth/groups/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
 				                json resp;
 				                try {
-				                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+				                    const std::string passwordsPath = active_passwords_store_path(configDir);
 				                    if (!load_passwords_store(passwordsPath)) {
 				                        resp["ok"] = false;
 				                        resp["error"] = "Failed to load passwords.jsonc.";
@@ -26578,7 +26676,7 @@ window.addEventListener("load", startAutoRefresh);
 			            svr.Post("/auth/users", [&](const httplib::Request &req, httplib::Response &res) {
 			                json resp;
 			                try {
-			                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+			                    const std::string passwordsPath = active_passwords_store_path(configDir);
 			                    if (!load_passwords_store(passwordsPath)) {
 			                        resp["ok"] = false;
 			                        resp["error"] = "Failed to load passwords.jsonc.";
@@ -26689,8 +26787,16 @@ window.addEventListener("load", startAutoRefresh);
 		                    res.set_content(resp.dump(2), "application/json");
 		                    return;
 		                }
+		                active_passwords_store_path(configDir);
+		                if (g_identityCentralMode) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "Password changes are managed by the central directory.";
+		                    res.status = 409;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
+		                }
 		                try {
-		                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		                    const std::string passwordsPath = active_passwords_store_path(configDir);
 		                    load_passwords_store(passwordsPath);
 		                    const json body = json::parse(req.body.empty() ? "{}" : req.body);
 		                    const std::string currentPassword = body.value("current_password", std::string{});
@@ -26777,8 +26883,16 @@ window.addEventListener("load", startAutoRefresh);
 		                    res.set_content(resp.dump(2), "application/json");
 		                    return;
 		                }
+		                active_passwords_store_path(configDir);
+		                if (g_identityCentralMode) {
+		                    resp["ok"] = false;
+		                    resp["error"] = "User changes are managed by the central directory.";
+		                    res.status = 409;
+		                    res.set_content(resp.dump(2), "application/json");
+		                    return;
+		                }
 		                try {
-		                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		                    const std::string passwordsPath = active_passwords_store_path(configDir);
 		                    load_passwords_store(passwordsPath);
 		                    if (!g_userStoreConfigured) {
 		                        resp["ok"] = false;
@@ -26956,7 +27070,7 @@ window.addEventListener("load", startAutoRefresh);
 			            svr.Delete(R"(/auth/users/(.+))", [&](const httplib::Request &req, httplib::Response &res) {
 			                json resp;
 		                try {
-		                    const std::string passwordsPath = joinPath(configDir, "passwords.jsonc");
+		                    const std::string passwordsPath = active_passwords_store_path(configDir);
 		                    if (!load_passwords_store(passwordsPath)) {
 		                        resp["ok"] = false;
 		                        resp["error"] = "Failed to load passwords.jsonc.";

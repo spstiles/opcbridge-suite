@@ -678,6 +678,23 @@ that has `auth.manage_users`; SCADA detects the standard SCADA and OPCBridge
 ports, uses the credentials only for the transfer, and closes the temporary
 source session afterward.
 
+Identity source modes:
+
+- `Local Directory` uses `passwords.jsonc` and retains the complete Users and
+  Groups management interface.
+- `Central Directory` uses the separately maintained
+  `passwords.central.jsonc` cache. SCADA synchronizes it from the configured
+  central OPCBridge system and makes local user management read-only. Login
+  continues from the last valid cache while the central system is unavailable.
+- Switching back to Local Directory restores the untouched local store. Local
+  changes do not update the central system or any other remote.
+
+The central account configured on a remote must have `auth.manage_users`.
+Its credential is stored in `/etc/opcbridge/scada/identity-sync.json` with mode
+`0600`; it is never returned by the settings API. The Users page identifies the
+central system, shows the last synchronization result, provides Sync Now, and
+can open the central Users interface in another browser tab.
+
 Service-to-service auth (optional):
 
 If you run headless modules (e.g. opcbridge-alarms) that need to fetch config without an interactive login, set an environment variable on the opcbridge service:

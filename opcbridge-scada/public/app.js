@@ -1013,6 +1013,20 @@
   usersTimeoutMinutes: document.getElementById('usersTimeoutMinutes'),
   usersTimeoutSaveBtn: document.getElementById('usersTimeoutSaveBtn'),
   usersTimeoutStatus: document.getElementById('usersTimeoutStatus'),
+  usersIdentityMode: document.getElementById('usersIdentityMode'),
+  usersIdentityCentralFields: document.getElementById('usersIdentityCentralFields'),
+  usersIdentityCentralName: document.getElementById('usersIdentityCentralName'),
+  usersIdentityCentralUrl: document.getElementById('usersIdentityCentralUrl'),
+  usersIdentityUsername: document.getElementById('usersIdentityUsername'),
+  usersIdentityPassword: document.getElementById('usersIdentityPassword'),
+  usersIdentityInterval: document.getElementById('usersIdentityInterval'),
+  usersIdentitySaveBtn: document.getElementById('usersIdentitySaveBtn'),
+  usersIdentitySyncBtn: document.getElementById('usersIdentitySyncBtn'),
+  usersIdentityStatus: document.getElementById('usersIdentityStatus'),
+  usersCentralDirectoryNotice: document.getElementById('usersCentralDirectoryNotice'),
+  usersCentralDirectoryNoticeText: document.getElementById('usersCentralDirectoryNoticeText'),
+  usersCentralDirectoryOpenBtn: document.getElementById('usersCentralDirectoryOpenBtn'),
+  usersLocalDirectoryControls: document.getElementById('usersLocalDirectoryControls'),
   usersImportMode: document.getElementById('usersImportMode'),
   usersDirectoryExportBtn: document.getElementById('usersDirectoryExportBtn'),
   usersDirectoryImportBtn: document.getElementById('usersDirectoryImportBtn'),
@@ -1204,6 +1218,7 @@ const state = {
   usersSelectedNodeId: '',
   usersFormMode: '', // role_new|role_edit|user_new|user_edit
   usersFormTargetId: '', // role id or username
+  usersIdentity: { mode: 'local', central_name: '', central_url: '', last_sync_ms: 0, last_error: '' },
 
   // connections
   connFiles: [],
@@ -27045,6 +27060,38 @@ function setUsersDirectoryStatus(msg) {
   if (els.usersDirectoryStatus) els.usersDirectoryStatus.textContent = String(msg || '');
 }
 
+function setUsersIdentityStatus(msg) {
+  if (els.usersIdentityStatus) els.usersIdentityStatus.textContent = String(msg || '');
+}
+
+function renderUsersIdentity(identity = {}) {
+  const mode = identity.mode === 'central' ? 'central' : 'local';
+  state.usersIdentity = { ...state.usersIdentity, ...identity, mode };
+  if (els.usersIdentityMode) els.usersIdentityMode.value = mode;
+  if (els.usersIdentityCentralFields) els.usersIdentityCentralFields.style.display = mode === 'central' ? 'block' : 'none';
+  if (els.usersIdentityCentralName && document.activeElement !== els.usersIdentityCentralName) els.usersIdentityCentralName.value = String(identity.central_name || '');
+  if (els.usersIdentityCentralUrl && document.activeElement !== els.usersIdentityCentralUrl) els.usersIdentityCentralUrl.value = String(identity.central_url || '');
+  if (identity.username !== undefined && els.usersIdentityUsername && document.activeElement !== els.usersIdentityUsername) els.usersIdentityUsername.value = String(identity.username || '');
+  if (identity.interval_ms && els.usersIdentityInterval) els.usersIdentityInterval.value = String(Math.max(15, Math.round(Number(identity.interval_ms) / 1000)));
+  if (els.usersLocalDirectoryControls) els.usersLocalDirectoryControls.style.display = mode === 'local' ? 'block' : 'none';
+  if (els.usersCentralDirectoryNotice) els.usersCentralDirectoryNotice.style.display = mode === 'central' ? 'flex' : 'none';
+  if (els.usersIdentitySyncBtn) els.usersIdentitySyncBtn.style.display = mode === 'central' ? '' : 'none';
+  if (els.usersCentralDirectoryNoticeText && mode === 'central') {
+    const last = Number(identity.last_sync_ms || 0) ? new Date(Number(identity.last_sync_ms)).toLocaleString() : 'never';
+    els.usersCentralDirectoryNoticeText.textContent = `Users are managed by ${identity.central_name || 'the central directory'} at ${identity.central_url || 'an unspecified address'}. Cached login remains available if it is offline. Last sync: ${last}${identity.last_error ? ` · Error: ${identity.last_error}` : ''}`;
+  }
+}
+
+async function refreshUsersIdentitySettings() {
+  if (!isOpcbridgeAdmin()) return;
+  try {
+    const data = await apiGet('/api/users/identity-settings');
+    renderUsersIdentity(data.settings || {});
+  } catch (err) {
+    setUsersIdentityStatus(`Identity settings failed: ${err.message}`);
+  }
+}
+
 function setUsersDetailsStatus(msg) {
   if (els.usersDetailsStatus) els.usersDetailsStatus.textContent = String(msg || '');
 }
@@ -27524,6 +27571,7 @@ async function refreshUsersPanel() {
     const roles = Array.isArray(s?.groups) ? s.groups : [];
     state.usersUsers = users;
     state.usersRoles = roles;
+    renderUsersIdentity(s?.identity || {});
 
     const who = loggedIn ? `${username || '?'} (${groups.join(', ') || 'no groups'})` : 'not logged in';
     setUsersStatus(`OPCBridge auth: configured=${configured ? 'yes' : 'no'} initialized=${initialized ? 'yes' : 'no'} · ${who}`);
@@ -27546,6 +27594,7 @@ async function refreshUsersPanel() {
     if (els.usersDirectoryImportBtn) els.usersDirectoryImportBtn.disabled = !canAdmin;
     if (els.usersDirectoryRemoteBtn) els.usersDirectoryRemoteBtn.disabled = !canAdmin;
     if (els.usersImportMode) els.usersImportMode.disabled = !canAdmin;
+    if (canAdmin) refreshUsersIdentitySettings().catch(() => {});
 
     renderUsersTree();
     const roots = buildUsersTree();
@@ -27561,6 +27610,52 @@ async function refreshUsersPanel() {
 
 function wireUsersUi() {
   if (els.usersRefreshBtn) els.usersRefreshBtn.addEventListener('click', refreshUsersPanel);
+  els.usersIdentityMode?.addEventListener('change', () => {
+    if (els.usersIdentityCentralFields) els.usersIdentityCentralFields.style.display = els.usersIdentityMode.value === 'central' ? 'block' : 'none';
+  });
+  els.usersIdentitySaveBtn?.addEventListener('click', async () => {
+    const mode = els.usersIdentityMode?.value === 'central' ? 'central' : 'local';
+    if (mode === 'local' && state.usersIdentity.mode === 'central' && !window.confirm('Switch back to the preserved local user directory? Central users and password changes will no longer apply here.')) return;
+    setUsersIdentityStatus('Saving identity source…');
+    try {
+      const body = {
+        mode,
+        central_name: String(els.usersIdentityCentralName?.value || '').trim(),
+        central_url: String(els.usersIdentityCentralUrl?.value || '').trim(),
+        username: String(els.usersIdentityUsername?.value || '').trim(),
+        password: String(els.usersIdentityPassword?.value || ''),
+        interval_ms: Math.max(15, Number(els.usersIdentityInterval?.value) || 60) * 1000
+      };
+      const result = await apiJson('/api/users/identity-settings', { method: 'PUT', bodyObj: body, timeoutMs: 45000 });
+      if (els.usersIdentityPassword) els.usersIdentityPassword.value = '';
+      renderUsersIdentity(result.settings || body);
+      await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+      setUsersIdentityStatus(mode === 'central'
+        ? (result.sync?.ok ? 'Central directory enabled and synchronized.' : `Central directory enabled using its cached copy. Sync failed: ${result.sync?.error || 'unknown error'}`)
+        : 'Local directory restored.');
+    } catch (err) {
+      setUsersIdentityStatus(`Save failed: ${err.message}`);
+    }
+  });
+  els.usersIdentitySyncBtn?.addEventListener('click', async () => {
+    setUsersIdentityStatus('Synchronizing…');
+    try {
+      const result = await apiPostJson('/api/users/identity-sync', {}, { timeoutMs: 45000 });
+      await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
+      setUsersIdentityStatus(`Synchronized ${result.users || 0} users and ${result.groups || 0} groups.`);
+    } catch (err) {
+      setUsersIdentityStatus(`Sync failed: ${err.message}`);
+    }
+  });
+  els.usersCentralDirectoryOpenBtn?.addEventListener('click', () => {
+    let address = String(state.usersIdentity.central_url || '').trim();
+    if (!address) return;
+    if (!/^https?:\/\//i.test(address)) address = `http://${address}`;
+    const url = new URL(address);
+    if (!url.port) url.port = '3010';
+    url.searchParams.set('tab', 'users');
+    window.open(url.toString(), '_blank', 'noopener');
+  });
   els.usersDirectoryExportBtn?.addEventListener('click', exportUsersDirectory);
   els.usersDirectoryImportBtn?.addEventListener('click', () => els.usersDirectoryFile?.click());
   els.usersDirectoryRemoteBtn?.addEventListener('click', () => setRemoteUsersDirectoryFormOpen(true));
@@ -28025,6 +28120,7 @@ async function main() {
   } catch {
     // ignore
   }
+  if (new URLSearchParams(window.location.search).get('tab') === 'users') setTab('users');
 
   try {
     await loadScadaSettings();
