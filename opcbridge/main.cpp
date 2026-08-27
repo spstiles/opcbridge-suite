@@ -167,6 +167,7 @@ static std::atomic<uint64_t> g_reloadRequestGeneration{1};
 
 struct ConnectionConfig {
     std::string id;
+    std::string name;        // friendly display name; id remains the runtime key
     std::string driver;      // "ab_eip", "modbus_tcp", "mqtt"
     std::string gateway;     // IP/host of PLC, ENxT, or Modbus TCP server
     std::string path;        // CIP path ("1,0") or Modbus unit/server ID
@@ -4285,6 +4286,8 @@ ConnectionConfig load_connection_config(const std::string &path) {
 
     ConnectionConfig c;
     c.id       = j.at("id").get<std::string>();
+    c.name     = trim_copy(j.value("description", j.value("name", c.id)));
+    if (c.name.empty()) c.name = c.id;
     c.driver   = j.value("driver", std::string("ab_eip"));
     c.gateway  = j.value("gateway", std::string{});
     c.enabled  = j.value("enabled", true);
@@ -21886,6 +21889,7 @@ window.addEventListener("load", startAutoRefresh);
 
 					struct TagRow {
 						std::string connection_id;
+						std::string connection_name;
 						std::string name;
 						std::string datatype;
 						TagSnapshot snap;
@@ -21902,7 +21906,10 @@ window.addEventListener("load", startAutoRefresh);
 
 		            auto tag_row_to_json = [](const TagRow &r) {
 		                json jt;
-		                jt["connection_id"] = r.connection_id;
+						jt["connection_id"] = r.connection_id;
+						jt["connection_name"] = !r.connection_name.empty() ? r.connection_name
+							: (r.connection_id == "_system" ? std::string("System")
+							: (r.connection_id == "_memory" ? std::string("Memory") : r.connection_id));
 		                jt["name"]          = r.name;
 		                jt["datatype"]      = r.datatype;
 		                jt["enabled"]       = r.enabled;
@@ -22086,6 +22093,7 @@ window.addEventListener("load", startAutoRefresh);
 										auto it = tagTable.find(key);
 										TagRow row;
 										row.connection_id = driver.conn.id;
+										row.connection_name = driver.conn.name;
 										row.name          = t.cfg.logical_name;
 											row.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
 										row.enabled       = t.cfg.enabled;
@@ -22112,7 +22120,7 @@ window.addEventListener("load", startAutoRefresh);
 												statusText = "bad";
 											}
 											std::string hay = to_lower_copy(
-												driver.conn.id + " " +
+												driver.conn.id + " " + driver.conn.name + " " +
 												t.cfg.logical_name + " " +
 												t.cfg.plc_tag_name + " " +
 												t.cfg.datatype + " " +
@@ -22124,14 +22132,17 @@ window.addEventListener("load", startAutoRefresh);
 									}
 								}
 
-                                for (const auto &m : g_mqttInputs) {
+								for (const auto &m : g_mqttInputs) {
                                     if (m.write_to_plc) continue;
                                     if (!filterConn.empty() && m.connection_id != filterConn) continue;
                                     if (!filterTag.empty() && m.tag_name != filterTag) continue;
                                     std::string key = make_tag_key(m.connection_id, m.tag_name);
                                     auto it = tagTable.find(key);
                                     TagRow row;
-                                    row.connection_id = m.connection_id;
+									row.connection_id = m.connection_id;
+									for (const auto &driver : drivers) {
+										if (driver.conn.id == m.connection_id) { row.connection_name = driver.conn.name; break; }
+									}
                                     row.name = m.tag_name;
                                     row.datatype = m.datatype.empty() ? "string" : m.datatype;
                                     row.enabled = true;
@@ -22474,8 +22485,9 @@ window.addEventListener("load", startAutoRefresh);
 		                            for (auto &t : driver.tags) {
 		                                if (!isWanted(driver.conn.id, t.cfg.logical_name)) continue;
 		                                auto it = tagTable.find(make_tag_key(driver.conn.id, t.cfg.logical_name));
-		                                TagRow row;
-		                                row.connection_id = driver.conn.id;
+								TagRow row;
+								row.connection_id = driver.conn.id;
+								row.connection_name = driver.conn.name;
 		                                row.name = t.cfg.logical_name;
 		                                row.datatype = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
 		                                row.enabled = t.cfg.enabled;
@@ -22493,8 +22505,11 @@ window.addEventListener("load", startAutoRefresh);
 		                            if (m.write_to_plc) continue;
 		                            if (!isWanted(m.connection_id, m.tag_name)) continue;
 		                            auto it = tagTable.find(make_tag_key(m.connection_id, m.tag_name));
-		                            TagRow row;
-		                            row.connection_id = m.connection_id;
+							TagRow row;
+							row.connection_id = m.connection_id;
+							for (const auto &driver : drivers) {
+								if (driver.conn.id == m.connection_id) { row.connection_name = driver.conn.name; break; }
+							}
 		                            row.name = m.tag_name;
 		                            row.datatype = m.datatype.empty() ? "string" : m.datatype;
 		                            row.enabled = true;

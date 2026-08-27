@@ -25271,8 +25271,9 @@ function renderWorkspaceDetails(node) {
   if (els.workspaceChildrenHint) {
     const label = String(node?.label || '').trim();
     const count = rowsToRender.length;
+    const connectionLabel = connectionId ? displayConnectionName(connectionId) : '';
     els.workspaceChildrenHint.textContent = showTagCols
-      ? `${count} tag${count === 1 ? '' : 's'}${rawRowsToRender.length !== count ? ` of ${rawRowsToRender.length}` : ''}${connectionId ? ` · ${connectionId}` : ''}`
+      ? `${count} tag${count === 1 ? '' : 's'}${rawRowsToRender.length !== count ? ` of ${rawRowsToRender.length}` : ''}${connectionLabel ? ` · ${connectionLabel}` : ''}`
       : `${count} item${count === 1 ? '' : 's'}${label ? ` · ${label}` : ''}`;
   }
 
@@ -25941,7 +25942,7 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
     const topic = String(node.meta?.topic || '').trim() || String(node.label || '').trim();
     if (brokerId && direction === 'subscribe' && topic) {
       const name = `${topic}/RawPayload`;
-      state.liveTagFilter = { type: 'tag', connection_id: brokerId, name, label: `${brokerId}:${name}` };
+      state.liveTagFilter = { type: 'tag', connection_id: brokerId, name, label: `${displayConnectionName(brokerId)}:${name}` };
     } else if (brokerId) {
       state.liveTagFilter = { type: 'mqtt', connection_id: brokerId, label: `MQTT / ${String(node.label || 'Brokers')}` };
     } else {
@@ -25958,14 +25959,14 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
     const connection_id = String(node.meta?.connection_id || '').trim();
     const name = String(node.meta?.name || node.label || '').trim();
     if (connection_id && name) {
-      state.liveTagFilter = { type: 'tag', connection_id, name, label: `${connection_id}:${name}` };
+      state.liveTagFilter = { type: 'tag', connection_id, name, label: `${displayConnectionName(connection_id)}:${name}` };
     } else {
       state.liveTagFilter = { type: 'all', label: 'All' };
     }
   } else if (type === 'device') {
     const connection_id = String(node.meta?.connection_id || '').trim();
     if (connection_id) {
-      state.liveTagFilter = { type: 'device', connection_id, label: connection_id };
+      state.liveTagFilter = { type: 'device', connection_id, label: displayConnectionName(connection_id) };
     } else {
       state.liveTagFilter = { type: 'all', label: 'All' };
     }

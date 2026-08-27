@@ -1542,7 +1542,7 @@ const populateVisibilityExpressionConnectionOptions = () => {
   sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((connectionId) => {
     const option = document.createElement("option");
     option.value = connectionId;
-    option.textContent = connectionId;
+    option.textContent = getConnectionDisplayName(connectionId);
     visibilityExprTagConnection.appendChild(option);
   });
   if (previous) visibilityExprTagConnection.value = previous;
@@ -1664,7 +1664,7 @@ const populateRectColorExpressionConnectionOptions = () => {
   sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((connectionId) => {
     const option = document.createElement("option");
     option.value = connectionId;
-    option.textContent = connectionId;
+    option.textContent = getConnectionDisplayName(connectionId);
     rectColorExprTagConnection.appendChild(option);
   });
   setSelectValueSafe(rectColorExprTagConnection, previous || String(rule.connection_id || ""));
@@ -4655,7 +4655,8 @@ const renderActiveAlarmsRows = () => {
     row.classList.toggle("alarm-row-acked", Boolean(alarm?.acked));
 
     const src = alarm?.source || {};
-    const sourceText = `${String(src?.connection_id || alarm?.connection_id || "")}:${String(src?.tag || alarm?.tag || "")}`.trim();
+    const sourceConnectionId = String(src?.connection_id || alarm?.connection_id || "");
+    const sourceText = `${getConnectionDisplayName(sourceConnectionId)}:${String(src?.tag || alarm?.tag || "")}`.trim();
 	    const cols = [
 	      { text: String(alarm?.alarm_id || ""), mono: true },
 	      { text: String(alarm?.severity ?? ""), mono: true },
@@ -4693,7 +4694,7 @@ const renderAlarmEventRows = () => {
   rows.forEach((ev) => {
     const row = document.createElement("tr");
     const src = ev?.source || {};
-    const sourceText = `${String(src?.connection_id || "")}:${String(src?.tag || "")}`.trim();
+    const sourceText = `${getConnectionDisplayName(src?.connection_id)}:${String(src?.tag || "")}`.trim();
     const cols = [
       { text: formatAlarmTimeMs(ev?.ts_ms), mono: true },
       { text: String(ev?.type || ""), mono: true },
@@ -4999,7 +5000,7 @@ const alarmMatchesFilterSet = (alarm, filters) => {
   const src = alarm?.source || {};
   const connectionId = String(src?.connection_id || "");
   const tagName = String(src?.tag || "");
-  const sourceText = `${connectionId}:${tagName}`.trim();
+  const sourceText = `${getConnectionDisplayName(connectionId)}:${tagName}`.trim();
   const alarmText = [
     alarm?.alarm_id,
     alarm?.name,
@@ -5131,7 +5132,7 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
     const src = alarm?.source || {};
     const connectionId = String(src?.connection_id || "");
     const tagName = String(src?.tag || "");
-    const sourceText = showSource ? `${connectionId}:${tagName}`.trim() : tagName.trim();
+    const sourceText = showSource ? `${getConnectionDisplayName(connectionId)}:${tagName}`.trim() : tagName.trim();
     let areaText = String(alarm?.area || src?.area || "").trim();
     if (!areaText) {
       const groupText = String(alarm?.group || src?.group || "").trim();
@@ -8242,7 +8243,7 @@ const getTextBindingSummary = (bind) => {
   const normalized = normalizeTextBinding(bind);
   if (!normalized) return "(unbound)";
   const parts = [];
-  const path = [normalized.connection_id, normalized.tag].filter(Boolean).join(" / ");
+  const path = [getConnectionDisplayName(normalized.connection_id), normalized.tag].filter(Boolean).join(" / ");
   parts.push(path || "(unbound)");
   if (normalized.digits !== "") parts.push(`digits=${normalized.digits}`);
   if (normalized.padZeros) parts.push("zpad");
@@ -10308,7 +10309,7 @@ const populateTagSelect = (selectEl) => {
   });
   Array.from(groups.entries()).forEach(([connectionId, entries]) => {
     const group = document.createElement("optgroup");
-    group.label = connectionId || "?";
+    group.label = getConnectionDisplayName(connectionId) || "?";
     entries.forEach((entry) => {
       const opt = document.createElement("option");
       opt.value = entry.value;
@@ -10341,7 +10342,7 @@ const populateConnectionSelect = (selectEl) => {
   connectionIds.forEach((connectionId) => {
     const opt = document.createElement("option");
     opt.value = connectionId;
-    opt.textContent = connectionId;
+    opt.textContent = getConnectionDisplayName(connectionId);
     selectEl.appendChild(opt);
   });
   selectEl.dataset.tagsVersion = nextVersion;
@@ -10570,7 +10571,7 @@ const renderTagsList = (tags) => {
   Array.from(groups.entries()).forEach(([connectionId, entries]) => {
     const header = document.createElement("div");
     header.className = "tag-group";
-    header.textContent = connectionId || "?";
+    header.textContent = getConnectionDisplayName(connectionId) || "?";
     tagsList.appendChild(header);
     entries.forEach((tag) => {
       const item = document.createElement("div");
@@ -10636,7 +10637,7 @@ function sortTagsForDisplay(tags) {
     const aSys = aConn.startsWith("_") ? 1 : 0;
     const bSys = bConn.startsWith("_") ? 1 : 0;
     if (aSys !== bSys) return aSys - bSys; // push "_" connections to bottom
-    const connCmp = aConn.localeCompare(bConn, undefined, { numeric: true, sensitivity: "base" });
+    const connCmp = getConnectionDisplayName(aConn).localeCompare(getConnectionDisplayName(bConn), undefined, { numeric: true, sensitivity: "base" });
     if (connCmp) return connCmp;
     const aName = String(a?.name || "");
     const bName = String(b?.name || "");
@@ -10652,7 +10653,7 @@ function applyTagsFilter(tags) {
   const query = getTagsFilterQuery();
   if (!query) return tags;
   return (Array.isArray(tags) ? tags : []).filter((tag) => {
-    const conn = String(tag?.connection_id || "").toLowerCase();
+    const conn = `${String(tag?.connection_id || "")} ${String(tag?.connection_name || "")} ${getConnectionDisplayName(tag?.connection_id)}`.toLowerCase();
     const name = String(tag?.name || "").toLowerCase();
     return conn.includes(query) || name.includes(query);
   });
@@ -10666,6 +10667,7 @@ const loadTags = async () => {
     const data = await response.json();
     const authTags = Object.entries(getAuthStateValues()).map(([name, value]) => ({
       connection_id: "_hmi",
+      connection_name: "HMI",
       name,
       value,
       quality: "GOOD"
@@ -13078,7 +13080,7 @@ const openSetpointPrompt = (action, buttonLabel) => {
   const tagName = String(action?.tag || "").trim();
   const titleParts = [];
   if (buttonLabel) titleParts.push(buttonLabel);
-  if (connectionId && tagName) titleParts.push(`${connectionId}.${tagName}`);
+  if (connectionId && tagName) titleParts.push(`${getConnectionDisplayName(connectionId)}.${tagName}`);
   const title = titleParts.join(" • ") || "Numeric Entry (Prompt)";
   if (setpointTitle) setpointTitle.textContent = title;
 
@@ -22241,8 +22243,20 @@ function sortConnectionIdsForDisplay(connectionIds) {
     const aSys = a.startsWith("_") ? 1 : 0;
     const bSys = b.startsWith("_") ? 1 : 0;
     if (aSys !== bSys) return aSys - bSys;
-    return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    return getConnectionDisplayName(a).localeCompare(getConnectionDisplayName(b), undefined, { numeric: true, sensitivity: "base" });
   });
+}
+
+function getConnectionDisplayName(connectionId) {
+  const id = String(connectionId || "").trim();
+  if (!id) return "";
+  if (id === "_system") return "System";
+  if (id === "_memory") return "Memory";
+  if (id === "_hmi") return "HMI";
+  const match = [...tagsCache, ...tagsAllCache].find((tag) =>
+    String(tag?.connection_id || "").trim() === id && String(tag?.connection_name || "").trim()
+  );
+  return String(match?.connection_name || "").trim() || id;
 }
 
 function populateCompactTagBindingConnectionOptions() {
@@ -22256,7 +22270,7 @@ function populateCompactTagBindingConnectionOptions() {
   sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((connectionId) => {
     const option = document.createElement("option");
     option.value = connectionId;
-    option.textContent = connectionId;
+    option.textContent = getConnectionDisplayName(connectionId);
     tagBindingConnectionSelect.appendChild(option);
   });
   if (previous) tagBindingConnectionSelect.value = previous;
@@ -22300,7 +22314,7 @@ function populateCompactTagBindingTagOptions(connectionId = "") {
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
       if (!tagNames.length) return;
       const group = document.createElement("optgroup");
-      group.label = tagConnectionId;
+      group.label = getConnectionDisplayName(tagConnectionId);
       tagNames.forEach((tagName) => group.appendChild(createTagOption(tagConnectionId, tagName)));
       tagBindingTagSelect.appendChild(group);
     });
@@ -22313,8 +22327,8 @@ function getCompactTagBindingSummary(binding, emptyText = "(unbound)") {
   const tagName = String(binding?.tag || "").trim();
   if (!connectionId && !tagName) return emptyText;
   if (!connectionId) return tagName;
-  if (!tagName) return connectionId;
-  return `${connectionId} / ${tagName}`;
+  if (!tagName) return getConnectionDisplayName(connectionId);
+  return `${getConnectionDisplayName(connectionId)} / ${tagName}`;
 }
 
 function closeCompactTagBindingModal() {
