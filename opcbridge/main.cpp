@@ -25075,7 +25075,9 @@ window.addEventListener("load", startAutoRefresh);
 				});
 
 				// POST /config/tags/import_csv
-				// Body: { "token":"...", "connection_id":"B030", "csv":"connection_id,name,..." }
+				// Body: { "token":"...", "connection_id":"B030", "csv":"name,..." }
+				// The request's connection_id is the import destination. Connection columns in
+				// the CSV are intentionally ignored so tag lists remain portable between systems.
 				// Upserts/deletes rows into the canonical tags/<connection_id>.json file.
 				svr.Post("/config/tags/import_csv", [&](const httplib::Request &req, httplib::Response &res) {
 					if (!is_admin_request(req)) {
@@ -25128,7 +25130,6 @@ window.addEventListener("load", startAutoRefresh);
 							csv_has_header(table, "historian_mode") ||
 							csv_has_header(table, "historian_interval_sec") ||
 							csv_has_header(table, "historian_interval_ms");
-
 						const std::string tagDir = joinPath(configDir, "tags");
 						std::error_code ec;
 						fs::create_directories(tagDir, ec);
@@ -25155,24 +25156,15 @@ window.addEventListener("load", startAutoRefresh);
 						int updated = 0;
 						int deleted = 0;
 						int skipped = 0;
-						int skippedWrongConn = 0;
 						int skippedMissing = 0;
 
 						for (const auto &row : table.records) {
-							const std::string rowCidRaw = trim_copy(csv_get(row, "connection_id"));
-							const std::string rowCid = rowCidRaw.empty() ? cid : rowCidRaw;
 							const std::string name = trim_copy(csv_get(row, "name"));
-							if (rowCid.empty() || name.empty()) {
+							if (name.empty()) {
 								++skipped;
 								++skippedMissing;
 								continue;
 							}
-							if (rowCid != cid) {
-								++skipped;
-								++skippedWrongConn;
-								continue;
-							}
-
 							size_t idx = tags.size();
 							for (size_t i = 0; i < tags.size(); ++i) {
 								if (tags[i].is_object() && tags[i].value("name", std::string{}) == name) {
@@ -25416,7 +25408,6 @@ window.addEventListener("load", startAutoRefresh);
 						resp["updated"] = updated;
 						resp["deleted"] = deleted;
 						resp["skipped"] = skipped;
-						resp["skipped_wrong_connection_id"] = skippedWrongConn;
 						resp["skipped_missing_required_fields"] = skippedMissing;
 						resp["total_tags"] = tags.size();
 						resp["reload_required"] = true;

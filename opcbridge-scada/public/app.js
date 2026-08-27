@@ -11309,6 +11309,7 @@ function renderOverviewHealth(health, metrics = null) {
     const lines = [];
     const metricConns = metrics?.connections && typeof metrics.connections === 'object' ? metrics.connections : {};
     Object.entries(conns).forEach(([cid, info]) => {
+      const connectionName = displayConnectionName(cid);
       const st = String(info?.status || 'unknown');
       const metricInfo = metricConns[cid] && typeof metricConns[cid] === 'object' ? metricConns[cid] : {};
       const reason = info?.reason ? (` - ${info.reason}`) : '';
@@ -11360,7 +11361,7 @@ function renderOverviewHealth(health, metrics = null) {
         const isExpanded = state.overviewHealthExpanded.has(cid);
         blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>Address</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK Count</th><th>Err Count</th><th>Last Status</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
       }
-      lines.push(`<div class="${cls}">${cid}: ${st.toUpperCase()}${reason}${ratio}${details}${blockHtml}</div>`);
+      lines.push(`<div class="${cls}">${escapeHtml(connectionName)}: ${st.toUpperCase()}${reason}${ratio}${details}${blockHtml}</div>`);
     });
 
     els.overviewHealthConnections.innerHTML = lines.join('');
@@ -11628,6 +11629,7 @@ function renderRuntimeRebuildStatus(status) {
   const done = Boolean(st.done);
   const ok = Boolean(st.ok);
   const target = String(st.target_connection_id || '').trim();
+  const targetName = target ? displayConnectionName(target) : '';
   const gen = Number.isFinite(Number(st.gen)) ? Number(st.gen) : 0;
   const sync = st.opcua_sync && typeof st.opcua_sync === 'object' ? st.opcua_sync : {};
   const syncAttempted = Boolean(sync.attempted);
@@ -11636,10 +11638,10 @@ function renderRuntimeRebuildStatus(status) {
   let label = required ? 'Full rebuild required.' : 'Full runtime is current.';
   let cls = required ? 'status-degraded' : 'status-ok';
   if (requested && !inProgress) {
-    label = target ? `Connection reload queued: ${target}` : 'Full runtime rebuild queued.';
+    label = target ? `Connection reload queued: ${targetName}` : 'Full runtime rebuild queued.';
     cls = 'status-degraded';
   } else if (inProgress) {
-    label = target ? `Connection reload running: ${target}` : 'Full runtime rebuild running.';
+    label = target ? `Connection reload running: ${targetName}` : 'Full runtime rebuild running.';
     cls = 'status-degraded';
   } else if (done && !ok) {
     label = 'Last rebuild/reload failed.';
@@ -11664,7 +11666,7 @@ function renderRuntimeRebuildStatus(status) {
   if (els.overviewRebuildDetails) {
     const rows = [];
     rows.push(`Generation: ${gen || '-'}`);
-    rows.push(`Scope: ${target ? `connection ${target}` : 'full runtime'}`);
+    rows.push(`Scope: ${target ? `connection ${targetName}` : 'full runtime'}`);
     rows.push(`Requested: ${requested ? 'yes' : 'no'} | Running: ${inProgress ? 'yes' : 'no'} | Done: ${done ? 'yes' : 'no'} | OK: ${done ? (ok ? 'yes' : 'no') : '-'}`);
     if (syncAttempted) {
       const bits = [];
@@ -11846,8 +11848,7 @@ async function downloadConnectivityCsv() {
   }));
 
   const headers = [
-    'connection_id',
-    'description',
+    'connection_name',
     'driver',
     'driver_label',
     'gateway',
@@ -11859,12 +11860,10 @@ async function downloadConnectivityCsv() {
     'polling_pacing',
     'poll_batch_size',
     'poll_time_budget_ms',
-    'source_file',
     'action'
   ];
 
-  const rows = objs.filter(Boolean).map(({ rel, obj }) => {
-    const cid = String(obj?.connection_id || obj?.id || '') || inferConnectionIdFromPath(rel);
+  const rows = objs.filter(Boolean).map(({ obj }) => {
     const driver = String(obj?.driver || '').trim();
     const plcType = String(obj?.plc_type || obj?.plcType || '').trim();
     const pollingMode = normalizePollingMode(obj?.polling_mode);
@@ -11872,8 +11871,7 @@ async function downloadConnectivityCsv() {
     const pollBatchSize = Number(obj?.poll_batch_size);
     const pollTimeBudgetMs = Number(obj?.poll_time_budget_ms);
     return {
-      connection_id: cid,
-      description: String(obj?.description || '').trim(),
+      connection_name: String(obj?.description || '').trim(),
       driver,
       driver_label: labelForDriver(driver),
       gateway: String(obj?.gateway || '').trim(),
@@ -11885,7 +11883,6 @@ async function downloadConnectivityCsv() {
       polling_pacing: pollingPacing,
       poll_batch_size: Number.isFinite(pollBatchSize) && pollBatchSize > 0 ? String(Math.trunc(pollBatchSize)) : '',
       poll_time_budget_ms: Number.isFinite(pollTimeBudgetMs) && pollTimeBudgetMs > 0 ? String(Math.trunc(pollTimeBudgetMs)) : '',
-      source_file: rel,
       action: ''
     };
   });
@@ -11937,7 +11934,6 @@ function downloadDeviceTagsCsv(connectionId) {
     .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
 
 	  const headers = [
-	    'connection_id',
 	    'name',
 	    'source',
 	    'plc_tag_name',
@@ -11983,7 +11979,6 @@ function downloadDeviceTagsCsv(connectionId) {
 	    return {
 	      // Derived tags: source_tag is set (bit optional) and no plc_tag_name
 	      // Direct tags: plc_tag_name and no source_tag/bit
-	      connection_id: cid,
 	      name: String(t?.name || '').trim(),
 	      source: String(t?.source || t?.source_type || '').trim(),
 	      plc_tag_name: (sourceTag !== '') ? '' : String(t?.plc_tag_name || '').trim(),
@@ -12017,7 +12012,7 @@ function downloadDeviceTagsCsv(connectionId) {
 	    };
 	  });
 
-  const safe = cid.replace(/[^a-z0-9._-]+/gi, '_');
+  const safe = displayConnectionName(cid).replace(/[^a-z0-9._-]+/gi, '_');
   downloadTextFile({
     filename: `opcbridge-tags-${safe}.csv`,
     mime: 'text/csv',
@@ -12407,14 +12402,6 @@ function csvGet(rowObj, key) {
   return '';
 }
 
-function normalizeConnRelPath(connectionId, sourceFile) {
-  const cid = String(connectionId || '').trim();
-  if (!cid) return '';
-  const sf = String(sourceFile || '').trim();
-  if (sf && sf.startsWith('connections/') && sf.toLowerCase().endsWith('.json')) return sf;
-  return `connections/${cid}.json`;
-}
-
 async function pickCsvText() {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
@@ -12457,12 +12444,28 @@ async function importDevicesCsvIntoWorkspace() {
   let staged = 0;
   let deleted = 0;
   let skipped = 0;
+  let ambiguous = 0;
   records.forEach((r) => {
-    const connection_id = String(csvGet(r, 'connection_id') || '').trim();
-    if (!connection_id) { skipped += 1; return; }
-    const relPath = normalizeConnRelPath(connection_id, csvGet(r, 'source_file'));
+    // Current exports use connection_name. "description" keeps older exports portable.
+    const connectionName = String(csvGet(r, 'connection_name') || csvGet(r, 'description') || '').trim();
+    if (!connectionName) { skipped += 1; return; }
+
+    const matches = (state.connFiles || []).filter((file) => {
+      const path = String(file?.path || '').trim();
+      const obj = state.connObjCache?.get?.(path);
+      return String(obj?.description || '').trim().toLowerCase() === connectionName.toLowerCase();
+    });
+    if (matches.length > 1) { skipped += 1; ambiguous += 1; return; }
+
+    const existingPath = String(matches[0]?.path || '').trim();
+    const existingObj = existingPath ? state.connObjCache?.get?.(existingPath) : null;
+    const connection_id = existingPath
+      ? connectionIdForConnFilePath(existingPath)
+      : generateWorkspaceConnectionId();
+    const relPath = existingPath || `connections/${connection_id}.json`;
 
     if (isDeleteAction(csvGet(r, 'action'))) {
+      if (!existingPath) { skipped += 1; return; }
       state.workspaceDeletePaths?.add?.(relPath);
       state.workspaceConnDirty?.delete?.(relPath);
       state.connObjCache?.delete?.(relPath);
@@ -12482,14 +12485,13 @@ async function importDevicesCsvIntoWorkspace() {
     const gateway = String(csvGet(r, 'gateway') || '').trim();
     const pathVal = String(csvGet(r, 'path') || '').trim() || '1,0';
     const slot = parseIntLoose(csvGet(r, 'slot'), 0) || 0;
-    const description = String(csvGet(r, 'description') || '').trim();
     const pollingMode = normalizePollingMode(csvGet(r, 'polling_mode'));
     const pollingPacing = normalizePollingPacing(csvGet(r, 'polling_pacing'));
     const pollBatchSize = parseIntLoose(csvGet(r, 'poll_batch_size'), 0) || 0;
     const pollTimeBudgetMs = parseIntLoose(csvGet(r, 'poll_time_budget_ms'), 0) || 0;
 
     const obj = applyPollingConfigToConnection(
-      { id: connection_id, description, driver, gateway, path: pathVal, slot, plc_type },
+      { ...(existingObj || {}), id: connection_id, description: connectionName, driver, gateway, path: pathVal, slot, plc_type },
       { mode: pollingMode, pacing: pollingPacing, batchSize: pollBatchSize, timeBudgetMs: pollTimeBudgetMs }
     );
 
@@ -12508,7 +12510,7 @@ async function importDevicesCsvIntoWorkspace() {
   renderWorkspaceSaveBar();
   saveWorkspaceDraft();
   renderWorkspaceTree();
-  setWorkspaceSaveStatus(`Imported devices CSV: staged ${staged} device(s)${deleted ? `, deleted ${deleted}` : ''}${skipped ? `, skipped ${skipped}` : ''}.`);
+  setWorkspaceSaveStatus(`Imported devices CSV: staged ${staged} device(s)${deleted ? `, deleted ${deleted}` : ''}${skipped ? `, skipped ${skipped}${ambiguous ? ` (${ambiguous} ambiguous connection name${ambiguous === 1 ? '' : 's'})` : ''}` : ''}.`);
 }
 
 async function importTagsCsvIntoWorkspace(connectionId) {
@@ -12523,10 +12525,14 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   const csvText = await pickCsvText();
   if (!csvText) return;
 
-  setWorkspaceSaveStatus(`Importing tags CSV for ${cid} on server...`);
+  const connectionName = displayConnectionName(cid);
+  setWorkspaceSaveStatus(`Importing tags CSV for ${connectionName} on server...`);
   renderWorkspaceSaveBar();
 
-  const result = await apiPostJson('/api/opcbridge/config/tags/import_csv', { connection_id: cid, csv: csvText });
+  const result = await apiPostJson('/api/opcbridge/config/tags/import_csv', {
+    connection_id: cid,
+    csv: csvText
+  });
   invalidateLoggerTagPickerCache();
   setWorkspaceSaveStatus('Imported CSV. Rebuilding full runtime…');
   renderWorkspaceSaveBar();
@@ -12543,13 +12549,11 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   await refreshVisible().catch(() => {});
 
   const skipped = Number(result?.skipped || 0);
-  const wrong = Number(result?.skipped_wrong_connection_id || 0);
   const missing = Number(result?.skipped_missing_required_fields || 0);
   const skipParts = [];
-  if (wrong) skipParts.push(`${wrong} wrong connection_id`);
   if (missing) skipParts.push(`${missing} missing required fields`);
   const skipText = skipped ? `, skipped ${skipped}${skipParts.length ? ` (${skipParts.join(', ')})` : ''}` : '';
-  setWorkspaceSaveStatus(`Imported tags CSV for ${cid}: upserted ${Number(result?.upserted || 0)}, deleted ${Number(result?.deleted || 0)}${skipText}. Rebuilt full runtime.${historianSyncText}`);
+  setWorkspaceSaveStatus(`Imported tags CSV for ${connectionName}: upserted ${Number(result?.upserted || 0)}, deleted ${Number(result?.deleted || 0)}${skipText}. Rebuilt full runtime.${historianSyncText}`);
 }
 
 async function importAlarmsCsv() {
@@ -17353,6 +17357,7 @@ async function loadConnectionsList() {
     })).then(() => {
       renderConnList();
       renderWorkspaceTree();
+      if (state.healthLast) renderOverviewHealth(state.healthLast, state.metricsLast);
     }).catch(() => {});
   } catch (err) {
     setConnStatus(`Failed: ${err.message}`);
