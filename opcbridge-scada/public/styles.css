@@ -403,6 +403,10 @@ body.app-viewport #tab-users.is-active {
   min-height: 0;
   overflow: auto;
 }
+body.app-viewport #usersManageWrap {
+  flex-direction: column;
+  overflow: visible;
+}
 
 body.app-viewport:not(.reports-builder-active) #tab-reports.is-active { display: flex; flex-direction: column; }
 body.app-viewport:not(.reports-builder-active) #reportsDownloadCard { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
