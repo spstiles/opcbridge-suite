@@ -27050,6 +27050,10 @@ function isOpcbridgeAdmin() {
   return hasPerm('auth.manage_users');
 }
 
+function canManageLocalUserDirectory() {
+  return isOpcbridgeAdmin() && state.usersIdentity?.mode !== 'central';
+}
+
 function setUsersStatus(msg) {
   if (els.usersStatusLine) els.usersStatusLine.textContent = String(msg || '');
 }
@@ -27217,7 +27221,7 @@ function renderUsersTreeNode(node, container) {
     renderUsersTree();
     renderUsersDetails(node);
 
-    if (!isOpcbridgeAdmin()) return;
+    if (!canManageLocalUserDirectory()) return;
 
     const items = [];
     if (node.type === 'roles_root') {
@@ -27273,7 +27277,7 @@ function renderUsersDetails(node) {
         String(r?.description || ''),
         Array.isArray(r?.permissions) ? r.permissions.join(', ') : ''
       ],
-      onDblClick: () => openRoleForm({ mode: 'edit', roleId: String(r?.id || '') })
+      onDblClick: canManageLocalUserDirectory() ? () => openRoleForm({ mode: 'edit', roleId: String(r?.id || '') }) : null
     }));
     usersSetDetailsTable(['Group', 'Label', 'Description', 'Permissions'], rows);
     return;
@@ -27287,19 +27291,33 @@ function renderUsersDetails(node) {
         String(u?.description || ''),
         (Array.isArray(u?.groups) ? u.groups : []).join(', ')
       ],
-      onDblClick: () => openUserForm({ mode: 'edit', username: String(u?.username || '') })
+      onDblClick: canManageLocalUserDirectory() ? () => openUserForm({ mode: 'edit', username: String(u?.username || '') }) : null
     }));
     usersSetDetailsTable(['Username', 'Name', 'Description', 'Groups'], rows);
     return;
   }
 
   if (node.type === 'role') {
-    openRoleForm({ mode: 'edit', roleId: String(node?.meta?.id || '') });
+    if (canManageLocalUserDirectory()) {
+      openRoleForm({ mode: 'edit', roleId: String(node?.meta?.id || '') });
+    } else {
+      const role = node.meta || {};
+      usersSetDetailsTable(['Group', 'Label', 'Description', 'Permissions'], [{
+        cells: [String(role.id || ''), String(role.label || ''), String(role.description || ''), Array.isArray(role.permissions) ? role.permissions.join(', ') : '']
+      }]);
+    }
     return;
   }
 
   if (node.type === 'user') {
-    openUserForm({ mode: 'edit', username: String(node?.meta?.username || '') });
+    if (canManageLocalUserDirectory()) {
+      openUserForm({ mode: 'edit', username: String(node?.meta?.username || '') });
+    } else {
+      const user = node.meta || {};
+      usersSetDetailsTable(['Username', 'Name', 'Description', 'Groups'], [{
+        cells: [String(user.username || ''), String(user.name || user.username || ''), String(user.description || ''), Array.isArray(user.groups) ? user.groups.join(', ') : '']
+      }]);
+    }
   }
 }
 

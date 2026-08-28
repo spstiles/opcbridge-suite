@@ -1419,7 +1419,7 @@ const applyRectColorDraftToObject = () => {
   return true;
 };
 
-const normalizeVisibilityState = (value) => {
+const normalizeVisibilityRule = (value) => {
   const next = cloneVisibilityState(value);
   next.sourceType = next.sourceType === "expression" ? "expression" : "tag";
   if (next.sourceType === "expression") {
@@ -1449,20 +1449,57 @@ const normalizeVisibilityState = (value) => {
   }
   if (next.enabled == null) next.enabled = true;
   if (!next.invert) delete next.invert;
+  next.flashEnabled = Boolean(next.flashEnabled);
+  next.flashRate = next.flashRate === "fast" ? "fast" : "slow";
+  next.flashWhen = next.flashWhen !== false;
   return next;
 };
 
+const normalizeVisibilityState = (value) => {
+  const source = cloneVisibilityState(value);
+  if (!Array.isArray(source.rules)) return normalizeVisibilityRule(source);
+  const rules = source.rules.map(normalizeVisibilityRule);
+  return {
+    enabled: source.enabled !== false,
+    defaultVisible: source.defaultVisible === true,
+    rules: rules.length ? rules : [normalizeVisibilityRule({ enabled: true })],
+    selectedRuleIndex: Math.max(0, Math.min(Number.isInteger(Number(source.selectedRuleIndex)) ? Number(source.selectedRuleIndex) : 0, Math.max(0, rules.length - 1)))
+  };
+};
+
+const getVisibilityRuleState = (value) => {
+  const state = normalizeVisibilityState(value);
+  if (!Array.isArray(state.rules)) return { collection: null, rule: state, index: 0 };
+  const index = Math.max(0, Math.min(Number(state.selectedRuleIndex) || 0, state.rules.length - 1));
+  return { collection: state, rule: state.rules[index], index };
+};
+
 const syncVisibilityUiFromState = (state) => {
-  const vis = state || {};
+  const normalized = normalizeVisibilityState(state || {});
+  const { collection, rule: vis, index } = getVisibilityRuleState(normalized);
   const sourceType = vis.sourceType === "expression" ? "expression" : "tag";
-  const hasFields = Object.keys(vis).some((k) => k !== "enabled");
-  const isEnabled = (vis.enabled === undefined) ? hasFields : Boolean(vis.enabled);
+  const hasFields = collection ? collection.rules.length > 0 : Object.keys(vis).some((k) => k !== "enabled");
+  const isEnabled = collection ? collection.enabled !== false : ((vis.enabled === undefined) ? hasFields : Boolean(vis.enabled));
   if (visibilityEnabledInput) visibilityEnabledInput.checked = isEnabled;
   if (visibilityFields) {
     visibilityFields.classList.toggle("is-hidden", !isEnabled);
     visibilityFields.hidden = !isEnabled;
   }
   if (visibilitySourceTypeSelect) setSelectValueSafe(visibilitySourceTypeSelect, sourceType);
+  if (visibilityRuleSelect) {
+    visibilityRuleSelect.textContent = "";
+    const rules = collection?.rules || [vis];
+    rules.forEach((rule, ruleIndex) => {
+      const option = document.createElement("option");
+      option.value = String(ruleIndex);
+      option.textContent = `Condition ${ruleIndex + 1}${rule.sourceReference ? " · unresolved" : ""}`;
+      visibilityRuleSelect.appendChild(option);
+    });
+    visibilityRuleSelect.value = String(index);
+  }
+  if (visibilityRuleDeleteBtn) visibilityRuleDeleteBtn.disabled = (collection?.rules?.length || 1) <= 1;
+  if (visibilityRuleUpBtn) visibilityRuleUpBtn.disabled = !collection || index <= 0;
+  if (visibilityRuleDownBtn) visibilityRuleDownBtn.disabled = !collection || index >= collection.rules.length - 1;
   setInputValueSafe(visibilityConnectionInput, vis.connection_id || "");
   setInputValueSafe(visibilityTagInput, vis.tag || "");
   const unresolvedSource = vis.status === "unresolved" || Boolean(vis.sourceReference && !vis.connection_id);
@@ -1478,6 +1515,15 @@ const syncVisibilityUiFromState = (state) => {
   if (visibilityThresholdInput) setInputValueSafe(visibilityThresholdInput, thresholdValue ?? "");
   if (visibilityMatchInput) setInputValueSafe(visibilityMatchInput, vis.match ?? "");
   if (visibilityInvertInput) visibilityInvertInput.checked = Boolean(vis.invert);
+  if (visibilityFlashEnabledInput) visibilityFlashEnabledInput.checked = Boolean(vis.flashEnabled);
+  if (visibilityFlashRateSelect) {
+    visibilityFlashRateSelect.value = vis.flashRate === "fast" ? "fast" : "slow";
+    visibilityFlashRateSelect.disabled = !vis.flashEnabled;
+  }
+  if (visibilityFlashWhenInput) {
+    visibilityFlashWhenInput.checked = vis.flashWhen !== false;
+    visibilityFlashWhenInput.disabled = !vis.flashEnabled;
+  }
   if (visibilityExpressionSummary) {
     const expression = String(vis.expression || "").trim();
     const summary = expression ? (expression.length > 72 ? `${expression.slice(0, 72)}…` : expression) : "(empty)";
@@ -2477,6 +2523,8 @@ const syncObjectDynamicColorTabs = (obj) => {
   [...objectDynamicTabs.querySelectorAll("[data-color-tab-index]")].forEach((button) => {
     const tabKey = String(button.dataset.objectDynamicTab || "color");
     button.classList.toggle("is-active", currentObjectDynamicTab === tabKey);
+    button.draggable = count > 1;
+    button.title = count > 1 ? "Drag to change automation priority" : "";
   });
 };
 
@@ -4308,6 +4356,11 @@ const barBorderWidthInput = document.getElementById("barBorderWidth");
 const visibilityProps = document.getElementById("visibilityProps");
 const visibilityFields = document.getElementById("visibilityFields");
 const visibilityEnabledInput = document.getElementById("visibilityEnabled");
+const visibilityRuleSelect = document.getElementById("visibilityRuleSelect");
+const visibilityRuleAddBtn = document.getElementById("visibilityRuleAddBtn");
+const visibilityRuleDeleteBtn = document.getElementById("visibilityRuleDeleteBtn");
+const visibilityRuleUpBtn = document.getElementById("visibilityRuleUpBtn");
+const visibilityRuleDownBtn = document.getElementById("visibilityRuleDownBtn");
 const visibilityConnectionInput = document.getElementById("visibilityConnection");
 const visibilityTagInput = document.getElementById("visibilityTag");
 const visibilityTagPickBtn = document.getElementById("visibilityTagPickBtn");
@@ -4317,6 +4370,9 @@ const visibilityThresholdInput = document.getElementById("visibilityThreshold");
 const visibilityMatchRow = document.getElementById("visibilityMatchRow");
 const visibilityMatchInput = document.getElementById("visibilityMatch");
 const visibilityInvertInput = document.getElementById("visibilityInvert");
+const visibilityFlashEnabledInput = document.getElementById("visibilityFlashEnabled");
+const visibilityFlashRateSelect = document.getElementById("visibilityFlashRate");
+const visibilityFlashWhenInput = document.getElementById("visibilityFlashWhen");
 const visibilitySourceTypeSelect = document.getElementById("visibilitySourceType");
 const visibilityExpressionRow = document.getElementById("visibilityExpressionRow");
 const visibilityExpressionSummary = document.getElementById("visibilityExpressionSummary");
@@ -8371,15 +8427,21 @@ const appendBarTicks = (parent, x, y, w, h, orientation, tickConfig, colorFallba
   }
 };
 
-const shouldRenderObject = (obj) => {
-  if (!obj) return false;
-  if (isEditMode) return true;
-  const vis = obj.visibility;
-  if (!vis || vis.enabled === false) return true;
+const applyVisibilityFlash = (visibility, result, fallback) => {
+  if (!visibility?.flashEnabled) return Boolean(result);
+  const blinkTag = visibility.flashRate === "fast" ? "System/Clock/FastBlink" : "System/Clock/SlowBlink";
+  const rawBlink = tagValueCache.get(normalizeTagCacheKey("_system", blinkTag));
+  if (rawBlink === undefined || rawBlink === null) return Boolean(result);
+  return coerceTagBoolean(rawBlink) ? Boolean(result) : Boolean(fallback);
+};
+
+const evaluateVisibilityRule = (vis) => {
+  if (!vis || vis.enabled === false) return null;
   if (vis.sourceType === "expression") {
     const result = evaluateVisibilityExpression(vis.expression);
     if (result === null || result === undefined) {
-      return runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false;
+      const cached = runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false;
+      return cached;
     }
     const isOn = coerceTagBoolean(result);
     const next = vis.invert ? !isOn : isOn;
@@ -8388,11 +8450,12 @@ const shouldRenderObject = (obj) => {
   }
   const connectionId = String(vis.connection_id || "");
   const tag = String(vis.tag || "");
-  if (!connectionId || !tag) return true;
+  if (!connectionId || !tag) return null;
   const key = normalizeTagCacheKey(connectionId, tag);
   const value = key ? tagValueCache.get(key) : undefined;
   if (value === undefined || value === null) {
-    return runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false;
+    const cached = runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false;
+    return cached;
   }
   const thresholdRaw = (vis.threshold !== undefined && vis.threshold !== null && vis.threshold !== "")
     ? vis.threshold
@@ -8409,12 +8472,32 @@ const shouldRenderObject = (obj) => {
     };
     const state = getAutomationState(value, config);
     if (state !== null) runtimeAutomationStateCache.set(vis, state);
-    return state !== null ? state : (runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false);
+    const resolved = state !== null ? state : (runtimeAutomationStateCache.has(vis) ? runtimeAutomationStateCache.get(vis) : false);
+    return resolved;
   }
   const isOn = coerceTagBoolean(value);
   const next = vis.invert ? !isOn : isOn;
   runtimeAutomationStateCache.set(vis, next);
   return next;
+};
+
+const shouldRenderObject = (obj) => {
+  if (!obj) return false;
+  if (isEditMode) return true;
+  const visibility = obj.visibility;
+  if (!visibility || visibility.enabled === false) return true;
+  if (!Array.isArray(visibility.rules)) {
+    const result = evaluateVisibilityRule(visibility);
+    return result === null ? true : applyVisibilityFlash(visibility, result, !result);
+  }
+  const fallback = visibility.defaultVisible === true;
+  for (const rule of visibility.rules) {
+    const matched = evaluateVisibilityRule(rule);
+    if (matched !== true) continue;
+    const result = rule.visible !== false;
+    return applyVisibilityFlash(rule, result, fallback);
+  }
+  return fallback;
 };
 
 const getAutomationState = (value, config) => {
@@ -8484,7 +8567,7 @@ const getAutomationColor = (config, baseColor) => {
       const result = evaluateAutomationExpression(rule.expression);
       if (result === null || result === undefined) continue;
       const isOn = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
-      if (isOn && isColorRuleFlashActive(rule)) return rule.onColor || baseColor;
+      if (isOn) return isColorRuleFlashActive(rule) ? (rule.onColor || baseColor) : baseColor;
       continue;
     }
     const connectionId = String(rule.connection_id || "");
@@ -8492,7 +8575,7 @@ const getAutomationColor = (config, baseColor) => {
     if (!connectionId || !tag) continue;
     const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
     const state = getStableAutomationState(rawValue, rule, null);
-    if (state && isColorRuleFlashActive(rule)) return rule.onColor || baseColor;
+    if (state) return isColorRuleFlashActive(rule) ? (rule.onColor || baseColor) : baseColor;
   }
   return baseColor;
 };
@@ -8508,7 +8591,7 @@ const getActiveAutomationOverrideColor = (config) => {
       const result = evaluateAutomationExpression(rule.expression);
       if (result === null || result === undefined) continue;
       const isOn = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
-      if (isOn && isColorRuleFlashActive(rule)) return onColor;
+      if (isOn) return isColorRuleFlashActive(rule) ? onColor : null;
       continue;
     }
     const connectionId = String(rule.connection_id || "");
@@ -8516,7 +8599,7 @@ const getActiveAutomationOverrideColor = (config) => {
     if (!connectionId || !tag) continue;
     const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
     const state = getStableAutomationState(rawValue, rule, null);
-    if (state && isColorRuleFlashActive(rule)) return onColor;
+    if (state) return isColorRuleFlashActive(rule) ? onColor : null;
   }
   return null;
 };
@@ -8592,6 +8675,25 @@ const applyGroupColorOverridesToObject = (sourceObj, overrides) => {
 
 const getAutomationText = (config, baseText, bindings = {}, previewOnly = false) => {
   if (!config || !config.enabled || isEditMode) return renderBoundTemplate(baseText, bindings, previewOnly);
+  if (Array.isArray(config.rules)) {
+    for (const rule of config.rules) {
+      if (!rule || rule.enabled === false) continue;
+      let state = null;
+      if (rule.sourceType === "expression") {
+        const result = evaluateAutomationExpression(rule.expression);
+        if (result !== null && result !== undefined) state = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
+      } else {
+        const connectionId = String(rule.connection_id || "");
+        const tag = String(rule.tag || "");
+        if (connectionId && tag) {
+          const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
+          state = getStableAutomationState(rawValue, rule, null);
+        }
+      }
+      if (state) return renderBoundTemplate(rule.onText || baseText, bindings, previewOnly);
+    }
+    return renderBoundTemplate(config.defaultText || baseText, bindings, previewOnly);
+  }
   const connectionId = String(config.connection_id || "");
   const tag = String(config.tag || "");
   if (!connectionId || !tag) return renderBoundTemplate(baseText, bindings, previewOnly);
@@ -8600,6 +8702,23 @@ const getAutomationText = (config, baseText, bindings = {}, previewOnly = false)
   if (state === null) return renderBoundTemplate(baseText, bindings, previewOnly);
   const nextText = state ? (config.onText || baseText) : (config.offText || baseText);
   return renderBoundTemplate(nextText, bindings, previewOnly);
+};
+
+const normalizeTextAutomationCollection = (value) => {
+  const source = value && typeof value === "object" ? { ...value } : {};
+  const legacyRule = { ...source };
+  delete legacyRule.rules;
+  delete legacyRule.selectedRuleIndex;
+  delete legacyRule.defaultText;
+  const rules = Array.isArray(source.rules) && source.rules.length
+    ? source.rules.map((rule) => ({ enabled: true, ...(rule || {}) }))
+    : [{ enabled: source.enabled !== false, ...legacyRule }];
+  return {
+    enabled: source.enabled !== false,
+    defaultText: String(source.defaultText ?? source.offText ?? ""),
+    rules,
+    selectedRuleIndex: Math.max(0, Math.min(Number(source.selectedRuleIndex) || 0, rules.length - 1))
+  };
 };
 
 const ROTATION_PIVOT_TYPES = new Set(["text", "button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "group", "line"]);
@@ -15602,7 +15721,25 @@ const applyVisibilityDraftToObject = () => {
 	  if (!obj) return;
     if (isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingButtonVisibilityDynamic() || isEditingGroupVisibilityDynamic() || isEditingCircleVisibilityDynamic() || isEditingPolygonVisibilityDynamic()) {
       ensureRectVisibilityDraft(obj);
-      const current = rectVisibilityDraft || { enabled: true };
+      const normalizedCurrent = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
+      if (Array.isArray(normalizedCurrent.rules)) {
+        const selectedRuleIndex = Math.max(0, Math.min(Number(normalizedCurrent.selectedRuleIndex) || 0, normalizedCurrent.rules.length - 1));
+        const rulePatch = { ...patch };
+        delete rulePatch.enabled;
+        const rules = normalizedCurrent.rules.slice();
+        rules[selectedRuleIndex] = normalizeVisibilityRule({ ...rules[selectedRuleIndex], ...rulePatch });
+        rectVisibilityDraft = {
+          ...normalizedCurrent,
+          enabled: patch.enabled === false ? false : true,
+          rules,
+          selectedRuleIndex
+        };
+        syncVisibilityUiFromState(rectVisibilityDraft);
+        renderCompactTagBindingRows();
+        applyVisibilityDraftToObject();
+        return;
+      }
+      const current = normalizedCurrent;
       const next = { ...current, ...patch };
       if ("sourceType" in patch) next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
       if ("expression" in patch) {
@@ -15711,6 +15848,26 @@ const updateAutomationProperty = (key, patch) => {
     return;
   }
   recordHistory();
+  if (key === "textStateAutomation") {
+    const collection = normalizeTextAutomationCollection(obj[key] || { enabled: true });
+    const ruleIndex = collection.selectedRuleIndex;
+    const rule = { ...collection.rules[ruleIndex], ...patch };
+    if ("connection_id" in patch && !patch.connection_id) delete rule.connection_id;
+    if ("tag" in patch && !patch.tag) delete rule.tag;
+    if ("match" in patch && !patch.match) delete rule.match;
+    if ("threshold" in patch && (patch.threshold === "" || patch.threshold == null)) delete rule.threshold;
+    if ("offText" in patch) {
+      collection.defaultText = String(patch.offText || "");
+      delete rule.offText;
+    }
+    collection.rules[ruleIndex] = rule;
+    if ("enabled" in patch) collection.enabled = patch.enabled !== false;
+    obj[key] = collection;
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+    return;
+  }
   const current = obj[key] || { enabled: true };
   const next = { ...current, ...patch };
   if ("threshold" in patch) {
@@ -21619,6 +21776,55 @@ if (visibilityEnabledInput) {
   });
 }
 
+if (visibilityRuleSelect) {
+  visibilityRuleSelect.addEventListener("change", () => {
+    const normalized = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
+    if (!Array.isArray(normalized.rules)) return;
+    normalized.selectedRuleIndex = Math.max(0, Math.min(Number(visibilityRuleSelect.value) || 0, normalized.rules.length - 1));
+    rectVisibilityDraft = normalized;
+    syncVisibilityUiFromState(rectVisibilityDraft);
+  });
+}
+
+if (visibilityRuleAddBtn) {
+  visibilityRuleAddBtn.addEventListener("click", () => {
+    const normalized = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
+    const rules = Array.isArray(normalized.rules) ? normalized.rules.slice() : [normalizeVisibilityRule(normalized)];
+    rules.push(normalizeVisibilityRule({ enabled: true }));
+    rectVisibilityDraft = { enabled: true, defaultVisible: false, rules, selectedRuleIndex: rules.length - 1 };
+    syncVisibilityUiFromState(rectVisibilityDraft);
+    applyVisibilityDraftToObject();
+  });
+}
+
+if (visibilityRuleDeleteBtn) {
+  visibilityRuleDeleteBtn.addEventListener("click", () => {
+    const normalized = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
+    if (!Array.isArray(normalized.rules) || normalized.rules.length <= 1) return;
+    normalized.rules.splice(normalized.selectedRuleIndex, 1);
+    normalized.selectedRuleIndex = Math.max(0, Math.min(normalized.selectedRuleIndex, normalized.rules.length - 1));
+    rectVisibilityDraft = normalized;
+    syncVisibilityUiFromState(rectVisibilityDraft);
+    applyVisibilityDraftToObject();
+  });
+}
+
+const moveSelectedVisibilityRule = (offset) => {
+    const normalized = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
+    if (!Array.isArray(normalized.rules)) return;
+    const from = normalized.selectedRuleIndex;
+    const to = Math.max(0, Math.min(from + offset, normalized.rules.length - 1));
+    if (from === to) return;
+    const [rule] = normalized.rules.splice(from, 1);
+    normalized.rules.splice(to, 0, rule);
+    normalized.selectedRuleIndex = to;
+    rectVisibilityDraft = normalized;
+    syncVisibilityUiFromState(rectVisibilityDraft);
+    applyVisibilityDraftToObject();
+};
+visibilityRuleUpBtn?.addEventListener("click", () => moveSelectedVisibilityRule(-1));
+visibilityRuleDownBtn?.addEventListener("click", () => moveSelectedVisibilityRule(1));
+
 if (visibilitySourceTypeSelect) {
   visibilitySourceTypeSelect.addEventListener("change", () => {
     updateVisibilityProperty({ sourceType: visibilitySourceTypeSelect.value, enabled: true });
@@ -21690,6 +21896,24 @@ if (visibilityMatchInput) {
 if (visibilityInvertInput) {
   visibilityInvertInput.addEventListener("change", () => {
     updateVisibilityProperty({ invert: visibilityInvertInput.checked, enabled: true });
+  });
+}
+
+if (visibilityFlashEnabledInput) {
+  visibilityFlashEnabledInput.addEventListener("change", () => {
+    updateVisibilityProperty({ flashEnabled: visibilityFlashEnabledInput.checked, enabled: true });
+  });
+}
+
+if (visibilityFlashRateSelect) {
+  visibilityFlashRateSelect.addEventListener("change", () => {
+    updateVisibilityProperty({ flashRate: visibilityFlashRateSelect.value === "fast" ? "fast" : "slow", enabled: true });
+  });
+}
+
+if (visibilityFlashWhenInput) {
+  visibilityFlashWhenInput.addEventListener("change", () => {
+    updateVisibilityProperty({ flashWhen: visibilityFlashWhenInput.checked, enabled: true });
   });
 }
 
@@ -23755,7 +23979,7 @@ const initializeTextStateAutomationControl = () => {
   header.className = "prop-group-header";
   const title = document.createElement("div");
   title.className = "prop-group-title";
-  title.textContent = "Text State";
+  title.textContent = "Text";
   const headerInline = document.createElement("div");
   headerInline.className = "prop-inline";
   const enabledLabel = document.createElement("label");
@@ -23816,20 +24040,49 @@ const initializeTextStateAutomationControl = () => {
   offTextInput.type = "text";
   offTextInput.placeholder = "STOPPED";
 
+  const ruleControls = document.createElement("div");
+  ruleControls.className = "prop-inline";
+  const ruleSelect = document.createElement("select");
+  const ruleAddBtn = document.createElement("button");
+  ruleAddBtn.type = "button";
+  ruleAddBtn.className = "panel-btn";
+  ruleAddBtn.textContent = "Add";
+  const ruleDeleteBtn = document.createElement("button");
+  ruleDeleteBtn.type = "button";
+  ruleDeleteBtn.className = "panel-btn";
+  ruleDeleteBtn.textContent = "Delete";
+  const ruleUpBtn = document.createElement("button");
+  ruleUpBtn.type = "button";
+  ruleUpBtn.className = "panel-btn";
+  ruleUpBtn.textContent = "←";
+  ruleUpBtn.title = "Move rule earlier";
+  const ruleDownBtn = document.createElement("button");
+  ruleDownBtn.type = "button";
+  ruleDownBtn.className = "panel-btn";
+  ruleDownBtn.textContent = "→";
+  ruleDownBtn.title = "Move rule later";
+  ruleControls.append(ruleSelect, ruleAddBtn, ruleDeleteBtn, ruleUpBtn, ruleDownBtn);
+
   const thresholdRow = makeRow("Threshold", thresholdInput, "textStateAutoThresholdRow");
   const matchRow = makeRow("Match", matchInput, "textStateAutoMatchRow");
   matchRow.classList.add("is-hidden");
   matchRow.hidden = true;
 
   fields.append(
+    makeRow("Priority Rule", ruleControls),
     makeRow("Connection", sourceConnectionInput),
     makeRow("Tag", sourceTagSelect),
     makeRow("Mode", modeSelect),
     thresholdRow,
     matchRow,
     makeRow("On Text", onTextInput),
-    makeRow("Off Text", offTextInput)
+    makeRow("Default Text", offTextInput)
   );
+
+  const priorityHelp = document.createElement("div");
+  priorityHelp.className = "prop-help";
+  priorityHelp.textContent = "Rules are evaluated from first to last. The first matching rule wins.";
+  fields.insertBefore(priorityHelp, fields.children[1] || null);
 
   sectionEl.append(header, fields);
 
@@ -23846,7 +24099,12 @@ const initializeTextStateAutomationControl = () => {
     matchRow,
     matchInput,
     onTextInput,
-    offTextInput
+    offTextInput,
+    ruleSelect,
+    ruleAddBtn,
+    ruleDeleteBtn,
+    ruleUpBtn,
+    ruleDownBtn
   };
 
   bindAutomationControls({
@@ -23879,6 +24137,41 @@ const initializeTextStateAutomationControl = () => {
     updateAutomationProperty("textStateAutomation", { offText: value, enabled: true });
   });
 
+  const editRuleCollection = (mutate, record = true) => {
+    const objects = getActiveObjects();
+    const obj = selectedIndices.length === 1 ? objects?.[selectedIndices[0]] : null;
+    if (!obj || obj.type !== "text") return;
+    const collection = normalizeTextAutomationCollection(obj.textStateAutomation || { enabled: true });
+    if (record) recordHistory();
+    mutate(collection);
+    obj.textStateAutomation = collection;
+    renderScreen();
+    syncEditorFromScreen();
+    setDirty(true);
+  };
+  ruleSelect.addEventListener("change", () => editRuleCollection((collection) => {
+    collection.selectedRuleIndex = Math.max(0, Math.min(Number(ruleSelect.value) || 0, collection.rules.length - 1));
+  }, false));
+  ruleAddBtn.addEventListener("click", () => editRuleCollection((collection) => {
+    collection.rules.push({ enabled: true, mode: "threshold", threshold: 0, onText: "" });
+    collection.selectedRuleIndex = collection.rules.length - 1;
+  }));
+  ruleDeleteBtn.addEventListener("click", () => editRuleCollection((collection) => {
+    if (collection.rules.length <= 1) return;
+    collection.rules.splice(collection.selectedRuleIndex, 1);
+    collection.selectedRuleIndex = Math.min(collection.selectedRuleIndex, collection.rules.length - 1);
+  }));
+  const moveRule = (offset) => editRuleCollection((collection) => {
+    const from = collection.selectedRuleIndex;
+    const to = Math.max(0, Math.min(from + offset, collection.rules.length - 1));
+    if (from === to) return;
+    const [rule] = collection.rules.splice(from, 1);
+    collection.rules.splice(to, 0, rule);
+    collection.selectedRuleIndex = to;
+  });
+  ruleUpBtn.addEventListener("click", () => moveRule(-1));
+  ruleDownBtn.addEventListener("click", () => moveRule(1));
+
   registerCompactTagBinding({
     id: "textStateAutomation",
     container: fields,
@@ -23907,27 +24200,39 @@ const initializeTextStateAutomationControl = () => {
 const syncTextStateAutomationControl = (obj) => {
   const control = initializeTextStateAutomationControl();
   if (!control) return;
-  const automation = obj?.textStateAutomation || {};
+  const automation = normalizeTextAutomationCollection(obj?.textStateAutomation || {});
+  const rule = automation.rules[automation.selectedRuleIndex] || {};
   const enabled = Boolean(automation.enabled);
   control.enabledInput.checked = enabled;
-  control.invertInput.checked = Boolean(automation.invert);
+  control.invertInput.checked = Boolean(rule.invert);
   control.fields.classList.toggle("is-hidden", !enabled);
   control.fields.hidden = !enabled;
-  setInputValueSafe(control.connectionInput, automation.connection_id || "");
+  control.ruleSelect.textContent = "";
+  automation.rules.forEach((item, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = `Text ${index + 1}${item.sourceReference ? " · unresolved" : ""}`;
+    control.ruleSelect.appendChild(option);
+  });
+  control.ruleSelect.value = String(automation.selectedRuleIndex);
+  control.ruleDeleteBtn.disabled = automation.rules.length <= 1;
+  control.ruleUpBtn.disabled = automation.selectedRuleIndex <= 0;
+  control.ruleDownBtn.disabled = automation.selectedRuleIndex >= automation.rules.length - 1;
+  setInputValueSafe(control.connectionInput, rule.connection_id || "");
   populateTagSelect(control.tagSelect);
-  const combined = automation.connection_id && automation.tag ? `${automation.connection_id}::${automation.tag}` : "";
+  const combined = rule.connection_id && rule.tag ? `${rule.connection_id}::${rule.tag}` : "";
   setSelectValueSafe(control.tagSelect, combined);
-  const mode = automation.mode === "equals" ? "equals" : "threshold";
+  const mode = rule.mode === "equals" ? "equals" : "threshold";
   control.modeSelect.value = mode;
   const showMatch = mode === "equals";
   control.thresholdRow.classList.toggle("is-hidden", showMatch);
   control.thresholdRow.hidden = showMatch;
   control.matchRow.classList.toggle("is-hidden", !showMatch);
   control.matchRow.hidden = !showMatch;
-  setInputValueSafe(control.thresholdInput, automation.threshold ?? "");
-  setInputValueSafe(control.matchInput, automation.match ?? "");
-  setInputValueSafe(control.onTextInput, automation.onText || "");
-  setInputValueSafe(control.offTextInput, automation.offText || "");
+  setInputValueSafe(control.thresholdInput, rule.threshold ?? "");
+  setInputValueSafe(control.matchInput, rule.match ?? "");
+  setInputValueSafe(control.onTextInput, rule.onText || "");
+  setInputValueSafe(control.offTextInput, automation.defaultText || "");
 };
 
 const createAutomationSectionTitle = (text) => {
@@ -29697,6 +30002,7 @@ if (objectDynamicTabStatesBtn) {
 }
 
 if (objectDynamicTabs) {
+  let draggedColorRuleIndex = null;
   objectDynamicTabs.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-object-dynamic-tab]") : null;
     if (!(button instanceof HTMLButtonElement)) return;
@@ -29704,6 +30010,43 @@ if (objectDynamicTabs) {
     if (!isColorDynamicTab(tab)) return;
     setObjectDynamicTab(tab);
     updatePropertiesPanel();
+  });
+  objectDynamicTabs.addEventListener("dragstart", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index]") : null;
+    if (!(button instanceof HTMLButtonElement)) return;
+    draggedColorRuleIndex = Number(button.dataset.colorTabIndex || 0);
+    event.dataTransfer?.setData("text/plain", String(draggedColorRuleIndex));
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  });
+  objectDynamicTabs.addEventListener("dragover", (event) => {
+    if (draggedColorRuleIndex === null) return;
+    const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index]") : null;
+    if (!(button instanceof HTMLButtonElement)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  });
+  objectDynamicTabs.addEventListener("drop", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index]") : null;
+    if (!(button instanceof HTMLButtonElement) || draggedColorRuleIndex === null) return;
+    event.preventDefault();
+    const obj = getSelectedColorDynamicObject();
+    if (!obj) return;
+    ensureRectColorDraft(obj);
+    const draft = normalizeRectColorDraft(obj, rectColorDraft);
+    const from = draggedColorRuleIndex;
+    const to = Number(button.dataset.colorTabIndex || 0);
+    draggedColorRuleIndex = null;
+    if (from === to || from < 0 || from >= draft.rules.length || to < 0 || to >= draft.rules.length) return;
+    const [rule] = draft.rules.splice(from, 1);
+    draft.rules.splice(to, 0, rule);
+    draft.selectedRuleIndex = to;
+    rectColorDraft = draft;
+    currentObjectDynamicTab = getColorDynamicTabKey(to);
+    syncRectColorUiFromDraft(obj, rectColorDraft);
+    applyRectColorDraftToObject();
+  });
+  objectDynamicTabs.addEventListener("dragend", () => {
+    draggedColorRuleIndex = null;
   });
 }
 

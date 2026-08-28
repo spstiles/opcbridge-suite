@@ -208,7 +208,13 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
     comparison: String(item.DataComparison || ""),
     periodicToggleRate: num(item.PeriodicToggleRate, 0)
   }));
-  const hides = descendants(node, (name) => name === "gwx:GwxHide").map((item) => ({ kind: "visibility", sourceExpression: String(item.DataSource || ""), comparison: String(item.DataComparison || "") }));
+  const hides = descendants(node, (name) => name === "gwx:GwxHide").map((item) => ({
+    kind: "visibility",
+    sourceExpression: String(item.DataSource || ""),
+    comparison: String(item.DataComparison || ""),
+    periodicToggleRate: num(item.PeriodicToggleRate, 0),
+    dynamicStateWhenToggleOff: String(item.DynamicStateWhenToggleOff || "").toLowerCase() === "true"
+  }));
   const sizes = descendants(node, (name) => name === "gwx:GwxSize").map((item) => ({ kind: "size", sourceExpression: String(item.DataSource || "") }));
   const rotations = descendants(node, (name) => name === "gwx:GwxRotation").map((item) => ({ kind: "rotation", sourceExpression: String(item.DataSource || "") }));
   const processPoints = descendants(node, (name) => name === "gwx:GwxProcessPoint").map((item) => ({
@@ -423,8 +429,19 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       if (fillRules.length) obj.fillAutomation = { rules: fillRules };
       if (strokeRules.length) obj.strokeAutomation = { rules: strokeRules };
     }
-    const hidden = dynamics.hides?.[0];
-    if (hidden) obj.visibility = { ...unresolvedBinding(hidden.sourceExpression), invert: !String(hidden.comparison || "").toLowerCase().includes("equalzero") };
+    const hiddenRules = (dynamics.hides || []).map((hidden) => {
+      const toggleRate = num(hidden.periodicToggleRate, 0);
+      return {
+        ...unresolvedBinding(hidden.sourceExpression),
+        invert: !String(hidden.comparison || "").toLowerCase().includes("equalzero"),
+        visible: false,
+        flashEnabled: toggleRate > 0,
+        flashRate: toggleRate > 0 && toggleRate <= 500 ? "fast" : "slow",
+        flashWhen: true,
+        sourceDynamicStateWhenToggleOff: hidden.dynamicStateWhenToggleOff
+      };
+    });
+    if (hiddenRules.length) obj.visibility = { enabled: true, defaultVisible: true, rules: hiddenRules, selectedRuleIndex: 0 };
     const rotation = dynamics.rotations?.[0];
     if (rotation) obj.rotationAutomation = unresolvedBinding(rotation.sourceExpression);
     const size = dynamics.sizes?.[0];
@@ -585,9 +602,32 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
     const base = { x: num(node["Canvas.Left"]), y: num(node["Canvas.Top"]), w: num(node.Width), h: num(node.Height) };
     if (name === "mwt:ClassicBorderDecorator") {
       const decoration = asArray(node.Rectangle)[0] || {};
+      const labels = asArray(node.Label);
       const thickness = String(node.BorderThickness || "").split(",").map(Number).filter(Number.isFinite);
       const decoratorStrokeWidth = thickness.length ? Math.max(...thickness) : num(decoration.StrokeThickness, 1);
       const innerStrokeWidth = decoration.StrokeThickness == null ? 0 : Math.max(0, num(decoration.StrokeThickness));
+      if (labels.length === 1 && !asArray(node.Rectangle).length) {
+        const label = labels[0];
+        const align = horizontalTextAlignment(label);
+        const valign = verticalTextAlignment(label);
+        const anchorX = align === "center" ? 0.5 : (align === "right" ? 1 : 0);
+        const anchorY = valign === "middle" ? 0.5 : (valign === "bottom" ? 1 : 0);
+        add({
+          type: "text", ...base,
+          x: base.x + base.w * anchorX, y: base.y + base.h * anchorY,
+          autoSize: false, positionMode: "insertion-point",
+          text: textFrom(label), padding: Math.max(0, decoratorStrokeWidth), wrapMode: "word",
+          fontSize: num(label.FontSize, 14),
+          fill: dynamicColorFallback(label, "Foreground", color(label.Foreground, "#000000")),
+          background: nestedPaint(label, "Label.Background", label.Background, "transparent"),
+          bold: String(label.FontWeight).toLowerCase() === "bold", align, valign,
+          borderEnabled: decoratorStrokeWidth > 0, borderColor: color(decoration.Stroke, "#000000"),
+          borderWidth: decoratorStrokeWidth,
+          borderStyle: String(node.BorderStyle || "").toLowerCase().includes("sunken") ? "inset" : "outset",
+          ...sourceMetadata(name, node, { sourceBorderThickness: thickness.length ? thickness : null, importConversion: "collapsed-label-decorator" })
+        });
+        return;
+      }
       add({
         type: "rect",
         ...base,

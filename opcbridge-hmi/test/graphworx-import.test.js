@@ -276,6 +276,44 @@ test("maps GraphWorX AltRaised decorators to OPCBridge outset borders", () => {
   assert.equal(result.screen.objects[0].strokeWidth, 2);
 });
 
+test("collapses a flashing bordered GraphWorX alarm label into one native text object", () => {
+  const sourceTag = "ac:Plant/Alarms/HighLevel/Status";
+  const xml = `<Canvas Width="800" Height="600" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:gwx="clr-namespace:Ico.Gwx" xmlns:mwt="clr-namespace:Microsoft.Windows.Themes">
+    <mwt:ClassicBorderDecorator BorderStyle="AltRaised" BorderThickness="2,2,2,2" Name="ClassicBorder3"
+      Width="394" Height="29" Canvas.Left="200" Canvas.Top="100">
+      <gwx:GwxDynamicGroup.GwxDynamicGroup><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+        <gwx:GwxHide AnimationMode="Discrete" DataSource="${sourceTag}" PeriodicToggleRate="1000"
+          DynamicStateWhenToggleOff="True"/>
+      </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></gwx:GwxDynamicGroup.GwxDynamicGroup>
+      <Label Background="#FFFF0000" Foreground="#FFFFFFFF" FontSize="12" FontWeight="Bold"
+        HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Width="390" Height="25"
+        Canvas.Left="-140" Canvas.Top="14"><TextBlock Text="HIGH LEVEL ALARM"/></Label>
+    </mwt:ClassicBorderDecorator>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Alarm Banner.gdfx" });
+  const banner = result.screen.objects[0];
+  assert.equal(result.screen.objects.length, 1);
+  assert.deepEqual(
+    { type: banner.type, x: banner.x, y: banner.y, w: banner.w, h: banner.h },
+    { type: "text", x: 397, y: 114.5, w: 394, h: 29 }
+  );
+  assert.equal(banner.text, "HIGH LEVEL ALARM");
+  assert.equal(banner.background, "#ff0000");
+  assert.equal(banner.fill, "#ffffff");
+  assert.equal(banner.bold, true);
+  assert.equal(banner.borderEnabled, true);
+  assert.equal(banner.borderWidth, 2);
+  assert.equal(banner.borderStyle, "outset");
+  assert.equal(banner.visibility.defaultVisible, true);
+  assert.equal(banner.visibility.rules[0].tag, sourceTag);
+  assert.equal(banner.visibility.rules[0].visible, false);
+  assert.equal(banner.visibility.rules[0].flashEnabled, true);
+  assert.equal(banner.visibility.rules[0].flashRate, "slow");
+  assert.equal(banner.visibility.rules[0].flashWhen, true);
+  assert.ok(result.screen.referenceHealth.issues.some((issue) => issue.automation === "visibility" && issue.source.value === sourceTag));
+});
+
 test("preserves a decorator child stroke as a separate native inner border", () => {
   const xml = `<Canvas Width="400" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:mwt="clr-namespace:Microsoft.Windows.Themes">
     <mwt:ClassicBorderDecorator BorderStyle="AltRaised" BorderThickness="2,2,2,2" Width="312" Height="30">
@@ -336,11 +374,33 @@ test("creates editable unresolved automation from GraphWorX dynamics", () => {
   const object = convertGraphWorx(xml, { filename: "Dynamics.gdfx" }).screen.objects[0];
   assert.equal(object.fillAutomation.rules[0].tag, "ac:Plant/Pump/Running");
   assert.equal(object.fillAutomation.rules[0].status, "unresolved");
-  assert.equal(object.visibility.sourceType, "expression");
-  assert.equal(object.visibility.expression, "{{ac:Plant/Pump/Fault}} == 1");
+  assert.equal(object.visibility.defaultVisible, true);
+  assert.equal(object.visibility.rules[0].sourceType, "expression");
+  assert.equal(object.visibility.rules[0].expression, "{{ac:Plant/Pump/Fault}} == 1");
+  assert.equal(object.visibility.rules[0].visible, false);
   assert.ok(object.externalReferences.some((ref) => ref.automation === "color"));
   assert.ok(object.externalReferences.some((ref) => ref.automation === "visibility"));
   assert.ok(convertGraphWorx(xml, { filename: "Dynamics.gdfx" }).screen.referenceHealth.issues.some((issue) => issue.automation === "color"));
+});
+
+test("preserves multiple GraphWorX visibility dynamics in source priority order", () => {
+  const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
+    <Rectangle Width="80" Height="40">
+      <gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+        <gwx:GwxHide DataSource="ac:Plant/Pump/CommunicationsAlarm" />
+        <gwx:GwxHide DataSource="ac:Plant/Pump/Running" PeriodicToggleRate="500" />
+      </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup>
+    </Rectangle>
+  </Canvas>`;
+  const visibility = convertGraphWorx(xml, { filename: "Visibility Priority.gdfx" }).screen.objects[0].visibility;
+  assert.equal(visibility.defaultVisible, true);
+  assert.deepEqual(visibility.rules.map((rule) => rule.tag), [
+    "ac:Plant/Pump/CommunicationsAlarm",
+    "ac:Plant/Pump/Running"
+  ]);
+  assert.deepEqual(visibility.rules.map((rule) => rule.visible), [false, false]);
+  assert.equal(visibility.rules[1].flashEnabled, true);
+  assert.equal(visibility.rules[1].flashRate, "fast");
 });
 
 test("keeps an opaque black base color when a GraphWorX color animation is present", () => {
