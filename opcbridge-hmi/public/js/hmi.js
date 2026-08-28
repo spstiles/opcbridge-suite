@@ -6466,7 +6466,118 @@ const viewReferenceHealthMenuBtn = document.getElementById("viewReferenceHealthM
 const referenceHealthBadge = document.getElementById("referenceHealthBadge");
 let referenceHealthOverlay = null;
 
+const referenceAutomationMatches = (expected, actual) => {
+  const normalize = (value) => {
+    const name = String(value || "").trim().toLowerCase();
+    if (name === "pick/write") return "action";
+    if (name === "process point") return "data";
+    return name;
+  };
+  return !expected || normalize(expected) === normalize(actual);
+};
+
+const reconcileReferenceHealthMetadata = () => {
+  if (!currentScreenObj) return;
+  const occurrences = collectScreenReferenceMappings()
+    .flatMap((group) => group.occurrences.map((occurrence) => ({
+      ...occurrence,
+      type: group.type,
+      current: group.current,
+      resolved: group.type === "tag" ? knownMappedTag(group.current) : knownMappedScreen(group.current)
+    })));
+  const byObject = new Map();
+  occurrences.forEach((occurrence) => {
+    const objectId = String(occurrence.objectId || "");
+    if (!byObject.has(objectId)) byObject.set(objectId, []);
+    byObject.get(objectId).push(occurrence);
+    if (occurrence.binding && (occurrence.binding.sourceReference || occurrence.binding.status)) {
+      occurrence.binding.status = occurrence.resolved ? "resolved" : "unresolved";
+    }
+  });
+  const hasLiveSourceReference = (value, source) => {
+    if (!value || typeof value !== "object") return false;
+    if (Array.isArray(value)) return value.some((item) => hasLiveSourceReference(item, source));
+    if (String(value.sourceReference || "") === source) return true;
+    return Object.entries(value).some(([key, child]) =>
+      key !== "externalReferences"
+      && key !== "referenceHealth"
+      && key !== "importInfo"
+      && hasLiveSourceReference(child, source)
+    );
+  };
+
+  const reconcileObject = (obj) => {
+    const objectId = String(obj?.id || obj?.importId || "");
+    const objectOccurrences = byObject.get(objectId) || [];
+    (obj?.externalReferences || []).forEach((ref) => {
+      if (ref?.status === "unsupported" || ref?.supported === false) return;
+      const type = String(ref?.kind || "reference");
+      const source = String(ref?.source?.value || "");
+      const target = String(ref?.target?.value || "");
+      const automation = String(ref?.automation || "");
+      const matching = objectOccurrences.filter((occurrence) =>
+        occurrence.type === type
+        && referenceAutomationMatches(automation, occurrence.automation)
+        && (occurrence.original === source || occurrence.current === target || occurrence.current === source)
+      );
+      const resolved = matching.some((occurrence) => occurrence.resolved);
+      const removed = !matching.length && !hasLiveSourceReference(obj, source);
+      if (resolved) {
+        const occurrence = matching.find((item) => item.resolved);
+        ref.target = type === "tag"
+          ? { ...parseMappedTagReference(occurrence.current), value: occurrence.current }
+          : { value: occurrence.current };
+        ref.status = "resolved";
+      } else if (removed) {
+        ref.status = "resolved";
+        ref.resolution = "removed";
+      } else {
+        ref.status = "unresolved";
+      }
+    });
+    (obj?.children || []).forEach(reconcileObject);
+  };
+  (currentScreenObj.objects || []).forEach(reconcileObject);
+
+  const findReferenceStatus = (issue) => {
+    if (issue?.status === "unsupported" || issue?.category === "unsupported-automation") return "unsupported";
+    const objectId = String(issue?.objectImportId || "");
+    const source = String(issue?.source?.value || "");
+    const type = String(issue?.category || "reference");
+    const automation = String(issue?.automation || "");
+    const objectOccurrences = byObject.get(objectId) || [];
+    const matching = objectOccurrences.filter((occurrence) =>
+      occurrence.type === type
+      && referenceAutomationMatches(automation, occurrence.automation)
+      && (occurrence.original === source || occurrence.current === source)
+    );
+    if (matching.some((occurrence) => occurrence.resolved)) return "resolved";
+
+    let matchingExternal = null;
+    const visit = (objects) => {
+      for (const obj of objects || []) {
+        if (String(obj?.id || obj?.importId || "") === objectId) {
+          matchingExternal = (obj.externalReferences || []).find((ref) =>
+            String(ref?.kind || "reference") === type
+            && referenceAutomationMatches(automation, ref?.automation)
+            && String(ref?.source?.value || "") === source
+          ) || null;
+          return;
+        }
+        visit(obj?.children);
+        if (matchingExternal) return;
+      }
+    };
+    visit(currentScreenObj.objects);
+    return matchingExternal?.status === "resolved" ? "resolved" : "unresolved";
+  };
+  (currentScreenObj.referenceHealth?.issues || []).forEach((issue) => {
+    issue.status = findReferenceStatus(issue);
+  });
+};
+
 const getReferenceHealthIssues = () => {
+  reconcileReferenceHealthMetadata();
   const stored = currentScreenObj?.referenceHealth?.issues;
   const issues = Array.isArray(stored)
     ? stored.filter((issue) => String(issue?.status || "").toLowerCase() !== "resolved")
@@ -6647,6 +6758,8 @@ const referenceAutomationLabel = (pathParts) => {
   const joined = pathParts.join(".").toLowerCase();
   if (joined.includes("color")) return "color";
   if (joined.includes("visibility") || joined.includes("visible")) return "visibility";
+  if (joined.includes("multistate")) return "states";
+  if (joined.includes("textstate") || joined.includes("textbindings")) return "text";
   if (joined.includes("rotation")) return "rotation";
   if (joined.includes("motion") || joined.includes("position")) return "motion";
   if (joined.includes("size")) return "size";
@@ -6679,6 +6792,7 @@ const collectScreenReferenceMappings = () => {
         automation: referenceAutomationLabel(pathParts),
         objectId: String(nextOwner?.id || nextOwner?.importId || ""),
         path: pathText,
+        binding: value,
         status: String(value.status || (connection && tag ? "resolved" : "unresolved")),
         apply(replacement, resolved) {
           const parsed = parseMappedTagReference(replacement);
@@ -6696,14 +6810,14 @@ const collectScreenReferenceMappings = () => {
 
     if (typeof value.screenId === "string" && value.screenId.trim()) {
       const current = value.screenId.trim();
-      occurrences.push({ type: "screen", current, original: String(value.sourceScreen || current), automation: "action", objectId: String(nextOwner?.id || nextOwner?.importId || ""), path: `${pathText}.screenId`, status: String(value.status || "resolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+      occurrences.push({ type: "screen", current, original: String(value.sourceScreen || current), automation: "action", objectId: String(nextOwner?.id || nextOwner?.importId || ""), path: `${pathText}.screenId`, binding: value, status: String(value.status || "resolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
     } else if (typeof value.sourceScreen === "string" && value.sourceScreen.trim()) {
       const current = value.sourceScreen.trim();
-      occurrences.push({ type: "screen", current, original: current, automation: "action", objectId: String(nextOwner?.id || nextOwner?.importId || ""), path: `${pathText}.sourceScreen`, status: String(value.status || "unresolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+      occurrences.push({ type: "screen", current, original: current, automation: "action", objectId: String(nextOwner?.id || nextOwner?.importId || ""), path: `${pathText}.sourceScreen`, binding: value, status: String(value.status || "unresolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
     }
     if (value.type === "viewport" && typeof value.target === "string" && value.target.trim()) {
       const current = value.target.trim();
-      occurrences.push({ type: "screen", current, original: current, automation: "viewport", objectId: String(value.id || value.importId || ""), path: `${pathText}.target`, status: "resolved", apply(replacement, resolved) { value.target = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+      occurrences.push({ type: "screen", current, original: current, automation: "viewport", objectId: String(value.id || value.importId || ""), path: `${pathText}.target`, binding: value, status: "resolved", apply(replacement, resolved) { value.target = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
     }
 
     Object.entries(value).forEach(([key, child]) => {

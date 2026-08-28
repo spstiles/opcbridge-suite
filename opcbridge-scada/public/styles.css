@@ -400,7 +400,8 @@ body.app-viewport #tab-hmi_audit .table-wrap {
 body.app-viewport #tab-users.is-active {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 body.app-viewport #tab-users > .card,
 body.app-viewport #tab-users > .card > .card-body,
