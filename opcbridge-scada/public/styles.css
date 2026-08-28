@@ -412,7 +412,7 @@ body.app-viewport #usersManageWrap {
 body.app-viewport #tab-users > .card { display: flex; flex-direction: column; }
 body.app-viewport #tab-users > .card > .card-body,
 body.app-viewport #usersManageWrap { display: flex; flex-direction: column; overflow: hidden; }
-body.app-viewport #usersManageWrap > .users-workspace { flex: 1 1 auto; height: auto; min-height: 0 !important; }
+body.app-viewport #usersManageWrap > .users-workspace { flex: 1 1 auto; height: auto; min-height: 560px !important; }
 body.app-viewport .users-right,
 body.app-viewport .users-right > .card,
 body.app-viewport .users-right > .card > .card-body,
@@ -437,7 +437,7 @@ body.report-portal.app-viewport #tab-reports { display: flex !important; flex-di
   body.app-viewport #tab-hmi_audit.is-active,
   body.app-viewport #tab-users.is-active { overflow: auto; }
   body.app-viewport #tab-workspace > .workspace,
-  body.app-viewport #usersManageWrap > .users-workspace { min-height: 420px !important; }
+  body.app-viewport #usersManageWrap > .users-workspace { min-height: 560px !important; }
 }
 
 .flow-wires {
