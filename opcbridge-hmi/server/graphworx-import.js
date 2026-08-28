@@ -104,11 +104,22 @@ const nestedPaint = (node, propertyName, directValue, fallback = "none") => {
     || color(solid?.Color, fallback);
 };
 
-const rotationFrom = (node) => {
-  const explicit = descendants(node, (name) => name === "RotateTransform")[0];
-  if (explicit?.Angle != null) return num(explicit.Angle);
+const renderMatrixFrom = (node) => {
   const matrix = String(node?.RenderTransform || "").split(",").map(Number);
-  if (matrix.length === 6 && matrix.every(Number.isFinite)) {
+  return matrix.length === 6 && matrix.every(Number.isFinite) ? matrix : null;
+};
+
+const directRotateTransformFrom = (node) => {
+  const renderTransform = node?.["UIElement.RenderTransform"] || node?.["FrameworkElement.LayoutTransform"];
+  if (!renderTransform || typeof renderTransform !== "object") return null;
+  return asArray(renderTransform.RotateTransform)[0] || null;
+};
+
+const rotationFrom = (node) => {
+  const explicit = directRotateTransformFrom(node);
+  if (explicit?.Angle != null) return num(explicit.Angle);
+  const matrix = renderMatrixFrom(node);
+  if (matrix) {
     const angle = Math.atan2(matrix[1], matrix[0]) * 180 / Math.PI;
     return Math.abs(angle) > 0.001 ? angle : 0;
   }
@@ -116,8 +127,8 @@ const rotationFrom = (node) => {
 };
 
 const transformPoints = (points, node, base) => {
-  const matrix = String(node?.RenderTransform || "").split(",").map(Number);
-  if (matrix.length !== 6 || !matrix.every(Number.isFinite)) {
+  const matrix = renderMatrixFrom(node);
+  if (!matrix) {
     return points.map(([x, y]) => ({ x: x + base.x, y: y + base.y }));
   }
   const [a, b, c, d, e, f] = matrix;
@@ -125,6 +136,20 @@ const transformPoints = (points, node, base) => {
     x: (a * x) + (c * y) + e + base.x,
     y: (b * x) + (d * y) + f + base.y
   }));
+};
+
+const transformedFrame = (node, base) => {
+  const matrix = renderMatrixFrom(node);
+  if (!matrix) return { ...base, rotation: rotationFrom(node) };
+  const [a, b, c, d, e, f] = matrix;
+  const centerX = base.x + (a * base.w / 2) + (c * base.h / 2) + e;
+  const centerY = base.y + (b * base.w / 2) + (d * base.h / 2) + f;
+  const w = base.w * Math.hypot(a, b);
+  const h = base.h * Math.hypot(c, d);
+  return {
+    x: centerX - (w / 2), y: centerY - (h / 2), w, h,
+    rotation: rotationFrom(node)
+  };
 };
 
 const childEntries = (node) => {
@@ -164,7 +189,7 @@ const namedDataSources = (node) => {
     if (!value || typeof value !== "object") return;
     childEntries(value).forEach((entry) => {
       if (typeof entry.node?.DataSource === "string" && entry.node.DataSource.trim()) {
-        found.push({ name: entry.name, value: entry.node.DataSource.trim() });
+        found.push({ name: entry.name, value: entry.node.DataSource.trim(), node: entry.node });
       }
       visit(entry.node);
     });
@@ -186,7 +211,23 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
   const hides = descendants(node, (name) => name === "gwx:GwxHide").map((item) => ({ kind: "visibility", sourceExpression: String(item.DataSource || ""), comparison: String(item.DataComparison || "") }));
   const sizes = descendants(node, (name) => name === "gwx:GwxSize").map((item) => ({ kind: "size", sourceExpression: String(item.DataSource || "") }));
   const rotations = descendants(node, (name) => name === "gwx:GwxRotation").map((item) => ({ kind: "rotation", sourceExpression: String(item.DataSource || "") }));
-  const dynamics = [...colors, ...hides, ...sizes, ...rotations].filter((item) => item.sourceExpression);
+  const processPoints = descendants(node, (name) => name === "gwx:GwxProcessPoint").map((item) => ({
+    kind: "states",
+    sourceExpression: String(item.DataSource || ""),
+    animationMode: String(item.AnimationMode || ""),
+    isAnalog: String(item.AnimationMode || "").toLowerCase() === "analog",
+    maximumIntegerDigits: item.MaximumIntegerDigits == null ? null : num(item.MaximumIntegerDigits),
+    decimalPlaces: item.DecimalPlaces == null ? null : num(item.DecimalPlaces),
+    prefixLabel: String(item.PrefixLabel || ""),
+    postfixLabel: String(item.PostfixLabel || ""),
+    states: descendants(item, (name) => name === "gwx:GwxProcessPointStateItem").map((state) => ({
+      text: String(state.StateText || ""),
+      match: String(state.LowLimitSource ?? ""),
+      comparison: String(state.DataComparison || ""),
+      target: String(state.TargetPropertyName || "")
+    }))
+  })).filter((item) => item.sourceExpression);
+  const dynamics = [...colors, ...hides, ...sizes, ...rotations, ...processPoints].filter((item) => item.sourceExpression);
   const automationTypes = {
     "gwx:GwxColor": { automation: "color", supported: true },
     "gwx:GwxHide": { automation: "visibility", supported: true },
@@ -199,7 +240,17 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
   const namedValues = new Set(named.map((item) => item.value));
   const refs = [
     ...named.map((item) => {
-      const info = automationTypes[item.name] || { automation: item.name.replace(/^.*:/, ""), supported: false };
+      const hasDiscreteStates = item.name === "gwx:GwxProcessPoint"
+        && descendants(item.node, (name) => name === "gwx:GwxProcessPointStateItem").length > 0;
+      const hasTextValue = item.name === "gwx:GwxProcessPoint" && sourceType === "Label" && !hasDiscreteStates
+        && (String(item.node.AnimationMode || "").toLowerCase() === "analog" || /\?+/.test(textFrom(node)));
+      const hasWriteCommand = item.name === "gwx:GwxPick"
+        && descendants(item.node, (name) => name === "gwxcmd:WriteValueCommand").length > 0;
+      const info = hasDiscreteStates
+        ? { automation: "states", supported: true }
+        : (hasTextValue ? { automation: "text", supported: true }
+        : (hasWriteCommand ? { automation: "pick/write", supported: true }
+        : (automationTypes[item.name] || { automation: item.name.replace(/^.*:/, ""), supported: false })));
       return { kind: "tag", ...info, source: { format: "graphworx64", value: item.value }, target: null, status: info.supported ? "unresolved" : "unsupported" };
     }),
     ...dataSources(node).filter((value) => !namedValues.has(value)).map((value) => ({ kind: "tag", automation: "data", supported: false, source: { format: "graphworx64", value }, target: null, status: "unsupported" }))
@@ -207,7 +258,7 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
   return {
     source: { format: "graphworx64", type: sourceType, name: node?.Name || null },
     externalReferences: refs,
-    ...(dynamics.length ? { importedDynamics: { colors, hides, sizes, rotations } } : {}),
+    ...(dynamics.length ? { importedDynamics: { colors, hides, sizes, rotations, processPoints } } : {}),
     ...extra
   };
 };
@@ -266,20 +317,48 @@ const navigationFor = (node, viewportNames) => {
   // A containing Canvas must not steal the action from a nested clickable Canvas.
   let command = null;
   let commandName = "";
-  const visit = (value) => {
+  let commandPick = null;
+  const visit = (value, owningPick = null) => {
     if (!value || typeof value !== "object" || command) return;
     for (const entry of childEntries(value)) {
-      if (["gwxcmd:LoadDisplayCommand", "gwxcmd:HistoryBackCommand", "gwxcmd:HistoryForwardCommand"].includes(entry.name)) {
+      const nextPick = entry.name === "gwx:GwxPick" ? entry.node : owningPick;
+      if (["gwxcmd:LoadDisplayCommand", "gwxcmd:HistoryBackCommand", "gwxcmd:HistoryForwardCommand", "gwxcmd:WriteValueCommand"].includes(entry.name)) {
         command = entry.node;
         commandName = entry.name;
+        commandPick = owningPick;
         return;
       }
-      if (entry.name !== "Canvas") visit(entry.node);
+      if (entry.name !== "Canvas") visit(entry.node, nextPick);
     }
   };
   visit(node);
   if (commandName === "gwxcmd:HistoryBackCommand" || commandName === "gwxcmd:HistoryForwardCommand") {
     return { type: commandName === "gwxcmd:HistoryBackCommand" ? "history-back" : "history-forward" };
+  }
+  if (commandName === "gwxcmd:WriteValueCommand") {
+    const sourceReference = String(commandPick?.DataSource || "").trim();
+    if (!sourceReference) return null;
+    const hasDownValue = command?.OnDownValue != null && String(command.OnDownValue) !== "";
+    const hasUpValue = command?.OnUpValue != null && String(command.OnUpValue) !== "";
+    if (hasDownValue && hasUpValue) {
+      return {
+        type: "momentary-write",
+        connection_id: "",
+        tag: sourceReference,
+        onValue: String(command.OnDownValue),
+        offValue: String(command.OnUpValue),
+        sourceReference,
+        status: "unresolved"
+      };
+    }
+    return {
+      type: "set-write",
+      connection_id: "",
+      tag: sourceReference,
+      onValue: String(hasUpValue ? command.OnUpValue : (hasDownValue ? command.OnDownValue : "1")),
+      sourceReference,
+      status: "unresolved"
+    };
   }
   if (!command?.FileName) return null;
   const sourceScreen = String(command.FileName);
@@ -350,6 +429,48 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
     if (rotation) obj.rotationAutomation = unresolvedBinding(rotation.sourceExpression);
     const size = dynamics.sizes?.[0];
     if (size) obj.sizeAutomation = unresolvedBinding(size.sourceExpression);
+    const processPoint = dynamics.processPoints?.[0];
+    if (processPoint?.states?.length) {
+      obj.multiStateAutomation = {
+        ...unresolvedBinding(processPoint.sourceExpression),
+        mode: processPoint.states.every((state) => String(state.comparison || "").toLowerCase().includes("equal")) ? "equals" : "threshold",
+        states: processPoint.states.map((state, index) => ({
+          name: state.text || `State ${index + 1}`,
+          match: state.match,
+          rotationEnabled: false,
+          rotation: 0,
+          textEnabled: obj.type === "text" && state.text !== "",
+          text: state.text,
+          fillEnabled: false,
+          fillColor: "",
+          backgroundEnabled: false,
+          backgroundColor: "",
+          borderEnabled: false,
+          borderColor: "",
+          sourceTarget: state.target || ""
+        })),
+        selectedStateIndex: 0
+      };
+    } else if (processPoint && obj.type === "text" && (processPoint.isAnalog || /\?+/.test(String(obj.text || "")))) {
+      const sourceReference = String(processPoint.sourceExpression || "").trim();
+      const decimals = Math.max(0, num(processPoint.decimalPlaces, 0));
+      const integerDigits = Math.max(1, num(processPoint.maximumIntegerDigits, 1));
+      const originalText = String(obj.text || "");
+      const generatedText = `${processPoint.prefixLabel || ""}{1}${processPoint.postfixLabel ? ` ${processPoint.postfixLabel}` : ""}`;
+      obj.text = /\?+(?:\.\?+)?/.test(originalText) ? originalText.replace(/\?+(?:\.\?+)?/, "{1}") : generatedText;
+      obj.textBindings = {
+        "1": {
+          connection_id: "",
+          tag: sourceReference,
+          digits: integerDigits + decimals,
+          decimals,
+          padZeros: false,
+          multiplier: 1,
+          status: "unresolved",
+          sourceReference
+        }
+      };
+    }
   };
   const add = (obj) => {
     applyImportedDynamics(obj);
@@ -359,7 +480,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const unsupported = ref.supported === false || ref.status === "unsupported";
       issues.push({ id: `${obj.importId}:${issues.length + 1}`, objectImportId: obj.importId, severity: "warning", category: unsupported ? "unsupported-automation" : ref.kind, automation: ref.automation || null, status: unsupported ? "unsupported" : "unresolved", source: ref.source, message: unsupported ? `Unsupported ${ref.automation || ref.kind} automation preserved: ${ref.source.value}` : `Unresolved ${ref.automation || ref.kind}: ${ref.source.value}` });
     }
-    if (obj.action?.status === "unresolved") {
+    if (obj.action?.status === "unresolved" && obj.action?.sourceScreen) {
       issues.push({ id: `${obj.importId}:${issues.length + 1}`, objectImportId: obj.importId, severity: "warning", category: "screen", status: "unresolved", source: { format: "graphworx64", value: obj.action.sourceScreen }, message: `Screen not mapped: ${obj.action.sourceScreen}` });
     }
     return obj;
@@ -480,13 +601,16 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       });
       return;
     }
-    if (name === "Rectangle") add({ type: "rect", ...base, rx: num(node.RadiusX), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Rectangle.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), rotation: rotationFrom(node), ...sourceMetadata(name, node) });
-    else if (name === "Ellipse") add({ type: "ellipse", ...base, fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Ellipse.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), rotation: rotationFrom(node), ...sourceMetadata(name, node) });
-    else if (name === "Line") add({ type: "line", x1: num(node.X1) + base.x, y1: num(node.Y1) + base.y, x2: num(node.X2) + base.x, y2: num(node.Y2) + base.y, stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
+    if (name === "Rectangle") add({ type: "rect", ...transformedFrame(node, base), rx: num(node.RadiusX), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Rectangle.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
+    else if (name === "Ellipse") add({ type: "ellipse", ...transformedFrame(node, base), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Ellipse.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
+    else if (name === "Line") {
+      const [start, end] = transformPoints([[num(node.X1), num(node.Y1)], [num(node.X2), num(node.Y2)]], node, base);
+      add({ type: "line", x1: start.x, y1: start.y, x2: end.x, y2: end.y, stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
+    }
     else if (name === "Polygon" || name === "Polyline") {
       const rawPoints = String(node.Points || "").trim().split(/\s+/).map((pair) => pair.split(",").map(Number)).filter((pair) => pair.length === 2 && pair.every(Number.isFinite));
       const points = transformPoints(rawPoints, node, base);
-      if (points.length) add({ type: name.toLowerCase(), points, fill: dynamicColorFallback(node, "Fill", nestedPaint(node, `${name}.Fill`, node.Fill, "none")), stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), rotation: rotationFrom(node), ...sourceMetadata(name, node) });
+      if (points.length) add({ type: name.toLowerCase(), points, fill: dynamicColorFallback(node, "Fill", nestedPaint(node, `${name}.Fill`, node.Fill, "none")), stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
     } else if (name === "Label") {
       const align = horizontalTextAlignment(node);
       const valign = verticalTextAlignment(node);

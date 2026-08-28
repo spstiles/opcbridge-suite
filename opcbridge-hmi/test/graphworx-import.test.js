@@ -95,6 +95,60 @@ test("converts nested WPF gradient brushes", () => {
   assert.equal(result.screen.objects[0].fill, "linear-gradient(90deg, #ff0000 0%, #0000ff 100%)");
 });
 
+test("keeps brush rotation separate from the object's render transform", () => {
+  const xml = `<Canvas Width="300" Height="200" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Rectangle Width="38" Height="20" Canvas.Left="100" Canvas.Top="50"
+      RenderTransform="-1,0,0,-1,70,40">
+      <Rectangle.Fill><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+        <LinearGradientBrush.GradientStops>
+          <GradientStop Color="#FF003860" Offset="0"/><GradientStop Color="#FF0000FF" Offset="1"/>
+        </LinearGradientBrush.GradientStops>
+        <LinearGradientBrush.RelativeTransform><RotateTransform Angle="90" CenterX="0.5" CenterY="0.5"/></LinearGradientBrush.RelativeTransform>
+      </LinearGradientBrush></Rectangle.Fill>
+    </Rectangle>
+  </Canvas>`;
+  const rectangle = convertGraphWorx(xml, { filename: "Rotated Rectangle.gdfx" }).screen.objects[0];
+  assert.deepEqual(
+    { x: rectangle.x, y: rectangle.y, w: rectangle.w, h: rectangle.h, rotation: rectangle.rotation },
+    { x: 132, y: 70, w: 38, h: 20, rotation: 180 }
+  );
+  assert.equal(rectangle.fill, "linear-gradient(180deg, #003860 0%, #0000ff 100%)");
+});
+
+test("imports an analog process point as an unresolved native text binding", () => {
+  const sourceTag = "ac:Plant/Flow/FIT_100/Analog";
+  const xml = `<Canvas Width="300" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
+    <Label Width="100" Height="30">
+      <gwx:GwxDynamicGroup.GwxDynamicGroup><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+        <gwx:GwxProcessPoint MaximumIntegerDigits="4" DecimalPlaces="2" PostfixLabel="gpm"
+          AnimationMode="Analog" DataSource="${sourceTag}"/>
+      </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></gwx:GwxDynamicGroup.GwxDynamicGroup>
+      <TextBlock Text="????.?? gpm"/>
+    </Label>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Analog Text.gdfx" });
+  const label = result.screen.objects[0];
+  assert.equal(label.text, "{1} gpm");
+  assert.deepEqual(label.textBindings["1"], {
+    connection_id: "", tag: sourceTag, digits: 6, decimals: 2, padZeros: false,
+    multiplier: 1, status: "unresolved", sourceReference: sourceTag
+  });
+  assert.ok(label.externalReferences.some((ref) => ref.automation === "text" && ref.status === "unresolved"));
+  assert.ok(result.screen.referenceHealth.issues.some((issue) => issue.automation === "text" && issue.source.value === sourceTag));
+});
+
+test("bakes a polygon render transform into its points only once", () => {
+  const xml = `<Canvas Width="300" Height="200" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Polygon Points="0,0 20,0 0,10" Canvas.Left="100" Canvas.Top="50"
+      RenderTransform="0,1,-1,0,30,40" Fill="#FFFF0000"/>
+  </Canvas>`;
+  const polygon = convertGraphWorx(xml, { filename: "Rotated Polygon.gdfx" }).screen.objects[0];
+  assert.deepEqual(polygon.points, [
+    { x: 130, y: 90 }, { x: 130, y: 110 }, { x: 120, y: 90 }
+  ]);
+  assert.equal(polygon.rotation, undefined);
+});
+
 test("preserves colored equipment inside a clickable Canvas", () => {
   const xml = `<Canvas Width="300" Height="200" Background="#FF000000"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
