@@ -398,31 +398,11 @@ body.app-viewport #tab-hmi_audit .table-wrap {
 }
 
 body.app-viewport #tab-users.is-active {
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-body.app-viewport #tab-users > .card,
-body.app-viewport #tab-users > .card > .card-body,
-body.app-viewport #usersManageWrap {
-  flex: 1 1 auto;
+  display: block;
+  height: 100%;
   min-height: 0;
+  overflow: auto;
 }
-body.app-viewport #tab-users > .card { display: flex; flex-direction: column; }
-body.app-viewport #tab-users > .card > .card-body,
-body.app-viewport #usersManageWrap { display: flex; flex-direction: column; overflow: hidden; }
-body.app-viewport #usersManageWrap > .users-workspace { flex: 1 1 auto; height: auto; min-height: 560px !important; }
-body.app-viewport .users-right,
-body.app-viewport .users-right > .card,
-body.app-viewport .users-right > .card > .card-body,
-body.app-viewport #usersDetailsTablePanel,
-body.app-viewport #usersDetailsTablePanel > .table-wrap { min-height: 0; }
-body.app-viewport .users-right > .card { height: 100%; display: flex; flex-direction: column; }
-body.app-viewport .users-right > .card > .card-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-body.app-viewport #usersDetailsTablePanel { flex: 1; display: flex; overflow: hidden; }
-body.app-viewport #usersDetailsTablePanel > .table-wrap { flex: 1; }
-body.app-viewport #usersDetailsFormPanel { flex: 1; min-height: 0; overflow: auto; }
 
 body.app-viewport:not(.reports-builder-active) #tab-reports.is-active { display: flex; flex-direction: column; }
 body.app-viewport:not(.reports-builder-active) #reportsDownloadCard { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -434,10 +414,8 @@ body.report-portal.app-viewport #tab-reports { display: flex !important; flex-di
 @media (max-height: 650px) {
   body.app-viewport .panel.is-active { overflow: auto; }
   body.app-viewport #tab-workspace.is-active,
-  body.app-viewport #tab-hmi_audit.is-active,
-  body.app-viewport #tab-users.is-active { overflow: auto; }
-  body.app-viewport #tab-workspace > .workspace,
-  body.app-viewport #usersManageWrap > .users-workspace { min-height: 560px !important; }
+  body.app-viewport #tab-hmi_audit.is-active { overflow: auto; }
+  body.app-viewport #tab-workspace > .workspace { min-height: 420px !important; }
 }
 
 .flow-wires {
