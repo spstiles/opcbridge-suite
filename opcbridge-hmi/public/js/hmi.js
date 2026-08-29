@@ -104,6 +104,9 @@ const groupActionViewportRow = document.getElementById("groupActionViewportRow")
 const groupActionViewportIdSelect = document.getElementById("groupActionViewportId");
 const groupActionScreenRow = document.getElementById("groupActionScreenRow");
 const groupActionScreenIdSelect = document.getElementById("groupActionScreenId");
+const groupNavigationTargetRow = document.getElementById("groupNavigationTargetRow");
+const groupNavigationTargetSelect = document.getElementById("groupNavigationTarget");
+const groupTargetAliases = document.getElementById("groupTargetAliases");
 const groupPopupFields = document.getElementById("groupPopupFields");
 const groupPopupModalInput = document.getElementById("groupPopupModal");
 const groupPopupMovableInput = document.getElementById("groupPopupMovable");
@@ -317,6 +320,9 @@ const tagBindingCloseBtn = document.getElementById("tagBindingCloseBtn");
 const tagBindingConnectionSelect = document.getElementById("tagBindingConnection");
 const tagBindingTagSelect = document.getElementById("tagBindingTag");
 const tagBindingTagFilterInput = document.getElementById("tagBindingTagFilter");
+const tagBindingTemplateInput = document.getElementById("tagBindingTemplate");
+const tagBindingAliasInsertSelect = document.getElementById("tagBindingAliasInsert");
+const tagBindingAliasInsertBtn = document.getElementById("tagBindingAliasInsertBtn");
 const tagBindingRefreshBtn = document.getElementById("tagBindingRefreshBtn");
 const tagBindingClearBtn = document.getElementById("tagBindingClearBtn");
 const tagBindingSaveBtn = document.getElementById("tagBindingSaveBtn");
@@ -3516,6 +3522,8 @@ const saveCurrentScreenAs = async () => {
     currentScreenPath = saved.path;
     currentScreenId = saved.ref;
     currentScreenFilename = pathBasename(currentScreenPath);
+    lastLoadedFilename = currentScreenPath;
+    if (currentScreenObj && currentScreenId) screenCache.set(currentScreenId, currentScreenObj);
     if (screenTitle) screenTitle.textContent = currentScreenId || "Untitled";
     if (editorFilename) editorFilename.textContent = currentScreenFilename;
     await refreshScreensList();
@@ -3827,10 +3835,14 @@ const screenBgSwatchBtn = document.getElementById("screenBgSwatchBtn");
 const screenBorderSwatchBtn = document.getElementById("screenBorderSwatchBtn");
 const screenBgImageSelect = document.getElementById("screenBgImage");
 const screenBgImageClearBtn = document.getElementById("screenBgImageClear");
+const screenAliasDefinitions = document.getElementById("screenAliasDefinitions");
+const screenAliasAddBtn = document.getElementById("screenAliasAddBtn");
 const screenProps = document.getElementById("screenProps");
 const selectedReferenceHealthProps = document.getElementById("selectedReferenceHealthProps");
 const textProps = document.getElementById("textProps");
 const textValueInput = document.getElementById("textValue");
+const textAliasInsertSelect = document.getElementById("textAliasInsert");
+const textAliasInsertBtn = document.getElementById("textAliasInsertBtn");
 const textXInput = document.getElementById("textX");
 const textYInput = document.getElementById("textY");
 const textAutoSizeInput = document.getElementById("textAutoSize");
@@ -3872,6 +3884,11 @@ const buttonTargetSelect = document.getElementById("buttonTarget");
 const buttonViewportSelect = document.getElementById("buttonViewportTarget");
 const buttonViewportRow = document.getElementById("buttonViewportRow");
 const buttonTargetRow = document.getElementById("buttonTargetRow");
+const buttonNavigationTargetRow = document.getElementById("buttonNavigationTargetRow");
+const buttonNavigationTargetSelect = document.getElementById("buttonNavigationTarget");
+const buttonTargetAliases = document.getElementById("buttonTargetAliases");
+const buttonAliasInsertSelect = document.getElementById("buttonAliasInsert");
+const buttonAliasInsertBtn = document.getElementById("buttonAliasInsertBtn");
 const buttonPopupFields = document.getElementById("buttonPopupFields");
 const buttonPopupModalInput = document.getElementById("buttonPopupModal");
 const buttonPopupMovableInput = document.getElementById("buttonPopupMovable");
@@ -5777,6 +5794,194 @@ const syncTextLayoutModeRows = (autoSize) => {
   }
 };
 let availableScreens = [];
+let currentScreenAliasContext = {};
+let pendingMainAliasNavigation = null;
+const viewportAliasContexts = new Map();
+const viewportAliasMappings = new Map();
+const screenAliasDefinitionPromises = new Map();
+
+const normalizeScreenAliases = (aliases) => (Array.isArray(aliases) ? aliases : [])
+  .map((item) => ({
+    name: String(item?.name || "").trim().replace(/[^a-zA-Z0-9_.-]+/g, "_"),
+    type: ["text", "number", "boolean", "tag"].includes(item?.type) ? item.type : "text",
+    description: String(item?.description || ""),
+    required: Boolean(item?.required),
+    defaultValue: item?.defaultValue ?? ""
+  }))
+  .filter((item) => item.name);
+
+const inferScreenAliases = (screen) => {
+  const inferred = new Map();
+  const visit = (value, key = "", depth = 0) => {
+    if (value == null || depth > 20) return;
+    if (typeof value === "string") {
+      const exactTagAlias = key === "tag" ? value.trim().match(/^\{alias:([a-zA-Z0-9_.-]+)\}$/i) : null;
+      const matches = value.matchAll(/\{alias:([a-zA-Z0-9_.-]+)\}/gi);
+      for (const match of matches) {
+        const name = String(match[1] || "");
+        if (!name) continue;
+        const type = exactTagAlias && exactTagAlias[1] === name ? "tag" : "text";
+        const previous = inferred.get(name);
+        if (!previous || type === "tag") inferred.set(name, { name, type, description: "Detected from screen content", required: false, defaultValue: "", inferred: true });
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, key, depth + 1));
+      return;
+    }
+    if (typeof value !== "object") return;
+    Object.entries(value).forEach(([childKey, child]) => {
+      if (childKey === "aliases") return;
+      visit(child, childKey, depth + 1);
+    });
+  };
+  visit(screen);
+  return [...inferred.values()];
+};
+
+const getEffectiveScreenAliases = (screen) => {
+  const explicit = normalizeScreenAliases(screen?.aliases);
+  const byName = new Map(explicit.map((alias) => [alias.name, alias]));
+  inferScreenAliases(screen).forEach((alias) => {
+    if (!byName.has(alias.name)) byName.set(alias.name, alias);
+  });
+  return [...byName.values()];
+};
+
+const populateAliasInsertSelect = (select) => {
+  if (!select) return;
+  const previous = select.value;
+  select.textContent = "";
+  getEffectiveScreenAliases(currentScreenObj).forEach((alias) => {
+    const option = document.createElement("option");
+    option.value = alias.name;
+    option.textContent = alias.name;
+    select.appendChild(option);
+  });
+  const create = document.createElement("option");
+  create.value = "__new__";
+  create.textContent = "New alias…";
+  select.appendChild(create);
+  if (previous && Array.from(select.options).some((option) => option.value === previous)) select.value = previous;
+};
+
+const aliasNameFromInsertSelect = (select) => {
+  if (!select) return "";
+  if (select.value !== "__new__") return String(select.value || "");
+  const entered = window.prompt("Alias name:", "");
+  return String(entered || "").trim().replace(/[^a-zA-Z0-9_.-]+/g, "_");
+};
+
+const insertAliasTokenIntoInput = (select, input) => {
+  if (!input) return;
+  const name = aliasNameFromInsertSelect(select);
+  if (!name) return;
+  const token = `{alias:${name}}`;
+  const source = String(input.value || "");
+  const start = Number.isInteger(input.selectionStart) ? input.selectionStart : source.length;
+  const end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start;
+  input.value = `${source.slice(0, start)}${token}${source.slice(end)}`;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.focus();
+  try { input.setSelectionRange(start + token.length, start + token.length); } catch {}
+  populateAliasInsertSelect(select);
+  if (Array.from(select?.options || []).some((option) => option.value === name)) select.value = name;
+};
+
+const refreshAliasInsertionControls = () => {
+  [textAliasInsertSelect, buttonAliasInsertSelect, tagBindingAliasInsertSelect].forEach(populateAliasInsertSelect);
+};
+
+const aliasTokenName = (value) => {
+  const match = String(value ?? "").trim().match(/^\{alias:([a-zA-Z0-9_.-]+)\}$/i);
+  return match ? match[1] : "";
+};
+
+const replaceAliasTokens = (value, context) => String(value ?? "").replace(/\{alias:([a-zA-Z0-9_.-]+)\}/gi, (token, name) => {
+  const resolved = context?.[name];
+  if (resolved == null) return token;
+  if (typeof resolved === "object" && resolved.connection_id != null) {
+    return `tag(${JSON.stringify(String(resolved.connection_id || ""))}, ${JSON.stringify(String(resolved.tag || ""))})`;
+  }
+  return String(resolved);
+});
+
+const resolveAliasObject = (source, context) => {
+  if (!source || typeof source !== "object") return source;
+  const clone = JSON.parse(JSON.stringify(source));
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.tag === "string") {
+      const name = aliasTokenName(value.tag);
+      const target = name ? context?.[name] : null;
+      if (target && typeof target === "object") {
+        value.connection_id = String(target.connection_id || "");
+        value.tag = String(target.tag || "");
+      }
+    }
+    if (typeof value.connection_id === "string") {
+      const name = aliasTokenName(value.connection_id);
+      const target = name ? context?.[name] : null;
+      if (target && typeof target === "object") value.connection_id = String(target.connection_id || "");
+    }
+    Object.entries(value).forEach(([key, child]) => {
+      if (typeof child === "string") value[key] = replaceAliasTokens(child, context);
+      else if (child && typeof child === "object") visit(child);
+    });
+  };
+  visit(clone);
+  return clone;
+};
+
+const buildAliasContext = (screen, mappings = {}, parentContext = {}) => {
+  const context = {};
+  getEffectiveScreenAliases(screen).forEach((definition) => {
+    const mapping = mappings?.[definition.name];
+    if (definition.type === "tag") {
+      const forwarded = aliasTokenName(mapping?.tag || mapping?.value || "");
+      context[definition.name] = forwarded && parentContext?.[forwarded]
+        ? parentContext[forwarded]
+        : { connection_id: String(mapping?.connection_id || ""), tag: String(mapping?.tag || "") };
+      return;
+    }
+    let value = mapping && Object.prototype.hasOwnProperty.call(mapping, "value") ? mapping.value : definition.defaultValue;
+    const forwarded = aliasTokenName(value);
+    if (forwarded && Object.prototype.hasOwnProperty.call(parentContext || {}, forwarded)) value = parentContext[forwarded];
+    if (definition.type === "number") value = Number.isFinite(Number(value)) ? Number(value) : value;
+    if (definition.type === "boolean") value = value === true || String(value).toLowerCase() === "true" || String(value) === "1";
+    context[definition.name] = value;
+  });
+  return context;
+};
+
+const buildAliasPreviewContext = (screen) => Object.fromEntries(
+  Object.entries(buildAliasContext(screen, {}, {})).filter(([, value]) => {
+    if (value && typeof value === "object") return Boolean(value.connection_id && value.tag);
+    return value !== "" && value != null;
+  })
+);
+
+const getScreenForAliases = async (screenId) => {
+  const id = String(screenId || "").trim();
+  if (!id) return null;
+  if (screenCache.has(id)) return screenCache.get(id);
+  if (screenAliasDefinitionPromises.has(id)) return screenAliasDefinitionPromises.get(id);
+  const item = availableScreens.find((screen) => screen.id === id || screen.ref === id);
+  const path = item?.path || id;
+  const promise = fetch(`/api/screens/file?path=${encodeURIComponent(path)}`)
+    .then((response) => response.ok ? response.json() : null)
+    .then((data) => {
+      if (!data?.parsed) return null;
+      screenCache.set(String(data.ref || id), data.parsed);
+      screenCache.set(id, data.parsed);
+      return data.parsed;
+    })
+    .finally(() => screenAliasDefinitionPromises.delete(id));
+  screenAliasDefinitionPromises.set(id, promise);
+  return promise;
+};
+
 let nextNumberInputId = 1;
 let nextIndicatorId = 1;
 let imageFilesCache = [];
@@ -6536,7 +6741,14 @@ const referenceAutomationMatches = (expected, actual) => {
     if (name === "process point") return "data";
     return name;
   };
-  return !expected || normalize(expected) === normalize(actual);
+  const expectedName = normalize(expected);
+  const actualName = normalize(actual);
+  if (!expectedName || expectedName === actualName) return true;
+  // Older GraphWorX imports retained these under their source dynamic names.
+  // Once converted to native controls, compare them to the native automation.
+  if (expectedName === "size" && actualName === "level") return true;
+  if (expectedName === "data" && (actualName === "text" || actualName === "states")) return true;
+  return false;
 };
 
 const reconcileReferenceHealthMetadata = () => {
@@ -6573,7 +6785,6 @@ const reconcileReferenceHealthMetadata = () => {
     const objectId = String(obj?.id || obj?.importId || "");
     const objectOccurrences = byObject.get(objectId) || [];
     (obj?.externalReferences || []).forEach((ref) => {
-      if (ref?.status === "unsupported" || ref?.supported === false) return;
       const type = String(ref?.kind || "reference");
       const source = String(ref?.source?.value || "");
       const target = String(ref?.target?.value || "");
@@ -6583,6 +6794,12 @@ const reconcileReferenceHealthMetadata = () => {
         && referenceAutomationMatches(automation, occurrence.automation)
         && (occurrence.original === source || occurrence.current === target || occurrence.current === source)
       );
+      if ((ref?.status === "unsupported" || ref?.supported === false) && matching.length) {
+        ref.supported = true;
+        ref.automation = matching[0].automation || ref.automation;
+        ref.status = "unresolved";
+      }
+      if (ref?.status === "unsupported" || ref?.supported === false) return;
       const resolved = matching.some((occurrence) => occurrence.resolved);
       const removed = !matching.length && !hasLiveSourceReference(obj, source);
       if (resolved) {
@@ -6603,10 +6820,11 @@ const reconcileReferenceHealthMetadata = () => {
   (currentScreenObj.objects || []).forEach(reconcileObject);
 
   const findReferenceStatus = (issue) => {
-    if (issue?.status === "unsupported" || issue?.category === "unsupported-automation") return "unsupported";
     const objectId = String(issue?.objectImportId || "");
     const source = String(issue?.source?.value || "");
-    const type = String(issue?.category || "reference");
+    const type = issue?.category === "unsupported-automation"
+      ? "tag"
+      : String(issue?.category || "reference");
     const automation = String(issue?.automation || "");
     const objectOccurrences = byObject.get(objectId) || [];
     const matching = objectOccurrences.filter((occurrence) =>
@@ -6632,7 +6850,14 @@ const reconcileReferenceHealthMetadata = () => {
       }
     };
     visit(currentScreenObj.objects);
-    return matchingExternal?.status === "resolved" ? "resolved" : "unresolved";
+    if (matchingExternal?.status === "resolved") return "resolved";
+    if (matchingExternal?.supported === true && matchingExternal?.status !== "unsupported") {
+      if (issue.category === "unsupported-automation") issue.category = matchingExternal.kind || "tag";
+      issue.automation = matchingExternal.automation || issue.automation;
+      issue.message = `Unresolved ${issue.automation || issue.category || "reference"}: ${source}`;
+      return "unresolved";
+    }
+    return issue?.status === "unsupported" || issue?.category === "unsupported-automation" ? "unsupported" : "unresolved";
   };
   (currentScreenObj.referenceHealth?.issues || []).forEach((issue) => {
     issue.status = findReferenceStatus(issue);
@@ -6654,6 +6879,28 @@ const getReferenceHealthIssues = () => {
       issues.push({ id, objectImportId: obj.importId, objectIndex: index, severity: "warning", category: ref.kind || "reference", status: "unresolved", source: ref.source, message: `Unresolved ${ref.kind || "reference"}: ${ref.source?.value || "unknown"}` });
     });
     (obj?.children || []).forEach((child, childIndex) => collectObjectIssues(child, `${index}.${childIndex}`));
+    const screenId = String(obj?.action?.screenId || "").trim();
+    const targetScreen = screenId ? screenCache.get(screenId) : null;
+    getEffectiveScreenAliases(targetScreen).forEach((definition, aliasIndex) => {
+      if (!definition.required) return;
+      const mapping = obj?.action?.aliases?.[definition.name];
+      const missing = definition.type === "tag"
+        ? !String(mapping?.tag || "").trim()
+        : !(mapping && Object.prototype.hasOwnProperty.call(mapping, "value") && (definition.type === "boolean" || String(mapping.value).trim() !== ""))
+          && String(definition.defaultValue ?? "").trim() === "";
+      if (!missing) return;
+      issues.push({
+        id: `alias:${index}:${aliasIndex}`,
+        objectImportId: obj?.importId || obj?.id || "",
+        objectIndex: index,
+        severity: "warning",
+        category: "alias",
+        automation: "action",
+        status: "unresolved",
+        source: { format: "opcbridge", value: `${screenId}.${definition.name}` },
+        message: `Required target alias not assigned: ${definition.name}`
+      });
+    });
   };
   (currentScreenObj?.objects || []).forEach(collectObjectIssues);
   return issues;
@@ -6825,6 +7072,7 @@ const referenceAutomationLabel = (pathParts) => {
   if (joined.includes("textstate") || joined.includes("textbindings")) return "text";
   if (joined.includes("rotation")) return "rotation";
   if (joined.includes("motion") || joined.includes("position")) return "motion";
+  if (joined.includes("levelautomation")) return "level";
   if (joined.includes("size")) return "size";
   if (joined.includes("action")) return "action";
   if (joined.includes("bind")) return "value";
@@ -6846,7 +7094,7 @@ const collectScreenReferenceMappings = () => {
     const sourceReference = String(value.sourceReference || "").trim();
     const looksLikeTagBinding = Object.prototype.hasOwnProperty.call(value, "tag")
       && (Object.prototype.hasOwnProperty.call(value, "connection_id") || value.sourceType === "tag" || sourceReference);
-    if (looksLikeTagBinding && (tag || sourceReference)) {
+    if (looksLikeTagBinding && (tag || sourceReference) && !aliasTokenName(tag || sourceReference)) {
       const current = formatMappedTagReference(connection, tag) || sourceReference || tag;
       occurrences.push({
         type: "tag",
@@ -7219,6 +7467,7 @@ let hotspotLayer = null;
 let textMeasureCtx = null;
 
 let runtimeScreenHistory = [];
+let runtimeScreenAliasHistory = [];
 let runtimeScreenHistoryIndex = -1;
 let runtimeHasNavigated = false;
 
@@ -7430,6 +7679,7 @@ const setRuntimeHistoryBase = (id) => {
   const cleaned = String(id || "").trim();
   if (!cleaned) return;
   runtimeScreenHistory = [cleaned];
+  runtimeScreenAliasHistory = [currentScreenAliasContext || {}];
   runtimeScreenHistoryIndex = 0;
   runtimeHasNavigated = false;
 };
@@ -7464,15 +7714,19 @@ const ensureRuntimeHistoryForCurrentScreen = () => {
   }
 };
 
-const runtimeNavigateTo = (screenId) => {
+const runtimeNavigateTo = (screenId, action = null, parentContext = currentScreenAliasContext) => {
   const id = String(screenId || "").trim();
   if (!id) return;
-  if (runtimeScreenHistoryIndex >= 0 && runtimeScreenHistory[runtimeScreenHistoryIndex] === id) return;
+  pendingMainAliasNavigation = { screenId: id, mappings: action?.aliases || {}, parentContext: parentContext || {} };
   runtimeHasNavigated = true;
   if (runtimeScreenHistoryIndex >= 0 && runtimeScreenHistoryIndex < runtimeScreenHistory.length - 1) {
     runtimeScreenHistory = runtimeScreenHistory.slice(0, runtimeScreenHistoryIndex + 1);
+    runtimeScreenAliasHistory = runtimeScreenAliasHistory.slice(0, runtimeScreenHistoryIndex + 1);
   }
+  const targetScreen = screenCache.get(id);
+  currentScreenAliasContext = buildAliasContext(targetScreen, pendingMainAliasNavigation.mappings, pendingMainAliasNavigation.parentContext);
   runtimeScreenHistory.push(id);
+  runtimeScreenAliasHistory.push(currentScreenAliasContext);
   runtimeScreenHistoryIndex = runtimeScreenHistory.length - 1;
   loadScreenById(id);
 };
@@ -7481,6 +7735,8 @@ const runtimeGoBack = () => {
   if (runtimeScreenHistoryIndex <= 0) return;
   runtimeHasNavigated = true;
   runtimeScreenHistoryIndex -= 1;
+  currentScreenAliasContext = runtimeScreenAliasHistory[runtimeScreenHistoryIndex] || {};
+  pendingMainAliasNavigation = { screenId: runtimeScreenHistory[runtimeScreenHistoryIndex], resolvedContext: currentScreenAliasContext };
   loadScreenById(runtimeScreenHistory[runtimeScreenHistoryIndex]);
 };
 
@@ -7488,6 +7744,8 @@ const runtimeGoForward = () => {
   if (runtimeScreenHistoryIndex < 0 || runtimeScreenHistoryIndex >= runtimeScreenHistory.length - 1) return;
   runtimeHasNavigated = true;
   runtimeScreenHistoryIndex += 1;
+  currentScreenAliasContext = runtimeScreenAliasHistory[runtimeScreenHistoryIndex] || {};
+  pendingMainAliasNavigation = { screenId: runtimeScreenHistory[runtimeScreenHistoryIndex], resolvedContext: currentScreenAliasContext };
   loadScreenById(runtimeScreenHistory[runtimeScreenHistoryIndex]);
 };
 
@@ -10114,21 +10372,25 @@ const collectViewportTargetsFromValue = (value, out, depth = 0) => {
 const collectActiveWsSubscriptions = () => {
   const out = new Set();
   if (currentScreenObj) {
-    collectTagKeysFromValue(currentScreenObj, out);
+    collectTagKeysFromValue(resolveAliasObject(currentScreenObj, currentScreenAliasContext), out);
 
     // Include any loaded viewport target screens (only those already in cache).
     const targetIds = new Set();
     collectViewportTargetsFromValue(currentScreenObj, targetIds);
     targetIds.forEach((targetId) => {
       const child = screenCache.get(targetId);
-      if (child) collectTagKeysFromValue(child, out);
+      if (child) {
+        const viewport = currentScreenObj?.objects?.find((obj) => obj?.type === "viewport" && String(obj.target || "") === String(targetId));
+        const aliasSource = viewportAliasMappings.get(String(viewport?.id || "")) || { mappings: viewport?.aliases || {}, parentContext: currentScreenAliasContext };
+        collectTagKeysFromValue(resolveAliasObject(child, buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext)), out);
+      }
     });
   }
 
   // Include popup screen if open and loaded.
   if (typeof currentPopupScreenId !== "undefined" && currentPopupScreenId) {
     const child = screenCache.get(currentPopupScreenId);
-    if (child) collectTagKeysFromValue(child, out);
+    if (child) collectTagKeysFromValue(resolveAliasObject(child, buildAliasContext(child, currentPopupOptions?.aliases || {}, currentPopupOptions?.parentAliasContext || currentScreenAliasContext)), out);
   }
 
   return Array.from(out).sort();
@@ -10449,12 +10711,22 @@ const refreshAlarmPanelTargetOptions = () => {
 const updateButtonActionUI = (actionType) => {
   const isWriteAction = actionType === "momentary-write" || actionType === "toggle-write" || actionType === "set-write" || actionType === "prompt-write";
   const isHistoryAction = actionType === "history-back" || actionType === "history-forward";
+  const isClosePopupAction = actionType === "close-popup";
   const isAuthAction = actionType === "auth";
   const isAlarmFilterAction = actionType === "alarm-filter";
   const isPromptWrite = actionType === "prompt-write";
   const showOffValue = actionType === "momentary-write" || actionType === "toggle-write";
-  if (buttonTargetRow) buttonTargetRow.classList.toggle("is-hidden", isWriteAction || isHistoryAction || isAuthAction || isAlarmFilterAction);
+  if (buttonTargetRow) buttonTargetRow.classList.toggle("is-hidden", isWriteAction || isHistoryAction || isClosePopupAction || isAuthAction || isAlarmFilterAction);
+  if (buttonTargetAliases && (isWriteAction || isHistoryAction || isClosePopupAction || isAuthAction || isAlarmFilterAction)) {
+    buttonTargetAliases.classList.add("is-hidden");
+    buttonTargetAliases.hidden = true;
+  }
   if (buttonViewportRow) buttonViewportRow.classList.toggle("is-hidden", actionType !== "load-viewport");
+  if (buttonNavigationTargetRow) {
+    const showNavigationTarget = actionType === "navigate";
+    buttonNavigationTargetRow.classList.toggle("is-hidden", !showNavigationTarget);
+    buttonNavigationTargetRow.hidden = !showNavigationTarget;
+  }
   if (buttonPopupFields) {
     const showPopup = actionType === "popup";
     buttonPopupFields.classList.toggle("is-hidden", !showPopup);
@@ -10513,6 +10785,15 @@ const setGroupActionRows = (actionType) => {
   if (groupActionScreenRow) {
     groupActionScreenRow.classList.toggle("is-hidden", !hasScreenTarget);
     groupActionScreenRow.hidden = !hasScreenTarget;
+  }
+  if (groupNavigationTargetRow) {
+    const showNavigationTarget = type === "navigate";
+    groupNavigationTargetRow.classList.toggle("is-hidden", !showNavigationTarget);
+    groupNavigationTargetRow.hidden = !showNavigationTarget;
+  }
+  if (groupTargetAliases && !hasScreenTarget) {
+    groupTargetAliases.classList.add("is-hidden");
+    groupTargetAliases.hidden = true;
   }
   if (groupPopupFields) {
     const showPopup = type === "popup";
@@ -10605,6 +10886,18 @@ const populateTagSelect = (selectEl) => {
     if (!groups.has(connectionId)) groups.set(connectionId, []);
     groups.get(connectionId).push({ value, tagName });
   });
+  const tagAliases = getEffectiveScreenAliases(currentScreenObj).filter((alias) => alias.type === "tag");
+  if (tagAliases.length) {
+    const group = document.createElement("optgroup");
+    group.label = "Screen Aliases";
+    tagAliases.forEach((alias) => {
+      const opt = document.createElement("option");
+      opt.value = `::{alias:${alias.name}}`;
+      opt.textContent = `{alias:${alias.name}}`;
+      group.appendChild(opt);
+    });
+    selectEl.appendChild(group);
+  }
   Array.from(groups.entries()).forEach(([connectionId, entries]) => {
     const group = document.createElement("optgroup");
     group.label = getConnectionDisplayName(connectionId) || "?";
@@ -12186,6 +12479,16 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
   if (!shouldRenderObject(obj)) return;
   const ns = "http://www.w3.org/2000/svg";
   const xhtml = "http://www.w3.org/1999/xhtml";
+  const isPopupContent = parent === popupSvg || Boolean(parent.closest?.("#popupSvg"));
+  if (isPopupContent && obj.action?.type) {
+    const actionHost = document.createElementNS(ns, "g");
+    actionHost.dataset.hmiPopupAction = "true";
+    actionHost.style.cursor = "pointer";
+    actionHost.__hmiPopupAction = obj.action;
+    actionHost.__hmiPopupObject = obj;
+    parent.appendChild(actionHost);
+    parent = actionHost;
+  }
   const rotation = getObjectRotationDegrees(obj);
   const hasRotation = Number.isFinite(rotation) && rotation !== 0;
   if (obj.type === "group") {
@@ -13330,6 +13633,9 @@ const renderSharedTopLevelObject = (parent, obj) => {
 const pendingScreens = new Set();
 let currentPopupScreenId = null;
 let currentPopupOptions = null;
+let currentPopupAliasContext = {};
+let popupScreenHistory = [];
+let popupScreenHistoryIndex = -1;
 
 const queueScreenLoad = (id) => {
   if (!id || pendingScreens.has(id)) return;
@@ -13339,7 +13645,9 @@ const queueScreenLoad = (id) => {
     .then((data) => {
       if (data?.parsed) {
         screenCache.set(String(data.ref || id), data.parsed);
+        screenCache.set(String(id), data.parsed);
         renderScreen();
+        if (currentPopupScreenId === id) openPopup(id, currentPopupOptions);
         scheduleWsSubscribeRefresh();
       }
     })
@@ -13348,7 +13656,7 @@ const queueScreenLoad = (id) => {
     });
 };
 
-const loadViewportTarget = (viewportId, screenId) => {
+const loadViewportTarget = (viewportId, screenId, action = null, parentContext = currentScreenAliasContext) => {
   if (!viewportId || !screenId || !currentScreenObj?.objects) return;
   const viewport = currentScreenObj.objects.find(
     (obj) => obj?.type === "viewport" && obj.id === viewportId
@@ -13374,6 +13682,7 @@ const loadViewportTarget = (viewportId, screenId) => {
   }
 
   viewport.target = screenId;
+  viewportAliasMappings.set(String(viewportId), { mappings: action?.aliases || {}, parentContext: parentContext || {} });
   renderScreen();
   scheduleWsSubscribeRefresh();
 };
@@ -13436,7 +13745,78 @@ const closePopup = () => {
   if (popupSvg) popupSvg.textContent = "";
   currentPopupScreenId = null;
   currentPopupOptions = null;
+  currentPopupAliasContext = {};
+  popupScreenHistory = [];
+  popupScreenHistoryIndex = -1;
   scheduleWsSubscribeRefresh();
+};
+
+const beginPopup = (screenId, options = {}) => {
+  const id = String(screenId || "").trim();
+  if (!id) return;
+  popupScreenHistory = [{ screenId: id, options: { ...options } }];
+  popupScreenHistoryIndex = 0;
+  openPopup(id, options);
+};
+
+const navigatePopupTo = (screenId, action = {}) => {
+  const id = String(screenId || "").trim();
+  if (!id || !currentPopupScreenId) return false;
+  const options = {
+    ...(currentPopupOptions || {}),
+    aliases: action.aliases || {},
+    parentAliasContext: currentPopupAliasContext
+  };
+  popupScreenHistory = popupScreenHistory.slice(0, popupScreenHistoryIndex + 1);
+  popupScreenHistory.push({ screenId: id, options });
+  popupScreenHistoryIndex = popupScreenHistory.length - 1;
+  openPopup(id, options);
+  return true;
+};
+
+const popupGoHistory = (offset) => {
+  const nextIndex = popupScreenHistoryIndex + offset;
+  if (nextIndex < 0 || nextIndex >= popupScreenHistory.length) return false;
+  popupScreenHistoryIndex = nextIndex;
+  const entry = popupScreenHistory[nextIndex];
+  openPopup(entry.screenId, entry.options);
+  return true;
+};
+
+const navigatePopupOpener = (screenId, action = {}) => {
+  const opener = currentPopupOptions?.opener || { type: "main" };
+  const popupAliasContext = currentPopupAliasContext;
+  const id = String(screenId || "").trim();
+  if (!id) return false;
+  closePopup();
+  if (opener.type === "viewport" && opener.viewportId) {
+    return loadViewportTarget(opener.viewportId, id, action, popupAliasContext);
+  }
+  runtimeNavigateTo(id, action, popupAliasContext);
+  return true;
+};
+
+const runPopupScreenAction = (action) => {
+  if (!action?.type) return false;
+  if (action.type === "close-popup") {
+    closePopup();
+    return true;
+  }
+  if (action.type === "navigate") {
+    const target = String(action.navigationTarget || "current");
+    if (target === "opener") return navigatePopupOpener(action.screenId, action);
+    if (target === "main") {
+      const screenId = action.screenId;
+      const popupAliasContext = currentPopupAliasContext;
+      closePopup();
+      runtimeNavigateTo(screenId, action, popupAliasContext);
+      return true;
+    }
+    return navigatePopupTo(action.screenId, action);
+  }
+  if (action.type === "history-back") return popupGoHistory(-1);
+  if (action.type === "history-forward") return popupGoHistory(1);
+  return false;
 };
 
 let pendingSetpointAction = null;
@@ -13541,7 +13921,10 @@ const openPopup = (screenId, requestedOptions = null) => {
     popupSizeMode: options.popupSizeMode === "fixed" ? "fixed" : "screen",
     popupWidth: parseOptionalNumber(options.popupWidth),
     popupHeight: parseOptionalNumber(options.popupHeight),
-    popupScaleMode: options.popupScaleMode === "crop" ? "crop" : "fit"
+    popupScaleMode: options.popupScaleMode === "crop" ? "crop" : "fit",
+    aliases: options.aliases || {},
+    parentAliasContext: options.parentAliasContext || currentScreenAliasContext,
+    opener: options.opener || currentPopupOptions?.opener || { type: "main" }
   };
   const child = screenCache.get(screenId);
   if (!child) {
@@ -13595,9 +13978,11 @@ const openPopup = (screenId, requestedOptions = null) => {
     setImageHref(bgImg, imgUrl(popupBgImage));
     popupSvg.appendChild(bgImg);
   }
-  child.objects?.forEach((childObj) => renderObjectInto(popupSvg, childObj));
+  const popupAliasContext = buildAliasContext(child, currentPopupOptions.aliases, currentPopupOptions.parentAliasContext);
+  currentPopupAliasContext = popupAliasContext;
+  child.objects?.forEach((childObj) => renderObjectInto(popupSvg, resolveAliasObject(childObj, popupAliasContext)));
 
-  if (popupTitle) popupTitle.textContent = screenId;
+  if (popupTitle) popupTitle.textContent = String(popupAliasContext.ScreenTitle || screenId);
   const popupModal = popupOverlay.querySelector(".popup-modal");
   const positioned = currentPopupOptions.popupX != null || currentPopupOptions.popupY != null;
   popupOverlay.classList.toggle("is-nonmodal", !currentPopupOptions.modal);
@@ -13690,7 +14075,8 @@ const renderScreen = () => {
   }
 
   objects.forEach((sourceObj, index) => {
-    const obj = getDisplayObject(sourceObj);
+    const screenAliasContext = isEditMode ? buildAliasPreviewContext(currentScreenObj) : currentScreenAliasContext;
+    const obj = getDisplayObject(resolveAliasObject(sourceObj, screenAliasContext));
     if (!shouldRenderObject(obj)) return;
     if (obj?.type !== "number-input" && obj?.type !== "viewport") {
       const rendered = renderSharedTopLevelObject(hmiSvg, obj);
@@ -13898,7 +14284,9 @@ const renderScreen = () => {
             scaledGroup.appendChild(bgImg);
           }
           child.objects?.forEach((childObj) => {
-            renderObjectInto(scaledGroup, childObj);
+            const aliasSource = viewportAliasMappings.get(String(obj.id || "")) || { mappings: obj.aliases || {}, parentContext: currentScreenAliasContext };
+            const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
+            renderObjectInto(scaledGroup, resolveAliasObject(childObj, aliasContext));
           });
         } else {
           queueScreenLoad(targetId);
@@ -13992,6 +14380,7 @@ const syncEditorFromScreen = () => {
 
 const syncPropertiesFromScreen = () => {
   if (!currentScreenObj) return;
+  refreshAliasInsertionControls();
   const { width, height, background, border, backgroundImage } = currentScreenObj;
   if (screenWidthInput) screenWidthInput.value = Number(width) || "";
   if (screenHeightInput) screenHeightInput.value = Number(height) || "";
@@ -14006,6 +14395,99 @@ const syncPropertiesFromScreen = () => {
   if (screenBorderColorInput) screenBorderColorInput.value = border?.color || "#ffffff";
   if (screenBorderColorTextInput) screenBorderColorTextInput.value = border?.color || "";
   if (screenBorderWidthInput) screenBorderWidthInput.value = Number(border?.width ?? 1);
+  renderScreenAliasDefinitions();
+};
+
+const renderScreenAliasDefinitions = () => {
+  if (!screenAliasDefinitions || !currentScreenObj) return;
+  const aliases = getEffectiveScreenAliases(currentScreenObj);
+  screenAliasDefinitions.textContent = "";
+  aliases.forEach((definition, index) => {
+    const card = document.createElement("div");
+    card.className = "prop-group";
+    const name = document.createElement("input");
+    name.type = "text"; name.placeholder = "Alias name"; name.value = definition.name;
+    const type = document.createElement("select");
+    type.innerHTML = '<option value="text">Text</option><option value="number">Number</option><option value="boolean">Boolean</option><option value="tag">Tag Reference</option>';
+    type.value = definition.type;
+    const description = document.createElement("input");
+    description.type = "text"; description.placeholder = "Description"; description.value = definition.description;
+    const required = document.createElement("input"); required.type = "checkbox"; required.checked = definition.required;
+    const defaultValue = document.createElement("input");
+    defaultValue.type = definition.type === "boolean" ? "checkbox" : (definition.type === "number" ? "number" : "text");
+    if (defaultValue.type === "checkbox") defaultValue.checked = definition.defaultValue === true || String(definition.defaultValue).toLowerCase() === "true";
+    else defaultValue.value = definition.defaultValue ?? "";
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "panel-btn danger"; remove.textContent = "Remove";
+    const row = (labelText, input) => { const el = document.createElement("div"); el.className = "prop-row"; const label = document.createElement("label"); label.textContent = labelText; el.append(label, input); return el; };
+    card.append(row("Name", name), row("Type", type), row("Description", description), row("Required", required), row("Default", defaultValue), remove);
+    const commit = () => {
+      const next = getEffectiveScreenAliases(currentScreenObj).map((item) => ({ ...item, inferred: undefined }));
+      next[index] = {
+        name: name.value.trim(), type: type.value, description: description.value.trim(), required: required.checked,
+        defaultValue: defaultValue.type === "checkbox" ? defaultValue.checked : defaultValue.value
+      };
+      updateScreenProperty({ aliases: next.filter((item) => item.name) });
+    };
+    [name, description, required, defaultValue].forEach((input) => input.addEventListener("change", commit));
+    type.addEventListener("change", () => {
+      const next = aliases.map((item) => ({ ...item }));
+      next[index] = { ...next[index], type: type.value, defaultValue: type.value === "boolean" ? false : "" };
+      updateScreenProperty({ aliases: next });
+    });
+    remove.addEventListener("click", () => updateScreenProperty({ aliases: aliases.filter((_, itemIndex) => itemIndex !== index) }));
+    screenAliasDefinitions.appendChild(card);
+  });
+};
+
+const getSelectedActionOwner = (kind) => {
+  const objects = getActiveObjects();
+  const obj = selectedIndices.length === 1 ? objects?.[selectedIndices[0]] : null;
+  if (!obj) return null;
+  return kind === "button" ? (obj.type === "button" ? obj : null) : (obj.type !== "button" ? obj : null);
+};
+
+let targetAliasRenderSequence = 0;
+const renderTargetAliasEditor = async (kind, screenId, action) => {
+  const host = kind === "button" ? buttonTargetAliases : groupTargetAliases;
+  if (!host) return;
+  const sequence = ++targetAliasRenderSequence;
+  const screen = await getScreenForAliases(screenId);
+  if (sequence !== targetAliasRenderSequence) return;
+  const definitions = getEffectiveScreenAliases(screen);
+  host.textContent = "";
+  host.classList.toggle("is-hidden", definitions.length === 0);
+  host.hidden = definitions.length === 0;
+  if (!definitions.length) return;
+  const title = document.createElement("div"); title.className = "prop-group-title"; title.textContent = "Target Screen Aliases"; host.appendChild(title);
+  const help = document.createElement("div"); help.className = "prop-help"; help.textContent = "Required values are highlighted until supplied. A value may forward a parent alias with {alias:Name}."; host.appendChild(help);
+  definitions.forEach((definition) => {
+    const mapping = action?.aliases?.[definition.name] || {};
+    const row = document.createElement("div"); row.className = "prop-row";
+    const label = document.createElement("label"); label.textContent = `${definition.name}${definition.required ? " *" : ""}`; label.title = definition.description || definition.name;
+    const commit = (nextMapping) => {
+      const owner = getSelectedActionOwner(kind); if (!owner) return;
+      const aliases = { ...(owner.action?.aliases || {}), [definition.name]: nextMapping };
+      if (kind === "button") updateButtonProperty({ action: { ...(owner.action || {}), aliases } });
+      else updateSelectedGroupAction({ aliases });
+    };
+    if (definition.type === "tag") {
+      const wrap = document.createElement("div"); wrap.className = "prop-inline";
+      const connection = document.createElement("input"); connection.type = "text"; connection.placeholder = "Connection"; connection.value = mapping.connection_id || "";
+      const tag = document.createElement("input"); tag.type = "text"; tag.placeholder = "Tag or {alias:Parent}"; tag.value = mapping.tag || "";
+      const refreshState = () => { const missing = definition.required && !tag.value.trim(); [connection, tag].forEach((input) => input.classList.toggle("reference-error", missing)); };
+      [connection, tag].forEach((input) => input.addEventListener("change", () => { commit({ connection_id: connection.value.trim(), tag: tag.value.trim() }); refreshState(); }));
+      refreshState(); wrap.append(connection, tag); row.append(label, wrap);
+    } else {
+      const input = document.createElement("input"); input.type = definition.type === "boolean" ? "checkbox" : (definition.type === "number" ? "number" : "text");
+      if (input.type === "checkbox") input.checked = mapping.value ?? definition.defaultValue ?? false;
+      else input.value = mapping.value ?? definition.defaultValue ?? "";
+      const refreshState = () => input.classList.toggle("reference-error", definition.required && input.type !== "checkbox" && !String(input.value).trim());
+      input.addEventListener("change", () => { commit({ value: input.type === "checkbox" ? input.checked : input.value }); refreshState(); });
+      refreshState(); row.append(label, input);
+    }
+    host.appendChild(row);
+  });
+  renderReferenceHealthBadge();
 };
 
 const renderIndicatorStatesEditor = (obj) => {
@@ -14157,6 +14639,7 @@ const syncPropertiesFromSelection = () => {
   const index = selectedIndices[0];
   const obj = activeObjects[index];
   if (!obj) return;
+  refreshAliasInsertionControls();
   syncLevelAutomationControl(obj);
   if (obj.type === "group") {
     setInputValueSafe(groupXInput, Number(obj.x ?? 0));
@@ -14173,6 +14656,8 @@ const syncPropertiesFromSelection = () => {
 	    setGroupActionRows(actionType);
 	    if (groupActionViewportIdSelect) setSelectValueSafe(groupActionViewportIdSelect, String(obj.action?.viewportId || ""));
 	    if (groupActionScreenIdSelect) setSelectValueSafe(groupActionScreenIdSelect, String(obj.action?.screenId || ""));
+      if (groupNavigationTargetSelect) setSelectValueSafe(groupNavigationTargetSelect, String(obj.action?.navigationTarget || "current"));
+      renderTargetAliasEditor("group", String(obj.action?.screenId || ""), obj.action || {});
       if (groupPopupModalInput) groupPopupModalInput.checked = obj.action?.modal !== false;
       if (groupPopupMovableInput) groupPopupMovableInput.checked = Boolean(obj.action?.movable);
       setInputValueSafe(groupPopupXInput, obj.action?.popupX ?? "");
@@ -14263,6 +14748,7 @@ const syncPropertiesFromSelection = () => {
     if (buttonValignSelect) buttonValignSelect.value = obj.valign || "middle";
     if (buttonTargetSelect) buttonTargetSelect.value = obj.action?.screenId || "";
     if (buttonActionSelect) buttonActionSelect.value = obj.action?.type || "navigate";
+    if (buttonNavigationTargetSelect) setSelectValueSafe(buttonNavigationTargetSelect, String(obj.action?.navigationTarget || "current"));
     refreshViewportIdOptions();
     refreshAlarmPanelTargetOptions();
     if (buttonViewportSelect) buttonViewportSelect.value = obj.action?.viewportId || "";
@@ -14279,6 +14765,7 @@ const syncPropertiesFromSelection = () => {
     if (buttonAuthLoggedOutTextInput) setInputValueSafe(buttonAuthLoggedOutTextInput, authText.loggedOutText);
     if (buttonAuthLoggedInTextInput) setInputValueSafe(buttonAuthLoggedInTextInput, authText.loggedInText);
     updateButtonActionUI(obj.action?.type || "navigate");
+    renderTargetAliasEditor("button", String(obj.action?.screenId || ""), obj.action || {});
     const alarmFilterAction = obj.action?.type === "alarm-filter" ? normalizeAlarmFilterAction(obj.action) : normalizeAlarmFilterAction({});
     if (buttonAlarmFilterTargetInput) setInputValueSafe(buttonAlarmFilterTargetInput, alarmFilterAction.target || "");
     if (buttonAlarmFilterSitesInput) setInputValueSafe(buttonAlarmFilterSitesInput, joinAlarmFilterValues(alarmFilterAction.filters.sites));
@@ -17271,7 +17758,12 @@ async function refreshScreensList() {
       String(s?.ref || "") === String(currentScreenId || "") ||
       String(s?.id || "") === String(currentScreenId || "")
     ) || null;
-    const preferred = startupScreen || (isEditMode ? (currentScreen || availableScreens[0]) : null);
+    // In the editor, refreshing the file list must preserve the screen being
+    // edited. Giving the configured startup screen priority here caused Save
+    // As to immediately jump back to that screen after creating a new file.
+    const preferred = isEditMode
+      ? (currentScreen || startupScreen || availableScreens[0])
+      : startupScreen;
     if (preferred) {
       screenList.value = preferred.ref;
       const sameScreenLoaded =
@@ -18332,6 +18824,11 @@ const loadJsonc = async () => {
     jsonEditorSyncPending = false;
     try {
       currentScreenObj = parseJsonc(template);
+      currentScreenAliasContext = pendingMainAliasNavigation?.screenId === currentScreenId
+        ? (pendingMainAliasNavigation.resolvedContext || buildAliasContext(currentScreenObj, pendingMainAliasNavigation.mappings, pendingMainAliasNavigation.parentContext))
+        : buildAliasContext(currentScreenObj, {}, {});
+      if (runtimeScreenHistoryIndex >= 0) runtimeScreenAliasHistory[runtimeScreenHistoryIndex] = currentScreenAliasContext;
+      pendingMainAliasNavigation = null;
       screenCache.set(currentScreenId || "untitled", currentScreenObj);
       initViewportHistoriesForCurrentScreen();
       selectedIndices = [];
@@ -18368,6 +18865,11 @@ const loadJsonc = async () => {
     jsonEditorSyncPending = false;
     try {
       currentScreenObj = parseJsonc(raw);
+      currentScreenAliasContext = pendingMainAliasNavigation?.screenId === currentScreenId
+        ? (pendingMainAliasNavigation.resolvedContext || buildAliasContext(currentScreenObj, pendingMainAliasNavigation.mappings, pendingMainAliasNavigation.parentContext))
+        : buildAliasContext(currentScreenObj, {}, {});
+      if (runtimeScreenHistoryIndex >= 0) runtimeScreenAliasHistory[runtimeScreenHistoryIndex] = currentScreenAliasContext;
+      pendingMainAliasNavigation = null;
       const migrateButtonFlags = (objects) => {
         if (!Array.isArray(objects)) return;
         objects.forEach((obj) => {
@@ -18533,6 +19035,18 @@ if (tagsFilterInput) {
 
 if (popupCloseBtn) {
   popupCloseBtn.addEventListener("click", closePopup);
+}
+
+if (popupSvg) {
+  popupSvg.addEventListener("click", (event) => {
+    const actionHost = event.target instanceof Element ? event.target.closest("[data-hmi-popup-action]") : null;
+    if (!actionHost || !popupSvg.contains(actionHost)) return;
+    const action = actionHost.__hmiPopupAction;
+    if (runPopupScreenAction(action)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
 }
 
 if (popupOverlay) {
@@ -19506,6 +20020,16 @@ if (screenHeightInput) {
   });
 }
 
+if (screenAliasAddBtn) {
+  screenAliasAddBtn.addEventListener("click", () => {
+    const aliases = getEffectiveScreenAliases(currentScreenObj);
+    const used = new Set(aliases.map((item) => item.name));
+    let index = aliases.length + 1;
+    while (used.has(`Alias${index}`)) index += 1;
+    updateScreenProperty({ aliases: [...aliases, { name: `Alias${index}`, type: "text", description: "", required: false, defaultValue: "" }] });
+  });
+}
+
 if (screenBgInput) {
   screenBgInput.addEventListener("input", () => {
     updateScreenProperty({ background: screenBgInput.value });
@@ -19603,6 +20127,12 @@ if (textValueInput) {
       const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
       if (obj?.type === "text") renderTextBindingRows(obj);
     });
+}
+
+if (textAliasInsertBtn) {
+  textAliasInsertBtn.addEventListener("click", () => {
+    insertAliasTokenIntoInput(textAliasInsertSelect, textValueInput);
+  });
 }
 
 const bindRotationInput = (input, updater) => {
@@ -19783,6 +20313,16 @@ if (tagBindingTagFilterInput) {
     populateCompactTagBindingTagOptions(tagBindingConnectionSelect?.value || "");
   });
 }
+if (tagBindingTagSelect) {
+  tagBindingTagSelect.addEventListener("change", () => {
+    if (tagBindingTemplateInput && tagBindingTagSelect.value) tagBindingTemplateInput.value = "";
+  });
+}
+if (tagBindingAliasInsertBtn) {
+  tagBindingAliasInsertBtn.addEventListener("click", () => {
+    insertAliasTokenIntoInput(tagBindingAliasInsertSelect, tagBindingTemplateInput);
+  });
+}
 if (tagBindingRefreshBtn) {
   tagBindingRefreshBtn.addEventListener("click", async () => {
     await loadTags();
@@ -19798,10 +20338,11 @@ if (tagBindingSaveBtn) {
     const selectedTagOption = tagBindingTagSelect?.selectedOptions?.[0] || null;
     const parsedSelection = parseTagSelectValue(String(tagBindingTagSelect?.value || ""));
     const connection_id = String(selectedTagOption?.dataset?.connectionId || tagBindingConnectionSelect?.value || parsedSelection.connection_id || "").trim();
-    const tag = String(selectedTagOption?.dataset?.tag || parsedSelection.tag || "").trim();
+    const template = String(tagBindingTemplateInput?.value || "").trim();
+    const tag = template || String(selectedTagOption?.dataset?.tag || parsedSelection.tag || "").trim();
     if (config.connectionInput) config.connectionInput.value = connection_id;
     if (config.tagInput) config.tagInput.value = tag;
-    if (config.tagSelect) setSelectValueSafe(config.tagSelect, connection_id && tag ? `${connection_id}::${tag}` : "");
+    if (config.tagSelect) setSelectValueSafe(config.tagSelect, formatTagSelectValue(connection_id, tag));
     config.apply({ connection_id, tag });
     closeCompactTagBindingModal();
     renderCompactTagBindingRows();
@@ -19815,6 +20356,7 @@ if (tagBindingClearBtn) {
     if (config.connectionInput) config.connectionInput.value = "";
     if (config.tagInput) config.tagInput.value = "";
     if (config.tagSelect) setSelectValueSafe(config.tagSelect, "");
+    if (tagBindingTemplateInput) tagBindingTemplateInput.value = "";
     config.apply({ connection_id: "", tag: "" });
     closeCompactTagBindingModal();
     renderCompactTagBindingRows();
@@ -19920,6 +20462,12 @@ if (buttonLabelInput) {
   });
 }
 
+if (buttonAliasInsertBtn) {
+  buttonAliasInsertBtn.addEventListener("click", () => {
+    insertAliasTokenIntoInput(buttonAliasInsertSelect, buttonLabelInput);
+  });
+}
+
 const getCurrentAuthButtonAction = () => ({
   type: "auth",
   loggedOutText: String(buttonAuthLoggedOutTextInput?.value || "").trim() || "Log In",
@@ -19998,6 +20546,8 @@ if (buttonActionSelect) {
     const actionType = buttonActionSelect.value || "navigate";
     const screenId = buttonTargetSelect?.value || availableScreens[0]?.id || "";
     const viewportId = buttonViewportSelect?.value || "";
+    const navigationTarget = buttonNavigationTargetSelect?.value || "current";
+    const existingAliases = getSelectedActionOwner("button")?.action?.aliases || {};
     const promptDefaults = {
       defaultValue: parseOptionalNumber(buttonPromptDefaultInput?.value),
       min: parseOptionalNumber(buttonPromptMinInput?.value),
@@ -20005,9 +20555,11 @@ if (buttonActionSelect) {
       step: parseOptionalNumber(buttonPromptStepInput?.value)
     };
 	    const action = actionType === "load-viewport"
-	      ? { type: "load-viewport", viewportId, screenId }
+	      ? { type: "load-viewport", viewportId, screenId, aliases: existingAliases }
 	      : actionType === "popup"
-	        ? { type: "popup", screenId, ...buttonPopupSettingsFromInputs() }
+	        ? { type: "popup", screenId, aliases: existingAliases, ...buttonPopupSettingsFromInputs() }
+	        : actionType === "close-popup"
+	          ? { type: "close-popup" }
 	        : actionType === "history-back"
 	          ? { type: "history-back" }
 	          : actionType === "history-forward"
@@ -20046,9 +20598,10 @@ if (buttonActionSelect) {
             onValue: buttonWriteOnValueInput?.value ?? "1",
             offValue: buttonWriteOffValueInput?.value ?? "0"
           }
-          : { type: "navigate", screenId };
+          : { type: "navigate", screenId, aliases: existingAliases, navigationTarget };
     updateButtonProperty({ action });
     updateButtonActionUI(actionType);
+    renderTargetAliasEditor("button", screenId, action);
   });
 }
 
@@ -20060,17 +20613,20 @@ if (buttonTargetSelect) {
   buttonTargetSelect.addEventListener("change", () => {
     const actionType = buttonActionSelect?.value || "navigate";
     if (actionType === "momentary-write" || actionType === "toggle-write" || actionType === "set-write" || actionType === "prompt-write") return;
-    if (actionType === "history-back" || actionType === "history-forward") return;
+    if (actionType === "close-popup" || actionType === "history-back" || actionType === "history-forward") return;
     if (actionType === "auth") return;
     if (actionType === "alarm-filter") return;
     const screenId = buttonTargetSelect.value;
     const viewportId = buttonViewportSelect?.value || "";
+    const aliases = getSelectedActionOwner("button")?.action?.aliases || {};
+    const navigationTarget = buttonNavigationTargetSelect?.value || "current";
     const action = actionType === "load-viewport"
-      ? { type: "load-viewport", viewportId, screenId }
+      ? { type: "load-viewport", viewportId, screenId, aliases }
       : actionType === "popup"
-        ? { type: "popup", screenId, ...buttonPopupSettingsFromInputs() }
-      : { type: "navigate", screenId };
+        ? { type: "popup", screenId, aliases, ...buttonPopupSettingsFromInputs() }
+      : { type: "navigate", screenId, aliases, navigationTarget };
     updateButtonProperty({ action });
+    renderTargetAliasEditor("button", screenId, action);
   });
 }
 
@@ -20080,7 +20636,17 @@ if (buttonViewportSelect) {
     if (actionType !== "load-viewport") return;
     const screenId = buttonTargetSelect?.value || "";
     const viewportId = buttonViewportSelect.value;
-    updateButtonProperty({ action: { type: "load-viewport", viewportId, screenId } });
+    const aliases = getSelectedActionOwner("button")?.action?.aliases || {};
+    updateButtonProperty({ action: { type: "load-viewport", viewportId, screenId, aliases } });
+  });
+}
+
+if (buttonNavigationTargetSelect) {
+  buttonNavigationTargetSelect.addEventListener("change", () => {
+    if (buttonActionSelect?.value !== "navigate") return;
+    const owner = getSelectedActionOwner("button");
+    if (!owner) return;
+    updateButtonProperty({ action: { ...(owner.action || {}), type: "navigate", navigationTarget: buttonNavigationTargetSelect.value || "current" } });
   });
 }
 
@@ -20094,7 +20660,7 @@ const updateSelectedGroupAction = (patch) => {
   if (!activeObjects || !Array.isArray(activeObjects)) return;
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
-  if (!obj || obj.type !== "group") return;
+  if (!obj || obj.type === "button") return;
   recordHistory();
   const next = { ...(obj.action || {}), ...patch };
   if (!next.type) {
@@ -20149,16 +20715,18 @@ if (groupActionTypeSelect) {
       const viewportId = groupActionViewportIdSelect?.value || getViewportIds()[0] || "";
       const screenId = groupActionScreenIdSelect?.value || availableScreens[0]?.id || DEFAULT_SCREEN_ID;
       updateSelectedGroupAction({ type: "load-viewport", viewportId, screenId });
+      renderTargetAliasEditor("group", screenId, getSelectedActionOwner("group")?.action || {});
       return;
     }
-    if (nextType === "history-back" || nextType === "history-forward") {
+    if (nextType === "close-popup" || nextType === "history-back" || nextType === "history-forward") {
       updateSelectedGroupAction({ type: nextType });
       return;
     }
     const screenId = groupActionScreenIdSelect?.value || availableScreens[0]?.id || DEFAULT_SCREEN_ID;
     updateSelectedGroupAction(nextType === "popup"
       ? { type: nextType, screenId, ...groupPopupSettingsFromInputs() }
-      : { type: nextType, screenId });
+      : { type: nextType, screenId, navigationTarget: groupNavigationTargetSelect?.value || "current" });
+    renderTargetAliasEditor("group", screenId, getSelectedActionOwner("group")?.action || {});
   });
 }
 
@@ -20175,16 +20743,25 @@ if (groupActionScreenIdSelect) {
   groupActionScreenIdSelect.addEventListener("change", () => {
     const type = String(groupActionTypeSelect?.value || "");
     if (!type) return;
-    if (type === "history-back" || type === "history-forward") return;
+    if (type === "close-popup" || type === "history-back" || type === "history-forward") return;
     const screenId = groupActionScreenIdSelect.value || "";
     if (type === "load-viewport") {
       const viewportId = groupActionViewportIdSelect?.value || "";
       updateSelectedGroupAction({ type: "load-viewport", viewportId, screenId });
+      renderTargetAliasEditor("group", screenId, getSelectedActionOwner("group")?.action || {});
       return;
     }
     updateSelectedGroupAction(type === "popup"
       ? { type, screenId, ...groupPopupSettingsFromInputs() }
-      : { type, screenId });
+      : { type, screenId, navigationTarget: groupNavigationTargetSelect?.value || "current" });
+    renderTargetAliasEditor("group", screenId, getSelectedActionOwner("group")?.action || {});
+  });
+}
+
+if (groupNavigationTargetSelect) {
+  groupNavigationTargetSelect.addEventListener("change", () => {
+    if (groupActionTypeSelect?.value !== "navigate") return;
+    updateSelectedGroupAction({ navigationTarget: groupNavigationTargetSelect.value || "current" });
   });
 }
 
@@ -22752,6 +23329,14 @@ const parseTagSelectValue = (value) => {
   return { connection_id: connectionId || "", tag: tagName || "" };
 };
 
+const formatTagSelectValue = (connectionId, tagName) => {
+  const connection = String(connectionId || "").trim();
+  const tag = String(tagName || "").trim();
+  if (!tag) return "";
+  if (aliasTokenName(tag)) return `::${tag}`;
+  return connection ? `${connection}::${tag}` : "";
+};
+
 function sortConnectionIdsForDisplay(connectionIds) {
   return [...new Set((Array.isArray(connectionIds) ? connectionIds : []).map((value) => String(value || "").trim()).filter(Boolean))].sort((a, b) => {
     const aSys = a.startsWith("_") ? 1 : 0;
@@ -22849,6 +23434,7 @@ function closeCompactTagBindingModal() {
   activeCompactTagBindingId = "";
   if (!tagBindingOverlay) return;
   if (tagBindingTagFilterInput) tagBindingTagFilterInput.value = "";
+  if (tagBindingTemplateInput) tagBindingTemplateInput.value = "";
   tagBindingOverlay.classList.add("is-hidden");
   tagBindingOverlay.setAttribute("aria-hidden", "true");
 }
@@ -22863,11 +23449,17 @@ function openCompactTagBindingModal(id) {
   activeCompactTagBindingId = id;
   if (tagBindingTitle) tagBindingTitle.textContent = config.modalTitle || config.label || "Tag Binding";
   const binding = config.read();
+  refreshAliasInsertionControls();
   if (tagBindingTagFilterInput) tagBindingTagFilterInput.value = "";
+  if (tagBindingTemplateInput) {
+    tagBindingTemplateInput.value = /\{alias:[a-zA-Z0-9_.-]+\}/i.test(String(binding.tag || ""))
+      ? String(binding.tag || "")
+      : "";
+  }
   populateCompactTagBindingConnectionOptions();
   setSelectValueSafe(tagBindingConnectionSelect, binding.connection_id || "");
   populateCompactTagBindingTagOptions(binding.connection_id || "");
-  setSelectValueSafe(tagBindingTagSelect, binding.connection_id && binding.tag ? `${binding.connection_id}::${binding.tag}` : "");
+  setSelectValueSafe(tagBindingTagSelect, formatTagSelectValue(binding.connection_id, binding.tag));
   tagBindingOverlay.classList.remove("is-hidden");
   tagBindingOverlay.setAttribute("aria-hidden", "false");
   if (tagBindingTagFilterInput) requestAnimationFrame(() => tagBindingTagFilterInput.focus());
@@ -24510,7 +25102,7 @@ const syncTextStateAutomationControl = (obj) => {
   control.ruleDownBtn.disabled = automation.selectedRuleIndex >= automation.rules.length - 1;
   setInputValueSafe(control.connectionInput, rule.connection_id || "");
   populateTagSelect(control.tagSelect);
-  const combined = rule.connection_id && rule.tag ? `${rule.connection_id}::${rule.tag}` : "";
+  const combined = formatTagSelectValue(rule.connection_id, rule.tag);
   setSelectValueSafe(control.tagSelect, combined);
   const mode = rule.mode === "equals" ? "equals" : "threshold";
   control.modeSelect.value = mode;
@@ -24642,7 +25234,7 @@ const syncLevelAutomationControl = (obj) => {
   control.sourceType.value = value.sourceType;
   control.connection.value = value.connection_id;
   populateTagSelect(control.tag);
-  setSelectValueSafe(control.tag, value.connection_id && value.tag ? `${value.connection_id}::${value.tag}` : "");
+  setSelectValueSafe(control.tag, formatTagSelectValue(value.connection_id, value.tag));
   control.expression.value = value.expression;
   control.updateSourceRows();
   control.min.value = String(value.inputMin); control.max.value = String(value.inputMax);
@@ -30913,19 +31505,31 @@ if (hmiSvg) {
 	          if (hotspot) {
 	            const action = hotspot.obj.action || {};
 	            if (action.type === "navigate") {
-                if (hotspot.viewportId) {
-                  loadViewportTarget(hotspot.viewportId, action.screenId);
+                if (hotspot.viewportId && action.navigationTarget !== "main") {
+                  loadViewportTarget(hotspot.viewportId, action.screenId, action);
                   return;
                 }
-	              runtimeNavigateTo(action.screenId);
+	              runtimeNavigateTo(action.screenId, action);
 	              return;
 	            }
 	            if (action.type === "load-viewport") {
-	              loadViewportTarget(action.viewportId, action.screenId);
+	              loadViewportTarget(action.viewportId, action.screenId, action);
 	              return;
 	            }
             if (action.type === "popup") {
-              openPopup(action.screenId, action);
+              beginPopup(action.screenId, {
+                ...action,
+                opener: hotspot.viewportId
+                  ? { type: "viewport", viewportId: hotspot.viewportId }
+                  : { type: "main" },
+                parentAliasContext: hotspot.viewportId
+                  ? (viewportAliasContexts.get(hotspot.viewportId) || currentScreenAliasContext)
+                  : currentScreenAliasContext
+              });
+              return;
+            }
+            if (action.type === "close-popup") {
+              if (currentPopupScreenId) closePopup();
               return;
             }
           }
@@ -30942,21 +31546,37 @@ if (hmiSvg) {
           hitMeta?.type === "viewport" &&
           Array.isArray(hitMeta?.viewportChildPath) &&
           hitMeta.viewportChildPath.length > 0;
-	        if (isViewportChildNavigate) {
+	        if (isViewportChildNavigate && obj.action.navigationTarget !== "main") {
 	          const viewportObj = currentScreenObj?.objects?.[hitMeta.index];
 	          const viewportId = viewportObj?.type === "viewport" ? viewportObj?.id : null;
 	          if (viewportId) {
-	            loadViewportTarget(viewportId, obj.action.screenId);
+	            loadViewportTarget(viewportId, obj.action.screenId, obj.action);
 	            return;
 	          }
 	        }
-	        runtimeNavigateTo(obj.action.screenId);
+	        runtimeNavigateTo(obj.action.screenId, obj.action);
 	      }
 	      if (obj?.action?.type === "load-viewport") {
-	        loadViewportTarget(obj.action.viewportId, obj.action.screenId);
+	        loadViewportTarget(obj.action.viewportId, obj.action.screenId, obj.action);
 	      }
 	      if (obj?.action?.type === "popup") {
-	        openPopup(obj.action.screenId, obj.action);
+	        const isViewportChildPopup =
+	          hitMeta?.type === "viewport" &&
+	          Array.isArray(hitMeta?.viewportChildPath) &&
+	          hitMeta.viewportChildPath.length > 0;
+	        const viewportObj = isViewportChildPopup ? currentScreenObj?.objects?.[hitMeta.index] : null;
+	        beginPopup(obj.action.screenId, {
+	          ...obj.action,
+	          opener: viewportObj?.type === "viewport" && viewportObj.id
+	            ? { type: "viewport", viewportId: viewportObj.id }
+	            : { type: "main" },
+	          parentAliasContext: viewportObj?.type === "viewport" && viewportObj.id
+	            ? (viewportAliasContexts.get(viewportObj.id) || currentScreenAliasContext)
+	            : currentScreenAliasContext
+	        });
+	      }
+	      if (obj?.action?.type === "close-popup" && currentPopupScreenId) {
+	        closePopup();
 	      }
 	      if (obj?.action?.type === "history-back") {
 	        const isViewportChild =

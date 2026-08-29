@@ -432,6 +432,10 @@
               <label for="screenBorderWidth">Width</label>
               <input id="screenBorderWidth" type="number" min="0" step="1" />
             </div>
+            <div class="prop-group-title">Aliases</div>
+            <div class="prop-help">Declare values this screen accepts. Use <code>{alias:Name}</code> in text or tag fields.</div>
+            <div id="screenAliasDefinitions" class="text-binding-rows"></div>
+            <button id="screenAliasAddBtn" class="panel-btn" type="button">Add Alias</button>
           </div>
 
           <div id="textProps" class="properties-form is-hidden">
@@ -439,6 +443,10 @@
             <div class="prop-row">
               <label for="textValue">Text</label>
               <textarea id="textValue" rows="3" placeholder="Text"></textarea>
+            </div>
+            <div class="prop-row">
+              <label for="textAliasInsert">Insert Alias</label>
+              <div class="prop-inline"><select id="textAliasInsert"></select><button id="textAliasInsertBtn" class="panel-btn" type="button">Insert</button></div>
             </div>
             <div class="prop-row prop-row-compact">
               <label>Layout</label>
@@ -550,7 +558,7 @@
               </select>
             </div>
             <div class="prop-group-title">Binding</div>
-            <div class="prop-help">Use placeholders like <code>{1}</code>, <code>{2}</code>, or <code>{flow}</code> in the text.</div>
+            <div class="prop-help">Use <code>{1}</code>, <code>{2}</code>, or <code>{flow}</code> for automation values. Use <code>{alias:Name}</code> for a value supplied by the screen or calling action.</div>
             <div id="textBindingRows" class="text-binding-rows"></div>
           </div>
 
@@ -560,7 +568,11 @@
               <label for="buttonLabel">Label</label>
               <textarea id="buttonLabel" rows="3" placeholder="Button"></textarea>
             </div>
-            <div class="prop-help">Use placeholders like <code>{1}</code>, <code>{2}</code>, or <code>{state}</code> in the button text.</div>
+            <div class="prop-row">
+              <label for="buttonAliasInsert">Insert Alias</label>
+              <div class="prop-inline"><select id="buttonAliasInsert"></select><button id="buttonAliasInsertBtn" class="panel-btn" type="button">Insert</button></div>
+            </div>
+            <div class="prop-help">Use <code>{1}</code>, <code>{2}</code>, or <code>{state}</code> for automation values. Use <code>{alias:Name}</code> for a value supplied by the screen or calling action.</div>
             <div id="buttonLabelBindingRows" class="text-binding-rows"></div>
 	            <div class="prop-row">
 	              <label for="buttonActionType">Action</label>
@@ -571,6 +583,7 @@
 		                  <option value="popup">Popup</option>
 		                </optgroup>
 		                <optgroup label="Actions">
+		                  <option value="close-popup">Close Popup</option>
 		                  <option value="history-back">Browser Back</option>
 		                  <option value="history-forward">Browser Forward</option>
 		                  <option value="auth">Log In / Log Out</option>
@@ -600,6 +613,15 @@
               <label for="buttonTarget">Target Screen</label>
               <select id="buttonTarget"></select>
             </div>
+            <div class="prop-row is-hidden" id="buttonNavigationTargetRow" hidden>
+              <label for="buttonNavigationTarget">Open In</label>
+              <select id="buttonNavigationTarget">
+                <option value="current">Current Container</option>
+                <option value="opener">Popup Opener</option>
+                <option value="main">Main Screen</option>
+              </select>
+            </div>
+            <div id="buttonTargetAliases" class="prop-subgroup is-hidden" hidden></div>
             <div class="prop-row is-hidden" id="buttonViewportRow">
               <label for="buttonViewportTarget">Viewport</label>
               <select id="buttonViewportTarget"></select>
@@ -2142,6 +2164,7 @@
 	                  <option value="popup">Popup</option>
 	                </optgroup>
 	                <optgroup label="Actions">
+	                  <option value="close-popup">Close Popup</option>
 	                  <option value="history-back">Browser Back</option>
 	                  <option value="history-forward">Browser Forward</option>
 	                </optgroup>
@@ -2159,6 +2182,15 @@
 	                <option value="">Select screen…</option>
 	              </select>
               </div>
+              <div class="prop-row is-hidden" id="groupNavigationTargetRow" hidden>
+                <label for="groupNavigationTarget">Open In</label>
+                <select id="groupNavigationTarget">
+                  <option value="current">Current Container</option>
+                  <option value="opener">Popup Opener</option>
+                  <option value="main">Main Screen</option>
+                </select>
+              </div>
+              <div id="groupTargetAliases" class="prop-subgroup is-hidden" hidden></div>
               <div class="prop-subgroup is-hidden" id="groupPopupFields" hidden>
                 <div class="prop-group-title">Popup Window</div>
                 <div class="prop-row"><label for="groupPopupModal">Modal</label><input id="groupPopupModal" type="checkbox" checked /></div>
@@ -2507,6 +2539,15 @@
 	              <button id="tagBindingRefreshBtn" class="panel-btn" type="button">Refresh</button>
 	            </div>
 	          </div>
+              <div class="prop-row">
+                <label for="tagBindingTemplate">Tag Template</label>
+                <input id="tagBindingTemplate" type="text" placeholder="Pump{alias:PumpNumber}Running" />
+              </div>
+              <div class="prop-row">
+                <label for="tagBindingAliasInsert">Insert Alias</label>
+                <div class="prop-inline"><select id="tagBindingAliasInsert"></select><button id="tagBindingAliasInsertBtn" class="panel-btn" type="button">Insert</button></div>
+              </div>
+              <div class="prop-help">Use aliases inline to build a tag name. The selected connection is retained.</div>
 	          <div class="text-binding-actions">
 	            <button id="tagBindingClearBtn" class="panel-btn" type="button">Clear</button>
 	            <button id="tagBindingSaveBtn" class="panel-btn" type="button">Save</button>
@@ -3071,6 +3112,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="/js/hmi.js?v=20260828-file-menu-v7"></script>
+	  <script src="/js/hmi.js?v=20260829-reference-migration-v14"></script>
 	</body>
 	</html>
