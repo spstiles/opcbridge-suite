@@ -20,6 +20,7 @@ const automationTabRotationBtn = document.getElementById("automationTabRotation"
 const automationTabVisibilityBtn = document.getElementById("automationTabVisibility");
 const automationTabTextBtn = document.getElementById("automationTabText");
 const automationTabColorBtn = document.getElementById("automationTabColor");
+const automationTabLevelBtn = document.getElementById("automationTabLevel");
 const automationTabFillBtn = document.getElementById("automationTabFill");
 const automationTabStrokeBtn = document.getElementById("automationTabStroke");
 const automationTabValueBtn = document.getElementById("automationTabValue");
@@ -28,6 +29,7 @@ const automationTabPanelRotation = document.getElementById("automationTabPanelRo
 const automationTabPanelVisibility = document.getElementById("automationTabPanelVisibility");
 const automationTabPanelText = document.getElementById("automationTabPanelText");
 const automationTabPanelColor = document.getElementById("automationTabPanelColor");
+const automationTabPanelLevel = document.getElementById("automationTabPanelLevel");
 const automationTabPanelFill = document.getElementById("automationTabPanelFill");
 const automationTabPanelStroke = document.getElementById("automationTabPanelStroke");
 const automationTabPanelValue = document.getElementById("automationTabPanelValue");
@@ -201,6 +203,10 @@ const fileNewScreenMenuBtn = document.getElementById("fileNewScreenMenuBtn");
 const fileOpenScreenMenuBtn = document.getElementById("fileOpenScreenMenuBtn");
 const fileSaveAsMenuBtn = document.getElementById("fileSaveAsMenuBtn");
 const fileBackupScreensMenuBtn = document.getElementById("fileBackupScreensMenuBtn");
+const fileManagerMenuBtn = document.getElementById("fileManagerMenuBtn");
+const fileImportMenuWrap = document.getElementById("fileImportMenuWrap");
+const fileImportMenuBtn = document.getElementById("fileImportMenuBtn");
+const fileImportMenuFlyout = document.getElementById("fileImportMenuFlyout");
 const viewMenuWrap = document.getElementById("viewMenuWrap");
 const viewMenuBtn = document.getElementById("viewMenuBtn");
 const viewMenuFlyout = document.getElementById("viewMenuFlyout");
@@ -2653,6 +2659,7 @@ const returnAutomationSectionsToStore = () => {
     automationTabPanelVisibility,
     automationTabPanelText,
     automationTabPanelColor,
+    automationTabPanelLevel,
     automationTabPanelFill,
     automationTabPanelStroke,
     automationTabPanelValue
@@ -2670,6 +2677,7 @@ const setAutomationTab = (nextTab) => {
     { id: "visibility", el: automationTabVisibilityBtn, panel: automationTabPanelVisibility },
     { id: "text", el: automationTabTextBtn, panel: automationTabPanelText },
     { id: "color", el: automationTabColorBtn, panel: automationTabPanelColor },
+    { id: "level", el: automationTabLevelBtn, panel: automationTabPanelLevel },
     { id: "fill", el: automationTabFillBtn, panel: automationTabPanelFill },
     { id: "stroke", el: automationTabStrokeBtn, panel: automationTabPanelStroke },
     { id: "value", el: automationTabValueBtn, panel: automationTabPanelValue }
@@ -2713,7 +2721,7 @@ const populateAutomationPanel = () => {
     visibilityProps.classList.remove("is-hidden");
     automationTabPanelVisibility.appendChild(visibilityProps);
   }
-  [["text", automationTabPanelText], ["color", automationTabPanelColor], ["fill", automationTabPanelFill], ["stroke", automationTabPanelStroke], ["value", automationTabPanelValue]].forEach(([tab, panel]) => {
+  [["text", automationTabPanelText], ["color", automationTabPanelColor], ["level", automationTabPanelLevel], ["fill", automationTabPanelFill], ["stroke", automationTabPanelStroke], ["value", automationTabPanelValue]].forEach(([tab, panel]) => {
     if (!panel) return;
     getAutomationSectionsForObjectByTab(obj, tab).forEach((config) => {
       if (config.sectionEl) {
@@ -2727,6 +2735,7 @@ const populateAutomationPanel = () => {
   if (automationTabVisibilityBtn) automationTabVisibilityBtn.classList.toggle("is-hidden", !visibilityAvailable);
   if (automationTabTextBtn) automationTabTextBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "text").length === 0);
   if (automationTabColorBtn) automationTabColorBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "color").length === 0);
+  if (automationTabLevelBtn) automationTabLevelBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "level").length === 0);
   if (automationTabFillBtn) automationTabFillBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "fill").length === 0);
   if (automationTabStrokeBtn) automationTabStrokeBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "stroke").length === 0);
   if (automationTabValueBtn) automationTabValueBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "value").length === 0);
@@ -2761,7 +2770,7 @@ const closeAutomationPanel = () => {
 };
 
 // Screen Files (Open / Save As)
-let screenFileMode = "open"; // "open" | "saveAs"
+let screenFileMode = "open"; // "open" | "manager" | "saveAs"
 let screenFileSource = "screens"; // "screens" | "images"
 let screenFileDir = "";
 let screenFileSelected = null; // { kind:"dir"|"file", name, path, ref }
@@ -2781,7 +2790,7 @@ const screenFileDateFormatter = new Intl.DateTimeFormat(undefined, {
 const updateScreenFileFooterButtons = () => {
   const isScreens = screenFileSource === "screens";
   const isImages = screenFileSource === "images";
-  const canDownload = screenFileMode === "open"
+  const canDownload = screenFileMode === "manager"
     && Boolean(screenFileSelected)
     && (
       (isScreens && ((screenFileSelected?.kind === "file" && Boolean(screenFileSelected?.path)) || screenFileSelected?.kind === "dir"))
@@ -2790,9 +2799,9 @@ const updateScreenFileFooterButtons = () => {
   if (screenFileDownloadBtn) screenFileDownloadBtn.disabled = !canDownload;
   const canOpen = isScreens && screenFileSelected?.kind === "file" && Boolean(screenFileSelected?.path);
   const canManageFile = screenFileSelected?.kind === "file";
-  if (screenFilePrimaryBtn) screenFilePrimaryBtn.disabled = screenFileMode === "open" ? !canOpen : !isScreens;
+  if (screenFilePrimaryBtn) screenFilePrimaryBtn.disabled = screenFileMode !== "saveAs" ? !canOpen : !isScreens;
   if (screenFileOpenBtn) screenFileOpenBtn.disabled = !canOpen;
-  if (screenFileUploadBtn) screenFileUploadBtn.disabled = screenFileMode !== "open";
+  if (screenFileUploadBtn) screenFileUploadBtn.disabled = screenFileMode !== "manager";
   if (screenFileRenameBtn) screenFileRenameBtn.disabled = !canManageFile;
   if (screenFileDuplicateBtn) screenFileDuplicateBtn.disabled = !canManageFile;
   if (screenFileDeleteBtn) screenFileDeleteBtn.disabled = !canManageFile;
@@ -2847,14 +2856,16 @@ const pathBasename = (p) => String(p || "").replace(/\\/g, "/").split("/").pop()
 const screenRefFromPath = (relPath) => String(relPath || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\.(screen|jsonc)$/i, "");
 
 const setScreenFileDialogMode = (mode) => {
-  screenFileMode = mode === "saveAs" ? "saveAs" : "open";
-  if (screenFileTitle) screenFileTitle.textContent = screenFileMode === "saveAs" ? "Save Screen As…" : "File Manager";
+  screenFileMode = mode === "saveAs" ? "saveAs" : (mode === "manager" ? "manager" : "open");
+  if (screenFileTitle) screenFileTitle.textContent = screenFileMode === "saveAs" ? "Save Screen As…" : (screenFileMode === "manager" ? "File Manager" : "Open Screen");
   if (screenFilePrimaryBtn) screenFilePrimaryBtn.textContent = screenFileMode === "saveAs" ? "Save" : "Open";
   if (screenFileNameInput) screenFileNameInput.disabled = false;
   if (screenFileNameRow) screenFileNameRow.classList.toggle("is-hidden", screenFileMode !== "saveAs" || screenFileSource !== "screens");
-  if (screenFileOpenBtn) screenFileOpenBtn.classList.toggle("is-hidden", screenFileMode !== "open");
-  if (screenFileUploadBtn) screenFileUploadBtn.classList.toggle("is-hidden", screenFileMode !== "open");
-  if (screenFileDownloadBtn) screenFileDownloadBtn.classList.toggle("is-hidden", screenFileMode !== "open");
+  if (screenFileOpenBtn) screenFileOpenBtn.classList.toggle("is-hidden", screenFileMode !== "manager");
+  if (screenFileUploadBtn) screenFileUploadBtn.classList.toggle("is-hidden", screenFileMode !== "manager");
+  if (screenFileDownloadBtn) screenFileDownloadBtn.classList.toggle("is-hidden", screenFileMode !== "manager");
+  [screenFileNewBtn, screenFileRenameBtn, screenFileDuplicateBtn, screenFileDeleteBtn, screenFileRefreshBtn, screenFileNewFolderBtn]
+    .forEach((button) => button?.classList.toggle("is-hidden", screenFileMode === "open"));
   if (screenFileUploadInput) {
     screenFileUploadInput.value = "";
     if (screenFileSource === "images") {
@@ -3038,7 +3049,7 @@ const renderScreenFileList = (payload) => {
         setScreenFileLocation({ source: "screens", dir: meta?.path || "" }, { push: true });
         return;
       }
-      if (kind === "file" && screenFileMode === "open") {
+      if (kind === "file" && screenFileMode !== "saveAs") {
         openSelectedScreenFile();
       }
     });
@@ -3318,7 +3329,7 @@ const updateScreenFileNavButtons = () => {
 
 const showScreenFileDialog = async (mode) => {
   if (!openFileOverlay) return;
-  if (mode === "saveAs") screenFileSource = "screens";
+  if (mode === "saveAs" || mode === "open") screenFileSource = "screens";
   screenFileUploadTargetSource = screenFileSource;
   screenFileUploadTargetDir = screenFileDir || "";
   setScreenFileDialogMode(mode);
@@ -3422,6 +3433,10 @@ const openSelectedScreenFile = async () => {
     }
   }
   if (!nextPath) return;
+  if (isDirty && !confirmLoseUnsavedChanges("Open screen")) {
+    showHmiToast("Open canceled (unsaved changes kept).", 6000);
+    return;
+  }
   applyScreenSelection(screenRefFromPath(nextPath), nextPath);
   hideScreenFileDialog();
 };
@@ -3444,7 +3459,7 @@ const createNewUnsavedScreen = () => {
 };
 
 const downloadScreenManagerEntry = (entry = screenFileSelected, source = screenFileSource) => {
-  if (screenFileMode !== "open") return;
+  if (screenFileMode !== "manager") return;
   if (!entry) return;
   if (source === "images") {
     const filename = String(entry.name || "").trim();
@@ -5871,12 +5886,31 @@ const getAuthStateValues = () => {
   };
 };
 
+const getSessionSystemTagValues = () => {
+  const loggedIn = hasServerAuthSession();
+  const permissions = getAuthPermissions();
+  return {
+    "System/Session/LoggedIn": loggedIn,
+    "System/Session/Username": loggedIn ? String(authSession?.username || "") : "",
+    "System/Session/FirstName": loggedIn ? String(authSession?.firstName || "") : "",
+    "System/Session/LastName": loggedIn ? String(authSession?.lastName || "") : "",
+    "System/Session/DisplayName": loggedIn ? String(authSession?.displayName || authSession?.username || "") : "",
+    "System/Session/Groups": loggedIn ? (Array.isArray(authSession?.groups) ? authSession.groups.join(",") : "") : "",
+    "System/Session/IsAdmin": loggedIn && permissions.includes("auth.manage_users")
+  };
+};
+
 const scheduleAuthStateRender = () => {
   if (authStateRenderTimer) return;
   authStateRenderTimer = window.setTimeout(() => {
     authStateRenderTimer = null;
     Object.entries(getAuthStateValues()).forEach(([tag, value]) => {
       const key = normalizeTagCacheKey("_hmi", tag);
+      tagValueCache.set(key, value);
+      tagQualityCache.set(key, "GOOD");
+    });
+    Object.entries(getSessionSystemTagValues()).forEach(([tag, value]) => {
+      const key = normalizeTagCacheKey("_system", tag);
       tagValueCache.set(key, value);
       tagQualityCache.set(key, "GOOD");
     });
@@ -5916,6 +5950,8 @@ const loadAuthSession = () => {
     const parsed = JSON.parse(raw);
     const username = String(parsed?.username || "").trim();
     const displayName = String(parsed?.displayName || parsed?.name || username).trim() || username;
+    const firstName = String(parsed?.firstName || parsed?.first_name || "").trim();
+    const lastName = String(parsed?.lastName || parsed?.last_name || "").trim();
     const groups = Array.isArray(parsed?.groups) ? parsed.groups.map(String) : [];
     const permissions = Array.isArray(parsed?.permissions) ? parsed.permissions : [];
     const timeoutMinutes = Number(parsed?.timeoutMinutes) || 0;
@@ -5923,7 +5959,7 @@ const loadAuthSession = () => {
     const adminToken = String(parsed?.adminToken || "").trim();
     if (!username) return null;
     const serverValid = parsed?.serverValid !== false;
-    return { username, displayName, groups, permissions, timeoutMinutes, lastActivityMs, serverValid, adminToken };
+    return { username, firstName, lastName, displayName, groups, permissions, timeoutMinutes, lastActivityMs, serverValid, adminToken };
   } catch {
     return null;
   }
@@ -5985,6 +6021,8 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   const serverUser = authInfo?.user;
   const serverUsername = String(serverUser?.username || "").trim();
   const serverDisplayName = String(serverUser?.name || serverUser?.displayName || serverUser?.display_name || serverUsername).trim() || serverUsername;
+  const serverFirstName = String(serverUser?.first_name || "").trim();
+  const serverLastName = String(serverUser?.last_name || "").trim();
   const serverGroups = Array.isArray(serverUser?.groups) ? serverUser.groups.map(String) : [];
   const serverPerms = Array.isArray(serverUser?.permissions) ? serverUser.permissions : [];
 
@@ -6041,6 +6079,8 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   const needsSync = !authSession ||
     String(authSession?.username || "").trim() !== serverUsername ||
     String(authSession?.displayName || "").trim() !== serverDisplayName ||
+    String(authSession?.firstName || "").trim() !== serverFirstName ||
+    String(authSession?.lastName || "").trim() !== serverLastName ||
     JSON.stringify((authSession?.groups || []).slice().sort()) !== JSON.stringify(serverGroups.slice().sort()) ||
     localPermsKey !== permsKey ||
     Number(authSession?.timeoutMinutes || 0) !== Number(authInfo?.timeoutMinutes || 0);
@@ -6048,6 +6088,8 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
   if (needsSync) {
     saveAuthSession({
       username: serverUsername,
+      firstName: serverFirstName,
+      lastName: serverLastName,
       displayName: serverDisplayName,
       groups: serverGroups,
       permissions: serverPerms,
@@ -6424,6 +6466,27 @@ const closeAuth = () => {
   closeTouchKeyboard();
   setOverlayOpen(authOverlay, false);
   if (authStatusEl) authStatusEl.textContent = "Ready.";
+};
+
+const performAuthAction = async (source = "screen-auth-action") => {
+  if (!hasServerAuthSession()) {
+    await openAuth();
+    return;
+  }
+
+  setMenuOpen(false);
+  try {
+    await apiAuthLogout();
+  } catch {
+    // Clear the local session even if the server is already unavailable/logged out.
+  }
+  pendingEditModeAfterLogin = false;
+  recordAuthDiagnostic("explicit-logout", { source });
+  clearAuthSession();
+  if (isEditMode) setMode(false);
+  closeAuth();
+  await refreshAuthUi().catch(() => {});
+  showHmiToast("User logged out", 15000);
 };
 
 const openUsers = async () => {
@@ -9883,6 +9946,8 @@ const setMenuOpen = (isOpen) => {
   if (!isOpen && fileMenuFlyout && fileMenuBtn) {
     fileMenuFlyout.classList.add("is-hidden");
     fileMenuBtn.setAttribute("aria-expanded", "false");
+    fileImportMenuFlyout?.classList.add("is-hidden");
+    fileImportMenuBtn?.setAttribute("aria-expanded", "false");
   }
   if (!isOpen && viewMenuFlyout && viewMenuBtn) {
     viewMenuFlyout.classList.add("is-hidden");
@@ -10439,15 +10504,15 @@ const refreshGroupActionScreenOptions = () => {
 
 const setGroupActionRows = (actionType) => {
   const type = String(actionType || "");
-  const hasAction = Boolean(type);
+  const hasScreenTarget = type === "navigate" || type === "load-viewport" || type === "popup";
   const isLoadViewport = type === "load-viewport";
   if (groupActionViewportRow) {
     groupActionViewportRow.classList.toggle("is-hidden", !isLoadViewport);
     groupActionViewportRow.hidden = !isLoadViewport;
   }
   if (groupActionScreenRow) {
-    groupActionScreenRow.classList.toggle("is-hidden", !hasAction);
-    groupActionScreenRow.hidden = !hasAction;
+    groupActionScreenRow.classList.toggle("is-hidden", !hasScreenTarget);
+    groupActionScreenRow.hidden = !hasScreenTarget;
   }
   if (groupPopupFields) {
     const showPopup = type === "popup";
@@ -10905,7 +10970,14 @@ const loadTags = async () => {
       value,
       quality: "GOOD"
     }));
-    const rawTags = [...(data?.tags || []), ...authTags];
+    const sessionTags = Object.entries(getSessionSystemTagValues()).map(([name, value]) => ({
+      connection_id: "_system",
+      connection_name: "System",
+      name,
+      value,
+      quality: "GOOD"
+    }));
+    const rawTags = [...(data?.tags || []), ...authTags, ...sessionTags];
     const sortedAll = sortTagsForDisplay(rawTags);
     tagsAllCache = sortedAll;
     tagsCache = sortedAll;
@@ -11692,6 +11764,68 @@ const setSvgPaint = (el, attr, paint, bounds, parentForDefs = null) => {
   el.setAttribute(attr, resolveSvgPaint(parent, paint, bounds));
 };
 
+const getLevelAutomationFraction = (obj) => {
+  const config = normalizeLevelAutomation(obj?.levelAutomation || {});
+  if (!config.enabled) return null;
+  let numeric = null;
+  if (isEditMode) {
+    numeric = (config.inputMin + config.inputMax) / 2;
+  } else if (config.sourceType === "expression") {
+    numeric = coerceTagNumber(evaluateAutomationExpression(config.expression));
+  } else {
+    const raw = tagValueCache.get(normalizeTagCacheKey(config.connection_id, config.tag));
+    numeric = coerceTagNumber(raw);
+  }
+  if (numeric === null || !Number.isFinite(numeric)) return 0;
+  const span = config.inputMax - config.inputMin;
+  let fraction = span === 0 ? (numeric >= config.inputMax ? 1 : 0) : (numeric - config.inputMin) / span;
+  if (config.invert) fraction = 1 - fraction;
+  // SVG clipping naturally clamps overflow; explicit clamping also prevents
+  // negative dimensions when the source falls outside its configured range.
+  return Math.max(0, Math.min(1, fraction));
+};
+
+const getLevelEmptyPaint = (obj, basePaint) => {
+  const config = normalizeLevelAutomation(obj?.levelAutomation || {});
+  return config.enabled && config.emptyFill ? config.emptyFill : basePaint;
+};
+
+const appendLevelAutomationOverlay = (parent, obj, shapeEl, bounds) => {
+  const fraction = getLevelAutomationFraction(obj);
+  if (fraction === null || !parent || !shapeEl || !bounds) return;
+  const config = normalizeLevelAutomation(obj.levelAutomation);
+  const x = Number(bounds.x || 0), y = Number(bounds.y || 0);
+  const width = Math.max(0, Number(bounds.width || 0)), height = Math.max(0, Number(bounds.height || 0));
+  if (width <= 0 || height <= 0) return;
+  const svgRoot = svgRootForPaint(parent);
+  const defs = getOrCreateDefs(svgRoot);
+  if (!defs) return;
+  const clipId = `levelClip${nextClipPathId++}`;
+  const clipPath = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
+  clipPath.setAttribute("id", clipId);
+  const clipShape = shapeEl.cloneNode(false);
+  clipShape.setAttribute("fill", "#ffffff");
+  clipShape.setAttribute("stroke", "none");
+  clipPath.appendChild(clipShape);
+  defs.appendChild(clipPath);
+  let fx = x, fy = y, fw = width, fh = height;
+  if (config.direction === "up") { fy = y + height * (1 - fraction); fh = height * fraction; }
+  if (config.direction === "down") fh = height * fraction;
+  if (config.direction === "right") fw = width * fraction;
+  if (config.direction === "left") { fx = x + width * (1 - fraction); fw = width * fraction; }
+  const levelRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  levelRect.setAttribute("x", fx); levelRect.setAttribute("y", fy);
+  levelRect.setAttribute("width", Math.max(0, fw)); levelRect.setAttribute("height", Math.max(0, fh));
+  levelRect.setAttribute("clip-path", `url(#${clipId})`);
+  levelRect.setAttribute("pointer-events", "none");
+  setSvgPaint(levelRect, "fill", config.fill || "#3b82f6", bounds, parent);
+  parent.appendChild(levelRect);
+  const border = shapeEl.cloneNode(false);
+  border.setAttribute("fill", "none");
+  border.setAttribute("pointer-events", "none");
+  parent.appendChild(border);
+};
+
 const setImageHref = (imageEl, href) => {
   if (!imageEl) return;
   imageEl.setAttribute("href", href);
@@ -12226,12 +12360,13 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     rect.setAttribute("height", h);
     rect.setAttribute("rx", obj.rx ?? 0);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
-    setSvgPaint(rect, "fill", fillColor, { x, y, width: w, height: h }, containerParent);
+    setSvgPaint(rect, "fill", getLevelEmptyPaint(obj, fillColor), { x, y, width: w, height: h }, containerParent);
 	    const baseStroke = obj.stroke || "#ffffff";
 	    const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
 	    const strokeWidth = Number(obj.strokeWidth ?? 1);
 	    setFlatBorderStroke(rect, strokeColor, strokeWidth, obj.borderStyle);
 	    containerParent.appendChild(rect);
+	    appendLevelAutomationOverlay(containerParent, obj, rect, { x, y, width: w, height: h });
 	    const innerBorder = obj.innerBorder || {};
 	    const innerBorderWidth = Math.max(0, Number(innerBorder.width ?? 1) || 0);
 	    if (innerBorder.enabled === true && innerBorderWidth > 0) {
@@ -12490,12 +12625,14 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     circle.setAttribute("cy", cy);
     circle.setAttribute("r", r);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
-    setSvgPaint(circle, "fill", fillColor, { x: cx - r, y: cy - r, width: r * 2, height: r * 2 }, containerParent);
+    const circleBounds = { x: cx - r, y: cy - r, width: r * 2, height: r * 2 };
+    setSvgPaint(circle, "fill", getLevelEmptyPaint(obj, fillColor), circleBounds, containerParent);
     const baseStroke = obj.stroke || "#ffffff";
     const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
     circle.setAttribute("stroke", strokeColor);
     circle.setAttribute("stroke-width", obj.strokeWidth ?? 1);
     containerParent.appendChild(circle);
+    appendLevelAutomationOverlay(containerParent, obj, circle, circleBounds);
     return;
   }
 
@@ -12533,12 +12670,14 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     ellipse.setAttribute("rx", rx);
     ellipse.setAttribute("ry", ry);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
-    setSvgPaint(ellipse, "fill", fillColor, { x, y, width: w, height: h }, containerParent);
+    const ellipseBounds = { x, y, width: w, height: h };
+    setSvgPaint(ellipse, "fill", getLevelEmptyPaint(obj, fillColor), ellipseBounds, containerParent);
     const baseStroke = obj.stroke || "#ffffff";
     const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
     ellipse.setAttribute("stroke", strokeColor);
     ellipse.setAttribute("stroke-width", obj.strokeWidth ?? 1);
     containerParent.appendChild(ellipse);
+    appendLevelAutomationOverlay(containerParent, obj, ellipse, ellipseBounds);
     return;
   }
 
@@ -12840,18 +12979,20 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const attr = points.map((pt) => `${Number(pt?.x ?? 0)},${Number(pt?.y ?? 0)}`).join(" ");
     el.setAttribute("points", attr);
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#3a3f4b");
-    setSvgPaint(el, "fill", fillColor, {
+    const polygonBounds = {
       x: Number.isFinite(minX) ? minX : 0,
       y: Number.isFinite(minY) ? minY : 0,
       width: Number.isFinite(maxX - minX) ? Math.max(1, maxX - minX) : 1,
       height: Number.isFinite(maxY - minY) ? Math.max(1, maxY - minY) : 1
-    }, containerParent);
+    };
+    setSvgPaint(el, "fill", getLevelEmptyPaint(obj, fillColor), polygonBounds, containerParent);
     const baseStroke = obj.stroke || "#ffffff";
     const strokeColor = baseStroke === "none" ? "none" : getAutomationColor(obj.strokeAutomation, baseStroke);
     el.setAttribute("stroke", strokeColor);
     el.setAttribute("stroke-width", obj.strokeWidth ?? 1);
     el.setAttribute("vector-effect", "non-scaling-stroke");
     containerParent.appendChild(el);
+    appendLevelAutomationOverlay(containerParent, obj, el, polygonBounds);
     return;
   }
   if (obj.type === "bar") {
@@ -13080,9 +13221,11 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
       && getWriteActionActiveState(obj.action);
     const buttonStroke = obj.stroke || "#ffffff";
     const buttonStrokeWidth = Number(obj.strokeWidth ?? 1);
-    setSvgPaint(rect, "fill", fillColor, { x: 0, y: 0, width: w, height: h }, parent);
+    const buttonBounds = { x: 0, y: 0, width: w, height: h };
+    setSvgPaint(rect, "fill", getLevelEmptyPaint(obj, fillColor), buttonBounds, parent);
     setFlatBorderStroke(rect, buttonStroke, buttonStrokeWidth, obj.borderStyle);
     group.appendChild(rect);
+    appendLevelAutomationOverlay(group, obj, rect, buttonBounds);
 
     if (isWriteActive) {
       const activeRing = document.createElementNS(ns, "rect");
@@ -14014,6 +14157,7 @@ const syncPropertiesFromSelection = () => {
   const index = selectedIndices[0];
   const obj = activeObjects[index];
   if (!obj) return;
+  syncLevelAutomationControl(obj);
   if (obj.type === "group") {
     setInputValueSafe(groupXInput, Number(obj.x ?? 0));
     setInputValueSafe(groupYInput, Number(obj.y ?? 0));
@@ -17154,10 +17298,17 @@ async function refreshScreensList() {
 }
 
 function bindScreenManager() {
+  const setFileImportFlyoutOpen = (isOpen) => {
+    if (!fileImportMenuFlyout || !fileImportMenuBtn) return;
+    fileImportMenuFlyout.classList.toggle("is-hidden", !isOpen);
+    fileImportMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  };
+
   const setFileFlyoutOpen = (isOpen) => {
     if (!fileMenuFlyout || !fileMenuBtn) return;
     fileMenuFlyout.classList.toggle("is-hidden", !isOpen);
     fileMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (!isOpen) setFileImportFlyoutOpen(false);
   };
 
   const setViewFlyoutOpen = (isOpen) => {
@@ -17262,6 +17413,13 @@ function bindScreenManager() {
     });
   }
 
+  if (fileImportMenuBtn) {
+    fileImportMenuBtn.addEventListener("click", () => {
+      const isOpen = !fileImportMenuFlyout?.classList.contains("is-hidden");
+      setFileImportFlyoutOpen(!isOpen);
+    });
+  }
+
   if (viewMenuBtn) {
     viewMenuBtn.addEventListener("click", () => {
       cancelViewFlyoutClose();
@@ -17307,6 +17465,12 @@ function bindScreenManager() {
       cancelFileFlyoutClose();
       setFileFlyoutOpen(true);
     });
+  }
+
+  if (fileImportMenuWrap && fileImportMenuBtn && fileImportMenuFlyout) {
+    fileImportMenuWrap.addEventListener("pointerenter", () => setFileImportFlyoutOpen(true));
+    fileImportMenuWrap.addEventListener("pointerleave", () => setFileImportFlyoutOpen(false));
+    fileImportMenuBtn.addEventListener("focus", () => setFileImportFlyoutOpen(true));
   }
 
   if (viewMenuWrap && viewMenuBtn && viewMenuFlyout) {
@@ -17399,18 +17563,25 @@ function bindScreenManager() {
     });
   }
 
-  // File menu: File Manager…
+  // File menu: Open…
   if (fileOpenScreenMenuBtn) {
     fileOpenScreenMenuBtn.addEventListener("click", async () => {
       setFileFlyoutOpen(false);
       setMenuOpen(false);
-      if (isDirty && !confirmLoseUnsavedChanges("Open file manager")) {
-        showHmiToast("File manager canceled (unsaved changes kept).", 6000);
-        return;
-      }
       screenFileHistory = [];
       screenFileHistoryIndex = -1;
       await showScreenFileDialog("open");
+    });
+  }
+
+  // File menu: File Manager…
+  if (fileManagerMenuBtn) {
+    fileManagerMenuBtn.addEventListener("click", async () => {
+      setFileFlyoutOpen(false);
+      setMenuOpen(false);
+      screenFileHistory = [];
+      screenFileHistoryIndex = -1;
+      await showScreenFileDialog("manager");
     });
   }
 
@@ -19980,6 +20151,10 @@ if (groupActionTypeSelect) {
       updateSelectedGroupAction({ type: "load-viewport", viewportId, screenId });
       return;
     }
+    if (nextType === "history-back" || nextType === "history-forward") {
+      updateSelectedGroupAction({ type: nextType });
+      return;
+    }
     const screenId = groupActionScreenIdSelect?.value || availableScreens[0]?.id || DEFAULT_SCREEN_ID;
     updateSelectedGroupAction(nextType === "popup"
       ? { type: nextType, screenId, ...groupPopupSettingsFromInputs() }
@@ -20000,6 +20175,7 @@ if (groupActionScreenIdSelect) {
   groupActionScreenIdSelect.addEventListener("change", () => {
     const type = String(groupActionTypeSelect?.value || "");
     if (!type) return;
+    if (type === "history-back" || type === "history-forward") return;
     const screenId = groupActionScreenIdSelect.value || "";
     if (type === "load-viewport") {
       const viewportId = groupActionViewportIdSelect?.value || "";
@@ -24371,9 +24547,113 @@ const compactBindingRowBefore = (rowEl) => {
   return prev?.classList?.contains("compact-binding-row") ? prev : null;
 };
 
+const LEVEL_AUTOMATION_TYPES = ["rect", "ellipse", "circle", "polygon", "button"];
+let levelAutomationControl = null;
+
+const normalizeLevelAutomation = (value = {}) => ({
+  enabled: value?.enabled === true,
+  sourceType: value?.sourceType === "expression" ? "expression" : "tag",
+  connection_id: String(value?.connection_id || ""),
+  tag: String(value?.tag || ""),
+  expression: String(value?.expression || ""),
+  inputMin: Number.isFinite(Number(value?.inputMin)) ? Number(value.inputMin) : 0,
+  inputMax: Number.isFinite(Number(value?.inputMax)) ? Number(value.inputMax) : 100,
+  direction: ["up", "down", "left", "right"].includes(value?.direction) ? value.direction : "up",
+  invert: Boolean(value?.invert),
+  clamp: value?.clamp !== false,
+  fill: String(value?.fill || "#3b82f6"),
+  emptyFill: String(value?.emptyFill || "")
+});
+
+const updateSelectedLevelAutomation = (patch) => {
+  const objects = getActiveObjects();
+  const obj = selectedIndices.length === 1 ? objects?.[selectedIndices[0]] : null;
+  if (!obj || !LEVEL_AUTOMATION_TYPES.includes(obj.type)) return;
+  recordHistory();
+  obj.levelAutomation = normalizeLevelAutomation({ ...(obj.levelAutomation || {}), ...(patch || {}) });
+  renderScreen();
+  syncEditorFromScreen();
+  setDirty(true);
+};
+
+const initializeLevelAutomationControl = () => {
+  if (levelAutomationControl) return levelAutomationControl;
+  const sectionEl = document.createElement("div");
+  sectionEl.className = "properties-form";
+  const title = createAutomationSectionTitle("Level Automation");
+  const makeInput = (type = "text") => { const input = document.createElement("input"); input.type = type; return input; };
+  const makeRow = (labelText, input) => {
+    const row = document.createElement("div"); row.className = "prop-row";
+    const label = document.createElement("label"); label.textContent = labelText;
+    row.append(label, input); return row;
+  };
+  const enabled = makeInput("checkbox");
+  const sourceType = document.createElement("select"); sourceType.innerHTML = '<option value="tag">Tag</option><option value="expression">Expression</option>';
+  const connection = makeInput(); connection.placeholder = "connection_id";
+  const tag = document.createElement("select"); tag.innerHTML = '<option value="">Select tag…</option>';
+  const expression = makeInput(); expression.placeholder = "{connection:tag} or expression";
+  const min = makeInput("number"); min.step = "any";
+  const max = makeInput("number"); max.step = "any";
+  const direction = document.createElement("select");
+  direction.innerHTML = '<option value="up">Up</option><option value="down">Down</option><option value="left">Left</option><option value="right">Right</option>';
+  const invert = makeInput("checkbox");
+  const clamp = makeInput("checkbox");
+  const fill = makeInput(); fill.placeholder = "#3b82f6 or linear-gradient(...)";
+  const emptyFill = makeInput(); emptyFill.placeholder = "Object fill";
+  const enabledRow = makeRow("Enabled", enabled);
+  const connectionRow = makeRow("Connection", connection);
+  const tagRow = makeRow("Tag", tag);
+  const expressionRow = makeRow("Expression", expression);
+  sectionEl.append(title, enabledRow, makeRow("Source", sourceType), connectionRow, tagRow, expressionRow, makeRow("Input Minimum", min), makeRow("Input Maximum", max), makeRow("Direction", direction), makeRow("Invert", invert), makeRow("Clamp", clamp), makeRow("Level Fill", fill), makeRow("Empty Fill", emptyFill));
+  const updateSourceRows = () => {
+    const expressionMode = sourceType.value === "expression";
+    [connectionRow, tagRow].forEach((row) => { row.classList.toggle("is-hidden", expressionMode); row.hidden = expressionMode; });
+    expressionRow.classList.toggle("is-hidden", !expressionMode); expressionRow.hidden = !expressionMode;
+  };
+  const apply = () => {
+    const parsed = parseTagSelectValue(tag.value || "");
+    updateSelectedLevelAutomation({
+      enabled: enabled.checked,
+      sourceType: sourceType.value,
+      connection_id: String(connection.value || "").trim(),
+      tag: parsed.tag,
+      expression: expression.value.trim(),
+      inputMin: Number(min.value), inputMax: Number(max.value), direction: direction.value,
+      invert: invert.checked, clamp: clamp.checked, fill: fill.value.trim(), emptyFill: emptyFill.value.trim()
+    });
+  };
+  [enabled, sourceType, connection, tag, expression, min, max, direction, invert, clamp, fill, emptyFill].forEach((input) => input.addEventListener("change", () => { updateSourceRows(); apply(); }));
+  registerCompactTagBinding({
+    id: "levelAutomation", container: sectionEl, beforeEl: min.closest?.(".prop-row") || null,
+    connectionInput: connection, tagSelect: tag, buttonLabel: "Source", modalTitle: "Level Source Tag",
+    read: () => ({ connection_id: connection.value.trim(), tag: parseTagSelectValue(tag.value || "").tag }),
+    apply: ({ connection_id, tag: tagName }) => updateSelectedLevelAutomation({ connection_id, tag: tagName, enabled: true })
+  });
+  levelAutomationControl = { sectionEl, enabled, sourceType, connection, tag, expression, connectionRow, tagRow, expressionRow, updateSourceRows, min, max, direction, invert, clamp, fill, emptyFill };
+  automationSectionConfigs.push({ id: "level-automation", tab: "level", types: LEVEL_AUTOMATION_TYPES, sectionEl });
+  return levelAutomationControl;
+};
+
+const syncLevelAutomationControl = (obj) => {
+  if (!LEVEL_AUTOMATION_TYPES.includes(String(obj?.type || ""))) return;
+  const control = initializeLevelAutomationControl();
+  const value = normalizeLevelAutomation(obj?.levelAutomation || {});
+  control.enabled.checked = value.enabled;
+  control.sourceType.value = value.sourceType;
+  control.connection.value = value.connection_id;
+  populateTagSelect(control.tag);
+  setSelectValueSafe(control.tag, value.connection_id && value.tag ? `${value.connection_id}::${value.tag}` : "");
+  control.expression.value = value.expression;
+  control.updateSourceRows();
+  control.min.value = String(value.inputMin); control.max.value = String(value.inputMax);
+  control.direction.value = value.direction; control.invert.checked = value.invert; control.clamp.checked = value.clamp;
+  control.fill.value = value.fill; control.emptyFill.value = value.emptyFill;
+};
+
 const initializeAdditionalAutomationSections = () => {
   if (additionalAutomationSectionsInitialized) return;
   initializeTextStateAutomationControl();
+  initializeLevelAutomationControl();
 
   registerAutomationSection({
     id: "polygon-fill-automation",
@@ -30197,6 +30477,7 @@ if (automationPanelCloseBtn) {
   automationTabVisibilityBtn,
   automationTabTextBtn,
   automationTabColorBtn,
+  automationTabLevelBtn,
   automationTabFillBtn,
   automationTabStrokeBtn,
   automationTabValueBtn
@@ -30702,7 +30983,9 @@ if (hmiSvg) {
 	        runtimeGoForward();
 		      }
 	      if (obj?.action?.type === "auth") {
-	        openAuth();
+	        performAuthAction("screen-auth-action").catch((error) => {
+	          console.error("[auth] action failed:", error);
+	        });
 	        return;
 	      }
 		      if (obj?.action?.type === "alarm-filter") {

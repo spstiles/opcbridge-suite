@@ -55,8 +55,21 @@ generated from the bridge host clock.
 Each configured connection has diagnostics under:
 
 ```text
-System/Connections/<connection_id>/
+System/Connections/<friendly_connection_name>/
 ```
+
+Virtual memory drivers and orphaned legacy tag stores are not reported as physical connections.
+
+## Session Tags
+
+SCADA and HMI expose the current browser's authenticated session under:
+
+```text
+System/Session/
+```
+
+Available tags are `LoggedIn`, `Username`, `FirstName`, `LastName`, `DisplayName`, `Groups`, and `IsAdmin`.
+These values are browser-local so two operator stations can use different sessions without overwriting each other.
 
 | Tag | Type | Meaning |
 | --- | --- | --- |

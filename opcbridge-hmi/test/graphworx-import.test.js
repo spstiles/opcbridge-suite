@@ -438,16 +438,39 @@ test("imports pipe color target, color, and flashing into the editable automatio
   assert.equal(pipe.strokeAutomation.rules[0].onColor, "#00ff00");
 });
 
-test("identifies preserved GraphWorX automations that OPCBridge does not support", () => {
+test("imports analog GraphWorX size dynamics as native level automation", () => {
   const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
-    <Rectangle Width="80" Height="40"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
-      <gwx:GwxSize SizeVertical="True" DataSource="ac:Plant/Tank/Level" />
+    <Rectangle Width="80" Height="40" Fill="#FF0066CC"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+      <gwx:GwxSize SizeVertical="True" VerticalAnchor="1" AnimationMode="Analog"
+        LowLimitSource="5" HighLimitSource="25" DataSource="ac:Plant/Tank/Level" />
     </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></Rectangle>
   </Canvas>`;
-  const result = convertGraphWorx(xml, { filename: "Unsupported.gdfx" });
+  const result = convertGraphWorx(xml, { filename: "Level.gdfx" });
+  const level = result.screen.objects[0].levelAutomation;
+  const ref = result.screen.objects[0].externalReferences[0];
+  assert.equal(level.tag, "ac:Plant/Tank/Level");
+  assert.equal(level.inputMin, 5);
+  assert.equal(level.inputMax, 25);
+  assert.equal(level.direction, "up");
+  assert.equal(level.fill, "#0066cc");
+  assert.equal(level.emptyFill, "none");
+  assert.equal(level.status, "unresolved");
+  assert.equal(ref.automation, "level");
+  assert.equal(ref.supported, true);
+  assert.equal(ref.status, "unresolved");
+  assert.ok(!result.screen.referenceHealth.issues.some((issue) => issue.category === "unsupported-automation"));
+});
+
+test("keeps non-level GraphWorX size dynamics marked unsupported", () => {
+  const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
+    <Rectangle Width="80" Height="40"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+      <gwx:GwxSize SizeVertical="True" AnimationMode="Discrete" DataSource="ac:Plant/Tank/Large" />
+    </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></Rectangle>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Unsupported Size.gdfx" });
   const ref = result.screen.objects[0].externalReferences[0];
   assert.equal(ref.automation, "size");
   assert.equal(ref.supported, false);
   assert.equal(ref.status, "unsupported");
-  assert.ok(result.screen.referenceHealth.issues.some((issue) => issue.category === "unsupported-automation" && issue.status === "unsupported"));
+  assert.ok(result.screen.referenceHealth.issues.some((issue) => issue.category === "unsupported-automation"));
 });

@@ -215,7 +215,22 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
     periodicToggleRate: num(item.PeriodicToggleRate, 0),
     dynamicStateWhenToggleOff: String(item.DynamicStateWhenToggleOff || "").toLowerCase() === "true"
   }));
-  const sizes = descendants(node, (name) => name === "gwx:GwxSize").map((item) => ({ kind: "size", sourceExpression: String(item.DataSource || "") }));
+  const sizes = descendants(node, (name) => name === "gwx:GwxSize").map((item) => {
+    const vertical = String(item.SizeVertical || "").toLowerCase() === "true";
+    const horizontal = String(item.SizeHorizontal || "").toLowerCase() === "true";
+    const analog = String(item.AnimationMode || "").toLowerCase() === "analog";
+    let direction = "up";
+    if (horizontal) direction = num(item.HorizontalAnchor, 0) >= 0.5 ? "left" : "right";
+    else if (vertical) direction = num(item.VerticalAnchor, 0) >= 0.5 ? "up" : "down";
+    return {
+      kind: "size",
+      sourceExpression: String(item.DataSource || ""),
+      lowLimit: num(item.LowLimitSource, 0),
+      highLimit: num(item.HighLimitSource, 100),
+      direction,
+      levelCompatible: analog && (vertical || horizontal)
+    };
+  });
   const rotations = descendants(node, (name) => name === "gwx:GwxRotation").map((item) => ({ kind: "rotation", sourceExpression: String(item.DataSource || "") }));
   const processPoints = descendants(node, (name) => name === "gwx:GwxProcessPoint").map((item) => ({
     kind: "states",
@@ -252,11 +267,15 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
         && (String(item.node.AnimationMode || "").toLowerCase() === "analog" || /\?+/.test(textFrom(node)));
       const hasWriteCommand = item.name === "gwx:GwxPick"
         && descendants(item.node, (name) => name === "gwxcmd:WriteValueCommand").length > 0;
+      const sizeDynamic = item.name === "gwx:GwxSize"
+        ? sizes.find((candidate) => candidate.sourceExpression === item.value)
+        : null;
       const info = hasDiscreteStates
         ? { automation: "states", supported: true }
         : (hasTextValue ? { automation: "text", supported: true }
         : (hasWriteCommand ? { automation: "pick/write", supported: true }
-        : (automationTypes[item.name] || { automation: item.name.replace(/^.*:/, ""), supported: false })));
+        : (sizeDynamic?.levelCompatible ? { automation: "level", supported: true }
+        : (automationTypes[item.name] || { automation: item.name.replace(/^.*:/, ""), supported: false }))));
       return { kind: "tag", ...info, source: { format: "graphworx64", value: item.value }, target: null, status: info.supported ? "unresolved" : "unsupported" };
     }),
     ...dataSources(node).filter((value) => !namedValues.has(value)).map((value) => ({ kind: "tag", automation: "data", supported: false, source: { format: "graphworx64", value }, target: null, status: "unsupported" }))
@@ -444,8 +463,23 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
     if (hiddenRules.length) obj.visibility = { enabled: true, defaultVisible: true, rules: hiddenRules, selectedRuleIndex: 0 };
     const rotation = dynamics.rotations?.[0];
     if (rotation) obj.rotationAutomation = unresolvedBinding(rotation.sourceExpression);
-    const size = dynamics.sizes?.[0];
-    if (size) obj.sizeAutomation = unresolvedBinding(size.sourceExpression);
+    const size = dynamics.sizes?.find((item) => item.levelCompatible);
+    if (size) {
+      obj.levelAutomation = {
+        ...unresolvedBinding(size.sourceExpression),
+        inputMin: size.lowLimit,
+        inputMax: size.highLimit,
+        direction: size.direction,
+        invert: false,
+        clamp: true,
+        fill: obj.fill || "#3a7bd5",
+        emptyFill: "none",
+        sourceAutomation: "GwxSize"
+      };
+    } else {
+      const unsupportedSize = dynamics.sizes?.[0];
+      if (unsupportedSize) obj.sizeAutomation = unresolvedBinding(unsupportedSize.sourceExpression);
+    }
     const processPoint = dynamics.processPoints?.[0];
     if (processPoint?.states?.length) {
       obj.multiStateAutomation = {

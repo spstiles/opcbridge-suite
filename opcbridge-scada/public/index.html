@@ -645,6 +645,8 @@
             <div class="hint">First-time setup (creates the initial admin user).</div>
             <div class="form" style="max-width: 520px;">
               <div class="form-row"><label>Username</label><input id="usersInitUsername" type="text" autocomplete="username" /></div>
+              <div class="form-row"><label>First Name</label><input id="usersInitFirstName" type="text" autocomplete="given-name" /></div>
+              <div class="form-row"><label>Last Name</label><input id="usersInitLastName" type="text" autocomplete="family-name" /></div>
               <div class="form-row"><label>Admin Password</label><input id="usersInitPassword" type="password" autocomplete="new-password" /></div>
               <div class="form-row"><label>Confirm Password</label><input id="usersInitConfirm" type="password" autocomplete="new-password" /></div>
               <div class="form-row"><label>Session Timeout (min)</label><input id="usersInitTimeout" type="number" min="0" step="1" placeholder="0 = no timeout" /></div>
@@ -754,7 +756,8 @@
                     <section id="usersDetailsFormPanel" style="display:none;">
                       <div class="form" style="max-width: 720px;">
                         <div class="form-row"><label id="usersFormIdLabel">ID</label><input id="usersFormId" type="text" /></div>
-                        <div class="form-row"><label>Name</label><input id="usersFormLabel" type="text" /></div>
+                        <div class="form-row" id="usersFormNameRow"><label id="usersFormNameLabel">Name</label><input id="usersFormLabel" type="text" /></div>
+                        <div class="form-row" id="usersFormLastNameRow" style="display:none;"><label>Last Name</label><input id="usersFormLastName" type="text" /></div>
 	                        <div class="form-row"><label>Description</label><input id="usersFormDescription" type="text" /></div>
 	                        <div class="form-row" id="usersFormPermsRow"><label>Permissions</label><div id="usersFormPerms" class="perm-grid"></div></div>
 	                        <div class="form-row" id="usersFormRoleRow" style="display:none;">
@@ -2836,6 +2839,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260828_central_identity_directory_view_v2"></script>
+  <script src="app.js?v=20260828_session_system_tags_v10"></script>
 </body>
 </html>

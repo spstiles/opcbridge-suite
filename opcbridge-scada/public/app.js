@@ -1002,6 +1002,8 @@
   usersStatusLine: document.getElementById('usersStatusLine'),
   usersInitWrap: document.getElementById('usersInitWrap'),
   usersInitUsername: document.getElementById('usersInitUsername'),
+  usersInitFirstName: document.getElementById('usersInitFirstName'),
+  usersInitLastName: document.getElementById('usersInitLastName'),
   usersInitPassword: document.getElementById('usersInitPassword'),
   usersInitConfirm: document.getElementById('usersInitConfirm'),
   usersInitTimeout: document.getElementById('usersInitTimeout'),
@@ -1053,6 +1055,9 @@
   usersFormIdLabel: document.getElementById('usersFormIdLabel'),
   usersFormId: document.getElementById('usersFormId'),
   usersFormLabel: document.getElementById('usersFormLabel'),
+  usersFormNameLabel: document.getElementById('usersFormNameLabel'),
+  usersFormLastNameRow: document.getElementById('usersFormLastNameRow'),
+  usersFormLastName: document.getElementById('usersFormLastName'),
   usersFormDescription: document.getElementById('usersFormDescription'),
   usersFormPermsRow: document.getElementById('usersFormPermsRow'),
   usersFormPerms: document.getElementById('usersFormPerms'),
@@ -1242,6 +1247,7 @@ const state = {
 
   workspaceConnDirty: new Map(), // pathRel -> connection object
   workspaceDeletePaths: new Set(), // connection config paths to delete on Save/Save+Reload
+  workspaceDeletedTagConnectionIds: new Set(), // orphan tag stores intentionally removed on Save
 
   // tree
   expanded: new Set(['project:opcbridge', 'folder:connectivity']),
@@ -3825,6 +3831,13 @@ function displayConnectionName(connectionId) {
   const match = (state.connFiles || []).find((file) => connectionIdForConnFilePath(String(file?.path || '')) === cid);
   const obj = match ? state.connObjCache?.get?.(String(match.path || '')) : null;
   return String(obj?.description || '').trim() || cid;
+}
+
+function displaySystemTagName(tagName) {
+  const name = String(tagName || '');
+  const match = /^System\/Connections\/([^/]+)(\/.*)?$/.exec(name);
+  if (!match) return name;
+  return `System/Connections/${displayConnectionName(match[1])}${match[2] || ''}`;
 }
 
 function opaqueObjectId(prefix = 'item', usedIds = new Set()) {
@@ -17357,6 +17370,10 @@ async function loadConnectionsList() {
     })).then(() => {
       renderConnList();
       renderWorkspaceTree();
+      // Live Tags may have rendered while only the connection filenames were
+      // available. Render the saved snapshot again now that descriptions are
+      // cached so internal connection IDs are replaced by friendly names.
+      if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
       if (state.healthLast) renderOverviewHealth(state.healthLast, state.metricsLast);
     }).catch(() => {});
   } catch (err) {
@@ -17537,7 +17554,9 @@ function computeChangedTagConnectionIds(baseTags, nextTags) {
 
 async function saveTagsForChangedConnections(baseTags, nextTags) {
   const changed = computeChangedTagConnectionIds(baseTags, nextTags);
-  const emptied = computeEmptiedTagConnectionIds(baseTags, nextTags);
+  const intentionallyDeleted = state.workspaceDeletedTagConnectionIds || new Set();
+  const emptied = computeEmptiedTagConnectionIds(baseTags, nextTags)
+    .filter((cid) => !intentionallyDeleted.has(cid));
   const tags = Array.isArray(nextTags) ? nextTags : [];
   const changedList = Array.from(changed);
   const tagsToWrite = changedList.length > 0
@@ -17579,6 +17598,7 @@ function workspaceIsDirty() {
   return (
     (state.workspaceConnDirty && state.workspaceConnDirty.size > 0) ||
     (state.workspaceDeletePaths && state.workspaceDeletePaths.size > 0) ||
+    (state.workspaceDeletedTagConnectionIds && state.workspaceDeletedTagConnectionIds.size > 0) ||
     Boolean(state.tagConfigDirty) ||
     Boolean(state.historianConfigDirty) ||
     Boolean(state.alarmsConfigDirty)
@@ -17626,6 +17646,7 @@ function saveWorkspaceDraft() {
       ts_ms: Date.now(),
       conn_dirty: conn,
       conn_delete: deletes,
+      deleted_tag_connections: Array.from(state.workspaceDeletedTagConnectionIds || []),
       tag_all: Array.isArray(state.tagConfigAll) ? state.tagConfigAll : [],
       tag_edits: tagEdits,
       tag_dirty: Boolean(state.tagConfigDirty),
@@ -17688,6 +17709,11 @@ function restoreWorkspaceDraft() {
         if (rel) state.workspaceDeletePaths.add(rel);
       });
     }
+    state.workspaceDeletedTagConnectionIds = new Set(
+      (Array.isArray(parsed.deleted_tag_connections) ? parsed.deleted_tag_connections : [])
+        .map((cid) => String(cid || '').trim())
+        .filter(Boolean)
+    );
 
     markTagsDirty(Boolean(parsed.tag_dirty));
     state.historianConfigDirty = Boolean(parsed.historian_dirty);
@@ -24700,10 +24726,100 @@ function tagCountForConn(connectionId) {
     .length;
 }
 
+function configuredPhysicalConnectionIds() {
+  return new Set((state.connFiles || []).map((file) => {
+    const pathRel = String(file?.path || '').trim();
+    return connectionIdForConnFilePath(pathRel);
+  }).filter(Boolean));
+}
+
+function orphanedTagGroups() {
+  const connectionFiles = Array.isArray(state.connFiles) ? state.connFiles : [];
+  const configsReady = connectionFiles.every((file) => state.connObjCache?.has?.(String(file?.path || '').trim()));
+  if (!configsReady) return new Map();
+  const physicalIds = configuredPhysicalConnectionIds();
+  const groups = new Map();
+  getEffectiveTagsAll().forEach((tag) => {
+    const cid = String(tag?.connection_id || '').trim();
+    if (!cid || cid === MEMORY_CONNECTION_ID || physicalIds.has(cid)) return;
+    if (!groups.has(cid)) groups.set(cid, []);
+    groups.get(cid).push(tag);
+  });
+  return groups;
+}
+
+function isOrphanedTagConnection(connectionId) {
+  return orphanedTagGroups().has(String(connectionId || '').trim());
+}
+
 function getMemoryTagsAll() {
   return getEffectiveTagsAll()
-    .filter((t) => isMemoryTagConfig(t) || String(t?.connection_id || '') === MEMORY_CONNECTION_ID)
+    .filter((t) => {
+      const cid = String(t?.connection_id || '').trim();
+      return !isOrphanedTagConnection(cid) && (isMemoryTagConfig(t) || cid === MEMORY_CONNECTION_ID);
+    })
     .map((t) => ({ ...(t || {}), connection_id: String(t?.connection_id || '') || MEMORY_CONNECTION_ID }));
+}
+
+function orphanTagSourcePaths(connectionId, tags) {
+  const paths = new Set((Array.isArray(tags) ? tags : [])
+    .map((tag) => String(tag?.source_file || '').trim())
+    .filter((path) => path && !path.includes('..') && !path.includes('/') && !path.includes('\\'))
+    .map((filename) => `tags/${filename}`));
+  const cid = String(connectionId || '').trim();
+  if (!paths.size && /^[A-Za-z0-9_.-]+$/.test(cid)) paths.add(`tags/${cid}.json`);
+  return paths;
+}
+
+function stageOrphanTagStoreRemoval(connectionId, tags) {
+  const cid = String(connectionId || '').trim();
+  if (!cid) return;
+  orphanTagSourcePaths(cid, tags).forEach((path) => state.workspaceDeletePaths.add(path));
+  state.workspaceDeletedTagConnectionIds.add(cid);
+}
+
+function stageMoveOrphanTagsToMemory(connectionId) {
+  const cid = String(connectionId || '').trim();
+  const orphanTags = orphanedTagGroups().get(cid) || [];
+  if (!orphanTags.length) return;
+  const memoryNames = new Set(getEffectiveTagsAll()
+    .filter((tag) => String(tag?.connection_id || '') === MEMORY_CONNECTION_ID)
+    .map((tag) => String(tag?.name || '').trim()));
+  const conflicts = orphanTags.map((tag) => String(tag?.name || '').trim()).filter((name) => memoryNames.has(name));
+  if (conflicts.length) {
+    window.alert(`Cannot move these tags to Memory because ${conflicts.length} name${conflicts.length === 1 ? '' : 's'} already exist: ${conflicts.join(', ')}`);
+    return;
+  }
+  if (!window.confirm(`Move ${orphanTags.length} orphaned tag${orphanTags.length === 1 ? '' : 's'} from '${cid}' into Memory?`)) return;
+  const orphanKeys = new Set(orphanTags.map(makeTagKey));
+  state.tagConfigAll = (state.tagConfigAll || []).map((tag) => {
+    if (!orphanKeys.has(makeTagKey(tag))) return tag;
+    const moved = { ...tag, connection_id: MEMORY_CONNECTION_ID, source_type: 'memory' };
+    delete moved.source_file;
+    return moved;
+  });
+  orphanKeys.forEach((key) => state.tagConfigEdited?.delete?.(key));
+  stageOrphanTagStoreRemoval(cid, orphanTags);
+  markTagsDirty(true);
+  renderWorkspaceTree();
+  setWorkspaceSaveStatus(`Moved '${cid}' tags to Memory locally. Save & Apply Changes to remove the orphaned store.`);
+  renderWorkspaceSaveBar();
+}
+
+function stageDeleteOrphanTagGroup(connectionId) {
+  const cid = String(connectionId || '').trim();
+  const orphanTags = orphanedTagGroups().get(cid) || [];
+  if (!orphanTags.length) return;
+  if (!window.confirm(`Permanently delete orphaned tag group '${cid}' and its ${orphanTags.length} tag${orphanTags.length === 1 ? '' : 's'}?`)) return;
+  const orphanKeys = new Set(orphanTags.map(makeTagKey));
+  state.tagConfigAll = (state.tagConfigAll || []).filter((tag) => !orphanKeys.has(makeTagKey(tag)));
+  orphanKeys.forEach((key) => state.tagConfigEdited?.delete?.(key));
+  stageOrphanTagStoreRemoval(cid, orphanTags);
+  markTagsDirty(true);
+  state.selectedNodeId = 'folder:orphaned_tags';
+  renderWorkspaceTree();
+  setWorkspaceSaveStatus(`Deleted orphaned group '${cid}' locally. Save & Apply Changes to remove its file.`);
+  renderWorkspaceSaveBar();
 }
 
 function getMqttWorkspaceMessages(connObj = null) {
@@ -24787,10 +24903,50 @@ function systemTagNamesFromCaches() {
     });
   };
   if (Array.isArray(state.liveTagsLast?.tags)) addRows(state.liveTagsLast.tags);
+  addRows(getScadaSessionSystemTagRows());
   if (state.workspaceSystemChildrenCache instanceof Map) {
     for (const rows of state.workspaceSystemChildrenCache.values()) addRows(rows);
   }
   return Array.from(byName);
+}
+
+function getScadaSessionSystemTagRows() {
+  const status = state.opcbridgeAuthStatus || {};
+  const user = status?.user || {};
+  const loggedIn = Boolean(status?.user_logged_in ?? status?.logged_in);
+  const username = loggedIn ? String(user?.username || '') : '';
+  const firstName = loggedIn ? String(user?.first_name || '') : '';
+  const lastName = loggedIn ? String(user?.last_name || '') : '';
+  const displayName = loggedIn ? (String(user?.name || '').trim() || [firstName, lastName].filter(Boolean).join(' ') || username) : '';
+  const groups = loggedIn && Array.isArray(user?.groups) ? user.groups.map(String) : [];
+  const permissions = loggedIn && Array.isArray(user?.permissions) ? user.permissions.map(String) : [];
+  const isAdmin = loggedIn && (permissions.includes('auth.manage_users') || groups.some((group) => group.toLowerCase() === 'admin'));
+  const timestamp = Date.now();
+  const values = [
+    ['System/Session/LoggedIn', 'bool', loggedIn],
+    ['System/Session/Username', 'string', username],
+    ['System/Session/FirstName', 'string', firstName],
+    ['System/Session/LastName', 'string', lastName],
+    ['System/Session/DisplayName', 'string', displayName],
+    ['System/Session/Groups', 'string', groups.join(',')],
+    ['System/Session/IsAdmin', 'bool', isAdmin]
+  ];
+  return values.map(([name, datatype, value]) => ({
+    connection_id: '_system',
+    connection_name: 'System',
+    name,
+    datatype,
+    value,
+    enabled: true,
+    writable: false,
+    handle_ok: true,
+    has_snapshot: true,
+    is_array_root: false,
+    quality: 1,
+    system: true,
+    local_session: true,
+    timestamp_ms: timestamp
+  }));
 }
 
 function systemPathChildren(prefix) {
@@ -24872,6 +25028,32 @@ function buildTree() {
     connectivity.children.push(deviceNode);
   });
 
+  const orphanGroups = orphanedTagGroups();
+  const orphanRoot = {
+    id: 'folder:orphaned_tags',
+    type: 'orphan_folder',
+    label: 'Orphaned Tags',
+    meta: { warning: true },
+    children: Array.from(orphanGroups.entries())
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+      .map(([connectionId, tags]) => ({
+        id: `orphan:${connectionId}`,
+        type: 'orphan_connection',
+        label: connectionId,
+        meta: { connection_id: connectionId, orphaned: true },
+        children: tags.slice()
+          .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }))
+          .map((tag) => ({
+            id: `tag:${connectionId}::${String(tag?.name || '')}`,
+            type: 'tag',
+            label: String(tag?.name || ''),
+            meta: { connection_id: connectionId, name: String(tag?.name || ''), orphaned: true },
+            children: []
+          }))
+      }))
+  };
+  root.children.push(orphanRoot);
+
   if (state.expanded.has(memoryRoot.id)) {
     getMemoryTagsAll()
       .slice()
@@ -24894,7 +25076,11 @@ function buildTree() {
     .map((f) => connectionIdForConnFilePath(String(f?.path || '')))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
-    .map((id) => makeSystemGroup(`system:connections:${id}`, id, `System/Connections/${id}/`));
+    .map((id) => makeSystemGroup(
+      `system:connections:${id}`,
+      displayConnectionName(id),
+      `System/Connections/${displayConnectionName(id).replace(/[\\/]/g, '-')}/`
+    ));
 
   const networkIfaceChildren = systemPathChildren('System/Host/Network/')
     .map((iface) => makeSystemGroup(`system:host:network:${iface}`, iface, `System/Host/Network/${iface}/`));
@@ -24921,6 +25107,8 @@ function buildTree() {
     });
   const logicScriptChildren = systemPathChildren('System/Logic/Scripts/')
     .map((id) => makeSystemGroup(`system:logic:script:${id}`, id, `System/Logic/Scripts/${id}/`));
+  const userSystemChildren = systemPathChildren('System/Users/')
+    .map((username) => makeSystemGroup(`system:users:${username}`, username, `System/Users/${username}/`));
 
   const systemNode = {
     id: 'folder:system',
@@ -24948,7 +25136,9 @@ function buildTree() {
       makeSystemGroup('system:reporter', 'Logger', 'System/Logger/', [
         makeSystemGroup('system:reporter:data_checks', 'Data Checks', 'System/Logger/DataChecks/', reporterCheckChildren),
         makeSystemGroup('system:reporter:databases', 'Databases', 'System/Logger/Databases/', reporterDatabaseChildren)
-      ])
+      ]),
+      makeSystemGroup('system:session', 'Session', 'System/Session/'),
+      makeSystemGroup('system:users', 'Users', 'System/Users/', userSystemChildren)
     ]
   };
   root.children.push(systemNode);
@@ -24966,6 +25156,8 @@ function renderTreeNode(node, container) {
     'mqtt_topic',
     'device',
     'memory_folder',
+    'orphan_folder',
+    'orphan_connection',
     'system_folder',
     'system_group'
   ].includes(String(node.type || ''));
@@ -25020,6 +25212,9 @@ function renderTreeNode(node, container) {
   } else if (node.type === 'memory_folder') {
     const n = getMemoryTagsAll().length;
     meta.textContent = n ? `${n} tag(s)` : '';
+  } else if (node.type === 'orphan_folder' || node.type === 'orphan_connection') {
+    const n = Array.isArray(node.children) ? node.children.length : 0;
+    meta.textContent = node.type === 'orphan_folder' ? `${n} group${n === 1 ? '' : 's'}` : `${n} tag(s)`;
   } else if (node.type === 'system_folder') {
     meta.textContent = 'read-only';
   } else if (node.type === 'system_group') {
@@ -25064,6 +25259,13 @@ function renderTreeNode(node, container) {
       items.push({ label: 'Refresh', onClick: async () => { await refreshVisible().catch(() => {}); } });
       showContextMenu(e.clientX, e.clientY, items);
       return;
+    }
+
+    if (node.type === 'orphan_connection') {
+      const cid = String(node.meta?.connection_id || '').trim();
+      items.push({ label: 'Move Tags to Memory…', onClick: () => stageMoveOrphanTagsToMemory(cid) });
+      items.push({ label: 'Delete Orphaned Group…', onClick: () => stageDeleteOrphanTagGroup(cid) });
+      items.push('sep');
     }
 
     if (node.type === 'memory_folder') {
@@ -25147,6 +25349,8 @@ function renderWorkspaceDetails(node) {
   const isMqttDevice = isDevice && String(node.meta?.driver || '') === 'mqtt';
   const isMemoryFolder = String(node.type || '') === 'memory_folder';
   const isTag = String(node.type || '') === 'tag';
+  const isOrphanFolder = String(node.type || '') === 'orphan_folder';
+  const isOrphanConnection = String(node.type || '') === 'orphan_connection';
   const isSystem = String(node.type || '') === 'system_folder' || String(node.type || '') === 'system_group';
   const isMqtt = isMqttDevice || String(node.type || '').startsWith('mqtt_');
 
@@ -25156,7 +25360,7 @@ function renderWorkspaceDetails(node) {
   const showDeviceCols = isConnectivity;
 
   // When a device is selected, list its tags. Clicking a tag in the tree should not change the right pane.
-  const showTagCols = (isDevice && !isMqttDevice) || isMemoryFolder || isTag || isSystem;
+  const showTagCols = (isDevice && !isMqttDevice) || isMemoryFolder || isTag || isSystem || isOrphanConnection;
 
   const columns = [];
   const addCol = (key, label, sortable = false) => columns.push({ key, label, sortable });
@@ -25198,9 +25402,20 @@ function renderWorkspaceDetails(node) {
     const prefix = String(node.meta?.tag_prefix || '').trim();
     const cacheKey = `system:${prefix}`;
     const cached = state.workspaceSystemChildrenCache?.get?.(cacheKey);
-    tagRows = (Array.isArray(cached) ? cached : [])
+    const systemRows = [
+      ...(Array.isArray(cached) ? cached : []),
+      ...getScadaSessionSystemTagRows()
+    ];
+    const seenSystemNames = new Set();
+    tagRows = systemRows
       .filter((tt) => String(tt?.connection_id || '') === '_system')
       .filter((tt) => !prefix || String(tt?.name || '').startsWith(prefix))
+      .filter((tt) => {
+        const name = String(tt?.name || '');
+        if (!name || seenSystemNames.has(name)) return false;
+        seenSystemNames.add(name);
+        return true;
+      })
       .map((tt) => ({
         connection_id: '_system',
         name: String(tt?.name || ''),
@@ -25209,7 +25424,11 @@ function renderWorkspaceDetails(node) {
         scan_ms: '',
         enabled: true,
         writable: false,
-        system: true
+        system: true,
+        value: tt?.value,
+        quality: tt?.quality,
+        timestamp_ms: tt?.timestamp_ms,
+        local_session: tt?.local_session === true
       }));
 
     if (!Array.isArray(cached) && state.workspaceSystemChildrenInflight !== cacheKey) {
@@ -25231,6 +25450,10 @@ function renderWorkspaceDetails(node) {
         if (state.workspaceSystemChildrenInflight === cacheKey) state.workspaceSystemChildrenInflight = '';
       });
     }
+  } else if (isOrphanConnection && connectionId) {
+    tagRows = getEffectiveTagsAll()
+      .filter((tag) => String(tag?.connection_id || '') === connectionId)
+      .slice();
   } else if (showTagCols && connectionId) {
     const memoryTagSelected = isTag && connectionId === MEMORY_CONNECTION_ID;
     tagRows = (isMemoryFolder || memoryTagSelected)
@@ -25300,7 +25523,9 @@ function renderWorkspaceDetails(node) {
       return '';
     }
     if (showTagCols) {
-      if (k === 'name') return String(row?.name || '');
+      if (k === 'name') return isSystem
+        ? displaySystemTagName(row?.name)
+        : String(row?.name || '');
       if (k === 'plc_tag_name') return String(row?.plc_tag_name || '');
       if (k === 'datatype') return String(row?.datatype || '');
       if (k === 'scan_ms') return (row?.scan_ms == null) ? -1 : Number(row.scan_ms);
@@ -25510,7 +25735,9 @@ function renderWorkspaceDetails(node) {
     const tr = document.createElement('tr');
 
     const type = String(c?.type || '');
-    const name = showTagCols ? String(c?.name || '') : String(c?.label || c?.id || '');
+    const name = showTagCols
+      ? (isSystem ? displaySystemTagName(c?.name) : String(c?.name || ''))
+      : String(c?.label || c?.id || '');
 
     addCell(tr, name);
 
@@ -25627,6 +25854,14 @@ function renderWorkspaceDetails(node) {
         state.workspaceChildrenLastIndex = idx;
         applySelectionClass();
       }
+      if (String(c?.type || '') === 'orphan_connection') {
+        const cid = String(c?.meta?.connection_id || '').trim();
+        showContextMenu(e.clientX, e.clientY, [
+          { label: 'Move Tags to Memory…', onClick: () => stageMoveOrphanTagsToMemory(cid) },
+          { label: 'Delete Orphaned Group…', onClick: () => stageDeleteOrphanTagGroup(cid) }
+        ]);
+        return;
+      }
       if (showTagCols && !isSystem && (state.workspaceChildrenSel?.size || 0) > 0) {
         const selectedCount = state.workspaceChildrenSel.size;
         showContextMenu(e.clientX, e.clientY, [
@@ -25638,6 +25873,10 @@ function renderWorkspaceDetails(node) {
 
     tr.addEventListener('dblclick', () => {
       // double-click opens properties
+      if (String(c?.type || '') === 'orphan_connection') {
+        selectWorkspaceNodeById(String(c?.id || ''));
+        return;
+      }
       if (isMqtt) {
         if (String(c?.type || '') === 'mqtt_topic') {
           openMqttTopicModal({ mode: 'edit', direction: c?.meta?.direction, brokerId: c?.meta?.connection_id, pathRel: c?.meta?.path, nodeId: c?.id });
@@ -25737,6 +25976,7 @@ async function refreshWorkspaceConfigViews() {
   renderWorkspaceTree();
   loadWorkspaceConnectionObjects().then(() => {
     renderWorkspaceTree();
+    if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
   }).catch(() => {});
   if (isPanelActive('tab-workspace')) {
     await refreshVisible().catch(() => {});
@@ -25846,6 +26086,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
     state.tagConfigEdited = new Map();
     state.historianConfigDirty = false;
     markTagsDirty(false);
+    state.workspaceDeletedTagConnectionIds.clear();
     clearWorkspaceDraft();
 
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
@@ -25888,6 +26129,7 @@ async function discardWorkspaceChanges() {
   try {
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
     if (state.workspaceDeletePaths) state.workspaceDeletePaths.clear();
+    if (state.workspaceDeletedTagConnectionIds) state.workspaceDeletedTagConnectionIds.clear();
     state.alarmsConfigDirty = false;
     state.historianConfigDirty = false;
     state.tagConfigEdited = new Map();
@@ -25936,6 +26178,11 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
       connection_id: MEMORY_CONNECTION_ID,
       label: 'Memory'
     };
+  } else if (type === 'orphan_folder') {
+    state.liveTagFilter = { type: 'orphan', connection_id: '', label: 'Orphaned Tags' };
+  } else if (type === 'orphan_connection') {
+    const connection_id = String(node.meta?.connection_id || '').trim();
+    state.liveTagFilter = { type: 'orphan', connection_id, label: `Orphaned / ${connection_id}` };
   } else if (type === 'mqtt_topic' || type === 'mqtt_field') {
     const brokerId = String(node.meta?.connection_id || node.meta?.broker_id || '').trim();
     const direction = String(node.meta?.direction || '').trim();
@@ -26000,6 +26247,12 @@ function filterLiveTagsForWorkspace(tags) {
 
   if (f.type === 'memory') {
     return tags.filter((t) => String(t?.connection_id || '') === MEMORY_CONNECTION_ID);
+  }
+
+  if (f.type === 'orphan') {
+    const orphanIds = new Set(orphanedTagGroups().keys());
+    const cid = String(f.connection_id || '').trim();
+    return tags.filter((t) => orphanIds.has(String(t?.connection_id || '')) && (!cid || String(t?.connection_id || '') === cid));
   }
 
   if (f.type === 'mqtt') {
@@ -26128,6 +26381,7 @@ function renderLiveTagsInto(tbody, tags) {
 
     const conn = String(t?.connection_id || '');
     const name = String(t?.tag || t?.name || '');
+    const displayName = conn === '_system' ? displaySystemTagName(name) : name;
     const datatype = String(t?.datatype || '');
 
     const value = (() => {
@@ -26143,9 +26397,9 @@ function renderLiveTagsInto(tbody, tags) {
       : '';
 
     tr.innerHTML = `
-      <td><code>${conn}</code></td>
-      <td><code>${name}</code></td>
-      <td><code>${datatype}</code></td>
+      <td><code>${escapeHtml(displayConnectionName(conn))}</code></td>
+      <td><code>${escapeHtml(displayName)}</code></td>
+      <td><code>${escapeHtml(datatype)}</code></td>
       <td class="${cls}"><code>${status}</code></td>
       <td><code>${value}</code></td>
       <td><code>${writable}</code></td>
@@ -26209,7 +26463,7 @@ function compareLiveTagIndexRows(a, b) {
   const aSystemLike = ac.startsWith('_') ? 1 : 0;
   const bSystemLike = bc.startsWith('_') ? 1 : 0;
   if (aSystemLike !== bSystemLike) return aSystemLike - bSystemLike;
-  const connCmp = ac.localeCompare(bc, undefined, { numeric: true, sensitivity: 'base' });
+  const connCmp = displayConnectionName(ac).localeCompare(displayConnectionName(bc), undefined, { numeric: true, sensitivity: 'base' });
   if (connCmp !== 0) return connCmp;
   const an = String(a?.name || a?.tag || '');
   const bn = String(b?.name || b?.tag || '');
@@ -26283,6 +26537,18 @@ function liveTagsQueryParamsForCurrentScope() {
   return { params, scopeKey: page.scopeKey || scopeKey, search: page.search || effectiveSearch };
 }
 
+function sessionSystemRowsForLiveParams(params) {
+  const connectionId = String(params?.get?.('connection_id') || '').trim();
+  const exactTag = String(params?.get?.('tag') || '').trim();
+  const search = String(params?.get?.('search') || '').trim().toLowerCase();
+  if (connectionId && connectionId !== '_system') return [];
+  return getScadaSessionSystemTagRows().filter((row) => {
+    if (exactTag && row.name !== exactTag) return false;
+    if (search && !`${row.connection_id} ${row.connection_name} ${row.name} ${row.datatype}`.toLowerCase().includes(search)) return false;
+    return true;
+  });
+}
+
 async function loadVisibleLiveTags() {
   const page = state.liveTagsPaging || { offset: 0, limit: 250, search: '', scopeKey: '', index: [], valueByKey: new Map() };
   state.liveTagsPaging = page;
@@ -26291,7 +26557,12 @@ async function loadVisibleLiveTags() {
   if (!page.indexLoaded) {
     params.set('limit', '0');
     const indexResp = await apiGet(`/api/opcbridge/tags?${params.toString()}`, { timeoutMs: 30000 });
-    const index = (Array.isArray(indexResp?.tags) ? indexResp.tags : []).slice().sort(compareLiveTagIndexRows);
+    const indexByKey = new Map();
+    [...(Array.isArray(indexResp?.tags) ? indexResp.tags : []), ...sessionSystemRowsForLiveParams(params)].forEach((row) => {
+      const key = liveTagKey(row);
+      if (key) indexByKey.set(key, row);
+    });
+    const index = Array.from(indexByKey.values()).sort(compareLiveTagIndexRows);
     page.index = index;
     page.total = Number(indexResp?.total ?? index.length) || index.length;
     page.indexLoaded = true;
@@ -26302,8 +26573,17 @@ async function loadVisibleLiveTags() {
     });
   }
 
+  const currentSessionRows = sessionSystemRowsForLiveParams(params);
+  const valueByKey = page.valueByKey instanceof Map ? page.valueByKey : new Map();
+  currentSessionRows.forEach((row) => {
+    const key = liveTagKey(row);
+    if (key) valueByKey.set(key, row);
+  });
+  page.valueByKey = valueByKey;
+
   const visible = liveTagsBuildVisibleResponse();
   const queryTags = visible.tags
+    .filter((row) => row?.local_session !== true)
     .map((row) => ({ connection_id: String(row?.connection_id || ''), name: String(row?.name || row?.tag || '') }))
     .filter((row) => row.connection_id && row.name);
   if (queryTags.length) {
@@ -27287,13 +27567,14 @@ function renderUsersDetails(node) {
     const rows = (state.usersUsers || []).slice().sort((a, b) => String(a?.username || '').localeCompare(String(b?.username || ''))).map((u) => ({
       cells: [
         String(u?.username || ''),
-        String(u?.name || u?.username || ''),
+        String(u?.first_name || ''),
+        String(u?.last_name || ''),
         String(u?.description || ''),
         (Array.isArray(u?.groups) ? u.groups : []).join(', ')
       ],
       onDblClick: canManageLocalUserDirectory() ? () => openUserForm({ mode: 'edit', username: String(u?.username || '') }) : null
     }));
-    usersSetDetailsTable(['Username', 'Name', 'Description', 'Groups'], rows);
+    usersSetDetailsTable(['Username', 'First Name', 'Last Name', 'Description', 'Groups'], rows);
     return;
   }
 
@@ -27314,8 +27595,8 @@ function renderUsersDetails(node) {
       openUserForm({ mode: 'edit', username: String(node?.meta?.username || '') });
     } else {
       const user = node.meta || {};
-      usersSetDetailsTable(['Username', 'Name', 'Description', 'Groups'], [{
-        cells: [String(user.username || ''), String(user.name || user.username || ''), String(user.description || ''), Array.isArray(user.groups) ? user.groups.join(', ') : '']
+      usersSetDetailsTable(['Username', 'First Name', 'Last Name', 'Description', 'Groups'], [{
+        cells: [String(user.username || ''), String(user.first_name || ''), String(user.last_name || ''), String(user.description || ''), Array.isArray(user.groups) ? user.groups.join(', ') : '']
       }]);
     }
   }
@@ -27358,6 +27639,8 @@ function openRoleForm({ mode, roleId }) {
   state.usersFormTargetId = roleId ? String(roleId) : '';
 
   if (els.usersFormId?.closest('.form-row')) els.usersFormId.closest('.form-row').style.display = 'none';
+  if (els.usersFormNameLabel) els.usersFormNameLabel.textContent = 'Name';
+  if (els.usersFormLastNameRow) els.usersFormLastNameRow.style.display = 'none';
   if (els.usersFormRoleRow) els.usersFormRoleRow.style.display = 'none';
   if (els.usersFormPasswordRow) els.usersFormPasswordRow.style.display = 'none';
   if (els.usersFormConfirmRow) els.usersFormConfirmRow.style.display = 'none';
@@ -27413,6 +27696,8 @@ function openUserForm({ mode, username }) {
   const canAdmin = isOpcbridgeAdmin();
 
   if (els.usersFormIdLabel) els.usersFormIdLabel.textContent = 'Username';
+  if (els.usersFormNameLabel) els.usersFormNameLabel.textContent = 'First Name';
+  if (els.usersFormLastNameRow) els.usersFormLastNameRow.style.display = '';
   if (els.usersFormId?.closest('.form-row')) els.usersFormId.closest('.form-row').style.display = '';
   if (els.usersFormPermsRow) els.usersFormPermsRow.style.display = 'none';
   if (els.usersFormRoleRow) els.usersFormRoleRow.style.display = '';
@@ -27428,8 +27713,12 @@ function openUserForm({ mode, username }) {
     els.usersFormId.disabled = (mode === 'edit');
   }
   if (els.usersFormLabel) {
-    els.usersFormLabel.value = user ? String(user.name || user.username || '') : '';
+    els.usersFormLabel.value = user ? String(user.first_name || '') : '';
     els.usersFormLabel.disabled = false;
+  }
+  if (els.usersFormLastName) {
+    els.usersFormLastName.value = user ? String(user.last_name || '') : '';
+    els.usersFormLastName.disabled = false;
   }
   if (els.usersFormDescription) {
     els.usersFormDescription.value = user ? String(user.description || '') : '';
@@ -27701,6 +27990,8 @@ function wireUsersUi() {
   if (els.usersInitBtn) {
     els.usersInitBtn.addEventListener('click', async () => {
       const username = String(els.usersInitUsername?.value || '').trim();
+      const first_name = String(els.usersInitFirstName?.value || '').trim();
+      const last_name = String(els.usersInitLastName?.value || '').trim();
       const password = String(els.usersInitPassword?.value || '');
       const confirm = String(els.usersInitConfirm?.value || '');
       const timeoutMinutes = Math.max(0, Math.floor(Number(els.usersInitTimeout?.value) || 0));
@@ -27710,7 +28001,7 @@ function wireUsersUi() {
       if (password !== confirm) { setUsersInitStatus('Passwords do not match.'); return; }
       setUsersInitStatus('Initializing…');
       try {
-        await apiPostJson('/api/opcbridge/auth/init', { username, password, confirm, timeoutMinutes });
+        await apiPostJson('/api/opcbridge/auth/init', { username, first_name, last_name, password, confirm, timeoutMinutes });
         if (els.usersInitPassword) els.usersInitPassword.value = '';
         if (els.usersInitConfirm) els.usersInitConfirm.value = '';
         await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
@@ -27780,7 +28071,8 @@ function wireUsersUi() {
       } else if (mode === 'user_new') {
         const username = String(els.usersFormId?.value || '').trim();
         const groups = selectedUserGroups();
-        const name = String(els.usersFormLabel?.value || '').trim();
+        const first_name = String(els.usersFormLabel?.value || '').trim();
+        const last_name = String(els.usersFormLastName?.value || '').trim();
         const description = String(els.usersFormDescription?.value || '').trim();
         const password = String(els.usersFormPassword?.value || '');
         const confirm = String(els.usersFormConfirm?.value || '');
@@ -27789,15 +28081,16 @@ function wireUsersUi() {
         if (!confirm) throw new Error('Confirm required.');
         if (password !== confirm) throw new Error('Passwords do not match.');
         if (!groups.length) throw new Error('Select at least one group.');
-        await apiPostJson('/api/opcbridge/auth/users', { username, name, description, password, groups });
+        await apiPostJson('/api/opcbridge/auth/users', { username, first_name, last_name, description, password, groups });
         state.usersSelectedNodeId = `user:${username}`;
       } else if (mode === 'user_edit') {
         const username = String(state.usersFormTargetId || '').trim();
-        const name = String(els.usersFormLabel?.value || '').trim();
+        const first_name = String(els.usersFormLabel?.value || '').trim();
+        const last_name = String(els.usersFormLastName?.value || '').trim();
         const description = String(els.usersFormDescription?.value || '').trim();
         const password = String(els.usersFormPassword?.value || '');
         const confirm = String(els.usersFormConfirm?.value || '');
-        const bodyObj = { name, description };
+        const bodyObj = { first_name, last_name, description };
         if (isOpcbridgeAdmin()) {
           bodyObj.groups = selectedUserGroups();
           if (!bodyObj.groups.length) throw new Error('Select at least one group.');

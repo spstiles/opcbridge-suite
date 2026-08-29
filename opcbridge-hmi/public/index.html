@@ -24,12 +24,22 @@
             </button>
             <div id="fileMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="File menu">
               <button id="fileNewScreenMenuBtn" class="menu-item" type="button">New</button>
-              <button id="fileOpenScreenMenuBtn" class="menu-item" type="button">File Manager…</button>
+              <button id="fileOpenScreenMenuBtn" class="menu-item" type="button">Open…</button>
               <button id="screenSaveMenuBtn" class="menu-item" type="button">Save</button>
               <button id="fileSaveAsMenuBtn" class="menu-item" type="button">Save As…</button>
-              <button id="fileImportGraphWorxMenuBtn" class="menu-item" type="button">Import GraphWorX64…</button>
               <div class="menu-separator"></div>
               <button id="fileBackupScreensMenuBtn" class="menu-item" type="button">Backup Screens…</button>
+              <div id="fileImportMenuWrap" class="menu-flyout-wrap">
+                <button id="fileImportMenuBtn" class="menu-item menu-item-flyout" type="button" aria-haspopup="true" aria-expanded="false">
+                  <span>Import</span>
+                  <span class="menu-item-caret" aria-hidden="true">›</span>
+                </button>
+                <div id="fileImportMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Import menu">
+                  <button id="fileImportGraphWorxMenuBtn" class="menu-item" type="button">GraphWorX64 Screen…</button>
+                </div>
+              </div>
+              <div class="menu-separator"></div>
+              <button id="fileManagerMenuBtn" class="menu-item" type="button">File Manager…</button>
             </div>
           </div>
           <div id="viewMenuWrap" class="menu-flyout-wrap">
@@ -555,17 +565,25 @@
 	            <div class="prop-row">
 	              <label for="buttonActionType">Action</label>
 		              <select id="buttonActionType">
-		                <option value="navigate">Navigate</option>
-		                <option value="history-back">History Back</option>
-		                <option value="history-forward">History Forward</option>
-		                <option value="auth">Log In / Log Out</option>
-		                <option value="load-viewport">Load Viewport</option>
-		                <option value="popup">Popup</option>
-		                <option value="momentary-write">Momentary Write</option>
-			                <option value="toggle-write">Maintained (Toggle)</option>
-			                <option value="set-write">Maintained (Set Value)</option>
-			                <option value="prompt-write">Numeric Entry (Prompt)</option>
-			                <option value="alarm-filter">Alarm Panel Filter</option>
+		                <optgroup label="Navigation">
+		                  <option value="navigate">Navigate</option>
+		                  <option value="load-viewport">Load Viewport</option>
+		                  <option value="popup">Popup</option>
+		                </optgroup>
+		                <optgroup label="Actions">
+		                  <option value="history-back">Browser Back</option>
+		                  <option value="history-forward">Browser Forward</option>
+		                  <option value="auth">Log In / Log Out</option>
+		                </optgroup>
+		                <optgroup label="Writes">
+		                  <option value="momentary-write">Momentary Write</option>
+			                  <option value="toggle-write">Maintained (Toggle)</option>
+			                  <option value="set-write">Maintained (Set Value)</option>
+			                  <option value="prompt-write">Numeric Entry (Prompt)</option>
+		                </optgroup>
+		                <optgroup label="Panels">
+			                  <option value="alarm-filter">Alarm Panel Filter</option>
+		                </optgroup>
 			              </select>
 		            </div>
             <div class="prop-subgroup is-hidden" id="buttonAuthFields" hidden>
@@ -2118,9 +2136,15 @@
 	              <label for="groupActionType">Action</label>
 	              <select id="groupActionType">
 	                <option value="">None</option>
-	                <option value="navigate">Navigate</option>
-	                <option value="load-viewport">Load Viewport</option>
-	                <option value="popup">Popup</option>
+	                <optgroup label="Navigation">
+	                  <option value="navigate">Navigate</option>
+	                  <option value="load-viewport">Load Viewport</option>
+	                  <option value="popup">Popup</option>
+	                </optgroup>
+	                <optgroup label="Actions">
+	                  <option value="history-back">Browser Back</option>
+	                  <option value="history-forward">Browser Forward</option>
+	                </optgroup>
 	              </select>
 	            </div>
 	            <div class="prop-row is-hidden" id="groupActionViewportRow">
@@ -2289,6 +2313,7 @@
       <button id="automationTabVisibility" class="automation-tab" type="button" data-tab="visibility" role="tab" aria-selected="false">Visibility</button>
       <button id="automationTabText" class="automation-tab" type="button" data-tab="text" role="tab" aria-selected="false">Text</button>
       <button id="automationTabColor" class="automation-tab" type="button" data-tab="color" role="tab" aria-selected="false">Color</button>
+      <button id="automationTabLevel" class="automation-tab" type="button" data-tab="level" role="tab" aria-selected="false">Level</button>
       <button id="automationTabFill" class="automation-tab" type="button" data-tab="fill" role="tab" aria-selected="false">Fill</button>
       <button id="automationTabStroke" class="automation-tab" type="button" data-tab="stroke" role="tab" aria-selected="false">Stroke</button>
       <button id="automationTabValue" class="automation-tab" type="button" data-tab="value" role="tab" aria-selected="false">Value</button>
@@ -2299,6 +2324,7 @@
       <div id="automationTabPanelVisibility" class="automation-tab-panel is-hidden" data-tab-panel="visibility" role="tabpanel"></div>
       <div id="automationTabPanelText" class="automation-tab-panel is-hidden" data-tab-panel="text" role="tabpanel"></div>
       <div id="automationTabPanelColor" class="automation-tab-panel is-hidden" data-tab-panel="color" role="tabpanel"></div>
+      <div id="automationTabPanelLevel" class="automation-tab-panel is-hidden" data-tab-panel="level" role="tabpanel"></div>
       <div id="automationTabPanelFill" class="automation-tab-panel is-hidden" data-tab-panel="fill" role="tabpanel"></div>
       <div id="automationTabPanelStroke" class="automation-tab-panel is-hidden" data-tab-panel="stroke" role="tabpanel"></div>
       <div id="automationTabPanelValue" class="automation-tab-panel is-hidden" data-tab-panel="value" role="tabpanel"></div>
@@ -3045,6 +3071,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="/js/hmi.js?v=20260826-reference-mapping-v2"></script>
+	  <script src="/js/hmi.js?v=20260828-file-menu-v7"></script>
 	</body>
 	</html>

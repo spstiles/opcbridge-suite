@@ -124,7 +124,9 @@ struct AuthRoleRecord {
 static std::vector<AuthRoleRecord> g_authRoles;
 struct AuthUserRecord {
     std::string username;
-    std::string name; // display name (human-readable); username remains immutable
+    std::string first_name;
+    std::string last_name;
+    std::string name; // derived display name retained for backward compatibility
     std::string description; // optional free-form note
     std::vector<std::string> groups; // group ids
     int iterations = 150000;
@@ -132,6 +134,28 @@ struct AuthUserRecord {
     std::string hash_b64;
 };
 static std::vector<AuthUserRecord> g_authUsers;
+
+static std::string auth_user_display_name(const AuthUserRecord &user) {
+    std::string display = user.first_name;
+    if (!user.last_name.empty()) {
+        if (!display.empty()) display += " ";
+        display += user.last_name;
+    }
+    if (display.empty()) display = user.name;
+    return display.empty() ? user.username : display;
+}
+
+static void set_auth_user_names(AuthUserRecord &user, const std::string &firstName,
+                                const std::string &lastName, const std::string &legacyName = {}) {
+    user.first_name = firstName;
+    user.last_name = lastName;
+    if (user.first_name.empty() && user.last_name.empty() && !legacyName.empty()) {
+        const auto split = legacyName.find(' ');
+        user.first_name = split == std::string::npos ? legacyName : legacyName.substr(0, split);
+        user.last_name = split == std::string::npos ? std::string{} : legacyName.substr(split + 1);
+    }
+    user.name = auth_user_display_name(user);
+}
 static bool g_identityCentralMode = false;
 static std::string g_identityCentralName;
 static std::string g_identityCentralUrl;
@@ -596,6 +620,14 @@ static std::string ua_connection_nodeid_string(const std::string &connId) {
 
 static std::string display_connection_name(const std::string &connId) {
     return connId == "_memory" ? std::string("Memory") : connId;
+}
+
+static std::string system_connection_path_segment(const ConnectionConfig &conn) {
+    std::string segment = conn.name.empty() ? conn.id : conn.name;
+    for (char &c : segment) {
+        if (c == '/' || c == '\\') c = '-';
+    }
+    return segment.empty() ? conn.id : segment;
 }
 
 static sqlite3 *g_alarmDb = nullptr;
@@ -1452,6 +1484,48 @@ static std::string system_tag_path_segment(std::string value) {
     return value;
 }
 
+static std::vector<SystemTagDef> collect_user_system_tags() {
+    std::vector<AuthUserRecord> users;
+    std::unordered_map<std::string, int> sessionCounts;
+    {
+        std::lock_guard<std::mutex> lock(g_userStoreMutex);
+        users = g_authUsers;
+    }
+    {
+        const auto now = std::chrono::system_clock::now();
+        std::lock_guard<std::mutex> lock(g_adminMutex);
+        for (const auto &[token, session] : g_adminSessions) {
+            (void)token;
+            if (session.username.empty() || session.username == "service" || session.expires_at <= now) continue;
+            sessionCounts[session.username]++;
+        }
+    }
+    int loggedInUsers = 0;
+    for (const auto &user : users) if (sessionCounts[user.username] > 0) loggedInUsers++;
+    std::vector<SystemTagDef> rows = {
+        {"System/Users/Count", "int32", static_cast<int>(users.size())},
+        {"System/Users/LoggedInCount", "int32", loggedInUsers},
+        {"System/Users/AnyLoggedIn", "bool", loggedInUsers > 0}
+    };
+    for (const auto &user : users) {
+        const std::string prefix = "System/Users/" + system_tag_path_segment(user.username) + "/";
+        std::string groups;
+        for (const auto &group : user.groups) {
+            if (!groups.empty()) groups += ",";
+            groups += group;
+        }
+        const int sessions = sessionCounts[user.username];
+        rows.push_back({prefix + "Username", "string", user.username});
+        rows.push_back({prefix + "FirstName", "string", user.first_name});
+        rows.push_back({prefix + "LastName", "string", user.last_name});
+        rows.push_back({prefix + "DisplayName", "string", auth_user_display_name(user)});
+        rows.push_back({prefix + "Groups", "string", groups});
+        rows.push_back({prefix + "LoggedIn", "bool", sessions > 0});
+        rows.push_back({prefix + "SessionCount", "int32", sessions});
+    }
+    return rows;
+}
+
 static std::vector<SystemTagDef> collect_logic_system_tags() {
     LogicRuntimeState copy;
     {
@@ -1787,6 +1861,7 @@ static std::vector<SystemTagDef> collect_runtime_system_tags(
     rows.push_back({"System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen});
     appendRows(collect_clock_system_tags());
     appendRows(collect_host_system_tags());
+    appendRows(collect_user_system_tags());
     appendRows(collect_alarm_system_tags());
     appendRows(collect_reporter_system_tags());
     appendRows(collect_historian_system_tags());
@@ -3213,8 +3288,8 @@ static bool load_passwords_store(const std::string &path) {
             if (!u.is_object()) continue;
             AuthUserRecord r;
             r.username = normalize_auth_username(get_string_or_empty(u, "username"));
-            r.name = get_string_or_default(u, "name", r.username);
-            if (r.name.empty()) r.name = r.username;
+            set_auth_user_names(r, get_string_or_empty(u, "first_name"), get_string_or_empty(u, "last_name"),
+                                get_string_or_default(u, "name", r.username));
             r.description = get_string_or_empty(u, "description");
             r.groups = parse_group_list(u.value("groups", json::array()));
             if (r.groups.empty()) {
@@ -3308,7 +3383,9 @@ static bool save_passwords_store(const std::string &path) {
         for (const auto &u : users) {
             json rec;
             rec["username"] = u.username;
-            rec["name"] = u.name.empty() ? u.username : u.name;
+            rec["first_name"] = u.first_name;
+            rec["last_name"] = u.last_name;
+            rec["name"] = auth_user_display_name(u);
             rec["description"] = u.description.empty() ? json(nullptr) : json(u.description);
             rec["groups"] = u.groups;
             rec["kdf"] = {
@@ -11830,6 +11907,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             UA_NodeId bridgeSysId = ua_add_folder(server, systemId, "Bridge");
             UA_NodeId clockSysId = ua_add_folder(server, systemId, "Clock");
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
+            UA_NodeId usersSysId = ua_add_folder(server, systemId, "Users");
             UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
             UA_NodeId reporterSysId = ua_add_folder(server, systemId, "Logger");
             UA_NodeId legacyReporterSysId = ua_add_folder(server, systemId, "Reporter");
@@ -11872,6 +11950,27 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
                         }
                     } else {
                         ua_add_system_variable(server, hostSysId, systemBindings, hostRow.name, hostRow.datatype, hostRow.value);
+                    }
+                }
+            }
+
+            if (!UA_NodeId_isNull(&usersSysId)) {
+                std::unordered_map<std::string, UA_NodeId> userNodes;
+                for (const auto &userRow : collect_user_system_tags()) {
+                    const std::string prefix = "System/Users/";
+                    const std::string rest = userRow.name.substr(prefix.size());
+                    const size_t slash = rest.find('/');
+                    if (slash == std::string::npos) {
+                        ua_add_system_variable(server, usersSysId, systemBindings, userRow.name, userRow.datatype, userRow.value);
+                        continue;
+                    }
+                    const std::string userId = rest.substr(0, slash);
+                    auto it = userNodes.find(userId);
+                    if (it == userNodes.end()) {
+                        it = userNodes.emplace(userId, ua_add_folder(server, usersSysId, userId)).first;
+                    }
+                    if (!UA_NodeId_isNull(&it->second)) {
+                        ua_add_system_variable(server, it->second, systemBindings, userRow.name, userRow.datatype, userRow.value);
                     }
                 }
             }
@@ -12006,9 +12105,10 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
             if (!UA_NodeId_isNull(&connectionsSysId)) {
                 for (auto &driver : drivers) {
                     if (is_memory_connection_id(driver.conn.id) || driver.conn.driver == "memory") continue;
-                    UA_NodeId connSysId = ua_add_folder(server, connectionsSysId, driver.conn.id);
+                    const std::string connectionName = system_connection_path_segment(driver.conn);
+                    UA_NodeId connSysId = ua_add_folder(server, connectionsSysId, connectionName);
                     if (UA_NodeId_isNull(&connSysId)) continue;
-                    const std::string prefix = "System/Connections/" + driver.conn.id + "/";
+                    const std::string prefix = "System/Connections/" + connectionName + "/";
                     ua_add_system_variable(server, connSysId, systemBindings, prefix + "Enabled", "bool", true);
                     ua_add_system_variable(server, connSysId, systemBindings, prefix + "TagCount", "int32", 0);
                     ua_add_system_variable(server, connSysId, systemBindings, prefix + "WithSnapshotCount", "int32", 0);
@@ -12443,6 +12543,9 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     for (const auto &hostRow : collect_host_system_tags()) {
         ua_write_system_value(hostRow.name, hostRow.value);
     }
+    for (const auto &userRow : collect_user_system_tags()) {
+        ua_write_system_value(userRow.name, userRow.value);
+    }
     for (const auto &alarmRow : collect_alarm_system_tags()) {
         ua_write_system_value(alarmRow.name, alarmRow.value);
     }
@@ -12469,7 +12572,11 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     }
 
     for (auto &driver : drivers) {
-        const std::string prefix = "System/Connections/" + driver.conn.id + "/";
+        // Memory tags may be loaded from legacy tag files whose physical
+        // connection was removed. They remain valid memory tags, but their
+        // virtual driver must not appear as a real System/Connections entry.
+        if (is_memory_connection_id(driver.conn.id) || driver.conn.driver == "memory") continue;
+        const std::string prefix = "System/Connections/" + system_connection_path_segment(driver.conn) + "/";
         int total = 0;
         int with_snapshot = 0;
         int good = 0;
@@ -17046,10 +17153,14 @@ const wsBuildNodeIndex = (root) => {
 	    });
 
 	    const connSystemChildren = conns
-	        .map((c) => String(c?.id || "").trim())
-	        .filter(Boolean)
-	        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
-	        .map((id) => wsMakeSystemGroup(`ws:system:connections:${encodeURIComponent(id)}`, id, `System/Connections/${id}/`));
+	        .map((c) => {
+	            const id = String(c?.id || "").trim();
+	            const label = String(c?.description || c?.name || id).trim() || id;
+	            return { id, label, pathLabel: label.replace(/[\\/]/g, "-") };
+	        })
+	        .filter((c) => c.id)
+	        .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }))
+	        .map((c) => wsMakeSystemGroup(`ws:system:connections:${encodeURIComponent(c.id)}`, c.label, `System/Connections/${c.pathLabel}/`));
 	    const networkIfaceChildren = wsSystemPathChildren("System/Host/Network/")
 	        .map((iface) => wsMakeSystemGroup(`ws:system:host:network:${encodeURIComponent(iface)}`, iface, `System/Host/Network/${iface}/`));
 	    const reporterDatabaseChildren = wsSystemPathChildren("System/Logger/Databases/")
@@ -22238,7 +22349,8 @@ window.addEventListener("load", startAutoRefresh);
 									}
 
 									for (auto &driver : drivers) {
-										const std::string prefix = "System/Connections/" + driver.conn.id + "/";
+										if (is_memory_connection_id(driver.conn.id) || driver.conn.driver == "memory") continue;
+										const std::string prefix = "System/Connections/" + system_connection_path_segment(driver.conn) + "/";
 										int total = 0;
 										int with_snapshot = 0;
 										int good = 0;
@@ -22417,7 +22529,8 @@ window.addEventListener("load", startAutoRefresh);
 		                    {
 		                        std::lock_guard<std::mutex> lock(driverMutex);
 		                        for (auto &driver : drivers) {
-		                            const std::string prefix = "System/Connections/" + driver.conn.id + "/";
+		                            if (is_memory_connection_id(driver.conn.id) || driver.conn.driver == "memory") continue;
+		                            const std::string prefix = "System/Connections/" + system_connection_path_segment(driver.conn) + "/";
 		                            bool wantsConnSystem = false;
 		                            for (const auto &reqItem : requested) {
 		                                if (reqItem.first == "_system" && reqItem.second.rfind(prefix, 0) == 0) {
@@ -25640,7 +25753,7 @@ window.addEventListener("load", startAutoRefresh);
 				                    std::string description;
 				                    for (const auto &u : g_authUsers) {
 				                        if (u.username == sess.username) {
-				                            displayName = u.name.empty() ? u.username : u.name;
+				                            displayName = auth_user_display_name(u);
 				                            description = u.description;
 				                            break;
 				                        }
@@ -25648,6 +25761,8 @@ window.addEventListener("load", startAutoRefresh);
 				                    resp["user"] = json::object({
 				                        {"username", sess.username},
 				                        {"name", displayName},
+				                        {"first_name", [&]() { for (const auto &u : g_authUsers) if (u.username == sess.username) return u.first_name; return std::string{}; }()},
+				                        {"last_name", [&]() { for (const auto &u : g_authUsers) if (u.username == sess.username) return u.last_name; return std::string{}; }()},
 				                        {"description", description.empty() ? json(nullptr) : json(description)},
 				                        {"groups", sess.groups},
 				                        {"permissions", group_permissions(sess.groups)}
@@ -25673,7 +25788,9 @@ window.addEventListener("load", startAutoRefresh);
 				                    for (const auto &u : g_authUsers) {
 				                        resp["users"].push_back({
 				                            {"username", u.username},
-				                            {"name", u.name.empty() ? u.username : u.name},
+				                            {"first_name", u.first_name},
+				                            {"last_name", u.last_name},
+				                            {"name", auth_user_display_name(u)},
 				                            {"description", u.description.empty() ? json(nullptr) : json(u.description)},
 				                            {"groups", u.groups},
 				                            {"permissions", group_permissions(u.groups)}
@@ -25813,7 +25930,9 @@ window.addEventListener("load", startAutoRefresh);
 			                    for (const auto &user : g_authUsers) {
 			                        directory["users"].push_back({
 			                            {"username", user.username},
-			                            {"name", user.name.empty() ? user.username : user.name},
+			                            {"first_name", user.first_name},
+			                            {"last_name", user.last_name},
+			                            {"name", auth_user_display_name(user)},
 			                            {"description", user.description.empty() ? json(nullptr) : json(user.description)},
 			                            {"groups", user.groups},
 			                            {"kdf", {
@@ -25899,7 +26018,8 @@ window.addEventListener("load", startAutoRefresh);
 			                        if (!item.is_object()) throw std::runtime_error("Invalid user record.");
 			                        AuthUserRecord user;
 			                        user.username = normalize_auth_username(directoryString(item, "username"));
-			                        user.name = directoryString(item, "name", user.username);
+			                        set_auth_user_names(user, directoryString(item, "first_name"), directoryString(item, "last_name"),
+			                                            directoryString(item, "name", user.username));
 			                        user.description = directoryString(item, "description");
 			                        user.groups = parse_group_list(item.value("groups", json::array()));
 			                        const json kdf = item.value("kdf", json::object());
@@ -26183,7 +26303,9 @@ window.addEventListener("load", startAutoRefresh);
 	                    resp["username"] = username;
 	                    for (const auto &u : authUsers) {
 	                        if (u.username == username) {
-	                            resp["name"] = u.name.empty() ? u.username : u.name;
+	                            resp["first_name"] = u.first_name;
+	                            resp["last_name"] = u.last_name;
+	                            resp["name"] = auth_user_display_name(u);
 	                            break;
 	                        }
 	                    }
@@ -26206,7 +26328,7 @@ window.addEventListener("load", startAutoRefresh);
 	            });
 
 			            // POST /auth/init  (first-time user store setup)
-			            // Body: { "username": "...", "password": "...", "confirm": "...", "timeoutMinutes": 0, "legacy_password": "..." }
+			            // Body: { "username": "...", "first_name": "...", "last_name": "...", "password": "...", "confirm": "...", "timeoutMinutes": 0, "legacy_password": "..." }
 			            svr.Post("/auth/init", [&](const httplib::Request &req, httplib::Response &res) {
 			                json resp;
 			                try {
@@ -26222,6 +26344,8 @@ window.addEventListener("load", startAutoRefresh);
 
 			                    json body = json::parse(req.body.empty() ? "{}" : req.body);
 			                    const std::string username = normalize_auth_username(body.value("username", std::string{}));
+			                    const std::string firstName = body.value("first_name", std::string{});
+			                    const std::string lastName = body.value("last_name", std::string{});
 			                    const std::string password = body.value("password", std::string{});
 			                    const std::string confirm = body.value("confirm", std::string{});
 			                    const std::string legacyPassword = body.value("legacy_password", std::string{});
@@ -26289,7 +26413,7 @@ window.addEventListener("load", startAutoRefresh);
 
 				                    AuthUserRecord u;
 				                    u.username = username;
-				                    u.name = username;
+				                    set_auth_user_names(u, firstName, lastName, username);
 				                    u.description = "";
 				                    u.groups = {"admin"};
 	                    u.iterations = 150000;
@@ -26751,8 +26875,9 @@ window.addEventListener("load", startAutoRefresh);
 
 	                    AuthUserRecord u;
 	                    u.username = username;
-	                    u.name = body.value("name", std::string{});
-	                    if (u.name.empty()) u.name = username;
+	                    set_auth_user_names(u, body.value("first_name", std::string{}),
+	                                        body.value("last_name", std::string{}),
+	                                        body.value("name", std::string{}));
 	                    u.description = body.value("description", std::string{});
 	                    u.groups = groups;
 	                    u.iterations = 150000;
@@ -26921,6 +27046,8 @@ window.addEventListener("load", startAutoRefresh);
 		                    const bool hasGroups = body.contains("groups");
 		                    const bool hasPassword = body.contains("password");
 		                    const bool hasName = body.contains("name");
+		                    const bool hasFirstName = body.contains("first_name");
+		                    const bool hasLastName = body.contains("last_name");
 		                    const bool hasDescription = body.contains("description");
 
 		                    const bool isSelf = (sess.username == username);
@@ -26977,6 +27104,8 @@ window.addEventListener("load", startAutoRefresh);
 		                    if (hasName) {
 		                        nextName = body.value("name", std::string{});
 		                    }
+		                    const std::string nextFirstName = hasFirstName ? body.value("first_name", std::string{}) : std::string{};
+		                    const std::string nextLastName = hasLastName ? body.value("last_name", std::string{}) : std::string{};
 		                    std::string nextDescription;
 		                    if (hasDescription) {
 		                        nextDescription = body.value("description", std::string{});
@@ -26991,9 +27120,12 @@ window.addEventListener("load", startAutoRefresh);
 		                            previousGroups = u.groups;
 		                            u.groups = nextGroups;
 		                        }
-		                        if (hasName) {
-		                            u.name = nextName;
-		                            if (u.name.empty()) u.name = u.username;
+		                        if (hasFirstName || hasLastName) {
+		                            set_auth_user_names(u,
+		                                hasFirstName ? nextFirstName : u.first_name,
+		                                hasLastName ? nextLastName : u.last_name);
+		                        } else if (hasName) {
+		                            set_auth_user_names(u, {}, {}, nextName);
 		                        }
 		                        if (hasDescription) {
 		                            u.description = nextDescription;

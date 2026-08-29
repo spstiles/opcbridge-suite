@@ -121,12 +121,12 @@ The connection health display should be judged against what the connection can a
 Useful system tags:
 
 ```text
-System/Connections/<id>/StalePercent
-System/Connections/<id>/BadCount
-System/Connections/<id>/MissingCount
-System/Connections/<id>/BadHandleCount
-System/Connections/<id>/ReadMsAvg
-System/Connections/<id>/PollLanes
+System/Connections/<friendly_connection_name>/StalePercent
+System/Connections/<friendly_connection_name>/BadCount
+System/Connections/<friendly_connection_name>/MissingCount
+System/Connections/<friendly_connection_name>/BadHandleCount
+System/Connections/<friendly_connection_name>/ReadMsAvg
+System/Connections/<friendly_connection_name>/PollLanes
 ```
 
 If `BadCount`, `MissingCount`, and `BadHandleCount` are low or zero, but `StalePercent` is high, the connection is usually reading successfully but not sweeping the full tag list fast enough.
