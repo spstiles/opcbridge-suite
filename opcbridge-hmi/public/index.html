@@ -558,7 +558,7 @@
               </select>
             </div>
             <div class="prop-group-title">Binding</div>
-            <div class="prop-help">Use <code>{1}</code>, <code>{2}</code>, or <code>{flow}</code> for automation values. Use <code>{alias:Name}</code> for a value supplied by the screen or calling action.</div>
+            <div class="prop-help">Use <code>{1}</code>, <code>{2}</code>, or <code>{flow}</code> as placeholders. Each placeholder can use a tag or an expression. Use <code>{alias:Name}</code> for a value supplied by the screen or calling action.</div>
             <div id="textBindingRows" class="text-binding-rows"></div>
           </div>
 
@@ -572,7 +572,7 @@
               <label for="buttonAliasInsert">Insert Alias</label>
               <div class="prop-inline"><select id="buttonAliasInsert"></select><button id="buttonAliasInsertBtn" class="panel-btn" type="button">Insert</button></div>
             </div>
-            <div class="prop-help">Use <code>{1}</code>, <code>{2}</code>, or <code>{state}</code> for automation values. Use <code>{alias:Name}</code> for a value supplied by the screen or calling action.</div>
+            <div class="prop-help">Use <code>{1}</code>, <code>{2}</code>, or <code>{state}</code> as placeholders. Each placeholder can use a tag or an expression. Use <code>{alias:Name}</code> for a value supplied by the screen or calling action.</div>
             <div id="buttonLabelBindingRows" class="text-binding-rows"></div>
 	            <div class="prop-row">
 	              <label for="buttonActionType">Action</label>
@@ -2475,14 +2475,28 @@
 	      <div class="settings-body">
 	        <div class="settings-section">
 	          <div class="prop-row">
+	            <label for="textBindingSourceType">Source</label>
+	            <select id="textBindingSourceType">
+	              <option value="tag">Tag</option>
+	              <option value="expression">Expression</option>
+	            </select>
+	          </div>
+	          <div id="textBindingConnectionRow" class="prop-row">
 	            <label for="textBindingConnection">Connection</label>
 	            <input id="textBindingConnection" class="automation-tag-input" type="text" placeholder="connection_id" />
 	          </div>
-	          <div class="prop-row">
+	          <div id="textBindingTagRow" class="prop-row">
 	            <label for="textBindingTag">Tag</label>
 	            <div class="prop-inline automation-tag-inline">
 	              <input id="textBindingTag" class="automation-tag-input" type="text" placeholder="tag" />
 	              <button id="textBindingTagPickBtn" class="panel-btn" type="button">Pick…</button>
+	            </div>
+	          </div>
+	          <div id="textBindingExpressionRow" class="prop-row is-hidden" hidden>
+	            <label for="textBindingExpression">Expression</label>
+	            <div class="prop-inline automation-tag-inline">
+	              <textarea id="textBindingExpression" rows="3" placeholder='tag("connection", "tag") + 10'></textarea>
+	              <button id="textBindingExpressionEditBtn" class="panel-btn" type="button">Edit…</button>
 	            </div>
 	          </div>
 	          <div class="prop-row">
@@ -3112,6 +3126,6 @@
 	      </div>
 	    </div>
 	  </div>
-	  <script src="/js/hmi.js?v=20260830-runtime-click-stability-v22"></script>
+	  <script src="/js/hmi.js?v=20260830-text-binding-expressions-v23"></script>
 	</body>
 	</html>

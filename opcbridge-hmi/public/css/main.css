@@ -3822,6 +3822,11 @@ body.automation-panel-open #editor-pane {
   transition: border-color 0.15s ease;
 }
 
+#textBindingExpression {
+  min-width: 0;
+  resize: vertical;
+}
+
 .prop-row input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;

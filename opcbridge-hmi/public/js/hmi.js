@@ -304,9 +304,15 @@ const libraryModalHost = document.getElementById("libraryModalHost");
 const textBindingOverlay = document.getElementById("textBindingOverlay");
 const textBindingTitle = document.getElementById("textBindingTitle");
 const textBindingCloseBtn = document.getElementById("textBindingCloseBtn");
+const textBindingSourceTypeSelect = document.getElementById("textBindingSourceType");
+const textBindingConnectionRow = document.getElementById("textBindingConnectionRow");
 const textBindingConnectionInput = document.getElementById("textBindingConnection");
+const textBindingTagRow = document.getElementById("textBindingTagRow");
 const textBindingTagInput = document.getElementById("textBindingTag");
 const textBindingTagPickBtn = document.getElementById("textBindingTagPickBtn");
+const textBindingExpressionRow = document.getElementById("textBindingExpressionRow");
+const textBindingExpressionInput = document.getElementById("textBindingExpression");
+const textBindingExpressionEditBtn = document.getElementById("textBindingExpressionEditBtn");
 const textBindingDigitsInput = document.getElementById("textBindingDigits");
 const textBindingPadZerosInput = document.getElementById("textBindingPadZeros");
 const textBindingDecimalsInput = document.getElementById("textBindingDecimals");
@@ -2282,6 +2288,25 @@ const extractVisibilityExpressionTagKeys = (expression, out) => {
     match = regex.exec(source);
   }
   return target;
+};
+
+const extractAutomationExpressionTagReferences = (expression) => {
+  const references = [];
+  const seen = new Set();
+  const source = String(expression || "");
+  const regex = /tag\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g;
+  let match = regex.exec(source);
+  while (match) {
+    const connection_id = decodeExpressionStringLiteral(match[1]);
+    const tag = decodeExpressionStringLiteral(match[2]);
+    const key = formatMappedTagReference(connection_id, tag);
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      references.push({ connection_id, tag, value: key });
+    }
+    match = regex.exec(source);
+  }
+  return references;
 };
 
 const extractAutomationExpressionTagKeys = (expression, out) => extractVisibilityExpressionTagKeys(expression, out);
@@ -6957,6 +6982,42 @@ const getReferenceHealthIssues = () => {
       const id = `native:${index}:${refIndex}`;
       addIssue({ id, objectImportId: objectId, objectIndex: index, severity: "warning", category: ref.kind || "reference", automation: ref.automation || null, status: ref.status === "unsupported" || ref.supported === false ? "unsupported" : "unresolved", source: ref.source, message: `${ref.status === "unsupported" || ref.supported === false ? "Unsupported" : "Unresolved"} ${ref.automation || ref.kind || "reference"}: ${ref.source?.value || "unknown"}` });
     });
+    const expressionBindings = [
+      ...Object.entries(getTextBindingsMap(obj)).map(([key, binding]) => ({ key, binding, label: "text" })),
+      ...Object.entries(getButtonLabelBindingsMap(obj)).map(([key, binding]) => ({ key, binding, label: "button text" }))
+    ].filter((entry) => entry.binding?.sourceType === "expression");
+    expressionBindings.forEach(({ key, binding, label }, expressionIndex) => {
+      const expression = String(binding.expression || "").trim();
+      const validationError = getAutomationExpressionValidationError(expression);
+      if (validationError) {
+        addIssue({
+          id: `expression:${index}:${expressionIndex}`,
+          objectImportId: objectId,
+          objectIndex: index,
+          severity: "warning",
+          category: "expression",
+          automation: "text",
+          status: "unresolved",
+          source: { format: "opcbridge", value: expression || `{${key}}` },
+          message: `Invalid ${label} expression for {${key}}: ${validationError}`
+        });
+        return;
+      }
+      extractAutomationExpressionTagReferences(expression).forEach((reference, refIndex) => {
+        if (knownMappedTag(reference.value)) return;
+        addIssue({
+          id: `expression-tag:${index}:${expressionIndex}:${refIndex}`,
+          objectImportId: objectId,
+          objectIndex: index,
+          severity: "warning",
+          category: "tag",
+          automation: "text expression",
+          status: "unresolved",
+          source: { format: "opcbridge", value: reference.value },
+          message: `Unresolved ${label} expression tag: ${reference.value}`
+        });
+      });
+    });
     const actionType = String(obj?.action?.type || "");
     const isScreenAction = ["navigate", "popup", "load-viewport"].includes(actionType);
     const isViewportReference = obj?.type === "viewport" && (String(obj.target || "").trim() || obj.sourceInitialScreen);
@@ -8688,15 +8749,20 @@ const getTextPlaceholderKeys = (text) => {
 
 const normalizeTextBinding = (bind) => {
   if (!bind || typeof bind !== "object") return null;
+  const sourceType = bind.sourceType === "expression" ? "expression" : "tag";
   const connection_id = String(bind.connection_id || "").trim();
   const tag = String(bind.tag || "").trim();
-  const digits = Number.isFinite(Number(bind.digits)) ? Math.max(1, Math.trunc(Number(bind.digits))) : "";
+  const expression = String(bind.expression || "").trim();
+  const rawDigits = String(bind.digits ?? "").trim();
+  const digits = rawDigits !== "" && Number.isFinite(Number(rawDigits)) ? Math.max(1, Math.trunc(Number(rawDigits))) : "";
   const padZeros = bind.padZeros === true || String(bind.padZeros || "").trim().toLowerCase() === "true";
   const decimals = Number.isFinite(Number(bind.decimals)) ? Math.max(0, Math.trunc(Number(bind.decimals))) : 0;
   const multiplier = Number.isFinite(Number(bind.multiplier)) ? Number(bind.multiplier) : 1;
-  const hasValue = Boolean(connection_id || tag || digits !== "" || padZeros || decimals !== 0 || multiplier !== 1);
+  const hasValue = Boolean((sourceType === "expression" ? expression : (connection_id || tag)) || digits !== "" || padZeros || decimals !== 0 || multiplier !== 1);
   if (!hasValue) return null;
-  return { connection_id, tag, digits, padZeros, decimals, multiplier };
+  return sourceType === "expression"
+    ? { sourceType, expression, digits, padZeros, decimals, multiplier }
+    : { sourceType, connection_id, tag, digits, padZeros, decimals, multiplier };
 };
 
 const getTextBindingsMap = (obj) => {
@@ -8742,12 +8808,15 @@ const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
   connectionInput.className = "automation-tag-input";
   connectionInput.placeholder = "connection_id";
   connectionInput.value = String(binding?.connection_id || "");
+  connectionInput.disabled = binding?.sourceType === "expression";
 
   const tagInput = document.createElement("input");
   tagInput.type = "text";
   tagInput.className = "automation-tag-input";
   tagInput.placeholder = "tag";
-  tagInput.value = String(binding?.tag || "");
+  tagInput.value = binding?.sourceType === "expression" ? String(binding.expression || "") : String(binding?.tag || "");
+  tagInput.disabled = binding?.sourceType === "expression";
+  if (binding?.sourceType === "expression") tagInput.title = String(binding.expression || "");
 
   const editBtn = document.createElement("button");
   editBtn.type = "button";
@@ -8777,8 +8846,10 @@ const renderBoundTemplate = (rawText, bindings, previewOnly = false) => {
   return String(rawText || "").replace(TEXT_PLACEHOLDER_RE, (_, key) => {
     const bind = bindings[String(key)] || null;
     if (!bind) return `{${String(key)}}`;
-    const cacheKey = normalizeTagCacheKey(bind.connection_id, bind.tag);
-    const rawValue = cacheKey ? tagValueCache.get(cacheKey) : undefined;
+    const cacheKey = bind.sourceType === "expression" ? "" : normalizeTagCacheKey(bind.connection_id, bind.tag);
+    const rawValue = bind.sourceType === "expression"
+      ? evaluateAutomationExpression(bind.expression)
+      : (cacheKey ? tagValueCache.get(cacheKey) : undefined);
     return getTextBindingDisplayValue(rawValue, bind, previewOnly || isEditMode);
   });
 };
@@ -8841,7 +8912,9 @@ const getTextBindingSummary = (bind) => {
   const normalized = normalizeTextBinding(bind);
   if (!normalized) return "(unbound)";
   const parts = [];
-  const path = [getConnectionDisplayName(normalized.connection_id), normalized.tag].filter(Boolean).join(" / ");
+  const path = normalized.sourceType === "expression"
+    ? String(normalized.expression || "")
+    : [getConnectionDisplayName(normalized.connection_id), normalized.tag].filter(Boolean).join(" / ");
   parts.push(path || "(unbound)");
   if (normalized.digits !== "") parts.push(`digits=${normalized.digits}`);
   if (normalized.padZeros) parts.push("zpad");
@@ -11098,6 +11171,16 @@ const closeTextBindingModal = () => {
   textBindingOverlay.setAttribute("aria-hidden", "true");
 };
 
+const updateTextBindingSourceUi = () => {
+  const expressionMode = textBindingSourceTypeSelect?.value === "expression";
+  textBindingConnectionRow?.classList.toggle("is-hidden", expressionMode);
+  if (textBindingConnectionRow) textBindingConnectionRow.hidden = expressionMode;
+  textBindingTagRow?.classList.toggle("is-hidden", expressionMode);
+  if (textBindingTagRow) textBindingTagRow.hidden = expressionMode;
+  textBindingExpressionRow?.classList.toggle("is-hidden", !expressionMode);
+  if (textBindingExpressionRow) textBindingExpressionRow.hidden = !expressionMode;
+};
+
 const updateTextBindingProperty = (placeholderKey, patch, { clear = false } = {}) => {
   const activeObjects = getActiveObjects();
   if (!activeObjects || !Array.isArray(activeObjects)) return;
@@ -11213,7 +11296,10 @@ const openTextBindingModal = (placeholderKey, objectType = "text") => {
   textBindingModalKey = key;
   textBindingModalObjectType = objectType;
   if (textBindingTitle) textBindingTitle.textContent = `${objectType === "button" ? "Button Label" : "Text"} Binding {${key}}`;
+  if (textBindingSourceTypeSelect) textBindingSourceTypeSelect.value = binding?.sourceType === "expression" ? "expression" : "tag";
   setTagBindingFieldValues(textBindingConnectionInput, textBindingTagInput, binding);
+  setInputValueSafe(textBindingExpressionInput, binding?.expression || "");
+  updateTextBindingSourceUi();
   setInputValueSafe(textBindingDigitsInput, binding?.digits ?? "");
   if (textBindingPadZerosInput) {
     textBindingPadZerosInput.checked = binding?.padZeros === true || String(binding?.padZeros || "").trim().toLowerCase() === "true";
@@ -11222,7 +11308,10 @@ const openTextBindingModal = (placeholderKey, objectType = "text") => {
   setInputValueSafe(textBindingMultiplierInput, Number.isFinite(Number(binding?.multiplier)) ? Number(binding.multiplier) : 1);
   textBindingOverlay.classList.remove("is-hidden");
   textBindingOverlay.setAttribute("aria-hidden", "false");
-  if (textBindingTagInput) requestAnimationFrame(() => textBindingTagInput.focus());
+  requestAnimationFrame(() => {
+    if (textBindingSourceTypeSelect?.value === "expression") textBindingExpressionInput?.focus();
+    else textBindingTagInput?.focus();
+  });
 };
 
 const refreshBarBindTagOptions = () => {
@@ -20399,6 +20488,21 @@ if (textBindingTagPickBtn) {
   });
 }
 
+textBindingSourceTypeSelect?.addEventListener("change", updateTextBindingSourceUi);
+
+textBindingExpressionEditBtn?.addEventListener("click", () => {
+  if (!textBindingModalKey) return;
+  openAutomationNumericExpressionModal({
+    title: `Text Binding {${textBindingModalKey}} Expression`,
+    value: textBindingExpressionInput?.value || "",
+    apply: (expression) => {
+      if (textBindingExpressionInput) textBindingExpressionInput.value = expression;
+      if (textBindingSourceTypeSelect) textBindingSourceTypeSelect.value = "expression";
+      updateTextBindingSourceUi();
+    }
+  });
+});
+
 if (buttonWriteTagPickBtn) {
   buttonWriteTagPickBtn.addEventListener("click", () => openCompactTagBindingModal("buttonWrite"));
 }
@@ -20406,10 +20510,22 @@ if (buttonWriteTagPickBtn) {
 if (textBindingSaveBtn) {
   textBindingSaveBtn.addEventListener("click", () => {
     if (!textBindingModalKey) return;
+    const sourceType = textBindingSourceTypeSelect?.value === "expression" ? "expression" : "tag";
+    const expression = String(textBindingExpressionInput?.value || "").trim();
+    if (sourceType === "expression") {
+      const error = getAutomationExpressionValidationError(expression);
+      if (error) {
+        showHmiToast(`Text expression is invalid: ${error}`, 7000);
+        textBindingExpressionInput?.focus();
+        return;
+      }
+    }
     const patch = {
-      connection_id: String(textBindingConnectionInput?.value || "").trim(),
-      tag: String(textBindingTagInput?.value || "").trim(),
-      digits: Number.isFinite(Number(textBindingDigitsInput?.value)) ? Number(textBindingDigitsInput.value) : "",
+      sourceType,
+      ...(sourceType === "expression"
+        ? { expression, connection_id: "", tag: "" }
+        : { expression: "", connection_id: String(textBindingConnectionInput?.value || "").trim(), tag: String(textBindingTagInput?.value || "").trim() }),
+      digits: String(textBindingDigitsInput?.value || "").trim() !== "" && Number.isFinite(Number(textBindingDigitsInput.value)) ? Number(textBindingDigitsInput.value) : "",
       padZeros: Boolean(textBindingPadZerosInput?.checked),
       decimals: Number.isFinite(Number(textBindingDecimalsInput?.value)) ? Number(textBindingDecimalsInput.value) : 0,
       multiplier: Number.isFinite(Number(textBindingMultiplierInput?.value)) ? Number(textBindingMultiplierInput.value) : 1
