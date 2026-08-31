@@ -6794,8 +6794,41 @@ const referenceAutomationMatches = (expected, actual) => {
   return false;
 };
 
+const pruneInactiveTemplateBindings = (obj) => {
+  if (!obj || typeof obj !== "object") return;
+  const activeKeys = new Set();
+  const collectKeys = (text) => {
+    for (const match of String(text || "").matchAll(/\{([a-zA-Z0-9_]+)\}/g)) {
+      if (match[1]) activeKeys.add(String(match[1]));
+    }
+  };
+  let property = "";
+  if (obj.type === "text") {
+    property = "textBindings";
+    collectKeys(obj.text);
+  } else if (obj.type === "button") {
+    property = "labelBindings";
+    collectKeys(obj.label);
+    if (obj?.action?.type === "auth") {
+      collectKeys(obj.action.loggedInText ?? obj.authLoggedInText ?? "Log Out");
+      collectKeys(obj.action.loggedOutText ?? obj.authLoggedOutText ?? "Log In");
+    }
+  }
+  const bindings = property && obj[property];
+  if (bindings && typeof bindings === "object" && !Array.isArray(bindings)) {
+    Object.keys(bindings).forEach((key) => {
+      if (!activeKeys.has(String(key))) delete bindings[key];
+    });
+    if (!Object.keys(bindings).length) delete obj[property];
+  }
+  (obj.children || []).forEach(pruneInactiveTemplateBindings);
+};
+
 const reconcileReferenceHealthMetadata = () => {
   if (!currentScreenObj) return;
+  // Template bindings that no longer have a matching placeholder are dormant,
+  // not broken references. Remove them before deriving object reference health.
+  (currentScreenObj.objects || []).forEach(pruneInactiveTemplateBindings);
   const occurrences = collectScreenReferenceMappings()
     .flatMap((group) => group.occurrences.map((occurrence) => ({
       ...occurrence,
@@ -16240,6 +16273,9 @@ const updateTextProperty = (patch) => {
   if (!obj || obj.type !== "text") return;
   recordHistory();
   Object.assign(obj, patch);
+  if (Object.prototype.hasOwnProperty.call(patch || {}, "text")) {
+    pruneInactiveTemplateBindings(obj);
+  }
   if (isTextAutoSize(obj)) {
     const autoPatch = autosizeTextObject(obj);
     if (autoPatch) Object.assign(obj, autoPatch);
@@ -16272,6 +16308,9 @@ const updateButtonProperty = (patch) => {
   if (!obj || obj.type !== "button") return;
   recordHistory();
   Object.assign(obj, patch);
+  if (Object.prototype.hasOwnProperty.call(patch || {}, "label")) {
+    pruneInactiveTemplateBindings(obj);
+  }
   renderScreen();
   syncEditorFromScreen();
   setDirty(true);
