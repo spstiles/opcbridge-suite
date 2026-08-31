@@ -79,6 +79,21 @@ test("rejects a non-GraphWorX document cleanly", () => {
   assert.throws(() => convertGraphWorx("<Document />"), /GraphWorX Canvas/);
 });
 
+test("imports a GraphWorX alarm viewer as an actionable native panel without a permanent issue", () => {
+  const xml = `<Canvas Width="800" Height="600"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:ia="clr-namespace:Ico.Awx;assembly=AwxViewControl">
+    <ia:AwxViewControl Width="700" Height="120" Canvas.Left="10" Canvas.Top="470" />
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Console Background.gdfx" });
+  const panel = result.screen.objects[0];
+  assert.equal(panel.type, "alarms-panel");
+  assert.equal(panel.panelMode, "alarms");
+  assert.equal(panel.importConversion, "approximated");
+  assert.equal(result.screen.referenceHealth.issues.length, 0);
+  assert.equal(result.summary.issues, 0);
+});
+
 test("imports embedded GraphWorX bitmap images as native image layers", () => {
   const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
   const xml = `<Canvas Width="800" Height="600"

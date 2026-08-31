@@ -6935,6 +6935,10 @@ const reconcileReferenceHealthMetadata = () => {
     // object or the reference removes its issue; changing the target evaluates
     // the new target without relying on the original import report.
     if (objectId && !owningObject) return "resolved";
+    // Older imports recorded approximated native controls (notably the alarm
+    // panel) as permanent partial-conversion issues. Once the native object
+    // exists, that conversion note is provenance rather than a broken setting.
+    if (owningObject && issue?.category === "partial") return "resolved";
     if (type === "screen" && owningObject) {
       const current = currentScreenReference(owningObject);
       if (!current) return "resolved";

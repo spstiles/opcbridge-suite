@@ -758,7 +758,6 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       });
     } else if (name === "ia:AwxViewControl") {
       add({ type: "alarms-panel", ...base, panelMode: "alarms", ...sourceMetadata(name, node, { importConversion: "approximated" }) });
-      issues.push({ id: `alarm:${issues.length + 1}`, objectImportId: objects.at(-1).importId, severity: "notice", category: "partial", status: "open", source: { format: "graphworx64", value: "AwxViewControl" }, message: "GraphWorX alarm viewer imported with its source filters preserved for review." });
       return;
     }
 
