@@ -1028,12 +1028,32 @@ body.runtime-mode .ws-badge {
 .settings-modal.screen-file-modal {
     width: min(1280px, calc(100vw - 24px));
     max-width: 1280px;
+    height: min(760px, calc(100vh - 48px));
+    max-height: calc(100vh - 48px);
+    overflow: hidden;
+}
+
+.screen-file-modal > .popup-header {
+    flex: 0 0 auto;
+}
+
+.screen-file-modal > .settings-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.screen-file-modal .settings-section,
+.screen-file-chrome {
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .screen-file-chrome {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    overflow: hidden;
 }
 
 .screen-file-nav {
@@ -1084,7 +1104,9 @@ body.runtime-mode .ws-badge {
     display: grid;
     grid-template-columns: 240px minmax(0, 1fr);
     gap: 10px;
-    min-height: 420px;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
 }
 
 .screen-file-sidebar {
@@ -1094,6 +1116,7 @@ body.runtime-mode .ws-badge {
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    min-height: 0;
 }
 
 .screen-file-side-title {
@@ -1160,6 +1183,7 @@ body.runtime-mode .ws-badge {
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    min-height: 0;
 }
 
 .screen-file-main-toolbar {
@@ -1210,7 +1234,10 @@ body.runtime-mode .ws-badge {
 
 .screen-file-main .open-file-list {
     max-height: none;
-    height: 100%;
+    height: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
 }
 
 .screen-file-footer {
@@ -1220,6 +1247,7 @@ body.runtime-mode .ws-badge {
     gap: 10px;
     padding-top: 4px;
     flex-wrap: wrap;
+    flex: 0 0 auto;
 }
 
 .screen-file-details {
