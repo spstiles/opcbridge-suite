@@ -18601,6 +18601,15 @@ const setMode = (next) => {
   }
   applyScale();
   renderScreen();
+  if (wasEditMode && !isEditMode) {
+    // Runtime always starts at the screen origin. Repeat after layout settles
+    // so collapsing the editor panels cannot restore the editing scroll offset.
+    screenWrapper?.scrollTo?.({ left: 0, top: 0, behavior: "auto" });
+    window.requestAnimationFrame(() => {
+      applyScale();
+      screenWrapper?.scrollTo?.({ left: 0, top: 0, behavior: "auto" });
+    });
+  }
   if (isEditMode) refreshScreensList();
   updateSelectionOverlays();
   updatePropertiesPanel();
