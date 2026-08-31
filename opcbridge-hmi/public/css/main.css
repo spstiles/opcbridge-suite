@@ -793,6 +793,17 @@ body.runtime-mode .ws-badge {
     z-index: 1002;
 }
 
+/* Keep the visual spacing between menu levels without leaving a dead pointer
+   gap that closes a submenu while the user moves into it. */
+.menu-flyout::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    left: -7px;
+    width: 7px;
+}
+
 .menu-flyout.is-hidden {
     display: none;
 }

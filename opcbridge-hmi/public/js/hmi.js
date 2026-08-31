@@ -4891,15 +4891,29 @@ const markAlarmPanelInteraction = () => {
   alarmPanelInteractionUntilMs = Date.now() + ALARM_PANEL_INTERACTION_HOLD_MS;
 };
 
+const isRuntimePointerInteractionActive = () => Date.now() < runtimePointerInteractionUntilMs;
+
+const beginRuntimePointerInteraction = () => {
+  // Long enough to cover a normal press even if tag updates arrive between
+  // pointerdown and click. Pointer release shortens this immediately.
+  runtimePointerInteractionUntilMs = Date.now() + 2000;
+};
+
+const endRuntimePointerInteraction = () => {
+  // Keep the DOM stable through the click event that follows pointerup.
+  runtimePointerInteractionUntilMs = Date.now() + 100;
+};
+
 const shouldDeferRuntimeScreenRender = () => (
   !isEditMode
-  && screenHasAlarmsPanel()
-  && isAlarmPanelInteractionActive()
+  && (isRuntimePointerInteractionActive()
+    || (screenHasAlarmsPanel() && isAlarmPanelInteractionActive()))
 );
 
 const scheduleDeferredRuntimeScreenRender = () => {
   if (runtimeRenderDeferredTimer) window.clearTimeout(runtimeRenderDeferredTimer);
-  const delayMs = Math.max(50, alarmPanelInteractionUntilMs - Date.now() + 50);
+  const interactionUntilMs = Math.max(alarmPanelInteractionUntilMs, runtimePointerInteractionUntilMs);
+  const delayMs = Math.max(50, interactionUntilMs - Date.now() + 50);
   runtimeRenderDeferredTimer = window.setTimeout(() => {
     runtimeRenderDeferredTimer = null;
     if (shouldDeferRuntimeScreenRender()) {
@@ -4918,6 +4932,10 @@ const scheduleAlarmsRender = () => {
     renderAlarmsBadge();
     renderAlarmsOverlay();
     if (!isEditMode && screenHasAlarmsPanel() && !isEditingGestureActive() && !isKeypadOpen) {
+      if (isRuntimePointerInteractionActive()) {
+        scheduleDeferredRuntimeScreenRender();
+        return;
+      }
       if (isAlarmPanelInteractionActive()) {
         scheduleDeferredAlarmPanelRender();
         return;
@@ -6120,8 +6138,7 @@ const scheduleAuthStateRender = () => {
       tagQualityCache.set(key, "GOOD");
     });
     if (!isEditMode) {
-      renderScreen();
-      if (currentPopupScreenId) openPopup(currentPopupScreenId);
+      scheduleRuntimeRender();
     }
   }, 0);
 };
@@ -6739,6 +6756,7 @@ const referenceAutomationMatches = (expected, actual) => {
     const name = String(value || "").trim().toLowerCase();
     if (name === "pick/write") return "action";
     if (name === "process point") return "data";
+    if (name === "text expression") return "text";
     return name;
   };
   const expectedName = normalize(expected);
@@ -6782,7 +6800,7 @@ const reconcileReferenceHealthMetadata = () => {
   };
 
   const reconcileObject = (obj) => {
-    const objectId = String(obj?.id || obj?.importId || "");
+    const objectId = String(obj?.importId || obj?.id || "");
     const objectOccurrences = byObject.get(objectId) || [];
     (obj?.externalReferences || []).forEach((ref) => {
       const type = String(ref?.kind || "reference");
@@ -6796,10 +6814,18 @@ const reconcileReferenceHealthMetadata = () => {
       );
       if ((ref?.status === "unsupported" || ref?.supported === false) && matching.length) {
         ref.supported = true;
-        ref.automation = matching[0].automation || ref.automation;
+        ref.automation = source.startsWith("x=") && matching[0].automation === "text"
+          ? "text expression"
+          : (matching[0].automation || ref.automation);
         ref.status = "unresolved";
       }
-      if (ref?.status === "unsupported" || ref?.supported === false) return;
+      if (ref?.status === "unsupported" || ref?.supported === false) {
+        if (!matching.length && !hasLiveSourceReference(obj, source)) {
+          ref.status = "resolved";
+          ref.resolution = "removed";
+        }
+        return;
+      }
       const resolved = matching.some((occurrence) => occurrence.resolved);
       const removed = !matching.length && !hasLiveSourceReference(obj, source);
       if (resolved) {
@@ -6819,6 +6845,25 @@ const reconcileReferenceHealthMetadata = () => {
   };
   (currentScreenObj.objects || []).forEach(reconcileObject);
 
+  const findObjectByReferenceId = (objects, objectId) => {
+    for (const obj of objects || []) {
+      if (String(obj?.importId || obj?.id || "") === objectId) return obj;
+      const nested = findObjectByReferenceId(obj?.children, objectId);
+      if (nested) return nested;
+    }
+    return null;
+  };
+
+  const currentScreenReference = (obj) => {
+    if (obj?.type === "viewport") {
+      const value = String(obj.target || "").trim();
+      return value || obj.sourceInitialScreen ? { value, automation: "viewport" } : null;
+    }
+    const actionType = String(obj?.action?.type || "");
+    if (!["navigate", "popup", "load-viewport"].includes(actionType)) return null;
+    return { value: String(obj.action?.screenId || "").trim(), automation: "action" };
+  };
+
   const findReferenceStatus = (issue) => {
     const objectId = String(issue?.objectImportId || "");
     const source = String(issue?.source?.value || "");
@@ -6827,17 +6872,31 @@ const reconcileReferenceHealthMetadata = () => {
       : String(issue?.category || "reference");
     const automation = String(issue?.automation || "");
     const objectOccurrences = byObject.get(objectId) || [];
+    const owningObject = objectId ? findObjectByReferenceId(currentScreenObj.objects, objectId) : null;
+    // Object-scoped issues are derived from the current object. Removing the
+    // object or the reference removes its issue; changing the target evaluates
+    // the new target without relying on the original import report.
+    if (objectId && !owningObject) return "resolved";
+    if (type === "screen" && owningObject) {
+      const current = currentScreenReference(owningObject);
+      if (!current) return "resolved";
+      return current.value && knownMappedScreen(current.value) ? "resolved" : "unresolved";
+    }
     const matching = objectOccurrences.filter((occurrence) =>
       occurrence.type === type
       && referenceAutomationMatches(automation, occurrence.automation)
       && (occurrence.original === source || occurrence.current === source)
     );
     if (matching.some((occurrence) => occurrence.resolved)) return "resolved";
+    if (type === "screen" && objectOccurrences.some((occurrence) =>
+      (occurrence.automation === "viewport" || occurrence.automation === "action")
+      && occurrence.resolved
+    )) return "resolved";
 
     let matchingExternal = null;
     const visit = (objects) => {
       for (const obj of objects || []) {
-        if (String(obj?.id || obj?.importId || "") === objectId) {
+        if (String(obj?.importId || obj?.id || "") === objectId) {
           matchingExternal = (obj.externalReferences || []).find((ref) =>
             String(ref?.kind || "reference") === type
             && referenceAutomationMatches(automation, ref?.automation)
@@ -6868,16 +6927,56 @@ const getReferenceHealthIssues = () => {
   reconcileReferenceHealthMetadata();
   const stored = currentScreenObj?.referenceHealth?.issues;
   const issues = Array.isArray(stored)
-    ? stored.filter((issue) => String(issue?.status || "").toLowerCase() !== "resolved")
+    ? stored.filter((issue) =>
+      String(issue?.status || "").toLowerCase() !== "resolved"
+      // Screen references are evaluated directly from their owning object;
+      // imported entries are provenance, not a second source of truth.
+      && !(issue?.objectImportId && issue?.category === "screen")
+    )
     : [];
   const known = new Set(issues.map((issue) => String(issue?.id || "")));
+  const issueKey = (objectId, category, source, automation = "") =>
+    `${String(objectId || "")}\u0000${String(category || "reference")}\u0000${String(source || "")}\u0000${String(automation || "")}`;
+  const knownIssueKeys = new Set(issues.map((issue) => issueKey(
+    issue?.objectImportId,
+    issue?.category === "unsupported-automation" ? "tag" : issue?.category,
+    issue?.source?.value,
+    issue?.automation
+  )));
+  const addIssue = (issue) => {
+    const key = issueKey(issue.objectImportId, issue.category, issue.source?.value, issue.automation);
+    if (known.has(String(issue.id || "")) || knownIssueKeys.has(key)) return;
+    known.add(String(issue.id || ""));
+    knownIssueKeys.add(key);
+    issues.push(issue);
+  };
   const collectObjectIssues = (obj, index) => {
+    const objectId = obj?.importId || obj?.id || "";
     (obj?.externalReferences || []).forEach((ref, refIndex) => {
       if (ref?.target || ref?.status === "resolved") return;
       const id = `native:${index}:${refIndex}`;
-      if (known.has(id)) return;
-      issues.push({ id, objectImportId: obj.importId, objectIndex: index, severity: "warning", category: ref.kind || "reference", status: "unresolved", source: ref.source, message: `Unresolved ${ref.kind || "reference"}: ${ref.source?.value || "unknown"}` });
+      addIssue({ id, objectImportId: objectId, objectIndex: index, severity: "warning", category: ref.kind || "reference", automation: ref.automation || null, status: ref.status === "unsupported" || ref.supported === false ? "unsupported" : "unresolved", source: ref.source, message: `${ref.status === "unsupported" || ref.supported === false ? "Unsupported" : "Unresolved"} ${ref.automation || ref.kind || "reference"}: ${ref.source?.value || "unknown"}` });
     });
+    const actionType = String(obj?.action?.type || "");
+    const isScreenAction = ["navigate", "popup", "load-viewport"].includes(actionType);
+    const isViewportReference = obj?.type === "viewport" && (String(obj.target || "").trim() || obj.sourceInitialScreen);
+    if (isScreenAction || isViewportReference) {
+      const target = String(isViewportReference ? obj.target : obj.action?.screenId || "").trim();
+      if (!target || !knownMappedScreen(target)) {
+        const source = String(isViewportReference ? (target || obj.sourceInitialScreen || "") : (target || obj.action?.sourceScreen || "")).trim();
+        addIssue({
+          id: `screen:${index}`,
+          objectImportId: objectId,
+          objectIndex: index,
+          severity: "warning",
+          category: "screen",
+          automation: isViewportReference ? "viewport" : "action",
+          status: "unresolved",
+          source: { format: obj?.source?.format || "opcbridge", value: source || "Screen target" },
+          message: `${isViewportReference ? "Viewport" : "Action"} screen not mapped: ${source || "no target selected"}`
+        });
+      }
+    }
     (obj?.children || []).forEach((child, childIndex) => collectObjectIssues(child, `${index}.${childIndex}`));
     const screenId = String(obj?.action?.screenId || "").trim();
     const targetScreen = screenId ? screenCache.get(screenId) : null;
@@ -6889,7 +6988,7 @@ const getReferenceHealthIssues = () => {
         : !(mapping && Object.prototype.hasOwnProperty.call(mapping, "value") && (definition.type === "boolean" || String(mapping.value).trim() !== ""))
           && String(definition.defaultValue ?? "").trim() === "";
       if (!missing) return;
-      issues.push({
+      addIssue({
         id: `alias:${index}:${aliasIndex}`,
         objectImportId: obj?.importId || obj?.id || "",
         objectIndex: index,
@@ -7087,7 +7186,10 @@ const collectScreenReferenceMappings = () => {
       value.forEach((item, index) => visit(item, [...pathParts, String(index)], owner));
       return;
     }
-    const nextOwner = value.type ? value : owner;
+    // Action objects also have a `type` field, but references inside them
+    // belong to the visual object that owns the action. Only objects with an
+    // actual object identity should replace the current owner.
+    const nextOwner = value.importId || value.id ? value : owner;
     const pathText = pathParts.join(".");
     const connection = String(value.connection_id || "").trim();
     const tag = String(value.tag || "").trim();
@@ -7101,7 +7203,7 @@ const collectScreenReferenceMappings = () => {
         current,
         original: sourceReference || current,
         automation: referenceAutomationLabel(pathParts),
-        objectId: String(nextOwner?.id || nextOwner?.importId || ""),
+        objectId: String(nextOwner?.importId || nextOwner?.id || ""),
         path: pathText,
         binding: value,
         status: String(value.status || (connection && tag ? "resolved" : "unresolved")),
@@ -7121,14 +7223,14 @@ const collectScreenReferenceMappings = () => {
 
     if (typeof value.screenId === "string" && value.screenId.trim()) {
       const current = value.screenId.trim();
-      occurrences.push({ type: "screen", current, original: String(value.sourceScreen || current), automation: "action", objectId: String(nextOwner?.id || nextOwner?.importId || ""), path: `${pathText}.screenId`, binding: value, status: String(value.status || "resolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+      occurrences.push({ type: "screen", current, original: String(value.sourceScreen || current), automation: "action", objectId: String(nextOwner?.importId || nextOwner?.id || ""), path: `${pathText}.screenId`, binding: value, status: String(value.status || "resolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
     } else if (typeof value.sourceScreen === "string" && value.sourceScreen.trim()) {
       const current = value.sourceScreen.trim();
-      occurrences.push({ type: "screen", current, original: current, automation: "action", objectId: String(nextOwner?.id || nextOwner?.importId || ""), path: `${pathText}.sourceScreen`, binding: value, status: String(value.status || "unresolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+      occurrences.push({ type: "screen", current, original: current, automation: "action", objectId: String(nextOwner?.importId || nextOwner?.id || ""), path: `${pathText}.sourceScreen`, binding: value, status: String(value.status || "unresolved"), apply(replacement, resolved) { value.screenId = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
     }
     if (value.type === "viewport" && typeof value.target === "string" && value.target.trim()) {
       const current = value.target.trim();
-      occurrences.push({ type: "screen", current, original: current, automation: "viewport", objectId: String(value.id || value.importId || ""), path: `${pathText}.target`, binding: value, status: "resolved", apply(replacement, resolved) { value.target = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
+      occurrences.push({ type: "screen", current, original: String(value.sourceInitialScreen || current), automation: "viewport", objectId: String(value.importId || value.id || ""), path: `${pathText}.target`, binding: value, status: "resolved", apply(replacement, resolved) { value.target = replacement; value.status = resolved ? "resolved" : "unresolved"; value.mappedReference = replacement; return true; } });
     }
 
     Object.entries(value).forEach(([key, child]) => {
@@ -7343,6 +7445,10 @@ const uploadScreenReferenceMappings = async (file) => {
 
 const importGraphWorxFile = async (file) => {
   if (!file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    showHmiToast("GraphWorX import failed: the GDFX file exceeds the 10 MB import limit.", 10000);
+    return;
+  }
   if (isDirty && !confirmLoseUnsavedChanges("Import GraphWorX screen")) return;
   setMenuOpen(false);
   setEditorStatusSafe(`Importing ${file.name}…`);
@@ -7441,6 +7547,7 @@ window.setInterval(() => {
 let pendingScaleRaf = null;
 let wsRuntimeRenderRaf = null;
 let runtimeRenderDeferredTimer = null;
+let runtimePointerInteractionUntilMs = 0;
 const tagValueCache = new Map();
 const tagQualityCache = new Map();
 let tagsCache = [];
@@ -11679,7 +11786,12 @@ const stripJsonComments = (raw) => {
     .replace(/^\s*\/\/.*$/gm, "");
 };
 
-const imgUrl = (filename) => `/img/${encodeURIComponent(String(filename || ""))}`;
+const imgUrl = (filename) => {
+  const value = String(filename || "").trim();
+  return /^data:image\/(?:png|jpeg|gif|webp|bmp);base64,/i.test(value)
+    ? value
+    : `/img/${encodeURIComponent(value)}`;
+};
 
 const parseJsonc = (raw) => {
   const cleaned = stripJsonComments(raw);
@@ -12322,7 +12434,7 @@ const renderIndicatorInto = (parent, obj) => {
     image.setAttribute("y", imageY);
     image.setAttribute("width", imageW);
     image.setAttribute("height", imageH);
-    image.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    image.setAttribute("preserveAspectRatio", obj.fit === "fill" ? "none" : "xMidYMid meet");
     setImageHref(image, imgUrl(imageName));
     content.appendChild(image);
   }
@@ -17841,6 +17953,20 @@ function bindScreenManager() {
     fileFlyoutCloseTimer = null;
   };
 
+  let fileImportFlyoutCloseTimer = null;
+  const scheduleFileImportFlyoutClose = () => {
+    if (fileImportFlyoutCloseTimer) window.clearTimeout(fileImportFlyoutCloseTimer);
+    fileImportFlyoutCloseTimer = window.setTimeout(() => {
+      fileImportFlyoutCloseTimer = null;
+      setFileImportFlyoutOpen(false);
+    }, 350);
+  };
+  const cancelFileImportFlyoutClose = () => {
+    if (!fileImportFlyoutCloseTimer) return;
+    window.clearTimeout(fileImportFlyoutCloseTimer);
+    fileImportFlyoutCloseTimer = null;
+  };
+
   let viewFlyoutCloseTimer = null;
   const scheduleViewFlyoutClose = () => {
     if (viewFlyoutCloseTimer) window.clearTimeout(viewFlyoutCloseTimer);
@@ -17907,6 +18033,7 @@ function bindScreenManager() {
 
   if (fileImportMenuBtn) {
     fileImportMenuBtn.addEventListener("click", () => {
+      cancelFileImportFlyoutClose();
       const isOpen = !fileImportMenuFlyout?.classList.contains("is-hidden");
       setFileImportFlyoutOpen(!isOpen);
     });
@@ -17960,9 +18087,17 @@ function bindScreenManager() {
   }
 
   if (fileImportMenuWrap && fileImportMenuBtn && fileImportMenuFlyout) {
-    fileImportMenuWrap.addEventListener("pointerenter", () => setFileImportFlyoutOpen(true));
-    fileImportMenuWrap.addEventListener("pointerleave", () => setFileImportFlyoutOpen(false));
-    fileImportMenuBtn.addEventListener("focus", () => setFileImportFlyoutOpen(true));
+    fileImportMenuWrap.addEventListener("pointerenter", () => {
+      cancelFileImportFlyoutClose();
+      setFileImportFlyoutOpen(true);
+    });
+    fileImportMenuWrap.addEventListener("pointerleave", scheduleFileImportFlyoutClose);
+    fileImportMenuFlyout.addEventListener("pointerenter", cancelFileImportFlyoutClose);
+    fileImportMenuFlyout.addEventListener("pointerleave", scheduleFileImportFlyoutClose);
+    fileImportMenuBtn.addEventListener("focus", () => {
+      cancelFileImportFlyoutClose();
+      setFileImportFlyoutOpen(true);
+    });
   }
 
   if (viewMenuWrap && viewMenuBtn && viewMenuFlyout) {
@@ -31463,6 +31598,7 @@ if (hmiSvg) {
 
 		  hmiSvg.addEventListener("pointerdown", async (event) => {
 		    if (isEditMode) return;
+		    beginRuntimePointerInteraction();
 		    if (isViewOnlyRuntime()) return;
 		    const point = getScreenPoint(event);
 		    if (!point) return;
@@ -31481,16 +31617,19 @@ if (hmiSvg) {
 
   hmiSvg.addEventListener("pointerup", (event) => {
     if (isEditMode) return;
+    endRuntimePointerInteraction();
     releaseMomentary(event.pointerId);
   });
 
   hmiSvg.addEventListener("pointercancel", (event) => {
     if (isEditMode) return;
+    endRuntimePointerInteraction();
     releaseMomentary(event.pointerId);
   });
 
   hmiSvg.addEventListener("pointerleave", () => {
     if (isEditMode) return;
+    endRuntimePointerInteraction();
     setGroupHotspotHover(null);
     hmiSvg.style.cursor = "default";
     releaseMomentary(null);

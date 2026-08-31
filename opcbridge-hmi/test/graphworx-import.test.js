@@ -79,6 +79,30 @@ test("rejects a non-GraphWorX document cleanly", () => {
   assert.throws(() => convertGraphWorx("<Document />"), /GraphWorX Canvas/);
 });
 
+test("imports embedded GraphWorX bitmap images as native image layers", () => {
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const xml = `<Canvas Width="800" Height="600"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:iwm="clr-namespace:Ico.Wpf.Media">
+    <Image Width="800" Height="600" Canvas.Left="0" Canvas.Top="0" Stretch="Fill">
+      <Image.Source><BitmapImage><iwm:BitmapImageInfo.StreamSource>
+        <iwm:Base64Stream Data="${png}" />
+      </iwm:BitmapImageInfo.StreamSource></BitmapImage></Image.Source>
+    </Image>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Embedded Background.gdfx" });
+  const image = result.screen.objects[0];
+  assert.equal(image.type, "image");
+  assert.match(image.src, /^graphworx-[a-f0-9]{24}\.png$/);
+  assert.equal(image.fit, "fill");
+  assert.deepEqual({ x: image.x, y: image.y, w: image.w, h: image.h }, { x: 0, y: 0, w: 800, h: 600 });
+  assert.equal(result.embeddedAssets.length, 1);
+  assert.equal(result.embeddedAssets[0].filename, image.src);
+  assert.deepEqual(result.embeddedAssets[0].bytes, Buffer.from(png, "base64"));
+  assert.equal(result.summary.imagesExtracted, 1);
+  assert.equal(result.summary.issues, 0);
+});
+
 test("converts nested WPF gradient brushes", () => {
   const xml = `<Canvas Width="200" Height="100" Background="#FF000000"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
@@ -135,6 +159,27 @@ test("imports an analog process point as an unresolved native text binding", () 
   });
   assert.ok(label.externalReferences.some((ref) => ref.automation === "text" && ref.status === "unresolved"));
   assert.ok(result.screen.referenceHealth.issues.some((issue) => issue.automation === "text" && issue.source.value === sourceTag));
+});
+
+test("classifies a GraphWorX analog text expression as supported but unresolved", () => {
+  const source = "x={{{{ac:Building_30/PLC_Year/Analog}}}}-2000";
+  const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
+    <Label Width="34" Height="32"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+      <gwx:GwxProcessPoint MaximumIntegerDigits="2" DecimalPlaces="0" AnimationMode="Analog" DataSource="${source}" />
+    </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup><TextBlock Text="??" /></Label>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Console Background.gdfx" });
+  const object = result.screen.objects[0];
+  const ref = object.externalReferences[0];
+  const issue = result.screen.referenceHealth.issues[0];
+  assert.equal(ref.automation, "text expression");
+  assert.equal(ref.supported, true);
+  assert.equal(ref.status, "unresolved");
+  assert.equal(object.textBindings["1"].sourceReference, source);
+  assert.equal(issue.category, "tag");
+  assert.equal(issue.automation, "text expression");
+  assert.equal(issue.status, "unresolved");
+  assert.ok(!result.screen.referenceHealth.issues.some((entry) => entry.category === "unsupported-automation"));
 });
 
 test("bakes a polygon render transform into its points only once", () => {

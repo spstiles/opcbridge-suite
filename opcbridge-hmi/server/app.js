@@ -34,6 +34,9 @@ const SUITE_VERSION = readVersionFile(SUITE_VERSION_PATH);
 const COMPONENT_VERSION = readVersionFile(COMPONENT_VERSION_PATH);
 const IMAGE_UPLOAD_LIMIT_MB = Math.max(1, Math.min(1024, Number(process.env.OPCBRIDGE_HMI_IMAGE_UPLOAD_LIMIT_MB) || 250));
 const IMAGE_UPLOAD_LIMIT_BYTES = IMAGE_UPLOAD_LIMIT_MB * 1024 * 1024;
+// GraphWorX imports allow a 10 MB source file. JSON encoding adds some
+// overhead, so the application parser must sit above that route-level limit.
+const JSON_BODY_LIMIT_MB = 12;
 
 const readConfig = async () => {
   let raw = "";
@@ -363,7 +366,7 @@ const resolveImagePath = (name) => {
 const createApp = () => {
   const app = express();
 
-  app.use(express.json({ limit: "5mb" }));
+  app.use(express.json({ limit: `${JSON_BODY_LIMIT_MB}mb` }));
   app.use((req, res, next) => {
     res.setHeader("X-OPCBRIDGE-HMI-Build", HMI_BUILD);
     res.setHeader("X-OPCBRIDGE-Suite-Version", SUITE_VERSION);
@@ -614,6 +617,7 @@ const createApp = () => {
     createScreensRouter({
       rootDir: FILES_ROOT,
       legacyScreensDir: path.join(ROOT, "screens"),
+      imagesDir: IMAGES_DIR,
       audit: appendAudit
     })
   );
@@ -1158,7 +1162,7 @@ const createApp = () => {
     if (!err) return next();
     const isTooLarge = err?.type === "entity.too.large" || err?.name === "PayloadTooLargeError";
     if (!isTooLarge) return next(err);
-    res.status(413).json({ error: `Upload too large (max ${IMAGE_UPLOAD_LIMIT_MB} MB).` });
+    res.status(413).json({ error: `Request body too large (max ${JSON_BODY_LIMIT_MB} MB).` });
   });
 
   return app;

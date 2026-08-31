@@ -126,7 +126,7 @@ const buildBackupFilename = () => {
   return `opcbridge-hmi-screens-${ts}.zip`;
 };
 
-const createScreensRouter = ({ rootDir, legacyScreensDir, audit }) => {
+const createScreensRouter = ({ rootDir, legacyScreensDir, imagesDir, audit }) => {
   const router = express.Router();
   const fsp = fs.promises;
   const screensRoot = path.join(String(rootDir || "/etc/opcbridge/hmi"), "screens");
@@ -199,6 +199,22 @@ const createScreensRouter = ({ rootDir, legacyScreensDir, audit }) => {
       if (typeof raw !== "string") return res.status(400).json({ error: "Body must include { raw: string }." });
       if (Buffer.byteLength(raw, "utf8") > 10 * 1024 * 1024) return res.status(413).json({ error: "GDFX file exceeds the 10 MB import limit." });
       const converted = convertGraphWorx(raw, { filename });
+      const extractedAssets = Array.isArray(converted.embeddedAssets) ? converted.embeddedAssets : [];
+      if (extractedAssets.length) {
+        const assetRoot = String(imagesDir || "");
+        if (!assetRoot) throw new Error("HMI image storage is unavailable.");
+        await ensureDir(assetRoot);
+        for (const asset of extractedAssets) {
+          const destination = path.join(assetRoot, asset.filename);
+          if (!destination.startsWith(`${assetRoot}${path.sep}`)) throw new Error("Invalid extracted image filename.");
+          try {
+            await fsp.writeFile(destination, asset.bytes, { flag: "wx", mode: 0o640 });
+          } catch (error) {
+            if (error?.code !== "EEXIST") throw error;
+          }
+        }
+      }
+      delete converted.embeddedAssets;
       try {
         await audit?.(req, { event: "screen.import.preview", format: "graphworx64", filename, ...converted.summary });
       } catch {}

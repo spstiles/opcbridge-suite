@@ -1,4 +1,5 @@
 const path = require("path");
+const crypto = require("crypto");
 
 let parser = null;
 const getParser = () => {
@@ -172,6 +173,25 @@ const descendants = (node, wanted) => {
   return out;
 };
 
+const embeddedBitmapSource = (node) => {
+  const stream = descendants(node, (name) => name === "iwm:Base64Stream")
+    .find((candidate) => typeof candidate?.Data === "string" && candidate.Data.trim());
+  if (!stream) return null;
+  const data = stream.Data.replace(/\s+/g, "");
+  const format = data.startsWith("iVBOR") ? { mime: "image/png", ext: ".png" }
+    : data.startsWith("/9j/") ? { mime: "image/jpeg", ext: ".jpg" }
+      : data.startsWith("R0lGOD") ? { mime: "image/gif", ext: ".gif" }
+        : data.startsWith("Qk") ? { mime: "image/bmp", ext: ".bmp" }
+          : null;
+  if (!format) return null;
+  const bytes = Buffer.from(data, "base64");
+  const digest = crypto.createHash("sha256").update(bytes).digest("hex");
+  return {
+    ...format, data, bytes,
+    filename: `graphworx-${digest.slice(0, 24)}${format.ext}`
+  };
+};
+
 const dataSources = (node) => {
   const found = [];
   const visit = (value) => {
@@ -265,6 +285,7 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
         && descendants(item.node, (name) => name === "gwx:GwxProcessPointStateItem").length > 0;
       const hasTextValue = item.name === "gwx:GwxProcessPoint" && sourceType === "Label" && !hasDiscreteStates
         && (String(item.node.AnimationMode || "").toLowerCase() === "analog" || /\?+/.test(textFrom(node)));
+      const hasTextExpression = hasTextValue && String(item.value || "").trim().startsWith("x=");
       const hasWriteCommand = item.name === "gwx:GwxPick"
         && descendants(item.node, (name) => name === "gwxcmd:WriteValueCommand").length > 0;
       const sizeDynamic = item.name === "gwx:GwxSize"
@@ -272,7 +293,7 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
         : null;
       const info = hasDiscreteStates
         ? { automation: "states", supported: true }
-        : (hasTextValue ? { automation: "text", supported: true }
+        : (hasTextValue ? { automation: hasTextExpression ? "text expression" : "text", supported: true }
         : (hasWriteCommand ? { automation: "pick/write", supported: true }
         : (sizeDynamic?.levelCompatible ? { automation: "level", supported: true }
         : (automationTypes[item.name] || { automation: item.name.replace(/^.*:/, ""), supported: false }))));
@@ -409,6 +430,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
 
   const objects = [];
   const issues = [];
+  const embeddedAssets = [];
   const viewportNames = new Map();
   const supportedContainers = new Set(["Canvas", "mwt:ClassicBorderDecorator", "MultipleTabItem"]);
   let objectTarget = objects;
@@ -675,6 +697,25 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       });
       return;
     }
+    if (name === "Image") {
+      const asset = embeddedBitmapSource(node);
+      if (asset) {
+        if (!embeddedAssets.some((existing) => existing.filename === asset.filename)) embeddedAssets.push(asset);
+        add({
+          type: "image", ...transformedFrame(node, base), src: asset.filename,
+          fit: String(node.Stretch || "Uniform").toLowerCase() === "fill" ? "fill" : "contain",
+          ...sourceMetadata(name, node, { importConversion: "extracted-embedded-image" })
+        });
+      } else {
+        issues.push({
+          id: `image:${issues.length + 1}`, objectImportId: null, severity: "warning",
+          category: "image", status: "unresolved",
+          source: { format: "graphworx64", value: String(node.Source || "Image source") },
+          message: "GraphWorX image source could not be resolved."
+        });
+      }
+      return;
+    }
     if (name === "Rectangle") add({ type: "rect", ...transformedFrame(node, base), rx: num(node.RadiusX), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Rectangle.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
     else if (name === "Ellipse") add({ type: "ellipse", ...transformedFrame(node, base), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Ellipse.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
     else if (name === "Line") {
@@ -721,7 +762,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       return;
     }
 
-    if (supportedContainers.has(name) || !["Rectangle", "Ellipse", "Line", "Polygon", "Polyline", "Label", "gwxctl:GwxPipeControl"].includes(name)) {
+    if (supportedContainers.has(name) || !["Image", "Rectangle", "Ellipse", "Line", "Polygon", "Polyline", "Label", "gwxctl:GwxPipeControl"].includes(name)) {
       childEntries(node).forEach((entry) => walk(entry.name, entry.node));
     }
   };
@@ -734,7 +775,8 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       importInfo: { format: "graphworx64", sourceFile: path.basename(filename), importedAt: new Date().toISOString(), converterVersion: 2, zOrderPreserved: true },
       referenceHealth: { issues }
     },
-    summary: { imported: true, objects: objects.length, unresolved, notices: issues.length - unresolved, issues: issues.length }
+    summary: { imported: true, objects: objects.length, imagesExtracted: embeddedAssets.length, unresolved, notices: issues.length - unresolved, issues: issues.length },
+    embeddedAssets
   };
 };
 
