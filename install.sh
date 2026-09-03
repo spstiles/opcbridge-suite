@@ -473,17 +473,14 @@ install_timescaledb_dependency() {
   fi
   [[ -n "$pg_major" ]] || { echo "Could not determine the installed PostgreSQL major version." >&2; return 1; }
 
-  # Prefer the distribution's own package. Debian 13, for example, ships a
-  # TimescaleDB build matched to its PostgreSQL 17 packages. This also lets
-  # compatible derivatives such as LMDE or MX Linux use their configured
-  # Debian repositories without adding a third-party source.
+  # The native Debian package is built with TimescaleDB's Apache-only feature
+  # set. It supports hypertables, but not the continuous aggregates required
+  # by the historian's cascading-resolution policy. Use TimescaleDB's package
+  # repository so a successful dependency install supplies every feature the
+  # historian requires.
   local native_pkg="postgresql-${pg_major}-timescaledb"
-  if apt_has_pkg "$native_pkg"; then
-    echo "Using TimescaleDB from the configured distribution repositories: ${native_pkg}"
-    apt_install "$native_pkg"
-  else
-    have_cmd curl || { echo "curl is required to configure the TimescaleDB fallback repository." >&2; return 1; }
-    local base_os="" base_dist="" repo_script
+  have_cmd curl || { echo "curl is required to configure the TimescaleDB repository." >&2; return 1; }
+  local base_os="" base_dist="" repo_script
     if [[ -r /etc/os-release ]]; then
       # shellcheck disable=SC1091
       . /etc/os-release
@@ -507,11 +504,11 @@ install_timescaledb_dependency() {
       esac
     fi
     if [[ -z "$base_os" || -z "$base_dist" ]]; then
-      echo "No ${native_pkg} package is available and the underlying Debian/Ubuntu release could not be identified." >&2
+      echo "The underlying Debian/Ubuntu release could not be identified." >&2
       echo "This Debian-based distribution is not currently supported for automatic TimescaleDB installation." >&2
       return 1
     fi
-    echo "No native ${native_pkg} package found; using TimescaleDB's ${base_os}/${base_dist} repository."
+    echo "Using TimescaleDB's ${base_os}/${base_dist} repository (continuous aggregates are required)."
     repo_script="$(mktemp -t opcbridge-timescaledb-repo.XXXXXX)"
     if ! download_file "https://packagecloud.io/install/repositories/timescale/timescaledb/script.deb.sh" "$repo_script"; then
       rm -f "$repo_script"
@@ -532,8 +529,11 @@ install_timescaledb_dependency() {
       echo "TimescaleDB does not provide ${external_pkg} for ${base_os}/${base_dist}." >&2
       return 1
     }
+    if dpkg-query -W -f='${Status}' "$native_pkg" 2>/dev/null | grep -q 'install ok installed'; then
+      echo "Replacing incompatible Apache-only package ${native_pkg}..."
+      apt-get remove -y "$native_pkg"
+    fi
     apt_install "$external_pkg" timescaledb-tools
-  fi
 
   if have_cmd timescaledb-tune; then
     timescaledb-tune --quiet --yes
@@ -550,6 +550,15 @@ install_timescaledb_dependency() {
     fi
   fi
   systemctl restart postgresql
+
+  local installed_license
+  installed_license="$(runuser -u postgres -- psql -X -tAc "SHOW timescaledb.license;" 2>/dev/null | xargs || true)"
+  if [[ "$installed_license" == "apache" ]]; then
+    echo "Installed TimescaleDB is using the Apache-only feature set." >&2
+    echo "OPCBridge Historian requires continuous aggregates; dependency installation cannot continue." >&2
+    echo "Remove ${native_pkg}, then re-run the installer with --deps." >&2
+    return 1
+  fi
 }
 
 install_deps() {
@@ -1573,9 +1582,9 @@ init_historian_db() {
     wait "$schema_pid" || return 1
     "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" -c "ALTER TABLE public.tag_samples OWNER TO \"${user}\";" || return 1
     local verification
-    verification="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT (SELECT count(*) FROM pg_extension WHERE extname='timescaledb')::text || '|' || (SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_schema='public' AND hypertable_name='tag_samples')::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='tag_samples');" | xargs)"
-    if [[ "$verification" != "1|1|${user}" ]]; then
-      echo "Historian database verification failed (extension|hypertable|owner=${verification:-unknown})." >&2
+    verification="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT (SELECT count(*) FROM pg_extension WHERE extname='timescaledb')::text || '|' || (SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_schema='public' AND hypertable_name='tag_samples')::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='tag_samples') || '|' || current_setting('timescaledb.license');" | xargs)"
+    if [[ "$verification" != "1|1|${user}|timescale" ]]; then
+      echo "Historian database verification failed (extension|hypertable|owner|license=${verification:-unknown})." >&2
       return 1
     fi
   else
@@ -1597,9 +1606,9 @@ init_historian_db() {
     wait "$schema_pid" || return 1
     "${as_pg[@]}" "psql -v ON_ERROR_STOP=1 -d \"${db}\" -c 'ALTER TABLE public.tag_samples OWNER TO \"${user}\";'" || return 1
     local verification
-    verification="$("${as_pg[@]}" "psql -d \"${db}\" -X -tAc \"SELECT (SELECT count(*) FROM pg_extension WHERE extname='timescaledb')::text || '|' || (SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_schema='public' AND hypertable_name='tag_samples')::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='tag_samples');\"" | xargs)"
-    if [[ "$verification" != "1|1|${user}" ]]; then
-      echo "Historian database verification failed (extension|hypertable|owner=${verification:-unknown})." >&2
+    verification="$("${as_pg[@]}" "psql -d \"${db}\" -X -tAc \"SELECT (SELECT count(*) FROM pg_extension WHERE extname='timescaledb')::text || '|' || (SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_schema='public' AND hypertable_name='tag_samples')::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='tag_samples') || '|' || current_setting('timescaledb.license');\"" | xargs)"
+    if [[ "$verification" != "1|1|${user}|timescale" ]]; then
+      echo "Historian database verification failed (extension|hypertable|owner|license=${verification:-unknown})." >&2
       return 1
     fi
   fi
