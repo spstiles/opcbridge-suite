@@ -4,7 +4,7 @@ Time-series historian service for the opcbridge ecosystem.
 
 - Subscribes to opcbridge tag updates via WebSocket (`type: "tag_update"`).
 - Optionally performs periodic HTTP snapshots (`GET /tags`) for true periodic sampling.
-- Writes samples to Postgres (optionally with TimescaleDB for retention + rollups).
+- Writes samples to a TimescaleDB hypertable and uses continuous aggregates for retention tiers.
 
 ## Quick start
 
@@ -36,9 +36,15 @@ Note: the opcbridge-suite installer runs this as a systemd service and passes Po
 
 You can enable either or both:
 
-- **V1 periodic selected tags**: configure `historian_tags` with per-tag
-  intervals. The service polls opcbridge `/tags` independently from PLC polling
-  and stores numeric values.
+- **Periodic selected tags**: configure the global `historian_policy`, then add
+  deliberate selections to `historian_tags`. The service polls opcbridge
+  `/tags` independently from PLC polling and stores numeric values.
+- Tags inherit the global interval, deadband, and quality policy. Individual
+  tags may set `deadband_override` and `deadband` when a signal needs different
+  noise filtering.
+- **Cascading resolution policy**: `historian_policy.resolution_tiers` records
+  the ordered resolution and retention duration for each storage tier. A
+  `retention_ms` value of `0` means retain that tier indefinitely.
 - **Change-only**: store on change (with optional deadband/throttle), plus optional `max_interval_ms` to force a point occasionally.
 - **Periodic sampling**: store snapshots on a timer by calling opcbridge HTTP `/tags` (works even when values don’t change).
 
@@ -64,7 +70,7 @@ The `/query` endpoint returns raw numeric points for the requested range. Add
 ## Notes
 
 - For ~10,000 tags, you will want batching and either deadbanding, throttling, periodic sampling at a reasonable interval, or some combination.
-- TimescaleDB is recommended for production (compression + retention + continuous aggregates).
+- TimescaleDB is required. Run the suite installer with `--deps` to install and configure it.
 
 ## Build deps
 

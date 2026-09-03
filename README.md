@@ -8,7 +8,7 @@ OPCBridge Suite is a complete SCADA stack for industrial automation:
 - **OPCBridge-Logger**: scheduled data logging and data checks
 - **OPCBridge-Flow**: visual, deployable OPC and MQTT data flows
 - **OPCBridge-Report**: published historian reports and spreadsheet downloads
-- **OPCBridge-Historian**: time-series storage to Postgres/TimescaleDB
+- **OPCBridge-Historian**: time-series storage using PostgreSQL with the required TimescaleDB extension
 - **OPCBridge-HMI**: HMI runtime + editor
 
 ![OPCBridge-SCADA landing page](docs/manual/screenshots/opcbridge-scada-landing-page.png)
@@ -71,11 +71,15 @@ available without artificial limitation.
 
 **Small utilities deserve modern tools too.**
 
-## Quick Start (Debian 12+)
+## Quick Start (Debian 12/13)
 
 Requirements:
 
-- Debian 12+ (or derivative: Ubuntu, Linux Mint, etc.)
+- Debian 12 or 13 is the primary supported platform.
+- Debian-based distributions are supported when they provide compatible
+  Debian or Ubuntu package repositories. The installer validates required
+  packages before installing OPCBridge components; tested derivatives include Ubuntu
+  and Linux Mint.
 - `sudo` access
 - Network access (deps + Node packages)
 

@@ -81,7 +81,9 @@ Options:
   -h, --help              Show help
 
 Notes:
-- This script targets Debian 12+ and Debian-like derivatives using systemd.
+- This script targets Debian 12/13 and compatible Debian-based derivatives using systemd.
+- Derivatives must expose compatible Debian or Ubuntu package repositories;
+  dependency availability is validated before component installation.
 - It never writes secrets into the repo; tokens live in ${ENV_FILE}.
 - --deps uses apt plus source builds for libplctag/IXWebSocket and needs network access.
 - Source dependency versions can be overridden with OPCBRIDGE_LIBPLCTAG_VERSION and
@@ -462,13 +464,101 @@ apt_install_first_available() {
   return 1
 }
 
+install_timescaledb_dependency() {
+  echo "Installing required TimescaleDB historian dependency..."
+  local pg_major
+  pg_major="$(pg_config --version 2>/dev/null | sed -n 's/^PostgreSQL \([0-9][0-9]*\).*/\1/p')"
+  if [[ -z "$pg_major" ]]; then
+    pg_major="$(psql --version 2>/dev/null | sed -n 's/^psql (PostgreSQL) \([0-9][0-9]*\).*/\1/p')"
+  fi
+  [[ -n "$pg_major" ]] || { echo "Could not determine the installed PostgreSQL major version." >&2; return 1; }
+
+  # Prefer the distribution's own package. Debian 13, for example, ships a
+  # TimescaleDB build matched to its PostgreSQL 17 packages. This also lets
+  # compatible derivatives such as LMDE or MX Linux use their configured
+  # Debian repositories without adding a third-party source.
+  local native_pkg="postgresql-${pg_major}-timescaledb"
+  if apt_has_pkg "$native_pkg"; then
+    echo "Using TimescaleDB from the configured distribution repositories: ${native_pkg}"
+    apt_install "$native_pkg"
+  else
+    have_cmd curl || { echo "curl is required to configure the TimescaleDB fallback repository." >&2; return 1; }
+    local base_os="" base_dist="" repo_script
+    if [[ -r /etc/os-release ]]; then
+      # shellcheck disable=SC1091
+      . /etc/os-release
+      case "${ID:-}" in
+        debian) base_os="debian"; base_dist="${VERSION_CODENAME:-${DEBIAN_CODENAME:-}}" ;;
+        ubuntu) base_os="ubuntu"; base_dist="${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}" ;;
+        linuxmint)
+          if [[ -n "${UBUNTU_CODENAME:-}" ]]; then
+            base_os="ubuntu"; base_dist="${UBUNTU_CODENAME}"
+          elif [[ -n "${DEBIAN_CODENAME:-}" ]]; then
+            base_os="debian"; base_dist="${DEBIAN_CODENAME}"
+          fi
+          ;;
+        *)
+          if [[ " ${ID_LIKE:-} " == *" ubuntu " && -n "${UBUNTU_CODENAME:-}" ]]; then
+            base_os="ubuntu"; base_dist="${UBUNTU_CODENAME}"
+          elif [[ " ${ID_LIKE:-} " == *" debian " && -n "${DEBIAN_CODENAME:-}" ]]; then
+            base_os="debian"; base_dist="${DEBIAN_CODENAME}"
+          fi
+          ;;
+      esac
+    fi
+    if [[ -z "$base_os" || -z "$base_dist" ]]; then
+      echo "No ${native_pkg} package is available and the underlying Debian/Ubuntu release could not be identified." >&2
+      echo "This Debian-based distribution is not currently supported for automatic TimescaleDB installation." >&2
+      return 1
+    fi
+    echo "No native ${native_pkg} package found; using TimescaleDB's ${base_os}/${base_dist} repository."
+    repo_script="$(mktemp -t opcbridge-timescaledb-repo.XXXXXX)"
+    if ! download_file "https://packagecloud.io/install/repositories/timescale/timescaledb/script.deb.sh" "$repo_script"; then
+      rm -f "$repo_script"
+      echo "Unable to download the official TimescaleDB repository installer." >&2
+      return 1
+    fi
+    chmod 0700 "$repo_script"
+    if ! os="$base_os" dist="$base_dist" "$repo_script"; then
+      rm -f "$repo_script"
+      echo "TimescaleDB repository setup failed for ${base_os}/${base_dist}." >&2
+      return 1
+    fi
+    rm -f "$repo_script"
+    APT_UPDATED=0
+    apt_update_once
+    local external_pkg="timescaledb-2-postgresql-${pg_major}"
+    apt_has_pkg "$external_pkg" || {
+      echo "TimescaleDB does not provide ${external_pkg} for ${base_os}/${base_dist}." >&2
+      return 1
+    }
+    apt_install "$external_pkg" timescaledb-tools
+  fi
+
+  if have_cmd timescaledb-tune; then
+    timescaledb-tune --quiet --yes
+  else
+    local cluster current_preloads next_preloads conf_dir
+    cluster="$(pg_lsclusters --no-header 2>/dev/null | awk -v version="$pg_major" '$1 == version { print $2; exit }')"
+    [[ -n "$cluster" ]] || { echo "Could not find a PostgreSQL ${pg_major} cluster to configure." >&2; return 1; }
+    current_preloads="$(runuser -u postgres -- psql -X -tAc 'SHOW shared_preload_libraries;' 2>/dev/null | xargs || true)"
+    if [[ ",${current_preloads}," != *",timescaledb,"* ]]; then
+      next_preloads="${current_preloads:+${current_preloads},}timescaledb"
+      conf_dir="/etc/postgresql/${pg_major}/${cluster}/conf.d"
+      mkdir -p "$conf_dir"
+      printf "shared_preload_libraries = '%s'\n" "$next_preloads" >"${conf_dir}/opcbridge-timescaledb.conf"
+    fi
+  fi
+  systemctl restart postgresql
+}
+
 install_deps() {
   if ! have_cmd apt-get; then
     echo "apt-get not found; cannot install dependencies automatically." >&2
     exit 1
   fi
   if ! is_debian_like; then
-    echo "This installer currently supports --deps only on Debian-like systems." >&2
+    echo "--deps supports Debian 12/13 and derivatives with compatible Debian or Ubuntu repositories." >&2
     exit 1
   fi
 
@@ -562,6 +652,10 @@ install_deps() {
   printf '  %s\n' "${uniq[@]}"
 
   apt_install "${uniq[@]}"
+
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
+    install_timescaledb_dependency
+  fi
 
   # Optional DB client headers for opcbridge-logger.
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
@@ -1380,6 +1474,19 @@ install_historian() {
     "interval_ms": 60000
   },
 
+  "historian_policy": {
+    "interval_ms": 60000,
+    "mode": "periodic",
+    "deadband": 0.0,
+    "include_bad_quality": false,
+    "resolution_tiers": [
+      { "resolution_ms": 10000, "retention_ms": 2592000000, "enabled": true },
+      { "resolution_ms": 60000, "retention_ms": 31536000000, "enabled": true },
+      { "resolution_ms": 300000, "retention_ms": 157680000000, "enabled": true },
+      { "resolution_ms": 3600000, "retention_ms": 0, "enabled": true }
+    ]
+  },
+
   "postgres": {
     "conninfo": "",
     "table": "tag_samples",
@@ -1414,6 +1521,14 @@ init_historian_db() {
   systemctl enable --now postgresql >/dev/null 2>&1 || true
   systemctl start postgresql >/dev/null 2>&1 || true
 
+  # A first-time conversion of an existing tag_samples table to a TimescaleDB
+  # hypertable requires an exclusive lock. Stop the writer cleanly so it does
+  # not sit behind that lock or make the migration appear stalled.
+  if systemctl cat opcbridge-historian.service >/dev/null 2>&1; then
+    echo "Stopping opcbridge-historian for database initialization..."
+    systemctl stop opcbridge-historian.service >/dev/null 2>&1 || true
+  fi
+
   if [[ -z "$pass" ]]; then
     pass="$(gen_token)"
     if grep -Eq '^HISTORIAN_PGPASSWORD=' "$ENV_FILE" 2>/dev/null; then
@@ -1438,16 +1553,58 @@ init_historian_db() {
     if ! "${as_pg[@]}" psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
       "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${db}\" OWNER \"${user}\";" || return 1
     fi
+    "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"${db}\" OWNER TO \"${user}\";" || return 1
+    local table_size schema_pid elapsed
+    table_size="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT CASE WHEN to_regclass('public.tag_samples') IS NULL THEN 'new table' ELSE pg_size_pretty(pg_total_relation_size('public.tag_samples')) END;" | xargs)"
+    echo "Historian table before schema update: ${table_size:-unknown size}"
+    echo "Applying TimescaleDB schema. Converting an existing table is a one-time operation and may take a while."
     # Open the schema as root and pass it over stdin. CONFIG_ROOT is normally
     # not traversable by the postgres account, and psql -f would fail there.
-    "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" <"${schema_path}" || return 1
+    "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" <"${schema_path}" &
+    schema_pid=$!
+    elapsed=0
+    while kill -0 "$schema_pid" 2>/dev/null; do
+      sleep 1
+      elapsed=$((elapsed + 1))
+      if (( elapsed % 15 == 0 )) && kill -0 "$schema_pid" 2>/dev/null; then
+        echo "TimescaleDB schema migration is still active (${elapsed}s elapsed)..."
+      fi
+    done
+    wait "$schema_pid" || return 1
+    "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" -c "ALTER TABLE public.tag_samples OWNER TO \"${user}\";" || return 1
+    local verification
+    verification="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT (SELECT count(*) FROM pg_extension WHERE extname='timescaledb')::text || '|' || (SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_schema='public' AND hypertable_name='tag_samples')::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='tag_samples');" | xargs)"
+    if [[ "$verification" != "1|1|${user}" ]]; then
+      echo "Historian database verification failed (extension|hypertable|owner=${verification:-unknown})." >&2
+      return 1
+    fi
   else
     "${as_pg[@]}" "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${user}'\" | grep -q 1 || psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE \\\"${user}\\\" LOGIN PASSWORD '${pass}';\"" || return 1
     "${as_pg[@]}" "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='${db}'\" | grep -q 1 || psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE \\\"${db}\\\" OWNER \\\"${user}\\\";\"" || return 1
-    "${as_pg[@]}" "psql -v ON_ERROR_STOP=1 -d \"${db}\"" <"${schema_path}" || return 1
+    "${as_pg[@]}" "psql -v ON_ERROR_STOP=1 -c 'ALTER DATABASE \"${db}\" OWNER TO \"${user}\";'" || return 1
+    local schema_pid elapsed
+    echo "Applying TimescaleDB schema. Converting an existing table is a one-time operation and may take a while."
+    "${as_pg[@]}" "psql -v ON_ERROR_STOP=1 -d \"${db}\"" <"${schema_path}" &
+    schema_pid=$!
+    elapsed=0
+    while kill -0 "$schema_pid" 2>/dev/null; do
+      sleep 1
+      elapsed=$((elapsed + 1))
+      if (( elapsed % 15 == 0 )) && kill -0 "$schema_pid" 2>/dev/null; then
+        echo "TimescaleDB schema migration is still active (${elapsed}s elapsed)..."
+      fi
+    done
+    wait "$schema_pid" || return 1
+    "${as_pg[@]}" "psql -v ON_ERROR_STOP=1 -d \"${db}\" -c 'ALTER TABLE public.tag_samples OWNER TO \"${user}\";'" || return 1
+    local verification
+    verification="$("${as_pg[@]}" "psql -d \"${db}\" -X -tAc \"SELECT (SELECT count(*) FROM pg_extension WHERE extname='timescaledb')::text || '|' || (SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_schema='public' AND hypertable_name='tag_samples')::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='tag_samples');\"" | xargs)"
+    if [[ "$verification" != "1|1|${user}" ]]; then
+      echo "Historian database verification failed (extension|hypertable|owner=${verification:-unknown})." >&2
+      return 1
+    fi
   fi
 
-  echo "Initialized Postgres for historian:"
+  echo "Initialized and verified TimescaleDB for historian:"
   echo "  db=${db}"
   echo "  user=${user}"
   echo "  password stored in ${ENV_FILE} as HISTORIAN_PGPASSWORD"
@@ -1734,8 +1891,8 @@ RestartSec=2
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'historian'; then
       write_unit "opcbridge-historian.service" "[Unit]
 Description=opcbridge historian
-After=network.target opcbridge.service
-Wants=opcbridge.service
+After=network.target postgresql.service opcbridge.service
+Wants=postgresql.service opcbridge.service
 
 [Service]
 Type=simple

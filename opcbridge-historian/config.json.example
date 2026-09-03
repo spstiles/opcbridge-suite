@@ -22,11 +22,22 @@
       "connection_id": "field_ops",
       "tag_name": "Flow",
       "enabled": true,
-      "interval_ms": 60000,
-      "mode": "periodic",
-      "include_bad_quality": false
+      "deadband_override": true,
+      "deadband": 0.1
     }
   ],
+  "historian_policy": {
+    "interval_ms": 60000,
+    "mode": "periodic",
+    "deadband": 0.0,
+    "include_bad_quality": false,
+    "resolution_tiers": [
+      { "resolution_ms": 10000, "retention_ms": 2592000000, "enabled": true },
+      { "resolution_ms": 60000, "retention_ms": 31536000000, "enabled": true },
+      { "resolution_ms": 300000, "retention_ms": 157680000000, "enabled": true },
+      { "resolution_ms": 3600000, "retention_ms": 0, "enabled": true }
+    ]
+  },
   "patterns": [
     { "connection_id": "field_ops", "name": "Pump*.Running" }
   ],

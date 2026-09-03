@@ -154,6 +154,42 @@ test("keeps brush rotation separate from the object's render transform", () => {
   assert.equal(rectangle.fill, "linear-gradient(180deg, #003860 0%, #0000ff 100%)");
 });
 
+test("imports a GraphWorX cubic Path as an editable native spline", () => {
+  const xml = `<Canvas Width="1200" Height="600" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Path Stroke="#FF000000" StrokeThickness="1">
+      <Path.Data><PathGeometry Figures="M1064.24096679688,377.001579284668C1065.45727539063,373.308158874512 1066.49682617188,358.799903869629 1071.53942871094,354.841102600098 1076.58190917969,350.882286071777 1090.669921875,353.514106750488 1094.49609375,353.248725891113" /></Path.Data>
+    </Path>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Overview.gdfx" });
+  const spline = result.screen.objects[0];
+  assert.equal(spline.type, "spline");
+  assert.equal(spline.importConversion, "editable-spline");
+  assert.equal(spline.stroke, "#000000");
+  assert.equal(spline.strokeWidth, 1);
+  assert.ok(spline.points.length > 20);
+  assert.deepEqual(spline.points[0], { x: 1064.24096679688, y: 377.001579284668 });
+  assert.deepEqual(spline.points.at(-1), { x: 1094.49609375, y: 353.248725891113 });
+  assert.equal(result.summary.issues, 0);
+});
+
+test("preserves GraphWorX Label backgrounds and borders on native text", () => {
+  const xml = `<Canvas Width="300" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Label Background="#FFFFFF00" BorderBrush="#FF000000" BorderThickness="2,2,2,2"
+      Foreground="#FF000000" Width="100" Height="26" Canvas.Left="20" Canvas.Top="30"
+      HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+      <TextBlock Text="125-PLC3" />
+    </Label>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Overview.gdfx" });
+  const label = result.screen.objects[0];
+  assert.equal(label.type, "text");
+  assert.equal(label.background, "#ffff00");
+  assert.equal(label.borderEnabled, true);
+  assert.equal(label.borderColor, "#000000");
+  assert.equal(label.borderWidth, 2);
+  assert.equal(label.borderStyle, "flat");
+});
+
 test("imports an analog process point as an unresolved native text binding", () => {
   const sourceTag = "ac:Plant/Flow/FIT_100/Analog";
   const xml = `<Canvas Width="300" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">

@@ -42,11 +42,14 @@ Status: Draft (placeholders for screenshots)
 
 ## 1. Quick Start
 
-This section is written for a brand-new user on a fresh Debian 12+ system.
+This section is written for a brand-new user on a fresh Debian 12 or Debian 13 system.
 
 ### 1.1 Requirements
 
-- Debian 12+ (or derivative: Ubuntu, Linux Mint, etc.)
+- Debian 12 or 13 is the primary supported platform. Debian-based derivatives
+  require compatible Debian or Ubuntu repositories; the installer validates
+  dependency availability before installing OPCBridge components. Ubuntu and Linux
+  Mint are tested derivatives.
 - `sudo` access
 - Network access (to install deps and Node packages)
 
@@ -705,7 +708,7 @@ Notes:
 
 Key concepts:
 
-- Storage backend (Postgres/TimescaleDB)
+- Storage backend (PostgreSQL with the required TimescaleDB extension)
 - Retention
 - Performance tuning
 

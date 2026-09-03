@@ -580,6 +580,10 @@
   historianPointsTitle: document.getElementById('historianPointsTitle'),
   historianPointsHeadRow: document.getElementById('historianPointsHeadRow'),
   historianPointsTbody: document.getElementById('historianPointsTbody'),
+  historianPolicyInterval: document.getElementById('historianPolicyInterval'),
+  historianPolicyDeadband: document.getElementById('historianPolicyDeadband'),
+  historianPolicyIncludeBadQuality: document.getElementById('historianPolicyIncludeBadQuality'),
+  historianTierRows: Array.from(document.querySelectorAll('[data-historian-tier]')),
 
   loggerTagPickerModal: document.getElementById('loggerTagPickerModal'),
   loggerTagPickerCloseBtn: document.getElementById('loggerTagPickerCloseBtn'),
@@ -840,8 +844,8 @@
   editTagScan: document.getElementById('editTagScan'),
   editTagElemCount: document.getElementById('editTagElemCount'),
   editTagHistorianEnabled: document.getElementById('editTagHistorianEnabled'),
-  editTagHistorianMode: document.getElementById('editTagHistorianMode'),
-  editTagHistorianInterval: document.getElementById('editTagHistorianInterval'),
+  editTagHistorianDeadbandOverride: document.getElementById('editTagHistorianDeadbandOverride'),
+  editTagHistorianDeadband: document.getElementById('editTagHistorianDeadband'),
   editTagEnabled: document.getElementById('editTagEnabled'),
   editTagWritable: document.getElementById('editTagWritable'),
   editTagInvert: document.getElementById('editTagInvert'),
@@ -1790,6 +1794,7 @@ function renderHistorianHealth() {
     ['Inserted samples', h.inserted_samples],
     ['Last sample', fmtTime(h.last_sample_ms)],
     ['Last snapshot', fmtTime(h.last_snapshot_ms)],
+    ['TimescaleDB', h.timescaledb ? `Active${h.timescaledb_version ? ` (${h.timescaledb_version})` : ''}` : 'Unavailable'],
     ['Last insert', fmtTime(h.last_insert_ms)],
     ['Last error', h.last_error || '']
   ];
@@ -1853,13 +1858,42 @@ function renderHistorianTags() {
     };
     const cid = String(t.connection_id || '').trim();
     const tagName = String(t.tag_name || '').trim();
-    const intervalMs = Math.max(1000, Math.trunc(Number(t.interval_ms || 60000) || 60000));
+    const intervalMs = Math.max(1000, Math.trunc(Number(state.historianConfig?.historian_policy?.interval_ms || t.interval_ms || 60000) || 60000));
     const intervalSec = Math.round(intervalMs / 1000);
     tr.appendChild(mk(displayConnectionName(cid), true));
     tr.appendChild(mk(t.tag_name || '', true));
-    tr.appendChild(mk(Boolean(t.enabled ?? true) ? 'Yes' : 'No'));
     tr.appendChild(mk(`${intervalSec} sec`));
-    tr.appendChild(mk(t.mode || 'periodic'));
+    const deadbandCell = document.createElement('td');
+    const deadbandInput = document.createElement('input');
+    deadbandInput.type = 'number';
+    deadbandInput.min = '0';
+    deadbandInput.step = 'any';
+    deadbandInput.placeholder = `Global (${Number(state.historianConfig?.historian_policy?.deadband || 0)})`;
+    deadbandInput.value = t.deadband_override ? String(Number(t.deadband || 0)) : '';
+    deadbandInput.title = 'Leave blank to inherit the global deadband.';
+    deadbandInput.addEventListener('change', () => {
+      const raw = String(deadbandInput.value || '').trim();
+      t.deadband_override = raw !== '';
+      if (raw !== '') t.deadband = Math.max(0, Number(raw) || 0);
+      else delete t.deadband;
+      state.historianConfigDirty = true;
+      historianSetStatus('Config changed. Save and apply when ready.');
+    });
+    deadbandCell.appendChild(deadbandInput);
+    tr.appendChild(deadbandCell);
+    const actions = document.createElement('td');
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn danger';
+    removeBtn.textContent = 'Remove';
+    removeBtn.addEventListener('click', () => {
+      state.historianConfig.historian_tags = state.historianConfig.historian_tags.filter((rule) => rule !== t);
+      state.historianConfigDirty = true;
+      renderHistorianTags();
+      historianSetStatus('Tag removed from historian. Save and apply when ready.');
+    });
+    actions.appendChild(removeBtn);
+    tr.appendChild(actions);
     tr.addEventListener('dblclick', () => {
       if (els.historianQueryConnection) els.historianQueryConnection.value = cid;
       if (els.historianQueryTag) els.historianQueryTag.value = tagName;
@@ -1871,15 +1905,33 @@ function renderHistorianTags() {
 
 function normalizeHistorianConfig(cfg) {
   const root = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) ? { ...cfg } : {};
+  const policy = (root.historian_policy && typeof root.historian_policy === 'object' && !Array.isArray(root.historian_policy))
+    ? root.historian_policy : {};
+  const defaultResolutionTiers = [
+    { resolution_ms: 10000, retention_ms: 2592000000, enabled: true },
+    { resolution_ms: 60000, retention_ms: 31536000000, enabled: true },
+    { resolution_ms: 300000, retention_ms: 157680000000, enabled: true },
+    { resolution_ms: 3600000, retention_ms: 0, enabled: true }
+  ];
+  root.historian_policy = {
+    interval_ms: Math.max(1000, Math.trunc(Number(policy.interval_ms || 60000) || 60000)),
+    mode: 'periodic',
+    deadband: Math.max(0, Number(policy.deadband || 0) || 0),
+    include_bad_quality: Boolean(policy.include_bad_quality ?? false),
+    resolution_tiers: (Array.isArray(policy.resolution_tiers) ? policy.resolution_tiers : defaultResolutionTiers).map((tier) => ({
+      resolution_ms: Math.max(1000, Math.trunc(Number(tier?.resolution_ms || 0) || 0)),
+      retention_ms: Math.max(0, Math.trunc(Number(tier?.retention_ms || 0) || 0)),
+      enabled: Boolean(tier?.enabled ?? true)
+    })).filter((tier) => tier.resolution_ms > 0)
+  };
   const tags = Array.isArray(root.historian_tags) ? root.historian_tags : [];
   const seen = new Set();
   root.historian_tags = tags.map((t) => ({
     connection_id: String(t?.connection_id || '').trim(),
     tag_name: String(t?.tag_name || t?.name || '').trim(),
     enabled: Boolean(t?.enabled ?? true),
-    interval_ms: Math.max(1000, Math.trunc(Number(t?.interval_ms || 60000) || 60000)),
-    mode: String(t?.mode || 'periodic').trim() || 'periodic',
-    include_bad_quality: Boolean(t?.include_bad_quality ?? false)
+    deadband_override: Boolean(t?.deadband_override ?? false),
+    ...(Boolean(t?.deadband_override ?? false) ? { deadband: Math.max(0, Number(t?.deadband || 0) || 0) } : {})
   })).filter((t) => {
     if (!t.connection_id || !t.tag_name) return false;
     const key = `${t.connection_id}:${t.tag_name}`;
@@ -1891,19 +1943,40 @@ function normalizeHistorianConfig(cfg) {
   return root;
 }
 
+function renderHistorianPolicy() {
+  const policy = state.historianConfig?.historian_policy || { interval_ms: 60000, deadband: 0, include_bad_quality: false };
+  if (els.historianPolicyInterval) els.historianPolicyInterval.value = String(Math.max(1, Math.round(Number(policy.interval_ms || 60000) / 1000)));
+  if (els.historianPolicyDeadband) els.historianPolicyDeadband.value = String(Math.max(0, Number(policy.deadband || 0)));
+  if (els.historianPolicyIncludeBadQuality) els.historianPolicyIncludeBadQuality.checked = Boolean(policy.include_bad_quality);
+  (els.historianTierRows || []).forEach((row) => {
+    const resolutionMs = Number(row.dataset.historianTier || 0);
+    const tier = (policy.resolution_tiers || []).find((item) => Number(item.resolution_ms) === resolutionMs);
+    const enabled = row.querySelector('.historian-tier-enabled');
+    const retention = row.querySelector('.historian-tier-retention');
+    if (enabled) enabled.checked = Boolean(tier?.enabled);
+    if (retention) retention.value = tier?.retention_ms > 0 ? String(Math.round(Number(tier.retention_ms) / 86400000)) : '';
+  });
+}
+
 function normalizeTagHistorianSettings(tag) {
   const raw = (tag?.historian && typeof tag.historian === 'object' && !Array.isArray(tag.historian))
     ? tag.historian
     : {};
-  const enabled = Boolean(raw.enabled ?? tag?.historian_enabled ?? false);
-  const mode = String(raw.mode || tag?.historian_mode || 'periodic').trim().toLowerCase() || 'periodic';
-  const intervalRaw = raw.interval_ms ?? tag?.historian_interval_ms ?? 60000;
-  const interval_ms = Math.max(1000, Math.trunc(Number(intervalRaw || 60000) || 60000));
+  const cid = String(tag?.connection_id || '').trim();
+  const name = String(tag?.name || '').trim();
+  const registryRule = (state.historianConfig?.historian_tags || []).find((rule) =>
+    String(rule?.connection_id || '') === cid && String(rule?.tag_name || '') === name
+  );
+  const policy = state.historianConfig?.historian_policy || { interval_ms: 60000, deadband: 0 };
+  const registryLoaded = Array.isArray(state.historianConfig?.historian_tags);
+  const enabled = registryLoaded ? Boolean(registryRule && registryRule.enabled !== false) : Boolean(raw.enabled ?? tag?.historian_enabled ?? false);
   return {
     enabled,
-    mode: mode === 'periodic' ? 'periodic' : 'periodic',
-    interval_ms,
-    include_bad_quality: Boolean(raw.include_bad_quality ?? tag?.historian_include_bad_quality ?? false)
+    mode: 'periodic',
+    interval_ms: Math.max(1000, Number(policy.interval_ms || 60000) || 60000),
+    include_bad_quality: Boolean(policy.include_bad_quality ?? false),
+    deadband_override: Boolean(registryRule?.deadband_override ?? raw.deadband_override ?? false),
+    deadband: Math.max(0, Number(registryRule?.deadband ?? raw.deadband ?? policy.deadband ?? 0) || 0)
   };
 }
 
@@ -1921,9 +1994,8 @@ function historianTagRulesFromWorkspaceTags(tags) {
       connection_id: cid,
       tag_name: name,
       enabled: true,
-      interval_ms: h.interval_ms,
-      mode: h.mode,
-      include_bad_quality: h.include_bad_quality
+      deadband_override: h.deadband_override,
+      ...(h.deadband_override ? { deadband: h.deadband } : {})
     };
   }).filter(Boolean);
 }
@@ -1955,9 +2027,7 @@ function addHistorianTagFromSpec(spec) {
     connection_id: parts.connection_id,
     tag_name: parts.tag_name,
     enabled: true,
-    interval_ms: 60000,
-    mode: 'periodic',
-    include_bad_quality: false
+    deadband_override: false
   });
   state.historianConfigDirty = true;
   renderHistorianTags();
@@ -2075,6 +2145,7 @@ async function refreshHistorianTab() {
     state.historianConfigDirty = false;
   }
   renderHistorianHealth();
+  renderHistorianPolicy();
   renderHistorianTags();
   historianSetStatus(health?.ok ? 'Loaded' : `Unavailable: ${health?.error || 'failed'}`);
 }
@@ -2105,11 +2176,12 @@ async function saveHistorianConfig() {
   state.historianConfig = normalizeHistorianConfig(resp.config || cfg);
   state.historianConfigDirty = false;
   renderHistorianTags();
-  historianSetStatus('Saved. Restart historian to apply changes.');
+  historianSetStatus('Saved. Apply config to activate changes.');
 }
 
 async function restartHistorianService() {
   historianSetStatus('Applying historian config...');
+  if (state.historianConfigDirty) await saveHistorianConfig();
   const resp = await apiPostJson('/api/historian/reload', {});
   if (!resp?.ok) throw new Error(String(resp?.error || 'Apply failed'));
   const warning = resp?.warning ? ` ${resp.warning}` : '';
@@ -2160,7 +2232,45 @@ function wireHistorianUi() {
     state.historianQueryBucket = String(els.historianQueryBucket?.value || 'auto') || 'auto';
     renderHistorianPoints();
   });
+  const updatePolicy = () => {
+    if (!state.historianConfig) state.historianConfig = normalizeHistorianConfig({});
+    const resolutionTiers = (els.historianTierRows || []).map((row) => {
+      const enabled = Boolean(row.querySelector('.historian-tier-enabled')?.checked);
+      const daysText = String(row.querySelector('.historian-tier-retention')?.value || '').trim();
+      return {
+        resolution_ms: Number(row.dataset.historianTier || 0),
+        retention_ms: daysText ? Math.max(1, Math.trunc(Number(daysText) || 1)) * 86400000 : 0,
+        enabled
+      };
+    }).filter((tier) => tier.enabled && tier.resolution_ms > 0);
+    for (let i = 1; i < resolutionTiers.length; i += 1) {
+      const previous = resolutionTiers[i - 1].retention_ms;
+      const current = resolutionTiers[i].retention_ms;
+      if (previous === 0 || (current > 0 && current < previous)) {
+        historianSetStatus('Each coarser resolution must be retained at least as long as the tier before it. Indefinite must be last.');
+        return;
+      }
+    }
+    state.historianConfig.historian_policy = {
+      interval_ms: Math.max(1000, Math.trunc(Number(els.historianPolicyInterval?.value || 60) || 60) * 1000),
+      mode: 'periodic',
+      deadband: Math.max(0, Number(els.historianPolicyDeadband?.value || 0) || 0),
+      include_bad_quality: Boolean(els.historianPolicyIncludeBadQuality?.checked),
+      resolution_tiers: resolutionTiers
+    };
+    state.historianConfigDirty = true;
+    renderHistorianTags();
+    historianSetStatus('Global policy changed. Save and apply when ready.');
+  };
+  els.historianPolicyInterval?.addEventListener('change', updatePolicy);
+  els.historianPolicyDeadband?.addEventListener('change', updatePolicy);
+  els.historianPolicyIncludeBadQuality?.addEventListener('change', updatePolicy);
+  (els.historianTierRows || []).forEach((row) => {
+    row.querySelector('.historian-tier-enabled')?.addEventListener('change', updatePolicy);
+    row.querySelector('.historian-tier-retention')?.addEventListener('change', updatePolicy);
+  });
   renderHistorianHealth();
+  renderHistorianPolicy();
   renderHistorianSummary();
   renderHistorianPoints();
 }
@@ -17847,7 +17957,11 @@ function renderTagsConfigFilters() {
 async function loadTagsConfig() {
   setTagsConfigStatus('Loading tag config…');
   try {
-    const data = await apiGet('/api/opcbridge/config/tags');
+    const [data, historianConfig] = await Promise.all([
+      apiGet('/api/opcbridge/config/tags'),
+      apiGet('/api/historian/config').catch(() => null)
+    ]);
+    if (historianConfig?.ok) state.historianConfig = normalizeHistorianConfig(historianConfig.config || {});
     const tags = Array.isArray(data?.tags) ? data.tags : [];
     // Keep an immutable snapshot of what was loaded so we can determine
     // which connections were emptied (e.g., deleting the last tag for a device).
@@ -18631,8 +18745,8 @@ function openWorkspaceItemModal(node) {
       applyTagWordOrderUi({ rowEl: els.editTagWordOrderRow, selectEl: els.editTagWordOrder }, { connId: conn, sourceKind: 'plc', datatype: 'bool', existingRow: null });
       if (els.editTagScan) els.editTagScan.value = '';
       if (els.editTagHistorianEnabled) els.editTagHistorianEnabled.checked = false;
-      if (els.editTagHistorianMode) els.editTagHistorianMode.value = 'periodic';
-      if (els.editTagHistorianInterval) els.editTagHistorianInterval.value = '60';
+      if (els.editTagHistorianDeadbandOverride) els.editTagHistorianDeadbandOverride.checked = false;
+      if (els.editTagHistorianDeadband) { els.editTagHistorianDeadband.value = ''; els.editTagHistorianDeadband.disabled = true; }
       if (els.editTagEnabled) els.editTagEnabled.checked = true;
       if (els.editTagWritable) els.editTagWritable.checked = false;
       if (els.editTagInvert) els.editTagInvert.checked = false;
@@ -18688,8 +18802,12 @@ function openWorkspaceItemModal(node) {
       if (els.editTagElemCount) els.editTagElemCount.value = (row?.elem_count == null) ? '1' : String(row.elem_count);
       const historian = normalizeTagHistorianSettings(row);
       if (els.editTagHistorianEnabled) els.editTagHistorianEnabled.checked = historian.enabled;
-      if (els.editTagHistorianMode) els.editTagHistorianMode.value = historian.mode;
-      if (els.editTagHistorianInterval) els.editTagHistorianInterval.value = String(Math.max(1, Math.trunc(historian.interval_ms / 1000)));
+      if (els.editTagHistorianDeadbandOverride) els.editTagHistorianDeadbandOverride.checked = historian.deadband_override;
+      if (els.editTagHistorianDeadband) {
+        els.editTagHistorianDeadband.value = historian.deadband_override ? String(historian.deadband) : '';
+        els.editTagHistorianDeadband.disabled = !historian.deadband_override;
+        els.editTagHistorianDeadband.placeholder = `Global (${Number(state.historianConfig?.historian_policy?.deadband || 0)})`;
+      }
       if (els.editTagEnabled) els.editTagEnabled.checked = (row?.enabled !== false);
       if (els.editTagWritable) els.editTagWritable.checked = (row?.writable === true);
       if (els.editTagInvert) els.editTagInvert.checked = (row?.invert === true);
@@ -18790,9 +18908,20 @@ function openWorkspaceItemModal(node) {
       applyScalingModeUi(els.editTagScaling, els.editTagScalingLinearRow);
       els.editTagScaling.disabled = (conn === MEMORY_CONNECTION_ID) || !canEditConfig();
     }
-    [els.editTagHistorianEnabled, els.editTagHistorianMode, els.editTagHistorianInterval, els.editTagLogEvent, els.editTagRawLow, els.editTagRawHigh, els.editTagScaledLow, els.editTagScaledHigh, els.editTagScaledDatatype, els.editTagClampLow, els.editTagClampHigh]
+    [els.editTagHistorianEnabled, els.editTagHistorianDeadbandOverride, els.editTagHistorianDeadband, els.editTagLogEvent, els.editTagRawLow, els.editTagRawHigh, els.editTagScaledLow, els.editTagScaledHigh, els.editTagScaledDatatype, els.editTagClampLow, els.editTagClampHigh]
       .filter(Boolean)
       .forEach((e) => { e.disabled = !canEditConfig(); });
+    if (els.editTagHistorianDeadbandOverride) {
+      els.editTagHistorianDeadbandOverride.onchange = () => {
+        if (els.editTagHistorianDeadband) {
+          els.editTagHistorianDeadband.disabled = !canEditConfig() || !els.editTagHistorianDeadbandOverride.checked;
+          if (!els.editTagHistorianDeadbandOverride.checked) els.editTagHistorianDeadband.value = '';
+        }
+      };
+      if (els.editTagHistorianDeadband) {
+        els.editTagHistorianDeadband.disabled = !canEditConfig() || !els.editTagHistorianDeadbandOverride.checked;
+      }
+    }
 
     els.editTagPlc?.focus?.();
     return;
@@ -19068,9 +19197,8 @@ async function saveEditedTagFromModal() {
   const invert = Boolean(els.editTagInvert?.checked);
   const log_event_on_change = Boolean(els.editTagLogEvent?.checked);
   const historianEnabled = Boolean(els.editTagHistorianEnabled?.checked);
-  const historianMode = String(els.editTagHistorianMode?.value || 'periodic').trim().toLowerCase() || 'periodic';
-  const historianIntervalSecRaw = String(els.editTagHistorianInterval?.value || '').trim();
-  const historianIntervalSec = Math.max(1, Math.trunc(Number(historianIntervalSecRaw || '60') || 60));
+  const historianDeadbandOverride = Boolean(els.editTagHistorianDeadbandOverride?.checked);
+  const historianDeadband = Math.max(0, Number(els.editTagHistorianDeadband?.value || 0) || 0);
 
   if (!datatype) { setEditTagStatus('Datatype is required.'); return; }
 
@@ -19215,15 +19343,30 @@ async function saveEditedTagFromModal() {
   if (historianEnabled) {
     next.historian = {
       enabled: true,
-      mode: historianMode === 'periodic' ? 'periodic' : 'periodic',
-      interval_ms: historianIntervalSec * 1000
+      deadband_override: historianDeadbandOverride,
+      ...(historianDeadbandOverride ? { deadband: historianDeadband } : {})
     };
   } else {
     delete next.historian;
     delete next.historian_enabled;
     delete next.historian_mode;
     delete next.historian_interval_ms;
+    delete next.historian_deadband;
   }
+  if (!state.historianConfig) state.historianConfig = normalizeHistorianConfig({});
+  const registryKeyMatches = (rule) => String(rule?.connection_id || '') === conn
+    && [name, newName].includes(String(rule?.tag_name || ''));
+  state.historianConfig.historian_tags = (state.historianConfig.historian_tags || []).filter((rule) => !registryKeyMatches(rule));
+  if (historianEnabled) {
+    state.historianConfig.historian_tags.push({
+      connection_id: conn,
+      tag_name: newName,
+      enabled: true,
+      deadband_override: historianDeadbandOverride,
+      ...(historianDeadbandOverride ? { deadband: historianDeadband } : {})
+    });
+  }
+  state.historianConfigDirty = true;
   if (invert) next.invert = true;
   else delete next.invert;
   if (isMemory) delete next.scan_ms;

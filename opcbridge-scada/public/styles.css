@@ -1608,6 +1608,20 @@ input, textarea, select {
 }
 input[type="checkbox"] { width: auto; }
 
+.historian-tier-retention-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.historian-tier-retention-cell .historian-tier-retention {
+  box-sizing: border-box;
+  width: 130px;
+  max-width: calc(100% - 44px);
+  min-width: 80px;
+}
+
 .caps-lock-indicator {
   color: var(--warn);
   display: block;

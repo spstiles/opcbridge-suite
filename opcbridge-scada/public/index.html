@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=20260828_users_vertical_scroll_v9" />
+  <link rel="stylesheet" href="styles.css?v=20260902_historian_retention_width_v10" />
 </head>
 <body>
   <header class="topbar">
@@ -1686,13 +1686,37 @@
 
 		    <section id="tab-historian" class="panel">
 		      <h2>Historian</h2>
-		      <div class="hint">View historian health and query numeric tag history. Historian tag setup is managed from Workspace tag properties.</div>
+		      <div class="hint">Historized tags share one registry with Workspace. Add or remove tags here, or toggle Historize in tag properties.</div>
 
 		      <div class="row-actions" style="margin: 0 0 10px 0;">
 		        <button class="btn" id="historianRefreshBtn" type="button">Refresh</button>
+		        <button class="btn" id="historianAddTagBtn" type="button">Add Tag</button>
+		        <button class="btn" id="historianSaveConfigBtn" type="button">Save</button>
 		        <button class="btn" id="historianRestartBtn" type="button">Apply Config</button>
 		        <button class="btn primary" id="historianRunQueryBtn" type="button">Run Query</button>
 		        <div class="hint mono" id="historianStatus" style="margin-left: auto;"></div>
+		      </div>
+
+		      <div class="card" style="margin-bottom: 10px;">
+		        <div class="card-title">Global Collection Policy</div>
+		        <div class="card-body">
+		          <div class="form" style="grid-template-columns: repeat(3, minmax(180px, 1fr));">
+		            <div class="form-row"><label>Sample Interval (sec)</label><input id="historianPolicyInterval" type="number" min="1" step="1" value="60" /></div>
+		            <div class="form-row"><label>Default Deadband</label><input id="historianPolicyDeadband" type="number" min="0" step="any" value="0" /></div>
+		            <div class="form-row"><label>Quality</label><label class="check-pill"><input id="historianPolicyIncludeBadQuality" type="checkbox" class="inline-check" /> Include bad quality</label></div>
+		          </div>
+		          <div class="hint">All selected tags inherit this policy. A tag may override only its deadband.</div>
+		          <div class="card-title" style="margin-top:16px;">Cascading Resolution</div>
+		          <div class="hint">Set how long each resolution is retained. Leave retention blank for indefinite storage.</div>
+		          <div class="table-wrap" style="margin-top:8px;">
+		            <table class="table"><thead><tr><th>Enabled</th><th>Resolution</th><th>Retain for</th></tr></thead><tbody>
+		              <tr data-historian-tier="10000"><td><input type="checkbox" class="historian-tier-enabled"></td><td>10 seconds</td><td class="historian-tier-retention-cell"><input class="historian-tier-retention" type="number" min="1" step="1" placeholder="Indefinitely"><span>days</span></td></tr>
+		              <tr data-historian-tier="60000"><td><input type="checkbox" class="historian-tier-enabled"></td><td>1 minute</td><td class="historian-tier-retention-cell"><input class="historian-tier-retention" type="number" min="1" step="1" placeholder="Indefinitely"><span>days</span></td></tr>
+		              <tr data-historian-tier="300000"><td><input type="checkbox" class="historian-tier-enabled"></td><td>5 minutes</td><td class="historian-tier-retention-cell"><input class="historian-tier-retention" type="number" min="1" step="1" placeholder="Indefinitely"><span>days</span></td></tr>
+		              <tr data-historian-tier="3600000"><td><input type="checkbox" class="historian-tier-enabled"></td><td>1 hour</td><td class="historian-tier-retention-cell"><input class="historian-tier-retention" type="number" min="1" step="1" placeholder="Indefinitely"><span>days</span></td></tr>
+		            </tbody></table>
+		          </div>
+		        </div>
 		      </div>
 
 		      <div class="grid two">
@@ -1759,16 +1783,16 @@
 		      <div class="card" style="margin-top: 10px;">
 		        <div class="card-title">Historized Tags</div>
 		        <div class="card-body">
-		          <div class="hint" style="margin-bottom: 8px;">Read-only list of tags with Historize enabled in Workspace.</div>
+		          <div class="hint" style="margin-bottom: 8px;">Tags selected here also appear as historized in Workspace.</div>
 		          <div class="table-wrap">
 		            <table class="table">
 		              <thead>
 		                <tr>
 		                  <th>Connection</th>
 		                  <th>Tag</th>
-		                  <th>Enabled</th>
 		                  <th>Interval</th>
-		                  <th>Mode</th>
+		                  <th>Deadband</th>
+		                  <th>Actions</th>
 		                </tr>
 		              </thead>
 		              <tbody id="historianTagsTbody"></tbody>
@@ -1994,15 +2018,13 @@
             <div class="form-row"><label>Elem Count</label><input id="editTagElemCount" type="number" min="1" step="1" placeholder="1" /></div>
             <div class="form-row">
               <label>Historian</label>
-              <div style="display:grid; grid-template-columns: minmax(150px, .8fr) minmax(130px, .6fr) minmax(190px, .8fr); gap: 10px; justify-items: start; align-items: center;">
+              <div style="display:grid; grid-template-columns: minmax(150px, .8fr) minmax(170px, .8fr) minmax(160px, .8fr); gap: 10px; justify-items: start; align-items: center;">
                 <label style="display:flex; align-items:center; gap: 8px; margin: 0;"><input id="editTagHistorianEnabled" type="checkbox" class="inline-check" /> Historize</label>
-                <select id="editTagHistorianMode">
-                  <option value="periodic">Periodic</option>
-                </select>
                 <label style="display:flex; align-items:center; gap: 8px; margin: 0;">
-                  <span class="small">Interval sec</span>
-                  <input id="editTagHistorianInterval" type="number" min="1" step="1" placeholder="60" style="width: 90px;" />
+                  <input id="editTagHistorianDeadbandOverride" type="checkbox" class="inline-check" />
+                  <span class="small">Custom deadband</span>
                 </label>
+                <input id="editTagHistorianDeadband" type="number" min="0" step="any" placeholder="Global" style="width: 130px;" />
               </div>
             </div>
 	            <div class="form-row">
@@ -2839,6 +2861,6 @@
   <script src="vendor/codemirror/lib/codemirror.min.js"></script>
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
-  <script src="app.js?v=20260828_session_system_tags_v10"></script>
+  <script src="app.js?v=20260901_historian_tiers_v12"></script>
 </body>
 </html>

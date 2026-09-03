@@ -4304,6 +4304,12 @@ const server = http.createServer(async (req, res) => {
         opcbridge_host: '127.0.0.1',
         opcbridge_http_port: 8080,
         postgres: { conninfo: '', table: 'tag_samples', batch_size: 500, flush_interval_ms: 250, queue_limit: 50000 },
+        historian_policy: { interval_ms: 60000, mode: 'periodic', deadband: 0, include_bad_quality: false, resolution_tiers: [
+          { resolution_ms: 10000, retention_ms: 2592000000, enabled: true },
+          { resolution_ms: 60000, retention_ms: 31536000000, enabled: true },
+          { resolution_ms: 300000, retention_ms: 157680000000, enabled: true },
+          { resolution_ms: 3600000, retention_ms: 0, enabled: true }
+        ] },
         historian_tags: []
       };
       const safe = { ...onDisk };

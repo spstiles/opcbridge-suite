@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -67,7 +68,29 @@ struct HistorianTagRule
     int64_t interval_ms = 60000;
     std::string mode = "periodic";
     bool include_bad_quality = false;
+    double deadband = 0.0;
+    bool deadband_override = false;
     int64_t next_due_ms = 0;
+};
+
+struct HistorianPolicy
+{
+    int64_t interval_ms = 60000;
+    std::string mode = "periodic";
+    bool include_bad_quality = false;
+    double deadband = 0.0;
+    struct ResolutionTier
+    {
+        int64_t resolution_ms = 0;
+        int64_t retention_ms = 0;
+        bool enabled = true;
+    };
+    std::vector<ResolutionTier> resolution_tiers{
+        {10000, 2592000000LL, true},
+        {60000, 31536000000LL, true},
+        {300000, 157680000000LL, true},
+        {3600000, 0, true}
+    };
 };
 
 struct AppCfg
@@ -88,6 +111,7 @@ struct AppCfg
     ChangeOnlyCfg change_only;
     SnapshotCfg snapshot;
     PgCfg pg;
+    HistorianPolicy historian_policy;
     std::vector<HistorianTagRule> historian_tags;
 };
 
@@ -389,6 +413,33 @@ static AppCfg load_config(const std::string& path)
     cfg.opcbridge_ws_port = static_cast<uint16_t>(root.value("opcbridge_ws_port", cfg.opcbridge_ws_port));
     cfg.opcbridge_ws_path = root.value("opcbridge_ws_path", cfg.opcbridge_ws_path);
 
+    if (root.contains("historian_policy") && root["historian_policy"].is_object())
+    {
+        const auto& policy = root["historian_policy"];
+        cfg.historian_policy.interval_ms = policy.value("interval_ms", cfg.historian_policy.interval_ms);
+        cfg.historian_policy.mode = policy.value("mode", cfg.historian_policy.mode);
+        cfg.historian_policy.include_bad_quality = policy.value("include_bad_quality", cfg.historian_policy.include_bad_quality);
+        cfg.historian_policy.deadband = std::max(0.0, policy.value("deadband", cfg.historian_policy.deadband));
+        if (policy.contains("resolution_tiers") && policy["resolution_tiers"].is_array())
+        {
+            cfg.historian_policy.resolution_tiers.clear();
+            for (const auto& item : policy["resolution_tiers"])
+            {
+                if (!item.is_object()) continue;
+                HistorianPolicy::ResolutionTier tier;
+                tier.resolution_ms = std::max<int64_t>(1000, item.value("resolution_ms", 0LL));
+                tier.retention_ms = std::max<int64_t>(0, item.value("retention_ms", 0LL));
+                tier.enabled = item.value("enabled", true);
+                if (tier.enabled && tier.resolution_ms > 0)
+                    cfg.historian_policy.resolution_tiers.push_back(tier);
+            }
+            std::sort(cfg.historian_policy.resolution_tiers.begin(), cfg.historian_policy.resolution_tiers.end(),
+                      [](const auto& a, const auto& b) { return a.resolution_ms < b.resolution_ms; });
+        }
+        if (cfg.historian_policy.interval_ms < 1000) cfg.historian_policy.interval_ms = 1000;
+        if (cfg.historian_policy.mode != "periodic") cfg.historian_policy.mode = "periodic";
+    }
+
     cfg.subscribe_mode = root.value("subscribe_mode", cfg.subscribe_mode);
     if (root.contains("tags") && root["tags"].is_array())
     {
@@ -404,6 +455,10 @@ static AppCfg load_config(const std::string& path)
                     HistorianTagRule rule;
                     rule.connection_id = parts->first;
                     rule.tag_name = parts->second;
+                    rule.interval_ms = cfg.historian_policy.interval_ms;
+                    rule.mode = cfg.historian_policy.mode;
+                    rule.include_bad_quality = cfg.historian_policy.include_bad_quality;
+                    rule.deadband = cfg.historian_policy.deadband;
                     cfg.historian_tags.push_back(std::move(rule));
                 }
                 continue;
@@ -413,9 +468,11 @@ static AppCfg load_config(const std::string& path)
             rule.connection_id = t.value("connection_id", "");
             rule.tag_name = t.value("tag_name", t.value("name", ""));
             rule.enabled = t.value("enabled", rule.enabled);
-            rule.interval_ms = t.value("interval_ms", rule.interval_ms);
-            rule.mode = t.value("mode", rule.mode);
-            rule.include_bad_quality = t.value("include_bad_quality", rule.include_bad_quality);
+            rule.interval_ms = cfg.historian_policy.interval_ms;
+            rule.mode = cfg.historian_policy.mode;
+            rule.include_bad_quality = cfg.historian_policy.include_bad_quality;
+            rule.deadband_override = t.value("deadband_override", false);
+            rule.deadband = std::max(0.0, rule.deadband_override ? t.value("deadband", cfg.historian_policy.deadband) : cfg.historian_policy.deadband);
             if (rule.interval_ms < 1000) rule.interval_ms = 1000;
             if (!rule.connection_id.empty() && !rule.tag_name.empty())
             {
@@ -433,9 +490,11 @@ static AppCfg load_config(const std::string& path)
             rule.connection_id = t.value("connection_id", "");
             rule.tag_name = t.value("tag_name", t.value("name", ""));
             rule.enabled = t.value("enabled", rule.enabled);
-            rule.interval_ms = t.value("interval_ms", rule.interval_ms);
-            rule.mode = t.value("mode", rule.mode);
-            rule.include_bad_quality = t.value("include_bad_quality", rule.include_bad_quality);
+            rule.interval_ms = cfg.historian_policy.interval_ms;
+            rule.mode = cfg.historian_policy.mode;
+            rule.include_bad_quality = cfg.historian_policy.include_bad_quality;
+            rule.deadband_override = t.value("deadband_override", false);
+            rule.deadband = std::max(0.0, rule.deadband_override ? t.value("deadband", cfg.historian_policy.deadband) : cfg.historian_policy.deadband);
             if (rule.interval_ms < 1000) rule.interval_ms = 1000;
             if (!rule.connection_id.empty() && !rule.tag_name.empty())
             {
@@ -558,6 +617,86 @@ public:
     }
 
     bool is_connected() const { return conn_ && PQstatus(conn_) == CONNECTION_OK; }
+    const std::string& timescaledb_version() const { return timescaledb_version_; }
+
+    bool configure_timescale(const std::vector<HistorianPolicy::ResolutionTier>& tiers, std::string& err)
+    {
+        if (!is_connected()) { err = "Not connected"; return false; }
+        {
+            PGresult* version = PQexec(conn_, "SELECT extversion FROM pg_extension WHERE extname='timescaledb';");
+            if (!version || PQresultStatus(version) != PGRES_TUPLES_OK || PQntuples(version) < 1)
+            {
+                err = "TimescaleDB extension is not active in the historian database";
+                if (version) PQclear(version);
+                return false;
+            }
+            timescaledb_version_ = PQgetvalue(version, 0, 0);
+            PQclear(version);
+        }
+        resolution_tiers_ = tiers;
+        const std::string raw = sql_ident_quoted(cfg_.table);
+        const int64_t rawRefreshWindow = (!tiers.empty() && tiers.front().retention_ms > 0)
+            ? tiers.front().retention_ms : 3153600000000LL;
+        for (const auto& tier : tiers)
+        {
+            const std::string legacyViewName = sql_identifier_safe_name(cfg_.table + "_cagg_" + std::to_string(tier.resolution_ms));
+            if (!exec_command("DROP MATERIALIZED VIEW IF EXISTS " + sql_ident_quoted(legacyViewName) + " CASCADE;", err)) return false;
+            const std::string viewName = sql_identifier_safe_name(cfg_.table + "_cagg_v1_" + std::to_string(tier.resolution_ms));
+            const std::string view = sql_ident_quoted(viewName);
+            bool viewAlreadyExists = false;
+            {
+                PGresult* exists = PQexec(conn_, ("SELECT to_regclass('" + viewName + "') IS NOT NULL;").c_str());
+                if (!exists || PQresultStatus(exists) != PGRES_TUPLES_OK || PQntuples(exists) < 1)
+                {
+                    err = exists ? PQresultErrorMessage(exists) : "PQexec returned null";
+                    if (exists) PQclear(exists);
+                    return false;
+                }
+                viewAlreadyExists = std::string(PQgetvalue(exists, 0, 0)) == "t";
+                PQclear(exists);
+            }
+            std::ostringstream create;
+            create << "CREATE MATERIALIZED VIEW IF NOT EXISTS " << view << " WITH (timescaledb.continuous) AS SELECT "
+                   << "time_bucket(INTERVAL '" << tier.resolution_ms << " milliseconds',ts) AS bucket,"
+                   << "connection_id,tag_name,count(value_double)::bigint AS sample_count,"
+                   << "min(value_double) AS min_value,max(value_double) AS max_value,avg(value_double) AS avg_value,"
+                   << "first(value_double,ts) AS first_value,last(value_double,ts) AS last_value "
+                   << "FROM " << raw << " WHERE value_double IS NOT NULL GROUP BY bucket,connection_id,tag_name WITH NO DATA;";
+            if (!exec_command(create.str(), err)) return false;
+            if (!exec_command("ALTER MATERIALIZED VIEW " + view + " SET (timescaledb.materialized_only=false);", err)) return false;
+            if (!viewAlreadyExists)
+            {
+                std::ostringstream refresh;
+                refresh << "CALL refresh_continuous_aggregate('" << viewName << "',NULL,now()-INTERVAL '"
+                        << tier.resolution_ms << " milliseconds');";
+                if (!exec_command(refresh.str(), err)) return false;
+            }
+            if (!exec_query_command("SELECT remove_continuous_aggregate_policy('" + viewName + "',if_exists=>TRUE);", err)) return false;
+            std::ostringstream policy;
+            policy << "SELECT add_continuous_aggregate_policy('" << viewName << "',"
+                   << "start_offset=>INTERVAL '" << rawRefreshWindow << " milliseconds',"
+                   << "end_offset=>INTERVAL '" << tier.resolution_ms << " milliseconds',"
+                   << "schedule_interval=>INTERVAL '15 minutes',if_not_exists=>TRUE);";
+            if (!exec_query_command(policy.str(), err)) return false;
+            if (!exec_query_command("SELECT remove_retention_policy('" + viewName + "',if_exists=>TRUE);", err)) return false;
+            if (tier.retention_ms > 0)
+            {
+                std::ostringstream retention;
+                retention << "SELECT add_retention_policy('" << viewName << "',INTERVAL '" << tier.retention_ms
+                          << " milliseconds',if_not_exists=>TRUE);";
+                if (!exec_query_command(retention.str(), err)) return false;
+            }
+        }
+        if (!exec_query_command("SELECT remove_retention_policy('" + cfg_.table + "',if_exists=>TRUE);", err)) return false;
+        if (!tiers.empty() && tiers.front().retention_ms > 0)
+        {
+            std::ostringstream retention;
+            retention << "SELECT add_retention_policy('" << cfg_.table << "',INTERVAL '" << tiers.front().retention_ms
+                      << " milliseconds',if_not_exists=>TRUE);";
+            if (!exec_query_command(retention.str(), err)) return false;
+        }
+        return true;
+    }
 
     bool insert_batch(const std::vector<Sample>& batch, std::string& err)
     {
@@ -682,18 +821,26 @@ public:
         }
 
         const std::string qualityClause = goodOnly ? " AND (quality IS NULL OR quality = 1)" : "";
+        const auto tier = choose_resolution_tier(fromMs, std::numeric_limits<int64_t>::max());
         std::ostringstream sql;
-        sql << "WITH filtered AS ("
-            << " SELECT ts_ms, datatype, value_double FROM " << sql_ident_quoted(cfg_.table)
-            << " WHERE connection_id = " << connLit
-            << " AND tag_name = " << tagLit
-            << " AND ts_ms >= " << fromMs
-            << " AND ts_ms <= " << toMs
-            << " AND value_double IS NOT NULL"
-            << qualityClause
-            << "), last_row AS ("
-            << " SELECT value_double AS last_value, datatype AS last_datatype FROM filtered ORDER BY ts_ms DESC LIMIT 1"
-            << ") SELECT count(*)::bigint, min(value_double), max(value_double), avg(value_double),"
+        if (tier.has_value())
+        {
+            const std::string view = sql_ident_quoted(cfg_.table + "_cagg_v1_" + std::to_string(tier->resolution_ms));
+            sql << "WITH filtered AS (SELECT (extract(epoch from bucket)*1000)::bigint AS ts_ms,NULL::text AS datatype,sample_count AS n,min_value AS min_v,max_value AS max_v,"
+                << "avg_value*sample_count AS weighted,last_value AS last_v FROM " << view
+                << " WHERE connection_id=" << connLit << " AND tag_name=" << tagLit
+                << " AND bucket >= to_timestamp(" << (static_cast<double>(fromMs) / 1000.0) << ") AND bucket <= to_timestamp(" << (static_cast<double>(toMs) / 1000.0) << ")),last_row AS (";
+        }
+        else
+        {
+            sql << "WITH filtered AS (SELECT ts_ms,datatype,1::bigint AS n,value_double AS min_v,value_double AS max_v,"
+                << "value_double AS weighted,value_double AS last_v FROM " << sql_ident_quoted(cfg_.table)
+                << " WHERE connection_id=" << connLit << " AND tag_name=" << tagLit
+                << " AND ts_ms >= " << fromMs << " AND ts_ms <= " << toMs << " AND value_double IS NOT NULL" << qualityClause
+                << "),last_row AS (";
+        }
+        sql << " SELECT last_v AS last_value, datatype AS last_datatype FROM filtered ORDER BY ts_ms DESC LIMIT 1"
+            << ") SELECT coalesce(sum(n),0)::bigint, min(min_v), max(max_v), sum(weighted)/NULLIF(sum(n),0),"
             << " (SELECT last_value FROM last_row), (SELECT last_datatype FROM last_row) FROM filtered;";
 
         free_if_needed(connLit);
@@ -853,18 +1000,26 @@ public:
         }
 
         const std::string qualityClause = goodOnly ? " AND (quality IS NULL OR quality = 1)" : "";
+        const auto tier = choose_resolution_tier(fromMs, bucketMs);
         std::ostringstream sql;
-        sql << "WITH filtered AS ("
-            << " SELECT ts_ms, value_double, ((ts_ms - " << fromMs << ") / " << bucketMs << ")::bigint AS bucket_idx"
-            << " FROM " << sql_ident_quoted(cfg_.table)
-            << " WHERE connection_id = " << connLit
-            << " AND tag_name = " << tagLit
-            << " AND ts_ms >= " << fromMs
-            << " AND ts_ms <= " << toMs
-            << " AND value_double IS NOT NULL"
-            << qualityClause
-            << ") SELECT bucket_idx, count(*)::bigint, min(value_double), max(value_double), avg(value_double)"
-            << " FROM filtered GROUP BY bucket_idx ORDER BY bucket_idx ASC LIMIT " << limit << ";";
+        sql << "WITH combined AS (";
+        if (tier.has_value())
+        {
+            const std::string view = sql_ident_quoted(cfg_.table + "_cagg_v1_" + std::to_string(tier->resolution_ms));
+            sql << "SELECT (extract(epoch from bucket)*1000)::bigint AS ts_ms,sample_count AS n,min_value AS min_v,max_value AS max_v,avg_value*sample_count AS weighted FROM " << view
+                << " WHERE connection_id=" << connLit << " AND tag_name=" << tagLit
+                << " AND bucket >= to_timestamp(" << (static_cast<double>(fromMs) / 1000.0) << ") AND bucket <= to_timestamp(" << (static_cast<double>(toMs) / 1000.0) << ")";
+        }
+        else
+        {
+            sql << "SELECT ts_ms,1::bigint AS n,value_double AS min_v,value_double AS max_v,value_double AS weighted FROM "
+                << sql_ident_quoted(cfg_.table) << " WHERE connection_id=" << connLit << " AND tag_name=" << tagLit
+                << " AND ts_ms >= " << fromMs << " AND ts_ms <= " << toMs << " AND value_double IS NOT NULL" << qualityClause;
+        }
+        sql << "), grouped AS (SELECT ((ts_ms-" << fromMs << ")/" << bucketMs << ")::bigint AS bucket_idx,"
+            << " sum(n)::bigint AS n,min(min_v) AS min_v,max(max_v) AS max_v,sum(weighted)/NULLIF(sum(n),0) AS avg_v"
+            << " FROM combined GROUP BY ((ts_ms-" << fromMs << ")/" << bucketMs << ")::bigint)"
+            << " SELECT bucket_idx,n,min_v,max_v,avg_v FROM grouped ORDER BY bucket_idx ASC LIMIT " << limit << ";";
 
         free_if_needed(connLit);
         free_if_needed(tagLit);
@@ -913,6 +1068,30 @@ public:
     }
 
 private:
+    std::optional<HistorianPolicy::ResolutionTier> choose_resolution_tier(int64_t fromMs, int64_t maxResolutionMs) const
+    {
+        const int64_t age = std::max<int64_t>(0, now_ms() - fromMs);
+        for (const auto& tier : resolution_tiers_)
+            if (tier.resolution_ms <= maxResolutionMs && (tier.retention_ms == 0 || tier.retention_ms >= age)) return tier;
+        for (const auto& tier : resolution_tiers_)
+            if (tier.retention_ms == 0 || tier.retention_ms >= age) return tier;
+        return std::nullopt;
+    }
+
+    bool exec_query_command(const std::string& sql, std::string& err)
+    {
+        PGresult* res = PQexec(conn_, sql.c_str());
+        if (!res) { err = "PQexec returned null"; return false; }
+        if (PQresultStatus(res) != PGRES_TUPLES_OK)
+        {
+            err = PQresultErrorMessage(res);
+            PQclear(res);
+            return false;
+        }
+        PQclear(res);
+        return true;
+    }
+
     static void free_if_needed(char* p) { if (p) PQfreemem(p); }
 
     bool exec_command(const std::string& sql, std::string& err)
@@ -936,6 +1115,7 @@ private:
     bool ensure_schema(std::string& err)
     {
         if (!is_connected()) { err = "Not connected"; return false; }
+        if (!exec_command("CREATE EXTENSION IF NOT EXISTS timescaledb;", err)) return false;
         const std::string tableIdent = sql_ident_quoted(cfg_.table);
         const std::string tableSafe = sql_identifier_safe_name(cfg_.table);
 
@@ -968,8 +1148,14 @@ private:
                   << " ON " << tableIdent << " USING BRIN (ts);";
         if (!exec_command(brinIndex.str(), err)) return false;
 
+        std::ostringstream hypertable;
+        hypertable << "SELECT create_hypertable('" << cfg_.table << "','ts',if_not_exists=>TRUE,migrate_data=>TRUE);";
+        if (!exec_query_command(hypertable.str(), err)) return false;
+
         return true;
     }
+
+    std::vector<HistorianPolicy::ResolutionTier> resolution_tiers_;
 
     std::optional<double> query_twa(const std::string& connectionId,
                                     const std::string& tagName,
@@ -993,8 +1179,19 @@ private:
         }
 
         const std::string qualityClause = goodOnly ? " AND (quality IS NULL OR quality = 1)" : "";
+        const auto tier = choose_resolution_tier(fromMs, std::numeric_limits<int64_t>::max());
         std::ostringstream sql;
-        sql << "WITH points AS ("
+        if (tier.has_value())
+        {
+            const std::string view = sql_ident_quoted(cfg_.table + "_cagg_v1_" + std::to_string(tier->resolution_ms));
+            sql << "WITH points AS (SELECT (extract(epoch from bucket)*1000)::bigint AS ts_ms,last_value AS value_double FROM " << view
+                << " WHERE connection_id=" << connLit << " AND tag_name=" << tagLit
+                << " AND bucket >= to_timestamp(" << (static_cast<double>(fromMs) / 1000.0) << ") AND bucket <= to_timestamp(" << (static_cast<double>(toMs) / 1000.0) << ")"
+                << ") SELECT ts_ms,value_double FROM points ORDER BY ts_ms ASC;";
+        }
+        else
+        {
+            sql << "WITH points AS ("
             << " (SELECT ts_ms, value_double FROM " << sql_ident_quoted(cfg_.table)
             << " WHERE connection_id = " << connLit
             << " AND tag_name = " << tagLit
@@ -1012,6 +1209,7 @@ private:
             << qualityClause
             << ")"
             << ") SELECT ts_ms, value_double FROM points ORDER BY ts_ms ASC;";
+        }
 
         free_if_needed(connLit);
         free_if_needed(tagLit);
@@ -1068,6 +1266,7 @@ private:
 
     PgCfg cfg_;
     PGconn* conn_ = nullptr;
+    std::string timescaledb_version_;
 };
 
 struct TagState
@@ -1316,6 +1515,11 @@ int main(int argc, char* argv[])
             std::cerr << "[historian] Hint: create schema via psql -f ./schema.sql\n";
             return 1;
         }
+        if (!writer.configure_timescale(cfg.historian_policy.resolution_tiers, err))
+        {
+            std::cerr << "[historian] TimescaleDB configuration failed: " << err << "\n";
+            return 1;
+        }
     }
 
     std::mutex qMutex;
@@ -1369,6 +1573,11 @@ int main(int argc, char* argv[])
         j["last_insert_ms"] = health.last_insert_ms.load();
         j["last_sample_ms"] = health.last_sample_ms.load();
         j["last_snapshot_ms"] = health.last_snapshot_ms.load();
+        j["timescaledb"] = true;
+        j["timescaledb_version"] = writer.timescaledb_version();
+        j["resolution_tiers"] = json::array();
+        for (const auto& tier : cfgCopy.historian_policy.resolution_tiers)
+            j["resolution_tiers"].push_back({{"resolution_ms", tier.resolution_ms}, {"retention_ms", tier.retention_ms}});
         j["last_error"] = health.get_error();
         res.set_content(j.dump(2), "application/json");
     });
@@ -1388,6 +1597,8 @@ int main(int argc, char* argv[])
             r["interval_ms"] = rule.interval_ms;
             r["mode"] = rule.mode;
             r["include_bad_quality"] = rule.include_bad_quality;
+            r["deadband"] = rule.deadband;
+            r["deadband_override"] = rule.deadband_override;
             tags.push_back(std::move(r));
         }
         json j;
@@ -1425,10 +1636,18 @@ int main(int argc, char* argv[])
                 cfg.patterns = next.patterns;
                 cfg.change_only = next.change_only;
                 cfg.snapshot = next.snapshot;
+                cfg.historian_policy = next.historian_policy;
                 cfg.pg.queue_limit = next.pg.queue_limit;
                 cfg.historian_tags = next.historian_tags;
             }
             health.set_error("");
+            if (!pg_changed)
+            {
+                std::string timescaleErr;
+                std::lock_guard<std::mutex> pgLock(pgMutex);
+                if (!writer.configure_timescale(next.historian_policy.resolution_tiers, timescaleErr))
+                    throw std::runtime_error("TimescaleDB policy update failed: " + timescaleErr);
+            }
             json j;
             j["ok"] = true;
             j["reloaded"] = true;
@@ -1744,6 +1963,7 @@ int main(int argc, char* argv[])
     std::thread snapshotThread;
     snapshotThread = std::thread([&]() {
             std::unordered_map<std::string, int64_t> nextDueByKey;
+            std::unordered_map<std::string, double> lastValueByKey;
             while (!stop.load())
             {
                 const int64_t started = now_ms();
@@ -1818,6 +2038,11 @@ int main(int argc, char* argv[])
                                 if (it == dueRules.end()) continue;
                                 if (!it->second.include_bad_quality && s.quality.has_value() && s.quality.value() != 1) continue;
                                 if (!s.value_double.has_value()) continue;
+                                const double deadband = std::max(0.0, it->second.deadband);
+                                const auto previous = lastValueByKey.find(k);
+                                if (deadband > 0.0 && previous != lastValueByKey.end()
+                                    && std::abs(s.value_double.value() - previous->second) <= deadband) continue;
+                                lastValueByKey[k] = s.value_double.value();
                             }
                             else if (!want.empty() && want.find(k) == want.end()) continue;
                             enqueue(std::move(s));
@@ -1906,6 +2131,24 @@ int main(int argc, char* argv[])
         const std::string conn = payload.value("connection_id", "");
         const std::string name = payload.value("name", "");
         if (conn.empty() || name.empty()) return;
+
+        HistorianTagRule selectedRule;
+        bool selected = false;
+        {
+            std::lock_guard<std::mutex> cfgLock(cfgMutex);
+            const auto it = std::find_if(cfg.historian_tags.begin(), cfg.historian_tags.end(), [&](const auto& rule) {
+                return rule.enabled && rule.connection_id == conn && rule.tag_name == name;
+            });
+            if (it != cfg.historian_tags.end())
+            {
+                selectedRule = *it;
+                selected = true;
+            }
+        }
+        if (!selected) return;
+        // Periodic selected tags are sampled by the independent snapshot
+        // worker. Do not duplicate them from the live update stream.
+        if (selectedRule.mode == "periodic") return;
 
         const int64_t ts = payload.value("timestamp_ms", now_ms());
 

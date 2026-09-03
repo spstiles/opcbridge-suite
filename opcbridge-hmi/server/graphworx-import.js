@@ -153,6 +153,80 @@ const transformedFrame = (node, base) => {
   };
 };
 
+const sampleGraphWorxPathFigures = (figures, curveSteps = 12) => {
+  const tokens = String(figures || "").match(/[A-Za-z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[Ee][-+]?\d+)?/g) || [];
+  const paths = [];
+  let points = [];
+  let index = 0;
+  let command = "";
+  let current = { x: 0, y: 0 };
+  let start = { x: 0, y: 0 };
+  const isCommand = (value) => /^[A-Za-z]$/.test(value || "");
+  const take = () => Number(tokens[index++]);
+  const push = (point) => {
+    current = point;
+    points.push([point.x, point.y]);
+  };
+  const finish = () => {
+    if (points.length > 1) paths.push(points);
+    points = [];
+  };
+  while (index < tokens.length) {
+    if (isCommand(tokens[index])) command = tokens[index++];
+    if (!command) break;
+    const relative = command === command.toLowerCase();
+    const upper = command.toUpperCase();
+    const point = () => {
+      const x = take();
+      const y = take();
+      return relative ? { x: current.x + x, y: current.y + y } : { x, y };
+    };
+    if (upper === "M") {
+      finish();
+      push(point());
+      start = { ...current };
+      command = relative ? "l" : "L";
+    } else if (upper === "L") {
+      push(point());
+    } else if (upper === "H") {
+      const x = take();
+      push({ x: relative ? current.x + x : x, y: current.y });
+    } else if (upper === "V") {
+      const y = take();
+      push({ x: current.x, y: relative ? current.y + y : y });
+    } else if (upper === "C") {
+      const origin = { ...current };
+      const c1 = point();
+      current = origin;
+      const c2 = point();
+      current = origin;
+      const end = point();
+      current = origin;
+      for (let step = 1; step <= curveSteps; step += 1) {
+        const t = step / curveSteps;
+        const mt = 1 - t;
+        push({
+          x: (mt ** 3) * origin.x + 3 * (mt ** 2) * t * c1.x + 3 * mt * (t ** 2) * c2.x + (t ** 3) * end.x,
+          y: (mt ** 3) * origin.y + 3 * (mt ** 2) * t * c1.y + 3 * mt * (t ** 2) * c2.y + (t ** 3) * end.y
+        });
+      }
+    } else if (upper === "A") {
+      // Preserve the arc endpoint when importing into the editable spline.
+      // Intermediate spline points still produce a curved, selectable path.
+      take(); take(); take(); take(); take();
+      push(point());
+    } else if (upper === "Z") {
+      push({ ...start });
+      command = "";
+    } else {
+      break;
+    }
+    if (index < tokens.length && !isCommand(tokens[index])) continue;
+  }
+  finish();
+  return paths;
+};
+
 const childEntries = (node) => {
   if (!node || typeof node !== "object") return [];
   if (Array.isArray(node.__orderedChildren)) return node.__orderedChildren;
@@ -722,6 +796,19 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const [start, end] = transformPoints([[num(node.X1), num(node.Y1)], [num(node.X2), num(node.Y2)]], node, base);
       add({ type: "line", x1: start.x, y1: start.y, x2: end.x, y2: end.y, stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
     }
+    else if (name === "Path") {
+      const geometry = asArray(node?.["Path.Data"]?.PathGeometry)[0];
+      const figures = String(geometry?.Figures || node.Data || "").trim();
+      sampleGraphWorxPathFigures(figures).forEach((rawPoints) => {
+        const points = transformPoints(rawPoints, node, base);
+        add({
+          type: "spline", points,
+          stroke: color(node.Stroke, "#000000"),
+          strokeWidth: num(node.StrokeThickness, 1),
+          ...sourceMetadata(name, node, { importConversion: "editable-spline" })
+        });
+      });
+    }
     else if (name === "Polygon" || name === "Polyline") {
       const rawPoints = String(node.Points || "").trim().split(/\s+/).map((pair) => pair.split(",").map(Number)).filter((pair) => pair.length === 2 && pair.every(Number.isFinite));
       const points = transformPoints(rawPoints, node, base);
@@ -731,9 +818,13 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const valign = verticalTextAlignment(node);
       const text = textFrom(node);
       const padding = num(String(node.Padding || "0").split(",")[0], 0);
+      const background = color(node.Background, "transparent");
+      const borderColor = color(node.BorderBrush, "transparent");
+      const borderWidth = Math.max(0, num(String(node.BorderThickness || "0").split(",")[0], 0));
+      const borderEnabled = borderWidth > 0 && !["none", "transparent", "#ffffff00"].includes(String(borderColor).toLowerCase());
       const anchorX = align === "center" ? 0.5 : (align === "right" ? 1 : 0);
       const anchorY = valign === "middle" ? 0.5 : (valign === "bottom" ? 1 : 0);
-      add({ type: "text", ...base, x: base.x + base.w * anchorX, y: base.y + base.h * anchorY, autoSize: !(base.w > 0 && base.h > 0), positionMode: "insertion-point", text, padding, wrapMode: text.includes("\n") ? "explicit" : "word", fontSize: num(node.FontSize, 14), fill: dynamicColorFallback(node, "Foreground", color(node.Foreground, "#000000")), bold: String(node.FontWeight).toLowerCase() === "bold", align, valign, ...sourceMetadata(name, node) });
+      add({ type: "text", ...base, x: base.x + base.w * anchorX, y: base.y + base.h * anchorY, autoSize: !(base.w > 0 && base.h > 0), positionMode: "insertion-point", text, padding, wrapMode: text.includes("\n") ? "explicit" : "word", fontSize: num(node.FontSize, 14), fill: dynamicColorFallback(node, "Foreground", color(node.Foreground, "#000000")), background, borderEnabled, borderColor, borderWidth, borderStyle: "flat", bold: String(node.FontWeight).toLowerCase() === "bold", align, valign, ...sourceMetadata(name, node) });
     }
     else if (name === "gwxctl:GwxPipeControl") {
       const rawPoints = String(node.Vertices || "").trim().split(/\s+/).map((pair) => pair.split(",").map(Number)).filter((pair) => pair.length === 2 && pair.every(Number.isFinite));
@@ -761,7 +852,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       return;
     }
 
-    if (supportedContainers.has(name) || !["Image", "Rectangle", "Ellipse", "Line", "Polygon", "Polyline", "Label", "gwxctl:GwxPipeControl"].includes(name)) {
+    if (supportedContainers.has(name) || !["Image", "Rectangle", "Ellipse", "Line", "Path", "Polygon", "Polyline", "Label", "gwxctl:GwxPipeControl"].includes(name)) {
       childEntries(node).forEach((entry) => walk(entry.name, entry.node));
     }
   };

@@ -1,5 +1,7 @@
--- Postgres schema for opcbridge-historian.
--- Works on plain Postgres. If TimescaleDB is installed, you can enable the optional section below.
+-- TimescaleDB schema for opcbridge-historian.
+-- TimescaleDB is a required Historian dependency.
+
+CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 CREATE TABLE IF NOT EXISTS tag_samples (
   ts          TIMESTAMPTZ NOT NULL,
@@ -19,25 +21,4 @@ CREATE TABLE IF NOT EXISTS tag_samples (
 CREATE INDEX IF NOT EXISTS idx_tag_samples_key_ts ON tag_samples (key, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_tag_samples_ts_brin ON tag_samples USING BRIN (ts);
 
--- Optional: TimescaleDB setup (uncomment if you have the extension installed).
--- CREATE EXTENSION IF NOT EXISTS timescaledb;
--- SELECT create_hypertable('tag_samples', 'ts', if_not_exists => TRUE);
---
--- -- Raw retention (default example: 30 days)
--- SELECT add_retention_policy('tag_samples', INTERVAL '30 days', if_not_exists => TRUE);
---
--- -- 1-minute rollup example (numeric-focused). Adjust retention to taste.
--- CREATE MATERIALIZED VIEW IF NOT EXISTS tag_rollup_1m
--- WITH (timescaledb.continuous) AS
--- SELECT
---   time_bucket(INTERVAL '1 minute', ts) AS bucket,
---   key,
---   avg(value_double) AS avg_value,
---   min(value_double) AS min_value,
---   max(value_double) AS max_value,
---   last(value_double, ts) AS last_value,
---   count(*) AS n
--- FROM tag_samples
--- GROUP BY bucket, key;
---
--- SELECT add_retention_policy('tag_rollup_1m', INTERVAL '2 years', if_not_exists => TRUE);
+SELECT create_hypertable('tag_samples', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
