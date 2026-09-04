@@ -8840,11 +8840,17 @@ const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
   keyEl.className = "text-binding-key";
   keyEl.textContent = `{${key}}`;
 
-  const connectionInput = document.createElement("input");
-  connectionInput.type = "text";
+  const connectionInput = document.createElement("select");
   connectionInput.className = "automation-tag-input";
-  connectionInput.placeholder = "connection_id";
-  connectionInput.value = String(binding?.connection_id || "");
+  populateConnectionSelect(connectionInput);
+  const bindingConnectionId = String(binding?.connection_id || "").trim();
+  if (bindingConnectionId && !Array.from(connectionInput.options).some((option) => option.value === bindingConnectionId)) {
+    const unresolvedOption = document.createElement("option");
+    unresolvedOption.value = bindingConnectionId;
+    unresolvedOption.textContent = getConnectionDisplayName(bindingConnectionId);
+    connectionInput.appendChild(unresolvedOption);
+  }
+  connectionInput.value = bindingConnectionId;
   connectionInput.disabled = binding?.sourceType === "expression";
 
   const tagInput = document.createElement("input");
