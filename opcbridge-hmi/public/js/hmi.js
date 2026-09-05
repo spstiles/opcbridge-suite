@@ -7243,6 +7243,12 @@ const parseReferenceCsv = (text) => {
 
 const parseMappedTagReference = (value) => {
   const raw = String(value || "").trim();
+  const functionMatch = raw.match(/^tag\s*\(\s*(["'])(.*?)\1\s*,\s*(["'])(.*?)\3\s*\)$/i);
+  if (functionMatch) {
+    const connection_id = resolveMappedConnectionId(functionMatch[2]);
+    const tag = String(functionMatch[4] || "").trim();
+    return connection_id && tag ? { connection_id, tag } : null;
+  }
   let separator = raw.indexOf("::");
   let width = 2;
   if (separator < 0) {
@@ -7250,10 +7256,27 @@ const parseMappedTagReference = (value) => {
     width = 1;
   }
   if (separator <= 0) return null;
-  const connection_id = raw.slice(0, separator).trim();
+  const connection_id = resolveMappedConnectionId(raw.slice(0, separator));
   const tag = raw.slice(separator + width).trim();
   return connection_id && tag ? { connection_id, tag } : null;
 };
+
+function resolveMappedConnectionId(value) {
+  const reference = String(value || "").trim();
+  if (!reference) return "";
+  const allTags = [...tagsCache, ...tagsAllCache];
+  if (allTags.some((tag) => String(tag?.connection_id || "").trim() === reference)) return reference;
+  const normalized = reference.toLowerCase();
+  const matches = [...new Set(allTags
+    .filter((tag) => {
+      const id = String(tag?.connection_id || "").trim();
+      const name = String(tag?.connection_name || "").trim();
+      return name.toLowerCase() === normalized || getConnectionDisplayName(id).toLowerCase() === normalized;
+    })
+    .map((tag) => String(tag?.connection_id || "").trim())
+    .filter(Boolean))];
+  return matches.length === 1 ? matches[0] : reference;
+}
 
 const formatMappedTagReference = (connectionId, tagName) => {
   const connection = String(connectionId || "").trim();
@@ -7360,11 +7383,11 @@ const downloadScreenReferenceMappings = () => {
     showHmiToast("This screen does not contain any tag or screen references.", 5000);
     return;
   }
-  const columns = ["mapping_scope", "reference_type", "original_reference", "current_reference", "replacement_reference", "uses", "status", "automations", "object_id", "object_path", "screen_id"];
+  const columns = ["mapping_scope", "reference_type", "current_reference", "replacement_reference", "uses", "status", "automations", "object_id", "object_path", "screen_id"];
   const lines = [columns.join(",")];
   groups.forEach((group) => {
     const statuses = Array.from(group.statuses);
-    const row = ["reference", group.type, Array.from(group.originals).join(" | "), group.current, "", group.occurrences.length, statuses.length === 1 ? statuses[0] : "mixed", Array.from(group.automations).sort().join(" | "), "", "", currentScreenId || currentScreenFilename || ""];
+    const row = ["reference", group.type, group.current, "", group.occurrences.length, statuses.length === 1 ? statuses[0] : "mixed", Array.from(group.automations).sort().join(" | "), "", "", currentScreenId || currentScreenFilename || ""];
     lines.push(row.map(referenceCsvEscape).join(","));
   });
   const blob = new Blob([`${lines.join("\r\n")}\r\n`], { type: "text/csv;charset=utf-8" });
@@ -7386,12 +7409,12 @@ const downloadObjectReferenceMappings = () => {
     showHmiToast("This screen does not contain any object references.", 5000);
     return;
   }
-  const columns = ["mapping_scope", "reference_type", "original_reference", "current_reference", "replacement_reference", "uses", "status", "automations", "object_id", "object_path", "screen_id"];
+  const columns = ["mapping_scope", "reference_type", "current_reference", "replacement_reference", "uses", "status", "automations", "object_id", "object_path", "screen_id"];
   const lines = [columns.join(",")];
   occurrences
     .sort((a, b) => a.type.localeCompare(b.type) || a.current.localeCompare(b.current, undefined, { numeric: true, sensitivity: "base" }) || a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: "base" }))
     .forEach((occurrence) => {
-      const row = ["object", occurrence.type, occurrence.original || occurrence.current, occurrence.current, "", 1, occurrence.status || "unknown", occurrence.automation || "data", occurrence.objectId || "", occurrence.path || "", currentScreenId || currentScreenFilename || ""];
+      const row = ["object", occurrence.type, occurrence.current, "", 1, occurrence.status || "unknown", occurrence.automation || "data", occurrence.objectId || "", occurrence.path || "", currentScreenId || currentScreenFilename || ""];
       lines.push(row.map(referenceCsvEscape).join(","));
     });
   const blob = new Blob([`${lines.join("\r\n")}\r\n`], { type: "text/csv;charset=utf-8" });
@@ -7468,13 +7491,25 @@ const openReferenceMappingPreview = (rows) => {
   closeReferenceMappingPreview();
   const groups = collectScreenReferenceMappings();
   const byKey = new Map(groups.map((group) => [`${group.type}\u0000${group.current}`, group]));
+  const findSourceGroup = (type, current, original) => {
+    const direct = byKey.get(`${type}\u0000${current}`);
+    if (direct) return direct;
+    const candidates = [current, ...String(original || "").split(" | ")].map((value) => value.trim()).filter(Boolean);
+    return groups.find((group) => group.type === type && candidates.some((candidate) =>
+      group.current === candidate || group.originals.has(candidate)
+    )) || null;
+  };
   const proposed = [];
   rows.forEach((row) => {
     const type = String(row.reference_type || "").trim().toLowerCase();
     const current = String(row.current_reference || "").trim();
-    const replacement = String(row.replacement_reference || "").trim();
-    if (!replacement || replacement === current) return;
-    const sourceGroup = byKey.get(`${type}\u0000${current}`);
+    const replacementInput = String(row.replacement_reference || "").trim();
+    if (!replacementInput || replacementInput === current) return;
+    const parsedReplacement = type === "tag" ? parseMappedTagReference(replacementInput) : null;
+    const replacement = parsedReplacement
+      ? formatMappedTagReference(parsedReplacement.connection_id, parsedReplacement.tag)
+      : replacementInput;
+    const sourceGroup = findSourceGroup(type, current, row.original_reference);
     const scope = String(row.mapping_scope || "reference").trim().toLowerCase();
     const objectPath = String(row.object_path || "").trim();
     const objectId = String(row.object_id || "").trim();
@@ -7486,8 +7521,8 @@ const openReferenceMappingPreview = (rows) => {
       );
       group = matches.length ? { ...sourceGroup, occurrences: matches } : null;
     }
-    const validFormat = type === "tag" ? Boolean(parseMappedTagReference(replacement)) : type === "screen";
-    proposed.push({ type, current, replacement, group, scope, objectId, objectPath, validFormat, resolved: type === "tag" ? knownMappedTag(replacement) : type === "screen" ? knownMappedScreen(replacement) : false });
+    const validFormat = type === "tag" ? Boolean(parsedReplacement) : type === "screen";
+    proposed.push({ type, current, replacement, replacementInput, group, scope, objectId, objectPath, validFormat, resolved: type === "tag" ? knownMappedTag(replacement) : type === "screen" ? knownMappedScreen(replacement) : false });
   });
   const applicable = proposed.filter((item) => item.group && item.validFormat);
   const affected = applicable.reduce((sum, item) => sum + item.group.occurrences.length, 0);
@@ -7501,7 +7536,7 @@ const openReferenceMappingPreview = (rows) => {
     const result = !item.group ? "Not used by this screen" : !item.validFormat ? "Invalid reference format" : item.resolved ? "Available" : "Unresolved (allowed)";
     row.className = item.group && item.validFormat ? (item.resolved ? "is-resolved" : "is-unresolved") : "is-invalid";
     const typeLabel = item.scope === "object" ? `${item.type || "?"} · object` : (item.type || "?");
-    [typeLabel, item.current, item.replacement, item.group?.occurrences?.length || 0, result].forEach((value) => { const cell = document.createElement("td"); cell.textContent = String(value); row.appendChild(cell); });
+    [typeLabel, item.current, item.replacementInput, item.group?.occurrences?.length || 0, result].forEach((value) => { const cell = document.createElement("td"); cell.textContent = String(value); row.appendChild(cell); });
     tbody.appendChild(row);
   });
   if (!proposed.length) overlay.querySelector(".reference-mapping-note").textContent = "No replacement_reference values were provided.";
