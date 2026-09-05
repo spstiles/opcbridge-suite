@@ -351,6 +351,44 @@ static bool snapshot_from_opcua_variant(TagSnapshot &snap,
     return true;
 }
 
+struct RemoteUaChild {
+    std::string node_id;
+    std::string name;
+    UA_NodeClass node_class = UA_NODECLASS_UNSPECIFIED;
+};
+
+static std::vector<RemoteUaChild> remote_ua_browse_children(UA_Client *client, const UA_NodeId &parent) {
+    std::vector<RemoteUaChild> out;
+    UA_BrowseRequest req;
+    UA_BrowseRequest_init(&req);
+    req.requestedMaxReferencesPerNode = 0;
+    req.nodesToBrowse = UA_BrowseDescription_new();
+    req.nodesToBrowseSize = 1;
+    UA_NodeId_copy(&parent, &req.nodesToBrowse[0].nodeId);
+    req.nodesToBrowse[0].browseDirection = UA_BROWSEDIRECTION_FORWARD;
+    req.nodesToBrowse[0].referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
+    req.nodesToBrowse[0].includeSubtypes = true;
+    req.nodesToBrowse[0].resultMask = UA_BROWSERESULTMASK_ALL;
+    UA_BrowseResponse resp = UA_Client_Service_browse(client, req);
+    if (resp.responseHeader.serviceResult == UA_STATUSCODE_GOOD && resp.resultsSize > 0 && resp.results[0].statusCode == UA_STATUSCODE_GOOD) {
+        for (size_t i = 0; i < resp.results[0].referencesSize; ++i) {
+            const UA_ReferenceDescription &ref = resp.results[0].references[i];
+            if (ref.nodeId.serverIndex != 0 || ref.nodeId.namespaceUri.length != 0) continue;
+            RemoteUaChild child;
+            UA_String printed = UA_STRING_NULL;
+            if (UA_NodeId_print(&ref.nodeId.nodeId, &printed) != UA_STATUSCODE_GOOD) continue;
+            child.node_id.assign(reinterpret_cast<const char*>(printed.data), printed.length);
+            UA_String_clear(&printed);
+            child.name.assign(reinterpret_cast<const char*>(ref.displayName.text.data), ref.displayName.text.length);
+            child.node_class = ref.nodeClass;
+            out.push_back(std::move(child));
+        }
+    }
+    UA_BrowseResponse_clear(&resp);
+    UA_BrowseRequest_clear(&req);
+    return out;
+}
+
 // Forward declaration so write_single_tag can use it
 bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b);
 bool should_log_tag_event_change(bool hadPrev, const TagSnapshot &snap, const TagSnapshot &prevSnap);
@@ -11773,7 +11811,8 @@ static bool ua_add_tag_variable_node(UA_Server *server,
                                      std::string &err) {
     const TagConfig &cfg = tag.cfg;
     err.clear();
-    if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg)) {
+    if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) &&
+        tag.cfg.source_tag.empty() && !is_opcua_client_driver_name(conn.driver)) {
         err = "invalid handle";
         return false;
     }
@@ -12300,7 +12339,8 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         for (auto &tag : driver.tags) {
             const TagConfig &cfg = tag.cfg;
 
-            if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) && !is_opcua_client_driver_name(conn.driver)) {
+            if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) &&
+                tag.cfg.source_tag.empty() && !is_opcua_client_driver_name(conn.driver)) {
                 std::cerr << "OPC UA: skipping tag '" << cfg.logical_name
                           << "' on connection '" << conn.id
                           << "' (invalid handle)\n";
@@ -23910,6 +23950,74 @@ window.addEventListener("load", startAutoRefresh);
 
 					res.set_content(root.dump(2), "application/json");
 				});
+
+					// POST /config/opcua/browse -> OPCBridge-only remote namespace discovery
+					svr.Post("/config/opcua/browse", [&](const httplib::Request &req, httplib::Response &res) {
+						if (!is_admin_request(req)) {
+							res.status = 403;
+							res.set_content(json{{"ok", false}, {"error", "Admin login required."}}.dump(), "application/json");
+							return;
+						}
+						json result{{"ok", false}, {"connections", json::array()}};
+						UA_Client *client = nullptr;
+						try {
+							const json body = json::parse(req.body.empty() ? "{}" : req.body);
+							std::string endpoint = trim_copy(body.value("endpoint", std::string{}));
+							if (endpoint.empty()) throw std::runtime_error("OPC UA endpoint is required.");
+							if (endpoint.rfind("opc.tcp://", 0) != 0) endpoint = "opc.tcp://" + endpoint;
+							if (endpoint.find(':', std::string("opc.tcp://").size()) == std::string::npos) endpoint += ":4840";
+							client = UA_Client_new();
+							if (!client) throw std::runtime_error("Unable to allocate OPC UA client.");
+							UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+							const std::string username = body.value("username", std::string{});
+							const std::string password = body.value("password", std::string{});
+							UA_StatusCode rc = username.empty() ? UA_Client_connect(client, endpoint.c_str())
+							    : UA_Client_connectUsername(client, endpoint.c_str(), username.c_str(), password.c_str());
+							if (rc != UA_STATUSCODE_GOOD) throw std::runtime_error("Connection failed: " + std::string(UA_StatusCode_name(rc)));
+
+							auto objects = remote_ua_browse_children(client, UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER));
+							RemoteUaChild bridge;
+							bool foundBridge = false;
+							for (const auto &child : objects) if (child.name == "OPCBridge") { bridge = child; foundBridge = true; break; }
+							if (!foundBridge) throw std::runtime_error("The endpoint does not expose an OPCBridge namespace.");
+							UA_NodeId bridgeId = UA_NODEID_NULL;
+							UA_String bridgeText = UA_STRING(const_cast<char*>(bridge.node_id.c_str()));
+							if (UA_NodeId_parse(&bridgeId, bridgeText) != UA_STATUSCODE_GOOD) throw std::runtime_error("Invalid remote OPCBridge node ID.");
+							for (const auto &remoteConn : remote_ua_browse_children(client, bridgeId)) {
+								if (remoteConn.node_class != UA_NODECLASS_OBJECT) continue;
+								json conn{{"name", remoteConn.name}, {"node_id", remoteConn.node_id}, {"tags", json::array()}};
+								UA_NodeId connId = UA_NODEID_NULL;
+								UA_String connText = UA_STRING(const_cast<char*>(remoteConn.node_id.c_str()));
+								if (UA_NodeId_parse(&connId, connText) == UA_STATUSCODE_GOOD) {
+									for (const auto &remoteTag : remote_ua_browse_children(client, connId)) {
+										if (remoteTag.node_class != UA_NODECLASS_VARIABLE) continue;
+										UA_NodeId tagId = UA_NODEID_NULL;
+										UA_String tagText = UA_STRING(const_cast<char*>(remoteTag.node_id.c_str()));
+										UA_Variant value; UA_Variant_init(&value);
+										std::string datatype = "string";
+										if (UA_NodeId_parse(&tagId, tagText) == UA_STATUSCODE_GOOD && UA_Client_readValueAttribute(client, tagId, &value) == UA_STATUSCODE_GOOD) {
+											TagSnapshot sample; ConnectionConfig dc; TagConfig dt;
+											if (snapshot_from_opcua_variant(sample, dc, dt, value)) datatype = sample.datatype;
+										}
+										UA_Byte access = 0; UA_Client_readAccessLevelAttribute(client, tagId, &access);
+										conn["tags"].push_back({{"name", remoteTag.name}, {"node_id", remoteTag.node_id}, {"datatype", datatype}, {"writable", (access & UA_ACCESSLEVELMASK_WRITE) != 0}});
+										UA_Variant_clear(&value); UA_NodeId_clear(&tagId);
+									}
+								}
+								UA_NodeId_clear(&connId);
+								result["connections"].push_back(std::move(conn));
+							}
+							UA_NodeId_clear(&bridgeId);
+							result["ok"] = true;
+							result["endpoint"] = endpoint;
+							res.status = 200;
+						} catch (const std::exception &ex) {
+							result["error"] = ex.what();
+							res.status = 400;
+						}
+						if (client) { UA_Client_disconnect(client); UA_Client_delete(client); }
+						res.set_content(result.dump(2), "application/json");
+					});
 
 					// GET /config/tags  -> flattened view of all tag configs on disk
 					svr.Get("/config/tags", [&](const httplib::Request &req, httplib::Response &res) {

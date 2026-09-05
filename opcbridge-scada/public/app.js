@@ -934,6 +934,9 @@
   newDevDriver: document.getElementById('newDevDriver'),
   newDevGatewayRow: document.getElementById('newDevGatewayRow'),
   newDevGateway: document.getElementById('newDevGateway'),
+  newDevOpcuaBrowseRow: document.getElementById('newDevOpcuaBrowseRow'),
+  newDevOpcuaBrowseBtn: document.getElementById('newDevOpcuaBrowseBtn'),
+  newDevOpcuaBrowseResults: document.getElementById('newDevOpcuaBrowseResults'),
   newDevPathRow: document.getElementById('newDevPathRow'),
   newDevPath: document.getElementById('newDevPath'),
   newDevModbusAddressModeRow: document.getElementById('newDevModbusAddressModeRow'),
@@ -17409,6 +17412,31 @@ function applyDeviceDriverUi(prefix) {
   const modeEl = isEdit ? els.editDevModbusAddressMode : els.newDevModbusAddressMode;
   if (modeEl && !modeEl.value) modeEl.value = 'address';
   mqttRows.forEach((row) => setRowVisible(row, isMqtt));
+  if (!isEdit) setRowVisible(els.newDevOpcuaBrowseRow, isRemoteOpcua);
+}
+
+async function browseNewRemoteOpcbridge() {
+  const endpoint = String(els.newDevGateway?.value || '').trim();
+  if (!endpoint) { setNewDevStatus('Enter the remote OPC UA endpoint first.'); return; }
+  setNewDevStatus('Browsing remote OPCBridge…');
+  if (els.newDevOpcuaBrowseBtn) els.newDevOpcuaBrowseBtn.disabled = true;
+  try {
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 120000 });
+    const connections = Array.isArray(payload?.connections) ? payload.connections : [];
+    if (!els.newDevOpcuaBrowseResults) return;
+    els.newDevOpcuaBrowseResults.innerHTML = connections.map((conn, ci) => {
+      const tags = Array.isArray(conn?.tags) ? conn.tags : [];
+      return `<details open><summary><label><input type="checkbox" data-opcua-connection="${ci}" checked /> ${escapeHtml(String(conn?.name || 'Connection'))}</label> <span class="hint">(${tags.length} tags)</span></summary>` +
+        tags.map((tag, ti) => `<label style="display:flex;gap:8px;padding:3px 18px;"><input type="checkbox" data-opcua-tag="${ci}:${ti}" checked /> <span>${escapeHtml(String(tag?.name || 'Tag'))}</span><span class="hint mono">${escapeHtml(String(tag?.datatype || ''))}</span></label>`).join('') + '</details>';
+    }).join('') || '<div class="hint">No OPCBridge tag connections were found.</div>';
+    els.newDevOpcuaBrowseResults.style.display = '';
+    els.newDevOpcuaBrowseResults._opcuaConnections = connections;
+    setNewDevStatus(`Found ${connections.length} remote connection${connections.length === 1 ? '' : 's'}. Select tags, then click Create.`);
+  } catch (err) {
+    setNewDevStatus(`Remote browse failed: ${err.message || err}`);
+  } finally {
+    if (els.newDevOpcuaBrowseBtn) els.newDevOpcuaBrowseBtn.disabled = false;
+  }
 }
 
 function fillConnForm(obj) {
@@ -20366,6 +20394,28 @@ async function createNewDeviceFromWorkspace() {
   if (state.connObjCache) state.connObjCache.set(String(relPath), obj);
   state.connFiles = state.connFiles.concat([{ kind: 'connection', path: relPath }]);
 
+  if (driver === 'opcua_client' && els.newDevOpcuaBrowseResults?._opcuaConnections) {
+    const remote = els.newDevOpcuaBrowseResults._opcuaConnections;
+    const selected = Array.from(els.newDevOpcuaBrowseResults.querySelectorAll('[data-opcua-tag]:checked'));
+    const imported = selected.map((input) => {
+      const [ci, ti] = String(input.dataset.opcuaTag || '').split(':').map(Number);
+      const tag = remote?.[ci]?.tags?.[ti] || {};
+      const remoteConnection = String(remote?.[ci]?.name || '').trim();
+      const name = String(tag?.name || '').trim();
+      return {
+        connection_id,
+        name: remoteConnection ? `${remoteConnection}/${name}` : name,
+        plc_tag_name: String(tag?.node_id || ''),
+        datatype: String(tag?.datatype || 'string'),
+        scan_ms: 1000,
+        enabled: true,
+        writable: Boolean(tag?.writable)
+      };
+    }).filter((tag) => tag.name && tag.plc_tag_name);
+    state.tagConfigAll = (Array.isArray(state.tagConfigAll) ? state.tagConfigAll : []).concat(imported);
+    if (imported.length) markTagsDirty(true);
+  }
+
   setNewDevStatus('Staged.');
   renderWorkspaceSaveBar();
   saveWorkspaceDraft();
@@ -20390,6 +20440,15 @@ function wireNewDeviceFormUi() {
   els.newDevModalCloseBtn?.addEventListener('click', closeWorkspaceNewDeviceForm);
   els.newDevCreateBtn?.addEventListener('click', createNewDeviceFromWorkspace);
   els.newDevDriver?.addEventListener('change', () => applyDeviceDriverUi('new'));
+  els.newDevOpcuaBrowseBtn?.addEventListener('click', browseNewRemoteOpcbridge);
+  els.newDevOpcuaBrowseResults?.addEventListener('change', (event) => {
+    const connectionToggle = event.target?.closest?.('[data-opcua-connection]');
+    if (!connectionToggle) return;
+    const index = String(connectionToggle.dataset.opcuaConnection || '');
+    els.newDevOpcuaBrowseResults.querySelectorAll('[data-opcua-tag]').forEach((input) => {
+      if (String(input.dataset.opcuaTag || '').startsWith(`${index}:`)) input.checked = connectionToggle.checked;
+    });
+  });
   els.newDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('new'));
   els.serverCertRefreshBtn?.addEventListener('click', () => refreshServerCertificateLibrary());
   els.serverCertUploadBtn?.addEventListener('click', uploadServerCertificate);
