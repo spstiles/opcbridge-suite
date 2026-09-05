@@ -21,4 +21,6 @@ CREATE TABLE IF NOT EXISTS tag_samples (
 CREATE INDEX IF NOT EXISTS idx_tag_samples_key_ts ON tag_samples (key, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_tag_samples_ts_brin ON tag_samples USING BRIN (ts);
 
-SELECT create_hypertable('tag_samples', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
+-- Never initiate a potentially hours-long legacy-table conversion implicitly.
+-- The installer handles existing data explicitly (archive or migrate).
+SELECT create_hypertable('tag_samples', 'ts', if_not_exists => TRUE, migrate_data => FALSE);

@@ -40,6 +40,9 @@ FORCE_SOURCE_DEPS="${OPCBRIDGE_FORCE_SOURCE_DEPS:-0}"
 PROFILE=""
 COMPONENTS=()
 INIT_HISTORIAN_DB=0
+HISTORIAN_EXISTING_DATA="ask"
+HISTORIAN_DB_SKIPPED=0
+HISTORIAN_DB_MIGRATING=0
 
 usage() {
   cat <<USAGE
@@ -74,6 +77,8 @@ Options:
   --with-pjsip            Build/install pjproject (pjsua) for SIP callouts
   --no-pjsip              Do not build/install pjproject (pjsua)
   --init-historian-db     Create local Postgres role/db and load historian schema
+  --historian-existing-data MODE
+                          Existing non-Timescale data: ask (default), archive, migrate, or cancel
   --no-start              Do not start services
   --no-enable             Do not enable services at boot
   --scada-systemd-sudo    Configure sudoers so opcbridge-scada can manage opcbridge.service
@@ -1456,8 +1461,9 @@ install_historian() {
   local src="$ROOT_DIR/opcbridge-historian/opcbridge-historian"
   [[ -x "$src" ]] || { echo "Missing $src (build first)" >&2; exit 1; }
   install -m 0755 "$src" "$PREFIX/bin/opcbridge-historian"
+  install -m 0755 "$ROOT_DIR/opcbridge-historian/migrate-timescaledb.sh" "$PREFIX/bin/opcbridge-historian-migrate"
 
-  mkdir -p "$PREFIX/share/opcbridge-historian" "$CONFIG_ROOT/historian"
+  mkdir -p "$PREFIX/share/opcbridge-historian" "$CONFIG_ROOT/historian" "$DATA_ROOT/historian"
   install -m 0644 "$ROOT_DIR/opcbridge-historian/schema.sql" "$PREFIX/share/opcbridge-historian/schema.sql" 2>/dev/null || true
   install -m 0644 "$ROOT_DIR/opcbridge-historian/schema.sql" "$CONFIG_ROOT/historian/schema.sql" 2>/dev/null || true
   install -m 0644 "$ROOT_DIR/opcbridge-historian/config.json.example" "$CONFIG_ROOT/historian/config.json.example" 2>/dev/null || true
@@ -1563,10 +1569,75 @@ init_historian_db() {
       "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${db}\" OWNER \"${user}\";" || return 1
     fi
     "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"${db}\" OWNER TO \"${user}\";" || return 1
-    local table_size schema_pid elapsed
-    table_size="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT CASE WHEN to_regclass('public.tag_samples') IS NULL THEN 'new table' ELSE pg_size_pretty(pg_total_relation_size('public.tag_samples')) END;" | xargs)"
-    echo "Historian table before schema update: ${table_size:-unknown size}"
-    echo "Applying TimescaleDB schema. Converting an existing table is a one-time operation and may take a while."
+    local table_info table_exists table_has_rows is_hypertable estimated_rows table_size migration_choice archive_stamp archive_table
+    table_exists="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT (to_regclass('public.tag_samples') IS NOT NULL)::int;" | xargs)"
+    table_has_rows=0
+    estimated_rows=0
+    table_size="new table"
+    if [[ "$table_exists" == "1" ]]; then
+      table_info="$("${as_pg[@]}" psql -d "${db}" -X -AtF '|' -c "SELECT (EXISTS (SELECT 1 FROM public.tag_samples LIMIT 1))::int, GREATEST((SELECT reltuples::bigint FROM pg_class WHERE oid='public.tag_samples'::regclass),0), pg_size_pretty(pg_total_relation_size('public.tag_samples'));" | xargs)"
+      IFS='|' read -r table_has_rows estimated_rows table_size <<<"$table_info"
+    fi
+    is_hypertable=0
+    if "${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT 1 FROM pg_extension WHERE extname='timescaledb';" | grep -q 1; then
+      is_hypertable="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT EXISTS (SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema='public' AND hypertable_name='tag_samples')::int;" | xargs)"
+    fi
+    echo "Historian table before schema update: ${table_size:-unknown size}; approximately ${estimated_rows:-0} rows"
+
+    if [[ "$table_exists" == "1" && "$is_hypertable" != "1" && "$table_has_rows" == "1" ]]; then
+      migration_choice="$HISTORIAN_EXISTING_DATA"
+      if [[ "$migration_choice" == "ask" ]]; then
+        echo "Existing historian data must be handled before TimescaleDB can be enabled."
+        echo "Archiving is fast and recoverable. Migration preserves the data in place but can take hours."
+        migration_choice="$(prompt_choice "Choose how to handle the existing historian archive:" \
+          "archive - preserve the old table and start a new historian (recommended)" \
+          "migrate - convert existing rows in the background after installation" \
+          "cancel - leave the database unchanged and do not start historian")"
+        migration_choice="${migration_choice%% *}"
+      fi
+
+      case "$migration_choice" in
+        archive)
+          archive_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          archive_table="tag_samples_legacy_${archive_stamp}"
+          echo "Archiving existing historian table as public.${archive_table}..."
+          "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" <<SQL || return 1
+ALTER TABLE public.tag_samples RENAME TO ${archive_table};
+ALTER INDEX IF EXISTS public.idx_tag_samples_key_ts RENAME TO idx_legacy_key_ts_${archive_stamp};
+ALTER INDEX IF EXISTS public.idx_tag_samples_ts_brin RENAME TO idx_legacy_ts_brin_${archive_stamp};
+SQL
+          echo "Archived ${table_size} of legacy data. It was preserved and will not be queried by the new historian."
+          ;;
+        migrate)
+          echo "Scheduling approximately ${estimated_rows} rows (${table_size}) for background TimescaleDB migration."
+          install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$DATA_ROOT/historian"
+          touch "$DATA_ROOT/historian/migration-requested"
+          chmod 0644 "$DATA_ROOT/historian/migration-requested"
+          printf '{"state":"pending","message":"Waiting for the background migration service to start.","started_at":null,"updated_at":"%s","elapsed_seconds":0,"table_size":"%s","estimated_rows":%s}\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$table_size" "$estimated_rows" >"$DATA_ROOT/historian/migration-status.json"
+          chmod 0644 "$DATA_ROOT/historian/migration-status.json"
+          HISTORIAN_DB_MIGRATING=1
+          systemctl enable opcbridge-historian-migrate.service >/dev/null 2>&1 || true
+          systemctl start --no-block opcbridge-historian-migrate.service || return 1
+          echo "Background migration started. The rest of the installation will continue."
+          echo "Monitor it with: journalctl -u opcbridge-historian-migrate -f"
+          return 0
+          ;;
+        cancel)
+          echo "Historian database conversion cancelled. The existing table was not changed."
+          echo "The historian service will remain stopped. Re-run with --historian-existing-data archive or migrate."
+          HISTORIAN_DB_SKIPPED=1
+          return 0
+          ;;
+        *)
+          echo "Invalid historian existing-data mode: ${migration_choice}" >&2
+          return 1
+          ;;
+      esac
+    fi
+
+    local schema_pid elapsed
+    echo "Applying TimescaleDB schema..."
     # Open the schema as root and pass it over stdin. CONFIG_ROOT is normally
     # not traversable by the postgres account, and psql -f would fail there.
     "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -d "${db}" <"${schema_path}" &
@@ -1576,7 +1647,7 @@ init_historian_db() {
       sleep 1
       elapsed=$((elapsed + 1))
       if (( elapsed % 15 == 0 )) && kill -0 "$schema_pid" 2>/dev/null; then
-        echo "TimescaleDB schema migration is still active (${elapsed}s elapsed)..."
+        echo "TimescaleDB schema update is still active (${elapsed}s elapsed)..."
       fi
     done
     wait "$schema_pid" || return 1
@@ -1916,6 +1987,25 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 "
+      write_unit "opcbridge-historian-migrate.service" "[Unit]
+Description=OPCBridge historian legacy TimescaleDB migration
+After=postgresql.service
+Requires=postgresql.service
+Before=opcbridge-historian.service
+ConditionPathExists=${DATA_ROOT}/historian/migration-requested
+
+[Service]
+Type=oneshot
+EnvironmentFile=${ENV_FILE}
+Environment=OPCBRIDGE_HISTORIAN_MIGRATION_STATUS=${DATA_ROOT}/historian/migration-status.json
+Environment=OPCBRIDGE_HISTORIAN_MIGRATION_REQUEST=${DATA_ROOT}/historian/migration-requested
+Environment=OPCBRIDGE_HISTORIAN_SCHEMA=${CONFIG_ROOT}/historian/schema.sql
+ExecStart=${PREFIX}/bin/opcbridge-historian-migrate
+ExecStartPost=/bin/systemctl --no-block start opcbridge-historian.service
+
+[Install]
+WantedBy=multi-user.target
+"
   fi
 
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
@@ -2029,6 +2119,11 @@ main() {
       --with-node-deps) WITH_NODE_DEPS=1; shift;;
       --deps) INSTALL_DEPS=1; shift;;
       --init-historian-db) INIT_HISTORIAN_DB=1; shift;;
+      --historian-existing-data)
+        HISTORIAN_EXISTING_DATA="${2:-}"
+        case "$HISTORIAN_EXISTING_DATA" in ask|archive|migrate|cancel) ;; *) echo "Invalid --historian-existing-data mode: ${HISTORIAN_EXISTING_DATA}" >&2; exit 1;; esac
+        shift 2
+        ;;
       --with-odbc) WITH_ODBC=1; shift;;
       --odbc-driver) ODBC_DRIVER="${2:-}"; shift 2;;
       --with-pjsip) WITH_PJSIP=1; WITH_PJSIP_EXPLICIT=1; shift;;
@@ -2198,7 +2293,7 @@ main() {
       if [[ "$INIT_HISTORIAN_DB" -eq 1 ]]; then
         init_historian_db || mark_install_error
         systemctl daemon-reload >/dev/null 2>&1 || true
-        if [[ "$ENABLE_SERVICES" -eq 1 ]] && systemctl cat "opcbridge-historian" >/dev/null 2>&1; then
+        if [[ "$HISTORIAN_DB_SKIPPED" -eq 0 && "$ENABLE_SERVICES" -eq 1 ]] && systemctl cat "opcbridge-historian" >/dev/null 2>&1; then
           systemctl enable "opcbridge-historian" >/dev/null 2>&1 || true
         fi
       fi
@@ -2233,6 +2328,14 @@ main() {
           fi
         fi
         if [[ "$svc" == "opcbridge-historian" ]]; then
+          if [[ "$HISTORIAN_DB_SKIPPED" -eq 1 ]]; then
+            echo "Skipping start of opcbridge-historian (database conversion was cancelled)."
+            continue
+          fi
+          if [[ "$HISTORIAN_DB_MIGRATING" -eq 1 ]]; then
+            echo "Skipping start of opcbridge-historian while its database migrates in the background."
+            continue
+          fi
           if ! grep -Eq '^HISTORIAN_PGPASSWORD=.+$' "$ENV_FILE" 2>/dev/null; then
             echo "Skipping start of opcbridge-historian (HISTORIAN_PGPASSWORD is not set in ${ENV_FILE})."
             echo "After configuring Postgres, start with:"

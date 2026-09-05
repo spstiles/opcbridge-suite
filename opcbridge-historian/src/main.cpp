@@ -1149,7 +1149,10 @@ private:
         if (!exec_command(brinIndex.str(), err)) return false;
 
         std::ostringstream hypertable;
-        hypertable << "SELECT create_hypertable('" << cfg_.table << "','ts',if_not_exists=>TRUE,migrate_data=>TRUE);";
+        // Service startup must never silently launch a potentially hours-long
+        // conversion of an existing PostgreSQL table. The installer presents
+        // the archive/migrate decision explicitly.
+        hypertable << "SELECT create_hypertable('" << cfg_.table << "','ts',if_not_exists=>TRUE,migrate_data=>FALSE);";
         if (!exec_query_command(hypertable.str(), err)) return false;
 
         return true;

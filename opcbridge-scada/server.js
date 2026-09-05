@@ -200,6 +200,16 @@ const HISTORIAN_CONFIG_PATH = String(
 ).trim();
 const HISTORIAN_CONFIG_EXAMPLE_PATH = `${HISTORIAN_CONFIG_PATH}.example`;
 const HISTORIAN_SYSTEMD_UNIT = String(process.env.OPCBRIDGE_HISTORIAN_SYSTEMD_UNIT || 'opcbridge-historian.service').trim();
+const HISTORIAN_MIGRATION_STATUS_PATH = String(
+  process.env.OPCBRIDGE_HISTORIAN_MIGRATION_STATUS ||
+  '/var/lib/opcbridge/historian/migration-status.json'
+).trim();
+
+function readHistorianMigrationStatus() {
+  const status = readJsoncFileOrNull(HISTORIAN_MIGRATION_STATUS_PATH);
+  const state = String(status?.state || '').toLowerCase();
+  return ['pending', 'migrating', 'completed', 'failed'].includes(state) ? { ...status, state } : null;
+}
 
 const REPORT_DEFINITIONS_PATH = String(
   process.env.OPCBRIDGE_REPORT_DEFINITIONS ||
@@ -3383,7 +3393,21 @@ const server = http.createServer(async (req, res) => {
       { id: 'scada', name: 'SCADA', version: COMPONENT_VERSION, suite_version: SUITE_VERSION, status: 'running' },
       component('hmi', 'HMI', hmi),
       component('logger', 'Logger', logger),
-      component('historian', 'Historian', historian),
+      (() => {
+        const item = component('historian', 'Historian', historian);
+        const migration = readHistorianMigrationStatus();
+        if (item.status === 'unavailable' && (migration?.state === 'pending' || migration?.state === 'migrating')) {
+          item.status = 'migrating';
+          item.detail = migration;
+        } else if (item.status === 'unavailable' && migration?.state === 'completed') {
+          item.status = 'starting';
+          item.detail = migration;
+        } else if (item.status === 'unavailable' && migration?.state === 'failed') {
+          item.status = 'migration failed';
+          item.detail = migration;
+        }
+        return item;
+      })(),
       component('flow', 'Flow', flow),
       { id: 'report', name: 'Report', version: readInstalledVersion(path.join(SUITE_PREFIX, 'report', 'VERSION')),
         suite_version: SUITE_VERSION, status: fs.existsSync(path.join(SUITE_PREFIX, 'report', 'opcbridge-report')) ? 'installed' : 'unavailable' }
@@ -4270,6 +4294,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const health = await historianApiRequest('GET', '/health');
+    const migration = readHistorianMigrationStatus();
+    if (!health.ok && (migration?.state === 'pending' || migration?.state === 'migrating')) {
+      sendJson(res, 200, { ok: true, migrating: true, migration, historian: null, api: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT, status: health.status } });
+      return;
+    }
+    if (!health.ok && migration?.state === 'completed') {
+      sendJson(res, 200, { ok: true, starting: true, migration, historian: null, api: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT, status: health.status } });
+      return;
+    }
     sendJson(res, health.ok ? 200 : 502, {
       ok: health.ok,
       historian: health.json || null,

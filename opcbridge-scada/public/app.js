@@ -1777,6 +1777,27 @@ function historianSetStatus(msg) {
 
 function renderHistorianHealth() {
   if (!els.historianHealthKv) return;
+  const migration = state.historianRuntime?.migration || null;
+  if (state.historianRuntime?.migrating && migration) {
+    const elapsed = Math.max(0, Number(migration.elapsed_seconds || 0));
+    const elapsedText = elapsed >= 3600
+      ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`
+      : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+    const rows = [
+      ['Status', migration.state === 'pending' ? 'Migration pending' : 'Migrating legacy data'],
+      ['Table size', migration.table_size || 'Unknown'],
+      ['Estimated rows', Number(migration.estimated_rows || 0).toLocaleString()],
+      ['Elapsed', elapsedText],
+      ['Last update', migration.updated_at || ''],
+      ['Details', migration.message || 'Historian will start automatically when migration completes.']
+    ];
+    els.historianHealthKv.innerHTML = rows.map(([k, v]) => `<div><b>${escapeHtml(k)}</b><span>${escapeHtml(String(v))}</span></div>`).join('');
+    return;
+  }
+  if (state.historianRuntime?.starting && migration) {
+    els.historianHealthKv.innerHTML = '<div><b>Status</b><span>Migration complete; historian is starting</span></div>';
+    return;
+  }
   const h = state.historianRuntime?.historian || null;
   if (!h) {
     els.historianHealthKv.innerHTML = '<div><b>Status</b><span>Not loaded</span></div>';
@@ -2147,7 +2168,9 @@ async function refreshHistorianTab() {
   renderHistorianHealth();
   renderHistorianPolicy();
   renderHistorianTags();
-  historianSetStatus(health?.ok ? 'Loaded' : `Unavailable: ${health?.error || 'failed'}`);
+  historianSetStatus(health?.migrating
+    ? 'Migrating legacy historian data in the background'
+    : (health?.starting ? 'Migration complete; historian is starting' : (health?.ok ? 'Loaded' : `Unavailable: ${health?.error || 'failed'}`)));
 }
 
 async function refreshHistorianRuntimeStatus() {
@@ -27191,10 +27214,13 @@ function renderComponentVersions(payload) {
   }
   els.overviewComponentsTbody.innerHTML = components.map((item) => {
     const status = String(item?.status || 'unavailable');
-    const statusClass = status === 'running' || status === 'installed' ? 'ok' : 'bad';
+    const statusClass = status === 'running' || status === 'installed' ? 'ok' : (status === 'migrating' || status === 'starting' ? 'warn' : 'bad');
+    const detail = item?.detail && (status === 'migrating' || status === 'starting')
+      ? ` title="${escapeHtml(`${item.detail.table_size || 'Unknown size'}; ${Number(item.detail.elapsed_seconds || 0)}s elapsed`)}"`
+      : '';
     return `<tr><td>${escapeHtml(String(item?.name || item?.id || ''))}</td>` +
       `<td class="mono">${escapeHtml(String(item?.version || '—'))}</td>` +
-      `<td><span class="badge ${statusClass}">${escapeHtml(status)}</span></td></tr>`;
+      `<td><span class="badge ${statusClass}"${detail}>${escapeHtml(status)}</span></td></tr>`;
   }).join('');
 }
 

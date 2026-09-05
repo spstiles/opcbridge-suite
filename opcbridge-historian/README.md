@@ -32,6 +32,22 @@ psql "$PGCONN" -f ./schema.sql
 
 Note: the opcbridge-suite installer runs this as a systemd service and passes Postgres settings via `--pg-conninfo` (with `PGPASSWORD` from the suite env file), so `postgres.conninfo` in the JSON can be left empty for non-secret configs.
 
+### Existing archive conversion
+
+If an existing PostgreSQL `tag_samples` table contains legacy archive data,
+the installer asks whether to archive it and start fresh, migrate it in the
+background, or cancel. Background conversion is owned by
+`opcbridge-historian-migrate.service`; the remaining suite starts normally and
+SCADA reports the Historian as **migrating** until conversion completes. Follow
+its detailed log with:
+
+```bash
+journalctl -u opcbridge-historian-migrate -f
+```
+
+The historian writer starts automatically after a successful conversion. Its
+normal startup path never implicitly migrates a populated PostgreSQL table.
+
 ## Modes
 
 You can enable either or both:
