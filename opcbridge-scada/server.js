@@ -2810,6 +2810,7 @@ function upstreamTimeoutMs(prefixName, upstreamPathname, method) {
 
   // Some writes can legitimately take a long time (large tag lists, reload).
   if (prefixName === 'opcbridge') {
+    if (p === '/config/opcua/browse') return 180000;
     if (p === '/reload') return 120000;
     if (p === '/reload/connection') return 120000;
     if (p === '/config/tags') return 120000;

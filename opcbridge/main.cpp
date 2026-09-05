@@ -23989,20 +23989,38 @@ window.addEventListener("load", startAutoRefresh);
 								UA_NodeId connId = UA_NODEID_NULL;
 								UA_String connText = UA_STRING(const_cast<char*>(remoteConn.node_id.c_str()));
 								if (UA_NodeId_parse(&connId, connText) == UA_STATUSCODE_GOOD) {
-									for (const auto &remoteTag : remote_ua_browse_children(client, connId)) {
-										if (remoteTag.node_class != UA_NODECLASS_VARIABLE) continue;
+									auto children = remote_ua_browse_children(client, connId);
+									std::vector<RemoteUaChild> tags;
+									for (const auto &child : children) if (child.node_class == UA_NODECLASS_VARIABLE) tags.push_back(child);
+									UA_ReadRequest readReq; UA_ReadRequest_init(&readReq);
+									readReq.nodesToReadSize = tags.size() * 2;
+									readReq.nodesToRead = static_cast<UA_ReadValueId*>(UA_Array_new(readReq.nodesToReadSize, &UA_TYPES[UA_TYPES_READVALUEID]));
+									for (size_t i = 0; i < tags.size(); ++i) {
 										UA_NodeId tagId = UA_NODEID_NULL;
-										UA_String tagText = UA_STRING(const_cast<char*>(remoteTag.node_id.c_str()));
-										UA_Variant value; UA_Variant_init(&value);
-										std::string datatype = "string";
-										if (UA_NodeId_parse(&tagId, tagText) == UA_STATUSCODE_GOOD && UA_Client_readValueAttribute(client, tagId, &value) == UA_STATUSCODE_GOOD) {
-											TagSnapshot sample; ConnectionConfig dc; TagConfig dt;
-											if (snapshot_from_opcua_variant(sample, dc, dt, value)) datatype = sample.datatype;
-										}
-										UA_Byte access = 0; UA_Client_readAccessLevelAttribute(client, tagId, &access);
-										conn["tags"].push_back({{"name", remoteTag.name}, {"node_id", remoteTag.node_id}, {"datatype", datatype}, {"writable", (access & UA_ACCESSLEVELMASK_WRITE) != 0}});
-										UA_Variant_clear(&value); UA_NodeId_clear(&tagId);
+										UA_String tagText = UA_STRING(const_cast<char*>(tags[i].node_id.c_str()));
+										if (UA_NodeId_parse(&tagId, tagText) != UA_STATUSCODE_GOOD) continue;
+										UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 2].nodeId);
+										readReq.nodesToRead[i * 2].attributeId = UA_ATTRIBUTEID_VALUE;
+										UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 2 + 1].nodeId);
+										readReq.nodesToRead[i * 2 + 1].attributeId = UA_ATTRIBUTEID_ACCESSLEVEL;
+										UA_NodeId_clear(&tagId);
 									}
+									UA_ReadResponse readResp = UA_Client_Service_read(client, readReq);
+									for (size_t i = 0; i < tags.size(); ++i) {
+										std::string datatype = "string";
+										bool writable = false;
+										if (readResp.resultsSize > i * 2 && readResp.results[i * 2].hasValue) {
+											TagSnapshot sample; ConnectionConfig dc; TagConfig dt;
+											if (snapshot_from_opcua_variant(sample, dc, dt, readResp.results[i * 2].value)) datatype = sample.datatype;
+										}
+										if (readResp.resultsSize > i * 2 + 1 && readResp.results[i * 2 + 1].hasValue) {
+											const UA_Variant &accessValue = readResp.results[i * 2 + 1].value;
+											if (UA_Variant_hasScalarType(&accessValue, &UA_TYPES[UA_TYPES_BYTE])) writable = ((*static_cast<const UA_Byte*>(accessValue.data) & UA_ACCESSLEVELMASK_WRITE) != 0);
+										}
+										conn["tags"].push_back({{"name", tags[i].name}, {"node_id", tags[i].node_id}, {"datatype", datatype}, {"writable", writable}});
+									}
+									UA_ReadResponse_clear(&readResp);
+									UA_ReadRequest_clear(&readReq);
 								}
 								UA_NodeId_clear(&connId);
 								result["connections"].push_back(std::move(conn));

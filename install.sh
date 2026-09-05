@@ -43,6 +43,7 @@ INIT_HISTORIAN_DB=0
 HISTORIAN_EXISTING_DATA="ask"
 HISTORIAN_DB_SKIPPED=0
 HISTORIAN_DB_MIGRATING=0
+HISTORIAN_DB_INIT_FAILED=0
 
 usage() {
   cat <<USAGE
@@ -1569,6 +1570,18 @@ init_historian_db() {
       "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${db}\" OWNER \"${user}\";" || return 1
     fi
     "${as_pg[@]}" psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"${db}\" OWNER TO \"${user}\";" || return 1
+
+    # Validate the server extension before renaming or migrating any existing
+    # historian table. Having psql installed does not mean the TimescaleDB
+    # package exists for the active PostgreSQL major version.
+    if ! "${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT 1 FROM pg_available_extensions WHERE name='timescaledb';" | grep -q 1; then
+      local pg_server_version
+      pg_server_version="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SHOW server_version;" | xargs)"
+      echo "ERROR: TimescaleDB is not installed for the active PostgreSQL server (${pg_server_version:-unknown version})." >&2
+      echo "No historian tables were changed. Re-run the installer with --deps." >&2
+      return 1
+    fi
+
     local table_info table_exists table_has_rows is_hypertable estimated_rows table_size migration_choice archive_stamp archive_table
     table_exists="$("${as_pg[@]}" psql -d "${db}" -X -tAc "SELECT (to_regclass('public.tag_samples') IS NOT NULL)::int;" | xargs)"
     table_has_rows=0
@@ -2291,9 +2304,12 @@ main() {
         fi
       fi
       if [[ "$INIT_HISTORIAN_DB" -eq 1 ]]; then
-        init_historian_db || mark_install_error
+        if ! init_historian_db; then
+          HISTORIAN_DB_INIT_FAILED=1
+          mark_install_error
+        fi
         systemctl daemon-reload >/dev/null 2>&1 || true
-        if [[ "$HISTORIAN_DB_SKIPPED" -eq 0 && "$ENABLE_SERVICES" -eq 1 ]] && systemctl cat "opcbridge-historian" >/dev/null 2>&1; then
+        if [[ "$HISTORIAN_DB_SKIPPED" -eq 0 && "$HISTORIAN_DB_INIT_FAILED" -eq 0 && "$ENABLE_SERVICES" -eq 1 ]] && systemctl cat "opcbridge-historian" >/dev/null 2>&1; then
           systemctl enable "opcbridge-historian" >/dev/null 2>&1 || true
         fi
       fi
@@ -2328,6 +2344,10 @@ main() {
           fi
         fi
         if [[ "$svc" == "opcbridge-historian" ]]; then
+          if [[ "$HISTORIAN_DB_INIT_FAILED" -eq 1 ]]; then
+            echo "Skipping start of opcbridge-historian because database initialization failed."
+            continue
+          fi
           if [[ "$HISTORIAN_DB_SKIPPED" -eq 1 ]]; then
             echo "Skipping start of opcbridge-historian (database conversion was cancelled)."
             continue

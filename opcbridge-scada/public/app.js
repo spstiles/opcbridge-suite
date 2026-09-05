@@ -17421,7 +17421,7 @@ async function browseNewRemoteOpcbridge() {
   setNewDevStatus('Browsing remote OPCBridge…');
   if (els.newDevOpcuaBrowseBtn) els.newDevOpcuaBrowseBtn.disabled = true;
   try {
-    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 120000 });
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     if (!els.newDevOpcuaBrowseResults) return;
     els.newDevOpcuaBrowseResults.innerHTML = connections.map((conn, ci) => {
