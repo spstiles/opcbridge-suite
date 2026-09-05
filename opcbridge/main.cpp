@@ -211,6 +211,9 @@ struct ConnectionConfig {
     int debug              = 0;
     std::vector<std::string> mqtt_subscription_topics;
     std::vector<std::string> mqtt_publication_topics;
+    std::string opcua_endpoint;
+    std::string opcua_username;
+    std::string opcua_password;
 };
 
 	struct TagConfig {
@@ -305,6 +308,48 @@ struct TagSnapshot {
     std::chrono::system_clock::time_point timestamp;
     int quality; // 0=bad, 1=good
 };
+
+static bool snapshot_from_opcua_variant(TagSnapshot &snap,
+                                        const ConnectionConfig &conn,
+                                        const TagConfig &tag,
+                                        const UA_Variant &value) {
+    snap.connection_id = conn.id;
+    snap.logical_name = tag.logical_name;
+    snap.datatype = tag.datatype;
+    snap.timestamp = std::chrono::system_clock::now();
+    snap.quality = 1;
+    if (!UA_Variant_isScalar(&value) || !value.data) return false;
+
+    if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BOOLEAN])) {
+        snap.datatype = "bool";
+        snap.value = (*static_cast<const UA_Boolean*>(value.data) != UA_FALSE);
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT16])) {
+        snap.datatype = "int16";
+        snap.value = static_cast<int16_t>(*static_cast<const UA_Int16*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT16])) {
+        snap.datatype = "uint16";
+        snap.value = static_cast<uint16_t>(*static_cast<const UA_UInt16*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT32])) {
+        snap.datatype = "int32";
+        snap.value = static_cast<int32_t>(*static_cast<const UA_Int32*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32])) {
+        snap.datatype = "uint32";
+        snap.value = static_cast<uint32_t>(*static_cast<const UA_UInt32*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_FLOAT])) {
+        snap.datatype = "float32";
+        snap.value = static_cast<float>(*static_cast<const UA_Float*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_DOUBLE])) {
+        snap.datatype = "float64";
+        snap.value = static_cast<double>(*static_cast<const UA_Double*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_STRING])) {
+        const UA_String &s = *static_cast<const UA_String*>(value.data);
+        snap.datatype = "string";
+        snap.value = std::string(reinterpret_cast<const char*>(s.data), s.length);
+    } else {
+        return false;
+    }
+    return true;
+}
 
 // Forward declaration so write_single_tag can use it
 bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b);
@@ -4351,6 +4396,9 @@ static bool is_safe_connection_id_filename(const std::string &cid) {
 
 static bool is_supported_datatype(const std::string &dt);
 static bool is_modbus_driver_name(const std::string &driver);
+static bool is_opcua_client_driver_name(const std::string &driver) {
+    return driver == "opcua_client" || driver == "opcua-client" || driver == "remote_opcbridge";
+}
 static bool build_modbus_plc_tag_name(const json &jt, std::string &outName, std::string &outErr);
 static std::string normalize_word_order(const std::string &raw);
 static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
@@ -4423,9 +4471,26 @@ ConnectionConfig load_connection_config(const std::string &path) {
         c.poll_time_budget_ms = 0;
         c.poll_max_reads_per_sec = 0;
         c.poll_lanes = 1;
+    } else if (is_opcua_client_driver_name(c.driver)) {
+        c.driver = "opcua_client";
+        const json settings = (j.contains("settings") && j["settings"].is_object())
+            ? j["settings"] : json::object();
+        c.opcua_endpoint = trim_copy(settings.value("endpoint", j.value("endpoint", std::string{})));
+        if (c.opcua_endpoint.empty()) {
+            std::string host = trim_copy(c.gateway);
+            if (host.empty()) throw std::runtime_error("OPC UA client connection requires an endpoint or gateway");
+            if (host.rfind("opc.tcp://", 0) != 0) host = "opc.tcp://" + host;
+            if (host.find(':', std::string("opc.tcp://").size()) == std::string::npos) host += ":4840";
+            c.opcua_endpoint = host;
+        }
+        c.opcua_username = trim_copy(settings.value("username", std::string{}));
+        c.opcua_password = settings.value("password", std::string{});
+        c.path.clear();
+        c.plc_type = "opcua_client";
+        c.poll_lanes = 1;
     } else {
         throw std::runtime_error("Unsupported driver: " + c.driver +
-                                 " (expected 'ab_eip', 'modbus_tcp', or 'mqtt')");
+                                 " (expected 'ab_eip', 'modbus_tcp', 'mqtt', or 'opcua_client')");
     }
 
     return c;
@@ -6285,6 +6350,66 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         return true;
     }
 
+    if (is_opcua_client_driver_name(conn.driver)) {
+        TagValue parsed{};
+        if (!parse_string_to_tagvalue(value_str, cfg.datatype, parsed)) {
+            return fail("Remote OPC UA write value cannot be parsed as " + cfg.datatype + ".");
+        }
+        UA_Client *client = UA_Client_new();
+        if (!client) return fail("Unable to allocate OPC UA client.");
+        UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+        UA_StatusCode rc = conn.opcua_username.empty()
+            ? UA_Client_connect(client, conn.opcua_endpoint.c_str())
+            : UA_Client_connectUsername(client, conn.opcua_endpoint.c_str(), conn.opcua_username.c_str(), conn.opcua_password.c_str());
+        if (rc != UA_STATUSCODE_GOOD) {
+            const std::string msg = "Remote OPC UA connect failed: " + std::string(UA_StatusCode_name(rc));
+            UA_Client_delete(client);
+            return fail(msg);
+        }
+        std::string nodeText = trim_copy(cfg.plc_tag_name);
+        if (nodeText.rfind("ns=", 0) != 0) nodeText = "ns=1;s=" + nodeText;
+        UA_NodeId nodeId = UA_NODEID_NULL;
+        UA_String encoded = UA_STRING(const_cast<char*>(nodeText.c_str()));
+        rc = UA_NodeId_parse(&nodeId, encoded);
+        UA_Variant variant;
+        UA_Variant_init(&variant);
+        if (rc == UA_STATUSCODE_GOOD) {
+            std::visit([&](auto &&arg) {
+                using T = std::decay_t<decltype(arg)>;
+                if constexpr (std::is_same_v<T, bool>) {
+                    UA_Boolean v = arg ? UA_TRUE : UA_FALSE; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
+                } else if constexpr (std::is_same_v<T, int16_t>) {
+                    UA_Int16 v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_INT16]);
+                } else if constexpr (std::is_same_v<T, uint16_t>) {
+                    UA_UInt16 v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_UINT16]);
+                } else if constexpr (std::is_same_v<T, int32_t>) {
+                    UA_Int32 v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_INT32]);
+                } else if constexpr (std::is_same_v<T, uint32_t>) {
+                    UA_UInt32 v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_UINT32]);
+                } else if constexpr (std::is_same_v<T, float>) {
+                    UA_Float v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_FLOAT]);
+                } else if constexpr (std::is_same_v<T, double>) {
+                    UA_Double v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+                } else if constexpr (std::is_same_v<T, std::string>) {
+                    UA_String v = UA_STRING(const_cast<char*>(arg.c_str())); UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_STRING]);
+                }
+            }, parsed);
+            rc = UA_Client_writeValueAttribute(client, nodeId, &variant);
+        }
+        UA_Variant_clear(&variant);
+        UA_NodeId_clear(&nodeId);
+        UA_Client_disconnect(client);
+        UA_Client_delete(client);
+        if (rc != UA_STATUSCODE_GOOD) return fail("Remote OPC UA write failed: " + std::string(UA_StatusCode_name(rc)));
+
+        TagSnapshot written{conn.id, logical_name, cfg.datatype, parsed, std::chrono::system_clock::now(), 1};
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            table[key] = written;
+        }
+        return true;
+    }
+
     // Keep handles stable across the operation, then give this write priority
     // over polling reads for its connection only.
     const auto plcLockWaitStarted = std::chrono::steady_clock::now();
@@ -7105,6 +7230,15 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
         if (!tc.source_tag.empty()) {
             rt.handle = PLCTAG_ERR_NOT_FOUND;
             rt.next_poll = std::chrono::steady_clock::time_point{};
+            ctx.tags.push_back(std::move(rt));
+            continue;
+        }
+
+        if (is_opcua_client_driver_name(conn_cfg.driver)) {
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+            rt.handle_deferred = false;
+            rt.next_poll = std::chrono::steady_clock::now();
+            schedule_next_periodic(rt);
             ctx.tags.push_back(std::move(rt));
             continue;
         }
@@ -12166,7 +12300,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         for (auto &tag : driver.tags) {
             const TagConfig &cfg = tag.cfg;
 
-            if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg)) {
+            if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) && !is_opcua_client_driver_name(conn.driver)) {
                 std::cerr << "OPC UA: skipping tag '" << cfg.logical_name
                           << "' on connection '" << conn.id
                           << "' (invalid handle)\n";
@@ -27521,7 +27655,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                baseSpec.derived_alias_by_source[t.cfg.source_tag].push_back(std::move(a));
 		                            }
 		                        }
-		                        if (t.handle < 0 && !t.handle_deferred) continue;
+		                        if (t.handle < 0 && !t.handle_deferred && !is_opcua_client_driver_name(d.conn.driver)) continue;
 		                        PollTagItem it;
 		                        it.cfg = t.cfg;
 	                        it.handle = t.handle;
@@ -27544,7 +27678,9 @@ window.addEventListener("load", startAutoRefresh);
 	                    }
 
 	                    const size_t totalTags = baseSpec.tags.size();
-	                    const int laneCount = std::max(1, std::min<int>(baseSpec.conn.poll_lanes, static_cast<int>(std::max<size_t>(totalTags, 1))));
+	                    const int laneCount = is_opcua_client_driver_name(baseSpec.conn.driver)
+	                        ? 1
+	                        : std::max(1, std::min<int>(baseSpec.conn.poll_lanes, static_cast<int>(std::max<size_t>(totalTags, 1))));
 	                    if (baseSpec.metrics) {
 	                        baseSpec.metrics->poll_tag_count.store(static_cast<uint64_t>(totalTags), std::memory_order_relaxed);
 	                        reset_connection_sweep_tracking(baseSpec.metrics, static_cast<uint64_t>(totalTags));
@@ -27627,6 +27763,37 @@ window.addEventListener("load", startAutoRefresh);
 									}
 								}
 							} pollerHandleCleanup{&spec.tags};
+
+							UA_Client *remoteUaClient = nullptr;
+							bool remoteUaConnected = false;
+							if (is_opcua_client_driver_name(spec.conn.driver)) {
+								remoteUaClient = UA_Client_new();
+								if (remoteUaClient) UA_ClientConfig_setDefault(UA_Client_getConfig(remoteUaClient));
+							}
+							struct RemoteUaCleanup {
+								UA_Client **client = nullptr;
+								~RemoteUaCleanup() {
+									if (client && *client) {
+										UA_Client_disconnect(*client);
+										UA_Client_delete(*client);
+										*client = nullptr;
+									}
+								}
+							} remoteUaCleanup{&remoteUaClient};
+							auto ensureRemoteUaConnected = [&]() -> bool {
+								if (!remoteUaClient) return false;
+								if (remoteUaConnected) return true;
+								UA_StatusCode rc = spec.conn.opcua_username.empty()
+									? UA_Client_connect(remoteUaClient, spec.conn.opcua_endpoint.c_str())
+									: UA_Client_connectUsername(remoteUaClient, spec.conn.opcua_endpoint.c_str(),
+									                            spec.conn.opcua_username.c_str(), spec.conn.opcua_password.c_str());
+								remoteUaConnected = (rc == UA_STATUSCODE_GOOD);
+								if (!remoteUaConnected) {
+									std::cerr << "Remote OPC UA connection '" << spec.conn.id << "' unavailable at "
+									          << spec.conn.opcua_endpoint << ": " << UA_StatusCode_name(rc) << std::endl;
+								}
+								return remoteUaConnected;
+							};
 
 							auto publishReadyDeferredHandle = [&](PollTagItem &pollTag) {
 								if (!pollTag.poller_owns_handle || pollTag.handle < 0) return;
@@ -27716,6 +27883,51 @@ window.addEventListener("load", startAutoRefresh);
 		                                auto connectionGate = connection_plc_mutex(spec.conn.id);
 		                                std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
 
+		                                    if (is_opcua_client_driver_name(spec.conn.driver)) {
+		                                        const auto readStarted = std::chrono::steady_clock::now();
+		                                        UA_StatusCode uaStatus = UA_STATUSCODE_BADNOTCONNECTED;
+		                                        if (ensureRemoteUaConnected()) {
+		                                            std::string nodeText = trim_copy(t.cfg.plc_tag_name);
+		                                            if (nodeText.rfind("ns=", 0) != 0) nodeText = "ns=1;s=" + nodeText;
+		                                            UA_NodeId nodeId = UA_NODEID_NULL;
+		                                            UA_String encoded = UA_STRING(const_cast<char*>(nodeText.c_str()));
+		                                            uaStatus = UA_NodeId_parse(&nodeId, encoded);
+		                                            if (uaStatus == UA_STATUSCODE_GOOD) {
+		                                                UA_Variant remoteValue;
+		                                                UA_Variant_init(&remoteValue);
+		                                                uaStatus = UA_Client_readValueAttribute(remoteUaClient, nodeId, &remoteValue);
+		                                                if (uaStatus == UA_STATUSCODE_GOOD && !snapshot_from_opcua_variant(snap, spec.conn, t.cfg, remoteValue)) {
+		                                                    uaStatus = UA_STATUSCODE_BADTYPEMISMATCH;
+		                                                }
+		                                                UA_Variant_clear(&remoteValue);
+		                                            }
+		                                            UA_NodeId_clear(&nodeId);
+		                                        }
+		                                        if (uaStatus != UA_STATUSCODE_GOOD) {
+		                                            status = PLCTAG_ERR_REMOTE_ERR;
+		                                            remoteUaConnected = false;
+		                                            if (remoteUaClient) UA_Client_disconnect(remoteUaClient);
+		                                        }
+		                                        if (spec.metrics) {
+		                                            const uint64_t us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - readStarted).count());
+		                                            const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+		                                            spec.metrics->reads_total.fetch_add(1, std::memory_order_relaxed);
+		                                            spec.metrics->read_us_total.fetch_add(us, std::memory_order_relaxed);
+		                                            spec.metrics->read_us_last.store(us, std::memory_order_relaxed);
+		                                            atomic_update_max(spec.metrics->read_us_max, us);
+		                                            spec.metrics->last_read_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                            record_connection_block_read(spec.metrics, t.sweep_index, status, us, ts_ms);
+		                                            metricsRecorded = true;
+		                                            if (status == PLCTAG_STATUS_OK) {
+		                                                spec.metrics->reads_ok.fetch_add(1, std::memory_order_relaxed);
+		                                                spec.metrics->last_ok_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                            } else {
+		                                                spec.metrics->reads_err.fetch_add(1, std::memory_order_relaxed);
+		                                                spec.metrics->last_err_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                            }
+		                                            record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
+		                                        }
+		                                    } else {
 		                                    if (t.handle < 0 && t.handle_deferred) {
 		                                        std::string tagStr;
 		                                        try {
@@ -27847,6 +28059,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                            elemSnaps.push_back(std::move(es));
 		                                        }
 		                                    }
+		                                }
 		                                }
 		                                }
 		                                }

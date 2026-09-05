@@ -1403,7 +1403,8 @@ const state = {
 const DRIVER_LABELS = {
   ab_eip: 'Allen-Bradley Ethernet/IP',
   modbus_tcp: 'Modbus TCP',
-  mqtt: 'MQTT Broker'
+  mqtt: 'MQTT Broker',
+  opcua_client: 'Remote OPCBridge (OPC UA)'
 };
 
 const MEMORY_CONNECTION_ID = '_memory';
@@ -17386,6 +17387,7 @@ function applyDeviceDriverUi(prefix) {
   const driver = String(driverEl?.value || '').trim();
   const isMqtt = driver === 'mqtt';
   const isModbus = isModbusDriver(driver);
+  const isRemoteOpcua = driver === 'opcua_client';
   const plcRows = isEdit
     ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevModbusAddressModeRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
     : [els.newDevGatewayRow, els.newDevPathRow, els.newDevModbusAddressModeRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
@@ -17395,13 +17397,14 @@ function applyDeviceDriverUi(prefix) {
 
   plcRows.forEach((row) => setRowVisible(row, !isMqtt));
   setRowVisible(isEdit ? els.editDevModbusAddressModeRow : els.newDevModbusAddressModeRow, !isMqtt && isModbus);
-  setRowVisible(isEdit ? els.editDevSlotRow : els.newDevSlotRow, !isMqtt && !isModbus);
-  setRowVisible(isEdit ? els.editDevPlcTypeRow : els.newDevPlcTypeRow, !isMqtt && !isModbus);
-  setFormRowLabel(isEdit ? els.editDevGatewayRow : els.newDevGatewayRow, isModbus ? 'Server' : 'Gateway');
+  setRowVisible(isEdit ? els.editDevPathRow : els.newDevPathRow, !isMqtt && !isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevSlotRow : els.newDevSlotRow, !isMqtt && !isModbus && !isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevPlcTypeRow : els.newDevPlcTypeRow, !isMqtt && !isModbus && !isRemoteOpcua);
+  setFormRowLabel(isEdit ? els.editDevGatewayRow : els.newDevGatewayRow, isRemoteOpcua ? 'OPC UA Endpoint' : (isModbus ? 'Server' : 'Gateway'));
   setFormRowLabel(isEdit ? els.editDevPathRow : els.newDevPathRow, isModbus ? 'Unit ID' : 'Path');
   const gatewayEl = isEdit ? els.editDevGateway : els.newDevGateway;
   const pathEl = isEdit ? els.editDevPath : els.newDevPath;
-  if (gatewayEl) gatewayEl.placeholder = isModbus ? '192.0.2.50:502' : '192.0.2.10';
+  if (gatewayEl) gatewayEl.placeholder = isRemoteOpcua ? 'opc.tcp://192.0.2.20:4840' : (isModbus ? '192.0.2.50:502' : '192.0.2.10');
   if (pathEl) pathEl.placeholder = isModbus ? '1' : '1,0';
   const modeEl = isEdit ? els.editDevModbusAddressMode : els.newDevModbusAddressMode;
   if (modeEl && !modeEl.value) modeEl.value = 'address';
