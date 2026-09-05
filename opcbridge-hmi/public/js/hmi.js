@@ -1277,6 +1277,11 @@ const updateRectColorDraft = (patch) => {
   const draft = normalizeRectColorDraft(obj, rectColorDraft);
   const selectedRuleIndex = Math.max(0, Math.min(getColorDynamicTabIndex(), draft.rules.length - 1));
   const next = { ...(draft.rules[selectedRuleIndex] || getDefaultColorRuleForObject(obj)), ...patch };
+  if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in patch)) {
+    delete next.status;
+    delete next.sourceReference;
+    delete next.sourceTarget;
+  }
   if ("sourceType" in patch) {
     next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
     if (next.sourceType === "expression") {
@@ -7432,7 +7437,9 @@ const downloadObjectReferenceMappings = () => {
 const knownMappedTag = (replacement) => {
   const parsed = parseMappedTagReference(replacement);
   if (!parsed) return false;
-  return tagsCache.some((tag) => String(tag?.connection_id || "") === parsed.connection_id && String(tag?.name || "") === parsed.tag);
+  return [...tagsCache, ...tagsAllCache].some((tag) =>
+    String(tag?.connection_id || "") === parsed.connection_id && String(tag?.name || "") === parsed.tag
+  );
 };
 
 const knownMappedScreen = (replacement) => {
@@ -16757,7 +16764,13 @@ const applyVisibilityDraftToObject = () => {
         const rulePatch = { ...patch };
         delete rulePatch.enabled;
         const rules = normalizedCurrent.rules.slice();
-        rules[selectedRuleIndex] = normalizeVisibilityRule({ ...rules[selectedRuleIndex], ...rulePatch });
+        const nextRule = { ...rules[selectedRuleIndex], ...rulePatch };
+        if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in rulePatch)) {
+          delete nextRule.status;
+          delete nextRule.sourceReference;
+          delete nextRule.sourceTarget;
+        }
+        rules[selectedRuleIndex] = normalizeVisibilityRule(nextRule);
         rectVisibilityDraft = {
           ...normalizedCurrent,
           enabled: patch.enabled === false ? false : true,
@@ -16771,6 +16784,11 @@ const applyVisibilityDraftToObject = () => {
       }
       const current = normalizedCurrent;
       const next = { ...current, ...patch };
+      if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in patch)) {
+        delete next.status;
+        delete next.sourceReference;
+        delete next.sourceTarget;
+      }
       if ("sourceType" in patch) next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
       if ("expression" in patch) {
         const expression = String(patch.expression || "");
@@ -16802,6 +16820,11 @@ const applyVisibilityDraftToObject = () => {
 	  recordHistory();
 	  const current = obj.visibility || { enabled: true };
 	  const next = { ...current, ...patch };
+    if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in patch)) {
+      delete next.status;
+      delete next.sourceReference;
+      delete next.sourceTarget;
+    }
     if ("sourceType" in patch) next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
     if ("expression" in patch) {
       const expression = String(patch.expression || "");
@@ -23906,10 +23929,12 @@ function initializeCompactTagBindingRows() {
 
   registerCompactTagBinding({
     id: "visibility",
+    container: visibilityFields,
+    beforeEl: visibilityModeSelect?.closest(".prop-row"),
     connectionInput: visibilityConnectionInput,
     tagInput: visibilityTagInput,
+    buttonLabel: "Source",
     modalTitle: "Visibility Tag",
-    inlineOnly: true,
     read: () => ({
       connection_id: String(visibilityConnectionInput?.value || "").trim(),
       tag: String(visibilityTagInput?.value || "").trim()
@@ -23919,10 +23944,12 @@ function initializeCompactTagBindingRows() {
 
   registerCompactTagBinding({
     id: "rectColor",
+    container: rectColorFields,
+    beforeEl: rectColorModeSelect?.closest(".prop-row"),
     connectionInput: rectColorConnectionInput,
     tagInput: rectColorTagInput,
+    buttonLabel: "Source",
     modalTitle: "Color Tag",
-    inlineOnly: true,
     read: () => ({
       connection_id: String(rectColorConnectionInput?.value || "").trim(),
       tag: String(rectColorTagInput?.value || "").trim()
