@@ -762,6 +762,9 @@
   editDevDriver: document.getElementById('editDevDriver'),
   editDevGatewayRow: document.getElementById('editDevGatewayRow'),
   editDevGateway: document.getElementById('editDevGateway'),
+  editDevOpcuaBrowseRow: document.getElementById('editDevOpcuaBrowseRow'),
+  editDevOpcuaBrowseBtn: document.getElementById('editDevOpcuaBrowseBtn'),
+  editDevOpcuaBrowseResults: document.getElementById('editDevOpcuaBrowseResults'),
   editDevPathRow: document.getElementById('editDevPathRow'),
   editDevPath: document.getElementById('editDevPath'),
   editDevModbusAddressModeRow: document.getElementById('editDevModbusAddressModeRow'),
@@ -11609,7 +11612,7 @@ async function loadOpcbridgeHealth({ allowCached = true } = {}) {
 
 async function loadOpcbridgeMetrics({ allowCached = true } = {}) {
   try {
-    const metrics = await apiGet('/api/opcbridge/metrics');
+    const metrics = await apiGet('/api/opcbridge/metrics?include_blocks=0');
     state.metricsLast = metrics;
     state.metricsLastOkAtMs = Date.now();
     state.metricsLastFetchError = '';
@@ -17412,7 +17415,34 @@ function applyDeviceDriverUi(prefix) {
   const modeEl = isEdit ? els.editDevModbusAddressMode : els.newDevModbusAddressMode;
   if (modeEl && !modeEl.value) modeEl.value = 'address';
   mqttRows.forEach((row) => setRowVisible(row, isMqtt));
-  if (!isEdit) setRowVisible(els.newDevOpcuaBrowseRow, isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevOpcuaBrowseRow : els.newDevOpcuaBrowseRow, isRemoteOpcua);
+}
+
+function renderRemoteOpcuaBrowseResults(container, connections, existingNodeIds = new Set(), selectNew = true) {
+  if (!container) return;
+  const groupsHtml = connections.map((conn, ci) => {
+    const tags = Array.isArray(conn?.tags) ? conn.tags : [];
+    const selectedCount = tags.filter((tag) => existingNodeIds.has(String(tag?.node_id || ''))).length;
+    const connectionChecked = selectNew ? tags.length > 0 : selectedCount > 0;
+    return `<details data-opcua-group><summary><input type="checkbox" data-opcua-connection="${ci}" ${connectionChecked ? 'checked' : ''} aria-label="Select all tags in ${escapeHtml(String(conn?.name || 'connection'))}" /> <span>${escapeHtml(String(conn?.name || 'Connection'))}</span> <span class="hint">(${tags.length} tags)</span></summary>` +
+      tags.map((tag, ti) => {
+        const exists = existingNodeIds.has(String(tag?.node_id || ''));
+        return `<label style="display:flex;gap:8px;padding:3px 18px;"><input type="checkbox" data-opcua-tag="${ci}:${ti}" ${selectNew || exists ? 'checked' : ''} /> <span>${escapeHtml(String(tag?.name || 'Tag'))}</span><span class="hint mono">${escapeHtml(String(tag?.datatype || ''))}</span></label>`;
+      }).join('') + '</details>';
+  }).join('');
+  container.innerHTML = groupsHtml
+    ? `<div class="row-actions" style="position:sticky;top:0;z-index:1;padding:6px;background:var(--panel, #111);"><button class="btn" type="button" data-opcua-groups="expand">Expand All</button><button class="btn" type="button" data-opcua-groups="collapse">Collapse All</button></div>${groupsHtml}`
+    : '<div class="hint">No OPCBridge tag connections were found.</div>';
+  container.style.display = '';
+  container._opcuaConnections = connections;
+  container.querySelectorAll('details[data-opcua-group]').forEach((details) => {
+    const connectionToggle = details.querySelector('[data-opcua-connection]');
+    const tags = Array.from(details.querySelectorAll('[data-opcua-tag]'));
+    if (!connectionToggle || !tags.length) return;
+    const checked = tags.filter((tag) => tag.checked).length;
+    connectionToggle.checked = checked > 0;
+    connectionToggle.indeterminate = checked > 0 && checked < tags.length;
+  });
 }
 
 async function browseNewRemoteOpcbridge() {
@@ -17424,19 +17454,74 @@ async function browseNewRemoteOpcbridge() {
     const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     if (!els.newDevOpcuaBrowseResults) return;
-    els.newDevOpcuaBrowseResults.innerHTML = connections.map((conn, ci) => {
-      const tags = Array.isArray(conn?.tags) ? conn.tags : [];
-      return `<details open><summary><label><input type="checkbox" data-opcua-connection="${ci}" checked /> ${escapeHtml(String(conn?.name || 'Connection'))}</label> <span class="hint">(${tags.length} tags)</span></summary>` +
-        tags.map((tag, ti) => `<label style="display:flex;gap:8px;padding:3px 18px;"><input type="checkbox" data-opcua-tag="${ci}:${ti}" checked /> <span>${escapeHtml(String(tag?.name || 'Tag'))}</span><span class="hint mono">${escapeHtml(String(tag?.datatype || ''))}</span></label>`).join('') + '</details>';
-    }).join('') || '<div class="hint">No OPCBridge tag connections were found.</div>';
-    els.newDevOpcuaBrowseResults.style.display = '';
-    els.newDevOpcuaBrowseResults._opcuaConnections = connections;
+    renderRemoteOpcuaBrowseResults(els.newDevOpcuaBrowseResults, connections);
     setNewDevStatus(`Found ${connections.length} remote connection${connections.length === 1 ? '' : 's'}. Select tags, then click Create.`);
   } catch (err) {
     setNewDevStatus(`Remote browse failed: ${err.message || err}`);
   } finally {
     if (els.newDevOpcuaBrowseBtn) els.newDevOpcuaBrowseBtn.disabled = false;
   }
+}
+
+function editedRemoteOpcuaConnectionId() {
+  const nodeId = String(state.pendingWorkspaceItem?.id || '');
+  const node = findWorkspaceNodeById(state.workspaceTreeRoot, nodeId);
+  return String(state.pendingWorkspaceItem?.connection_id || node?.meta?.connection_id || node?.meta?.id || '').trim();
+}
+
+async function browseEditedRemoteOpcbridge() {
+  const endpoint = String(els.editDevGateway?.value || '').trim();
+  if (!endpoint) { setEditDevStatus('Enter the remote OPC UA endpoint first.'); return; }
+  setEditDevStatus('Browsing remote OPCBridge…');
+  if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = true;
+  try {
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 180000 });
+    const connections = Array.isArray(payload?.connections) ? payload.connections : [];
+    const connectionId = editedRemoteOpcuaConnectionId();
+    const existingNodeIds = new Set((state.tagConfigAll || [])
+      .filter((tag) => String(tag?.connection_id || '') === connectionId)
+      .map((tag) => String(tag?.plc_tag_name || ''))
+      .filter(Boolean));
+    renderRemoteOpcuaBrowseResults(els.editDevOpcuaBrowseResults, connections, existingNodeIds, false);
+    setEditDevStatus(`Found ${connections.length} remote connection${connections.length === 1 ? '' : 's'}. Check or uncheck connections and tags, then click Save.`);
+  } catch (err) {
+    setEditDevStatus(`Remote browse failed: ${err.message || err}`);
+  } finally {
+    if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = false;
+  }
+}
+
+function applyEditedRemoteOpcuaTagSelection() {
+  const container = els.editDevOpcuaBrowseResults;
+  const remote = container?._opcuaConnections;
+  const connectionId = editedRemoteOpcuaConnectionId();
+  if (!connectionId || !Array.isArray(remote)) return;
+  const browsedNodeIds = new Set();
+  const selectedTags = [];
+  container.querySelectorAll('[data-opcua-tag]').forEach((input) => {
+    const [ci, ti] = String(input.dataset.opcuaTag || '').split(':').map(Number);
+    const tag = remote?.[ci]?.tags?.[ti] || {};
+    const nodeId = String(tag?.node_id || '').trim();
+    if (nodeId) browsedNodeIds.add(nodeId);
+    if (!input.checked) return;
+    const remoteConnection = String(remote?.[ci]?.name || '').trim();
+    const remoteName = String(tag?.name || '').trim();
+    const name = remoteConnection ? `${remoteConnection}/${remoteName}` : remoteName;
+    if (nodeId && name) selectedTags.push({ connection_id: connectionId, name, plc_tag_name: nodeId, datatype: String(tag?.datatype || 'string'), scan_ms: 1000, enabled: true, writable: Boolean(tag?.writable) });
+  });
+  const existingByNodeId = new Map((state.tagConfigAll || [])
+    .filter((tag) => String(tag?.connection_id || '') === connectionId)
+    .map((tag) => [String(tag?.plc_tag_name || ''), tag]));
+  const retained = (state.tagConfigAll || []).filter((tag) => {
+    if (String(tag?.connection_id || '') !== connectionId) return true;
+    const nodeId = String(tag?.plc_tag_name || '');
+    return !browsedNodeIds.has(nodeId);
+  });
+  const applied = selectedTags.map((tag) => existingByNodeId.get(tag.plc_tag_name) || tag);
+  const previousCount = existingByNodeId.size;
+  state.tagConfigAll = retained.concat(applied);
+  markTagsDirty(true);
+  return { previousCount, selectedCount: selectedTags.length };
 }
 
 function fillConnForm(obj) {
@@ -18710,6 +18795,12 @@ function openWorkspaceItemModal(node) {
   if (type === 'device') {
     if (els.workspaceItemDeviceEdit) els.workspaceItemDeviceEdit.style.display = 'block';
 
+    if (els.editDevOpcuaBrowseResults) {
+      els.editDevOpcuaBrowseResults.innerHTML = '';
+      els.editDevOpcuaBrowseResults.style.display = 'none';
+      delete els.editDevOpcuaBrowseResults._opcuaConnections;
+    }
+
     const connectionId = String(node.meta?.connection_id || '');
     const relPath = String(node.meta?.path || '').trim();
 
@@ -18757,7 +18848,12 @@ function openWorkspaceItemModal(node) {
           refreshMqttTrustCertificateLibrary(mqtt.cafile).catch(() => {});
           refreshMqttConnectionCertificateStatus(connectionId).catch(() => {});
         }
-        setEditDevStatus('');
+        if (driver === 'opcua_client') {
+          const includedCount = (state.tagConfigAll || []).filter((tag) => String(tag?.connection_id || '') === connectionId).length;
+          setEditDevStatus(`${includedCount} remote tag${includedCount === 1 ? '' : 's'} currently included. Browse the source to add or remove tags.`);
+        } else {
+          setEditDevStatus('');
+        }
       }).catch((err) => {
         setEditDevStatus(`Load failed: ${err.message}`);
       });
@@ -19673,6 +19769,10 @@ async function saveEditedDeviceFromModal() {
     return;
   }
 
+  if (driver === 'opcua_client' && Array.isArray(els.editDevOpcuaBrowseResults?._opcuaConnections)) {
+    applyEditedRemoteOpcuaTagSelection();
+  }
+
   let targetRelPath = relPath;
   if (oldId && newId !== oldId) {
     const newRelPath = `connections/${newId}.json`;
@@ -20229,6 +20329,33 @@ function wireWorkspaceItemModalUi() {
   els.editDevCancelBtn?.addEventListener('click', close);
   els.editDevSaveBtn?.addEventListener('click', saveEditedDeviceFromModal);
   els.editDevDriver?.addEventListener('change', () => applyDeviceDriverUi('edit'));
+  els.editDevOpcuaBrowseBtn?.addEventListener('click', browseEditedRemoteOpcbridge);
+  els.editDevOpcuaBrowseResults?.addEventListener('change', (event) => {
+    const connectionToggle = event.target?.closest?.('[data-opcua-connection]');
+    if (connectionToggle) {
+      const index = String(connectionToggle.dataset.opcuaConnection || '');
+      connectionToggle.indeterminate = false;
+      els.editDevOpcuaBrowseResults.querySelectorAll('[data-opcua-tag]').forEach((input) => {
+        if (String(input.dataset.opcuaTag || '').startsWith(`${index}:`)) input.checked = connectionToggle.checked;
+      });
+      return;
+    }
+    const tagToggle = event.target?.closest?.('[data-opcua-tag]');
+    const details = tagToggle?.closest?.('details[data-opcua-group]');
+    const groupToggle = details?.querySelector?.('[data-opcua-connection]');
+    if (!details || !groupToggle) return;
+    const tags = Array.from(details.querySelectorAll('[data-opcua-tag]'));
+    const checked = tags.filter((tag) => tag.checked).length;
+    groupToggle.checked = checked > 0;
+    groupToggle.indeterminate = checked > 0 && checked < tags.length;
+  });
+  els.editDevOpcuaBrowseResults?.addEventListener('click', (event) => {
+    const action = event.target?.closest?.('[data-opcua-groups]')?.dataset?.opcuaGroups;
+    if (!action) return;
+    els.editDevOpcuaBrowseResults.querySelectorAll('details[data-opcua-group]').forEach((details) => {
+      details.open = action === 'expand';
+    });
+  });
   els.editDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('edit'));
 
   els.editTagCancelBtn?.addEventListener('click', close);
@@ -20447,6 +20574,13 @@ function wireNewDeviceFormUi() {
     const index = String(connectionToggle.dataset.opcuaConnection || '');
     els.newDevOpcuaBrowseResults.querySelectorAll('[data-opcua-tag]').forEach((input) => {
       if (String(input.dataset.opcuaTag || '').startsWith(`${index}:`)) input.checked = connectionToggle.checked;
+    });
+  });
+  els.newDevOpcuaBrowseResults?.addEventListener('click', (event) => {
+    const action = event.target?.closest?.('[data-opcua-groups]')?.dataset?.opcuaGroups;
+    if (!action) return;
+    els.newDevOpcuaBrowseResults.querySelectorAll('details[data-opcua-group]').forEach((details) => {
+      details.open = action === 'expand';
     });
   });
   els.newDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('new'));

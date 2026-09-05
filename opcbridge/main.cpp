@@ -22052,8 +22052,10 @@ window.addEventListener("load", startAutoRefresh);
 		            });
 
 		            // /metrics (poll performance counters)
-		            svr.Get("/metrics", [&](const httplib::Request &, httplib::Response &res) {
+		            svr.Get("/metrics", [&](const httplib::Request &req, httplib::Response &res) {
 		                json root;
+		                const bool includeBlocks = !(req.has_param("include_blocks") &&
+		                    (req.get_param_value("include_blocks") == "0" || req.get_param_value("include_blocks") == "false"));
 		                auto now_sys = std::chrono::system_clock::now();
 		                int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 		                    now_sys.time_since_epoch()
@@ -22138,7 +22140,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        j["sweep_ms_avg_10s"] = average_connection_sweep_ms_locked(*m, 10000, now_ms);
 		                        j["sweep_ms_avg_60s"] = average_connection_sweep_ms_locked(*m, 60000, now_ms);
 		                    }
-		                    {
+		                    if (includeBlocks) {
 		                        std::lock_guard<std::mutex> blockLock(m->blocks_mutex);
 		                        j["blocks"] = json::array();
 		                        for (const auto &block : m->blocks) {
@@ -22164,6 +22166,8 @@ window.addEventListener("load", startAutoRefresh);
 		                            jb["last_status_text"] = block.last_status_text;
 		                            j["blocks"].push_back(std::move(jb));
 		                        }
+		                    } else {
+		                        j["blocks_omitted"] = true;
 		                    }
 
 		                    root["connections"][connId] = std::move(j);
@@ -27920,6 +27924,74 @@ window.addEventListener("load", startAutoRefresh);
 								}
 								return remoteUaConnected;
 							};
+							struct RemoteUaPrefetchResult {
+								UA_StatusCode ua_status = UA_STATUSCODE_BADNOTCONNECTED;
+								TagSnapshot snapshot;
+								uint64_t read_us = 0;
+							};
+							std::unordered_map<size_t, RemoteUaPrefetchResult> remoteUaPrefetch;
+							auto prefetchRemoteUaDue = [&](size_t requestedIdx, std::chrono::steady_clock::time_point dueNow) {
+								if (!is_opcua_client_driver_name(spec.conn.driver) || remoteUaPrefetch.count(requestedIdx)) return;
+								std::vector<size_t> indices;
+								const size_t maxBatch = static_cast<size_t>(std::max(1, spec.conn.poll_batch_size > 0 ? spec.conn.poll_batch_size : 250));
+								indices.reserve(std::min(maxBatch, spec.tags.size()));
+								indices.push_back(requestedIdx);
+								for (size_t i = 0; i < spec.tags.size() && indices.size() < maxBatch; ++i) {
+									if (i == requestedIdx || remoteUaPrefetch.count(i)) continue;
+									if (spec.tags[i].next_poll <= dueNow + std::chrono::milliseconds(10)) indices.push_back(i);
+								}
+
+								const auto started = std::chrono::steady_clock::now();
+								if (!ensureRemoteUaConnected()) {
+									for (size_t idx : indices) remoteUaPrefetch[idx] = RemoteUaPrefetchResult{};
+									return;
+								}
+
+								std::vector<UA_ReadValueId> nodes(indices.size());
+								std::vector<bool> parsed(indices.size(), false);
+								for (size_t i = 0; i < indices.size(); ++i) {
+									UA_ReadValueId_init(&nodes[i]);
+									nodes[i].attributeId = UA_ATTRIBUTEID_VALUE;
+									std::string nodeText = trim_copy(spec.tags[indices[i]].cfg.plc_tag_name);
+									if (nodeText.rfind("ns=", 0) != 0) nodeText = "ns=1;s=" + nodeText;
+									UA_String encoded = UA_STRING(const_cast<char*>(nodeText.c_str()));
+									parsed[i] = UA_NodeId_parse(&nodes[i].nodeId, encoded) == UA_STATUSCODE_GOOD;
+								}
+								UA_ReadRequest request;
+								UA_ReadRequest_init(&request);
+								request.nodesToRead = nodes.data();
+								request.nodesToReadSize = nodes.size();
+								request.timestampsToReturn = UA_TIMESTAMPSTORETURN_BOTH;
+								UA_ReadResponse response = UA_Client_Service_read(remoteUaClient, request);
+								const uint64_t elapsedUs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+									std::chrono::steady_clock::now() - started).count());
+								const uint64_t perTagUs = indices.empty() ? elapsedUs : elapsedUs / indices.size();
+								const bool serviceGood = response.responseHeader.serviceResult == UA_STATUSCODE_GOOD;
+								for (size_t i = 0; i < indices.size(); ++i) {
+									RemoteUaPrefetchResult result;
+									result.read_us = perTagUs;
+									if (!parsed[i]) {
+										result.ua_status = UA_STATUSCODE_BADNODEIDINVALID;
+									} else if (!serviceGood) {
+										result.ua_status = response.responseHeader.serviceResult;
+									} else if (i >= response.resultsSize) {
+										result.ua_status = UA_STATUSCODE_BADUNEXPECTEDERROR;
+									} else {
+										result.ua_status = response.results[i].status;
+										if (result.ua_status == UA_STATUSCODE_GOOD &&
+										    !snapshot_from_opcua_variant(result.snapshot, spec.conn, spec.tags[indices[i]].cfg, response.results[i].value)) {
+											result.ua_status = UA_STATUSCODE_BADTYPEMISMATCH;
+										}
+									}
+									remoteUaPrefetch[indices[i]] = std::move(result);
+								}
+								for (auto &node : nodes) UA_ReadValueId_clear(&node);
+								UA_ReadResponse_clear(&response);
+								if (!serviceGood) {
+									remoteUaConnected = false;
+									if (remoteUaClient) UA_Client_disconnect(remoteUaClient);
+								}
+							};
 
 							auto publishReadyDeferredHandle = [&](PollTagItem &pollTag) {
 								if (!pollTag.poller_owns_handle || pollTag.handle < 0) return;
@@ -28001,41 +28073,35 @@ window.addEventListener("load", startAutoRefresh);
 			                            std::vector<TagSnapshot> elemSnaps;
 			                            bool metricsRecorded = false;
 
-		                            {
-		                                std::shared_lock<std::shared_mutex> plcLifecycleLock;
-		                                if (g_plcMutex) {
-		                                    plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
-		                                }
-		                                auto connectionGate = connection_plc_mutex(spec.conn.id);
-		                                std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
+			                            if (is_opcua_client_driver_name(spec.conn.driver)) {
+			                                prefetchRemoteUaDue(top.idx, nowSteady);
+			                            }
+			                            {
+			                                std::shared_lock<std::shared_mutex> plcLifecycleLock;
+			                                if (g_plcMutex && !is_opcua_client_driver_name(spec.conn.driver)) {
+			                                    plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+			                                }
+			                                auto connectionGate = connection_plc_mutex(spec.conn.id);
+			                                std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock;
+			                                if (!is_opcua_client_driver_name(spec.conn.driver)) {
+			                                    plcConnectionLock = std::shared_lock<WriterPrioritySharedMutex>(*connectionGate);
+			                                }
 
 		                                    if (is_opcua_client_driver_name(spec.conn.driver)) {
-		                                        const auto readStarted = std::chrono::steady_clock::now();
-		                                        UA_StatusCode uaStatus = UA_STATUSCODE_BADNOTCONNECTED;
-		                                        if (ensureRemoteUaConnected()) {
-		                                            std::string nodeText = trim_copy(t.cfg.plc_tag_name);
-		                                            if (nodeText.rfind("ns=", 0) != 0) nodeText = "ns=1;s=" + nodeText;
-		                                            UA_NodeId nodeId = UA_NODEID_NULL;
-		                                            UA_String encoded = UA_STRING(const_cast<char*>(nodeText.c_str()));
-		                                            uaStatus = UA_NodeId_parse(&nodeId, encoded);
-		                                            if (uaStatus == UA_STATUSCODE_GOOD) {
-		                                                UA_Variant remoteValue;
-		                                                UA_Variant_init(&remoteValue);
-		                                                uaStatus = UA_Client_readValueAttribute(remoteUaClient, nodeId, &remoteValue);
-		                                                if (uaStatus == UA_STATUSCODE_GOOD && !snapshot_from_opcua_variant(snap, spec.conn, t.cfg, remoteValue)) {
-		                                                    uaStatus = UA_STATUSCODE_BADTYPEMISMATCH;
-		                                                }
-		                                                UA_Variant_clear(&remoteValue);
-		                                            }
-		                                            UA_NodeId_clear(&nodeId);
-		                                        }
-		                                        if (uaStatus != UA_STATUSCODE_GOOD) {
-		                                            status = PLCTAG_ERR_REMOTE_ERR;
-		                                            remoteUaConnected = false;
-		                                            if (remoteUaClient) UA_Client_disconnect(remoteUaClient);
-		                                        }
-		                                        if (spec.metrics) {
-		                                            const uint64_t us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - readStarted).count());
+			                                        UA_StatusCode uaStatus = UA_STATUSCODE_BADNOTCONNECTED;
+			                                        uint64_t readUs = 0;
+			                                        auto prefetched = remoteUaPrefetch.find(top.idx);
+			                                        if (prefetched != remoteUaPrefetch.end()) {
+			                                            uaStatus = prefetched->second.ua_status;
+			                                            readUs = prefetched->second.read_us;
+			                                            if (uaStatus == UA_STATUSCODE_GOOD) snap = std::move(prefetched->second.snapshot);
+			                                            remoteUaPrefetch.erase(prefetched);
+			                                        }
+			                                        if (uaStatus != UA_STATUSCODE_GOOD) {
+			                                            status = PLCTAG_ERR_REMOTE_ERR;
+			                                        }
+			                                        if (spec.metrics) {
+			                                            const uint64_t us = readUs;
 		                                            const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 		                                            spec.metrics->reads_total.fetch_add(1, std::memory_order_relaxed);
 		                                            spec.metrics->read_us_total.fetch_add(us, std::memory_order_relaxed);
