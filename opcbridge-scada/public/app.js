@@ -47,6 +47,11 @@
   scadaSettingsReloadBtn: document.getElementById('scadaSettingsReloadBtn'),
   scadaSettingsSaveBtn: document.getElementById('scadaSettingsSaveBtn'),
   scadaSettingsStatus: document.getElementById('scadaSettingsStatus'),
+  opcuaTrustRefreshBtn: document.getElementById('opcuaTrustRefreshBtn'),
+  opcuaTrustStatus: document.getElementById('opcuaTrustStatus'),
+  opcuaServerIdentity: document.getElementById('opcuaServerIdentity'),
+  opcuaRejectedTbody: document.getElementById('opcuaRejectedTbody'),
+  opcuaTrustedTbody: document.getElementById('opcuaTrustedTbody'),
   serverCertName: document.getElementById('serverCertName'),
   serverCertUploadFile: document.getElementById('serverCertUploadFile'),
   serverCertUploadBtn: document.getElementById('serverCertUploadBtn'),
@@ -1403,6 +1408,7 @@ const state = {
   flowAvailableTags: [],
   flowTagsLoadingPromise: null,
   mqttTrustCertificates: [],
+  opcuaTrust: { identity: null, rejected: [], trusted: [] },
   themeMode: 'auto',
 };
 
@@ -11366,6 +11372,7 @@ function setTab(id) {
     loadSoundSettings().catch(() => {});
     loadSmtpSettings().catch(() => {});
     loadVoiceModemSettings().catch(() => {});
+    refreshOpcuaTrust().catch(() => {});
     refreshServerCertificateLibrary().catch(() => {});
   }
   if (id === 'alarms_events') {
@@ -19927,6 +19934,77 @@ function certificatePrincipalLabel(value) {
   return commonName?.trim() || text || '—';
 }
 
+function opcuaCertificateRow(certificate, status) {
+  const expires = certificate.valid_to ? new Date(certificate.valid_to) : null;
+  const expired = expires && Number.isFinite(expires.getTime()) && expires.getTime() < Date.now();
+  const expiryLabel = expires && Number.isFinite(expires.getTime()) ? expires.toLocaleDateString() : 'Unknown';
+  const fingerprint = String(certificate.fingerprint || '');
+  const action = status === 'rejected'
+    ? `<button class="btn primary" type="button" data-opcua-trust-action="trust" data-opcua-fingerprint="${escapeHtml(fingerprint)}">Trust</button>`
+    : `<button class="btn danger" type="button" data-opcua-trust-action="remove" data-opcua-fingerprint="${escapeHtml(fingerprint)}">Remove</button>`;
+  return `<tr>
+    <td title="${escapeHtml(String(certificate.subject || ''))}"><strong>${escapeHtml(certificatePrincipalLabel(certificate.subject))}</strong></td>
+    <td class="mono">${escapeHtml(certificate.application_uri || '—')}</td>
+    <td class="${expired ? 'status-error' : ''}">${escapeHtml(expired ? `${expiryLabel} · expired` : expiryLabel)}</td>
+    <td class="mono" title="${escapeHtml(fingerprint)}">${escapeHtml(fingerprint || 'Unknown')}</td>
+    <td>${action}</td>
+  </tr>`;
+}
+
+function renderOpcuaTrust() {
+  const trust = state.opcuaTrust || { identity: null, rejected: [], trusted: [] };
+  const identity = trust.identity;
+  if (els.opcuaServerIdentity) {
+    els.opcuaServerIdentity.innerHTML = identity
+      ? `This server: <strong>${escapeHtml(certificatePrincipalLabel(identity.subject))}</strong> · <span class="mono">${escapeHtml(identity.application_uri || '')}</span> · SHA-256 <span class="mono">${escapeHtml(identity.fingerprint || '')}</span>`
+      : 'OPC UA server identity is not installed.';
+  }
+  if (els.opcuaRejectedTbody) {
+    els.opcuaRejectedTbody.innerHTML = trust.rejected?.length
+      ? trust.rejected.map((certificate) => opcuaCertificateRow(certificate, 'rejected')).join('')
+      : '<tr><td colspan="5" class="hint">No rejected client certificates.</td></tr>';
+  }
+  if (els.opcuaTrustedTbody) {
+    els.opcuaTrustedTbody.innerHTML = trust.trusted?.length
+      ? trust.trusted.map((certificate) => opcuaCertificateRow(certificate, 'trusted')).join('')
+      : '<tr><td colspan="5" class="hint">No trusted client certificates.</td></tr>';
+  }
+}
+
+async function refreshOpcuaTrust(message = '') {
+  if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = message || 'Loading…';
+  try {
+    const data = await apiGet('/api/opcbridge/opcua-trust', { timeoutMs: 15000 });
+    state.opcuaTrust = {
+      identity: data?.identity || null,
+      rejected: Array.isArray(data?.rejected) ? data.rejected : [],
+      trusted: Array.isArray(data?.trusted) ? data.trusted : []
+    };
+    renderOpcuaTrust();
+    if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = message;
+  } catch (err) {
+    if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = `Load failed: ${err.message || err}`;
+  }
+}
+
+async function changeOpcuaTrust(action, fingerprint) {
+  const certificate = [...(state.opcuaTrust?.rejected || []), ...(state.opcuaTrust?.trusted || [])]
+    .find((item) => item.fingerprint === fingerprint);
+  const verb = action === 'trust' ? 'Trust' : 'Remove trust for';
+  if (!certificate || !window.confirm(`${verb} '${certificatePrincipalLabel(certificate.subject)}'?\n\nSHA-256: ${fingerprint}`)) return;
+  if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = action === 'trust' ? 'Trusting certificate…' : 'Removing certificate…';
+  try {
+    const response = await fetchWithTimeout(`/api/opcbridge/opcua-trust?action=${encodeURIComponent(action)}&fingerprint=${encodeURIComponent(fingerprint)}`, {
+      method: 'POST'
+    }, 30000);
+    const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+    if (!response.ok || !data?.ok) throw new Error(data?.error || `Operation failed (HTTP ${response.status})`);
+    await refreshOpcuaTrust(action === 'trust' ? 'Certificate trusted. Reconnect the OPC UA client.' : 'Certificate removed from trust.');
+  } catch (err) {
+    if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = `Operation failed: ${err.message || err}`;
+  }
+}
+
 function renderServerCertificateLibrary() {
   if (!els.serverCertLibraryTbody) return;
   const certificates = state.mqttTrustCertificates || [];
@@ -20584,6 +20662,12 @@ function wireNewDeviceFormUi() {
     });
   });
   els.newDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('new'));
+  els.opcuaTrustRefreshBtn?.addEventListener('click', () => refreshOpcuaTrust());
+  [els.opcuaRejectedTbody, els.opcuaTrustedTbody].forEach((tbody) => tbody?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-opcua-trust-action][data-opcua-fingerprint]');
+    if (!button) return;
+    changeOpcuaTrust(button.dataset.opcuaTrustAction, button.dataset.opcuaFingerprint);
+  }));
   els.serverCertRefreshBtn?.addEventListener('click', () => refreshServerCertificateLibrary());
   els.serverCertUploadBtn?.addEventListener('click', uploadServerCertificate);
   els.serverCertUploadFile?.addEventListener('change', () => {

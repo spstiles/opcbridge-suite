@@ -404,9 +404,10 @@ test("collapses a flashing bordered GraphWorX alarm label into one native text o
   assert.equal(banner.borderEnabled, true);
   assert.equal(banner.borderWidth, 2);
   assert.equal(banner.borderStyle, "outset");
-  assert.equal(banner.visibility.defaultVisible, true);
+  assert.equal(banner.visibility.defaultVisible, false);
   assert.equal(banner.visibility.rules[0].tag, sourceTag);
-  assert.equal(banner.visibility.rules[0].visible, false);
+  assert.equal(banner.visibility.rules[0].invert, true);
+  assert.equal(banner.visibility.rules[0].visible, undefined);
   assert.equal(banner.visibility.rules[0].flashEnabled, true);
   assert.equal(banner.visibility.rules[0].flashRate, "slow");
   assert.equal(banner.visibility.rules[0].flashWhen, true);
@@ -473,10 +474,11 @@ test("creates editable unresolved automation from GraphWorX dynamics", () => {
   const object = convertGraphWorx(xml, { filename: "Dynamics.gdfx" }).screen.objects[0];
   assert.equal(object.fillAutomation.rules[0].tag, "ac:Plant/Pump/Running");
   assert.equal(object.fillAutomation.rules[0].status, "unresolved");
-  assert.equal(object.visibility.defaultVisible, true);
+  assert.equal(object.visibility.defaultVisible, false);
   assert.equal(object.visibility.rules[0].sourceType, "expression");
   assert.equal(object.visibility.rules[0].expression, "{{ac:Plant/Pump/Fault}} == 1");
-  assert.equal(object.visibility.rules[0].visible, false);
+  assert.equal(object.visibility.rules[0].invert, true);
+  assert.equal(object.visibility.rules[0].visible, undefined);
   assert.ok(object.externalReferences.some((ref) => ref.automation === "color"));
   assert.ok(object.externalReferences.some((ref) => ref.automation === "visibility"));
   assert.ok(convertGraphWorx(xml, { filename: "Dynamics.gdfx" }).screen.referenceHealth.issues.some((issue) => issue.automation === "color"));
@@ -506,14 +508,29 @@ test("preserves multiple GraphWorX visibility dynamics in source priority order"
     </Rectangle>
   </Canvas>`;
   const visibility = convertGraphWorx(xml, { filename: "Visibility Priority.gdfx" }).screen.objects[0].visibility;
-  assert.equal(visibility.defaultVisible, true);
+  assert.equal(visibility.defaultVisible, false);
   assert.deepEqual(visibility.rules.map((rule) => rule.tag), [
     "ac:Plant/Pump/CommunicationsAlarm",
     "ac:Plant/Pump/Running"
   ]);
-  assert.deepEqual(visibility.rules.map((rule) => rule.visible), [false, false]);
+  assert.deepEqual(visibility.rules.map((rule) => rule.invert), [true, true]);
+  assert.deepEqual(visibility.rules.map((rule) => rule.visible), [undefined, undefined]);
   assert.equal(visibility.rules[1].flashEnabled, true);
   assert.equal(visibility.rules[1].flashRate, "fast");
+});
+
+test("imports GwxHide EqualZero as an inverted native visibility condition", () => {
+  const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
+    <Label Width="100" Height="30"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+      <gwx:GwxHide AnimationMode="Discrete" DataSource="ac:Plant/Pump/Running" DataComparison="EqualZero" />
+    </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup><TextBlock Text="RUNNING" /></Label>
+  </Canvas>`;
+  const visibility = convertGraphWorx(xml, { filename: "Hide Equal Zero.gdfx" }).screen.objects[0].visibility;
+  assert.equal(visibility.defaultVisible, false);
+  assert.equal(visibility.rules[0].mode, "equals");
+  assert.equal(visibility.rules[0].match, "0");
+  assert.equal(visibility.rules[0].invert, true);
+  assert.equal(visibility.rules[0].visible, undefined);
 });
 
 test("keeps an opaque black base color when a GraphWorX color animation is present", () => {

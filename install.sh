@@ -983,18 +983,10 @@ fix_config_permissions() {
   # OPC UA application private keys are service credentials. Keep them
   # owner-only even though the broader config tree is group-writable.
   if [[ -d "$CONFIG_ROOT/certs/opcua" ]]; then
-    chmod 0750 "$CONFIG_ROOT/certs/opcua" \
-      "$CONFIG_ROOT/certs/opcua/own" \
-      "$CONFIG_ROOT/certs/opcua/own/certs" \
-      "$CONFIG_ROOT/certs/opcua/trusted" \
-      "$CONFIG_ROOT/certs/opcua/trusted/certs" \
-      "$CONFIG_ROOT/certs/opcua/issuers" \
-      "$CONFIG_ROOT/certs/opcua/issuers/certs" \
-      "$CONFIG_ROOT/certs/opcua/rejected" \
-      "$CONFIG_ROOT/certs/opcua/rejected/certs" 2>/dev/null || true
-    chmod 0700 "$CONFIG_ROOT/certs/opcua/own/private" 2>/dev/null || true
-    find "$CONFIG_ROOT/certs/opcua/own/private" -type f -exec chmod 0600 {} + 2>/dev/null || true
-    find "$CONFIG_ROOT/certs/opcua/own/certs" -type f -exec chmod 0640 {} + 2>/dev/null || true
+    find "$CONFIG_ROOT/certs/opcua" -type d -exec chmod 0750 {} + 2>/dev/null || true
+    find "$CONFIG_ROOT/certs/opcua/pki" -type d -path '*/own/private' -exec chmod 0700 {} + 2>/dev/null || true
+    find "$CONFIG_ROOT/certs/opcua/pki" -type f -path '*/own/private/*' -exec chmod 0600 {} + 2>/dev/null || true
+    find "$CONFIG_ROOT/certs/opcua/pki" -type f ! -path '*/own/private/*' -exec chmod 0640 {} + 2>/dev/null || true
     chmod 0640 "$CONFIG_ROOT/certs/opcua/identity.json" 2>/dev/null || true
   fi
 
@@ -1771,8 +1763,8 @@ verify_component_installation() {
       "$PREFIX/bin/opcbridge-provision-opcua-identity"
       "$PREFIX/VERSION"
       "$CONFIG_ROOT/certs/opcua/identity.json"
-      "$CONFIG_ROOT/certs/opcua/own/certs/opcbridge-application.der"
-      "$CONFIG_ROOT/certs/opcua/own/private/opcbridge-application-key.der"
+      "$CONFIG_ROOT/certs/opcua/pki/ApplCerts/own/certs/opcbridge-application.der"
+      "$CONFIG_ROOT/certs/opcua/pki/ApplCerts/own/private/opcbridge-application-key.der"
     );;
     alarms) required=("$PREFIX/bin/opcbridge-alarms");;
     scada) required=("$PREFIX/scada/server.js" "$PREFIX/scada/VERSION");;

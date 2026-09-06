@@ -12020,7 +12020,44 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
     return true;
 }
 
-bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
+static bool load_opcua_binary_file(const fs::path &path, UA_ByteString &out, std::string &error) {
+    UA_ByteString_init(&out);
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) {
+        error = "unable to open " + path.string();
+        return false;
+    }
+    const std::streamsize size = input.tellg();
+    if (size <= 0) {
+        error = "file is empty: " + path.string();
+        return false;
+    }
+    input.seekg(0, std::ios::beg);
+    if (UA_ByteString_allocBuffer(&out, static_cast<size_t>(size)) != UA_STATUSCODE_GOOD) {
+        error = "unable to allocate certificate buffer";
+        return false;
+    }
+    if (!input.read(reinterpret_cast<char*>(out.data), size)) {
+        UA_ByteString_clear(&out);
+        error = "unable to read " + path.string();
+        return false;
+    }
+    return true;
+}
+
+static std::string load_opcua_application_uri(const fs::path &identityPath) {
+    try {
+        const json identity = load_json_with_comments(identityPath.string());
+        return trim_copy(identity.value("application_uri", std::string{}));
+    } catch (const std::exception &ex) {
+        std::cerr << "OPC UA: unable to read identity metadata " << identityPath
+                  << ": " << ex.what() << "\n";
+        return {};
+    }
+}
+
+bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
+                       const std::string &configDir) {
     if (g_uaServer) {
         std::cerr << "OPC UA: server already initialized.\n";
         return true;
@@ -12042,13 +12079,68 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         return false;
     }
 
-    UA_StatusCode rc = UA_ServerConfig_setMinimal(config, port, nullptr);
+    const fs::path opcuaRoot = fs::path(configDir) / "certs" / "opcua";
+    const fs::path pkiRoot = opcuaRoot / "pki";
+    const fs::path certificatePath = pkiRoot / "ApplCerts" / "own" / "certs" / "opcbridge-application.der";
+    const fs::path privateKeyPath = pkiRoot / "ApplCerts" / "own" / "private" / "opcbridge-application-key.der";
+    const std::string applicationUri = load_opcua_application_uri(opcuaRoot / "identity.json");
+    UA_ByteString certificate = UA_BYTESTRING_NULL;
+    UA_ByteString privateKey = UA_BYTESTRING_NULL;
+    std::string identityError;
+    const bool certificateLoaded = load_opcua_binary_file(certificatePath, certificate, identityError);
+    const bool privateKeyLoaded = certificateLoaded && load_opcua_binary_file(privateKeyPath, privateKey, identityError);
+    const bool secureIdentityReady = certificateLoaded && privateKeyLoaded && !applicationUri.empty();
+
+    UA_StatusCode rc = UA_ServerConfig_setMinimal(config, port,
+                                                   secureIdentityReady ? &certificate : nullptr);
     if (rc != UA_STATUSCODE_GOOD) {
         std::cerr << "OPC UA: UA_ServerConfig_setMinimal failed: "
                   << UA_StatusCode_name(rc) << "\n";
+        UA_ByteString_clear(&certificate);
+        UA_ByteString_clear(&privateKey);
         UA_Server_delete(server);
         return false;
     }
+
+    if (secureIdentityReady) {
+        // Endpoint descriptions copy the server application description, so
+        // apply the URI from the certificate metadata before adding one.
+        UA_String_clear(&config->applicationDescription.applicationUri);
+        config->applicationDescription.applicationUri =
+            UA_STRING_ALLOC(const_cast<char*>(applicationUri.c_str()));
+
+        UA_NodeId applicationGroup =
+            UA_NS0ID(SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP);
+        const std::string pkiRootText = pkiRoot.string();
+        UA_String pkiStore = UA_STRING(const_cast<char*>(pkiRootText.c_str()));
+        rc = UA_CertificateGroup_Filestore(&config->secureChannelPKI, &applicationGroup,
+                                           pkiStore, config->logging, &UA_KEYVALUEMAP_NULL);
+        if (rc == UA_STATUSCODE_GOOD) {
+            rc = UA_ServerConfig_addSecurityPolicyBasic256Sha256(config, &certificate, &privateKey);
+        }
+        if (rc == UA_STATUSCODE_GOOD) {
+            UA_String policy = UA_STRING(const_cast<char*>(
+                "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"));
+            rc = UA_ServerConfig_addEndpoint(config, policy,
+                                             UA_MESSAGESECURITYMODE_SIGNANDENCRYPT);
+        }
+        if (rc != UA_STATUSCODE_GOOD) {
+            std::cerr << "OPC UA: failed to configure Basic256Sha256/SignAndEncrypt: "
+                      << UA_StatusCode_name(rc) << "\n";
+            UA_ByteString_clear(&certificate);
+            UA_ByteString_clear(&privateKey);
+            UA_Server_delete(server);
+            return false;
+        }
+        std::cout << "OPC UA: secure endpoint enabled (Basic256Sha256 / SignAndEncrypt).\n"
+                  << "OPC UA: PKI store: " << pkiRoot << "\n";
+    } else {
+        std::cerr << "OPC UA: secure endpoint unavailable: "
+                  << (identityError.empty() ? "identity metadata is missing" : identityError) << "\n"
+                  << "OPC UA: continuing with the unsecured endpoint for compatibility.\n";
+    }
+    UA_ByteString_clear(&certificate);
+    UA_ByteString_clear(&privateKey);
 
     // UA_ServerConfig_setMinimal allocates strings inside applicationDescription.
     // If we replace them, we must also allocate (and clear old) to avoid invalid frees on shutdown.
@@ -13715,7 +13807,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	                runtime_log("info", "startup", msg.str());
 	            }
 	            const auto opcuaInitStarted = std::chrono::steady_clock::now();
-	            if (!init_opcua_server(opcuaPort, drivers)) {
+            if (!init_opcua_server(opcuaPort, drivers, configDir)) {
 	                std::cerr << "Failed to initialize OPC UA server.\n";
 	                destroy_all_handles(drivers);
 	                return 1;
@@ -29360,7 +29452,7 @@ window.addEventListener("load", startAutoRefresh);
 			                                std::cout << "[reload] Rebuilding OPC UA server...\n";
 			                                const auto opcuaRebuildStarted = std::chrono::steady_clock::now();
 			                                shutdown_opcua_server();
-			                                if (!init_opcua_server(opcuaPort, drivers)) {
+			                                if (!init_opcua_server(opcuaPort, drivers, configDir)) {
 			                                    err = "OPC UA reinit failed after reload (see server log).";
 			                                }
 			                                {

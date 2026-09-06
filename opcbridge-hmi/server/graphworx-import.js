@@ -557,17 +557,21 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
     }
     const hiddenRules = (dynamics.hides || []).map((hidden) => {
       const toggleRate = num(hidden.periodicToggleRate, 0);
+      const comparison = String(hidden.comparison || "").trim().toLowerCase();
+      const equalityToZero = comparison.includes("equalzero") && !comparison.includes("notequal");
       return {
         ...unresolvedBinding(hidden.sourceExpression),
-        invert: !String(hidden.comparison || "").toLowerCase().includes("equalzero"),
-        visible: false,
+        // GwxHide is the inverse of the equivalent show condition. Keep one
+        // native visibility model and represent that difference with Invert.
+        invert: true,
+        ...(equalityToZero ? { mode: "equals", match: "0" } : {}),
         flashEnabled: toggleRate > 0,
         flashRate: toggleRate > 0 && toggleRate <= 500 ? "fast" : "slow",
         flashWhen: true,
         sourceDynamicStateWhenToggleOff: hidden.dynamicStateWhenToggleOff
       };
     });
-    if (hiddenRules.length) obj.visibility = { enabled: true, defaultVisible: true, rules: hiddenRules, selectedRuleIndex: 0 };
+    if (hiddenRules.length) obj.visibility = { enabled: true, defaultVisible: false, rules: hiddenRules, selectedRuleIndex: 0 };
     const rotation = dynamics.rotations?.[0];
     if (rotation) obj.rotationAutomation = unresolvedBinding(rotation.sourceExpression);
     const size = dynamics.sizes?.find((item) => item.levelCompatible);

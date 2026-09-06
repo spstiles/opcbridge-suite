@@ -4735,6 +4735,102 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/opcbridge/opcua-trust') {
+    if (!await requireManageServerPerm()) return;
+    const opcuaRoot = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'opcua');
+    const applicationStore = path.join(opcuaRoot, 'pki', 'ApplCerts');
+    const trustedDir = path.join(applicationStore, 'trusted', 'certs');
+    const rejectedDir = path.join(applicationStore, 'rejected', 'certs');
+    const ownCertPath = path.join(applicationStore, 'own', 'certs', 'opcbridge-application.pem');
+    const identityPath = path.join(opcuaRoot, 'identity.json');
+    const normalizeFingerprint = (value) => String(value || '').replace(/[^a-fA-F0-9]/g, '').toUpperCase();
+    const certificateInfo = (absolute) => {
+      const body = fs.readFileSync(absolute);
+      const certificate = new crypto.X509Certificate(body);
+      const uri = String(certificate.subjectAltName || '').match(/(?:^|,\s*)URI:([^,]+)/i)?.[1]?.trim() || '';
+      return {
+        name: path.basename(absolute),
+        subject: certificate.subject,
+        issuer: certificate.issuer,
+        application_uri: uri,
+        valid_from: certificate.validFrom,
+        valid_to: certificate.validTo,
+        fingerprint: certificate.fingerprint256,
+        size: body.length,
+        modified_ms: Math.trunc(fs.statSync(absolute).mtimeMs)
+      };
+    };
+    const listDirectory = (directory) => {
+      if (!fs.existsSync(directory)) return [];
+      const certificates = [];
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        try { certificates.push(certificateInfo(path.join(directory, entry.name))); }
+        catch { /* Ignore non-certificate files in a PKI certificate directory. */ }
+      }
+      return certificates.sort((a, b) => String(a.subject || a.name).localeCompare(String(b.subject || b.name), undefined, { sensitivity: 'base', numeric: true }));
+    };
+    const findByFingerprint = (directory, wanted) => {
+      if (!fs.existsSync(directory)) return null;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const absolute = path.join(directory, entry.name);
+        try {
+          const info = certificateInfo(absolute);
+          if (normalizeFingerprint(info.fingerprint) === wanted) return { absolute, info };
+        } catch { /* Continue past invalid files. */ }
+      }
+      return null;
+    };
+    try {
+      if (req.method === 'GET') {
+        let identity = null;
+        if (fs.existsSync(ownCertPath)) {
+          identity = certificateInfo(ownCertPath);
+          const metadata = readJsoncFileOrNull(identityPath);
+          if (metadata?.application_uri) identity.application_uri = String(metadata.application_uri);
+        }
+        sendJson(res, 200, {
+          ok: true,
+          identity,
+          rejected: listDirectory(rejectedDir),
+          trusted: listDirectory(trustedDir)
+        });
+        return;
+      }
+      if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+      const action = String(url.searchParams.get('action') || '').trim().toLowerCase();
+      const wanted = normalizeFingerprint(url.searchParams.get('fingerprint'));
+      if (!/^[A-F0-9]{64}$/.test(wanted)) { sendJson(res, 400, { ok: false, error: 'A valid SHA-256 certificate fingerprint is required.' }); return; }
+      if (action === 'trust') {
+        const source = findByFingerprint(rejectedDir, wanted);
+        if (!source) {
+          const existing = findByFingerprint(trustedDir, wanted);
+          if (existing) { sendJson(res, 200, { ok: true, duplicate: true, certificate: existing.info }); return; }
+          sendJson(res, 404, { ok: false, error: 'Rejected certificate not found. Refresh the list and retry the client connection.' }); return;
+        }
+        fs.mkdirSync(trustedDir, { recursive: true, mode: 0o750 });
+        const destination = path.join(trustedDir, `${wanted.toLowerCase()}.der`);
+        if (fs.existsSync(destination)) fs.unlinkSync(source.absolute);
+        else fs.renameSync(source.absolute, destination);
+        fs.chmodSync(destination, 0o640);
+        sendJson(res, 200, { ok: true, certificate: certificateInfo(destination) });
+        return;
+      }
+      if (action === 'remove') {
+        const trusted = findByFingerprint(trustedDir, wanted);
+        if (!trusted) { sendJson(res, 404, { ok: false, error: 'Trusted certificate not found.' }); return; }
+        fs.unlinkSync(trusted.absolute);
+        sendJson(res, 200, { ok: true, removed: trusted.info });
+        return;
+      }
+      sendJson(res, 400, { ok: false, error: "Action must be 'trust' or 'remove'." });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: `OPC UA trust operation failed: ${err.message || err}` });
+    }
+    return;
+  }
+
   if (url.pathname === '/api/opcbridge/mqtt-trust-certificates') {
     if (!await requireManageServerPerm()) return;
     const mqttCertRoot = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'mqtt');

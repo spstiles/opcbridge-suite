@@ -4070,6 +4070,18 @@ body.automation-panel-open #editor-pane {
   grid-template-columns: 64px minmax(0, 1fr) auto;
 }
 
+.compact-binding-editors {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.8fr) minmax(128px, 1.2fr);
+  gap: 6px;
+  overflow: visible;
+}
+
+.compact-binding-editors input {
+  width: 100%;
+  min-width: 0;
+}
+
 .text-binding-actions {
   display: flex;
   justify-content: flex-end;
