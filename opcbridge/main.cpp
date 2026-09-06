@@ -218,6 +218,7 @@ struct ConnectionConfig {
     std::string opcua_username;
     std::string opcua_password;
     bool opcua_secure = false;
+    std::string opcua_security_profile;
     std::string opcua_client_certificate;
     std::string opcua_client_private_key;
     std::string opcua_trusted_server_certificate;
@@ -713,6 +714,8 @@ struct UaSystemBinding {
 
 // OPC UA global state
 static UA_Server *g_uaServer = nullptr;
+static fs::path g_opcuaRejectedCertificatesDir;
+static std::chrono::steady_clock::time_point g_nextOpcuaRejectedSync{};
 static UA_NodeId g_uaBridgeNodeId = UA_NODEID_NULL;
 static std::deque<UaTagBinding> g_uaBindings;
 static std::vector<UaSystemBinding> g_uaSystemBindings;
@@ -1110,7 +1113,35 @@ struct ConnPollMetrics {
 
     std::mutex blocks_mutex;
     std::vector<BlockPollMetrics> blocks;
+
+    std::mutex issue_mutex;
+    std::string runtime_issue;
 };
+
+static void set_connection_runtime_issue(const std::shared_ptr<ConnPollMetrics> &metrics,
+                                         const std::string &issue) {
+    if (!metrics) return;
+    std::lock_guard<std::mutex> lock(metrics->issue_mutex);
+    metrics->runtime_issue = issue;
+}
+
+static std::string connection_runtime_issue(const std::shared_ptr<ConnPollMetrics> &metrics) {
+    if (!metrics) return {};
+    std::lock_guard<std::mutex> lock(metrics->issue_mutex);
+    return metrics->runtime_issue;
+}
+
+static std::string remote_opcua_issue_text(UA_StatusCode status) {
+    if (status == UA_STATUSCODE_BADSECURITYCHECKSFAILED)
+        return "secure connection rejected; verify the server profile and approve this client's certificate on the remote server";
+    if (status == UA_STATUSCODE_BADCERTIFICATEUNTRUSTED)
+        return "remote server certificate is not trusted by the selected security profile";
+    if (status == UA_STATUSCODE_BADSECURITYPOLICYREJECTED)
+        return "remote server rejected Basic256Sha256 / SignAndEncrypt";
+    if (status == UA_STATUSCODE_BADCERTIFICATEINVALID)
+        return "local OPC UA identity or trusted-server certificate is missing or invalid";
+    return "upstream OPC UA connection failed: " + std::string(UA_StatusCode_name(status));
+}
 
 static std::mutex g_metricsMutex;
 static std::unordered_map<std::string, std::shared_ptr<ConnPollMetrics>> g_connPollMetrics;
@@ -4587,6 +4618,7 @@ ConnectionConfig load_connection_config(const std::string &path) {
         c.opcua_password = settings.value("password", std::string{});
         const std::string securityProfile = trim_copy(settings.value("security_profile", std::string{}));
         c.opcua_secure = !securityProfile.empty() && securityProfile != "unsecured";
+        c.opcua_security_profile = c.opcua_secure ? securityProfile : "unsecured";
         if (c.opcua_secure) {
             if (!is_safe_connection_id_filename(securityProfile)) {
                 throw std::runtime_error("Invalid OPC UA security profile name");
@@ -12128,6 +12160,68 @@ static std::string load_opcua_application_uri(const fs::path &identityPath) {
     }
 }
 
+static void persist_opcua_rejected_certificates() {
+    if (!g_uaServer || g_opcuaRejectedCertificatesDir.empty()) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (g_nextOpcuaRejectedSync.time_since_epoch().count() != 0 && now < g_nextOpcuaRejectedSync) return;
+    g_nextOpcuaRejectedSync = now + std::chrono::seconds(1);
+
+    UA_ServerConfig *config = UA_Server_getConfig(g_uaServer);
+    if (!config || !config->secureChannelPKI.getRejectedList) return;
+
+    UA_ByteString *certificates = nullptr;
+    size_t certificateCount = 0;
+    const UA_StatusCode rc = config->secureChannelPKI.getRejectedList(
+        &config->secureChannelPKI, &certificates, &certificateCount);
+    if (rc != UA_STATUSCODE_GOOD) {
+        std::cerr << "OPC UA: unable to read rejected certificate list: "
+                  << UA_StatusCode_name(rc) << "\n";
+        return;
+    }
+
+    try {
+        fs::create_directories(g_opcuaRejectedCertificatesDir);
+        for (size_t i = 0; i < certificateCount; ++i) {
+            const UA_ByteString &certificate = certificates[i];
+            if (!certificate.data || certificate.length == 0) continue;
+
+            unsigned char digest[EVP_MAX_MD_SIZE];
+            unsigned int digestLength = 0;
+            if (EVP_Digest(certificate.data, certificate.length, digest, &digestLength,
+                           EVP_sha256(), nullptr) != 1) {
+                continue;
+            }
+            std::ostringstream filename;
+            filename << std::hex << std::setfill('0');
+            for (unsigned int n = 0; n < digestLength; ++n) {
+                filename << std::setw(2) << static_cast<unsigned int>(digest[n]);
+            }
+            filename << ".der";
+            const fs::path destination = g_opcuaRejectedCertificatesDir / filename.str();
+            if (fs::exists(destination)) continue;
+
+            const fs::path temporary = destination.string() + ".tmp";
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            if (!output) throw std::runtime_error("unable to open " + temporary.string());
+            output.write(reinterpret_cast<const char *>(certificate.data),
+                         static_cast<std::streamsize>(certificate.length));
+            output.close();
+            if (!output) throw std::runtime_error("unable to write " + temporary.string());
+            fs::permissions(temporary, fs::perms::owner_read | fs::perms::owner_write |
+                                       fs::perms::group_read, fs::perm_options::replace);
+            fs::rename(temporary, destination);
+            std::cout << "OPC UA: recorded rejected client certificate "
+                      << destination.filename() << "\n";
+        }
+    } catch (const std::exception &ex) {
+        std::cerr << "OPC UA: unable to persist rejected client certificates: "
+                  << ex.what() << "\n";
+    }
+
+    UA_Array_delete(certificates, certificateCount, &UA_TYPES[UA_TYPES_BYTESTRING]);
+}
+
 bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
                        const std::string &configDir) {
     if (g_uaServer) {
@@ -12153,6 +12247,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
 
     const fs::path opcuaRoot = fs::path(configDir) / "certs" / "opcua";
     const fs::path pkiRoot = opcuaRoot / "pki";
+    g_opcuaRejectedCertificatesDir = pkiRoot / "ApplCerts" / "rejected" / "certs";
     const fs::path certificatePath = pkiRoot / "ApplCerts" / "own" / "certs" / "opcbridge-application.der";
     const fs::path privateKeyPath = pkiRoot / "ApplCerts" / "own" / "private" / "opcbridge-application-key.der";
     const std::string applicationUri = load_opcua_application_uri(opcuaRoot / "identity.json");
@@ -23537,12 +23632,15 @@ window.addEventListener("load", startAutoRefresh);
 								double sweep_ms_last = 0.0;
 								double sweep_ms_avg_10s = 0.0;
 								double sweep_ms_avg_60s = 0.0;
+								std::shared_ptr<ConnPollMetrics> connectionMetrics;
+								std::string runtimeIssue;
 
 								{
 									std::lock_guard<std::mutex> mlock(g_metricsMutex);
 									auto mit = g_connPollMetrics.find(driver.conn.id);
 									if (mit != g_connPollMetrics.end() && mit->second) {
 										auto &m = mit->second;
+										connectionMetrics = m;
 										metric_reads_total = m->reads_total.load(std::memory_order_relaxed);
 										metric_last_read_ts_ms = m->last_read_ts_ms.load(std::memory_order_relaxed);
 										metric_last_ok_ts_ms = m->last_ok_ts_ms.load(std::memory_order_relaxed);
@@ -23573,6 +23671,7 @@ window.addEventListener("load", startAutoRefresh);
 										}
 									}
 								}
+								runtimeIssue = connection_runtime_issue(connectionMetrics);
 
 								large_time_sliced = (driver.conn.polling_mode == "time_sliced" || driver.tags.size() >= 500);
 								if (large_time_sliced) {
@@ -23754,6 +23853,25 @@ window.addEventListener("load", startAutoRefresh);
 								}
 								dstatus["poll_lanes"] = driver.conn.poll_lanes;
 								if (newest_age_ms >= 0) dstatus["newest_age_ms"] = newest_age_ms;
+								if (is_opcua_client_driver_name(driver.conn.driver)) {
+									dstatus["transport"] = "OPC UA subscription";
+									dstatus["security_mode"] = driver.conn.opcua_secure
+										? "Basic256Sha256 / SignAndEncrypt"
+										: "Unsecured";
+									if (driver.conn.opcua_secure && !driver.conn.opcua_security_profile.empty()) {
+										dstatus["security_profile"] = driver.conn.opcua_security_profile;
+									}
+								}
+								if (!runtimeIssue.empty()) {
+									dstatus["runtime_issue"] = runtimeIssue;
+									const std::string priorStatus = dstatus.value("status", std::string{});
+									if (priorStatus == "ok") {
+										if (ok_count > 0) --ok_count;
+										++degraded_count;
+										dstatus["status"] = "degraded";
+									}
+									dstatus["reason"] = runtimeIssue;
+								}
 
 								conn_obj[driver.conn.id] = dstatus;
 							}
@@ -28124,6 +28242,7 @@ window.addEventListener("load", startAutoRefresh);
 							if (remoteUaClient) {
 								const UA_StatusCode configureRc = configure_remote_opcua_client(remoteUaClient, spec.conn);
 								if (configureRc != UA_STATUSCODE_GOOD) {
+									set_connection_runtime_issue(spec.metrics, remote_opcua_issue_text(configureRc));
 									std::cerr << "Remote OPC UA security setup '" << spec.conn.id << "' failed: "
 									          << UA_StatusCode_name(configureRc) << std::endl;
 									UA_Client_delete(remoteUaClient);
@@ -28150,7 +28269,9 @@ window.addEventListener("load", startAutoRefresh);
 									: UA_Client_connectUsername(remoteUaClient, spec.conn.opcua_endpoint.c_str(),
 									                            spec.conn.opcua_username.c_str(), spec.conn.opcua_password.c_str());
 								remoteUaConnected = (rc == UA_STATUSCODE_GOOD);
+								if (remoteUaConnected) set_connection_runtime_issue(spec.metrics, "");
 								if (!remoteUaConnected) {
+									set_connection_runtime_issue(spec.metrics, remote_opcua_issue_text(rc));
 									remoteUaConnectRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 									std::cerr << "Remote OPC UA connection '" << spec.conn.id << "' unavailable at "
 									          << spec.conn.opcua_endpoint << ": " << UA_StatusCode_name(rc) << std::endl;
@@ -28194,6 +28315,7 @@ window.addEventListener("load", startAutoRefresh);
 								UA_CreateSubscriptionResponse subResponse = UA_Client_Subscriptions_create(
 									remoteUaClient, subRequest, &remoteUaSubscriptionState, nullptr, nullptr);
 								if (subResponse.responseHeader.serviceResult != UA_STATUSCODE_GOOD || subResponse.subscriptionId == 0) {
+									set_connection_runtime_issue(spec.metrics, "upstream connected, but OPC UA subscription creation failed: " + std::string(UA_StatusCode_name(subResponse.responseHeader.serviceResult)));
 									std::cerr << "Remote OPC UA subscription '" << spec.conn.id << "' failed: "
 									          << UA_StatusCode_name(subResponse.responseHeader.serviceResult) << std::endl;
 									UA_CreateSubscriptionResponse_clear(&subResponse);
@@ -28201,6 +28323,7 @@ window.addEventListener("load", startAutoRefresh);
 									return false;
 								}
 								remoteUaSubscriptionId = subResponse.subscriptionId;
+								set_connection_runtime_issue(spec.metrics, "");
 								UA_CreateSubscriptionResponse_clear(&subResponse);
 
 								const size_t createBatch = static_cast<size_t>(std::max(1, spec.conn.poll_batch_size > 0 ? spec.conn.poll_batch_size : 250));
@@ -28260,6 +28383,7 @@ window.addEventListener("load", startAutoRefresh);
 								if (ensureRemoteUaSubscription()) {
 									const UA_StatusCode iterateStatus = UA_Client_run_iterate(remoteUaClient, 0);
 									if (iterateStatus != UA_STATUSCODE_GOOD) {
+										set_connection_runtime_issue(spec.metrics, remote_opcua_issue_text(iterateStatus));
 										remoteUaConnected = false;
 										remoteUaSubscriptionId = 0;
 										remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -29927,6 +30051,7 @@ window.addEventListener("load", startAutoRefresh);
 
 	            if (g_uaServer) {
 	                UA_Server_run_iterate(g_uaServer, false);
+	                persist_opcua_rejected_certificates();
 	            }
 
 	            std::this_thread::sleep_for(std::chrono::milliseconds(50));

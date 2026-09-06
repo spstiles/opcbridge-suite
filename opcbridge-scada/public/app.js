@@ -11483,7 +11483,9 @@ function renderOverviewHealth(health, metrics = null) {
       const connectionName = displayConnectionName(cid);
       const st = String(info?.status || 'unknown');
       const metricInfo = metricConns[cid] && typeof metricConns[cid] === 'object' ? metricConns[cid] : {};
-      const reason = info?.reason ? (` - ${info.reason}`) : '';
+      const actionableIssue = String(info?.runtime_issue || '').trim();
+      const reasonText = actionableIssue || String(info?.reason || '').trim();
+      const reason = reasonText ? (` - ${reasonText}`) : '';
       const ratio = (typeof info?.stale_ratio === 'number') ? ` (${Math.round(info.stale_ratio * 100)}% stale/bad)` : '';
       const seen = (typeof info?.tags_seen === 'number') ? info.tags_seen : null;
       const good = (typeof info?.good_recent === 'number') ? info.good_recent : null;
@@ -11508,6 +11510,9 @@ function renderOverviewHealth(health, metrics = null) {
       if (typeof info?.last_read_age_ms === 'number' && info.last_read_age_ms >= 0) details += ` • last read ${formatMsCompact(info.last_read_age_ms)} ago`;
       if (lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
       if (info?.stalled === true) details += ` • stalled`;
+      if (info?.transport) details += ` • ${String(info.transport)}`;
+      if (info?.security_profile) details += ` • security profile ${String(info.security_profile)}`;
+      else if (info?.security_mode) details += ` • ${String(info.security_mode)}`;
 
       const cls = classForStatus(st);
       const blocks = Array.isArray(metricInfo?.blocks) ? metricInfo.blocks : [];
