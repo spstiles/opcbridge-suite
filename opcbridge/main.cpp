@@ -221,6 +221,7 @@ struct ConnectionConfig {
     std::string opcua_client_certificate;
     std::string opcua_client_private_key;
     std::string opcua_trusted_server_certificate;
+    std::string opcua_application_uri;
 };
 
 	struct TagConfig {
@@ -384,6 +385,11 @@ static UA_StatusCode configure_remote_opcua_client(UA_Client *client, const Conn
     }
     UA_StatusCode rc = UA_ClientConfig_setDefaultEncryption(config, ownCert, ownKey, &trusted, 1, nullptr, 0);
     if (rc == UA_STATUSCODE_GOOD) {
+        if (!conn.opcua_application_uri.empty()) {
+            UA_String_clear(&config->clientDescription.applicationUri);
+            config->clientDescription.applicationUri = UA_STRING_ALLOC(
+                const_cast<char*>(conn.opcua_application_uri.c_str()));
+        }
         config->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
         UA_String_clear(&config->securityPolicyUri);
         config->securityPolicyUri = UA_STRING_ALLOC(const_cast<char*>(
@@ -4590,6 +4596,13 @@ ConnectionConfig load_connection_config(const std::string &path) {
             c.opcua_client_certificate = (opcuaRoot / "pki" / "ApplCerts" / "own" / "certs" / "opcbridge-application.der").string();
             c.opcua_client_private_key = (opcuaRoot / "pki" / "ApplCerts" / "own" / "private" / "opcbridge-application-key.der").string();
             c.opcua_trusted_server_certificate = (opcuaRoot / "server-profiles" / (securityProfile + ".der")).string();
+            try {
+                const json identity = load_json_with_comments((opcuaRoot / "identity.json").string());
+                c.opcua_application_uri = trim_copy(identity.value("application_uri", std::string{}));
+            } catch (...) {
+                throw std::runtime_error("Unable to load the OPC UA application identity metadata");
+            }
+            if (c.opcua_application_uri.empty()) throw std::runtime_error("OPC UA application identity has no Application URI");
         }
         c.path.clear();
         c.plc_type = "opcua_client";
@@ -24175,6 +24188,8 @@ window.addEventListener("load", startAutoRefresh);
 								browseConnection.opcua_client_certificate = (opcuaRoot / "pki" / "ApplCerts" / "own" / "certs" / "opcbridge-application.der").string();
 								browseConnection.opcua_client_private_key = (opcuaRoot / "pki" / "ApplCerts" / "own" / "private" / "opcbridge-application-key.der").string();
 								browseConnection.opcua_trusted_server_certificate = (opcuaRoot / "server-profiles" / (securityProfile + ".der")).string();
+								const json identity = load_json_with_comments((opcuaRoot / "identity.json").string());
+								browseConnection.opcua_application_uri = trim_copy(identity.value("application_uri", std::string{}));
 							}
 							const UA_StatusCode configureRc = configure_remote_opcua_client(client, browseConnection);
 							if (configureRc != UA_STATUSCODE_GOOD) throw std::runtime_error("Security setup failed: " + std::string(UA_StatusCode_name(configureRc)));
@@ -28139,6 +28154,7 @@ window.addEventListener("load", startAutoRefresh);
 									remoteUaConnectRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 									std::cerr << "Remote OPC UA connection '" << spec.conn.id << "' unavailable at "
 									          << spec.conn.opcua_endpoint << ": " << UA_StatusCode_name(rc) << std::endl;
+									UA_Client_disconnect(remoteUaClient);
 								}
 								return remoteUaConnected;
 							};
@@ -28634,10 +28650,12 @@ window.addEventListener("load", startAutoRefresh);
 
 	                                if (!isArray) {
 	                                    if (status != PLCTAG_STATUS_OK) {
-	                                        std::cerr << "Read error for ["
-	                                                  << spec.conn.id << "]."
-	                                                  << t.cfg.logical_name << ": "
-	                                                  << plc_tag_decode_error(status) << std::endl;
+	                                        if (!is_opcua_client_driver_name(spec.conn.driver)) {
+	                                            std::cerr << "Read error for ["
+	                                                      << spec.conn.id << "]."
+	                                                      << t.cfg.logical_name << ": "
+	                                                      << plc_tag_decode_error(status) << std::endl;
+	                                        }
 
 	                                        TagSnapshot &s = tagTable[key];
 	                                        s.connection_id = spec.conn.id;

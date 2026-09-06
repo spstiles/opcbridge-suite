@@ -19785,11 +19785,6 @@ async function saveEditedDeviceFromModal() {
       delete obj.modbus_address_mode;
     }
     if (driver === 'opcua_client') {
-      obj.settings = {};
-      const securityProfile = String(els.newDevOpcuaSecurityProfile?.value || '').trim();
-      if (securityProfile) obj.settings.security_profile = securityProfile;
-    }
-    if (driver === 'opcua_client') {
       obj.settings = { ...((existing?.settings && typeof existing.settings === 'object') ? existing.settings : {}) };
       const securityProfile = String(els.editDevOpcuaSecurityProfile?.value || '').trim();
       if (securityProfile) obj.settings.security_profile = securityProfile;
@@ -20631,6 +20626,11 @@ async function createNewDeviceFromWorkspace() {
       obj.modbus_address_mode = modbus_address_mode;
     } else {
       delete obj.modbus_address_mode;
+    }
+    if (driver === 'opcua_client') {
+      obj.settings = {};
+      const securityProfile = String(els.newDevOpcuaSecurityProfile?.value || '').trim();
+      if (securityProfile) obj.settings.security_profile = securityProfile;
     }
   } catch (err) {
     setNewDevStatus(err.message || String(err));
