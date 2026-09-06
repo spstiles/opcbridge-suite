@@ -25612,6 +25612,7 @@ function renderTreeNode(node, container) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'tree-item';
+  btn.dataset.workspaceNodeId = String(node.id || '');
   btn.classList.toggle('is-active', state.selectedNodeId === node.id);
 
   const twisty = document.createElement('span');
@@ -25682,7 +25683,7 @@ function renderTreeNode(node, container) {
     state.selectedNodeId = node.id;
     updateWorkspaceLiveTagFilterFromNode(node);
     resetLiveTagsViewport();
-    renderWorkspaceTree();
+    updateWorkspaceTreeSelection(btn);
     renderWorkspaceDetails(node);
     refreshVisible().catch(() => {});
   });
@@ -25691,11 +25692,12 @@ function renderTreeNode(node, container) {
     e.preventDefault();
     e.stopPropagation();
 
-    // Right-click also selects the node and updates the right pane.
+    // Select in place. Rebuilding the tree here can create thousands of tag
+    // nodes before the context menu appears on large OPC UA connections.
     state.selectedNodeId = node.id;
     updateWorkspaceLiveTagFilterFromNode(node);
     resetLiveTagsViewport();
-    renderWorkspaceTree();
+    updateWorkspaceTreeSelection(btn);
 
     if (node.type === 'project') return;
 
@@ -25780,6 +25782,15 @@ function renderTreeNode(node, container) {
     (node.children || []).forEach((c) => renderTreeNode(c, childrenWrap));
     container.appendChild(childrenWrap);
   }
+}
+
+function updateWorkspaceTreeSelection(selectedButton = null) {
+  if (!els.treeView) return;
+  els.treeView.querySelectorAll('.tree-item.is-active').forEach((item) => item.classList.remove('is-active'));
+  const button = selectedButton || Array.from(els.treeView.querySelectorAll('.tree-item')).find(
+    (item) => String(item.dataset.workspaceNodeId || '') === String(state.selectedNodeId || '')
+  );
+  button?.classList.add('is-active');
 }
 
 
@@ -26387,7 +26398,7 @@ function selectWorkspaceNodeById(id) {
   if (!node) return;
   state.selectedNodeId = node.id;
   updateWorkspaceLiveTagFilterFromNode(node);
-  renderWorkspaceTree();
+  updateWorkspaceTreeSelection();
   renderWorkspaceDetails(node);
 }
 

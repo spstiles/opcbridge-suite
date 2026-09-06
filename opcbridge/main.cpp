@@ -13781,6 +13781,24 @@ static bool apply_config_bundle_json(const std::string &configDir,
 		        // - `driverMutex` protects in-memory state (drivers vector, tagTable, alarms, etc).
 		        std::shared_mutex plcMutex;
 		        std::mutex driverMutex;
+		        // Stable vector coordinates are rebuilt whenever driver configuration
+		        // changes. REST lookups can then fetch requested tags directly instead
+		        // of scanning every configured tag on each SCADA refresh.
+		        std::unordered_map<std::string, std::pair<size_t, size_t>> tagRuntimeIndex;
+		        auto rebuildTagRuntimeIndex = [&]() {
+		            tagRuntimeIndex.clear();
+		            size_t tagCount = 0;
+		            for (const auto &driver : drivers) tagCount += driver.tags.size();
+		            tagRuntimeIndex.reserve(tagCount);
+		            for (size_t driverIndex = 0; driverIndex < drivers.size(); ++driverIndex) {
+		                const auto &driver = drivers[driverIndex];
+		                for (size_t tagIndex = 0; tagIndex < driver.tags.size(); ++tagIndex) {
+		                    tagRuntimeIndex[make_tag_key(driver.conn.id, driver.tags[tagIndex].cfg.logical_name)] =
+		                        {driverIndex, tagIndex};
+		                }
+		            }
+		        };
+		        rebuildTagRuntimeIndex();
 		        httplib::Server svr;
 		        svr.new_task_queue = [] {
 		            return new httplib::ThreadPool(32, 1024);
@@ -22881,23 +22899,30 @@ window.addEventListener("load", startAutoRefresh);
 		                                pushSystemRow(prefix + "DeferredHandleOpenMsAvg", "float64", (metrics && deferredOpenTotal > 0) ? (static_cast<double>(metrics->deferred_handle_open_us_total.load(std::memory_order_relaxed)) / 1000.0) / static_cast<double>(deferredOpenTotal) : 0.0, ts_ms);
 		                            }
 
-		                            for (auto &t : driver.tags) {
-		                                if (!isWanted(driver.conn.id, t.cfg.logical_name)) continue;
-		                                auto it = tagTable.find(make_tag_key(driver.conn.id, t.cfg.logical_name));
-								TagRow row;
-								row.connection_id = driver.conn.id;
-								row.connection_name = driver.conn.name;
-		                                row.name = t.cfg.logical_name;
-		                                row.datatype = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
-		                                row.enabled = t.cfg.enabled;
-		                                row.writable = t.cfg.writable;
-		                                row.has_snapshot = (it != tagTable.end());
-		                                row.is_array_root = ((t.handle >= 0) || t.handle_deferred) && (t.cfg.elem_count > 1);
-		                                row.handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || is_memory_tag(t.cfg) || row.has_snapshot;
-		                                row.system = false;
-		                                if (row.has_snapshot) row.snap = it->second;
-		                                root["tags"].push_back(tag_row_to_json(row));
-		                            }
+		                        }
+
+		                        for (const auto &reqItem : requested) {
+		                            const auto indexed = tagRuntimeIndex.find(make_tag_key(reqItem.first, reqItem.second));
+		                            if (indexed == tagRuntimeIndex.end()) continue;
+		                            const size_t driverIndex = indexed->second.first;
+		                            const size_t tagIndex = indexed->second.second;
+		                            if (driverIndex >= drivers.size() || tagIndex >= drivers[driverIndex].tags.size()) continue;
+		                            auto &driver = drivers[driverIndex];
+		                            auto &t = driver.tags[tagIndex];
+		                            auto snapshot = tagTable.find(make_tag_key(driver.conn.id, t.cfg.logical_name));
+		                            TagRow row;
+		                            row.connection_id = driver.conn.id;
+		                            row.connection_name = driver.conn.name;
+		                            row.name = t.cfg.logical_name;
+		                            row.datatype = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+		                            row.enabled = t.cfg.enabled;
+		                            row.writable = t.cfg.writable;
+		                            row.has_snapshot = (snapshot != tagTable.end());
+		                            row.is_array_root = ((t.handle >= 0) || t.handle_deferred) && (t.cfg.elem_count > 1);
+		                            row.handle_ok = (t.handle >= 0) || t.handle_deferred || (!t.cfg.source_tag.empty()) || is_memory_tag(t.cfg) || row.has_snapshot;
+		                            row.system = false;
+		                            if (row.has_snapshot) row.snap = snapshot->second;
+		                            root["tags"].push_back(tag_row_to_json(row));
 		                        }
 
 		                        for (const auto &m : g_mqttInputs) {
@@ -28006,6 +28031,8 @@ window.addEventListener("load", startAutoRefresh);
 
 							UA_Client *remoteUaClient = nullptr;
 							bool remoteUaConnected = false;
+							UA_UInt32 remoteUaSubscriptionId = 0;
+							auto remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::time_point{};
 							if (is_opcua_client_driver_name(spec.conn.driver)) {
 								remoteUaClient = UA_Client_new();
 								if (remoteUaClient) UA_ClientConfig_setDefault(UA_Client_getConfig(remoteUaClient));
@@ -28040,8 +28067,109 @@ window.addEventListener("load", startAutoRefresh);
 								uint64_t read_us = 0;
 							};
 							std::unordered_map<size_t, RemoteUaPrefetchResult> remoteUaPrefetch;
+							struct RemoteUaSubscriptionState {
+								PollerSpec *spec = nullptr;
+								std::unordered_map<size_t, RemoteUaPrefetchResult> *pending = nullptr;
+							};
+							RemoteUaSubscriptionState remoteUaSubscriptionState{&spec, &remoteUaPrefetch};
+							auto remoteUaDataChange = [](UA_Client *, UA_UInt32, void *subContext,
+							                            UA_UInt32, void *monContext, UA_DataValue *value) {
+								auto *state = static_cast<RemoteUaSubscriptionState*>(subContext);
+								if (!state || !state->spec || !state->pending || !monContext) return;
+								const size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(monContext) - 1U);
+								if (idx >= state->spec->tags.size()) return;
+								RemoteUaPrefetchResult result;
+								result.ua_status = (value && value->hasStatus) ? value->status : UA_STATUSCODE_GOOD;
+								if (!value || !value->hasValue) result.ua_status = UA_STATUSCODE_BADNODATA;
+								if (result.ua_status == UA_STATUSCODE_GOOD &&
+								    !snapshot_from_opcua_variant(result.snapshot, state->spec->conn,
+								                                  state->spec->tags[idx].cfg, value->value)) {
+									result.ua_status = UA_STATUSCODE_BADTYPEMISMATCH;
+								}
+								(*state->pending)[idx] = std::move(result);
+							};
+							auto ensureRemoteUaSubscription = [&]() -> bool {
+								if (std::chrono::steady_clock::now() < remoteUaSubscriptionRetryAfter) return false;
+								if (!ensureRemoteUaConnected()) return false;
+								if (remoteUaSubscriptionId != 0) return true;
+								UA_CreateSubscriptionRequest subRequest = UA_CreateSubscriptionRequest_default();
+								subRequest.requestedPublishingInterval = 250.0;
+								UA_CreateSubscriptionResponse subResponse = UA_Client_Subscriptions_create(
+									remoteUaClient, subRequest, &remoteUaSubscriptionState, nullptr, nullptr);
+								if (subResponse.responseHeader.serviceResult != UA_STATUSCODE_GOOD || subResponse.subscriptionId == 0) {
+									std::cerr << "Remote OPC UA subscription '" << spec.conn.id << "' failed: "
+									          << UA_StatusCode_name(subResponse.responseHeader.serviceResult) << std::endl;
+									UA_CreateSubscriptionResponse_clear(&subResponse);
+									remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+									return false;
+								}
+								remoteUaSubscriptionId = subResponse.subscriptionId;
+								UA_CreateSubscriptionResponse_clear(&subResponse);
+
+								const size_t createBatch = static_cast<size_t>(std::max(1, spec.conn.poll_batch_size > 0 ? spec.conn.poll_batch_size : 250));
+								for (size_t begin = 0; begin < spec.tags.size(); begin += createBatch) {
+									const size_t count = std::min(createBatch, spec.tags.size() - begin);
+									std::vector<UA_MonitoredItemCreateRequest> items(count);
+									std::vector<void*> contexts(count);
+									std::vector<UA_Client_DataChangeNotificationCallback> callbacks(count, remoteUaDataChange);
+									std::vector<UA_Client_DeleteMonitoredItemCallback> deleteCallbacks(count, nullptr);
+									for (size_t i = 0; i < count; ++i) {
+										const size_t idx = begin + i;
+										std::string nodeText = trim_copy(spec.tags[idx].cfg.plc_tag_name);
+										if (nodeText.rfind("ns=", 0) != 0) nodeText = "ns=1;s=" + nodeText;
+										UA_NodeId nodeId;
+										UA_NodeId_init(&nodeId);
+										UA_String encoded = UA_STRING(const_cast<char*>(nodeText.c_str()));
+										if (UA_NodeId_parse(&nodeId, encoded) != UA_STATUSCODE_GOOD) continue;
+										items[i] = UA_MonitoredItemCreateRequest_default(nodeId);
+										const int samplingMs = spec.tags[idx].cfg.scan_ms > 0 ? spec.tags[idx].cfg.scan_ms : 1000;
+										items[i].requestedParameters.samplingInterval = static_cast<double>(std::max(50, samplingMs));
+										items[i].requestedParameters.queueSize = 1;
+										contexts[i] = reinterpret_cast<void*>(static_cast<uintptr_t>(idx + 1U));
+									}
+									UA_CreateMonitoredItemsRequest request;
+									UA_CreateMonitoredItemsRequest_init(&request);
+									request.subscriptionId = remoteUaSubscriptionId;
+									request.timestampsToReturn = UA_TIMESTAMPSTORETURN_BOTH;
+									request.itemsToCreate = items.data();
+									request.itemsToCreateSize = items.size();
+									UA_CreateMonitoredItemsResponse response = UA_Client_MonitoredItems_createDataChanges(
+										remoteUaClient, request, contexts.data(), callbacks.data(), deleteCallbacks.data());
+									const bool created = response.responseHeader.serviceResult == UA_STATUSCODE_GOOD;
+									if (created) {
+										for (size_t i = 0; i < count; ++i) {
+											const UA_StatusCode itemStatus = i < response.resultsSize
+												? response.results[i].statusCode : UA_STATUSCODE_BADUNEXPECTEDERROR;
+											if (itemStatus != UA_STATUSCODE_GOOD) {
+												RemoteUaPrefetchResult failed;
+												failed.ua_status = itemStatus;
+												remoteUaPrefetch[begin + i] = std::move(failed);
+											}
+										}
+									}
+									UA_CreateMonitoredItemsResponse_clear(&response);
+									for (auto &item : items) UA_MonitoredItemCreateRequest_clear(&item);
+									if (!created) {
+										UA_Client_Subscriptions_deleteSingle(remoteUaClient, remoteUaSubscriptionId);
+										remoteUaSubscriptionId = 0;
+										remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+										return false;
+									}
+								}
+								return true;
+							};
 							auto prefetchRemoteUaDue = [&](size_t requestedIdx, std::chrono::steady_clock::time_point dueNow) {
 								if (!is_opcua_client_driver_name(spec.conn.driver) || remoteUaPrefetch.count(requestedIdx)) return;
+								if (ensureRemoteUaSubscription()) {
+									const UA_StatusCode iterateStatus = UA_Client_run_iterate(remoteUaClient, 0);
+									if (iterateStatus != UA_STATUSCODE_GOOD) {
+										remoteUaConnected = false;
+										remoteUaSubscriptionId = 0;
+										remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+										UA_Client_disconnect(remoteUaClient);
+									}
+									return;
+								}
 								std::vector<size_t> indices;
 								const size_t maxBatch = static_cast<size_t>(std::max(1, spec.conn.poll_batch_size > 0 ? spec.conn.poll_batch_size : 250));
 								indices.reserve(std::min(maxBatch, spec.tags.size()));
@@ -28200,13 +28328,23 @@ window.addEventListener("load", startAutoRefresh);
 		                                    if (is_opcua_client_driver_name(spec.conn.driver)) {
 			                                        UA_StatusCode uaStatus = UA_STATUSCODE_BADNOTCONNECTED;
 			                                        uint64_t readUs = 0;
-			                                        auto prefetched = remoteUaPrefetch.find(top.idx);
-			                                        if (prefetched != remoteUaPrefetch.end()) {
+										auto prefetched = remoteUaPrefetch.find(top.idx);
+										if (prefetched != remoteUaPrefetch.end()) {
 			                                            uaStatus = prefetched->second.ua_status;
 			                                            readUs = prefetched->second.read_us;
 			                                            if (uaStatus == UA_STATUSCODE_GOOD) snap = std::move(prefetched->second.snapshot);
-			                                            remoteUaPrefetch.erase(prefetched);
-			                                        }
+											remoteUaPrefetch.erase(prefetched);
+										} else if (remoteUaSubscriptionId != 0) {
+											// Subscriptions only publish changed values. Reuse the last
+											// good value so periodic logging and freshness bookkeeping
+											// still run without issuing another upstream read.
+											std::lock_guard<std::mutex> snapshotLock(driverMutex);
+											auto existing = tagTable.find(key);
+											if (existing == tagTable.end()) continue;
+											snap = existing->second;
+											snap.timestamp = std::chrono::system_clock::now();
+											uaStatus = UA_STATUSCODE_GOOD;
+										}
 			                                        if (uaStatus != UA_STATUSCODE_GOOD) {
 			                                            status = PLCTAG_ERR_REMOTE_ERR;
 			                                        }
@@ -29379,6 +29517,7 @@ window.addEventListener("load", startAutoRefresh);
 			                                        }
 			                                    }
 			                                }
+			                                rebuildTagRuntimeIndex();
 
 			                                if (g_uaServer) {
 			                                    if (hasDriver) {
@@ -29445,6 +29584,7 @@ window.addEventListener("load", startAutoRefresh);
 			                                // first snapshot. Seed them immediately after
 			                                // every full reload, just as startup does.
 			                                seed_memory_tag_table(drivers, tagTable);
+			                                rebuildTagRuntimeIndex();
 			                            }
 
 			                            // Rebuild OPC UA server to refresh node contexts / handles.
