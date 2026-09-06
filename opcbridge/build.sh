@@ -11,6 +11,7 @@ COMPONENT_VERSION="$(cat "$ROOT/VERSION" 2>/dev/null | tr -d '\r\n' || true)"
 
 CXX_FLAGS="-std=c++17 -Wall -Wextra -O2"
 C_FLAGS="-std=c99 -O2"
+UA_SECURITY_FLAGS="-DUA_ENABLE_ENCRYPTION_OPENSSL"
 
 # Include current dir + ixwebsocket headers
 INCLUDES="-I. -I/usr/local/include"
@@ -25,10 +26,10 @@ OUT="./opcbridge"
 echo "Building opcbridge version ${COMPONENT_VERSION} (suite ${SUITE_VERSION})"
 
 # Compile open62541.c as C
-gcc ${C_FLAGS} ${INCLUDES} -c open62541.c -o open62541.o
+gcc ${C_FLAGS} ${UA_SECURITY_FLAGS} ${INCLUDES} -c open62541.c -o open62541.o
 
 # Compile & link main.cpp + ws.cpp as C++
-g++ ${CXX_FLAGS} ${INCLUDES} main.cpp ws.cpp open62541.o -o ${OUT} \
+g++ ${CXX_FLAGS} ${UA_SECURITY_FLAGS} ${INCLUDES} main.cpp ws.cpp open62541.o -o ${OUT} \
     -DOPCBRIDGE_VERSION=\"${COMPONENT_VERSION}\" \
     -DOPCBRIDGE_SUITE_VERSION=\"${SUITE_VERSION}\" \
     ${LIBS}

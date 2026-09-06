@@ -84,6 +84,9 @@ extern "C" {
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 #include "open62541.h"
+#ifndef UA_ENABLE_ENCRYPTION_OPENSSL
+#error "OPCBridge requires open62541 OpenSSL encryption support"
+#endif
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #elif defined(__GNUC__)
@@ -21912,6 +21915,8 @@ window.addEventListener("load", startAutoRefresh);
 					root["suite_version"]     = OPCBRIDGE_SUITE_VERSION;
 					root["build_date"]        = __DATE__;
 					root["build_time"]        = __TIME__;
+					root["capabilities"]["opcua_encryption"] = true;
+					root["capabilities"]["opcua_encryption_backend"] = "openssl";
 
 				auto now = std::chrono::system_clock::now();
 				auto uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
@@ -23276,6 +23281,8 @@ window.addEventListener("load", startAutoRefresh);
 	                json resp;
 	                resp["component_version"] = OPCBRIDGE_VERSION;
 	                resp["suite_version"] = OPCBRIDGE_SUITE_VERSION;
+	                resp["capabilities"]["opcua_encryption"] = true;
+	                resp["capabilities"]["opcua_encryption_backend"] = "openssl";
 
 					auto now = std::chrono::system_clock::now();
 					const int64_t now_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
