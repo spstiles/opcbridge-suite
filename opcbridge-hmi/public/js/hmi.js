@@ -1132,7 +1132,7 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   }
   setInputValueSafe(rectColorConnectionInput, next.connection_id || "");
   setInputValueSafe(rectColorTagInput, next.tag || "");
-  const unresolvedSource = next.status === "unresolved" || Boolean(next.sourceReference && !next.connection_id);
+  const unresolvedSource = next.status === "unresolved" || Boolean(next.sourceType !== "expression" && next.sourceReference && !next.connection_id);
   rectColorConnectionInput?.classList.toggle("reference-error", unresolvedSource);
   rectColorTagInput?.classList.toggle("reference-error", unresolvedSource);
   if (rectColorModeSelect) rectColorModeSelect.value = mode;
@@ -1140,9 +1140,10 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   if (rectColorMatchInput) setInputValueSafe(rectColorMatchInput, next.match ?? "");
   if (rectColorExpressionSummary) {
     const expression = String(next.expression || "").trim();
-    const summary = expression || "(empty)";
+    const displayExpression = formatAutomationExpressionForDisplay(expression);
+    const summary = displayExpression || "(empty)";
     rectColorExpressionSummary.textContent = summary;
-    rectColorExpressionSummary.title = expression;
+    rectColorExpressionSummary.title = displayExpression;
     rectColorExpressionSummary.classList.toggle("reference-error", unresolvedSource);
   }
   if (rectColorFillEnabledInput) rectColorFillEnabledInput.checked = next.fillEnabled !== false;
@@ -1277,6 +1278,11 @@ const updateRectColorDraft = (patch) => {
   const draft = normalizeRectColorDraft(obj, rectColorDraft);
   const selectedRuleIndex = Math.max(0, Math.min(getColorDynamicTabIndex(), draft.rules.length - 1));
   const next = { ...(draft.rules[selectedRuleIndex] || getDefaultColorRuleForObject(obj)), ...patch };
+  if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in patch)) {
+    delete next.status;
+    delete next.sourceReference;
+    delete next.sourceTarget;
+  }
   if ("sourceType" in patch) {
     next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
     if (next.sourceType === "expression") {
@@ -1520,7 +1526,7 @@ const syncVisibilityUiFromState = (state) => {
   if (visibilityRuleDownBtn) visibilityRuleDownBtn.disabled = !collection || index >= collection.rules.length - 1;
   setInputValueSafe(visibilityConnectionInput, vis.connection_id || "");
   setInputValueSafe(visibilityTagInput, vis.tag || "");
-  const unresolvedSource = vis.status === "unresolved" || Boolean(vis.sourceReference && !vis.connection_id);
+  const unresolvedSource = vis.status === "unresolved" || Boolean(vis.sourceType !== "expression" && vis.sourceReference && !vis.connection_id);
   visibilityConnectionInput?.classList.toggle("reference-error", unresolvedSource);
   visibilityTagInput?.classList.toggle("reference-error", unresolvedSource);
   const thresholdValue = (vis.threshold ?? vis.value);
@@ -1544,9 +1550,10 @@ const syncVisibilityUiFromState = (state) => {
   }
   if (visibilityExpressionSummary) {
     const expression = String(vis.expression || "").trim();
-    const summary = expression ? (expression.length > 72 ? `${expression.slice(0, 72)}…` : expression) : "(empty)";
+    const displayExpression = formatAutomationExpressionForDisplay(expression);
+    const summary = displayExpression ? (displayExpression.length > 72 ? `${displayExpression.slice(0, 72)}…` : displayExpression) : "(empty)";
     visibilityExpressionSummary.textContent = summary;
-    visibilityExpressionSummary.title = expression;
+    visibilityExpressionSummary.title = displayExpression;
   }
   const expressionMode = sourceType === "expression";
   const tagBindingConfig = getCompactTagBindingConfig("visibility");
@@ -2142,10 +2149,12 @@ const ensureAutomationNumericExpressionModal = () => {
 
 const openAutomationNumericExpressionModal = ({ title, value, apply }) => {
   ensureAutomationNumericExpressionModal();
-  automationNumericExpressionContext = { apply };
+  automationNumericExpressionContext = {
+    apply: (expression) => apply(normalizeAutomationExpressionConnectionReferences(expression))
+  };
   const titleEl = document.getElementById("automationNumericExpressionTitle");
   if (titleEl) titleEl.textContent = title || "Automation Expression";
-  if (automationNumericExpressionEditor) automationNumericExpressionEditor.value = String(value || "");
+  if (automationNumericExpressionEditor) automationNumericExpressionEditor.value = formatAutomationExpressionForDisplay(value);
   syncAutomationNumericExpressionValidationUi();
   hideAutomationNumericExpressionInsertMenu();
   setAutomationNumericExpressionTagPickerVisible(false);
@@ -2274,6 +2283,26 @@ const decodeExpressionStringLiteral = (literal) => {
   }
   return "";
 };
+
+const rewriteAutomationExpressionConnections = (expression, resolver) => String(expression || "").replace(
+  /tag\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g,
+  (match, connectionLiteral, tagLiteral) => {
+    const connection = decodeExpressionStringLiteral(connectionLiteral);
+    const tag = decodeExpressionStringLiteral(tagLiteral);
+    const resolved = String(resolver(connection) || connection);
+    return resolved === connection ? match : `tag(${JSON.stringify(resolved)}, ${JSON.stringify(tag)})`;
+  }
+);
+
+const formatAutomationExpressionForDisplay = (expression) => rewriteAutomationExpressionConnections(
+  expression,
+  (connectionId) => getConnectionDisplayName(connectionId)
+);
+
+const normalizeAutomationExpressionConnectionReferences = (expression) => rewriteAutomationExpressionConnections(
+  expression,
+  (connectionReference) => resolveMappedConnectionId(connectionReference)
+);
 
 const extractVisibilityExpressionTagKeys = (expression, out) => {
   const target = out instanceof Set ? out : new Set();
@@ -7315,6 +7344,33 @@ const collectScreenReferenceMappings = () => {
     const connection = String(value.connection_id || "").trim();
     const tag = String(value.tag || "").trim();
     const sourceReference = String(value.sourceReference || "").trim();
+    if (value.sourceType === "expression" && String(value.expression || "").trim()) {
+      extractAutomationExpressionTagReferences(value.expression).forEach((reference, expressionIndex) => {
+        occurrences.push({
+          type: "tag",
+          current: reference.value,
+          original: sourceReference || reference.value,
+          automation: referenceAutomationLabel(pathParts),
+          objectId: String(nextOwner?.importId || nextOwner?.id || ""),
+          path: `${pathText}.expression.${expressionIndex}`,
+          binding: value,
+          status: String(value.status || "unresolved"),
+          apply(replacement, resolved) {
+            const parsed = parseMappedTagReference(replacement);
+            if (!parsed) return false;
+            const expressionPattern = /tag\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g;
+            value.expression = String(value.expression || "").replace(expressionPattern, (match, connectionLiteral, tagLiteral) => {
+              const matches = decodeExpressionStringLiteral(connectionLiteral) === reference.connection_id
+                && decodeExpressionStringLiteral(tagLiteral) === reference.tag;
+              return matches ? `tag(${JSON.stringify(parsed.connection_id)}, ${JSON.stringify(parsed.tag)})` : match;
+            });
+            value.status = resolved ? "resolved" : "unresolved";
+            value.mappedReference = replacement;
+            return true;
+          }
+        });
+      });
+    }
     const looksLikeTagBinding = Object.prototype.hasOwnProperty.call(value, "tag")
       && (Object.prototype.hasOwnProperty.call(value, "connection_id") || value.sourceType === "tag" || sourceReference);
     if (looksLikeTagBinding && (tag || sourceReference) && !aliasTokenName(tag || sourceReference)) {
@@ -7432,7 +7488,9 @@ const downloadObjectReferenceMappings = () => {
 const knownMappedTag = (replacement) => {
   const parsed = parseMappedTagReference(replacement);
   if (!parsed) return false;
-  return tagsCache.some((tag) => String(tag?.connection_id || "") === parsed.connection_id && String(tag?.name || "") === parsed.tag);
+  return [...tagsCache, ...tagsAllCache].some((tag) =>
+    String(tag?.connection_id || "") === parsed.connection_id && String(tag?.name || "") === parsed.tag
+  );
 };
 
 const knownMappedScreen = (replacement) => {
@@ -16757,7 +16815,13 @@ const applyVisibilityDraftToObject = () => {
         const rulePatch = { ...patch };
         delete rulePatch.enabled;
         const rules = normalizedCurrent.rules.slice();
-        rules[selectedRuleIndex] = normalizeVisibilityRule({ ...rules[selectedRuleIndex], ...rulePatch });
+        const nextRule = { ...rules[selectedRuleIndex], ...rulePatch };
+        if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in rulePatch)) {
+          delete nextRule.status;
+          delete nextRule.sourceReference;
+          delete nextRule.sourceTarget;
+        }
+        rules[selectedRuleIndex] = normalizeVisibilityRule(nextRule);
         rectVisibilityDraft = {
           ...normalizedCurrent,
           enabled: patch.enabled === false ? false : true,
@@ -16771,6 +16835,11 @@ const applyVisibilityDraftToObject = () => {
       }
       const current = normalizedCurrent;
       const next = { ...current, ...patch };
+      if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in patch)) {
+        delete next.status;
+        delete next.sourceReference;
+        delete next.sourceTarget;
+      }
       if ("sourceType" in patch) next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
       if ("expression" in patch) {
         const expression = String(patch.expression || "");
@@ -16802,6 +16871,11 @@ const applyVisibilityDraftToObject = () => {
 	  recordHistory();
 	  const current = obj.visibility || { enabled: true };
 	  const next = { ...current, ...patch };
+    if (["sourceType", "connection_id", "tag", "expression"].some((key) => key in patch)) {
+      delete next.status;
+      delete next.sourceReference;
+      delete next.sourceTarget;
+    }
     if ("sourceType" in patch) next.sourceType = patch.sourceType === "expression" ? "expression" : "tag";
     if ("expression" in patch) {
       const expression = String(patch.expression || "");
@@ -23906,10 +23980,12 @@ function initializeCompactTagBindingRows() {
 
   registerCompactTagBinding({
     id: "visibility",
+    container: visibilityFields,
+    beforeEl: visibilityModeSelect?.closest(".prop-row"),
     connectionInput: visibilityConnectionInput,
     tagInput: visibilityTagInput,
+    buttonLabel: "Source",
     modalTitle: "Visibility Tag",
-    inlineOnly: true,
     read: () => ({
       connection_id: String(visibilityConnectionInput?.value || "").trim(),
       tag: String(visibilityTagInput?.value || "").trim()
@@ -23919,10 +23995,12 @@ function initializeCompactTagBindingRows() {
 
   registerCompactTagBinding({
     id: "rectColor",
+    container: rectColorFields,
+    beforeEl: rectColorModeSelect?.closest(".prop-row"),
     connectionInput: rectColorConnectionInput,
     tagInput: rectColorTagInput,
+    buttonLabel: "Source",
     modalTitle: "Color Tag",
-    inlineOnly: true,
     read: () => ({
       connection_id: String(rectColorConnectionInput?.value || "").trim(),
       tag: String(rectColorTagInput?.value || "").trim()
@@ -24626,7 +24704,7 @@ const syncRotationControls = (obj) => {
     control.autoFields.hidden = !enabled;
     setSelectValueSafe(control.sourceTypeSelect, automation.sourceType || "tag");
     setTagBindingFieldValues(control.connectionInput, control.tagInput, automation);
-    const unresolvedSource = automation.status === "unresolved" || Boolean(automation.sourceReference && !automation.connection_id);
+    const unresolvedSource = automation.status === "unresolved" || Boolean(automation.sourceType !== "expression" && automation.sourceReference && !automation.connection_id);
     control.connectionInput.classList.toggle("reference-error", unresolvedSource);
     control.tagInput.classList.toggle("reference-error", unresolvedSource);
     control.connectionRow.classList.toggle("is-hidden", automation.sourceType === "expression");
@@ -24635,7 +24713,7 @@ const syncRotationControls = (obj) => {
     control.tagRow.hidden = automation.sourceType === "expression";
     control.expressionRow.classList.toggle("is-hidden", automation.sourceType !== "expression");
     control.expressionRow.hidden = automation.sourceType !== "expression";
-    const expressionSummary = String(automation.expression || "").trim();
+    const expressionSummary = formatAutomationExpressionForDisplay(automation.expression).trim();
     control.expressionSummary.textContent = expressionSummary || "(empty)";
     control.expressionSummary.title = expressionSummary;
     control.expressionSummary.classList.toggle("reference-error", unresolvedSource);
@@ -25172,7 +25250,7 @@ const syncMotionControls = (obj) => {
     control.tagRow.hidden = motion.sourceType === "expression";
     control.expressionRow.classList.toggle("is-hidden", motion.sourceType !== "expression");
     control.expressionRow.hidden = motion.sourceType !== "expression";
-    const expressionSummary = String(motion.expression || "").trim();
+    const expressionSummary = formatAutomationExpressionForDisplay(motion.expression).trim();
     control.expressionSummary.textContent = expressionSummary || "(empty)";
     control.expressionSummary.title = expressionSummary;
     setInputValueSafe(control.minInput, Number.isFinite(Number(motion.inputMin)) ? Number(motion.inputMin) : 0);

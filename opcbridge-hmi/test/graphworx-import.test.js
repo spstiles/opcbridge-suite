@@ -205,7 +205,7 @@ test("imports an analog process point as an unresolved native text binding", () 
   const label = result.screen.objects[0];
   assert.equal(label.text, "{1} gpm");
   assert.deepEqual(label.textBindings["1"], {
-    connection_id: "", tag: sourceTag, digits: 6, decimals: 2, padZeros: false,
+    enabled: true, sourceType: "tag", connection_id: "", tag: sourceTag, digits: 6, decimals: 2, padZeros: false,
     multiplier: 1, status: "unresolved", sourceReference: sourceTag
   });
   assert.ok(label.externalReferences.some((ref) => ref.automation === "text" && ref.status === "unresolved"));
@@ -226,6 +226,9 @@ test("classifies a GraphWorX analog text expression as supported but unresolved"
   assert.equal(ref.automation, "text expression");
   assert.equal(ref.supported, true);
   assert.equal(ref.status, "unresolved");
+  assert.equal(object.textBindings["1"].sourceType, "expression");
+  assert.equal(object.textBindings["1"].expression, "{{{{ac:Building_30/PLC_Year/Analog}}}}-2000");
+  assert.equal(object.textBindings["1"].tag, undefined);
   assert.equal(object.textBindings["1"].sourceReference, source);
   assert.equal(issue.category, "tag");
   assert.equal(issue.automation, "text expression");
@@ -477,6 +480,20 @@ test("creates editable unresolved automation from GraphWorX dynamics", () => {
   assert.ok(object.externalReferences.some((ref) => ref.automation === "color"));
   assert.ok(object.externalReferences.some((ref) => ref.automation === "visibility"));
   assert.ok(convertGraphWorx(xml, { filename: "Dynamics.gdfx" }).screen.referenceHealth.issues.some((issue) => issue.automation === "color"));
+});
+
+test("recognizes an implicit GraphWorX calculated data source as an expression", () => {
+  const source = "{{ac:Plant/Pump/Speed}} / 10";
+  const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
+    <Rectangle Width="80" Height="40"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+      <gwx:GwxColor TargetPropertyName="Fill" EndBrush="#FF00FF00" DataSource="${source}" />
+    </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></Rectangle>
+  </Canvas>`;
+  const rule = convertGraphWorx(xml, { filename: "Implicit Expression.gdfx" }).screen.objects[0].colorAutomationRules[0];
+  assert.equal(rule.sourceType, "expression");
+  assert.equal(rule.expression, source);
+  assert.equal(rule.tag, undefined);
+  assert.equal(rule.sourceReference, source);
 });
 
 test("preserves multiple GraphWorX visibility dynamics in source priority order", () => {

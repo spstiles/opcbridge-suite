@@ -4433,6 +4433,17 @@ static bool is_safe_connection_id_filename(const std::string &cid) {
 // -----------------------------
 
 static bool is_supported_datatype(const std::string &dt);
+static std::string normalize_config_datatype(const std::string &raw) {
+    const std::string dt = to_lower_copy(trim_copy(raw));
+    if (dt == "boolean") return "bool";
+    if (dt == "int") return "int16";
+    if (dt == "word") return "uint16";
+    if (dt == "dint") return "int32";
+    if (dt == "dword") return "uint32";
+    if (dt == "real") return "float32";
+    if (dt == "lreal") return "float64";
+    return dt;
+}
 static bool is_modbus_driver_name(const std::string &driver);
 static bool is_opcua_client_driver_name(const std::string &driver) {
     return driver == "opcua_client" || driver == "opcua-client" || driver == "remote_opcbridge";
@@ -4690,7 +4701,7 @@ static std::string normalize_word_order(const std::string &raw) {
 	                t.bit = -1;
 	                t.elem_count = 1;
 	                t.scan_ms = 0;
-	                t.datatype = json_get_string_loose(jt, "datatype", std::string{});
+	                t.datatype = normalize_config_datatype(json_get_string_loose(jt, "datatype", std::string{}));
 	                if (t.datatype.empty()) {
 	                    std::cerr << "[load] Warning: skipping memory tag '" << t.logical_name
 	                              << "' in " << path << " because datatype is missing.\n";
@@ -4707,7 +4718,7 @@ static std::string normalize_word_order(const std::string &raw) {
 	                t.bit = bit;
 	                t.plc_tag_name.clear();
 
-	                t.datatype = json_get_string_loose(jt, "datatype", std::string{});
+	                t.datatype = normalize_config_datatype(json_get_string_loose(jt, "datatype", std::string{}));
 	                if (t.datatype.empty()) {
 	                    t.datatype = isDerivedBit ? std::string("bool") : std::string{};
 	                }
@@ -4753,7 +4764,7 @@ static std::string normalize_word_order(const std::string &raw) {
 	                    }
 	                }
 	                t.path         = trim_copy(json_get_string_loose(jt, "path", std::string{}));
-	                t.datatype     = json_get_string_loose(jt, "datatype", std::string{});
+	                t.datatype     = normalize_config_datatype(json_get_string_loose(jt, "datatype", std::string{}));
 	                if (t.plc_tag_name.empty() || t.datatype.empty()) continue;
 	                if (!is_supported_datatype(t.datatype)) {
 	                    std::cerr << "[load] Warning: skipping tag '" << t.logical_name

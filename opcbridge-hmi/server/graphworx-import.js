@@ -292,6 +292,16 @@ const namedDataSources = (node) => {
   return found;
 };
 
+const graphWorxExpression = (source) => {
+  const raw = String(source || "").trim();
+  const explicit = raw.match(/^x\s*=\s*([\s\S]*)$/i);
+  if (explicit) return { isExpression: true, expression: explicit[1].trim() };
+  // GraphWorX encloses references used inside calculated data sources in
+  // double braces. Plain data sources are unwrapped (for example ac:...).
+  if (raw.includes("{{") && raw.includes("}}")) return { isExpression: true, expression: raw };
+  return { isExpression: false, expression: "" };
+};
+
 const sourceMetadata = (sourceType, node, extra = {}) => {
   const colors = descendants(node, (name) => name === "gwx:GwxColor").map((item) => ({
     kind: "color",
@@ -359,7 +369,7 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
         && descendants(item.node, (name) => name === "gwx:GwxProcessPointStateItem").length > 0;
       const hasTextValue = item.name === "gwx:GwxProcessPoint" && sourceType === "Label" && !hasDiscreteStates
         && (String(item.node.AnimationMode || "").toLowerCase() === "analog" || /\?+/.test(textFrom(node)));
-      const hasTextExpression = hasTextValue && String(item.value || "").trim().startsWith("x=");
+      const hasTextExpression = hasTextValue && graphWorxExpression(item.value).isExpression;
       const hasWriteCommand = item.name === "gwx:GwxPick"
         && descendants(item.node, (name) => name === "gwxcmd:WriteValueCommand").length > 0;
       const sizeDynamic = item.name === "gwx:GwxSize"
@@ -511,8 +521,9 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
   let objectSequence = 0;
   const unresolvedBinding = (source) => {
     const raw = String(source || "").trim();
-    return raw.startsWith("x=")
-      ? { enabled: true, sourceType: "expression", expression: raw.slice(2), status: "unresolved", sourceReference: raw }
+    const parsedExpression = graphWorxExpression(raw);
+    return parsedExpression.isExpression
+      ? { enabled: true, sourceType: "expression", expression: parsedExpression.expression, status: "unresolved", sourceReference: raw }
       : { enabled: true, sourceType: "tag", connection_id: "", tag: raw, status: "unresolved", sourceReference: raw };
   };
   const applyImportedDynamics = (obj) => {
@@ -607,14 +618,11 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       obj.text = /\?+(?:\.\?+)?/.test(originalText) ? originalText.replace(/\?+(?:\.\?+)?/, "{1}") : generatedText;
       obj.textBindings = {
         "1": {
-          connection_id: "",
-          tag: sourceReference,
+          ...unresolvedBinding(sourceReference),
           digits: integerDigits + decimals,
           decimals,
           padZeros: false,
-          multiplier: 1,
-          status: "unresolved",
-          sourceReference
+          multiplier: 1
         }
       };
     }
