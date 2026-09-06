@@ -860,6 +860,10 @@ maybe_prompt_install_deps() {
   local -a missing
   missing=()
 
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'opcbridge'; then
+    have_cmd openssl || missing+=("openssl (OPC UA application identity)")
+  fi
+
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'alarms'; then
     have_cmd aplay || missing+=("alsa-utils (aplay)")
     if ! have_cmd espeak-ng && ! have_cmd espeak && ! have_cmd flite; then
@@ -976,6 +980,24 @@ fix_config_permissions() {
   find "$CONFIG_ROOT" -type d -exec chmod 770 {} + 2>/dev/null || true
   find "$CONFIG_ROOT" -type f -exec chmod 660 {} + 2>/dev/null || true
 
+  # OPC UA application private keys are service credentials. Keep them
+  # owner-only even though the broader config tree is group-writable.
+  if [[ -d "$CONFIG_ROOT/certs/opcua" ]]; then
+    chmod 0750 "$CONFIG_ROOT/certs/opcua" \
+      "$CONFIG_ROOT/certs/opcua/own" \
+      "$CONFIG_ROOT/certs/opcua/own/certs" \
+      "$CONFIG_ROOT/certs/opcua/trusted" \
+      "$CONFIG_ROOT/certs/opcua/trusted/certs" \
+      "$CONFIG_ROOT/certs/opcua/issuers" \
+      "$CONFIG_ROOT/certs/opcua/issuers/certs" \
+      "$CONFIG_ROOT/certs/opcua/rejected" \
+      "$CONFIG_ROOT/certs/opcua/rejected/certs" 2>/dev/null || true
+    chmod 0700 "$CONFIG_ROOT/certs/opcua/own/private" 2>/dev/null || true
+    find "$CONFIG_ROOT/certs/opcua/own/private" -type f -exec chmod 0600 {} + 2>/dev/null || true
+    find "$CONFIG_ROOT/certs/opcua/own/certs" -type f -exec chmod 0640 {} + 2>/dev/null || true
+    chmod 0640 "$CONFIG_ROOT/certs/opcua/identity.json" 2>/dev/null || true
+  fi
+
   # Keep the env file root-owned and not group/world readable.
   if [[ -f "$ENV_FILE" ]]; then
     chown root:root "$ENV_FILE" 2>/dev/null || true
@@ -1078,11 +1100,17 @@ install_opcbridge() {
 
   install -m 0755 "$src" "$PREFIX/bin/opcbridge"
 
+  install -m 0755 "$ROOT_DIR/opcbridge/scripts/provision-opcua-identity.sh" \
+    "$PREFIX/bin/opcbridge-provision-opcua-identity"
+
   # Per-connection MQTT TLS material is managed by the SCADA service and read
   # by OPCBridge. Private keys receive stricter permissions when uploaded.
   mkdir -p "$CONFIG_ROOT/certs/mqtt"
   chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/certs" 2>/dev/null || true
   chmod 0750 "$CONFIG_ROOT/certs" "$CONFIG_ROOT/certs/mqtt" 2>/dev/null || true
+
+  "$PREFIX/bin/opcbridge-provision-opcua-identity" \
+    "$CONFIG_ROOT" "$SERVICE_USER" "$SERVICE_GROUP"
 
   # Install example configs (non-sensitive)
   install -m 0644 "$ROOT_DIR/opcbridge/config/admin_auth.json.example" "$CONFIG_ROOT/admin_auth.json.example" 2>/dev/null || true
@@ -1738,7 +1766,14 @@ verify_component_installation() {
   local -a required=()
 
   case "$component" in
-    opcbridge) required=("$PREFIX/bin/opcbridge" "$PREFIX/VERSION");;
+    opcbridge) required=(
+      "$PREFIX/bin/opcbridge"
+      "$PREFIX/bin/opcbridge-provision-opcua-identity"
+      "$PREFIX/VERSION"
+      "$CONFIG_ROOT/certs/opcua/identity.json"
+      "$CONFIG_ROOT/certs/opcua/own/certs/opcbridge-application.der"
+      "$CONFIG_ROOT/certs/opcua/own/private/opcbridge-application-key.der"
+    );;
     alarms) required=("$PREFIX/bin/opcbridge-alarms");;
     scada) required=("$PREFIX/scada/server.js" "$PREFIX/scada/VERSION");;
     hmi) required=("$PREFIX/hmi/server.js" "$PREFIX/hmi/VERSION");;
