@@ -84,6 +84,9 @@ extern "C" {
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 #include "open62541.h"
+#ifndef UA_ENABLE_ENCRYPTION_OPENSSL
+#error "OPCBridge requires open62541 OpenSSL encryption support"
+#endif
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #elif defined(__GNUC__)
@@ -211,6 +214,9 @@ struct ConnectionConfig {
     int debug              = 0;
     std::vector<std::string> mqtt_subscription_topics;
     std::vector<std::string> mqtt_publication_topics;
+    std::string opcua_endpoint;
+    std::string opcua_username;
+    std::string opcua_password;
 };
 
 	struct TagConfig {
@@ -305,6 +311,86 @@ struct TagSnapshot {
     std::chrono::system_clock::time_point timestamp;
     int quality; // 0=bad, 1=good
 };
+
+static bool snapshot_from_opcua_variant(TagSnapshot &snap,
+                                        const ConnectionConfig &conn,
+                                        const TagConfig &tag,
+                                        const UA_Variant &value) {
+    snap.connection_id = conn.id;
+    snap.logical_name = tag.logical_name;
+    snap.datatype = tag.datatype;
+    snap.timestamp = std::chrono::system_clock::now();
+    snap.quality = 1;
+    if (!UA_Variant_isScalar(&value) || !value.data) return false;
+
+    if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BOOLEAN])) {
+        snap.datatype = "bool";
+        snap.value = (*static_cast<const UA_Boolean*>(value.data) != UA_FALSE);
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT16])) {
+        snap.datatype = "int16";
+        snap.value = static_cast<int16_t>(*static_cast<const UA_Int16*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT16])) {
+        snap.datatype = "uint16";
+        snap.value = static_cast<uint16_t>(*static_cast<const UA_UInt16*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT32])) {
+        snap.datatype = "int32";
+        snap.value = static_cast<int32_t>(*static_cast<const UA_Int32*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32])) {
+        snap.datatype = "uint32";
+        snap.value = static_cast<uint32_t>(*static_cast<const UA_UInt32*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_FLOAT])) {
+        snap.datatype = "float32";
+        snap.value = static_cast<float>(*static_cast<const UA_Float*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_DOUBLE])) {
+        snap.datatype = "float64";
+        snap.value = static_cast<double>(*static_cast<const UA_Double*>(value.data));
+    } else if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_STRING])) {
+        const UA_String &s = *static_cast<const UA_String*>(value.data);
+        snap.datatype = "string";
+        snap.value = std::string(reinterpret_cast<const char*>(s.data), s.length);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+struct RemoteUaChild {
+    std::string node_id;
+    std::string name;
+    UA_NodeClass node_class = UA_NODECLASS_UNSPECIFIED;
+};
+
+static std::vector<RemoteUaChild> remote_ua_browse_children(UA_Client *client, const UA_NodeId &parent) {
+    std::vector<RemoteUaChild> out;
+    UA_BrowseRequest req;
+    UA_BrowseRequest_init(&req);
+    req.requestedMaxReferencesPerNode = 0;
+    req.nodesToBrowse = UA_BrowseDescription_new();
+    req.nodesToBrowseSize = 1;
+    UA_NodeId_copy(&parent, &req.nodesToBrowse[0].nodeId);
+    req.nodesToBrowse[0].browseDirection = UA_BROWSEDIRECTION_FORWARD;
+    req.nodesToBrowse[0].referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
+    req.nodesToBrowse[0].includeSubtypes = true;
+    req.nodesToBrowse[0].resultMask = UA_BROWSERESULTMASK_ALL;
+    UA_BrowseResponse resp = UA_Client_Service_browse(client, req);
+    if (resp.responseHeader.serviceResult == UA_STATUSCODE_GOOD && resp.resultsSize > 0 && resp.results[0].statusCode == UA_STATUSCODE_GOOD) {
+        for (size_t i = 0; i < resp.results[0].referencesSize; ++i) {
+            const UA_ReferenceDescription &ref = resp.results[0].references[i];
+            if (ref.nodeId.serverIndex != 0 || ref.nodeId.namespaceUri.length != 0) continue;
+            RemoteUaChild child;
+            UA_String printed = UA_STRING_NULL;
+            if (UA_NodeId_print(&ref.nodeId.nodeId, &printed) != UA_STATUSCODE_GOOD) continue;
+            child.node_id.assign(reinterpret_cast<const char*>(printed.data), printed.length);
+            UA_String_clear(&printed);
+            child.name.assign(reinterpret_cast<const char*>(ref.displayName.text.data), ref.displayName.text.length);
+            child.node_class = ref.nodeClass;
+            out.push_back(std::move(child));
+        }
+    }
+    UA_BrowseResponse_clear(&resp);
+    UA_BrowseRequest_clear(&req);
+    return out;
+}
 
 // Forward declaration so write_single_tag can use it
 bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b);
@@ -4362,6 +4448,9 @@ static std::string normalize_config_datatype(const std::string &raw) {
     return dt;
 }
 static bool is_modbus_driver_name(const std::string &driver);
+static bool is_opcua_client_driver_name(const std::string &driver) {
+    return driver == "opcua_client" || driver == "opcua-client" || driver == "remote_opcbridge";
+}
 static bool build_modbus_plc_tag_name(const json &jt, std::string &outName, std::string &outErr);
 static std::string normalize_word_order(const std::string &raw);
 static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
@@ -4434,9 +4523,26 @@ ConnectionConfig load_connection_config(const std::string &path) {
         c.poll_time_budget_ms = 0;
         c.poll_max_reads_per_sec = 0;
         c.poll_lanes = 1;
+    } else if (is_opcua_client_driver_name(c.driver)) {
+        c.driver = "opcua_client";
+        const json settings = (j.contains("settings") && j["settings"].is_object())
+            ? j["settings"] : json::object();
+        c.opcua_endpoint = trim_copy(settings.value("endpoint", j.value("endpoint", std::string{})));
+        if (c.opcua_endpoint.empty()) {
+            std::string host = trim_copy(c.gateway);
+            if (host.empty()) throw std::runtime_error("OPC UA client connection requires an endpoint or gateway");
+            if (host.rfind("opc.tcp://", 0) != 0) host = "opc.tcp://" + host;
+            if (host.find(':', std::string("opc.tcp://").size()) == std::string::npos) host += ":4840";
+            c.opcua_endpoint = host;
+        }
+        c.opcua_username = trim_copy(settings.value("username", std::string{}));
+        c.opcua_password = settings.value("password", std::string{});
+        c.path.clear();
+        c.plc_type = "opcua_client";
+        c.poll_lanes = 1;
     } else {
         throw std::runtime_error("Unsupported driver: " + c.driver +
-                                 " (expected 'ab_eip', 'modbus_tcp', or 'mqtt')");
+                                 " (expected 'ab_eip', 'modbus_tcp', 'mqtt', or 'opcua_client')");
     }
 
     return c;
@@ -6296,6 +6402,66 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         return true;
     }
 
+    if (is_opcua_client_driver_name(conn.driver)) {
+        TagValue parsed{};
+        if (!parse_string_to_tagvalue(value_str, cfg.datatype, parsed)) {
+            return fail("Remote OPC UA write value cannot be parsed as " + cfg.datatype + ".");
+        }
+        UA_Client *client = UA_Client_new();
+        if (!client) return fail("Unable to allocate OPC UA client.");
+        UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+        UA_StatusCode rc = conn.opcua_username.empty()
+            ? UA_Client_connect(client, conn.opcua_endpoint.c_str())
+            : UA_Client_connectUsername(client, conn.opcua_endpoint.c_str(), conn.opcua_username.c_str(), conn.opcua_password.c_str());
+        if (rc != UA_STATUSCODE_GOOD) {
+            const std::string msg = "Remote OPC UA connect failed: " + std::string(UA_StatusCode_name(rc));
+            UA_Client_delete(client);
+            return fail(msg);
+        }
+        std::string nodeText = trim_copy(cfg.plc_tag_name);
+        if (nodeText.rfind("ns=", 0) != 0) nodeText = "ns=1;s=" + nodeText;
+        UA_NodeId nodeId = UA_NODEID_NULL;
+        UA_String encoded = UA_STRING(const_cast<char*>(nodeText.c_str()));
+        rc = UA_NodeId_parse(&nodeId, encoded);
+        UA_Variant variant;
+        UA_Variant_init(&variant);
+        if (rc == UA_STATUSCODE_GOOD) {
+            std::visit([&](auto &&arg) {
+                using T = std::decay_t<decltype(arg)>;
+                if constexpr (std::is_same_v<T, bool>) {
+                    UA_Boolean v = arg ? UA_TRUE : UA_FALSE; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
+                } else if constexpr (std::is_same_v<T, int16_t>) {
+                    UA_Int16 v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_INT16]);
+                } else if constexpr (std::is_same_v<T, uint16_t>) {
+                    UA_UInt16 v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_UINT16]);
+                } else if constexpr (std::is_same_v<T, int32_t>) {
+                    UA_Int32 v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_INT32]);
+                } else if constexpr (std::is_same_v<T, uint32_t>) {
+                    UA_UInt32 v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_UINT32]);
+                } else if constexpr (std::is_same_v<T, float>) {
+                    UA_Float v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_FLOAT]);
+                } else if constexpr (std::is_same_v<T, double>) {
+                    UA_Double v = arg; UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+                } else if constexpr (std::is_same_v<T, std::string>) {
+                    UA_String v = UA_STRING(const_cast<char*>(arg.c_str())); UA_Variant_setScalarCopy(&variant, &v, &UA_TYPES[UA_TYPES_STRING]);
+                }
+            }, parsed);
+            rc = UA_Client_writeValueAttribute(client, nodeId, &variant);
+        }
+        UA_Variant_clear(&variant);
+        UA_NodeId_clear(&nodeId);
+        UA_Client_disconnect(client);
+        UA_Client_delete(client);
+        if (rc != UA_STATUSCODE_GOOD) return fail("Remote OPC UA write failed: " + std::string(UA_StatusCode_name(rc)));
+
+        TagSnapshot written{conn.id, logical_name, cfg.datatype, parsed, std::chrono::system_clock::now(), 1};
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            table[key] = written;
+        }
+        return true;
+    }
+
     // Keep handles stable across the operation, then give this write priority
     // over polling reads for its connection only.
     const auto plcLockWaitStarted = std::chrono::steady_clock::now();
@@ -7116,6 +7282,15 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
         if (!tc.source_tag.empty()) {
             rt.handle = PLCTAG_ERR_NOT_FOUND;
             rt.next_poll = std::chrono::steady_clock::time_point{};
+            ctx.tags.push_back(std::move(rt));
+            continue;
+        }
+
+        if (is_opcua_client_driver_name(conn_cfg.driver)) {
+            rt.handle = PLCTAG_ERR_NOT_FOUND;
+            rt.handle_deferred = false;
+            rt.next_poll = std::chrono::steady_clock::now();
+            schedule_next_periodic(rt);
             ctx.tags.push_back(std::move(rt));
             continue;
         }
@@ -11650,7 +11825,8 @@ static bool ua_add_tag_variable_node(UA_Server *server,
                                      std::string &err) {
     const TagConfig &cfg = tag.cfg;
     err.clear();
-    if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg)) {
+    if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) &&
+        tag.cfg.source_tag.empty() && !is_opcua_client_driver_name(conn.driver)) {
         err = "invalid handle";
         return false;
     }
@@ -11844,7 +12020,44 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
     return true;
 }
 
-bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
+static bool load_opcua_binary_file(const fs::path &path, UA_ByteString &out, std::string &error) {
+    UA_ByteString_init(&out);
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) {
+        error = "unable to open " + path.string();
+        return false;
+    }
+    const std::streamsize size = input.tellg();
+    if (size <= 0) {
+        error = "file is empty: " + path.string();
+        return false;
+    }
+    input.seekg(0, std::ios::beg);
+    if (UA_ByteString_allocBuffer(&out, static_cast<size_t>(size)) != UA_STATUSCODE_GOOD) {
+        error = "unable to allocate certificate buffer";
+        return false;
+    }
+    if (!input.read(reinterpret_cast<char*>(out.data), size)) {
+        UA_ByteString_clear(&out);
+        error = "unable to read " + path.string();
+        return false;
+    }
+    return true;
+}
+
+static std::string load_opcua_application_uri(const fs::path &identityPath) {
+    try {
+        const json identity = load_json_with_comments(identityPath.string());
+        return trim_copy(identity.value("application_uri", std::string{}));
+    } catch (const std::exception &ex) {
+        std::cerr << "OPC UA: unable to read identity metadata " << identityPath
+                  << ": " << ex.what() << "\n";
+        return {};
+    }
+}
+
+bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
+                       const std::string &configDir) {
     if (g_uaServer) {
         std::cerr << "OPC UA: server already initialized.\n";
         return true;
@@ -11866,13 +12079,68 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         return false;
     }
 
-    UA_StatusCode rc = UA_ServerConfig_setMinimal(config, port, nullptr);
+    const fs::path opcuaRoot = fs::path(configDir) / "certs" / "opcua";
+    const fs::path pkiRoot = opcuaRoot / "pki";
+    const fs::path certificatePath = pkiRoot / "ApplCerts" / "own" / "certs" / "opcbridge-application.der";
+    const fs::path privateKeyPath = pkiRoot / "ApplCerts" / "own" / "private" / "opcbridge-application-key.der";
+    const std::string applicationUri = load_opcua_application_uri(opcuaRoot / "identity.json");
+    UA_ByteString certificate = UA_BYTESTRING_NULL;
+    UA_ByteString privateKey = UA_BYTESTRING_NULL;
+    std::string identityError;
+    const bool certificateLoaded = load_opcua_binary_file(certificatePath, certificate, identityError);
+    const bool privateKeyLoaded = certificateLoaded && load_opcua_binary_file(privateKeyPath, privateKey, identityError);
+    const bool secureIdentityReady = certificateLoaded && privateKeyLoaded && !applicationUri.empty();
+
+    UA_StatusCode rc = UA_ServerConfig_setMinimal(config, port,
+                                                   secureIdentityReady ? &certificate : nullptr);
     if (rc != UA_STATUSCODE_GOOD) {
         std::cerr << "OPC UA: UA_ServerConfig_setMinimal failed: "
                   << UA_StatusCode_name(rc) << "\n";
+        UA_ByteString_clear(&certificate);
+        UA_ByteString_clear(&privateKey);
         UA_Server_delete(server);
         return false;
     }
+
+    if (secureIdentityReady) {
+        // Endpoint descriptions copy the server application description, so
+        // apply the URI from the certificate metadata before adding one.
+        UA_String_clear(&config->applicationDescription.applicationUri);
+        config->applicationDescription.applicationUri =
+            UA_STRING_ALLOC(const_cast<char*>(applicationUri.c_str()));
+
+        UA_NodeId applicationGroup =
+            UA_NS0ID(SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP);
+        const std::string pkiRootText = pkiRoot.string();
+        UA_String pkiStore = UA_STRING(const_cast<char*>(pkiRootText.c_str()));
+        rc = UA_CertificateGroup_Filestore(&config->secureChannelPKI, &applicationGroup,
+                                           pkiStore, config->logging, &UA_KEYVALUEMAP_NULL);
+        if (rc == UA_STATUSCODE_GOOD) {
+            rc = UA_ServerConfig_addSecurityPolicyBasic256Sha256(config, &certificate, &privateKey);
+        }
+        if (rc == UA_STATUSCODE_GOOD) {
+            UA_String policy = UA_STRING(const_cast<char*>(
+                "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"));
+            rc = UA_ServerConfig_addEndpoint(config, policy,
+                                             UA_MESSAGESECURITYMODE_SIGNANDENCRYPT);
+        }
+        if (rc != UA_STATUSCODE_GOOD) {
+            std::cerr << "OPC UA: failed to configure Basic256Sha256/SignAndEncrypt: "
+                      << UA_StatusCode_name(rc) << "\n";
+            UA_ByteString_clear(&certificate);
+            UA_ByteString_clear(&privateKey);
+            UA_Server_delete(server);
+            return false;
+        }
+        std::cout << "OPC UA: secure endpoint enabled (Basic256Sha256 / SignAndEncrypt).\n"
+                  << "OPC UA: PKI store: " << pkiRoot << "\n";
+    } else {
+        std::cerr << "OPC UA: secure endpoint unavailable: "
+                  << (identityError.empty() ? "identity metadata is missing" : identityError) << "\n"
+                  << "OPC UA: continuing with the unsecured endpoint for compatibility.\n";
+    }
+    UA_ByteString_clear(&certificate);
+    UA_ByteString_clear(&privateKey);
 
     // UA_ServerConfig_setMinimal allocates strings inside applicationDescription.
     // If we replace them, we must also allocate (and clear old) to avoid invalid frees on shutdown.
@@ -12177,7 +12445,8 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers) {
         for (auto &tag : driver.tags) {
             const TagConfig &cfg = tag.cfg;
 
-            if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg)) {
+            if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) &&
+                tag.cfg.source_tag.empty() && !is_opcua_client_driver_name(conn.driver)) {
                 std::cerr << "OPC UA: skipping tag '" << cfg.logical_name
                           << "' on connection '" << conn.id
                           << "' (invalid handle)\n";
@@ -13538,7 +13807,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	                runtime_log("info", "startup", msg.str());
 	            }
 	            const auto opcuaInitStarted = std::chrono::steady_clock::now();
-	            if (!init_opcua_server(opcuaPort, drivers)) {
+            if (!init_opcua_server(opcuaPort, drivers, configDir)) {
 	                std::cerr << "Failed to initialize OPC UA server.\n";
 	                destroy_all_handles(drivers);
 	                return 1;
@@ -21738,6 +22007,8 @@ window.addEventListener("load", startAutoRefresh);
 					root["suite_version"]     = OPCBRIDGE_SUITE_VERSION;
 					root["build_date"]        = __DATE__;
 					root["build_time"]        = __TIME__;
+					root["capabilities"]["opcua_encryption"] = true;
+					root["capabilities"]["opcua_encryption_backend"] = "openssl";
 
 				auto now = std::chrono::system_clock::now();
 				auto uptime_sec = std::chrono::duration_cast<std::chrono::seconds>(
@@ -21889,8 +22160,10 @@ window.addEventListener("load", startAutoRefresh);
 		            });
 
 		            // /metrics (poll performance counters)
-		            svr.Get("/metrics", [&](const httplib::Request &, httplib::Response &res) {
+		            svr.Get("/metrics", [&](const httplib::Request &req, httplib::Response &res) {
 		                json root;
+		                const bool includeBlocks = !(req.has_param("include_blocks") &&
+		                    (req.get_param_value("include_blocks") == "0" || req.get_param_value("include_blocks") == "false"));
 		                auto now_sys = std::chrono::system_clock::now();
 		                int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 		                    now_sys.time_since_epoch()
@@ -21975,7 +22248,7 @@ window.addEventListener("load", startAutoRefresh);
 		                        j["sweep_ms_avg_10s"] = average_connection_sweep_ms_locked(*m, 10000, now_ms);
 		                        j["sweep_ms_avg_60s"] = average_connection_sweep_ms_locked(*m, 60000, now_ms);
 		                    }
-		                    {
+		                    if (includeBlocks) {
 		                        std::lock_guard<std::mutex> blockLock(m->blocks_mutex);
 		                        j["blocks"] = json::array();
 		                        for (const auto &block : m->blocks) {
@@ -22001,6 +22274,8 @@ window.addEventListener("load", startAutoRefresh);
 		                            jb["last_status_text"] = block.last_status_text;
 		                            j["blocks"].push_back(std::move(jb));
 		                        }
+		                    } else {
+		                        j["blocks_omitted"] = true;
 		                    }
 
 		                    root["connections"][connId] = std::move(j);
@@ -23098,6 +23373,8 @@ window.addEventListener("load", startAutoRefresh);
 	                json resp;
 	                resp["component_version"] = OPCBRIDGE_VERSION;
 	                resp["suite_version"] = OPCBRIDGE_SUITE_VERSION;
+	                resp["capabilities"]["opcua_encryption"] = true;
+	                resp["capabilities"]["opcua_encryption_backend"] = "openssl";
 
 					auto now = std::chrono::system_clock::now();
 					const int64_t now_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -23787,6 +24064,92 @@ window.addEventListener("load", startAutoRefresh);
 
 					res.set_content(root.dump(2), "application/json");
 				});
+
+					// POST /config/opcua/browse -> OPCBridge-only remote namespace discovery
+					svr.Post("/config/opcua/browse", [&](const httplib::Request &req, httplib::Response &res) {
+						if (!is_admin_request(req)) {
+							res.status = 403;
+							res.set_content(json{{"ok", false}, {"error", "Admin login required."}}.dump(), "application/json");
+							return;
+						}
+						json result{{"ok", false}, {"connections", json::array()}};
+						UA_Client *client = nullptr;
+						try {
+							const json body = json::parse(req.body.empty() ? "{}" : req.body);
+							std::string endpoint = trim_copy(body.value("endpoint", std::string{}));
+							if (endpoint.empty()) throw std::runtime_error("OPC UA endpoint is required.");
+							if (endpoint.rfind("opc.tcp://", 0) != 0) endpoint = "opc.tcp://" + endpoint;
+							if (endpoint.find(':', std::string("opc.tcp://").size()) == std::string::npos) endpoint += ":4840";
+							client = UA_Client_new();
+							if (!client) throw std::runtime_error("Unable to allocate OPC UA client.");
+							UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+							const std::string username = body.value("username", std::string{});
+							const std::string password = body.value("password", std::string{});
+							UA_StatusCode rc = username.empty() ? UA_Client_connect(client, endpoint.c_str())
+							    : UA_Client_connectUsername(client, endpoint.c_str(), username.c_str(), password.c_str());
+							if (rc != UA_STATUSCODE_GOOD) throw std::runtime_error("Connection failed: " + std::string(UA_StatusCode_name(rc)));
+
+							auto objects = remote_ua_browse_children(client, UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER));
+							RemoteUaChild bridge;
+							bool foundBridge = false;
+							for (const auto &child : objects) if (child.name == "OPCBridge") { bridge = child; foundBridge = true; break; }
+							if (!foundBridge) throw std::runtime_error("The endpoint does not expose an OPCBridge namespace.");
+							UA_NodeId bridgeId = UA_NODEID_NULL;
+							UA_String bridgeText = UA_STRING(const_cast<char*>(bridge.node_id.c_str()));
+							if (UA_NodeId_parse(&bridgeId, bridgeText) != UA_STATUSCODE_GOOD) throw std::runtime_error("Invalid remote OPCBridge node ID.");
+							for (const auto &remoteConn : remote_ua_browse_children(client, bridgeId)) {
+								if (remoteConn.node_class != UA_NODECLASS_OBJECT) continue;
+								json conn{{"name", remoteConn.name}, {"node_id", remoteConn.node_id}, {"tags", json::array()}};
+								UA_NodeId connId = UA_NODEID_NULL;
+								UA_String connText = UA_STRING(const_cast<char*>(remoteConn.node_id.c_str()));
+								if (UA_NodeId_parse(&connId, connText) == UA_STATUSCODE_GOOD) {
+									auto children = remote_ua_browse_children(client, connId);
+									std::vector<RemoteUaChild> tags;
+									for (const auto &child : children) if (child.node_class == UA_NODECLASS_VARIABLE) tags.push_back(child);
+									UA_ReadRequest readReq; UA_ReadRequest_init(&readReq);
+									readReq.nodesToReadSize = tags.size() * 2;
+									readReq.nodesToRead = static_cast<UA_ReadValueId*>(UA_Array_new(readReq.nodesToReadSize, &UA_TYPES[UA_TYPES_READVALUEID]));
+									for (size_t i = 0; i < tags.size(); ++i) {
+										UA_NodeId tagId = UA_NODEID_NULL;
+										UA_String tagText = UA_STRING(const_cast<char*>(tags[i].node_id.c_str()));
+										if (UA_NodeId_parse(&tagId, tagText) != UA_STATUSCODE_GOOD) continue;
+										UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 2].nodeId);
+										readReq.nodesToRead[i * 2].attributeId = UA_ATTRIBUTEID_VALUE;
+										UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 2 + 1].nodeId);
+										readReq.nodesToRead[i * 2 + 1].attributeId = UA_ATTRIBUTEID_ACCESSLEVEL;
+										UA_NodeId_clear(&tagId);
+									}
+									UA_ReadResponse readResp = UA_Client_Service_read(client, readReq);
+									for (size_t i = 0; i < tags.size(); ++i) {
+										std::string datatype = "string";
+										bool writable = false;
+										if (readResp.resultsSize > i * 2 && readResp.results[i * 2].hasValue) {
+											TagSnapshot sample; ConnectionConfig dc; TagConfig dt;
+											if (snapshot_from_opcua_variant(sample, dc, dt, readResp.results[i * 2].value)) datatype = sample.datatype;
+										}
+										if (readResp.resultsSize > i * 2 + 1 && readResp.results[i * 2 + 1].hasValue) {
+											const UA_Variant &accessValue = readResp.results[i * 2 + 1].value;
+											if (UA_Variant_hasScalarType(&accessValue, &UA_TYPES[UA_TYPES_BYTE])) writable = ((*static_cast<const UA_Byte*>(accessValue.data) & UA_ACCESSLEVELMASK_WRITE) != 0);
+										}
+										conn["tags"].push_back({{"name", tags[i].name}, {"node_id", tags[i].node_id}, {"datatype", datatype}, {"writable", writable}});
+									}
+									UA_ReadResponse_clear(&readResp);
+									UA_ReadRequest_clear(&readReq);
+								}
+								UA_NodeId_clear(&connId);
+								result["connections"].push_back(std::move(conn));
+							}
+							UA_NodeId_clear(&bridgeId);
+							result["ok"] = true;
+							result["endpoint"] = endpoint;
+							res.status = 200;
+						} catch (const std::exception &ex) {
+							result["error"] = ex.what();
+							res.status = 400;
+						}
+						if (client) { UA_Client_disconnect(client); UA_Client_delete(client); }
+						res.set_content(result.dump(2), "application/json");
+					});
 
 					// GET /config/tags  -> flattened view of all tag configs on disk
 					svr.Get("/config/tags", [&](const httplib::Request &req, httplib::Response &res) {
@@ -27532,7 +27895,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                baseSpec.derived_alias_by_source[t.cfg.source_tag].push_back(std::move(a));
 		                            }
 		                        }
-		                        if (t.handle < 0 && !t.handle_deferred) continue;
+		                        if (t.handle < 0 && !t.handle_deferred && !is_opcua_client_driver_name(d.conn.driver)) continue;
 		                        PollTagItem it;
 		                        it.cfg = t.cfg;
 	                        it.handle = t.handle;
@@ -27555,7 +27918,9 @@ window.addEventListener("load", startAutoRefresh);
 	                    }
 
 	                    const size_t totalTags = baseSpec.tags.size();
-	                    const int laneCount = std::max(1, std::min<int>(baseSpec.conn.poll_lanes, static_cast<int>(std::max<size_t>(totalTags, 1))));
+	                    const int laneCount = is_opcua_client_driver_name(baseSpec.conn.driver)
+	                        ? 1
+	                        : std::max(1, std::min<int>(baseSpec.conn.poll_lanes, static_cast<int>(std::max<size_t>(totalTags, 1))));
 	                    if (baseSpec.metrics) {
 	                        baseSpec.metrics->poll_tag_count.store(static_cast<uint64_t>(totalTags), std::memory_order_relaxed);
 	                        reset_connection_sweep_tracking(baseSpec.metrics, static_cast<uint64_t>(totalTags));
@@ -27639,6 +28004,105 @@ window.addEventListener("load", startAutoRefresh);
 								}
 							} pollerHandleCleanup{&spec.tags};
 
+							UA_Client *remoteUaClient = nullptr;
+							bool remoteUaConnected = false;
+							if (is_opcua_client_driver_name(spec.conn.driver)) {
+								remoteUaClient = UA_Client_new();
+								if (remoteUaClient) UA_ClientConfig_setDefault(UA_Client_getConfig(remoteUaClient));
+							}
+							struct RemoteUaCleanup {
+								UA_Client **client = nullptr;
+								~RemoteUaCleanup() {
+									if (client && *client) {
+										UA_Client_disconnect(*client);
+										UA_Client_delete(*client);
+										*client = nullptr;
+									}
+								}
+							} remoteUaCleanup{&remoteUaClient};
+							auto ensureRemoteUaConnected = [&]() -> bool {
+								if (!remoteUaClient) return false;
+								if (remoteUaConnected) return true;
+								UA_StatusCode rc = spec.conn.opcua_username.empty()
+									? UA_Client_connect(remoteUaClient, spec.conn.opcua_endpoint.c_str())
+									: UA_Client_connectUsername(remoteUaClient, spec.conn.opcua_endpoint.c_str(),
+									                            spec.conn.opcua_username.c_str(), spec.conn.opcua_password.c_str());
+								remoteUaConnected = (rc == UA_STATUSCODE_GOOD);
+								if (!remoteUaConnected) {
+									std::cerr << "Remote OPC UA connection '" << spec.conn.id << "' unavailable at "
+									          << spec.conn.opcua_endpoint << ": " << UA_StatusCode_name(rc) << std::endl;
+								}
+								return remoteUaConnected;
+							};
+							struct RemoteUaPrefetchResult {
+								UA_StatusCode ua_status = UA_STATUSCODE_BADNOTCONNECTED;
+								TagSnapshot snapshot;
+								uint64_t read_us = 0;
+							};
+							std::unordered_map<size_t, RemoteUaPrefetchResult> remoteUaPrefetch;
+							auto prefetchRemoteUaDue = [&](size_t requestedIdx, std::chrono::steady_clock::time_point dueNow) {
+								if (!is_opcua_client_driver_name(spec.conn.driver) || remoteUaPrefetch.count(requestedIdx)) return;
+								std::vector<size_t> indices;
+								const size_t maxBatch = static_cast<size_t>(std::max(1, spec.conn.poll_batch_size > 0 ? spec.conn.poll_batch_size : 250));
+								indices.reserve(std::min(maxBatch, spec.tags.size()));
+								indices.push_back(requestedIdx);
+								for (size_t i = 0; i < spec.tags.size() && indices.size() < maxBatch; ++i) {
+									if (i == requestedIdx || remoteUaPrefetch.count(i)) continue;
+									if (spec.tags[i].next_poll <= dueNow + std::chrono::milliseconds(10)) indices.push_back(i);
+								}
+
+								const auto started = std::chrono::steady_clock::now();
+								if (!ensureRemoteUaConnected()) {
+									for (size_t idx : indices) remoteUaPrefetch[idx] = RemoteUaPrefetchResult{};
+									return;
+								}
+
+								std::vector<UA_ReadValueId> nodes(indices.size());
+								std::vector<bool> parsed(indices.size(), false);
+								for (size_t i = 0; i < indices.size(); ++i) {
+									UA_ReadValueId_init(&nodes[i]);
+									nodes[i].attributeId = UA_ATTRIBUTEID_VALUE;
+									std::string nodeText = trim_copy(spec.tags[indices[i]].cfg.plc_tag_name);
+									if (nodeText.rfind("ns=", 0) != 0) nodeText = "ns=1;s=" + nodeText;
+									UA_String encoded = UA_STRING(const_cast<char*>(nodeText.c_str()));
+									parsed[i] = UA_NodeId_parse(&nodes[i].nodeId, encoded) == UA_STATUSCODE_GOOD;
+								}
+								UA_ReadRequest request;
+								UA_ReadRequest_init(&request);
+								request.nodesToRead = nodes.data();
+								request.nodesToReadSize = nodes.size();
+								request.timestampsToReturn = UA_TIMESTAMPSTORETURN_BOTH;
+								UA_ReadResponse response = UA_Client_Service_read(remoteUaClient, request);
+								const uint64_t elapsedUs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+									std::chrono::steady_clock::now() - started).count());
+								const uint64_t perTagUs = indices.empty() ? elapsedUs : elapsedUs / indices.size();
+								const bool serviceGood = response.responseHeader.serviceResult == UA_STATUSCODE_GOOD;
+								for (size_t i = 0; i < indices.size(); ++i) {
+									RemoteUaPrefetchResult result;
+									result.read_us = perTagUs;
+									if (!parsed[i]) {
+										result.ua_status = UA_STATUSCODE_BADNODEIDINVALID;
+									} else if (!serviceGood) {
+										result.ua_status = response.responseHeader.serviceResult;
+									} else if (i >= response.resultsSize) {
+										result.ua_status = UA_STATUSCODE_BADUNEXPECTEDERROR;
+									} else {
+										result.ua_status = response.results[i].status;
+										if (result.ua_status == UA_STATUSCODE_GOOD &&
+										    !snapshot_from_opcua_variant(result.snapshot, spec.conn, spec.tags[indices[i]].cfg, response.results[i].value)) {
+											result.ua_status = UA_STATUSCODE_BADTYPEMISMATCH;
+										}
+									}
+									remoteUaPrefetch[indices[i]] = std::move(result);
+								}
+								for (auto &node : nodes) UA_ReadValueId_clear(&node);
+								UA_ReadResponse_clear(&response);
+								if (!serviceGood) {
+									remoteUaConnected = false;
+									if (remoteUaClient) UA_Client_disconnect(remoteUaClient);
+								}
+							};
+
 							auto publishReadyDeferredHandle = [&](PollTagItem &pollTag) {
 								if (!pollTag.poller_owns_handle || pollTag.handle < 0) return;
 								if (plc_tag_status(pollTag.handle) != PLCTAG_STATUS_OK) return;
@@ -27719,14 +28183,53 @@ window.addEventListener("load", startAutoRefresh);
 			                            std::vector<TagSnapshot> elemSnaps;
 			                            bool metricsRecorded = false;
 
-		                            {
-		                                std::shared_lock<std::shared_mutex> plcLifecycleLock;
-		                                if (g_plcMutex) {
-		                                    plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
-		                                }
-		                                auto connectionGate = connection_plc_mutex(spec.conn.id);
-		                                std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
+			                            if (is_opcua_client_driver_name(spec.conn.driver)) {
+			                                prefetchRemoteUaDue(top.idx, nowSteady);
+			                            }
+			                            {
+			                                std::shared_lock<std::shared_mutex> plcLifecycleLock;
+			                                if (g_plcMutex && !is_opcua_client_driver_name(spec.conn.driver)) {
+			                                    plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+			                                }
+			                                auto connectionGate = connection_plc_mutex(spec.conn.id);
+			                                std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock;
+			                                if (!is_opcua_client_driver_name(spec.conn.driver)) {
+			                                    plcConnectionLock = std::shared_lock<WriterPrioritySharedMutex>(*connectionGate);
+			                                }
 
+		                                    if (is_opcua_client_driver_name(spec.conn.driver)) {
+			                                        UA_StatusCode uaStatus = UA_STATUSCODE_BADNOTCONNECTED;
+			                                        uint64_t readUs = 0;
+			                                        auto prefetched = remoteUaPrefetch.find(top.idx);
+			                                        if (prefetched != remoteUaPrefetch.end()) {
+			                                            uaStatus = prefetched->second.ua_status;
+			                                            readUs = prefetched->second.read_us;
+			                                            if (uaStatus == UA_STATUSCODE_GOOD) snap = std::move(prefetched->second.snapshot);
+			                                            remoteUaPrefetch.erase(prefetched);
+			                                        }
+			                                        if (uaStatus != UA_STATUSCODE_GOOD) {
+			                                            status = PLCTAG_ERR_REMOTE_ERR;
+			                                        }
+			                                        if (spec.metrics) {
+			                                            const uint64_t us = readUs;
+		                                            const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+		                                            spec.metrics->reads_total.fetch_add(1, std::memory_order_relaxed);
+		                                            spec.metrics->read_us_total.fetch_add(us, std::memory_order_relaxed);
+		                                            spec.metrics->read_us_last.store(us, std::memory_order_relaxed);
+		                                            atomic_update_max(spec.metrics->read_us_max, us);
+		                                            spec.metrics->last_read_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                            record_connection_block_read(spec.metrics, t.sweep_index, status, us, ts_ms);
+		                                            metricsRecorded = true;
+		                                            if (status == PLCTAG_STATUS_OK) {
+		                                                spec.metrics->reads_ok.fetch_add(1, std::memory_order_relaxed);
+		                                                spec.metrics->last_ok_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                            } else {
+		                                                spec.metrics->reads_err.fetch_add(1, std::memory_order_relaxed);
+		                                                spec.metrics->last_err_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                            }
+		                                            record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
+		                                        }
+		                                    } else {
 		                                    if (t.handle < 0 && t.handle_deferred) {
 		                                        std::string tagStr;
 		                                        try {
@@ -27858,6 +28361,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                            elemSnaps.push_back(std::move(es));
 		                                        }
 		                                    }
+		                                }
 		                                }
 		                                }
 		                                }
@@ -28948,7 +29452,7 @@ window.addEventListener("load", startAutoRefresh);
 			                                std::cout << "[reload] Rebuilding OPC UA server...\n";
 			                                const auto opcuaRebuildStarted = std::chrono::steady_clock::now();
 			                                shutdown_opcua_server();
-			                                if (!init_opcua_server(opcuaPort, drivers)) {
+			                                if (!init_opcua_server(opcuaPort, drivers, configDir)) {
 			                                    err = "OPC UA reinit failed after reload (see server log).";
 			                                }
 			                                {
