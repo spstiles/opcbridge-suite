@@ -4735,6 +4735,56 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/opcbridge/opcua-server-profiles') {
+    if (!await requireManageServerPerm()) return;
+    const profilesDir = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'opcua', 'server-profiles');
+    const safeName = (value) => String(value || '').trim().replace(/[^a-zA-Z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+    const usedBy = (name) => {
+      const directory = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'connections');
+      if (!fs.existsSync(directory)) return [];
+      return fs.readdirSync(directory).filter((file) => file.endsWith('.json')).flatMap((file) => {
+        try {
+          const cfg = readJsoncFileOrNull(path.join(directory, file));
+          return String(cfg?.settings?.security_profile || '') === name ? [String(cfg?.description || cfg?.id || file)] : [];
+        } catch { return []; }
+      });
+    };
+    const list = () => {
+      if (!fs.existsSync(profilesDir)) return [];
+      return fs.readdirSync(profilesDir).filter((file) => file.endsWith('.der')).flatMap((file) => {
+        try {
+          const certificate = new crypto.X509Certificate(fs.readFileSync(path.join(profilesDir, file)));
+          const name = file.slice(0, -4);
+          return [{ name, subject: certificate.subject, issuer: certificate.issuer, valid_to: certificate.validTo, fingerprint: certificate.fingerprint256, used_by: usedBy(name) }];
+        } catch { return []; }
+      });
+    };
+    try {
+      if (req.method === 'GET') { sendJson(res, 200, { ok: true, profiles: list() }); return; }
+      const name = safeName(url.searchParams.get('name'));
+      if (!name) { sendJson(res, 400, { ok: false, error: 'A profile name is required.' }); return; }
+      if (req.method === 'POST') {
+        const body = await readBody(req, 2 * 1024 * 1024);
+        const certificate = new crypto.X509Certificate(body);
+        fs.mkdirSync(profilesDir, { recursive: true, mode: 0o750 });
+        const destination = path.join(profilesDir, `${name}.der`);
+        fs.writeFileSync(destination, certificate.raw, { mode: 0o640 });
+        fs.chmodSync(destination, 0o640);
+        sendJson(res, 200, { ok: true, profile: list().find((item) => item.name === name) }); return;
+      }
+      if (req.method === 'DELETE') {
+        const usage = usedBy(name);
+        if (usage.length) { sendJson(res, 409, { ok: false, error: `Profile is used by: ${usage.join(', ')}` }); return; }
+        const destination = path.join(profilesDir, `${name}.der`);
+        if (!fs.existsSync(destination)) { sendJson(res, 404, { ok: false, error: 'Profile not found.' }); return; }
+        fs.unlinkSync(destination);
+        sendJson(res, 200, { ok: true }); return;
+      }
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    } catch (err) { sendJson(res, 400, { ok: false, error: `OPC UA server profile operation failed: ${err.message || err}` }); }
+    return;
+  }
+
   if (url.pathname === '/api/opcbridge/opcua-trust') {
     if (!await requireManageServerPerm()) return;
     const opcuaRoot = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'opcua');
@@ -4784,6 +4834,12 @@ const server = http.createServer(async (req, res) => {
     };
     try {
       if (req.method === 'GET') {
+        if (String(url.searchParams.get('action') || '') === 'download-identity') {
+          if (!fs.existsSync(ownCertPath)) { sendJson(res, 404, { ok: false, error: 'Server identity is not installed.' }); return; }
+          const body = fs.readFileSync(ownCertPath);
+          res.writeHead(200, { 'Content-Type': 'application/x-pem-file', 'Content-Disposition': 'attachment; filename="opcbridge-server.pem"', 'Content-Length': body.length });
+          res.end(body); return;
+        }
         let identity = null;
         if (fs.existsSync(ownCertPath)) {
           identity = certificateInfo(ownCertPath);

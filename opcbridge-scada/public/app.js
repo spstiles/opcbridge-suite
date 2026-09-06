@@ -48,6 +48,11 @@
   scadaSettingsSaveBtn: document.getElementById('scadaSettingsSaveBtn'),
   scadaSettingsStatus: document.getElementById('scadaSettingsStatus'),
   opcuaTrustRefreshBtn: document.getElementById('opcuaTrustRefreshBtn'),
+  opcuaIdentityDownloadBtn: document.getElementById('opcuaIdentityDownloadBtn'),
+  opcuaServerProfileName: document.getElementById('opcuaServerProfileName'),
+  opcuaServerProfileFile: document.getElementById('opcuaServerProfileFile'),
+  opcuaServerProfileAddBtn: document.getElementById('opcuaServerProfileAddBtn'),
+  opcuaServerProfilesTbody: document.getElementById('opcuaServerProfilesTbody'),
   opcuaTrustStatus: document.getElementById('opcuaTrustStatus'),
   opcuaServerIdentity: document.getElementById('opcuaServerIdentity'),
   opcuaRejectedTbody: document.getElementById('opcuaRejectedTbody'),
@@ -770,6 +775,8 @@
   editDevOpcuaBrowseRow: document.getElementById('editDevOpcuaBrowseRow'),
   editDevOpcuaBrowseBtn: document.getElementById('editDevOpcuaBrowseBtn'),
   editDevOpcuaBrowseResults: document.getElementById('editDevOpcuaBrowseResults'),
+  editDevOpcuaSecurityRow: document.getElementById('editDevOpcuaSecurityRow'),
+  editDevOpcuaSecurityProfile: document.getElementById('editDevOpcuaSecurityProfile'),
   editDevPathRow: document.getElementById('editDevPathRow'),
   editDevPath: document.getElementById('editDevPath'),
   editDevModbusAddressModeRow: document.getElementById('editDevModbusAddressModeRow'),
@@ -945,6 +952,8 @@
   newDevOpcuaBrowseRow: document.getElementById('newDevOpcuaBrowseRow'),
   newDevOpcuaBrowseBtn: document.getElementById('newDevOpcuaBrowseBtn'),
   newDevOpcuaBrowseResults: document.getElementById('newDevOpcuaBrowseResults'),
+  newDevOpcuaSecurityRow: document.getElementById('newDevOpcuaSecurityRow'),
+  newDevOpcuaSecurityProfile: document.getElementById('newDevOpcuaSecurityProfile'),
   newDevPathRow: document.getElementById('newDevPathRow'),
   newDevPath: document.getElementById('newDevPath'),
   newDevModbusAddressModeRow: document.getElementById('newDevModbusAddressModeRow'),
@@ -1409,6 +1418,7 @@ const state = {
   flowTagsLoadingPromise: null,
   mqttTrustCertificates: [],
   opcuaTrust: { identity: null, rejected: [], trusted: [] },
+  opcuaServerProfiles: [],
   themeMode: 'auto',
 };
 
@@ -11373,6 +11383,7 @@ function setTab(id) {
     loadSmtpSettings().catch(() => {});
     loadVoiceModemSettings().catch(() => {});
     refreshOpcuaTrust().catch(() => {});
+    refreshOpcuaServerProfiles().catch(() => {});
     refreshServerCertificateLibrary().catch(() => {});
   }
   if (id === 'alarms_events') {
@@ -17423,6 +17434,8 @@ function applyDeviceDriverUi(prefix) {
   if (modeEl && !modeEl.value) modeEl.value = 'address';
   mqttRows.forEach((row) => setRowVisible(row, isMqtt));
   setRowVisible(isEdit ? els.editDevOpcuaBrowseRow : els.newDevOpcuaBrowseRow, isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevOpcuaSecurityRow : els.newDevOpcuaSecurityRow, isRemoteOpcua);
+  if (isRemoteOpcua && !(state.opcuaServerProfiles || []).length) refreshOpcuaServerProfiles().catch(() => {});
 }
 
 function renderRemoteOpcuaBrowseResults(container, connections, existingNodeIds = new Set(), selectNew = true) {
@@ -17458,7 +17471,7 @@ async function browseNewRemoteOpcbridge() {
   setNewDevStatus('Browsing remote OPCBridge…');
   if (els.newDevOpcuaBrowseBtn) els.newDevOpcuaBrowseBtn.disabled = true;
   try {
-    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 180000 });
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint, security_profile: String(els.newDevOpcuaSecurityProfile?.value || '') }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     if (!els.newDevOpcuaBrowseResults) return;
     renderRemoteOpcuaBrowseResults(els.newDevOpcuaBrowseResults, connections);
@@ -17482,7 +17495,7 @@ async function browseEditedRemoteOpcbridge() {
   setEditDevStatus('Browsing remote OPCBridge…');
   if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = true;
   try {
-    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 180000 });
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint, security_profile: String(els.editDevOpcuaSecurityProfile?.value || '') }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     const connectionId = editedRemoteOpcuaConnectionId();
     const existingNodeIds = new Set((state.tagConfigAll || [])
@@ -18856,6 +18869,7 @@ function openWorkspaceItemModal(node) {
           refreshMqttConnectionCertificateStatus(connectionId).catch(() => {});
         }
         if (driver === 'opcua_client') {
+          refreshOpcuaServerProfiles({ editDevOpcuaSecurityProfile: String(obj?.settings?.security_profile || '') }).catch(() => {});
           const includedCount = (state.tagConfigAll || []).filter((tag) => String(tag?.connection_id || '') === connectionId).length;
           setEditDevStatus(`${includedCount} remote tag${includedCount === 1 ? '' : 's'} currently included. Browse the source to add or remove tags.`);
         } else {
@@ -19770,6 +19784,17 @@ async function saveEditedDeviceFromModal() {
     } else {
       delete obj.modbus_address_mode;
     }
+    if (driver === 'opcua_client') {
+      obj.settings = {};
+      const securityProfile = String(els.newDevOpcuaSecurityProfile?.value || '').trim();
+      if (securityProfile) obj.settings.security_profile = securityProfile;
+    }
+    if (driver === 'opcua_client') {
+      obj.settings = { ...((existing?.settings && typeof existing.settings === 'object') ? existing.settings : {}) };
+      const securityProfile = String(els.editDevOpcuaSecurityProfile?.value || '').trim();
+      if (securityProfile) obj.settings.security_profile = securityProfile;
+      else delete obj.settings.security_profile;
+    }
     obj.enabled = Boolean(els.editDevEnabled?.checked);
   } catch (err) {
     setEditDevStatus(err.message || String(err));
@@ -19985,6 +20010,39 @@ async function refreshOpcuaTrust(message = '') {
   } catch (err) {
     if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = `Load failed: ${err.message || err}`;
   }
+}
+
+function renderOpcuaServerProfiles(selected = {}) {
+  const profiles = state.opcuaServerProfiles || [];
+  [els.newDevOpcuaSecurityProfile, els.editDevOpcuaSecurityProfile].forEach((select) => {
+    if (!select) return;
+    const wanted = selected[select.id] ?? select.value;
+    select.replaceChildren(new Option('Unsecured (troubleshooting)', ''));
+    profiles.forEach((profile) => select.add(new Option(profile.name, profile.name)));
+    select.value = profiles.some((profile) => profile.name === wanted) ? wanted : '';
+  });
+  if (els.opcuaServerProfilesTbody) els.opcuaServerProfilesTbody.innerHTML = profiles.length
+    ? profiles.map((profile) => `<tr><td><strong>${escapeHtml(profile.name)}</strong></td><td title="${escapeHtml(profile.subject || '')}">${escapeHtml(certificatePrincipalLabel(profile.subject))}</td><td>${escapeHtml(profile.valid_to || '—')}</td><td>${escapeHtml((profile.used_by || []).join(', ') || 'Not in use')}</td><td><button class="btn danger" data-opcua-profile-delete="${escapeHtml(profile.name)}" ${(profile.used_by || []).length ? 'disabled' : ''}>Delete</button></td></tr>`).join('')
+    : '<tr><td colspan="5" class="hint">No trusted server profiles.</td></tr>';
+}
+
+async function refreshOpcuaServerProfiles(selected = {}) {
+  const response = await apiGet('/api/opcbridge/opcua-server-profiles', { timeoutMs: 15000 });
+  state.opcuaServerProfiles = Array.isArray(response?.profiles) ? response.profiles : [];
+  renderOpcuaServerProfiles(selected);
+}
+
+async function addOpcuaServerProfile() {
+  const name = String(els.opcuaServerProfileName?.value || '').trim();
+  const file = els.opcuaServerProfileFile?.files?.[0];
+  if (!name || !file) { if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = 'Enter a profile name and choose the remote server certificate.'; return; }
+  const response = await fetchWithTimeout(`/api/opcbridge/opcua-server-profiles?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: await file.arrayBuffer() }, 30000);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok === false) throw new Error(data?.error || `Upload failed (${response.status})`);
+  if (els.opcuaServerProfileName) els.opcuaServerProfileName.value = '';
+  if (els.opcuaServerProfileFile) els.opcuaServerProfileFile.value = '';
+  await refreshOpcuaServerProfiles();
+  if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = `Trusted server profile '${data.profile?.name || name}' added.`;
 }
 
 async function changeOpcuaTrust(action, fingerprint) {
@@ -20663,6 +20721,18 @@ function wireNewDeviceFormUi() {
   });
   els.newDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('new'));
   els.opcuaTrustRefreshBtn?.addEventListener('click', () => refreshOpcuaTrust());
+  els.opcuaIdentityDownloadBtn?.addEventListener('click', () => window.open('/api/opcbridge/opcua-trust?action=download-identity', '_blank', 'noopener,noreferrer'));
+  els.opcuaServerProfileAddBtn?.addEventListener('click', () => addOpcuaServerProfile().catch((err) => { if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = err.message || err; }));
+  els.opcuaServerProfilesTbody?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-opcua-profile-delete]');
+    if (!button) return;
+    const name = String(button.dataset.opcuaProfileDelete || '');
+    if (!name || !window.confirm(`Delete trusted server profile '${name}'?`)) return;
+    const response = await fetchWithTimeout(`/api/opcbridge/opcua-server-profiles?name=${encodeURIComponent(name)}`, { method: 'DELETE' }, 30000);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.ok === false) { if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = data?.error || 'Delete failed.'; return; }
+    await refreshOpcuaServerProfiles();
+  });
   [els.opcuaRejectedTbody, els.opcuaTrustedTbody].forEach((tbody) => tbody?.addEventListener('click', (event) => {
     const button = event.target.closest('[data-opcua-trust-action][data-opcua-fingerprint]');
     if (!button) return;

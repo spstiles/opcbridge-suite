@@ -614,9 +614,14 @@
         <div class="card-body">
           <div class="row-actions" style="margin-bottom: 10px;">
             <button class="btn" id="opcuaTrustRefreshBtn" type="button">Refresh</button>
+            <button class="btn" id="opcuaIdentityDownloadBtn" type="button">Download This Server Certificate</button>
             <span class="hint" id="opcuaTrustStatus">Loading…</span>
           </div>
           <div class="hint" id="opcuaServerIdentity"></div>
+          <h3 style="margin: 16px 0 8px;">Trusted Server Profiles</h3>
+          <div class="row-actions"><input id="opcuaServerProfileName" type="text" placeholder="Friendly profile name" /><input id="opcuaServerProfileFile" type="file" accept=".der,.crt,.pem" /><button class="btn primary" id="opcuaServerProfileAddBtn" type="button">Add Trusted Server</button></div>
+          <div class="hint">Download the server certificate from the remote computer, then add it here once. Multiple workspace connections can reuse this profile.</div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Profile</th><th>Server</th><th>Expires</th><th>Used By</th><th>Action</th></tr></thead><tbody id="opcuaServerProfilesTbody"></tbody></table></div>
           <h3 style="margin: 16px 0 8px;">Rejected Clients</h3>
           <div class="table-wrap">
             <table class="table">
@@ -1937,6 +1942,7 @@
               <option value="opcua_client">Remote OPCBridge (OPC UA)</option>
             </select></div>
             <div class="form-row" id="editDevGatewayRow"><label>Gateway</label><input id="editDevGateway" type="text" placeholder="192.0.2.10" /></div>
+            <div class="form-row" id="editDevOpcuaSecurityRow" style="display:none;"><label>Security</label><select id="editDevOpcuaSecurityProfile"><option value="">Unsecured (troubleshooting)</option></select></div>
             <div class="form-row" id="editDevOpcuaBrowseRow" style="display:none;"><label>Remote Tags</label><div style="min-width:0;"><button class="btn" id="editDevOpcuaBrowseBtn" type="button">Browse Remote OPCBridge</button><div id="editDevOpcuaBrowseResults" class="table-wrap" style="display:none; max-height:280px; overflow:auto; margin-top:8px;"></div></div></div>
             <div class="form-row" id="editDevPathRow"><label>Path</label><input id="editDevPath" type="text" placeholder="1,0" /></div>
             <div class="form-row" id="editDevModbusAddressModeRow" style="display:none;"><label>Address Entry</label><select id="editDevModbusAddressMode">
@@ -2273,6 +2279,7 @@
             <option value="opcua_client">Remote OPCBridge (OPC UA)</option>
           </select></div>
           <div class="form-row" id="newDevGatewayRow"><label>Gateway</label><input id="newDevGateway" type="text" placeholder="192.0.2.10" /></div>
+          <div class="form-row" id="newDevOpcuaSecurityRow" style="display:none;"><label>Security</label><select id="newDevOpcuaSecurityProfile"><option value="">Unsecured (troubleshooting)</option></select></div>
           <div class="form-row" id="newDevOpcuaBrowseRow" style="display:none;"><label>Remote Tags</label><div style="min-width:0;"><button class="btn" id="newDevOpcuaBrowseBtn" type="button">Browse Remote OPCBridge</button><div id="newDevOpcuaBrowseResults" class="table-wrap" style="display:none; max-height:280px; overflow:auto; margin-top:8px;"></div></div></div>
           <div class="form-row" id="newDevPathRow"><label>Path</label><input id="newDevPath" type="text" placeholder="1,0" /></div>
           <div class="form-row" id="newDevModbusAddressModeRow" style="display:none;"><label>Address Entry</label><select id="newDevModbusAddressMode">

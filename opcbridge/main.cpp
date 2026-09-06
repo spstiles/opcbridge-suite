@@ -217,6 +217,10 @@ struct ConnectionConfig {
     std::string opcua_endpoint;
     std::string opcua_username;
     std::string opcua_password;
+    bool opcua_secure = false;
+    std::string opcua_client_certificate;
+    std::string opcua_client_private_key;
+    std::string opcua_trusted_server_certificate;
 };
 
 	struct TagConfig {
@@ -352,6 +356,44 @@ static bool snapshot_from_opcua_variant(TagSnapshot &snap,
         return false;
     }
     return true;
+}
+
+static bool load_remote_opcua_file(const std::string &path, UA_ByteString &out) {
+    out = UA_BYTESTRING_NULL;
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return false;
+    const std::vector<UA_Byte> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    if (bytes.empty() || UA_ByteString_allocBuffer(&out, bytes.size()) != UA_STATUSCODE_GOOD) return false;
+    std::copy(bytes.begin(), bytes.end(), out.data);
+    return true;
+}
+
+static UA_StatusCode configure_remote_opcua_client(UA_Client *client, const ConnectionConfig &conn) {
+    if (!client) return UA_STATUSCODE_BADINVALIDARGUMENT;
+    UA_ClientConfig *config = UA_Client_getConfig(client);
+    if (!conn.opcua_secure) return UA_ClientConfig_setDefault(config);
+#ifdef UA_ENABLE_ENCRYPTION
+    UA_ByteString ownCert = UA_BYTESTRING_NULL;
+    UA_ByteString ownKey = UA_BYTESTRING_NULL;
+    UA_ByteString trusted = UA_BYTESTRING_NULL;
+    if (!load_remote_opcua_file(conn.opcua_client_certificate, ownCert) ||
+        !load_remote_opcua_file(conn.opcua_client_private_key, ownKey) ||
+        !load_remote_opcua_file(conn.opcua_trusted_server_certificate, trusted)) {
+        UA_ByteString_clear(&ownCert); UA_ByteString_clear(&ownKey); UA_ByteString_clear(&trusted);
+        return UA_STATUSCODE_BADCERTIFICATEINVALID;
+    }
+    UA_StatusCode rc = UA_ClientConfig_setDefaultEncryption(config, ownCert, ownKey, &trusted, 1, nullptr, 0);
+    if (rc == UA_STATUSCODE_GOOD) {
+        config->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+        UA_String_clear(&config->securityPolicyUri);
+        config->securityPolicyUri = UA_STRING_ALLOC(const_cast<char*>(
+            "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"));
+    }
+    UA_ByteString_clear(&ownCert); UA_ByteString_clear(&ownKey); UA_ByteString_clear(&trusted);
+    return rc;
+#else
+    return UA_STATUSCODE_BADSECURITYPOLICYREJECTED;
+#endif
 }
 
 struct RemoteUaChild {
@@ -4537,6 +4579,18 @@ ConnectionConfig load_connection_config(const std::string &path) {
         }
         c.opcua_username = trim_copy(settings.value("username", std::string{}));
         c.opcua_password = settings.value("password", std::string{});
+        const std::string securityProfile = trim_copy(settings.value("security_profile", std::string{}));
+        c.opcua_secure = !securityProfile.empty() && securityProfile != "unsecured";
+        if (c.opcua_secure) {
+            if (!is_safe_connection_id_filename(securityProfile)) {
+                throw std::runtime_error("Invalid OPC UA security profile name");
+            }
+            const fs::path configRoot = fs::path(path).parent_path().parent_path();
+            const fs::path opcuaRoot = configRoot / "certs" / "opcua";
+            c.opcua_client_certificate = (opcuaRoot / "pki" / "ApplCerts" / "own" / "certs" / "opcbridge-application.der").string();
+            c.opcua_client_private_key = (opcuaRoot / "pki" / "ApplCerts" / "own" / "private" / "opcbridge-application-key.der").string();
+            c.opcua_trusted_server_certificate = (opcuaRoot / "server-profiles" / (securityProfile + ".der")).string();
+        }
         c.path.clear();
         c.plc_type = "opcua_client";
         c.poll_lanes = 1;
@@ -6409,7 +6463,12 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
         UA_Client *client = UA_Client_new();
         if (!client) return fail("Unable to allocate OPC UA client.");
-        UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+        UA_StatusCode configureRc = configure_remote_opcua_client(client, conn);
+        if (configureRc != UA_STATUSCODE_GOOD) {
+            const std::string msg = "Remote OPC UA security setup failed: " + std::string(UA_StatusCode_name(configureRc));
+            UA_Client_delete(client);
+            return fail(msg);
+        }
         UA_StatusCode rc = conn.opcua_username.empty()
             ? UA_Client_connect(client, conn.opcua_endpoint.c_str())
             : UA_Client_connectUsername(client, conn.opcua_endpoint.c_str(), conn.opcua_username.c_str(), conn.opcua_password.c_str());
@@ -24107,7 +24166,18 @@ window.addEventListener("load", startAutoRefresh);
 							if (endpoint.find(':', std::string("opc.tcp://").size()) == std::string::npos) endpoint += ":4840";
 							client = UA_Client_new();
 							if (!client) throw std::runtime_error("Unable to allocate OPC UA client.");
-							UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+							ConnectionConfig browseConnection;
+							const std::string securityProfile = trim_copy(body.value("security_profile", std::string{}));
+							if (!securityProfile.empty()) {
+								if (!is_safe_connection_id_filename(securityProfile)) throw std::runtime_error("Invalid OPC UA security profile name.");
+								const fs::path opcuaRoot = fs::path(configDir) / "certs" / "opcua";
+								browseConnection.opcua_secure = true;
+								browseConnection.opcua_client_certificate = (opcuaRoot / "pki" / "ApplCerts" / "own" / "certs" / "opcbridge-application.der").string();
+								browseConnection.opcua_client_private_key = (opcuaRoot / "pki" / "ApplCerts" / "own" / "private" / "opcbridge-application-key.der").string();
+								browseConnection.opcua_trusted_server_certificate = (opcuaRoot / "server-profiles" / (securityProfile + ".der")).string();
+							}
+							const UA_StatusCode configureRc = configure_remote_opcua_client(client, browseConnection);
+							if (configureRc != UA_STATUSCODE_GOOD) throw std::runtime_error("Security setup failed: " + std::string(UA_StatusCode_name(configureRc)));
 							const std::string username = body.value("username", std::string{});
 							const std::string password = body.value("password", std::string{});
 							UA_StatusCode rc = username.empty() ? UA_Client_connect(client, endpoint.c_str())
@@ -28031,11 +28101,20 @@ window.addEventListener("load", startAutoRefresh);
 
 							UA_Client *remoteUaClient = nullptr;
 							bool remoteUaConnected = false;
+							auto remoteUaConnectRetryAfter = std::chrono::steady_clock::time_point{};
 							UA_UInt32 remoteUaSubscriptionId = 0;
 							auto remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::time_point{};
 							if (is_opcua_client_driver_name(spec.conn.driver)) {
 								remoteUaClient = UA_Client_new();
-								if (remoteUaClient) UA_ClientConfig_setDefault(UA_Client_getConfig(remoteUaClient));
+							if (remoteUaClient) {
+								const UA_StatusCode configureRc = configure_remote_opcua_client(remoteUaClient, spec.conn);
+								if (configureRc != UA_STATUSCODE_GOOD) {
+									std::cerr << "Remote OPC UA security setup '" << spec.conn.id << "' failed: "
+									          << UA_StatusCode_name(configureRc) << std::endl;
+									UA_Client_delete(remoteUaClient);
+									remoteUaClient = nullptr;
+								}
+							}
 							}
 							struct RemoteUaCleanup {
 								UA_Client **client = nullptr;
@@ -28050,12 +28129,14 @@ window.addEventListener("load", startAutoRefresh);
 							auto ensureRemoteUaConnected = [&]() -> bool {
 								if (!remoteUaClient) return false;
 								if (remoteUaConnected) return true;
+								if (std::chrono::steady_clock::now() < remoteUaConnectRetryAfter) return false;
 								UA_StatusCode rc = spec.conn.opcua_username.empty()
 									? UA_Client_connect(remoteUaClient, spec.conn.opcua_endpoint.c_str())
 									: UA_Client_connectUsername(remoteUaClient, spec.conn.opcua_endpoint.c_str(),
 									                            spec.conn.opcua_username.c_str(), spec.conn.opcua_password.c_str());
 								remoteUaConnected = (rc == UA_STATUSCODE_GOOD);
 								if (!remoteUaConnected) {
+									remoteUaConnectRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 									std::cerr << "Remote OPC UA connection '" << spec.conn.id << "' unavailable at "
 									          << spec.conn.opcua_endpoint << ": " << UA_StatusCode_name(rc) << std::endl;
 								}
