@@ -170,6 +170,7 @@
   svcWsEnabled: document.getElementById('svcWsEnabled'),
   svcOpcuaEnabled: document.getElementById('svcOpcuaEnabled'),
   svcOpcuaAllowUnsecured: document.getElementById('svcOpcuaAllowUnsecured'),
+  opcuaSecurityApplyBtn: document.getElementById('opcuaSecurityApplyBtn'),
   svcHttpPort: document.getElementById('svcHttpPort'),
   svcWsPort: document.getElementById('svcWsPort'),
   svcOpcuaPort: document.getElementById('svcOpcuaPort'),
@@ -16648,6 +16649,11 @@ async function applySvcSettings() {
 function wireSvcUi() {
   els.svcReloadBtn?.addEventListener('click', loadSvcSettings);
   els.svcApplyBtn?.addEventListener('click', applySvcSettings);
+  els.opcuaSecurityApplyBtn?.addEventListener('click', async () => {
+    if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = 'Applying OPC UA security mode…';
+    await applySvcSettings();
+    if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = els.svcStatus?.textContent || 'OPC UA security mode applied.';
+  });
   els.globalAlarmDelayReloadBtn?.addEventListener('click', loadGlobalAlarmDelay);
   els.globalAlarmDelaySaveBtn?.addEventListener('click', saveGlobalAlarmDelay);
   loadGlobalAlarmDelay().catch(() => {});

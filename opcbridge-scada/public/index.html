@@ -596,12 +596,6 @@
               <input id="svcOpcuaPort" type="number" min="1" max="65535" step="1" />
             </div>
             <div class="form-row">
-              <label>OPC UA Security</label>
-              <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaAllowUnsecured" type="checkbox" /> Allow unsecured OPC UA clients</label>
-            </div>
-            <div class="hint">When unchecked, only trusted Basic256Sha256 / SignAndEncrypt clients can connect.</div>
-
-            <div class="form-row">
               <label></label>
               <div class="row-actions">
                 <button class="btn" id="svcReloadBtn" type="button">Reload</button>
@@ -623,6 +617,11 @@
             <span class="hint" id="opcuaTrustStatus">Loading…</span>
           </div>
           <div class="hint" id="opcuaServerIdentity"></div>
+          <div class="row-actions" style="margin-top: 12px; justify-content: flex-start;">
+            <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaAllowUnsecured" type="checkbox" /> Allow unsecured OPC UA clients</label>
+            <button class="btn primary" id="opcuaSecurityApplyBtn" type="button">Apply Security Mode</button>
+          </div>
+          <div class="hint">When unchecked, only trusted Basic256Sha256 / SignAndEncrypt clients can connect. Applying this setting briefly restarts OPCBridge.</div>
           <h3 style="margin: 16px 0 8px;">Trusted Server Profiles</h3>
           <div class="row-actions"><input id="opcuaServerProfileName" type="text" placeholder="Friendly profile name" /><input id="opcuaServerProfileFile" type="file" accept=".der,.crt,.pem" /><button class="btn primary" id="opcuaServerProfileAddBtn" type="button">Add Trusted Server</button></div>
           <div class="hint">Download the server certificate from the remote computer, then add it here once. Multiple workspace connections can reuse this profile.</div>
