@@ -4888,7 +4888,23 @@ const server = http.createServer(async (req, res) => {
         const trusted = findByFingerprint(trustedDir, wanted);
         if (!trusted) { sendJson(res, 404, { ok: false, error: 'Trusted certificate not found.' }); return; }
         fs.unlinkSync(trusted.absolute);
-        sendJson(res, 200, { ok: true, removed: trusted.info });
+        // Remove any stale rejected/pending copy before the forced reconnect.
+        for (const directory of [pendingClientsDir, rejectedDir]) {
+          const duplicate = findByFingerprint(directory, wanted);
+          if (duplicate) fs.unlinkSync(duplicate.absolute);
+        }
+        // Trust is evaluated when a SecureChannel is established. Restarting the
+        // core closes existing channels so removal takes effect immediately.
+        const restart = SYSTEMD_ENABLED
+          ? runSystemctl(['restart', SYSTEMD_UNIT])
+          : { ok: false, error: 'Systemd management is disabled.' };
+        sendJson(res, 200, {
+          ok: true,
+          removed: trusted.info,
+          restart,
+          reconnect_required: !restart.ok,
+          warning: restart.ok ? '' : `Trust was removed, but ${SYSTEMD_UNIT} could not be restarted automatically.`
+        });
         return;
       }
       sendJson(res, 400, { ok: false, error: "Action must be 'trust' or 'remove'." });

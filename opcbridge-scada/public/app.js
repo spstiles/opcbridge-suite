@@ -20049,7 +20049,10 @@ async function changeOpcuaTrust(action, fingerprint) {
   const certificate = [...(state.opcuaTrust?.rejected || []), ...(state.opcuaTrust?.trusted || [])]
     .find((item) => item.fingerprint === fingerprint);
   const verb = action === 'trust' ? 'Trust' : 'Remove trust for';
-  if (!certificate || !window.confirm(`${verb} '${certificatePrincipalLabel(certificate.subject)}'?\n\nSHA-256: ${fingerprint}`)) return;
+  const impact = action === 'remove'
+    ? '\n\nThis briefly restarts OPCBridge to disconnect active OPC UA clients and apply the revocation immediately.'
+    : '';
+  if (!certificate || !window.confirm(`${verb} '${certificatePrincipalLabel(certificate.subject)}'?\n\nSHA-256: ${fingerprint}${impact}`)) return;
   if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = action === 'trust' ? 'Trusting certificate…' : 'Removing certificate…';
   try {
     const response = await fetchWithTimeout(`/api/opcbridge/opcua-trust?action=${encodeURIComponent(action)}&fingerprint=${encodeURIComponent(fingerprint)}`, {
@@ -20057,7 +20060,17 @@ async function changeOpcuaTrust(action, fingerprint) {
     }, 30000);
     const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     if (!response.ok || !data?.ok) throw new Error(data?.error || `Operation failed (HTTP ${response.status})`);
-    await refreshOpcuaTrust(action === 'trust' ? 'Certificate trusted. Reconnect the OPC UA client.' : 'Certificate removed from trust.');
+    if (action === 'trust') {
+      await refreshOpcuaTrust('Certificate trusted. Reconnect the OPC UA client.');
+    } else {
+      const removalMessage = data?.restart?.ok
+        ? 'Certificate trust removed. Active OPC UA connections were closed; waiting for the client to reconnect…'
+        : `Certificate trust removed. ${data?.warning || 'Restart OPCBridge to disconnect the active client.'}`;
+      await refreshOpcuaTrust(removalMessage);
+      if (data?.restart?.ok) {
+        window.setTimeout(() => refreshOpcuaTrust('The removed client must be trusted again before it can connect.'), 3000);
+      }
+    }
   } catch (err) {
     if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = `Operation failed: ${err.message || err}`;
   }
