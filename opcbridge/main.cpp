@@ -715,6 +715,7 @@ struct UaSystemBinding {
 // OPC UA global state
 static UA_Server *g_uaServer = nullptr;
 static fs::path g_opcuaRejectedCertificatesDir;
+static fs::path g_opcuaTrustedCertificatesDir;
 static std::chrono::steady_clock::time_point g_nextOpcuaRejectedSync{};
 static UA_NodeId g_uaBridgeNodeId = UA_NODEID_NULL;
 static std::deque<UaTagBinding> g_uaBindings;
@@ -12199,6 +12200,11 @@ static void persist_opcua_rejected_certificates() {
             }
             filename << ".der";
             const fs::path destination = g_opcuaRejectedCertificatesDir / filename.str();
+            const fs::path trustedDestination = g_opcuaTrustedCertificatesDir / filename.str();
+            if (!g_opcuaTrustedCertificatesDir.empty() && fs::exists(trustedDestination)) {
+                if (fs::exists(destination)) fs::remove(destination);
+                continue;
+            }
             if (fs::exists(destination)) continue;
 
             const fs::path temporary = destination.string() + ".tmp";
@@ -12247,7 +12253,10 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
 
     const fs::path opcuaRoot = fs::path(configDir) / "certs" / "opcua";
     const fs::path pkiRoot = opcuaRoot / "pki";
-    g_opcuaRejectedCertificatesDir = pkiRoot / "ApplCerts" / "rejected" / "certs";
+    // open62541 may rewrite its managed rejected directory while refreshing the
+    // trust store. Keep the operator approval inbox outside that volatile tree.
+    g_opcuaRejectedCertificatesDir = opcuaRoot / "pending-client-certificates";
+    g_opcuaTrustedCertificatesDir = pkiRoot / "ApplCerts" / "trusted" / "certs";
     const fs::path certificatePath = pkiRoot / "ApplCerts" / "own" / "certs" / "opcbridge-application.der";
     const fs::path privateKeyPath = pkiRoot / "ApplCerts" / "own" / "private" / "opcbridge-application-key.der";
     const std::string applicationUri = load_opcua_application_uri(opcuaRoot / "identity.json");

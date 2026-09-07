@@ -4791,6 +4791,7 @@ const server = http.createServer(async (req, res) => {
     const applicationStore = path.join(opcuaRoot, 'pki', 'ApplCerts');
     const trustedDir = path.join(applicationStore, 'trusted', 'certs');
     const rejectedDir = path.join(applicationStore, 'rejected', 'certs');
+    const pendingClientsDir = path.join(opcuaRoot, 'pending-client-certificates');
     const ownCertPath = path.join(applicationStore, 'own', 'certs', 'opcbridge-application.pem');
     const identityPath = path.join(opcuaRoot, 'identity.json');
     const normalizeFingerprint = (value) => String(value || '').replace(/[^a-fA-F0-9]/g, '').toUpperCase();
@@ -4832,6 +4833,16 @@ const server = http.createServer(async (req, res) => {
       }
       return null;
     };
+    const listRejectedCertificates = () => {
+      const unique = new Map();
+      for (const certificate of [...listDirectory(pendingClientsDir), ...listDirectory(rejectedDir)]) {
+        const key = normalizeFingerprint(certificate.fingerprint);
+        if (key && !unique.has(key)) unique.set(key, certificate);
+      }
+      return [...unique.values()].sort((a, b) => String(a.subject || a.name).localeCompare(String(b.subject || b.name), undefined, { sensitivity: 'base', numeric: true }));
+    };
+    const findRejectedByFingerprint = (wanted) =>
+      findByFingerprint(pendingClientsDir, wanted) || findByFingerprint(rejectedDir, wanted);
     try {
       if (req.method === 'GET') {
         if (String(url.searchParams.get('action') || '') === 'download-identity') {
@@ -4849,7 +4860,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, {
           ok: true,
           identity,
-          rejected: listDirectory(rejectedDir),
+          rejected: listRejectedCertificates(),
           trusted: listDirectory(trustedDir)
         });
         return;
@@ -4859,7 +4870,7 @@ const server = http.createServer(async (req, res) => {
       const wanted = normalizeFingerprint(url.searchParams.get('fingerprint'));
       if (!/^[A-F0-9]{64}$/.test(wanted)) { sendJson(res, 400, { ok: false, error: 'A valid SHA-256 certificate fingerprint is required.' }); return; }
       if (action === 'trust') {
-        const source = findByFingerprint(rejectedDir, wanted);
+        const source = findRejectedByFingerprint(wanted);
         if (!source) {
           const existing = findByFingerprint(trustedDir, wanted);
           if (existing) { sendJson(res, 200, { ok: true, duplicate: true, certificate: existing.info }); return; }
