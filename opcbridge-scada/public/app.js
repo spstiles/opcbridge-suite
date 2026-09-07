@@ -170,6 +170,7 @@
   svcWsEnabled: document.getElementById('svcWsEnabled'),
   svcOpcuaEnabled: document.getElementById('svcOpcuaEnabled'),
   svcOpcuaAllowUnsecured: document.getElementById('svcOpcuaAllowUnsecured'),
+  svcOpcuaRequireLogin: document.getElementById('svcOpcuaRequireLogin'),
   opcuaSecurityApplyBtn: document.getElementById('opcuaSecurityApplyBtn'),
   svcHttpPort: document.getElementById('svcHttpPort'),
   svcWsPort: document.getElementById('svcWsPort'),
@@ -779,6 +780,10 @@
   editDevOpcuaBrowseResults: document.getElementById('editDevOpcuaBrowseResults'),
   editDevOpcuaSecurityRow: document.getElementById('editDevOpcuaSecurityRow'),
   editDevOpcuaSecurityProfile: document.getElementById('editDevOpcuaSecurityProfile'),
+  editDevOpcuaUsernameRow: document.getElementById('editDevOpcuaUsernameRow'),
+  editDevOpcuaUsername: document.getElementById('editDevOpcuaUsername'),
+  editDevOpcuaPasswordRow: document.getElementById('editDevOpcuaPasswordRow'),
+  editDevOpcuaPassword: document.getElementById('editDevOpcuaPassword'),
   editDevPathRow: document.getElementById('editDevPathRow'),
   editDevPath: document.getElementById('editDevPath'),
   editDevModbusAddressModeRow: document.getElementById('editDevModbusAddressModeRow'),
@@ -956,6 +961,10 @@
   newDevOpcuaBrowseResults: document.getElementById('newDevOpcuaBrowseResults'),
   newDevOpcuaSecurityRow: document.getElementById('newDevOpcuaSecurityRow'),
   newDevOpcuaSecurityProfile: document.getElementById('newDevOpcuaSecurityProfile'),
+  newDevOpcuaUsernameRow: document.getElementById('newDevOpcuaUsernameRow'),
+  newDevOpcuaUsername: document.getElementById('newDevOpcuaUsername'),
+  newDevOpcuaPasswordRow: document.getElementById('newDevOpcuaPasswordRow'),
+  newDevOpcuaPassword: document.getElementById('newDevOpcuaPassword'),
   newDevPathRow: document.getElementById('newDevPathRow'),
   newDevPath: document.getElementById('newDevPath'),
   newDevModbusAddressModeRow: document.getElementById('newDevModbusAddressModeRow'),
@@ -1442,6 +1451,8 @@ const ROLE_PERMISSION_DEFS = [
   { id: 'scada.access', label: 'Access SCADA portal and Overview' },
   { id: 'hmi.edit_screens', label: 'Edit screens (HMI editor)' },
   { id: 'opcbridge.write_tags', label: 'Write tags (runtime)' },
+  { id: 'opcua.read', label: 'OPC UA read access' },
+  { id: 'opcua.write', label: 'OPC UA write access' },
   { id: 'opcbridge.edit_config', label: 'Edit connections/tags (config)' },
   { id: 'suite.manage_server', label: 'Manage server (ports, endpoints, tokens)' },
   { id: 'auth.manage_users', label: 'Manage users/groups' },
@@ -16598,6 +16609,7 @@ function fillSvcForm(s) {
   if (els.svcWsEnabled) els.svcWsEnabled.checked = Boolean(s.ws_enabled);
   if (els.svcOpcuaEnabled) els.svcOpcuaEnabled.checked = Boolean(s.opcua_enabled);
   if (els.svcOpcuaAllowUnsecured) els.svcOpcuaAllowUnsecured.checked = s.opcua_allow_unsecured !== false;
+  if (els.svcOpcuaRequireLogin) els.svcOpcuaRequireLogin.checked = Boolean(s.opcua_require_login);
   if (els.svcHttpPort) els.svcHttpPort.value = String(s.http_port ?? '');
   if (els.svcWsPort) els.svcWsPort.value = String(s.ws_port ?? '');
   if (els.svcOpcuaPort) els.svcOpcuaPort.value = String(s.opcua_port ?? '');
@@ -16611,6 +16623,7 @@ function readSvcForm() {
     ws_enabled: Boolean(els.svcWsEnabled?.checked),
     opcua_enabled: Boolean(els.svcOpcuaEnabled?.checked),
     opcua_allow_unsecured: Boolean(els.svcOpcuaAllowUnsecured?.checked),
+    opcua_require_login: Boolean(els.svcOpcuaRequireLogin?.checked),
     http_port: Number(els.svcHttpPort?.value ?? 0) || 0,
     ws_port: Number(els.svcWsPort?.value ?? 0) || 0,
     opcua_port: Number(els.svcOpcuaPort?.value ?? 0) || 0
@@ -16653,6 +16666,16 @@ function wireSvcUi() {
     if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = 'Applying OPC UA security mode…';
     await applySvcSettings();
     if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = els.svcStatus?.textContent || 'OPC UA security mode applied.';
+  });
+  els.svcOpcuaRequireLogin?.addEventListener('change', () => {
+    if (els.svcOpcuaRequireLogin.checked && els.svcOpcuaAllowUnsecured) {
+      els.svcOpcuaAllowUnsecured.checked = false;
+    }
+  });
+  els.svcOpcuaAllowUnsecured?.addEventListener('change', () => {
+    if (els.svcOpcuaAllowUnsecured.checked && els.svcOpcuaRequireLogin) {
+      els.svcOpcuaRequireLogin.checked = false;
+    }
   });
   els.globalAlarmDelayReloadBtn?.addEventListener('click', loadGlobalAlarmDelay);
   els.globalAlarmDelaySaveBtn?.addEventListener('click', saveGlobalAlarmDelay);
@@ -17449,6 +17472,8 @@ function applyDeviceDriverUi(prefix) {
   mqttRows.forEach((row) => setRowVisible(row, isMqtt));
   setRowVisible(isEdit ? els.editDevOpcuaBrowseRow : els.newDevOpcuaBrowseRow, isRemoteOpcua);
   setRowVisible(isEdit ? els.editDevOpcuaSecurityRow : els.newDevOpcuaSecurityRow, isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevOpcuaUsernameRow : els.newDevOpcuaUsernameRow, isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevOpcuaPasswordRow : els.newDevOpcuaPasswordRow, isRemoteOpcua);
   if (isRemoteOpcua && !(state.opcuaServerProfiles || []).length) refreshOpcuaServerProfiles().catch(() => {});
 }
 
@@ -17485,7 +17510,12 @@ async function browseNewRemoteOpcbridge() {
   setNewDevStatus('Browsing remote OPCBridge…');
   if (els.newDevOpcuaBrowseBtn) els.newDevOpcuaBrowseBtn.disabled = true;
   try {
-    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint, security_profile: String(els.newDevOpcuaSecurityProfile?.value || '') }, { timeoutMs: 180000 });
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', {
+      endpoint,
+      security_profile: String(els.newDevOpcuaSecurityProfile?.value || ''),
+      username: String(els.newDevOpcuaUsername?.value || '').trim(),
+      password: String(els.newDevOpcuaPassword?.value || '')
+    }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     if (!els.newDevOpcuaBrowseResults) return;
     renderRemoteOpcuaBrowseResults(els.newDevOpcuaBrowseResults, connections);
@@ -17509,7 +17539,14 @@ async function browseEditedRemoteOpcbridge() {
   setEditDevStatus('Browsing remote OPCBridge…');
   if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = true;
   try {
-    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint, security_profile: String(els.editDevOpcuaSecurityProfile?.value || '') }, { timeoutMs: 180000 });
+    const existing = state.connObjCache?.get?.(state.pendingWorkspaceItem?.path || '') || {};
+    const enteredPassword = String(els.editDevOpcuaPassword?.value || '');
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', {
+      endpoint,
+      security_profile: String(els.editDevOpcuaSecurityProfile?.value || ''),
+      username: String(els.editDevOpcuaUsername?.value || '').trim(),
+      password: enteredPassword || String(existing?.settings?.password || '')
+    }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     const connectionId = editedRemoteOpcuaConnectionId();
     const existingNodeIds = new Set((state.tagConfigAll || [])
@@ -18273,6 +18310,8 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevId) els.newDevId.value = '';
   if (els.newDevDriver) els.newDevDriver.value = 'ab_eip';
   if (els.newDevGateway) els.newDevGateway.value = '';
+  if (els.newDevOpcuaUsername) els.newDevOpcuaUsername.value = '';
+  if (els.newDevOpcuaPassword) els.newDevOpcuaPassword.value = '';
   if (els.newDevPath) els.newDevPath.value = '';
   if (els.newDevModbusAddressMode) els.newDevModbusAddressMode.value = 'address';
   if (els.newDevSlot) els.newDevSlot.value = '';
@@ -18863,6 +18902,13 @@ function openWorkspaceItemModal(node) {
         if (els.editDevPollMaxReadsPerSec) els.editDevPollMaxReadsPerSec.value = obj?.poll_max_reads_per_sec == null ? '' : String(obj.poll_max_reads_per_sec);
         if (els.editDevPollLanes) els.editDevPollLanes.value = obj?.poll_lanes == null ? '1' : String(obj.poll_lanes);
         if (els.editDevEnabled) els.editDevEnabled.checked = obj?.enabled !== false;
+        if (els.editDevOpcuaUsername) els.editDevOpcuaUsername.value = String(obj?.settings?.username || '');
+        if (els.editDevOpcuaPassword) {
+          els.editDevOpcuaPassword.value = '';
+          els.editDevOpcuaPassword.placeholder = obj?.settings?.password
+            ? 'Configured; leave blank to keep current'
+            : 'Required when source requires login';
+        }
         const mqtt = mqttSettingsFromConnection(obj);
         if (els.editDevMqttHost) els.editDevMqttHost.value = mqtt.host;
         if (els.editDevMqttPort) els.editDevMqttPort.value = mqtt.port ? String(mqtt.port) : (mqtt.use_tls ? '8883' : '1883');
@@ -19803,6 +19849,12 @@ async function saveEditedDeviceFromModal() {
       const securityProfile = String(els.editDevOpcuaSecurityProfile?.value || '').trim();
       if (securityProfile) obj.settings.security_profile = securityProfile;
       else delete obj.settings.security_profile;
+      const username = String(els.editDevOpcuaUsername?.value || '').trim();
+      const password = String(els.editDevOpcuaPassword?.value || '');
+      if (username) obj.settings.username = username;
+      else delete obj.settings.username;
+      if (password) obj.settings.password = password;
+      else if (!username) delete obj.settings.password;
     }
     obj.enabled = Boolean(els.editDevEnabled?.checked);
   } catch (err) {
@@ -20658,6 +20710,10 @@ async function createNewDeviceFromWorkspace() {
       obj.settings = {};
       const securityProfile = String(els.newDevOpcuaSecurityProfile?.value || '').trim();
       if (securityProfile) obj.settings.security_profile = securityProfile;
+      const username = String(els.newDevOpcuaUsername?.value || '').trim();
+      const password = String(els.newDevOpcuaPassword?.value || '');
+      if (username) obj.settings.username = username;
+      if (password) obj.settings.password = password;
     }
   } catch (err) {
     setNewDevStatus(err.message || String(err));

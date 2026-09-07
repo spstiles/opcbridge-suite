@@ -619,9 +619,10 @@
           <div class="hint" id="opcuaServerIdentity"></div>
           <div class="row-actions" style="margin-top: 12px; justify-content: flex-start;">
             <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaAllowUnsecured" type="checkbox" /> Allow unsecured OPC UA clients</label>
+            <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaRequireLogin" type="checkbox" /> Require OPCBridge username/password</label>
             <button class="btn primary" id="opcuaSecurityApplyBtn" type="button">Apply Security Mode</button>
           </div>
-          <div class="hint">When unchecked, only trusted Basic256Sha256 / SignAndEncrypt clients can connect. Applying this setting briefly restarts OPCBridge.</div>
+          <div class="hint">Requiring login also requires a trusted Basic256Sha256 / SignAndEncrypt connection. Group permissions control OPC UA read and write access. Applying this setting briefly restarts OPCBridge.</div>
           <h3 style="margin: 16px 0 8px;">Trusted Server Profiles</h3>
           <div class="row-actions"><input id="opcuaServerProfileName" type="text" placeholder="Friendly profile name" /><input id="opcuaServerProfileFile" type="file" accept=".der,.crt,.pem" /><button class="btn primary" id="opcuaServerProfileAddBtn" type="button">Add Trusted Server</button></div>
           <div class="hint">Download the server certificate from the remote computer, then add it here once. Multiple workspace connections can reuse this profile.</div>
@@ -1947,6 +1948,8 @@
             </select></div>
             <div class="form-row" id="editDevGatewayRow"><label>Gateway</label><input id="editDevGateway" type="text" placeholder="192.0.2.10" /></div>
             <div class="form-row" id="editDevOpcuaSecurityRow" style="display:none;"><label>Security</label><select id="editDevOpcuaSecurityProfile"><option value="">Unsecured (troubleshooting)</option></select></div>
+            <div class="form-row" id="editDevOpcuaUsernameRow" style="display:none;"><label>OPC UA Username</label><input id="editDevOpcuaUsername" type="text" autocomplete="off" /></div>
+            <div class="form-row" id="editDevOpcuaPasswordRow" style="display:none;"><label>OPC UA Password</label><input id="editDevOpcuaPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" /></div>
             <div class="form-row" id="editDevOpcuaBrowseRow" style="display:none;"><label>Remote Tags</label><div style="min-width:0;"><button class="btn" id="editDevOpcuaBrowseBtn" type="button">Browse Remote OPCBridge</button><div id="editDevOpcuaBrowseResults" class="table-wrap" style="display:none; max-height:280px; overflow:auto; margin-top:8px;"></div></div></div>
             <div class="form-row" id="editDevPathRow"><label>Path</label><input id="editDevPath" type="text" placeholder="1,0" /></div>
             <div class="form-row" id="editDevModbusAddressModeRow" style="display:none;"><label>Address Entry</label><select id="editDevModbusAddressMode">
@@ -2284,6 +2287,8 @@
           </select></div>
           <div class="form-row" id="newDevGatewayRow"><label>Gateway</label><input id="newDevGateway" type="text" placeholder="192.0.2.10" /></div>
           <div class="form-row" id="newDevOpcuaSecurityRow" style="display:none;"><label>Security</label><select id="newDevOpcuaSecurityProfile"><option value="">Unsecured (troubleshooting)</option></select></div>
+          <div class="form-row" id="newDevOpcuaUsernameRow" style="display:none;"><label>OPC UA Username</label><input id="newDevOpcuaUsername" type="text" autocomplete="off" /></div>
+          <div class="form-row" id="newDevOpcuaPasswordRow" style="display:none;"><label>OPC UA Password</label><input id="newDevOpcuaPassword" type="password" autocomplete="new-password" /></div>
           <div class="form-row" id="newDevOpcuaBrowseRow" style="display:none;"><label>Remote Tags</label><div style="min-width:0;"><button class="btn" id="newDevOpcuaBrowseBtn" type="button">Browse Remote OPCBridge</button><div id="newDevOpcuaBrowseResults" class="table-wrap" style="display:none; max-height:280px; overflow:auto; margin-top:8px;"></div></div></div>
           <div class="form-row" id="newDevPathRow"><label>Path</label><input id="newDevPath" type="text" placeholder="1,0" /></div>
           <div class="form-row" id="newDevModbusAddressModeRow" style="display:none;"><label>Address Entry</label><select id="newDevModbusAddressMode">

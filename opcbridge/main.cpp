@@ -3211,6 +3211,8 @@ static const std::vector<std::string> &all_permission_ids() {
         "scada.access",
         "hmi.edit_screens",
         "opcbridge.write_tags",
+        "opcua.read",
+        "opcua.write",
         "opcbridge.edit_config",
         "suite.manage_server",
         "auth.manage_users",
@@ -3310,6 +3312,79 @@ static bool groups_have_permission(const std::vector<std::string> &groupIds, con
 
 static bool session_has_permission(const AdminSessionInfo &sess, const std::string &permId) {
     return groups_have_permission(sess.groups, permId);
+}
+
+struct OpcUaUserSessionContext {
+    std::string username;
+    bool can_read = false;
+    bool can_write = false;
+};
+
+static UA_StatusCode opcua_username_login_callback(
+    const UA_String *userName, const UA_ByteString *password,
+    size_t, const UA_UsernamePasswordLogin *, void **sessionContext, void *) {
+    if (!userName || !password || !sessionContext) return UA_STATUSCODE_BADUSERACCESSDENIED;
+    const std::string username(reinterpret_cast<const char *>(userName->data), userName->length);
+    const std::string passwordText(reinterpret_cast<const char *>(password->data), password->length);
+
+    AuthUserRecord user;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(g_userStoreMutex);
+        for (const auto &candidate : g_authUsers) {
+            if (candidate.username != username) continue;
+            user = candidate;
+            found = true;
+            break;
+        }
+    }
+    if (!found || !verify_auth_user_password(user, passwordText)) return UA_STATUSCODE_BADUSERACCESSDENIED;
+
+    bool canRead = groups_have_permission(user.groups, "opcua.read");
+    const bool canWrite = groups_have_permission(user.groups, "opcua.write");
+    if (canWrite) canRead = true;
+    if (!canRead) return UA_STATUSCODE_BADUSERACCESSDENIED;
+
+    auto *context = new (std::nothrow) OpcUaUserSessionContext{username, canRead, canWrite};
+    if (!context) return UA_STATUSCODE_BADOUTOFMEMORY;
+    *sessionContext = context;
+    return UA_STATUSCODE_GOOD;
+}
+
+static void opcua_close_user_session(UA_Server *, UA_AccessControl *, const UA_NodeId *, void *sessionContext) {
+    delete static_cast<OpcUaUserSessionContext *>(sessionContext);
+}
+
+static UA_Byte opcua_user_access_level(UA_Server *, UA_AccessControl *, const UA_NodeId *,
+                                       void *sessionContext, const UA_NodeId *, void *) {
+    // A null context represents an anonymous session, which is admitted only
+    // when OPC UA login is not required. Preserve compatibility in that mode.
+    if (!sessionContext) return 0xFF;
+    const auto *context = static_cast<const OpcUaUserSessionContext *>(sessionContext);
+    UA_Byte level = context->can_read ? UA_ACCESSLEVELMASK_READ : 0;
+    if (context->can_write) level |= UA_ACCESSLEVELMASK_WRITE;
+    return level;
+}
+
+static bool configure_opcua_user_access(UA_ServerConfig *config) {
+    if (!config) return false;
+    UA_UsernamePasswordLogin placeholder;
+    placeholder.username = UA_STRING_STATIC("opcbridge-directory");
+    placeholder.password = UA_BYTESTRING(const_cast<char *>("unused"));
+    UA_String tokenPolicy = UA_STRING_STATIC(
+        "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
+    const UA_StatusCode rc = UA_AccessControl_defaultWithLoginCallback(
+        config, false, &tokenPolicy, 1, &placeholder,
+        opcua_username_login_callback, nullptr);
+    if (rc != UA_STATUSCODE_GOOD) {
+        std::cerr << "OPC UA: unable to configure username/password access control: "
+                  << UA_StatusCode_name(rc) << "\n";
+        return false;
+    }
+    config->allowNonePolicyPassword = false;
+    config->accessControl.closeSession = opcua_close_user_session;
+    config->accessControl.getUserAccessLevel = opcua_user_access_level;
+    return true;
 }
 
 static bool role_exists(const std::string &role) {
@@ -12229,7 +12304,8 @@ static void persist_opcua_rejected_certificates() {
 }
 
 bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
-                       const std::string &configDir, bool allowUnsecuredClients) {
+                       const std::string &configDir, bool allowUnsecuredClients,
+                       bool requireLogin) {
     if (g_uaServer) {
         std::cerr << "OPC UA: server already initialized.\n";
         return true;
@@ -12266,6 +12342,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
     const bool certificateLoaded = load_opcua_binary_file(certificatePath, certificate, identityError);
     const bool privateKeyLoaded = certificateLoaded && load_opcua_binary_file(privateKeyPath, privateKey, identityError);
     const bool secureIdentityReady = certificateLoaded && privateKeyLoaded && !applicationUri.empty();
+    if (requireLogin) allowUnsecuredClients = false;
 
     if (!allowUnsecuredClients && !secureIdentityReady) {
         std::cerr << "OPC UA: secure-only mode requires a valid application certificate, private key, and Application URI.\n";
@@ -12330,10 +12407,28 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
     } else {
         std::cerr << "OPC UA: secure endpoint unavailable: "
                   << (identityError.empty() ? "identity metadata is missing" : identityError) << "\n"
-                  << "OPC UA: continuing with the unsecured endpoint for compatibility.\n";
+                  << (requireLogin
+                          ? "OPC UA: username/password login requires the secure endpoint; server startup aborted.\n"
+                          : "OPC UA: continuing with the unsecured endpoint for compatibility.\n");
+        if (requireLogin) {
+            UA_ByteString_clear(&certificate);
+            UA_ByteString_clear(&privateKey);
+            UA_Server_delete(server);
+            return false;
+        }
     }
     UA_ByteString_clear(&certificate);
     UA_ByteString_clear(&privateKey);
+
+    if (requireLogin) {
+        if (!configure_opcua_user_access(config)) {
+            UA_Server_delete(server);
+            return false;
+        }
+        std::cout << "OPC UA: username/password login required.\n";
+    } else {
+        std::cout << "OPC UA: username/password login disabled; anonymous sessions allowed.\n";
+    }
 
     // UA_ServerConfig_setMinimal allocates strings inside applicationDescription.
     // If we replace them, we must also allocate (and clear old) to avoid invalid frees on shutdown.
@@ -13778,6 +13873,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	        bool httpMode     = false;
 	        bool opcuaMode    = false;
 	        bool opcuaAllowUnsecuredClients = true;
+	        bool opcuaRequireLogin = false;
 	        bool versionMode  = false;
 	        bool mqttMode    = false;
 			bool wsMode = false;
@@ -13828,6 +13924,10 @@ static bool apply_config_bundle_json(const std::string &configDir,
             } else if (arg == "--opcua") {
                 opcuaMode = true;
             } else if (arg == "--opcua-secure-only") {
+                opcuaAllowUnsecuredClients = false;
+                opcuaMode = true;
+            } else if (arg == "--opcua-require-login") {
+                opcuaRequireLogin = true;
                 opcuaAllowUnsecuredClients = false;
                 opcuaMode = true;
             } else if (arg == "--opcua-port") {
@@ -14022,7 +14122,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	                runtime_log("info", "startup", msg.str());
 	            }
 	            const auto opcuaInitStarted = std::chrono::steady_clock::now();
-            if (!init_opcua_server(opcuaPort, drivers, configDir, opcuaAllowUnsecuredClients)) {
+            if (!init_opcua_server(opcuaPort, drivers, configDir, opcuaAllowUnsecuredClients, opcuaRequireLogin)) {
 	                std::cerr << "Failed to initialize OPC UA server.\n";
 	                destroy_all_handles(drivers);
 	                return 1;
@@ -16245,6 +16345,8 @@ const USERS_PERMISSION_DEFS = [
     { id: "scada.access", label: "Access SCADA portal and Overview" },
     { id: "hmi.edit_screens", label: "HMI screen editing" },
     { id: "opcbridge.write_tags", label: "Write tags" },
+    { id: "opcua.read", label: "OPC UA read access" },
+    { id: "opcua.write", label: "OPC UA write access" },
     { id: "opcbridge.edit_config", label: "Edit OPCBridge config" },
     { id: "suite.manage_server", label: "Manage suite server" },
     { id: "auth.manage_users", label: "Manage users and groups" },
@@ -23598,6 +23700,7 @@ window.addEventListener("load", startAutoRefresh);
 	                resp["capabilities"]["opcua_encryption"] = true;
 	                resp["capabilities"]["opcua_encryption_backend"] = "openssl";
 	                resp["capabilities"]["opcua_allow_unsecured_clients"] = opcuaAllowUnsecuredClients;
+	                resp["capabilities"]["opcua_require_login"] = opcuaRequireLogin;
 
 					auto now = std::chrono::system_clock::now();
 					const int64_t now_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -29846,7 +29949,7 @@ window.addEventListener("load", startAutoRefresh);
 			                                std::cout << "[reload] Rebuilding OPC UA server...\n";
 			                                const auto opcuaRebuildStarted = std::chrono::steady_clock::now();
 			                                shutdown_opcua_server();
-			                                if (!init_opcua_server(opcuaPort, drivers, configDir, opcuaAllowUnsecuredClients)) {
+			                                if (!init_opcua_server(opcuaPort, drivers, configDir, opcuaAllowUnsecuredClients, opcuaRequireLogin)) {
 			                                    err = "OPC UA reinit failed after reload (see server log).";
 			                                }
 			                                {
