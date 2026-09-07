@@ -32069,6 +32069,16 @@ if (hmiSvg) {
               if (currentPopupScreenId) closePopup();
               return;
             }
+            if (action.type === "history-back") {
+              if (hotspot.viewportId) viewportGoBack(hotspot.viewportId);
+              else runtimeGoBack();
+              return;
+            }
+            if (action.type === "history-forward") {
+              if (hotspot.viewportId) viewportGoForward(hotspot.viewportId);
+              else runtimeGoForward();
+              return;
+            }
           }
         }
 		      const hitMeta = getMetaAtPoint(point);
