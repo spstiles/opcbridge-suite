@@ -14333,17 +14333,13 @@ const closeSetpointPrompt = () => {
   pendingSetpointAction = null;
 };
 
-const openSetpointPrompt = (action, buttonLabel) => {
+const openSetpointPrompt = (action) => {
   if (isViewOnlyRuntime()) return;
   if (!setpointOverlay || !setpointValueInput) return;
   pendingSetpointAction = action || null;
   const connectionId = String(action?.connection_id || "").trim();
   const tagName = String(action?.tag || "").trim();
-  const titleParts = [];
-  if (buttonLabel) titleParts.push(buttonLabel);
-  if (connectionId && tagName) titleParts.push(`${getConnectionDisplayName(connectionId)}.${tagName}`);
-  const title = titleParts.join(" • ") || "Numeric Entry (Prompt)";
-  if (setpointTitle) setpointTitle.textContent = title;
+  if (setpointTitle) setpointTitle.textContent = "Enter Setpoint";
 
   const minValue = parseOptionalNumber(action?.min);
   const maxValue = parseOptionalNumber(action?.max);
@@ -14374,7 +14370,7 @@ const openSetpointPrompt = (action, buttonLabel) => {
       kind: "setpoint",
       connection_id: connectionId,
       tag: tagName,
-      title,
+      title: "Enter Setpoint",
       value: String(initialValue),
       min: minValue,
       max: maxValue,
@@ -32316,7 +32312,7 @@ if (hmiSvg) {
 	      }
 	      if (obj?.action?.type === "prompt-write") {
 	        if (writesDisabled) return;
-	        openSetpointPrompt(obj.action, obj.label || "Numeric Entry (Prompt)");
+	        openSetpointPrompt(obj.action);
 	      }
 	      return;
 	    }
