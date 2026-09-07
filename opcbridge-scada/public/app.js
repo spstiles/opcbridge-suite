@@ -48,6 +48,11 @@
   scadaSettingsSaveBtn: document.getElementById('scadaSettingsSaveBtn'),
   scadaSettingsStatus: document.getElementById('scadaSettingsStatus'),
   opcuaTrustRefreshBtn: document.getElementById('opcuaTrustRefreshBtn'),
+  opcuaIdentityDownloadBtn: document.getElementById('opcuaIdentityDownloadBtn'),
+  opcuaServerProfileName: document.getElementById('opcuaServerProfileName'),
+  opcuaServerProfileFile: document.getElementById('opcuaServerProfileFile'),
+  opcuaServerProfileAddBtn: document.getElementById('opcuaServerProfileAddBtn'),
+  opcuaServerProfilesTbody: document.getElementById('opcuaServerProfilesTbody'),
   opcuaTrustStatus: document.getElementById('opcuaTrustStatus'),
   opcuaServerIdentity: document.getElementById('opcuaServerIdentity'),
   opcuaRejectedTbody: document.getElementById('opcuaRejectedTbody'),
@@ -164,6 +169,9 @@
   svcHttpEnabled: document.getElementById('svcHttpEnabled'),
   svcWsEnabled: document.getElementById('svcWsEnabled'),
   svcOpcuaEnabled: document.getElementById('svcOpcuaEnabled'),
+  svcOpcuaAllowUnsecured: document.getElementById('svcOpcuaAllowUnsecured'),
+  svcOpcuaRequireLogin: document.getElementById('svcOpcuaRequireLogin'),
+  opcuaSecurityApplyBtn: document.getElementById('opcuaSecurityApplyBtn'),
   svcHttpPort: document.getElementById('svcHttpPort'),
   svcWsPort: document.getElementById('svcWsPort'),
   svcOpcuaPort: document.getElementById('svcOpcuaPort'),
@@ -770,6 +778,12 @@
   editDevOpcuaBrowseRow: document.getElementById('editDevOpcuaBrowseRow'),
   editDevOpcuaBrowseBtn: document.getElementById('editDevOpcuaBrowseBtn'),
   editDevOpcuaBrowseResults: document.getElementById('editDevOpcuaBrowseResults'),
+  editDevOpcuaSecurityRow: document.getElementById('editDevOpcuaSecurityRow'),
+  editDevOpcuaSecurityProfile: document.getElementById('editDevOpcuaSecurityProfile'),
+  editDevOpcuaUsernameRow: document.getElementById('editDevOpcuaUsernameRow'),
+  editDevOpcuaUsername: document.getElementById('editDevOpcuaUsername'),
+  editDevOpcuaPasswordRow: document.getElementById('editDevOpcuaPasswordRow'),
+  editDevOpcuaPassword: document.getElementById('editDevOpcuaPassword'),
   editDevPathRow: document.getElementById('editDevPathRow'),
   editDevPath: document.getElementById('editDevPath'),
   editDevModbusAddressModeRow: document.getElementById('editDevModbusAddressModeRow'),
@@ -945,6 +959,12 @@
   newDevOpcuaBrowseRow: document.getElementById('newDevOpcuaBrowseRow'),
   newDevOpcuaBrowseBtn: document.getElementById('newDevOpcuaBrowseBtn'),
   newDevOpcuaBrowseResults: document.getElementById('newDevOpcuaBrowseResults'),
+  newDevOpcuaSecurityRow: document.getElementById('newDevOpcuaSecurityRow'),
+  newDevOpcuaSecurityProfile: document.getElementById('newDevOpcuaSecurityProfile'),
+  newDevOpcuaUsernameRow: document.getElementById('newDevOpcuaUsernameRow'),
+  newDevOpcuaUsername: document.getElementById('newDevOpcuaUsername'),
+  newDevOpcuaPasswordRow: document.getElementById('newDevOpcuaPasswordRow'),
+  newDevOpcuaPassword: document.getElementById('newDevOpcuaPassword'),
   newDevPathRow: document.getElementById('newDevPathRow'),
   newDevPath: document.getElementById('newDevPath'),
   newDevModbusAddressModeRow: document.getElementById('newDevModbusAddressModeRow'),
@@ -1409,6 +1429,7 @@ const state = {
   flowTagsLoadingPromise: null,
   mqttTrustCertificates: [],
   opcuaTrust: { identity: null, rejected: [], trusted: [] },
+  opcuaServerProfiles: [],
   themeMode: 'auto',
 };
 
@@ -1430,6 +1451,8 @@ const ROLE_PERMISSION_DEFS = [
   { id: 'scada.access', label: 'Access SCADA portal and Overview' },
   { id: 'hmi.edit_screens', label: 'Edit screens (HMI editor)' },
   { id: 'opcbridge.write_tags', label: 'Write tags (runtime)' },
+  { id: 'opcua.read', label: 'OPC UA read access' },
+  { id: 'opcua.write', label: 'OPC UA write access' },
   { id: 'opcbridge.edit_config', label: 'Edit connections/tags (config)' },
   { id: 'suite.manage_server', label: 'Manage server (ports, endpoints, tokens)' },
   { id: 'auth.manage_users', label: 'Manage users/groups' },
@@ -11373,6 +11396,7 @@ function setTab(id) {
     loadSmtpSettings().catch(() => {});
     loadVoiceModemSettings().catch(() => {});
     refreshOpcuaTrust().catch(() => {});
+    refreshOpcuaServerProfiles().catch(() => {});
     refreshServerCertificateLibrary().catch(() => {});
   }
   if (id === 'alarms_events') {
@@ -11472,7 +11496,9 @@ function renderOverviewHealth(health, metrics = null) {
       const connectionName = displayConnectionName(cid);
       const st = String(info?.status || 'unknown');
       const metricInfo = metricConns[cid] && typeof metricConns[cid] === 'object' ? metricConns[cid] : {};
-      const reason = info?.reason ? (` - ${info.reason}`) : '';
+      const actionableIssue = String(info?.runtime_issue || '').trim();
+      const reasonText = actionableIssue || String(info?.reason || '').trim();
+      const reason = reasonText ? (` - ${reasonText}`) : '';
       const ratio = (typeof info?.stale_ratio === 'number') ? ` (${Math.round(info.stale_ratio * 100)}% stale/bad)` : '';
       const seen = (typeof info?.tags_seen === 'number') ? info.tags_seen : null;
       const good = (typeof info?.good_recent === 'number') ? info.good_recent : null;
@@ -11497,6 +11523,9 @@ function renderOverviewHealth(health, metrics = null) {
       if (typeof info?.last_read_age_ms === 'number' && info.last_read_age_ms >= 0) details += ` • last read ${formatMsCompact(info.last_read_age_ms)} ago`;
       if (lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
       if (info?.stalled === true) details += ` • stalled`;
+      if (info?.transport) details += ` • ${String(info.transport)}`;
+      if (info?.security_profile) details += ` • security profile ${String(info.security_profile)}`;
+      else if (info?.security_mode) details += ` • ${String(info.security_mode)}`;
 
       const cls = classForStatus(st);
       const blocks = Array.isArray(metricInfo?.blocks) ? metricInfo.blocks : [];
@@ -16579,6 +16608,8 @@ function fillSvcForm(s) {
   if (els.svcHttpEnabled) els.svcHttpEnabled.checked = Boolean(s.http_enabled);
   if (els.svcWsEnabled) els.svcWsEnabled.checked = Boolean(s.ws_enabled);
   if (els.svcOpcuaEnabled) els.svcOpcuaEnabled.checked = Boolean(s.opcua_enabled);
+  if (els.svcOpcuaAllowUnsecured) els.svcOpcuaAllowUnsecured.checked = s.opcua_allow_unsecured !== false;
+  if (els.svcOpcuaRequireLogin) els.svcOpcuaRequireLogin.checked = Boolean(s.opcua_require_login);
   if (els.svcHttpPort) els.svcHttpPort.value = String(s.http_port ?? '');
   if (els.svcWsPort) els.svcWsPort.value = String(s.ws_port ?? '');
   if (els.svcOpcuaPort) els.svcOpcuaPort.value = String(s.opcua_port ?? '');
@@ -16591,6 +16622,8 @@ function readSvcForm() {
     http_enabled: Boolean(els.svcHttpEnabled?.checked),
     ws_enabled: Boolean(els.svcWsEnabled?.checked),
     opcua_enabled: Boolean(els.svcOpcuaEnabled?.checked),
+    opcua_allow_unsecured: Boolean(els.svcOpcuaAllowUnsecured?.checked),
+    opcua_require_login: Boolean(els.svcOpcuaRequireLogin?.checked),
     http_port: Number(els.svcHttpPort?.value ?? 0) || 0,
     ws_port: Number(els.svcWsPort?.value ?? 0) || 0,
     opcua_port: Number(els.svcOpcuaPort?.value ?? 0) || 0
@@ -16606,11 +16639,57 @@ async function loadSvcSettings() {
       return;
     }
     fillSvcForm(data?.settings);
+    connectOpcuaTrustEvents(data?.settings);
     const p = data?.dropin_path ? ` (${data.dropin_path})` : '';
     setSvcStatus(data?.exists ? `Loaded from drop-in${p}.` : `No drop-in found${p}; showing defaults.`);
   } catch (err) {
     setSvcStatus(`Failed: ${err.message}`);
   }
+}
+
+let opcuaTrustEventsSocket = null;
+let opcuaTrustEventsReconnectTimer = 0;
+let opcuaTrustEventsPort = 0;
+
+function configureServerTabIsActive() {
+  return Boolean(document.querySelector('.tab[data-tab="configure"].is-active'));
+}
+
+function connectOpcuaTrustEvents(settings = null) {
+  const enabled = Boolean(settings?.ws_enabled);
+  const port = Number(settings?.ws_port || 0);
+  opcuaTrustEventsPort = enabled && Number.isFinite(port) && port > 0 ? Math.trunc(port) : 0;
+  if (opcuaTrustEventsReconnectTimer) {
+    window.clearTimeout(opcuaTrustEventsReconnectTimer);
+    opcuaTrustEventsReconnectTimer = 0;
+  }
+  if (opcuaTrustEventsSocket) {
+    opcuaTrustEventsSocket.onclose = null;
+    opcuaTrustEventsSocket.close();
+    opcuaTrustEventsSocket = null;
+  }
+  if (!opcuaTrustEventsPort) return;
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${window.location.hostname}:${opcuaTrustEventsPort}`);
+  opcuaTrustEventsSocket = socket;
+  socket.onmessage = (event) => {
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (message?.type !== 'opcua_trust_changed') return;
+    if (configureServerTabIsActive()) {
+      refreshOpcuaTrust('New rejected OPC UA client detected.').catch(() => {});
+    }
+  };
+  socket.onclose = () => {
+    if (opcuaTrustEventsSocket === socket) opcuaTrustEventsSocket = null;
+    if (!opcuaTrustEventsPort) return;
+    opcuaTrustEventsReconnectTimer = window.setTimeout(() => {
+      opcuaTrustEventsReconnectTimer = 0;
+      connectOpcuaTrustEvents({ ws_enabled: true, ws_port: opcuaTrustEventsPort });
+    }, 3000);
+  };
+  socket.onerror = () => socket.close();
 }
 
 async function applySvcSettings() {
@@ -16629,6 +16708,21 @@ async function applySvcSettings() {
 function wireSvcUi() {
   els.svcReloadBtn?.addEventListener('click', loadSvcSettings);
   els.svcApplyBtn?.addEventListener('click', applySvcSettings);
+  els.opcuaSecurityApplyBtn?.addEventListener('click', async () => {
+    if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = 'Applying OPC UA security mode…';
+    await applySvcSettings();
+    if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = els.svcStatus?.textContent || 'OPC UA security mode applied.';
+  });
+  els.svcOpcuaRequireLogin?.addEventListener('change', () => {
+    if (els.svcOpcuaRequireLogin.checked && els.svcOpcuaAllowUnsecured) {
+      els.svcOpcuaAllowUnsecured.checked = false;
+    }
+  });
+  els.svcOpcuaAllowUnsecured?.addEventListener('change', () => {
+    if (els.svcOpcuaAllowUnsecured.checked && els.svcOpcuaRequireLogin) {
+      els.svcOpcuaRequireLogin.checked = false;
+    }
+  });
   els.globalAlarmDelayReloadBtn?.addEventListener('click', loadGlobalAlarmDelay);
   els.globalAlarmDelaySaveBtn?.addEventListener('click', saveGlobalAlarmDelay);
   loadGlobalAlarmDelay().catch(() => {});
@@ -17423,6 +17517,10 @@ function applyDeviceDriverUi(prefix) {
   if (modeEl && !modeEl.value) modeEl.value = 'address';
   mqttRows.forEach((row) => setRowVisible(row, isMqtt));
   setRowVisible(isEdit ? els.editDevOpcuaBrowseRow : els.newDevOpcuaBrowseRow, isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevOpcuaSecurityRow : els.newDevOpcuaSecurityRow, isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevOpcuaUsernameRow : els.newDevOpcuaUsernameRow, isRemoteOpcua);
+  setRowVisible(isEdit ? els.editDevOpcuaPasswordRow : els.newDevOpcuaPasswordRow, isRemoteOpcua);
+  if (isRemoteOpcua && !(state.opcuaServerProfiles || []).length) refreshOpcuaServerProfiles().catch(() => {});
 }
 
 function renderRemoteOpcuaBrowseResults(container, connections, existingNodeIds = new Set(), selectNew = true) {
@@ -17458,7 +17556,12 @@ async function browseNewRemoteOpcbridge() {
   setNewDevStatus('Browsing remote OPCBridge…');
   if (els.newDevOpcuaBrowseBtn) els.newDevOpcuaBrowseBtn.disabled = true;
   try {
-    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 180000 });
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', {
+      endpoint,
+      security_profile: String(els.newDevOpcuaSecurityProfile?.value || ''),
+      username: String(els.newDevOpcuaUsername?.value || '').trim(),
+      password: String(els.newDevOpcuaPassword?.value || '')
+    }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     if (!els.newDevOpcuaBrowseResults) return;
     renderRemoteOpcuaBrowseResults(els.newDevOpcuaBrowseResults, connections);
@@ -17482,7 +17585,14 @@ async function browseEditedRemoteOpcbridge() {
   setEditDevStatus('Browsing remote OPCBridge…');
   if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = true;
   try {
-    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', { endpoint }, { timeoutMs: 180000 });
+    const existing = state.connObjCache?.get?.(state.pendingWorkspaceItem?.path || '') || {};
+    const enteredPassword = String(els.editDevOpcuaPassword?.value || '');
+    const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', {
+      endpoint,
+      security_profile: String(els.editDevOpcuaSecurityProfile?.value || ''),
+      username: String(els.editDevOpcuaUsername?.value || '').trim(),
+      password: enteredPassword || String(existing?.settings?.password || '')
+    }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     const connectionId = editedRemoteOpcuaConnectionId();
     const existingNodeIds = new Set((state.tagConfigAll || [])
@@ -18246,6 +18356,8 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevId) els.newDevId.value = '';
   if (els.newDevDriver) els.newDevDriver.value = 'ab_eip';
   if (els.newDevGateway) els.newDevGateway.value = '';
+  if (els.newDevOpcuaUsername) els.newDevOpcuaUsername.value = '';
+  if (els.newDevOpcuaPassword) els.newDevOpcuaPassword.value = '';
   if (els.newDevPath) els.newDevPath.value = '';
   if (els.newDevModbusAddressMode) els.newDevModbusAddressMode.value = 'address';
   if (els.newDevSlot) els.newDevSlot.value = '';
@@ -18836,6 +18948,13 @@ function openWorkspaceItemModal(node) {
         if (els.editDevPollMaxReadsPerSec) els.editDevPollMaxReadsPerSec.value = obj?.poll_max_reads_per_sec == null ? '' : String(obj.poll_max_reads_per_sec);
         if (els.editDevPollLanes) els.editDevPollLanes.value = obj?.poll_lanes == null ? '1' : String(obj.poll_lanes);
         if (els.editDevEnabled) els.editDevEnabled.checked = obj?.enabled !== false;
+        if (els.editDevOpcuaUsername) els.editDevOpcuaUsername.value = String(obj?.settings?.username || '');
+        if (els.editDevOpcuaPassword) {
+          els.editDevOpcuaPassword.value = '';
+          els.editDevOpcuaPassword.placeholder = obj?.settings?.password
+            ? 'Configured; leave blank to keep current'
+            : 'Required when source requires login';
+        }
         const mqtt = mqttSettingsFromConnection(obj);
         if (els.editDevMqttHost) els.editDevMqttHost.value = mqtt.host;
         if (els.editDevMqttPort) els.editDevMqttPort.value = mqtt.port ? String(mqtt.port) : (mqtt.use_tls ? '8883' : '1883');
@@ -18856,6 +18975,7 @@ function openWorkspaceItemModal(node) {
           refreshMqttConnectionCertificateStatus(connectionId).catch(() => {});
         }
         if (driver === 'opcua_client') {
+          refreshOpcuaServerProfiles({ editDevOpcuaSecurityProfile: String(obj?.settings?.security_profile || '') }).catch(() => {});
           const includedCount = (state.tagConfigAll || []).filter((tag) => String(tag?.connection_id || '') === connectionId).length;
           setEditDevStatus(`${includedCount} remote tag${includedCount === 1 ? '' : 's'} currently included. Browse the source to add or remove tags.`);
         } else {
@@ -19770,6 +19890,18 @@ async function saveEditedDeviceFromModal() {
     } else {
       delete obj.modbus_address_mode;
     }
+    if (driver === 'opcua_client') {
+      obj.settings = { ...((existing?.settings && typeof existing.settings === 'object') ? existing.settings : {}) };
+      const securityProfile = String(els.editDevOpcuaSecurityProfile?.value || '').trim();
+      if (securityProfile) obj.settings.security_profile = securityProfile;
+      else delete obj.settings.security_profile;
+      const username = String(els.editDevOpcuaUsername?.value || '').trim();
+      const password = String(els.editDevOpcuaPassword?.value || '');
+      if (username) obj.settings.username = username;
+      else delete obj.settings.username;
+      if (password) obj.settings.password = password;
+      else if (!username) delete obj.settings.password;
+    }
     obj.enabled = Boolean(els.editDevEnabled?.checked);
   } catch (err) {
     setEditDevStatus(err.message || String(err));
@@ -19987,11 +20119,47 @@ async function refreshOpcuaTrust(message = '') {
   }
 }
 
+function renderOpcuaServerProfiles(selected = {}) {
+  const profiles = state.opcuaServerProfiles || [];
+  [els.newDevOpcuaSecurityProfile, els.editDevOpcuaSecurityProfile].forEach((select) => {
+    if (!select) return;
+    const wanted = selected[select.id] ?? select.value;
+    select.replaceChildren(new Option('Unsecured (troubleshooting)', ''));
+    profiles.forEach((profile) => select.add(new Option(profile.name, profile.name)));
+    select.value = profiles.some((profile) => profile.name === wanted) ? wanted : '';
+  });
+  if (els.opcuaServerProfilesTbody) els.opcuaServerProfilesTbody.innerHTML = profiles.length
+    ? profiles.map((profile) => `<tr><td><strong>${escapeHtml(profile.name)}</strong></td><td title="${escapeHtml(profile.subject || '')}">${escapeHtml(certificatePrincipalLabel(profile.subject))}</td><td>${escapeHtml(profile.valid_to || '—')}</td><td>${escapeHtml((profile.used_by || []).join(', ') || 'Not in use')}</td><td><button class="btn danger" data-opcua-profile-delete="${escapeHtml(profile.name)}" ${(profile.used_by || []).length ? 'disabled' : ''}>Delete</button></td></tr>`).join('')
+    : '<tr><td colspan="5" class="hint">No trusted server profiles.</td></tr>';
+}
+
+async function refreshOpcuaServerProfiles(selected = {}) {
+  const response = await apiGet('/api/opcbridge/opcua-server-profiles', { timeoutMs: 15000 });
+  state.opcuaServerProfiles = Array.isArray(response?.profiles) ? response.profiles : [];
+  renderOpcuaServerProfiles(selected);
+}
+
+async function addOpcuaServerProfile() {
+  const name = String(els.opcuaServerProfileName?.value || '').trim();
+  const file = els.opcuaServerProfileFile?.files?.[0];
+  if (!name || !file) { if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = 'Enter a profile name and choose the remote server certificate.'; return; }
+  const response = await fetchWithTimeout(`/api/opcbridge/opcua-server-profiles?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: await file.arrayBuffer() }, 30000);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok === false) throw new Error(data?.error || `Upload failed (${response.status})`);
+  if (els.opcuaServerProfileName) els.opcuaServerProfileName.value = '';
+  if (els.opcuaServerProfileFile) els.opcuaServerProfileFile.value = '';
+  await refreshOpcuaServerProfiles();
+  if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = `Trusted server profile '${data.profile?.name || name}' added.`;
+}
+
 async function changeOpcuaTrust(action, fingerprint) {
   const certificate = [...(state.opcuaTrust?.rejected || []), ...(state.opcuaTrust?.trusted || [])]
     .find((item) => item.fingerprint === fingerprint);
   const verb = action === 'trust' ? 'Trust' : 'Remove trust for';
-  if (!certificate || !window.confirm(`${verb} '${certificatePrincipalLabel(certificate.subject)}'?\n\nSHA-256: ${fingerprint}`)) return;
+  const impact = action === 'remove'
+    ? '\n\nThis briefly restarts OPCBridge to disconnect active OPC UA clients and apply the revocation immediately.'
+    : '';
+  if (!certificate || !window.confirm(`${verb} '${certificatePrincipalLabel(certificate.subject)}'?\n\nSHA-256: ${fingerprint}${impact}`)) return;
   if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = action === 'trust' ? 'Trusting certificate…' : 'Removing certificate…';
   try {
     const response = await fetchWithTimeout(`/api/opcbridge/opcua-trust?action=${encodeURIComponent(action)}&fingerprint=${encodeURIComponent(fingerprint)}`, {
@@ -19999,7 +20167,17 @@ async function changeOpcuaTrust(action, fingerprint) {
     }, 30000);
     const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     if (!response.ok || !data?.ok) throw new Error(data?.error || `Operation failed (HTTP ${response.status})`);
-    await refreshOpcuaTrust(action === 'trust' ? 'Certificate trusted. Reconnect the OPC UA client.' : 'Certificate removed from trust.');
+    if (action === 'trust') {
+      await refreshOpcuaTrust('Certificate trusted. Reconnect the OPC UA client.');
+    } else {
+      const removalMessage = data?.restart?.ok
+        ? 'Certificate trust removed. Active OPC UA connections were closed; waiting for the client to reconnect…'
+        : `Certificate trust removed. ${data?.warning || 'Restart OPCBridge to disconnect the active client.'}`;
+      await refreshOpcuaTrust(removalMessage);
+      if (data?.restart?.ok) {
+        window.setTimeout(() => refreshOpcuaTrust('The removed client must be trusted again before it can connect.'), 3000);
+      }
+    }
   } catch (err) {
     if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = `Operation failed: ${err.message || err}`;
   }
@@ -20574,6 +20752,15 @@ async function createNewDeviceFromWorkspace() {
     } else {
       delete obj.modbus_address_mode;
     }
+    if (driver === 'opcua_client') {
+      obj.settings = {};
+      const securityProfile = String(els.newDevOpcuaSecurityProfile?.value || '').trim();
+      if (securityProfile) obj.settings.security_profile = securityProfile;
+      const username = String(els.newDevOpcuaUsername?.value || '').trim();
+      const password = String(els.newDevOpcuaPassword?.value || '');
+      if (username) obj.settings.username = username;
+      if (password) obj.settings.password = password;
+    }
   } catch (err) {
     setNewDevStatus(err.message || String(err));
     return;
@@ -20663,6 +20850,18 @@ function wireNewDeviceFormUi() {
   });
   els.newDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('new'));
   els.opcuaTrustRefreshBtn?.addEventListener('click', () => refreshOpcuaTrust());
+  els.opcuaIdentityDownloadBtn?.addEventListener('click', () => window.open('/api/opcbridge/opcua-trust?action=download-identity', '_blank', 'noopener,noreferrer'));
+  els.opcuaServerProfileAddBtn?.addEventListener('click', () => addOpcuaServerProfile().catch((err) => { if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = err.message || err; }));
+  els.opcuaServerProfilesTbody?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-opcua-profile-delete]');
+    if (!button) return;
+    const name = String(button.dataset.opcuaProfileDelete || '');
+    if (!name || !window.confirm(`Delete trusted server profile '${name}'?`)) return;
+    const response = await fetchWithTimeout(`/api/opcbridge/opcua-server-profiles?name=${encodeURIComponent(name)}`, { method: 'DELETE' }, 30000);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.ok === false) { if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = data?.error || 'Delete failed.'; return; }
+    await refreshOpcuaServerProfiles();
+  });
   [els.opcuaRejectedTbody, els.opcuaTrustedTbody].forEach((tbody) => tbody?.addEventListener('click', (event) => {
     const button = event.target.closest('[data-opcua-trust-action][data-opcua-fingerprint]');
     if (!button) return;
@@ -25612,6 +25811,7 @@ function renderTreeNode(node, container) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'tree-item';
+  btn.dataset.workspaceNodeId = String(node.id || '');
   btn.classList.toggle('is-active', state.selectedNodeId === node.id);
 
   const twisty = document.createElement('span');
@@ -25682,7 +25882,7 @@ function renderTreeNode(node, container) {
     state.selectedNodeId = node.id;
     updateWorkspaceLiveTagFilterFromNode(node);
     resetLiveTagsViewport();
-    renderWorkspaceTree();
+    updateWorkspaceTreeSelection(btn);
     renderWorkspaceDetails(node);
     refreshVisible().catch(() => {});
   });
@@ -25691,11 +25891,12 @@ function renderTreeNode(node, container) {
     e.preventDefault();
     e.stopPropagation();
 
-    // Right-click also selects the node and updates the right pane.
+    // Select in place. Rebuilding the tree here can create thousands of tag
+    // nodes before the context menu appears on large OPC UA connections.
     state.selectedNodeId = node.id;
     updateWorkspaceLiveTagFilterFromNode(node);
     resetLiveTagsViewport();
-    renderWorkspaceTree();
+    updateWorkspaceTreeSelection(btn);
 
     if (node.type === 'project') return;
 
@@ -25780,6 +25981,15 @@ function renderTreeNode(node, container) {
     (node.children || []).forEach((c) => renderTreeNode(c, childrenWrap));
     container.appendChild(childrenWrap);
   }
+}
+
+function updateWorkspaceTreeSelection(selectedButton = null) {
+  if (!els.treeView) return;
+  els.treeView.querySelectorAll('.tree-item.is-active').forEach((item) => item.classList.remove('is-active'));
+  const button = selectedButton || Array.from(els.treeView.querySelectorAll('.tree-item')).find(
+    (item) => String(item.dataset.workspaceNodeId || '') === String(state.selectedNodeId || '')
+  );
+  button?.classList.add('is-active');
 }
 
 
@@ -26387,7 +26597,7 @@ function selectWorkspaceNodeById(id) {
   if (!node) return;
   state.selectedNodeId = node.id;
   updateWorkspaceLiveTagFilterFromNode(node);
-  renderWorkspaceTree();
+  updateWorkspaceTreeSelection();
   renderWorkspaceDetails(node);
 }
 

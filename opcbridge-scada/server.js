@@ -1832,6 +1832,8 @@ function buildOpcbridgeExecStart(settings) {
   const enableHttp = Boolean(settings?.http_enabled);
   const enableWs = Boolean(settings?.ws_enabled);
   const enableOpcua = Boolean(settings?.opcua_enabled);
+  const allowUnsecuredOpcua = settings?.opcua_allow_unsecured !== false;
+  const requireOpcuaLogin = Boolean(settings?.opcua_require_login);
 
   const httpPort = Number(settings?.http_port);
   const wsPort = Number(settings?.ws_port);
@@ -1851,6 +1853,8 @@ function buildOpcbridgeExecStart(settings) {
   if (enableOpcua) {
     args.push('--opcua');
     if (Number.isFinite(opcuaPort) && opcuaPort > 0) args.push('--opcua-port', String(Math.trunc(opcuaPort)));
+    if (!allowUnsecuredOpcua || requireOpcuaLogin) args.push('--opcua-secure-only');
+    if (requireOpcuaLogin) args.push('--opcua-require-login');
   }
   // systemd ExecStart uses a single line; avoid quoting unless necessary.
   return args.join(' ');
@@ -1867,6 +1871,8 @@ function loadOpcbridgeSystemdSettings() {
     ws_enabled: true,
     ws_port: 8090,
     opcua_enabled: true,
+    opcua_allow_unsecured: true,
+    opcua_require_login: false,
     opcua_port: 4840
   };
 
@@ -1899,6 +1905,8 @@ function loadOpcbridgeSystemdSettings() {
       if (t === '--ws') { s.ws_enabled = true; continue; }
       if (t === '--ws-port') { s.ws_port = Number(tokens[i + 1] || s.ws_port); i += 1; continue; }
       if (t === '--opcua') { s.opcua_enabled = true; continue; }
+      if (t === '--opcua-secure-only') { s.opcua_allow_unsecured = false; continue; }
+      if (t === '--opcua-require-login') { s.opcua_require_login = true; s.opcua_allow_unsecured = false; continue; }
       if (t === '--opcua-port') { s.opcua_port = Number(tokens[i + 1] || s.opcua_port); i += 1; continue; }
     }
 
@@ -4735,12 +4743,63 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/opcbridge/opcua-server-profiles') {
+    if (!await requireManageServerPerm()) return;
+    const profilesDir = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'opcua', 'server-profiles');
+    const safeName = (value) => String(value || '').trim().replace(/[^a-zA-Z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+    const usedBy = (name) => {
+      const directory = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'connections');
+      if (!fs.existsSync(directory)) return [];
+      return fs.readdirSync(directory).filter((file) => file.endsWith('.json')).flatMap((file) => {
+        try {
+          const cfg = readJsoncFileOrNull(path.join(directory, file));
+          return String(cfg?.settings?.security_profile || '') === name ? [String(cfg?.description || cfg?.id || file)] : [];
+        } catch { return []; }
+      });
+    };
+    const list = () => {
+      if (!fs.existsSync(profilesDir)) return [];
+      return fs.readdirSync(profilesDir).filter((file) => file.endsWith('.der')).flatMap((file) => {
+        try {
+          const certificate = new crypto.X509Certificate(fs.readFileSync(path.join(profilesDir, file)));
+          const name = file.slice(0, -4);
+          return [{ name, subject: certificate.subject, issuer: certificate.issuer, valid_to: certificate.validTo, fingerprint: certificate.fingerprint256, used_by: usedBy(name) }];
+        } catch { return []; }
+      });
+    };
+    try {
+      if (req.method === 'GET') { sendJson(res, 200, { ok: true, profiles: list() }); return; }
+      const name = safeName(url.searchParams.get('name'));
+      if (!name) { sendJson(res, 400, { ok: false, error: 'A profile name is required.' }); return; }
+      if (req.method === 'POST') {
+        const body = await readBody(req, 2 * 1024 * 1024);
+        const certificate = new crypto.X509Certificate(body);
+        fs.mkdirSync(profilesDir, { recursive: true, mode: 0o750 });
+        const destination = path.join(profilesDir, `${name}.der`);
+        fs.writeFileSync(destination, certificate.raw, { mode: 0o640 });
+        fs.chmodSync(destination, 0o640);
+        sendJson(res, 200, { ok: true, profile: list().find((item) => item.name === name) }); return;
+      }
+      if (req.method === 'DELETE') {
+        const usage = usedBy(name);
+        if (usage.length) { sendJson(res, 409, { ok: false, error: `Profile is used by: ${usage.join(', ')}` }); return; }
+        const destination = path.join(profilesDir, `${name}.der`);
+        if (!fs.existsSync(destination)) { sendJson(res, 404, { ok: false, error: 'Profile not found.' }); return; }
+        fs.unlinkSync(destination);
+        sendJson(res, 200, { ok: true }); return;
+      }
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    } catch (err) { sendJson(res, 400, { ok: false, error: `OPC UA server profile operation failed: ${err.message || err}` }); }
+    return;
+  }
+
   if (url.pathname === '/api/opcbridge/opcua-trust') {
     if (!await requireManageServerPerm()) return;
     const opcuaRoot = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'opcua');
     const applicationStore = path.join(opcuaRoot, 'pki', 'ApplCerts');
     const trustedDir = path.join(applicationStore, 'trusted', 'certs');
     const rejectedDir = path.join(applicationStore, 'rejected', 'certs');
+    const pendingClientsDir = path.join(opcuaRoot, 'pending-client-certificates');
     const ownCertPath = path.join(applicationStore, 'own', 'certs', 'opcbridge-application.pem');
     const identityPath = path.join(opcuaRoot, 'identity.json');
     const normalizeFingerprint = (value) => String(value || '').replace(/[^a-fA-F0-9]/g, '').toUpperCase();
@@ -4782,19 +4841,55 @@ const server = http.createServer(async (req, res) => {
       }
       return null;
     };
+    const removeByFingerprint = (directory, wanted) => {
+      if (!fs.existsSync(directory)) return 0;
+      let removed = 0;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const absolute = path.join(directory, entry.name);
+        try {
+          if (normalizeFingerprint(certificateInfo(absolute).fingerprint) !== wanted) continue;
+          fs.unlinkSync(absolute);
+          removed += 1;
+        } catch { /* Continue past invalid or concurrently removed files. */ }
+      }
+      return removed;
+    };
+    const uniqueCertificates = (certificates) => {
+      const unique = new Map();
+      for (const certificate of certificates) {
+        const key = normalizeFingerprint(certificate.fingerprint);
+        if (key && !unique.has(key)) unique.set(key, certificate);
+      }
+      return [...unique.values()].sort((a, b) => String(a.subject || a.name).localeCompare(String(b.subject || b.name), undefined, { sensitivity: 'base', numeric: true }));
+    };
+    const listTrustedCertificates = () => uniqueCertificates(listDirectory(trustedDir));
+    const listRejectedCertificates = (trustedFingerprints = new Set()) =>
+      uniqueCertificates([...listDirectory(pendingClientsDir), ...listDirectory(rejectedDir)])
+        .filter((certificate) => !trustedFingerprints.has(normalizeFingerprint(certificate.fingerprint)));
+    const findRejectedByFingerprint = (wanted) =>
+      findByFingerprint(pendingClientsDir, wanted) || findByFingerprint(rejectedDir, wanted);
     try {
       if (req.method === 'GET') {
+        if (String(url.searchParams.get('action') || '') === 'download-identity') {
+          if (!fs.existsSync(ownCertPath)) { sendJson(res, 404, { ok: false, error: 'Server identity is not installed.' }); return; }
+          const body = fs.readFileSync(ownCertPath);
+          res.writeHead(200, { 'Content-Type': 'application/x-pem-file', 'Content-Disposition': 'attachment; filename="opcbridge-server.pem"', 'Content-Length': body.length });
+          res.end(body); return;
+        }
         let identity = null;
         if (fs.existsSync(ownCertPath)) {
           identity = certificateInfo(ownCertPath);
           const metadata = readJsoncFileOrNull(identityPath);
           if (metadata?.application_uri) identity.application_uri = String(metadata.application_uri);
         }
+        const trusted = listTrustedCertificates();
+        const trustedFingerprints = new Set(trusted.map((certificate) => normalizeFingerprint(certificate.fingerprint)));
         sendJson(res, 200, {
           ok: true,
           identity,
-          rejected: listDirectory(rejectedDir),
-          trusted: listDirectory(trustedDir)
+          rejected: listRejectedCertificates(trustedFingerprints),
+          trusted
         });
         return;
       }
@@ -4803,7 +4898,7 @@ const server = http.createServer(async (req, res) => {
       const wanted = normalizeFingerprint(url.searchParams.get('fingerprint'));
       if (!/^[A-F0-9]{64}$/.test(wanted)) { sendJson(res, 400, { ok: false, error: 'A valid SHA-256 certificate fingerprint is required.' }); return; }
       if (action === 'trust') {
-        const source = findByFingerprint(rejectedDir, wanted);
+        const source = findRejectedByFingerprint(wanted);
         if (!source) {
           const existing = findByFingerprint(trustedDir, wanted);
           if (existing) { sendJson(res, 200, { ok: true, duplicate: true, certificate: existing.info }); return; }
@@ -4811,17 +4906,35 @@ const server = http.createServer(async (req, res) => {
         }
         fs.mkdirSync(trustedDir, { recursive: true, mode: 0o750 });
         const destination = path.join(trustedDir, `${wanted.toLowerCase()}.der`);
-        if (fs.existsSync(destination)) fs.unlinkSync(source.absolute);
-        else fs.renameSync(source.absolute, destination);
+        if (!fs.existsSync(destination)) fs.copyFileSync(source.absolute, destination);
         fs.chmodSync(destination, 0o640);
+        // A client may retry before an administrator trusts it. Remove every
+        // rejected copy of this certificate from both stores once it is trusted.
+        removeByFingerprint(pendingClientsDir, wanted);
+        removeByFingerprint(rejectedDir, wanted);
         sendJson(res, 200, { ok: true, certificate: certificateInfo(destination) });
         return;
       }
       if (action === 'remove') {
         const trusted = findByFingerprint(trustedDir, wanted);
         if (!trusted) { sendJson(res, 404, { ok: false, error: 'Trusted certificate not found.' }); return; }
-        fs.unlinkSync(trusted.absolute);
-        sendJson(res, 200, { ok: true, removed: trusted.info });
+        removeByFingerprint(trustedDir, wanted);
+        // Remove any stale rejected/pending copy before the forced reconnect.
+        for (const directory of [pendingClientsDir, rejectedDir]) {
+          removeByFingerprint(directory, wanted);
+        }
+        // Trust is evaluated when a SecureChannel is established. Restarting the
+        // core closes existing channels so removal takes effect immediately.
+        const restart = SYSTEMD_ENABLED
+          ? runSystemctl(['restart', SYSTEMD_UNIT])
+          : { ok: false, error: 'Systemd management is disabled.' };
+        sendJson(res, 200, {
+          ok: true,
+          removed: trusted.info,
+          restart,
+          reconnect_required: !restart.ok,
+          warning: restart.ok ? '' : `Trust was removed, but ${SYSTEMD_UNIT} could not be restarted automatically.`
+        });
         return;
       }
       sendJson(res, 400, { ok: false, error: "Action must be 'trust' or 'remove'." });
