@@ -7792,7 +7792,7 @@ let runtimeScreenAliasHistory = [];
 let runtimeScreenHistoryIndex = -1;
 let runtimeHasNavigated = false;
 
-let viewportScreenHistoryById = new Map(); // viewportId -> { stack: string[], index: number }
+let viewportScreenHistoryById = new Map(); // viewportId -> { stack: { screenId, mappings, parentContext }[], index: number }
 
 window.addEventListener("error", (event) => {
   const message = event?.message || "Unknown error";
@@ -8015,7 +8015,14 @@ const initViewportHistoriesForCurrentScreen = () => {
     if (!viewportId) return;
     const targetId = String(obj.target || obj.screenId || obj.targetScreen || obj.targetId || "").trim();
     if (targetId) {
-      viewportScreenHistoryById.set(viewportId, { stack: [targetId], index: 0 });
+      viewportScreenHistoryById.set(viewportId, {
+        stack: [{
+          screenId: targetId,
+          mappings: obj.aliases || {},
+          parentContext: currentScreenAliasContext || {}
+        }],
+        index: 0
+      });
     } else {
       viewportScreenHistoryById.set(viewportId, { stack: [], index: -1 });
     }
@@ -14028,13 +14035,21 @@ const loadViewportTarget = (viewportId, screenId, action = null, parentContext =
     const target = String(screenId || "").trim();
     if (id && target) {
       const entry = viewportScreenHistoryById.get(id) || { stack: [], index: -1 };
-      if (entry.index >= 0 && entry.index < entry.stack.length && entry.stack[entry.index] === target) {
+      const historyItem = {
+        screenId: target,
+        mappings: action?.aliases || {},
+        parentContext: parentContext || {}
+      };
+      const currentItem = entry.index >= 0 && entry.index < entry.stack.length ? entry.stack[entry.index] : null;
+      const currentTarget = typeof currentItem === "string" ? currentItem : String(currentItem?.screenId || "");
+      const currentMappings = typeof currentItem === "string" ? {} : (currentItem?.mappings || {});
+      if (currentTarget === target && JSON.stringify(currentMappings) === JSON.stringify(historyItem.mappings)) {
         // no-op
       } else {
         if (entry.index >= 0 && entry.index < entry.stack.length - 1) {
           entry.stack = entry.stack.slice(0, entry.index + 1);
         }
-        entry.stack.push(target);
+        entry.stack.push(historyItem);
         entry.index = entry.stack.length - 1;
       }
       viewportScreenHistoryById.set(id, entry);
@@ -14054,10 +14069,15 @@ const viewportGoBack = (viewportId) => {
   if (!entry || entry.index <= 0) return false;
   entry.index -= 1;
   viewportScreenHistoryById.set(id, entry);
-  const target = entry.stack[entry.index];
+  const historyItem = entry.stack[entry.index];
+  const target = typeof historyItem === "string" ? historyItem : String(historyItem?.screenId || "");
   if (target) {
     const viewport = currentScreenObj?.objects?.find((obj) => obj?.type === "viewport" && obj.id === id);
     if (viewport) viewport.target = target;
+    viewportAliasMappings.set(id, {
+      mappings: typeof historyItem === "string" ? {} : (historyItem?.mappings || {}),
+      parentContext: typeof historyItem === "string" ? currentScreenAliasContext : (historyItem?.parentContext || {})
+    });
     renderScreen();
     scheduleWsSubscribeRefresh();
     return true;
@@ -14072,10 +14092,15 @@ const viewportGoForward = (viewportId) => {
   if (!entry || entry.index < 0 || entry.index >= entry.stack.length - 1) return false;
   entry.index += 1;
   viewportScreenHistoryById.set(id, entry);
-  const target = entry.stack[entry.index];
+  const historyItem = entry.stack[entry.index];
+  const target = typeof historyItem === "string" ? historyItem : String(historyItem?.screenId || "");
   if (target) {
     const viewport = currentScreenObj?.objects?.find((obj) => obj?.type === "viewport" && obj.id === id);
     if (viewport) viewport.target = target;
+    viewportAliasMappings.set(id, {
+      mappings: typeof historyItem === "string" ? {} : (historyItem?.mappings || {}),
+      parentContext: typeof historyItem === "string" ? currentScreenAliasContext : (historyItem?.parentContext || {})
+    });
     renderScreen();
     scheduleWsSubscribeRefresh();
     return true;
@@ -32098,7 +32123,10 @@ if (hmiSvg) {
 	        if (isViewportChild) {
 	          const viewportObj = currentScreenObj?.objects?.[hitMeta.index];
 	          const viewportId = viewportObj?.type === "viewport" ? viewportObj?.id : null;
-	          if (viewportId && viewportGoBack(viewportId)) return;
+	          if (viewportId) {
+	            viewportGoBack(viewportId);
+	            return;
+	          }
 	        }
 	        runtimeGoBack();
 	      }
@@ -32110,7 +32138,10 @@ if (hmiSvg) {
 	        if (isViewportChild) {
 	          const viewportObj = currentScreenObj?.objects?.[hitMeta.index];
 	          const viewportId = viewportObj?.type === "viewport" ? viewportObj?.id : null;
-	          if (viewportId && viewportGoForward(viewportId)) return;
+	          if (viewportId) {
+	            viewportGoForward(viewportId);
+	            return;
+	          }
 	        }
 	        runtimeGoForward();
 		      }
