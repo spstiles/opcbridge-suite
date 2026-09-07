@@ -7279,7 +7279,10 @@ const setDiagnosticsMode = (enabled) => {
   if (!diagnosticsModeEnabled) hideDiagnosticsTooltip();
 };
 
-const toggleDiagnosticsMode = () => setDiagnosticsMode(!diagnosticsModeEnabled);
+const toggleDiagnosticsMode = () => {
+  setDiagnosticsMode(!diagnosticsModeEnabled);
+  showHmiToast(`Diagnostics mode ${diagnosticsModeEnabled ? "enabled" : "disabled"}`, 3000);
+};
 
 const closeReferenceHealth = () => {
   referenceHealthOverlay?.remove();
