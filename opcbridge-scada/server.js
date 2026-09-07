@@ -4841,14 +4841,32 @@ const server = http.createServer(async (req, res) => {
       }
       return null;
     };
-    const listRejectedCertificates = () => {
+    const removeByFingerprint = (directory, wanted) => {
+      if (!fs.existsSync(directory)) return 0;
+      let removed = 0;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const absolute = path.join(directory, entry.name);
+        try {
+          if (normalizeFingerprint(certificateInfo(absolute).fingerprint) !== wanted) continue;
+          fs.unlinkSync(absolute);
+          removed += 1;
+        } catch { /* Continue past invalid or concurrently removed files. */ }
+      }
+      return removed;
+    };
+    const uniqueCertificates = (certificates) => {
       const unique = new Map();
-      for (const certificate of [...listDirectory(pendingClientsDir), ...listDirectory(rejectedDir)]) {
+      for (const certificate of certificates) {
         const key = normalizeFingerprint(certificate.fingerprint);
         if (key && !unique.has(key)) unique.set(key, certificate);
       }
       return [...unique.values()].sort((a, b) => String(a.subject || a.name).localeCompare(String(b.subject || b.name), undefined, { sensitivity: 'base', numeric: true }));
     };
+    const listTrustedCertificates = () => uniqueCertificates(listDirectory(trustedDir));
+    const listRejectedCertificates = (trustedFingerprints = new Set()) =>
+      uniqueCertificates([...listDirectory(pendingClientsDir), ...listDirectory(rejectedDir)])
+        .filter((certificate) => !trustedFingerprints.has(normalizeFingerprint(certificate.fingerprint)));
     const findRejectedByFingerprint = (wanted) =>
       findByFingerprint(pendingClientsDir, wanted) || findByFingerprint(rejectedDir, wanted);
     try {
@@ -4865,11 +4883,13 @@ const server = http.createServer(async (req, res) => {
           const metadata = readJsoncFileOrNull(identityPath);
           if (metadata?.application_uri) identity.application_uri = String(metadata.application_uri);
         }
+        const trusted = listTrustedCertificates();
+        const trustedFingerprints = new Set(trusted.map((certificate) => normalizeFingerprint(certificate.fingerprint)));
         sendJson(res, 200, {
           ok: true,
           identity,
-          rejected: listRejectedCertificates(),
-          trusted: listDirectory(trustedDir)
+          rejected: listRejectedCertificates(trustedFingerprints),
+          trusted
         });
         return;
       }
@@ -4886,20 +4906,22 @@ const server = http.createServer(async (req, res) => {
         }
         fs.mkdirSync(trustedDir, { recursive: true, mode: 0o750 });
         const destination = path.join(trustedDir, `${wanted.toLowerCase()}.der`);
-        if (fs.existsSync(destination)) fs.unlinkSync(source.absolute);
-        else fs.renameSync(source.absolute, destination);
+        if (!fs.existsSync(destination)) fs.copyFileSync(source.absolute, destination);
         fs.chmodSync(destination, 0o640);
+        // A client may retry before an administrator trusts it. Remove every
+        // rejected copy of this certificate from both stores once it is trusted.
+        removeByFingerprint(pendingClientsDir, wanted);
+        removeByFingerprint(rejectedDir, wanted);
         sendJson(res, 200, { ok: true, certificate: certificateInfo(destination) });
         return;
       }
       if (action === 'remove') {
         const trusted = findByFingerprint(trustedDir, wanted);
         if (!trusted) { sendJson(res, 404, { ok: false, error: 'Trusted certificate not found.' }); return; }
-        fs.unlinkSync(trusted.absolute);
+        removeByFingerprint(trustedDir, wanted);
         // Remove any stale rejected/pending copy before the forced reconnect.
         for (const directory of [pendingClientsDir, rejectedDir]) {
-          const duplicate = findByFingerprint(directory, wanted);
-          if (duplicate) fs.unlinkSync(duplicate.absolute);
+          removeByFingerprint(directory, wanted);
         }
         // Trust is evaluated when a SecureChannel is established. Restarting the
         // core closes existing channels so removal takes effect immediately.

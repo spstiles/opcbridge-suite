@@ -5823,6 +5823,15 @@ void ws_notify_system_tag_update(const SystemTagDef &def, int64_t timestamp_ms)
     ws_send_json(j);
 }
 
+void ws_notify_opcua_trust_changed(const std::string &reason)
+{
+    if (!ws_is_enabled()) return;
+    json j;
+    j["type"] = "opcua_trust_changed";
+    j["reason"] = reason;
+    ws_send_json(j);
+}
+
 void ws_notify_alarm_event(const AlarmRuntime &alarm,
                            const TagSnapshot &snap,
                            const std::string &state)
@@ -12256,6 +12265,7 @@ static void persist_opcua_rejected_certificates() {
         return;
     }
 
+    bool trustListChanged = false;
     try {
         fs::create_directories(g_opcuaRejectedCertificatesDir);
         for (size_t i = 0; i < certificateCount; ++i) {
@@ -12292,6 +12302,7 @@ static void persist_opcua_rejected_certificates() {
             fs::permissions(temporary, fs::perms::owner_read | fs::perms::owner_write |
                                        fs::perms::group_read, fs::perm_options::replace);
             fs::rename(temporary, destination);
+            trustListChanged = true;
             std::cout << "OPC UA: recorded rejected client certificate "
                       << destination.filename() << "\n";
         }
@@ -12301,6 +12312,7 @@ static void persist_opcua_rejected_certificates() {
     }
 
     UA_Array_delete(certificates, certificateCount, &UA_TYPES[UA_TYPES_BYTESTRING]);
+    if (trustListChanged) ws_notify_opcua_trust_changed("client_rejected");
 }
 
 bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,

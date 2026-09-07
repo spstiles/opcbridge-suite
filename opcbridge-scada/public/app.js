@@ -16639,11 +16639,57 @@ async function loadSvcSettings() {
       return;
     }
     fillSvcForm(data?.settings);
+    connectOpcuaTrustEvents(data?.settings);
     const p = data?.dropin_path ? ` (${data.dropin_path})` : '';
     setSvcStatus(data?.exists ? `Loaded from drop-in${p}.` : `No drop-in found${p}; showing defaults.`);
   } catch (err) {
     setSvcStatus(`Failed: ${err.message}`);
   }
+}
+
+let opcuaTrustEventsSocket = null;
+let opcuaTrustEventsReconnectTimer = 0;
+let opcuaTrustEventsPort = 0;
+
+function configureServerTabIsActive() {
+  return Boolean(document.querySelector('.tab[data-tab="configure"].is-active'));
+}
+
+function connectOpcuaTrustEvents(settings = null) {
+  const enabled = Boolean(settings?.ws_enabled);
+  const port = Number(settings?.ws_port || 0);
+  opcuaTrustEventsPort = enabled && Number.isFinite(port) && port > 0 ? Math.trunc(port) : 0;
+  if (opcuaTrustEventsReconnectTimer) {
+    window.clearTimeout(opcuaTrustEventsReconnectTimer);
+    opcuaTrustEventsReconnectTimer = 0;
+  }
+  if (opcuaTrustEventsSocket) {
+    opcuaTrustEventsSocket.onclose = null;
+    opcuaTrustEventsSocket.close();
+    opcuaTrustEventsSocket = null;
+  }
+  if (!opcuaTrustEventsPort) return;
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${window.location.hostname}:${opcuaTrustEventsPort}`);
+  opcuaTrustEventsSocket = socket;
+  socket.onmessage = (event) => {
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (message?.type !== 'opcua_trust_changed') return;
+    if (configureServerTabIsActive()) {
+      refreshOpcuaTrust('New rejected OPC UA client detected.').catch(() => {});
+    }
+  };
+  socket.onclose = () => {
+    if (opcuaTrustEventsSocket === socket) opcuaTrustEventsSocket = null;
+    if (!opcuaTrustEventsPort) return;
+    opcuaTrustEventsReconnectTimer = window.setTimeout(() => {
+      opcuaTrustEventsReconnectTimer = 0;
+      connectOpcuaTrustEvents({ ws_enabled: true, ws_port: opcuaTrustEventsPort });
+    }, 3000);
+  };
+  socket.onerror = () => socket.close();
 }
 
 async function applySvcSettings() {
