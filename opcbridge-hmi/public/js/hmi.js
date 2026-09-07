@@ -14417,7 +14417,7 @@ const navigatePopupOpener = (screenId, action = {}) => {
   return true;
 };
 
-const runPopupScreenAction = (action) => {
+const runPopupScreenAction = (action, obj = null) => {
   if (!action?.type) return false;
   if (action.type === "close-popup") {
     closePopup();
@@ -14437,6 +14437,22 @@ const runPopupScreenAction = (action) => {
   }
   if (action.type === "history-back") return popupGoHistory(-1);
   if (action.type === "history-forward") return popupGoHistory(1);
+  if (action.type === "toggle-write") {
+    runToggleWriteAction(action, obj).catch((error) => {
+      console.error("[popup toggle-write] failed:", error);
+    });
+    return true;
+  }
+  if (action.type === "set-write") {
+    runSetWriteAction(action, obj).catch((error) => {
+      console.error("[popup set-write] failed:", error);
+    });
+    return true;
+  }
+  if (action.type === "prompt-write") {
+    openSetpointPrompt(action);
+    return true;
+  }
   return false;
 };
 
@@ -19726,11 +19742,63 @@ if (popupCloseBtn) {
 }
 
 if (popupSvg) {
+  let popupMomentaryPress = null;
+
+  const releasePopupMomentary = async (pointerId) => {
+    if (!popupMomentaryPress) return;
+    if (pointerId != null && popupMomentaryPress.pointerId !== pointerId) return;
+    const { action, object } = popupMomentaryPress;
+    popupMomentaryPress = null;
+    if (isViewOnlyRuntime()) return;
+    try {
+      await apiWriteTag({
+        connection_id: action.connection_id,
+        tag: action.tag,
+        value: action.offValue,
+        audit: {
+          action: "momentary-write-release",
+          object_id: object?.id || "",
+          object_label: object?.label || ""
+        }
+      });
+    } catch (error) {
+      console.error("[popup momentary-write] release failed:", error);
+    }
+  };
+
+  popupSvg.addEventListener("pointerdown", async (event) => {
+    const actionHost = event.target instanceof Element ? event.target.closest("[data-hmi-popup-action]") : null;
+    if (!actionHost || !popupSvg.contains(actionHost)) return;
+    const action = actionHost.__hmiPopupAction;
+    if (action?.type !== "momentary-write" || isViewOnlyRuntime()) return;
+    const object = actionHost.__hmiPopupObject;
+    popupMomentaryPress = { pointerId: event.pointerId, action, object };
+    try {
+      await apiWriteTag({
+        connection_id: action.connection_id,
+        tag: action.tag,
+        value: action.onValue,
+        audit: {
+          action: "momentary-write-press",
+          object_id: object?.id || "",
+          object_label: object?.label || ""
+        }
+      });
+    } catch (error) {
+      popupMomentaryPress = null;
+      console.error("[popup momentary-write] press failed:", error);
+    }
+  });
+
+  popupSvg.addEventListener("pointerup", (event) => releasePopupMomentary(event.pointerId));
+  popupSvg.addEventListener("pointercancel", (event) => releasePopupMomentary(event.pointerId));
+  popupSvg.addEventListener("pointerleave", () => releasePopupMomentary(null));
+
   popupSvg.addEventListener("click", (event) => {
     const actionHost = event.target instanceof Element ? event.target.closest("[data-hmi-popup-action]") : null;
     if (!actionHost || !popupSvg.contains(actionHost)) return;
     const action = actionHost.__hmiPopupAction;
-    if (runPopupScreenAction(action)) {
+    if (action?.type === "momentary-write" || runPopupScreenAction(action, actionHost.__hmiPopupObject)) {
       event.preventDefault();
       event.stopPropagation();
     }
