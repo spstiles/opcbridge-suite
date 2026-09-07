@@ -169,6 +169,7 @@
   svcHttpEnabled: document.getElementById('svcHttpEnabled'),
   svcWsEnabled: document.getElementById('svcWsEnabled'),
   svcOpcuaEnabled: document.getElementById('svcOpcuaEnabled'),
+  svcOpcuaAllowUnsecured: document.getElementById('svcOpcuaAllowUnsecured'),
   svcHttpPort: document.getElementById('svcHttpPort'),
   svcWsPort: document.getElementById('svcWsPort'),
   svcOpcuaPort: document.getElementById('svcOpcuaPort'),
@@ -16595,6 +16596,7 @@ function fillSvcForm(s) {
   if (els.svcHttpEnabled) els.svcHttpEnabled.checked = Boolean(s.http_enabled);
   if (els.svcWsEnabled) els.svcWsEnabled.checked = Boolean(s.ws_enabled);
   if (els.svcOpcuaEnabled) els.svcOpcuaEnabled.checked = Boolean(s.opcua_enabled);
+  if (els.svcOpcuaAllowUnsecured) els.svcOpcuaAllowUnsecured.checked = s.opcua_allow_unsecured !== false;
   if (els.svcHttpPort) els.svcHttpPort.value = String(s.http_port ?? '');
   if (els.svcWsPort) els.svcWsPort.value = String(s.ws_port ?? '');
   if (els.svcOpcuaPort) els.svcOpcuaPort.value = String(s.opcua_port ?? '');
@@ -16607,6 +16609,7 @@ function readSvcForm() {
     http_enabled: Boolean(els.svcHttpEnabled?.checked),
     ws_enabled: Boolean(els.svcWsEnabled?.checked),
     opcua_enabled: Boolean(els.svcOpcuaEnabled?.checked),
+    opcua_allow_unsecured: Boolean(els.svcOpcuaAllowUnsecured?.checked),
     http_port: Number(els.svcHttpPort?.value ?? 0) || 0,
     ws_port: Number(els.svcWsPort?.value ?? 0) || 0,
     opcua_port: Number(els.svcOpcuaPort?.value ?? 0) || 0

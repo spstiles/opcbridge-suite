@@ -595,6 +595,11 @@
               <label>OPC UA Port</label>
               <input id="svcOpcuaPort" type="number" min="1" max="65535" step="1" />
             </div>
+            <div class="form-row">
+              <label>OPC UA Security</label>
+              <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaAllowUnsecured" type="checkbox" /> Allow unsecured OPC UA clients</label>
+            </div>
+            <div class="hint">When unchecked, only trusted Basic256Sha256 / SignAndEncrypt clients can connect.</div>
 
             <div class="form-row">
               <label></label>

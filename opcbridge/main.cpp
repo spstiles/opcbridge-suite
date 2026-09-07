@@ -12229,7 +12229,7 @@ static void persist_opcua_rejected_certificates() {
 }
 
 bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
-                       const std::string &configDir) {
+                       const std::string &configDir, bool allowUnsecuredClients) {
     if (g_uaServer) {
         std::cerr << "OPC UA: server already initialized.\n";
         return true;
@@ -12267,6 +12267,14 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
     const bool privateKeyLoaded = certificateLoaded && load_opcua_binary_file(privateKeyPath, privateKey, identityError);
     const bool secureIdentityReady = certificateLoaded && privateKeyLoaded && !applicationUri.empty();
 
+    if (!allowUnsecuredClients && !secureIdentityReady) {
+        std::cerr << "OPC UA: secure-only mode requires a valid application certificate, private key, and Application URI.\n";
+        UA_ByteString_clear(&certificate);
+        UA_ByteString_clear(&privateKey);
+        UA_Server_delete(server);
+        return false;
+    }
+
     UA_StatusCode rc = UA_ServerConfig_setMinimal(config, port,
                                                    secureIdentityReady ? &certificate : nullptr);
     if (rc != UA_STATUSCODE_GOOD) {
@@ -12295,6 +12303,12 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
             rc = UA_ServerConfig_addSecurityPolicyBasic256Sha256(config, &certificate, &privateKey);
         }
         if (rc == UA_STATUSCODE_GOOD) {
+            if (!allowUnsecuredClients) {
+                UA_Array_delete(config->endpoints, config->endpointsSize,
+                                &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
+                config->endpoints = nullptr;
+                config->endpointsSize = 0;
+            }
             UA_String policy = UA_STRING(const_cast<char*>(
                 "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"));
             rc = UA_ServerConfig_addEndpoint(config, policy,
@@ -12310,6 +12324,9 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
         }
         std::cout << "OPC UA: secure endpoint enabled (Basic256Sha256 / SignAndEncrypt).\n"
                   << "OPC UA: PKI store: " << pkiRoot << "\n";
+        std::cout << "OPC UA: unsecured clients "
+                  << (allowUnsecuredClients ? "allowed" : "disabled (secure connections required)")
+                  << ".\n";
     } else {
         std::cerr << "OPC UA: secure endpoint unavailable: "
                   << (identityError.empty() ? "identity metadata is missing" : identityError) << "\n"
@@ -13760,6 +13777,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	        bool dumpJsonMode = false;
 	        bool httpMode     = false;
 	        bool opcuaMode    = false;
+	        bool opcuaAllowUnsecuredClients = true;
 	        bool versionMode  = false;
 	        bool mqttMode    = false;
 			bool wsMode = false;
@@ -13808,6 +13826,9 @@ static bool apply_config_bundle_json(const std::string &configDir,
             } else if (arg == "--http") {
                 httpMode = true;
             } else if (arg == "--opcua") {
+                opcuaMode = true;
+            } else if (arg == "--opcua-secure-only") {
+                opcuaAllowUnsecuredClients = false;
                 opcuaMode = true;
             } else if (arg == "--opcua-port") {
                 if (i + 1 >= argc) {
@@ -14001,7 +14022,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 	                runtime_log("info", "startup", msg.str());
 	            }
 	            const auto opcuaInitStarted = std::chrono::steady_clock::now();
-            if (!init_opcua_server(opcuaPort, drivers, configDir)) {
+            if (!init_opcua_server(opcuaPort, drivers, configDir, opcuaAllowUnsecuredClients)) {
 	                std::cerr << "Failed to initialize OPC UA server.\n";
 	                destroy_all_handles(drivers);
 	                return 1;
@@ -23576,6 +23597,7 @@ window.addEventListener("load", startAutoRefresh);
 	                resp["suite_version"] = OPCBRIDGE_SUITE_VERSION;
 	                resp["capabilities"]["opcua_encryption"] = true;
 	                resp["capabilities"]["opcua_encryption_backend"] = "openssl";
+	                resp["capabilities"]["opcua_allow_unsecured_clients"] = opcuaAllowUnsecuredClients;
 
 					auto now = std::chrono::system_clock::now();
 					const int64_t now_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -29824,7 +29846,7 @@ window.addEventListener("load", startAutoRefresh);
 			                                std::cout << "[reload] Rebuilding OPC UA server...\n";
 			                                const auto opcuaRebuildStarted = std::chrono::steady_clock::now();
 			                                shutdown_opcua_server();
-			                                if (!init_opcua_server(opcuaPort, drivers, configDir)) {
+			                                if (!init_opcua_server(opcuaPort, drivers, configDir, opcuaAllowUnsecuredClients)) {
 			                                    err = "OPC UA reinit failed after reload (see server log).";
 			                                }
 			                                {

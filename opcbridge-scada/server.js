@@ -1832,6 +1832,7 @@ function buildOpcbridgeExecStart(settings) {
   const enableHttp = Boolean(settings?.http_enabled);
   const enableWs = Boolean(settings?.ws_enabled);
   const enableOpcua = Boolean(settings?.opcua_enabled);
+  const allowUnsecuredOpcua = settings?.opcua_allow_unsecured !== false;
 
   const httpPort = Number(settings?.http_port);
   const wsPort = Number(settings?.ws_port);
@@ -1851,6 +1852,7 @@ function buildOpcbridgeExecStart(settings) {
   if (enableOpcua) {
     args.push('--opcua');
     if (Number.isFinite(opcuaPort) && opcuaPort > 0) args.push('--opcua-port', String(Math.trunc(opcuaPort)));
+    if (!allowUnsecuredOpcua) args.push('--opcua-secure-only');
   }
   // systemd ExecStart uses a single line; avoid quoting unless necessary.
   return args.join(' ');
@@ -1867,6 +1869,7 @@ function loadOpcbridgeSystemdSettings() {
     ws_enabled: true,
     ws_port: 8090,
     opcua_enabled: true,
+    opcua_allow_unsecured: true,
     opcua_port: 4840
   };
 
@@ -1899,6 +1902,7 @@ function loadOpcbridgeSystemdSettings() {
       if (t === '--ws') { s.ws_enabled = true; continue; }
       if (t === '--ws-port') { s.ws_port = Number(tokens[i + 1] || s.ws_port); i += 1; continue; }
       if (t === '--opcua') { s.opcua_enabled = true; continue; }
+      if (t === '--opcua-secure-only') { s.opcua_allow_unsecured = false; continue; }
       if (t === '--opcua-port') { s.opcua_port = Number(tokens[i + 1] || s.opcua_port); i += 1; continue; }
     }
 
