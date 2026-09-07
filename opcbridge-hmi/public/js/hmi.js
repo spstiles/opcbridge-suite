@@ -2312,7 +2312,7 @@ const rewriteAutomationExpressionConnections = (expression, resolver) => String(
   (match, connectionLiteral, tagLiteral) => {
     const connection = decodeExpressionStringLiteral(connectionLiteral);
     const tag = decodeExpressionStringLiteral(tagLiteral);
-    const resolved = String(resolver(connection) || connection);
+    const resolved = String(resolver(connection, tag) || connection);
     return resolved === connection ? match : `tag(${JSON.stringify(resolved)}, ${JSON.stringify(tag)})`;
   }
 );
@@ -6068,6 +6068,8 @@ const getScreenForAliases = async (screenId) => {
     .then((response) => response.ok ? response.json() : null)
     .then((data) => {
       if (!data?.parsed) return null;
+      repairDuplicateImportIds(data.parsed);
+      repairScreenTagConnections(data.parsed);
       screenCache.set(String(data.ref || id), data.parsed);
       screenCache.set(id, data.parsed);
       return data.parsed;
@@ -7329,6 +7331,113 @@ function resolveMappedConnectionId(value) {
     .filter(Boolean))];
   return matches.length === 1 ? matches[0] : reference;
 }
+
+function resolveConnectionForKnownTag(connectionReference, tagName) {
+  const connection = resolveMappedConnectionId(connectionReference);
+  const tag = String(tagName || "").trim();
+  if (!connection || !tag || aliasTokenName(connection) || aliasTokenName(tag)) return connection;
+  const allTags = [...tagsCache, ...tagsAllCache];
+  if (allTags.some((item) =>
+    String(item?.connection_id || "").trim() === connection
+    && String(item?.name || "").trim() === tag
+  )) return connection;
+  const matches = [...new Set(allTags
+    .filter((item) => String(item?.name || "").trim() === tag)
+    .map((item) => String(item?.connection_id || "").trim())
+    .filter(Boolean))];
+  return matches.length === 1 ? matches[0] : connection;
+}
+
+const repairScreenTagConnections = (screen) => {
+  if (!screen || typeof screen !== "object" || !tagsCache.length) return 0;
+  let changes = 0;
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.connection_id === "string" && typeof value.tag === "string") {
+      const current = String(value.connection_id || "").trim();
+      const resolved = resolveConnectionForKnownTag(current, value.tag);
+      if (resolved && resolved !== current) {
+        value.connection_id = resolved;
+        changes += 1;
+      }
+    }
+    if (value.sourceType === "expression" && typeof value.expression === "string") {
+      const repaired = rewriteAutomationExpressionConnections(
+        value.expression,
+        (connection, tagName) => resolveConnectionForKnownTag(connection, tagName)
+      );
+      if (repaired !== value.expression) {
+        value.expression = repaired;
+        changes += 1;
+      }
+    }
+    Object.values(value).forEach((child) => {
+      if (child && typeof child === "object") visit(child);
+    });
+  };
+  visit(screen);
+  return changes;
+};
+
+const repairDuplicateImportIds = (screen) => {
+  if (!screen || typeof screen !== "object") return 0;
+  const used = new Set();
+  let changes = 0;
+  const visit = (objects) => {
+    (Array.isArray(objects) ? objects : []).forEach((obj) => {
+      if (!obj || typeof obj !== "object") return;
+      const original = String(obj.importId || "").trim();
+      if (original) {
+        if (!used.has(original)) used.add(original);
+        else {
+          let suffix = 2;
+          let replacement = `${original}_copy${suffix}`;
+          while (used.has(replacement)) replacement = `${original}_copy${++suffix}`;
+          obj.importId = replacement;
+          used.add(replacement);
+          changes += 1;
+        }
+      }
+      visit(obj.children);
+    });
+  };
+  visit(screen.objects);
+  return changes;
+};
+
+const regenerateClonedObjectIdentifiers = (objects) => {
+  const token = Date.now().toString(36);
+  const idMap = new Map();
+  let sequence = 0;
+  const assign = (items) => {
+    (Array.isArray(items) ? items : []).forEach((obj) => {
+      if (!obj || typeof obj !== "object") return;
+      sequence += 1;
+      if (obj.id != null && String(obj.id).trim()) {
+        const previous = String(obj.id);
+        const replacement = `${previous}_copy_${token}_${sequence}`;
+        if (!idMap.has(previous)) idMap.set(previous, replacement);
+        obj.id = replacement;
+      }
+      if (obj.importId != null && String(obj.importId).trim()) {
+        obj.importId = `copy_${token}_${sequence}`;
+      }
+      assign(obj.children);
+    });
+  };
+  const rewriteInternalReferences = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (value.action && typeof value.action === "object") {
+      const viewportId = String(value.action.viewportId || "");
+      if (viewportId && idMap.has(viewportId)) value.action.viewportId = idMap.get(viewportId);
+    }
+    Object.values(value).forEach((child) => {
+      if (child && typeof child === "object") rewriteInternalReferences(child);
+    });
+  };
+  assign(objects);
+  rewriteInternalReferences(objects);
+};
 
 const formatMappedTagReference = (connectionId, tagName) => {
   const connection = String(connectionId || "").trim();
@@ -11637,6 +11746,15 @@ const loadTags = async () => {
     tagsAllCache = sortedAll;
     tagsCache = sortedAll;
     tagsCacheVersion += 1;
+    const repairedScreenReferences = repairScreenTagConnections(currentScreenObj);
+    if (repairedScreenReferences > 0) {
+      reconcileReferenceHealthMetadata();
+      scheduleWsSubscribeRefresh();
+      if (isEditMode) {
+        syncEditorFromScreen();
+        setDirty(true);
+      }
+    }
     const filtered = applyTagsFilter(sortedAll);
     renderTagsList(filtered);
     if (Array.isArray(sortedAll)) {
@@ -14011,6 +14129,8 @@ const queueScreenLoad = (id) => {
     .then((res) => (res.ok ? res.json() : null))
     .then((data) => {
       if (data?.parsed) {
+        repairDuplicateImportIds(data.parsed);
+        repairScreenTagConnections(data.parsed);
         screenCache.set(String(data.ref || id), data.parsed);
         screenCache.set(String(id), data.parsed);
         renderScreen();
@@ -19040,6 +19160,7 @@ window.addEventListener("keydown", (evt) => {
     y: snapValue(Math.round(rawAnchor.y))
   };
   const clones = clipboardObjects.map((obj) => JSON.parse(JSON.stringify(obj)));
+  regenerateClonedObjectIdentifiers(clones);
   clones.forEach((obj) => translateObject(obj, anchor.x, anchor.y));
   const startIndex = activeObjects.length;
   activeObjects.push(...clones);
@@ -19325,6 +19446,9 @@ const loadJsonc = async () => {
         });
       };
       migrateButtonFlags(currentScreenObj?.objects);
+      const repairedIdentifiers = repairDuplicateImportIds(currentScreenObj);
+      const repairedConnections = repairScreenTagConnections(currentScreenObj);
+      const migrationRepairs = repairedIdentifiers + repairedConnections;
       screenCache.set(currentScreenId, currentScreenObj);
       initViewportHistoriesForCurrentScreen();
       selectedIndices = [];
@@ -19338,8 +19462,14 @@ const loadJsonc = async () => {
       updateGroupBreadcrumb();
       refreshViewportIdOptions();
       ensureRuntimeHistoryForCurrentScreen();
-      if (editorStatus) editorStatus.textContent = `Loaded ${currentScreenFilename}.`;
-      setDirty(false);
+      if (migrationRepairs > 0 && isEditMode) {
+        syncEditorFromScreen();
+        setDirty(true);
+        if (editorStatus) editorStatus.textContent = `Loaded ${currentScreenFilename}; repaired ${migrationRepairs} legacy reference${migrationRepairs === 1 ? "" : "s"}. Save to preserve the repairs.`;
+      } else {
+        if (editorStatus) editorStatus.textContent = `Loaded ${currentScreenFilename}.`;
+        setDirty(false);
+      }
     } catch (parseError) {
       currentScreenObj = null;
       if (editorStatus) {
@@ -32037,7 +32167,16 @@ if (hmiSvg) {
 	    if (!isEditMode) {
 	      const point = getScreenPoint(event);
 	      if (!point) return;
-        if (!(event.target instanceof HTMLInputElement)) {
+        const hitMeta = getMetaAtPoint(point);
+        const obj = hitMeta ? getObjectFromMeta(hitMeta) : null;
+        const targetIsNativeControl = event.target instanceof HTMLInputElement
+          || event.target instanceof HTMLButtonElement
+          || event.target instanceof HTMLSelectElement
+          || event.target instanceof HTMLTextAreaElement;
+        // An explicitly interactive child owns the click. A containing group's
+        // navigation is only a fallback for its background/non-interactive art.
+        const childOwnsInteraction = Boolean(obj?.action?.type) || targetIsNativeControl;
+        if (!childOwnsInteraction) {
           const hotspot = findRuntimeGroupHotspot(point);
 	          if (hotspot) {
 	            const action = hotspot.obj.action || {};
@@ -32081,9 +32220,7 @@ if (hmiSvg) {
             }
           }
         }
-		      const hitMeta = getMetaAtPoint(point);
 		      if (!hitMeta) return;
-		      const obj = getObjectFromMeta(hitMeta);
 		      const writesDisabled = isViewOnlyRuntime();
 		      if (obj?.action?.type === "momentary-write") {
 		        return;
