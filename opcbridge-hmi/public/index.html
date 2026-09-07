@@ -49,6 +49,7 @@
             </button>
             <div id="viewMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="View menu">
               <button id="viewTagsMenuBtn" class="menu-item" type="button">Tags</button>
+              <button id="viewDiagnosticsMenuBtn" class="menu-item" type="button" aria-pressed="false">Diagnostics Mode <span class="menu-shortcut">Ctrl+D</span></button>
             </div>
           </div>
           <div id="referencesMenuWrap" class="menu-flyout-wrap">
@@ -133,6 +134,7 @@
 	      <span id="wsStatus" class="ws-status" aria-live="polite">ws://</span>
 	      <button id="alarmsBadge" class="alarms-badge" type="button" aria-live="polite" title="View alarms">Alarms: 0</button>
 	      <button id="referenceHealthBadge" class="reference-health-badge" type="button" aria-live="polite" title="View unresolved references and import issues" aria-label="Reference Health: 0 issues"><span aria-hidden="true">⚠</span> Issues: 0</button>
+	      <span id="diagnosticsBadge" class="diagnostics-badge is-hidden" aria-live="polite">Diagnostics</span>
 	    </div>
     <div class="toolbar-right">
       <div class="toolbar-zoom" aria-label="Canvas zoom controls">

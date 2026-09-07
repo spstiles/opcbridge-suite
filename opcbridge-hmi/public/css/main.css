@@ -4265,3 +4265,38 @@ body.automation-panel-open #editor-pane {
   background: #f3c86c;
   border-color: #ffdf91;
 }
+
+.menu-shortcut {
+  float: right;
+  margin-left: 24px;
+  color: #8fa0b8;
+  font-size: 11px;
+}
+
+.diagnostics-badge {
+  padding: 3px 8px;
+  border: 1px solid #f6c344;
+  border-radius: 999px;
+  color: #17130a;
+  background: #f6c344;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hmi-diagnostics-tooltip {
+  position: fixed;
+  z-index: 100000;
+  max-width: min(440px, calc(100vw - 24px));
+  padding: 9px 11px;
+  border: 1px solid rgba(246, 195, 68, 0.9);
+  border-radius: 5px;
+  color: #f3f6fb;
+  background: rgba(10, 15, 24, 0.96);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}

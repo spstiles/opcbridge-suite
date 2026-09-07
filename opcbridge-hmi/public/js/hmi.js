@@ -213,6 +213,8 @@ const fileImportMenuFlyout = document.getElementById("fileImportMenuFlyout");
 const viewMenuWrap = document.getElementById("viewMenuWrap");
 const viewMenuBtn = document.getElementById("viewMenuBtn");
 const viewMenuFlyout = document.getElementById("viewMenuFlyout");
+const viewDiagnosticsMenuBtn = document.getElementById("viewDiagnosticsMenuBtn");
+const diagnosticsBadge = document.getElementById("diagnosticsBadge");
 const viewTagsMenuBtn = document.getElementById("viewTagsMenuBtn");
 const referencesMenuWrap = document.getElementById("referencesMenuWrap");
 const referencesMenuBtn = document.getElementById("referencesMenuBtn");
@@ -7167,6 +7169,117 @@ const renderReferenceHealthBadge = () => {
     : "No unresolved references or import issues";
   referenceHealthBadge.setAttribute("aria-label", `Reference Health: ${count} issue${count === 1 ? "" : "s"}`);
 };
+
+let diagnosticsModeEnabled = false;
+let diagnosticsTooltip = null;
+
+const ensureDiagnosticsTooltip = () => {
+  if (diagnosticsTooltip) return diagnosticsTooltip;
+  diagnosticsTooltip = document.createElement("div");
+  diagnosticsTooltip.className = "hmi-diagnostics-tooltip is-hidden";
+  diagnosticsTooltip.setAttribute("role", "tooltip");
+  document.body.appendChild(diagnosticsTooltip);
+  return diagnosticsTooltip;
+};
+
+const hideDiagnosticsTooltip = () => diagnosticsTooltip?.classList.add("is-hidden");
+
+const diagnosticValueText = (value) => {
+  if (value === undefined) return "Unavailable";
+  if (value === null) return "null";
+  if (typeof value === "string") return value;
+  try { return JSON.stringify(value); } catch { return String(value); }
+};
+
+const collectObjectDiagnosticReferences = (obj) => {
+  const references = [];
+  const seen = new Set();
+  const add = (connection, tag) => {
+    const storedConnection = String(connection || "").trim();
+    const tagName = String(tag || "").trim();
+    const key = `${storedConnection}\u0000${tagName}`;
+    if (!storedConnection || !tagName || seen.has(key)) return;
+    seen.add(key);
+    references.push({ storedConnection, tag: tagName });
+  };
+  const visit = (value, depth = 0) => {
+    if (!value || typeof value !== "object" || depth > 8) return;
+    if (typeof value.connection_id === "string" && typeof value.tag === "string") {
+      add(value.connection_id, value.tag);
+    }
+    if (value.sourceType === "expression" && typeof value.expression === "string") {
+      extractAutomationExpressionTagReferences(value.expression).forEach((reference) =>
+        add(reference.connection_id, reference.tag)
+      );
+    }
+    Object.entries(value).forEach(([key, child]) => {
+      if (key === "children") return;
+      if (child && typeof child === "object") visit(child, depth + 1);
+    });
+  };
+  visit(obj);
+  return references;
+};
+
+const buildObjectDiagnosticsText = (obj) => {
+  const references = collectObjectDiagnosticReferences(obj);
+  if (!references.length) return "";
+  const blocks = references.slice(0, 8).map((reference) => {
+    const resolved = resolveConnectionForKnownTag(reference.storedConnection, reference.tag);
+    const key = normalizeTagCacheKey(resolved, reference.tag);
+    const quality = key ? tagQualityCache.get(key) : undefined;
+    const tagInfo = [...tagsCache, ...tagsAllCache].find((item) =>
+      String(item?.connection_id || "").trim() === resolved
+      && String(item?.name || "").trim() === reference.tag
+    );
+    const lines = [
+      `Connection: ${getConnectionDisplayName(resolved)}`,
+      `Tag: ${reference.tag}`
+    ];
+    const sourceTag = String(tagInfo?.plc_tag_name || "").trim();
+    if (sourceTag && sourceTag !== reference.tag) {
+      lines.push(`PLC tag: ${sourceTag}`);
+    }
+    lines.push(`Value: ${diagnosticValueText(key ? tagValueCache.get(key) : undefined)}`);
+    lines.push(`Quality: ${quality == null ? "Unknown" : (isExplicitBadQuality(quality) ? "Bad" : "Good")}`);
+    return lines.join("\n");
+  });
+  if (references.length > 8) blocks.push(`…and ${references.length - 8} more tag references`);
+  return blocks.join("\n\n");
+};
+
+const showDiagnosticsForPointer = (event) => {
+  if (!diagnosticsModeEnabled || isEditMode || !hmiSvg) return hideDiagnosticsTooltip();
+  const point = getScreenPoint(event);
+  const meta = point ? getMetaAtPoint(point) : null;
+  const obj = meta ? getObjectFromMeta(meta) : null;
+  if (!obj) return hideDiagnosticsTooltip();
+  const text = buildObjectDiagnosticsText(obj);
+  if (!text) return hideDiagnosticsTooltip();
+  const tooltip = ensureDiagnosticsTooltip();
+  tooltip.textContent = text;
+  tooltip.classList.remove("is-hidden");
+  const margin = 12;
+  let left = event.clientX + 16;
+  let top = event.clientY + 16;
+  const bounds = tooltip.getBoundingClientRect();
+  if (left + bounds.width > window.innerWidth - margin) left = event.clientX - bounds.width - 16;
+  if (top + bounds.height > window.innerHeight - margin) top = event.clientY - bounds.height - 16;
+  tooltip.style.left = `${Math.max(margin, left)}px`;
+  tooltip.style.top = `${Math.max(margin, top)}px`;
+};
+
+const setDiagnosticsMode = (enabled) => {
+  diagnosticsModeEnabled = Boolean(enabled);
+  diagnosticsBadge?.classList.toggle("is-hidden", !diagnosticsModeEnabled);
+  if (viewDiagnosticsMenuBtn) {
+    viewDiagnosticsMenuBtn.setAttribute("aria-pressed", diagnosticsModeEnabled ? "true" : "false");
+    viewDiagnosticsMenuBtn.innerHTML = `${diagnosticsModeEnabled ? "✓ " : ""}Diagnostics Mode <span class="menu-shortcut">Ctrl+D</span>`;
+  }
+  if (!diagnosticsModeEnabled) hideDiagnosticsTooltip();
+};
+
+const toggleDiagnosticsMode = () => setDiagnosticsMode(!diagnosticsModeEnabled);
 
 const closeReferenceHealth = () => {
   referenceHealthOverlay?.remove();
@@ -18458,6 +18571,12 @@ function bindScreenManager() {
     });
   }
 
+  viewDiagnosticsMenuBtn?.addEventListener("click", () => {
+    toggleDiagnosticsMode();
+    setViewFlyoutOpen(false);
+    setMenuOpen(false);
+  });
+
   if (referencesMenuBtn) {
     referencesMenuBtn.addEventListener("click", () => {
       cancelReferencesFlyoutClose();
@@ -18892,6 +19011,7 @@ const setMode = (next) => {
     };
   }
   isEditMode = next;
+  if (isEditMode) hideDiagnosticsTooltip();
   if (isEditMode) markAuthActivity({ force: true });
   document.body.classList.toggle("edit-mode", isEditMode);
   document.body.classList.toggle("runtime-mode", !isEditMode);
@@ -32087,6 +32207,9 @@ if (viewportToolBtn) {
 if (hmiSvg) {
   let momentaryPress = null;
 
+  hmiSvg.addEventListener("pointermove", showDiagnosticsForPointer);
+  hmiSvg.addEventListener("pointerleave", hideDiagnosticsTooltip);
+
   hmiSvg.addEventListener("dragover", (event) => {
     if (!isEditMode) return;
     event.preventDefault();
@@ -32351,3 +32474,11 @@ if (hmiSvg) {
     setEditorTab("properties");
   });
 }
+
+window.addEventListener("keydown", (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || String(event.key || "").toLowerCase() !== "d") return;
+  const target = event.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable) return;
+  event.preventDefault();
+  toggleDiagnosticsMode();
+});
