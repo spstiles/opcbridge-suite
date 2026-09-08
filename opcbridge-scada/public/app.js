@@ -20566,10 +20566,11 @@ function setWorkspaceDeviceEnabled(connectionId, relPath, enabled) {
     return;
   }
   const connObj = { ...currentConnObj, enabled: Boolean(enabled) };
+  const connectionName = String(currentConnObj?.description || '').trim() || displayConnectionName(connectionId);
   if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
   state.workspaceConnDirty.set(path, connObj);
   if (state.connObjCache) state.connObjCache.set(path, connObj);
-  setWorkspaceSaveStatus(`Device '${connectionId}' ${connObj.enabled ? 'enabled' : 'disabled'} locally. Click Save or Save & Apply Changes.`);
+  setWorkspaceSaveStatus(`Device '${connectionName}' ${connObj.enabled ? 'enabled' : 'disabled'} locally. Click Save or Save & Apply Changes.`);
   renderWorkspaceSaveBar();
   saveWorkspaceDraft();
   renderWorkspaceTree();

@@ -4999,7 +4999,7 @@ const scheduleDeferredRuntimeScreenRender = () => {
       scheduleDeferredRuntimeScreenRender();
       return;
     }
-    renderScreen();
+    renderScreen({ refreshReferenceHealth: false });
     if (currentPopupScreenId) openPopup(currentPopupScreenId);
   }, delayMs);
 };
@@ -5019,7 +5019,7 @@ const scheduleAlarmsRender = () => {
         scheduleDeferredAlarmPanelRender();
         return;
       }
-      if (!refreshRenderedAlarmsPanels()) renderScreen();
+      if (!refreshRenderedAlarmsPanels()) renderScreen({ refreshReferenceHealth: false });
     }
   });
 };
@@ -7228,7 +7228,7 @@ const buildObjectDiagnosticsText = (obj) => {
     const resolved = resolveConnectionForKnownTag(reference.storedConnection, reference.tag);
     const key = normalizeTagCacheKey(resolved, reference.tag);
     const quality = key ? tagQualityCache.get(key) : undefined;
-    const tagInfo = [...tagsCache, ...tagsAllCache].find((item) =>
+    const tagInfo = activeTagInfoCache.get(key) || [...tagsCache, ...tagsAllCache].find((item) =>
       String(item?.connection_id || "").trim() === resolved
       && String(item?.name || "").trim() === reference.tag
     );
@@ -7736,9 +7736,7 @@ const downloadObjectReferenceMappings = () => {
 const knownMappedTag = (replacement) => {
   const parsed = parseMappedTagReference(replacement);
   if (!parsed) return false;
-  return [...tagsCache, ...tagsAllCache].some((tag) =>
-    String(tag?.connection_id || "") === parsed.connection_id && String(tag?.name || "") === parsed.tag
-  );
+  return knownTagKeysCache.has(normalizeWsTagKey(parsed.connection_id, parsed.tag));
 };
 
 const knownMappedScreen = (replacement) => {
@@ -7985,12 +7983,18 @@ window.setInterval(() => {
 }, ALARM_PANEL_POLL_MS);
 let pendingScaleRaf = null;
 let wsRuntimeRenderRaf = null;
+let wsRuntimeRenderTimer = null;
+let wsRuntimeLastRenderAt = 0;
+const WS_RUNTIME_RENDER_MIN_INTERVAL_MS = 100;
 let runtimeRenderDeferredTimer = null;
 let runtimePointerInteractionUntilMs = 0;
 const tagValueCache = new Map();
 const tagQualityCache = new Map();
+const activeTagInfoCache = new Map();
 let tagsCache = [];
 let tagsAllCache = [];
+let knownTagKeysCache = new Set();
+let tagCatalogLoaded = false;
 let tagsCacheVersion = 0;
 let isKeypadOpen = false;
 let keypadTarget = null;
@@ -10874,18 +10878,26 @@ const getStableAutomationNumber = (config, value, fallback = null, cacheKey = co
 };
 
 const scheduleRuntimeRender = () => {
-  if (wsRuntimeRenderRaf != null) return;
-  wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
-    wsRuntimeRenderRaf = null;
-    if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
-      if (shouldDeferRuntimeScreenRender()) {
-        scheduleDeferredRuntimeScreenRender();
-        return;
+  if (wsRuntimeRenderRaf != null || wsRuntimeRenderTimer != null) return;
+  const now = performance.now();
+  const delay = Math.max(0, WS_RUNTIME_RENDER_MIN_INTERVAL_MS - (now - wsRuntimeLastRenderAt));
+  const queueFrame = () => {
+    wsRuntimeRenderTimer = null;
+    wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
+      wsRuntimeRenderRaf = null;
+      if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
+        if (shouldDeferRuntimeScreenRender()) {
+          scheduleDeferredRuntimeScreenRender();
+          return;
+        }
+        wsRuntimeLastRenderAt = performance.now();
+        renderScreen({ refreshReferenceHealth: false });
+        if (currentPopupScreenId) openPopup(currentPopupScreenId);
       }
-      renderScreen();
-      if (currentPopupScreenId) openPopup(currentPopupScreenId);
-    }
-  });
+    });
+  };
+  if (delay > 0) wsRuntimeRenderTimer = window.setTimeout(queueFrame, delay);
+  else queueFrame();
 };
 
 const normalizeWsTagKey = (connectionId, tagName) => {
@@ -10984,6 +10996,7 @@ const applyTagRowsToCache = (rows) => {
     const name = String(tag?.name || "");
     const key = normalizeTagCacheKey(connectionId, name);
     if (!key) return;
+    activeTagInfoCache.set(key, tag);
     changed = applyTagSnapshotToCache(
       key,
       tag.value,
@@ -11026,8 +11039,7 @@ const seedActiveTagValues = async () => {
         scheduleDeferredRuntimeScreenRender();
         return;
       }
-      renderScreen();
-      if (currentPopupScreenId) openPopup(currentPopupScreenId);
+      scheduleRuntimeRender();
     }
   } catch {
     // WebSocket updates remain primary; exact seeding is a best-effort catch-up path.
@@ -11059,6 +11071,12 @@ const updateWsSubscriptions = () => {
   const fingerprint = tags.join("\n");
   if (fingerprint === wsLastSubscribeFingerprint) return;
   wsLastSubscribeFingerprint = fingerprint;
+  const activeInfoKeys = new Set(tags.map(wsTagKeyToQueryItem).filter(Boolean).map((tag) =>
+    normalizeTagCacheKey(tag.connection_id, tag.name)
+  ));
+  for (const key of activeTagInfoCache.keys()) {
+    if (!activeInfoKeys.has(key)) activeTagInfoCache.delete(key);
+  }
   wsSendSubscribe(tags);
 };
 
@@ -11861,6 +11879,10 @@ const loadTags = async () => {
     const sortedAll = sortTagsForDisplay(rawTags);
     tagsAllCache = sortedAll;
     tagsCache = sortedAll;
+    knownTagKeysCache = new Set(sortedAll.map((tag) =>
+      normalizeWsTagKey(tag?.connection_id, tag?.name)
+    ).filter(Boolean));
+    tagCatalogLoaded = true;
     tagsCacheVersion += 1;
     const repairedScreenReferences = repairScreenTagConnections(currentScreenObj);
     if (repairedScreenReferences > 0) {
@@ -11889,12 +11911,13 @@ const loadTags = async () => {
         );
       });
       if (!isEditMode) {
-        renderScreen();
+        renderScreen({ refreshReferenceHealth: false });
         if (currentPopupScreenId) openPopup(currentPopupScreenId);
       } else if (selectedIndices.length === 1) {
         syncPropertiesFromSelection();
         updatePropertiesPanel();
       }
+      if (isEditMode) renderReferenceHealthBadge();
     }
     if (tagsStatus) {
       const query = getTagsFilterQuery();
@@ -11904,6 +11927,8 @@ const loadTags = async () => {
     if (tagsStatus) tagsStatus.textContent = `Failed to load tags: ${error.message}`;
     tagsCache = [];
     tagsAllCache = [];
+    knownTagKeysCache = new Set();
+    tagCatalogLoaded = false;
     tagsCacheVersion += 1;
     if (isEditMode && selectedIndices.length === 1) {
       syncPropertiesFromSelection();
@@ -12970,6 +12995,7 @@ const renderIndicatorInto = (parent, obj) => {
 };
 
 const reportTableState = { reports: [], reportsPromise: null, cache: new Map() };
+const reportTableRuntimeAnchors = new WeakMap();
 const hmiDataEntryState = { forms: [], promise: null, values: new Map() };
 
 const loadHmiDataEntryForms = async () => {
@@ -12987,6 +13013,27 @@ const reportTableIsoDate = (date = new Date()) => {
   return `${year}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 };
 
+const getReportTableAnchor = (obj) => {
+  if (!obj || typeof obj !== "object") return reportTableIsoDate();
+  if (!isEditMode) {
+    const runtimeAnchor = reportTableRuntimeAnchors.get(obj);
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(runtimeAnchor || ""))
+      ? runtimeAnchor
+      : reportTableIsoDate();
+  }
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(obj.reportAnchor || ""))
+    ? String(obj.reportAnchor)
+    : reportTableIsoDate();
+};
+
+const setReportTableAnchor = (obj, anchor) => {
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(String(anchor || ""))
+    ? String(anchor)
+    : reportTableIsoDate();
+  if (isEditMode) obj.reportAnchor = normalized;
+  else reportTableRuntimeAnchors.set(obj, normalized);
+};
+
 const loadHmiReports = async () => {
   if (reportTableState.reports.length) return reportTableState.reports;
   if (reportTableState.reportsPromise) return reportTableState.reportsPromise;
@@ -13002,7 +13049,7 @@ const loadHmiReports = async () => {
 };
 
 const reportTableRangeBody = (obj, report) => {
-  const anchor = /^\d{4}-\d{2}-\d{2}$/.test(String(obj.reportAnchor || "")) ? String(obj.reportAnchor) : reportTableIsoDate();
+  const anchor = getReportTableAnchor(obj);
   if (obj.reportRangeMode === "last7") return { range_mode: "last7", period_value: anchor };
   if (report?.period === "yearly") return { period_value: anchor.slice(0, 4) };
   if (report?.period === "month") return { period_value: anchor.slice(0, 7) };
@@ -13347,12 +13394,12 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	      const controls = document.createElementNS(xhtml, "span"); controls.className = "hmi-report-table-controls";
 	      ["pointerdown", "mousedown", "touchstart", "click"].forEach((eventName) => controls.addEventListener(eventName, (event) => event.stopPropagation(), { passive: true }));
 	      const shift = (direction) => {
-	        const anchor = new Date(`${obj.reportAnchor || reportTableIsoDate()}T12:00:00`);
+	        const anchor = new Date(`${getReportTableAnchor(obj)}T12:00:00`);
 	        const days = obj.reportRangeMode === "last7" || report?.period === "weekly" ? 7 : (report?.period === "daily" ? 1 : 0);
 	        if (report?.period === "yearly" && obj.reportRangeMode !== "last7") anchor.setFullYear(anchor.getFullYear() + direction);
 	        else if (report?.period === "month" && obj.reportRangeMode !== "last7") anchor.setMonth(anchor.getMonth() + direction);
 	        else anchor.setDate(anchor.getDate() + direction * (days || 1));
-	        obj.reportAnchor = reportTableIsoDate(anchor); renderScreen();
+	        setReportTableAnchor(obj, reportTableIsoDate(anchor)); renderScreen();
 	      };
 	      if (obj.showNavigation !== false) {
 	        const previous = document.createElementNS(xhtml, "button"); previous.textContent = "‹";
@@ -13360,7 +13407,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	        previous.addEventListener("click", (event) => { event.stopPropagation(); shift(-1); });
 	        controls.appendChild(previous);
 	        const picker = document.createElementNS(xhtml, "input");
-	        const anchorValue = /^\d{4}-\d{2}-\d{2}$/.test(String(obj.reportAnchor || "")) ? obj.reportAnchor : reportTableIsoDate();
+	        const anchorValue = getReportTableAnchor(obj);
 	        const pickerPeriod = obj.reportRangeMode === "last7" ? "daily" : String(report?.period || "daily");
 	        picker.type = pickerPeriod === "month" ? "month" : (pickerPeriod === "yearly" ? "number" : "date");
 	        if (pickerPeriod === "yearly") {
@@ -13374,7 +13421,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 	          const nextAnchor = pickerPeriod === "yearly" && /^\d{4}$/.test(selected)
 	            ? `${selected}-01-01`
 	            : (pickerPeriod === "month" && /^\d{4}-\d{2}$/.test(selected) ? `${selected}-01` : selected);
-	          if (/^\d{4}-\d{2}-\d{2}$/.test(nextAnchor)) { obj.reportAnchor = nextAnchor; renderScreen(); }
+	          if (/^\d{4}-\d{2}-\d{2}$/.test(nextAnchor)) { setReportTableAnchor(obj, nextAnchor); renderScreen(); }
 	        });
 	        controls.appendChild(picker);
 	        const next = document.createElementNS(xhtml, "button"); next.textContent = "›";
@@ -14249,7 +14296,7 @@ const queueScreenLoad = (id) => {
         repairScreenTagConnections(data.parsed);
         screenCache.set(String(data.ref || id), data.parsed);
         screenCache.set(String(id), data.parsed);
-        renderScreen();
+        renderScreen({ refreshReferenceHealth: isEditMode && tagCatalogLoaded });
         if (currentPopupScreenId === id) openPopup(id, currentPopupOptions);
         scheduleWsSubscribeRefresh();
       }
@@ -14294,7 +14341,7 @@ const loadViewportTarget = (viewportId, screenId, action = null, parentContext =
 
   viewport.target = screenId;
   viewportAliasMappings.set(String(viewportId), { mappings: action?.aliases || {}, parentContext: parentContext || {} });
-  renderScreen();
+  renderScreen({ refreshReferenceHealth: isEditMode && tagCatalogLoaded });
   scheduleWsSubscribeRefresh();
 };
 
@@ -14314,7 +14361,7 @@ const viewportGoBack = (viewportId) => {
       mappings: typeof historyItem === "string" ? {} : (historyItem?.mappings || {}),
       parentContext: typeof historyItem === "string" ? currentScreenAliasContext : (historyItem?.parentContext || {})
     });
-    renderScreen();
+    renderScreen({ refreshReferenceHealth: false });
     scheduleWsSubscribeRefresh();
     return true;
   }
@@ -14337,7 +14384,7 @@ const viewportGoForward = (viewportId) => {
       mappings: typeof historyItem === "string" ? {} : (historyItem?.mappings || {}),
       parentContext: typeof historyItem === "string" ? currentScreenAliasContext : (historyItem?.parentContext || {})
     });
-    renderScreen();
+    renderScreen({ refreshReferenceHealth: false });
     scheduleWsSubscribeRefresh();
     return true;
   }
@@ -14633,9 +14680,9 @@ const openPopup = (screenId, requestedOptions = null) => {
   scheduleWsSubscribeRefresh();
 };
 
-const renderScreen = () => {
+const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
   if (!hmiSvg || !currentScreenObj) return;
-  renderReferenceHealthBadge();
+  if (refreshReferenceHealth) renderReferenceHealthBadge();
   hmiSvg.querySelectorAll?.(".hmi-alarms-panel-list[data-alarms-panel-key]").forEach((list) => {
     const scrollKey = String(list.dataset?.alarmsPanelKey || "");
     if (scrollKey) alarmsPanelScrollByKey.set(scrollKey, list.scrollTop);
@@ -18336,7 +18383,7 @@ const showStartupEmptyScreen = (reason = "") => {
   if (screenTitle) screenTitle.textContent = "No startup screen";
   if (editorFilename) editorFilename.textContent = "Built-in startup placeholder";
   if (editorStatus) editorStatus.textContent = reason ? `No startup screen loaded: ${reason}` : "No startup screen configured.";
-  renderScreen();
+  renderScreen({ refreshReferenceHealth: isEditMode && tagCatalogLoaded });
   refreshAlarmsForScreenLoad();
   scheduleWsSubscribeRefresh();
   updateGroupBreadcrumb();
@@ -19030,6 +19077,9 @@ const setMode = (next) => {
     };
   }
   isEditMode = next;
+  if (isEditMode && !wasEditMode && !tagCatalogLoaded) {
+    loadTags();
+  }
   if (isEditMode) hideDiagnosticsTooltip();
   if (isEditMode) markAuthActivity({ force: true });
   document.body.classList.toggle("edit-mode", isEditMode);
@@ -19061,7 +19111,7 @@ const setMode = (next) => {
     initViewportHistoriesForCurrentScreen();
   }
   applyScale();
-  renderScreen();
+  renderScreen({ refreshReferenceHealth: isEditMode && tagCatalogLoaded });
   if (wasEditMode && !isEditMode) {
     // Runtime always starts at the screen origin. Repeat after layout settles
     // so collapsing the editor panels cannot restore the editing scroll offset.
@@ -19531,7 +19581,7 @@ const loadJsonc = async () => {
       undoStack.length = 0;
       lastHistoryRecordedAt = 0;
       recordHistory();
-      renderScreen();
+      renderScreen({ refreshReferenceHealth: isEditMode && tagCatalogLoaded });
       refreshAlarmsForScreenLoad();
       scheduleWsSubscribeRefresh();
       updateGroupBreadcrumb();
@@ -19591,7 +19641,7 @@ const loadJsonc = async () => {
       undoStack.length = 0;
       lastHistoryRecordedAt = 0;
       recordHistory();
-      renderScreen();
+      renderScreen({ refreshReferenceHealth: isEditMode && tagCatalogLoaded });
       refreshAlarmsForScreenLoad();
       scheduleWsSubscribeRefresh();
       updateGroupBreadcrumb();
@@ -19708,7 +19758,6 @@ loadClientConfig()
     connectWebSocket();
     connectAlarmsWebSocket();
   });
-loadTags();
 loadImageFiles();
 
 if (runtimeBtn) {
@@ -24135,7 +24184,7 @@ function getConnectionDisplayName(connectionId) {
   if (id === "_system") return "System";
   if (id === "_memory") return "Memory";
   if (id === "_hmi") return "HMI";
-  const match = [...tagsCache, ...tagsAllCache].find((tag) =>
+  const match = [...activeTagInfoCache.values(), ...tagsCache, ...tagsAllCache].find((tag) =>
     String(tag?.connection_id || "").trim() === id && String(tag?.connection_name || "").trim()
   );
   const friendly = String(match?.connection_name || "").trim();

@@ -28383,6 +28383,7 @@ window.addEventListener("load", startAutoRefresh);
 							auto remoteUaConnectRetryAfter = std::chrono::steady_clock::time_point{};
 							UA_UInt32 remoteUaSubscriptionId = 0;
 							auto remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::time_point{};
+							auto remoteUaLastIterate = std::chrono::steady_clock::time_point{};
 							if (is_opcua_client_driver_name(spec.conn.driver)) {
 								remoteUaClient = UA_Client_new();
 							if (remoteUaClient) {
@@ -28527,14 +28528,6 @@ window.addEventListener("load", startAutoRefresh);
 							auto prefetchRemoteUaDue = [&](size_t requestedIdx, std::chrono::steady_clock::time_point dueNow) {
 								if (!is_opcua_client_driver_name(spec.conn.driver) || remoteUaPrefetch.count(requestedIdx)) return;
 								if (ensureRemoteUaSubscription()) {
-									const UA_StatusCode iterateStatus = UA_Client_run_iterate(remoteUaClient, 0);
-									if (iterateStatus != UA_STATUSCODE_GOOD) {
-										set_connection_runtime_issue(spec.metrics, remote_opcua_issue_text(iterateStatus));
-										remoteUaConnected = false;
-										remoteUaSubscriptionId = 0;
-										remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-										UA_Client_disconnect(remoteUaClient);
-									}
 									return;
 								}
 								std::vector<size_t> indices;
@@ -28598,6 +28591,21 @@ window.addEventListener("load", startAutoRefresh);
 								}
 							};
 
+							auto serviceRemoteUaSubscription = [&](std::chrono::steady_clock::time_point now) {
+								if (!is_opcua_client_driver_name(spec.conn.driver) || !remoteUaClient) return;
+								if (remoteUaLastIterate.time_since_epoch().count() != 0 &&
+								    now - remoteUaLastIterate < std::chrono::milliseconds(25)) return;
+								remoteUaLastIterate = now;
+								if (!ensureRemoteUaSubscription()) return;
+								const UA_StatusCode iterateStatus = UA_Client_run_iterate(remoteUaClient, 0);
+								if (iterateStatus == UA_STATUSCODE_GOOD) return;
+								set_connection_runtime_issue(spec.metrics, remote_opcua_issue_text(iterateStatus));
+								remoteUaConnected = false;
+								remoteUaSubscriptionId = 0;
+								remoteUaSubscriptionRetryAfter = now + std::chrono::seconds(1);
+								UA_Client_disconnect(remoteUaClient);
+							};
+
 							auto publishReadyDeferredHandle = [&](PollTagItem &pollTag) {
 								if (!pollTag.poller_owns_handle || pollTag.handle < 0) return;
 								if (plc_tag_status(pollTag.handle) != PLCTAG_STATUS_OK) return;
@@ -28646,12 +28654,13 @@ window.addEventListener("load", startAutoRefresh);
 								    g_configGeneration.load(std::memory_order_relaxed) != spec.gen) {
 									return;
 								}
+								auto nowSteady = std::chrono::steady_clock::now();
+								serviceRemoteUaSubscription(nowSteady);
 								if (heap.empty()) {
 									std::this_thread::sleep_for(std::chrono::milliseconds(25));
 									continue;
 								}
 
-								auto nowSteady = std::chrono::steady_clock::now();
 								const HeapItem top = heap.top();
 								if (nowSteady < top.next_poll) {
 									auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(top.next_poll - nowSteady);
@@ -28703,8 +28712,13 @@ window.addEventListener("load", startAutoRefresh);
 											remoteUaPrefetch.erase(prefetched);
 										} else if (remoteUaSubscriptionId != 0) {
 											// Subscriptions only publish changed values. Reuse the last
-											// good value so periodic logging and freshness bookkeeping
-											// still run without issuing another upstream read.
+											// good value only when periodic logging is actually due.
+											// Otherwise skip the expensive table/alarm/OPC UA/WebSocket
+											// pipeline entirely for unchanged tags.
+											const bool periodicDue = t.periodic_enabled &&
+												t.next_periodic_log.time_since_epoch().count() > 0 &&
+												std::chrono::system_clock::now() >= t.next_periodic_log;
+											if (!periodicDue) continue;
 											std::lock_guard<std::mutex> snapshotLock(driverMutex);
 											auto existing = tagTable.find(key);
 											if (existing == tagTable.end()) continue;
