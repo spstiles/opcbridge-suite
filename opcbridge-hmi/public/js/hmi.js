@@ -7983,9 +7983,6 @@ window.setInterval(() => {
 }, ALARM_PANEL_POLL_MS);
 let pendingScaleRaf = null;
 let wsRuntimeRenderRaf = null;
-let wsRuntimeRenderTimer = null;
-let wsRuntimeLastRenderAt = 0;
-const WS_RUNTIME_RENDER_MIN_INTERVAL_MS = 100;
 let runtimeRenderDeferredTimer = null;
 let runtimePointerInteractionUntilMs = 0;
 const tagValueCache = new Map();
@@ -10878,26 +10875,18 @@ const getStableAutomationNumber = (config, value, fallback = null, cacheKey = co
 };
 
 const scheduleRuntimeRender = () => {
-  if (wsRuntimeRenderRaf != null || wsRuntimeRenderTimer != null) return;
-  const now = performance.now();
-  const delay = Math.max(0, WS_RUNTIME_RENDER_MIN_INTERVAL_MS - (now - wsRuntimeLastRenderAt));
-  const queueFrame = () => {
-    wsRuntimeRenderTimer = null;
-    wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
-      wsRuntimeRenderRaf = null;
-      if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
-        if (shouldDeferRuntimeScreenRender()) {
-          scheduleDeferredRuntimeScreenRender();
-          return;
-        }
-        wsRuntimeLastRenderAt = performance.now();
-        renderScreen({ refreshReferenceHealth: false });
-        if (currentPopupScreenId) openPopup(currentPopupScreenId);
+  if (wsRuntimeRenderRaf != null) return;
+  wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
+    wsRuntimeRenderRaf = null;
+    if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
+      if (shouldDeferRuntimeScreenRender()) {
+        scheduleDeferredRuntimeScreenRender();
+        return;
       }
-    });
-  };
-  if (delay > 0) wsRuntimeRenderTimer = window.setTimeout(queueFrame, delay);
-  else queueFrame();
+      renderScreen({ refreshReferenceHealth: false });
+      if (currentPopupScreenId) openPopup(currentPopupScreenId);
+    }
+  });
 };
 
 const normalizeWsTagKey = (connectionId, tagName) => {
@@ -10907,13 +10896,14 @@ const normalizeWsTagKey = (connectionId, tagName) => {
   return `${conn}:${tag}`;
 };
 
-const collectTagKeysFromValue = (value, out, depth = 0) => {
-  if (!value || depth > 10) return;
+const collectTagKeysFromValue = (value, out, visited = new WeakSet()) => {
+  if (!value || typeof value !== "object") return;
+  if (visited.has(value)) return;
+  visited.add(value);
   if (Array.isArray(value)) {
-    value.forEach((item) => collectTagKeysFromValue(item, out, depth + 1));
+    value.forEach((item) => collectTagKeysFromValue(item, out, visited));
     return;
   }
-  if (typeof value !== "object") return;
 
   const conn = value.connection_id;
   const tag = value.tag;
@@ -10930,17 +10920,18 @@ const collectTagKeysFromValue = (value, out, depth = 0) => {
   }
 
   Object.values(value).forEach((v) => {
-    if (v && (typeof v === "object")) collectTagKeysFromValue(v, out, depth + 1);
+    if (v && (typeof v === "object")) collectTagKeysFromValue(v, out, visited);
   });
 };
 
-const collectViewportTargetsFromValue = (value, out, depth = 0) => {
-  if (!value || depth > 10) return;
+const collectViewportTargetsFromValue = (value, out, visited = new WeakSet()) => {
+  if (!value || typeof value !== "object") return;
+  if (visited.has(value)) return;
+  visited.add(value);
   if (Array.isArray(value)) {
-    value.forEach((item) => collectViewportTargetsFromValue(item, out, depth + 1));
+    value.forEach((item) => collectViewportTargetsFromValue(item, out, visited));
     return;
   }
-  if (typeof value !== "object") return;
 
   if (value.type === "viewport") {
     const targetId = String(value.target || "").trim();
@@ -10948,7 +10939,7 @@ const collectViewportTargetsFromValue = (value, out, depth = 0) => {
   }
 
   Object.values(value).forEach((v) => {
-    if (v && (typeof v === "object")) collectViewportTargetsFromValue(v, out, depth + 1);
+    if (v && (typeof v === "object")) collectViewportTargetsFromValue(v, out, visited);
   });
 };
 
