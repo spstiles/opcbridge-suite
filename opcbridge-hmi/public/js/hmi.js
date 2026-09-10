@@ -1250,9 +1250,9 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     strokeTargetLabel.hidden = !supportsStrokeTarget;
   }
   const strokeTargetText = strokeTargetLabel?.querySelector("span");
-  if (strokeTargetText) strokeTargetText.textContent = isPipe ? "Pipe" : (isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : (isGroup ? "Line" : "Border"))));
+  if (strokeTargetText) strokeTargetText.textContent = isPipe ? "Pipe" : (isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : (isGroup ? "Object Lines" : "Border"))));
   const strokeColorLabel = rectColorStrokeRow?.querySelector('label[for="rectColorStroke"]');
-  if (strokeColorLabel) strokeColorLabel.textContent = isPipe ? "Pipe Color" : (isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : (isGroup ? "Line Color" : "Border Color"))));
+  if (strokeColorLabel) strokeColorLabel.textContent = isPipe ? "Pipe Color" : (isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : (isGroup ? "Object Line Color" : "Border Color"))));
   const fillTargetText = rectColorFillEnabledInput?.closest(".inline-check")?.querySelector("span");
   if (fillTargetText) fillTargetText.textContent = isText ? "Text" : (isButton ? "Background" : "Fill");
   const fillColorLabel = rectColorFillRow?.querySelector('label[for="rectColorFill"]');
@@ -1271,6 +1271,10 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     rectColorBorderTargetLabel.classList.toggle("is-hidden", !supportsBorderTarget);
     rectColorBorderTargetLabel.hidden = !supportsBorderTarget;
   }
+  const borderTargetText = rectColorBorderTargetLabel?.querySelector("span");
+  if (borderTargetText) borderTargetText.textContent = isGroup ? "Group Border" : "Text Border";
+  const borderColorLabel = rectColorBorderRow?.querySelector('label[for="rectColorBorder"]');
+  if (borderColorLabel) borderColorLabel.textContent = isGroup ? "Group Border Color" : "Text Border Color";
   if (rectColorTargetsRow) {
     rectColorTargetsRow.classList.remove("is-hidden");
     rectColorTargetsRow.hidden = false;
@@ -24575,8 +24579,9 @@ function registerCompactTagBinding(config) {
       connectionRow.hidden = true;
     }
   }
-  if (config.tagSelect?.closest && !config.keepInlineFields) {
-    const tagRow = config.tagSelect.closest(".prop-row");
+  const inlineTagControl = config.tagSelect || config.tagInput;
+  if (inlineTagControl?.closest && !config.keepInlineFields) {
+    const tagRow = inlineTagControl.closest(".prop-row");
     if (tagRow) {
       tagRow.classList.add("is-hidden");
       tagRow.hidden = true;
