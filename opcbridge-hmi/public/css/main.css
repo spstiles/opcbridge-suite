@@ -4101,6 +4101,10 @@ body.automation-panel-open #editor-pane {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.text-binding-row.is-hidden {
+  display: none;
+}
+
 .text-binding-inline-row {
   grid-template-columns: 56px minmax(0, 1fr) minmax(0, 1fr) auto;
 }
