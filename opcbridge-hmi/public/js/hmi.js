@@ -5306,6 +5306,39 @@ const getRuntimeAlarmFilterForPanel = (obj) => {
 
 const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtml") => {
   if (!list || !obj) return;
+  if (isEditMode) {
+    const previewRows = [
+      {
+        className: "hmi-alarms-panel-row is-active-unacked",
+        cells: ["10:32:18", "", "Pretreatment:Pump_1_Fault", "Plant-Pretreatment", "Pump 1 fault", "ACTIVE", "GOOD"]
+      },
+      {
+        className: "hmi-alarms-panel-row is-active-acked",
+        cells: ["10:28:42", "", "Collection:Wet_Well_High", "Remote-Lift Station", "Wet well level high", "ACK", "GOOD"]
+      },
+      {
+        className: "hmi-alarms-panel-row is-returned",
+        cells: ["10:14:07", "10:20:31", "Water:Low_Pressure", "Plant-Filtration", "Header pressure low", "RETURN", "GOOD"]
+      },
+      {
+        className: "hmi-alarms-panel-row is-active-unacked is-bad-quality",
+        cells: ["10:35:03", "", "Remote:PLC_Communication", "Remote-Site 4", "PLC communication failure", "ACTIVE", "BAD"]
+      }
+    ];
+    list.replaceChildren(...previewRows.map(({ className, cells }, rowIndex) => {
+      const row = document.createElementNS(xhtml, "div");
+      row.className = className;
+      row.dataset.alarmRowKey = `editor-preview-${rowIndex}`;
+      cells.forEach((text) => {
+        const cell = document.createElementNS(xhtml, "div");
+        cell.className = "hmi-alarms-panel-cell";
+        cell.textContent = text;
+        row.appendChild(cell);
+      });
+      return row;
+    }));
+    return;
+  }
   const nowMs = Date.now();
   const onlyUnacked = Boolean(obj.onlyUnacked);
   const showSource = obj.showSource !== false;
@@ -11916,7 +11949,7 @@ const loadTags = async () => {
     : null;
   try {
     if (busyToken) await waitForHmiBusyPaint();
-    const response = await fetch("/api/opc/tags", { cache: "no-store" });
+    const response = await fetch("/api/opc/tag-catalog", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     const authTags = Object.entries(getAuthStateValues()).map(([name, value]) => ({
@@ -24246,16 +24279,30 @@ function sortConnectionIdsForDisplay(connectionIds) {
   });
 }
 
+let connectionDisplayNameCacheVersion = -1;
+let connectionDisplayNameCache = new Map();
+
+function refreshConnectionDisplayNameCache() {
+  if (connectionDisplayNameCacheVersion === tagsCacheVersion) return;
+  const next = new Map([
+    ["_system", "System"],
+    ["_memory", "Memory"],
+    ["_hmi", "HMI"]
+  ]);
+  [...tagsAllCache, ...tagsCache, ...activeTagInfoCache.values()].forEach((tag) => {
+    const id = String(tag?.connection_id || "").trim();
+    const name = String(tag?.connection_name || "").trim();
+    if (id && name && !next.has(id)) next.set(id, name);
+  });
+  connectionDisplayNameCache = next;
+  connectionDisplayNameCacheVersion = tagsCacheVersion;
+}
+
 function getConnectionDisplayName(connectionId) {
   const id = String(connectionId || "").trim();
   if (!id) return "";
-  if (id === "_system") return "System";
-  if (id === "_memory") return "Memory";
-  if (id === "_hmi") return "HMI";
-  const match = [...activeTagInfoCache.values(), ...tagsCache, ...tagsAllCache].find((tag) =>
-    String(tag?.connection_id || "").trim() === id && String(tag?.connection_name || "").trim()
-  );
-  const friendly = String(match?.connection_name || "").trim();
+  refreshConnectionDisplayNameCache();
+  const friendly = String(connectionDisplayNameCache.get(id) || "").trim();
   if (friendly) return friendly;
   if (/^connection_[a-f0-9]+$/i.test(id)) return "Missing connection";
   return id;
@@ -24269,6 +24316,12 @@ function ensureFriendlyConnectionNames(input) {
     list.id = "hmiFriendlyConnectionNames";
     document.body.appendChild(list);
   }
+  const nextVersion = String(tagsCacheVersion);
+  if (list.dataset.tagsVersion === nextVersion) {
+    input.setAttribute("list", list.id);
+    input.placeholder = "Connection name";
+    return;
+  }
   const names = ["Memory", "System", ...sortConnectionIdsForDisplay(
     [...tagsCache, ...tagsAllCache].map((tag) => String(tag?.connection_id || ""))
   ).map(getConnectionDisplayName)].filter(Boolean);
@@ -24277,6 +24330,7 @@ function ensureFriendlyConnectionNames(input) {
     option.value = name;
     return option;
   }));
+  list.dataset.tagsVersion = nextVersion;
   input.setAttribute("list", list.id);
   input.placeholder = "Connection name";
 }
@@ -26068,7 +26122,7 @@ const syncTextStateAutomationControl = (obj) => {
   control.ruleUpBtn.disabled = automation.selectedRuleIndex <= 0;
   control.ruleDownBtn.disabled = automation.selectedRuleIndex >= automation.rules.length - 1;
   setFriendlyConnectionInputValue(control.connectionInput, rule.connection_id || "");
-  populateTagSelect(control.tagSelect);
+  populateFilteredCombinedTagSelect(control.tagSelect, rule.connection_id || "");
   const combined = formatTagSelectValue(rule.connection_id, rule.tag);
   setSelectValueSafe(control.tagSelect, combined);
   const mode = rule.mode === "equals" ? "equals" : "threshold";
@@ -26200,7 +26254,7 @@ const syncLevelAutomationControl = (obj) => {
   control.enabled.checked = value.enabled;
   control.sourceType.value = value.sourceType;
   setFriendlyConnectionInputValue(control.connection, value.connection_id);
-  populateTagSelect(control.tag);
+  populateFilteredCombinedTagSelect(control.tag, value.connection_id || "");
   setSelectValueSafe(control.tag, formatTagSelectValue(value.connection_id, value.tag));
   control.expression.value = value.expression;
   control.updateSourceRows();

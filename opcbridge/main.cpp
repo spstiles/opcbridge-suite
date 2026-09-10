@@ -22779,6 +22779,119 @@ window.addEventListener("load", startAutoRefresh);
 		                    res.set_content(root.dump(), "application/json");
 		                });
 
+		            // /tags/catalog
+		            // Lightweight binding metadata for editors. This deliberately
+		            // avoids copying live values, quality, timestamps, handles, and
+		            // per-connection health from the runtime tag table.
+		            svr.Get("/tags/catalog", [&](const httplib::Request &, httplib::Response &res) {
+		                struct CatalogRow {
+		                    std::string connection_id;
+		                    std::string connection_name;
+		                    std::string name;
+		                    std::string plc_tag_name;
+		                    std::string source_tag;
+		                    std::string datatype;
+		                    bool enabled = true;
+		                    bool writable = false;
+		                    bool is_array_root = false;
+		                    bool system = false;
+		                };
+
+		                std::vector<CatalogRow> rows;
+		                std::unordered_set<std::string> seen;
+		                {
+		                    std::lock_guard<std::mutex> lock(driverMutex);
+		                    for (const auto &driver : drivers) {
+		                        for (const auto &tag : driver.tags) {
+		                            const std::string key = make_tag_key(driver.conn.id, tag.cfg.logical_name);
+		                            if (!seen.insert(key).second) continue;
+		                            rows.push_back({
+		                                driver.conn.id,
+		                                driver.conn.name,
+		                                tag.cfg.logical_name,
+		                                tag.cfg.plc_tag_name,
+		                                tag.cfg.source_tag,
+		                                tag.out_datatype.empty() ? tag.cfg.datatype : tag.out_datatype,
+		                                tag.cfg.enabled,
+		                                tag.cfg.writable,
+		                                tag.cfg.elem_count > 1,
+		                                false
+		                            });
+		                        }
+		                    }
+
+		                    for (const auto &input : g_mqttInputs) {
+		                        if (input.write_to_plc) continue;
+		                        const std::string key = make_tag_key(input.connection_id, input.tag_name);
+		                        if (!seen.insert(key).second) continue;
+		                        std::string connectionName;
+		                        for (const auto &driver : drivers) {
+		                            if (driver.conn.id == input.connection_id) {
+		                                connectionName = driver.conn.name;
+		                                break;
+		                            }
+		                        }
+		                        rows.push_back({
+		                            input.connection_id,
+		                            connectionName,
+		                            input.tag_name,
+		                            "",
+		                            "",
+		                            input.datatype.empty() ? "string" : input.datatype,
+		                            true,
+		                            false,
+		                            false,
+		                            false
+		                        });
+		                    }
+		                }
+
+		                for (const auto &systemTag : collect_runtime_system_tags(processStartTime, mqttMode)) {
+		                    const std::string key = make_tag_key("_system", systemTag.name);
+		                    if (!seen.insert(key).second) continue;
+		                    rows.push_back({
+		                        "_system", "System", systemTag.name, "", "", systemTag.datatype,
+		                        true, false, false, true
+		                    });
+		                }
+
+		                std::sort(rows.begin(), rows.end(), [](const CatalogRow &a, const CatalogRow &b) {
+		                    const bool aSystemLike = !a.connection_id.empty() && a.connection_id[0] == '_';
+		                    const bool bSystemLike = !b.connection_id.empty() && b.connection_id[0] == '_';
+		                    if (aSystemLike != bSystemLike) return !aSystemLike;
+		                    const std::string ac = to_lower_copy(a.connection_name.empty() ? a.connection_id : a.connection_name);
+		                    const std::string bc = to_lower_copy(b.connection_name.empty() ? b.connection_id : b.connection_name);
+		                    if (ac != bc) return ac < bc;
+		                    const std::string an = to_lower_copy(a.name);
+		                    const std::string bn = to_lower_copy(b.name);
+		                    if (an != bn) return an < bn;
+		                    if (a.connection_id != b.connection_id) return a.connection_id < b.connection_id;
+		                    return a.name < b.name;
+		                });
+
+		                json root;
+		                root["ok"] = true;
+		                root["generation"] = g_configGeneration.load(std::memory_order_relaxed);
+		                root["total"] = rows.size();
+		                root["tags"] = json::array();
+		                for (const auto &row : rows) {
+		                    json item;
+		                    item["connection_id"] = row.connection_id;
+		                    item["connection_name"] = !row.connection_name.empty() ? row.connection_name : row.connection_id;
+		                    item["name"] = row.name;
+		                    item["plc_tag_name"] = row.plc_tag_name;
+		                    item["source_tag"] = row.source_tag;
+		                    item["datatype"] = row.datatype;
+		                    item["enabled"] = row.enabled;
+		                    item["writable"] = row.writable;
+		                    item["read_only"] = row.system || !row.writable;
+		                    item["is_array_root"] = row.is_array_root;
+		                    item["system"] = row.system;
+		                    root["tags"].push_back(std::move(item));
+		                }
+		                res.set_content(root.dump(), "application/json");
+		            });
+
 		            // /tags
 		            svr.Get("/tags", [&](const httplib::Request &req, httplib::Response &res) {
 						std::vector<TagRow> rows;

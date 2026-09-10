@@ -689,6 +689,26 @@ const createApp = () => {
     }
   });
 
+  app.get("/api/opc/tag-catalog", async (req, res) => {
+    try {
+      const { config: parsed } = await readConfig();
+      const opcbridge = parsed?.opcbridge || {};
+      const host = opcbridge.host || "127.0.0.1";
+      const port = Number(opcbridge.httpPort) || 8080;
+      const response = await fetch(`http://${host}:${port}/tags/catalog`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) {
+        return res.status(502).json({ error: `OPCBridge HTTP ${response.status}` });
+      }
+      const data = await response.json();
+      res.setHeader("Cache-Control", "no-store");
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   app.post("/api/opc/tags/query", async (req, res) => {
     try {
       const { config: parsed } = await readConfig();
