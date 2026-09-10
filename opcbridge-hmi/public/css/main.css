@@ -291,6 +291,66 @@ body.edit-mode .left-toolbar {
     background: rgba(0, 0, 0, 0.42);
 }
 
+.hmi-busy-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    display: none;
+    place-items: center;
+    padding: 24px;
+    cursor: wait;
+    background: rgba(4, 9, 15, 0.68);
+    backdrop-filter: blur(2px);
+}
+
+.hmi-busy-overlay.is-show {
+    display: grid;
+}
+
+.hmi-busy-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: min(360px, 84vw);
+    max-width: min(560px, 90vw);
+    padding: 20px 22px;
+    color: var(--text-primary, #f4f5f7);
+    background: var(--bg-secondary, #20242d);
+    border: 1px solid rgba(111, 190, 255, 0.48);
+    border-radius: 10px;
+    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.55);
+}
+
+.hmi-busy-card strong {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 1rem;
+}
+
+.hmi-busy-card p {
+    margin: 0;
+    color: var(--text-secondary, #b7bdc9);
+    line-height: 1.35;
+}
+
+.hmi-busy-spinner {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border: 4px solid rgba(111, 190, 255, 0.22);
+    border-top-color: #6fbeff;
+    border-radius: 50%;
+    animation: hmi-busy-spin 0.8s linear infinite;
+}
+
+@keyframes hmi-busy-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hmi-busy-spinner { animation-duration: 1.8s; }
+}
+
 .reference-health-panel {
     width: min(520px, 92vw);
     height: 100%;

@@ -354,6 +354,59 @@ const showHmiToast = (message, durationMs = 15000) => {
   }, Math.max(250, Number(durationMs) || 15000));
 };
 
+const hmiBusyOperations = new Map();
+const ensureHmiBusyOverlay = () => {
+  let overlay = document.getElementById("hmiBusyOverlay");
+  if (overlay) return overlay;
+  overlay = document.createElement("div");
+  overlay.id = "hmiBusyOverlay";
+  overlay.className = "hmi-busy-overlay";
+  overlay.setAttribute("role", "status");
+  overlay.setAttribute("aria-live", "polite");
+  overlay.setAttribute("aria-hidden", "true");
+  overlay.innerHTML = `<div class="hmi-busy-card"><span class="hmi-busy-spinner" aria-hidden="true"></span><div><strong>Working…</strong><p></p></div></div>`;
+  document.body.appendChild(overlay);
+  return overlay;
+};
+
+const refreshHmiBusyOverlay = () => {
+  const overlay = ensureHmiBusyOverlay();
+  const active = Array.from(hmiBusyOperations.values()).at(-1);
+  const isActive = Boolean(active);
+  overlay.classList.toggle("is-show", isActive);
+  overlay.setAttribute("aria-hidden", isActive ? "false" : "true");
+  document.body.setAttribute("aria-busy", isActive ? "true" : "false");
+  if (isActive) {
+    const title = overlay.querySelector("strong");
+    const detail = overlay.querySelector("p");
+    if (title) title.textContent = active.title || "Working…";
+    if (detail) detail.textContent = active.detail || "Please wait.";
+  }
+};
+
+const showHmiBusy = (title, detail = "Please wait.") => {
+  const token = Symbol("hmi-busy");
+  hmiBusyOperations.set(token, { title: String(title || "Working…"), detail: String(detail || "") });
+  refreshHmiBusyOverlay();
+  return token;
+};
+
+const updateHmiBusy = (token, title, detail = "") => {
+  if (!token || !hmiBusyOperations.has(token)) return;
+  hmiBusyOperations.set(token, { title: String(title || "Working…"), detail: String(detail || "") });
+  refreshHmiBusyOverlay();
+};
+
+const hideHmiBusy = (token) => {
+  if (!token) return;
+  hmiBusyOperations.delete(token);
+  refreshHmiBusyOverlay();
+};
+
+const waitForHmiBusyPaint = () => new Promise((resolve) => {
+  window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+});
+
 // Editor pane docking / floating state
 const EDITOR_PANE_STATE_KEY = "opcbridge-hmi.editorPane.v2";
 const AUTOMATION_PANEL_STATE_KEY = "opcbridge-hmi.automationPanel.v1";
@@ -7889,8 +7942,11 @@ const importGraphWorxFile = async (file) => {
   if (isDirty && !confirmLoseUnsavedChanges("Import GraphWorX screen")) return;
   setMenuOpen(false);
   setEditorStatusSafe(`Importing ${file.name}…`);
+  const busyToken = showHmiBusy("Importing GraphWorX screen", `Reading ${file.name}…`);
   try {
+    await waitForHmiBusyPaint();
     const raw = await file.text();
+    updateHmiBusy(busyToken, "Importing GraphWorX screen", `Uploading and converting ${file.name}…`);
     const response = await fetch("/api/screens/import/graphworx", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -7898,6 +7954,13 @@ const importGraphWorxFile = async (file) => {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    const summary = result.summary || {};
+    updateHmiBusy(
+      busyToken,
+      "Building imported screen",
+      `Preparing ${Number(summary.objects || 0).toLocaleString()} objects for the editor…`
+    );
+    await waitForHmiBusyPaint();
     currentScreenObj = result.screen;
     currentScreenPath = "";
     currentScreenId = screenRefFromPath(String(file.name).replace(/\.gdfx?$/i, ".screen")) || "imported";
@@ -7917,7 +7980,6 @@ const importGraphWorxFile = async (file) => {
       applyScale();
       screenWrapper?.scrollTo?.({ left: 0, top: 0 });
     });
-    const summary = result.summary || {};
     setEditorStatusSafe(`Imported ${summary.objects || 0} objects; ${summary.issues || 0} reference items need review.`);
     showHmiToast(`GraphWorX import succeeded. ${summary.unresolved || 0} unresolved references were preserved.`, 8000);
     openReferenceHealth();
@@ -7926,6 +7988,7 @@ const importGraphWorxFile = async (file) => {
     showHmiToast(`GraphWorX import failed: ${error.message}`, 8000);
   } finally {
     graphWorxImportInput.value = "";
+    hideHmiBusy(busyToken);
   }
 };
 
@@ -11848,7 +11911,11 @@ function applyTagsFilter(tags) {
 
 const loadTags = async () => {
   if (tagsStatus) tagsStatus.textContent = "Loading…";
+  const busyToken = isEditMode
+    ? showHmiBusy("Loading editor tags", "Downloading the tag catalog…")
+    : null;
   try {
+    if (busyToken) await waitForHmiBusyPaint();
     const response = await fetch("/api/opc/tags", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
@@ -11867,6 +11934,14 @@ const loadTags = async () => {
       quality: "GOOD"
     }));
     const rawTags = [...(data?.tags || []), ...authTags, ...sessionTags];
+    if (busyToken) {
+      updateHmiBusy(
+        busyToken,
+        "Preparing editor tags",
+        `Sorting and indexing ${rawTags.length.toLocaleString()} tags…`
+      );
+      await waitForHmiBusyPaint();
+    }
     const sortedAll = sortTagsForDisplay(rawTags);
     tagsAllCache = sortedAll;
     tagsCache = sortedAll;
@@ -11925,8 +12000,10 @@ const loadTags = async () => {
       syncPropertiesFromSelection();
       updatePropertiesPanel();
     }
-      renderTagsList([]);
-	  }
+    renderTagsList([]);
+  } finally {
+    hideHmiBusy(busyToken);
+  }
 };
 
 const loadImageFiles = async () => {
