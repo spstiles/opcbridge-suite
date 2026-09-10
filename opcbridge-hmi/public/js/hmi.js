@@ -620,7 +620,7 @@ const getSelectedVisibilityDynamicObject = () => {
 
 const getSelectedColorDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon") ? obj : null;
 };
 
 const getSelectedRotationDynamicObject = () => {
@@ -705,16 +705,6 @@ const hasPolygonColorDynamic = (obj) => {
   const hasFill = Boolean(obj.fillAutomation && typeof obj.fillAutomation === "object" && Object.keys(obj.fillAutomation).length);
   const hasStroke = Boolean(obj.strokeAutomation && typeof obj.strokeAutomation === "object" && Object.keys(obj.strokeAutomation).length);
   return hasFill || hasStroke;
-};
-
-const hasGroupColorDynamic = (obj) => {
-  if (!obj || typeof obj !== "object") return false;
-  const hasFill = Boolean(obj.fillAutomation && typeof obj.fillAutomation === "object" && Object.keys(obj.fillAutomation).length);
-  const hasStroke = Boolean(obj.strokeAutomation && typeof obj.strokeAutomation === "object" && Object.keys(obj.strokeAutomation).length);
-  const hasText = Boolean(obj.textColorAutomation && typeof obj.textColorAutomation === "object" && Object.keys(obj.textColorAutomation).length);
-  const hasBackground = Boolean(obj.backgroundAutomation && typeof obj.backgroundAutomation === "object" && Object.keys(obj.backgroundAutomation).length);
-  const hasBorder = Boolean(obj.borderColorAutomation && typeof obj.borderColorAutomation === "object" && Object.keys(obj.borderColorAutomation).length);
-  return hasFill || hasStroke || hasText || hasBackground || hasBorder;
 };
 
 const hasLineRotationDynamic = (obj) => {
@@ -931,6 +921,7 @@ const getCurrentColorRulesForObject = (obj) => {
 };
 
 const hasEditableColorDynamic = (obj) => {
+  if (obj?.type === "group") return false;
   if (rectColorDraftObject === obj && rectColorDraft) {
     return getCurrentColorRulesForObject(obj).length > 0;
   }
@@ -1111,8 +1102,7 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   const isPipe = Boolean(obj && obj.type === "pipe");
   const isText = Boolean(obj && obj.type === "text");
   const isButton = Boolean(obj && obj.type === "button");
-  const isGroup = Boolean(obj && obj.type === "group");
-  const strokePresent = isLine || isText || isButton || isGroup || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
+  const strokePresent = isLine || isText || isButton || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
   const normalizedDraft = normalizeRectColorDraft(obj, draft);
   if (isColorDynamicTab()) normalizedDraft.selectedRuleIndex = Math.max(0, Math.min(getColorDynamicTabIndex(), normalizedDraft.rules.length - 1));
   const rules = normalizedDraft.rules;
@@ -1150,13 +1140,11 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     rectColorFields.hidden = !show;
   }
   if (rectColorSourceTypeSelect) rectColorSourceTypeSelect.value = sourceType;
-  if (rectColorConnectionRow) {
-    rectColorConnectionRow.classList.toggle("is-hidden", sourceType === "expression");
-    rectColorConnectionRow.hidden = sourceType === "expression";
-  }
-  if (rectColorTagRow) {
-    rectColorTagRow.classList.toggle("is-hidden", sourceType === "expression");
-    rectColorTagRow.hidden = sourceType === "expression";
+  const compactSourceConfig = getCompactTagBindingConfig("rectColor");
+  const compactSourceRow = compactSourceConfig?.row;
+  if (compactSourceRow) {
+    compactSourceRow.classList.toggle("is-hidden", sourceType === "expression");
+    compactSourceRow.hidden = sourceType === "expression";
   }
   if (rectColorModeRow) {
     rectColorModeRow.classList.toggle("is-hidden", sourceType === "expression");
@@ -1185,11 +1173,9 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     rectColorFlashWhenRow.classList.toggle("is-hidden", !flashEnabled);
     rectColorFlashWhenRow.hidden = !flashEnabled;
   }
-  setFriendlyConnectionInputValue(rectColorConnectionInput, next.connection_id || "");
-  setInputValueSafe(rectColorTagInput, next.tag || "");
   const unresolvedSource = next.status === "unresolved" || Boolean(next.sourceType !== "expression" && next.sourceReference && !next.connection_id);
-  rectColorConnectionInput?.classList.toggle("reference-error", unresolvedSource);
-  rectColorTagInput?.classList.toggle("reference-error", unresolvedSource);
+  compactSourceConfig?.editorConnectionInput?.classList.toggle("reference-error", unresolvedSource);
+  compactSourceConfig?.editorTagInput?.classList.toggle("reference-error", unresolvedSource);
   if (rectColorModeSelect) rectColorModeSelect.value = mode;
   if (rectColorThresholdInput) setInputValueSafe(rectColorThresholdInput, next.threshold ?? "");
   if (rectColorMatchInput) setInputValueSafe(rectColorMatchInput, next.match ?? "");
@@ -1206,9 +1192,6 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     rectColorStrokeEnabledInput.checked = isLine ? true : (Boolean(next.strokeEnabled) && strokePresent);
     rectColorStrokeEnabledInput.disabled = isLine || !strokePresent;
   }
-  if (rectColorTextEnabledInput) rectColorTextEnabledInput.checked = Boolean(next.textEnabled);
-  if (rectColorBackgroundEnabledInput) rectColorBackgroundEnabledInput.checked = Boolean(next.backgroundEnabled);
-  if (rectColorBorderEnabledInput) rectColorBorderEnabledInput.checked = Boolean(next.borderEnabled);
   const fillFallback = isText
     ? String(obj?.fill || "#ffffff")
     : isButton
@@ -1221,26 +1204,14 @@ const syncRectColorUiFromDraft = (obj, draft) => {
       : isPipe
         ? String(obj?.color || "#808080")
         : String((!obj?.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
-  const borderFallback = String(obj?.borderColor || "#000000");
-  const textFallback = String(obj?.textColor || "#ffffff");
-  const backgroundFallback = String(obj?.background || "#000000");
   if (rectColorFillInput) rectColorFillInput.value = isHexColor(next.fillColor || fillFallback) ? (next.fillColor || fillFallback) : (isText ? "#ffffff" : "#3a3f4b");
   if (rectColorFillTextInput) setInputValueSafe(rectColorFillTextInput, next.fillColor || "");
   if (rectColorStrokeInput) rectColorStrokeInput.value = isHexColor(next.strokeColor || strokeFallback) ? (next.strokeColor || strokeFallback) : "#000000";
   if (rectColorStrokeTextInput) setInputValueSafe(rectColorStrokeTextInput, next.strokeColor || "");
-  if (rectColorTextInput) rectColorTextInput.value = isHexColor(next.textColor || textFallback) ? (next.textColor || textFallback) : "#ffffff";
-  if (rectColorTextTextInput) setInputValueSafe(rectColorTextTextInput, next.textColor || "");
-  if (rectColorBackgroundInput) rectColorBackgroundInput.value = isHexColor(next.backgroundColor || backgroundFallback) ? (next.backgroundColor || backgroundFallback) : "#000000";
-  if (rectColorBackgroundTextInput) setInputValueSafe(rectColorBackgroundTextInput, next.backgroundColor || "");
-  if (rectColorBorderInput) rectColorBorderInput.value = isHexColor(next.borderColor || borderFallback) ? (next.borderColor || borderFallback) : "#000000";
-  if (rectColorBorderTextInput) setInputValueSafe(rectColorBorderTextInput, next.borderColor || "");
   const fillTargetLabel = rectColorFillEnabledInput?.closest(".inline-check");
   const strokeTargetLabel = rectColorStrokeEnabledInput?.closest(".inline-check");
   const supportsFillTarget = !isLine;
   const supportsStrokeTarget = strokePresent;
-  const supportsTextTarget = false;
-  const supportsBackgroundTarget = false;
-  const supportsBorderTarget = isText || isGroup;
   if (fillTargetLabel) {
     fillTargetLabel.classList.toggle("is-hidden", !supportsFillTarget);
     fillTargetLabel.hidden = !supportsFillTarget;
@@ -1250,31 +1221,13 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     strokeTargetLabel.hidden = !supportsStrokeTarget;
   }
   const strokeTargetText = strokeTargetLabel?.querySelector("span");
-  if (strokeTargetText) strokeTargetText.textContent = isPipe ? "Pipe" : (isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : (isGroup ? "Object Lines" : "Border"))));
+  if (strokeTargetText) strokeTargetText.textContent = isPipe ? "Pipe" : (isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : "Border")));
   const strokeColorLabel = rectColorStrokeRow?.querySelector('label[for="rectColorStroke"]');
-  if (strokeColorLabel) strokeColorLabel.textContent = isPipe ? "Pipe Color" : (isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : (isGroup ? "Object Line Color" : "Border Color"))));
+  if (strokeColorLabel) strokeColorLabel.textContent = isPipe ? "Pipe Color" : (isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : "Border Color")));
   const fillTargetText = rectColorFillEnabledInput?.closest(".inline-check")?.querySelector("span");
   if (fillTargetText) fillTargetText.textContent = isText ? "Text" : (isButton ? "Background" : "Fill");
   const fillColorLabel = rectColorFillRow?.querySelector('label[for="rectColorFill"]');
   if (fillColorLabel) fillColorLabel.textContent = isText ? "Text Color" : (isButton ? "Background Color" : "Fill Color");
-  const textTargetText = rectColorTextTargetLabel?.querySelector("span");
-  if (textTargetText) textTargetText.textContent = "Text";
-  if (rectColorTextTargetLabel) {
-    rectColorTextTargetLabel.classList.toggle("is-hidden", !supportsTextTarget);
-    rectColorTextTargetLabel.hidden = !supportsTextTarget;
-  }
-  if (rectColorBackgroundTargetLabel) {
-    rectColorBackgroundTargetLabel.classList.toggle("is-hidden", !supportsBackgroundTarget);
-    rectColorBackgroundTargetLabel.hidden = !supportsBackgroundTarget;
-  }
-  if (rectColorBorderTargetLabel) {
-    rectColorBorderTargetLabel.classList.toggle("is-hidden", !supportsBorderTarget);
-    rectColorBorderTargetLabel.hidden = !supportsBorderTarget;
-  }
-  const borderTargetText = rectColorBorderTargetLabel?.querySelector("span");
-  if (borderTargetText) borderTargetText.textContent = isGroup ? "Group Border" : "Text Border";
-  const borderColorLabel = rectColorBorderRow?.querySelector('label[for="rectColorBorder"]');
-  if (borderColorLabel) borderColorLabel.textContent = isGroup ? "Group Border Color" : "Text Border Color";
   if (rectColorTargetsRow) {
     rectColorTargetsRow.classList.remove("is-hidden");
     rectColorTargetsRow.hidden = false;
@@ -1288,21 +1241,6 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     const showStroke = supportsStrokeTarget && Boolean(rectColorStrokeEnabledInput?.checked);
     rectColorStrokeRow.classList.toggle("is-hidden", !showStroke);
     rectColorStrokeRow.hidden = !showStroke;
-  }
-  if (rectColorTextRow) {
-    const showText = supportsTextTarget && Boolean(rectColorTextEnabledInput?.checked);
-    rectColorTextRow.classList.toggle("is-hidden", !showText);
-    rectColorTextRow.hidden = !showText;
-  }
-  if (rectColorBackgroundRow) {
-    const showBackground = supportsBackgroundTarget && Boolean(rectColorBackgroundEnabledInput?.checked);
-    rectColorBackgroundRow.classList.toggle("is-hidden", !showBackground);
-    rectColorBackgroundRow.hidden = !showBackground;
-  }
-  if (rectColorBorderRow) {
-    const showBorder = supportsBorderTarget && Boolean(rectColorBorderEnabledInput?.checked);
-    rectColorBorderRow.classList.toggle("is-hidden", !showBorder);
-    rectColorBorderRow.hidden = !showBorder;
   }
 };
 
@@ -1326,8 +1264,7 @@ const isEditingAnyColorDynamic = () => (
   isEditingTextColorDynamic() ||
   isEditingButtonColorDynamic() ||
   isEditingCircleColorDynamic() ||
-  isEditingPolygonColorDynamic() ||
-  isEditingGroupColorDynamic()
+  isEditingPolygonColorDynamic()
 );
 
 const updateRectColorDraft = (patch) => {
@@ -2495,11 +2432,6 @@ const isEditingCircleColorDynamic = () => {
 const isEditingPolygonColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
   return Boolean(obj && obj.type === "polygon" && isColorDynamicTab() && hasEditableColorDynamic(obj));
-};
-
-const isEditingGroupColorDynamic = () => {
-  const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && obj.type === "group" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingRectRotationDynamic = () => {
@@ -4289,11 +4221,6 @@ const rectColorRuleDeleteBtn = document.getElementById("rectColorRuleDeleteBtn")
 const rectColorRuleUpBtn = document.getElementById("rectColorRuleUpBtn");
 const rectColorRuleDownBtn = document.getElementById("rectColorRuleDownBtn");
 const rectColorSourceTypeSelect = document.getElementById("rectColorSourceType");
-const rectColorConnectionRow = document.getElementById("rectColorConnectionRow");
-const rectColorConnectionInput = document.getElementById("rectColorConnection");
-const rectColorTagRow = document.getElementById("rectColorTagRow");
-const rectColorTagInput = document.getElementById("rectColorTag");
-const rectColorTagPickBtn = document.getElementById("rectColorTagPickBtn");
 const rectColorTargetsRow = document.getElementById("rectColorTargetsRow");
 const rectColorModeRow = document.getElementById("rectColorModeRow");
 const rectColorModeSelect = document.getElementById("rectColorMode");
@@ -4310,12 +4237,6 @@ const rectColorFlashWhenRow = document.getElementById("rectColorFlashWhenRow");
 const rectColorFlashWhenSelect = document.getElementById("rectColorFlashWhen");
 const rectColorFillEnabledInput = document.getElementById("rectColorFillEnabled");
 const rectColorStrokeEnabledInput = document.getElementById("rectColorStrokeEnabled");
-const rectColorTextTargetLabel = document.getElementById("rectColorTextTargetLabel");
-const rectColorTextEnabledInput = document.getElementById("rectColorTextEnabled");
-const rectColorBackgroundTargetLabel = document.getElementById("rectColorBackgroundTargetLabel");
-const rectColorBackgroundEnabledInput = document.getElementById("rectColorBackgroundEnabled");
-const rectColorBorderTargetLabel = document.getElementById("rectColorBorderTargetLabel");
-const rectColorBorderEnabledInput = document.getElementById("rectColorBorderEnabled");
 const rectColorFillRow = document.getElementById("rectColorFillRow");
 const rectColorFillInput = document.getElementById("rectColorFill");
 const rectColorFillTextInput = document.getElementById("rectColorFillText");
@@ -4326,21 +4247,6 @@ const rectColorStrokeInput = document.getElementById("rectColorStroke");
 const rectColorStrokeTextInput = document.getElementById("rectColorStrokeText");
 const rectColorStrokeSwatches = document.getElementById("rectColorStrokeSwatches");
 const rectColorStrokeSwatchBtn = document.getElementById("rectColorStrokeSwatchBtn");
-const rectColorTextRow = document.getElementById("rectColorTextRow");
-const rectColorTextInput = document.getElementById("rectColorText");
-const rectColorTextTextInput = document.getElementById("rectColorTextText");
-const rectColorTextSwatches = document.getElementById("rectColorTextSwatches");
-const rectColorTextSwatchBtn = document.getElementById("rectColorTextSwatchBtn");
-const rectColorBackgroundRow = document.getElementById("rectColorBackgroundRow");
-const rectColorBackgroundInput = document.getElementById("rectColorBackground");
-const rectColorBackgroundTextInput = document.getElementById("rectColorBackgroundText");
-const rectColorBackgroundSwatches = document.getElementById("rectColorBackgroundSwatches");
-const rectColorBackgroundSwatchBtn = document.getElementById("rectColorBackgroundSwatchBtn");
-const rectColorBorderRow = document.getElementById("rectColorBorderRow");
-const rectColorBorderInput = document.getElementById("rectColorBorder");
-const rectColorBorderTextInput = document.getElementById("rectColorBorderText");
-const rectColorBorderSwatches = document.getElementById("rectColorBorderSwatches");
-const rectColorBorderSwatchBtn = document.getElementById("rectColorBorderSwatchBtn");
 const ellipseProps = document.getElementById("ellipseProps");
 const ellipseXInput = document.getElementById("ellipseX");
 const ellipseYInput = document.getElementById("ellipseY");
@@ -10834,7 +10740,7 @@ const updateMenuState = () => {
   const canAddPolygonDynamic = Boolean(getSelectedPolygonObject());
   const canAddGroupDynamic = Boolean(getSelectedGroupObject());
   const canAddPipeDynamic = selectedIndices.length === 1 && activeObjects[selectedIndices[0]]?.type === "pipe";
-  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddPipeDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddPolygonDynamic || canAddGroupDynamic;
+  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddPipeDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddPolygonDynamic;
   const canAddStatesDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
   const canAddRotationDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic;
   const canAddMotionDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
@@ -15529,7 +15435,7 @@ const syncPropertiesFromSelection = () => {
     if (!isActiveElementWithin(textBindingRows)) renderTextBindingRows(obj);
 
     syncTextStateAutomationControl(obj);
-    if (isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic() || isEditingGroupColorDynamic()) {
+    if (isEditingTextColorDynamic() || isEditingButtonColorDynamic() || isEditingCircleColorDynamic()) {
       ensureRectColorDraft(obj);
       syncRectColorUiFromDraft(obj, rectColorDraft);
     }
@@ -15873,7 +15779,7 @@ const syncPropertiesFromSelection = () => {
     setInputValueSafe(rectInnerBorderColorTextInput, innerColor);
     setInputValueSafe(rectInnerBorderWidthInput, Number(innerBorder.width ?? 1));
 
-    if (isEditingRectColorDynamic() || isEditingEllipseColorDynamic() || isEditingGroupColorDynamic()) {
+    if (isEditingRectColorDynamic() || isEditingEllipseColorDynamic()) {
       ensureRectColorDraft(obj);
       syncRectColorUiFromDraft(obj, rectColorDraft);
     }
@@ -24098,23 +24004,6 @@ if (rectColorFlashWhenSelect) {
   });
 }
 
-if (rectColorConnectionInput) {
-  rectColorConnectionInput.addEventListener("change", () => {
-    const connectionId = connectionIdFromFriendlyInput(rectColorConnectionInput);
-    updateRectColorDraft({ connection_id: connectionId });
-  });
-}
-
-if (rectColorTagInput) {
-  rectColorTagInput.addEventListener("change", () => {
-    updateRectColorDraft({ tag: String(rectColorTagInput.value || "").trim() });
-  });
-}
-
-if (rectColorTagPickBtn) {
-  rectColorTagPickBtn.addEventListener("click", () => openCompactTagBindingModal("rectColor"));
-}
-
 if (rectColorModeSelect) {
   rectColorModeSelect.addEventListener("change", () => {
     const mode = rectColorModeSelect.value === "equals" ? "equals" : "threshold";
@@ -24158,24 +24047,6 @@ if (rectColorStrokeEnabledInput) {
   });
 }
 
-if (rectColorTextEnabledInput) {
-  rectColorTextEnabledInput.addEventListener("change", () => {
-    updateRectColorDraft({ textEnabled: rectColorTextEnabledInput.checked });
-  });
-}
-
-if (rectColorBackgroundEnabledInput) {
-  rectColorBackgroundEnabledInput.addEventListener("change", () => {
-    updateRectColorDraft({ backgroundEnabled: rectColorBackgroundEnabledInput.checked });
-  });
-}
-
-if (rectColorBorderEnabledInput) {
-  rectColorBorderEnabledInput.addEventListener("change", () => {
-    updateRectColorDraft({ borderEnabled: rectColorBorderEnabledInput.checked });
-  });
-}
-
 if (rectColorFillInput) {
   rectColorFillInput.addEventListener("input", () => {
     updateRectColorDraft({ fillColor: rectColorFillInput.value, fillEnabled: true });
@@ -24205,54 +24076,6 @@ if (rectColorStrokeTextInput) {
     if (!value) return;
     updateRectColorDraft({ strokeColor: value, strokeEnabled: true });
     if (rectColorStrokeInput && isHexColor(value)) rectColorStrokeInput.value = value;
-  });
-}
-
-if (rectColorTextInput) {
-  rectColorTextInput.addEventListener("input", () => {
-    updateRectColorDraft({ textColor: rectColorTextInput.value, textEnabled: true });
-    if (rectColorTextTextInput) rectColorTextTextInput.value = rectColorTextInput.value;
-  });
-}
-
-if (rectColorTextTextInput) {
-  rectColorTextTextInput.addEventListener("change", () => {
-    const value = rectColorTextTextInput.value.trim();
-    if (!value) return;
-    updateRectColorDraft({ textColor: value, textEnabled: true });
-    if (rectColorTextInput && isHexColor(value)) rectColorTextInput.value = value;
-  });
-}
-
-if (rectColorBackgroundInput) {
-  rectColorBackgroundInput.addEventListener("input", () => {
-    updateRectColorDraft({ backgroundColor: rectColorBackgroundInput.value, backgroundEnabled: true });
-    if (rectColorBackgroundTextInput) rectColorBackgroundTextInput.value = rectColorBackgroundInput.value;
-  });
-}
-
-if (rectColorBackgroundTextInput) {
-  rectColorBackgroundTextInput.addEventListener("change", () => {
-    const value = rectColorBackgroundTextInput.value.trim();
-    if (!value) return;
-    updateRectColorDraft({ backgroundColor: value, backgroundEnabled: true });
-    if (rectColorBackgroundInput && isHexColor(value)) rectColorBackgroundInput.value = value;
-  });
-}
-
-if (rectColorBorderInput) {
-  rectColorBorderInput.addEventListener("input", () => {
-    updateRectColorDraft({ borderColor: rectColorBorderInput.value, borderEnabled: true });
-    if (rectColorBorderTextInput) rectColorBorderTextInput.value = rectColorBorderInput.value;
-  });
-}
-
-if (rectColorBorderTextInput) {
-  rectColorBorderTextInput.addEventListener("change", () => {
-    const value = rectColorBorderTextInput.value.trim();
-    if (!value) return;
-    updateRectColorDraft({ borderColor: value, borderEnabled: true });
-    if (rectColorBorderInput && isHexColor(value)) rectColorBorderInput.value = value;
   });
 }
 
@@ -24531,14 +24354,12 @@ function registerCompactTagBinding(config) {
   }
   if (!config?.container || !config?.buttonLabel) return;
   const row = document.createElement("div");
-  row.className = "text-binding-row compact-binding-row";
+  row.className = "text-binding-row text-binding-inline-row compact-binding-row";
 
   const keyEl = document.createElement("div");
   keyEl.className = "text-binding-key";
   keyEl.textContent = config.buttonLabel;
 
-  const summaryEl = document.createElement("div");
-  summaryEl.className = "prop-inline compact-binding-editors";
   const editorConnectionInput = document.createElement("input");
   editorConnectionInput.type = "text";
   editorConnectionInput.className = "automation-tag-input";
@@ -24547,7 +24368,6 @@ function registerCompactTagBinding(config) {
   editorTagInput.type = "text";
   editorTagInput.className = "automation-tag-input";
   editorTagInput.placeholder = "Tag name";
-  summaryEl.append(editorConnectionInput, editorTagInput);
   ensureFriendlyConnectionNames(editorConnectionInput);
 
   const button = document.createElement("button");
@@ -24564,9 +24384,7 @@ function registerCompactTagBinding(config) {
   editorConnectionInput.addEventListener("change", applyEditedBinding);
   editorTagInput.addEventListener("change", applyEditedBinding);
 
-  row.appendChild(keyEl);
-  row.appendChild(summaryEl);
-  row.appendChild(button);
+  row.append(keyEl, editorConnectionInput, editorTagInput, button);
 
   const beforeEl = config.beforeEl || null;
   if (beforeEl && beforeEl.parentNode === config.container) config.container.insertBefore(row, beforeEl);
@@ -24588,7 +24406,7 @@ function registerCompactTagBinding(config) {
     }
   }
 
-  compactTagBindingConfigs.push({ ...registeredConfig, row, summaryEl, editorConnectionInput, editorTagInput });
+  compactTagBindingConfigs.push({ ...registeredConfig, row, summaryEl: null, editorConnectionInput, editorTagInput });
 }
 
 function updateButtonWriteBinding(patch) {
@@ -24636,14 +24454,20 @@ function initializeCompactTagBindingRows() {
     id: "rectColor",
     container: rectColorFields,
     beforeEl: rectColorModeSelect?.closest(".prop-row"),
-    connectionInput: rectColorConnectionInput,
-    tagInput: rectColorTagInput,
     buttonLabel: "Source",
     modalTitle: "Color Tag",
-    read: () => ({
-      connection_id: connectionIdFromFriendlyInput(rectColorConnectionInput),
-      tag: String(rectColorTagInput?.value || "").trim()
-    }),
+    read: () => {
+      const obj = getSelectedColorDynamicObject();
+      if (!obj) return { connection_id: "", tag: "" };
+      ensureRectColorDraft(obj);
+      const draft = normalizeRectColorDraft(obj, rectColorDraft);
+      const index = Math.max(0, Math.min(getColorDynamicTabIndex(), draft.rules.length - 1));
+      const rule = draft.rules[index] || {};
+      return {
+        connection_id: String(rule.connection_id || ""),
+        tag: String(rule.tag || "")
+      };
+    },
     apply: ({ connection_id, tag }) => updateRectColorDraft({ connection_id, tag, enabled: true })
   });
 
@@ -27134,30 +26958,6 @@ buildSwatches(rectColorStrokeSwatches, (color) => {
   closeSwatches();
 });
 
-buildSwatches(rectColorTextSwatches, (color) => {
-  if (color === "transparent" || color === "none") return;
-  if (rectColorTextInput) rectColorTextInput.value = color;
-  if (rectColorTextTextInput) rectColorTextTextInput.value = color;
-  updateRectColorDraft({ textColor: color, textEnabled: true });
-  closeSwatches();
-});
-
-buildSwatches(rectColorBackgroundSwatches, (color) => {
-  if (color === "transparent" || color === "none") return;
-  if (rectColorBackgroundInput) rectColorBackgroundInput.value = color;
-  if (rectColorBackgroundTextInput) rectColorBackgroundTextInput.value = color;
-  updateRectColorDraft({ backgroundColor: color, backgroundEnabled: true });
-  closeSwatches();
-});
-
-buildSwatches(rectColorBorderSwatches, (color) => {
-  if (color === "transparent" || color === "none") return;
-  if (rectColorBorderInput) rectColorBorderInput.value = color;
-  if (rectColorBorderTextInput) rectColorBorderTextInput.value = color;
-  updateRectColorDraft({ borderColor: color, borderEnabled: true });
-  closeSwatches();
-});
-
 buildSwatches(ellipseFillSwatches, (color) => {
   updateEllipseProperty({ fill: color });
   if (ellipseFillInput) ellipseFillInput.value = color;
@@ -27568,42 +27368,6 @@ if (rectColorStrokeSwatchBtn && rectColorStrokeSwatches) {
       value: rectColorStrokeTextInput?.value || rectColorStrokeInput?.value || "#ffffff",
       fallback: "#ffffff",
       onApply: (color) => applyRectColorDraftColor(color, rectColorStrokeInput, rectColorStrokeTextInput, "strokeColor", "strokeEnabled")
-    });
-  });
-}
-
-if (rectColorTextSwatchBtn && rectColorTextSwatches) {
-  rectColorTextSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    openPaintPicker({
-      title: "Automation Text Color",
-      value: rectColorTextTextInput?.value || rectColorTextInput?.value || "#ffffff",
-      fallback: "#ffffff",
-      onApply: (color) => applyRectColorDraftColor(color, rectColorTextInput, rectColorTextTextInput, "textColor", "textEnabled")
-    });
-  });
-}
-
-if (rectColorBackgroundSwatchBtn && rectColorBackgroundSwatches) {
-  rectColorBackgroundSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    openPaintPicker({
-      title: "Automation Background Color",
-      value: rectColorBackgroundTextInput?.value || rectColorBackgroundInput?.value || "#000000",
-      fallback: "#000000",
-      onApply: (color) => applyRectColorDraftColor(color, rectColorBackgroundInput, rectColorBackgroundTextInput, "backgroundColor", "backgroundEnabled")
-    });
-  });
-}
-
-if (rectColorBorderSwatchBtn && rectColorBorderSwatches) {
-  rectColorBorderSwatchBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    openPaintPicker({
-      title: "Automation Border Color",
-      value: rectColorBorderTextInput?.value || rectColorBorderInput?.value || "#000000",
-      fallback: "#000000",
-      onApply: (color) => applyRectColorDraftColor(color, rectColorBorderInput, rectColorBorderTextInput, "borderColor", "borderEnabled")
     });
   });
 }
