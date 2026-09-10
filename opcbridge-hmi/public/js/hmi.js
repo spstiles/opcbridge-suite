@@ -5309,32 +5309,56 @@ const populateAlarmsPanelList = (list, obj, xhtml = "http://www.w3.org/1999/xhtm
   if (isEditMode) {
     const previewRows = [
       {
+        className: "hmi-alarms-panel-row",
+        background: obj.rowBg || "#ffffff",
+        color: obj.rowText || "#000000",
+        stripe: "",
+        cells: ["10:36:12", "", "Water:Filter_1_Status", "Plant-Filtration", "Normal alarm row", "STATUS", "GOOD"]
+      },
+      {
         className: "hmi-alarms-panel-row is-active-unacked",
+        background: obj.rowBgActiveUnacked || "#ffcccc",
+        color: obj.rowTextActiveUnacked || obj.rowText || "#000000",
+        stripe: obj.stripeActiveUnacked || "#dc2626",
         cells: ["10:32:18", "", "Pretreatment:Pump_1_Fault", "Plant-Pretreatment", "Pump 1 fault", "ACTIVE", "GOOD"]
       },
       {
         className: "hmi-alarms-panel-row is-active-acked",
+        background: obj.rowBgActiveAcked || "#ffe3a3",
+        color: obj.rowTextActiveAcked || obj.rowText || "#000000",
+        stripe: obj.stripeActiveAcked || "#d97706",
         cells: ["10:28:42", "", "Collection:Wet_Well_High", "Remote-Lift Station", "Wet well level high", "ACK", "GOOD"]
       },
       {
         className: "hmi-alarms-panel-row is-returned",
+        background: obj.rowBgReturned || "#e9ecef",
+        color: obj.rowTextReturned || obj.rowText || "#000000",
+        stripe: obj.stripeReturned || "#6b7280",
         cells: ["10:14:07", "10:20:31", "Water:Low_Pressure", "Plant-Filtration", "Header pressure low", "RETURN", "GOOD"]
       },
       {
         className: "hmi-alarms-panel-row is-active-unacked is-bad-quality",
+        background: obj.rowBgBadQuality || "#ffd1ea",
+        color: obj.rowTextBadQuality || obj.rowText || "#000000",
+        stripe: obj.stripeBadQuality || "#be185d",
         cells: ["10:35:03", "", "Remote:PLC_Communication", "Remote-Site 4", "PLC communication failure", "ACTIVE", "BAD"]
       }
     ];
-    list.replaceChildren(...previewRows.map(({ className, cells }, rowIndex) => {
+    list.replaceChildren(...previewRows.map(({ className, background, color, stripe, cells }, rowIndex) => {
       const row = document.createElementNS(xhtml, "div");
       row.className = className;
       row.dataset.alarmRowKey = `editor-preview-${rowIndex}`;
+      row.style.background = background;
+      row.style.color = color;
+      row.style.fontSize = `${Number(obj.fontSize ?? 14)}px`;
+      row.style.fontWeight = obj.bold ? "700" : "400";
       cells.forEach((text) => {
         const cell = document.createElementNS(xhtml, "div");
         cell.className = "hmi-alarms-panel-cell";
         cell.textContent = text;
         row.appendChild(cell);
       });
+      if (stripe && row.firstElementChild) row.firstElementChild.style.borderLeft = `6px solid ${stripe}`;
       return row;
     }));
     return;
@@ -9632,6 +9656,17 @@ const getAutomationState = (value, config) => {
 
   const hasThreshold = config.threshold !== undefined && config.threshold !== null && config.threshold !== "";
   if (hasThreshold) {
+    const connectionId = String(config.connection_id || "").trim();
+    const tagName = String(config.tag || "").trim();
+    const tagInfo = connectionId && tagName
+      ? activeTagInfoCache.get(normalizeTagCacheKey(connectionId, tagName))
+      : null;
+    const datatype = String(tagInfo?.datatype || "").trim().toLowerCase();
+    const isBooleanSource = typeof value === "boolean" || datatype === "bool" || datatype === "boolean";
+    if (isBooleanSource) {
+      const isOn = coerceTagBoolean(value);
+      return config.invert ? !isOn : isOn;
+    }
     const thresholdValue = Number(config.threshold);
     if (!Number.isFinite(thresholdValue)) return null;
     const numeric = coerceTagNumber(value);
@@ -22371,7 +22406,7 @@ if (alarmsPanelShowSourceInput) {
 }
 
 if (alarmsPanelFontSizeInput) {
-  alarmsPanelFontSizeInput.addEventListener("change", () => {
+  alarmsPanelFontSizeInput.addEventListener("input", () => {
     const value = Number(alarmsPanelFontSizeInput.value);
     if (Number.isFinite(value) && value >= 6) updateRectProperty({ fontSize: Math.round(value) });
   });
