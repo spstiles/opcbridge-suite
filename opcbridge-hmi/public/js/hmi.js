@@ -26130,7 +26130,10 @@ const normalizeLevelAutomation = (value = {}) => ({
   invert: Boolean(value?.invert),
   clamp: value?.clamp !== false,
   fill: String(value?.fill || "#3b82f6"),
-  emptyFill: String(value?.emptyFill || "")
+  emptyFill: String(value?.emptyFill || ""),
+  ...(String(value?.status || "").trim() ? { status: String(value.status) } : {}),
+  ...(String(value?.sourceReference || "").trim() ? { sourceReference: String(value.sourceReference) } : {}),
+  ...(String(value?.sourceAutomation || "").trim() ? { sourceAutomation: String(value.sourceAutomation) } : {})
 });
 
 const updateSelectedLevelAutomation = (patch) => {
@@ -26138,7 +26141,12 @@ const updateSelectedLevelAutomation = (patch) => {
   const obj = selectedIndices.length === 1 ? objects?.[selectedIndices[0]] : null;
   if (!obj || !LEVEL_AUTOMATION_TYPES.includes(obj.type)) return;
   recordHistory();
-  obj.levelAutomation = normalizeLevelAutomation({ ...(obj.levelAutomation || {}), ...(patch || {}) });
+  const next = { ...(obj.levelAutomation || {}), ...(patch || {}) };
+  if (["sourceType", "connection_id", "tag", "expression"].some((key) => Object.prototype.hasOwnProperty.call(patch || {}, key))) {
+    delete next.status;
+    delete next.sourceReference;
+  }
+  obj.levelAutomation = normalizeLevelAutomation(next);
   renderScreen();
   syncEditorFromScreen();
   setDirty(true);
@@ -26157,8 +26165,6 @@ const initializeLevelAutomationControl = () => {
   };
   const enabled = makeInput("checkbox");
   const sourceType = document.createElement("select"); sourceType.innerHTML = '<option value="tag">Tag</option><option value="expression">Expression</option>';
-  const connection = makeInput(); connection.placeholder = "Connection name";
-  const tag = document.createElement("select"); tag.innerHTML = '<option value="">Select tag…</option>';
   const expression = makeInput(); expression.placeholder = "{connection:tag} or expression";
   const min = makeInput("number"); min.step = "any";
   const max = makeInput("number"); max.step = "any";
@@ -26169,35 +26175,42 @@ const initializeLevelAutomationControl = () => {
   const fill = makeInput(); fill.placeholder = "#3b82f6 or linear-gradient(...)";
   const emptyFill = makeInput(); emptyFill.placeholder = "Object fill";
   const enabledRow = makeRow("Enabled", enabled);
-  const connectionRow = makeRow("Connection", connection);
-  const tagRow = makeRow("Tag", tag);
   const expressionRow = makeRow("Expression", expression);
-  sectionEl.append(title, enabledRow, makeRow("Source", sourceType), connectionRow, tagRow, expressionRow, makeRow("Input Minimum", min), makeRow("Input Maximum", max), makeRow("Direction", direction), makeRow("Invert", invert), makeRow("Clamp", clamp), makeRow("Level Fill", fill), makeRow("Empty Fill", emptyFill));
+  sectionEl.append(title, enabledRow, makeRow("Source Type", sourceType), expressionRow, makeRow("Input Minimum", min), makeRow("Input Maximum", max), makeRow("Direction", direction), makeRow("Invert", invert), makeRow("Clamp", clamp), makeRow("Level Fill", fill), makeRow("Empty Fill", emptyFill));
   const updateSourceRows = () => {
     const expressionMode = sourceType.value === "expression";
-    [connectionRow, tagRow].forEach((row) => { row.classList.toggle("is-hidden", expressionMode); row.hidden = expressionMode; });
+    const bindingRow = sectionEl.querySelector(".compact-binding-row");
+    if (bindingRow) {
+      bindingRow.classList.toggle("is-hidden", expressionMode);
+      bindingRow.hidden = expressionMode;
+    }
     expressionRow.classList.toggle("is-hidden", !expressionMode); expressionRow.hidden = !expressionMode;
   };
-  const apply = () => {
-    const parsed = parseTagSelectValue(tag.value || "");
-    updateSelectedLevelAutomation({
-      enabled: enabled.checked,
-      sourceType: sourceType.value,
-      connection_id: String(connection.value || "").trim(),
-      tag: parsed.tag,
-      expression: expression.value.trim(),
-      inputMin: Number(min.value), inputMax: Number(max.value), direction: direction.value,
-      invert: invert.checked, clamp: clamp.checked, fill: fill.value.trim(), emptyFill: emptyFill.value.trim()
-    });
-  };
-  [enabled, sourceType, connection, tag, expression, min, max, direction, invert, clamp, fill, emptyFill].forEach((input) => input.addEventListener("change", () => { updateSourceRows(); apply(); }));
+  enabled.addEventListener("change", () => updateSelectedLevelAutomation({ enabled: enabled.checked }));
+  sourceType.addEventListener("change", () => {
+    updateSourceRows();
+    updateSelectedLevelAutomation({ sourceType: sourceType.value, enabled: true });
+  });
+  expression.addEventListener("change", () => updateSelectedLevelAutomation({ expression: expression.value.trim(), enabled: true }));
+  min.addEventListener("change", () => updateSelectedLevelAutomation({ inputMin: Number(min.value) }));
+  max.addEventListener("change", () => updateSelectedLevelAutomation({ inputMax: Number(max.value) }));
+  direction.addEventListener("change", () => updateSelectedLevelAutomation({ direction: direction.value }));
+  invert.addEventListener("change", () => updateSelectedLevelAutomation({ invert: invert.checked }));
+  clamp.addEventListener("change", () => updateSelectedLevelAutomation({ clamp: clamp.checked }));
+  fill.addEventListener("change", () => updateSelectedLevelAutomation({ fill: fill.value.trim() }));
+  emptyFill.addEventListener("change", () => updateSelectedLevelAutomation({ emptyFill: emptyFill.value.trim() }));
   registerCompactTagBinding({
     id: "levelAutomation", container: sectionEl, beforeEl: min.closest?.(".prop-row") || null,
-    connectionInput: connection, tagSelect: tag, buttonLabel: "Source", modalTitle: "Level Source Tag",
-    read: () => ({ connection_id: connectionIdFromFriendlyInput(connection), tag: parseTagSelectValue(tag.value || "").tag }),
+    buttonLabel: "Source", modalTitle: "Level Source Tag",
+    read: () => {
+      const objects = getActiveObjects();
+      const obj = selectedIndices.length === 1 ? objects?.[selectedIndices[0]] : null;
+      const value = normalizeLevelAutomation(obj?.levelAutomation || {});
+      return { connection_id: value.connection_id, tag: value.tag };
+    },
     apply: ({ connection_id, tag: tagName }) => updateSelectedLevelAutomation({ connection_id, tag: tagName, enabled: true })
   });
-  levelAutomationControl = { sectionEl, enabled, sourceType, connection, tag, expression, connectionRow, tagRow, expressionRow, updateSourceRows, min, max, direction, invert, clamp, fill, emptyFill };
+  levelAutomationControl = { sectionEl, enabled, sourceType, expression, expressionRow, updateSourceRows, min, max, direction, invert, clamp, fill, emptyFill };
   automationSectionConfigs.push({ id: "level-automation", tab: "level", types: LEVEL_AUTOMATION_TYPES, sectionEl });
   return levelAutomationControl;
 };
@@ -26208,11 +26221,9 @@ const syncLevelAutomationControl = (obj) => {
   const value = normalizeLevelAutomation(obj?.levelAutomation || {});
   control.enabled.checked = value.enabled;
   control.sourceType.value = value.sourceType;
-  setFriendlyConnectionInputValue(control.connection, value.connection_id);
-  populateFilteredCombinedTagSelect(control.tag, value.connection_id || "");
-  setSelectValueSafe(control.tag, formatTagSelectValue(value.connection_id, value.tag));
   control.expression.value = value.expression;
   control.updateSourceRows();
+  renderCompactTagBindingRows();
   control.min.value = String(value.inputMin); control.max.value = String(value.inputMax);
   control.direction.value = value.direction; control.invert.checked = value.invert; control.clamp.checked = value.clamp;
   control.fill.value = value.fill; control.emptyFill.value = value.emptyFill;
