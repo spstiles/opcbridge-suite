@@ -172,6 +172,36 @@ test("imports a GraphWorX cubic Path as an editable native spline", () => {
   assert.equal(result.summary.issues, 0);
 });
 
+test("preserves the gradient fill on a closed straight GraphWorX Path", () => {
+  const xml = `<Canvas Width="800" Height="600"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Path Stroke="#FF00AA55" StrokeThickness="3">
+      <Path.Data><PathGeometry Figures="M10,10 L40,10 50,20 40,30 10,30z" /></Path.Data>
+      <Path.Fill>
+        <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+          <LinearGradientBrush.GradientStops>
+            <GradientStop Color="#FF008000" Offset="0" />
+            <GradientStop Color="#FFB1F7B9" Offset="0.5" />
+            <GradientStop Color="#FF00AA55" Offset="1" />
+          </LinearGradientBrush.GradientStops>
+        </LinearGradientBrush>
+      </Path.Fill>
+    </Path>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Filled Arrow.gdfx" });
+  const arrow = result.screen.objects[0];
+  assert.equal(arrow.type, "polyline");
+  assert.equal(arrow.closed, true);
+  assert.equal(arrow.importConversion, "editable-closed-polyline");
+  assert.equal(arrow.stroke, "#00aa55");
+  assert.equal(arrow.strokeWidth, 3);
+  assert.match(arrow.fill, /^linear-gradient\(/);
+  assert.match(arrow.fill, /#008000 0%/);
+  assert.match(arrow.fill, /#00aa55 100%/);
+  assert.deepEqual(arrow.points[0], { x: 10, y: 10 });
+  assert.deepEqual(arrow.points.at(-1), { x: 10, y: 30 });
+});
+
 test("preserves GraphWorX Label backgrounds and borders on native text", () => {
   const xml = `<Canvas Width="300" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
     <Label Background="#FFFFFF00" BorderBrush="#FF000000" BorderThickness="2,2,2,2"

@@ -1741,6 +1741,15 @@
 
           <div id="polylineProps" class="properties-form is-hidden">
             <div id="polylinePropsTitle" class="prop-group-title">Polyline</div>
+	            <div id="polylineFillRow" class="prop-row is-hidden">
+	              <label for="polylineFill">Fill</label>
+	              <div class="prop-inline">
+	                <input id="polylineFill" type="color" />
+	                <input id="polylineFillText" type="text" placeholder="none" />
+	                <button id="polylineFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
+	                <div id="polylineFillSwatches" class="swatch-popover" aria-label="Polyline fill swatches"></div>
+	              </div>
+	            </div>
             <div class="prop-row">
               <label for="polylineStroke">Stroke</label>
 	              <div class="prop-inline">
@@ -1772,6 +1781,15 @@
 
           <div id="splineProps" class="properties-form is-hidden">
             <div class="prop-group-title">Spline</div>
+            <div id="splineFillRow" class="prop-row is-hidden">
+              <label for="splineFill">Fill</label>
+              <div class="prop-inline">
+                <input id="splineFill" type="color" />
+                <input id="splineFillText" type="text" placeholder="none" />
+                <button id="splineFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
+                <div id="splineFillSwatches" class="swatch-popover" aria-label="Spline fill swatches"></div>
+              </div>
+            </div>
             <div class="prop-row">
               <label for="splineStroke">Stroke</label>
               <div class="prop-inline">

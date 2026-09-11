@@ -827,6 +827,27 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const figures = String(geometry?.Figures || node.Data || "").trim();
       sampleGraphWorxPathFigures(figures).forEach((rawPoints) => {
         const points = transformPoints(rawPoints, node, base);
+        const first = points[0];
+        const last = points[points.length - 1];
+        const isClosed = points.length >= 3
+          && first && last
+          && Math.abs(first.x - last.x) < 0.001
+          && Math.abs(first.y - last.y) < 0.001;
+        const hasCurves = /[CQAST]/i.test(figures);
+        if (isClosed) {
+          add({
+            type: hasCurves ? "spline" : "polyline",
+            closed: true,
+            // Closed native paths close the final edge themselves. Dropping
+            // the duplicate endpoint keeps vertex editing predictable.
+            points: points.slice(0, -1),
+            fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Path.Fill", node.Fill, "none")),
+            stroke: color(node.Stroke, "#000000"),
+            strokeWidth: num(node.StrokeThickness, 1),
+            ...sourceMetadata(name, node, { importConversion: hasCurves ? "editable-closed-spline" : "editable-closed-polyline" })
+          });
+          return;
+        }
         add({
           type: "spline", points,
           stroke: color(node.Stroke, "#000000"),

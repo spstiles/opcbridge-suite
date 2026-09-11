@@ -4442,11 +4442,21 @@ const pipeGradientSmoothSelect = document.getElementById("pipeGradientSmooth");
 const getPipeCapDefaultWidth = (cap) => String(cap || "flat").toLowerCase() === "flange" ? 200 : 100;
 const getPipeCapDefaultLength = (cap) => ({ round: 50, triangle: 86.6, square: 50, flange: 50 })[String(cap || "flat").toLowerCase()] || 50;
 const polylineStrokeInput = document.getElementById("polylineStroke");
+const polylineFillRow = document.getElementById("polylineFillRow");
+const polylineFillInput = document.getElementById("polylineFill");
+const polylineFillTextInput = document.getElementById("polylineFillText");
+const polylineFillSwatches = document.getElementById("polylineFillSwatches");
+const polylineFillSwatchBtn = document.getElementById("polylineFillSwatchBtn");
 const polylineStrokeTextInput = document.getElementById("polylineStrokeText");
 const polylineStrokeSwatches = document.getElementById("polylineStrokeSwatches");
 const polylineStrokeSwatchBtn = document.getElementById("polylineStrokeSwatchBtn");
 const polylineStrokeWidthInput = document.getElementById("polylineStrokeWidth");
 const splineProps = document.getElementById("splineProps");
+const splineFillRow = document.getElementById("splineFillRow");
+const splineFillInput = document.getElementById("splineFill");
+const splineFillTextInput = document.getElementById("splineFillText");
+const splineFillSwatches = document.getElementById("splineFillSwatches");
+const splineFillSwatchBtn = document.getElementById("splineFillSwatchBtn");
 const splineStrokeInput = document.getElementById("splineStroke");
 const splineStrokeTextInput = document.getElementById("splineStrokeText");
 const splineStrokeSwatches = document.getElementById("splineStrokeSwatches");
@@ -6268,6 +6278,7 @@ let polylineDraftPoints = [];
 let isDrawingSpline = false;
 let splineDraft = null;
 let splineDraftPoints = [];
+let pathDrawingContextMenu = null;
 let isDrawingPolygon = false;
 let polygonDraft = null;
 let polygonDraftPoints = [];
@@ -10493,7 +10504,7 @@ const getObjectBounds = (obj) => {
     return { x: bx.min - pad, y: by.min - pad, width: (bx.max - bx.min) + pad * 2, height: (by.max - by.min) + pad * 2 };
   }
   if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
-    const points = obj.type === "spline" ? getSplineSamplePoints(obj.points) : (Array.isArray(obj.points) ? obj.points : []);
+    const points = obj.type === "spline" ? getSplineSamplePoints(obj.points, 12, obj.closed) : (Array.isArray(obj.points) ? obj.points : []);
     if (!points.length) return { x: 0, y: 0, width: 0, height: 0 };
     const xs = points.map((p) => Number(p?.x ?? 0));
     const ys = points.map((p) => Number(p?.y ?? 0));
@@ -14323,7 +14334,13 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     const el = document.createElementNS(ns, "polyline");
     const attr = points.map((pt) => `${Number(pt?.x ?? 0)},${Number(pt?.y ?? 0)}`).join(" ");
     el.setAttribute("points", attr);
-    el.setAttribute("fill", "none");
+    const bounds = {
+      x: Number.isFinite(minX) ? minX : 0,
+      y: Number.isFinite(minY) ? minY : 0,
+      width: Number.isFinite(maxX - minX) ? Math.max(1, maxX - minX) : 1,
+      height: Number.isFinite(maxY - minY) ? Math.max(1, maxY - minY) : 1
+    };
+    setSvgPaint(el, "fill", obj.closed ? (obj.fill || "none") : "none", bounds, containerParent);
     el.setAttribute("stroke", obj.stroke || "#ffffff");
     el.setAttribute("stroke-width", obj.strokeWidth ?? 2);
     el.setAttribute("vector-effect", "non-scaling-stroke");
@@ -14332,7 +14349,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
   }
   if (obj.type === "spline") {
     const points = Array.isArray(obj.points) ? obj.points : [];
-    const samplePoints = getSplineSamplePoints(points);
+    const samplePoints = getSplineSamplePoints(points, 12, obj.closed);
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -14356,8 +14373,14 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         })()
       : parent;
     const path = document.createElementNS(ns, "path");
-    path.setAttribute("d", getSplinePathData(points));
-    path.setAttribute("fill", "none");
+    path.setAttribute("d", getSplinePathData(points, obj.closed));
+    const bounds = {
+      x: Number.isFinite(minX) ? minX : 0,
+      y: Number.isFinite(minY) ? minY : 0,
+      width: Number.isFinite(maxX - minX) ? Math.max(1, maxX - minX) : 1,
+      height: Number.isFinite(maxY - minY) ? Math.max(1, maxY - minY) : 1
+    };
+    setSvgPaint(path, "fill", obj.closed ? (obj.fill || "none") : "none", bounds, containerParent);
     path.setAttribute("stroke", obj.stroke || "#ffffff");
     path.setAttribute("stroke-width", obj.strokeWidth ?? 2);
     path.setAttribute("vector-effect", "non-scaling-stroke");
@@ -16267,6 +16290,11 @@ const syncPropertiesFromSelection = () => {
     if (polylineStrokeInput) polylineStrokeInput.value = strokeValue;
     if (polylineStrokeTextInput) polylineStrokeTextInput.value = strokeValue;
     if (polylineStrokeWidthInput) polylineStrokeWidthInput.value = Number(obj.type === "pipe" ? (obj.thickness ?? 20) : (obj.strokeWidth ?? 2));
+    if (polylineFillRow) polylineFillRow.classList.toggle("is-hidden", obj.type !== "polyline" || !obj.closed);
+    if (obj.type === "polyline" && obj.closed) {
+      if (polylineFillInput) polylineFillInput.value = isGradientPaint(obj.fill) || obj.fill === "none" ? "#000000" : (obj.fill || "#000000");
+      if (polylineFillTextInput) polylineFillTextInput.value = obj.fill || "none";
+    }
     if (polylinePropsTitle) polylinePropsTitle.textContent = obj.type === "pipe" ? "Pipe" : "Polyline";
     if (polylineStrokeWidthLabel) polylineStrokeWidthLabel.textContent = obj.type === "pipe" ? "Thickness" : "Stroke Width";
     if (pipePropertyRows) pipePropertyRows.classList.toggle("is-hidden", obj.type !== "pipe");
@@ -16289,6 +16317,11 @@ const syncPropertiesFromSelection = () => {
 	    if (splineStrokeInput) splineStrokeInput.value = strokeValue;
 	    if (splineStrokeTextInput) splineStrokeTextInput.value = strokeValue;
 	    if (splineStrokeWidthInput) splineStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
+	    if (splineFillRow) splineFillRow.classList.toggle("is-hidden", !obj.closed);
+	    if (obj.closed) {
+	      if (splineFillInput) splineFillInput.value = isGradientPaint(obj.fill) || obj.fill === "none" ? "#000000" : (obj.fill || "#000000");
+	      if (splineFillTextInput) splineFillTextInput.value = obj.fill || "none";
+	    }
 	  }
 	  if (obj.type === "polygon") {
 	    const fillValue = obj.fill || "#3a3f4b";
@@ -23098,6 +23131,18 @@ if (polylineStrokeInput) {
   });
 }
 
+const applyPolylineFillColor = (value) => {
+  updatePolylineProperty({ fill: value });
+  if (polylineFillTextInput) polylineFillTextInput.value = value;
+  if (polylineFillInput && !isGradientPaint(value) && value !== "none") polylineFillInput.value = value;
+};
+
+if (polylineFillInput) polylineFillInput.addEventListener("input", () => applyPolylineFillColor(polylineFillInput.value));
+if (polylineFillTextInput) polylineFillTextInput.addEventListener("change", () => {
+  const value = polylineFillTextInput.value.trim();
+  if (value) applyPolylineFillColor(value);
+});
+
 if (polylineStrokeTextInput) {
   polylineStrokeTextInput.addEventListener("change", () => {
     const value = polylineStrokeTextInput.value.trim();
@@ -23151,6 +23196,18 @@ if (splineStrokeInput) {
     if (splineStrokeTextInput) splineStrokeTextInput.value = splineStrokeInput.value;
   });
 }
+
+const applySplineFillColor = (value) => {
+  updateSplineProperty({ fill: value });
+  if (splineFillTextInput) splineFillTextInput.value = value;
+  if (splineFillInput && !isGradientPaint(value) && value !== "none") splineFillInput.value = value;
+};
+
+if (splineFillInput) splineFillInput.addEventListener("input", () => applySplineFillColor(splineFillInput.value));
+if (splineFillTextInput) splineFillTextInput.addEventListener("change", () => {
+  const value = splineFillTextInput.value.trim();
+  if (value) applySplineFillColor(value);
+});
 
 if (splineStrokeTextInput) {
   splineStrokeTextInput.addEventListener("change", () => {
@@ -27441,10 +27498,20 @@ buildSwatches(polylineStrokeSwatches, (color) => {
   closeSwatches();
 });
 
+buildSwatches(polylineFillSwatches, (color) => {
+  applyPolylineFillColor(color);
+  closeSwatches();
+});
+
 buildSwatches(splineStrokeSwatches, (color) => {
   updateSplineProperty({ stroke: color });
   if (splineStrokeInput) splineStrokeInput.value = color;
   if (splineStrokeTextInput) splineStrokeTextInput.value = color;
+  closeSwatches();
+});
+
+buildSwatches(splineFillSwatches, (color) => {
+  applySplineFillColor(color);
   closeSwatches();
 });
 
@@ -27865,10 +27932,34 @@ if (polylineStrokeSwatchBtn && polylineStrokeSwatches) {
   });
 }
 
+if (polylineFillSwatchBtn && polylineFillSwatches) {
+  polylineFillSwatchBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openPaintPicker({
+      title: "Polyline Fill",
+      value: polylineFillTextInput?.value || "none",
+      fallback: "#3a3f4b",
+      onApply: applyPolylineFillColor
+    });
+  });
+}
+
 if (splineStrokeSwatchBtn && splineStrokeSwatches) {
   splineStrokeSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleSwatches(splineStrokeSwatches, splineStrokeSwatchBtn);
+  });
+}
+
+if (splineFillSwatchBtn && splineFillSwatches) {
+  splineFillSwatchBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openPaintPicker({
+      title: "Spline Fill",
+      value: splineFillTextInput?.value || "none",
+      fallback: "#3a3f4b",
+      onApply: applySplineFillColor
+    });
   });
 }
 
@@ -28969,13 +29060,27 @@ const pointToSegmentDistance = (point, start, end) => {
   return Math.hypot(px - projX, py - projY);
 };
 
-const getSplinePathData = (points) => {
+const getSplinePathData = (points, closed = false) => {
   const pts = (Array.isArray(points) ? points : [])
     .map((pt) => ({ x: Number(pt?.x ?? 0), y: Number(pt?.y ?? 0) }));
   if (!pts.length) return "";
   if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
   if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
   let d = `M ${pts[0].x} ${pts[0].y}`;
+  if (closed) {
+    for (let i = 0; i < pts.length; i += 1) {
+      const p0 = pts[(i - 1 + pts.length) % pts.length];
+      const p1 = pts[i];
+      const p2 = pts[(i + 1) % pts.length];
+      const p3 = pts[(i + 2) % pts.length];
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${p2.x} ${p2.y}`;
+    }
+    return `${d} Z`;
+  }
   for (let i = 0; i < pts.length - 1; i += 1) {
     const p0 = pts[i - 1] || pts[i];
     const p1 = pts[i];
@@ -28990,16 +29095,17 @@ const getSplinePathData = (points) => {
   return d;
 };
 
-const getSplineSamplePoints = (points, segmentsPerCurve = 12) => {
+const getSplineSamplePoints = (points, segmentsPerCurve = 12, closed = false) => {
   const pts = (Array.isArray(points) ? points : [])
     .map((pt) => ({ x: Number(pt?.x ?? 0), y: Number(pt?.y ?? 0) }));
   if (pts.length <= 2) return pts;
   const out = [{ ...pts[0] }];
-  for (let i = 0; i < pts.length - 1; i += 1) {
-    const p0 = pts[i - 1] || pts[i];
+  const segmentCount = closed ? pts.length : pts.length - 1;
+  for (let i = 0; i < segmentCount; i += 1) {
+    const p0 = closed ? pts[(i - 1 + pts.length) % pts.length] : (pts[i - 1] || pts[i]);
     const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[i + 2] || p2;
+    const p2 = closed ? pts[(i + 1) % pts.length] : pts[i + 1];
+    const p3 = closed ? pts[(i + 2) % pts.length] : (pts[i + 2] || p2);
     const cp1x = p1.x + (p2.x - p0.x) / 6;
     const cp1y = p1.y + (p2.y - p0.y) / 6;
     const cp2x = p2.x - (p3.x - p1.x) / 6;
@@ -29032,7 +29138,7 @@ const pointHitsSpline = (point, obj) => {
   if (!point || !obj || obj.type !== "spline") return false;
   const strokeWidth = Math.max(1, Number(obj.strokeWidth ?? 2));
   const tolerance = Math.max(6, (strokeWidth / 2) + 4);
-  const samplePoints = getSplineSamplePoints(obj.points);
+  const samplePoints = getSplineSamplePoints(obj.points, 12, obj.closed);
   if (samplePoints.length < 2) return false;
   for (let i = 0; i < samplePoints.length - 1; i += 1) {
     if (pointToSegmentDistance(point, samplePoints[i], samplePoints[i + 1]) <= tolerance) return true;
@@ -29050,7 +29156,7 @@ const pointHitsPathObject = (point, obj, offset = { x: 0, y: 0 }) => {
     x: Number(pt?.x ?? 0) + Number(offset.x ?? 0),
     y: Number(pt?.y ?? 0) + Number(offset.y ?? 0)
   }));
-  const segmentCount = translated.length - 1 + (obj.type === "polygon" ? 1 : 0);
+  const segmentCount = translated.length - 1 + (obj.type === "polygon" || obj.closed ? 1 : 0);
   for (let i = 0; i < segmentCount; i += 1) {
     const start = translated[i];
     const end = translated[(i + 1) % translated.length];
@@ -30277,6 +30383,80 @@ const finishSplineDraft = () => {
     splineDraft = null;
   }
   splineDraftPoints = [];
+};
+
+const completePathDrawing = (type, closed = false) => {
+  const isSpline = type === "spline";
+  const sourcePoints = isSpline ? splineDraftPoints : polylineDraftPoints;
+  const minimum = closed ? 3 : 2;
+  if (currentScreenObj && sourcePoints.length >= minimum) {
+    const activeObjects = ensureActiveObjects();
+    if (activeObjects) {
+      const points = sourcePoints.map((pt) => {
+        const local = toActivePoint(pt);
+        return { x: snapValue(Math.round(local.x)), y: snapValue(Math.round(local.y)) };
+      });
+      recordHistory();
+      activeObjects.push({ type, points, closed, fill: "none", stroke: "#ffffff", strokeWidth: 2 });
+      selectedIndices = [activeObjects.length - 1];
+      renderScreen();
+      syncEditorFromScreen();
+      setDirty(true);
+      setEditorTab("properties");
+    }
+  }
+  if (isSpline) {
+    finishSplineDraft();
+    isDrawingSpline = false;
+  } else {
+    finishPolylineDraft();
+    isDrawingPolyline = false;
+  }
+  setTool("select");
+};
+
+const cancelPathDrawing = (type) => {
+  if (type === "spline") {
+    finishSplineDraft();
+    isDrawingSpline = false;
+  } else {
+    finishPolylineDraft();
+    isDrawingPolyline = false;
+  }
+  setTool("select");
+};
+
+const showPathDrawingContextMenu = (clientX, clientY, type) => {
+  if (!pathDrawingContextMenu) {
+    pathDrawingContextMenu = document.createElement("div");
+    pathDrawingContextMenu.className = "hmi-context-menu is-hidden";
+    pathDrawingContextMenu.setAttribute("role", "menu");
+    pathDrawingContextMenu.addEventListener("click", (event) => event.stopPropagation());
+    document.body.appendChild(pathDrawingContextMenu);
+    document.addEventListener("click", () => pathDrawingContextMenu?.classList.add("is-hidden"));
+  }
+  pathDrawingContextMenu.textContent = "";
+  const title = document.createElement("div");
+  title.className = "hmi-context-menu-title";
+  title.textContent = type === "spline" ? "Finish Spline" : "Finish Polyline";
+  pathDrawingContextMenu.appendChild(title);
+  const addAction = (label, action, disabled = false) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "hmi-context-menu-item";
+    button.textContent = label;
+    button.disabled = disabled;
+    button.addEventListener("click", () => {
+      pathDrawingContextMenu.classList.add("is-hidden");
+      action();
+    });
+    pathDrawingContextMenu.appendChild(button);
+  };
+  const count = type === "spline" ? splineDraftPoints.length : polylineDraftPoints.length;
+  addAction("Finish Open", () => completePathDrawing(type, false), count < 2);
+  addAction("Close Shape", () => completePathDrawing(type, true), count < 3);
+  addAction("Cancel Drawing", () => cancelPathDrawing(type));
+  showFixedContextMenuAt(pathDrawingContextMenu, clientX, clientY);
 };
 
 const startPolygonDraft = (point) => {
@@ -32022,14 +32202,20 @@ const setTool = (nextTool) => {
 
 	  hmiSvg.addEventListener("contextmenu", (event) => {
 	    if (!isEditMode) return;
-	    if (currentTool === "polyline" || currentTool === "pipe" || currentTool === "polygon") {
-	      if ((currentTool === "polyline" || currentTool === "pipe") && !isDrawingPolyline) return;
+	    if (currentTool === "polyline") {
+	      if (!isDrawingPolyline) return;
+	      event.preventDefault();
+	      showPathDrawingContextMenu(event.clientX, event.clientY, "polyline");
+	      return;
+	    }
+	    if (currentTool === "pipe" || currentTool === "polygon") {
+	      if (currentTool === "pipe" && !isDrawingPolyline) return;
 	      if (currentTool === "polygon" && !isDrawingPolygon) return;
 	      event.preventDefault();
 	      if (!currentScreenObj) return;
 	      const activeObjects = ensureActiveObjects();
 	      if (!activeObjects) return;
-	      if (currentTool === "polyline" || currentTool === "pipe") {
+	      if (currentTool === "pipe") {
 	        const points = polylineDraftPoints.map((pt) => {
 	          const local = toActivePoint(pt);
 	          return { x: snapValue(Math.round(local.x)), y: snapValue(Math.round(local.y)) };
@@ -32071,25 +32257,7 @@ const setTool = (nextTool) => {
       if (currentTool === "spline") {
         if (!isDrawingSpline) return;
         event.preventDefault();
-        if (!currentScreenObj) return;
-        const activeObjects = ensureActiveObjects();
-        if (!activeObjects) return;
-        const points = splineDraftPoints.map((pt) => {
-          const local = toActivePoint(pt);
-          return { x: snapValue(Math.round(local.x)), y: snapValue(Math.round(local.y)) };
-        });
-        if (points.length >= 2) {
-          recordHistory();
-          activeObjects.push({ type: "spline", points, stroke: "#ffffff", strokeWidth: 2 });
-          selectedIndices = [activeObjects.length - 1];
-          renderScreen();
-          syncEditorFromScreen();
-          setDirty(true);
-          setEditorTab("properties");
-        }
-        finishSplineDraft();
-        isDrawingSpline = false;
-        setTool("select");
+        showPathDrawingContextMenu(event.clientX, event.clientY, "spline");
         return;
       }
 	    if (currentTool !== "select") return;
