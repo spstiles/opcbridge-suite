@@ -6961,6 +6961,27 @@ const referenceMappingInput = document.getElementById("referenceMappingInput");
 const viewReferenceHealthMenuBtn = document.getElementById("viewReferenceHealthMenuBtn");
 const referenceHealthBadge = document.getElementById("referenceHealthBadge");
 let referenceHealthOverlay = null;
+let referenceHealthIssuesCache = null;
+let referenceHealthIssuesScreen = null;
+let referenceHealthRefreshTimer = null;
+
+const invalidateReferenceHealthCache = () => {
+  referenceHealthIssuesCache = null;
+  referenceHealthIssuesScreen = null;
+};
+
+const scheduleReferenceHealthRefresh = (delay = 250) => {
+  if (referenceHealthRefreshTimer !== null) window.clearTimeout(referenceHealthRefreshTimer);
+  referenceHealthRefreshTimer = window.setTimeout(() => {
+    referenceHealthRefreshTimer = null;
+    invalidateReferenceHealthCache();
+    if (!isEditMode || !currentScreenObj) return;
+    renderReferenceHealthBadge();
+    const activeObjects = getActiveObjects();
+    const selectedObj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+    renderSelectedReferenceProperties(selectedObj);
+  }, Math.max(0, Number(delay) || 0));
+};
 
 const referenceAutomationMatches = (expected, actual) => {
   const normalize = (value) => {
@@ -7172,6 +7193,9 @@ const reconcileReferenceHealthMetadata = () => {
 };
 
 const getReferenceHealthIssues = () => {
+  if (referenceHealthIssuesScreen === currentScreenObj && Array.isArray(referenceHealthIssuesCache)) {
+    return referenceHealthIssuesCache;
+  }
   reconcileReferenceHealthMetadata();
   const stored = currentScreenObj?.referenceHealth?.issues;
   const issues = Array.isArray(stored)
@@ -7339,6 +7363,8 @@ const getReferenceHealthIssues = () => {
     });
   };
   (currentScreenObj?.objects || []).forEach(collectObjectIssues);
+  referenceHealthIssuesScreen = currentScreenObj;
+  referenceHealthIssuesCache = issues;
   return issues;
 };
 
@@ -12152,6 +12178,7 @@ const loadTags = async () => {
     ).filter(Boolean));
     tagCatalogLoaded = true;
     tagsCacheVersion += 1;
+    invalidateReferenceHealthCache();
     const repairedScreenReferences = repairScreenTagConnections(currentScreenObj);
     if (repairedScreenReferences > 0) {
       reconcileReferenceHealthMetadata();
@@ -12198,6 +12225,7 @@ const loadTags = async () => {
     knownTagKeysCache = new Set();
     tagCatalogLoaded = false;
     tagsCacheVersion += 1;
+    invalidateReferenceHealthCache();
     if (isEditMode && selectedIndices.length === 1) {
       syncPropertiesFromSelection();
       updatePropertiesPanel();
@@ -18501,6 +18529,7 @@ const setDirty = (next) => {
   }
   if (next && currentScreenObj) {
     scheduleWsSubscribeRefresh();
+    scheduleReferenceHealthRefresh();
   }
 };
 
