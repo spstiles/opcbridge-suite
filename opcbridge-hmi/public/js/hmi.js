@@ -7175,12 +7175,16 @@ const getReferenceHealthIssues = () => {
   reconcileReferenceHealthMetadata();
   const stored = currentScreenObj?.referenceHealth?.issues;
   const issues = Array.isArray(stored)
-    ? stored.filter((issue) =>
-      String(issue?.status || "").toLowerCase() !== "resolved"
-      // Screen references are evaluated directly from their owning object;
-      // imported entries are provenance, not a second source of truth.
-      && !(issue?.objectImportId && issue?.category === "screen")
-    )
+    ? stored.filter((issue) => {
+      const status = String(issue?.status || "").toLowerCase();
+      const category = String(issue?.category || "").toLowerCase();
+      if (status === "resolved") return false;
+      // Current object bindings are validated below. Retain only conversion
+      // limitations and screen-level asset notices from the import report.
+      return status === "unsupported"
+        || category === "unsupported-automation"
+        || (!issue?.objectImportId && ["image", "asset", "partial"].includes(category));
+    })
     : [];
   const known = new Set(issues.map((issue) => String(issue?.id || "")));
   const issueKey = (objectId, category, source, automation = "") =>
@@ -7198,56 +7202,105 @@ const getReferenceHealthIssues = () => {
     knownIssueKeys.add(key);
     issues.push(issue);
   };
+  const objectLocations = new Map();
+  const collectObjectLocations = (objects, parents = []) => {
+    (objects || []).forEach((obj, index) => {
+      const location = { index, parents };
+      if (obj?.id) objectLocations.set(String(obj.id), location);
+      if (obj?.importId) objectLocations.set(String(obj.importId), location);
+      collectObjectLocations(obj?.children, [...parents, obj]);
+    });
+  };
+  collectObjectLocations(currentScreenObj?.objects || []);
+
+  const bindingHasAlias = (value) => /\{alias:[a-zA-Z0-9_.-]+\}/i.test(String(value || ""));
+  collectScreenReferenceMappings().forEach((group) => {
+    group.occurrences.forEach((occurrence, occurrenceIndex) => {
+      if (bindingHasAlias(occurrence.current)) return;
+      const resolved = occurrence.type === "tag"
+        ? (!tagCatalogLoaded || knownMappedTag(occurrence.current))
+        : knownMappedScreen(occurrence.current);
+      if (resolved) return;
+      const location = objectLocations.get(String(occurrence.objectId || ""));
+      const label = occurrence.type === "tag" ? "tag" : "screen";
+      addIssue({
+        id: `current:${occurrence.type}:${occurrence.objectId}:${occurrence.path}:${occurrenceIndex}`,
+        objectImportId: occurrence.objectId || "",
+        objectIndex: location?.index,
+        severity: "warning",
+        category: occurrence.type,
+        automation: occurrence.automation || null,
+        status: "unresolved",
+        source: { format: "opcbridge", value: occurrence.current },
+        message: `${occurrence.automation || "Object"} ${label} not found: ${occurrence.current}`
+      });
+    });
+  });
+
   const collectObjectIssues = (obj, index) => {
     const objectId = obj?.importId || obj?.id || "";
     (obj?.externalReferences || []).forEach((ref, refIndex) => {
-      if (ref?.target || ref?.status === "resolved") return;
+      if (ref?.target || ref?.status === "resolved" || (ref?.status !== "unsupported" && ref?.supported !== false)) return;
       const id = `native:${index}:${refIndex}`;
-      addIssue({ id, objectImportId: objectId, objectIndex: index, severity: "warning", category: ref.kind || "reference", automation: ref.automation || null, status: ref.status === "unsupported" || ref.supported === false ? "unsupported" : "unresolved", source: ref.source, message: `${ref.status === "unsupported" || ref.supported === false ? "Unsupported" : "Unresolved"} ${ref.automation || ref.kind || "reference"}: ${ref.source?.value || "unknown"}` });
+      addIssue({ id, objectImportId: objectId, objectIndex: index, severity: "warning", category: "unsupported-automation", automation: ref.automation || null, status: "unsupported", source: ref.source, message: `Unsupported ${ref.automation || ref.kind || "reference"}: ${ref.source?.value || "unknown"}` });
     });
-    const expressionBindings = [
-      ...Object.entries(getTextBindingsMap(obj)).map(([key, binding]) => ({ key, binding, label: "text" })),
-      ...Object.entries(getButtonLabelBindingsMap(obj)).map(([key, binding]) => ({ key, binding, label: "button text" }))
-    ].filter((entry) => entry.binding?.sourceType === "expression");
-    expressionBindings.forEach(({ key, binding, label }, expressionIndex) => {
-      const expression = String(binding.expression || "").trim();
-      const validationError = getAutomationExpressionValidationError(expression);
-      if (validationError) {
-        addIssue({
-          id: `expression:${index}:${expressionIndex}`,
-          objectImportId: objectId,
-          objectIndex: index,
-          severity: "warning",
-          category: "expression",
-          automation: "text",
-          status: "unresolved",
-          source: { format: "opcbridge", value: expression || `{${key}}` },
-          message: `Invalid ${label} expression for {${key}}: ${validationError}`
-        });
+
+    const inspectBindings = (value, path = []) => {
+      if (!value || typeof value !== "object") return;
+      if (Array.isArray(value)) {
+        value.forEach((child, childIndex) => inspectBindings(child, [...path, String(childIndex)]));
         return;
       }
-      extractAutomationExpressionTagReferences(expression).forEach((reference, refIndex) => {
-        if (knownMappedTag(reference.value)) return;
-        addIssue({
-          id: `expression-tag:${index}:${expressionIndex}:${refIndex}`,
-          objectImportId: objectId,
-          objectIndex: index,
-          severity: "warning",
-          category: "tag",
-          automation: "text expression",
-          status: "unresolved",
-          source: { format: "opcbridge", value: reference.value },
-          message: `Unresolved ${label} expression tag: ${reference.value}`
-        });
+      if (value.sourceType === "expression") {
+        const expression = String(value.expression || "").trim();
+        const validationError = getAutomationExpressionValidationError(expression);
+        if (validationError) {
+          const automation = referenceAutomationLabel(path);
+          addIssue({
+            id: `expression:${index}:${path.join(".")}`,
+            objectImportId: objectId,
+            objectIndex: index,
+            severity: "warning",
+            category: "expression",
+            automation,
+            status: "unresolved",
+            source: { format: "opcbridge", value: expression || "Empty expression" },
+            message: `Invalid ${automation} expression: ${validationError}`
+          });
+        }
+      } else if (value.sourceType === "tag" && value.enabled !== false && Object.prototype.hasOwnProperty.call(value, "tag")) {
+        const connection = String(value.connection_id || "").trim();
+        const tag = String(value.tag || "").trim();
+        if ((!connection || !tag) && !bindingHasAlias(tag)) {
+          const automation = referenceAutomationLabel(path);
+          const source = formatMappedTagReference(connection, tag) || tag || "No tag selected";
+          addIssue({
+            id: `empty-tag:${index}:${path.join(".")}`,
+            objectImportId: objectId,
+            objectIndex: index,
+            severity: "warning",
+            category: "tag",
+            automation,
+            status: "unresolved",
+            source: { format: "opcbridge", value: source },
+            message: `${automation} source is incomplete: ${source}`
+          });
+        }
+      }
+      Object.entries(value).forEach(([key, child]) => {
+        if (["children", "externalReferences", "referenceHealth", "importInfo"].includes(key)) return;
+        if (child && typeof child === "object") inspectBindings(child, [...path, key]);
       });
-    });
+    };
+    inspectBindings(obj, []);
+
     const actionType = String(obj?.action?.type || "");
     const isScreenAction = ["navigate", "popup", "load-viewport"].includes(actionType);
     const isViewportReference = obj?.type === "viewport" && (String(obj.target || "").trim() || obj.sourceInitialScreen);
     if (isScreenAction || isViewportReference) {
       const target = String(isViewportReference ? obj.target : obj.action?.screenId || "").trim();
-      if (!target || !knownMappedScreen(target)) {
-        const source = String(isViewportReference ? (target || obj.sourceInitialScreen || "") : (target || obj.action?.sourceScreen || "")).trim();
+      if (!target) {
+        const source = String(isViewportReference ? (obj.sourceInitialScreen || "") : (obj.action?.sourceScreen || "")).trim();
         addIssue({
           id: `screen:${index}`,
           objectImportId: objectId,
@@ -7257,7 +7310,7 @@ const getReferenceHealthIssues = () => {
           automation: isViewportReference ? "viewport" : "action",
           status: "unresolved",
           source: { format: obj?.source?.format || "opcbridge", value: source || "Screen target" },
-          message: `${isViewportReference ? "Viewport" : "Action"} screen not mapped: ${source || "no target selected"}`
+          message: `${isViewportReference ? "Viewport" : "Action"} has no screen selected: ${source || "no target selected"}`
         });
       }
     }
@@ -7295,8 +7348,8 @@ const renderReferenceHealthBadge = () => {
   referenceHealthBadge.innerHTML = `<span aria-hidden="true">⚠</span> Issues: ${count}`;
   referenceHealthBadge.classList.toggle("is-active", count > 0);
   referenceHealthBadge.title = count > 0
-    ? `View ${count} unresolved reference${count === 1 ? "" : "s"} and import issue${count === 1 ? "" : "s"}`
-    : "No unresolved references or import issues";
+    ? `View ${count} unresolved reference${count === 1 ? "" : "s"} or unsupported automation${count === 1 ? "" : "s"}`
+    : "All current references are valid";
   referenceHealthBadge.setAttribute("aria-label", `Reference Health: ${count} issue${count === 1 ? "" : "s"}`);
 };
 
@@ -7424,7 +7477,7 @@ const selectReferenceIssueObject = (issue) => {
   const findImportedObjectPath = (items, importId, parents = []) => {
     for (let index = 0; index < (items || []).length; index += 1) {
       const obj = items[index];
-      if (obj?.importId === importId) return { parents, index, object: obj };
+      if (String(obj?.importId || "") === importId || String(obj?.id || "") === importId) return { parents, index, object: obj };
       if (obj?.type === "group" && Array.isArray(obj.children)) {
         const nested = findImportedObjectPath(obj.children, importId, [...parents, obj]);
         if (nested) return nested;
@@ -7452,6 +7505,8 @@ const selectReferenceIssueObject = (issue) => {
       ? "visibility"
       : automation === "level"
         ? "level"
+        : automation === "states"
+          ? "states"
       : automation === "rotation"
           ? "rotation"
           : "properties";
@@ -7482,7 +7537,7 @@ const openReferenceHealth = () => {
   overlay.addEventListener("click", (event) => { if (event.target === overlay) closeReferenceHealth(); });
   const list = overlay.querySelector(".reference-health-list");
   if (!issues.length) {
-    list.innerHTML = '<div class="reference-health-empty">No unresolved or partially converted references were recorded.</div>';
+    list.innerHTML = '<div class="reference-health-empty">All current references are valid.</div>';
   } else {
     issues.forEach((issue) => {
       const row = document.createElement("button");
@@ -16675,21 +16730,14 @@ const renderMultiStateEditor = (obj) => {
 const renderSelectedReferenceProperties = (obj) => {
   if (!selectedReferenceHealthProps) return;
   selectedReferenceHealthProps.textContent = "";
-  const references = [];
-  (obj?.externalReferences || []).forEach((ref) => {
-    if (ref?.status === "resolved" || ref?.target) return;
-    const value = String(ref?.source?.value || "").trim();
-    if (value) references.push({
-      kind: `${ref.automation || ref.kind || "reference"}${ref.supported === false || ref.status === "unsupported" ? " (unsupported)" : ""}`,
-      value
-    });
-  });
-  if (obj?.action?.status === "unresolved" && obj.action.sourceScreen) {
-    references.push({ kind: "screen", value: String(obj.action.sourceScreen) });
-  }
-  if (obj?.type === "viewport" && !obj.target && obj.sourceInitialScreen) {
-    references.push({ kind: "screen", value: String(obj.sourceInitialScreen) });
-  }
+  const objectIds = new Set([obj?.id, obj?.importId].map((value) => String(value || "").trim()).filter(Boolean));
+  const references = getReferenceHealthIssues()
+    .filter((issue) => objectIds.has(String(issue?.objectImportId || "").trim()))
+    .map((issue) => ({
+      kind: `${issue.automation || issue.category || "reference"}${issue.status === "unsupported" ? " (unsupported)" : ""}`,
+      value: String(issue.source?.value || issue.message || "").trim()
+    }))
+    .filter((reference) => reference.value);
   const unique = references.filter((ref, index, all) =>
     all.findIndex((candidate) => candidate.kind === ref.kind && candidate.value === ref.value) === index
   );
@@ -16716,7 +16764,7 @@ const renderSelectedReferenceProperties = (obj) => {
   });
   const hint = document.createElement("p");
   hint.className = "reference-property-hint";
-  hint.textContent = "The original reference is preserved. Use the object's automation or action controls to select its OPCBridge replacement.";
+  hint.textContent = "References remain highlighted until their current tag, expression, screen, or automation can be verified.";
   selectedReferenceHealthProps.appendChild(hint);
 };
 
@@ -24466,6 +24514,7 @@ function registerCompactTagBinding(config) {
   const existingIndex = compactTagBindingConfigs.findIndex((entry) => entry.id === config.id);
   if (existingIndex >= 0) {
     const existing = compactTagBindingConfigs[existingIndex];
+    existing?.cancelPending?.();
     if (existing?.row?.parentNode) existing.row.parentNode.removeChild(existing.row);
     compactTagBindingConfigs.splice(existingIndex, 1);
   }
@@ -24509,8 +24558,23 @@ function registerCompactTagBinding(config) {
     const tag = String(editorTagInput.value || "").trim();
     config.apply({ connection_id, tag });
   };
+  let pendingEditTimer = null;
+  const cancelPending = () => {
+    if (pendingEditTimer !== null) window.clearTimeout(pendingEditTimer);
+    pendingEditTimer = null;
+  };
   editorConnectionInput.addEventListener("change", applyEditedBinding);
-  editorTagInput.addEventListener("change", applyEditedBinding);
+  editorTagInput.addEventListener("input", () => {
+    cancelPending();
+    pendingEditTimer = window.setTimeout(() => {
+      pendingEditTimer = null;
+      applyEditedBinding();
+    }, 350);
+  });
+  editorTagInput.addEventListener("change", () => {
+    cancelPending();
+    applyEditedBinding();
+  });
 
   row.append(keyEl, editorConnectionInput, editorTagInput, button);
 
@@ -24534,7 +24598,7 @@ function registerCompactTagBinding(config) {
     }
   }
 
-  compactTagBindingConfigs.push({ ...registeredConfig, row, summaryEl: null, editorConnectionInput, editorTagInput });
+  compactTagBindingConfigs.push({ ...registeredConfig, row, summaryEl: null, editorConnectionInput, editorTagInput, cancelPending });
 }
 
 function updateButtonWriteBinding(patch) {
