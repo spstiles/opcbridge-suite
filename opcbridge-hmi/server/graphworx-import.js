@@ -302,6 +302,21 @@ const graphWorxExpression = (source) => {
   return { isExpression: false, expression: "" };
 };
 
+const importedShadow = (node) => {
+  const effect = descendants(node, (name) => name === "DropShadowBitmapEffect" || name === "DropShadowEffect")[0];
+  if (!effect) return null;
+  const depth = num(effect.ShadowDepth, 2);
+  const direction = num(effect.Direction, 315) * Math.PI / 180;
+  const softness = num(effect.BlurRadius, Math.max(0.5, num(effect.Softness, 0.02) * 20));
+  return {
+    color: color(effect.Color, "#000000"),
+    opacity: Math.max(0, Math.min(1, num(effect.Opacity, 1))),
+    offsetX: Number((Math.cos(direction) * depth).toFixed(3)),
+    offsetY: Number((-Math.sin(direction) * depth).toFixed(3)),
+    blur: softness
+  };
+};
+
 const sourceMetadata = (sourceType, node, extra = {}) => {
   const colors = descendants(node, (name) => name === "gwx:GwxColor").map((item) => ({
     kind: "color",
@@ -835,6 +850,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
           && Math.abs(first.y - last.y) < 0.001;
         const hasCurves = /[CQAST]/i.test(figures);
         if (isClosed) {
+          const shadow = importedShadow(node);
           add({
             type: hasCurves ? "spline" : "polyline",
             closed: true,
@@ -844,6 +860,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
             fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Path.Fill", node.Fill, "none")),
             stroke: color(node.Stroke, "#000000"),
             strokeWidth: num(node.StrokeThickness, 1),
+            ...(shadow ? { shadow } : {}),
             ...sourceMetadata(name, node, { importConversion: hasCurves ? "editable-closed-spline" : "editable-closed-polyline" })
           });
           return;
@@ -852,6 +869,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
           type: "spline", points,
           stroke: color(node.Stroke, "#000000"),
           strokeWidth: num(node.StrokeThickness, 1),
+          ...(importedShadow(node) ? { shadow: importedShadow(node) } : {}),
           ...sourceMetadata(name, node, { importConversion: "editable-spline" })
         });
       });

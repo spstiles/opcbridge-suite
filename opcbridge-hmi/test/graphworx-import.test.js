@@ -176,6 +176,7 @@ test("preserves the gradient fill on a closed straight GraphWorX Path", () => {
   const xml = `<Canvas Width="800" Height="600"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
     <Path Stroke="#FF00AA55" StrokeThickness="3">
+      <Path.BitmapEffect><DropShadowBitmapEffect ShadowDepth="2" Softness="0.02" /></Path.BitmapEffect>
       <Path.Data><PathGeometry Figures="M10,10 L40,10 50,20 40,30 10,30z" /></Path.Data>
       <Path.Fill>
         <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
@@ -198,6 +199,7 @@ test("preserves the gradient fill on a closed straight GraphWorX Path", () => {
   assert.match(arrow.fill, /^linear-gradient\(/);
   assert.match(arrow.fill, /#008000 0%/);
   assert.match(arrow.fill, /#00aa55 100%/);
+  assert.deepEqual(arrow.shadow, { color: "#000000", opacity: 1, offsetX: 1.414, offsetY: 1.414, blur: 0.5 });
   assert.deepEqual(arrow.points[0], { x: 10, y: 10 });
   assert.deepEqual(arrow.points.at(-1), { x: 10, y: 30 });
 });

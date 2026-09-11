@@ -80,11 +80,15 @@
               <span class="menu-item-caret" aria-hidden="true">›</span>
             </button>
             <div id="dynamicsMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Dynamics menu">
+              <div class="menu-group-label">Automations</div>
               <button id="dynamicsAddVisibilityMenuBtn" class="menu-item" type="button">Visibility</button>
               <button id="dynamicsAddColorMenuBtn" class="menu-item" type="button">Color</button>
               <button id="dynamicsAddStatesMenuBtn" class="menu-item" type="button">States</button>
               <button id="dynamicsAddRotationMenuBtn" class="menu-item" type="button">Rotation</button>
               <button id="dynamicsAddMotionMenuBtn" class="menu-item" type="button">Motion</button>
+              <div class="menu-separator"></div>
+              <div class="menu-group-label">Effects</div>
+              <button id="dynamicsAddShadowMenuBtn" class="menu-item" type="button">Shadow</button>
             </div>
           </div>
           <div class="menu-separator"></div>
@@ -138,6 +142,20 @@
 	      <span id="diagnosticsBadge" class="diagnostics-badge is-hidden" aria-live="polite">Diagnostics</span>
 	    </div>
     <div class="toolbar-right">
+      <div id="toolbarDynamicsWrap" class="toolbar-dynamics-wrap">
+        <button id="toolbarDynamicsBtn" class="toolbar-btn" type="button" aria-haspopup="true" aria-expanded="false">Automation ▾</button>
+        <div id="toolbarDynamicsFlyout" class="toolbar-dynamics-flyout is-hidden" role="menu" aria-label="Add automation or effect">
+          <div class="menu-group-label">Automations</div>
+          <button class="menu-item" type="button" data-add-dynamic="visibility">Visibility</button>
+          <button class="menu-item" type="button" data-add-dynamic="color">Color</button>
+          <button class="menu-item" type="button" data-add-dynamic="states">States</button>
+          <button class="menu-item" type="button" data-add-dynamic="rotation">Rotation</button>
+          <button class="menu-item" type="button" data-add-dynamic="motion">Motion</button>
+          <div class="menu-separator"></div>
+          <div class="menu-group-label">Effects</div>
+          <button class="menu-item" type="button" data-add-dynamic="shadow">Shadow</button>
+        </div>
+      </div>
       <div class="toolbar-zoom" aria-label="Canvas zoom controls">
         <span class="toolbar-zoom-label">Zoom</span>
         <button id="editorZoomOutBtn" class="toolbar-btn toolbar-zoom-btn" type="button" title="Zoom out">−</button>
@@ -386,6 +404,7 @@
             <button id="objectDynamicTabStatesBtn" class="editor-tab is-hidden" type="button">States</button>
             <button id="objectDynamicTabRotationBtn" class="editor-tab is-hidden" type="button">Rotation</button>
             <button id="objectDynamicTabMotionBtn" class="editor-tab is-hidden" type="button">Motion</button>
+            <button id="objectDynamicTabShadowBtn" class="editor-tab is-hidden" type="button">Shadow</button>
           </div>
           <div id="objectDynamicVisibilityHost" class="is-hidden"></div>
           <div id="objectDynamicColorHost" class="is-hidden"></div>
@@ -393,6 +412,15 @@
           <div id="objectDynamicStatesHost" class="is-hidden"></div>
           <div id="objectDynamicRotationHost" class="is-hidden"></div>
           <div id="objectDynamicMotionHost" class="is-hidden"></div>
+          <div id="objectDynamicShadowHost" class="properties-form is-hidden">
+            <div class="prop-group-title">Shadow</div>
+            <div class="prop-row"><label for="objectShadowColor">Color</label><input id="objectShadowColor" type="color" /></div>
+            <div class="prop-row"><label for="objectShadowOpacity">Opacity</label><input id="objectShadowOpacity" type="number" min="0" max="1" step="0.05" /></div>
+            <div class="prop-row"><label for="objectShadowOffsetX">X offset</label><input id="objectShadowOffsetX" type="number" step="0.5" /></div>
+            <div class="prop-row"><label for="objectShadowOffsetY">Y offset</label><input id="objectShadowOffsetY" type="number" step="0.5" /></div>
+            <div class="prop-row"><label for="objectShadowBlur">Blur</label><input id="objectShadowBlur" type="number" min="0" step="0.5" /></div>
+            <div class="prop-actions"><button id="objectShadowDeleteBtn" class="panel-btn danger" type="button">Delete Shadow</button></div>
+          </div>
           <div id="screenProps" class="properties-form">
             <div class="prop-group-title">Screen</div>
             <div class="prop-row">

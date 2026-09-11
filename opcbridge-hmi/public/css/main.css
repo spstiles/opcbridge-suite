@@ -906,6 +906,37 @@ body.runtime-mode .ws-badge {
     display: none;
 }
 
+.menu-group-label {
+    padding: 5px 10px 3px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.toolbar-dynamics-wrap {
+    position: relative;
+    padding-right: 8px;
+    margin-right: 2px;
+    border-right: 1px solid var(--border-subtle);
+}
+
+.toolbar-dynamics-flyout {
+    position: absolute;
+    top: calc(100% + 7px);
+    right: 8px;
+    z-index: 1002;
+    min-width: 190px;
+    padding: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    box-shadow: var(--shadow-lg);
+}
+
+.toolbar-dynamics-flyout.is-hidden { display: none; }
+
 #visibilityExpressionInsertMenu,
 #rectColorExpressionInsertMenu,
 #automationNumericExpressionInsertMenu {
