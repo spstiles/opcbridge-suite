@@ -16653,14 +16653,29 @@ const renderMultiStateEditor = (obj) => {
   objectDynamicStatesHost.appendChild(form);
 
   const updateAutomation = (patch) => persistMultiStateAutomation(obj, { ...automation, ...patch });
+  const updateAutomationWhileTyping = (patch) => {
+    const current = normalizeMultiStateAutomationState(obj.multiStateAutomation);
+    const next = normalizeMultiStateAutomationState({ ...current, ...patch });
+    if (current.sourceType === next.sourceType
+      && current.connection_id === next.connection_id
+      && current.tag === next.tag) return;
+    recordHistory();
+    obj.multiStateAutomation = next;
+    syncEditorFromScreen();
+    setDirty(true);
+  };
   registerCompactTagBinding({
     id: "multi-state-source",
     container: form,
     beforeEl: expressionRow,
     buttonLabel: "Source",
     modalTitle: "Multi-State Source Tag",
-    read: () => ({ connection_id: automation.connection_id || "", tag: automation.tag || "" }),
-    apply: ({ connection_id, tag }) => updateAutomation({ sourceType: "tag", connection_id, tag })
+    read: () => {
+      const current = normalizeMultiStateAutomationState(obj.multiStateAutomation);
+      return { connection_id: current.connection_id || "", tag: current.tag || "" };
+    },
+    apply: ({ connection_id, tag }) => updateAutomation({ sourceType: "tag", connection_id, tag }),
+    applyLive: ({ connection_id, tag }) => updateAutomationWhileTyping({ sourceType: "tag", connection_id, tag })
   });
 
   const syncSourceRows = () => {
@@ -24593,39 +24608,30 @@ function registerCompactTagBinding(config) {
   button.textContent = "...";
   button.addEventListener("click", () => openCompactTagBindingModal(config.id));
 
-  const applyEditedBinding = () => {
+  const readEditedBinding = () => {
     const connection_id = String(editorConnectionInput.value || "").trim();
     const tag = String(editorTagInput.value || "").trim();
-    config.apply({ connection_id, tag });
+    return { connection_id, tag };
   };
   let pendingEditTimer = null;
   const cancelPending = () => {
     if (pendingEditTimer !== null) window.clearTimeout(pendingEditTimer);
     pendingEditTimer = null;
   };
-  editorConnectionInput.addEventListener("change", applyEditedBinding);
-  editorTagInput.addEventListener("input", () => {
-    cancelPending();
-    pendingEditTimer = window.setTimeout(() => {
-      pendingEditTimer = null;
-      const selectionStart = editorTagInput.selectionStart;
-      const selectionEnd = editorTagInput.selectionEnd;
-      applyEditedBinding();
-      requestAnimationFrame(() => {
-        const refreshedInput = getCompactTagBindingConfig(config.id)?.editorTagInput;
-        if (!refreshedInput || !refreshedInput.isConnected) return;
-        refreshedInput.focus();
-        if (typeof selectionStart === "number" && typeof selectionEnd === "number") {
-          try {
-            refreshedInput.setSelectionRange(selectionStart, selectionEnd);
-          } catch {}
-        }
-      });
-    }, 350);
-  });
+  editorConnectionInput.addEventListener("change", () => config.apply(readEditedBinding()));
+  if (typeof config.applyLive === "function") {
+    editorTagInput.addEventListener("input", () => {
+      cancelPending();
+      pendingEditTimer = window.setTimeout(() => {
+        pendingEditTimer = null;
+        config.applyLive(readEditedBinding());
+      }, 350);
+    });
+  }
   editorTagInput.addEventListener("change", () => {
     cancelPending();
-    applyEditedBinding();
+    if (typeof config.applyLive === "function") config.applyLive(readEditedBinding());
+    else config.apply(readEditedBinding());
   });
 
   row.append(keyEl, editorConnectionInput, editorTagInput, button);
