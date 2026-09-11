@@ -309,16 +309,15 @@ const objectDynamicMotionHost = document.getElementById("objectDynamicMotionHost
 const objectDynamicShadowHost = document.getElementById("objectDynamicShadowHost");
 const objectShadowColor = document.getElementById("objectShadowColor");
 const objectShadowOpacity = document.getElementById("objectShadowOpacity");
-const objectShadowOffsetX = document.getElementById("objectShadowOffsetX");
-const objectShadowOffsetY = document.getElementById("objectShadowOffsetY");
+const objectShadowSize = document.getElementById("objectShadowSize");
 const objectShadowBlur = document.getElementById("objectShadowBlur");
 const objectShadowDeleteBtn = document.getElementById("objectShadowDeleteBtn");
 const objectDynamicDropShadowHost = document.getElementById("objectDynamicDropShadowHost");
 const objectDropShadowColor = document.getElementById("objectDropShadowColor");
 const objectDropShadowOpacity = document.getElementById("objectDropShadowOpacity");
-const objectDropShadowOffsetX = document.getElementById("objectDropShadowOffsetX");
-const objectDropShadowOffsetY = document.getElementById("objectDropShadowOffsetY");
-const objectDropShadowBlur = document.getElementById("objectDropShadowBlur");
+const objectDropShadowDirection = document.getElementById("objectDropShadowDirection");
+const objectDropShadowDepth = document.getElementById("objectDropShadowDepth");
+const objectDropShadowSoftness = document.getElementById("objectDropShadowSoftness");
 const objectDropShadowDeleteBtn = document.getElementById("objectDropShadowDeleteBtn");
 const tagsModalOverlay = document.getElementById("tagsModalOverlay");
 const tagsModalCloseBtn = document.getElementById("tagsModalCloseBtn");
@@ -2664,7 +2663,7 @@ const ensureShadowEffectForSelectedObject = () => {
   const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
   if (!obj || ["alarms-panel", "viewport"].includes(obj.type)) return;
   if (!obj.shadow) {
-    obj.shadow = { color: "#000000", opacity: 0.45, offsetX: 2, offsetY: 2, blur: 2 };
+    obj.shadow = { color: "#000000", opacity: 0.45, size: 2, blur: 0 };
     setDirty(true);
     render();
   }
@@ -2677,7 +2676,7 @@ const ensureDropShadowEffectForSelectedObject = () => {
   const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
   if (!obj || ["alarms-panel", "viewport"].includes(obj.type)) return;
   if (!obj.dropShadow) {
-    obj.dropShadow = { color: "#000000", opacity: 0.45, offsetX: 2, offsetY: 2, blur: 2 };
+    obj.dropShadow = { color: "#000000", opacity: 0.45, direction: 315, depth: 2, softness: 0.2 };
     setDirty(true);
     render();
   }
@@ -13680,36 +13679,82 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
   }
   if (obj.shadow && typeof obj.shadow === "object") {
     const shadow = obj.shadow;
-    const colorValue = String(shadow.color || "#000000").trim();
-    const opacity = Math.max(0, Math.min(1, Number(shadow.opacity ?? 0.45)));
-    const hex = colorValue.match(/^#([0-9a-f]{6})$/i);
-    const colorValueWithOpacity = hex
-      ? `rgba(${parseInt(hex[1].slice(0, 2), 16)}, ${parseInt(hex[1].slice(2, 4), 16)}, ${parseInt(hex[1].slice(4, 6), 16)}, ${opacity})`
-      : colorValue;
-    const shadowHost = document.createElementNS(ns, "g");
-    shadowHost.style.filter = `drop-shadow(${Number(shadow.offsetX ?? 2)}px ${Number(shadow.offsetY ?? 2)}px ${Math.max(0, Number(shadow.blur ?? 2))}px ${colorValueWithOpacity})`;
-    parent.appendChild(shadowHost);
-    parent = shadowHost;
+    const bounds = getObjectBounds(obj);
+    if (bounds) {
+      const size = Math.max(0, Number(shadow.size ?? 2));
+      const blur = Math.max(0, Number(shadow.blur ?? 0));
+      const box = document.createElementNS(ns, "rect");
+      box.setAttribute("x", Number(bounds.x || 0) - size);
+      box.setAttribute("y", Number(bounds.y || 0) - size);
+      box.setAttribute("width", Math.max(0, Number(bounds.width || 0)) + size * 2);
+      box.setAttribute("height", Math.max(0, Number(bounds.height || 0)) + size * 2);
+      box.setAttribute("fill", String(shadow.color || "#000000"));
+      box.setAttribute("fill-opacity", Math.max(0, Math.min(1, Number(shadow.opacity ?? 0.45))));
+      box.setAttribute("pointer-events", "none");
+      if (blur > 0) box.style.filter = `blur(${blur}px)`;
+      applyRotationTransform(box, obj, bounds);
+      parent.appendChild(box);
+    }
   }
   if (obj.dropShadow && typeof obj.dropShadow === "object") {
     const shadow = obj.dropShadow;
     const svgRoot = svgRootForPaint(parent);
     const defs = getOrCreateDefs(svgRoot);
     if (defs) {
+      const bounds = getObjectBounds(obj) || { x: 0, y: 0, width: 1, height: 1 };
+      const legacyX = Number(shadow.offsetX);
+      const legacyY = Number(shadow.offsetY);
+      const legacyDepth = Number.isFinite(legacyX) && Number.isFinite(legacyY) ? Math.hypot(legacyX, legacyY) : 2;
+      const legacyDirection = Number.isFinite(legacyX) && Number.isFinite(legacyY)
+        ? ((Math.atan2(-legacyY, legacyX) * 180 / Math.PI) + 360) % 360
+        : 315;
+      const direction = Number.isFinite(Number(shadow.direction)) ? Number(shadow.direction) : legacyDirection;
+      const depth = Math.max(0, Number.isFinite(Number(shadow.depth)) ? Number(shadow.depth) : legacyDepth);
+      const softness = Math.max(0, Math.min(1, Number.isFinite(Number(shadow.softness)) ? Number(shadow.softness) : Math.max(0, Number(shadow.blur ?? 2)) / 10));
+      const radians = direction * Math.PI / 180;
+      const dx = Math.cos(radians) * depth;
+      const dy = -Math.sin(radians) * depth;
+      const blur = softness * 10;
+      const padding = Math.max(8, blur * 4);
       const filterId = `hmi-drop-shadow-${nextDropShadowId++}`;
       const filter = document.createElementNS(ns, "filter");
       filter.setAttribute("id", filterId);
-      filter.setAttribute("x", "-100%");
-      filter.setAttribute("y", "-100%");
-      filter.setAttribute("width", "300%");
-      filter.setAttribute("height", "300%");
-      const effect = document.createElementNS(ns, "feDropShadow");
-      effect.setAttribute("dx", Number(shadow.offsetX ?? 2));
-      effect.setAttribute("dy", Number(shadow.offsetY ?? 2));
-      effect.setAttribute("stdDeviation", Math.max(0, Number(shadow.blur ?? 2)));
-      effect.setAttribute("flood-color", String(shadow.color || "#000000"));
-      effect.setAttribute("flood-opacity", Math.max(0, Math.min(1, Number(shadow.opacity ?? 0.45))));
-      filter.appendChild(effect);
+      filter.setAttribute("filterUnits", "userSpaceOnUse");
+      filter.setAttribute("color-interpolation-filters", "sRGB");
+      filter.setAttribute("x", Number(bounds.x || 0) - padding + Math.min(0, dx));
+      filter.setAttribute("y", Number(bounds.y || 0) - padding + Math.min(0, dy));
+      filter.setAttribute("width", Math.max(1, Number(bounds.width || 1)) + padding * 2 + Math.abs(dx));
+      filter.setAttribute("height", Math.max(1, Number(bounds.height || 1)) + padding * 2 + Math.abs(dy));
+      const gaussian = document.createElementNS(ns, "feGaussianBlur");
+      gaussian.setAttribute("in", "SourceAlpha");
+      gaussian.setAttribute("stdDeviation", blur);
+      gaussian.setAttribute("result", "blurredAlpha");
+      filter.appendChild(gaussian);
+      const offset = document.createElementNS(ns, "feOffset");
+      offset.setAttribute("in", "blurredAlpha");
+      offset.setAttribute("dx", dx);
+      offset.setAttribute("dy", dy);
+      offset.setAttribute("result", "offsetAlpha");
+      filter.appendChild(offset);
+      const flood = document.createElementNS(ns, "feFlood");
+      flood.setAttribute("flood-color", String(shadow.color || "#000000"));
+      flood.setAttribute("flood-opacity", Math.max(0, Math.min(1, Number(shadow.opacity ?? 0.45))));
+      flood.setAttribute("result", "shadowColor");
+      filter.appendChild(flood);
+      const composite = document.createElementNS(ns, "feComposite");
+      composite.setAttribute("in", "shadowColor");
+      composite.setAttribute("in2", "offsetAlpha");
+      composite.setAttribute("operator", "in");
+      composite.setAttribute("result", "coloredShadow");
+      filter.appendChild(composite);
+      const merge = document.createElementNS(ns, "feMerge");
+      const shadowNode = document.createElementNS(ns, "feMergeNode");
+      shadowNode.setAttribute("in", "coloredShadow");
+      const sourceNode = document.createElementNS(ns, "feMergeNode");
+      sourceNode.setAttribute("in", "SourceGraphic");
+      merge.appendChild(shadowNode);
+      merge.appendChild(sourceNode);
+      filter.appendChild(merge);
       defs.appendChild(filter);
       const shadowHost = document.createElementNS(ns, "g");
       shadowHost.setAttribute("filter", `url(#${filterId})`);
@@ -17260,16 +17305,19 @@ const updatePropertiesPanel = () => {
   if (showShadowTab) {
     if (objectShadowColor) objectShadowColor.value = String(obj.shadow.color || "#000000");
     if (objectShadowOpacity) objectShadowOpacity.value = String(obj.shadow.opacity ?? 0.45);
-    if (objectShadowOffsetX) objectShadowOffsetX.value = String(obj.shadow.offsetX ?? 2);
-    if (objectShadowOffsetY) objectShadowOffsetY.value = String(obj.shadow.offsetY ?? 2);
-    if (objectShadowBlur) objectShadowBlur.value = String(obj.shadow.blur ?? 2);
+    if (objectShadowSize) objectShadowSize.value = String(obj.shadow.size ?? 2);
+    if (objectShadowBlur) objectShadowBlur.value = String(obj.shadow.blur ?? 0);
   }
   if (showDropShadowTab) {
+    const legacyX = Number(obj.dropShadow.offsetX);
+    const legacyY = Number(obj.dropShadow.offsetY);
+    const legacyDepth = Number.isFinite(legacyX) && Number.isFinite(legacyY) ? Math.hypot(legacyX, legacyY) : 2;
+    const legacyDirection = Number.isFinite(legacyX) && Number.isFinite(legacyY) ? ((Math.atan2(-legacyY, legacyX) * 180 / Math.PI) + 360) % 360 : 315;
     if (objectDropShadowColor) objectDropShadowColor.value = String(obj.dropShadow.color || "#000000");
     if (objectDropShadowOpacity) objectDropShadowOpacity.value = String(obj.dropShadow.opacity ?? 0.45);
-    if (objectDropShadowOffsetX) objectDropShadowOffsetX.value = String(obj.dropShadow.offsetX ?? 2);
-    if (objectDropShadowOffsetY) objectDropShadowOffsetY.value = String(obj.dropShadow.offsetY ?? 2);
-    if (objectDropShadowBlur) objectDropShadowBlur.value = String(obj.dropShadow.blur ?? 2);
+    if (objectDropShadowDirection) objectDropShadowDirection.value = String(obj.dropShadow.direction ?? legacyDirection);
+    if (objectDropShadowDepth) objectDropShadowDepth.value = String(obj.dropShadow.depth ?? legacyDepth);
+    if (objectDropShadowSoftness) objectDropShadowSoftness.value = String(obj.dropShadow.softness ?? Math.max(0, Math.min(1, Number(obj.dropShadow.blur ?? 2) / 10)));
   }
   if (visibilityProps && objectDynamicVisibilityHost && showRectVisibilityTab) {
     if (visibilityProps.parentNode !== objectDynamicVisibilityHost) objectDynamicVisibilityHost.appendChild(visibilityProps);
@@ -32703,14 +32751,13 @@ const applySelectedShadowProperty = () => {
   obj.shadow = {
     color: String(objectShadowColor?.value || "#000000"),
     opacity: Math.max(0, Math.min(1, Number(objectShadowOpacity?.value ?? 0.45))),
-    offsetX: Number(objectShadowOffsetX?.value ?? 2),
-    offsetY: Number(objectShadowOffsetY?.value ?? 2),
-    blur: Math.max(0, Number(objectShadowBlur?.value ?? 2))
+    size: Math.max(0, Number(objectShadowSize?.value ?? 2)),
+    blur: Math.max(0, Number(objectShadowBlur?.value ?? 0))
   };
   setDirty(true);
   render();
 };
-[objectShadowColor, objectShadowOpacity, objectShadowOffsetX, objectShadowOffsetY, objectShadowBlur].forEach((input) => {
+[objectShadowColor, objectShadowOpacity, objectShadowSize, objectShadowBlur].forEach((input) => {
   input?.addEventListener("input", applySelectedShadowProperty);
   input?.addEventListener("change", applySelectedShadowProperty);
 });
@@ -32732,14 +32779,14 @@ const applySelectedDropShadowProperty = () => {
   obj.dropShadow = {
     color: String(objectDropShadowColor?.value || "#000000"),
     opacity: Math.max(0, Math.min(1, Number(objectDropShadowOpacity?.value ?? 0.45))),
-    offsetX: Number(objectDropShadowOffsetX?.value ?? 2),
-    offsetY: Number(objectDropShadowOffsetY?.value ?? 2),
-    blur: Math.max(0, Number(objectDropShadowBlur?.value ?? 2))
+    direction: ((Number(objectDropShadowDirection?.value ?? 315) % 360) + 360) % 360,
+    depth: Math.max(0, Number(objectDropShadowDepth?.value ?? 2)),
+    softness: Math.max(0, Math.min(1, Number(objectDropShadowSoftness?.value ?? 0.2)))
   };
   setDirty(true);
   render();
 };
-[objectDropShadowColor, objectDropShadowOpacity, objectDropShadowOffsetX, objectDropShadowOffsetY, objectDropShadowBlur].forEach((input) => {
+[objectDropShadowColor, objectDropShadowOpacity, objectDropShadowDirection, objectDropShadowDepth, objectDropShadowSoftness].forEach((input) => {
   input?.addEventListener("input", applySelectedDropShadowProperty);
   input?.addEventListener("change", applySelectedDropShadowProperty);
 });

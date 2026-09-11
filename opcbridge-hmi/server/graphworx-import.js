@@ -306,14 +306,16 @@ const importedShadow = (node) => {
   const effect = descendants(node, (name) => name === "DropShadowBitmapEffect" || name === "DropShadowEffect")[0];
   if (!effect) return null;
   const depth = num(effect.ShadowDepth, 2);
-  const direction = num(effect.Direction, 315) * Math.PI / 180;
-  const softness = num(effect.BlurRadius, Math.max(0.5, num(effect.Softness, 0.02) * 20));
+  const direction = num(effect.Direction, 315);
+  const softness = effect.Softness != null
+    ? Math.max(0, Math.min(1, num(effect.Softness, 0.5)))
+    : Math.max(0, Math.min(1, num(effect.BlurRadius, 5) / 25));
   return {
     color: color(effect.Color, "#000000"),
     opacity: Math.max(0, Math.min(1, num(effect.Opacity, 1))),
-    offsetX: Number((Math.cos(direction) * depth).toFixed(3)),
-    offsetY: Number((-Math.sin(direction) * depth).toFixed(3)),
-    blur: softness
+    direction,
+    depth,
+    softness
   };
 };
 
