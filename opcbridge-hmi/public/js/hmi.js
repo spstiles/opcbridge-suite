@@ -9383,24 +9383,33 @@ const getButtonLabelBindingsMap = (obj) => {
 const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
   const row = document.createElement("div");
   row.className = "text-binding-row text-binding-inline-row";
+  const isExpression = binding?.sourceType === "expression";
 
   const keyEl = document.createElement("div");
   keyEl.className = "text-binding-key";
   keyEl.textContent = `{${key}}`;
 
-  const connectionInput = document.createElement("select");
-  connectionInput.className = "automation-tag-input";
-  const bindingConnectionId = String(binding?.connection_id || "").trim();
-  setConnectionSelectValue(connectionInput, bindingConnectionId);
-  connectionInput.disabled = binding?.sourceType === "expression";
+  let connectionInput = null;
+  let sourceControl = null;
+  if (isExpression) {
+    sourceControl = document.createElement("div");
+    sourceControl.className = "text-binding-source-kind";
+    sourceControl.textContent = "Expression";
+  } else {
+    connectionInput = document.createElement("select");
+    connectionInput.className = "automation-tag-input";
+    const bindingConnectionId = String(binding?.connection_id || "").trim();
+    setConnectionSelectValue(connectionInput, bindingConnectionId);
+    sourceControl = connectionInput;
+  }
 
   const tagInput = document.createElement("input");
   tagInput.type = "text";
   tagInput.className = "automation-tag-input";
   tagInput.placeholder = "tag";
-  tagInput.value = binding?.sourceType === "expression" ? String(binding.expression || "") : String(binding?.tag || "");
-  tagInput.disabled = binding?.sourceType === "expression";
-  if (binding?.sourceType === "expression") tagInput.title = String(binding.expression || "");
+  tagInput.value = isExpression ? String(binding.expression || "") : String(binding?.tag || "");
+  tagInput.readOnly = isExpression;
+  if (isExpression) tagInput.title = String(binding.expression || "");
 
   const editBtn = document.createElement("button");
   editBtn.type = "button";
@@ -9412,17 +9421,19 @@ const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
     else updateTextBindingProperty(key, patch, options);
   };
 
-  connectionInput.addEventListener("change", () => {
+  connectionInput?.addEventListener("change", () => {
     applyPatch({ connection_id: connectionIdFromFriendlyInput(connectionInput) });
   });
-  tagInput.addEventListener("change", () => {
-    applyPatch({ tag: String(tagInput.value || "").trim() });
-  });
+  if (!isExpression) {
+    tagInput.addEventListener("change", () => {
+      applyPatch({ tag: String(tagInput.value || "").trim() });
+    });
+  }
   editBtn.addEventListener("click", () => {
     openTextBindingModal(key, objectType);
   });
 
-  row.append(keyEl, connectionInput, tagInput, editBtn);
+  row.append(keyEl, sourceControl, tagInput, editBtn);
   return row;
 };
 

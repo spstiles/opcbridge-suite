@@ -4121,6 +4121,18 @@ body.automation-panel-open #editor-pane {
   white-space: nowrap;
 }
 
+.text-binding-source-kind {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: center;
+}
+
 .text-binding-summary {
   min-width: 0;
   font-size: 10px;
