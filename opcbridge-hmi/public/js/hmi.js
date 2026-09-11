@@ -899,6 +899,20 @@ const buildColorRulesFromObject = (obj) => {
 
 const isColorDynamicTab = (tab = currentObjectDynamicTab) => /^color(?:-\d+)?$/.test(String(tab || "").trim());
 
+const isVisibilityDynamicTab = (tab = currentObjectDynamicTab) => /^visibility(?:-\d+)?$/.test(String(tab || "").trim());
+
+const getVisibilityDynamicTabIndex = (tab = currentObjectDynamicTab) => {
+  const normalized = String(tab || "").trim();
+  if (!isVisibilityDynamicTab(normalized)) return -1;
+  const match = normalized.match(/^visibility-(\d+)$/);
+  return match ? Math.max(0, Number(match[1]) || 0) : 0;
+};
+
+const getVisibilityDynamicTabKey = (index = 0) => {
+  const normalized = Math.max(0, Number(index) || 0);
+  return normalized <= 0 ? "visibility" : `visibility-${normalized}`;
+};
+
 const getColorDynamicTabIndex = (tab = currentObjectDynamicTab) => {
   const normalized = String(tab || "").trim();
   if (!isColorDynamicTab(normalized)) return -1;
@@ -1513,7 +1527,9 @@ const normalizeVisibilityState = (value) => {
 const getVisibilityRuleState = (value) => {
   const state = normalizeVisibilityState(value);
   if (!Array.isArray(state.rules)) return { collection: null, rule: state, index: 0 };
-  const index = Math.max(0, Math.min(Number(state.selectedRuleIndex) || 0, state.rules.length - 1));
+  const requestedIndex = isVisibilityDynamicTab() ? getVisibilityDynamicTabIndex() : Number(state.selectedRuleIndex) || 0;
+  const index = Math.max(0, Math.min(requestedIndex, state.rules.length - 1));
+  state.selectedRuleIndex = index;
   return { collection: state, rule: state.rules[index], index };
 };
 
@@ -1529,20 +1545,6 @@ const syncVisibilityUiFromState = (state) => {
     visibilityFields.hidden = !isEnabled;
   }
   if (visibilitySourceTypeSelect) setSelectValueSafe(visibilitySourceTypeSelect, sourceType);
-  if (visibilityRuleSelect) {
-    visibilityRuleSelect.textContent = "";
-    const rules = collection?.rules || [vis];
-    rules.forEach((rule, ruleIndex) => {
-      const option = document.createElement("option");
-      option.value = String(ruleIndex);
-      option.textContent = `Condition ${ruleIndex + 1}${rule.sourceReference ? " · unresolved" : ""}`;
-      visibilityRuleSelect.appendChild(option);
-    });
-    visibilityRuleSelect.value = String(index);
-  }
-  if (visibilityRuleDeleteBtn) visibilityRuleDeleteBtn.disabled = (collection?.rules?.length || 1) <= 1;
-  if (visibilityRuleUpBtn) visibilityRuleUpBtn.disabled = !collection || index <= 0;
-  if (visibilityRuleDownBtn) visibilityRuleDownBtn.disabled = !collection || index >= collection.rules.length - 1;
   setFriendlyConnectionInputValue(visibilityConnectionInput, vis.connection_id || "");
   setInputValueSafe(visibilityTagInput, vis.tag || "");
   const unresolvedSource = vis.status === "unresolved" || Boolean(vis.sourceType !== "expression" && vis.sourceReference && !vis.connection_id);
@@ -2361,42 +2363,42 @@ const extractAutomationExpressionTagKeys = (expression, out) => extractVisibilit
 
 const isEditingRectVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && obj.type === "rect" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && obj.type === "rect" && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingLineVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && (obj.type === "line" || obj.type === "pipe") && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && (obj.type === "line" || obj.type === "pipe") && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingEllipseVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && obj.type === "ellipse" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && obj.type === "ellipse" && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingTextVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && obj.type === "text" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && obj.type === "text" && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingButtonVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && obj.type === "button" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && obj.type === "button" && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingGroupVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && obj.type === "group" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && obj.type === "group" && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingCircleVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && obj.type === "circle" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && obj.type === "circle" && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingPolygonVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && obj.type === "polygon" && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj));
+  return Boolean(obj && obj.type === "polygon" && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingRectColorDynamic = () => {
@@ -2544,13 +2546,23 @@ const ensureRectMotionDraft = (obj) => {
 const setObjectDynamicTab = (tab) => {
   const normalized = String(tab || "properties").trim();
   const next =
-    normalized === "visibility" ? "visibility" :
+    isVisibilityDynamicTab(normalized) ? getVisibilityDynamicTabKey(getVisibilityDynamicTabIndex(normalized)) :
     isColorDynamicTab(normalized) ? getColorDynamicTabKey(getColorDynamicTabIndex(normalized)) :
     normalized === "states" ? "states" :
     normalized === "rotation" ? "rotation" :
     normalized === "motion" ? "motion" :
     "properties";
   currentObjectDynamicTab = next;
+  if (isVisibilityDynamicTab(next)) {
+    const obj = getSelectedVisibilityDynamicObject();
+    if (obj && rectVisibilityDraftObject === obj && rectVisibilityDraft) {
+      const draft = normalizeVisibilityState(rectVisibilityDraft);
+      if (Array.isArray(draft.rules)) {
+        draft.selectedRuleIndex = Math.max(0, Math.min(getVisibilityDynamicTabIndex(next), draft.rules.length - 1));
+        rectVisibilityDraft = draft;
+      }
+    }
+  }
   if (isColorDynamicTab(next)) {
     const obj = getSelectedColorDynamicObject();
     if (obj && rectColorDraftObject === obj && rectColorDraft) {
@@ -2561,11 +2573,51 @@ const setObjectDynamicTab = (tab) => {
     }
   }
   if (objectDynamicTabPropertiesBtn) objectDynamicTabPropertiesBtn.classList.toggle("is-active", next === "properties");
-  if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-active", next === "visibility");
+  if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-active", isVisibilityDynamicTab(next));
   if (objectDynamicTabStatesBtn) objectDynamicTabStatesBtn.classList.toggle("is-active", next === "states");
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-active", next === "rotation");
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-active", next === "motion");
+  syncObjectDynamicVisibilityTabs(getSelectedVisibilityDynamicObject());
   syncObjectDynamicColorTabs(getSelectedColorDynamicObject());
+};
+
+const syncObjectDynamicVisibilityTabs = (obj) => {
+  if (!objectDynamicTabs || !objectDynamicTabVisibilityBtn) return;
+  const normalized = obj && hasVisibilityDynamic(obj) ? normalizeVisibilityState(rectVisibilityDraftObject === obj && rectVisibilityDraft ? rectVisibilityDraft : obj.visibility) : null;
+  const count = Array.isArray(normalized?.rules) ? normalized.rules.length : (normalized ? 1 : 0);
+  [...objectDynamicTabs.querySelectorAll("[data-visibility-tab-index]")].forEach((button) => {
+    const index = Number(button.dataset.visibilityTabIndex || 0);
+    if (index > 0 && index >= count) button.remove();
+  });
+  if (count <= 0) {
+    objectDynamicTabVisibilityBtn.classList.add("is-hidden");
+    objectDynamicTabVisibilityBtn.hidden = true;
+    return;
+  }
+  objectDynamicTabVisibilityBtn.classList.remove("is-hidden");
+  objectDynamicTabVisibilityBtn.hidden = false;
+  objectDynamicTabVisibilityBtn.textContent = "Visibility";
+  objectDynamicTabVisibilityBtn.dataset.visibilityTabIndex = "0";
+  objectDynamicTabVisibilityBtn.dataset.objectDynamicTab = "visibility";
+  for (let index = 1; index < count; index += 1) {
+    let button = objectDynamicTabs.querySelector(`[data-visibility-tab-index="${index}"]`);
+    if (!button) {
+      button = objectDynamicTabVisibilityBtn.cloneNode(true);
+      button.id = "";
+      objectDynamicTabColorBtn?.before(button);
+    }
+    button.classList.remove("is-hidden");
+    button.hidden = false;
+    button.textContent = `Visibility ${index + 1}`;
+    button.dataset.visibilityTabIndex = String(index);
+    button.dataset.objectDynamicTab = getVisibilityDynamicTabKey(index);
+  }
+  [...objectDynamicTabs.querySelectorAll("[data-visibility-tab-index]")].forEach((button) => {
+    const tabKey = String(button.dataset.objectDynamicTab || "visibility");
+    button.classList.toggle("is-active", currentObjectDynamicTab === tabKey);
+    button.draggable = count > 1;
+    button.title = count > 1 ? "Drag to change automation priority" : "";
+  });
 };
 
 const syncObjectDynamicColorTabs = (obj) => {
@@ -2638,6 +2690,7 @@ const ensureVisibilityDynamicForSelectedObject = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedVisibilityDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
+  const hadVisibility = hasVisibilityDynamic(obj);
   if (!hasVisibilityDynamic(obj)) {
     recordHistory();
     obj.visibility = { enabled: true };
@@ -2646,7 +2699,15 @@ const ensureVisibilityDynamicForSelectedObject = () => {
     setDirty(true);
   }
   ensureRectVisibilityDraft(obj);
-  currentObjectDynamicTab = "visibility";
+  const draft = normalizeVisibilityState(rectVisibilityDraft);
+  if (hadVisibility) {
+    const rules = Array.isArray(draft.rules) ? draft.rules.slice() : [normalizeVisibilityRule(draft)];
+    rules.push(normalizeVisibilityRule({ enabled: true }));
+    rectVisibilityDraft = { enabled: true, defaultVisible: false, rules, selectedRuleIndex: rules.length - 1 };
+    applyVisibilityDraftToObject();
+  }
+  const selectedIndex = Array.isArray(rectVisibilityDraft?.rules) ? rectVisibilityDraft.rules.length - 1 : 0;
+  currentObjectDynamicTab = getVisibilityDynamicTabKey(selectedIndex);
   updatePropertiesPanel();
   return true;
 };
@@ -4430,11 +4491,6 @@ const barBorderWidthInput = document.getElementById("barBorderWidth");
 const visibilityProps = document.getElementById("visibilityProps");
 const visibilityFields = document.getElementById("visibilityFields");
 const visibilityEnabledInput = document.getElementById("visibilityEnabled");
-const visibilityRuleSelect = document.getElementById("visibilityRuleSelect");
-const visibilityRuleAddBtn = document.getElementById("visibilityRuleAddBtn");
-const visibilityRuleDeleteBtn = document.getElementById("visibilityRuleDeleteBtn");
-const visibilityRuleUpBtn = document.getElementById("visibilityRuleUpBtn");
-const visibilityRuleDownBtn = document.getElementById("visibilityRuleDownBtn");
 const visibilityConnectionInput = document.getElementById("visibilityConnection");
 const visibilityTagInput = document.getElementById("visibilityTag");
 const visibilityTagPickBtn = document.getElementById("visibilityTagPickBtn");
@@ -16646,7 +16702,12 @@ const updatePropertiesPanel = () => {
   if (barProps) barProps.classList.toggle("is-hidden", !showBar);
   if (automationLaunchRow) automationLaunchRow.classList.toggle("is-hidden", !showAutomationLaunch);
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
-  if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && !hasVisibilityDynamic(obj) && currentObjectDynamicTab === "visibility") currentObjectDynamicTab = "properties";
+  if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && !hasVisibilityDynamic(obj) && isVisibilityDynamicTab(currentObjectDynamicTab)) currentObjectDynamicTab = "properties";
+  if (isVisibilityDynamicTab(currentObjectDynamicTab) && hasVisibilityDynamic(obj)) {
+    const visibilityState = normalizeVisibilityState(rectVisibilityDraftObject === obj && rectVisibilityDraft ? rectVisibilityDraft : obj.visibility);
+    const visibilityRuleCount = Array.isArray(visibilityState.rules) ? visibilityState.rules.length : 1;
+    currentObjectDynamicTab = getVisibilityDynamicTabKey(Math.min(getVisibilityDynamicTabIndex(), Math.max(0, visibilityRuleCount - 1)));
+  }
   if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicPolygon || showDynamicGroup) && !hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab)) currentObjectDynamicTab = "properties";
   if (isColorDynamicTab(currentObjectDynamicTab) && hasEditableColorDynamic(obj)) {
     const colorRuleCount = getCurrentColorRulesForObject(obj).length;
@@ -16667,13 +16728,13 @@ const updatePropertiesPanel = () => {
     rectMotionDraftObject = null;
   }
   if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon));
-  if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && hasVisibilityDynamic(obj)));
+  syncObjectDynamicVisibilityTabs(obj);
   syncObjectDynamicColorTabs(obj);
   if (objectDynamicTabStatesBtn) objectDynamicTabStatesBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && hasMultiStateDynamic(obj)));
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))));
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) setObjectDynamicTab(currentObjectDynamicTab);
-  const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && currentObjectDynamicTab === "visibility" && hasVisibilityDynamic(obj);
+  const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && isVisibilityDynamicTab(currentObjectDynamicTab) && hasVisibilityDynamic(obj);
   const showRectColorTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicPolygon || showDynamicGroup) && hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab);
   const showRectStatesTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && currentObjectDynamicTab === "states" && hasMultiStateDynamic(obj);
   const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
@@ -23527,55 +23588,6 @@ if (visibilityEnabledInput) {
   });
 }
 
-if (visibilityRuleSelect) {
-  visibilityRuleSelect.addEventListener("change", () => {
-    const normalized = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
-    if (!Array.isArray(normalized.rules)) return;
-    normalized.selectedRuleIndex = Math.max(0, Math.min(Number(visibilityRuleSelect.value) || 0, normalized.rules.length - 1));
-    rectVisibilityDraft = normalized;
-    syncVisibilityUiFromState(rectVisibilityDraft);
-  });
-}
-
-if (visibilityRuleAddBtn) {
-  visibilityRuleAddBtn.addEventListener("click", () => {
-    const normalized = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
-    const rules = Array.isArray(normalized.rules) ? normalized.rules.slice() : [normalizeVisibilityRule(normalized)];
-    rules.push(normalizeVisibilityRule({ enabled: true }));
-    rectVisibilityDraft = { enabled: true, defaultVisible: false, rules, selectedRuleIndex: rules.length - 1 };
-    syncVisibilityUiFromState(rectVisibilityDraft);
-    applyVisibilityDraftToObject();
-  });
-}
-
-if (visibilityRuleDeleteBtn) {
-  visibilityRuleDeleteBtn.addEventListener("click", () => {
-    const normalized = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
-    if (!Array.isArray(normalized.rules) || normalized.rules.length <= 1) return;
-    normalized.rules.splice(normalized.selectedRuleIndex, 1);
-    normalized.selectedRuleIndex = Math.max(0, Math.min(normalized.selectedRuleIndex, normalized.rules.length - 1));
-    rectVisibilityDraft = normalized;
-    syncVisibilityUiFromState(rectVisibilityDraft);
-    applyVisibilityDraftToObject();
-  });
-}
-
-const moveSelectedVisibilityRule = (offset) => {
-    const normalized = normalizeVisibilityState(rectVisibilityDraft || { enabled: true });
-    if (!Array.isArray(normalized.rules)) return;
-    const from = normalized.selectedRuleIndex;
-    const to = Math.max(0, Math.min(from + offset, normalized.rules.length - 1));
-    if (from === to) return;
-    const [rule] = normalized.rules.splice(from, 1);
-    normalized.rules.splice(to, 0, rule);
-    normalized.selectedRuleIndex = to;
-    rectVisibilityDraft = normalized;
-    syncVisibilityUiFromState(rectVisibilityDraft);
-    applyVisibilityDraftToObject();
-};
-visibilityRuleUpBtn?.addEventListener("click", () => moveSelectedVisibilityRule(-1));
-visibilityRuleDownBtn?.addEventListener("click", () => moveSelectedVisibilityRule(1));
-
 if (visibilitySourceTypeSelect) {
   visibilitySourceTypeSelect.addEventListener("change", () => {
     updateVisibilityProperty({ sourceType: visibilitySourceTypeSelect.value, enabled: true });
@@ -23879,6 +23891,18 @@ if (visibilityDeleteBtn) {
     const activeObjects = getActiveObjects();
     const obj = getSelectedVisibilityDynamicObject();
     if (!activeObjects || !obj || !hasVisibilityDynamic(obj)) return;
+    ensureRectVisibilityDraft(obj);
+    const draft = normalizeVisibilityState(rectVisibilityDraft);
+    if (Array.isArray(draft.rules) && draft.rules.length > 1) {
+      const index = Math.max(0, Math.min(getVisibilityDynamicTabIndex(), draft.rules.length - 1));
+      draft.rules.splice(index, 1);
+      draft.selectedRuleIndex = Math.max(0, Math.min(index, draft.rules.length - 1));
+      rectVisibilityDraft = draft;
+      applyVisibilityDraftToObject();
+      setObjectDynamicTab(getVisibilityDynamicTabKey(draft.selectedRuleIndex));
+      updatePropertiesPanel();
+      return;
+    }
     recordHistory();
     delete obj.visibility;
     rectVisibilityDraft = null;
@@ -31820,29 +31844,55 @@ if (objectDynamicTabStatesBtn) {
 
 if (objectDynamicTabs) {
   let draggedColorRuleIndex = null;
+  let draggedVisibilityRuleIndex = null;
   objectDynamicTabs.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-object-dynamic-tab]") : null;
     if (!(button instanceof HTMLButtonElement)) return;
     const tab = String(button.dataset.objectDynamicTab || "");
-    if (!isColorDynamicTab(tab)) return;
+    if (!isColorDynamicTab(tab) && !isVisibilityDynamicTab(tab)) return;
     setObjectDynamicTab(tab);
     updatePropertiesPanel();
   });
   objectDynamicTabs.addEventListener("dragstart", (event) => {
-    const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index]") : null;
+    const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index], [data-visibility-tab-index]") : null;
     if (!(button instanceof HTMLButtonElement)) return;
-    draggedColorRuleIndex = Number(button.dataset.colorTabIndex || 0);
-    event.dataTransfer?.setData("text/plain", String(draggedColorRuleIndex));
+    if (button.dataset.visibilityTabIndex !== undefined) draggedVisibilityRuleIndex = Number(button.dataset.visibilityTabIndex || 0);
+    else draggedColorRuleIndex = Number(button.dataset.colorTabIndex || 0);
+    event.dataTransfer?.setData("text/plain", String(draggedVisibilityRuleIndex ?? draggedColorRuleIndex));
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
   });
   objectDynamicTabs.addEventListener("dragover", (event) => {
-    if (draggedColorRuleIndex === null) return;
-    const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index]") : null;
+    if (draggedColorRuleIndex === null && draggedVisibilityRuleIndex === null) return;
+    const selector = draggedVisibilityRuleIndex !== null ? "[data-visibility-tab-index]" : "[data-color-tab-index]";
+    const button = event.target instanceof Element ? event.target.closest(selector) : null;
     if (!(button instanceof HTMLButtonElement)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   });
   objectDynamicTabs.addEventListener("drop", (event) => {
+    if (draggedVisibilityRuleIndex !== null) {
+      const button = event.target instanceof Element ? event.target.closest("[data-visibility-tab-index]") : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      const obj = getSelectedVisibilityDynamicObject();
+      if (!obj) return;
+      ensureRectVisibilityDraft(obj);
+      const draft = normalizeVisibilityState(rectVisibilityDraft);
+      if (!Array.isArray(draft.rules)) return;
+      const from = draggedVisibilityRuleIndex;
+      const to = Number(button.dataset.visibilityTabIndex || 0);
+      draggedVisibilityRuleIndex = null;
+      if (from === to || from < 0 || from >= draft.rules.length || to < 0 || to >= draft.rules.length) return;
+      const [rule] = draft.rules.splice(from, 1);
+      draft.rules.splice(to, 0, rule);
+      draft.selectedRuleIndex = to;
+      rectVisibilityDraft = draft;
+      currentObjectDynamicTab = getVisibilityDynamicTabKey(to);
+      syncVisibilityUiFromState(rectVisibilityDraft);
+      applyVisibilityDraftToObject();
+      updatePropertiesPanel();
+      return;
+    }
     const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index]") : null;
     if (!(button instanceof HTMLButtonElement) || draggedColorRuleIndex === null) return;
     event.preventDefault();
@@ -31864,6 +31914,7 @@ if (objectDynamicTabs) {
   });
   objectDynamicTabs.addEventListener("dragend", () => {
     draggedColorRuleIndex = null;
+    draggedVisibilityRuleIndex = null;
   });
 }
 
