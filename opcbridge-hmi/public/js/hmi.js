@@ -9221,15 +9221,8 @@ const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
 
   const connectionInput = document.createElement("select");
   connectionInput.className = "automation-tag-input";
-  populateConnectionSelect(connectionInput);
   const bindingConnectionId = String(binding?.connection_id || "").trim();
-  if (bindingConnectionId && !Array.from(connectionInput.options).some((option) => option.value === bindingConnectionId)) {
-    const unresolvedOption = document.createElement("option");
-    unresolvedOption.value = bindingConnectionId;
-    unresolvedOption.textContent = getConnectionDisplayName(bindingConnectionId);
-    connectionInput.appendChild(unresolvedOption);
-  }
-  connectionInput.value = bindingConnectionId;
+  setConnectionSelectValue(connectionInput, bindingConnectionId);
   connectionInput.disabled = binding?.sourceType === "expression";
 
   const tagInput = document.createElement("input");
@@ -11561,6 +11554,19 @@ const populateConnectionSelect = (selectEl) => {
   if (previous && connectionIds.includes(previous)) {
     selectEl.value = previous;
   }
+};
+
+const setConnectionSelectValue = (selectEl, connectionId = "") => {
+  if (!selectEl) return;
+  const normalizedId = String(connectionId || "").trim();
+  populateConnectionSelect(selectEl);
+  if (normalizedId && !Array.from(selectEl.options).some((option) => option.value === normalizedId)) {
+    const unresolvedOption = document.createElement("option");
+    unresolvedOption.value = normalizedId;
+    unresolvedOption.textContent = getConnectionDisplayName(normalizedId);
+    selectEl.appendChild(unresolvedOption);
+  }
+  selectEl.value = normalizedId;
 };
 
 const populateFilteredCombinedTagSelect = (selectEl, connectionId = "") => {
@@ -24326,7 +24332,9 @@ function openCompactTagBindingModal(id) {
 function renderCompactTagBindingRows() {
   compactTagBindingConfigs.forEach((config) => {
     const binding = config.read();
-    if (config.editorConnectionInput) setFriendlyConnectionInputValue(config.editorConnectionInput, binding.connection_id || "");
+    if (config.editorConnectionInput) {
+      setConnectionSelectValue(config.editorConnectionInput, binding.connection_id || "");
+    }
     if (config.editorTagInput && document.activeElement !== config.editorTagInput) config.editorTagInput.value = String(binding.tag || "");
   });
 }
@@ -24360,15 +24368,13 @@ function registerCompactTagBinding(config) {
   keyEl.className = "text-binding-key";
   keyEl.textContent = config.buttonLabel;
 
-  const editorConnectionInput = document.createElement("input");
-  editorConnectionInput.type = "text";
+  const editorConnectionInput = document.createElement("select");
   editorConnectionInput.className = "automation-tag-input";
-  editorConnectionInput.placeholder = "Connection name";
+  populateConnectionSelect(editorConnectionInput);
   const editorTagInput = document.createElement("input");
   editorTagInput.type = "text";
   editorTagInput.className = "automation-tag-input";
   editorTagInput.placeholder = "Tag name";
-  ensureFriendlyConnectionNames(editorConnectionInput);
 
   const button = document.createElement("button");
   button.type = "button";
@@ -24377,7 +24383,7 @@ function registerCompactTagBinding(config) {
   button.addEventListener("click", () => openCompactTagBindingModal(config.id));
 
   const applyEditedBinding = () => {
-    const connection_id = connectionIdFromFriendlyInput(editorConnectionInput);
+    const connection_id = String(editorConnectionInput.value || "").trim();
     const tag = String(editorTagInput.value || "").trim();
     config.apply({ connection_id, tag });
   };
