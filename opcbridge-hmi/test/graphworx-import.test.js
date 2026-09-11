@@ -591,6 +591,24 @@ test("imports analog GraphWorX size dynamics as native level automation", () => 
   assert.ok(!result.screen.referenceHealth.issues.some((issue) => issue.category === "unsupported-automation"));
 });
 
+test("classifies an analog process point inside a border decorator as native text", () => {
+  const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx" xmlns:mwt="clr-namespace:Ico.Wpf.Controls">
+    <mwt:ClassicBorderDecorator Width="80" Height="30" BorderThickness="2,2,2,2">
+      <Label Width="76" Height="26"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+        <gwx:GwxProcessPoint AnimationMode="Analog" DecimalPlaces="1" DataSource="ac:Plant/Tank/Level" />
+      </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup><TextBlock Text="???.? FT" /></Label>
+    </mwt:ClassicBorderDecorator>
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Decorated Level Text.gdfx" });
+  const text = result.screen.objects[0];
+  const ref = text.externalReferences[0];
+  assert.equal(text.type, "text");
+  assert.equal(text.textBindings["1"].tag, "ac:Plant/Tank/Level");
+  assert.equal(ref.automation, "text");
+  assert.equal(ref.supported, true);
+  assert.ok(!result.screen.referenceHealth.issues.some((issue) => issue.category === "unsupported-automation"));
+});
+
 test("keeps non-level GraphWorX size dynamics marked unsupported", () => {
   const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
     <Rectangle Width="80" Height="40"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>

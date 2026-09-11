@@ -766,7 +766,14 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
           borderEnabled: decoratorStrokeWidth > 0, borderColor: color(decoration.Stroke, "#000000"),
           borderWidth: decoratorStrokeWidth,
           borderStyle: String(node.BorderStyle || "").toLowerCase().includes("sunken") ? "inset" : "outset",
-          ...sourceMetadata(name, node, { sourceBorderThickness: thickness.length ? thickness : null, importConversion: "collapsed-label-decorator" })
+          // Treat the collapsed object as a Label when classifying its
+          // process-point dynamic. Otherwise a valid native text binding is
+          // retained but incorrectly reported as an unsupported automation.
+          ...sourceMetadata("Label", node, {
+            source: { format: "graphworx64", type: name, name: node.Name || null },
+            sourceBorderThickness: thickness.length ? thickness : null,
+            importConversion: "collapsed-label-decorator"
+          })
         });
         return;
       }

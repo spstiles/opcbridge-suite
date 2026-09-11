@@ -288,12 +288,14 @@ const objectDynamicTabs = document.getElementById("objectDynamicTabs");
 const objectDynamicTabPropertiesBtn = document.getElementById("objectDynamicTabPropertiesBtn");
 const objectDynamicTabVisibilityBtn = document.getElementById("objectDynamicTabVisibilityBtn");
 const objectDynamicTabColorBtn = document.getElementById("objectDynamicTabColorBtn");
+const objectDynamicTabLevelBtn = document.getElementById("objectDynamicTabLevelBtn");
 const objectDynamicTabStatesBtn = document.getElementById("objectDynamicTabStatesBtn");
 const objectDynamicTabRotationBtn = document.getElementById("objectDynamicTabRotationBtn");
 const objectDynamicTabMotionBtn = document.getElementById("objectDynamicTabMotionBtn");
 const editorPaneTitle = document.getElementById("editorPaneTitle");
 const objectDynamicVisibilityHost = document.getElementById("objectDynamicVisibilityHost");
 const objectDynamicColorHost = document.getElementById("objectDynamicColorHost");
+const objectDynamicLevelHost = document.getElementById("objectDynamicLevelHost");
 const objectDynamicStatesHost = document.getElementById("objectDynamicStatesHost");
 const objectDynamicRotationHost = document.getElementById("objectDynamicRotationHost");
 const objectDynamicMotionHost = document.getElementById("objectDynamicMotionHost");
@@ -1707,7 +1709,8 @@ const openVisibilityExpressionModal = () => {
   const obj = getSelectedVisibilityDynamicObject();
   if (!obj || !(isEditingRectVisibilityDynamic() || isEditingLineVisibilityDynamic() || isEditingEllipseVisibilityDynamic() || isEditingTextVisibilityDynamic() || isEditingButtonVisibilityDynamic() || isEditingGroupVisibilityDynamic() || isEditingCircleVisibilityDynamic() || isEditingPolygonVisibilityDynamic())) return;
   ensureRectVisibilityDraft(obj);
-  visibilityExpressionDraftValue = String(rectVisibilityDraft?.expression || "");
+  const { rule } = getVisibilityRuleState(rectVisibilityDraft || obj.visibility || {});
+  visibilityExpressionDraftValue = String(rule?.expression || "");
   if (visibilityExpressionEditor) visibilityExpressionEditor.value = visibilityExpressionDraftValue;
   syncVisibilityExpressionValidationUi();
   hideVisibilityExpressionInsertMenu();
@@ -2548,6 +2551,7 @@ const setObjectDynamicTab = (tab) => {
   const next =
     isVisibilityDynamicTab(normalized) ? getVisibilityDynamicTabKey(getVisibilityDynamicTabIndex(normalized)) :
     isColorDynamicTab(normalized) ? getColorDynamicTabKey(getColorDynamicTabIndex(normalized)) :
+    normalized === "level" ? "level" :
     normalized === "states" ? "states" :
     normalized === "rotation" ? "rotation" :
     normalized === "motion" ? "motion" :
@@ -2574,6 +2578,7 @@ const setObjectDynamicTab = (tab) => {
   }
   if (objectDynamicTabPropertiesBtn) objectDynamicTabPropertiesBtn.classList.toggle("is-active", next === "properties");
   if (objectDynamicTabVisibilityBtn) objectDynamicTabVisibilityBtn.classList.toggle("is-active", isVisibilityDynamicTab(next));
+  if (objectDynamicTabLevelBtn) objectDynamicTabLevelBtn.classList.toggle("is-active", next === "level");
   if (objectDynamicTabStatesBtn) objectDynamicTabStatesBtn.classList.toggle("is-active", next === "states");
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-active", next === "rotation");
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-active", next === "motion");
@@ -7397,9 +7402,11 @@ const selectReferenceIssueObject = (issue) => {
     ? "color"
     : automation === "visibility"
       ? "visibility"
+      : automation === "level"
+        ? "level"
       : automation === "rotation"
-        ? "rotation"
-        : "properties";
+          ? "rotation"
+          : "properties";
   rectVisibilityDraft = null;
   rectVisibilityDraftObject = null;
   rectColorDraft = null;
@@ -16755,6 +16762,8 @@ const updatePropertiesPanel = () => {
     currentObjectDynamicTab = getColorDynamicTabKey(Math.min(getColorDynamicTabIndex(), Math.max(0, colorRuleCount - 1)));
   }
   if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && !hasMultiStateDynamic(obj) && currentObjectDynamicTab === "states") currentObjectDynamicTab = "properties";
+  const hasLevelDynamic = Boolean(obj?.levelAutomation && LEVEL_AUTOMATION_TYPES.includes(obj.type));
+  if (!hasLevelDynamic && currentObjectDynamicTab === "level") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj)) || (showDynamicButton && !hasButtonRotationDynamic(obj)) || (showDynamicGroup && !hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
   if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon) {
@@ -16771,12 +16780,14 @@ const updatePropertiesPanel = () => {
   if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon));
   syncObjectDynamicVisibilityTabs(obj);
   syncObjectDynamicColorTabs(obj);
+  if (objectDynamicTabLevelBtn) objectDynamicTabLevelBtn.classList.toggle("is-hidden", !hasLevelDynamic);
   if (objectDynamicTabStatesBtn) objectDynamicTabStatesBtn.classList.toggle("is-hidden", !((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && hasMultiStateDynamic(obj)));
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))));
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) setObjectDynamicTab(currentObjectDynamicTab);
   const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && isVisibilityDynamicTab(currentObjectDynamicTab) && hasVisibilityDynamic(obj);
   const showRectColorTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicPolygon || showDynamicGroup) && hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab);
+  const showRectLevelTab = hasLevelDynamic && currentObjectDynamicTab === "level";
   const showRectStatesTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && currentObjectDynamicTab === "states" && hasMultiStateDynamic(obj);
   const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
   const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
@@ -16784,17 +16795,18 @@ const updatePropertiesPanel = () => {
   if (showRectColorTab) ensureRectColorDraft(obj);
   if (showRectRotationTab) ensureRectRotationDraft(obj);
   if (showRectMotionTab) ensureRectMotionDraft(obj);
-  if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showLine && lineProps) lineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (obj?.type === "pipe" && polylineProps) polylineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab);
-  if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicText && textProps) textProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicButton && buttonProps) buttonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
+  if (showDynamicButton && buttonProps) buttonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
-  if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectMotionTab);
-  if (showDynamicPolygon && polygonProps) polygonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab);
+  if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectMotionTab);
+  if (showDynamicPolygon && polygonProps) polygonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab);
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
   if (objectDynamicColorHost) objectDynamicColorHost.classList.toggle("is-hidden", !showRectColorTab);
+  if (objectDynamicLevelHost) objectDynamicLevelHost.classList.toggle("is-hidden", !showRectLevelTab);
   if (objectDynamicStatesHost) objectDynamicStatesHost.classList.toggle("is-hidden", !showRectStatesTab);
   if (objectDynamicRotationHost) objectDynamicRotationHost.classList.toggle("is-hidden", !showRectRotationTab);
   if (objectDynamicMotionHost) objectDynamicMotionHost.classList.toggle("is-hidden", !showRectMotionTab);
@@ -16811,6 +16823,12 @@ const updatePropertiesPanel = () => {
       if (node) node.classList.remove("is-hidden");
     });
     syncRectColorUiFromDraft(obj, rectColorDraft);
+  }
+  if (showRectLevelTab && objectDynamicLevelHost) {
+    const control = initializeLevelAutomationControl();
+    if (control?.sectionEl && control.sectionEl.parentNode !== objectDynamicLevelHost) objectDynamicLevelHost.appendChild(control.sectionEl);
+    if (control?.sectionEl) control.sectionEl.classList.remove("is-hidden");
+    syncLevelAutomationControl(obj);
   }
   if (showRectStatesTab && objectDynamicStatesHost) {
     renderMultiStateEditor(obj);
@@ -31874,6 +31892,13 @@ if (objectDynamicTabVisibilityBtn) {
 if (objectDynamicTabColorBtn) {
   objectDynamicTabColorBtn.addEventListener("click", () => {
     setObjectDynamicTab("color");
+    updatePropertiesPanel();
+  });
+}
+
+if (objectDynamicTabLevelBtn) {
+  objectDynamicTabLevelBtn.addEventListener("click", () => {
+    setObjectDynamicTab("level");
     updatePropertiesPanel();
   });
 }
