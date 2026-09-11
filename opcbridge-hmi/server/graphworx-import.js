@@ -535,6 +535,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const binding = unresolvedBinding(item.sourceExpression);
       const target = String(item.target || "").toLowerCase();
       const strokeTarget = obj.type === "line" || obj.type === "pipe" || target.includes("stroke") || target.includes("border");
+      const textTarget = obj.type === "group" && target.includes("foreground");
       const toggleRate = num(item.periodicToggleRate, 0);
       return {
         ...binding,
@@ -544,18 +545,22 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
         flashEnabled: toggleRate > 0,
         flashRate: toggleRate > 0 && toggleRate <= 500 ? "fast" : "slow",
         flashWhen: true,
-        fillEnabled: !strokeTarget,
+        fillEnabled: !strokeTarget && !textTarget,
         fillColor: item.endColor,
         strokeEnabled: strokeTarget,
-        strokeColor: item.endColor
+        strokeColor: item.endColor,
+        textEnabled: textTarget,
+        textColor: item.endColor
       };
       });
     if (colorRules.length) {
       obj.colorAutomationRules = colorRules;
       const fillRules = colorRules.filter((rule) => rule.fillEnabled).map((rule) => ({ ...rule, onColor: rule.fillColor }));
       const strokeRules = colorRules.filter((rule) => rule.strokeEnabled).map((rule) => ({ ...rule, onColor: rule.strokeColor }));
+      const textRules = colorRules.filter((rule) => rule.textEnabled).map((rule) => ({ ...rule, onColor: rule.textColor }));
       if (fillRules.length) obj.fillAutomation = { rules: fillRules };
       if (strokeRules.length) obj.strokeAutomation = { rules: strokeRules };
+      if (textRules.length) obj.textColorAutomation = { rules: textRules };
     }
     const hiddenRules = (dynamics.hides || []).map((hidden) => {
       const toggleRate = num(hidden.periodicToggleRate, 0);

@@ -622,7 +622,7 @@ const getSelectedVisibilityDynamicObject = () => {
 
 const getSelectedColorDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon") ? obj : null;
+  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") ? obj : null;
 };
 
 const getSelectedRotationDynamicObject = () => {
@@ -827,6 +827,7 @@ const buildColorRuleSummary = (rule, index) => {
   const parts = [];
   if (next.fillEnabled) parts.push("Fill");
   if (next.strokeEnabled) parts.push("Stroke");
+  if (next.textEnabled) parts.push("Text");
   if (next.borderEnabled) parts.push("Border");
   const targetText = parts.length ? parts.join("/") : "No targets";
   if (next.sourceType === "expression") {
@@ -884,11 +885,11 @@ const buildColorRulesFromObject = (obj) => {
       status: source.status || meta.status || "",
       sourceReference: source.sourceReference || meta.sourceReference || "",
       sourceTarget: source.sourceTarget || meta.sourceTarget || "",
-      fillEnabled: ("fillEnabled" in meta) ? Boolean(meta.fillEnabled || meta.textEnabled) : Boolean(fillAuto[index] || textAuto[index]),
-      fillColor: fillAuto[index]?.onColor || textAuto[index]?.onColor || meta.fillColor || meta.textColor || "",
+      fillEnabled: ("fillEnabled" in meta) ? Boolean(meta.fillEnabled) : Boolean(fillAuto[index]),
+      fillColor: fillAuto[index]?.onColor || meta.fillColor || "",
       strokeEnabled: (obj.type === "line" || obj.type === "pipe") ? true : (("strokeEnabled" in meta) ? Boolean(meta.strokeEnabled) : Boolean(strokeAuto[index])),
       strokeColor: strokeAuto[index]?.onColor || meta.strokeColor || "",
-      textEnabled: false,
+      textEnabled: obj.type === "group" ? (("textEnabled" in meta) ? Boolean(meta.textEnabled) : Boolean(textAuto[index])) : false,
       textColor: textAuto[index]?.onColor || meta.textColor || "",
       backgroundEnabled: false,
       backgroundColor: backgroundAuto[index]?.onColor || meta.backgroundColor || "",
@@ -897,6 +898,46 @@ const buildColorRulesFromObject = (obj) => {
     });
   }
   return rules;
+};
+
+const migrateLegacyGroupColorTargets = (objects) => {
+  let repaired = 0;
+  const visit = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((obj) => {
+      if (!obj || typeof obj !== "object") return;
+      if (obj.type === "group" && Array.isArray(obj.colorAutomationRules)) {
+        let changed = false;
+        obj.colorAutomationRules.forEach((rule) => {
+          if (!rule || typeof rule !== "object") return;
+          const target = String(rule.sourceTarget || "").trim().toLowerCase();
+          if (!target.includes("foreground") || rule.textEnabled) return;
+          rule.fillEnabled = false;
+          rule.textEnabled = true;
+          rule.textColor = rule.textColor || rule.fillColor || "";
+          changed = true;
+          repaired += 1;
+        });
+        if (changed) {
+          const fillRules = obj.colorAutomationRules
+            .filter((rule) => rule?.fillEnabled && String(rule.fillColor || "").trim())
+            .map((rule) => ({ ...rule, onColor: rule.fillColor }));
+          const textRules = obj.colorAutomationRules
+            .filter((rule) => rule?.textEnabled && String(rule.textColor || "").trim())
+            .map((rule) => ({ ...rule, onColor: rule.textColor }));
+          const fillConfig = serializeColorAutomationRules(fillRules);
+          const textConfig = serializeColorAutomationRules(textRules);
+          if (fillConfig) obj.fillAutomation = fillConfig;
+          else delete obj.fillAutomation;
+          if (textConfig) obj.textColorAutomation = textConfig;
+          else delete obj.textColorAutomation;
+        }
+      }
+      visit(obj.children);
+    });
+  };
+  visit(objects);
+  return repaired;
 };
 
 const isColorDynamicTab = (tab = currentObjectDynamicTab) => /^color(?:-\d+)?$/.test(String(tab || "").trim());
@@ -937,7 +978,6 @@ const getCurrentColorRulesForObject = (obj) => {
 };
 
 const hasEditableColorDynamic = (obj) => {
-  if (obj?.type === "group") return false;
   // Drafts are transient editor state and must not create an automation tab.
   // The object is updated whenever a real color rule is added or edited, so
   // its stored rules remain the source of truth for whether the tab exists.
@@ -1118,7 +1158,8 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   const isPipe = Boolean(obj && obj.type === "pipe");
   const isText = Boolean(obj && obj.type === "text");
   const isButton = Boolean(obj && obj.type === "button");
-  const strokePresent = isLine || isText || isButton || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
+  const isGroup = Boolean(obj && obj.type === "group");
+  const strokePresent = isLine || isText || isButton || isGroup || Boolean(obj?.stroke && obj.stroke !== "none" && Number(obj.strokeWidth ?? 1) > 0);
   const normalizedDraft = normalizeRectColorDraft(obj, draft);
   if (isColorDynamicTab()) normalizedDraft.selectedRuleIndex = Math.max(0, Math.min(getColorDynamicTabIndex(), normalizedDraft.rules.length - 1));
   const rules = normalizedDraft.rules;
@@ -1205,7 +1246,7 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   }
   if (rectColorFillEnabledInput) rectColorFillEnabledInput.checked = next.fillEnabled !== false;
   if (rectColorStrokeEnabledInput) {
-    rectColorStrokeEnabledInput.checked = isLine ? true : (Boolean(next.strokeEnabled) && strokePresent);
+    rectColorStrokeEnabledInput.checked = isLine ? true : (Boolean(isGroup ? next.textEnabled : next.strokeEnabled) && strokePresent);
     rectColorStrokeEnabledInput.disabled = isLine || !strokePresent;
   }
   const fillFallback = isText
@@ -1215,15 +1256,16 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     : String(obj?.fill || "#3a3f4b");
   const strokeFallback = isText
     ? String(obj?.background || "#000000")
-    : isButton
+    : isButton || isGroup
       ? String(obj?.textColor || "#ffffff")
       : isPipe
         ? String(obj?.color || "#808080")
         : String((!obj?.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
   if (rectColorFillInput) rectColorFillInput.value = isHexColor(next.fillColor || fillFallback) ? (next.fillColor || fillFallback) : (isText ? "#ffffff" : "#3a3f4b");
   if (rectColorFillTextInput) setInputValueSafe(rectColorFillTextInput, next.fillColor || "");
-  if (rectColorStrokeInput) rectColorStrokeInput.value = isHexColor(next.strokeColor || strokeFallback) ? (next.strokeColor || strokeFallback) : "#000000";
-  if (rectColorStrokeTextInput) setInputValueSafe(rectColorStrokeTextInput, next.strokeColor || "");
+  const secondaryColor = isGroup ? next.textColor : next.strokeColor;
+  if (rectColorStrokeInput) rectColorStrokeInput.value = isHexColor(secondaryColor || strokeFallback) ? (secondaryColor || strokeFallback) : "#000000";
+  if (rectColorStrokeTextInput) setInputValueSafe(rectColorStrokeTextInput, secondaryColor || "");
   const fillTargetLabel = rectColorFillEnabledInput?.closest(".inline-check");
   const strokeTargetLabel = rectColorStrokeEnabledInput?.closest(".inline-check");
   const supportsFillTarget = !isLine;
@@ -1237,9 +1279,9 @@ const syncRectColorUiFromDraft = (obj, draft) => {
     strokeTargetLabel.hidden = !supportsStrokeTarget;
   }
   const strokeTargetText = strokeTargetLabel?.querySelector("span");
-  if (strokeTargetText) strokeTargetText.textContent = isPipe ? "Pipe" : (isLine ? "Line" : (isText ? "Background" : (isButton ? "Text" : "Border")));
+  if (strokeTargetText) strokeTargetText.textContent = isPipe ? "Pipe" : (isLine ? "Line" : (isText ? "Background" : ((isButton || isGroup) ? "Text" : "Border")));
   const strokeColorLabel = rectColorStrokeRow?.querySelector('label[for="rectColorStroke"]');
-  if (strokeColorLabel) strokeColorLabel.textContent = isPipe ? "Pipe Color" : (isLine ? "Line Color" : (isText ? "Background Color" : (isButton ? "Text Color" : "Border Color")));
+  if (strokeColorLabel) strokeColorLabel.textContent = isPipe ? "Pipe Color" : (isLine ? "Line Color" : (isText ? "Background Color" : ((isButton || isGroup) ? "Text Color" : "Border Color")));
   const fillTargetText = rectColorFillEnabledInput?.closest(".inline-check")?.querySelector("span");
   if (fillTargetText) fillTargetText.textContent = isText ? "Text" : (isButton ? "Background" : "Fill");
   const fillColorLabel = rectColorFillRow?.querySelector('label[for="rectColorFill"]');
@@ -1280,7 +1322,8 @@ const isEditingAnyColorDynamic = () => (
   isEditingTextColorDynamic() ||
   isEditingButtonColorDynamic() ||
   isEditingCircleColorDynamic() ||
-  isEditingPolygonColorDynamic()
+  isEditingPolygonColorDynamic() ||
+  isEditingGroupColorDynamic()
 );
 
 const updateRectColorDraft = (patch) => {
@@ -2437,6 +2480,11 @@ const isEditingCircleColorDynamic = () => {
 const isEditingPolygonColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
   return Boolean(obj && obj.type === "polygon" && isColorDynamicTab() && hasEditableColorDynamic(obj));
+};
+
+const isEditingGroupColorDynamic = () => {
+  const obj = getSelectedColorDynamicObject();
+  return Boolean(obj && obj.type === "group" && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingRectRotationDynamic = () => {
@@ -19805,7 +19853,8 @@ const loadJsonc = async () => {
       migrateButtonFlags(currentScreenObj?.objects);
       const repairedIdentifiers = repairDuplicateImportIds(currentScreenObj);
       const repairedConnections = repairScreenTagConnections(currentScreenObj);
-      const migrationRepairs = repairedIdentifiers + repairedConnections;
+      const repairedGroupColors = migrateLegacyGroupColorTargets(currentScreenObj?.objects);
+      const migrationRepairs = repairedIdentifiers + repairedConnections + repairedGroupColors;
       screenCache.set(currentScreenId, currentScreenObj);
       initViewportHistoriesForCurrentScreen();
       selectedIndices = [];
@@ -24134,7 +24183,10 @@ if (rectColorFillEnabledInput) {
 
 if (rectColorStrokeEnabledInput) {
   rectColorStrokeEnabledInput.addEventListener("change", () => {
-    updateRectColorDraft({ strokeEnabled: rectColorStrokeEnabledInput.checked });
+    const obj = getSelectedColorDynamicObject();
+    updateRectColorDraft(obj?.type === "group"
+      ? { textEnabled: rectColorStrokeEnabledInput.checked }
+      : { strokeEnabled: rectColorStrokeEnabledInput.checked });
   });
 }
 
@@ -24156,7 +24208,10 @@ if (rectColorFillTextInput) {
 
 if (rectColorStrokeInput) {
   rectColorStrokeInput.addEventListener("input", () => {
-    updateRectColorDraft({ strokeColor: rectColorStrokeInput.value, strokeEnabled: true });
+    const obj = getSelectedColorDynamicObject();
+    updateRectColorDraft(obj?.type === "group"
+      ? { textColor: rectColorStrokeInput.value, textEnabled: true }
+      : { strokeColor: rectColorStrokeInput.value, strokeEnabled: true });
     if (rectColorStrokeTextInput) rectColorStrokeTextInput.value = rectColorStrokeInput.value;
   });
 }
@@ -24165,7 +24220,10 @@ if (rectColorStrokeTextInput) {
   rectColorStrokeTextInput.addEventListener("change", () => {
     const value = rectColorStrokeTextInput.value.trim();
     if (!value) return;
-    updateRectColorDraft({ strokeColor: value, strokeEnabled: true });
+    const obj = getSelectedColorDynamicObject();
+    updateRectColorDraft(obj?.type === "group"
+      ? { textColor: value, textEnabled: true }
+      : { strokeColor: value, strokeEnabled: true });
     if (rectColorStrokeInput && isHexColor(value)) rectColorStrokeInput.value = value;
   });
 }

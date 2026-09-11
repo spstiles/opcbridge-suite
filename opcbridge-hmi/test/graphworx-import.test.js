@@ -571,6 +571,27 @@ test("imports pipe color target, color, and flashing into the editable automatio
   assert.equal(pipe.strokeAutomation.rules[0].onColor, "#00ff00");
 });
 
+test("imports Canvas fill and foreground dynamics as editable group color rules", () => {
+  const xml = `<Canvas Width="300" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
+    <Canvas Width="100" Height="50">
+      <gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+        <gwx:GwxColor TargetPropertyName="Fill" EndBrush="#FF00FF00" DataSource="ac:Plant/Pump/Running" />
+        <gwx:GwxColor TargetPropertyName="Foreground" EndBrush="#FFFFFFFF" DataSource="ac:Plant/Pump/Failure" />
+      </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup>
+      <Rectangle Width="100" Height="50" Fill="#FF808080" />
+      <TextBlock Text="PUMP" Foreground="#FF000000" />
+    </Canvas>
+  </Canvas>`;
+  const group = convertGraphWorx(xml, { filename: "Group Color.gdfx" }).screen.objects[0];
+  assert.equal(group.type, "group");
+  assert.equal(group.colorAutomationRules[0].fillEnabled, true);
+  assert.equal(group.colorAutomationRules[0].textEnabled, false);
+  assert.equal(group.fillAutomation.rules[0].onColor, "#00ff00");
+  assert.equal(group.colorAutomationRules[1].fillEnabled, false);
+  assert.equal(group.colorAutomationRules[1].textEnabled, true);
+  assert.equal(group.textColorAutomation.rules[0].onColor, "#ffffff");
+});
+
 test("imports analog GraphWorX size dynamics as native level automation", () => {
   const xml = `<Canvas Width="200" Height="100" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:gwx="clr-namespace:Ico.Gwx">
     <Rectangle Width="80" Height="40" Fill="#FF0066CC"><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
