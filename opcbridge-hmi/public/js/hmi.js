@@ -24608,7 +24608,19 @@ function registerCompactTagBinding(config) {
     cancelPending();
     pendingEditTimer = window.setTimeout(() => {
       pendingEditTimer = null;
+      const selectionStart = editorTagInput.selectionStart;
+      const selectionEnd = editorTagInput.selectionEnd;
       applyEditedBinding();
+      requestAnimationFrame(() => {
+        const refreshedInput = getCompactTagBindingConfig(config.id)?.editorTagInput;
+        if (!refreshedInput || !refreshedInput.isConnected) return;
+        refreshedInput.focus();
+        if (typeof selectionStart === "number" && typeof selectionEnd === "number") {
+          try {
+            refreshedInput.setSelectionRange(selectionStart, selectionEnd);
+          } catch {}
+        }
+      });
     }, 350);
   });
   editorTagInput.addEventListener("change", () => {
