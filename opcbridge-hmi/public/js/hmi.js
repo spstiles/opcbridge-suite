@@ -16379,27 +16379,6 @@ const renderMultiStateEditor = (obj) => {
   sourceTypeSelect.value = automation.sourceType;
   form.appendChild(makeRow("Source Type", sourceTypeSelect));
 
-  const connectionInput = document.createElement("input");
-  connectionInput.type = "text";
-  connectionInput.className = "automation-tag-input";
-  setFriendlyConnectionInputValue(connectionInput, automation.connection_id || "");
-  const connectionRow = makeRow("Connection", connectionInput);
-  form.appendChild(connectionRow);
-
-  const tagInline = document.createElement("div");
-  tagInline.className = "prop-inline automation-tag-inline";
-  const tagInput = document.createElement("input");
-  tagInput.type = "text";
-  tagInput.className = "automation-tag-input";
-  tagInput.value = automation.tag || "";
-  const tagPickBtn = document.createElement("button");
-  tagPickBtn.type = "button";
-  tagPickBtn.className = "panel-btn";
-  tagPickBtn.textContent = "…";
-  tagInline.append(tagInput, tagPickBtn);
-  const tagRow = makeRow("Tag", tagInline);
-  form.appendChild(tagRow);
-
   const expressionInline = document.createElement("div");
   expressionInline.className = "prop-subgroup";
   const expressionSummary = document.createElement("div");
@@ -16579,15 +16558,29 @@ const renderMultiStateEditor = (obj) => {
   form.appendChild(stateEditor);
   objectDynamicStatesHost.appendChild(form);
 
+  const updateAutomation = (patch) => persistMultiStateAutomation(obj, { ...automation, ...patch });
+  registerCompactTagBinding({
+    id: "multi-state-source",
+    container: form,
+    beforeEl: expressionRow,
+    buttonLabel: "Source",
+    modalTitle: "Multi-State Source Tag",
+    read: () => ({ connection_id: automation.connection_id || "", tag: automation.tag || "" }),
+    apply: ({ connection_id, tag }) => updateAutomation({ sourceType: "tag", connection_id, tag })
+  });
+
   const syncSourceRows = () => {
     const isExpression = sourceTypeSelect.value === "expression";
-    connectionRow.classList.toggle("is-hidden", isExpression);
-    tagRow.classList.toggle("is-hidden", isExpression);
+    const bindingRow = getCompactTagBindingConfig("multi-state-source")?.row;
+    if (bindingRow) {
+      bindingRow.classList.toggle("is-hidden", isExpression);
+      bindingRow.hidden = isExpression;
+    }
     expressionRow.classList.toggle("is-hidden", !isExpression);
+    expressionRow.hidden = !isExpression;
   };
   syncSourceRows();
 
-  const updateAutomation = (patch) => persistMultiStateAutomation(obj, { ...automation, ...patch });
   const updateSelectedState = (patch) => {
     const states = automation.states.map((state, index) => index === selectedIndex ? { ...state, ...patch } : state);
     updateAutomation({ states });
@@ -16598,13 +16591,9 @@ const renderMultiStateEditor = (obj) => {
     syncSourceRows();
     updateAutomation({
       sourceType: sourceTypeSelect.value === "expression" ? "expression" : "tag",
-      connection_id: connectionInput.value,
-      tag: tagInput.value,
       expression: automation.expression || ""
     });
   });
-  connectionInput.addEventListener("change", () => updateAutomation({ sourceType: "tag", connection_id: connectionInput.value, tag: tagInput.value }));
-  tagInput.addEventListener("change", () => updateAutomation({ sourceType: "tag", connection_id: connectionInput.value, tag: tagInput.value }));
   expressionEditBtn.addEventListener("click", () => openAutomationNumericExpressionModal({
     title: "Multi-State Expression",
     value: automation.expression || "",
@@ -16680,16 +16669,6 @@ const renderMultiStateEditor = (obj) => {
     const states = automation.states.filter((_, index) => index !== selectedIndex);
     updateAutomation({ states, selectedStateIndex: Math.max(0, Math.min(selectedIndex, states.length - 1)) });
   });
-  registerCompactTagBinding({
-    id: "multi-state-source",
-    connectionInput,
-    tagInput,
-    modalTitle: "Multi-State Source Tag",
-    inlineOnly: true,
-    read: () => ({ connection_id: connectionInput.value, tag: tagInput.value }),
-    apply: ({ connection_id, tag }) => updateAutomation({ sourceType: "tag", connection_id, tag })
-  });
-  tagPickBtn.addEventListener("click", () => openCompactTagBindingModal("multi-state-source"));
   renderCompactTagBindingRows();
 };
 
