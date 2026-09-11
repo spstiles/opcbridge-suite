@@ -3499,6 +3499,7 @@ const openTagsModal = () => {
   if (viewMenuBtn) viewMenuBtn.setAttribute("aria-expanded", "false");
   tagsModalOverlay.classList.remove("is-hidden");
   tagsModalOverlay.setAttribute("aria-hidden", "false");
+  void loadLiveTagsForModal();
   try { tagsFilterInput?.focus?.(); } catch {}
 };
 
@@ -8076,6 +8077,8 @@ const tagQualityCache = new Map();
 const activeTagInfoCache = new Map();
 let tagsCache = [];
 let tagsAllCache = [];
+let tagsModalCache = [];
+let tagsModalLoading = false;
 let knownTagKeysCache = new Set();
 let tagCatalogLoaded = false;
 let tagsCacheVersion = 0;
@@ -11948,6 +11951,44 @@ function applyTagsFilter(tags) {
     return conn.includes(query) || name.includes(query);
   });
 }
+
+const loadLiveTagsForModal = async () => {
+  if (tagsModalLoading) return;
+  tagsModalLoading = true;
+  if (tagsStatus) tagsStatus.textContent = "Loading live tag quality…";
+  try {
+    const response = await fetch("/api/opc/tags", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const authTags = Object.entries(getAuthStateValues()).map(([name, value]) => ({
+      connection_id: "_hmi",
+      connection_name: "HMI",
+      name,
+      value,
+      quality: "GOOD"
+    }));
+    const sessionTags = Object.entries(getSessionSystemTagValues()).map(([name, value]) => ({
+      connection_id: "_system",
+      connection_name: "System",
+      name,
+      value,
+      quality: "GOOD"
+    }));
+    const liveTags = Array.isArray(data?.tags) ? data.tags : (Array.isArray(data) ? data : []);
+    tagsModalCache = sortTagsForDisplay([...liveTags, ...authTags, ...sessionTags]);
+    const filtered = applyTagsFilter(tagsModalCache);
+    renderTagsList(filtered);
+    if (tagsStatus) {
+      const query = getTagsFilterQuery();
+      tagsStatus.textContent = query ? `${filtered.length}/${tagsModalCache.length} live tags` : `${tagsModalCache.length} live tags`;
+    }
+  } catch (error) {
+    if (tagsStatus) tagsStatus.textContent = `Failed to load live tags: ${error.message}`;
+    if (!tagsModalCache.length) renderTagsList([]);
+  } finally {
+    tagsModalLoading = false;
+  }
+};
 
 const loadTags = async () => {
   if (tagsStatus) tagsStatus.textContent = "Loading…";
@@ -19884,17 +19925,19 @@ if (runtimeBtn) {
 
 if (tagsRefreshBtn) {
   tagsRefreshBtn.addEventListener("click", () => {
-    loadTags();
+    void loadLiveTagsForModal();
   });
 }
 
 if (tagsFilterInput) {
   tagsFilterInput.addEventListener("input", () => {
-    const filtered = applyTagsFilter(tagsAllCache);
+    const sourceTags = tagsModalCache.length ? tagsModalCache : tagsAllCache;
+    const filtered = applyTagsFilter(sourceTags);
     renderTagsList(filtered);
     if (tagsStatus) {
       const query = getTagsFilterQuery();
-      tagsStatus.textContent = query ? `${filtered.length}/${tagsAllCache.length} tags` : `${tagsAllCache.length} tags`;
+      const label = tagsModalCache.length ? "live tags" : "tags";
+      tagsStatus.textContent = query ? `${filtered.length}/${sourceTags.length} ${label}` : `${sourceTags.length} ${label}`;
     }
   });
 }
