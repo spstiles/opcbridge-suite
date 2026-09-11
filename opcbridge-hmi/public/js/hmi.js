@@ -938,9 +938,9 @@ const getCurrentColorRulesForObject = (obj) => {
 
 const hasEditableColorDynamic = (obj) => {
   if (obj?.type === "group") return false;
-  if (rectColorDraftObject === obj && rectColorDraft) {
-    return getCurrentColorRulesForObject(obj).length > 0;
-  }
+  // Drafts are transient editor state and must not create an automation tab.
+  // The object is updated whenever a real color rule is added or edited, so
+  // its stored rules remain the source of truth for whether the tab exists.
   return getStoredColorRulesForObject(obj).length > 0;
 };
 
