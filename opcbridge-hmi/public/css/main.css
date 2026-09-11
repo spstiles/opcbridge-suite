@@ -439,6 +439,44 @@ body.edit-mode .left-toolbar {
     text-align: center;
 }
 
+.system-reference-health-screen {
+    margin-bottom: 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.035);
+    overflow: hidden;
+}
+
+.system-reference-health-screen summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    color: inherit;
+    cursor: pointer;
+    font-weight: 650;
+}
+
+.system-reference-health-screen summary:hover {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.system-reference-health-count {
+    flex: 0 0 auto;
+    min-width: 28px;
+    padding: 2px 8px;
+    color: #ffd166;
+    text-align: center;
+    border: 1px solid rgba(255, 193, 7, 0.45);
+    border-radius: 999px;
+}
+
+.system-reference-health-screen .reference-health-item {
+    width: calc(100% - 16px);
+    margin: 0 8px 8px;
+}
+
 .reference-mapping-overlay {
     position: fixed;
     inset: 0;

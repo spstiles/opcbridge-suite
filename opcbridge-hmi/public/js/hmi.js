@@ -3676,6 +3676,7 @@ const saveScreenToPath = async (relPath, raw) => {
     body: JSON.stringify({ raw })
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  invalidateSystemReferenceHealth();
   return await response.json();
 };
 
@@ -6960,14 +6961,26 @@ const fileUploadReferencesMenuBtn = document.getElementById("fileUploadReference
 const referenceMappingInput = document.getElementById("referenceMappingInput");
 const viewReferenceHealthMenuBtn = document.getElementById("viewReferenceHealthMenuBtn");
 const referenceHealthBadge = document.getElementById("referenceHealthBadge");
+const systemReferenceHealthBadge = document.getElementById("systemReferenceHealthBadge");
 let referenceHealthOverlay = null;
 let referenceHealthIssuesCache = null;
 let referenceHealthIssuesScreen = null;
 let referenceHealthRefreshTimer = null;
+let systemReferenceHealthResults = new Map();
+let systemReferenceHealthScanPromise = null;
+let systemReferenceHealthScanGeneration = 0;
+let pendingSystemReferenceIssue = null;
 
 const invalidateReferenceHealthCache = () => {
   referenceHealthIssuesCache = null;
   referenceHealthIssuesScreen = null;
+};
+
+const invalidateSystemReferenceHealth = () => {
+  systemReferenceHealthResults.clear();
+  systemReferenceHealthScanGeneration += 1;
+  systemReferenceHealthScanPromise = null;
+  renderSystemReferenceHealthBadge();
 };
 
 const scheduleReferenceHealthRefresh = (delay = 250) => {
@@ -6977,6 +6990,10 @@ const scheduleReferenceHealthRefresh = (delay = 250) => {
     invalidateReferenceHealthCache();
     if (!isEditMode || !currentScreenObj) return;
     renderReferenceHealthBadge();
+    if (currentScreenId) {
+      systemReferenceHealthResults.set(currentScreenId, getReferenceHealthIssues().map((issue) => ({ ...issue })));
+      renderSystemReferenceHealthBadge();
+    }
     const activeObjects = getActiveObjects();
     const selectedObj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
     renderSelectedReferenceProperties(selectedObj);
@@ -7379,6 +7396,87 @@ const renderReferenceHealthBadge = () => {
   referenceHealthBadge.setAttribute("aria-label", `Reference Health: ${count} issue${count === 1 ? "" : "s"}`);
 };
 
+const renderSystemReferenceHealthBadge = () => {
+  if (!systemReferenceHealthBadge) return;
+  const count = [...systemReferenceHealthResults.values()].reduce((total, issues) => total + issues.length, 0);
+  const isLoading = Boolean(systemReferenceHealthScanPromise);
+  systemReferenceHealthBadge.innerHTML = `<span aria-hidden="true">⚠</span> System Issues: ${isLoading && !systemReferenceHealthResults.size ? "…" : count}`;
+  systemReferenceHealthBadge.classList.toggle("is-active", count > 0);
+  systemReferenceHealthBadge.title = isLoading
+    ? "Checking saved screens for unresolved references"
+    : (count ? `View ${count} unresolved reference${count === 1 ? "" : "s"} across all screens` : "All saved screen references are valid");
+  systemReferenceHealthBadge.setAttribute("aria-label", isLoading ? "System Reference Health: checking screens" : `System Reference Health: ${count} issue${count === 1 ? "" : "s"}`);
+};
+
+const evaluateReferenceHealthForScreen = (screen) => {
+  const previousScreen = currentScreenObj;
+  const previousIssuesCache = referenceHealthIssuesCache;
+  const previousIssuesScreen = referenceHealthIssuesScreen;
+  try {
+    currentScreenObj = screen;
+    referenceHealthIssuesCache = null;
+    referenceHealthIssuesScreen = null;
+    return getReferenceHealthIssues().map((issue) => JSON.parse(JSON.stringify(issue)));
+  } finally {
+    currentScreenObj = previousScreen;
+    referenceHealthIssuesCache = previousIssuesCache;
+    referenceHealthIssuesScreen = previousIssuesScreen;
+  }
+};
+
+const scanSystemReferenceHealth = async ({ force = false } = {}) => {
+  if (systemReferenceHealthScanPromise && !force) return systemReferenceHealthScanPromise;
+  const generation = ++systemReferenceHealthScanGeneration;
+  systemReferenceHealthResults.clear();
+  const scan = (async () => {
+    const loadedScreens = [];
+    for (const screenItem of availableScreens || []) {
+      if (generation !== systemReferenceHealthScanGeneration) return;
+      try {
+        let parsed = screenItem.ref === currentScreenId && currentScreenObj
+          ? currentScreenObj
+          : null;
+        if (!parsed) {
+          const response = await fetch(`/api/screens/file?path=${encodeURIComponent(screenItem.path || screenItem.ref)}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          parsed = data?.parsed;
+        }
+        if (!parsed) continue;
+        repairDuplicateImportIds(parsed);
+        repairScreenTagConnections(parsed);
+        screenCache.set(screenItem.ref, parsed);
+        loadedScreens.push({ screenItem, parsed });
+      } catch (error) {
+        console.warn(`[reference-health] Could not load ${screenItem.ref}:`, error);
+      }
+      renderSystemReferenceHealthBadge();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    }
+    // Evaluate only after every screen is cached so target-screen aliases are
+    // validated consistently regardless of file ordering.
+    for (const { screenItem, parsed } of loadedScreens) {
+      if (generation !== systemReferenceHealthScanGeneration) return;
+      try {
+        const issues = evaluateReferenceHealthForScreen(parsed);
+        if (issues.length) systemReferenceHealthResults.set(screenItem.ref, issues);
+      } catch (error) {
+        console.warn(`[reference-health] Could not evaluate ${screenItem.ref}:`, error);
+      }
+      renderSystemReferenceHealthBadge();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    }
+  })().finally(() => {
+    if (generation === systemReferenceHealthScanGeneration) {
+      systemReferenceHealthScanPromise = null;
+      renderSystemReferenceHealthBadge();
+    }
+  });
+  systemReferenceHealthScanPromise = scan;
+  renderSystemReferenceHealthBadge();
+  return scan;
+};
+
 let diagnosticsModeEnabled = false;
 let diagnosticsTooltip = null;
 
@@ -7548,6 +7646,70 @@ const selectReferenceIssueObject = (issue) => {
   updatePropertiesPanel();
   updateGroupBreadcrumb();
   closeReferenceHealth();
+};
+
+const openSystemReferenceIssue = (screenId, issue) => {
+  if (screenId === currentScreenId) {
+    selectReferenceIssueObject(issue);
+    return;
+  }
+  if (isDirty && !confirmLoseUnsavedChanges("Opening another screen")) return;
+  const screenItem = availableScreens.find((item) => item.ref === screenId || item.id === screenId);
+  if (!screenItem) return;
+  pendingSystemReferenceIssue = issue;
+  closeReferenceHealth();
+  applyScreenSelection(screenItem.ref, screenItem.path);
+};
+
+const openSystemReferenceHealth = async () => {
+  closeReferenceHealth();
+  const overlay = document.createElement("div");
+  overlay.className = "reference-health-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.innerHTML = `<section class="reference-health-panel"><header><div><h2>System Reference Health</h2><p data-system-ref-summary>Checking saved screens…</p></div><button type="button" data-ref-close>Close</button></header><div class="reference-health-list"><div class="reference-health-empty">Checking saved screens…</div></div></section>`;
+  overlay.querySelector("[data-ref-close]")?.addEventListener("click", closeReferenceHealth);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) closeReferenceHealth(); });
+  document.body.appendChild(overlay);
+  referenceHealthOverlay = overlay;
+  await scanSystemReferenceHealth();
+  if (referenceHealthOverlay !== overlay) return;
+  const groups = [...systemReferenceHealthResults.entries()]
+    .filter(([, issues]) => issues.length)
+    .sort(([left], [right]) => left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }));
+  const total = groups.reduce((sum, [, issues]) => sum + issues.length, 0);
+  const summaryText = overlay.querySelector("[data-system-ref-summary]");
+  if (summaryText) summaryText.textContent = `${total} item${total === 1 ? "" : "s"} across ${groups.length} screen${groups.length === 1 ? "" : "s"} need attention.`;
+  const list = overlay.querySelector(".reference-health-list");
+  list.textContent = "";
+  if (!groups.length) {
+    list.innerHTML = '<div class="reference-health-empty">All saved screen references are valid.</div>';
+  } else {
+    groups.forEach(([screenId, issues]) => {
+      const group = document.createElement("details");
+      group.className = "system-reference-health-screen";
+      const summary = document.createElement("summary");
+      const name = document.createElement("span");
+      name.textContent = screenId;
+      const count = document.createElement("span");
+      count.className = "system-reference-health-count";
+      count.textContent = String(issues.length);
+      summary.append(name, count);
+      group.appendChild(summary);
+      issues.forEach((issue) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = `reference-health-item is-${issue.severity || "warning"}`;
+        row.innerHTML = `<span class="reference-health-kind"></span><span class="reference-health-message"></span><span class="reference-health-source"></span>`;
+        row.querySelector(".reference-health-kind").textContent = issue.category || "reference";
+        row.querySelector(".reference-health-message").textContent = issue.message || "Reference needs attention";
+        row.querySelector(".reference-health-source").textContent = issue.source?.value || "";
+        row.addEventListener("click", () => openSystemReferenceIssue(screenId, issue));
+        group.appendChild(row);
+      });
+      list.appendChild(group);
+    });
+  }
 };
 
 const openReferenceHealth = () => {
@@ -8169,6 +8331,7 @@ viewReferenceHealthMenuBtn?.addEventListener("click", () => {
   openReferenceHealth();
 });
 referenceHealthBadge?.addEventListener("click", openReferenceHealth);
+systemReferenceHealthBadge?.addEventListener("click", openSystemReferenceHealth);
 updateAuthUiVisibility();
 installAuditActorHeaders();
 setTimeout(() => refreshAuthUi().catch(() => {}), 0);
@@ -12179,6 +12342,7 @@ const loadTags = async () => {
     tagCatalogLoaded = true;
     tagsCacheVersion += 1;
     invalidateReferenceHealthCache();
+    if (isEditMode) void scanSystemReferenceHealth({ force: true });
     const repairedScreenReferences = repairScreenTagConnections(currentScreenObj);
     if (repairedScreenReferences > 0) {
       reconcileReferenceHealthMetadata();
@@ -18590,6 +18754,8 @@ const saveJsoncEditor = async () => {
       body: JSON.stringify({ raw: rawToSave })
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    invalidateSystemReferenceHealth();
+    if (isEditMode && tagCatalogLoaded) void scanSystemReferenceHealth({ force: true });
     if (editorStatus) editorStatus.textContent = "Saved.";
     setDirty(false);
   } catch (error) {
@@ -18718,6 +18884,7 @@ async function refreshScreensList() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     availableScreens = (data.screens || []).map((s) => ({ ref: s.ref, path: s.path, id: s.ref, filename: pathBasename(s.path) }));
+    invalidateSystemReferenceHealth();
     availableScreens.forEach((screenItem) => {
       const opt = document.createElement("option");
       opt.value = screenItem.ref;
@@ -18784,6 +18951,7 @@ async function refreshScreensList() {
         : "Startup screen not found.";
       showStartupEmptyScreen(reason);
     }
+    if (isEditMode && tagCatalogLoaded) void scanSystemReferenceHealth({ force: true });
   } catch (error) {
     if (isEditMode) {
       if (editorStatus) editorStatus.textContent = `Failed to list screens: ${error.message}`;
@@ -19950,6 +20118,11 @@ const loadJsonc = async () => {
       updateGroupBreadcrumb();
       refreshViewportIdOptions();
       ensureRuntimeHistoryForCurrentScreen();
+      if (pendingSystemReferenceIssue) {
+        const pendingIssue = pendingSystemReferenceIssue;
+        pendingSystemReferenceIssue = null;
+        window.requestAnimationFrame(() => selectReferenceIssueObject(pendingIssue));
+      }
       if (migrationRepairs > 0 && isEditMode) {
         syncEditorFromScreen();
         setDirty(true);
