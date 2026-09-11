@@ -199,7 +199,7 @@ test("preserves the gradient fill on a closed straight GraphWorX Path", () => {
   assert.match(arrow.fill, /^linear-gradient\(/);
   assert.match(arrow.fill, /#008000 0%/);
   assert.match(arrow.fill, /#00aa55 100%/);
-  assert.deepEqual(arrow.shadow, { color: "#000000", opacity: 1, offsetX: 1.414, offsetY: 1.414, blur: 0.5 });
+  assert.deepEqual(arrow.dropShadow, { color: "#000000", opacity: 1, offsetX: 1.414, offsetY: 1.414, blur: 0.5 });
   assert.deepEqual(arrow.points[0], { x: 10, y: 10 });
   assert.deepEqual(arrow.points.at(-1), { x: 10, y: 30 });
 });

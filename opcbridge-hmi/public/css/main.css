@@ -915,24 +915,16 @@ body.runtime-mode .ws-badge {
     text-transform: uppercase;
 }
 
-.toolbar-dynamics-wrap {
-    position: relative;
-    padding-right: 8px;
-    margin-right: 2px;
-    border-right: 1px solid var(--border-subtle);
+.left-tool-divider {
+    width: 26px;
+    height: 1px;
+    margin: 2px 0;
+    flex: 0 0 auto;
+    background: var(--border-subtle);
 }
 
 .toolbar-dynamics-flyout {
-    position: absolute;
-    top: calc(100% + 7px);
-    right: 8px;
-    z-index: 1002;
     min-width: 190px;
-    padding: 4px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-default);
-    border-radius: 6px;
-    box-shadow: var(--shadow-lg);
 }
 
 .toolbar-dynamics-flyout.is-hidden { display: none; }

@@ -860,7 +860,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
             fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Path.Fill", node.Fill, "none")),
             stroke: color(node.Stroke, "#000000"),
             strokeWidth: num(node.StrokeThickness, 1),
-            ...(shadow ? { shadow } : {}),
+            ...(shadow ? { dropShadow: shadow } : {}),
             ...sourceMetadata(name, node, { importConversion: hasCurves ? "editable-closed-spline" : "editable-closed-polyline" })
           });
           return;
@@ -869,7 +869,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
           type: "spline", points,
           stroke: color(node.Stroke, "#000000"),
           strokeWidth: num(node.StrokeThickness, 1),
-          ...(importedShadow(node) ? { shadow: importedShadow(node) } : {}),
+          ...(importedShadow(node) ? { dropShadow: importedShadow(node) } : {}),
           ...sourceMetadata(name, node, { importConversion: "editable-spline" })
         });
       });

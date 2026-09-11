@@ -88,7 +88,8 @@
               <button id="dynamicsAddMotionMenuBtn" class="menu-item" type="button">Motion</button>
               <div class="menu-separator"></div>
               <div class="menu-group-label">Effects</div>
-              <button id="dynamicsAddShadowMenuBtn" class="menu-item" type="button">Shadow</button>
+              <button id="dynamicsAddShadowMenuBtn" class="menu-item" type="button">Box Shadow</button>
+              <button id="dynamicsAddDropShadowMenuBtn" class="menu-item" type="button">Drop Shadow</button>
             </div>
           </div>
           <div class="menu-separator"></div>
@@ -142,20 +143,6 @@
 	      <span id="diagnosticsBadge" class="diagnostics-badge is-hidden" aria-live="polite">Diagnostics</span>
 	    </div>
     <div class="toolbar-right">
-      <div id="toolbarDynamicsWrap" class="toolbar-dynamics-wrap">
-        <button id="toolbarDynamicsBtn" class="toolbar-btn" type="button" aria-haspopup="true" aria-expanded="false">Automation ▾</button>
-        <div id="toolbarDynamicsFlyout" class="toolbar-dynamics-flyout is-hidden" role="menu" aria-label="Add automation or effect">
-          <div class="menu-group-label">Automations</div>
-          <button class="menu-item" type="button" data-add-dynamic="visibility">Visibility</button>
-          <button class="menu-item" type="button" data-add-dynamic="color">Color</button>
-          <button class="menu-item" type="button" data-add-dynamic="states">States</button>
-          <button class="menu-item" type="button" data-add-dynamic="rotation">Rotation</button>
-          <button class="menu-item" type="button" data-add-dynamic="motion">Motion</button>
-          <div class="menu-separator"></div>
-          <div class="menu-group-label">Effects</div>
-          <button class="menu-item" type="button" data-add-dynamic="shadow">Shadow</button>
-        </div>
-      </div>
       <div class="toolbar-zoom" aria-label="Canvas zoom controls">
         <span class="toolbar-zoom-label">Zoom</span>
         <button id="editorZoomOutBtn" class="toolbar-btn toolbar-zoom-btn" type="button" title="Zoom out">−</button>
@@ -178,6 +165,27 @@
           <path fill="currentColor" d="M6 3l12 9-7 1.5L9.5 21 6 3zm3.9 6.2l1.9 7.1 1-2.6 2.8-.6-5.7-3.9z"/>
         </svg>
       </button>
+      <div class="left-tool-divider" aria-hidden="true"></div>
+      <div id="toolbarDynamicsWrap" class="left-tool-flyout toolbar-dynamics-wrap">
+        <button id="toolbarDynamicsBtn" class="left-tool-btn" type="button" title="Add automation or effect" aria-label="Add automation or effect" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <path d="M13.2 2L5.5 13h5.2L9.8 22l8.7-12h-5.4L13.2 2z" fill="currentColor"/>
+          </svg>
+        </button>
+        <div id="toolbarDynamicsFlyout" class="left-flyout toolbar-dynamics-flyout is-hidden" role="menu" aria-label="Add automation or effect">
+          <div class="menu-group-label">Automations</div>
+          <button class="left-flyout-item" type="button" data-add-dynamic="visibility">Visibility</button>
+          <button class="left-flyout-item" type="button" data-add-dynamic="color">Color</button>
+          <button class="left-flyout-item" type="button" data-add-dynamic="states">States</button>
+          <button class="left-flyout-item" type="button" data-add-dynamic="rotation">Rotation</button>
+          <button class="left-flyout-item" type="button" data-add-dynamic="motion">Motion</button>
+          <div class="menu-separator"></div>
+          <div class="menu-group-label">Effects</div>
+          <button class="left-flyout-item" type="button" data-add-dynamic="box-shadow">Box Shadow</button>
+          <button class="left-flyout-item" type="button" data-add-dynamic="drop-shadow">Drop Shadow</button>
+        </div>
+      </div>
+      <div class="left-tool-divider" aria-hidden="true"></div>
       <button id="leftLineToolBtn" class="left-tool-btn" type="button" title="Line" aria-label="Line tool">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
           <path d="M7 17L17 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -404,7 +412,8 @@
             <button id="objectDynamicTabStatesBtn" class="editor-tab is-hidden" type="button">States</button>
             <button id="objectDynamicTabRotationBtn" class="editor-tab is-hidden" type="button">Rotation</button>
             <button id="objectDynamicTabMotionBtn" class="editor-tab is-hidden" type="button">Motion</button>
-            <button id="objectDynamicTabShadowBtn" class="editor-tab is-hidden" type="button">Shadow</button>
+            <button id="objectDynamicTabShadowBtn" class="editor-tab is-hidden" type="button">Box Shadow</button>
+            <button id="objectDynamicTabDropShadowBtn" class="editor-tab is-hidden" type="button">Drop Shadow</button>
           </div>
           <div id="objectDynamicVisibilityHost" class="is-hidden"></div>
           <div id="objectDynamicColorHost" class="is-hidden"></div>
@@ -413,13 +422,22 @@
           <div id="objectDynamicRotationHost" class="is-hidden"></div>
           <div id="objectDynamicMotionHost" class="is-hidden"></div>
           <div id="objectDynamicShadowHost" class="properties-form is-hidden">
-            <div class="prop-group-title">Shadow</div>
+            <div class="prop-group-title">Box Shadow</div>
             <div class="prop-row"><label for="objectShadowColor">Color</label><input id="objectShadowColor" type="color" /></div>
             <div class="prop-row"><label for="objectShadowOpacity">Opacity</label><input id="objectShadowOpacity" type="number" min="0" max="1" step="0.05" /></div>
             <div class="prop-row"><label for="objectShadowOffsetX">X offset</label><input id="objectShadowOffsetX" type="number" step="0.5" /></div>
             <div class="prop-row"><label for="objectShadowOffsetY">Y offset</label><input id="objectShadowOffsetY" type="number" step="0.5" /></div>
             <div class="prop-row"><label for="objectShadowBlur">Blur</label><input id="objectShadowBlur" type="number" min="0" step="0.5" /></div>
-            <div class="prop-actions"><button id="objectShadowDeleteBtn" class="panel-btn danger" type="button">Delete Shadow</button></div>
+            <div class="prop-actions"><button id="objectShadowDeleteBtn" class="panel-btn danger" type="button">Delete Box Shadow</button></div>
+          </div>
+          <div id="objectDynamicDropShadowHost" class="properties-form is-hidden">
+            <div class="prop-group-title">Drop Shadow</div>
+            <div class="prop-row"><label for="objectDropShadowColor">Color</label><input id="objectDropShadowColor" type="color" /></div>
+            <div class="prop-row"><label for="objectDropShadowOpacity">Opacity</label><input id="objectDropShadowOpacity" type="number" min="0" max="1" step="0.05" /></div>
+            <div class="prop-row"><label for="objectDropShadowOffsetX">X offset</label><input id="objectDropShadowOffsetX" type="number" step="0.5" /></div>
+            <div class="prop-row"><label for="objectDropShadowOffsetY">Y offset</label><input id="objectDropShadowOffsetY" type="number" step="0.5" /></div>
+            <div class="prop-row"><label for="objectDropShadowBlur">Blur</label><input id="objectDropShadowBlur" type="number" min="0" step="0.5" /></div>
+            <div class="prop-actions"><button id="objectDropShadowDeleteBtn" class="panel-btn danger" type="button">Delete Drop Shadow</button></div>
           </div>
           <div id="screenProps" class="properties-form">
             <div class="prop-group-title">Screen</div>

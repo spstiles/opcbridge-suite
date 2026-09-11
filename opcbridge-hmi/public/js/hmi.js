@@ -232,6 +232,7 @@ const dynamicsAddStatesMenuBtn = document.getElementById("dynamicsAddStatesMenuB
 const dynamicsAddRotationMenuBtn = document.getElementById("dynamicsAddRotationMenuBtn");
 const dynamicsAddMotionMenuBtn = document.getElementById("dynamicsAddMotionMenuBtn");
 const dynamicsAddShadowMenuBtn = document.getElementById("dynamicsAddShadowMenuBtn");
+const dynamicsAddDropShadowMenuBtn = document.getElementById("dynamicsAddDropShadowMenuBtn");
 const toolbarDynamicsWrap = document.getElementById("toolbarDynamicsWrap");
 const toolbarDynamicsBtn = document.getElementById("toolbarDynamicsBtn");
 const toolbarDynamicsFlyout = document.getElementById("toolbarDynamicsFlyout");
@@ -297,6 +298,7 @@ const objectDynamicTabStatesBtn = document.getElementById("objectDynamicTabState
 const objectDynamicTabRotationBtn = document.getElementById("objectDynamicTabRotationBtn");
 const objectDynamicTabMotionBtn = document.getElementById("objectDynamicTabMotionBtn");
 const objectDynamicTabShadowBtn = document.getElementById("objectDynamicTabShadowBtn");
+const objectDynamicTabDropShadowBtn = document.getElementById("objectDynamicTabDropShadowBtn");
 const editorPaneTitle = document.getElementById("editorPaneTitle");
 const objectDynamicVisibilityHost = document.getElementById("objectDynamicVisibilityHost");
 const objectDynamicColorHost = document.getElementById("objectDynamicColorHost");
@@ -311,6 +313,13 @@ const objectShadowOffsetX = document.getElementById("objectShadowOffsetX");
 const objectShadowOffsetY = document.getElementById("objectShadowOffsetY");
 const objectShadowBlur = document.getElementById("objectShadowBlur");
 const objectShadowDeleteBtn = document.getElementById("objectShadowDeleteBtn");
+const objectDynamicDropShadowHost = document.getElementById("objectDynamicDropShadowHost");
+const objectDropShadowColor = document.getElementById("objectDropShadowColor");
+const objectDropShadowOpacity = document.getElementById("objectDropShadowOpacity");
+const objectDropShadowOffsetX = document.getElementById("objectDropShadowOffsetX");
+const objectDropShadowOffsetY = document.getElementById("objectDropShadowOffsetY");
+const objectDropShadowBlur = document.getElementById("objectDropShadowBlur");
+const objectDropShadowDeleteBtn = document.getElementById("objectDropShadowDeleteBtn");
 const tagsModalOverlay = document.getElementById("tagsModalOverlay");
 const tagsModalCloseBtn = document.getElementById("tagsModalCloseBtn");
 const tagsModalHost = document.getElementById("tagsModalHost");
@@ -2615,7 +2624,8 @@ const setObjectDynamicTab = (tab) => {
     normalized === "states" ? "states" :
     normalized === "rotation" ? "rotation" :
     normalized === "motion" ? "motion" :
-    normalized === "shadow" ? "shadow" :
+    (normalized === "shadow" || normalized === "box-shadow") ? "box-shadow" :
+    normalized === "drop-shadow" ? "drop-shadow" :
     "properties";
   currentObjectDynamicTab = next;
   if (isVisibilityDynamicTab(next)) {
@@ -2643,7 +2653,8 @@ const setObjectDynamicTab = (tab) => {
   if (objectDynamicTabStatesBtn) objectDynamicTabStatesBtn.classList.toggle("is-active", next === "states");
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-active", next === "rotation");
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-active", next === "motion");
-  if (objectDynamicTabShadowBtn) objectDynamicTabShadowBtn.classList.toggle("is-active", next === "shadow");
+  if (objectDynamicTabShadowBtn) objectDynamicTabShadowBtn.classList.toggle("is-active", next === "box-shadow");
+  if (objectDynamicTabDropShadowBtn) objectDynamicTabDropShadowBtn.classList.toggle("is-active", next === "drop-shadow");
   syncObjectDynamicVisibilityTabs(getSelectedVisibilityDynamicObject());
   syncObjectDynamicColorTabs(getSelectedColorDynamicObject());
 };
@@ -2657,7 +2668,20 @@ const ensureShadowEffectForSelectedObject = () => {
     setDirty(true);
     render();
   }
-  setObjectDynamicTab("shadow");
+  setObjectDynamicTab("box-shadow");
+  updatePropertiesPanel();
+};
+
+const ensureDropShadowEffectForSelectedObject = () => {
+  const activeObjects = getActiveObjects();
+  const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+  if (!obj || ["alarms-panel", "viewport"].includes(obj.type)) return;
+  if (!obj.dropShadow) {
+    obj.dropShadow = { color: "#000000", opacity: 0.45, offsetX: 2, offsetY: 2, blur: 2 };
+    setDirty(true);
+    render();
+  }
+  setObjectDynamicTab("drop-shadow");
   updatePropertiesPanel();
 };
 
@@ -11212,9 +11236,11 @@ const updateMenuState = () => {
   toggleDynamicMenuItem(dynamicsAddRotationMenuBtn, canAddRotationDynamic);
   toggleDynamicMenuItem(dynamicsAddMotionMenuBtn, canAddMotionDynamic);
   toggleDynamicMenuItem(dynamicsAddShadowMenuBtn, canAddShadow && !selectedObject?.shadow);
+  toggleDynamicMenuItem(dynamicsAddDropShadowMenuBtn, canAddShadow && !selectedObject?.dropShadow);
   toolbarDynamicsFlyout?.querySelectorAll("[data-add-dynamic]").forEach((button) => {
     const kind = button.dataset.addDynamic;
-    const enabled = kind === "shadow" ? canAddShadow && !selectedObject?.shadow
+    const enabled = kind === "box-shadow" ? canAddShadow && !selectedObject?.shadow
+      : kind === "drop-shadow" ? canAddShadow && !selectedObject?.dropShadow
       : kind === "color" ? canAddColorDynamic
       : kind === "states" ? canAddStatesDynamic
       : kind === "rotation" ? canAddRotationDynamic
@@ -13124,6 +13150,7 @@ const resolveIndicatorState = (obj) => {
 
 let nextClipPathId = 1;
 let nextPaintGradientId = 1;
+let nextDropShadowId = 1;
 const getOrCreateDefs = (svgRoot) => {
   if (!svgRoot) return null;
   const existing = svgRoot.querySelector("defs");
@@ -13663,6 +13690,32 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     shadowHost.style.filter = `drop-shadow(${Number(shadow.offsetX ?? 2)}px ${Number(shadow.offsetY ?? 2)}px ${Math.max(0, Number(shadow.blur ?? 2))}px ${colorValueWithOpacity})`;
     parent.appendChild(shadowHost);
     parent = shadowHost;
+  }
+  if (obj.dropShadow && typeof obj.dropShadow === "object") {
+    const shadow = obj.dropShadow;
+    const svgRoot = svgRootForPaint(parent);
+    const defs = getOrCreateDefs(svgRoot);
+    if (defs) {
+      const filterId = `hmi-drop-shadow-${nextDropShadowId++}`;
+      const filter = document.createElementNS(ns, "filter");
+      filter.setAttribute("id", filterId);
+      filter.setAttribute("x", "-100%");
+      filter.setAttribute("y", "-100%");
+      filter.setAttribute("width", "300%");
+      filter.setAttribute("height", "300%");
+      const effect = document.createElementNS(ns, "feDropShadow");
+      effect.setAttribute("dx", Number(shadow.offsetX ?? 2));
+      effect.setAttribute("dy", Number(shadow.offsetY ?? 2));
+      effect.setAttribute("stdDeviation", Math.max(0, Number(shadow.blur ?? 2)));
+      effect.setAttribute("flood-color", String(shadow.color || "#000000"));
+      effect.setAttribute("flood-opacity", Math.max(0, Math.min(1, Number(shadow.opacity ?? 0.45))));
+      filter.appendChild(effect);
+      defs.appendChild(filter);
+      const shadowHost = document.createElementNS(ns, "g");
+      shadowHost.setAttribute("filter", `url(#${filterId})`);
+      parent.appendChild(shadowHost);
+      parent = shadowHost;
+    }
   }
   const rotation = getObjectRotationDegrees(obj);
   const hasRotation = Number.isFinite(rotation) && rotation !== 0;
@@ -17112,6 +17165,7 @@ const updatePropertiesPanel = () => {
   const showIndicator = Boolean(obj && obj.type === "indicator");
   const supportsShadow = Boolean(obj && !["alarms-panel", "viewport"].includes(obj.type));
   const hasShadow = Boolean(supportsShadow && obj.shadow);
+  const hasDropShadow = Boolean(supportsShadow && obj.dropShadow);
   const showAutomationLaunch = Boolean(obj && obj.type !== "alarms-panel" && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !showBar);
   if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showSpline || showPolygon || showBar || showNumberInput || showIndicator);
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
@@ -17148,8 +17202,9 @@ const updatePropertiesPanel = () => {
   if (!hasLevelDynamic && currentObjectDynamicTab === "level") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj)) || (showDynamicButton && !hasButtonRotationDynamic(obj)) || (showDynamicGroup && !hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
-  if (!hasShadow && currentObjectDynamicTab === "shadow") currentObjectDynamicTab = "properties";
-  if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !hasShadow) {
+  if (!hasShadow && currentObjectDynamicTab === "box-shadow") currentObjectDynamicTab = "properties";
+  if (!hasDropShadow && currentObjectDynamicTab === "drop-shadow") currentObjectDynamicTab = "properties";
+  if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !hasShadow && !hasDropShadow) {
     currentObjectDynamicTab = "properties";
     rectVisibilityDraft = null;
     rectVisibilityDraftObject = null;
@@ -17160,7 +17215,7 @@ const updatePropertiesPanel = () => {
     rectMotionDraft = null;
     rectMotionDraftObject = null;
   }
-  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow));
+  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow));
   syncObjectDynamicVisibilityTabs(obj);
   syncObjectDynamicColorTabs(obj);
   if (objectDynamicTabLevelBtn) objectDynamicTabLevelBtn.classList.toggle("is-hidden", !hasLevelDynamic);
@@ -17168,14 +17223,16 @@ const updatePropertiesPanel = () => {
   if (objectDynamicTabRotationBtn) objectDynamicTabRotationBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))));
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (objectDynamicTabShadowBtn) objectDynamicTabShadowBtn.classList.toggle("is-hidden", !hasShadow);
-  if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow) setObjectDynamicTab(currentObjectDynamicTab);
+  if (objectDynamicTabDropShadowBtn) objectDynamicTabDropShadowBtn.classList.toggle("is-hidden", !hasDropShadow);
+  if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow) setObjectDynamicTab(currentObjectDynamicTab);
   const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && isVisibilityDynamicTab(currentObjectDynamicTab) && hasVisibilityDynamic(obj);
   const showRectColorTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicPolygon || showDynamicGroup) && hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab);
   const showRectLevelTab = hasLevelDynamic && currentObjectDynamicTab === "level";
   const showRectStatesTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && currentObjectDynamicTab === "states" && hasMultiStateDynamic(obj);
   const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
   const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
-  const showShadowTab = hasShadow && currentObjectDynamicTab === "shadow";
+  const showShadowTab = hasShadow && currentObjectDynamicTab === "box-shadow";
+  const showDropShadowTab = hasDropShadow && currentObjectDynamicTab === "drop-shadow";
   if (showRectVisibilityTab) ensureRectVisibilityDraft(obj);
   if (showRectColorTab) ensureRectColorDraft(obj);
   if (showRectRotationTab) ensureRectRotationDraft(obj);
@@ -17189,7 +17246,7 @@ const updatePropertiesPanel = () => {
   if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectMotionTab);
   if (showDynamicPolygon && polygonProps) polygonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab);
-  if (showShadowTab) {
+  if (showShadowTab || showDropShadowTab) {
     [textProps, buttonProps, groupProps, objectActionProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps, automationLaunchRow].forEach((panel) => panel?.classList.add("is-hidden"));
   }
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
@@ -17199,12 +17256,20 @@ const updatePropertiesPanel = () => {
   if (objectDynamicRotationHost) objectDynamicRotationHost.classList.toggle("is-hidden", !showRectRotationTab);
   if (objectDynamicMotionHost) objectDynamicMotionHost.classList.toggle("is-hidden", !showRectMotionTab);
   if (objectDynamicShadowHost) objectDynamicShadowHost.classList.toggle("is-hidden", !showShadowTab);
+  if (objectDynamicDropShadowHost) objectDynamicDropShadowHost.classList.toggle("is-hidden", !showDropShadowTab);
   if (showShadowTab) {
     if (objectShadowColor) objectShadowColor.value = String(obj.shadow.color || "#000000");
     if (objectShadowOpacity) objectShadowOpacity.value = String(obj.shadow.opacity ?? 0.45);
     if (objectShadowOffsetX) objectShadowOffsetX.value = String(obj.shadow.offsetX ?? 2);
     if (objectShadowOffsetY) objectShadowOffsetY.value = String(obj.shadow.offsetY ?? 2);
     if (objectShadowBlur) objectShadowBlur.value = String(obj.shadow.blur ?? 2);
+  }
+  if (showDropShadowTab) {
+    if (objectDropShadowColor) objectDropShadowColor.value = String(obj.dropShadow.color || "#000000");
+    if (objectDropShadowOpacity) objectDropShadowOpacity.value = String(obj.dropShadow.opacity ?? 0.45);
+    if (objectDropShadowOffsetX) objectDropShadowOffsetX.value = String(obj.dropShadow.offsetX ?? 2);
+    if (objectDropShadowOffsetY) objectDropShadowOffsetY.value = String(obj.dropShadow.offsetY ?? 2);
+    if (objectDropShadowBlur) objectDropShadowBlur.value = String(obj.dropShadow.blur ?? 2);
   }
   if (visibilityProps && objectDynamicVisibilityHost && showRectVisibilityTab) {
     if (visibilityProps.parentNode !== objectDynamicVisibilityHost) objectDynamicVisibilityHost.appendChild(visibilityProps);
@@ -19474,6 +19539,11 @@ function bindScreenManager() {
     setMenuOpen(false);
     ensureShadowEffectForSelectedObject();
   });
+  dynamicsAddDropShadowMenuBtn?.addEventListener("click", () => {
+    setDynamicsFlyoutOpen(false);
+    setMenuOpen(false);
+    ensureDropShadowEffectForSelectedObject();
+  });
 
   toolbarDynamicsBtn?.addEventListener("click", () => {
     const isOpen = !toolbarDynamicsFlyout?.classList.contains("is-hidden");
@@ -19489,7 +19559,8 @@ function bindScreenManager() {
       states: ensureMultiStateDynamic,
       rotation: ensureRectRotationDynamic,
       motion: ensureRectMotionDynamic,
-      shadow: ensureShadowEffectForSelectedObject
+      "box-shadow": ensureShadowEffectForSelectedObject,
+      "drop-shadow": ensureDropShadowEffectForSelectedObject
     };
     actions[button.dataset.addDynamic]?.();
   });
@@ -32617,7 +32688,11 @@ if (objectDynamicTabMotionBtn) {
 }
 
 objectDynamicTabShadowBtn?.addEventListener("click", () => {
-  setObjectDynamicTab("shadow");
+  setObjectDynamicTab("box-shadow");
+  updatePropertiesPanel();
+});
+objectDynamicTabDropShadowBtn?.addEventListener("click", () => {
+  setObjectDynamicTab("drop-shadow");
   updatePropertiesPanel();
 });
 
@@ -32644,6 +32719,35 @@ objectShadowDeleteBtn?.addEventListener("click", () => {
   const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
   if (!obj?.shadow) return;
   delete obj.shadow;
+  setDirty(true);
+  render();
+  setObjectDynamicTab("properties");
+  updatePropertiesPanel();
+});
+
+const applySelectedDropShadowProperty = () => {
+  const activeObjects = getActiveObjects();
+  const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+  if (!obj?.dropShadow) return;
+  obj.dropShadow = {
+    color: String(objectDropShadowColor?.value || "#000000"),
+    opacity: Math.max(0, Math.min(1, Number(objectDropShadowOpacity?.value ?? 0.45))),
+    offsetX: Number(objectDropShadowOffsetX?.value ?? 2),
+    offsetY: Number(objectDropShadowOffsetY?.value ?? 2),
+    blur: Math.max(0, Number(objectDropShadowBlur?.value ?? 2))
+  };
+  setDirty(true);
+  render();
+};
+[objectDropShadowColor, objectDropShadowOpacity, objectDropShadowOffsetX, objectDropShadowOffsetY, objectDropShadowBlur].forEach((input) => {
+  input?.addEventListener("input", applySelectedDropShadowProperty);
+  input?.addEventListener("change", applySelectedDropShadowProperty);
+});
+objectDropShadowDeleteBtn?.addEventListener("click", () => {
+  const activeObjects = getActiveObjects();
+  const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
+  if (!obj?.dropShadow) return;
+  delete obj.dropShadow;
   setDirty(true);
   render();
   setObjectDynamicTab("properties");
