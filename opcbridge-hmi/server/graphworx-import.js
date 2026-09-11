@@ -529,7 +529,9 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
   const applyImportedDynamics = (obj) => {
     const dynamics = obj?.importedDynamics;
     if (!dynamics) return;
-    const colorRules = (dynamics.colors || []).map((item) => {
+    const colorRules = (dynamics.colors || [])
+      .filter((item) => String(item.sourceExpression || "").trim())
+      .map((item) => {
       const binding = unresolvedBinding(item.sourceExpression);
       const target = String(item.target || "").toLowerCase();
       const strokeTarget = obj.type === "line" || obj.type === "pipe" || target.includes("stroke") || target.includes("border");
@@ -547,7 +549,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
         strokeEnabled: strokeTarget,
         strokeColor: item.endColor
       };
-    });
+      });
     if (colorRules.length) {
       obj.colorAutomationRules = colorRules;
       const fillRules = colorRules.filter((rule) => rule.fillEnabled).map((rule) => ({ ...rule, onColor: rule.fillColor }));

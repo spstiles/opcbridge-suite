@@ -384,6 +384,7 @@ test("collapses a flashing bordered GraphWorX alarm label into one native text o
       <gwx:GwxDynamicGroup.GwxDynamicGroup><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
         <gwx:GwxHide AnimationMode="Discrete" DataSource="${sourceTag}" PeriodicToggleRate="1000"
           DynamicStateWhenToggleOff="True"/>
+        <gwx:GwxColor TargetPropertyName="Foreground" EndBrush="#FFFF0000" AnimationMode="Discrete" />
       </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></gwx:GwxDynamicGroup.GwxDynamicGroup>
       <Label Background="#FFFF0000" Foreground="#FFFFFFFF" FontSize="12" FontWeight="Bold"
         HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Width="390" Height="25"
@@ -411,6 +412,8 @@ test("collapses a flashing bordered GraphWorX alarm label into one native text o
   assert.equal(banner.visibility.rules[0].flashEnabled, true);
   assert.equal(banner.visibility.rules[0].flashRate, "slow");
   assert.equal(banner.visibility.rules[0].flashWhen, true);
+  assert.equal(banner.colorAutomationRules, undefined);
+  assert.equal(banner.fillAutomation, undefined);
   assert.ok(result.screen.referenceHealth.issues.some((issue) => issue.automation === "visibility" && issue.source.value === sourceTag));
 });
 
