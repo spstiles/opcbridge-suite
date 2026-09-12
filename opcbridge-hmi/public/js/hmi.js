@@ -8012,6 +8012,19 @@ const referenceAutomationLabel = (pathParts) => {
   return "data";
 };
 
+// Imported expressions may still contain GraphWorX references. Keep token
+// locations so remapping changes only the reference, not its surrounding math.
+const importedExpressionReferences = (expression) => {
+  const source = String(expression || "");
+  const references = [];
+  const pattern = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(\{{2,}([^{}]+)\}{2,})/g;
+  for (const match of source.matchAll(pattern)) {
+    if (!match[1] || !match[2].trim()) continue;
+    references.push({ value: match[2].trim(), start: match.index, end: match.index + match[0].length });
+  }
+  return references;
+};
+
 const collectScreenReferenceMappings = () => {
   const occurrences = [];
   const visit = (value, pathParts = [], owner = null) => {
@@ -8029,6 +8042,32 @@ const collectScreenReferenceMappings = () => {
     const tag = String(value.tag || "").trim();
     const sourceReference = String(value.sourceReference || "").trim();
     if (value.sourceType === "expression" && String(value.expression || "").trim()) {
+      const importedReferences = [...new Set(importedExpressionReferences(value.expression).map((reference) => reference.value))];
+      importedReferences.forEach((current, expressionIndex) => {
+        occurrences.push({
+          type: "tag",
+          current,
+          original: current,
+          automation: referenceAutomationLabel(pathParts),
+          objectId: String(nextOwner?.importId || nextOwner?.id || ""),
+          path: `${pathText}.expression.imported.${expressionIndex}`,
+          binding: value,
+          status: "unresolved",
+          apply(replacement, resolved) {
+            const parsed = parseMappedTagReference(replacement);
+            if (!parsed) return false;
+            const matches = importedExpressionReferences(value.expression).filter((reference) => reference.value === current);
+            if (!matches.length) return false;
+            const call = `tag(${JSON.stringify(parsed.connection_id)}, ${JSON.stringify(parsed.tag)})`;
+            matches.reverse().forEach((reference) => {
+              value.expression = value.expression.slice(0, reference.start) + call + value.expression.slice(reference.end);
+            });
+            value.status = resolved && !importedExpressionReferences(value.expression).length ? "resolved" : "unresolved";
+            value.mappedReference = replacement;
+            return true;
+          }
+        });
+      });
       extractAutomationExpressionTagReferences(value.expression).forEach((reference, expressionIndex) => {
         occurrences.push({
           type: "tag",
@@ -8057,7 +8096,7 @@ const collectScreenReferenceMappings = () => {
     }
     const looksLikeTagBinding = Object.prototype.hasOwnProperty.call(value, "tag")
       && (Object.prototype.hasOwnProperty.call(value, "connection_id") || value.sourceType === "tag" || sourceReference);
-    if (looksLikeTagBinding && (tag || sourceReference) && !aliasTokenName(tag || sourceReference)) {
+    if (value.sourceType !== "expression" && looksLikeTagBinding && (tag || sourceReference) && !aliasTokenName(tag || sourceReference)) {
       const current = formatMappedTagReference(connection, tag) || sourceReference || tag;
       occurrences.push({
         type: "tag",
