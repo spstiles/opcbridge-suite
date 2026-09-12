@@ -1270,6 +1270,9 @@ const state = {
   workspaceTabLoadInFlight: false,
   workspaceConfigLoaded: false,
   workspaceLoadPromise: null,
+  workspaceRebuildInFlight: false,
+  workspaceSaveInFlight: false,
+  runtimeReloadBusy: false,
   selectedConnPath: '',
   selectedConnObj: null,
   selectedConnRawDirty: false,
@@ -11752,10 +11755,19 @@ async function copyTextToClipboardSafe(text) {
 }
 
 async function opcbridgeReload() {
-  const r = await apiPostJson('/api/opcbridge/reload', {});
+  let r;
+  try {
+    r = await apiPostJson('/api/opcbridge/reload', {});
+  } catch (err) {
+    if (!/already in progress/i.test(String(err?.message || err))) throw err;
+    const status = await apiGet('/api/opcbridge/reload/status');
+    if (status.target_connection_id || !(status.requested || status.in_progress)) throw err;
+    // Follow the existing full rebuild instead of submitting another request.
+    return waitForOpcbridgeReloadDone({ gen: status.gen, maxWaitMs: Infinity });
+  }
   if (r && r.pending) {
     const gen = (typeof r.gen === 'number') ? r.gen : null;
-    await waitForOpcbridgeReloadDone({ gen });
+    await waitForOpcbridgeReloadDone({ gen, maxWaitMs: Infinity });
   }
 }
 
@@ -11817,6 +11829,13 @@ function renderRuntimeRebuildStatus(status) {
   const required = Boolean(status?.full_rebuild_required);
   const requested = Boolean(st.requested);
   const inProgress = Boolean(st.in_progress);
+  if (status) {
+    state.runtimeReloadBusy = requested || inProgress;
+    renderWorkspaceSaveBar();
+  }
+  if (state.workspaceRebuildInFlight && (requested || inProgress)) {
+    setWorkspaceSaveStatus(inProgress ? 'Rebuilding OPC UA namespace…' : 'OPC UA rebuild queued…');
+  }
   const done = Boolean(st.done);
   const ok = Boolean(st.ok);
   const target = String(st.target_connection_id || '').trim();
@@ -11876,7 +11895,7 @@ function renderRuntimeRebuildStatus(status) {
     els.overviewRebuildDetails.innerHTML = rows.map((r) => `<div>${escapeHtml(r)}</div>`).join('');
   }
   if (els.overviewRebuildBtn) {
-    els.overviewRebuildBtn.disabled = !canEditConfig() || requested || inProgress;
+    els.overviewRebuildBtn.disabled = !canEditConfig() || requested || inProgress || state.workspaceRebuildInFlight;
   }
 }
 
@@ -11956,8 +11975,15 @@ function wireOverviewRuntimeUi() {
 async function waitForOpcbridgeReloadDone({ gen, maxWaitMs = 180000, intervalMs = 750 } = {}) {
   const start = Date.now();
   while ((Date.now() - start) < maxWaitMs) {
+    let s;
     try {
-      const s = await apiGet('/api/opcbridge/reload/status');
+      s = await apiGet('/api/opcbridge/reload/status');
+    } catch (err) {
+      const msg = String(err?.message || err || '');
+      if (msg.toLowerCase().includes('blocked path')) throw err;
+      if (state.workspaceSaveInFlight) setWorkspaceSaveStatus('Waiting for runtime update status… The server may still be working.');
+    }
+    if (s) {
       renderRuntimeRebuildStatus(s);
       const sGen = (typeof s?.gen === 'number') ? s.gen : 0;
       if (typeof gen === 'number' && sGen < gen) {
@@ -11966,14 +11992,10 @@ async function waitForOpcbridgeReloadDone({ gen, maxWaitMs = 180000, intervalMs 
         if (s.ok) return s;
         throw new Error(String(s.error || 'Reload failed'));
       }
-    } catch (err) {
-      // If the status endpoint is temporarily unavailable during reload, keep waiting.
-      const msg = String(err?.message || err || '');
-      if (msg.toLowerCase().includes('blocked path')) throw err;
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  return false;
+  throw new Error('Rebuild completion could not be confirmed. The server may still be working.');
 }
 
 function stripJsonComments(text) {
@@ -17976,15 +17998,18 @@ function workspaceIsDirty() {
 
 function setWorkspaceSaveStatus(msg) {
   if (els.workspaceSaveStatus) els.workspaceSaveStatus.textContent = String(msg || '');
+  if (state.workspaceSaveInFlight && msg) setWorkspaceLoading(String(msg));
 }
 
 function renderWorkspaceSaveBar() {
   const dirty = workspaceIsDirty();
   const applyBlocked = Date.now() < Number(state.workspaceApplyPollingBlockUntil || 0);
-  if (els.workspaceSaveBtn) els.workspaceSaveBtn.disabled = !dirty;
-  if (els.workspaceApplyPollingBtn) els.workspaceApplyPollingBtn.disabled = !dirty || applyBlocked;
-  if (els.workspaceRebuildOpcuaBtn) els.workspaceRebuildOpcuaBtn.disabled = !canEditConfig();
-  if (els.workspaceDiscardBtn) els.workspaceDiscardBtn.disabled = !dirty;
+  const busy = state.workspaceSaveInFlight || state.runtimeReloadBusy;
+  if (els.overviewRebuildBtn) els.overviewRebuildBtn.disabled = !canEditConfig() || busy;
+  if (els.workspaceSaveBtn) els.workspaceSaveBtn.disabled = !dirty || busy;
+  if (els.workspaceApplyPollingBtn) els.workspaceApplyPollingBtn.disabled = !dirty || applyBlocked || busy;
+  if (els.workspaceRebuildOpcuaBtn) els.workspaceRebuildOpcuaBtn.disabled = !canEditConfig() || busy;
+  if (els.workspaceDiscardBtn) els.workspaceDiscardBtn.disabled = !dirty || busy;
 }
 
 function blockWorkspaceApplyPollingBriefly() {
@@ -26622,6 +26647,7 @@ function setWorkspaceLoading(message = '', failed = false) {
 }
 
 async function refreshWorkspaceTab({ force = false } = {}) {
+  if (state.workspaceSaveInFlight) return;
   if (state.workspaceLoadPromise) return state.workspaceLoadPromise;
   if (!force && state.workspaceConfigLoaded) return;
   if (workspaceIsDirty()) return;
@@ -26675,6 +26701,28 @@ async function refreshWorkspaceConfigViews() {
 }
 
 async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } = {}) {
+  if (state.workspaceSaveInFlight || state.runtimeReloadBusy) return;
+  if (!rebuildOpcua && !workspaceIsDirty()) return;
+  if (rebuildOpcua && !workspaceIsDirty() && !window.confirm('Rebuild the full OPCBridge runtime and OPC UA namespace now?')) return;
+  if (state.workspaceLoadPromise) return;
+  state.workspaceSaveInFlight = true;
+  state.workspaceRebuildInFlight = rebuildOpcua;
+  setWorkspaceSaveStatus(rebuildOpcua
+    ? (workspaceIsDirty() ? 'Saving changes before rebuilding…' : 'Requesting OPC UA rebuild…')
+    : 'Saving Workspace changes…');
+  renderWorkspaceSaveBar();
+  try {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    await saveWorkspaceAllImpl({ applyPolling, rebuildOpcua });
+  } finally {
+    state.workspaceRebuildInFlight = false;
+    state.workspaceSaveInFlight = false;
+    setWorkspaceLoading();
+    renderWorkspaceSaveBar();
+  }
+}
+
+async function saveWorkspaceAllImpl({ applyPolling = false, rebuildOpcua = false } = {}) {
   if (applyPolling && Date.now() < Number(state.workspaceApplyPollingBlockUntil || 0)) {
     setWorkspaceSaveStatus('Tag delete staged. Click Save & Apply Changes when ready.');
     renderWorkspaceSaveBar();
@@ -26682,7 +26730,6 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
   }
   if (!workspaceIsDirty()) {
     if (!rebuildOpcua) return;
-    if (!window.confirm('Rebuild the full OPCBridge runtime and OPC UA namespace now?')) return;
     setWorkspaceSaveStatus('Rebuilding OPC UA namespace…');
     renderWorkspaceSaveBar();
     try {
@@ -26692,7 +26739,9 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
       renderWorkspaceTree();
       setWorkspaceSaveStatus('OPC UA namespace rebuilt.');
     } catch (err) {
-      setWorkspaceSaveStatus(`OPC UA rebuild failed: ${err.message}`);
+      setWorkspaceSaveStatus(/timeout|timed out/i.test(String(err?.message || err))
+        ? 'Rebuild request could not be confirmed. The server may still be working; check runtime status before retrying.'
+        : `OPC UA rebuild failed: ${err.message}`);
     } finally {
       renderWorkspaceSaveBar();
     }
@@ -26780,6 +26829,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
     state.workspaceDeletedTagConnectionIds.clear();
     clearWorkspaceDraft();
 
+    setWorkspaceSaveStatus('Saved. Refreshing Workspace…');
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
     await loadWorkspaceConnectionObjects();
     renderWorkspaceTree();
@@ -26789,7 +26839,7 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
   } catch (err) {
     const msg = String(err?.message || err || '');
     const lowerMsg = msg.toLowerCase();
-    if (lowerMsg.includes('upstream timeout') || lowerMsg.includes('request timed out')) {
+    if (!rebuildOpcua && (lowerMsg.includes('upstream timeout') || lowerMsg.includes('request timed out'))) {
       setWorkspaceSaveStatus('Save is taking longer than expected (timeout). The server may still be working; waiting a moment then refreshing…');
       renderWorkspaceSaveBar();
       setTimeout(async () => {
@@ -26806,7 +26856,9 @@ async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } =
         }
       }, 5000);
     } else {
-      setWorkspaceSaveStatus(`Save failed: ${msg}`);
+      setWorkspaceSaveStatus(rebuildOpcua && /timeout|timed out/i.test(msg)
+        ? 'Save/rebuild request could not be confirmed. The server may still be working; check runtime status before retrying.'
+        : `Save failed: ${msg}`);
     }
   } finally {
     renderWorkspaceSaveBar();
