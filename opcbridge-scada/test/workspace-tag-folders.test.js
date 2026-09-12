@@ -8,6 +8,49 @@ const context = vm.createContext({});
 vm.runInContext(source.slice(source.indexOf('function buildWorkspaceTagFolders('), source.indexOf('function buildTree(')), context);
 const build = names => context.buildWorkspaceTagFolders(names.map(name => ({ name })), 'Field_Ops');
 
+test('folder toggles reuse their branch without rebuilding the tree or details pane', () => {
+  let created = 0;
+  class Element {
+    constructor() { created++; this.children = []; this.style = {}; this.dataset = {}; this.classList = { toggle() {} }; this.handlers = {}; }
+    appendChild(child) { child.parent = this; this.children.push(child); }
+    after(child) { child.parent = this.parent; this.parent.children.splice(this.parent.children.indexOf(this) + 1, 0, child); }
+    addEventListener(event, fn) { this.handlers[event] = fn; }
+    setAttribute() {}
+  }
+  const state = { expanded: new Set() };
+  const ui = vm.createContext({ state, document: { createElement: () => new Element() } });
+  vm.runInContext(source.slice(source.indexOf('function ensureWorkspaceBranchChildren('), source.indexOf('function updateWorkspaceTreeSelection(')), ui);
+  const tree = build(['Station.Pump.Running']);
+  const container = new Element();
+  ui.renderTreeNode(tree[0], container);
+  const toggle = container.children[0].children[0];
+  const click = () => toggle.handlers.click({ preventDefault() {}, stopPropagation() {} });
+  click();
+  const branch = container.children[1];
+  assert.equal(branch.children.length, 1);
+  const count = created;
+  click();
+  assert.equal(branch.style.display, 'none');
+  click();
+  assert.equal(branch.style.display, '');
+  assert.equal(container.children[1], branch);
+  assert.equal(created, count);
+});
+
+test('collapsed connections build tag folders once per tree version', () => {
+  let reads = 0;
+  const ui = vm.createContext({
+    getEffectiveTagsAll: () => { reads++; return [{ connection_id: 'c', name: 'Pump.Running' }]; },
+    isMemoryTagConfig: () => false, buildWorkspaceTagFolders: context.buildWorkspaceTagFolders
+  });
+  vm.runInContext(source.slice(source.indexOf('function ensureWorkspaceBranchChildren('), source.indexOf('function renderTreeNode(')), ui);
+  const node = { type: 'device', meta: { connection_id: 'c' }, children: [] };
+  ui.ensureWorkspaceBranchChildren(node);
+  ui.ensureWorkspaceBranchChildren(node);
+  assert.equal(reads, 1);
+  assert.equal(node.children[0].children[0].meta.name, 'Pump.Running');
+});
+
 test('nested dotted names form folders while leaf identities retain full names', () => {
   const tree = build(['Lift_Station_01.Pump_01.Running', 'Lift_Station_01.Pump_01.Failed', 'Lift_Station_01.Generator_Running']);
   const station = tree[0];

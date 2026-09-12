@@ -25432,10 +25432,11 @@ function isOrphanedTagConnection(connectionId) {
 }
 
 function getMemoryTagsAll() {
+  const orphanIds = new Set(orphanedTagGroups().keys());
   return getEffectiveTagsAll()
     .filter((t) => {
       const cid = String(t?.connection_id || '').trim();
-      return !isOrphanedTagConnection(cid) && (isMemoryTagConfig(t) || cid === MEMORY_CONNECTION_ID);
+      return !orphanIds.has(cid) && (isMemoryTagConfig(t) || cid === MEMORY_CONNECTION_ID);
     })
     .map((t) => ({ ...(t || {}), connection_id: String(t?.connection_id || '') || MEMORY_CONNECTION_ID }));
 }
@@ -25729,6 +25730,7 @@ function buildTree() {
       id: deviceId,
       type: 'device',
       label: String(connObj?.description || '').trim() || connectionId,
+      childrenLoaded: state.expanded.has(deviceId),
       meta: { path: pathRel, connection_id: connectionId, driver: String(connObj?.driver || ''), enabled: connObj?.enabled !== false },
       children: tagChildren
     };
@@ -25763,6 +25765,7 @@ function buildTree() {
 
   if (state.expanded.has(memoryRoot.id)) {
     memoryRoot.children.push(...buildWorkspaceTagFolders(getMemoryTagsAll(), MEMORY_CONNECTION_ID));
+    memoryRoot.childrenLoaded = true;
   }
 
   const connectionSystemChildren = connItems
@@ -25839,6 +25842,19 @@ function buildTree() {
   return root;
 }
 
+function ensureWorkspaceBranchChildren(node) {
+  if (node.childrenLoaded || !['device', 'memory_folder'].includes(node.type)) return;
+  if (node.type === 'memory_folder') {
+    node.children = buildWorkspaceTagFolders(getMemoryTagsAll(), MEMORY_CONNECTION_ID);
+  } else {
+    const cid = node.meta.connection_id;
+    node.children = node.meta.driver === 'mqtt'
+      ? buildMqttWorkspaceChildren(cid, state.connObjCache.get(node.meta.path) || {}, node.meta.path)
+      : buildWorkspaceTagFolders(getEffectiveTagsAll().filter(tag => String(tag.connection_id || '') === cid && !isMemoryTagConfig(tag)), cid);
+  }
+  node.childrenLoaded = true;
+}
+
 function renderTreeNode(node, container) {
   const canExpand = [
     'tag_folder',
@@ -25856,6 +25872,17 @@ function renderTreeNode(node, container) {
     'system_group'
   ].includes(String(node.type || ''));
   const expanded = state.expanded.has(node.id);
+  let childrenWrap = null;
+  const showChildren = () => {
+    if (!childrenWrap) {
+      ensureWorkspaceBranchChildren(node);
+      childrenWrap = document.createElement('div');
+      childrenWrap.className = 'tree-children';
+      (node.children || []).forEach(child => renderTreeNode(child, childrenWrap));
+      btn.after(childrenWrap);
+    }
+    childrenWrap.style.display = '';
+  };
 
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -25871,9 +25898,17 @@ function renderTreeNode(node, container) {
     twisty.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (state.expanded.has(node.id)) state.expanded.delete(node.id);
-      else state.expanded.add(node.id);
-      renderWorkspaceTree();
+      if (state.expanded.has(node.id)) {
+        state.expanded.delete(node.id);
+        if (childrenWrap) childrenWrap.style.display = 'none';
+        twisty.textContent = '+';
+        btn.setAttribute('aria-expanded', 'false');
+      } else {
+        state.expanded.add(node.id);
+        showChildren();
+        twisty.textContent = '−';
+        btn.setAttribute('aria-expanded', 'true');
+      }
     });
   }
 
@@ -26029,12 +26064,8 @@ function renderTreeNode(node, container) {
 
   container.appendChild(btn);
 
-  if (canExpand && expanded) {
-    const childrenWrap = document.createElement('div');
-    childrenWrap.className = 'tree-children';
-    (node.children || []).forEach((c) => renderTreeNode(c, childrenWrap));
-    container.appendChild(childrenWrap);
-  }
+  if (canExpand) btn.setAttribute('aria-expanded', String(expanded));
+  if (canExpand && expanded) showChildren();
 }
 
 function updateWorkspaceTreeSelection(selectedButton = null) {
