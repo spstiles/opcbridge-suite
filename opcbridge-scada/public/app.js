@@ -18423,15 +18423,17 @@ function setNewTagStatus(msg) {
   if (els.newTagStatus) els.newTagStatus.textContent = String(msg || '');
 }
 
-function showNewTagModal(connectionId) {
+function showNewTagModal(connectionId, prefix = '') {
   const cid = String(connectionId || '').trim();
   if (!cid) return;
   touchOpcbridgeAuthActivity({ force: true });
   const memoryMode = cid === MEMORY_CONNECTION_ID;
 
-  state.pendingNewTag = { connection_id: cid };
+  state.pendingNewTag = { connection_id: cid, prefix };
 
-  if (els.newTagHint) els.newTagHint.textContent = memoryMode ? 'Creating a new memory tag.' : `Creating a new tag under device '${cid}'.`;
+  if (els.newTagHint) els.newTagHint.textContent = prefix
+    ? `Creating a tag in ${displayConnectionName(cid)} / ${prefix}. Enter a name relative to this folder.`
+    : (memoryMode ? 'Creating a new memory tag.' : `Creating a new tag under device '${displayConnectionName(cid)}'.`);
   if (els.newTagName) els.newTagName.value = '';
   if (els.newTagSourceKind) els.newTagSourceKind.value = memoryMode ? 'memory' : 'plc';
   if (els.newTagPlc) els.newTagPlc.value = '';
@@ -18597,8 +18599,10 @@ async function createNewTagFromModal() {
   const cid = String(state.pendingNewTag?.connection_id || '').trim();
   if (!cid) return;
 
-  const name = String(els.newTagName?.value || '').trim();
-  if (!name) { setNewTagStatus('Tag Name is required.'); return; }
+  const enteredName = String(els.newTagName?.value || '').trim();
+  if (!enteredName) { setNewTagStatus('Tag Name is required.'); return; }
+  const prefix = String(state.pendingNewTag?.prefix || '');
+  const name = prefix ? `${prefix}.${enteredName}` : enteredName;
 
   const sourceKind = (cid === MEMORY_CONNECTION_ID)
     ? 'memory'
@@ -25647,6 +25651,42 @@ function makeSystemGroup(id, label, prefix, children = []) {
 }
 
 
+function buildWorkspaceTagFolders(tags, connectionId) {
+  const root = [];
+  const folders = new Map();
+  for (const tag of tags) {
+    const name = String(tag?.name || '');
+    if (!name) continue;
+    const parts = name.split('.');
+    // Preserve unusual existing names with empty segments as literal leaves.
+    if (parts.some(part => !part)) parts.splice(0, parts.length, name);
+    let children = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const prefix = parts.slice(0, i + 1).join('.');
+      if (!folders.has(prefix)) {
+        const folder = { id: `tag-folder:${connectionId}::${prefix}`, type: 'tag_folder', label: parts[i],
+          meta: { connection_id: connectionId, tag_prefix: prefix }, children: [] };
+        folders.set(prefix, folder);
+        children.push(folder);
+      }
+      children = folders.get(prefix).children;
+    }
+    children.push({ id: `tag:${connectionId}::${name}`, type: 'tag', label: parts.at(-1),
+      meta: { connection_id: connectionId, name }, children: [] });
+  }
+  const sort = children => {
+    children.sort((a, b) => (b.type === 'tag_folder') - (a.type === 'tag_folder')
+      || a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
+    children.filter(node => node.type === 'tag_folder').forEach(node => sort(node.children));
+  };
+  sort(root);
+  return root;
+}
+
+function workspaceTagInFolder(name, prefix) {
+  return String(name || '').startsWith(`${prefix}.`);
+}
+
 function buildTree() {
   const root = {
     id: 'project:opcbridge',
@@ -25681,15 +25721,7 @@ function buildTree() {
           .slice()
           .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
 
-        tags.forEach((tt) => {
-          tagChildren.push({
-            id: `tag:${connectionId}::${String(tt.name || '')}`,
-            type: 'tag',
-            label: String(tt.name || ''),
-            meta: { connection_id: connectionId, name: String(tt.name || '') },
-            children: []
-          });
-        });
+        tagChildren.push(...buildWorkspaceTagFolders(tags, connectionId));
       }
     }
 
@@ -25730,21 +25762,7 @@ function buildTree() {
   root.children.push(orphanRoot);
 
   if (state.expanded.has(memoryRoot.id)) {
-    getMemoryTagsAll()
-      .slice()
-      .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { numeric: true, sensitivity: 'base' }))
-      .forEach((tt) => {
-        const name = String(tt?.name || '').trim();
-        if (!name) return;
-        const cid = String(tt?.connection_id || MEMORY_CONNECTION_ID).trim() || MEMORY_CONNECTION_ID;
-        memoryRoot.children.push({
-          id: `tag:${cid}::${name}`,
-          type: 'tag',
-          label: name,
-          meta: { connection_id: cid, name },
-          children: []
-        });
-      });
+    memoryRoot.children.push(...buildWorkspaceTagFolders(getMemoryTagsAll(), MEMORY_CONNECTION_ID));
   }
 
   const connectionSystemChildren = connItems
@@ -25823,6 +25841,7 @@ function buildTree() {
 
 function renderTreeNode(node, container) {
   const canExpand = [
+    'tag_folder',
     'project',
     'folder',
     'mqtt_broker',
@@ -25861,6 +25880,7 @@ function renderTreeNode(node, container) {
   const label = document.createElement('span');
   label.className = 'label';
   label.textContent = node.label;
+  if (node.type === 'tag_folder') label.textContent = `📁 ${node.label}`;
 
   const meta = document.createElement('span');
   meta.className = 'meta';
@@ -25931,6 +25951,10 @@ function renderTreeNode(node, container) {
     if (node.type === 'project') return;
 
     const items = [];
+
+    if (node.type === 'tag_folder') {
+      items.push({ label: 'Add Tag…', onClick: () => showNewTagModal(node.meta.connection_id, node.meta.tag_prefix) });
+    }
 
     if (node.type === 'system_folder' || node.type === 'system_group') {
       items.push({ label: 'Refresh', onClick: async () => { await refreshVisible().catch(() => {}); } });
@@ -26034,6 +26058,7 @@ function renderWorkspaceDetails(node) {
   const isDevice = String(node.type || '') === 'device';
   const isMqttDevice = isDevice && String(node.meta?.driver || '') === 'mqtt';
   const isMemoryFolder = String(node.type || '') === 'memory_folder';
+  const isTagFolder = node.type === 'tag_folder';
   const isTag = String(node.type || '') === 'tag';
   const isOrphanFolder = String(node.type || '') === 'orphan_folder';
   const isOrphanConnection = String(node.type || '') === 'orphan_connection';
@@ -26046,7 +26071,7 @@ function renderWorkspaceDetails(node) {
   const showDeviceCols = isConnectivity;
 
   // When a device is selected, list its tags. Clicking a tag in the tree should not change the right pane.
-  const showTagCols = (isDevice && !isMqttDevice) || isMemoryFolder || isTag || isSystem || isOrphanConnection;
+  const showTagCols = (isDevice && !isMqttDevice) || isMemoryFolder || isTagFolder || isTag || isSystem || isOrphanConnection;
 
   const columns = [];
   const addCol = (key, label, sortable = false) => columns.push({ key, label, sortable });
@@ -26141,7 +26166,7 @@ function renderWorkspaceDetails(node) {
       .filter((tag) => String(tag?.connection_id || '') === connectionId)
       .slice();
   } else if (showTagCols && connectionId) {
-    const memoryTagSelected = isTag && connectionId === MEMORY_CONNECTION_ID;
+    const memoryTagSelected = (isTag || isTagFolder) && connectionId === MEMORY_CONNECTION_ID;
     tagRows = (isMemoryFolder || memoryTagSelected)
       ? getMemoryTagsAll().slice()
       : getEffectiveTagsAll()
@@ -26150,6 +26175,7 @@ function renderWorkspaceDetails(node) {
         .slice();
   }
 
+  if (isTagFolder) tagRows = tagRows.filter(tag => workspaceTagInFolder(tag.name, node.meta.tag_prefix));
   const rawRowsToRender = showTagCols
     ? tagRows
     : (isMqttDevice
@@ -26186,7 +26212,7 @@ function renderWorkspaceDetails(node) {
       : `${count} item${count === 1 ? '' : 's'}${label ? ` · ${label}` : ''}`;
   }
 
-  const rootKey = showTagCols ? `tags:${connectionId || ''}` : `children:${String(node.id || '')}`;
+  const rootKey = showTagCols ? `tags:${connectionId || ''}:${isTagFolder ? node.meta.tag_prefix : ''}` : `children:${String(node.id || '')}`;
   if (state.workspaceChildrenSelRoot !== rootKey) {
     state.workspaceChildrenSelRoot = rootKey;
     state.workspaceChildrenSel = new Set();
@@ -26945,6 +26971,9 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
       connection_id: brokerId,
       label: `MQTT / ${String(node.label || 'Brokers')}`
     };
+  } else if (type === 'tag_folder') {
+    state.liveTagFilter = { type: 'tag_folder', connection_id: node.meta.connection_id,
+      prefix: node.meta.tag_prefix, label: `${displayConnectionName(node.meta.connection_id)} / ${node.meta.tag_prefix}` };
   } else if (type === 'tag') {
     const connection_id = String(node.meta?.connection_id || '').trim();
     const name = String(node.meta?.name || node.label || '').trim();
@@ -26975,6 +27004,8 @@ function updateWorkspaceLiveTagFilterFromNode(node) {
 function filterLiveTagsForWorkspace(tags) {
   const f = state.liveTagFilter || { type: 'all' };
   tags = mergeConfiguredMqttLiveTags(Array.isArray(tags) ? tags : []);
+  if (f.type === 'tag_folder') return tags.filter(tag => String(tag.connection_id || '') === f.connection_id
+    && workspaceTagInFolder(tag.name || tag.tag, f.prefix));
 
   if (f.type === 'tag') {
     const cid = String(f.connection_id || '').trim();
@@ -27255,9 +27286,10 @@ function liveTagsQueryParamsForCurrentScope() {
   let scopeKey = 'all';
   if (isPanelActive('tab-workspace')) {
     const f = state.liveTagFilter || { type: 'all' };
-    if ((f?.type === 'device' || f?.type === 'mqtt' || f?.type === 'tag' || f?.type === 'system' || f?.type === 'memory') && f.connection_id) {
+    if ((f?.type === 'device' || f?.type === 'mqtt' || f?.type === 'tag' || f?.type === 'tag_folder' || f?.type === 'system' || f?.type === 'memory') && f.connection_id) {
       params.set('connection_id', String(f.connection_id));
       scopeKey = `${String(f.type)}:${String(f.connection_id)}`;
+      if (f.type === 'tag_folder') scopeKey += `:${f.prefix}`;
       if (f.type === 'tag' && f.name) {
         params.set('tag', String(f.name));
         scopeKey += `:${String(f.name)}`;
@@ -27305,9 +27337,12 @@ async function loadVisibleLiveTags() {
       const key = liveTagKey(row);
       if (key) indexByKey.set(key, row);
     });
-    const index = Array.from(indexByKey.values()).sort(compareLiveTagIndexRows);
+    const folder = isPanelActive('tab-workspace') && state.liveTagFilter?.type === 'tag_folder' ? state.liveTagFilter : null;
+    const index = Array.from(indexByKey.values())
+      .filter(row => !folder || (String(row.connection_id || '') === folder.connection_id && workspaceTagInFolder(row.name || row.tag, folder.prefix)))
+      .sort(compareLiveTagIndexRows);
     page.index = index;
-    page.total = Number(indexResp?.total ?? index.length) || index.length;
+    page.total = folder ? index.length : Number(indexResp?.total ?? index.length) || index.length;
     page.indexLoaded = true;
     page.valueByKey = new Map();
     index.forEach((row) => {
