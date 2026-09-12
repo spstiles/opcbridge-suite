@@ -13710,11 +13710,11 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
         : 315;
       const direction = Number.isFinite(Number(shadow.direction)) ? Number(shadow.direction) : legacyDirection;
       const depth = Math.max(0, Number.isFinite(Number(shadow.depth)) ? Number(shadow.depth) : legacyDepth);
-      const softness = Math.max(0, Math.min(1, Number.isFinite(Number(shadow.softness)) ? Number(shadow.softness) : Math.max(0, Number(shadow.blur ?? 2)) / 10));
+      const softness = Math.max(0, Math.min(1, Number.isFinite(Number(shadow.softness)) ? Number(shadow.softness) : Math.max(0, Number(shadow.blur ?? 2)) / 25));
       const radians = direction * Math.PI / 180;
       const dx = Math.cos(radians) * depth;
       const dy = -Math.sin(radians) * depth;
-      const blur = softness * 10;
+      const blur = softness * 25;
       const padding = Math.max(8, blur * 4);
       const filterId = `hmi-drop-shadow-${nextDropShadowId++}`;
       const filter = document.createElementNS(ns, "filter");
@@ -17317,7 +17317,7 @@ const updatePropertiesPanel = () => {
     if (objectDropShadowOpacity) objectDropShadowOpacity.value = String(obj.dropShadow.opacity ?? 0.45);
     if (objectDropShadowDirection) objectDropShadowDirection.value = String(obj.dropShadow.direction ?? legacyDirection);
     if (objectDropShadowDepth) objectDropShadowDepth.value = String(obj.dropShadow.depth ?? legacyDepth);
-    if (objectDropShadowSoftness) objectDropShadowSoftness.value = String(obj.dropShadow.softness ?? Math.max(0, Math.min(1, Number(obj.dropShadow.blur ?? 2) / 10)));
+    if (objectDropShadowSoftness) objectDropShadowSoftness.value = String(obj.dropShadow.softness ?? Math.max(0, Math.min(1, Number(obj.dropShadow.blur ?? 2) / 25)));
   }
   if (visibilityProps && objectDynamicVisibilityHost && showRectVisibilityTab) {
     if (visibilityProps.parentNode !== objectDynamicVisibilityHost) objectDynamicVisibilityHost.appendChild(visibilityProps);
