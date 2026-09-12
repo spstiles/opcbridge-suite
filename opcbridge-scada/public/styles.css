@@ -1237,10 +1237,42 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 
 /* Desktop-like workspace */
 #tab-workspace {
+  position: relative;
   --workspace-pane-bg: rgba(18,24,32,.88);
   --workspace-pane-head: rgba(255,255,255,.03);
   --workspace-pane-border: var(--border);
 }
+
+.workspace-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 17, 24, .8);
+}
+.workspace-loading[hidden], .workspace-loading [hidden] { display: none; }
+.workspace-loading-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  max-width: 90%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #121820;
+}
+.workspace-loading-spinner {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 3px solid rgba(255,255,255,.2);
+  border-top-color: #72bcff;
+  border-radius: 50%;
+  animation: workspace-loading-spin .8s linear infinite;
+}
+@keyframes workspace-loading-spin { to { transform: rotate(360deg); } }
 
 #tab-workspace > h2 {
   margin-bottom: 6px;

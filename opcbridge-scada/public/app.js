@@ -1268,6 +1268,8 @@ const state = {
   // workspace rendering
   workspaceRenderSeq: 0,
   workspaceTabLoadInFlight: false,
+  workspaceConfigLoaded: false,
+  workspaceLoadPromise: null,
   selectedConnPath: '',
   selectedConnObj: null,
   selectedConnRawDirty: false,
@@ -17710,7 +17712,7 @@ function renderConnList() {
   }
 }
 
-async function loadConnectionsList() {
+async function loadConnectionsList({ throwOnError = false } = {}) {
   setConnStatus('Loading connections…');
   try {
     const data = await apiGet('/api/opcbridge/config/files');
@@ -17746,6 +17748,7 @@ async function loadConnectionsList() {
     setConnStatus(`Failed: ${err.message}`);
     renderConnList();
     renderWorkspaceTree();
+    if (throwOnError) throw err;
   }
 }
 
@@ -18210,7 +18213,7 @@ function renderTagsConfigFilters() {
   });
 }
 
-async function loadTagsConfig() {
+async function loadTagsConfig({ throwOnError = false } = {}) {
   setTagsConfigStatus('Loading tag config…');
   try {
     const [data, historianConfig] = await Promise.all([
@@ -18230,6 +18233,7 @@ async function loadTagsConfig() {
     renderWorkspaceTree();
   } catch (err) {
     setTagsConfigStatus(`Failed: ${err.message}`);
+    if (throwOnError) throw err;
   }
 }
 
@@ -26602,39 +26606,69 @@ function selectWorkspaceNodeById(id) {
   renderWorkspaceDetails(node);
 }
 
-async function refreshWorkspaceTab() {
-  if (!isPanelActive('tab-workspace')) return;
-  if (state.workspaceTabLoadInFlight) return;
-  state.workspaceTabLoadInFlight = true;
-  try {
-    await Promise.all([
-      loadConnectionsList(),
-      loadTagsConfig(),
-      refreshMqttWorkspaceConfig()
-    ]);
-    renderWorkspaceTree();
-    if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
-    loadWorkspaceConnectionObjects().then(() => {
-      if (!isPanelActive('tab-workspace')) return;
-      renderWorkspaceTree();
-      if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
-    }).catch(() => {});
-  } finally {
-    state.workspaceTabLoadInFlight = false;
+function setWorkspaceLoading(message = '', failed = false) {
+  const panel = document.getElementById('tab-workspace');
+  const overlay = document.getElementById('workspaceLoadingOverlay');
+  if (!panel || !overlay) return;
+  overlay.hidden = !message;
+  panel.setAttribute('aria-busy', String(Boolean(message) && !failed));
+  // Prevent keyboard edits to partially loaded configuration as well as clicks.
+  for (const child of panel.children) {
+    if (child !== overlay) child.inert = Boolean(message);
   }
+  document.getElementById('workspaceLoadingMessage').textContent = message;
+  document.getElementById('workspaceLoadingSpinner').hidden = failed;
+  document.getElementById('workspaceLoadingRetryBtn').hidden = !failed;
 }
 
+async function refreshWorkspaceTab({ force = false } = {}) {
+  if (state.workspaceLoadPromise) return state.workspaceLoadPromise;
+  if (!force && state.workspaceConfigLoaded) return;
+  if (workspaceIsDirty()) return;
+  state.workspaceTabLoadInFlight = true;
+  setWorkspaceLoading('Loading workspace…');
+  state.workspaceLoadPromise = (async () => {
+    try {
+      // Let the browser paint the indicator before processing large tag lists.
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      if (force) state.connObjCache.clear();
+      // MQTT configuration is included in loadConnectionsList already.
+      const results = await Promise.allSettled([
+        loadConnectionsList({ throwOnError: true }),
+        loadTagsConfig({ throwOnError: true })
+      ]);
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure) throw failure.reason;
+      setWorkspaceLoading('Loading connection details…');
+      await Promise.all((state.connFiles || []).map((file) => getConnObjForPath(file.path)));
+      setWorkspaceLoading('Preparing workspace…');
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      renderWorkspaceTree();
+      if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
+      state.workspaceConfigLoaded = true;
+      setWorkspaceLoading();
+    } catch (err) {
+      state.workspaceConfigLoaded = false;
+      setWorkspaceLoading(`Workspace could not load: ${err.message}`, true);
+      if (els.statusLine) els.statusLine.textContent = `Workspace refresh failed: ${err.message}`;
+    } finally {
+      state.workspaceTabLoadInFlight = false;
+      state.workspaceLoadPromise = null;
+    }
+  })();
+  return state.workspaceLoadPromise;
+}
+
+document.getElementById('workspaceLoadingRetryBtn')?.addEventListener('click', () => {
+  refreshWorkspaceTab({ force: true });
+});
+
 async function refreshWorkspaceConfigViews() {
-  await Promise.all([
-    loadConnectionsList(),
-    loadTagsConfig(),
-    refreshMqttWorkspaceConfig()
-  ]);
-  renderWorkspaceTree();
-  loadWorkspaceConnectionObjects().then(() => {
-    renderWorkspaceTree();
-    if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
-  }).catch(() => {});
+  if (workspaceIsDirty()) {
+    setWorkspaceSaveStatus('Save or discard your changes before refreshing the Workspace.');
+    return;
+  }
+  await refreshWorkspaceTab({ force: true });
   if (isPanelActive('tab-workspace')) {
     await refreshVisible().catch(() => {});
   }
@@ -29138,9 +29172,7 @@ async function main() {
   restartRefreshLoop();
 
   window.setTimeout(() => {
-    loadTagsConfig()
-      .then(() => renderWorkspaceTree())
-      .catch(() => {});
+    refreshWorkspaceTab();
   }, 0);
 
   window.setTimeout(preloadLoggerTagPickerCache, 500);

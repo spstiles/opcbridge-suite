@@ -1022,6 +1022,14 @@
       </section>
 	    </section>
 	    <section id="tab-workspace" class="panel">
+
+      <div id="workspaceLoadingOverlay" class="workspace-loading" hidden>
+        <div class="workspace-loading-card" role="status" aria-live="polite">
+          <span id="workspaceLoadingSpinner" class="workspace-loading-spinner" aria-hidden="true"></span>
+          <span id="workspaceLoadingMessage">Loading workspace…</span>
+          <button id="workspaceLoadingRetryBtn" class="btn" type="button" hidden>Retry</button>
+        </div>
+      </div>
 	      <h2>Workspace</h2>
 	      <div class="hint">Tree view for connectivity, tag configuration, alarm rules, and recent alarm/event history.</div>
 
