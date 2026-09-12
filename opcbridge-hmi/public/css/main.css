@@ -951,10 +951,17 @@ body.runtime-mode .ws-badge {
 
 #visibilityExpressionEditor,
 #rectColorExpressionEditor,
-#automationNumericExpressionEditor {
+#automationNumericExpressionEditor,
+#textBindingExpression {
     width: 100%;
     min-height: 160px;
     resize: vertical;
+    font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.5;
+    font-variant-ligatures: none;
+    tab-size: 2;
 }
 
 #visibilityExpressionHelperBar,
@@ -3945,7 +3952,17 @@ body.automation-panel-open #editor-pane {
 
 #textBindingExpression {
   min-width: 0;
+  min-height: 96px;
   resize: vertical;
+}
+
+#textBindingExpressionRow {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#textBindingExpressionRow .prop-inline {
+  min-width: 0;
+  align-items: flex-start;
 }
 
 .prop-row input[type="number"] {

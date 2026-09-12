@@ -328,6 +328,38 @@ Non-goals:
 - No silent substitution of zero or false for bad data.
 - No masking a PLC/connection problem as a normal process state.
 
+## HMI Tag Metadata in Bindings and Expressions
+
+Idea:
+
+- Allow tag references to retrieve quality, timestamps, and other metadata in addition to the process value.
+- Future feature only; syntax and metadata definitions remain proposals.
+
+Proposed expression syntax:
+
+```js
+tag("Field_Ops", "Lift_Station_01.Level")               // Value (default)
+tag("Field_Ops", "Lift_Station_01.Level", "quality")    // Quality
+tag("Field_Ops", "Lift_Station_01.Level", "timestamp")  // Timestamp; define semantics before implementation
+```
+
+Desired behavior:
+
+- Keep the property separate from the tag name: a `.Quality` suffix would be ambiguous because real tag names already contain dots.
+- Add a Property selector to the existing binding picker, defaulting to Value, so users do not have to memorize expression syntax.
+- Support metadata references in text bindings and expressions driving color, visibility, and other automations.
+- Consider readable quality descriptions and the age of the last update alongside raw quality and timestamps.
+- Define source measurement time separately from OPCBridge receipt time, including behavior when the source provides no timestamp.
+- Distinguish an unchanged value from stale communications; value-change age alone must not determine freshness.
+- Let users display and evaluate bad quality or stale data explicitly, without silently substituting zero for unavailable metadata.
+- Use friendly connection names in user-facing references and controls.
+
+Example uses:
+
+- Display the last update time next to a process value.
+- Change an object's color when its source quality is bad.
+- Show a stale-data indicator based on the age of a confirmed update.
+
 ## OPCBridge Tag Quality Reason Codes
 
 Idea:
