@@ -199,9 +199,22 @@ test("preserves the gradient fill on a closed straight GraphWorX Path", () => {
   assert.match(arrow.fill, /^linear-gradient\(/);
   assert.match(arrow.fill, /#008000 0%/);
   assert.match(arrow.fill, /#00aa55 100%/);
-  assert.deepEqual(arrow.dropShadow, { color: "#000000", opacity: 1, direction: 315, depth: 2, softness: 0.02 });
+  assert.deepEqual(arrow.dropShadow, { color: "#000000", opacity: 1, direction: 315, depth: 2, softness: 0.2 });
   assert.deepEqual(arrow.points[0], { x: 10, y: 10 });
   assert.deepEqual(arrow.points.at(-1), { x: 10, y: 30 });
+});
+
+test("distinguishes legacy bitmap softness from modern drop shadow blur", () => {
+  const shadowFor = (effect) => convertGraphWorx(`<Canvas Width="200" Height="100">
+    <Path Fill="#FF00AA55">
+      <Path.Effect>${effect}</Path.Effect>
+      <Path.Data><PathGeometry Figures="M10,10 L40,10 50,20 40,30 10,30z" /></Path.Data>
+    </Path>
+  </Canvas>`, { filename: "Shadows.gdfx" }).screen.objects[0].dropShadow;
+  assert.equal(shadowFor('<DropShadowBitmapEffect Softness="0" />').softness, 0);
+  assert.equal(shadowFor('<DropShadowBitmapEffect Softness="1" />').softness, 1);
+  assert.deepEqual(shadowFor('<DropShadowEffect ShadowDepth="5" Direction="315" Color="#FF000000" Opacity="1" BlurRadius="12.5" />'),
+    { color: "#000000", opacity: 1, direction: 315, depth: 5, softness: 0.5 });
 });
 
 test("preserves GraphWorX Label backgrounds and borders on native text", () => {

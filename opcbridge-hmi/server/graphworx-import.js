@@ -305,10 +305,15 @@ const graphWorxExpression = (source) => {
 const importedShadow = (node) => {
   const effect = descendants(node, (name) => name === "DropShadowBitmapEffect" || name === "DropShadowEffect")[0];
   if (!effect) return null;
+  const legacyBitmap = descendants(node, (name) => name === "DropShadowBitmapEffect").includes(effect);
   const depth = num(effect.ShadowDepth, 2);
   const direction = num(effect.Direction, 315);
   const softness = effect.Softness != null
-    ? Math.max(0, Math.min(1, num(effect.Softness, 0.5)))
+    // Legacy GraphWorX bitmap shadows have a much broader appearance than
+    // the modern WPF BlurRadius emulation. This is a visual approximation
+    // calibrated against the Franklin Park arrows: 0.02 becomes a 5px SVG
+    // standard deviation (native softness 0.20), preserving a hard edge at 0.
+    ? Math.max(0, Math.min(1, num(effect.Softness, 0.5) * (legacyBitmap ? 10 : 1)))
     : Math.max(0, Math.min(1, num(effect.BlurRadius, 5) / 25));
   return {
     color: color(effect.Color, "#000000"),

@@ -2665,7 +2665,7 @@ const ensureShadowEffectForSelectedObject = () => {
   if (!obj.shadow) {
     obj.shadow = { color: "#000000", opacity: 0.45, size: 2, blur: 0 };
     setDirty(true);
-    render();
+    renderScreen();
   }
   setObjectDynamicTab("box-shadow");
   updatePropertiesPanel();
@@ -2678,7 +2678,7 @@ const ensureDropShadowEffectForSelectedObject = () => {
   if (!obj.dropShadow) {
     obj.dropShadow = { color: "#000000", opacity: 0.45, direction: 315, depth: 2, softness: 0.2 };
     setDirty(true);
-    render();
+    renderScreen();
   }
   setObjectDynamicTab("drop-shadow");
   updatePropertiesPanel();
@@ -17303,21 +17303,21 @@ const updatePropertiesPanel = () => {
   if (objectDynamicShadowHost) objectDynamicShadowHost.classList.toggle("is-hidden", !showShadowTab);
   if (objectDynamicDropShadowHost) objectDynamicDropShadowHost.classList.toggle("is-hidden", !showDropShadowTab);
   if (showShadowTab) {
-    if (objectShadowColor) objectShadowColor.value = String(obj.shadow.color || "#000000");
-    if (objectShadowOpacity) objectShadowOpacity.value = String(obj.shadow.opacity ?? 0.45);
-    if (objectShadowSize) objectShadowSize.value = String(obj.shadow.size ?? 2);
-    if (objectShadowBlur) objectShadowBlur.value = String(obj.shadow.blur ?? 0);
+    setInputValueSafe(objectShadowColor, String(obj.shadow.color || "#000000"));
+    setInputValueSafe(objectShadowOpacity, String(obj.shadow.opacity ?? 0.45));
+    setInputValueSafe(objectShadowSize, String(obj.shadow.size ?? 2));
+    setInputValueSafe(objectShadowBlur, String(obj.shadow.blur ?? 0));
   }
   if (showDropShadowTab) {
     const legacyX = Number(obj.dropShadow.offsetX);
     const legacyY = Number(obj.dropShadow.offsetY);
     const legacyDepth = Number.isFinite(legacyX) && Number.isFinite(legacyY) ? Math.hypot(legacyX, legacyY) : 2;
     const legacyDirection = Number.isFinite(legacyX) && Number.isFinite(legacyY) ? ((Math.atan2(-legacyY, legacyX) * 180 / Math.PI) + 360) % 360 : 315;
-    if (objectDropShadowColor) objectDropShadowColor.value = String(obj.dropShadow.color || "#000000");
-    if (objectDropShadowOpacity) objectDropShadowOpacity.value = String(obj.dropShadow.opacity ?? 0.45);
-    if (objectDropShadowDirection) objectDropShadowDirection.value = String(obj.dropShadow.direction ?? legacyDirection);
-    if (objectDropShadowDepth) objectDropShadowDepth.value = String(obj.dropShadow.depth ?? legacyDepth);
-    if (objectDropShadowSoftness) objectDropShadowSoftness.value = String(obj.dropShadow.softness ?? Math.max(0, Math.min(1, Number(obj.dropShadow.blur ?? 2) / 25)));
+    setInputValueSafe(objectDropShadowColor, String(obj.dropShadow.color || "#000000"));
+    setInputValueSafe(objectDropShadowOpacity, String(obj.dropShadow.opacity ?? 0.45));
+    setInputValueSafe(objectDropShadowDirection, String(obj.dropShadow.direction ?? legacyDirection));
+    setInputValueSafe(objectDropShadowDepth, String(obj.dropShadow.depth ?? legacyDepth));
+    setInputValueSafe(objectDropShadowSoftness, String(obj.dropShadow.softness ?? Math.max(0, Math.min(1, Number(obj.dropShadow.blur ?? 2) / 25))));
   }
   if (visibilityProps && objectDynamicVisibilityHost && showRectVisibilityTab) {
     if (visibilityProps.parentNode !== objectDynamicVisibilityHost) objectDynamicVisibilityHost.appendChild(visibilityProps);
@@ -32744,7 +32744,9 @@ objectDynamicTabDropShadowBtn?.addEventListener("click", () => {
   updatePropertiesPanel();
 });
 
-const applySelectedShadowProperty = () => {
+const applySelectedShadowProperty = (event) => {
+  // A cleared or partially typed number is an editing state, not zero.
+  if (event?.target?.type === "number" && (event.target.value === "" || event.target.validity?.badInput)) return;
   const activeObjects = getActiveObjects();
   const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
   if (!obj?.shadow) return;
@@ -32755,7 +32757,7 @@ const applySelectedShadowProperty = () => {
     blur: Math.max(0, Number(objectShadowBlur?.value ?? 0))
   };
   setDirty(true);
-  render();
+  renderScreen();
 };
 [objectShadowColor, objectShadowOpacity, objectShadowSize, objectShadowBlur].forEach((input) => {
   input?.addEventListener("input", applySelectedShadowProperty);
@@ -32767,12 +32769,13 @@ objectShadowDeleteBtn?.addEventListener("click", () => {
   if (!obj?.shadow) return;
   delete obj.shadow;
   setDirty(true);
-  render();
+  renderScreen();
   setObjectDynamicTab("properties");
   updatePropertiesPanel();
 });
 
-const applySelectedDropShadowProperty = () => {
+const applySelectedDropShadowProperty = (event) => {
+  if (event?.target?.type === "number" && (event.target.value === "" || event.target.validity?.badInput)) return;
   const activeObjects = getActiveObjects();
   const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
   if (!obj?.dropShadow) return;
@@ -32784,7 +32787,7 @@ const applySelectedDropShadowProperty = () => {
     softness: Math.max(0, Math.min(1, Number(objectDropShadowSoftness?.value ?? 0.2)))
   };
   setDirty(true);
-  render();
+  renderScreen();
 };
 [objectDropShadowColor, objectDropShadowOpacity, objectDropShadowDirection, objectDropShadowDepth, objectDropShadowSoftness].forEach((input) => {
   input?.addEventListener("input", applySelectedDropShadowProperty);
@@ -32796,7 +32799,7 @@ objectDropShadowDeleteBtn?.addEventListener("click", () => {
   if (!obj?.dropShadow) return;
   delete obj.dropShadow;
   setDirty(true);
-  render();
+  renderScreen();
   setObjectDynamicTab("properties");
   updatePropertiesPanel();
 });
