@@ -11,26 +11,28 @@ test('selected array blocks, exact elements and logical aliases have distinct sc
   const model = create([
     { connection_id: 'c', name: 'HMI_Dints_0', plc_tag_name: 'HMI_Dints[0]', elem_count: 200 },
     { connection_id: 'c', name: 'HMI_Dints_400', plc_tag_name: 'HMI_Dints[400]', elem_count: 200 },
-    { connection_id: 'c', name: 'Low', plc_tag_name: 'HMI_Dints[10]' },
-    { connection_id: 'c', name: 'Flow', plc_tag_name: 'HMI_Dints[410]' },
-    { connection_id: 'c', name: 'Duplicate', plc_tag_name: 'HMI_Dints[410]' },
+    { connection_id: 'c', name: 'Low', source_tag: 'HMI_Dints_0[10]' },
+    { connection_id: 'c', name: 'Flow', source_tag: 'HMI_Dints_400[10]' },
+    { connection_id: 'c', name: 'Duplicate', source_tag: 'HMI_Dints_400[10]' },
     { connection_id: 'c', name: 'FlowAlias', source_tag: 'Flow' },
     { connection_id: 'c', name: 'Consumer', source_tag: 'FlowAlias' },
     { connection_id: 'c', name: 'Outside', plc_tag_name: 'HMI_Dints[600]' }
   ]);
-  assert.deepEqual(model.assignments('c', 'HMI_Dints_400').map(row => row.source), ['HMI_Dints[410]']);
-  assert.deepEqual(model.assignments('c', 'HMI_Dints_0').map(row => row.source), ['HMI_Dints[10]']);
+  assert.deepEqual(model.assignments('c', 'HMI_Dints_400').map(row => row.source), ['HMI_Dints_400[10]']);
+  assert.equal(model.assignments('c', 'HMI_Dints_400[10]')[0].tags.length, 2);
+  assert.deepEqual(model.assignments('c', 'HMI_Dints_0').map(row => row.source), ['HMI_Dints_0[10]']);
   assert.deepEqual(model.assignments('c', 'FlowAlias')[0].tags.map(tag => tag.name), ['Consumer']);
-  assert.deepEqual(model.assignments('c', 'Flow').map(row => row.source), ['HMI_Dints[410]']);
+  assert.deepEqual(model.assignments('c', 'Flow').map(row => row.source), ['Flow']);
   assert.deepEqual(model.assignments('c', 'Missing'), []);
 });
 
 test('named array roots match complete names rather than common prefixes', () => {
   const model = create([
     { connection_id: 'c', name: 'HMI_Dints_400', plc_tag_name: 'HMI_Dints_400' },
-    { connection_id: 'c', name: 'A', plc_tag_name: 'HMI_Dints_400[2]' },
-    { connection_id: 'c', name: 'B', plc_tag_name: 'HMI_Dints_0[2]' },
-    { connection_id: 'c', name: 'C', plc_tag_name: 'HMI_Dints_4000[2]' }
+    { connection_id: 'c', name: 'A', source_tag: 'HMI_Dints_400[2]' },
+    { connection_id: 'c', name: 'B', source_tag: 'HMI_Dints_0[2]' },
+    { connection_id: 'c', name: 'C', source_tag: 'HMI_Dints_4000[2]' },
+    { connection_id: 'c', name: 'SameAddress', plc_tag_name: 'HMI_Dints_400[2]' }
   ]);
   assert.deepEqual(model.assignments('c', 'HMI_Dints_400').map(row => row.source), ['HMI_Dints_400[2]']);
 });

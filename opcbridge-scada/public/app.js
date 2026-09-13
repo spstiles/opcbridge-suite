@@ -18917,8 +18917,7 @@ function openWorkspaceTagInformation(connection, name) {
   const search = append(controls, 'input', '');
   search.type = 'search'; search.placeholder = 'Filter PLC variable or assigned tag…';
   search.setAttribute('aria-label', 'Filter tag assignments');
-  const selected = model.details(`${connection}\u0000${name}`);
-  if (selected) append(controls, 'p', selected.error || `Selected tag source: ${selected.source}`);
+  if (name) append(controls, 'p', `References to: ${name}`);
   const summary = append(controls, 'p', ''); summary.setAttribute('role', 'status');
   const assignments = model.assignments(connection, name);
   const render = () => {
@@ -18928,7 +18927,7 @@ function openWorkspaceTagInformation(connection, name) {
     summary.textContent = `${visible.length} variables · ${visible.filter(row => row.tags.length > 1).length} with multiple assignments`;
     const table = append(content, 'table', '');
     const header = append(append(table, 'thead', ''), 'tr', '');
-    ['PLC variable', 'Assigned tag names'].forEach(label => append(header, 'th', label));
+    [name ? 'Referenced tag / element' : 'PLC variable', 'Assigned tag names'].forEach(label => append(header, 'th', label));
     const body = append(table, 'tbody', '');
     visible.forEach(item => {
       item.tags.forEach((tag, index) => {
