@@ -7,6 +7,22 @@ const tags = [
   { connection_id: 'c', name: 'Unused', plc_tag_name: 'Data[20]' }
 ];
 
+test('HMI references preserve each location and match logical array scope and connection', () => {
+  const model = create([{ connection_id: 'c', name: 'Block', plc_tag_name: 'PLC[400]', elem_count: 200 }], { c: 'Field Ops' });
+  model.scan([
+    { id: 'Label', bindings: { a: { connection_id: 'c', tag: 'Block[173]' } } },
+    { id: 'OtherLabel', connection_id: 'c', tag: 'Block[173]' },
+    { id: 'Expression', expression: 'tag("Field Ops", "Block[186]") / 100' },
+    { id: 'Unrelated', connection_id: 'c', tag: 'Block2[173]' },
+    { id: 'OtherConnection', connection_id: 'other', tag: 'Block[173]' },
+    { id: 'Physical', connection_id: 'c', tag: 'PLC[573]' }
+  ], 'HMI', 'Overview.screen');
+  assert.equal(model.uses('c', 'Block').length, 3);
+  assert.equal(model.uses('c', 'Block[173]').length, 2);
+  assert.ok(model.uses('c', 'Block')[0].location.includes('Label'));
+  assert.deepEqual(model.uses('c', 'Missing'), []);
+});
+
 test('selected array blocks, exact elements and logical aliases have distinct scopes', () => {
   const model = create([
     { connection_id: 'c', name: 'HMI_Dints_0', plc_tag_name: 'HMI_Dints[0]', elem_count: 200 },

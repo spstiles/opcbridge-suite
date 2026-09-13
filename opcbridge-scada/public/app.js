@@ -18913,7 +18913,7 @@ function openWorkspaceTagInformation(connection, name) {
   overlay.querySelector('.modal-title').textContent = `${name ? 'Tag References' : 'Tag Assignments'} — ${displayConnectionName(connection)}${name ? ` · ${name}` : ''}`;
   const controls = document.createElement('div');
   controls.className = 'tag-audit-controls'; content.before(controls);
-  append(controls, 'p', 'Workspace tag assignments only, including unsaved changes. This view does not scan HMI, flows, or other application uses.');
+  append(controls, 'p', name ? 'Workspace assignments and saved HMI references. Unsaved HMI edits, flows, and other services are not scanned.' : 'Workspace tag assignments, including unsaved changes.');
   const search = append(controls, 'input', '');
   search.type = 'search'; search.placeholder = 'Filter PLC variable or assigned tag…';
   search.setAttribute('aria-label', 'Filter tag assignments');
@@ -18950,6 +18950,62 @@ function openWorkspaceTagInformation(connection, name) {
   });
   document.body.appendChild(overlay);
   render();
+  if (name) {
+    const hmi = document.createElement('section');
+    // Keep asynchronous HMI results separate so updating them never rebuilds the assignment list.
+    search.addEventListener('input', () => content.appendChild(hmi));
+    content.appendChild(hmi);
+    append(hmi, 'h3', 'HMI references');
+    const status = append(hmi, 'p', 'Listing saved HMI screens…'); status.setAttribute('role', 'status');
+    const results = append(hmi, 'div', '');
+    const notes = append(hmi, 'details', '');
+    append(notes, 'summary', 'Scan coverage notes');
+    const noteText = append(notes, 'pre', ''); noteText.style.whiteSpace = 'pre-wrap';
+    notes.hidden = true;
+    const scanModel = TagAudit.create(tags, names);
+    const failures = [];
+    const update = () => {
+      results.replaceChildren();
+      const uses = scanModel.uses(connection, name);
+      const table = append(results, 'table', '');
+      const head = append(append(table, 'thead', ''), 'tr', '');
+      ['Referenced tag', 'Screen / object / property', 'Use'].forEach(text => append(head, 'th', text));
+      const body = append(table, 'tbody', '');
+      uses.forEach(use => {
+        const row = append(body, 'tr', '');
+        [use.name, use.location, use.usage].forEach(text => append(row, 'td', text));
+      });
+      const warnings = [...failures, ...scanModel.warnings];
+      notes.hidden = warnings.length === 0; noteText.textContent = warnings.join('\n');
+      return uses.length;
+    };
+    (async () => {
+      const fetch = async url => {
+        const data = await apiGet(url, { timeoutMs: 120000 });
+        if (data?.ok === false) throw new Error(data.error || 'Request failed');
+        return data;
+      };
+      try {
+        const list = await fetch('/api/hmi/api/screens');
+        if (!Array.isArray(list.screens)) throw new Error('Screen listing unavailable');
+        for (const [index, screen] of list.screens.entries()) {
+          if (!overlay.isConnected) return;
+          const path = String(screen.path || screen.ref);
+          status.textContent = `Scanning ${index + 1} of ${list.screens.length}: ${path}`;
+          try {
+            const data = await fetch(`/api/hmi/api/screens/file?path=${encodeURIComponent(path)}`);
+            if (!Array.isArray(data.parsed?.objects)) throw new Error('Screen objects unavailable');
+            scanModel.scan(data.parsed.objects, 'HMI', path);
+          } catch (err) { failures.push(`${path}: ${err.message}`); }
+          update();
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        status.textContent = `Scan finished: ${update()} HMI references.${failures.length || scanModel.warnings.size ? ' Coverage is incomplete; review notes.' : ''}`;
+      } catch (err) {
+        failures.push(err.message); update(); status.textContent = 'HMI scan incomplete — see coverage notes.';
+      }
+    })();
+  }
   overlay.querySelector('[data-close]').focus();
 }
 
@@ -26110,7 +26166,7 @@ function renderTreeNode(node, container) {
     if (node.type === 'tag') {
       const cid = String(node.meta?.connection_id || '').trim();
       const name = String(node.meta?.name || node.label || '').trim();
-      items.push({ label: 'Tag Assignments…', onClick: () => openWorkspaceTagInformation(cid, name) });
+      items.push({ label: 'Cross-reference…', onClick: () => openWorkspaceTagInformation(cid, name) });
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Delete Tag…', onClick: () => stageDeleteTagById(cid, name) });
       items.push('sep');

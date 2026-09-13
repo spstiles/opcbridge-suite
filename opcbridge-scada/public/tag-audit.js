@@ -2,6 +2,7 @@
 (function (root) {
   function create(tags, connectionNames = {}) {
     const warnings = new Set();
+    const references = new Map();
     const records = new Map();
     const byConnection = new Map();
     const key = (connection, name) => `${connection}\u0000${name}`;
@@ -27,6 +28,8 @@
         warnings.add(`${component}: dynamic or imported reference at ${location}`);
         return;
       }
+      const reference = { connection, name, component, location, usage };
+      references.set(JSON.stringify(reference), reference);
       let matches;
       if (patterns && /[*?]/.test(name)) {
         const regex = new RegExp(`^${name.split('').map(c => c === '*' ? '.*' : c === '?' ? '.' : c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('')}$`);
@@ -173,7 +176,14 @@
       if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
       return `"${text.replace(/"/g, '""')}"`;
     }).join(',')).join('\r\n');
-    return { scan, rows, csv, details, assignments, headers, warnings, tagCount: records.size };
+    function uses(connection, name) {
+      return [...references.values()].filter(ref => {
+        if (ref.connection !== connection || ref.component === 'Tag Alias') return false;
+        const suffix = ref.name.startsWith(name) ? ref.name.slice(name.length) : null;
+        return suffix === '' || !!(suffix && /^(?:\[\d+\])+(?:\.\d+)?$/.test(suffix));
+      }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }) || a.location.localeCompare(b.location));
+    }
+    return { scan, rows, csv, details, assignments, uses, headers, warnings, tagCount: records.size };
   }
   const connectionInfo = (config, fallbackId = '') => {
     const id = String(config.id || config.connection_id || fallbackId).trim();
