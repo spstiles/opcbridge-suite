@@ -29180,7 +29180,7 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
     <div class="modal-titlebar"><div id="tagAuditTitle" class="modal-title">Tag Cross-Reference</div><button class="btn" data-close>Close</button></div>
     <div class="tag-audit-controls"><p>On-demand audit of saved configuration across the system. Unsaved edits and external clients are not included. Zero uses means no configured references were found.</p>
     <button class="btn primary" data-run>Run Audit</button> <button class="btn" data-download disabled>Download CSV</button>
-    <input data-search type="search" placeholder="Filter tag, PLC array, or usage…" aria-label="Filter audit results" />
+    <input data-search type="search" placeholder="Filter connection, tag, PLC array, or usage…" aria-label="Filter audit results by connection, tag, PLC array, or usage" />
     <div data-status role="status" aria-live="polite">Ready.</div><details data-warnings hidden><summary>Audit coverage notes</summary><pre></pre></details></div>
     <div class="tag-audit-results"><table><thead></thead><tbody></tbody></table></div>
     <div class="tag-audit-controls"><button class="btn" data-prev disabled>Previous</button> <span data-page></span> <button class="btn" data-next disabled>Next</button></div>
