@@ -18989,7 +18989,15 @@ function openWorkspaceTagInformation(connection, name) {
         const row = append(body, 'tr', '');
         [use.name, use.location, use.usage].forEach(text => append(row, 'td', text));
       });
-      const warnings = [...failures, ...scanModel.warnings];
+      const warnings = [...failures, ...[...scanModel.warnings].filter(warning => {
+        // The HMI scanner also initializes alias diagnostics for the whole
+        // catalog. Those are not coverage failures for this HMI lookup.
+        if (warning.startsWith('Tag Alias:')) return false;
+        if (warning.startsWith('HMI: unresolved reference ')) {
+          return warning.includes(`::${name} at `) || warning.includes(`::${name}[`);
+        }
+        return true; // Keep parse/dynamic-expression warnings and scan failures.
+      })];
       coverageWarnings = warnings;
       notes.hidden = warnings.length === 0; noteText.textContent = warnings.join('\n');
       return uses.length;
@@ -19015,7 +19023,7 @@ function openWorkspaceTagInformation(connection, name) {
           update();
           await new Promise(resolve => setTimeout(resolve, 0));
         }
-        status.textContent = `Scan finished: ${update()} HMI references.${failures.length || scanModel.warnings.size ? ' Coverage is incomplete; review notes.' : ''}`;
+        status.textContent = `Scan finished: ${update()} HMI references.${coverageWarnings.length ? ' Coverage is incomplete; review notes.' : ''}`;
       } catch (err) {
         failures.push(err.message); update(); status.textContent = 'HMI scan incomplete — see coverage notes.';
       } finally {

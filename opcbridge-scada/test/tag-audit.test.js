@@ -6,12 +6,21 @@ test('cross-reference export includes assignments, HMI locations, and incomplete
     assignments: [{ source: 'Array[3]', tags: [{ name: '=Unsafe', enabled: false, bit: 0 }] }],
     uses: [{ name: 'Array[3]', component: 'HMI', location: 'Overview,"Label"', usage: 'Expression' }],
     warnings: ['One screen unavailable'] });
-  assert.equal(csv.split('\r\n').length, 3);
+  assert.equal(csv.split('\r\n').length, 5);
   assert.ok(csv.includes("'=Unsafe"));
   assert.ok(csv.includes('Overview,""Label""'));
   assert.ok(csv.includes('One screen unavailable'));
   assert.ok(csv.includes('"0","false"'));
   assert.ok(crossReferenceCsv({ connection: 'Memory' }).includes('No references found within scan coverage'));
+});
+test('large warning sets are emitted once, not multiplied by assignment count', () => {
+  const warning = 'Unavailable screen ' + 'x'.repeat(1000);
+  const csv = crossReferenceCsv({ connection: 'Field Ops', selection: 'Array',
+    assignments: Array.from({ length: 187 }, (_, i) => ({ source: `Array[${i}]`, tags: [{ name: `Alias${i}`, enabled: true }] })),
+    warnings: [warning, warning] });
+  assert.equal(csv.split(warning).length - 1, 1);
+  assert.equal(csv.split('\r\n').length, 190);
+  assert.ok(Buffer.byteLength(csv) < 40000);
 });
 const tags = [
   { connection_id: 'c', name: 'Running', plc_tag_name: 'Data[9]' },
