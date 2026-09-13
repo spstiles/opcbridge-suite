@@ -1,11 +1,22 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { create } = require('../public/tag-audit');
+const { create, connectionInfo } = require('../public/tag-audit');
 const tags = [
   { connection_id: 'c', name: 'Running', plc_tag_name: 'Data[9]' },
   { connection_id: 'c', name: 'Failed', plc_tag_name: 'Data[137]' },
   { connection_id: 'c', name: 'Unused', plc_tag_name: 'Data[20]' }
 ];
+
+test('connection names retain readable legacy IDs when description is empty', () => {
+  assert.deepEqual(connectionInfo({ id: 'Field_Ops', description: '' }), { id: 'Field_Ops', name: 'Field_Ops' });
+  assert.deepEqual(connectionInfo({ id: 'connection_123', description: 'Field Ops' }), { id: 'connection_123', name: 'Field Ops' });
+  assert.equal(connectionInfo({ description: '  ' }, 'TestPLC').name, 'TestPLC');
+  const info = connectionInfo({ id: 'Field_Ops' });
+  const audit = create([{ connection_id: info.id, name: 'Running' }], { [info.id]: info.name });
+  assert.equal(audit.rows()[0][0], 'Field_Ops');
+  assert.match(audit.csv(), /Field_Ops/);
+  assert.doesNotMatch(audit.csv(), /Unnamed connection/);
+});
 
 test('lists every configured tag with numeric source ordering and zero-use rows', () => {
   const audit = create(tags, { c: 'Field_Ops' });

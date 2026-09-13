@@ -103,7 +103,13 @@
     }).join(',')).join('\r\n');
     return { scan, rows, csv, headers, warnings, tagCount: records.size };
   }
-  const api = { create };
+  const connectionInfo = (config, fallbackId = '') => {
+    const id = String(config.id || config.connection_id || fallbackId).trim();
+    const name = String(config.description || '').trim() || String(config.name || '').trim()
+      || String(config.display_name || '').trim() || id;
+    return { id, name };
+  };
+  const api = { create, connectionInfo };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.TagAudit = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

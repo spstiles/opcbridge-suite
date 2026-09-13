@@ -29246,8 +29246,8 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
           try {
             const raw = await apiGetText(`/api/opcbridge/config/file?path=${encodeURIComponent(file.path)}`);
             const config = parseJsonc(raw);
-            const id = String(config.id || config.connection_id || inferConnectionIdFromPath(file.path));
-            names[id] = String(config.description || '').trim() || '(Unnamed connection)';
+            const { id, name } = TagAudit.connectionInfo(config, inferConnectionIdFromPath(file.path));
+            names[id] = name;
           } catch { connectionWarnings.push(`Connection name unavailable for ${file.path}`); }
         }
       } catch { connectionWarnings.push('Connection names could not be loaded.'); }
