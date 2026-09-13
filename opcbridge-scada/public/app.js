@@ -18910,50 +18910,44 @@ function openWorkspaceTagInformation(connection, name) {
   const append = (parent, type, text) => {
     const element = document.createElement(type); element.textContent = text; parent.appendChild(element); return element;
   };
-  const show = id => {
+  overlay.querySelector('.modal-title').textContent = `Tag Assignments — ${displayConnectionName(connection)}`;
+  const controls = document.createElement('div');
+  controls.className = 'tag-audit-controls'; content.before(controls);
+  append(controls, 'p', 'PLC variables and their assigned tags. Current Workspace definitions, including unsaved changes.');
+  const search = append(controls, 'input', '');
+  search.type = 'search'; search.placeholder = 'Filter PLC variable or assigned tag…';
+  search.setAttribute('aria-label', 'Filter tag assignments');
+  const selected = model.details(`${connection}\u0000${name}`);
+  search.value = selected?.array?.name || selected?.source || name || '';
+  const summary = append(controls, 'p', ''); summary.setAttribute('role', 'status');
+  const assignments = model.assignments(connection);
+  const render = () => {
     content.replaceChildren();
-    const info = model.details(id);
-    if (!info) { append(content, 'p', 'No configured definition was found for this tag.'); return; }
-    append(content, 'h3', `${info.connection} · ${info.name}`);
-    append(content, 'p', 'Current Workspace definitions, including unsaved changes. Read-only snapshot.');
-    append(content, 'p', info.error || `Source: ${info.sourceConnection} · ${info.source}`);
-    const link = (parent, tag) => {
-      const button = append(parent, 'button', `${tag.name}${Number(tag.bit) >= 0 ? ` (bit ${tag.bit})` : ''}${tag.enabled ? '' : ' (disabled)'}`);
-      button.className = 'btn'; button.onclick = () => show(tag.id);
-    };
-    if (info.array) {
-      append(content, 'h4', `Assignments for ${info.array.name}`);
-      append(content, 'p', `Highest configured index: ${info.array.highest}. ${info.array.elements.length} represented elements. Ordered by array index, not alias name.`);
-      append(content, 'p', 'Multiple tags can intentionally share an element, including separate bits. Array bounds and unused PLC memory are not verified.');
-      const table = append(content, 'table', '');
-      const header = append(append(table, 'thead', ''), 'tr', '');
-      ['Array element', 'Assignments', 'Tags / aliases'].forEach(label => append(header, 'th', label));
-      const body = append(table, 'tbody', '');
-      info.array.elements.forEach(element => {
-        const row = append(body, 'tr', '');
-        append(row, 'td', `${info.array.name}[${element.index}]`);
-        append(row, 'td', `${element.assignments.length}${element.assignments.length > 1 ? ' — multiple' : ''}`);
-        const cell = append(row, 'td', '');
-        element.assignments.forEach(tag => link(append(cell, 'div', ''), tag));
-      });
-    } else {
-      append(content, 'h4', 'Tags sharing this source');
-      info.related.forEach(tag => link(append(content, 'div', ''), tag));
-    }
-    if (info.chain.length > 1) {
-      append(content, 'h4', 'Alias source chain');
-      info.chain.forEach(tag => link(append(content, 'div', ''), tag));
-    }
-    append(content, 'p', 'This view inspects tag assignments. HMI, flow, logger, and other application uses remain in the separate cross-reference audit.');
+    const term = search.value.trim().toLowerCase();
+    const visible = assignments.filter(row => row.source.toLowerCase().includes(term) || row.tags.some(tag => tag.name.toLowerCase().includes(term)));
+    summary.textContent = `${visible.length} variables · ${visible.filter(row => row.tags.length > 1).length} with multiple assignments`;
+    const table = append(content, 'table', '');
+    const header = append(append(table, 'thead', ''), 'tr', '');
+    ['PLC variable', 'Assigned tag names'].forEach(label => append(header, 'th', label));
+    const body = append(table, 'tbody', '');
+    visible.forEach(item => {
+      const row = append(body, 'tr', '');
+      append(row, 'td', item.source);
+      const cell = append(row, 'td', '');
+      if (item.tags.length > 1) append(cell, 'strong', `${item.tags.length} assignments`);
+      item.tags.forEach(tag => append(cell, 'div', `${tag.name}${tag.bit != null && Number(tag.bit) >= 0 ? ` (bit ${tag.bit})` : ''}${tag.enabled ? '' : ' (disabled)'}${tag.error ? ` — ${tag.error}` : ''}`));
+    });
+    if (!visible.length) append(content, 'p', 'No matching assignments in this connection.');
     content.scrollTop = 0;
   };
+  search.addEventListener('input', render);
   const close = () => { overlay.remove(); previousFocus?.focus(); };
   overlay.querySelector('[data-close]').onclick = close;
   overlay.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.stopPropagation(); close(); }
   });
   document.body.appendChild(overlay);
-  show(`${connection}\u0000${name}`);
+  render();
   overlay.querySelector('[data-close]').focus();
 }
 
@@ -26105,6 +26099,7 @@ function renderTreeNode(node, container) {
         items.push({ label: 'Upload CSV…', onClick: () => importTagsCsvIntoWorkspace(cid).catch((err) => window.alert(`CSV import failed: ${err.message}`)) });
       }
       items.push({ label: node.meta?.enabled === false ? 'Enable Device' : 'Disable Device', onClick: () => setWorkspaceDeviceEnabled(cid, relPath, node.meta?.enabled === false) });
+      items.push({ label: 'Tag Assignments…', onClick: () => openWorkspaceTagInformation(cid, '') });
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Delete Device…', onClick: () => deleteDeviceById(cid, relPath) });
       items.push('sep');
@@ -26113,7 +26108,7 @@ function renderTreeNode(node, container) {
     if (node.type === 'tag') {
       const cid = String(node.meta?.connection_id || '').trim();
       const name = String(node.meta?.name || node.label || '').trim();
-      items.push({ label: 'Tag Information…', onClick: () => openWorkspaceTagInformation(cid, name) });
+      items.push({ label: 'Tag Assignments…', onClick: () => openWorkspaceTagInformation(cid, name) });
       items.push({ label: 'Properties…', onClick: () => openWorkspaceItemModal(node) });
       items.push({ label: 'Delete Tag…', onClick: () => stageDeleteTagById(cid, name) });
       items.push('sep');

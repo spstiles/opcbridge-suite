@@ -131,6 +131,18 @@
         elements: [...elements].sort((a, b) => a[0] - b[0]).map(([index, assignments]) => ({ index, assignments })) };
       return result;
     }
+    function assignments(connection) {
+      const groups = new Map();
+      for (const [id, record] of records) {
+        if (record.connection !== connection) continue;
+        const resolved = sources.get(id);
+        const source = resolved.error ? (record.definition.source_tag || record.source || record.name) : resolved.source;
+        const groupKey = key(resolved.connection || connection, source);
+        if (!groups.has(groupKey)) groups.set(groupKey, { source, tags: [] });
+        groups.get(groupKey).tags.push({ ...describe(record), error: resolved.error || '' });
+      }
+      return [...groups.values()].sort((a, b) => a.source.localeCompare(b.source, undefined, { numeric: true }));
+    }
     function rows() {
       const output = [];
       const notes = ['Saved configuration only; external clients and unsaved edits are excluded.', ...[...warnings].slice(0, 20),
@@ -152,7 +164,7 @@
       if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
       return `"${text.replace(/"/g, '""')}"`;
     }).join(',')).join('\r\n');
-    return { scan, rows, csv, details, headers, warnings, tagCount: records.size };
+    return { scan, rows, csv, details, assignments, headers, warnings, tagCount: records.size };
   }
   const connectionInfo = (config, fallbackId = '') => {
     const id = String(config.id || config.connection_id || fallbackId).trim();

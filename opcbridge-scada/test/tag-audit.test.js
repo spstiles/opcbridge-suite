@@ -7,6 +7,20 @@ const tags = [
   { connection_id: 'c', name: 'Unused', plc_tag_name: 'Data[20]' }
 ];
 
+test('flat assignments group duplicate sources despite unrelated alias names and isolate the connection', () => {
+  const model = create([
+    { connection_id: 'c', name: 'Zebra', plc_tag_name: 'HMI_Dints_400[2]' },
+    { connection_id: 'c', name: 'Apple', plc_tag_name: 'HMI_Dints_400[100]' },
+    { connection_id: 'c', name: 'Middle', plc_tag_name: 'HMI_Dints_400[2]' },
+    { connection_id: 'c', name: 'Derived', source_tag: 'Middle' },
+    { connection_id: 'other', name: 'Foreign', plc_tag_name: 'HMI_Dints_400[2]' }
+  ]);
+  const rows = model.assignments('c');
+  assert.deepEqual(rows.map(row => row.source), ['HMI_Dints_400[2]', 'HMI_Dints_400[100]']);
+  assert.deepEqual(rows[0].tags.map(tag => tag.name), ['Zebra', 'Middle', 'Derived']);
+  assert.equal(rows[1].tags[0].name, 'Apple');
+});
+
 test('details trace aliases and enumerate array assignments numerically without mixing connections', () => {
   const audit = create([
     { connection_id: 'c', name: 'Array', plc_tag_name: 'HMI_Dints_400' },
