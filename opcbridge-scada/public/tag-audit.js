@@ -109,7 +109,16 @@
       || String(config.display_name || '').trim() || id;
     return { id, name };
   };
-  const api = { create, connectionInfo };
+  const filterRows = (rows, search = '') => {
+    const terms = [...String(search).toLowerCase().matchAll(/"([^"]*)"|(\S+)/g)]
+      .map(match => match[1] ?? match[2]).filter(Boolean);
+    if (!terms.length) return rows;
+    return rows.filter(row => {
+      const fields = row.slice(0, 7).map(value => String(value).toLowerCase());
+      return terms.every(term => fields.some(field => field.includes(term)));
+    });
+  };
+  const api = { create, connectionInfo, filterRows };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.TagAudit = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

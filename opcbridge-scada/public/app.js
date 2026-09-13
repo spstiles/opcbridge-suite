@@ -29181,19 +29181,21 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
     <div class="tag-audit-controls"><p>On-demand audit of saved configuration across the system. Unsaved edits and external clients are not included. Zero uses means no configured references were found.</p>
     <button class="btn primary" data-run>Run Audit</button> <button class="btn" data-download disabled>Download CSV</button>
     <input data-search type="search" placeholder="Filter connection, tag, PLC array, or usage…" aria-label="Filter audit results by connection, tag, PLC array, or usage" />
+    <div class="hint">Separate search terms with spaces to match all terms. Use double quotes for a phrase.</div>
     <div data-status role="status" aria-live="polite">Ready.</div><details data-warnings hidden><summary>Audit coverage notes</summary><pre></pre></details></div>
     <div class="tag-audit-results"><table><thead></thead><tbody></tbody></table></div>
-    <div class="tag-audit-controls"><button class="btn" data-prev disabled>Previous</button> <span data-page></span> <button class="btn" data-next disabled>Next</button></div>
+    <div class="tag-audit-controls"><button class="btn" data-first disabled>First</button> <button class="btn" data-prev disabled>Previous</button> <span data-row-count></span> <label>Page <input data-page type="number" min="1" max="1" step="1" value="1" aria-label="Current results page" disabled /></label> <span data-page-count>of 1</span> <button class="btn" data-next disabled>Next</button> <button class="btn" data-last disabled>Last</button></div>
   </section>`;
   document.body.appendChild(overlay);
   const query = selector => overlay.querySelector(selector);
   let audit = null;
   let rows = [];
   let page = 0;
+  let pageCount = 1;
   const render = () => {
-    const search = query('[data-search]').value.toLowerCase();
-    const filtered = search ? rows.filter(row => row.slice(0, 7).some(value => String(value).toLowerCase().includes(search))) : rows;
+    const filtered = TagAudit.filterRows(rows, query('[data-search]').value);
     const pages = Math.max(1, Math.ceil(filtered.length / 250));
+    pageCount = pages;
     page = Math.max(0, Math.min(page, pages - 1));
     const body = query('tbody');
     body.textContent = '';
@@ -29204,9 +29206,15 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
       fragment.appendChild(tr);
     });
     body.appendChild(fragment);
-    query('[data-page]').textContent = `${filtered.length} rows · Page ${page + 1} of ${pages}`;
+    query('[data-row-count]').textContent = `${filtered.length} rows ·`;
+    query('[data-page]').value = String(page + 1);
+    query('[data-page]').max = String(pages);
+    query('[data-page]').disabled = filtered.length === 0;
+    query('[data-page-count]').textContent = `of ${pages}`;
     query('[data-prev]').disabled = page === 0;
     query('[data-next]').disabled = page + 1 >= pages;
+    query('[data-first]').disabled = page === 0;
+    query('[data-last]').disabled = page + 1 >= pages;
   };
   const close = () => { overlay.remove(); document.getElementById('workspaceTagAuditBtn')?.focus(); };
   query('[data-close]').addEventListener('click', close);
@@ -29214,6 +29222,17 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
   query('[data-search]').addEventListener('input', () => { page = 0; render(); });
   query('[data-prev]').addEventListener('click', () => { page--; render(); });
   query('[data-next]').addEventListener('click', () => { page++; render(); });
+  query('[data-first]').addEventListener('click', () => { page = 0; render(); });
+  query('[data-last]').addEventListener('click', () => { page = pageCount - 1; render(); });
+  const jumpToPage = () => {
+    const value = Number(query('[data-page]').value);
+    if (Number.isFinite(value) && query('[data-page]').value !== '') page = Math.trunc(value) - 1;
+    render();
+  };
+  query('[data-page]').addEventListener('change', jumpToPage);
+  query('[data-page]').addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); jumpToPage(); }
+  });
   query('[data-download]').addEventListener('click', () => {
     if (!audit) return;
     const url = URL.createObjectURL(new Blob(['\uFEFF', audit.csv()], { type: 'text/csv;charset=utf-8' }));

@@ -1,11 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { create, connectionInfo } = require('../public/tag-audit');
+const { create, connectionInfo, filterRows } = require('../public/tag-audit');
 const tags = [
   { connection_id: 'c', name: 'Running', plc_tag_name: 'Data[9]' },
   { connection_id: 'c', name: 'Failed', plc_tag_name: 'Data[137]' },
   { connection_id: 'c', name: 'Unused', plc_tag_name: 'Data[20]' }
 ];
+
+test('multiple search terms match across columns and quoted phrases stay together', () => {
+  const rows = [
+    ['Field Ops', 'Running', 'Data[137]', 1, 'HMI'],
+    ['Field Ops', 'Failed', 'Data[138]', 0, ''],
+    ['Plant', 'Running', 'Data[137]', 1, 'HMI']
+  ];
+  assert.deepEqual(filterRows(rows, 'field running'), [rows[0]]);
+  assert.deepEqual(filterRows(rows, '"Field Ops" Data[138]'), [rows[1]]);
+  assert.deepEqual(filterRows(rows, 'running hmi'), [rows[0], rows[2]]);
+  assert.equal(filterRows(rows, '   ').length, 3);
+});
 
 test('connection names retain readable legacy IDs when description is empty', () => {
   assert.deepEqual(connectionInfo({ id: 'Field_Ops', description: '' }), { id: 'Field_Ops', name: 'Field_Ops' });

@@ -1241,6 +1241,7 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 .tag-audit-controls { padding: 12px; flex: 0 0 auto; }
 .tag-audit-controls p { margin: 0 0 10px; }
 .tag-audit-controls input { margin-left: 10px; width: min(340px, 50vw); }
+.tag-audit-controls input[data-page] { width: 70px; margin-left: 4px; }
 .tag-audit-controls [role="status"] { margin-top: 10px; }
 .tag-audit-controls pre { white-space: pre-wrap; overflow: auto; max-height: 140px; }
 .tag-audit-results { overflow: auto; flex: 1 1 auto; min-height: 0; padding: 0 12px; }
