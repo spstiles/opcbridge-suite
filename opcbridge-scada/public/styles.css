@@ -1244,10 +1244,10 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 .tag-audit-controls input[data-page] { width: 70px; margin-left: 4px; }
 .tag-audit-controls [role="status"] { margin-top: 10px; }
 .tag-audit-controls pre { white-space: pre-wrap; overflow: auto; max-height: 140px; }
-.tag-audit-results { overflow: auto; flex: 1 1 auto; min-height: 0; padding: 0 12px; }
+.tag-audit-results { overflow: auto; flex: 1 1 0; min-height: 0; padding: 0 12px; }
 .tag-audit-results td { overflow-wrap: anywhere; max-width: 350px; }
 .tag-audit-results th { position: sticky; top: 0; background: #121820; }
-.tag-audit-detail { flex: 0 1 48%; min-height: 0; overflow: auto; padding: 12px; border-top: 1px solid #46505c; overflow-wrap: anywhere; }
+.tag-audit-detail { flex: 0 0 48%; min-height: 0; box-sizing: border-box; overflow: auto; padding: 12px; border-top: 1px solid #46505c; overflow-wrap: anywhere; }
 .tag-audit-detail[hidden] { display: none; }
 .tag-audit-detail .btn { margin: 3px; white-space: normal; text-align: left; }
 .tag-audit-detail table { width: 100%; }
