@@ -18933,6 +18933,7 @@ function openWorkspaceTagInformation(connection, name) {
       item.tags.forEach((tag, index) => {
         const row = append(body, 'tr', '');
         if (index === 0) {
+          row.classList.add('tag-assignment-group-start');
           const sourceCell = append(row, 'td', `${item.source} (${item.tags.length} assignment${item.tags.length === 1 ? '' : 's'})`);
           sourceCell.rowSpan = item.tags.length;
         }

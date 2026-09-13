@@ -1240,6 +1240,9 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 .workspace-tag-information .modal-titlebar { flex: 0 0 auto; }
 .workspace-tag-information-body { flex: 1 1 0; min-height: 0; overflow: auto; padding: 16px; overflow-wrap: anywhere; }
 .workspace-tag-information-body table { width: 100%; }
+.workspace-tag-information-body td { vertical-align: top; }
+.workspace-tag-information-body .tag-assignment-group-start > td { border-top: 1px solid var(--border); }
+.workspace-tag-information-body td[rowspan] { border-right: 1px solid var(--border); }
 .workspace-tag-information-body th { position: sticky; top: 0; background: #151925; }
 .workspace-tag-information-body .btn { white-space: normal; text-align: left; margin: 3px 0; }
 .tag-audit-overlay { display: flex; }
