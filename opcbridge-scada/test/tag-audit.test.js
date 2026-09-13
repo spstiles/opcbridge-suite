@@ -1,6 +1,18 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { create, connectionInfo, filterRows } = require('../public/tag-audit');
+const { create, connectionInfo, filterRows, crossReferenceCsv } = require('../public/tag-audit');
+test('cross-reference export includes assignments, HMI locations, and incomplete coverage', () => {
+  const csv = crossReferenceCsv({ connection: 'Field Ops', selection: 'Array',
+    assignments: [{ source: 'Array[3]', tags: [{ name: '=Unsafe', enabled: false, bit: 0 }] }],
+    uses: [{ name: 'Array[3]', component: 'HMI', location: 'Overview,"Label"', usage: 'Expression' }],
+    warnings: ['One screen unavailable'] });
+  assert.equal(csv.split('\r\n').length, 3);
+  assert.ok(csv.includes("'=Unsafe"));
+  assert.ok(csv.includes('Overview,""Label""'));
+  assert.ok(csv.includes('One screen unavailable'));
+  assert.ok(csv.includes('"0","false"'));
+  assert.ok(crossReferenceCsv({ connection: 'Memory' }).includes('No references found within scan coverage'));
+});
 const tags = [
   { connection_id: 'c', name: 'Running', plc_tag_name: 'Data[9]' },
   { connection_id: 'c', name: 'Failed', plc_tag_name: 'Data[137]' },

@@ -18920,6 +18920,18 @@ function openWorkspaceTagInformation(connection, name) {
   if (name) append(controls, 'p', `References to: ${name}`);
   const summary = append(controls, 'p', ''); summary.setAttribute('role', 'status');
   const assignments = model.assignments(connection, name);
+  let hmiUses = [], coverageWarnings = [];
+  const download = append(controls, 'button', 'Download CSV'); download.className = 'btn';
+  download.disabled = !!name;
+  download.title = 'Download all references for this selection, regardless of the text filter. Available when the scan finishes.';
+  download.onclick = () => {
+    const csv = TagAudit.crossReferenceCsv({ connection: displayConnectionName(connection), selection: name,
+      assignments, uses: hmiUses, warnings: coverageWarnings });
+    const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a'); link.href = url;
+    link.download = `cross-reference-${String(name || displayConnectionName(connection)).replace(/[^a-zA-Z0-9_.-]/g, '_')}-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   const render = () => {
     content.replaceChildren();
     const term = search.value.trim().toLowerCase();
@@ -18968,6 +18980,7 @@ function openWorkspaceTagInformation(connection, name) {
     const update = () => {
       results.replaceChildren();
       const uses = scanModel.uses(connection, name);
+      hmiUses = uses;
       const table = append(results, 'table', '');
       const head = append(append(table, 'thead', ''), 'tr', '');
       ['Referenced tag', 'Screen / object / property', 'Use'].forEach(text => append(head, 'th', text));
@@ -18977,6 +18990,7 @@ function openWorkspaceTagInformation(connection, name) {
         [use.name, use.location, use.usage].forEach(text => append(row, 'td', text));
       });
       const warnings = [...failures, ...scanModel.warnings];
+      coverageWarnings = warnings;
       notes.hidden = warnings.length === 0; noteText.textContent = warnings.join('\n');
       return uses.length;
     };
@@ -19004,6 +19018,8 @@ function openWorkspaceTagInformation(connection, name) {
         status.textContent = `Scan finished: ${update()} HMI references.${failures.length || scanModel.warnings.size ? ' Coverage is incomplete; review notes.' : ''}`;
       } catch (err) {
         failures.push(err.message); update(); status.textContent = 'HMI scan incomplete — see coverage notes.';
+      } finally {
+        download.disabled = false;
       }
     })();
   }

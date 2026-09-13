@@ -200,7 +200,25 @@
       return terms.every(term => fields.some(field => field.includes(term)));
     });
   };
-  const api = { create, connectionInfo, filterRows };
+  function crossReferenceCsv({ connection, selection = '', assignments = [], uses = [], warnings = [] }) {
+    const coverage = selection
+      ? 'Workspace assignments and saved HMI only; unsaved HMI edits and other services excluded.'
+      : 'Workspace assignments only; application uses not scanned.';
+    const notes = [coverage, ...warnings].join(' | ');
+    const rows = [['Connection', 'Selected Tag', 'Referenced Tag / Source', 'Assignment Count', 'Used In', 'Location / Assigned Tag', 'Usage', 'Bit', 'Enabled', 'Coverage Notes']];
+    assignments.forEach(item => item.tags.forEach(tag => rows.push([
+      connection, selection, item.source, item.tags.length, 'Workspace', tag.name,
+      'Tag assignment', tag.bit != null && Number(tag.bit) >= 0 ? tag.bit : '', tag.enabled, [notes, tag.error].filter(Boolean).join(' | ')
+    ])));
+    uses.forEach(use => rows.push([connection, selection, use.name, '', use.component, use.location, use.usage, '', '', notes]));
+    if (rows.length === 1) rows.push([connection, selection, '', 0, '', '', 'No references found within scan coverage', '', '', notes]);
+    return rows.map(row => row.map(value => {
+      let text = String(value ?? '');
+      if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
+      return `"${text.replace(/"/g, '""')}"`;
+    }).join(',')).join('\r\n');
+  }
+  const api = { create, connectionInfo, filterRows, crossReferenceCsv };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.TagAudit = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
