@@ -131,12 +131,36 @@
         elements: [...elements].sort((a, b) => a[0] - b[0]).map(([index, assignments]) => ({ index, assignments })) };
       return result;
     }
-    function assignments(connection) {
+    function assignments(connection, name = '') {
+      const selected = name ? records.get(key(connection, name)) : null;
+      if (name && !selected) return [];
+      const selectedSource = selected && sources.get(key(connection, name));
+      const count = Math.max(1, Number(selected?.definition.elem_count) || 1);
+      const indexed = selectedSource?.source?.match(/^(.*)\[(\d+)\]$/);
+      const isAlias = !!selected?.definition.source_tag;
       const groups = new Map();
       for (const [id, record] of records) {
         if (record.connection !== connection) continue;
         const resolved = sources.get(id);
         const source = resolved.error ? (record.definition.source_tag || record.source || record.name) : resolved.source;
+        if (selected) {
+          if (id === key(connection, name)) continue;
+          if (isAlias) {
+            // Referencing this logical alias is different from sharing its PLC address.
+            if (!(resolved.chain || []).some(tag => tag.id === key(connection, name))) continue;
+          } else {
+            if (resolved.error || selectedSource.error || resolved.connection !== selectedSource.connection) continue;
+            let matches = source === selectedSource.source;
+            if (count > 1 && indexed) {
+              const candidate = source.match(/^(.*)\[(\d+)\](?:\..*)?$/);
+              matches = !!candidate && candidate[1] === indexed[1]
+                && Number(candidate[2]) >= Number(indexed[2]) && Number(candidate[2]) < Number(indexed[2]) + count;
+            } else if (!indexed) {
+              matches ||= source.startsWith(`${selectedSource.source}[`);
+            }
+            if (!matches) continue;
+          }
+        }
         const groupKey = key(resolved.connection || connection, source);
         if (!groups.has(groupKey)) groups.set(groupKey, { source, tags: [] });
         groups.get(groupKey).tags.push({ ...describe(record), error: resolved.error || '' });

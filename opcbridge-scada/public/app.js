@@ -18910,17 +18910,17 @@ function openWorkspaceTagInformation(connection, name) {
   const append = (parent, type, text) => {
     const element = document.createElement(type); element.textContent = text; parent.appendChild(element); return element;
   };
-  overlay.querySelector('.modal-title').textContent = `Tag Assignments — ${displayConnectionName(connection)}`;
+  overlay.querySelector('.modal-title').textContent = `${name ? 'Tag References' : 'Tag Assignments'} — ${displayConnectionName(connection)}${name ? ` · ${name}` : ''}`;
   const controls = document.createElement('div');
   controls.className = 'tag-audit-controls'; content.before(controls);
-  append(controls, 'p', 'PLC variables and their assigned tags. Current Workspace definitions, including unsaved changes.');
+  append(controls, 'p', 'Workspace tag assignments only, including unsaved changes. This view does not scan HMI, flows, or other application uses.');
   const search = append(controls, 'input', '');
   search.type = 'search'; search.placeholder = 'Filter PLC variable or assigned tag…';
   search.setAttribute('aria-label', 'Filter tag assignments');
   const selected = model.details(`${connection}\u0000${name}`);
-  search.value = selected?.array?.name || selected?.source || name || '';
+  if (selected) append(controls, 'p', selected.error || `Selected tag source: ${selected.source}`);
   const summary = append(controls, 'p', ''); summary.setAttribute('role', 'status');
-  const assignments = model.assignments(connection);
+  const assignments = model.assignments(connection, name);
   const render = () => {
     content.replaceChildren();
     const term = search.value.trim().toLowerCase();
@@ -18931,13 +18931,16 @@ function openWorkspaceTagInformation(connection, name) {
     ['PLC variable', 'Assigned tag names'].forEach(label => append(header, 'th', label));
     const body = append(table, 'tbody', '');
     visible.forEach(item => {
-      const row = append(body, 'tr', '');
-      append(row, 'td', item.source);
-      const cell = append(row, 'td', '');
-      if (item.tags.length > 1) append(cell, 'strong', `${item.tags.length} assignments`);
-      item.tags.forEach(tag => append(cell, 'div', `${tag.name}${tag.bit != null && Number(tag.bit) >= 0 ? ` (bit ${tag.bit})` : ''}${tag.enabled ? '' : ' (disabled)'}${tag.error ? ` — ${tag.error}` : ''}`));
+      item.tags.forEach((tag, index) => {
+        const row = append(body, 'tr', '');
+        if (index === 0) {
+          const sourceCell = append(row, 'td', `${item.source} (${item.tags.length} assignment${item.tags.length === 1 ? '' : 's'})`);
+          sourceCell.rowSpan = item.tags.length;
+        }
+        append(row, 'td', `${tag.name}${tag.bit != null && Number(tag.bit) >= 0 ? ` (bit ${tag.bit})` : ''}${tag.enabled ? '' : ' (disabled)'}${tag.error ? ` — ${tag.error}` : ''}`);
+      });
     });
-    if (!visible.length) append(content, 'p', 'No matching assignments in this connection.');
+    if (!visible.length) append(content, 'p', name ? 'No other Workspace tags reference this selection.' : 'No matching assignments in this connection.');
     content.scrollTop = 0;
   };
   search.addEventListener('input', render);
