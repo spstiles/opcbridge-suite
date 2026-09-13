@@ -9,7 +9,7 @@
       const connection = String(tag.connection_id || '');
       const name = String(tag.name || '');
       if (!name) return;
-      const record = { connection, name, source: String(tag.plc_tag_name || tag.source_tag || ''), uses: new Map() };
+      const record = { connection, name, definition: tag, source: String(tag.plc_tag_name || tag.source_tag || ''), uses: new Map() };
       records.set(key(connection, name), record);
       if (!byConnection.has(connection)) byConnection.set(connection, []);
       byConnection.get(connection).push(record);
@@ -80,6 +80,57 @@
     tags.forEach(tag => {
       if (tag.source_tag) add(tag.source_connection_id || tag.connection_id, tag.source_tag, 'Tag Alias', String(tag.name), 'Derived source');
     });
+    const describe = record => ({ id: key(record.connection, record.name), name: record.name,
+      connection: connectionNames[record.connection] || record.connection,
+      bit: record.definition.bit, enabled: record.definition.enabled !== false });
+    function trace(record) {
+      const chain = [], seen = new Set();
+      let current = record;
+      while (current) {
+        const id = key(current.connection, current.name);
+        if (seen.has(id)) return { chain, error: 'Alias cycle — source cannot be resolved.' };
+        seen.add(id); chain.push(describe(current));
+        const source = current.definition.source_tag;
+        if (!source) return { chain, connection: current.connection,
+          source: current.definition.plc_tag_name || current.name };
+        const connection = resolveConnection(String(current.definition.source_connection_id || current.connection));
+        current = records.get(key(connection, String(source)));
+        if (!current) {
+          const element = String(source).match(/^(.*?)((?:\[\d+\])+.*)$/);
+          const arrayRoot = element && records.get(key(connection, element[1]));
+          if (arrayRoot && !arrayRoot.definition.source_tag) return { chain: [...chain, describe(arrayRoot)], connection,
+            source: (arrayRoot.definition.plc_tag_name || arrayRoot.name) + element[2] };
+        }
+        if (!current) return { chain, error: `Alias source not found: ${source}` };
+      }
+    }
+    const sources = new Map([...records].map(([id, record]) => [id, trace(record)]));
+    function details(id) {
+      const record = records.get(id);
+      if (!record) return null;
+      const resolved = sources.get(id);
+      const result = { ...describe(record), ...resolved, connection: describe(record).connection,
+        sourceConnection: connectionNames[resolved.connection] || resolved.connection,
+        uses: [...record.uses.values()], related: [], array: null };
+      if (resolved.error) return result;
+      const match = resolved.source.match(/^(.*?)\[(\d+)\](.*)$/);
+      const base = match ? match[1] : resolved.source;
+      const elements = new Map();
+      for (const [otherId, other] of records) {
+        const target = sources.get(otherId);
+        if (target.error || target.connection !== resolved.connection) continue;
+        if (target.source === resolved.source) result.related.push(describe(other));
+        const element = target.source.match(/^(.*?)\[(\d+)\](.*)$/);
+        if (!element || element[1] !== base) continue;
+        const index = Number(element[2]);
+        if (!elements.has(index)) elements.set(index, []);
+        elements.get(index).push({ ...describe(other), source: target.source });
+      }
+      if (elements.size) result.array = { name: base,
+        highest: Math.max(...elements.keys()),
+        elements: [...elements].sort((a, b) => a[0] - b[0]).map(([index, assignments]) => ({ index, assignments })) };
+      return result;
+    }
     function rows() {
       const output = [];
       const notes = ['Saved configuration only; external clients and unsaved edits are excluded.', ...[...warnings].slice(0, 20),
@@ -88,10 +139,10 @@
         || a.source.localeCompare(b.source, undefined, { numeric: true }) || a.name.localeCompare(b.name, undefined, { numeric: true }))
         .forEach(record => {
           const uses = [...record.uses.values()];
-          (uses.length ? uses : [{ component: '', location: '', usage: '' }]).forEach(use => output.push([
+          (uses.length ? uses : [{ component: '', location: '', usage: '' }]).forEach(use => output.push(Object.assign([
             connectionNames[record.connection] || record.connection, record.name, record.source, uses.length,
             use.component, use.location, use.usage, warnings.size ? 'Incomplete — see notes' : 'Configured references scanned', notes
-          ]));
+          ], { recordId: key(record.connection, record.name) })));
         });
       return output;
     }
@@ -101,7 +152,7 @@
       if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
       return `"${text.replace(/"/g, '""')}"`;
     }).join(',')).join('\r\n');
-    return { scan, rows, csv, headers, warnings, tagCount: records.size };
+    return { scan, rows, csv, details, headers, warnings, tagCount: records.size };
   }
   const connectionInfo = (config, fallbackId = '') => {
     const id = String(config.id || config.connection_id || fallbackId).trim();

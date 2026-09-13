@@ -29184,6 +29184,7 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
     <div class="hint">Separate search terms with spaces to match all terms. Use double quotes for a phrase.</div>
     <div data-status role="status" aria-live="polite">Ready.</div><details data-warnings hidden><summary>Audit coverage notes</summary><pre></pre></details></div>
     <div class="tag-audit-results"><table><thead></thead><tbody></tbody></table></div>
+    <section class="tag-audit-detail" data-detail hidden aria-label="Tag details"></section>
     <div class="tag-audit-controls"><button class="btn" data-first disabled>First</button> <button class="btn" data-prev disabled>Previous</button> <span data-row-count></span> <label>Page <input data-page type="number" min="1" max="1" step="1" value="1" aria-label="Current results page" disabled /></label> <span data-page-count>of 1</span> <button class="btn" data-next disabled>Next</button> <button class="btn" data-last disabled>Last</button></div>
   </section>`;
   document.body.appendChild(overlay);
@@ -29192,6 +29193,53 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
   let rows = [];
   let page = 0;
   let pageCount = 1;
+  const showDetails = id => {
+    const info = audit?.details(id);
+    if (!info) return;
+    const panel = query('[data-detail]');
+    panel.replaceChildren(); panel.hidden = false;
+    const append = (parent, tag, text) => {
+      const node = document.createElement(tag); node.textContent = text; parent.appendChild(node); return node;
+    };
+    const closeDetails = append(panel, 'button', 'Close details');
+    closeDetails.className = 'btn';
+    closeDetails.onclick = () => { panel.hidden = true; };
+    append(panel, 'h3', `${info.connection} · ${info.name}`);
+    const tagLink = (parent, tag) => {
+      const button = append(parent, 'button', `${tag.connection} · ${tag.name}${tag.bit != null ? ` (bit ${tag.bit})` : ''}${tag.enabled ? '' : ' (disabled)'}`);
+      button.className = 'btn'; button.onclick = () => showDetails(tag.id);
+    };
+    append(panel, 'p', info.error || `Resolved source: ${info.sourceConnection} · ${info.source}`);
+    if (info.chain.length > 1) {
+      append(panel, 'h4', 'Alias source chain');
+      info.chain.forEach(tag => tagLink(panel, tag));
+    }
+    if (info.related.length) {
+      append(panel, 'h4', 'Tags sharing this source');
+      info.related.forEach(tag => tagLink(panel, tag));
+      append(panel, 'p', 'Shared sources can be intentional. Check bit selections before treating them as duplicate assignments.');
+    }
+    if (info.array) {
+      append(panel, 'h4', `${info.array.name} — array assignments`);
+      append(panel, 'p', `Highest configured index: ${info.array.highest} · ${info.array.elements.length} represented elements · ${info.array.elements.filter(element => element.assignments.length > 1).length} elements with multiple tags`);
+      append(panel, 'p', 'Saved configuration only, including disabled tags. Array bounds are not verified; unlisted elements are not proof of unused PLC memory.');
+      const table = append(panel, 'table', '');
+      const header = append(table, 'tr', '');
+      ['Index', 'Configured tags / aliases'].forEach(text => append(header, 'th', text));
+      info.array.elements.forEach(element => {
+        const row = append(table, 'tr', ''); append(row, 'td', String(element.index));
+        const cell = append(row, 'td', '');
+        element.assignments.forEach(tag => {
+          const line = append(cell, 'div', ''); tagLink(line, tag);
+          append(line, 'span', ` → ${tag.source}`);
+        });
+      });
+    }
+    append(panel, 'h4', `Configured uses (${info.uses.length})`);
+    if (!info.uses.length) append(panel, 'p', 'No configured uses found within audit coverage.');
+    info.uses.forEach(use => append(panel, 'p', `${use.component} · ${use.location} · ${use.usage}`));
+    panel.scrollTop = 0;
+  };
   const render = () => {
     const filtered = TagAudit.filterRows(rows, query('[data-search]').value);
     const pages = Math.max(1, Math.ceil(filtered.length / 250));
@@ -29202,7 +29250,15 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
     const fragment = document.createDocumentFragment();
     filtered.slice(page * 250, (page + 1) * 250).forEach(row => {
       const tr = document.createElement('tr');
-      row.slice(0, 7).forEach(value => { const td = document.createElement('td'); td.textContent = String(value); tr.appendChild(td); });
+      row.slice(0, 7).forEach((value, index) => {
+        const td = document.createElement('td');
+        if (index === 1) {
+          const button = document.createElement('button'); button.className = 'btn';
+          button.textContent = String(value); button.title = 'View source, aliases, and uses';
+          button.onclick = () => showDetails(row.recordId); td.appendChild(button);
+        } else td.textContent = String(value);
+        tr.appendChild(td);
+      });
       fragment.appendChild(tr);
     });
     body.appendChild(fragment);
@@ -29246,6 +29302,7 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
     query('[data-run]').disabled = true;
     query('[data-download]').disabled = true;
     query('[data-warnings]').hidden = true;
+    query('[data-detail]').hidden = true;
     rows = []; render();
     const progress = text => { query('[data-status]').textContent = text; };
     const fetchJson = async url => {

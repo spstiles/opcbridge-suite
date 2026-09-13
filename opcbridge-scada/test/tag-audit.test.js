@@ -7,6 +7,40 @@ const tags = [
   { connection_id: 'c', name: 'Unused', plc_tag_name: 'Data[20]' }
 ];
 
+test('details trace aliases and enumerate array assignments numerically without mixing connections', () => {
+  const audit = create([
+    { connection_id: 'c', name: 'Array', plc_tag_name: 'HMI_Dints_400' },
+    { connection_id: 'c', name: 'Low', plc_tag_name: 'HMI_Dints_400[9]' },
+    { connection_id: 'c', name: 'High', plc_tag_name: 'HMI_Dints_400[137]' },
+    { connection_id: 'c', name: 'Alias', source_tag: 'High', bit: 2 },
+    { connection_id: 'c', name: 'Duplicate', plc_tag_name: 'HMI_Dints_400[137]', enabled: false },
+    { connection_id: 'c', name: 'Indexed', source_tag: 'Array[20]' },
+    { connection_id: 'other', name: 'Foreign', plc_tag_name: 'HMI_Dints_400[199]' }
+  ], { c: 'Field Ops' });
+  const info = audit.details(audit.rows().find(row => row[1] === 'Array').recordId);
+  assert.equal(info.array.highest, 137);
+  assert.deepEqual(info.array.elements.map(element => element.index), [9, 20, 137]);
+  assert.equal(info.array.elements[2].assignments.length, 3);
+  const alias = audit.details(audit.rows().find(row => row[1] === 'Alias').recordId);
+  assert.equal(alias.source, 'HMI_Dints_400[137]');
+  assert.equal(alias.connection, 'Field Ops');
+  assert.deepEqual(alias.chain.map(tag => tag.name), ['Alias', 'High']);
+  assert.equal(alias.related.find(tag => tag.name === 'Alias').bit, 2);
+});
+
+test('details report missing sources and cycles instead of claiming resolved assignments', () => {
+  const audit = create([
+    { connection_id: 'c', name: 'A', source_tag: 'B' },
+    { connection_id: 'c', name: 'B', source_tag: 'A' },
+    { connection_id: 'c', name: 'Missing', source_tag: 'Unknown' }
+  ]);
+  for (const row of audit.rows()) {
+    const info = audit.details(row.recordId);
+    assert.ok(info.error);
+    assert.equal(info.array, null);
+  }
+});
+
 test('multiple search terms match across columns and quoted phrases stay together', () => {
   const rows = [
     ['Field Ops', 'Running', 'Data[137]', 1, 'HMI'],
